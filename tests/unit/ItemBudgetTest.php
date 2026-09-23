@@ -287,13 +287,15 @@ class ItemBudgetTest extends TestCase {
 		for ( $i = 0; $i < 3 * Stats_Store::MAX_SERVER_VALUES; $i++ ) {
 			$names[] = self::wide( "srv{$i}.", 259 );
 		}
+		$every = Stats_Store::shard_mask( [ ...Stats_Store::url_shards(), ...Stats_Store::url_shards( true ) ] );
 		$index = [];
 		foreach ( Stats_Store::admit_servers( [], $names ) as $filed ) {
-			$index[ Stats_Store::server_key( $filed ) ] = $filed;
+			$index[ Stats_Store::server_key( $filed ) ] = [ Stats_Store::SRV_NAME => $filed, Stats_Store::SRV_SHARDS => $every ];
 		}
 
 		$this->assertCount( Stats_Store::MAX_SERVER_VALUES + 1, $index );
-		self::assert_fits_both( $index, 'a server index of the longest names' );
+		$this->assertSame( 0xFFFFFFFF, $every, 'each entry names all 32 shards, as a folded hour\'s does' );
+		self::assert_fits_both( $index, 'a server index of the longest names, every shard named' );
 	}
 
 	// ----- urlrank_s / urlrank_sh -----

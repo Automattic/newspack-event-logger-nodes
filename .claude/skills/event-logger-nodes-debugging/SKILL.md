@@ -120,7 +120,7 @@ Seventeen namespaces sit under that prefix. Per-server data has the server in th
 | `lb` / `lb_h` / `lb_s` | Leaderboard buckets: global, the global coarse hourly tier, and per server |
 | `urls` | The URL index, one server's rows sharded by the first hex digit of the url_hash, `urls:{server_key}:{shard}:{bucket}`; each row carries its path at `ROW_PATH` and never its host |
 | `urls_h` | The URL index's coarse hourly tier, `urls_h:{server_key}:{shard}:{Y-m-d-H}` |
-| `urlsrv` / `urlsrv_h` | The server index, `urlsrv:{bucket}` / `urlsrv_h:{Y-m-d-H}` => `{ server_key => server_name }`: which servers a bucket or hour holds URL rows for. Every unscoped read starts here, so a server missing from it is a server no site-wide table shows. Past `MAX_SERVER_VALUES` (128) names, new servers' rows file under the `Other` server |
+| `urlsrv` / `urlsrv_h` | The server index, `urlsrv:{bucket}` / `urlsrv_h:{Y-m-d-H}` => `{ server_key => [ server_name, shards ] }`: which servers a bucket or hour holds URL rows for, and the bitmask of the shards each wrote (`Stats_Store::SRV_NAME`, `SRV_SHARDS`; bit `i` reader shard `dechex(i)`, bit `16 + i` worker shard `w{dechex(i)}`). Every read starts here, scoped or not, and asks only for the shards an entry names, so a server missing from it is a server no table shows, and a shard its entry omits is one no reader asks for. Past `MAX_SERVER_VALUES` (128) names, new servers' rows file under the `Other` server |
 | `urlmap` | `urlmap:{hash}` => `[ server_name, path ]`, rewritten only past half the retention window; an unscoped `dump_url` reads it to find the hash's server |
 | `url` | The per-URL flame and profile blob, keyed `url:{hash}` |
 | `dim` / `url_dim` | Dimensional time series, global and per URL |

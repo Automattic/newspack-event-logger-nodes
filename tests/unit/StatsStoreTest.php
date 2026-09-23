@@ -156,8 +156,9 @@ class StatsStoreTest extends TestCase {
 		$this->set_url_bucket( $store, $bucket, [ 'a9a9a9a9a9a9' => [ 'url' => 'https://moa.test/moa-6', 'count' => 6 ] ], 'moa.test' );
 
 		$this->assertSame(
-			[ $bucket => [ Stats_Store::server_key( 'kea.test' ) => 'kea.test', Stats_Store::server_key( 'moa.test' ) => 'moa.test' ] ],
-			$store->server_index( [], [ $bucket, '2026-08-14-12-00' ] )
+			[ $bucket => self::index_of( [ 'kea.test', 'moa.test' ], [ 'a' ] ) ],
+			$store->server_index( [], [ $bucket, '2026-08-14-12-00' ] ),
+			'each server beside the one shard its rows fell in'
 		);
 
 		$counts = static function ( array $sources ): array {
@@ -181,7 +182,7 @@ class StatsStoreTest extends TestCase {
 			$counts( $store->url_row_sources( [ $bucket ], 'a', false, 'moa.test' ) ),
 			'a scoped read is that server\'s keys alone'
 		);
-		$this->assertSame( 1, $mc->multi_calls, 'and needs no index to find them' );
+		$this->assertSame( 2, $mc->multi_calls, 'the index, then the shards it names' );
 	}
 
 	public function test_a_server_past_the_cap_is_admitted_as_other(): void {
@@ -1212,6 +1213,7 @@ class StatsStoreTest extends TestCase {
 		};
 		$store  = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$bucket = Stats_Store::bucket_key( 1_700_000_000 );
+		$store->bucket_set_multi( [ [ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ], [ 'a' ] ) ] ] );
 
 		$store->url_row_sources( [ $bucket ], null, false, 'kea.test' );
 
@@ -1222,7 +1224,7 @@ class StatsStoreTest extends TestCase {
 		$this->assertContains(
 			self::cache_key( 0, 'urls:' . Stats_Store::server_key( 'kea.test' ) . ':a:' . $bucket ),
 			$asked,
-			'every shard of the server is'
+			'the shard the index names for the server is'
 		);
 	}
 
@@ -1661,7 +1663,7 @@ class StatsStoreTest extends TestCase {
 		$store->bucket_set_multi( [ [
 			Stats_Store::url_srv_parts( false ),
 			$bucket,
-			[ Stats_Store::server_key( 'kea.test' ) => 'kea.test', Stats_Store::server_key( 'moa.test' ) => 'moa.test' ],
+			self::index_of( [ 'kea.test', 'moa.test' ] ),
 		] ] );
 		$oracle = self::ranked_lists( Stats_Store::ranked_writes( [ 'site.test' => $union ], false, $bucket ) )[ Stats_Store::server_key( 'site.test' ) ];
 
@@ -1686,7 +1688,7 @@ class StatsStoreTest extends TestCase {
 		// bucket answers with the lists it has, as a stale site list did.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 2, max_lifespan: 86400 );
-		$index      = [ Stats_Store::server_key( 'kea.test' ) => 'kea.test', Stats_Store::server_key( 'moa.test' ) => 'moa.test' ];
+		$index      = self::index_of( [ 'kea.test', 'moa.test' ] );
 		$rows       = [ 'kea.test' => [ 'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 23, 'path' => '/kea-23' ] ) ] ];
 		$store->bucket_set_multi( [
 			...Stats_Store::ranked_writes( $rows, true, '2026-09-22-13' ),
@@ -1750,24 +1752,162 @@ class StatsStoreTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 2, max_lifespan: 86400 );
 		$entries    = [ [ 'a1a1a1a1a1a1', self::positional_url_row( [ 'count' => 30 ] ) ] ];
+		// 14-10 holds kea.test's list but no index naming it.
 		$store->bucket_set_multi( [
 			[ Stats_Store::url_rank_parts( 'count', 'desc', 'kea.test', false ), '2026-09-22-14-05', $entries ],
+			[ Stats_Store::url_rank_parts( 'count', 'desc', 'kea.test', false ), '2026-09-22-14-10', $entries ],
+			[ Stats_Store::url_srv_parts( false ), '2026-09-22-14-05', self::index_of( [ 'kea.test' ] ) ],
 		] );
 		$this->assertSame(
 			[ [ '2026-09-22-14-05', $entries ] ],
 			$store->url_rank_window( [], [ '2026-09-22-14-05', '2026-09-22-14-10' ], 'count', 'desc', 'kea.test' )
 		);
-		$this->assertSame( [], $store->url_rank_window( [], [ '2026-09-22-14-05' ], 'count', 'desc', '' ), 'no index names kea.test' );
+		$this->assertSame( [], $store->url_rank_window( [], [ '2026-09-22-14-10' ], 'count', 'desc', '' ), 'no index names kea.test' );
 	}
 
-	public function test_string_map_restores_the_string_keys_and_values_the_server_index_declares(): void {
-		// The index is `server_key => name` both ways, and a decoded one is
-		// neither: PHP hands back an all-digit key as an int, and a truncated
-		// or corrupt entry can carry anything at all.
+	public function test_index_entries_keeps_only_a_name_beside_a_shard_mask(): void {
+		// A decoded index is neither typed nor keyed as stored: PHP hands back
+		// an all-digit key as an int, and a truncated, corrupt or earlier-shaped
+		// entry can carry anything at all. Such an entry names no server.
 		$this->assertSame(
-			[ '12345678' => 'kakapo.test', 'a7a7a7a7' => '' ],
-			Stats_Store::string_map( [ 12345678 => 'kakapo.test', 'a7a7a7a7' => [ 'nope' ] ] )
+			[ '12345678' => [ Stats_Store::SRV_NAME => 'kakapo.test', Stats_Store::SRV_SHARDS => 9 ] ],
+			Stats_Store::index_entries( [
+				'a1a1a1a1' => 'kakapo.test',
+				'b2b2b2b2' => [ 'kakapo.test' ],
+				'c3c3c3c3' => [ 5, 3 ],
+				'd4d4d4d4' => [ 'kakapo.test', 'x' ],
+				12345678   => [ 'kakapo.test', 9 ],
+			] )
 		);
+	}
+
+	public function test_a_shard_mask_sets_one_bit_per_shard_and_reads_back_by_family(): void {
+		$mask = Stats_Store::shard_mask( [ '3', 'c', 'w5' ] );
+
+		$this->assertSame( ( 1 << 3 ) | ( 1 << 12 ) | ( 1 << 21 ), $mask );
+		$this->assertSame( [ '3', 'c' ], Stats_Store::shards_in( $mask, false ), 'the reader family alone' );
+		$this->assertSame( [ '3', 'c', 'w5' ], Stats_Store::shards_in( $mask, true ) );
+	}
+
+	public function test_merge_index_takes_the_new_name_and_ors_the_masks(): void {
+		$kea = Stats_Store::server_key( 'kea.test' );
+		$moa = Stats_Store::server_key( 'moa.test' );
+		$this->assertSame(
+			[
+				$kea => [ Stats_Store::SRV_NAME => 'kea.test', Stats_Store::SRV_SHARDS => 0b1011 ],
+				$moa => [ Stats_Store::SRV_NAME => 'moa.test', Stats_Store::SRV_SHARDS => 0b0100 ],
+			],
+			Stats_Store::merge_index(
+				[ $kea => [ Stats_Store::SRV_NAME => 'kea.test', Stats_Store::SRV_SHARDS => 0b0011 ] ],
+				[
+					$kea => [ Stats_Store::SRV_NAME => 'kea.test', Stats_Store::SRV_SHARDS => 0b1001 ],
+					$moa => [ Stats_Store::SRV_NAME => 'moa.test', Stats_Store::SRV_SHARDS => 0b0100 ],
+				]
+			)
+		);
+	}
+
+	/**
+	 * Seed kea.test in shard 3 and moa.test in shards b and e of two buckets,
+	 * the sparse shape a real server's five minutes has.
+	 *
+	 * @return list<string> The buckets.
+	 */
+	private function seed_sparse_servers( Stats_Store $store ): array {
+		$buckets = [ '2026-08-14-12-05', '2026-08-14-12-10' ];
+		foreach ( $buckets as $bucket ) {
+			$this->set_url_shard( $store, $bucket, '3', [ '3c3c3c3c3c3c' => [ Stats_Store::ROW_COUNT => 7 ] ], 'kea.test' );
+			$this->set_url_shard( $store, $bucket, 'b', [ 'b1b1b1b1b1b1' => [ Stats_Store::ROW_COUNT => 5 ] ], 'moa.test' );
+			$this->set_url_shard( $store, $bucket, 'e', [ 'e2e2e2e2e2e2' => [ Stats_Store::ROW_COUNT => 2 ] ], 'moa.test' );
+		}
+		return $buckets;
+	}
+
+	public function test_an_unscoped_read_asks_only_for_the_shards_the_index_names(): void {
+		// A key the index does not name misses memcache and goes to the
+		// mirror, which cannot stop early on an absent key: sixteen asks a
+		// server a bucket where one has rows is how a poll spent its budget.
+		$mc         = self::asking_memcached();
+		Core::$memd = $mc;
+		$store      = $this->make_store();
+		$buckets    = $this->seed_sparse_servers( $store );
+		$mc->asked  = [];
+
+		$sources = $store->url_row_sources( $buckets );
+
+		$kea = Stats_Store::server_key( 'kea.test' );
+		$moa = Stats_Store::server_key( 'moa.test' );
+		$this->assertSame(
+			self::sorted( [
+				"{$kea}:3:{$buckets[0]}", "{$moa}:b:{$buckets[0]}", "{$moa}:e:{$buckets[0]}",
+				"{$kea}:3:{$buckets[1]}", "{$moa}:b:{$buckets[1]}", "{$moa}:e:{$buckets[1]}",
+			] ),
+			self::asked_url_keys( $mc->asked ),
+			'one key per shard a server wrote, not sixteen per server'
+		);
+		$this->assertCount( 6, $sources );
+	}
+
+	public function test_a_scoped_read_asks_only_for_its_servers_named_shards(): void {
+		$mc         = self::asking_memcached();
+		Core::$memd = $mc;
+		$store      = $this->make_store();
+		$buckets    = $this->seed_sparse_servers( $store );
+		$mc->asked  = [];
+
+		$store->url_row_sources( $buckets, null, false, 'moa.test' );
+
+		$moa = Stats_Store::server_key( 'moa.test' );
+		$this->assertSame(
+			self::sorted( [ "{$moa}:b:{$buckets[0]}", "{$moa}:e:{$buckets[0]}", "{$moa}:b:{$buckets[1]}", "{$moa}:e:{$buckets[1]}" ] ),
+			self::asked_url_keys( $mc->asked )
+		);
+
+		$mc->asked = [];
+		$this->assertSame( [], $store->url_row_sources( $buckets, 'c', false, 'moa.test' ), 'a shard the server never wrote' );
+		$this->assertSame( [], self::asked_url_keys( $mc->asked ), 'is not asked for' );
+	}
+
+	public function test_a_scoped_rank_window_reads_an_hour_its_index_does_not_name_as_idle(): void {
+		// The hour is ranked whole for every server it names; one it does not
+		// name served nothing that hour, which is a list of nothing rather
+		// than a list missing.
+		Core::$memd = new InMemoryMemcached();
+		$store      = $this->make_store();
+		$hour       = '2026-09-22-13';
+		$this->set_url_rank_lists( $store, $hour, [ 'a4410ce0fa19' => [ 'url' => 'https://kea.test/kereru-41', 'count' => 41 ] ], true, 'kea.test' );
+
+		$this->assertSame( [ [ $hour, [] ] ], $store->url_rank_window( [ $hour ], [], 'count', 'desc', 'moa.test' ) );
+		$this->assertSame( [], $store->url_rank_window( [ '2026-09-22-12' ], [], 'count', 'desc', 'moa.test' ), 'an hour holding no index is still a hole' );
+	}
+
+	public function test_the_derived_probe_asks_only_for_the_shards_an_hour_names(): void {
+		$mc         = self::asking_memcached();
+		Core::$memd = $mc;
+		$store      = $this->make_store();
+		$hour       = '2026-09-21-15';
+		$kea        = Stats_Store::server_key( 'kea.test' );
+		$store->bucket_set_multi( [
+			[ Stats_Store::url_hour_parts( $kea, 'd' ), $hour, [] ],
+			[ Stats_Store::url_srv_parts( true ), $hour, [ $kea => [ Stats_Store::SRV_NAME => 'kea.test', Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( [ 'd' ] ) ] ] ],
+			[ Stats_Store::lb_hour_parts(), $hour, [] ],
+		] );
+		$mc->asked = [];
+
+		$this->assertSame(
+			[ $hour => [ 'folded' => true, 'unranked' => [ 'kea.test' ] ] ],
+			$store->url_hours_derived( [ $hour ] )
+		);
+		$this->assertSame( [ "{$kea}:d:{$hour}" ], self::asked_url_keys( $mc->asked, Stats_Store::NS_URLS_HOUR ) );
+	}
+
+	/**
+	 * @param list<string> $keys
+	 * @return list<string>
+	 */
+	private static function sorted( array $keys ): array {
+		\sort( $keys );
+		return $keys;
 	}
 
 	public function test_the_derived_probe_reports_rows_and_lists_apart(): void {
@@ -2036,7 +2176,10 @@ class StatsStoreTest extends TestCase {
 		$writes = [];
 		foreach ( $servers as $server ) {
 			$key           = Stats_Store::server_key( $server );
-			$index[ $key ] = $server;
+			$index[ $key ] = [
+				Stats_Store::SRV_NAME   => $server,
+				Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( [ ...Stats_Store::url_shards(), ...Stats_Store::url_shards( true ) ] ),
+			];
 			foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $shard ) {
 				$writes[] = [ Stats_Store::url_hour_parts( $key, $shard ), $hour, [] ];
 			}

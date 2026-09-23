@@ -758,19 +758,14 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'https://example.com/wombat-4471', $result['stats']['url'] );
 		$this->assertSame( 31, $result['stats']['count'] );
 
-		// Against what the whole table costs in the scope `urlmap` located —
-		// a ratio rather than a count, so this says "one shard, not sixteen"
-		// whatever the read plan's width is.
+		// Against what the whole table costs in the scope `urlmap` located:
+		// the two shards the index names, where the point read is one.
 		Core::cleanup_all_nodes();
 		$memd->row_keys = 0;
 		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=' . self::SEED_SERVER );
 
-		// Twice: the reader family, then the worker one when the first misses.
-		$this->assertLessThanOrEqual(
-			2 * (int) ( $memd->row_keys / Stats_Store::URL_SHARDS ),
-			$one_shard,
-			'dump_url must point-read the hash\'s shard, not the whole index'
-		);
+		$this->assertSame( 2, $memd->row_keys, 'the table reads both named shards' );
+		$this->assertSame( 1, $one_shard, 'dump_url must point-read the hash\'s shard, not the whole index' );
 	}
 
 	/**
@@ -884,8 +879,11 @@ class PerformanceCITest extends TestCase {
 	public function test_one_row_costs_one_shard_not_the_whole_index(): void {
 		$memd  = self::row_key_counter();
 		$store = new Stats_Store( 0, 86400 );
+		// Three shards: the table reads each, the modal one.
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
 			'a4471ab0c0de' => [ 'url' => '/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
+			'b8823bc1d2ef' => [ 'url' => '/quokka-8823', 'count' => 17, 'sum_ms' => 411.0, 'timed_count' => 17 ],
+			'c3309cd4e5f6' => [ 'url' => '/numbat-3309', 'count' => 9, 'sum_ms' => 90.0, 'timed_count' => 9 ],
 		] );
 		$node = new Performance_CI_Node();
 
@@ -897,12 +895,8 @@ class PerformanceCITest extends TestCase {
 		$modal          = $memd->row_keys;
 
 		$this->assertSame( 'https://example.com/wombat-4471', $detail['stats']['url'] );
-		$this->assertGreaterThan( 0, $modal, 'the row is read, not remembered' );
-		$this->assertLessThanOrEqual(
-			(int) ( $table / \count( Stats_Store::url_shards() ) ),
-			$modal,
-			'a modal must not pay the table fan-out'
-		);
+		$this->assertSame( 3, $table );
+		$this->assertSame( 1, $modal, 'the row is read, not remembered, and a modal must not pay the table fan-out' );
 	}
 
 	/**
@@ -4140,7 +4134,7 @@ class PerformanceCITest extends TestCase {
 		$written = self::tick() - ( 4 * 3600 );
 		$srv     = Stats_Store::server_key( 'example.test' );
 		foreach ( [
-			[ Stats_Store::NS_URLSRV . ":{$bucket}", [ $srv => 'example.test' ] ],
+			[ Stats_Store::NS_URLSRV . ":{$bucket}", self::index_of( [ 'example.test' ], [ $shard ] ) ],
 			[ "urls:{$srv}:{$shard}:{$bucket}", [ $hash => self::positional_url_row( [ 'count' => 41, 'path' => '/rebuilt-past-its-cache-life' ] ) ] ],
 			[ Stats_Store::NS_URLMAP . ":{$hash}", [ 'example.test', '/rebuilt-past-its-cache-life' ] ],
 		] as [ $logical, $data ] ) {
@@ -4190,7 +4184,8 @@ class PerformanceCITest extends TestCase {
 		// The name is mirrored too, on its own key: a row carries its path, so
 		// a bucket recovered without its names renders hostless rows.
 		$name_key = Stats_Store::entry_key( 0, Stats_Store::NS_URLMAP . ':' . $hash );
-		foreach ( [ [ $index_key, [ $srv => 'example.test' ] ], [ $key, $rows ], [ $name_key, [ 'example.test', '/jobs/import-film-times' ] ] ] as [ $frame_key, $data ] ) {
+		$index = self::index_of( [ 'example.test' ], [ Stats_Store::url_shard( $hash ) ] );
+		foreach ( [ [ $index_key, $index ], [ $key, $rows ], [ $name_key, [ 'example.test', '/jobs/import-film-times' ] ] ] as [ $frame_key, $data ] ) {
 			$msg                       = Message::new_message();
 			$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 			$msg[ Message::TIMESTAMP ] = self::tick();
@@ -4713,6 +4708,71 @@ class PerformanceCITest extends TestCase {
 		} finally {
 			$restore();
 		}
+	}
+
+	public function test_a_scoped_ranked_page_is_served_over_hours_that_name_other_servers(): void {
+		// Every hour names moa.test alone. kea.test served none of them, so
+		// its lists there are empty rather than missing, and its page ranks.
+		$this->activate_shipped_topology( 'performance', 1 );
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$kea    = [ 'a4410ce0fa19' => [ 'url' => 'https://kea.test/kereru-41', 'count' => 41, 'last_seen' => self::tick() ] ];
+		$this->set_url_bucket( $store, $bucket, $kea, 'kea.test' );
+		$this->set_url_rank_lists( $store, $bucket, $kea, false, 'kea.test' );
+		$this->seed_hour_lists( [], 'moa.test', 1 );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$this->warm_url_header( $fire, '--server=kea.test' );
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--server=kea.test' );
+			$this->assertTrue( $page['ranked'], 'served ranked, not folded' );
+			$this->assertSame( [ 'a4410ce0fa19' ], \array_column( $page['data'], 'hash' ) );
+		} finally {
+			$restore();
+		}
+	}
+
+	public function test_an_unscoped_page_over_sparse_servers_asks_the_mirror_for_no_url_key(): void {
+		// A key missing from memcache goes to the mirror, which walks its
+		// whole index to say it is absent. A reader asking for every shard
+		// of every server spent the poll's budget on keys nobody wrote.
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		foreach ( [ 'kea.test' => '3', 'moa.test' => 'c' ] as $server => $shard ) {
+			$url = self::url_in_shard( "https://{$server}", $shard );
+			$this->set_url_shard( $store, $bucket, $shard, [
+				Log_Manager::url_hash( $url ) => self::positional_url_row( [ 'count' => 9, 'timed_count' => 9, 'sum_ms' => 27.0, 'path' => '/p', 'last_seen' => self::tick() ] ),
+			], $server );
+		}
+		$asked            = [];
+		$store->rehydrate = static function ( array $keys ) use ( &$asked ): array {
+			\array_push( $asked, ...\array_map( 'strval', $keys ) );
+			return [];
+		};
+		$store->server_indexes = [];
+
+		$page = ( new \ReflectionMethod( Performance_CI_Node::class, 'url_page' ) )->invoke(
+			new Performance_CI_Node(),
+			'',
+			'',
+			false,
+			false,
+			'count',
+			'desc',
+			0,
+			50,
+			[ $store ],
+			(int) Core::$now
+		);
+
+		$urls = \array_values( \array_filter(
+			$asked,
+			static fn ( string $key ): bool => \str_starts_with( $key, Stats_Store::NS_URLS . ':' ) || \str_starts_with( $key, Stats_Store::NS_URLS_HOUR . ':' )
+		) );
+		$this->assertSame( [], $urls, 'no URL-index key went to the mirror' );
+		$this->assertFalse( Flame_Builder_Node::mirror_budget_spent() );
+		$this->assertIsArray( $page );
+		$this->assertCount( 2, $page['data'] );
 	}
 
 	public function test_the_site_ranked_page_is_what_one_list_over_every_server_gives(): void {

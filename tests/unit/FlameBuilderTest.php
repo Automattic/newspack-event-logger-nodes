@@ -1445,6 +1445,10 @@ class FlameBuilderTest extends TestCase {
 		$now     = self::tick();
 		$buckets = [];
 		foreach ( [ 0, 300, 600 ] as $back ) {
+			// moa.test's stored shard is what each bucket gap-fills.
+			$this->set_url_shard( $store, Stats_Store::bucket_key( $now - $back ), 'c', [
+				'c0c0c0c0c0c0' => self::positional_url_row( [ 'count' => 1, 'last_seen' => $now - $back ] ),
+			], 'moa.test' );
 			$buckets[ Stats_Store::bucket_key( $now - $back ) ] = [
 				'hourly'    => [ 'count' => 1 ],
 				'url_stats' => [
@@ -1563,9 +1567,113 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 'http://moa.test/kiwi-8842', $moa[ $kiwi ]['path'], 'an http URL is kept whole' );
 		$this->assertSame(
 			[ Stats_Store::server_key( 'kea.test' ) => 'kea.test', Stats_Store::server_key( 'moa.test' ) => 'moa.test' ],
-			$store->server_index( [], [ $bucket ] )[ $bucket ] ?? null,
+			Stats_Store::index_names( $store->server_index( [], [ $bucket ] )[ $bucket ] ?? [] ),
 			'the bucket\'s index names both'
 		);
+	}
+
+	public function test_the_flush_names_each_servers_shards_in_its_index_entry(): void {
+		// Every reader enumerates keys from the index, so the index has to say
+		// which of the 32 a server wrote: a server's five minutes fill a few.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$now    = self::tick();
+		$bucket = Stats_Store::bucket_key( $now );
+		$kea    = Stats_Store::server_key( 'kea.test' );
+		$index  = static fn (): ?array => $store->bucket_get_multi( [ [ Stats_Store::url_srv_parts( false ), $bucket ] ] )[0];
+		foreach ( [ '3' => false, 'c' => false, 'w5' => true ] as $shard => $worker ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'url' => self::url_in_shard( 'https://kea.test', (string) $shard ), 'server_name' => 'kea.test', 'is_worker' => $worker, 'timestamp' => $now ] ) );
+		}
+		$fb->flush();
+		$this->assertSame(
+			[ $kea => [ Stats_Store::SRV_NAME => 'kea.test', Stats_Store::SRV_SHARDS => ( 1 << 3 ) | ( 1 << 12 ) | ( 1 << 21 ) ] ],
+			$index()
+		);
+
+		$added = self::url_in_shard( 'https://kea.test', 'a' );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $added, 'server_name' => 'kea.test', 'timestamp' => $now ] ) );
+		$fb->flush();
+		$this->assertSame(
+			[ $kea => [ Stats_Store::SRV_NAME => 'kea.test', Stats_Store::SRV_SHARDS => ( 1 << 3 ) | ( 1 << 10 ) | ( 1 << 12 ) | ( 1 << 21 ) ] ],
+			$index(),
+			'a later flush ORs its shard in'
+		);
+
+		$written        = [];
+		$store->mirror = static function ( string $key, array $data, int $ttl, string $ns ) use ( &$written ): void {
+			$written[] = $ns;
+		};
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $added, 'server_name' => 'kea.test', 'timestamp' => $now ] ) );
+		$fb->flush();
+		$this->assertContains( Stats_Store::NS_URLS, $written, 'the flush wrote' );
+		$this->assertNotContains( Stats_Store::NS_URLSRV, $written, 'an unchanged union is no write' );
+	}
+
+	public function test_the_ranking_gap_fill_asks_only_for_the_reader_shards_the_index_names(): void {
+		// Ranking reads back what the flush did not land, and a shard the
+		// index does not name holds nothing to read back.
+		$mc         = self::asking_memcached();
+		Core::$memd = $mc;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$now    = self::tick();
+		$bucket = Stats_Store::bucket_key( $now );
+		$moa    = self::url_in_shard( 'https://moa.test', 'c' );
+		$this->set_url_shard( $store, $bucket, 'c', [
+			Log_Manager::url_hash( $moa ) => self::positional_url_row( [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 88.0, 'path' => '/moa', 'last_seen' => $now ] ),
+		], 'moa.test' );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => self::url_in_shard( 'https://kea.test', '3' ), 'server_name' => 'kea.test', 'timestamp' => $now ] ) );
+		$mc->asked = [];
+
+		$fb->flush();
+
+		$kea_key = Stats_Store::server_key( 'kea.test' );
+		$moa_key = Stats_Store::server_key( 'moa.test' );
+		$keys    = [ "{$kea_key}:3:{$bucket}", "{$moa_key}:c:{$bucket}" ];
+		\sort( $keys );
+		$this->assertSame( $keys, self::asked_url_keys( $mc->asked ), 'the flush\'s own shard, then moa.test\'s one' );
+		$list = $store->url_rank_window( [], [ $bucket ], 'count', 'desc', '' )[0][1];
+		$this->assertSame( [ Log_Manager::url_hash( $moa ) ], [ $list[0][ Stats_Store::RANK_HASH ] ], 'moa.test\'s rows still rank' );
+		$this->assertCount( 2, $list );
+	}
+
+	public function test_the_hour_fold_asks_only_for_the_named_shards_and_writes_every_shard(): void {
+		$mc         = self::asking_memcached();
+		Core::$memd = $mc;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$hour = \gmdate( 'Y-m-d-H', self::tick() - 3 * 3600 );
+		$this->set_url_shard( $store, "{$hour}-05", '3', [ '3a3a3a3a3a3a' => self::positional_url_row( [ 'count' => 6, 'path' => '/kea' ] ) ], 'kea.test' );
+		$this->set_url_shard( $store, "{$hour}-10", 'w5', [ '5b5b5b5b5b5b' => self::positional_url_row( [ 'count' => 2, 'worker' => true, 'path' => '/moa' ] ) ], 'moa.test' );
+		$mc->asked = [];
+
+		$fb->roll_up_hours( $store, [ 'fine' => [], 'hours' => [ $hour ] ] );
+
+		$kea  = Stats_Store::server_key( 'kea.test' );
+		$moa  = Stats_Store::server_key( 'moa.test' );
+		$keys = [ "{$kea}:3:{$hour}-05", "{$moa}:w5:{$hour}-10" ];
+		\sort( $keys );
+		$this->assertSame( $keys, self::asked_url_keys( $mc->asked ), 'one key per named shard per bucket' );
+		$this->assertSame(
+			[
+				$kea => [ Stats_Store::SRV_NAME => 'kea.test', Stats_Store::SRV_SHARDS => 0xFFFFFFFF ],
+				$moa => [ Stats_Store::SRV_NAME => 'moa.test', Stats_Store::SRV_SHARDS => 0xFFFFFFFF ],
+			],
+			$store->bucket_get_multi( [ [ Stats_Store::url_srv_parts( true ), $hour ] ] )[0],
+			'the hour names every shard it wrote'
+		);
+		$reads = [];
+		foreach ( [ $kea, $moa ] as $key ) {
+			foreach ( [ ...Stats_Store::url_shards(), ...Stats_Store::url_shards( true ) ] as $shard ) {
+				$reads[] = [ Stats_Store::url_hour_parts( $key, $shard ), $hour ];
+			}
+		}
+		$this->assertNotContains( null, $store->bucket_get_multi( $reads ), 'every shard of both families, empty or not' );
+		$this->assertSame( 6, self::named_url_rows( $this->get_url_hour( $store, $hour, '3', 'kea.test' ) )['3a3a3a3a3a3a']['count'] );
 	}
 
 	public function test_a_server_past_the_index_cap_is_filed_under_other(): void {
@@ -1578,10 +1686,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
-		$index  = [];
-		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES; $i++ ) {
-			$index[ Stats_Store::server_key( "spray{$i}.test" ) ] = "spray{$i}.test";
-		}
+		$index  = self::index_of( \array_map( static fn ( int $i ): string => "spray{$i}.test", \range( 0, Stats_Store::MAX_SERVER_VALUES - 1 ) ) );
 		$store->bucket_set_multi( [ [ Stats_Store::url_srv_parts( false ), $bucket, $index ] ] );
 
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://late-4471.test/kokako', 'server_name' => 'late-4471.test', 'timestamp' => $now ] ) );
@@ -1590,7 +1695,7 @@ class FlameBuilderTest extends TestCase {
 
 		$late    = Log_Manager::url_hash( 'https://late-4471.test/kokako' );
 		$shard   = Stats_Store::url_shard( $late );
-		$stored  = $store->server_index( [], [ $bucket ] )[ $bucket ];
+		$stored  = Stats_Store::index_names( $store->server_index( [], [ $bucket ] )[ $bucket ] );
 		$this->assertCount( Stats_Store::MAX_SERVER_VALUES + 1, $stored );
 		$this->assertSame( Stats_Store::OTHER_KEY, $stored[ Stats_Store::server_key( Stats_Store::OTHER_KEY ) ] );
 		$this->assertArrayNotHasKey( Stats_Store::server_key( 'late-4471.test' ), $stored );
@@ -1610,10 +1715,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
-		$index  = [];
-		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES; $i++ ) {
-			$index[ Stats_Store::server_key( "spray{$i}.test" ) ] = "spray{$i}.test";
-		}
+		$index  = self::index_of( \array_map( static fn ( int $i ): string => "spray{$i}.test", \range( 0, Stats_Store::MAX_SERVER_VALUES - 1 ) ) );
 		$store->bucket_set_multi( [ [ Stats_Store::url_srv_parts( false ), $bucket, $index ] ] );
 
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://late-4471.test/kokako?page=2', 'server_name' => 'late-4471.test', 'timestamp' => $now ] ) );
@@ -1820,7 +1922,7 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket  = Stats_Store::bucket_key( $now );
 		$servers = $this->get_dimensional_bucket( $store, 'server', $bucket );
-		$index   = $store->server_index( [], [ $bucket ] )[ $bucket ];
+		$index   = Stats_Store::index_names( $store->server_index( [], [ $bucket ] )[ $bucket ] );
 		$hash    = Log_Manager::url_hash( '/xmlrpc.php' );
 
 		$this->assertLessThanOrEqual( Stats_Store::MAX_SERVER_VALUES, \count( $servers ) );
@@ -1849,7 +1951,7 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket = Stats_Store::bucket_key( $now );
 		$hash   = Log_Manager::url_hash( '/cron' );
-		$this->assertSame( [ Stats_Store::server_key( 'Unknown' ) => 'Unknown' ], $store->server_index( [], [ $bucket ] )[ $bucket ] );
+		$this->assertSame( [ Stats_Store::server_key( 'Unknown' ) => 'Unknown' ], Stats_Store::index_names( $store->server_index( [], [ $bucket ] )[ $bucket ] ) );
 		$this->assertSame( 1, self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ), 'Unknown' ) )[ $hash ]['count'] );
 	}
 
@@ -2052,7 +2154,7 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket = Stats_Store::bucket_key( $now );
 		$hash   = Log_Manager::url_hash( '/spoke' );
-		$this->assertSame( [ Stats_Store::server_key( 'lone.example' ) => 'lone.example' ], $store->server_index( [], [ $bucket ] )[ $bucket ] );
+		$this->assertSame( [ Stats_Store::server_key( 'lone.example' ) => 'lone.example' ], Stats_Store::index_names( $store->server_index( [], [ $bucket ] )[ $bucket ] ) );
 		$this->assertArrayHasKey( $hash, $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ), 'lone.example' ) );
 	}
 
@@ -3530,7 +3632,7 @@ class FlameBuilderTest extends TestCase {
 		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, (int) Core::$now, self::fine_floor( $store, (int) Core::$now ) );
 		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [] );
 
-		$this->assertContains( 'late-7731.test', $store->server_index( [ '2026-08-27-13' ], [] )['2026-08-27-13'] );
+		$this->assertContains( 'late-7731.test', Stats_Store::index_names( $store->server_index( [ '2026-08-27-13' ], [] )['2026-08-27-13'] ) );
 		$this->assertFalse( $store->url_hours_derived( [ '2026-08-27-13' ] )['2026-08-27-13']['folded'], 'its hour keys are missing' );
 
 		( new \ReflectionProperty( $fb, 'folds_since_reprobe' ) )->setValue( $fb, PHP_INT_MAX - 1 );
@@ -4621,8 +4723,9 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 4, self::named_url_rows( $this->get_url_hour( $store, '2026-08-27-13', $shard, 'web-4471.test' ) )[ $hash ]['count'] );
 		$this->assertSame( 6, self::named_url_rows( $this->get_url_hour( $store, '2026-08-27-13', $shard, 'web-8823.test' ) )[ $hash ]['count'] );
 		$this->assertSame(
-			[ Stats_Store::server_key( 'web-4471.test' ) => 'web-4471.test', Stats_Store::server_key( 'web-8823.test' ) => 'web-8823.test' ],
-			$store->server_index( [ '2026-08-27-13' ], [] )['2026-08-27-13']
+			self::index_of( [ 'web-4471.test', 'web-8823.test' ], Stats_Store::every_shard() ),
+			$store->server_index( [ '2026-08-27-13' ], [] )['2026-08-27-13'],
+			'each server named with every shard the fold wrote'
 		);
 		$this->assertSame( [], $this->get_url_hour( $store, '2026-08-27-13', 'w3', 'web-4471.test' ), 'every shard of a named server is written, empty or not' );
 	}
@@ -4647,7 +4750,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		self::roll_up( $fb, (int) Core::$now );
 
-		$index = $store->server_index( [ '2026-08-27-13' ], [] )['2026-08-27-13'];
+		$index = Stats_Store::index_names( $store->server_index( [ '2026-08-27-13' ], [] )['2026-08-27-13'] );
 		$this->assertCount( Stats_Store::MAX_SERVER_VALUES + 1, $index );
 		$this->assertArrayNotHasKey( Stats_Store::server_key( 'quiet-4471.test' ), $index );
 		$this->assertSame( Stats_Store::OTHER_KEY, $index[ Stats_Store::server_key( Stats_Store::OTHER_KEY ) ] );

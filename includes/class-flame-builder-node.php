@@ -308,12 +308,12 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	private array $flushed_rows = [];
 
 	/**
-	 * Each bucket this flush wrote rows into, and every server its index
-	 * named once this flush's rows were admitted: what ranking gap-fills
-	 * from, so a bucket the flush just wrote costs no second index read.
-	 * Emptied with `$flushed_rows`.
+	 * Each bucket this flush wrote rows into, and the index it holds once
+	 * this flush's entries were merged in: what ranking gap-fills from, so a
+	 * bucket the flush just wrote costs no second index read. Emptied with
+	 * `$flushed_rows`.
 	 *
-	 * @var array<string,array<string,string>>
+	 * @var array<string,array<string,array{0:string,1:int}>>
 	 */
 	private array $flushed_index = [];
 
@@ -1519,12 +1519,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	/**
 	 * One bucket's URL index intents: each family's rows filed under the
 	 * server `Stats_Store::admit_servers()` admits them as, one intent per
-	 * server per shard, and the index naming them.
+	 * server per shard, and the index naming each server with the shards it
+	 * filed, both families in one mask.
 	 *
-	 * @param string               $bucket   Bucket key.
-	 * @param Bucket_Acc           $acc      The bucket's accumulator.
-	 * @param array<string,string> $index    The bucket's stored server index.
-	 * @param array<string,string> $admitted Server => the name its rows are filed under.
+	 * @param string                              $bucket   Bucket key.
+	 * @param Bucket_Acc                          $acc      The bucket's accumulator.
+	 * @param array<string,array{0:string,1:int}> $index    The bucket's stored server index.
+	 * @param array<string,string>                $admitted Server => the name its rows are filed under.
 	 * @return list<Pending_Write>
 	 */
 	private function url_intents( string $bucket, array $acc, array $index, array $admitted ): array {
@@ -1538,26 +1539,32 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				$filed[ $as ] = isset( $filed[ $as ] ) ? self::merge_url_rows( $filed[ $as ], $rows ) : $rows;
 			}
 			foreach ( $filed as $as => $rows ) {
-				$name = \strval( $as );
-				$entries[ Stats_Store::server_key( $name ) ] = $name;
-				foreach ( Stats_Store::rows_by_shard( $rows, 1 === $worker ) as $shard => $shard_rows ) {
+				$name   = \strval( $as );
+				$shards = Stats_Store::rows_by_shard( $rows, 1 === $worker );
+				foreach ( $shards as $shard => $shard_rows ) {
 					\array_push( $out, ...$this->url_shard_intent( $bucket, $name, \strval( $shard ), $shard_rows ) );
 				}
+				$entries = Stats_Store::merge_index( $entries, [
+					Stats_Store::server_key( $name ) => [
+						Stats_Store::SRV_NAME   => $name,
+						Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( \array_map( 'strval', \array_keys( $shards ) ) ),
+					],
+				] );
 			}
 		}
 		if ( [] === $entries ) {
 			return [];
 		}
-		$this->flushed_index[ $bucket ] = $index + $entries;
+		$this->flushed_index[ $bucket ] = Stats_Store::merge_index( $index, $entries );
 		return [ ...$out, ...$this->url_srv_intents( $bucket, $entries ) ];
 	}
 
 	/**
-	 * How one bucket's newly filed servers join its stored index: a union,
-	 * through the same tier choice the rows make.
+	 * How one bucket's newly filed servers join its stored index: a union of
+	 * names and shards, through the same tier choice the rows make.
 	 *
-	 * @param string               $bucket  Bucket key.
-	 * @param array<string,string> $entries server_key => name.
+	 * @param string                              $bucket  Bucket key.
+	 * @param array<string,array{0:string,1:int}> $entries server_key => entry.
 	 * @return list<Pending_Write>
 	 */
 	private function url_srv_intents( string $bucket, array $entries ): array {
@@ -1565,9 +1572,9 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			$bucket,
 			Stats_Store::url_srv_parts( false ),
 			Stats_Store::url_srv_parts( true ),
-			static fn ( array $existing ): array => \array_replace( Stats_Store::string_map( $existing ), $entries ),
+			static fn ( array $existing ): array => Stats_Store::merge_index( Stats_Store::index_entries( $existing ), $entries ),
 			function ( string $key ): void {
-				$this->print_less_often( 'URL server index write refused; its servers\' rows are unreachable unscoped', " — {$key}" );
+				$this->print_less_often( 'URL server index write refused; no reader or hour fold finds the rows it names', " — {$key}" );
 			},
 			null
 		);
@@ -1640,8 +1647,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * Every offered bucket is pending until it is ranked, and a ranking is
 	 * stamped and ends it whether its lists landed or were refused; a refusal
 	 * is logged and never retried. `rank_due()` decides which rank now. A
-	 * bucket's servers come from what this flush filed, else from its stored
-	 * index, read for every such bucket in one round trip.
+	 * bucket's index entries come from what this flush filed, else from its
+	 * stored index, read for every such bucket in one round trip.
 	 *
 	 * @param Stats_Store  $stats_store Source and destination.
 	 * @param list<string> $buckets     Buckets offered for ranking.
@@ -1664,17 +1671,14 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		$chunk  = [];
 		$size   = 0;
 		foreach ( $due as $bucket ) {
-			$servers = \array_values( \array_unique( [
-				...\array_values( $indexes[ $bucket ] ?? [] ),
-				...\array_map( 'strval', \array_keys( $this->flushed_rows[ $bucket ] ?? [] ) ),
-			] ) );
-			if ( [] !== $chunk && $size + \count( $servers ) > $budget ) {
+			$entries = $indexes[ $bucket ] ?? [];
+			if ( [] !== $chunk && $size + \count( $entries ) > $budget ) {
 				$this->rank_bucket_chunk( $stats_store, $chunk, $now );
 				$chunk = [];
 				$size  = 0;
 			}
-			$chunk[ $bucket ] = $servers;
-			$size            += \max( 1, \count( $servers ) );
+			$chunk[ $bucket ] = $entries;
+			$size            += \max( 1, \count( $entries ) );
 		}
 		if ( [] !== $chunk ) {
 			$this->rank_bucket_chunk( $stats_store, $chunk, $now );
@@ -1683,25 +1687,25 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 
 	/**
 	 * Rank each bucket over its whole STORED content: the reader-family rows
-	 * this flush landed, plus every shard of every server it did not, read
-	 * back for the whole chunk in ONE round trip — a read per bucket would be
-	 * a round trip per bucket on a replay. A deferred bucket landed none, so
-	 * it gap-fills all sixteen of every server.
+	 * this flush landed, plus every other reader shard each index entry
+	 * names, read back for the whole chunk in ONE round trip — a read per
+	 * bucket would be a round trip per bucket on a replay. A deferred bucket
+	 * landed none, so it gap-fills every reader shard its entries name.
 	 *
-	 * @param Stats_Store                      $stats_store Source and destination.
-	 * @param array<string,list<string>>       $chunk       Due bucket => its servers,
-	 *                                                      at most one write chunk's
-	 *                                                      worth of ranking groups.
-	 * @param int                              $now         The caller's one read of the tick.
+	 * @param Stats_Store                                        $stats_store Source and destination.
+	 * @param array<string,array<string,array{0:string,1:int}>> $chunk       Due bucket => its index
+	 *                                                                        entries, at most one write
+	 *                                                                        chunk's worth of ranking groups.
+	 * @param int                                                $now         The caller's one read of the tick.
 	 */
 	private function rank_bucket_chunk( Stats_Store $stats_store, array $chunk, int $now ): void {
 		$reads = [];
 		$owner = [];
-		foreach ( $chunk as $bucket => $servers ) {
-			foreach ( $servers as $server ) {
+		foreach ( $chunk as $bucket => $entries ) {
+			foreach ( $entries as $key => [ Stats_Store::SRV_NAME => $server, Stats_Store::SRV_SHARDS => $mask ] ) {
 				$landed = $this->flushed_rows[ $bucket ][ $server ] ?? [];
-				foreach ( \array_diff( Stats_Store::url_shards(), \array_keys( $landed ) ) as $shard ) {
-					$reads[] = [ Stats_Store::url_shard_parts( Stats_Store::server_key( $server ), $shard ), $bucket ];
+				foreach ( \array_diff( Stats_Store::shards_in( $mask, false ), \array_keys( $landed ) ) as $shard ) {
+					$reads[] = [ Stats_Store::url_shard_parts( $key, $shard ), $bucket ];
 					$owner[] = [ $bucket, $server ];
 				}
 			}
@@ -1713,9 +1717,9 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				$read_maps[ $bucket ][ $server ][] = $value;
 			}
 		}
-		foreach ( $chunk as $bucket => $servers ) {
+		foreach ( $chunk as $bucket => $entries ) {
 			$rows = [];
-			foreach ( $servers as $server ) {
+			foreach ( Stats_Store::index_names( $entries ) as $server ) {
 				$rows[ $server ] = \array_replace(
 					[],
 					...\array_values( $this->flushed_rows[ $bucket ][ $server ] ?? [] ),
@@ -1994,10 +1998,12 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * Fold one hour's fine buckets into its coarse rows, server index and
 	 * lists.
 	 *
-	 * Every server the hour's buckets name is folded apart, every shard of
-	 * both families written for it, empty or not, so the probe can tell a
-	 * folded hour from a missing key. The rows arrive in one round trip per
-	 * write chunk however many servers the hour holds.
+	 * Every server the hour's buckets name is folded apart from the shards
+	 * each bucket's index names for it, and every shard of both families is
+	 * written for it, empty or not, so the hour's index names all of them
+	 * and the probe can tell a folded hour from a missing key. The rows
+	 * arrive in one round trip per write chunk however many servers the
+	 * hour holds.
 	 *
 	 * A refused write is logged and not retried by the flush. The caller
 	 * memoizes the hour folded, and an hour left missing a row shard is
@@ -2007,23 +2013,20 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @param string      $hour        Hour key.
 	 */
 	private function fold_hour_into_store( Stats_Store $stats_store, string $hour ): void {
-		$buckets = Stats_Store::buckets_in_hour( $hour );
-		$shards  = \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) );
-		$index   = [];
-		foreach ( $stats_store->server_index( [], $buckets ) as $named ) {
-			$index += $named;
-		}
-		$reads = [];
-		$owner = [];
-		foreach ( $index as $key => $server ) {
-			foreach ( $shards as $shard ) {
-				foreach ( $buckets as $bucket ) {
+		$shards = Stats_Store::every_shard();
+		$names  = [];
+		$reads  = [];
+		$owner  = [];
+		foreach ( $stats_store->server_index( [], Stats_Store::buckets_in_hour( $hour ) ) as $bucket => $entries ) {
+			foreach ( $entries as $key => [ Stats_Store::SRV_NAME => $server, Stats_Store::SRV_SHARDS => $mask ] ) {
+				$names[ $key ] ??= $server;
+				foreach ( Stats_Store::shards_in( $mask, true ) as $shard ) {
 					$reads[] = [ Stats_Store::url_shard_parts( $key, $shard ), $bucket ];
-					$owner[] = [ $server, $shard ];
+					$owner[] = [ $names[ $key ], $shard ];
 				}
 			}
 		}
-		$rows = \array_fill_keys( \array_values( $index ), [] );
+		$rows = \array_fill_keys( \array_values( $names ), [] );
 		foreach ( \array_chunk( $reads, self::WRITE_BATCH_KEYS, true ) as $chunk ) {
 			foreach ( $stats_store->bucket_get_multi( $chunk ) as $at => $value ) {
 				if ( null !== $value ) {
@@ -2038,9 +2041,10 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		];
 		$ranked = [];
 		$named  = [];
+		$every  = Stats_Store::shard_mask( $shards );
 		foreach ( self::cap_hour_servers( $rows ) as $server => $server_rows ) {
 			$key           = Stats_Store::server_key( (string) $server );
-			$named[ $key ] = (string) $server;
+			$named[ $key ] = [ Stats_Store::SRV_NAME => (string) $server, Stats_Store::SRV_SHARDS => $every ];
 			// @longform Per SHARD, and not regroupable: each shard carries its
 			// own `Other` overflow row, which a merge by hash would collapse.
 			foreach ( $shards as $shard ) {

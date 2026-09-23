@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every URL-index reader asks only for the shards a server wrote.** The
+  server index (`urlsrv`, `urlsrv_h`) now stores `{ server_key => [
+  server_name, shards ] }`, `shards` an int bitmask of the reader and worker
+  shards the server filed rows in, and the unscoped and scoped reads, the
+  ranked reader, the ranking gap-fill, the hour fold and the derived-tier
+  probe read those keys and no other. They asked for every shard of every
+  named server, and each key nobody wrote missed memcache and cost the mirror
+  a full index walk: on a hub with 466,293 URLs one unfiltered `urls` page
+  took 13 to 15 seconds and spent its mirror read budget every poll. A
+  server-scoped page now reads the index too, one round trip a store, and a
+  scoped hour whose index does not name the server is served ranked as idle
+  rather than folded. **The stored shape changed, so run `wp nodes memcache
+  flush` with the deploy** (decision 5): an index in the earlier shape names
+  no server, so the URL index restarts for the window. The mirror is not
+  salted, so a fine index rehydrated from it in the earlier shape reads empty
+  until it leaves the fine tier, two hours.
+
 ### Changed
 
 - Tooling: the vendored `reorder-node-methods.php` no longer ends an arrow

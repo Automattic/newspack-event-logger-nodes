@@ -37,6 +37,81 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * A memcached double that records every key a batch read asks for, so a
+	 * test can say which keys a reader reached for rather than how many
+	 * round trips it took.
+	 *
+	 * @return \Newspack_Nodes\Tests\Helpers\InMemoryMemcached&object{asked: list<string>}
+	 */
+	protected static function asking_memcached(): \Newspack_Nodes\Tests\Helpers\InMemoryMemcached {
+		return new class() extends \Newspack_Nodes\Tests\Helpers\InMemoryMemcached {
+			/** @var list<string> */
+			public array $asked = [];
+
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				\array_push( $this->asked, ...\array_map( 'strval', $keys ) );
+				return parent::getMulti( $keys, $get_flags );
+			}
+		};
+	}
+
+	/**
+	 * The URL-index keys among `$asked`, as `{server_key}:{shard}:{key}`,
+	 * sorted, one per ask.
+	 *
+	 * @param list<string> $asked Full cache keys, as `asking_memcached()` records them.
+	 * @param string       $ns    `Stats_Store::NS_URLS` or `NS_URLS_HOUR`.
+	 * @return list<string>
+	 */
+	protected static function asked_url_keys( array $asked, string $ns = Stats_Store::NS_URLS ): array {
+		$out = [];
+		foreach ( $asked as $key ) {
+			if ( 1 === \preg_match( '/:' . \preg_quote( $ns, '/' ) . ':([0-9a-f]{8}:w?[0-9a-f]:[0-9-]+)$/', $key, $m ) ) {
+				$out[] = $m[1];
+			}
+		}
+		\sort( $out );
+		return $out;
+	}
+
+	/**
+	 * A stored server index naming each of `$servers`, every one with the
+	 * same shards: the value `urlsrv` and `urlsrv_h` hold.
+	 *
+	 * @param list<string> $servers Server names.
+	 * @param list<string> $shards  Shard tokens each wrote.
+	 * @return array<string,array{0:string,1:int}>
+	 */
+	protected static function index_of( array $servers, array $shards = [] ): array {
+		$out = [];
+		foreach ( $servers as $server ) {
+			$out[ Stats_Store::server_key( $server ) ] = [
+				Stats_Store::SRV_NAME   => $server,
+				Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( $shards ),
+			];
+		}
+		return $out;
+	}
+
+	/**
+	 * A URL under `$origin` whose hash files it in `$shard`, a worker shard
+	 * when the token says so.
+	 *
+	 * @param string $origin Scheme and host, e.g. `https://kea.test`.
+	 * @param string $shard  Shard token, as `Stats_Store::url_shards()` spells them.
+	 */
+	protected static function url_in_shard( string $origin, string $shard ): string {
+		$worker = \str_starts_with( $shard, Stats_Store::WORKER_SHARD_PREFIX );
+		for ( $i = 0; $i < 10000; $i++ ) {
+			$url = "{$origin}/kokako-{$i}";
+			if ( Stats_Store::url_shard( \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( $url ), $worker ) === $shard ) {
+				return $url;
+			}
+		}
+		throw new \RuntimeException( "no URL under {$origin} hashes to shard {$shard}" );
+	}
+
+	/**
 	 * Run the rest of the test on a tick `$seconds` off the wall, the state a
 	 * bucket boundary between setUp and a wall-dated seed leaves behind.
 	 * The substrate's tearDown restores the clock.
@@ -383,12 +458,22 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/**
 	 * Merge `$server` into one bucket's or hour's server index, as the flush
-	 * files it, so an unscoped read finds the rows seeded under it.
+	 * files it, so an unscoped read finds the rows seeded under it: the
+	 * shards named are the ones the seed wrote rows into.
+	 *
+	 * @param list<string> $shards Shard tokens the seed filed rows in.
 	 */
-	private static function index_server( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, string $server, bool $hour ): bool {
+	private static function index_server( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, string $server, bool $hour, array $shards ): bool {
 		$parts = \Newspack_Event_Logger_Nodes\Stats_Store::url_srv_parts( $hour );
-		$index = $store->bucket_get_multi( [ [ $parts, $key ] ] )[0] ?? [];
-		$index[ \Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ) ] = $server;
+		$index = \Newspack_Event_Logger_Nodes\Stats_Store::merge_index(
+			\Newspack_Event_Logger_Nodes\Stats_Store::index_entries( $store->bucket_get_multi( [ [ $parts, $key ] ] )[0] ?? [] ),
+			[
+				\Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ) => [
+					\Newspack_Event_Logger_Nodes\Stats_Store::SRV_NAME   => $server,
+					\Newspack_Event_Logger_Nodes\Stats_Store::SRV_SHARDS => \Newspack_Event_Logger_Nodes\Stats_Store::shard_mask( $shards ),
+				],
+			]
+		);
 		return $store->bucket_set_multi( [ [ $parts, $key, $index ] ] )[0];
 	}
 
@@ -486,7 +571,7 @@ abstract class TestCase extends RuntimeTestCase {
 		if ( $hour ) {
 			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts( \Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ) ), $key, [] ];
 		}
-		return ! \in_array( false, $store->bucket_set_multi( $writes ), true ) && self::index_server( $store, $key, $server, $hour );
+		return ! \in_array( false, $store->bucket_set_multi( $writes ), true ) && self::index_server( $store, $key, $server, $hour, [] );
 	}
 
 	// ── Stats_Store named bucket access ─────────────────────────────────────
@@ -506,7 +591,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function set_url_hour( Stats_Store $store, string $hour, string $shard, array $rows, string $server = self::SEED_SERVER ): bool {
 		$ok = $store->bucket_set_multi( [ [ Stats_Store::url_hour_parts( Stats_Store::server_key( $server ), $shard ), $hour, $rows ] ] )[0];
-		return self::index_server( $store, $hour, $server, true ) && $ok;
+		return self::index_server( $store, $hour, $server, true, [ $shard ] ) && $ok;
 	}
 
 	/**
@@ -630,6 +715,6 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function set_url_shard( Stats_Store $store, string $bucket, string $shard, array $rows, string $server = self::SEED_SERVER ): bool {
 		$ok = $store->bucket_set_multi( [ [ Stats_Store::url_shard_parts( Stats_Store::server_key( $server ), $shard ), $bucket, $rows ] ] )[0];
-		return self::index_server( $store, $bucket, $server, false ) && $ok;
+		return self::index_server( $store, $bucket, $server, false, [] === $rows ? [] : [ $shard ] ) && $ok;
 	}
 }
