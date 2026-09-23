@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.102.0
+ * Version: 0.102.1
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -40,7 +40,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.102.0' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.102.1' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -85,12 +85,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// shared AreaTimeChart and the chart roles its `ui` sheet paints, which
 	// every dashboard chart draws on. 2.65.12 is lookup_multi() reporting a
 	// failed batch read, without which a stats flush writes its deltas over
-	// the stored buckets — BEHAVIOUR again. Raise the floor whenever a new hard
-	// requirement appears. The floor is what makes a too-old substrate
-	// DORMANT rather than fatal, so one set too low is worse than none, and
-	// WordPress does not order plugin updates.
+	// the stored buckets — BEHAVIOUR again. 2.65.13 is the SSE stream
+	// addressing replies to the command session the bundled stream client
+	// presents; below it the dashboards' streams receive no replies. Raise
+	// the floor whenever a new hard requirement appears. The floor is what
+	// makes a too-old substrate DORMANT rather than fatal, so one set too low
+	// is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.65.12', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.65.13', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
