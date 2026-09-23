@@ -183,18 +183,30 @@ class Stats_Store {
 
 	/**
 	 * The URL index's server index: `urlsrv:{bucket}` => `{ server_key =>
-	 * server_name }`, every server with rows in the bucket, reader or worker.
+	 * [ server_name, shards ] }`, every server with rows in the bucket, reader
+	 * or worker, and the shards it wrote there (`SRV_NAME`, `SRV_SHARDS`).
 	 *
-	 * The keyspace cannot list itself, so this is what an unscoped read, the
-	 * fold, the probe and the ranker enumerate. Capped at `MAX_SERVER_VALUES`
-	 * names: past that a new server's rows go to the `Other` server key
-	 * (`admit_servers()`), so a bucket's keys stay bounded whatever Host
-	 * headers arrive.
+	 * The keyspace cannot list itself, so this is what every read of the URL
+	 * index, the fold, the probe and the ranker enumerate, and they ask for
+	 * the shards it names and no other: a key nobody wrote misses memcache
+	 * and costs the mirror a full walk to say so. Capped at
+	 * `MAX_SERVER_VALUES` names: past that a new server's rows go to the
+	 * `Other` server key (`admit_servers()`), so a bucket's keys stay bounded
+	 * whatever Host headers arrive.
 	 */
 	public const NS_URLSRV      = 'urlsrv';
 
 	/** The server index's COARSE tier, `urlsrv_h:{Y-m-d-H}`, folded beside `urls_h`. */
 	public const NS_URLSRV_HOUR = 'urlsrv_h';
+
+	/**
+	 * A stored server-index entry is positional (decision 18): the server's
+	 * name, and the int bitmask of the shards it wrote in that key, bit `i`
+	 * reader shard `dechex(i)` and bit `URL_SHARDS + i` worker shard
+	 * `w{dechex(i)}`. `shard_mask()` and `shards_in()` translate it.
+	 */
+	public const SRV_NAME   = 0;
+	public const SRV_SHARDS = 1;
 
 	/**
 	 * The search index: `urltoken:{server_key}:{token}` => the hashes of every
@@ -608,12 +620,12 @@ class Stats_Store {
 
 	/**
 	 * A reader's memo of the server index, `key => index`, for the one
-	 * reply the store serves: every shard of an unscoped read asks the same
-	 * buckets, and each would read the index again. Null, the default, reads
-	 * every time, which is what the long-lived writer needs.
+	 * reply the store serves: every shard of a read asks the same buckets,
+	 * and each would read the index again. Null, the default, reads every
+	 * time, which is what the long-lived writer needs.
 	 * `Performance_CI_Node::stats_stores()` sets it to [] on each reply's stores.
 	 *
-	 * @var array<string,array<string,string>|null>|null
+	 * @var array<string,array<string,array{0:string,1:int}>|null>|null
 	 */
 	public ?array $server_indexes = null;
 
@@ -907,16 +919,18 @@ class Stats_Store {
 	 * One scope's ranked lists across both tiers, as `[key, entries]` pairs,
 	 * in one round trip after the server index's own.
 	 *
-	 * A server scope reads that server's list and no index. The site reads
-	 * the index of every key and merges the lists of every server it names
-	 * into the list a ranking over all of their rows would have written:
-	 * URLs are disjoint by server, so the site's top-N lies inside the
-	 * union of the servers' top-Ns.
+	 * A server scope reads that server's list where the key's index names
+	 * it. The site merges the lists of every server the index names into the
+	 * list a ranking over all of their rows would have written: URLs are
+	 * disjoint by server, so the site's top-N lies inside the union of the
+	 * servers' top-Ns.
 	 *
 	 * An hour answers only when every server its index names has its list,
 	 * since the hour stands for twelve buckets and a reader serving it
-	 * ranked must see all of it. A fine bucket answers with the lists it
-	 * holds, which is what a ranking not yet due leaves.
+	 * ranked must see all of it; an hour whose index does not name the
+	 * scope's server answers with an empty list, the server idle in it. A
+	 * fine bucket answers with the lists it holds, which is what a ranking
+	 * not yet due leaves.
 	 *
 	 * @param array<int,string> $hours   Hour keys.
 	 * @param array<int,string> $buckets Bucket keys.
@@ -934,7 +948,7 @@ class Stats_Store {
 		$reads = [];
 		foreach ( $tiers as [ $hour, $keys ] ) {
 			foreach ( $keys as $key ) {
-				foreach ( $index[ $key ] ?? [] as $name ) {
+				foreach ( self::index_names( $index[ $key ] ?? [] ) as $name ) {
 					$reads[] = [ self::url_rank_parts( $sort, $order, $name, $hour ), $key ];
 				}
 			}
@@ -960,7 +974,7 @@ class Stats_Store {
 					$key,
 					'' === $server
 						? self::merge_rank_lists( $lists[ $key ] ?? [], $sort, $order, $hour )
-						: $lists[ $key ][0],
+						: $lists[ $key ][0] ?? [],
 				];
 			}
 		}
@@ -1034,6 +1048,16 @@ class Stats_Store {
 		$path                  = Core::str( $into[ self::ROW_PATH ] ?? '' );
 		$out[ self::ROW_PATH ] = '' === $path ? Core::str( $row[ self::ROW_PATH ] ?? '' ) : $path;
 		return $out;
+	}
+
+	/**
+	 * The name each entry of an index files its server under.
+	 *
+	 * @param array<string,array{0:string,1:int}> $entries server_key => entry.
+	 * @return array<string,string> server_key => name.
+	 */
+	public static function index_names( array $entries ): array {
+		return \array_map( static fn ( array $entry ): string => $entry[ self::SRV_NAME ], $entries );
 	}
 
 	/**
@@ -1133,9 +1157,8 @@ class Stats_Store {
 	 * triples.
 	 *
 	 * Triples rather than a merged map: one server's shard is complete for
-	 * the hashes it covers, and the caller owns how it combines them. Every
-	 * shard of every server the index names in one round trip after the
-	 * index's own; a scoped read names its server's keys and reads no index.
+	 * the hashes it covers, and the caller owns how it combines them. The
+	 * shards each index entry names, in one round trip after the index's own.
 	 *
 	 * @param array<int,string> $buckets Bucket keys.
 	 * @param ?string           $shard   Read ONE shard, for a reader asking about a
@@ -1175,16 +1198,15 @@ class Stats_Store {
 	 * @return list<array{0: string, 1: array<array-key,mixed>, 2: string}>
 	 */
 	private function shard_sources( bool $hour, array $buckets, ?string $shard, bool $workers, string $server ): array {
-		$shards = null === $shard
-			? ( $workers ? \array_merge( self::url_shards(), self::url_shards( true ) ) : self::url_shards() )
-			: [ $shard ];
+		$bit   = null === $shard ? null : self::shard_mask( [ $shard ] );
 		$index = $hour
 			? $this->scope_index( $buckets, [], $server )
 			: $this->scope_index( [], $buckets, $server );
 		$reads = [];
 		$names = [];
 		foreach ( $index as $bucket => $servers ) {
-			foreach ( $servers as $key => $name ) {
+			foreach ( $servers as $key => [ self::SRV_NAME => $name, self::SRV_SHARDS => $mask ] ) {
+				$shards = null === $bit ? self::shards_in( $mask, $workers ) : ( 0 !== ( $mask & $bit ) ? [ $shard ] : [] );
 				foreach ( $shards as $one ) {
 					$reads[] = [ $hour ? self::url_hour_parts( $key, $one ) : self::url_shard_parts( $key, $one ), $bucket ];
 					$names[] = $name;
@@ -1212,19 +1234,26 @@ class Stats_Store {
 	}
 
 	/**
-	 * The servers each key of a scope is read under: one server's own name
-	 * for every key, or for the site whatever each key's index names.
+	 * The index entries each key of a scope is read under: every entry for
+	 * the site, the one naming the server for a server, and none where the
+	 * key's index does not name it, which is that server idle in the key.
 	 *
 	 * @param array<int,string> $hours   Hour keys.
 	 * @param array<int,string> $buckets Bucket keys.
-	 * @param string            $server  One server; '' reads the index.
-	 * @return array<string,array<string,string>> key => server_key => name;
-	 *                                            a key the site's index lacks is absent.
+	 * @param string            $server  One server; '' is the site.
+	 * @return array<string,array<string,array{0:string,1:int}>> key => server_key =>
+	 *                                                         entry; a key holding no index is absent.
 	 */
 	private function scope_index( array $hours, array $buckets, string $server ): array {
-		return '' === $server
-			? $this->server_index( $hours, $buckets )
-			: \array_fill_keys( [ ...$hours, ...$buckets ], [ self::server_key( $server ) => $server ] );
+		$index = $this->server_index( $hours, $buckets );
+		if ( '' === $server ) {
+			return $index;
+		}
+		$key = self::server_key( $server );
+		return \array_map(
+			static fn ( array $entries ): array => \array_intersect_key( $entries, [ $key => true ] ),
+			$index
+		);
 	}
 
 	/**
@@ -1234,8 +1263,8 @@ class Stats_Store {
 	 *
 	 * @param array<int,string> $hours   Hour keys.
 	 * @param array<int,string> $buckets Bucket keys.
-	 * @return array<string,array<string,string>> key => server_key => name;
-	 *                                            a key holding no index is absent.
+	 * @return array<string,array<string,array{0:string,1:int}>> key => server_key =>
+	 *                                                         entry; a key holding no index is absent.
 	 */
 	public function server_index( array $hours, array $buckets ): array {
 		$reads = [];
@@ -1248,7 +1277,7 @@ class Stats_Store {
 		}
 		$found = [];
 		foreach ( [] === $reads ? [] : $this->bucket_get_multi( $reads ) as $key => $index ) {
-			$found[ (string) $key ] = null === $index ? null : self::string_map( $index );
+			$found[ (string) $key ] = null === $index ? null : self::index_entries( $index );
 		}
 		if ( null !== $this->server_indexes ) {
 			$this->server_indexes = $found + $this->server_indexes;
@@ -1264,26 +1293,42 @@ class Stats_Store {
 	}
 
 	/**
+	 * The bits a set of shard tokens sets in an index entry's mask.
+	 *
+	 * @param list<string> $shards Shard tokens, as `url_shard()` spells them.
+	 * @throws \LogicException On a token no shard answers to.
+	 */
+	public static function shard_mask( array $shards ): int {
+		$bits = \array_flip( self::every_shard() );
+		$mask = 0;
+		foreach ( $shards as $shard ) {
+			$mask |= 1 << ( $bits[ $shard ] ?? throw new \LogicException( "no such shard: {$shard}" ) );
+		}
+		return $mask;
+	}
+
+	/**
 	 * Which name each server's rows are filed under in a bucket whose index
 	 * is `$index`: its own while the index names it or has room, `OTHER_KEY`
 	 * once the index holds `MAX_SERVER_VALUES` others. The `Other` entry
 	 * holds no slot, so a bucket writes at most one server key past the cap.
 	 *
-	 * @param array<string,string> $index The bucket's stored index.
-	 * @param list<string>         $names Servers with rows to file.
+	 * @param array<string,array{0:string,1:int}> $index The bucket's stored index.
+	 * @param list<string>                        $names Servers with rows to file.
 	 * @return array<string,string> name => the name its rows are filed under.
 	 */
 	public static function admit_servers( array $index, array $names ): array {
-		unset( $index[ self::server_key( self::OTHER_KEY ) ] );
+		$held = \array_fill_keys( \array_keys( $index ), true );
+		unset( $held[ self::server_key( self::OTHER_KEY ) ] );
 		$out = [];
 		foreach ( $names as $name ) {
 			$key = self::server_key( $name );
-			if ( ! isset( $index[ $key ] ) && \count( $index ) >= self::MAX_SERVER_VALUES ) {
+			if ( ! isset( $held[ $key ] ) && \count( $held ) >= self::MAX_SERVER_VALUES ) {
 				$out[ $name ] = self::OTHER_KEY;
 				continue;
 			}
-			$index[ $key ] = $name;
-			$out[ $name ]  = $name;
+			$held[ $key ] = true;
+			$out[ $name ] = $name;
 		}
 		return $out;
 	}
@@ -1291,9 +1336,9 @@ class Stats_Store {
 	/**
 	 * What the derived tiers hold for each of `$hours`, in two round trips.
 	 *
-	 * `folded` is the hour's server index, every shard of both populations
-	 * for each server it names, and the global leaderboard's hour: a server
-	 * missing a shard is an hour whose rows no reader sees whole, a missing
+	 * `folded` is the hour's server index, every shard each entry of it
+	 * names, and the global leaderboard's hour: a server missing a named
+	 * shard is an hour whose rows no reader sees whole, a missing
 	 * leaderboard hour is one the board skips, and the fold is what would
 	 * otherwise never revisit either. `unranked` names each server the index
 	 * names whose DONE marker is missing — the one key its ranking writes
@@ -1311,15 +1356,14 @@ class Stats_Store {
 			$reads[] = [ self::url_srv_parts( true ), $hour ];
 			$reads[] = [ self::lb_hour_parts(), $hour ];
 		}
-		$heads  = $this->bucket_get_multi( $reads );
-		$shards = \array_merge( self::url_shards(), self::url_shards( true ) );
-		$keys   = [];
-		$owner  = [];
+		$heads = $this->bucket_get_multi( $reads );
+		$keys  = [];
+		$owner = [];
 		foreach ( \array_values( $hours ) as $at => $hour ) {
-			foreach ( self::string_map( $heads[ 2 * $at ] ?? [] ) as $key => $name ) {
+			foreach ( self::index_entries( $heads[ 2 * $at ] ?? [] ) as $key => [ self::SRV_NAME => $name, self::SRV_SHARDS => $mask ] ) {
 				$keys[]  = [ self::url_rank_done_parts( $key ), $hour ];
 				$owner[] = $name;
-				foreach ( $shards as $shard ) {
+				foreach ( self::shards_in( $mask, true ) as $shard ) {
 					$keys[]  = [ self::url_hour_parts( $key, $shard ), $hour ];
 					$owner[] = null;
 				}
@@ -1363,6 +1407,48 @@ class Stats_Store {
 	}
 
 	/**
+	 * The shards a mask sets: the reader family's, and the worker family's too
+	 * when `$workers`.
+	 *
+	 * @param int  $mask    An index entry's `SRV_SHARDS`.
+	 * @param bool $workers Include the WORKER shard family.
+	 * @return list<string>
+	 */
+	public static function shards_in( int $mask, bool $workers ): array {
+		$out = [];
+		foreach ( $workers ? self::every_shard() : self::url_shards() as $bit => $shard ) {
+			if ( 0 !== ( $mask & ( 1 << $bit ) ) ) {
+				$out[] = $shard;
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Every shard of both families, reader first: a shard's position is its
+	 * bit in an index entry's mask.
+	 *
+	 * @return list<string>
+	 */
+	public static function every_shard(): array {
+		return [ ...self::url_shards(), ...self::url_shards( true ) ];
+	}
+
+	/**
+	 * Every shard the URL index is spread across.
+	 *
+	 * @param bool $worker Name the WORKER shard family instead of the default one.
+	 * @return list<string>
+	 */
+	public static function url_shards( bool $worker = false ): array {
+		$prefix = $worker ? self::WORKER_SHARD_PREFIX : '';
+		return \array_map(
+			static fn ( int $i ): string => $prefix . \dechex( $i ),
+			\range( 0, self::URL_SHARDS - 1 )
+		);
+	}
+
+	/**
 	 * Namespace prefix of one server's DONE marker for an hour:
 	 * `urlrank_sh:done:{server_key}:{hour}`.
 	 *
@@ -1381,30 +1467,24 @@ class Stats_Store {
 	}
 
 	/**
-	 * Re-key AND re-type a decoded string map, as the server index is.
-	 * `string_keys()` for the key, because an all-digit key arrives as an int;
-	 * `Core::str()` for the value, because a truncated or corrupt entry is
-	 * whatever it decoded to and every reader of the map promises a string.
+	 * Decode a stored server index: re-keyed, because an all-digit server key
+	 * arrives as an int, and re-typed, because a truncated, corrupt or
+	 * earlier-shaped entry is whatever it decoded to. An entry that is not a
+	 * name beside a mask names no server, and is dropped.
 	 *
-	 * @param array<array-key,mixed> $map Decoded map.
-	 * @return array<string,string>
+	 * @param array<array-key,mixed> $raw Decoded index.
+	 * @return array<string,array{0:string,1:int}> server_key => [ name, shards ].
 	 */
-	public static function string_map( array $map ): array {
-		return \array_map( static fn ( $value ): string => Core::str( $value ), self::string_keys( $map ) );
-	}
-
-	/**
-	 * Every shard the URL index is spread across.
-	 *
-	 * @param bool $worker Name the WORKER shard family instead of the default one.
-	 * @return list<string>
-	 */
-	public static function url_shards( bool $worker = false ): array {
-		$prefix = $worker ? self::WORKER_SHARD_PREFIX : '';
-		return \array_map(
-			static fn ( int $i ): string => $prefix . \dechex( $i ),
-			\range( 0, self::URL_SHARDS - 1 )
-		);
+	public static function index_entries( array $raw ): array {
+		$out = [];
+		foreach ( $raw as $key => $entry ) {
+			$name   = \is_array( $entry ) ? $entry[ self::SRV_NAME ] ?? null : null;
+			$shards = \is_array( $entry ) ? $entry[ self::SRV_SHARDS ] ?? null : null;
+			if ( \is_string( $name ) && \is_int( $shards ) ) {
+				$out[ (string) $key ] = [ self::SRV_NAME => $name, self::SRV_SHARDS => $shards ];
+			}
+		}
+		return $out;
 	}
 
 	/**
@@ -2766,6 +2846,21 @@ class Stats_Store {
 			$out[ (string) $key ] = $value;
 		}
 		return $out;
+	}
+
+	/**
+	 * The index two writes of one key make between them: each server's name
+	 * from `$entries`, and its shards the union of both.
+	 *
+	 * @param array<string,array{0:string,1:int}> $into    The index so far.
+	 * @param array<string,array{0:string,1:int}> $entries The entries being written.
+	 * @return array<string,array{0:string,1:int}>
+	 */
+	public static function merge_index( array $into, array $entries ): array {
+		foreach ( $entries as $key => [ self::SRV_NAME => $name, self::SRV_SHARDS => $shards ] ) {
+			$into[ $key ] = [ self::SRV_NAME => $name, self::SRV_SHARDS => ( $into[ $key ][ self::SRV_SHARDS ] ?? 0 ) | $shards ];
+		}
+		return $into;
 	}
 
 	/**

@@ -1237,7 +1237,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		Flame_Builder_Node::with_own_mirror_read_budget( static function () use ( $tokens, $server, $plan, $buckets, $stores, &$sets ): void {
 			foreach ( $stores as $store ) {
 				$servers = '' === $server
-					? \array_values( \array_replace( [], ...\array_values( $store->server_index( $plan['hours'], $buckets ) ) ) )
+					? \array_values( Stats_Store::index_names( \array_replace( [], ...\array_values( $store->server_index( $plan['hours'], $buckets ) ) ) ) )
 					: [ $server ];
 				foreach ( $store->url_token_sets( $tokens, $servers ) as $token => $hashes ) {
 					// One partition's set unanswerable is the token's answer.
