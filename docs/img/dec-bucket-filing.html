@@ -35,8 +35,8 @@
   .rej .callout h4 .m { color: #B32D2E; }
 </style>
 <div class="sheet">
-  <h1>A request is filed in the bucket it FINISHED in, and a write into a folded hour goes to the hour key</h1>
-  <p class="sub">Two halves of one rule: a stats write must land where a reader will actually read it. The record reaches <span class="m">Flame_Builder_Node</span> at completion, and an hour folds exactly once.</p>
+  <h1>A request is filed in the bucket it FINISHED in, and a write into a folded hour reaches its fine bucket and the hour key</h1>
+  <p class="sub">Two halves of one rule: a stats write must land where a reader will actually read it. The record reaches <span class="m">Flame_Builder_Node</span> at completion, and a folded hour is re-folded only when a key of it goes missing.</p>
 
   <div class="fig">
     <svg width="1052" height="262" viewBox="0 0 1052 262">
@@ -60,8 +60,8 @@
       <circle cx="870" cy="118" r="7" fill="#B32D2E"/>
       <circle cx="810" cy="118" r="6" fill="#50575E"/>
       <line x1="810" y1="112" x2="810" y2="100" stroke="#50575E" stroke-width="1.5"/>
-      <path d="M866 128 C 820 160, 560 150, 466 182" fill="none" stroke="#B32D2E" stroke-width="1.8" stroke-dasharray="5 4"/>
-      <path d="M459 177 L466 183 L457 186" fill="none" stroke="#B32D2E" stroke-width="1.8"/>
+      <path d="M866 128 C 820 160, 560 150, 466 182" fill="none" stroke="#1E5B1E" stroke-width="2"/>
+      <path d="M459 177 L466 183 L457 186" fill="none" stroke="#1E5B1E" stroke-width="2"/>
       <path d="M874 128 C 880 150, 860 165, 850 182" fill="none" stroke="#1E5B1E" stroke-width="2"/>
       <path d="M845 175 L850 183 L856 176" fill="none" stroke="#1E5B1E" stroke-width="2"/>
     </svg>
@@ -72,8 +72,8 @@
     <div class="fl" style="left:556px; top:64px; width:150px"><b style="color:#003DA5">H closes</b></div>
     <div class="fl" style="left:626px; top:32px; width:178px; text-align:right">at least an hour after H closes, a flush folds H into <span class="m" style="white-space:nowrap">urls_h:{shard}:{H}</span> and records it in <span class="m">folded_hours</span></div>
     <div class="fl" style="left:884px; top:74px; width:150px"><b style="color:#B32D2E">the record arrives</b> after the fold, as a replay's does</div>
-    <div class="kbox dead" style="left:250px; width:340px"><b>urls:{shard}:{bucket}</b>its fine bucket: decision 17's reader skips a folded hour's fine buckets, so a write here is never read</div>
-    <div class="kbox live" style="left:690px; width:340px"><b>urls_h:{shard}:{H}</b><span class="m">url_shard_intent()</span> sends the write to the hour key, the one the reader takes</div>
+    <div class="kbox live" style="left:250px; width:340px"><b>urls:{shard}:{bucket}</b>its fine bucket: the reader skips it, a re-fold reads it; kept at the fine TTL like any fold read</div>
+    <div class="kbox live" style="left:690px; width:340px"><b>urls_h:{shard}:{H}</b><span class="m">hour_tier_intents()</span> merges into the hour key the reader takes, only while that key exists</div>
   </div>
 
   <div class="flow">
@@ -85,26 +85,26 @@
     </div>
     <div class="arrow">&rarr;</div>
     <div class="step">
-      <h3>2 · Which key: <span class="m">url_shard_intent()</span> picks the tier</h3>
-      <p>Transit is the second half. Decision 17's reader skips a folded hour's fine buckets, so a record arriving after its hour folded, written to its fine bucket, would sit where nothing reads it and never merge into the coarse key that replaced it.</p>
+      <h3>2 · Which keys: <span class="m">hour_tier_intents()</span> files them</h3>
+      <p>Transit is the second half. Decision 17's reader takes a folded hour's key and skips its fine buckets, so a record arriving after its hour folded must reach the hour key to be read, and its fine bucket to survive a re-fold.</p>
       <div class="branch">
         <div class="b fine"><b>hour not in folded_hours</b><span class="m">url_shard_parts( shard )</span> under the five-minute bucket key</div>
-        <div class="b hour"><b>hour in folded_hours</b><span class="m">url_hour_parts( shard )</span> under the hour key</div>
+        <div class="b hour"><b>hour in folded_hours</b>that bucket, and <span class="m">url_hour_parts( shard )</span> under the hour key when it exists</div>
       </div>
-      <p style="margin-top:8px">Same <span class="m">merge_url_row()</span>, same <span class="m">cap_url_rows()</span> ceiling: only the key differs.</p>
+      <p style="margin-top:8px">One merge for both, for rows, names and <span class="m">lb_h</span> alike. An hour key the read misses is forgotten, so the reprobe re-folds the hour from fine buckets that hold the late rows; one the write lands in forgets the hour's DONE marker, so the probe re-ranks it.</p>
     </div>
     <div class="arrow">&rarr;</div>
     <div class="step">
       <h3>3 · When the memo is right</h3>
       <p><span class="m">folded_hours</span> is per-process, and one partition has one worker (<span class="m">persist_aggregate_stats()</span>: read-then-write is not atomic), so a respawn is the only way it goes stale; there is no peer to race.</p>
-      <p><span class="m">flush()</span> therefore rolls up BEFORE it persists: the roll-up is what probes the coarse tier, so the first flush after a respawn has an accurate memo before a single row is placed.</p>
+      <p><span class="m">flush()</span> therefore rolls up BEFORE it persists: the roll-up is what probes the coarse tier, so the first flush after a respawn has an accurate memo before a single row is placed. The fold budget stops folds, never the probe.</p>
     </div>
   </div>
 
   <div class="cols">
     <div class="card">
       <h3>The trigger is routine, not exotic</h3>
-      <p><span class="m">wp nodes deactivate complete; wp nodes gc --force; wp nodes activate complete</span> replays the whole retention window, and every replayed record carries its original timestamp. Steady state never sees it: measured on a hub, records reach the builder about 14 s old against a fine tail of 65 to 120 minutes.</p>
+      <p><span class="m">wp nodes deactivate complete; wp nodes gc --force; wp nodes activate complete</span> replays the whole retention window, and every replayed record carries its original timestamp. A hub sees it without one: a single flame-builder partition takes every spoke's records, so a spoke feeding a backlog while its peers are caught up lands rows in hours already folded. A caught-up spoke's records reach the builder about 14 s old against a fine tail of 65 to 120 minutes.</p>
     </div>
   </div>
 

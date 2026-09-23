@@ -1105,7 +1105,7 @@ class Request_Builder_Node extends Timer_Node {
 		if ( 'complete' === ( $request->state ?? '' ) ) {
 			return;
 		}
-		$now                    = \time();
+		$now                    = (int) Core::$now;
 		$start_ts               = Core::num_int( $request->timestamp ?? null, $now );
 		$request->error_status  = 'T';
 		$request->duration_ms   = ( $now - $start_ts ) * 1000;
@@ -1776,7 +1776,7 @@ class Request_Builder_Node extends Timer_Node {
 		$rid          = Core::str( $request->rid ?? '' );
 		$url          = Core::str( $request->url ?? '' );
 		$url_hash     = Log_Manager::url_hash( $url );
-		$timestamp    = Core::as_int( $request->timestamp ?? \time() );
+		$timestamp    = Core::as_int( $request->timestamp ?? Core::$now );
 		$duration_ms  = Core::as_int( $request->duration_ms ?? 0 );
 		$status_code  = Core::as_int( $request->status_code ?? 0 );
 		$peak_mb      = Core::as_float( $request->peak_mb ?? 0 );

@@ -39,18 +39,9 @@ class RequestBuilderTest extends TestCase {
 	 * tests follow the production name -> arguments -> sink lifecycle. Core::reset()
 	 * in the parent setUp clears it between tests.
 	 */
-	/** @var float Core::$now as found; Core::reset() does not clear it. */
-	private float $saved_now = 0.0;
-
 	protected function setUp(): void {
 		parent::setUp();
-		$this->saved_now = Core::$now;
 		( new Router_Node() )->name( Node_Names::ROUTER );
-	}
-
-	protected function tearDown(): void {
-		Core::$now = $this->saved_now;
-		parent::tearDown();
 	}
 
 	/**
@@ -1188,6 +1179,23 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'complete', $evicted['state'] );
 	}
 
+	public function test_a_timed_out_request_is_measured_to_the_tick_not_the_wall_clock(): void {
+		Core::$now = 1_600_000_123.0;
+		$rb        = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( [ '1', '2' ] );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'ts' => 1_600_000_000 ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /tick-measured' ] );
+		$this->fill( $rb, 1, 'r2', 'process (start)' );
+
+		$evicted = $this->captured_request( $capture, 0 );
+		$this->assertSame( 'r1', $evicted['rid'] );
+		$this->assertSame( 123_000, $evicted['duration_ms'] );
+	}
+
 	// --- save / restore state --------------------------------------------
 
 	public function test_save_and_restore_round_trip(): void {
@@ -1245,6 +1253,20 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 100, $parsed['length'] );
 		$this->assertSame( 32, $parsed['peak_mb'] );
 		$this->assertSame( 'GET', $parsed['method'] );
+	}
+
+	public function test_format_index_entry_stamps_an_unstarted_request_with_the_tick(): void {
+		Core::$now                 = 1_600_000_123.0;
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [ 'rid' => 'no-start', 'url' => '/never/started' ];
+
+		$line = (string) Request_Builder_Node::format_index_entry(
+			$message,
+			[ 'segment' => 1, 'offset' => 0, 'length' => 10 ]
+		);
+
+		$this->assertSame( 1_600_000_123, Request_Builder_Node::parse_request_index( $line )['timestamp'] );
 	}
 
 	/**

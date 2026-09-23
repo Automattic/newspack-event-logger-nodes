@@ -65,8 +65,9 @@ After adding or renaming a Node class, regenerate the classmap that `make_node` 
 # every test, and `failOnRisky="true"` beside `failOnWarning="true"` makes a breach FAIL
 # the run rather than an `OK, but there were issues!` the push ignores.
 # `#[Medium]` and `#[Large]` are not the way out, and no class declares either: a
-# test must not wait in real time. It drives a clock instead — `Flame_Builder_Node`'s
-# `set_clock()` here, `Core::$clock` and `Event_Framework::$sleep` in the substrate.
+# test must not wait in real time. It pins a clock instead — `Core::$now`, the tick
+# every reader here dates from, and `Core::$clock` and `Event_Framework::$sleep` in
+# the substrate.
 cd tests && ../vendor/bin/phpunit --enforce-time-limit
 
 tests/run-coverage.sh        # coverage HTML/Clover
@@ -173,7 +174,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 16 | The breakdown panel is always mounted, and says which kind of nothing it has | [Decision 16](docs/architecture-decisions.md#decision-16-the-breakdown-panel-is-always-mounted-and-says-which-kind-of-nothing-it-has) |
 | 17 | The URL index is stored at TWO resolutions, and the coarse one is DERIVED | [Decision 17](docs/architecture-decisions.md#decision-17-the-url-index-is-stored-at-two-resolutions-and-the-coarse-one-is-derived) |
 | 18 | A stored value may be POSITIONAL, and then its indexes are named constants | [Decision 18](docs/architecture-decisions.md#decision-18-a-stored-value-may-be-positional-and-then-its-indexes-are-named-constants) |
-| 19 | A request is filed in the bucket it FINISHED in, and a write into a folded hour goes to the hour key | [Decision 19](docs/architecture-decisions.md#decision-19-a-request-is-filed-in-the-bucket-it-finished-in-and-a-write-into-a-folded-hour-goes-to-the-hour-key) |
+| 19 | A request is filed in the bucket it FINISHED in, and a write into a folded hour reaches its fine bucket and the hour key | [Decision 19](docs/architecture-decisions.md#decision-19-a-request-is-filed-in-the-bucket-it-finished-in-and-a-write-into-a-folded-hour-reaches-its-fine-bucket-and-the-hour-key) |
 | 20 | Outbound HTTP is timed as a span, and a short-circuited request opens nothing | [Decision 20](docs/architecture-decisions.md#decision-20-outbound-http-is-timed-as-a-span-and-a-short-circuited-request-opens-nothing) |
 | 21 | The fold keeps the CLOSE of any span the kept head left open | [Decision 21](docs/architecture-decisions.md#decision-21-the-fold-keeps-the-close-of-any-span-the-kept-head-left-open) |
 | 22 | Query spans are the same pair as decision 20, but PER-RULE | [Decision 22](docs/architecture-decisions.md#decision-22-query-spans-are-the-same-pair-as-decision-20-but-per-rule) |
@@ -183,6 +184,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 26 | A merged transport node keeps the statements it ran | [Decision 26](docs/architecture-decisions.md#decision-26-a-merged-transport-node-keeps-the-statements-it-ran) |
 | 27 | The platform's requests to itself are worker traffic, named by path | [Decision 27](docs/architecture-decisions.md#decision-27-the-platforms-requests-to-itself-are-worker-traffic-named-by-path) |
 | 28 | The writer ranks each bucket and indexes each name, and the page reads those rather than the index | [Decision 28](docs/architecture-decisions.md#decision-28-the-writer-ranks-each-bucket-and-indexes-each-name-and-the-page-reads-those-rather-than-the-index) |
+| 29 | Every reader dates from the tick, and a reply reads it once | [Decision 29](docs/architecture-decisions.md#decision-29-every-reader-dates-from-the-tick-and-a-reply-reads-it-once) |
 
 ## Layout
 
@@ -258,7 +260,7 @@ Mistakes that have actually happened.
 
 - **Documentation map**: `docs/README.md` — the three chapters, then the reference set
 - **Architecture**: `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, memcache schema
-- **Decisions**: `docs/architecture-decisions.md` — the 28 decisions, cited as "decision N"
+- **Decisions**: `docs/architecture-decisions.md` — the 29 decisions, cited as "decision N"
 - **Security model**: `docs/security-model.md` — what the logger captures, what crosses to the hub, the tradeoffs
 - **API**: `docs/API.md` — the one REST route (the MCP server), every service-CI verb, the two WP-CLI verbs, the PHP API sibling plugins log through, and the hooks fired and consumed
 - **Runtime**: `../newspack-nodes/` — the substrate this plugin depends on

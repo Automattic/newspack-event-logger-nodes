@@ -258,7 +258,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * It takes the STORES too, resolved once by the caller: each resolution
 	 * builds the topology catalog, and a verb reads sixteen shards.
 	 *
-	 * Signature: `function ( string $shard, list<Stats_Store> $stores ): array<int,array<string,mixed>>`.
+	 * It takes the reply's `$now` last, so every shard of one reply reads
+	 * one window.
+	 *
+	 * Signature: `function ( string $shard, list<Stats_Store> $stores, int $now ): array<int,array<string,mixed>>`.
 	 *
 	 * @var \Closure|null
 	 */
@@ -345,15 +348,17 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string                 $dimension One of DIMENSIONS.
 	 * @param string                 $server    Server scope; ignored for the `server` dimension.
 	 * @param array<int,Stats_Store> $stores    Stores the caller resolved once.
+	 * @param int                    $now       The reply's clock, read once at its entry.
 	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
 	 */
-	private static function merge_dim_across_partitions( string $dimension, string $server, array $stores ): array {
+	private static function merge_dim_across_partitions( string $dimension, string $server, array $stores, int $now ): array {
 		$store_server = 'server' === $dimension ? '' : $server;
 		return self::merged_across_stores(
 			static fn ( Stats_Store $store, array $buckets ): array => $store->get_dimensional_buckets( $dimension, $buckets, $store_server ),
 			Stats_Store::DIM_SUMS,
 			Stats_Store::DIM_COUNT,
-			$stores
+			$stores,
+			$now
 		);
 	}
 
@@ -363,14 +368,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string                 $server Server scope; '' merges every server.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 */
-	private static function merge_categories_across_partitions( string $server, array $stores ): array {
+	private static function merge_categories_across_partitions( string $server, array $stores, int $now ): array {
 		return self::merged_across_stores(
 			static fn ( Stats_Store $store, array $buckets ): array => $store->get_category_buckets( $buckets, $server ),
 			Stats_Store::CAT_SUMS,
 			Stats_Store::CAT_REQUESTS,
-			$stores
+			$stores,
+			$now
 		);
 	}
 
@@ -379,14 +386,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string                 $hash   12-char URL hash.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 */
-	private static function merge_url_categories( string $hash, array $stores ): array {
+	private static function merge_url_categories( string $hash, array $stores, int $now ): array {
 		return self::merged_across_stores(
 			static fn ( Stats_Store $store, array $buckets ): array => $store->get_url_category_buckets( $hash, $buckets ),
 			Stats_Store::CAT_SUMS,
 			Stats_Store::CAT_REQUESTS,
-			$stores
+			$stores,
+			$now
 		);
 	}
 
@@ -401,10 +410,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * filtered poll to ONE fan-out across the retention window.
 	 *
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 */
-	private static function build_overview_payload( array $stores ): array {
-		$time_series       = self::merge_hourly_across_partitions( $stores );
+	private static function build_overview_payload( array $stores, int $now ): array {
+		$time_series       = self::merge_hourly_across_partitions( $stores, $now );
 		$total_requests    = 0;
 		$total_sum_ms      = 0.0;
 		$total_sum_peak_mb = 0.0;
@@ -427,11 +437,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Sum-merge per-partition hourly buckets into one sorted time_series.
 	 *
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<int,mixed>
 	 */
-	private static function merge_hourly_across_partitions( array $stores ): array {
+	private static function merge_hourly_across_partitions( array $stores, int $now ): array {
 		$merged  = [];
-		$buckets = self::read_window();
+		$buckets = self::read_window( $now );
 		foreach ( $stores as $store ) {
 			foreach ( $store->get_hourly_buckets( $buckets ) as $hour => $row ) {
 				$row_arr = Core::arr( $row );
@@ -674,10 +685,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param list<string>        $descriptors Target first, containers after.
 	 * @param string              $server      Reporting server the brief answers for; '' is every server.
 	 * @param array<string,mixed> $filters     The url filters in force, which only `overview:` reads: every other descriptor names one thing, and a filtered view of one thing is the same thing.
+	 * @param int                 $now         The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException On an unknown descriptor or a missing context.
 	 */
-	private function assemble_ask( array $descriptors, string $server, array $filters ): array {
+	private function assemble_ask( array $descriptors, string $server, array $filters, int $now ): array {
 		$target = Ask_Assembler::parse_descriptor( Core::as_string( $descriptors[0] ?? '' ) );
 		if ( null === $target ) {
 			throw new \RuntimeException(
@@ -690,9 +702,9 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		switch ( $target['type'] ) {
 			case 'overview':
-				return $this->ask_overview( $server, $filters );
+				return $this->ask_overview( $server, $filters, $now );
 			case 'url':
-				return $this->ask_url( $target['id'], $server );
+				return $this->ask_url( $target['id'], $server, $now );
 			case 'request':
 				return self::ask_request( $target['id'], (int) $target['qualifier'], $context, $server );
 			case 'span':
@@ -700,7 +712,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			case 'entry':
 				return self::ask_entry( $target['id'], $context );
 			case 'category':
-				return self::ask_category( $target['id'], $context, $server );
+				return self::ask_category( $target['id'], $context, $server, $now );
 		}
 		throw new \RuntimeException( \esc_html( 'unknown descriptor: ' . $target['type'] ) );
 	}
@@ -721,9 +733,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string              $server  Server the page is scoped to; '' is every server.
 	 * @param array<string,mixed> $filters search / errors_only / include_workers, as the page has them.
+	 * @param int                 $now     The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 */
-	private function ask_overview( string $server, array $filters ): array {
+	private function ask_overview( string $server, array $filters, int $now ): array {
 		$stores = self::stats_stores();
 		$page   = $this->url_page(
 			$server,
@@ -734,7 +747,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			'desc',
 			0,
 			self::OVERVIEW_BRIEF_URLS,
-			$stores
+			$stores,
+			$now
 		);
 
 		return Ask_Assembler::for_overview(
@@ -743,7 +757,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'totals' => $page['totals'],
 				'data'   => $page['data'],
 			],
-			self::build_leaderboard( $server, $stores ),
+			self::build_leaderboard( $server, $stores, $now ),
 			$server,
 			$filters
 		);
@@ -755,20 +769,21 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string $hash   12-char URL hash the descriptor names.
 	 * @param string $server Server the brief answers for; '' is every server.
+	 * @param int    $now    The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When no URL row carries that hash.
 	 */
-	private function ask_url( string $hash, string $server ): array {
+	private function ask_url( string $hash, string $server, int $now ): array {
 		// @longform Through `row()`, never the loader: the loader emits sums
 		// and leaves the means to the projection, so a reader taking its
 		// output raw quotes a confident 0 for every average. Scoped, because
 		// the facts block stamps the filters onto every surface, and an
 		// unscoped number under a server's name is quotable and wrong.
-		$stats = $this->row( $hash, $server, self::stats_stores() );
+		$stats = $this->row( $hash, $server, self::stats_stores(), $now );
 		if ( null === $stats ) {
 			throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 		}
-		$recent = self::find_recent_requests_for_url( $hash );
+		$recent = self::find_recent_requests_for_url( $hash, $now );
 		return Ask_Assembler::for_url(
 			$stats,
 			$recent['requests'],
@@ -805,26 +820,27 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $offset  Page offset.
 	 * @param int                    $limit   Page size.
 	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
 	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
 	 */
-	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
+	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
 		// @longform Normalized ONCE, here: `Womb`, `womb` and `womb ` are one
 		// search, and a key that normalizes while the paths below it read the
 		// raw term would answer one entry two ways. The handler echoes the
 		// raw value in `filters`, which is the only place it still matters.
 		$search = \strtolower( \trim( $search ) );
-		$build  = function () use ( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores ): array {
+		$build  = function () use ( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores, $now ): array {
 			$result = self::ranked_serves( $search, $errors, $workers, \max( 0, $offset ) + \max( 0, $limit ) )
-				? $this->ranked_page( $server, $sort, $order, $offset, $limit, $stores )
+				? $this->ranked_page( $server, $sort, $order, $offset, $limit, $stores, $now )
 				: null;
-			return $result ?? $this->fold_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores );
+			return $result ?? $this->fold_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores, $now );
 		};
 		if ( $limit > self::URLS_PAGE_CACHE_MAX_ROWS ) {
 			return $build();
 		}
 		/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int} */
 		return self::read_through_page(
-			[ $server, $search, $errors, $workers, $sort, $order, $offset, $limit, Stats_Store::bucket_key( self::now() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
+			[ $server, $search, $errors, $workers, $sort, $order, $offset, $limit, Stats_Store::bucket_key( $now ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
 			self::PAGE_FIELDS,
 			Stats_Store::URL_PAGE_REFRESH_S,
 			$build
@@ -867,17 +883,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $offset Page offset.
 	 * @param int                    $limit  Page size.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}|null
 	 */
-	private function ranked_page( string $server, string $sort, string $order, int $offset, int $limit, array $stores ): ?array {
+	private function ranked_page( string $server, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): ?array {
 		// The header first: its own miss folds the page this poll answers with.
-		$header = $this->url_header( $server, $sort, $order, $offset, $limit, $stores );
+		$header = $this->url_header( $server, $sort, $order, $offset, $limit, $stores, $now );
 		if ( isset( $header['data'] ) ) {
 			/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int} */
 			return $header;
 		}
-		$plan   = Stats_Store::read_plan( \array_values( self::read_window() ) );
-		$recent = \array_flip( self::recent_buckets() );
+		$plan   = Stats_Store::read_plan( \array_values( self::read_window( $now ) ) );
+		$recent = \array_flip( self::recent_buckets( $now ) );
 		$hours  = \array_flip( $plan['hours'] );
 		$coarse = Stats_Store::url_rank_parts( $sort, $order, $server, true );
 		$fine   = Stats_Store::url_rank_parts( $sort, $order, $server, false );
@@ -934,7 +951,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return [
 			'data'   => self::resolve_urls( \array_slice( $rows, $offset, $limit ), $stores ),
 			'ranked' => true,
-			'as_of'  => self::now(),
+			'as_of'  => $now,
 		] + $header;
 	}
 
@@ -992,17 +1009,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $offset Page offset.
 	 * @param int                    $limit  Page size.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array{rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,data?:array<int,array<array-key,mixed>>,ranked?:bool,as_of?:int}
 	 */
-	private function url_header( string $server, string $sort, string $order, int $offset, int $limit, array $stores ): array {
+	private function url_header( string $server, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
 		$page  = null;
-		$build = function () use ( $server, $sort, $order, $offset, $limit, $stores, &$page ): array {
-			$page = $this->fold_page( $server, '', false, false, $sort, $order, $offset, $limit, $stores );
+		$build = function () use ( $server, $sort, $order, $offset, $limit, $stores, $now, &$page ): array {
+			$page = $this->fold_page( $server, '', false, false, $sort, $order, $offset, $limit, $stores, $now );
 			return \array_intersect_key( $page, \array_flip( self::HEADER_FIELDS ) );
 		};
 		/** @var array{rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>} $header */
 		$header = self::read_through_page(
-			[ 'header', $server, Stats_Store::bucket_key( self::now() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
+			[ 'header', $server, Stats_Store::bucket_key( $now ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
 			self::HEADER_FIELDS,
 			Stats_Store::BUCKET_SECONDS,
 			$build
@@ -1071,9 +1089,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $offset  Page offset.
 	 * @param int                    $limit   Page size.
 	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
 	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
 	 */
-	private function fold_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
+	private function fold_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
 		// `$search` is normalized by `url_page()`, which keys its cache on it.
 		$page_keep = \max( 0, $offset ) + \max( 0, $limit );
 		$ranked    = [];
@@ -1131,11 +1150,11 @@ class Performance_CI_Node extends Service_CI_Node {
 		$overflow = [];
 		foreach ( $shards as $shard ) {
 			$kept  = [];
-			$index = self::read_index( $shard, $stores );
+			$index = self::read_index( $shard, $stores, $now );
 			// The shard's own name blob: ~40 keys, however many URLs it holds.
 			$names = null !== $candidates
 				? $candidate_names
-				: ( $needs_names ? self::shard_paths( $shard, $stores ) : [] );
+				: ( $needs_names ? self::shard_paths( $shard, $stores, $now ) : [] );
 			foreach ( $index as $raw ) {
 				$raw_row = Core::arr( $raw );
 				// Derived here: there is no second walk to spend on it.
@@ -1240,7 +1259,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			],
 			'slowest' => \array_slice( $named, \count( $page ) ),
 			'ranked'  => false,
-			'as_of'   => self::now(),
+			'as_of'   => $now,
 		];
 	}
 
@@ -1378,14 +1397,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string                 $hash      12-char URL hash.
 	 * @param string                 $dimension One of DIMENSIONS.
 	 * @param array<int,Stats_Store> $stores    Stores the caller resolved once.
+	 * @param int                    $now       The reply's clock, read once at its entry.
 	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
 	 */
-	private static function merge_url_dim( string $hash, string $dimension, array $stores ): array {
+	private static function merge_url_dim( string $hash, string $dimension, array $stores, int $now ): array {
 		return self::merged_across_stores(
 			static fn ( Stats_Store $store, array $buckets ): array => $store->get_url_dimension_buckets( $hash, $dimension, $buckets ),
 			Stats_Store::DIM_SUMS,
 			Stats_Store::DIM_COUNT,
-			$stores
+			$stores,
+			$now
 		);
 	}
 
@@ -1398,11 +1419,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<int|string,bool>                                        $fields      Field table for the sum.
 	 * @param int                                                           $count_field The entry index a value's request count sits at.
 	 * @param array<int,Stats_Store>                                        $stores      Stores the caller resolved once.
+	 * @param int                                                           $now         The reply's clock, read once at its entry.
 	 * @return array<string,array<array-key,mixed>> Bucket key => value name => summed entry.
 	 */
-	private static function merged_across_stores( callable $rows_of, array $fields, int $count_field, array $stores ): array {
+	private static function merged_across_stores( callable $rows_of, array $fields, int $count_field, array $stores, int $now ): array {
 		$merged  = [];
-		$buckets = self::read_window();
+		$buckets = self::read_window( $now );
 		foreach ( $stores as $store ) {
 			foreach ( $rows_of( $store, $buckets ) as $bucket => $values ) {
 				$merged[ $bucket ] = Stats_Store::sum_fields( $merged[ $bucket ] ?? [], Core::arr( $values ), $fields );
@@ -1434,14 +1456,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * servers, the server has to go on the index entry.
 	 *
 	 * @param string $url_hash 12-char URL hash to match.
+	 * @param int    $now      The reply's clock, read once at its entry.
 	 * @param int    $since    Watermark (epoch seconds): a partition's walk ends
 	 *                         at the first entry that COMPLETED below it. 0 reads
 	 *                         the whole retained window.
 	 * @return array{requests:array<int,array<string,mixed>>, truncated:bool, window_start:int} The list, whether the budget cut it short, and the window it is of.
 	 */
-	private static function find_recent_requests_for_url( string $url_hash, int $since = 0 ): array {
+	private static function find_recent_requests_for_url( string $url_hash, int $now, int $since = 0 ): array {
 		$requests  = [];
-		$floor     = self::scan_floor();
+		$floor     = self::scan_floor( $now );
 		$truncated = self::scan_index_entries(
 			Bootstrap::node_dirs( self::NODE_REQUESTS ),
 			'requests',
@@ -1613,10 +1636,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param list<string> $context Container descriptors, outermost last.
 	 * @param string       $server  Server the leaderboard fallback answers for;
 	 *                              '' builds the global board.
+	 * @param int          $now     The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When no board holds the category, or the name is a callback row.
 	 */
-	private static function ask_category( string $name, array $context, string $server ): array {
+	private static function ask_category( string $name, array $context, string $server, int $now ): array {
 		// A callback row is no board; its time counts inside its hook.
 		if ( Flame_Tree::is_listener_span( $name ) ) {
 			throw new \RuntimeException( \esc_html( "'{$name}' is a callback row; ask about the hook it ran under" ) );
@@ -1637,7 +1661,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		// The card this is asked from renders the same scoped board.
-		$board      = self::build_leaderboard( $server, $stores );
+		$board      = self::build_leaderboard( $server, $stores, $now );
 		$categories = \is_array( $board['categories'] ?? null ) ? $board['categories'] : [];
 		$brief      = Ask_Assembler::for_category( $categories, $name, $server );
 		if ( null === $brief ) {
@@ -1704,9 +1728,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string                 $server Server to scope to; '' builds the global board.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 */
-	private static function build_leaderboard( string $server, array $stores ): array {
+	private static function build_leaderboard( string $server, array $stores, int $now ): array {
 		$count        = 0;
 		$sum_req_time = 0.0;
 		$sums         = [];
@@ -1725,12 +1750,12 @@ class Performance_CI_Node extends Service_CI_Node {
 		// cannot be enumerated from the keyspace — so it walks the window.
 		if ( '' !== $server ) {
 			foreach ( $stores as $store ) {
-				$fold( $store->get_leaderboard_buckets( self::read_window(), $server ) );
+				$fold( $store->get_leaderboard_buckets( self::read_window( $now ), $server ) );
 			}
 			return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
 		}
 
-		$plan = Stats_Store::read_plan( \array_values( self::read_window() ) );
+		$plan = Stats_Store::read_plan( \array_values( self::read_window( $now ) ) );
 		foreach ( $stores as $store ) {
 			// @longform The tolerant half of `Stats_Store::fine_fallback()`,
 			// exactly as the URL index reads it: the grace hour's twelve
@@ -1763,10 +1788,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * reaches is returned whatever its time, which is the side to err on: the
 	 * alternative drops rows the operator can see in the chart beside the list.
 	 *
+	 * @param int $now The reply's clock, read once at its entry.
 	 * @return int Unix timestamp.
 	 */
-	private static function scan_floor(): int {
-		return Stats_Store::window_start( AppConfig::stats_retention_seconds(), self::now() );
+	private static function scan_floor( int $now ): int {
+		return Stats_Store::window_start( AppConfig::stats_retention_seconds(), $now );
 	}
 
 	/**
@@ -2097,10 +2123,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string                 $hash   12-char URL hash.
 	 * @param string                 $server Reporting server to scope to; '' reads every server.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<array-key,mixed>|null
 	 */
-	private function row( string $hash, string $server, array $stores ): ?array {
-		$raw = self::load_row( $hash, $stores );
+	private function row( string $hash, string $server, array $stores, int $now ): ?array {
+		$raw = self::load_row( $hash, $stores, $now );
 		if ( null === $raw ) {
 			return null;
 		}
@@ -2201,10 +2228,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<string,string> hash => path.
 	 */
-	private static function shard_paths( string $shard, array $stores ): array {
-		$plan  = Stats_Store::read_plan( \array_values( self::read_window() ) );
+	private static function shard_paths( string $shard, array $stores, int $now ): array {
+		$plan  = Stats_Store::read_plan( \array_values( self::read_window( $now ) ) );
 		$paths = [];
 		foreach ( $stores as $store ) {
 			self::walk_shard_tiers(
@@ -2248,11 +2276,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string                 $hash   12-char URL hash.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<array-key,mixed>|null The merged row, or null when absent.
 	 */
-	public static function load_row( string $hash, array $stores ): ?array {
+	public static function load_row( string $hash, array $stores, int $now ): ?array {
 		foreach ( [ false, true ] as $worker ) {
-			$found = self::row_in_shard( $hash, Stats_Store::url_shard( $hash, $worker ), $stores );
+			$found = self::row_in_shard( $hash, Stats_Store::url_shard( $hash, $worker ), $stores, $now );
 			if ( null !== $found ) {
 				return $found;
 			}
@@ -2266,10 +2295,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string                 $hash   12-char URL hash.
 	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<array-key,mixed>|null
 	 */
-	private static function row_in_shard( string $hash, string $shard, array $stores ): ?array {
-		foreach ( self::read_index( $shard, $stores ) as $row ) {
+	private static function row_in_shard( string $hash, string $shard, array $stores, int $now ): ?array {
+		foreach ( self::read_index( $shard, $stores, $now ) as $row ) {
 			if ( Core::as_string( $row['hash'] ?? '' ) === $hash ) {
 				return $row;
 			}
@@ -2332,12 +2362,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<int,array<array-key,mixed>>
 	 */
-	private static function read_index( string $shard, array $stores ): array {
+	private static function read_index( string $shard, array $stores, int $now ): array {
 		$read = self::$load_index ?? self::load_index_default( ... );
 		$rows = [];
-		foreach ( Core::arr( $read( $shard, $stores ) ) as $row ) {
+		foreach ( Core::arr( $read( $shard, $stores, $now ) ) as $row ) {
 			if ( \is_array( $row ) ) {
 				$rows[] = $row;
 			}
@@ -2362,12 +2393,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<int,array<string,mixed>>
 	 */
-	public static function load_index_default( string $shard, array $stores ): array {
-		// ONE window: the flag and the plan cannot straddle a boundary.
-		$plan   = Stats_Store::read_plan( \array_values( self::read_window() ) );
-		$recent = \array_flip( self::recent_buckets() );
+	public static function load_index_default( string $shard, array $stores, int $now ): array {
+		$plan   = Stats_Store::read_plan( \array_values( self::read_window( $now ) ) );
+		$recent = \array_flip( self::recent_buckets( $now ) );
 		$result = [];
 		foreach ( $stores as $store ) {
 			self::walk_shard_tiers(
@@ -2547,10 +2578,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		);
 
 		// Expanded FIRST: `sum_fields()` skips a null and would drop the host.
-		$row_srv = Stats_Store::expand_sole_server(
-			$stat_arr,
-			Core::arr( $stat_arr[ Stats_Store::ROW_SRV ] ?? null )
-		);
+		$row_srv = Stats_Store::expand_sole_server( $stat_arr );
 		if ( [] !== $row_srv ) {
 			$entry[ Stats_Store::URL_SRV_FIELD ] = Stats_Store::sum_fields(
 				Core::arr( $entry[ Stats_Store::URL_SRV_FIELD ] ),
@@ -2574,10 +2602,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The newest bucket is still filling, so it is dropped: including a partial
 	 * one drags the figure down by however much of it has not happened yet.
 	 *
+	 * @param int $now The reply's clock, read once at its entry.
 	 * @return array<int,string>
 	 */
-	private static function recent_buckets(): array {
-		return \array_slice( self::read_window(), 1, self::RECENT_BUCKETS );
+	private static function recent_buckets( int $now ): array {
+		return \array_slice( self::read_window( $now ), 1, self::RECENT_BUCKETS );
 	}
 
 	/**
@@ -2585,15 +2614,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * Memoized for as long as the current bucket is current. One `overview` calls
 	 * this ten times (seven dimensions, plus hourly, leaderboard and categories),
-	 * each otherwise rebuilding up to 288 keys with a `gmdate()` apiece — and each
-	 * re-reading the clock. The memo on the bucket key is the straddle guard:
-	 * without it two panels of one response could answer for different
-	 * windows, since every call here reads the clock afresh.
+	 * each otherwise rebuilding up to 288 keys with a `gmdate()` apiece. The
+	 * caller's `$now` is what makes those ten one window: a reply reads the
+	 * clock once and hands the same instant to every call.
 	 *
+	 * @param int $now The reply's clock, read once at its entry.
 	 * @return array<int,string>
 	 */
-	private static function read_window(): array {
-		$now       = self::now();
+	private static function read_window( int $now ): array {
 		$retention = AppConfig::stats_retention_seconds();
 		// Keyed on retention too, or a settings change goes unnoticed.
 		$at = Stats_Store::bucket_key( $now ) . ':' . $retention;
@@ -2602,21 +2630,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			self::$read_window_at = $at;
 		}
 		return self::$read_window;
-	}
-
-	/**
-	 * Epoch seconds, from the substrate's canonical clock: the TICK's own
-	 * under a drain, and in request scope the one `Core::reset()` pinned as
-	 * the substrate loaded, which is before any verb can run.
-	 *
-	 * Nothing on the READER's path re-pins it — `Core::right_now()` WRITES
-	 * `Core::$now`, and the mirror read-backs were the one place a fold did.
-	 * The firehose producer still refreshes it per line in a request it is
-	 * logging, so what answers every panel of one reply from ONE window is
-	 * `read_window()`'s memo, which is keyed on the bucket.
-	 */
-	private static function now(): int {
-		return (int) Core::$now;
 	}
 
 	/**
@@ -2669,6 +2682,14 @@ class Performance_CI_Node extends Service_CI_Node {
 			+ Core::num_int( $row['count_4xx'] ?? 0 )
 			+ Core::num_int( $row['count_5xx'] ?? 0 );
 		return $classified < Core::num_int( $row['count'] ?? 0 );
+	}
+
+	/**
+	 * Epoch seconds from `Core::$now`, read once per verb and passed down,
+	 * per ELN decision 29.
+	 */
+	private static function now(): int {
+		return (int) Core::$now;
 	}
 
 	/**
@@ -2852,21 +2873,22 @@ class Performance_CI_Node extends Service_CI_Node {
 				$categories = self::flag( $opts, 'categories' );
 
 				\assert( $self instanceof self );
+				$now                           = self::now();
 				$stores                        = self::stats_stores();
-				$payload                       = self::build_overview_payload( $stores );
-				$payload['global_leaderboard'] = self::build_leaderboard( $server, $stores );
+				$payload                       = self::build_overview_payload( $stores, $now );
+				$payload['global_leaderboard'] = self::build_leaderboard( $server, $stores, $now );
 
 				// One key per dimension ASKED for, whatever the count.
 				if ( '' !== $breakdown ) {
 					$payload['breakdowns'] = [];
 					foreach ( \array_map( 'trim', \explode( ',', $breakdown ) ) as $dim ) {
 						self::assert_dimension( $dim );
-						$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server, $stores );
+						$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server, $stores, $now );
 					}
 				}
 
 				if ( $categories ) {
-					$payload['category_time_series'] = self::compact_category_series( self::merge_categories_across_partitions( $server, $stores ) );
+					$payload['category_time_series'] = self::compact_category_series( self::merge_categories_across_partitions( $server, $stores, $now ) );
 				}
 
 				return $payload;
@@ -2906,7 +2928,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				\assert( $self instanceof self );
-				$page = $self->url_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, self::stats_stores() );
+				$page = $self->url_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, self::stats_stores(), self::now() );
 
 				return [
 					'data'    => $page['data'],
@@ -2954,8 +2976,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				$server = (string) ( $opts['server'] ?? '' );
 
 				\assert( $self instanceof self );
+				$now    = self::now();
 				$stores = self::stats_stores();
-				$entry  = $self->row( $hash, $server, $stores );
+				$entry  = $self->row( $hash, $server, $stores, $now );
 				$stats  = null;
 				if ( null !== $entry ) {
 					$stats = [
@@ -2980,7 +3003,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$flame     = $aggregate['flame']
 					?? [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
 
-				$recent  = self::find_recent_requests_for_url( $hash, self::require_option_int( $opts, 'since', 0 ) );
+				$recent  = self::find_recent_requests_for_url( $hash, $now, self::require_option_int( $opts, 'since', 0 ) );
 				$payload = [
 					'stats'              => $stats,
 					'requests'           => $recent['requests'],
@@ -2995,11 +3018,11 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				$breakdown = (string) ( $opts['breakdown'] ?? '' );
 				if ( '' !== $breakdown && \in_array( $breakdown, self::DIMENSIONS, true ) ) {
-					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown, $stores );
+					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown, $stores, $now );
 				}
 
 				if ( self::flag( $opts, 'categories' ) ) {
-					$payload['category_time_series'] = self::compact_category_series( self::merge_url_categories( $hash, $stores ) );
+					$payload['category_time_series'] = self::compact_category_series( self::merge_url_categories( $hash, $stores, $now ) );
 				}
 
 				return $payload;
@@ -3025,7 +3048,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$breakdown = (string) ( $parsed['options']['breakdown'] ?? '' );
 				self::assert_dimension( $breakdown );
-				return [ 'breakdown_time_series' => self::merge_url_dim( $hash, $breakdown, self::stats_stores() ) ];
+				return [ 'breakdown_time_series' => self::merge_url_dim( $hash, $breakdown, self::stats_stores(), self::now() ) ];
 					},
 				],
 				[
@@ -3132,7 +3155,8 @@ class Performance_CI_Node extends Service_CI_Node {
 						'search'          => (string) ( $parsed['options']['search'] ?? '' ),
 						'errors_only'     => self::flag( $parsed['options'], 'errors_only' ),
 						'include_workers' => self::flag( $parsed['options'], 'include_workers' ),
-					]
+					],
+					self::now()
 				);
 					},
 				],

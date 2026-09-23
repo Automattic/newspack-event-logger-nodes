@@ -465,39 +465,23 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param string                                   $server Reporting server; '' is site-wide.
 	 */
 	protected function set_url_rank_lists( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, array $rows, bool $hour = false, string $server = '' ): bool {
-		$paths      = self::url_paths_of( $rows );
 		$positional = [];
 		foreach ( $rows as $hash => $row ) {
 			$row = \Newspack_Nodes\Core::arr( $row );
 			unset( $row['url'] );
-			$row = self::positional_url_row( $row );
-			// The writer's own projection, which `rank_scopes()` performs for
-			// every scope: a server-scoped list ranks the server's OWN split
-			// rather than the row's unscoped sums, a row that server never
-			// served drops out, and the site's rows shed the split.
-			$row = \Newspack_Event_Logger_Nodes\Stats_Store::url_row_scoped( $row, $server );
-			if ( null === $row ) {
-				continue;
-			}
-			$positional[ $hash ] = $row;
+			$positional[ $hash ] = self::positional_url_row( $row );
 		}
-		// ONE scope, from the pieces the writer ranks with: production names
-		// every scope its rows' splits do, where a test seeds the one it asks
-		// about — an empty list for a server included, which is how a reader
-		// that refuses a hole in the plan is exercised at all.
+		// The writer's own lists, kept for the ONE scope a test asks about.
+		$ranked = [];
+		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( $positional, self::url_paths_of( $rows ), $hour, $key ) as [ $parts, , $entries ] ) {
+			$ranked[ \implode( ':', $parts ) ] = $entries;
+		}
+		// A server no row serves gets empty lists: a hole a reader must refuse.
 		$writes = [];
-		$lists  = \Newspack_Event_Logger_Nodes\Stats_Store::rank_url_rows(
-			$positional,
-			$paths,
-			$hour ? \Newspack_Event_Logger_Nodes\Stats_Store::URL_RANK_N_HOUR : \Newspack_Event_Logger_Nodes\Stats_Store::URL_RANK_N
-		);
-		foreach ( $lists as $sort => $orders ) {
-			foreach ( $orders as $order => $entries ) {
-				$writes[] = [
-					\Newspack_Event_Logger_Nodes\Stats_Store::url_rank_parts( (string) $sort, (string) $order, $server, $hour ),
-					$key,
-					$entries,
-				];
+		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::URL_SORTS as $sort ) {
+			foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::URL_ORDERS as $order ) {
+				$parts    = \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_parts( $sort, $order, $server, $hour );
+				$writes[] = [ $parts, $key, $ranked[ \implode( ':', $parts ) ] ?? [] ];
 			}
 		}
 		// As the writer does: the hour's DONE marker, once the site's lists land.

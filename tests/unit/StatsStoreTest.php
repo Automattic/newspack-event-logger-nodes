@@ -1428,7 +1428,7 @@ class StatsStoreTest extends TestCase {
 		);
 	}
 
-	public function test_a_scoped_row_swaps_the_eight_sums_and_drops_the_split(): void {
+	public function test_a_scoped_entry_swaps_the_eight_sums_and_drops_the_split(): void {
 		$row = self::positional_url_row( [
 			'count' => 9, 'timed_count' => 7, 'sum_ms' => 900.0, 'sum_peak_mb' => 45.0,
 			'count_2xx' => 8, 'count_5xx' => 1, 'min_ms' => 12.0, 'max_ms' => 300.0,
@@ -1438,24 +1438,38 @@ class StatsStoreTest extends TestCase {
 				'moa.test'  => [ 'count' => 3, 'timed_count' => 2, 'sum_ms' => 400.0, 'sum_peak_mb' => 15.0, 'count_2xx' => 2, 'count_5xx' => 1 ],
 			],
 		] );
-		$site = Stats_Store::url_row_scoped( $row, '' );
+		$lists = self::ranked_lists( Stats_Store::ranked_writes( [ 'a1a1a1a1a1a1' => $row ], [], false, '2026-09-22-14-05' ) );
+
+		$site = $lists['']['count:desc'][0][ Stats_Store::RANK_ROW ];
 		$this->assertArrayNotHasKey( Stats_Store::ROW_SRV, $site );
 		$this->assertSame( 9, $site[ Stats_Store::ROW_COUNT ] );
 		$this->assertSame( 300.0, $site[ Stats_Store::ROW_MAX_MS ] );
 
-		$kea = Stats_Store::url_row_scoped( $row, 'kea.test' );
+		$kea = $lists[ Stats_Store::server_key( 'kea.test' ) ]['count:desc'][0][ Stats_Store::RANK_ROW ];
 		$this->assertArrayNotHasKey( Stats_Store::ROW_SRV, $kea );
 		$this->assertSame( 6, $kea[ Stats_Store::ROW_COUNT ] );
 		$this->assertSame( 500.0, $kea[ Stats_Store::ROW_SUM_MS ] );
 		$this->assertSame( 0, $kea[ Stats_Store::ROW_COUNT_5XX ] );
 		// Extremes are the URL's own (decision 14).
 		$this->assertSame( 300.0, $kea[ Stats_Store::ROW_MAX_MS ] );
-		$this->assertNull( Stats_Store::url_row_scoped( $row, 'tui.test' ) );
+		$this->assertArrayNotHasKey( Stats_Store::server_key( 'tui.test' ), $lists, 'no list for a server that never served it' );
 	}
 
-	public function test_a_sole_server_split_scopes_to_the_row_itself(): void {
-		$row = self::positional_url_row( [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 80.0, 'srv' => [ 'kea.test' => null ] ] );
-		$this->assertSame( 4, Stats_Store::url_row_scoped( $row, 'kea.test' )[ Stats_Store::ROW_COUNT ] );
+	public function test_a_sole_server_entry_is_the_row_itself(): void {
+		$row   = self::positional_url_row( [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 80.0, 'srv' => [ 'kea.test' => null ] ] );
+		$lists = self::ranked_lists( Stats_Store::ranked_writes( [ 'a1a1a1a1a1a1' => $row ], [], false, '2026-09-22-14-05' ) );
+		$this->assertSame( 4, $lists[ Stats_Store::server_key( 'kea.test' ) ]['count:desc'][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] );
+	}
+
+	public function test_expand_sole_server_reads_the_split_off_the_row(): void {
+		$sole = self::positional_url_row( [ 'count' => 4, 'timed_count' => 3, 'sum_ms' => 80.0, 'count_2xx' => 4, 'srv' => [ 'kea.test' => null ] ] );
+		$kea  = Stats_Store::expand_sole_server( $sole )['kea.test'];
+		$this->assertSame( 4, $kea[ Stats_Store::ROW_COUNT ], 'a collapsed host takes the row\'s own sums' );
+		$this->assertSame( 80.0, $kea[ Stats_Store::ROW_SUM_MS ] );
+
+		$split = [ 'moa.test' => [ Stats_Store::ROW_COUNT => 2 ], 'tui.test' => [ Stats_Store::ROW_COUNT => 5 ] ];
+		$this->assertSame( $split, Stats_Store::expand_sole_server( self::positional_url_row( [ 'count' => 7, 'srv' => $split ] ) ) );
+		$this->assertSame( [], Stats_Store::expand_sole_server( [ Stats_Store::ROW_COUNT => 7 ] ), 'a row with no split has none' );
 	}
 
 	public function test_a_desc_list_cuts_inside_a_tie_group_in_source_order(): void {
@@ -1472,10 +1486,23 @@ class StatsStoreTest extends TestCase {
 			'f6f6f6f6f6f6' => $row( 40.0, 1758500043 ),
 			'a7a7a7a7a7a7' => $row( 90.0, 1758500044 ),
 		];
-		$lists  = Stats_Store::rank_url_rows( $rows, [], 3 );
+		$lists  = self::rank_url_rows( $rows, [], 3 );
 		$hashes = static fn ( array $entries ): array => \array_column( $entries, Stats_Store::RANK_HASH );
 		$this->assertSame( [ 'a7a7a7a7a7a7', 'd4d4d4d4d4d4', 'e5e5e5e5e5e5' ], $hashes( $lists['avg_ms']['desc'] ) );
 		$this->assertSame( [ 'd4d4d4d4d4d4', 'e5e5e5e5e5e5', 'f6f6f6f6f6f6' ], $hashes( $lists['avg_ms']['asc'] ) );
+	}
+
+	public function test_an_all_digit_hash_ranks_as_a_string(): void {
+		// PHP stores a decimal-string key as an INT, so a hash of twelve
+		// digits reaches the ranker as one; the entry the reader matches on
+		// must still carry the hash as the string it is everywhere else.
+		$hash   = '123456789012';
+		$row    = self::positional_url_row( [ 'count' => 17, 'timed_count' => 2, 'sum_ms' => 34.0, 'min_ms' => 15.0, 'max_ms' => 19.0, 'last_seen' => 1758500017 ] );
+		$writes = Stats_Store::ranked_writes( [ $hash => $row ], [ $hash => '/digits-1701' ], false, '2026-09-22-14-05' );
+		$this->assertNotEmpty( $writes );
+		foreach ( $writes as [ $parts, , $entries ] ) {
+			$this->assertSame( [ $hash ], \array_column( $entries, Stats_Store::RANK_HASH ), \implode( ':', $parts ) );
+		}
 	}
 
 	public function test_ranking_cuts_every_list_to_n_in_both_directions(): void {
@@ -1485,7 +1512,7 @@ class StatsStoreTest extends TestCase {
 			'c3c3c3c3c3c3' => self::positional_url_row( [ 'count' => 20, 'timed_count' => 4, 'sum_ms' => 80.0, 'sum_peak_mb' => 40.0, 'min_ms' => 10.0, 'max_ms' => 40.0, 'last_seen' => 1758500020 ] ),
 		];
 		$paths = [ 'a1a1a1a1a1a1' => '/tui', 'b2b2b2b2b2b2' => '/kea', 'c3c3c3c3c3c3' => '/moa' ];
-		$lists = Stats_Store::rank_url_rows( $rows, $paths, 2 );
+		$lists = self::rank_url_rows( $rows, $paths, 2 );
 
 		$hashes = static fn ( array $entries ): array => \array_column( $entries, Stats_Store::RANK_HASH );
 		$this->assertSame( [ 'a1a1a1a1a1a1', 'c3c3c3c3c3c3' ], $hashes( $lists['count']['desc'] ) );
@@ -1524,13 +1551,7 @@ class StatsStoreTest extends TestCase {
 		];
 		$bucket = '2026-09-22-14-05';
 
-		$writes = Stats_Store::ranked_writes( $rows, [], false, $bucket );
-
-		$lists = [];
-		foreach ( $writes as [ $parts, , $entries ] ) {
-			$scope = Stats_Store::NS_URLRANK === $parts[0] ? '' : $parts[1];
-			$lists[ $scope ][ $parts[ \count( $parts ) - 2 ] . ':' . $parts[ \count( $parts ) - 1 ] ] = $entries;
-		}
+		$lists  = self::ranked_lists( Stats_Store::ranked_writes( $rows, [], false, $bucket ) );
 		$counts = static fn ( array $entries ): array => \array_combine(
 			\array_column( $entries, Stats_Store::RANK_HASH ),
 			\array_map(
@@ -1589,7 +1610,7 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( \array_fill( 0, 14, '2026-09-22-14-05' ), \array_column( $writes, 1 ) );
 		// The entries are the ranker's, list for list.
 		$this->assertSame(
-			Stats_Store::rank_url_rows( $rows, $paths, Stats_Store::URL_RANK_N )['count']['desc'],
+			self::rank_url_rows( $rows, $paths, Stats_Store::URL_RANK_N )['count']['desc'],
 			$writes[1][2]
 		);
 
@@ -1640,22 +1661,12 @@ class StatsStoreTest extends TestCase {
 			'e5e5e5e5e5e5' => self::positional_url_row( [ 'count' => 40, 'timed_count' => 0, 'sum_ms' => 0.0, 'min_ms' => 0.0 ] ),
 			'f6f6f6f6f6f6' => self::positional_url_row( [ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 30.0, 'min_ms' => 10.0, 'max_ms' => 10.0 ] ),
 		];
-		$lists = Stats_Store::rank_url_rows( $rows, [], 10 );
+		$lists = self::rank_url_rows( $rows, [], 10 );
 		$hashes = static fn ( array $entries ): array => \array_column( $entries, Stats_Store::RANK_HASH );
 		$this->assertSame( [ 'e5e5e5e5e5e5', 'f6f6f6f6f6f6' ], $hashes( $lists['count']['desc'] ) );
 		$this->assertSame( [ 'f6f6f6f6f6f6' ], $hashes( $lists['min_ms']['asc'] ) );
 		$this->assertSame( [ 'f6f6f6f6f6f6' ], $hashes( $lists['avg_ms']['desc'] ) );
 		$this->assertSame( [], $lists['url']['asc'], 'no path, no url rank' );
-	}
-
-	public function test_rank_url_rows_ranks_what_it_is_given_and_projects_nothing(): void {
-		// `rank_scopes()` filters what never ranks and projects each row to
-		// its scope, so the rows arriving here are SCALAR. Projecting again
-		// would walk every row of the bucket a second time — 32,000 of them.
-		$row  = self::positional_url_row( [ 'count' => 23, 'srv' => [ 'kea.test' => [ 'count' => 5 ] ] ] );
-		$list = Stats_Store::rank_url_rows( [ 'a7a7a7a7a7a7' => $row ], [], 10 )['count']['desc'];
-
-		$this->assertSame( $row, $list[0][ Stats_Store::RANK_ROW ], 'the row ranks exactly as it arrived' );
 	}
 
 	public function test_rank_sources_read_the_lists_of_the_named_scope(): void {
@@ -1685,17 +1696,24 @@ class StatsStoreTest extends TestCase {
 	public function test_the_derived_probe_reports_rows_and_lists_apart(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		// Hour 09 holds every URL key but no leaderboard hour.
 		foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $shard ) {
-			$store->bucket_set_multi( [
-				[ Stats_Store::url_hour_parts( $shard ), '2026-09-21-07', [] ],
-				[ Stats_Store::url_name_hour_parts( $shard ), '2026-09-21-07', [] ],
-			] );
+			foreach ( [ '2026-09-21-07', '2026-09-21-09' ] as $hour ) {
+				$store->bucket_set_multi( [
+					[ Stats_Store::url_hour_parts( $shard ), $hour, [] ],
+					[ Stats_Store::url_name_hour_parts( $shard ), $hour, [] ],
+				] );
+			}
 		}
-		$store->bucket_set_multi( [ [ Stats_Store::url_rank_done_parts(), '2026-09-21-08', [] ] ] );
+		$store->bucket_set_multi( [
+			[ Stats_Store::lb_hour_parts(), '2026-09-21-07', [] ],
+			[ Stats_Store::url_rank_done_parts(), '2026-09-21-08', [] ],
+		] );
 		$this->assertSame(
 			[
 				'2026-09-21-07' => [ 'folded' => true, 'ranked' => false ],
 				'2026-09-21-08' => [ 'folded' => false, 'ranked' => true ],
+				'2026-09-21-09' => [ 'folded' => false, 'ranked' => false ],
 			],
 			$store->url_hours_derived( [ '2026-09-21-07', '2026-09-21-08', '2026-09-21-09' ] )
 		);
@@ -1713,6 +1731,7 @@ class StatsStoreTest extends TestCase {
 			] );
 		}
 		$store->bucket_set_multi( [
+			[ Stats_Store::lb_hour_parts(), '2026-09-21-11', [] ],
 			[ Stats_Store::url_rank_done_parts(), '2026-09-21-11', [] ],
 		] );
 		$this->assertSame(
@@ -1882,5 +1901,34 @@ class StatsStoreTest extends TestCase {
 
 		$this->assertSame( [ 'at' => false ], $store->url_token_sets( [ 'at', 'takahe' ] ), 'takahe is unheld, so absent' );
 		$this->assertSame( [ 'takahe' ], $store->asked, 'only the token a read could answer' );
+	}
+
+	/**
+	 * `ranked_writes()` triples as scope => `sort:order` => entries, the
+	 * scope being '' for the site or the server's key.
+	 *
+	 * @param list<array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes
+	 * @return array<string,array<string,array<array-key,mixed>>>
+	 */
+	private static function ranked_lists( array $writes ): array {
+		$lists = [];
+		foreach ( $writes as [ $parts, , $entries ] ) {
+			$scope = \in_array( $parts[0], [ Stats_Store::NS_URLRANK, Stats_Store::NS_URLRANK_HOUR ], true ) ? '' : $parts[1];
+			$lists[ $scope ][ $parts[ \count( $parts ) - 2 ] . ':' . $parts[ \count( $parts ) - 1 ] ] = $entries;
+		}
+		return $lists;
+	}
+
+	/**
+	 * The private one-scope ranker, cut to `$n` rather than a tier's bound.
+	 *
+	 * @param array<string,array<array-key,mixed>> $rows  One scope's rows by hash.
+	 * @param array<string,string>                 $paths hash => path.
+	 * @param int                                  $n     Entries per list.
+	 * @return array<string,array<string,list<array<int,mixed>>>>
+	 */
+	private static function rank_url_rows( array $rows, array $paths, int $n ): array {
+		/** @var array<string,array<string,list<array<int,mixed>>>> */
+		return ( new \ReflectionMethod( Stats_Store::class, 'rank_url_rows' ) )->invoke( null, $rows, $paths, $n );
 	}
 }
