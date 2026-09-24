@@ -53,7 +53,7 @@ Click the row. The header gives its request rate, average time and memory. Below
 
 ### 4. Name the cause
 
-Open a slow request by clicking its row, then press **Ask AI** and click the request's summary. The panel that opens lists the **findings**: what is wrong with this request, worst first, each with the number that shows it. The request page itself does not show them.
+Open a slow request by clicking its row. Under its summary, **Findings** lists what is wrong with it, worst first, each with the number that shows it and, where a logging change would help, the change to make.
 
 | Finding | What it tells you |
 |---|---|
@@ -74,7 +74,7 @@ Open a slow request by clicking its row, then press **Ask AI** and click the req
 A logger sees only what the URL's **rule** tells it to time. If the findings say nothing is measured, or most time is unmeasured, the URL needs a rule that times more. In the URL's window press **Log this URL**, or **Edit logging rule** if one exists:
 
 - Leave **URL pattern** as filled in: the trailing `?` makes the rule cover this one URL only.
-- Under **Hooks**, pick the hooks the finding proposes. The panel names only the kind of change, `add_hooks`; the brief lists the hooks themselves. For a request nothing times, the proposal is six that split it into phases: `plugins_loaded`, `init`, `wp_loaded`, `template_redirect`, `wp_head` and `shutdown`.
+- Under **Hooks**, pick the hooks the finding's proposal names, after `add_hooks` or, for a URL no rule governs yet, `create_rule`. For a request nothing times, it proposes six that split it into phases: `plugins_loaded`, `init`, `wp_loaded`, `template_redirect`, `wp_head` and `shutdown`.
 - Tick **Log HTTP requests** when you suspect a slow outside service, and **Log database queries** when you suspect the database. Query logging makes a query-heavy request much slower, so turn it off once you have your answer.
 - Press **Save rule**. It applies at once, but only to requests that arrive after it, so wait for new ones before you look again.
 

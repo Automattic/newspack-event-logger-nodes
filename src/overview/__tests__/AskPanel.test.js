@@ -240,7 +240,7 @@ test( 'a brief with no findings says so rather than rendering an empty list', ()
 
 	expect( view.container.textContent ).toContain( 'Nothing stands out' );
 	expect(
-		view.container.querySelector( '.event-logger-ask__findings' )
+		view.container.querySelector( '.event-logger-findings' )
 	).toBeNull();
 } );
 

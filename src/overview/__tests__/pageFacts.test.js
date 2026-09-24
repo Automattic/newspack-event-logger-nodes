@@ -73,6 +73,16 @@ test( 'a selected request wins over its URL, and carries its findings', () => {
 	expect( facts.caveat ).toBe( 'not everything is measured' );
 } );
 
+test( 'a request no detector ran over claims no findings', () => {
+	// Absent and empty differ: empty says the detector looked.
+	const facts = pageFacts( {
+		selectedRequest: 'rid-7',
+		requestDetail: { duration_ms: 90, status_code: 200 },
+	} );
+
+	expect( facts.findings ).toBeUndefined();
+} );
+
 test( 'every surface names what it is scoped to', () => {
 	// A filter narrows the URL surface exactly as it narrows the overview, so
 	// the provenance cannot live inside one branch — a reader that cannot see

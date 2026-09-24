@@ -282,7 +282,7 @@ class Findings {
 
 	/**
 	 * The widest unexplained interval between consecutive entries — where a
-	 * `proc_open` or an outbound call hides, since neither is instrumented.
+	 * `proc_open` hides, and an outbound call on a rule without HTTP logging.
 	 *
 	 * @param array<array-key,mixed> $record  The request record.
 	 * @param string|null            $rule_id The governing rule's id, or null when none governs.
@@ -849,11 +849,11 @@ class Findings {
 	 */
 	public static function caveat(): string {
 		return 'The logger times ONLY the hooks the URL\'s governing rule names, the custom events '
-			. 'the application logs itself, every outbound HTTP request, and every database query '
-			. 'on a rule that turns on query logging — nothing else is instrumented, so an absence '
-			. 'here is as often an unbound hook as an idle one. Without query logging it sees no '
-			. 'SQL, and below PHP userland it sees only those HTTP calls and queries. '
-			. 'Unattributed time means unmeasured, not idle.';
+			. 'the application logs itself, outbound HTTP requests under the rule\'s HTTP logging, '
+			. 'and database queries under its query logging — nothing else is instrumented, so an '
+			. 'absence here is as often an unbound hook as an idle one. Without HTTP logging it '
+			. 'sees no outbound calls, without query logging no SQL, and below PHP userland it '
+			. 'sees only those calls and queries. Unattributed time means unmeasured, not idle.';
 	}
 
 	/**
