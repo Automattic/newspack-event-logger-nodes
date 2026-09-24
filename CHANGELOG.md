@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.102.8] - 2026-09-24
+
+### Changed
+
+- **Built against newspack-nodes 2.65.18.** The Request Log and Errors pages' segment rail now sends `dump_log` in the same POST as `list_logs` and the heartbeat, rather than in a POST of its own every ten seconds. A busy dashboard stream now reopens at once after its 30-second lifetime close instead of waiting five seconds.
+
 ## [0.102.7] - 2026-09-24
 
 ### Changed
