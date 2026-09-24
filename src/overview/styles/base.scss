@@ -29,18 +29,18 @@
 	z-index: base.$layer-modal-over;
 }
 
-.event-logger-ask__findings {
+.event-logger-findings {
 	margin: 0 0 12px;
 	padding: 0;
 	list-style: none;
 }
 
-.event-logger-ask__finding {
+.event-logger-findings__item {
 	margin-bottom: 16px;
 }
 
-.event-logger-ask__measured,
-.event-logger-ask__proposal {
+.event-logger-findings__measured,
+.event-logger-findings__proposal {
 	font-size: 12px;
 	margin: 4px 0 0;
 }

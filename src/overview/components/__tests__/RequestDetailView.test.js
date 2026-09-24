@@ -70,6 +70,149 @@ describe( 'RequestDetailView', () => {
 		unmount();
 	} );
 
+	it( 'shows the findings the record carries, with the hooks a proposal names', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestDetailView, {
+				requestDetail: {
+					...baseRequest,
+					findings: [
+						{
+							kind: 'unattributed',
+							severity: 'high',
+							title: '1.9s of 2.0s went unmeasured',
+							measured: 'subtraction',
+							proposal: {
+								action: 'add_hooks',
+								direction: 'more',
+								hooks: [ 'init', 'template_redirect' ],
+								why: 'Nothing watches the slow part.',
+							},
+						},
+						{
+							kind: 'truncation',
+							severity: 'info',
+							title: 'This record was folded under memory pressure',
+							detail: 'Repeated spans were merged.',
+							measured: 'record markers',
+							proposal: {
+								action: 'trim_hooks',
+								direction: 'less',
+							},
+						},
+						{
+							kind: 'fatal',
+							severity: 'high',
+							title: 'The request died in the sample plugin',
+							measured: 'php fatal',
+							proposal: { action: 'none' },
+						},
+					],
+				},
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+			} )
+		);
+		const text = container.textContent;
+		expect( text ).toContain( 'Findings' );
+		expect( text ).toContain( 'Repeated spans were merged.' );
+		expect( text ).toContain( 'less noise' );
+		// A fatal proposes nothing: no rule edit fixes a crash.
+		expect( text ).not.toContain( 'none' );
+		expect( text ).toContain( '1.9s of 2.0s went unmeasured' );
+		expect( text ).toContain( 'init, template_redirect' );
+		unmount();
+	} );
+
+	it( 'names what a proposal acts on, and how to take it back', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestDetailView, {
+				requestDetail: {
+					...baseRequest,
+					findings: [
+						{
+							kind: 'dominant_span',
+							severity: 'high',
+							title: 'the_content hook holds 81% of the profiled time',
+							measured: 'profiles',
+							proposal: {
+								action: 'mark_significant',
+								direction: 'more',
+								value: 'the_content',
+								why: 'Per-callback timing names the callback.',
+								undo: 'Remove the_content from significant events.',
+							},
+						},
+					],
+				},
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+			} )
+		);
+		const proposal = container.querySelector(
+			'.event-logger-findings__proposal'
+		).textContent;
+		expect( proposal ).toContain( 'the_content' );
+		expect( container.textContent ).toContain(
+			'Remove the_content from significant events.'
+		);
+		unmount();
+	} );
+
+	it( 'says a fold once, as a finding, when the record carries findings', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestDetailView, {
+				requestDetail: {
+					...baseRequest,
+					folded: true,
+					findings: [
+						{
+							kind: 'truncation',
+							severity: 'info',
+							title: 'This record was folded under memory pressure',
+							measured: 'record markers',
+							proposal: { action: 'none' },
+						},
+					],
+				},
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+			} )
+		);
+		expect( container.textContent ).not.toContain(
+			'Aggregated under load'
+		);
+		unmount();
+	} );
+
+	it( 'says nothing stands out when the detector found nothing', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestDetailView, {
+				requestDetail: { ...baseRequest, findings: [] },
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+			} )
+		);
+		expect( container.textContent ).toContain( 'Nothing stands out' );
+		unmount();
+	} );
+
+	it( 'draws no findings section for a record no detector ran over', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestDetailView, {
+				requestDetail: baseRequest,
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+			} )
+		);
+		expect( container.textContent ).not.toContain( 'Findings' );
+		unmount();
+	} );
+
 	it( 'omits memory + status when both are zero', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( RequestDetailView, {

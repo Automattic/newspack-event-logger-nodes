@@ -973,10 +973,19 @@ class FindingsTest extends TestCase {
 		$caveat = Findings::caveat();
 
 		$this->assertStringContainsString( 'SQL', $caveat );
-		// Outbound HTTP IS timed now; listing it as unseen sends a reader
-		// hunting for a cause the flame already names.
-		$this->assertStringContainsString( 'outbound HTTP request', $caveat );
 		$this->assertStringNotContainsString( 'SQL, outbound HTTP', $caveat );
+	}
+
+	/**
+	 * Outbound HTTP is timed only under a rule's `log_http`, as SQL is only
+	 * under `log_queries`. A caveat claiming every call is timed tells a model
+	 * a request with no HTTP span made none, when its rule simply never asked.
+	 */
+	public function test_the_caveat_makes_http_timing_the_rules_choice(): void {
+		$caveat = Findings::caveat();
+
+		$this->assertStringNotContainsString( 'every outbound HTTP request', $caveat );
+		$this->assertStringContainsString( 'outbound HTTP requests under the rule\'s HTTP logging', $caveat );
 	}
 
 	/**

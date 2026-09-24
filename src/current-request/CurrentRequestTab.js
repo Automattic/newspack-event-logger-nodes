@@ -25,6 +25,7 @@ import { errorStatus } from '../components/errorStatus';
 // Reuse the perf dashboard's trace + profile; its flame graph is lazy.
 import RequestTrace from '../overview/components/RequestTrace';
 import RequestProfile from '../overview/RequestProfile';
+import FindingList from '../overview/components/FindingList';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
 /** The view node's name: the poll fills it, `useNodeField` reads it. */
@@ -181,6 +182,14 @@ export default function CurrentRequestTab() {
 					statusNote={ isError ? status?.label ?? stamped : '' }
 				/>
 			</div>
+			{ Array.isArray( request.findings ) && (
+				<div className="eln-current-request__findings">
+					<h3 className="newspack-nodes-section-heading">
+						{ __( 'Findings', 'newspack-event-logger-nodes' ) }
+					</h3>
+					<FindingList findings={ request.findings } />
+				</div>
+			) }
 			{ hasFlame && <RequestTrace flameData={ flameData } /> }
 			{ hasProfiles && (
 				<div className="eln-current-request__profiles">

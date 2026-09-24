@@ -73,7 +73,7 @@ export function pageFacts( {
 				: null,
 			duration_ms: num( requestDetail.duration_ms ),
 			status_code: num( requestDetail.status_code ),
-			findings: requestDetail.findings ?? [],
+			findings: requestDetail.findings,
 			caveat: requestDetail.caveat ?? '',
 		};
 	}

@@ -1,8 +1,8 @@
 /**
  * Request Detail View Component
  *
- * Everything known about one logged request: the summary line, the flame
- * graph, the profile breakdown, and the log entries table. `PerformanceDashboard`
+ * Everything known about one logged request: the summary line, its findings,
+ * the flame graph, the profile breakdown, and the log entries table. `PerformanceDashboard`
  * renders this inside the URL modal once a request row is selected.
  *
  * The data arrives already assembled. The `request-detail:view` node holds the
@@ -24,6 +24,7 @@ import RequestSummary from '../../components/RequestSummary';
 import RequestProfile from '../RequestProfile';
 import RequestTrace from './RequestTrace';
 import LogEntriesTable from './LogEntriesTable';
+import FindingList from './FindingList';
 import { errorStatus } from '../../components/errorStatus';
 
 /** Vertical rhythm between the detail's sections. */
@@ -33,13 +34,15 @@ const SECTION_STYLE = { marginBottom: '20px' };
  * `requestDetail` is the durable request body `record_of()` writes and
  * `dump_request` reads back: `url`, `request_method`, `timestamp` (seconds),
  * `duration_ms`, `peak_mb`, `status_code`, `profiles`, `error_status` and
- * `folded`.
+ * `folded`, plus the `findings` `dump_request` computes for it — absent when
+ * no detector ran, which is not the same answer as an empty list.
  *
  * `Request_Builder_Node` stamps `error_status` as one character — `-` for a
  * clean request, and one of the shared `ERROR_STATUSES` codes for anything
  * else, which is what gets the badge. It sets `folded` on a request it merged
  * under memory pressure, and the banner is where that record says what the
- * merge cost its sequence.
+ * merge cost its sequence — unless the record carries findings, whose
+ * `truncation` finding already says it.
  *
  * @param {Object}  props                 Component props.
  * @param {Object}  props.requestDetail   Decoded request body; see above.
@@ -60,6 +63,7 @@ export default function RequestDetailView( {
 } ) {
 	const revealRef = useRef( null );
 	const status = errorStatus( requestDetail.error_status );
+	const hasFindings = Array.isArray( requestDetail.findings );
 	const isFolded = !! requestDetail.folded;
 	const hasEntries = indentedEntries.length > 0;
 	const hasFlame = flameData && flameData.children?.length > 0;
@@ -93,6 +97,16 @@ export default function RequestDetailView( {
 				/>
 			</div>
 
+			{ /* What is wrong, worst first: the answer before the evidence. */ }
+			{ hasFindings && (
+				<div style={ SECTION_STYLE }>
+					<h3 className="newspack-nodes-section-heading">
+						{ __( 'Findings', 'newspack-event-logger-nodes' ) }
+					</h3>
+					<FindingList findings={ requestDetail.findings } />
+				</div>
+			) }
+
 			{ hasNoDetail && (
 				<p className="event-logger-request-detail-empty newspack-nodes-no-selection">
 					{ __(
@@ -102,7 +116,7 @@ export default function RequestDetailView( {
 				</p>
 			) }
 
-			{ isFolded && (
+			{ isFolded && ! hasFindings && (
 				<p className="newspack-nodes-banner is-warning">
 					{ __(
 						'Aggregated under load. This request logged more than the worker could hold alongside the others in flight, so repeated spans were merged into one frame each — counts and totals are exact, the sequence is not. Its opening and closing entries are kept in full, and the merged spans sit between them in the log, each showing how many instances it stands for.',

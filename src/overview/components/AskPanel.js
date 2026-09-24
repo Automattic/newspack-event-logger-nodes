@@ -30,6 +30,7 @@ import {
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import { formatCommandArgs, nodesData } from '@newspack-nodes/runtime';
 import { askClaudeUrl, briefToMarkdown, clipboardBrief } from '../askBrief';
+import FindingList from './FindingList';
 
 /**
  * The picker's state, held once for the whole dashboard.
@@ -187,67 +188,6 @@ export function AskButton( { ask } ) {
 }
 
 /**
- * The status class each severity renders as. `Findings` mints exactly these
- * three, and `info` takes no modifier so it keeps the shared role's own
- * neutral styling.
- *
- * @type {Object<string,string>}
- */
-const TONE = {
-	high: 'is-error',
-	medium: 'is-warning',
-	info: '',
-};
-
-/**
- * One finding, rendered. This is the half that is worth shipping with no model
- * involved at all: the detector computes, and the numbers speak.
- *
- * @param {Object} props
- * @param {Object} props.finding One of the brief's findings: `severity`,
- *                               `title`, `detail`, `measured`, and a
- *                               `proposal` carrying the rule edit to make as
- *                               `action` — `none` when there is nothing to
- *                               change — beside the `direction` that edit
- *                               moves visibility in and its `why`.
- * @return {import('react').ReactElement} The rendered finding.
- */
-function Finding( { finding } ) {
-	const proposal = finding.proposal;
-	return (
-		<li className="event-logger-ask__finding">
-			<strong
-				className={ `newspack-nodes-status ${
-					TONE[ finding.severity ] ?? ''
-				}` }
-			>
-				{ finding.title }
-			</strong>
-			{ finding.detail && <p>{ finding.detail }</p> }
-			<p className="event-logger-ask__measured">
-				{ sprintf(
-					// translators: %s: where the finding was measured.
-					__( 'measured: %s', 'newspack-event-logger-nodes' ),
-					finding.measured
-				) }
-			</p>
-			{ proposal && 'none' !== proposal.action && (
-				<p className="event-logger-ask__proposal">
-					<code>{ proposal.action }</code>{ ' ' }
-					{ 'more' === proposal.direction
-						? __(
-								'— more visibility',
-								'newspack-event-logger-nodes'
-						  )
-						: __( '— less noise', 'newspack-event-logger-nodes' ) }
-					{ proposal.why && <span> — { proposal.why }</span> }
-				</p>
-			) }
-		</li>
-	);
-}
-
-/**
  * The brief preview: what the picker assembled, the markdown behind it, and
  * the two deliberate ways to send that markdown off the page.
  *
@@ -320,28 +260,7 @@ export default function AskPanel( { ask } ) {
 					key={ `${ brief.subject }-${ i }` }
 					className="event-logger-ask__section"
 				>
-					{ ( brief.findings ?? [] ).length > 0 && (
-						<ul className="event-logger-ask__findings">
-							{ brief.findings.map( ( finding, j ) => (
-								<Finding
-									key={ `${ finding.kind }-${ j }` }
-									finding={ finding }
-								/>
-							) ) }
-						</ul>
-					) }
-					{ /* @longform An empty list looked and found nothing; an
-					     absent one had no detector run over it, and saying
-					     nothing stands out there is a claim nobody made. */ }
-					{ Array.isArray( brief.findings ) &&
-						0 === brief.findings.length && (
-							<p className="newspack-nodes-status">
-								{ __(
-									'Nothing stands out in the numbers here.',
-									'newspack-event-logger-nodes'
-								) }
-							</p>
-						) }
+					<FindingList findings={ brief.findings } />
 				</div>
 			) ) }
 

@@ -108,6 +108,15 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 			children: [ { name: 'x' } ],
 		},
 		profiles: { db: 10, hooks: 20 },
+		findings: [
+			{
+				kind: 'plugin_load',
+				severity: 'medium',
+				title: 'Loading 41 plugins took 302ms, 70% of the request',
+				measured: 'profiles',
+				proposal: { action: 'none' },
+			},
+		],
 	} );
 
 	let view;
@@ -117,6 +126,10 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	// Flush the lazy FlameGraph import (Suspense) after the fetch.
 	await act( async () => {} );
 
+	// The same record's answer, as the dashboard's request page shows it.
+	expect( view.container.textContent ).toContain(
+		'Loading 41 plugins took 302ms, 70% of the request'
+	);
 	const sent = seen.mock.calls[ 0 ][ 0 ];
 	expect( sent[ TO ] ).toBe( 'performance' );
 	expect( sent[ VALUE ].name ).toBe( 'dump_request' );

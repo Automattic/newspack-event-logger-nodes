@@ -8,7 +8,7 @@ The writer sits on the critical path of the request it measures. [Log_Manager](.
 
 Four gates stand before the append. `enable_logging` is the master switch. The writer refuses to run as root. A rule pairs a URL pattern with a verdict, log or skip, and specificity outranks list order: a pattern with a query beats an exact path, which beats a prefix, and length breaks ties only within a rank. No match means skip, so the seed ruleset is one log rule on `/`; cron and the runtime's own endpoints log as worker traffic rather than being skipped. A rule's id is the hash of its pattern, so one URL never carries two rules.
 
-The fourth gate is what the log rule binds: the hooks to time, the custom events to log and the events to profile per callback. Outbound HTTP is timed by default, one span per remote call, and a rule can turn it off. SQL is timed only when a rule asks, because the closing hook fires only under `SAVEQUERIES` and each query costs two entries. Where nothing is bound, the Performance dashboard's findings report insufficient instrumentation rather than guess.
+The fourth gate is what the log rule binds: the hooks to time, the custom events to log and the events to profile per callback. Outbound HTTP and SQL are timed only when a rule asks, through its `log_http` and `log_queries`: each remote call or query costs two entries, and a query's closing hook fires only under `SAVEQUERIES`. Where nothing is bound, the Performance dashboard's findings report insufficient instrumentation rather than guess.
 
 ![Four gates decide whether a request is logged, and a line-by-line listing of the record one request writes to the firehose, under a byte budget showing the 3,840-byte entry inside Linux's 4,096-byte atomic append](img/d06.png)
 

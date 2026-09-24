@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A request's findings show on its page.** They showed only in the Ask panel, so reading why a request was slow took a detour through Ask AI. They now sit under the request's summary, and under the current-request overlay's too, drawn by the same list the Ask panel uses. A proposal now names what it acts on, its hooks or its single target, and how to undo it, and a folded record says so once, as a finding, rather than again in a banner.
+
+### Fixed
+
+- **The caveat no longer claims every outbound HTTP request is timed.** It is timed only under a rule with `log_http` on, as SQL is under `log_queries`. The claim rode in every brief, every MCP tool description and the MCP server's instructions, so an assistant read a request with no HTTP span as one that made no calls.
+
 ## [0.102.6] - 2026-09-23
 
 ### Changed
