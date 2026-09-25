@@ -18,7 +18,7 @@ The vocabulary here is the substrate's. Its [documentation map](https://github.c
 |-------------|---------|
 | WordPress | 6.5 |
 | PHP | 8.2 |
-| `newspack-nodes` | 2.65.13, installed and active |
+| `newspack-nodes` | 2.66.0, installed and active |
 | A cache backend | Memcached, or APCu |
 
 The substrate's [`Cache_Backend`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-cache-backend.php) prefers the shared `Memcached` handle `Bootstrap` builds from `memcache_servers` and falls back to APCu. Either one alone brings the runtime up. With neither, the substrate cannot claim a command's single-use nonce, so verification fails closed and no dashboard verb answers; [`Stats_Store::table()`](includes/class-stats-store.php) returns null besides, and every statistics read counts as a miss.
@@ -72,7 +72,7 @@ The settings layer is the substrate's shared [Config System](https://github.com/
 
 Three keys render as checkboxes on the settings page — `enable_logging`, `log_memory` and `flush_every_line`, each classed `all`, so changing one recycles the whole fleet. `rules` has its own editor on that page. The remaining six are overlay-only: `hook_start_priority` (where [`App\Core`](includes/app/class-core.php) binds `hook_start`, default `-10000`, against a `hook_complete` fixed at `PHP_INT_MAX - 1`), `custom_colors` (event name to hex swatch, for the event pickers), `stats_mirror_node` (the durable Partition shadowing the memcache stats, `flame-stats:partition`, empty to turn it off), `stats_mirror_read_budget_ms` (milliseconds one dashboard verb may spend reading that mirror, `5000`, `0` to turn the reader's mirror read off) and `recommended_log_events` (the hook picker's "Recommended" menu, which binds nothing itself). The `allowed_users` allowlist narrowing who reaches the dashboards is the SUBSTRATE's key, read through [`Capabilities::can()`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-capabilities.php); this plugin declares none of its own.
 
-Hub-mode is derived, never toggled: an active [`aggregator`](topologies/aggregator.tsl) topology, by name or by include, or any active graph carrying a `Remote_Source` node. Remote-spoke credentials live in the substrate's [**Vault**](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md#the-vault-and-the-hub-user) (the substrate's `vault` CI); the per-spoke `Remote_Source` nodes are wired on the topology console canvas.
+Hub-mode is derived, never toggled: an active [`aggregator`](topologies/aggregator.tsl) topology, by name or by include, or any active graph carrying a `Remote_Source` node. Remote-spoke credentials live in the substrate's [**Vault**](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md#the-vault-and-the-hub-user) (the substrate's `vault` CI); the per-spoke `Remote_Source` nodes are wired on the topology console canvas, one at a time or all at once as a `Vault_Group`.
 
 ### Logging rules
 

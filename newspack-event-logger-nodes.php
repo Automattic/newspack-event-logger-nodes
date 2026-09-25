@@ -78,7 +78,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// serving a record whose stated cache lifetime is spent — what lets an
 	// evicted `urls_h` rebuild from the fine buckets it derives from, and a
 	// BEHAVIOUR requirement check-substrate-floor.sh cannot see, since it
-	// audits which APIs exist rather than what they do. 2.57.0 is the
+	// audits which APIs exist rather than what they do. 2.53.0 is
+	// Capabilities::can() applying the operator's allowed_users list, after
+	// this plugin deleted its own copy of it: below the floor the capability
+	// still resolves and the list narrows nothing, a silent widening no gate
+	// can see. 2.56.0 is Admin::overlay_pages() and the station-tab filter
+	// the current-request tab registers on: below it the station has no
+	// Request tab and every rail's fetch is refused. 2.57.0 is the
 	// /auth reply naming the signing key `secret`, which the bundled auth
 	// client and MCP_Controller read. 2.58.0 is the Table's remembered
 	// absence, which Stats_Store's `$absence` seam sets. 2.60.0 is the
@@ -87,12 +93,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// failed batch read, without which a stats flush writes its deltas over
 	// the stored buckets — BEHAVIOUR again. 2.65.13 is the SSE stream
 	// addressing replies to the command session the bundled stream client
-	// presents; below it the dashboards' streams receive no replies. Raise
-	// the floor whenever a new hard requirement appears. The floor is what
-	// makes a too-old substrate DORMANT rather than fatal, so one set too low
-	// is worse than none, and WordPress does not order plugin updates.
+	// presents; below it the dashboards' streams receive no replies. 2.66.0
+	// is Fanout_Targets::egress_for(), which the discovery fan-out now calls.
+	// Raise the floor whenever a new hard requirement appears. The floor is
+	// what makes a too-old substrate DORMANT rather than fatal, so one set
+	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.65.13', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.66.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
