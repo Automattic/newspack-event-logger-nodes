@@ -3,11 +3,16 @@
  * Discovery_Collector_Node — the hub's periodic sweep of what its spokes instrument.
  *
  * Mounted by the `hub-control` topology; an operator connects it to the same
- * per-spoke `HTTP_Out` egress nodes that carry settings-sync. It mints and signs
- * one probe per spoke rather than letting a Tee fan one out, for the reason
+ * per-spoke `HTTP_Out` egress nodes that carry settings-sync — one at a time,
+ * or all at once by connecting it to a single `Vault_Group` node instead,
+ * whose members stand in for the per-spoke egress. It mints and signs one
+ * probe per spoke rather than letting a Tee fan one out, for the reason
  * Settings_Sync_Node is the hub's other minter: a signature verifies only at the
  * destination it was minted for, so a command re-addressed after the mint
- * verifies nowhere.
+ * verifies nowhere. Either way each egress needs `allow_replies_to
+ * discovery-collector` declared or the reply is dropped; on a `Vault_Group`
+ * that declaration is made ONCE, on the group, which forwards it to every
+ * member and replays it to one the Vault builds later.
  *
  * What the replies build is a staging catalog — the `discovered_hooks` and
  * `discovered_events` options the rule editor's hook picker offers. Nothing here
@@ -21,7 +26,6 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Command_Auth;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Fanout_Targets;
-use Newspack_Nodes\HTTP_Out_Node;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Message;
@@ -147,18 +151,6 @@ class Discovery_Collector_Node extends Timer_Node {
 			Command_Auth::sign_for( $spoke, $out );
 			$sink->fill( $out );
 		}
-	}
-
-	/**
-	 * The egress a target names; a target may be a path, so resolve its head.
-	 *
-	 * @param string $target Target name or path, as stored by connect_node().
-	 * @return HTTP_Out_Node|null The egress node, or null when the head names something else.
-	 */
-	private function egress_for( string $target ): ?HTTP_Out_Node {
-		[ $head ] = Message::split_first( $target );
-		$node     = Core::node( $head );
-		return $node instanceof HTTP_Out_Node ? $node : null;
 	}
 
 	/**

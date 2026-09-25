@@ -4,7 +4,7 @@ Event-logger application built on the [`newspack-nodes`](https://github.com/Auto
 
 Everything it writes hangs from the substrate's `base_directory`, `/tmp/newspack-nodes` by default.
 
-**Substrate presence.** The [deferred bootstrap](../newspack-event-logger-nodes.php) (run on [`plugins_loaded`](https://developer.wordpress.org/reference/hooks/plugins_loaded/) priority 11) returns early unless [`\Newspack_Nodes\Bootstrap`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-bootstrap.php) exists AND `Bootstrap::version_at_least( '2.65.13', 'Newspack Event Logger Nodes' )` passes: it wires the event logger against a new-enough substrate and lies dormant otherwise. `Requires Plugins: newspack-nodes` keeps the runtime active on WordPress 6.5+; the version handshake is the graceful fallback. One thing is wired outside the deferred closure — [`Config::register_config_keys()`](../includes/class-config.php) hooks `newspack_nodes/declare_config_keys` at file load, because the substrate pulls that declaration from inside any config read, ahead of `plugins_loaded`.
+**Substrate presence.** The [deferred bootstrap](../newspack-event-logger-nodes.php) (run on [`plugins_loaded`](https://developer.wordpress.org/reference/hooks/plugins_loaded/) priority 11) returns early unless [`\Newspack_Nodes\Bootstrap`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-bootstrap.php) exists AND `Bootstrap::version_at_least( '2.66.0', 'Newspack Event Logger Nodes' )` passes: it wires the event logger against a new-enough substrate and lies dormant otherwise. `Requires Plugins: newspack-nodes` keeps the runtime active on WordPress 6.5+; the version handshake is the graceful fallback. One thing is wired outside the deferred closure — [`Config::register_config_keys()`](../includes/class-config.php) hooks `newspack_nodes/declare_config_keys` at file load, because the substrate pulls that declaration from inside any config read, ahead of `plugins_loaded`.
 
 ## Table of Contents
 
@@ -385,7 +385,7 @@ connect_node remote-job-rewrite firehose:topic
 secure
 ```
 
-Per-spoke `Remote_Source` nodes are NOT in the stock topology — the operator adds them on the canvas, one per spoke/partition:
+Per-spoke `Remote_Source` nodes are NOT in the stock topology — the operator adds them on the canvas, one per spoke/partition, either by hand:
 
 ```tsl
 make_node Remote_Source spoke-<id> <vault-id> firehose.p<partition> \
@@ -393,6 +393,16 @@ make_node Remote_Source spoke-<id> <vault-id> firehose.p<partition> \
     <config:deadletter_dir>/spoke-<id>.p<partition>
 connect_node spoke-<id> remote-job-rewrite
 cmd spoke-<id>:config set_multi_writer true
+```
+
+or all at once as a `Vault_Group`, `{id}` standing in for each group member's own Vault id:
+
+```tsl
+make_node Vault_Group spoke Remote_Source <group> firehose.p<partition> \
+    <config:offsets_dir>/spoke-{id}.<topology>.p<partition> \
+    <config:deadletter_dir>/spoke-{id}.p<partition>
+connect_node spoke remote-job-rewrite
+cmd spoke:config set_multi_writer true
 ```
 
 [`Remote_Source`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-remote-source-node.php) reads like the Consumer it is: `<vault-id>` names the spoke, `firehose.p<partition>` names the remote partition to subscribe to, and the last two arguments are its offsetlog and dead-letter directories. Both are optional in the schema and both should be passed — omitting them means no cursor and no quarantine. Scope the offsetlog with `<topology>` so two hubs pulling one spoke partition never share a cursor.
@@ -422,7 +432,7 @@ The included `settings-sync` is the substrate's control plane — the settings l
 
 The three lines above add the application options, and they must stay in step with `Performance_CI_Node::SETTINGS_OPTIONS`: a hub push naming anything outside that whitelist comes back as "unknown option". This file also adds `Discovery_Collector`, which fans `discovery.get` to every spoke on its own 300s tick and union-merges the replies into the hub's staging options.
 
-**Neither fan-out goes through a Tee.** Each spoke's command is signed under that spoke's session key, and re-addressing a signed command after the mint makes it verify nowhere — so `Settings_Sync` and `Discovery_Collector` each iterate their own live targets and mint one signed command per spoke. The pipeline stays correctly inert until an operator wires per-spoke `HTTP_Out <name> <vault-id>` nodes from the console and connects the two nodes to them.
+**Neither fan-out goes through a Tee.** Each spoke's command is signed under that spoke's session key, and re-addressing a signed command after the mint makes it verify nowhere — so `Settings_Sync` and `Discovery_Collector` each iterate their own live targets, a group expanded to its members, and mint one signed command per spoke. The pipeline stays correctly inert until an operator connects the two nodes to per-spoke `HTTP_Out <name> <vault-id>` egress, wired one at a time from the console or all at once through `make_node Vault_Group <name> HTTP_Out <group>`.
 
 `Settings_Sync` and `Settings_Event_Writer` live in the substrate ([`\Newspack_Nodes\Settings_Sync_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-sync-node.php), [`\Newspack_Nodes\Settings_Event_Writer`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-event-writer.php)); `Discovery_Collector_Node` is this plugin's (see [Discovery_Collector_Node](#discovery_collector_node)).
 
@@ -591,7 +601,7 @@ Two gates this node deliberately does not hold. Size belongs to the producers an
 
 ### Remote_Job_Rewrite_Node
 
-Hub-side fan-in is the self-sufficient substrate [`\Newspack_Nodes\Remote_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-remote-source-node.php) — one per spoke/partition, operator-wired on the topology console. Each one patrons its own `SSE_In` + `HTTP_Out`, owns its offsetlog and reconnect/backoff, pulls `/messages/stream?subscribe=firehose.pN` with JSON `positions` resume, looks up its spoke credentials from the substrate **Vault**, and publishes the status snapshot the `aggregator` CI reads (see [`aggregator.tsl`](#topologiesaggregatortsl)).
+Hub-side fan-in is the self-sufficient substrate [`\Newspack_Nodes\Remote_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-remote-source-node.php) — one per spoke/partition, operator-wired on the topology console by hand or as a `Vault_Group`. Each one patrons its own `SSE_In` + `HTTP_Out`, owns its offsetlog and reconnect/backoff, pulls `/messages/stream?subscribe=firehose.pN` with JSON `positions` resume, looks up its spoke credentials from the substrate **Vault**, and publishes the status snapshot the `aggregator` CI reads (see [`aggregator.tsl`](#topologiesaggregatortsl)).
 
 The one application-specific piece is [`Remote_Job_Rewrite_Node`](../includes/class-remote-job-rewrite-node.php) — a pass-through transform the `aggregator` topology wires between the substrate `Remote_Source` sources and the firehose `Topic`. It flips aggregated `k:"job"` entries to `k:"remote_job"` so they dispatch centrally on the hub via `newspack_nodes/remote_job_handlers` rather than locally; non-`job` entries and non-array VALUEs pass through untouched.
 
@@ -739,7 +749,7 @@ A `Remote_Source` node references its spoke by `<vault-id>`, and the reload chan
 
 ## Settings Sync: No Operator Gate
 
-The fan-out above is **ungated** in the structural sense: a watched option change always records a settings event, and nothing fans it out unless `hub-control` is active and per-spoke `HTTP_Out` nodes are wired. On a spoke or standalone site there is no consumer, so the event is tailed and dropped. Letting that drop happen at the node-graph level is cheaper and harder to misconfigure than a per-listener `get_option` gate. Watched means `newspack_`-prefixed: `Settings_Event_Writer::maybe_emit()` returns on the name of any other option, a consumer plugin's own differently-prefixed setting included, so that change records nothing at all.
+The fan-out above is **ungated** in the structural sense: a watched option change always records a settings event, and nothing fans it out unless `hub-control` is active and per-spoke `HTTP_Out` egress is wired — by hand or as a `Vault_Group`. On a spoke or standalone site there is no consumer, so the event is tailed and dropped. Letting that drop happen at the node-graph level is cheaper and harder to misconfigure than a per-listener `get_option` gate. Watched means `newspack_`-prefixed: `Settings_Event_Writer::maybe_emit()` returns on the name of any other option, a consumer plugin's own differently-prefixed setting included, so that change records nothing at all.
 
 Recording the option NAME and resolving its value at consume time is what makes the ungated shape safe: a burst of writes collapses to one current-value push, and no stale value can race a fresher one onto a spoke. An auto-tune decision travels the same road (see [Auto_Tuner_Node](#auto_tuner_node)).
 

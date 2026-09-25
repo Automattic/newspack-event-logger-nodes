@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Requires newspack-nodes 2.66.0.** `Discovery_Collector_Node`'s fan-out now calls the substrate's `Fanout_Targets::egress_for()` instead of carrying its own copy of the method. Group fan-out itself — connecting the collector to a `Vault_Group` egress — is a substrate capability, not new behaviour here.
+
 ## [0.102.9] - 2026-09-25
 
 ### Fixed
