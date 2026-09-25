@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The three category charts title their Y-axis.** Time by Category, Events by Category and Average Time per Event drew bare ticks while the breakdown chart above them read "Requests". Their axes now read Time, Events and Time per Event; the ticks still carry the unit.
+- **The memory chart's axis title drops its unit.** It read "Avg Peak Memory (MB)" beside ticks that already print MB.
+
+### Changed
+
+- **Built against newspack-nodes 2.65.19.** Every chart's left gutter is 12px wider, so an axis title clears ticks as wide as `800ms/s`. The dashboards' own tick and axis-line paint is gone, since the substrate's chart role has painted both since 2.60.0.
+
 ## [0.102.8] - 2026-09-24
 
 ### Changed

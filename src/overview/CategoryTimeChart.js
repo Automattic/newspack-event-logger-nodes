@@ -42,23 +42,27 @@ const CHART_HEIGHT = 200;
 /**
  * The three views the panel takes of one series, in render order. `mode` picks
  * both the sampler in `buildSeries` and the unit in `formatYValue`; `title` is
- * the heading, translated here because `AreaTimeChart` holds no wording of its
- * own.
+ * the heading and `yLabel` the Y-axis title, translated here because
+ * `AreaTimeChart` holds no wording of its own. The axis title names the
+ * quantity alone: the ticks carry the unit.
  *
- * @type {Array<{mode: string, title: string}>}
+ * @type {Array<{mode: string, title: string, yLabel: string}>}
  */
 const CATEGORY_VIEWS = [
 	{
 		mode: 'time',
 		title: __( 'Time by Category', 'newspack-event-logger-nodes' ),
+		yLabel: __( 'Time', 'newspack-event-logger-nodes' ),
 	},
 	{
 		mode: 'count',
 		title: __( 'Events by Category', 'newspack-event-logger-nodes' ),
+		yLabel: __( 'Events', 'newspack-event-logger-nodes' ),
 	},
 	{
 		mode: 'average',
 		title: __( 'Average Time per Event', 'newspack-event-logger-nodes' ),
+		yLabel: __( 'Time per Event', 'newspack-event-logger-nodes' ),
 	},
 ];
 
@@ -211,12 +215,13 @@ export default function CategoryTimeChart( { data } ) {
 		return null;
 	}
 
-	return CATEGORY_VIEWS.map( ( { mode, title }, index ) => (
+	return CATEGORY_VIEWS.map( ( { mode, title, yLabel }, index ) => (
 		<AreaTimeChart
 			key={ mode }
 			series={ series[ index ] }
 			colorAt={ colorAt }
 			yFormatFor={ yFormatsFor[ index ] }
+			yLabel={ yLabel }
 			title={ title }
 			height={ CHART_HEIGHT }
 			stackable={ false }
