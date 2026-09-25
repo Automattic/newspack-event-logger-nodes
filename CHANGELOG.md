@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.102.9] - 2026-09-25
+
 ### Fixed
 
 - **The three category charts title their Y-axis.** Time by Category, Events by Category and Average Time per Event drew bare ticks while the breakdown chart above them read "Requests". Their axes now read Time, Events and Time per Event; the ticks still carry the unit.
