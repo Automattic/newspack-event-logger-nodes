@@ -6,22 +6,11 @@
 
 @use "base";
 
-// D3 renders axis ticks/titles with a default black fill and black axis lines,
-// which vanish under dark skins. Repoint them at the skin ink so the labels
-// (tick text + rotated y-axis titles) read in every theme.
+// SVG draws text black; our substrate floor's chart role leaves this unset.
 .event-logger-performance-dashboard,
 .event-logger-performance-modal {
-	.tick text {
-		fill: var(--ink-3);
-	}
-
 	.y-label {
-		fill: var(--ink);
-	}
-
-	.tick line,
-	.domain {
-		stroke: var(--paper-shadow);
+		fill: var(--ink, var(--np-text));
 	}
 }
 

@@ -657,6 +657,32 @@ describe( 'canonical appearance ownership', () => {
 		expect( offenders ).toEqual( [] );
 	} );
 
+	it( 'leaves tick and axis-line ink to the shared chart role', () => {
+		const offenders = [];
+
+		for ( const file of styleFiles() ) {
+			const stylesheet = postcss.parse( compile( file ), { from: file } );
+			stylesheet.walkRules( ( rule ) => {
+				if (
+					! rule.selectors.some( ( selector ) =>
+						/\.(?:tick|domain)(?![\w-])/.test( selector )
+					)
+				) {
+					return;
+				}
+				rule.walkDecls( /^(?:fill|stroke)$/, ( decl ) => {
+					offenders.push(
+						`${ path.relative( SRC, file ) }:${ rule.selector }:${
+							decl.prop
+						}`
+					);
+				} );
+			} );
+		}
+
+		expect( offenders ).toEqual( [] );
+	} );
+
 	it( 'keeps every local appearance declaration semantic and explicit', () => {
 		const offenders = [];
 

@@ -257,12 +257,11 @@ export default function AggregateTimeChart( {
 		memory: __( 'Avg Peak Memory', 'newspack-event-logger-nodes' ),
 	};
 
+	// No unit in an axis title: the ticks carry it, and it moves with the data.
 	const yLabels = {
+		...metricLabels,
 		volume: __( 'Requests', 'newspack-event-logger-nodes' ),
-		// No unit in the title: the ticks carry it, and it moves with the data.
-		avg: __( 'Avg Response Time', 'newspack-event-logger-nodes' ),
 		cumulative: __( 'Cumulative Time', 'newspack-event-logger-nodes' ),
-		memory: __( 'Avg Peak Memory (MB)', 'newspack-event-logger-nodes' ),
 	};
 
 	const titleSuffix = serverFilter ? ` — ${ serverFilter }` : '';

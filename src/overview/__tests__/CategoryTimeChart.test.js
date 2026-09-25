@@ -134,6 +134,23 @@ describe( 'CategoryTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'titles every view Y-axis with the quantity it plots', () => {
+		const { unmount } = renderComponent(
+			React.createElement( CategoryTimeChart, {
+				data: {
+					names: [ 'redis' ],
+					buckets: { [ bucketKeyNow() ]: [ [ 0, 8123, 419, 419 ] ] },
+				},
+			} )
+		);
+		const expected = [ 'Time', 'Events', 'Time per Event' ];
+		const yLabels = d3Mock.text.mock.calls
+			.map( ( [ text ] ) => text )
+			.filter( ( text ) => expected.includes( text ) );
+		expect( yLabels ).toEqual( expected );
+		unmount();
+	} );
+
 	it( 'returns null when data is null', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, { data: null } )

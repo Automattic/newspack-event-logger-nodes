@@ -341,6 +341,8 @@ describe( 'AggregateTimeChart', () => {
 			} )
 		);
 		expect( container.textContent ).toContain( 'Avg Peak Memory' );
+		// The ticks already print MB; the axis title names the quantity alone.
+		expect( d3Mock.text ).toHaveBeenCalledWith( 'Avg Peak Memory' );
 		unmount();
 	} );
 
