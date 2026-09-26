@@ -218,9 +218,9 @@ Two things about `include` are easy to trip over. Frontmatter is read from the T
 
 The `make_node` first argument is a **shell name** the substrate resolves to a fully-qualified class by scanning the registered namespace prefixes (`make_node Request_Builder` → `\Newspack_Event_Logger_Nodes\Request_Builder_Node`); the unqualified substrate types (`Consumer`, `Partition`, `Tee`, `Topic`, `Age_Sieve`, `Remote_Source`) resolve under the substrate's own prefix.
 
-Ten `.tsl` files ship. Five are primitives that declare their own nodes — [`request-builder`](../topologies/request-builder.tsl), [`flame-builder`](../topologies/flame-builder.tsl), [`job-router`](../topologies/job-router.tsl), [`job-feed`](../topologies/job-feed.tsl), [`aggregator`](../topologies/aggregator.tsl) — and five compose those with substrate stock topologies: [`performance`](../topologies/performance.tsl), [`job-hub`](../topologies/job-hub.tsl), [`job-spoke`](../topologies/job-spoke.tsl), [`complete`](../topologies/complete.tsl), [`hub-control`](../topologies/hub-control.tsl). Job *dispatch* (`Job_Worker_Node` tailing `jobs.pN`) is the substrate's stock [`job-worker`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/job-worker.tsl) topology, which `job-hub` and `job-spoke` include.
+Eleven `.tsl` files ship. Five are primitives that declare their own nodes — [`request-builder`](../topologies/request-builder.tsl), [`flame-builder`](../topologies/flame-builder.tsl), [`job-router`](../topologies/job-router.tsl), [`job-feed`](../topologies/job-feed.tsl), [`aggregator`](../topologies/aggregator.tsl) — and six compose those with substrate stock topologies: [`performance`](../topologies/performance.tsl), [`job-hub`](../topologies/job-hub.tsl), [`job-spoke`](../topologies/job-spoke.tsl), [`complete`](../topologies/complete.tsl), [`hub-control`](../topologies/hub-control.tsl), [`hub`](../topologies/hub.tsl) (`aggregator` + `hub-control` in one worker, pinning its own `num_partitions = 1` since an included file's frontmatter is skipped). `aggregator` and `hub-control` each ship a `Vault_Group` leg over Vault group `spoke` — the per-spoke `Remote_Source` and `HTTP_Out` nodes, respectively — so standing a hub up is a Vault edit, not a topology edit. Job *dispatch* (`Job_Worker_Node` tailing `jobs.pN`) is the substrate's stock [`job-worker`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/job-worker.tsl) topology, which `job-hub` and `job-spoke` include.
 
-![The ten topologies as compositions: four substrate stock files on the left (topic-probe, job-intake, job-worker, settings-sync) with what each reads and writes; the five primitives in the middle, each naming its includes and its logs; the five compositions on the right, each a list of includes, with the frontmatter it restates and the Tee complete adds; beneath, the fleet name scoping every cursor, the five eln tokens, and shell-name resolution.](img/ag-topologies.png)
+![The eleven topologies as compositions: four substrate stock files on the left (topic-probe, job-intake, job-worker, settings-sync) with what each reads and writes; the five primitives in the middle, each naming its includes and its logs; the six compositions on the right, each a list of includes, with the frontmatter it restates and the Tee complete adds; beneath, the fleet name scoping every cursor, the five eln tokens, and shell-name resolution.](img/ag-topologies.png)
 
 ### `topologies/request-builder.tsl`
 
@@ -375,37 +375,27 @@ Order matters. `job-hub` is included last and, through `job-router`, wires `fire
 
 ### `topologies/aggregator.tsl`
 
-Hub-side ingest. Per-spoke substrate `Remote_Source` nodes (operator-wired on the console canvas) pull each spoke's firehose via SSE; the ELN `Remote_Job_Rewrite` node flips aggregated `k:"job"` entries to `k:"remote_job"`; the multi-partition `Topic` KEY-routes by request-id hash so each downstream firehose-consuming partition sees its own slice.
+Hub-side ingest. A `firehose` `Vault_Group` over Vault group `spoke` builds one `Remote_Source` per spoke — pulling each spoke's firehose via SSE — and follows the Vault on reload; the ELN `Remote_Job_Rewrite` node flips aggregated `k:"job"` entries to `k:"remote_job"`; the multi-partition `Topic` KEY-routes by request-id hash so each downstream firehose-consuming partition sees its own slice.
 
 ```tsl
 include topic-probe
+
+make_node Vault_Group firehose Remote_Source spoke firehose.p<partition> \
+    <config:offsets_dir>/<topology>.firehose.{id}.p<partition> \
+    <config:deadletter_dir>/<topology>.firehose.{id}.p<partition>
 make_node Remote_Job_Rewrite remote-job-rewrite
 make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition}
+
+command_node firehose:config assume_clean_shutdown true
+command_node firehose:config set_multi_writer true
+connect_node firehose remote-job-rewrite
 connect_node remote-job-rewrite firehose:topic
 secure
 ```
 
-Per-spoke `Remote_Source` nodes are NOT in the stock topology — the operator adds them on the canvas, one per spoke/partition, either by hand:
+Standing a hub up is now a Vault operation: add each spoke to Vault group `spoke` (`vault add <id> --group=spoke …`) and the group builds, connects and configures its `Remote_Source` automatically on the next reload. An install with no such entries has an empty group and ingests nothing.
 
-```tsl
-make_node Remote_Source spoke-<id> <vault-id> firehose.p<partition> \
-    <config:offsets_dir>/spoke-<id>.<topology>.p<partition> \
-    <config:deadletter_dir>/spoke-<id>.p<partition>
-connect_node spoke-<id> remote-job-rewrite
-cmd spoke-<id>:config set_multi_writer true
-```
-
-or all at once as a `Vault_Group`, `{id}` standing in for each group member's own Vault id:
-
-```tsl
-make_node Vault_Group spoke Remote_Source <group> firehose.p<partition> \
-    <config:offsets_dir>/spoke-{id}.<topology>.p<partition> \
-    <config:deadletter_dir>/spoke-{id}.p<partition>
-connect_node spoke remote-job-rewrite
-cmd spoke:config set_multi_writer true
-```
-
-[`Remote_Source`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-remote-source-node.php) reads like the Consumer it is: `<vault-id>` names the spoke, `firehose.p<partition>` names the remote partition to subscribe to, and the last two arguments are its offsetlog and dead-letter directories. Both are optional in the schema and both should be passed — omitting them means no cursor and no quarantine. Scope the offsetlog with `<topology>` so two hubs pulling one spoke partition never share a cursor.
+[`Remote_Source`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-remote-source-node.php) reads like the Consumer it is: `<vault-id>` names the spoke (supplied by the group as each member's own Vault id, `{id}`), `firehose.p<partition>` names the remote partition to subscribe to, and the last two arguments are its offsetlog and dead-letter directories. Both are optional in the schema and both should be passed — omitting them means no cursor and no quarantine. Scope the offsetlog with `<topology>` so two hubs pulling one spoke partition never share a cursor.
 
 `set_multi_writer` belongs on every firehose spoke, because every request process there appends to that log. It asks the SPOKE's reader to hold a superseded segment for the seal grace; without it a straggler's last line — typically the request's terminal `process (complete)` — is orphaned, and the request never finalizes on the hub.
 
@@ -416,23 +406,31 @@ What a `Remote_Source` owns — its hidden siblings, its offsetlog, reconnect an
 Single-instance hub control plane. It is an ELN overlay over the substrate's stock [`settings-sync`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/topologies/settings-sync.tsl) topology, and it pins `var num_partitions = 1` so the fleet runs ONCE regardless of the data `num_partitions` — the pin must live in this file, since frontmatter is read from the top-level file only.
 
 ```tsl
-var num_partitions = 1;
+var num_partitions = 1
 
 include settings-sync
 
 make_node Discovery_Collector discovery-collector 300
+make_node Vault_Group settings HTTP_Out spoke
+make_node Null null
 
 cmd settings-sync:config add_setting newspack_event_logger_nodes_rules performance newspack_event_logger_nodes_rules
 cmd settings-sync:config add_setting newspack_event_logger_nodes_log_memory performance newspack_event_logger_nodes_log_memory
 cmd settings-sync:config add_setting newspack_event_logger_nodes_flush_every_line performance newspack_event_logger_nodes_flush_every_line
+command_node settings:config allow_replies_to settings-sync
+command_node settings:config allow_replies_to discovery-collector
+
+connect_node settings-sync settings
+connect_node discovery-collector settings
+connect_node settings null
 secure
 ```
 
 The included `settings-sync` is the substrate's control plane — the settings log, the `Settings_Sync` tick and its own `add_setting` registrations for `num_partitions` and the six-axis `remote_*` geometry — described in the substrate's [Hub and spoke](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md) chapter.
 
-The three lines above add the application options, and they must stay in step with `Performance_CI_Node::SETTINGS_OPTIONS`: a hub push naming anything outside that whitelist comes back as "unknown option". This file also adds `Discovery_Collector`, which fans `discovery.get` to every spoke on its own 300s tick and union-merges the replies into the hub's staging options.
+The three `add_setting` lines add the application options, and they must stay in step with `Performance_CI_Node::SETTINGS_OPTIONS`: a hub push naming anything outside that whitelist comes back as "unknown option". This file also adds `Discovery_Collector`, which fans `discovery.get` to every spoke on its own 300s tick and union-merges the replies into the hub's staging options.
 
-**Neither fan-out goes through a Tee.** Each spoke's command is signed under that spoke's session key, and re-addressing a signed command after the mint makes it verify nowhere — so `Settings_Sync` and `Discovery_Collector` each iterate their own live targets, a group expanded to its members, and mint one signed command per spoke. The pipeline stays correctly inert until an operator connects the two nodes to per-spoke `HTTP_Out <name> <vault-id>` egress, wired one at a time from the console or all at once through `make_node Vault_Group <name> HTTP_Out <group>`.
+**Neither fan-out goes through a Tee.** Each spoke's command is signed under that spoke's session key, and re-addressing a signed command after the mint makes it verify nowhere — so `Settings_Sync` and `Discovery_Collector` each iterate their own live targets, a group expanded to its members, and mint one signed command per spoke. The topology ships that egress itself now: a `settings` `Vault_Group` builds one `HTTP_Out` per Vault entry in group `spoke`, both minters target the group, each spoke's `allow_replies_to` is declared once on the group and replayed to every member, and the group's own target is the shared `Null` — a spoke's reply lands through `allow_replies_to`, never through this leg. As with `firehose` in `aggregator.tsl`, an install with no Vault entries in group `spoke` has an empty group and pushes nothing.
 
 `Settings_Sync` and `Settings_Event_Writer` live in the substrate ([`\Newspack_Nodes\Settings_Sync_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-sync-node.php), [`\Newspack_Nodes\Settings_Event_Writer`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-event-writer.php)); `Discovery_Collector_Node` is this plugin's (see [Discovery_Collector_Node](#discovery_collector_node)).
 
@@ -601,7 +599,7 @@ Two gates this node deliberately does not hold. Size belongs to the producers an
 
 ### Remote_Job_Rewrite_Node
 
-Hub-side fan-in is the self-sufficient substrate [`\Newspack_Nodes\Remote_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-remote-source-node.php) — one per spoke/partition, operator-wired on the topology console by hand or as a `Vault_Group`. Each one patrons its own `SSE_In` + `HTTP_Out`, owns its offsetlog and reconnect/backoff, pulls `/messages/stream?subscribe=firehose.pN` with JSON `positions` resume, looks up its spoke credentials from the substrate **Vault**, and publishes the status snapshot the `aggregator` CI reads (see [`aggregator.tsl`](#topologiesaggregatortsl)).
+Hub-side fan-in is the self-sufficient substrate [`\Newspack_Nodes\Remote_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-remote-source-node.php) — one per spoke/partition, built by `aggregator`'s own `firehose` `Vault_Group` over Vault group `spoke`, following the Vault on reload. Each one patrons its own `SSE_In` + `HTTP_Out`, owns its offsetlog and reconnect/backoff, pulls `/messages/stream?subscribe=firehose.pN` with JSON `positions` resume, looks up its spoke credentials from the substrate **Vault**, and publishes the status snapshot the `aggregator` CI reads (see [`aggregator.tsl`](#topologiesaggregatortsl)).
 
 The one application-specific piece is [`Remote_Job_Rewrite_Node`](../includes/class-remote-job-rewrite-node.php) — a pass-through transform the `aggregator` topology wires between the substrate `Remote_Source` sources and the firehose `Topic`. It flips aggregated `k:"job"` entries to `k:"remote_job"` so they dispatch centrally on the hub via `newspack_nodes/remote_job_handlers` rather than locally; non-`job` entries and non-array VALUEs pass through untouched.
 
@@ -749,7 +747,7 @@ A `Remote_Source` node references its spoke by `<vault-id>`, and the reload chan
 
 ## Settings Sync: No Operator Gate
 
-The fan-out above is **ungated** in the structural sense: a watched option change always records a settings event, and nothing fans it out unless `hub-control` is active and per-spoke `HTTP_Out` egress is wired — by hand or as a `Vault_Group`. On a spoke or standalone site there is no consumer, so the event is tailed and dropped. Letting that drop happen at the node-graph level is cheaper and harder to misconfigure than a per-listener `get_option` gate. Watched means `newspack_`-prefixed: `Settings_Event_Writer::maybe_emit()` returns on the name of any other option, a consumer plugin's own differently-prefixed setting included, so that change records nothing at all.
+The fan-out above is **ungated** in the structural sense: a watched option change always records a settings event, and nothing fans it out unless `hub-control` is active and its `settings` `Vault_Group` has at least one Vault entry in group `spoke`. On a spoke or standalone site there is no consumer, so the event is tailed and dropped. Never hand-wire a second `HTTP_Out` for a spoke already in the group beside it — two egresses minting for the same spoke double the pushes it receives. Letting that drop happen at the node-graph level is cheaper and harder to misconfigure than a per-listener `get_option` gate. Watched means `newspack_`-prefixed: `Settings_Event_Writer::maybe_emit()` returns on the name of any other option, a consumer plugin's own differently-prefixed setting included, so that change records nothing at all.
 
 Recording the option NAME and resolving its value at consume time is what makes the ungated shape safe: a burst of writes collapses to one current-value push, and no stale value can race a fresher one onto a spoke. An auto-tune decision travels the same road (see [Auto_Tuner_Node](#auto_tuner_node)).
 

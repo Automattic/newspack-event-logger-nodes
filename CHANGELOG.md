@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A `hub` topology composes `aggregator` and `hub-control` into one worker.** It pins its own `num_partitions = 1`, since an included file's frontmatter is skipped and a single-instance control plane would otherwise mount once per data partition on a hub configured above one; the same pin also means every Remote_Source child the firehose group builds pulls the spoke's `firehose.p0` alone, so a spoke running more than one partition needs `aggregator` and `hub-control` activated as their own topology instead. `hub` REPLACES running `aggregator` and `hub-control` as a pair — deactivate both before activating `hub`, or the control plane mounts twice. Switching which topology is active changes the `<topology>` cursor path every Remote_Source and offsetlog is scoped by, so each spoke starts its hub-side cursor fresh on the switch.
+
+### Changed
+
+- **`aggregator` and `hub-control` ship their per-spoke egress as a `Vault_Group` over Vault group `spoke`, so a hub needs only Vault entries in that group.** `aggregator`'s group builds one `Remote_Source` per spoke feeding `remote-job-rewrite`; `hub-control`'s builds one `HTTP_Out` per spoke, fed by `settings-sync` and `discovery-collector` and sinking to a shared `Null`, with each spoke's `allow_replies_to` declared once on the group. An install with no Vault entries in group `spoke` gets empty groups rather than a hand-wiring step. **Before grouping a spoke, remove any hand-wired per-spoke `Remote_Source` or `HTTP_Out` for it** — a hand-wired leg left beside the group double-ingests that spoke's firehose and double-pushes its settings and discovery commands.
+
 ## [0.102.10] - 2026-09-25
 
 ### Changed

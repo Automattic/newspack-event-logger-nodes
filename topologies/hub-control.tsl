@@ -12,19 +12,27 @@ var num_partitions = 1
 include settings-sync
 
 make_node Discovery_Collector discovery-collector 300
+make_node Vault_Group settings HTTP_Out spoke
+make_node Null null
 
 # discovery-collector fans `discovery.get` to every spoke on its own 300s tick
 # and union-merges the replies into the hub options. Its replies come back
-# through the per-spoke egress the operator wires (see settings-sync.tsl) — by
-# hand, one HTTP_Out per spoke, or all at once by connecting the collector to
-# ONE `Vault_Group` node — and that egress admits only DECLARED destinations,
-# so each one needs `allow_replies_to discovery-collector` beside the
-# settings-sync declaration or the discovery replies are dropped. Hand-wired,
-# that is `command_node <egress>:config allow_replies_to discovery-collector`
-# per spoke; on a group it is declared ONCE, `command_node
-# <group>:config allow_replies_to discovery-collector`, which the group
-# forwards to every member and replays to a member built later.
+# through `settings`, a Vault_Group over the same Vault group `spoke` as
+# `firehose` in aggregator.tsl: one HTTP_Out per member, following the Vault on
+# reload. That egress admits only DECLARED destinations, so it needs
+# `allow_replies_to discovery-collector` beside the settings-sync declaration
+# or the discovery replies are dropped; both are declared ONCE, on the group,
+# and replayed to every member present now or built later. Never hand-wire a
+# second HTTP_Out for a spoke already in the group beside it: two egresses
+# both minting from the same session double the pushes a spoke receives.
 command_node settings-sync:config add_setting newspack_event_logger_nodes_rules performance newspack_event_logger_nodes_rules
 command_node settings-sync:config add_setting newspack_event_logger_nodes_log_memory performance newspack_event_logger_nodes_log_memory
 command_node settings-sync:config add_setting newspack_event_logger_nodes_flush_every_line performance newspack_event_logger_nodes_flush_every_line
+command_node settings:config allow_replies_to settings-sync
+command_node settings:config allow_replies_to discovery-collector
+
+connect_node settings-sync settings
+connect_node discovery-collector settings
+connect_node settings null
+
 secure

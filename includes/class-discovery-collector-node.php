@@ -2,17 +2,16 @@
 /**
  * Discovery_Collector_Node — the hub's periodic sweep of what its spokes instrument.
  *
- * Mounted by the `hub-control` topology; an operator connects it to the same
- * per-spoke `HTTP_Out` egress nodes that carry settings-sync — one at a time,
- * or all at once by connecting it to a single `Vault_Group` node instead,
- * whose members stand in for the per-spoke egress. It mints and signs one
- * probe per spoke rather than letting a Tee fan one out, for the reason
- * Settings_Sync_Node is the hub's other minter: a signature verifies only at the
- * destination it was minted for, so a command re-addressed after the mint
- * verifies nowhere. Either way each egress needs `allow_replies_to
- * discovery-collector` declared or the reply is dropped; on a `Vault_Group`
- * that declaration is made ONCE, on the group, which forwards it to every
- * member and replays it to one the Vault builds later.
+ * Mounted by the `hub-control` topology, which targets it at `settings`, the
+ * same `Vault_Group` of per-spoke `HTTP_Out` egress that carries
+ * settings-sync — one member per Vault entry in group `spoke`. It mints and
+ * signs one probe per spoke rather than letting a Tee fan one out, for the
+ * reason Settings_Sync_Node is the hub's other minter: a signature verifies
+ * only at the destination it was minted for, so a command re-addressed after
+ * the mint verifies nowhere. The egress needs `allow_replies_to
+ * discovery-collector` declared or the reply is dropped; declared once, on
+ * the group, it forwards to every member and replays to one the Vault builds
+ * later.
  *
  * What the replies build is a staging catalog — the `discovered_hooks` and
  * `discovered_events` options the rule editor's hook picker offers. Nothing here

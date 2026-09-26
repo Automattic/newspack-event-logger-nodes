@@ -20,12 +20,14 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\HTTP_Out_Node;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Settings_Sync_Node;
 use Newspack_Nodes\Tee_Node;
 use Newspack_Nodes\Topology_Loader;
 use Newspack_Nodes\Topology_Analyzer;
 use Newspack_Nodes\Topology_Registry;
+use Newspack_Nodes\Vault;
 
 class HubControlTopologyTest extends TestCase {
 
@@ -46,6 +48,7 @@ class HubControlTopologyTest extends TestCase {
 
 	protected function tearDown(): void {
 		Core::$config_resolvers = $this->saved_resolvers;
+		Vault::get_instance()->reset_cache();
 		$this->rmdir_recursive( $this->tmp );
 		parent::tearDown();
 	}
@@ -82,10 +85,52 @@ class HubControlTopologyTest extends TestCase {
 		// connect_node sets the logical TO target (Tachikoma owner); every node
 		// physically sinks into _command_interpreter, so assert on target().
 		$this->assertSame( 'settings-sync', Core::node( 'settings:consumer' )->target() );
-		// Both minters now carry their own spoke list and fan out themselves, so
-		// the stock topology leaves it empty — an operator connects each HTTP_Out.
-		$this->assertSame( [], Core::node( 'settings-sync' )->target() );
-		$this->assertSame( [], Core::node( 'discovery-collector' )->target() );
+		// Both minters fan out to the `settings` Vault_Group over group `spoke`,
+		// which itself sinks its per-spoke HTTP_Out egress to `null` — a spoke
+		// replies through allow_replies_to, never through this leg.
+		$this->assertSame( [ 'settings' ], Core::node( 'settings-sync' )->target() );
+		$this->assertSame( [ 'settings' ], Core::node( 'discovery-collector' )->target() );
+		$this->assertSame( 'null', Core::node( 'settings' )->target() );
+	}
+
+	public function test_settings_group_records_both_egress_declarations(): void {
+		$this->load_hub_control();
+
+		// Neither minter may reply through the other's declaration, so both
+		// allow_replies_to calls are recorded on the group and replayed to
+		// every spoke's HTTP_Out, present or built later.
+		$dump = Core::node( 'settings' )->dump_config();
+		$this->assertStringContainsString( "command_node settings:config allow_replies_to settings-sync\n", $dump );
+		$this->assertStringContainsString( "command_node settings:config allow_replies_to discovery-collector\n", $dump );
+	}
+
+	/**
+	 * hub-control's `settings-sync` include already declares `settings:consumer`
+	 * before the `settings` Vault_Group, so a colliding Vault id is skipped
+	 * loudly rather than aborting the load — no reorder needed here, unlike
+	 * aggregator.tsl.
+	 */
+	public function test_a_vault_id_colliding_with_the_settings_consumer_name_is_skipped_not_fatal(): void {
+		$this->seed_vault_servers(
+			[
+				'tw7'      => [ 'url' => 'https://tw7.example', 'group' => 'spoke' ],
+				'consumer' => [ 'url' => 'https://consumer.example', 'group' => 'spoke' ],
+			]
+		);
+
+		$this->load_hub_control();
+
+		$this->assertInstanceOf( Consumer_Node::class, Core::node( 'settings:consumer' ) );
+		$this->assertInstanceOf( HTTP_Out_Node::class, Core::node( 'settings:tw7' ) );
+	}
+
+	public function test_settings_spoke_child_dump_config_shows_both_allow_replies_to_entries(): void {
+		$this->seed_vault( 'tw7', [ 'url' => 'https://tw7.example', 'group' => 'spoke' ] );
+		$this->load_hub_control();
+
+		$dump = Core::node( 'settings:tw7' )->dump_config();
+		$this->assertStringContainsString( 'allow_replies_to settings-sync', $dump );
+		$this->assertStringContainsString( 'allow_replies_to discovery-collector', $dump );
 	}
 
 	public function test_settings_sync_registers_all_nine_settings(): void {

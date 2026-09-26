@@ -1,0 +1,22 @@
+# hub.tsl — both hub legs, aggregator's firehose ingest and hub-control's
+# settings/discovery egress, in one worker. Frontmatter is read from the
+# top-level file only, so both `var` pins below must live here — an included
+# file's own frontmatter is skipped.
+#
+# `num_partitions = 1` does two things at once: it keeps hub-control's
+# single-instance control plane single (without it, a hub configured above
+# one data partition would mount that plane once per partition), and it means
+# every Remote_Source child the firehose group builds pulls the spoke's
+# `firehose.p0` alone. A spoke running more than one partition needs
+# `aggregator` and `hub-control` activated as their own topology instead,
+# with `num_partitions` matching the spoke's count.
+#
+# `on_demand_idle = 0` keeps the worker from idling out between ticks, so the
+# hub's SSE pulls and its outbound settings/discovery commands stay open
+# rather than cold-starting on the next reconcile pass.
+
+var on_demand_idle = 0
+var num_partitions = 1
+include aggregator
+include hub-control
+secure
