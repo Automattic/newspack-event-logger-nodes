@@ -6,19 +6,21 @@
 # dispatch on the hub via newspack_nodes/remote_job_handlers; non-job entries
 # pass through. The firehose Topic is the multi-partition, KEY-routed sink.
 #
-# Per-spoke Remote_Source nodes are NOT shipped in this stock topology — the
-# operator wires them on the console canvas, one per spoke/partition:
+# `firehose` is a Vault_Group over Vault group `spoke`: it builds one
+# Remote_Source per member, `{id}` substituted for each Vault id, and follows
+# the Vault on reload — a spoke is added or dropped by editing group
+# membership, never by hand-editing this file. Never hand-wire a second
+# Remote_Source for a spoke already in the group beside it: two readers
+# pulling the same spoke partition under independent cursors double-ingest
+# every entry.
 #
-#   make_node Remote_Source spoke-<id> <vault-id> firehose.p<partition> \
-#       <config:offsets_dir>/spoke-<id>.<topology>.p<partition> \
-#       <config:deadletter_dir>/spoke-<id>.p<partition>
-#   connect_node spoke-<id> remote-job-rewrite
-#   cmd spoke-<id>:config set_multi_writer true
-#
-# The connect_node line is also the relay's DECLARATION of where a spoke's lines
-# may go: a firehose record carries no TO of its own, so with no target the relay
-# refuses any line the spoke addressed rather than letting it name a node in this
-# worker's graph. The refusal consumes the line — the cursor advances past it.
+# assume_clean_shutdown and set_multi_writer are recorded ONCE, on the group,
+# and replayed to every child present now or built later. connect_node's
+# target is likewise the group's own, replayed the same way: it is also the
+# relay's DECLARATION of where a spoke's lines may go, since a firehose record
+# carries no TO of its own and the relay refuses any line a spoke addressed
+# rather than letting it name a node in this worker's graph — the refusal
+# consumes the line, and the cursor advances past it.
 #
 # set_multi_writer belongs on every firehose spoke: the log is appended by every
 # request process there, and it asks the SPOKE's reader to hold a superseded
@@ -26,19 +28,32 @@
 # request's terminal `process (complete)` — is orphaned, and the request never
 # finalizes on the hub.
 #
-# The offsetlog + deadletter dirs are ARGUMENTS (it reads like the Consumer it
-# is). Scope the cursor with `<topology>`: an offsetlog is a reader's cursor and
-# the reader is the FLEET, so two hubs pulling one spoke partition must not share
-# one. Omit them and you get no cursor / no quarantine — Consumer's contract.
+# The offsetlog + deadletter templates are the group's own ARGUMENTS (each
+# child reads like the Consumer it is). Scope the cursor with `<topology>`: an
+# offsetlog is a reader's cursor and the reader is the FLEET, so two hubs
+# pulling one spoke partition must not share one. Omit them and you get no
+# cursor / no quarantine — Consumer's contract.
 #
 # Each substrate Remote_Source is self-sufficient (it patrons its own SSE_In +
 # HTTP_Out, owns its offsetlog, and publishes a status snapshot under the
 # install-scoped cache key remote:<node-name>:<remote_partition>, e.g.
-# remote:spoke-<id>:firehose.p0). SSL/HTTPS policy comes from the substrate
+# remote:firehose:<id>:firehose.p0). SSL/HTTPS policy comes from the substrate
 # vault_verify_ssl / vault_require_ssl config — not a per-topology setter.
+#
+# A Vault id colliding with an already-declared node name (e.g. `topic`) is
+# skipped loudly rather than aborting the load, because this group is declared
+# AFTER the nodes it could collide with — keep it last among the make_node
+# lines below.
 
 include topic-probe
+
 make_node Remote_Job_Rewrite remote-job-rewrite
 make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition}
+make_node Vault_Group firehose Remote_Source spoke firehose.p<partition> <config:offsets_dir>/<topology>.firehose.{id}.p<partition> <config:deadletter_dir>/<topology>.firehose.{id}.p<partition>
+
+command_node firehose:config assume_clean_shutdown true
+command_node firehose:config set_multi_writer true
+connect_node firehose remote-job-rewrite
 connect_node remote-job-rewrite firehose:topic
+
 secure

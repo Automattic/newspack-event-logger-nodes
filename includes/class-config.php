@@ -329,13 +329,20 @@ class Config {
 	 * Derive hub-ness from the active topologies: an `aggregator` topology by
 	 * name or include, or any graph carrying a `Remote_Source` node.
 	 *
-	 * Two signals, because neither covers both shapes. The stock `aggregator`
-	 * ships NO `Remote_Source` nodes — the operator wires them on the console
-	 * canvas — so only its name gives it away. A deployment that forks the stock
+	 * Two signals, because neither covers both shapes. The stock `aggregator`'s
+	 * Remote_Source nodes are the `firehose` `Vault_Group`'s children, which
+	 * exist — at runtime, and in the flatten this second signal walks — only
+	 * once Vault group `spoke` has members, so a stock aggregator with an empty
+	 * group is given away only by its name. A deployment that forks the stock
 	 * file to change an argument renames it, and no name in a chain of renamed
-	 * forks says `aggregator`, so only its wired readers give that one away.
-	 * Matching on the name alone reads such a hub as a spoke and turns its
-	 * per-server stats off.
+	 * forks says `aggregator`, so such a fork is given away only by its wired
+	 * readers, once its own group has members. Matching on the name alone reads
+	 * such a hub as a spoke and turns its per-server stats off.
+	 *
+	 * The result is memoized PER PROCESS by `has_hub_topology()`, so a renamed
+	 * fork whose group is still empty when a worker boots reads as a spoke for
+	 * that worker's whole life, even after Vault members arrive later — only a
+	 * restart re-derives it.
 	 *
 	 * @return bool True when either signal fires.
 	 */

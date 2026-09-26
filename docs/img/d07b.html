@@ -26,43 +26,43 @@
   .math .op { flex: 0 0 26px; font-size: 17px; color: #787C82; align-self: center; padding: 0; }
 </style>
 <div class="sheet">
-  <h1>The live hub is five lines, and 241 names</h1>
-  <p class="sub">The top-level topology names two includes. Each include carries one leg per spoke, generated rather than hand-written, and each leg is what one spoke costs the hub.</p>
+  <h1>The live hub is four lines, and 245 names</h1>
+  <p class="sub">The top-level topology names ONE include, ELN's own <span class="mono">hub</span> composition, which runs both stock <span class="mono">Vault_Group</span> legs — each a <span class="mono">make_node</span> line building a child per Vault entry in group <span class="mono">spoke</span> — and each child still costs the hub the names below.</p>
 
   <div class="listing">
     <header>aggregator-hub.tsl <span>· the whole top-level file</span></header>
     <div class="ln"><div class="code"><span class="k">var</span> on_demand_idle = 0</div><div class="why">The worker never idles out, so the streams stay open.</div></div>
     <div class="ln"><div class="code"><span class="k">var</span> num_partitions = 1</div><div class="why">One instance holds every spoke.</div></div>
-    <div class="ln"><div class="code"><span class="k">include</span> aggregator-fdn</div><div class="why">The firehose coming in. 24 legs, below.</div></div>
-    <div class="ln"><div class="code"><span class="k">include</span> hub-control-fdn</div><div class="why">The commands going out. 24 more legs.</div></div>
-    <div class="ln"><div class="code"><span class="k">secure</span></div><div class="why">Freezes the graph: no later command builds or removes a node.</div></div>
+    <div class="ln"><div class="code"><span class="k">include</span> hub</div><div class="why">ELN's own composition of <span class="mono">aggregator</span> (firehose in) and <span class="mono">hub-control</span> (commands out) — both legs, below.</div></div>
+    <div class="ln"><div class="code"><span class="k">secure</span></div><div class="why">Freezes the graph: no later command builds or removes a node. A Vault_Group still builds and retracts members on the fleet's Vault RELOAD after this — membership was declared before securing, and reload replays it rather than issuing a fresh <span class="mono">make_node</span>.</div></div>
   </div>
 
   <div class="row" style="gap:16px;align-items:flex-start;margin-top:18px">
     <div style="flex:1 1 0">
       <div class="listing">
-        <header>aggregator-fdn.tsl <span>· one leg per spoke</span></header>
-        <div class="ln"><div class="code"><span class="k">make_node</span> Remote_Source firehose:bend <span class="v">bend firehose.p&lt;partition&gt; &lt;config:offsets_dir&gt;/&lt;topology&gt;.firehose.bend.p&lt;partition&gt; &lt;config:deadletter_dir&gt;/&lt;topology&gt;.firehose.bend.p&lt;partition&gt;</span></div><div class="why" style="flex:0 0 256px"><b>Four arguments:</b> the Vault id, the spoke's partition, an offsetlog directory and a dead-letter directory. It reads like the consumer it is, one whose log lives on another site. Scoping the cursor by topology name keeps two hubs off one offsetlog.</div></div>
-        <div class="ln"><div class="code"><span class="k">command_node</span> firehose:bend:config assume_clean_shutdown true</div><div class="why" style="flex:0 0 256px"><b>Beside it on every source.</b> Each record is durable in the hub's log before the worker stops, so a cooperative stop commits past the in-flight record instead of replaying it. Without the line, every worker recycle delivers one record twice.</div></div>
-        <div class="ln"><div class="code"><span class="k">command_node</span> firehose:bend:config set_multi_writer true</div><div class="why" style="flex:0 0 256px"><b>On every firehose source.</b> Every request process on the spoke appends to the log, so a request can still be writing a segment after the next opens. The verb asks the spoke's reader to hold the old segment for a grace period.</div></div>
-        <div class="ln"><div class="code"><span class="k">connect_node</span> firehose:bend remote-job-rewrite</div><div class="why" style="flex:0 0 256px">Every source sinks into the one rewrite node, and from there into the hub's own firehose Topic.</div></div>
-        <div class="rep">× 24 spokes, then <span class="mono">secure</span>.</div>
+        <header>aggregator.tsl <span>· the firehose Vault_Group leg, via <span class="mono">include hub</span></span></header>
+        <div class="ln"><div class="code"><span class="k">make_node</span> Vault_Group firehose <span class="v">Remote_Source spoke firehose.p&lt;partition&gt; &lt;config:offsets_dir&gt;/&lt;topology&gt;.firehose.{id}.p&lt;partition&gt; &lt;config:deadletter_dir&gt;/&lt;topology&gt;.firehose.{id}.p&lt;partition&gt;</span></div><div class="why" style="flex:0 0 256px"><b>One line, every spoke:</b> a Remote_Source per id in group <span class="mono">spoke</span>, <span class="mono">{id}</span> substituted for each. It reads like the consumer it is, one whose log lives on another site. Scoping the cursor by topology name keeps two hubs off one offsetlog.</div></div>
+        <div class="ln"><div class="code"><span class="k">command_node</span> firehose:config assume_clean_shutdown true</div><div class="why" style="flex:0 0 256px"><b>Recorded once, on the group.</b> Replayed to every child, present now or built later: each record is durable in the hub's log before the worker stops, so a cooperative stop commits past the in-flight record instead of replaying it. Without it, every worker recycle delivers one record twice.</div></div>
+        <div class="ln"><div class="code"><span class="k">command_node</span> firehose:config set_multi_writer true</div><div class="why" style="flex:0 0 256px"><b>Recorded once, on the group.</b> Every request process on a spoke appends to its log, so a request can still be writing a segment after the next opens. The verb asks the spoke's reader to hold the old segment for a grace period.</div></div>
+        <div class="ln"><div class="code"><span class="k">connect_node</span> firehose remote-job-rewrite</div><div class="why" style="flex:0 0 256px">The group's own target, replayed to every child: each source sinks into the one rewrite node, and from there into the hub's own firehose Topic.</div></div>
+        <div class="rep">One line per leg; membership from Vault group <span class="mono">spoke</span>.</div>
       </div>
 
       <div class="listing" style="margin-top:16px">
-        <header>hub-control-fdn.tsl <span>· six more lines per spoke</span></header>
-        <div class="ln"><div class="code"><span class="k">make_node</span> HTTP_Out settings:bend <span class="v">bend</span></div><div class="why" style="flex:0 0 256px">The outbound leg, reading the same Vault entry the source reads.</div></div>
-        <div class="ln"><div class="code"><span class="k">command_node</span> settings:bend:config allow_replies_to settings-sync<br><span class="k">command_node</span> settings:bend:config allow_replies_to discovery-collector</div><div class="why" style="flex:0 0 256px"><b>The reply gate, twice per spoke: 48 declarations.</b> The list fails closed, so an omitted line drops that spoke's acks silently.</div></div>
-        <div class="ln"><div class="code"><span class="k">connect_node</span> settings-sync settings:bend<br><span class="k">connect_node</span> discovery-collector settings:bend</div><div class="why" style="flex:0 0 256px">Both minters fan out by hand. A Tee cannot do it: re-addressing a signed command after the mint makes it verify nowhere.</div></div>
-        <div class="ln"><div class="code"><span class="k">connect_node</span> settings:bend null</div><div class="why" style="flex:0 0 256px">One shared Null catches whatever the spoke leaves unaddressed.</div></div>
-        <div class="rep">× 24 spokes, then <span class="mono">secure</span>.</div>
+        <header>hub-control.tsl <span>· the settings Vault_Group leg, via <span class="mono">include hub</span></span></header>
+        <div class="ln"><div class="code"><span class="k">make_node</span> Null <span class="v">null</span></div><div class="why" style="flex:0 0 256px">Built once, ahead of the group: the shared sink every child's egress ends at.</div></div>
+        <div class="ln"><div class="code"><span class="k">make_node</span> Vault_Group settings <span class="v">HTTP_Out spoke</span></div><div class="why" style="flex:0 0 256px">The outbound leg, one HTTP_Out per id in group <span class="mono">spoke</span>, each reading that id's own Vault entry.</div></div>
+        <div class="ln"><div class="code"><span class="k">command_node</span> settings:config allow_replies_to settings-sync<br><span class="k">command_node</span> settings:config allow_replies_to discovery-collector</div><div class="why" style="flex:0 0 256px"><b>The reply gate, recorded once on the group — not once per spoke.</b> Replayed to every child. The list fails closed, so a missing declaration drops every spoke's acks silently, not just one's.</div></div>
+        <div class="ln"><div class="code"><span class="k">connect_node</span> settings-sync settings<br><span class="k">connect_node</span> discovery-collector settings</div><div class="why" style="flex:0 0 256px">Both minters fan out to the group by name. A Tee cannot do it: re-addressing a signed command after the mint makes it verify nowhere.</div></div>
+        <div class="ln"><div class="code"><span class="k">connect_node</span> settings null</div><div class="why" style="flex:0 0 256px">The group's own target: one shared Null catches whatever a spoke leaves unaddressed.</div></div>
+        <div class="rep">One line per leg; membership from Vault group <span class="mono">spoke</span>.</div>
       </div>
     </div>
 
     <div style="flex:0 0 386px">
       <div class="card">
-        <h3>What <span class="mono">firehose:bend</span> costs: seven names</h3>
-        <p style="margin-bottom:10px">The operator writes the one Remote_Source line. The node builds the rest itself on its first tick, and each takes a name in the worker's registry.</p>
+        <h3>What one child, <span class="mono">firehose:bend</span>, costs: seven names</h3>
+        <p style="margin-bottom:10px">The group builds one Remote_Source per Vault entry named in group <span class="mono">spoke</span> — <span class="mono">bend</span> here. Each child builds the rest of this tree itself on its first tick, and each takes a name in the worker's registry.</p>
         <div class="tree">
           <div><span style="font-weight:600">firehose:bend</span> <span class="t">· the source</span></div>
           <div><span class="t">├─</span> firehose:bend:config <span class="t">· verbs</span></div>
@@ -82,11 +82,11 @@
           <div class="op">+</div>
           <div><div class="big">48</div><div class="cap2">settings links and<br>their interpreters</div></div>
           <div class="op">+</div>
-          <div><div class="big">25</div><div class="cap2">shared<br>nodes</div></div>
+          <div><div class="big">29</div><div class="cap2">shared<br>nodes</div></div>
           <div class="op">=</div>
-          <div><div class="big">241</div><div class="cap2">names, in one<br>worker process</div></div>
+          <div><div class="big">245</div><div class="cap2">names, in one<br>worker process</div></div>
         </div>
-        <p style="font-size:12px;color:#50575E;line-height:1.5;margin:4px 0 0">The shared 25 are the router, the fleet, the rewrite node and the firehose Topic among them.</p>
+        <p style="font-size:12px;color:#50575E;line-height:1.5;margin:4px 0 0">The shared 29 are the router, the fleet, the rewrite node, the firehose Topic, the <span class="mono">firehose</span> and <span class="mono">settings</span> Vault_Group nodes themselves, and their own <span class="mono">:config</span> interpreters among them.</p>
       </div>
 
       <div class="callout" style="margin-top:16px">
