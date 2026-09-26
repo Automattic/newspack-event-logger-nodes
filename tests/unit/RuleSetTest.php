@@ -264,6 +264,27 @@ final class RuleSetTest extends TestCase {
 		$this->assertSame( 'mc', $stored['hooks_in'], 'the rule must stay pointer-tier, not get re-inlined to []' );
 	}
 
+	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+	public function test_a_reload_rereads_a_pointer_option_another_process_rewrote(): void {
+		// A worker's WordPress caches the non-autoloaded option on first read.
+		require_once \dirname( __DIR__, 3 ) . '/newspack-nodes/tests/Helpers/wp-object-cache-stub.php';
+		Core::$memd = new InMemoryMemcached();
+		$option     = Rule_Set::hooks_option_name( 'ptr' );
+		$pointer    = new Rule( 'ptr', '/heavy/', Rule::ACTION_LOG, hooks: null, hooks_in: Rule::HOOKS_MC );
+		\update_option( $option, [ 'init', 'wp_loaded' ], false );
+		$this->assertSame( [ 'init', 'wp_loaded' ], Rule_Set::hooks_for( $pointer ) );
+
+		// The admin's save reaches the shared cache and signals a reload; the
+		// mirror entry it stored is later evicted.
+		$fresh = [ 'template_redirect', 'shutdown' ];
+		\wp_test_write_elsewhere( $option, $fresh, false );
+		\Newspack_Nodes\Topology_Registry::invalidate_config_cache();
+		$this->hooks_table()->forget( 'ptr' );
+
+		$this->assertSame( $fresh, Rule_Set::hooks_for( $pointer ) );
+		$this->assertSame( $fresh, $this->hooks_table()->lookup( 'ptr' ), 'the read-through must re-seed the mirror with the record' );
+	}
+
 	/** The stored (post-save) rule-map list, as settings-sync reads it off the option. */
 	private function stored_rule_maps(): array {
 		return \array_map( static fn ( Rule $r ): array => $r->to_array(), Rule_Set::load()->rules() );

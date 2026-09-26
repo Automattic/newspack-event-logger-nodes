@@ -32,9 +32,10 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 		$GLOBALS['_wp_actions'] = [];
 	}
 
-	/** Build a named collector wired to a capturing sink and a Tee target. */
+	/** Build a named collector wired to a capturing sink and one spoke egress. */
 	private function wired_node( Capture_Sink_Node $sink ): Discovery_Collector_Node {
 		$sink->name( '_command_interpreter' );
+		$this->egress( 'spokes:tee', 'tee' );
 		$node = new Discovery_Collector_Node();
 		$node->name( 'discovery-collector' );
 		$node->sink( $sink );
@@ -108,6 +109,71 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp', 'wp_loaded' ] ] ) );
 
 		$this->assertSame( [ 'init', 'wp', 'wp_loaded' ], \array_keys( $this->discovered_hooks() ) );
+	}
+
+	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+	public function test_merge_does_not_resurrect_a_catalog_another_process_cleared(): void {
+		// A worker's WordPress caches the non-autoloaded option on first read.
+		require_once \dirname( __DIR__, 3 ) . '/newspack-nodes/tests/Helpers/wp-object-cache-stub.php';
+		$node = $this->wired_node( new Capture_Sink_Node() );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'save_post' ] ] ) );
+
+		// The operator's clear reaches the shared cache, not this worker's copy.
+		\wp_test_delete_elsewhere( self::HOOKS_OPTION );
+		$node->fire();
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] ) );
+
+		$this->assertSame( [ 'wp_loaded' ], \array_keys( $this->discovered_hooks() ) );
+	}
+
+	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+	public function test_merge_keeps_a_catalog_absent_at_first_read_and_written_later(): void {
+		// WordPress caches the ABSENCE of a row it read, in `notoptions`.
+		require_once \dirname( __DIR__, 3 ) . '/newspack-nodes/tests/Helpers/wp-object-cache-stub.php';
+		$node = $this->wired_node( new Capture_Sink_Node() );
+		$this->assertSame( [], \get_option( self::EVENTS_OPTION, [] ) );
+
+		// Another process stages an event after this worker read the absence.
+		\wp_test_write_elsewhere( self::EVENTS_OPTION, [ 'checkout_done' => true ], false );
+		$node->fire();
+		$node->fill( $this->reply( [ 'custom_events' => [ 'cart_add' ] ] ) );
+
+		$this->assertSame( [ 'checkout_done', 'cart_add' ], \array_keys( Core::arr( $GLOBALS['_wp_options'][ self::EVENTS_OPTION ] ) ) );
+	}
+
+	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+	public function test_a_sweep_refreshes_the_cache_once_for_all_its_replies(): void {
+		require_once \dirname( __DIR__, 3 ) . '/newspack-nodes/tests/Helpers/wp-object-cache-stub.php';
+		$node = $this->wired_node( new Capture_Sink_Node() );
+
+		$node->fire();
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'save_post' ], 'custom_events' => [ 'cart_add' ] ] ) );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_head' ] ] ) );
+
+		$this->assertSame( [ 'runtime' ], $GLOBALS['_wp_cache_flushes'] );
+		$this->assertSame( [ 'save_post', 'wp_head' ], \array_keys( $this->discovered_hooks() ) );
+	}
+
+	public function test_a_sweep_with_no_spokes_pays_no_flush(): void {
+		$sink = new Capture_Sink_Node();
+		$sink->name( '_command_interpreter' );
+		$node = new Discovery_Collector_Node();
+		$node->name( 'discovery-collector' );
+		$node->sink( $sink );
+
+		$node->fire();
+
+		$this->assertSame( [], $GLOBALS['_wp_cache_flushes'] );
+	}
+
+	public function test_a_reply_pays_no_flush(): void {
+		$node = $this->wired_node( new Capture_Sink_Node() );
+
+		$node->fill( $this->reply( [] ) );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ '   ', 4417 ], 'custom_events' => [ '' ] ] ) );
+
+		$this->assertSame( [], $GLOBALS['_wp_cache_flushes'] );
+		$this->assertArrayNotHasKey( self::HOOKS_OPTION, $GLOBALS['_wp_options'] );
 	}
 
 	public function test_merge_recovers_when_discovered_hooks_option_is_not_an_array(): void {

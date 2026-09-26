@@ -256,48 +256,6 @@ if ( ! function_exists( 'get_bloginfo' ) ) {
 	}
 }
 
-// Overrides shared shim: adds the _test_get_option_hook seam.
-if ( ! function_exists( 'get_option' ) ) {
-	$GLOBALS['_wp_options'] = [];
-	function get_option( string $key, mixed $default = false ): mixed {
-		// Test seam: lets a test simulate the production wpdb->query → query-filter
-		// → Core::hook_start chain that real get_option triggers when alloptions
-		// isn't cached. The hook fires before the option lookup, mirroring the
-		// real recursion window.
-		if ( isset( $GLOBALS['_test_get_option_hook'] ) ) {
-			( $GLOBALS['_test_get_option_hook'] )( $key );
-		}
-		return $GLOBALS['_wp_options'][ $key ] ?? $default;
-	}
-	function update_option( string $key, mixed $value, $autoload = null ): bool {
-		$existed                        = array_key_exists( $key, $GLOBALS['_wp_options'] );
-		$old                            = $GLOBALS['_wp_options'][ $key ] ?? false;
-		$GLOBALS['_wp_options'][ $key ] = $value;
-		// Opt-in seam: real WP fires add_option/update_option on a write so the
-		// Settings_Event_Writer watcher runs. Off by default (other tests rely
-		// on the silent shim); a test sets the flag to exercise the watcher path.
-		if ( ! empty( $GLOBALS['_test_fire_option_actions'] ) ) {
-			if ( $existed ) {
-				do_action( 'update_option', $key, $old, $value );
-			} else {
-				do_action( 'add_option', $key, $value );
-			}
-		}
-		return true;
-	}
-	function delete_option( string $key ): bool {
-		$existed = array_key_exists( $key, $GLOBALS['_wp_options'] );
-		unset( $GLOBALS['_wp_options'][ $key ] );
-		if ( $existed && ! empty( $GLOBALS['_test_fire_option_actions'] ) ) {
-			do_action( 'delete_option', $key );
-		}
-		return true;
-	}
-	function wp_salt( string $scheme = 'auth' ): string {
-		return 'TEST_SALT_FOR_' . $scheme;
-	}
-}
-
 // Overrides shared shim: 403 when logged in (shared: always 401).
 if ( ! function_exists( 'rest_authorization_required_code' ) ) {
 	function rest_authorization_required_code(): int {
