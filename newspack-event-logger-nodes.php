@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.103.0
+ * Version: 0.103.1
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -40,7 +40,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.103.0' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.103.1' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -94,12 +94,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// the stored buckets — BEHAVIOUR again. 2.65.13 is the SSE stream
 	// addressing replies to the command session the bundled stream client
 	// presents; below it the dashboards' streams receive no replies. 2.66.0
-	// is Fanout_Targets::egress_for(), which the discovery fan-out now calls.
+	// is Fanout_Targets::egress_for(). 2.67.0 is Fanout_Targets::send_signed(),
+	// which mints the discovery probes, and an invalidate_options_cache() that
+	// drops every cached option, which the discovery merge relies on.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.66.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.67.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
