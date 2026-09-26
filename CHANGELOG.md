@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.103.0] - 2026-09-26
+
 ### Added
 
 - **A `hub` topology composes `aggregator` and `hub-control` into one worker.** It pins its own `num_partitions = 1`, since an included file's frontmatter is skipped and a single-instance control plane would otherwise mount once per data partition on a hub configured above one; the same pin also means every Remote_Source child the firehose group builds pulls the spoke's `firehose.p0` alone, so a spoke running more than one partition needs `aggregator` and `hub-control` activated as their own topology instead. `hub` REPLACES running `aggregator` and `hub-control` as a pair — deactivate both before activating `hub`, or the control plane mounts twice. Switching which topology is active changes the `<topology>` cursor path every Remote_Source and offsetlog is scoped by, so each spoke starts its hub-side cursor fresh on the switch.
