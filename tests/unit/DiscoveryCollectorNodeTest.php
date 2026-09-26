@@ -57,9 +57,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$sink->name( '_command_interpreter' );
 		\update_option( \Newspack_Nodes\Vault::OPTION_KEY, [ 'tw0' => [ 'url' => 'https://tw0.example' ] ] );
 		\Newspack_Nodes\Vault::get_instance()->reset_cache();
-		$egress = new \Newspack_Nodes\HTTP_Out_Node();
-		$egress->name( 'spokes:tw0' );
-		$egress->arguments( [ 'tw0' ] );
+		$this->egress( 'spokes:tw0', 'tw0' );
 		\Newspack_Nodes\Command_Auth::remember_session( 'tw0', \str_repeat( '5', 32 ), 'harness-session-key' );
 
 		$node = new Discovery_Collector_Node();
@@ -106,6 +104,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$this->assertSame( 'discovery-collector', $out[ Message::FROM ] );
 		$this->assertSame( 'get', $out[ Message::VALUE ]['name'] );
 		$this->assertSame( [], $out[ Message::VALUE ]['arguments'] );
+		$this->assertSame( \str_repeat( '5', 32 ), $out[ Message::VALUE ]['auth']['handle'] );
 	}
 
 	public function test_arguments_arms_recurring_timer(): void {

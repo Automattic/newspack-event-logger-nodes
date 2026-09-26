@@ -22,10 +22,8 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\Command_Auth;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Fanout_Targets;
-use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Timer_Node;
@@ -106,57 +104,30 @@ class Discovery_Collector_Node extends Timer_Node {
 	}
 
 	/**
-	 * Periodic fan-out: mint and sign one `discovery.get` command per live
-	 * target, addressed at that spoke's `discovery` CI. Drops silently if the
-	 * node has no sink.
+	 * Periodic fan-out: one signed `discovery.get` per live target, addressed
+	 * at that spoke's `discovery` CI, through `Fanout_Targets::send_signed()`.
 	 *
 	 * The override replaces Timer_Node's heartbeat emit, so this node puts
 	 * nothing on the wire but the probes themselves.
 	 *
-	 * A target with no established session is skipped and asked to handshake:
-	 * the far side has no key to verify a signature yet, and the skip alone
-	 * would deadlock, since nothing else drives HTTP_Out's `/auth` round-trip.
-	 * The missing-session warning stays quiet for the first 30 seconds of
-	 * process life, when a handshake is still in flight.
+	 * The sweep opens with one options-cache refresh, so the replies it draws
+	 * merge onto what an operator last wrote rather than this worker's copy.
 	 *
 	 * @api Driven by the substrate Timer (fire_cb).
 	 */
 	public function fire(): void {
-		if ( null === $this->sink ) {
+		if ( [] === $this->live_targets() ) {
 			return;
 		}
-		$sink = $this->sink;
-		// One signed probe per spoke: a re-addressed command cannot verify.
-		foreach ( $this->live_targets() as $target ) {
-			$egress = $this->egress_for( $target );
-			$spoke  = $egress?->vault_id() ?? '';
-			if ( '' === $spoke || ! Command_Auth::has_session( $spoke ) ) {
-				$uptime = (int) ( Core::$now - Core::$init_time );
-				if ( $uptime > 30 ) {
-					$this->print_less_often( 'no session for ', $target, '; skipping' );
-				}
-				// Skipping alone deadlocks: someone must ask for the handshake.
-				$egress?->ensure_session();
-				continue;
-			}
-			$out                   = Message::new_message();
-			$out[ Message::TYPE ]  = Message::TM_COMMAND;
-			$out[ Message::FROM ]  = $this->name;
-			$out[ Message::TO ]    = $this->target_path( $target, 'discovery' );
-			$out[ Message::VALUE ] = [
-				'name'      => 'get',
-				'arguments' => [],
-			];
-			Command_Auth::sign_for( $spoke, $out );
-			$sink->fill( $out );
-		}
+		RuntimeConfig::invalidate_options_cache();
+		$this->send_signed( 'discovery', 'get', [] );
 	}
 
 	/**
 	 * Union-merge a single reply's registered_hooks / custom_events into the
-	 * hub's options: remote-string sanitization, custom-event exclusion, and
-	 * option-cache invalidation before the read-modify-write. The MAX_EVENTS
-	 * ceiling belongs to stage_discovered(), which is what actually writes.
+	 * hub's options: remote-string sanitization and custom-event exclusion.
+	 * The MAX_EVENTS ceiling belongs to stage_discovered(), which is what
+	 * actually writes.
 	 *
 	 * Union-only — a name a spoke stops reporting stays staged until an
 	 * operator clears the option.
@@ -164,9 +135,6 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * @param array<array-key,mixed> $payload One spoke's discovery payload.
 	 */
 	private function merge_discovery( array $payload ): void {
-		// A stale option cache makes this read-modify-write clobber.
-		RuntimeConfig::invalidate_options_cache();
-
 		$hooks  = self::sanitized_names( $payload['registered_hooks'] ?? null );
 		$events = self::sanitized_names( $payload['custom_events'] ?? null );
 

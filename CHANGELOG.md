@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Discovery no longer writes back a staging catalog another process changed.** `Discovery_Collector_Node`'s read-modify-write of `discovered_hooks` and `discovered_events` read the `hub-control` worker's cached copy, so it merged new names into the list the worker had read first, restoring names an operator cleared. Each sweep now opens with one `Config::invalidate_options_cache()` call, skipped when no spoke is connected, so every reply it draws merges onto fresh options however many spokes answer. The call drops every cached option, those two non-autoloaded rows and a cached absence included, through the substrate's reworked purge: `wp_cache_flush_runtime()` with an external object cache, which evicts nothing shared, and `wp_cache_flush_group( 'options' )` without one.
+
+### Changed
+
+- **`Discovery_Collector_Node` probes spokes through the substrate's `Fanout_Targets::send_signed()`.** Its own copy of the per-spoke sign-and-send loop is gone; the probes, the handshake kick and the quiet first 30 seconds are unchanged.
+- **Requires the newspack-nodes release that ships `Fanout_Targets::send_signed()` and the reworked `Config::invalidate_options_cache()`.** No released substrate carries either yet, so the loader's `version_at_least()` floor must rise to that release when it is tagged.
+
 ## [0.103.0] - 2026-09-26
 
 ### Added
