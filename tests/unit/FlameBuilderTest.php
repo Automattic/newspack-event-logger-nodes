@@ -1091,9 +1091,11 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			public int $later = 0;
-			public function url_hours_derived( array $hours ): array {
-				Core::$now = $this->later;
-				return parent::url_hours_derived( $hours );
+			public ?int $probed_at = null;
+			public function url_hours_derived( array $hours, int $now ): array {
+				$this->probed_at = $now;
+				Core::$now       = $this->later;
+				return parent::url_hours_derived( $hours, $now );
 			}
 		};
 		$first        = \gmmktime( 10, 3, 0, 9, 22, 2026 );
@@ -1112,6 +1114,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$this->assertSame( $store->later, (int) Core::$now, 'the probe did tick the clock' );
+		$this->assertSame( $first, $store->probed_at, 'the probe dates its touches from the flush' );
 		$this->assertSame( $first, ( new \ReflectionProperty( $fb, 'ranked_at' ) )->getValue( $fb )[ $bucket ] ?? null );
 	}
 
@@ -1651,7 +1654,7 @@ class FlameBuilderTest extends TestCase {
 		$this->set_url_shard( $store, "{$hour}-10", 'w5', [ '5b5b5b5b5b5b' => self::positional_url_row( [ 'count' => 2, 'worker' => true, 'path' => '/moa' ] ) ], 'moa.test' );
 		$mc->asked = [];
 
-		$fb->roll_up_hours( $store, [ 'fine' => [], 'hours' => [ $hour ] ] );
+		$fb->roll_up_hours( $store, [ 'fine' => [], 'hours' => [ $hour ] ], self::tick() );
 
 		$kea  = Stats_Store::server_key( 'kea.test' );
 		$moa  = Stats_Store::server_key( 'moa.test' );
@@ -3439,7 +3442,7 @@ class FlameBuilderTest extends TestCase {
 	/** Run `roll_up_hours()` as a flush at `$now` would. */
 	private static function roll_up( Flame_Builder_Node $fb, int $now ): void {
 		$store = self::store_of( $fb );
-		$fb->roll_up_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( $store->ttl(), $now ) ) );
+		$fb->roll_up_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( $store->ttl(), $now ) ), $now );
 	}
 
 	/** The oldest bucket of the read plan's fine tail at `$now`. */
@@ -3633,7 +3636,7 @@ class FlameBuilderTest extends TestCase {
 		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [] );
 
 		$this->assertContains( 'late-7731.test', Stats_Store::index_names( $store->server_index( [ '2026-08-27-13' ], [] )['2026-08-27-13'] ) );
-		$this->assertFalse( $store->url_hours_derived( [ '2026-08-27-13' ] )['2026-08-27-13']['folded'], 'its hour keys are missing' );
+		$this->assertFalse( $store->url_hours_derived( [ '2026-08-27-13' ], (int) Core::$now )['2026-08-27-13']['folded'], 'its hour keys are missing' );
 
 		( new \ReflectionProperty( $fb, 'folds_since_reprobe' ) )->setValue( $fb, PHP_INT_MAX - 1 );
 		self::roll_up( $fb, (int) Core::$now );
@@ -4262,23 +4265,30 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 1, $store->folds, 'the refused shard is folded once' );
 	}
 
-	public function test_a_refused_hour_list_is_not_re_ranked_on_the_next_reprobe(): void {
-		// The re-probe finds the hour folded; a done marker written beside a
-		// refused list is what keeps it from ranking the hour again.
-		Core::$memd = new InMemoryMemcached();
-		$store      = new class( 0, 86400 ) extends Stats_Store {
+	public function test_a_refused_hour_list_is_ranked_again_at_the_next_reprobe(): void {
+		// memcached refuses every list; the done marker beside them lands, so
+		// only the reprobe's touch finds a list missing, and it re-ranks the
+		// hour, to be refused again. Policy, not an accident: flip the count
+		// if a refused list ever stops being retried.
+		$memd       = new InMemoryMemcached();
+		Core::$memd = $memd;
+		$hour       = '2026-08-27-13';
+		foreach ( Stats_Store::URL_SORTS as $sort ) {
+			foreach ( Stats_Store::URL_ORDERS as $order ) {
+				$key = Stats_Store::key( ...[ ...Stats_Store::url_rank_parts( $sort, $order, self::SEED_SERVER, true ), $hour ] );
+				$memd->fail_set( self::cache_key( 0, $key ) );
+			}
+		}
+		$store = new class( 0, 86400 ) extends Stats_Store {
 			public int $rankings = 0;
 			public function bucket_set_multi( array $writes ): array {
-				$out     = parent::bucket_set_multi( $writes );
-				$counted = false;
-				foreach ( $writes as $i => [ $parts, $key ] ) {
+				foreach ( $writes as [ $parts, $key ] ) {
 					if ( self::NS_URLRANK_HOUR_S === $parts[0] && 'done' !== $parts[1] && '2026-08-27-13' === $key ) {
-						$counted   = true;
-						$out[ $i ] = false;
+						++$this->rankings;
+						break;
 					}
 				}
-				$this->rankings += $counted ? 1 : 0;
-				return $out;
+				return parent::bucket_set_multi( $writes );
 			}
 		};
 		$this->set_url_bucket( $store, '2026-08-27-13-05', [
@@ -4294,7 +4304,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now += 5;
 		$fb->flush();
 
-		$this->assertSame( 1, $store->rankings, 'the re-probe does not rank it again' );
+		$this->assertSame( 2, $store->rankings, 'the reprobe finds a list missing and ranks the hour again' );
 	}
 
 	public function test_a_closed_hour_is_ranked_when_it_is_folded(): void {
@@ -4906,10 +4916,12 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * The skip probe is ONE round trip, not one per hour. Steady state is 23
-	 * hours already folded and nothing to do, on a flush that runs every few
-	 * seconds — asking per hour paid 23 trips to learn that, against an API
-	 * that takes a list (decision 6: per-key `get` is a latency cliff).
+	 * The skip probe reads once for every hour, not once per hour. Steady
+	 * state is 23 hours already folded and nothing to do, on a flush that
+	 * runs every few seconds — asking per hour paid 23 trips to learn that,
+	 * against an API that takes a list (decision 6: per-key `get` is a
+	 * latency cliff). The lists are the one exception: memcached has no
+	 * batched touch, so each marked server's fourteen are touched apiece.
 	 */
 	public function test_the_rollup_probe_asks_once_for_every_hour(): void {
 		$memd       = new InMemoryMemcached();
@@ -4919,7 +4931,8 @@ class FlameBuilderTest extends TestCase {
 		// Every hour already derived — index, rows and lists — so the probe is
 		// all this flush does.
 		$families = \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) );
-		foreach ( Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'] as $hour ) {
+		$hours    = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'];
+		foreach ( $hours as $hour ) {
 			foreach ( $families as $shard ) {
 				$this->seed_url_hour( $store, $hour, $shard, [] );
 			}
@@ -4936,6 +4949,7 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame( 2, $memd->multi_calls, 'one probe for the whole window: its heads, then the rows they name' );
 		$this->assertSame( 0, $memd->get_calls, 'and nothing folded, so no per-key reads' );
+		$this->assertSame( \count( $hours ) * \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ), $memd->touches, 'one touch a list' );
 	}
 
 	/**

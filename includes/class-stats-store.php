@@ -1334,23 +1334,34 @@ class Stats_Store {
 	}
 
 	/**
-	 * What the derived tiers hold for each of `$hours`, in two round trips.
+	 * What the derived tiers hold for each of `$hours`: two batched reads,
+	 * then one touch per ranked list of each hour that reads as folded.
 	 *
 	 * `folded` is the hour's server index, every shard each entry of it
 	 * names, and the global leaderboard's hour: a server missing a named
 	 * shard is an hour whose rows no reader sees whole, a missing
 	 * leaderboard hour is one the board skips, and the fold is what would
-	 * otherwise never revisit either. `unranked` names each server the index
-	 * names whose DONE marker is missing — the one key its ranking writes
-	 * beside its lists whatever they answer. The index and the leaderboard go
-	 * first, because the index says which keys the second read asks for.
-	 * The probe runs on every flush, and decision 6 is what keeps that
-	 * affordable.
+	 * otherwise never revisit either. The index and the leaderboard go
+	 * first, because the index says which keys the second read asks for
+	 * (decision 6).
+	 *
+	 * `unranked` names every server the index names whose DONE marker is
+	 * missing, and at most the first marked server found missing a LIST.
+	 * The marker alone is not enough: memcached evicts by slab class, so a
+	 * 30KB list goes long before the one-key marker beside it. A folded hour
+	 * with every server marked therefore has each marked server's fourteen
+	 * lists touched, one round trip a key, because a touch reports presence
+	 * without fetching a value, and holds the list to the hour's window. An
+	 * hour already unranked touches nothing: its only consumer re-ranks
+	 * every server of a stale hour, so one name is as good as all of them.
+	 * A touch the backend does not answer ends the hour's touches and names
+	 * no server (decision 3).
 	 *
 	 * @param array<int,string> $hours Hour keys to probe.
+	 * @param int               $now   The flush's tick, which dates each touch.
 	 * @return array<string,array{folded: bool, unranked: list<string>}> Only hours holding something.
 	 */
-	public function url_hours_derived( array $hours ): array {
+	public function url_hours_derived( array $hours, int $now ): array {
 		$reads = [];
 		foreach ( $hours as $hour ) {
 			$reads[] = [ self::url_srv_parts( true ), $hour ];
@@ -1371,28 +1382,87 @@ class Stats_Store {
 		}
 		$missing  = [];
 		$unranked = [];
+		$marked   = [];
 		foreach ( $this->bucket_get_multi( $keys ) as $at => $value ) {
-			if ( null !== $value ) {
+			$hour = $keys[ $at ][1];
+			$name = $owner[ $at ];
+			if ( null === $name ) {
+				if ( null === $value ) {
+					$missing[ $hour ] = true;
+				}
 				continue;
 			}
-			$hour = $keys[ $at ][1];
-			if ( null === $owner[ $at ] ) {
-				$missing[ $hour ] = true;
-			} else {
-				$unranked[ $hour ][] = $owner[ $at ];
+			if ( null === $value ) {
+				$unranked[ $hour ][] = $name;
+				continue;
 			}
+			$marked[ $hour ][] = $name;
 		}
 		$out = [];
 		foreach ( \array_values( $hours ) as $at => $hour ) {
 			[ $index, $board ] = \array_slice( $heads, 2 * $at, 2 );
-			if ( null !== $index || null !== $board ) {
-				$out[ $hour ] = [
-					'folded'   => null !== $index && null !== $board && ! isset( $missing[ $hour ] ),
-					'unranked' => $unranked[ $hour ] ?? [],
-				];
+			if ( null === $index && null === $board ) {
+				continue;
 			}
+			$folded = null !== $index && null !== $board && ! isset( $missing[ $hour ] );
+			if ( $folded && ! isset( $unranked[ $hour ] ) ) {
+				$unranked[ $hour ] = $this->url_hour_lost_list( $marked[ $hour ] ?? [], $hour, $now );
+			}
+			$out[ $hour ] = [
+				'folded'   => $folded,
+				'unranked' => $unranked[ $hour ] ?? [],
+			];
 		}
 		return $out;
+	}
+
+	/**
+	 * The first of a folded hour's marked servers missing one of its ranked
+	 * lists, touching each list it finds until the hour leaves the window.
+	 *
+	 * An hour past its window is owed nothing, and a touch at no time left
+	 * would make a list immortal, so it touches nothing and names no server.
+	 * A touch the backend does not answer cannot tell a lost list from a
+	 * standing one, so the hour's touches stop there and name no server
+	 * (decision 3); the next reprobe asks again.
+	 *
+	 * @param list<string> $servers Marked server names, as the hour's index names them.
+	 * @param string       $hour    Hour key.
+	 * @param int          $now     The flush's tick.
+	 * @return list<string> That server alone, or none.
+	 */
+	private function url_hour_lost_list( array $servers, string $hour, int $now ): array {
+		$ttl = $this->window_remaining( self::key( self::NS_URLRANK_HOUR_S, $hour ), $now );
+		if ( $ttl <= 0 ) {
+			return [];
+		}
+		foreach ( $servers as $server ) {
+			foreach ( self::URL_SORTS as $sort ) {
+				foreach ( self::URL_ORDERS as $order ) {
+					$standing = $this->bucket_touch( self::url_rank_parts( $sort, $order, $server, true ), $hour, $ttl );
+					if ( null === $standing ) {
+						return [];
+					}
+					if ( ! $standing ) {
+						return [ $server ];
+					}
+				}
+			}
+		}
+		return [];
+	}
+
+	/**
+	 * Refresh one bucket of a namespace in memcache without fetching it.
+	 *
+	 * @param array<int,string> $parts  Namespace prefix parts, before the bucket.
+	 * @param string            $bucket Bucket or hour key.
+	 * @param int               $ttl    New expiry in seconds.
+	 * @return bool|null True when the entry was there to refresh, false when
+	 *                   it is confirmed absent, null when no backend answered.
+	 */
+	private function bucket_touch( array $parts, string $bucket, int $ttl ): ?bool {
+		return $this->table( $this->role_for( $parts[0] ) )?->touch( self::key( ...[ ...$parts, $bucket ] ), $ttl );
 	}
 
 	/**
@@ -1454,10 +1524,9 @@ class Stats_Store {
 	 *
 	 * A server's hour is fourteen lists, so none of them can stand for the
 	 * set. This one tiny key says the server's ranking of the hour ran, and
-	 * rides that ranking's batch whatever its lists answer; a refused list is
-	 * not retried, and the ranked reader folds an hour whose list it finds
-	 * missing. `done` is never a server key, which is hex, so it can collide
-	 * with no list.
+	 * rides that ranking's batch whatever its lists answer;
+	 * `url_hours_derived()` also checks the lists. `done` is never a server
+	 * key, which is hex, so it can collide with no list.
 	 *
 	 * @param string $server_key The server's `server_key()`.
 	 * @return array<int,string>
@@ -2207,14 +2276,23 @@ class Stats_Store {
 	}
 
 	/**
-	 * How long a re-materialized entry is warmed for: what is left of the
-	 * RETENTION window, bounded by its own role's TTL.
+	 * How long an entry is still read: what is left of the RETENTION window,
+	 * bounded by its own role's TTL.
 	 *
 	 * The TTL it was written with bounds the CACHE and decays from the WRITE, so
 	 * a spent one says nothing about how long the data is still READ: the window
 	 * does, and it is a pure function of the bucket key, which is the last
-	 * segment and sorts chronologically. Zero or less means genuinely past
-	 * retention — nothing asks for it, and nothing should warm it.
+	 * segment and sorts chronologically. A bucket is read until its END leaves
+	 * the window — the read plan names an hour while any of its twelve buckets
+	 * is in it — so an hour dated from its start would lapse up to an hour
+	 * early. Zero or less means genuinely past retention — nothing asks for
+	 * it, and nothing should warm it.
+	 *
+	 * That end is exact for a retention of whole buckets up to 86,100s. Past
+	 * it `window_bucket_count()` caps the plan at `MAX_READ_BUCKETS`, so the
+	 * answer outlasts the last read by the retention less 86,100s — 300s at
+	 * eln's 24 hours, six days at `min_lifetime`'s 604,800s ceiling — which
+	 * errs long, and the role TTL keeps it from ever being immortal.
 	 *
 	 * The role's TTL is the other bound and is not the same statement.
 	 * `ttl_url_fine()` is a memcache FOOTPRINT: 24 buckets a shard rather than
@@ -2223,13 +2301,15 @@ class Stats_Store {
 	 * all 288 back in the cache that tier exists to keep out — up to twelve
 	 * times its footprint, for buckets no reader asks for.
 	 *
-	 * The HOUR branch is unreached from that seam today, because `NS_URLS_HOUR`
-	 * is a DERIVED namespace and is filtered out before this is asked.
-	 * It stays because the alternative is worse than dead: without it an hour
-	 * key falls to the hash-keyed branch and reports a FULL role TTL for a
-	 * bucket most of whose window is spent, the moment that policy changes.
+	 * Two callers ask. The mirror seam sizes the FINE buckets it hands back,
+	 * and never an hour, since `NS_URLS_HOUR` is a DERIVED namespace it
+	 * filters out. `url_hour_lost_list()` asks of an HOUR key on every
+	 * reprobe, to date the touches holding a folded hour's ranked lists.
+	 * `bucket_span()`'s HOUR branch must stay for it: without it an hour key
+	 * falls to the hash-keyed branch and reports a full role TTL.
 	 *
-	 * @api The mirror seam, sizing what it hands back.
+	 * @api The mirror seam, sizing what it hands back; also the reprobe's
+	 *      touch window.
 	 * @param string $key Table-RELATIVE entry key: `<ns>:…:<bucket>`.
 	 * @param int    $now Clock, so one answer cannot straddle a boundary.
 	 * @return int Seconds remaining, 0 when the key names no readable bucket.
@@ -2241,7 +2321,7 @@ class Stats_Store {
 			// `url` and `urlmap` key on a hash; neither is bucket-shaped.
 			return $role;
 		}
-		return \min( $role, \max( 0, ( $bucket[0] + $this->max_lifespan ) - $now ) );
+		return \min( $role, \max( 0, ( $bucket[0] + $bucket[1] + $this->max_lifespan ) - $now ) );
 	}
 
 	/**
