@@ -337,13 +337,10 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	private array $rank_pending = [];
 
 	/**
-	 * Folded hours the probe found holding rows but some server with no DONE
-	 * marker, each until its servers are ranked from those stored rows.
-	 * Pruned to the read plan's hours, since no reader plans one the window
-	 * passed.
-	 *
-	 * The store holds the debt, not this: a server missing its marker is
-	 * found again by the next probe, so a stop that leaves one loses nothing.
+	 * Folded hours the probe found with a server unranked, each until its
+	 * servers are ranked from the stored rows, and pruned to the read plan's
+	 * hours. The store holds the debt, not this: the next probe finds it
+	 * again, so a stop that leaves one loses nothing.
 	 *
 	 * @var array<string,true>
 	 */
@@ -1388,7 +1385,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			// worker, so a respawn is the only way the memo goes stale.
 			// Probing before the writes are placed keeps the first flush after
 			// one from leaving rows in fine buckets a folded hour replaced.
-			$this->roll_up_hours( $stats_store, $plan );
+			$this->roll_up_hours( $stats_store, $plan, $now );
 			// Lexical order IS chronological, which is what bucket_key() buys.
 			$this->persist_aggregate_stats( $stats_store, $now, (string) \end( $plan['fine'] ) );
 		}
@@ -1968,8 +1965,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * A fold is idempotent because it OVERWRITES from the fine buckets. Adding
 	 * into an hour incrementally would double-count every re-flush. It writes
 	 * the hour's ranked lists in the same pass, from the shard rows it just
-	 * folded; an hour holding every derived key but some server's DONE
-	 * marker, which a late write that lands forgets, is never folded again,
+	 * folded; an hour holding every derived key but with some server
+	 * unranked, as `url_hours_derived()` reports it, is never folded again,
 	 * but joins `stale_hours`, whose lists the flush ranks from those stored
 	 * rows. Only a fold spends the budget; such an hour
 	 * spends none, and a spent budget stops the folds but never the probe, so
@@ -1977,8 +1974,9 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 *
 	 * @param Stats_Store                                    $stats_store Source and destination.
 	 * @param array{fine: list<string>, hours: list<string>} $plan        The flush's read plan.
+	 * @param int                                            $now         The flush's one read of the tick.
 	 */
-	public function roll_up_hours( Stats_Store $stats_store, array $plan ): void {
+	public function roll_up_hours( Stats_Store $stats_store, array $plan, int $now ): void {
 		// @longform Drop what left the window, so the memo cannot outgrow it —
 		// and empty it outright now and then, because an evicted hour is not
 		// re-foldable while this process still believes it folded one.
@@ -1991,14 +1989,14 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		// No reader plans an hour the window passed; its lists are owed no one.
 		$this->stale_hours = \array_intersect_key( $this->stale_hours, $planned );
 		$unknown = \array_values( \array_diff( $plan['hours'], \array_keys( $this->folded_hours ) ) );
-		// @longform ONE round trip, and only for hours this process did not
-		// fold itself. The probe reads presence but `getMulti` fetches and
-		// unserializes the VALUES, so probing the settled hours would pull
-		// the whole coarse tier off memcache twelve times a minute — the
-		// tier that exists so a READER does not have to. It asks about every
-		// derived key an hour holds: an hour missing any of them, evicted or
-		// forgotten by a late write, otherwise reads as settled forever.
-		$found  = [] === $unknown ? [] : $stats_store->url_hours_derived( $unknown );
+		// @longform Only for hours this process did not fold itself. The
+		// probe reads presence but `getMulti` fetches and unserializes the
+		// VALUES, so probing the settled hours would pull the whole coarse
+		// tier off memcache twelve times a minute — the tier that exists so
+		// a READER does not have to. It asks about every derived key an hour
+		// holds: an hour missing any of them, evicted or forgotten by a late
+		// write, otherwise reads as settled forever.
+		$found  = [] === $unknown ? [] : $stats_store->url_hours_derived( $unknown, $now );
 		$budget = self::ROLLUP_HOURS_PER_FLUSH;
 		foreach ( $unknown as $hour ) {
 			// @longform A partial fold — a crash between shards — reads as
@@ -2006,8 +2004,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			// corrupt: the fold overwrites rather than adding.
 			$folded   = ! empty( $found[ $hour ]['folded'] );
 			$unranked = $found[ $hour ]['unranked'] ?? [];
-			// @longform Folded with a server unmarked: one whose marker was
-			// evicted or refused, or one a late write landed in. Its fine
+			// @longform Folded with a server unranked: one whose marker or list
+			// was evicted or refused, or one a late write landed in. Its fine
 			// buckets may be gone, so folding again would overwrite it with
 			// nothing; its lists come from the coarse rows, which is what they
 			// are derived from anyway.
@@ -2201,12 +2199,11 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * The tier picks its own list depth, the way `cap_dim()` picks its field
 	 * table: a pairing that can only go one way is not a parameter.
 	 *
-	 * A refused list is logged and not retried: the lists are top-N bounded
-	 * to fit, so a refusal is a wrong N, and a transient failure heals at
-	 * the ranking the next write into the key brings. On the hour tier each
-	 * server's DONE marker, which is what `url_hours_derived()` probes, rides
-	 * the same batch whatever the lists answer, so no re-probe ranks the hour
-	 * again; the reader serves an hour ranked only where every list is present.
+	 * A refused list is logged and not retried here: the lists are top-N
+	 * bounded to fit, so a refusal is a wrong N, and a transient failure
+	 * heals at the ranking the next write into the key brings. On the hour
+	 * tier each server's DONE marker rides the same batch whatever the lists
+	 * answer, and `url_hours_derived()` decides whether the hour ranks again.
 	 *
 	 * @param Stats_Store                             $stats_store Destination.
 	 * @param string                                  $key         Bucket or hour key.
