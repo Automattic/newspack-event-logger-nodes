@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.103.2] - 2026-09-27
+
 ### Fixed
 
 - **An hour whose ranked list memcached evicted is re-ranked, and `urls` stops folding the whole index on every poll.** `Stats_Store::url_hours_derived()` read only each server's DONE marker, and memcached evicts a 30KB list long before that one-key marker, which sits in a smaller slab class: on the eln staging hub 10,634 of 11,592 hour lists were gone while every marker stood, so every `urls` poll folded the index for 25 to 30 seconds and nothing re-ranked. In an hour that reads as folded with every server marked, the probe now touches each marked server's fourteen hour lists and names the first server missing one, so the flame builder re-ranks that hour from its stored rows. An hour it will fold, or one a missing marker already makes stale, touches nothing, since either is ranked afresh. A touch the backend does not answer stops that hour's touches and names no server, so a memcached timeout re-ranks nothing; the next reprobe asks again. A touch reports presence without fetching the list; php-memcached has no batched touch, so it costs one round trip a list, about 0.25 seconds for 2,898 lists a partition on eln, and runs only at the flame builder's five-minute reprobe. Each touch holds its list until the hour's last bucket leaves the window, which also keeps the probed lists off the LRU tail. A list is bounded to fit one item before it is written (decision 30), so a list refused for its size is a wrong `URL_RANK_N_HOUR`: it would be re-ranked and refused again at every reprobe, logging `URL rank write refused` each time.
