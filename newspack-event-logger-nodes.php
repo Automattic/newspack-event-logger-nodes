@@ -101,11 +101,17 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// 2.68.0 is Table_Node::touch(), which the reprobe checks hour lists with.
 	// 2.69.0 is Command_Interpreter_Node::$around_dispatch, the verb spans.
 	// 2.70.0 is that hook handing the command line the spans' (start) carries.
+	// 2.71.0 is Schema_Reflection::answer_request(), which both builders
+	// answer their requests through, CLI::worker_id(), which spells a spawned
+	// worker's row, and Table_Node::replace_absent(), which gives a late
+	// mirror write's frame to the absence a reader remembered; below it each
+	// call fatals. It is also newspack_nodes/worker_identified, naming the
+	// worker a spawn became.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.70.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.71.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
@@ -135,6 +141,9 @@ function newspack_event_logger_nodes_boot(): void {
 	// Give each substrate job its own /jobs/{handler}/{id} request context.
 	\add_filter( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'begin_job_context_filter' ], 10, 4 );
 	\add_action( 'newspack_nodes/job_worker/after_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'end_job_context' ], 10, 3 );
+
+	// A spawn request learns which worker it became after it began logging.
+	\add_action( 'newspack_nodes/worker_identified', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'identify_worker' ], 10, 2 );
 
 	// Every dispatched verb opens its own span in the request's record.
 	\Newspack_Event_Logger_Nodes\Diagnostics_Bridge::install();

@@ -1187,6 +1187,24 @@ class FindingsTest extends TestCase {
 		}
 	}
 
+	/** The builders' own upkeep spans are told whatever the rule; no edit reaches them. */
+	public function test_a_dominant_upkeep_span_proposes_nothing(): void {
+		foreach ( [ Flame_Tree::STATS_FOLD, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT ] as $step ) {
+			$record = $this->healthy_record();
+			$record['flame']['children'] = [
+				[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+				[ 'name' => $step, 'value' => 372.0, 'children' => [] ],
+			];
+
+			$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+			$this->assertNotNull( $found, $step );
+			$this->assertSame( 'none', $found['proposal']['action'], $step );
+			$this->assertStringContainsString( 'upkeep', $found['proposal']['why'], $step );
+			$this->assertStringNotContainsString( 'custom event', $found['detail'], $step );
+		}
+	}
+
 	/**
 	 * Only a single-token slug is the profiler's: an application event whose
 	 * name merely ends in "plugin" is still the application's own.

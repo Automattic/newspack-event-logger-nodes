@@ -267,6 +267,21 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Make the next Partition write raise the cooperative stop, as a lost lock
+	 * would. Returns the disarm.
+	 *
+	 * @return \Closure(): void
+	 */
+	public static function arm_stop_on_next_write(): \Closure {
+		$framework = \Newspack_Nodes\Event_Framework::instance();
+		$predicate = new \ReflectionProperty( \Newspack_Nodes\Event_Framework::class, 'continue_predicate' );
+		$last_pump = new \ReflectionProperty( \Newspack_Nodes\Event_Framework::class, 'last_pump' );
+		$predicate->setValue( $framework, static fn (): bool => false );
+		$last_pump->setValue( $framework, 0.0 );
+		return static fn () => $predicate->setValue( $framework, null );
+	}
+
+	/**
 	 * Run `$work` inside a started request log over the runtime tree at
 	 * `$base`, then return every firehose entry it wrote.
 	 *
@@ -517,7 +532,7 @@ abstract class TestCase extends RuntimeTestCase {
 		}
 		// The stored MAP, not `url_token_sets()`'s hashes: the stamps merge.
 		$existing = $store->bucket_get_multi( $reads );
-		$now      = \time();
+		$now      = self::tick();
 		$writes   = [];
 		foreach ( $by_token as $token => $hashes ) {
 			$writes[] = [

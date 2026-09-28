@@ -165,6 +165,10 @@ class Findings {
 			'detail' => 'The event logger times this step of the URL read itself, whatever the rule says, so no rule edit reaches inside it.',
 			'why'    => '%s is a step of `Performance_CI_Node`\'s URL read, whose `(complete)` line says whether its cache hit or how many rows it folded. Look there — nothing a rule can switch on runs inside it.',
 		],
+		'upkeep'           => [
+			'detail' => 'This is a builder\'s own work, told whatever the rule says, so no rule edit reaches inside it.',
+			'why'    => '%s is a step of a builder\'s upkeep on its worker, whose `(complete)` line counts what it wrote, folded or healed. Look there — nothing a rule can switch on runs inside it.',
+		],
 		'listener'         => [
 			'detail' => 'This is one listener on a significant hook — the time is inside this callback.',
 			'why'    => '%s is a listener, logged because its hook is already a significant event — this is the finest grain the logger has, and the answer is inside that callback.',
@@ -647,18 +651,19 @@ class Findings {
 	}
 
 	/**
-	 * The seven kinds of span the flame carries, classified once so every
+	 * The eight kinds of span the flame carries, classified once so every
 	 * caller reaches the same `SPAN_ADVICE` row. A custom event has no
 	 * listeners, and prose crediting it with any sends the reader hunting a
 	 * callback that does not exist. A query or HTTP span is the logger's own,
 	 * a plugin span is one plugin file's load, a command span is the frame of
-	 * one verb, and a URL-read span is one step inside such a verb; the last
-	 * two are logged whatever the rule says, and calling any of these a custom
-	 * event proposes a rule edit that changes nothing. A hook is known by its
-	 * BASE name: with hook tracing on, the frame carries the caller too.
+	 * one verb, a URL-read span is one step inside such a verb, and an upkeep
+	 * span is a builder's own work; the last three are logged whatever
+	 * the rule says, and calling any of these a custom event proposes a rule
+	 * edit that changes nothing. A hook is known by its BASE name: with hook
+	 * tracing on, the frame carries the caller too.
 	 *
 	 * @param string $base The span's base name, per `Flame_Tree::base_name()`.
-	 * @return string `transport`, `plugin`, `command`, `url_read`, `hook`, `listener` or `custom`.
+	 * @return string `transport`, `plugin`, `command`, `url_read`, `upkeep`, `hook`, `listener` or `custom`.
 	 */
 	private static function span_kind( string $base ): string {
 		if ( Flame_Tree::is_transport_span( $base ) ) {
@@ -670,8 +675,9 @@ class Findings {
 		if ( Flame_Tree::is_command_span( $base ) ) {
 			return 'command';
 		}
-		if ( Flame_Tree::is_url_read_span( $base ) ) {
-			return 'url_read';
+		$platform = Flame_Tree::platform_span_kind( $base );
+		if ( null !== $platform ) {
+			return $platform;
 		}
 		if ( Flame_Tree::is_hook_span( $base ) ) {
 			return 'hook';

@@ -170,34 +170,6 @@ describe( 'OverviewSection', () => {
 		expect( container.textContent ).not.toContain( 'all servers' );
 	} );
 
-	it( 'marks the URL count as an estimate when the reply says it is one', () => {
-		// The writer's records count URLs with a sketch; the fold counts
-		// them exactly. Nothing but the URL count is estimated.
-		const statValue = ( container, label ) =>
-			Array.from( container.querySelectorAll( '.newspack-nodes-stat' ) )
-				.find(
-					( stat ) =>
-						stat.querySelector( '.newspack-nodes-stat-label' )
-							.textContent === label
-				)
-				.querySelector( '.newspack-nodes-stat-value' ).textContent;
-		const urlTotals = { ...baseTotals, urls: 4217, requests: 9001 };
-
-		const { container: est, unmount } = mount(
-			{ total_requests: 33049 },
-			{ urlTotals, urlsEstimated: true }
-		);
-		expect( statValue( est, 'Unique URLs' ) ).toBe( '≈4,217' );
-		expect( statValue( est, 'Total Requests' ) ).toBe( '9,001' );
-		unmount();
-
-		const { container: exact } = mount(
-			{ total_requests: 33049 },
-			{ urlTotals, urlsEstimated: false }
-		);
-		expect( statValue( exact, 'Unique URLs' ) ).toBe( '4,217' );
-	} );
-
 	it( 'says the totals are provisional when the writer has yet to rank a record', () => {
 		// The header skipped the records of buckets the writer has not
 		// ranked yet, so the totals are short of them, and say so.

@@ -22,6 +22,14 @@
  * Requests that never complete are not lost: the cache's timed bucket
  * rotation evicts them, and eviction writes them out with `error_status='T'`.
  *
+ * What it does is told on its worker's own record through `Narration`. The
+ * restore is a span, and so is a checkpoint once what it carries has moved.
+ * The `requests writes` rollup, once a minute and at a clean stop, counts the
+ * lines assembled, what it wrote and dropped, each fold by its trigger and
+ * each envelope evicted by its cause. The one point line is
+ * `purge_cache()`'s `requests expire`. Narration read back off the firehose,
+ * this builder's or a sibling's, is folded like any line but never counted.
+ *
  * The two static index helpers, `format_index_entry()` and
  * `parse_request_index()`, are a matched pair — a fixed-width companion-index
  * line writer and its reader. The writer is registered as the `request-index`
@@ -38,6 +46,7 @@ use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Line_Fitter;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Shutdown_Sweeper;
 use Newspack_Nodes\Timer_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -53,9 +62,10 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *
  * @phpstan-import-type Fold_State from Flame_Fold
  */
-class Request_Builder_Node extends Timer_Node {
+class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	use \Newspack_Nodes\Schema_Reflection;
 	use \Newspack_Nodes\Deferred_Clean_Stop;
+	use Narration;
 
 	/** Discarded on overflow: the entries between this and the last one are gone. */
 	public const LOST_MARKER_KEY = 'entries (lost)';
@@ -117,6 +127,20 @@ class Request_Builder_Node extends Timer_Node {
 	 * from the equality the pre-filter columns promise.
 	 */
 	private const COMPLETION_COLUMNS = [ [ 44, 10 ], [ 54, 8 ] ];
+
+	/**
+	 * The keywords a request builder's narration is written under. Folded as
+	 * any line is, but no traffic: counted, a builder reading its own record
+	 * back, or two builders each reading the other's, tell for ever.
+	 */
+	private const NARRATION_KEYWORDS = [
+		Flame_Tree::REQUESTS_WRITES                     => true,
+		Flame_Tree::REQUESTS_EXPIRE                     => true,
+		Flame_Tree::REQUESTS_CHECKPOINT . ' (start)'    => true,
+		Flame_Tree::REQUESTS_CHECKPOINT . ' (complete)' => true,
+		Flame_Tree::REQUESTS_RESTORE . ' (start)'       => true,
+		Flame_Tree::REQUESTS_RESTORE . ' (complete)'    => true,
+	];
 
 	/** Markers that close a request. They land even when the sequence broke. */
 	public const TERMINAL_KEYWORDS = [ Log_Manager::REQUEST_COMPLETE => true, Log_Manager::REQUEST_ABORTED => true ];
@@ -233,6 +257,9 @@ class Request_Builder_Node extends Timer_Node {
 	 */
 	private const FOLD_KEEP_TAIL = 10;
 
+	/** What a checkpoint or a restore carries before its walk counts any envelope. */
+	private const NOTHING_HELD = [ 'envelopes' => 0, 'entries' => 0, 'folded' => 0 ];
+
 	/** @var int `$appended` value that triggers the next pressure check. */
 	private int $next_check = self::DEFAULT_ENTRY_BUDGET + 1;
 
@@ -245,8 +272,14 @@ class Request_Builder_Node extends Timer_Node {
 	/** @var string Late-bound node NAME `alert` entries also forward to ('' = off). */
 	private $alerts_target = '';
 
-	/** @var int Firehose lines seen since start; reported by `GET_CACHE`. */
+	/** @var int Firehose lines seen since start, narration aside; reported by `GET_CACHE`. */
 	private $line_counter = 0;
+
+	/** Whether what a checkpoint carries may have moved since the last one told. */
+	private bool $carry_moved = true;
+
+	/** `$line_counter` as the last `requests writes` rollup told it. */
+	private int $lines_told = 0;
 
 	/** @var array<string,callable> Keyword → mutator. Set in constructor. */
 	private $state_callbacks;
@@ -315,9 +348,9 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Node entry point: fold one firehose line into its request envelope.
 	 *
-	 * TM_REQUEST messages are commands and divert to `handle_request()`.
-	 * Everything else must be TM_STRUCT with a decoded entry in VALUE and the
-	 * request id in KEY; anything else is dropped silently.
+	 * A TM_REQUEST is answered by `answer_request()` from the declared
+	 * `requests`. Everything else must be TM_STRUCT with a decoded entry in
+	 * VALUE and the request id in KEY; anything else is dropped silently.
 	 *
 	 * The line's `n` field is a per-request sequence number, and this method is
 	 * the only place it is checked. A line numbered below the expected value is
@@ -349,11 +382,19 @@ class Request_Builder_Node extends Timer_Node {
 	 * request times out (error_status='T') and reaches both the primary sink and
 	 * the completed target even on a partition with no inbound firehose traffic.
 	 * An eviction's emit holds its stop in the bracket until the pass is done.
+	 * The tick also tells the `requests writes` rollup, once a minute.
 	 *
 	 * @api Used by substrate.
 	 */
 	protected function fire(): void {
-		$this->deferring( fn () => $this->cache->rotate_if_due() );
+		$this->deferring(
+			function (): void {
+				$this->cache->rotate_if_due();
+				if ( $this->rollup_due( (int) Core::$now ) ) {
+					$this->tell_writes();
+				}
+			}
+		);
 	}
 
 	/**
@@ -362,12 +403,11 @@ class Request_Builder_Node extends Timer_Node {
 	 * @param array<int,mixed> $message The firehose line or command to fold in.
 	 */
 	private function fold_line( array $message ): void {
-		$type_raw = $message[ Message::TYPE ];
-		$type     = Core::as_int( $type_raw );
-		if ( $type & Message::TM_REQUEST ) {
-			$this->handle_request( $message );
+		if ( $this->answer_request( $message ) ) {
 			return;
 		}
+		$type_raw = $message[ Message::TYPE ];
+		$type     = Core::as_int( $type_raw );
 		if ( ! ( $type & Message::TM_STRUCT ) ) {
 			return;
 		}
@@ -395,13 +435,17 @@ class Request_Builder_Node extends Timer_Node {
 			$keyword = $intern[ $keyword ] ??= $keyword;
 		}
 		$n = $entry['n'] ?? 0;
-		++$this->line_counter;
+		if ( ! isset( self::NARRATION_KEYWORDS[ $keyword ] ) ) {
+			++$this->line_counter;
+			$this->carry_moved = true;
+		}
 
 		// get() returns the same object instance — mutations happen in place.
 		$request = $this->cache->get( $rid );
 		if ( null === $request ) {
 			// Only the request opener opens a request; orphan lines drop.
 			if ( Log_Manager::REQUEST_START !== $keyword ) {
+				$this->tally( Flame_Tree::REQUESTS_WRITES, 'orphan lines' );
 				return;
 			}
 			$request = new \stdClass();
@@ -435,6 +479,7 @@ class Request_Builder_Node extends Timer_Node {
 		$whence = ' on ' . $rid . ' from ' . Core::as_string( $message[ Message::FROM ] ?? '' ) . ' at ' . Core::as_string( $message[ Message::ID ] ?? '' );
 		if ( $seq_n < $expected ) {
 			$this->print_less_often( 'INFO: duplicate message: expected #', (string) $expected, ', got #', (string) $seq_n, $whence );
+			$this->tally( Flame_Tree::REQUESTS_WRITES, 'duplicate lines' );
 			return;
 		}
 		if ( $seq_n > $expected ) {
@@ -445,6 +490,7 @@ class Request_Builder_Node extends Timer_Node {
 			}
 			// Terminal markers still land, or the request strands in the LRU.
 			if ( ! isset( self::TERMINAL_KEYWORDS[ $keyword ] ) ) {
+				$this->tally( Flame_Tree::REQUESTS_WRITES, 'gap lines' );
 				return;
 			}
 			$this->store_gap_entry( $request, $entry );
@@ -463,13 +509,13 @@ class Request_Builder_Node extends Timer_Node {
 
 		// Alerts route to the journal; onward fan-out is topology wiring.
 		if ( 'alert' === $keyword ) {
-			$this->emit_entry( $entry, $rid, $request, $this->alerts_target );
+			$this->emit_entry( $entry, $rid, $request, $this->alerts_target, 'alerts' );
 		} elseif ( 'error' === $keyword || 'warning' === $keyword
 			|| 'stderr' === $keyword
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
 		) {
-			$this->emit_entry( $entry, $rid, $request, $this->errors_target );
+			$this->emit_entry( $entry, $rid, $request, $this->errors_target, 'errors' );
 		}
 
 		if ( isset( $this->state_callbacks[ $keyword ] ) ) {
@@ -495,6 +541,7 @@ class Request_Builder_Node extends Timer_Node {
 
 		// Runaways stay visible (Perl gyroscope parity); still evicted+bounded.
 		if ( $request->is_runaway ?? false ) {
+			$this->tally( Flame_Tree::REQUESTS_WRITES, 'runaway lines' );
 			return;
 		}
 
@@ -551,7 +598,7 @@ class Request_Builder_Node extends Timer_Node {
 				++$this->appended;
 				if ( \count( $entries ) >= $this->max_entries_per_request ) {
 					// This one is the runaway; fold IT, not the pool's largest.
-					$this->appended -= $this->fold_request( $request );
+					$this->appended -= $this->fold_request( $request, 'max_entries_per_request' );
 				} elseif ( $this->appended >= $this->next_check ) {
 					$this->relieve_pressure();
 				}
@@ -562,67 +609,11 @@ class Request_Builder_Node extends Timer_Node {
 			// Write immediately to get state out of RAM.
 			if ( ! empty( $request->url ) ) {
 				$this->emit_request( $request );
+			} else {
+				$this->tally( Flame_Tree::REQUESTS_WRITES, 'no-url records' );
 			}
 			$this->cache->delete( $rid );
 		}
-	}
-
-	/**
-	 * Answer a TM_REQUEST verb with a TM_STRUCT reply addressed back to FROM.
-	 *
-	 * `GET_CACHE` reports in-flight depth for the REPL and dashboards. An
-	 * unknown verb still gets a reply, carrying an `error` payload.
-	 *
-	 * @param array<int,mixed> $message Incoming command Message.
-	 * @throws \RuntimeException When no sink is wired to carry the reply.
-	 */
-	private function handle_request( array $message ): void {
-		if ( null === $this->sink ) {
-			throw new \RuntimeException( 'Request_Builder::fill requires a wired sink' );
-		}
-		$value_raw = $message[ Message::VALUE ];
-		$value     = Core::as_string( $value_raw );
-		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
-
-		if ( 'GET_CACHE' === $verb ) {
-			$now     = (int) Core::$now;
-			$samples = [];
-			$oldest_rid = null;
-			$oldest_ts  = $now;
-			$count      = 0;
-			foreach ( $this->cache->iterate() as $rid => $request ) {
-				++$count;
-				// Cache holds stdClass; an is_array test reads "no stall".
-				$created = $request instanceof \stdClass
-					? Core::as_int( $request->timestamp ?? 0 )
-					: 0;
-				if ( $created > 0 && $created < $oldest_ts ) {
-					$oldest_ts  = $created;
-					$oldest_rid = $rid;
-				}
-				if ( \count( $samples ) < 5 ) {
-					$samples[] = Core::as_string( $rid );
-				}
-			}
-			$payload = [
-				'pending_count' => $count,
-				'oldest_rid'    => $oldest_rid,
-				'oldest_age_s'  => null !== $oldest_rid ? $now - $oldest_ts : 0,
-				'sample'        => $samples,
-				'line_counter'  => $this->line_counter,
-			];
-		} else {
-			$payload = [ 'error' => "unknown request verb: {$verb}" ];
-		}
-
-		$reply                   = Message::new_message();
-		$reply[ Message::TYPE ]  = Message::TM_STRUCT | Message::TM_RESPONSE;
-		$reply[ Message::FROM ]  = $this->name;
-		$reply[ Message::TO ]    = $message[ Message::FROM ];
-		$reply[ Message::ID ]    = $message[ Message::ID ];
-		$reply[ Message::KEY ]   = $message[ Message::KEY ];
-		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
-		$this->sink->fill( $reply );
 	}
 
 	/**
@@ -672,8 +663,9 @@ class Request_Builder_Node extends Timer_Node {
 	 *                                     without re-parsing the entry payload.
 	 * @param \stdClass           $request Active request state supplying authoritative URL context.
 	 * @param string              $target  Destination node name ('' = skip).
+	 * @param string              $counter The rollup counter a forwarded entry adds to.
 	 */
-	private function emit_entry( array $entry, string $rid, \stdClass $request, string $target ): void {
+	private function emit_entry( array $entry, string $rid, \stdClass $request, string $target, string $counter ): void {
 		if ( '' === $target || null === $this->sink ) {
 			return;
 		}
@@ -695,9 +687,11 @@ class Request_Builder_Node extends Timer_Node {
 		$fitted = Line_Fitter::fit( $message, [ 'm', 'url' ] );
 		if ( null === $fitted ) {
 			$this->print_less_often( 'WARNING: dropping oversize error entry for ', $rid );
+			$this->tally( Flame_Tree::REQUESTS_WRITES, "oversize {$counter}" );
 			return;
 		}
 		$this->guarded( fn () => $this->sink->fill( $fitted ) );
+		$this->tally( Flame_Tree::REQUESTS_WRITES, $counter );
 	}
 
 	/**
@@ -897,8 +891,8 @@ class Request_Builder_Node extends Timer_Node {
 		return ( new LRU_Cache( $this->bucket_size, $this->num_buckets ) )
 			->with_timed_rotation(
 				self::BUCKET_ROTATION_S,
-				function ( string $rid, $request ): void {
-					$this->evict_request( $rid, $request );
+				function ( string $rid, $request, bool $timed ): void {
+					$this->evict_request( $rid, $request, $timed );
 				}
 			);
 	}
@@ -953,8 +947,9 @@ class Request_Builder_Node extends Timer_Node {
 
 		$s[ Log_Manager::WORKER_TYPE ] = function ( \stdClass $request, array $entry ): void {
 			// The worker gets its own ?worker_type URL row.
-			$worker_type = \preg_replace( '/[^a-z0-9_-]/i', '', Core::as_string( $entry['m'] ?? '' ) ) ?? '';
-			if ( '' !== $worker_type ) {
+			$worker_type = Core::as_string( $entry['m'] ?? '' );
+			// A type no worker id can carry is dropped, never rewritten.
+			if ( [ $worker_type, 0 ] === \Newspack_Nodes\CLI::parse_worker_id( \Newspack_Nodes\CLI::worker_id( $worker_type, 0 ) ) ) {
 				$request->is_worker   = true;
 				$request->worker_type = $worker_type;
 			}
@@ -1061,7 +1056,10 @@ class Request_Builder_Node extends Timer_Node {
 	 * An incomplete request is written out with error_status='T' and a duration
 	 * measured to eviction time — a trace that stops mid-request is a finding,
 	 * not a gap. A request already marked complete, or one that never carried a
-	 * URL, is dropped instead.
+	 * URL, is dropped instead. The `requests writes` rollup counts each by its
+	 * cause — `timed out` by the clock's rotation, `crowded out` by a full
+	 * newest bucket — and the URL-less ones again as `dropped`: crowding
+	 * tracks visitor traffic, so a line apiece would flood the record.
 	 *
 	 * Called by the LRU_Cache eviction callback. LRU_Cache stores mixed values,
 	 * so the runtime type isn't guaranteed by the signature; the instanceof gate
@@ -1069,21 +1067,25 @@ class Request_Builder_Node extends Timer_Node {
 	 *
 	 * @param string $rid     Request ID.
 	 * @param mixed  $request Request object (expected \stdClass).
+	 * @param bool   $timed   Whether the clock's rotation evicted it, as
+	 *                        `LRU_Cache` says, rather than a full bucket.
 	 */
-	private function evict_request( string $rid, $request ): void {
-		if ( ! ( $request instanceof \stdClass ) || empty( $request->url ) ) {
+	private function evict_request( string $rid, $request, bool $timed ): void {
+		$this->carry_moved = true;
+		if ( ! ( $request instanceof \stdClass ) || 'complete' === ( $request->state ?? '' ) ) {
 			return;
 		}
-		if ( 'complete' === ( $request->state ?? '' ) ) {
+		$this->tally( Flame_Tree::REQUESTS_WRITES, $timed ? 'timed out' : 'crowded out' );
+		if ( empty( $request->url ) ) {
+			$this->tally( Flame_Tree::REQUESTS_WRITES, 'dropped' );
 			return;
 		}
-		$now                    = (int) Core::$now;
-		$start_ts               = Core::num_int( $request->timestamp ?? null, $now );
-		$request->error_status  = 'T';
-		$request->duration_ms   = ( $now - $start_ts ) * 1000;
-		$request->status_code   = $request->status_code ?? 0;
-		$request->state         = 'complete';
-		$url                    = \is_string( $request->url ?? null ) ? $request->url : '';
+		$now                   = (int) Core::$now;
+		$request->error_status = 'T';
+		$request->duration_ms  = ( $now - Core::num_int( $request->timestamp ?? null, $now ) ) * 1000;
+		$request->status_code  = $request->status_code ?? 0;
+		$request->state        = 'complete';
+		$url                   = \is_string( $request->url ) ? $request->url : '';
 		$this->print_less_often( 'WARNING: trace timed out on ', $rid, ' (', $url, ') after ', (string) $request->duration_ms, 'ms' );
 		$this->emit_request( $request );
 	}
@@ -1125,7 +1127,7 @@ class Request_Builder_Node extends Timer_Node {
 		while ( $total > $this->entry_budget && [] !== $sizes ) {
 			$rid = (string) \array_search( \max( $sizes ), $sizes, true );
 			unset( $sizes[ $rid ] );
-			$total -= $this->fold_request( $live[ $rid ] );
+			$total -= $this->fold_request( $live[ $rid ], 'entry_budget' );
 		}
 
 		// Back off only when folding could not get us under the budget.
@@ -1141,10 +1143,16 @@ class Request_Builder_Node extends Timer_Node {
 	 * folds straight into the same path map, so its cost stops tracking
 	 * message volume. A folded request cannot un-fold and must not try.
 	 *
+	 * A fold is a count, not a line: folds track visitor traffic, so the next
+	 * `requests writes` rollup carries each bound's folds and the entries
+	 * they reclaimed.
+	 *
 	 * @param \stdClass $request In-flight envelope, mutated in place.
+	 * @param string    $trigger The bound it crossed: `entry_budget` or
+	 *                           `max_entries_per_request`.
 	 * @return int Entries reclaimed.
 	 */
-	private function fold_request( \stdClass $request ): int {
+	private function fold_request( \stdClass $request, string $trigger ): int {
 		/** @var list<array<string,mixed>> $entries */
 		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
 		$started = $request->timestamp ?? null;
@@ -1162,7 +1170,10 @@ class Request_Builder_Node extends Timer_Node {
 		$request->keep    = $kept;
 		$request->tail    = [];
 		$request->folded  = true;
-		return \count( $entries ) - \count( $request->entries ) - \count( $kept );
+		$reclaimed        = \count( $entries ) - \count( $request->entries ) - \count( $kept );
+		$this->tally( Flame_Tree::REQUESTS_WRITES, "folded {$trigger}" );
+		$this->tally( Flame_Tree::REQUESTS_WRITES, "reclaimed {$trigger}", $reclaimed );
+		return $reclaimed;
 	}
 
 	/**
@@ -1297,6 +1308,7 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::KEY ]       = (string) $rid_raw;
 		$message[ Message::VALUE ]     = self::record_of( $request );
 		$this->guarded( fn () => parent::fill( $message ) );
+		$this->tally( Flame_Tree::REQUESTS_WRITES, 'records' );
 		$this->emit_compact_summary( $request );
 	}
 
@@ -1391,9 +1403,11 @@ class Request_Builder_Node extends Timer_Node {
 		$fitted = Line_Fitter::fit( $message, [ 'url', 'user_agent' ] );
 		if ( null === $fitted ) {
 			$this->print_less_often( 'WARNING: dropping oversize completed summary for ', $rid );
+			$this->tally( Flame_Tree::REQUESTS_WRITES, 'oversize summaries' );
 			return;
 		}
 		$this->guarded( fn () => $this->sink->fill( $fitted ) );
+		$this->tally( Flame_Tree::REQUESTS_WRITES, 'summaries' );
 	}
 
 	/**
@@ -1429,12 +1443,16 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Resolve the URL exactly as completed-request outputs do.
 	 *
-	 * A worker request gets its worker type appended as a bare query parameter,
-	 * so each worker type hashes to its own URL row instead of collapsing into
-	 * the endpoint they share. A URL that already carries a query gets it too,
+	 * A worker request gets its worker appended as a bare query parameter —
+	 * the worker id (`CLI::worker_id()`) when the record names a partition, as
+	 * a spawned worker's does, else the type, as a job's does — so each worker
+	 * hashes to its own URL row instead of collapsing into the endpoint they
+	 * share. A URL that already carries a query gets it too,
 	 * with the right separator: skipping it there puts worker traffic on the
 	 * VISITOR's row, and one row carries one `worker` flag — so the default
-	 * worker filter drops that URL's visitor traffic along with it.
+	 * worker filter drops that URL's visitor traffic along with it. The id
+	 * goes in as one `rawurlencode()`d token, because the type grammar admits
+	 * `&`, `=`, `#` and `%`; an unreserved id reads unchanged.
 	 *
 	 * @api `Request_Flight_Node` resolves in-flight URLs through this too — the
 	 *      completed record and the gyroscope row MUST agree, or a job's
@@ -1449,7 +1467,10 @@ class Request_Builder_Node extends Timer_Node {
 		if ( '' === $worker_type || '' === $url ) {
 			return $url;
 		}
-		return $url . ( \str_contains( $url, '?' ) ? '&' : '?' ) . $worker_type;
+		$worker = \is_int( $request->worker_partition ?? null )
+			? \Newspack_Nodes\CLI::worker_id( $worker_type, $request->worker_partition )
+			: $worker_type;
+		return $url . ( \str_contains( $url, '?' ) ? '&' : '?' ) . \rawurlencode( $worker );
 	}
 
 	/**
@@ -1506,40 +1527,114 @@ class Request_Builder_Node extends Timer_Node {
 	 *
 	 * Persists the full request cache (including entries and profiles)
 	 * so in-flight requests retain trace data across worker restarts.
-	 * Orphan eviction is handled by LRU bucket rotation.
+	 * Orphan eviction is handled by LRU bucket rotation. A `requests
+	 * checkpoint` span, counting what it carries as it converts it, told only
+	 * once the carry may have moved since the last one told.
 	 *
 	 * @api Used by substrate.
 	 * @return array<string,mixed> State to persist.
 	 */
 	public function save_state(): array {
-		$fn = static fn ( $val ) => $val instanceof \stdClass ? (array) $val : $val;
-		return [ 'request_cache' => self::map_buckets( $this->cache->get_state(), $fn ) ];
+		$held  = self::NOTHING_HELD;
+		$told  = $this->carry_moved && null !== Log_Manager::started_instance();
+		$state = $this->spanned(
+			Flame_Tree::REQUESTS_CHECKPOINT,
+			function () use ( &$held ): array {
+				$fn = static function ( $val ) use ( &$held ) {
+					if ( ! $val instanceof \stdClass ) {
+						return $val;
+					}
+					self::count_held( $held, $val );
+					return (array) $val;
+				};
+				return [ 'request_cache' => self::map_buckets( $this->cache->get_state(), $fn ) ];
+			},
+			static function () use ( &$held ): array {
+				/** @var array{envelopes: int, entries: int, folded: int} $held */
+				return [ '', $held, [ 'envelopes', 'entries' ] ];
+			},
+			$told
+		);
+		if ( $told ) {
+			$this->carry_moved = false;
+		}
+		return $state;
 	}
 
 	/**
 	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
+	 * A `requests restore` span, counting what came back as it rehydrates it.
 	 *
 	 * @api Used by substrate.
 	 * @param array<string,mixed> $saved Saved state from save_state().
 	 */
 	public function restore_state( array $saved ): void {
-		$cache_state = $saved['request_cache'] ?? null;
-		if ( ! \is_array( $cache_state ) ) {
-			return;
-		}
-		// Persisted cache snapshot: string-keyed by design (LRU_Cache state).
-		/** @var array<string,mixed> $cache_state */
-		// The checkpoint is the one entrance whose numerics nobody coerced.
-		$fn = static function ( $val ) {
-			if ( ! \is_array( $val ) ) {
-				return $val;
+		$held              = self::NOTHING_HELD;
+		$this->carry_moved = true;
+		$this->spanned(
+			Flame_Tree::REQUESTS_RESTORE,
+			function () use ( $saved, &$held ): void {
+				$cache_state = $saved['request_cache'] ?? null;
+				if ( ! \is_array( $cache_state ) ) {
+					return;
+				}
+				// Persisted cache snapshot: string-keyed (LRU_Cache state).
+				/** @var array<string,mixed> $cache_state */
+				// Nothing upstream coerced a checkpoint's numerics.
+				$fn = static function ( $val ) use ( &$held ) {
+					if ( ! \is_array( $val ) ) {
+						return $val;
+					}
+					$val['timestamp']   = Core::num_float( $val['timestamp'] ?? null );
+					$val['duration_ms'] = Core::num_float( $val['duration_ms'] ?? null );
+					$val['status_code'] = Core::num_int( $val['status_code'] ?? null );
+					$request            = (object) $val;
+					self::count_held( $held, $request );
+					return $request;
+				};
+				$this->cache->restore_state( self::map_buckets( $cache_state, $fn ) );
+			},
+			static function () use ( &$held ): array {
+				/** @var array{envelopes: int, entries: int, folded: int} $held */
+				return [ 'restored', $held, [ 'envelopes', 'entries' ] ];
 			}
-			$val['timestamp']   = Core::num_float( $val['timestamp'] ?? null );
-			$val['duration_ms'] = Core::num_float( $val['duration_ms'] ?? null );
-			$val['status_code'] = Core::num_int( $val['status_code'] ?? null );
-			return (object) $val;
-		};
-		$this->cache->restore_state( self::map_buckets( $cache_state, $fn ) );
+		);
+	}
+
+	/**
+	 * Tell the `requests writes` rollup a clean stop would otherwise lose.
+	 *
+	 * @api Used by substrate.
+	 */
+	public function shutdown_sweep(): void {
+		$this->tell_writes();
+	}
+
+	/**
+	 * Tell `requests writes`: the lines assembled since the last rollup, the
+	 * records, summaries, errors and alerts written, then every line dropped
+	 * and every envelope let go.
+	 */
+	private function tell_writes(): void {
+		$lines            = $this->line_counter - $this->lines_told;
+		$this->lines_told = $this->line_counter;
+		$this->rollup( Flame_Tree::REQUESTS_WRITES, [ 'records', 'summaries', 'errors', 'alerts' ], [ 'lines' => $lines ] );
+	}
+
+	/**
+	 * Count one envelope into what a checkpoint or a restore carries: the
+	 * envelope, its raw entries — its list, or a folded one's head, kept
+	 * entries and tail — and whether it folded.
+	 *
+	 * @param array{envelopes: int, entries: int, folded: int} $held    The counts so far.
+	 * @param \stdClass                                        $request In-flight envelope.
+	 */
+	private static function count_held( array &$held, \stdClass $request ): void {
+		++$held['envelopes'];
+		$held['entries'] += \count( Core::arr( $request->entries ?? null ) )
+			+ \count( Core::arr( $request->keep ?? null ) )
+			+ \count( Core::arr( $request->tail ?? null ) );
+		$held['folded']  += isset( $request->fold ) ? 1 : 0;
 	}
 
 	/**
@@ -1670,6 +1765,41 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * The `GET_CACHE` reply data, which `answer_request()` sends back: in-flight
+	 * depth for the REPL and dashboards.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function cache_report(): array {
+		$now     = (int) Core::$now;
+		$samples = [];
+		$oldest_rid = null;
+		$oldest_ts  = $now;
+		$count      = 0;
+		foreach ( $this->cache->iterate() as $rid => $request ) {
+			++$count;
+			// Cache holds stdClass; an is_array test reads "no stall".
+			$created = $request instanceof \stdClass
+				? Core::as_int( $request->timestamp ?? 0 )
+				: 0;
+			if ( $created > 0 && $created < $oldest_ts ) {
+				$oldest_ts  = $created;
+				$oldest_rid = $rid;
+			}
+			if ( \count( $samples ) < 5 ) {
+				$samples[] = Core::as_string( $rid );
+			}
+		}
+		return [
+			'pending_count' => $count,
+			'oldest_rid'    => $oldest_rid,
+			'oldest_age_s'  => null !== $oldest_rid ? $now - $oldest_ts : 0,
+			'sample'        => $samples,
+			'line_counter'  => $this->line_counter,
+		];
+	}
+
+	/**
 	 * Where a raw-comparable field sits on the line this class writes.
 	 *
 	 * The scan that reads these lines compares ONE column before parsing, and
@@ -1749,6 +1879,8 @@ class Request_Builder_Node extends Timer_Node {
 	public function purge_cache(): int {
 		$dropped = \iterator_count( $this->cache->iterate() );
 		$this->cache->flush();
+		$this->carry_moved = true;
+		$this->narrate( Flame_Tree::REQUESTS_EXPIRE, static fn (): array => [ 'purged', [ 'requests' => $dropped ] ] );
 		return $dropped;
 	}
 
@@ -1939,6 +2071,7 @@ class Request_Builder_Node extends Timer_Node {
 					'name'        => 'GET_CACHE',
 					'description' => 'In-flight request count + oldest pending rid + sample.',
 					'reply_shape' => '{ pending_count, oldest_rid, oldest_age_s, sample, line_counter }',
+					'handler'     => static fn ( self $node ): array => $node->cache_report(),
 				],
 			],
 		];

@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Request_Flight_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
@@ -551,6 +552,63 @@ class RequestBuilderTest extends TestCase {
 		);
 	}
 
+	/** A worker with a partition takes its worker id, behind the separator a query needs. */
+	public function test_a_partitioned_worker_resolves_to_its_worker_id_after_a_query(): void {
+		$request                   = new \stdClass();
+		$request->url              = '/feed/?post_type=event';
+		$request->worker_type      = 'kea-7713';
+		$request->worker_partition = 3;
+
+		$this->assertSame(
+			'/feed/?post_type=event&kea-7713.p3',
+			Request_Builder_Node::resolved_request_url( $request )
+		);
+	}
+
+	/**
+	 * The worker id rides the URL as one query token, so a type the worker-id
+	 * grammar admits cannot add a parameter, a fragment or a stray escape;
+	 * an unreserved one reads exactly as the worker id does.
+	 */
+	public function test_a_worker_id_is_one_query_token(): void {
+		$request                   = new \stdClass();
+		$request->url              = '/spawn';
+		$request->worker_type      = 'x&y=1';
+		$request->worker_partition = 0;
+		$this->assertSame( '/spawn?x%26y%3D1.p0', Request_Builder_Node::resolved_request_url( $request ) );
+
+		$request->worker_type      = 'kea #7%';
+		$request->worker_partition = 5;
+		$this->assertSame( '/spawn?kea%20%237%25.p5', Request_Builder_Node::resolved_request_url( $request ) );
+
+		$request->worker_type      = 'foo.bar';
+		$request->worker_partition = 2;
+		$this->assertSame( '/spawn?foo.bar.p2', Request_Builder_Node::resolved_request_url( $request ) );
+
+		unset( $request->worker_partition );
+		$request->worker_type = 'weka~_-9';
+		$this->assertSame( '/spawn?weka~_-9', Request_Builder_Node::resolved_request_url( $request ), 'a type alone, likewise' );
+	}
+
+	/**
+	 * A refused spawn never learns a worker identity, so it keeps the row its
+	 * path named it at the start rather than minting one from the request.
+	 */
+	public function test_a_refused_spawn_keeps_the_shared_restapi_row(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$this->fill( $rb, 1, 'refused-7713', 'process (start)' );
+		$this->fill( $rb, 2, 'refused-7713', 'worker_type', [ 'm' => 'restapi' ] );
+		$this->fill( $rb, 3, 'refused-7713', 'request', [ 'm' => 'POST https://x.test/wp-json/newspack-nodes/v1/workers/spawn' ] );
+		$this->fill( $rb, 4, 'refused-7713', 'process (complete)' );
+
+		$this->assertSame(
+			'https://x.test/wp-json/newspack-nodes/v1/workers/spawn?restapi',
+			$this->captured_request( $capture )['url']
+		);
+	}
+
 	/** The `worker_type` entry is the whole flag: it marks the worker and names its URL row. */
 	public function test_a_worker_type_entry_marks_request_as_worker(): void {
 		$rb      = new Request_Builder_Node();
@@ -565,16 +623,64 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'cache-cozy', $req['worker_type'] );
 	}
 
-	public function test_a_worker_type_entry_is_sanitized(): void {
+	/**
+	 * A worker type is what `CLI::parse_worker_id()` accepts, dots and case
+	 * included, and names its row as the worker id spells it.
+	 */
+	#[DataProvider( 'worker_ids_the_grammar_admits' )]
+	public function test_a_worker_type_the_worker_id_grammar_admits_names_its_row_verbatim( string $type, int $partition, string $row ): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'worker_type', [ 'm' => 'evil/../type?x' ] );
-		$this->fill( $rb, 3, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+		$this->fill( $rb, 2, 'r1', 'worker_type', [ 'm' => $type ] );
+		$this->fill( $rb, 3, 'r1', 'worker_partition', [ 'm' => $partition ] );
+		$this->fill( $rb, 4, 'r1', 'request', [ 'm' => 'GET https://x.test/wp-json/newspack-nodes/v1/workers/spawn' ] );
+		$this->fill( $rb, 5, 'r1', 'process (complete)' );
 		$req = $this->captured_request( $capture );
-		$this->assertSame( 'eviltypex', $req['worker_type'] );
+		$this->assertSame( $type, $req['worker_type'] );
+		$this->assertSame( "https://x.test/wp-json/newspack-nodes/v1/workers/spawn?{$row}", $req['url'] );
+	}
+
+	/** @return array<string,array{string,int,string}> */
+	public static function worker_ids_the_grammar_admits(): array {
+		return [
+			'dotted'    => [ 'foo.bar', 2, 'foo.bar.p2' ],
+			'uppercase' => [ 'Kea.X', 0, 'Kea.X.p0' ],
+		];
+	}
+
+	/**
+	 * A type the worker id grammar refuses is dropped, not rewritten into
+	 * another worker's name: the request keeps the type it already had.
+	 */
+	#[DataProvider( 'worker_types_the_grammar_refuses' )]
+	public function test_a_worker_type_the_worker_id_grammar_refuses_is_dropped( string $type ): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://x.test/x' ] );
+		$this->fill( $rb, 3, 'r1', 'worker_type', [ 'm' => $type ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+		$this->assertEmpty( $this->captured_request( $capture )['is_worker'] ?? null, 'no worker flagged' );
+
+		$rb->sink( $capture = new Capture_Sink_Node() );
+		$this->fill( $rb, 1, 'r3', 'process (start)' );
+		$this->fill( $rb, 2, 'r3', 'request', [ 'm' => 'GET https://x.test/x' ] );
+		$this->fill( $rb, 3, 'r3', 'worker_type', [ 'm' => 'weka-8813' ] );
+		$this->fill( $rb, 4, 'r3', 'worker_type', [ 'm' => $type ] );
+		$this->fill( $rb, 5, 'r3', 'process (complete)' );
+		$this->assertSame( 'https://x.test/x?weka-8813', $this->captured_request( $capture )['url'], 'the earlier type stands' );
+	}
+
+	/** @return array<string,array{string}> */
+	public static function worker_types_the_grammar_refuses(): array {
+		return [
+			'a path' => [ 'evil/../type' ],
+			'a NUL'  => [ "kea\0x" ],
+			'empty'  => [ '' ],
+		];
 	}
 
 	public function test_a_worker_partition_entry_is_carried_as_an_integer(): void {
@@ -1738,7 +1844,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 0, $capture->captured );
 	}
 
-	// --- handle_request (TM_REQUEST) --------------------------------------
+	// --- TM_REQUEST verbs (GET_CACHE) ------------------------------------
 
 	private function request_msg( string $verb, string $from = 'asker', string $id = 'req-1' ): array {
 		$message                      = Message::new_message();
@@ -1750,7 +1856,7 @@ class RequestBuilderTest extends TestCase {
 		return $message;
 	}
 
-	public function test_handle_request_get_cache_returns_empty_payload_on_empty_cache(): void {
+	public function test_get_cache_returns_empty_payload_on_empty_cache(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -1776,7 +1882,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( [], $payload['data']['sample'] );
 	}
 
-	public function test_handle_request_get_cache_reports_the_oldest_pending_request(): void {
+	public function test_get_cache_reports_the_oldest_pending_request(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -1797,7 +1903,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 300, $payload['data']['oldest_age_s'] );
 	}
 
-	public function test_handle_request_get_cache_reports_pending_count_and_sample(): void {
+	public function test_get_cache_reports_pending_count_and_sample(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -1830,7 +1936,7 @@ class RequestBuilderTest extends TestCase {
 		}
 	}
 
-	public function test_handle_request_get_cache_increments_line_counter(): void {
+	public function test_get_cache_counts_lines_but_not_itself(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -1853,7 +1959,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 3, $payload['data']['line_counter'] );
 	}
 
-	public function test_handle_request_with_request_response_flag_is_ignored(): void {
+	public function test_a_reply_carrying_the_verb_is_not_answered(): void {
 		// A reply (TM_STRUCT|TM_RESPONSE, no TM_REQUEST) bypasses fill()'s
 		// TM_REQUEST gate, so it's never re-dispatched as a request.
 		$rb      = new Request_Builder_Node();
@@ -1872,7 +1978,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 0, $capture->captured );
 	}
 
-	public function test_handle_request_unknown_verb_returns_error_payload(): void {
+	public function test_an_unknown_request_verb_is_refused_on_the_error_plane(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -1882,15 +1988,12 @@ class RequestBuilderTest extends TestCase {
 		$rb->fill( $message );
 
 		$this->assertCount( 1, $capture->captured );
-		$payload = $capture->captured[0][ Message::VALUE ];
-		// Verb is upper-cased — anything else is a bug in handle_request.
-		$this->assertSame( 'WHATEVER_NOT_REAL', $payload['verb'] );
-		$this->assertArrayHasKey( 'error', $payload['data'] );
-		$this->assertStringContainsString( 'unknown request verb', $payload['data']['error'] );
-		$this->assertStringContainsString( 'WHATEVER_NOT_REAL', $payload['data']['error'] );
+		$reply = $capture->captured[0];
+		$this->assertSame( Message::TM_ERROR, $reply[ Message::TYPE ] );
+		$this->assertSame( "unknown request verb: WHATEVER_NOT_REAL\n", $reply[ Message::VALUE ] );
 	}
 
-	public function test_handle_request_lowercase_verb_uppercased(): void {
+	public function test_a_lowercase_request_verb_is_answered(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );

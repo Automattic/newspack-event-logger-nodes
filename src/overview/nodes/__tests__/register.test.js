@@ -149,7 +149,6 @@ describe( 'UrlsView — the envelope slice', () => {
 			slowest: [],
 			filters: null,
 			ranked: false,
-			estimated: false,
 			provisional: false,
 			as_of: 0,
 			loading: false,
@@ -177,7 +176,6 @@ describe( 'UrlsView — the envelope slice', () => {
 			slowest: [ { url: '/slow', avg_ms: 2600 } ],
 			filters: { server: 'edge-01', search: '', errors_only: false },
 			ranked: false,
-			estimated: false,
 			provisional: false,
 			as_of: 0,
 			loading: false,
@@ -185,7 +183,7 @@ describe( 'UrlsView — the envelope slice', () => {
 		} );
 	} );
 
-	test( 'carries ranked, estimated, provisional and as_of off the reply when present', () => {
+	test( 'carries ranked, provisional and as_of off the reply, and no estimate flag', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
 		v.fill(
 			reply( 'urls', {
@@ -202,7 +200,7 @@ describe( 'UrlsView — the envelope slice', () => {
 		);
 
 		expect( v.view.ranked ).toBe( true );
-		expect( v.view.estimated ).toBe( true );
+		expect( v.view ).not.toHaveProperty( 'estimated' );
 		expect( v.view.provisional ).toBe( true );
 		expect( v.view.as_of ).toBe( 1758500000 );
 	} );

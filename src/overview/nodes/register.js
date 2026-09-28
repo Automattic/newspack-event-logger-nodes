@@ -71,11 +71,10 @@ export const views = {
 		 * because the fetcher's own args produced them. `filters` says what
 		 * the totals are OF, echoed by the verb rather than read back off the
 		 * client, so it describes the data in hand and not what was typed
-		 * since. `ranked`, `estimated`, `provisional` and `as_of` ride
-		 * straight off the reply, never derived: `ranked` says whether the
-		 * server answered from its per-bucket ranked lists, `estimated`
-		 * whether `totals.urls` is the writer's sketch rather than the fold's
-		 * count, `provisional` whether those totals skipped a record the
+		 * since. `ranked`, `provisional` and `as_of` ride straight off the
+		 * reply, never derived: `ranked` says whether the server answered
+		 * from its per-bucket ranked lists, `provisional` whether those
+		 * totals skipped a record the
 		 * writer has yet to rank, and `as_of` is
 		 * the server clock the page's rows were current at, which
 		 * `<UrlTable>` ages every row against.
@@ -92,7 +91,6 @@ export const views = {
 				slowest: [],
 				filters: null,
 				ranked: false,
-				estimated: false,
 				provisional: false,
 				as_of: 0,
 				loading: false,
@@ -108,8 +106,6 @@ export const views = {
 							slowest: ( payload && payload.slowest ) || [],
 							filters: ( payload && payload.filters ) || null,
 							ranked: ( payload && payload.ranked ) || false,
-							estimated:
-								( payload && payload.estimated ) || false,
 							provisional:
 								( payload && payload.provisional ) || false,
 							as_of: ( payload && payload.as_of ) || 0,

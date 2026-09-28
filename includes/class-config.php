@@ -139,14 +139,14 @@ class Config {
 	/**
 	 * The span colour map every page that draws a request profile prints as
 	 * `window.eventLoggerCustomColors`: the configured colours over
-	 * `Flame_Tree::PLATFORM_COLORS`, so an operator's colour of the same name
+	 * `Flame_Tree::platform_colors()`, so an operator's colour of the same name
 	 * outranks the platform's. The rule editor's picker takes
 	 * `get_custom_colors()` alone, which offers no platform span as an event.
 	 *
 	 * @return array<string,mixed> Span name to color.
 	 */
 	public static function span_colors(): array {
-		return self::get_custom_colors() + Flame_Tree::PLATFORM_COLORS;
+		return self::get_custom_colors() + Flame_Tree::platform_colors();
 	}
 
 	/**
@@ -609,20 +609,6 @@ class Config {
 	 */
 	public static function get_logs_directory(): string {
 		return RuntimeConfig::get_logs_directory();
-	}
-
-	/**
-	 * The locks directory, `{base_directory}/locks`.
-	 *
-	 * Delegates to the substrate for the same reason `get_logs_directory()`
-	 * does: one owner for the base directory and the canonical-path check.
-	 *
-	 * @api
-	 * @return string Validated absolute path to the locks directory.
-	 * @throws \RuntimeException If the directory cannot be created or fails the substrate's canonical-path check.
-	 */
-	public static function get_locks_directory(): string {
-		return RuntimeConfig::get_locks_directory();
 	}
 
 }

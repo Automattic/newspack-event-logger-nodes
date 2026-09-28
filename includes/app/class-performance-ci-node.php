@@ -2134,10 +2134,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * instead of throwing. Each store's TTL comes from the substrate
 	 * `min_lifetime` key.
 	 *
-	 * @param int $now The reply's clock, read once at its entry; each store's absences date from it.
+	 * @param int          $now      The reply's clock, read once at its entry; each store's absences date from it.
+	 * @param list<string> $unwalked Namespaces the reply never walks the mirror for.
 	 * @return array<int,Stats_Store>
 	 */
-	private static function stats_stores( int $now ): array {
+	private static function stats_stores( int $now, array $unwalked = [] ): array {
 		// Not Core::$memd: an APCu-only pool reaches stats via the mirror.
 		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
 			return [];
@@ -2147,7 +2148,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
 			$store = new Stats_Store( $p, $max_lifespan );
 			// No worker here to arm it: a miss must still reach the mirror.
-			Flame_Builder_Node::arm_stats_reader( $store, $now );
+			Flame_Builder_Node::arm_stats_reader( $store, $now, $unwalked );
 			// One reply's stores: every shard asks the same buckets' index.
 			$store->server_indexes = [];
 			$stores[] = $store;
@@ -3199,9 +3200,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				// surfaces too far apart to compare.
 				$server = (string) ( $opts['server'] ?? '' );
 
+				// A tail reads its URL blob from memcache alone.
+				$since = self::require_option_int( $opts, 'since', 0 );
+
 				\assert( $self instanceof self );
 				$now    = self::now();
-				$stores = self::stats_stores( $now );
+				$stores = self::stats_stores( $now, 0 === $since ? [] : [ Stats_Store::NS_URL ] );
 				$entry  = $self->row( $hash, $server, $stores, $now );
 				$stats  = null;
 				if ( null !== $entry ) {
@@ -3223,7 +3227,6 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 				}
 
-				$since     = self::require_option_int( $opts, 'since', 0 );
 				$deadline  = self::scan_deadline();
 				$recent    = self::find_recent_requests_for_url( $hash, $now, $since, $deadline );
 				$aggregate = self::find_url_aggregate( $hash, $stores )
@@ -3464,7 +3467,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
 				AppConfig::reset();
 				// Outside is_admin(): no updated_option tells the workers.
-				Restart_Planner::request_reloads( AppConfig::get_locks_directory() );
+				Restart_Planner::plan( [] );
 
 				return [
 					'option'  => $option,
