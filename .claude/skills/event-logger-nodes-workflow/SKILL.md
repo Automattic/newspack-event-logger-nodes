@@ -144,7 +144,7 @@ Two suites hold every file in the directory to a shape:
 
 #### Adding a CLI command (`wp nodes <verb>`)
 
-1. Live under `includes/cli/class-<verb>-command.php`. Register in the `WP_CLI` block of the deferred bootstrap in `newspack-event-logger-nodes.php`.
+1. Live under `includes/cli/class-<verb>-command.php`. Register in `newspack_event_logger_nodes_register_cli_commands()`, which the deferred bootstrap in `newspack-event-logger-nodes.php` calls under WP-CLI. `tests/unit/Cli/CliUsageOverviewTest.php` fails a verb no usage overview would list.
 2. Validate inputs at the boundary, and refuse rather than coerce — `Command_Args::option_int()` returns null for a malformed flag so each layer reports it in its own voice.
 3. **Make blocking work injectable.** A command that reads stdin in a loop, sleeps between iterations, or polls a file takes the resource or the iteration count as a parameter so tests can drive it deterministically. Two distinct seams in `Reqgrep_Command`:
    - `process_stdin( $stream = null )` — stream-injection seam; defaults to null (resolving STDIN inside), tests pass a `php://memory` resource.
@@ -240,7 +240,7 @@ wp nodes restart hub-control     # hub-only settings-sync + discovery control pl
 wp nodes restart complete --partition=0
 ```
 
-The **substrate** registers every runtime verb under `wp nodes` — `types`, `run`, `start`, `stop`, `restart`, `status` (aliased `ls`), `activate`, `deactivate`, `gc`, `doctor`, `ingest`, `scaffold`, `memcache get|flush`, `caps`, `hub-user` and the attached `cli` REPL. This plugin registers two, in the `WP_CLI` block of `newspack-event-logger-nodes.php`: `wp nodes reqgrep` (`Reqgrep_Command`, the application-aware firehose filter) and `wp nodes ruleset-bench` (`Ruleset_Bench_Command`, the sweep `Rule_Set::INLINE_HOOK_LIMIT` is calibrated from — measurement only, off the request hot path, and it never touches the live ruleset).
+The **substrate** registers every runtime verb under `wp nodes` — `types`, `run`, `start`, `stop`, `restart`, `status` (aliased `ls`), `activate`, `deactivate`, `gc`, `doctor`, `ingest`, `scaffold`, `memcache get|flush`, `caps`, `hub-user` and the attached `cli` REPL. This plugin registers two, through `newspack_event_logger_nodes_register_cli_commands()` in `newspack-event-logger-nodes.php`: `wp nodes reqgrep` (`Reqgrep_Command`, the application-aware firehose filter) and `wp nodes ruleset-bench` (`Ruleset_Bench_Command`, the sweep `Rule_Set::INLINE_HOOK_LIMIT` is calibrated from — measurement only, off the request hot path, and it never touches the live ruleset).
 
 ### Phase 5: Live-verify
 

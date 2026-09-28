@@ -122,8 +122,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
  */
 function newspack_event_logger_nodes_boot(): void {
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
-		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\Reqgrep_Command' );
-		\WP_CLI::add_command( 'nodes ruleset-bench', '\\Newspack_Event_Logger_Nodes\\CLI\\Ruleset_Bench_Command' );
+		\newspack_event_logger_nodes_register_cli_commands();
 	}
 
 	// reset_local_cache, not reset(): reset() would re-enter the substrate.
@@ -190,6 +189,16 @@ function newspack_event_logger_nodes_boot(): void {
 		new \Newspack_Event_Logger_Nodes\Admin\Admin();
 		\Newspack_Event_Logger_Nodes\Current_Request_Overlay::init();
 	}
+}
+
+/**
+ * Register this plugin's `wp nodes` verbs under the substrate's `nodes` root.
+ *
+ * @api Called by the deferred bootstrap; tests drive it against a recorder.
+ */
+function newspack_event_logger_nodes_register_cli_commands(): void {
+	\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\Reqgrep_Command' );
+	\WP_CLI::add_command( 'nodes ruleset-bench', '\\Newspack_Event_Logger_Nodes\\CLI\\Ruleset_Bench_Command' );
 }
 
 /**
