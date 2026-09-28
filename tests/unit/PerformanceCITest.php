@@ -6408,33 +6408,9 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Run `$work` inside a started request log, then return what it wrote.
-	 *
-	 * @param \Closure(): mixed   $work   The reads to log.
-	 * @param array<string,mixed> $extras Config beside logging, as `use_base_dir()` takes it.
-	 * @return list<array<string,mixed>>
-	 */
-	private function logged( \Closure $work, array $extras = [] ): array {
-		$this->use_base_dir( $this->tmp, $extras + [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'enable_logging' => true, 'flush_every_line' => true ] );
-		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ] ];
-		$server                 = $_SERVER;
-		$_SERVER['REQUEST_URI'] = '/perf-probe-7731';
-		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'] );
-		Log_Manager::reset();
-		$this->assertTrue( Log_Manager::instance()->is_started(), 'the request logs' );
-		try {
-			$work();
-		} finally {
-			Log_Manager::reset();
-			$_SERVER = $server;
-		}
-		return self::firehose_entries( $this->tmp );
-	}
-
-	/**
 	 * The `m` each `(complete)` of one span carried, in order.
 	 *
-	 * @param list<array<string,mixed>> $entries What `logged()` returned.
+	 * @param list<array<string,mixed>> $entries What `logged_in()` returned.
 	 * @return list<mixed>
 	 */
 	private static function completed( array $entries, string $span ): array {
@@ -6450,7 +6426,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		[ $fire, , $restore ] = $this->counting_urls_fire();
 		try {
-			$entries = $this->logged( static function () use ( $fire ): void {
+			$entries = $this->logged_in( $this->tmp, static function () use ( $fire ): void {
 				$fire( '--sort=count', '--order=desc', '--limit=100' );
 				$fire( '--sort=count', '--order=desc', '--limit=100' );
 			} );
@@ -6472,7 +6448,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		[ $fire, , $restore ] = $this->counting_urls_fire();
 		try {
-			$entries = $this->logged( static fn (): array => $fire( '--sort=avg_ms', '--order=asc', '--limit=40' ), $extras );
+			$entries = $this->logged_in( $this->tmp, static fn (): array => $fire( '--sort=avg_ms', '--order=asc', '--limit=40' ), $extras );
 		} finally {
 			$restore();
 		}
@@ -6485,7 +6461,8 @@ class PerformanceCITest extends TestCase {
 		Core::$memd                                 = null;
 		\Newspack_Nodes\Cache_Backend::$apcu_usable = static fn (): bool => false;
 		try {
-			$entries = $this->logged(
+			$entries = $this->logged_in(
+				$this->tmp,
 				static fn (): mixed => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--sort=count', '--order=desc', '--limit=100' ] )
 			);
 		} finally {
@@ -6502,7 +6479,8 @@ class PerformanceCITest extends TestCase {
 	 * @return list<array<string,mixed>>
 	 */
 	private function logged_throwing_page_read( \Throwable $thrown ): array {
-		return $this->logged(
+		return $this->logged_in(
+			$this->tmp,
 			static function () use ( $thrown ): void {
 				try {
 					( new \ReflectionMethod( Performance_CI_Node::class, 'read_through_page' ) )->invoke(
@@ -6553,7 +6531,8 @@ class PerformanceCITest extends TestCase {
 
 	/** A fold that throws still closes its span, saying so, and the throwable propagates. */
 	public function test_a_fold_that_throws_closes_its_span_with_the_short_class(): void {
-		$entries = $this->logged(
+		$entries = $this->logged_in(
+			$this->tmp,
 			function (): void {
 				try {
 					( new \ReflectionMethod( Performance_CI_Node::class, 'fold_page' ) )->invoke(
@@ -6588,7 +6567,7 @@ class PerformanceCITest extends TestCase {
 		$this->seed_hour_lists();
 		[ $fire, , $restore ] = $this->counting_urls_fire();
 		try {
-			$entries = $this->logged( function () use ( $fire ): void {
+			$entries = $this->logged_in( $this->tmp, function () use ( $fire ): void {
 				$this->assertTrue( $fire( '--sort=count', '--order=desc', '--limit=100' )['ranked'] );
 			} );
 		} finally {
@@ -6613,7 +6592,7 @@ class PerformanceCITest extends TestCase {
 		$this->seed_hour_lists( [ $gap ] );
 		[ $fire, , $restore ] = $this->counting_urls_fire();
 		try {
-			$entries = $this->logged( function () use ( $fire ): void {
+			$entries = $this->logged_in( $this->tmp, function () use ( $fire ): void {
 				$this->warm_url_header( $fire );
 				$this->assertFalse( $fire( '--sort=count', '--order=desc', '--limit=100' )['ranked'] );
 			} );
@@ -6636,7 +6615,7 @@ class PerformanceCITest extends TestCase {
 		$this->seed_evicted_bucket_on_the_mirror();
 		\Newspack_Nodes\Command_Interpreter_Node::$around_dispatch = \Newspack_Event_Logger_Nodes\Diagnostics_Bridge::around_dispatch( null );
 		try {
-			$entries = $this->logged( static fn (): mixed => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' ) );
+			$entries = $this->logged_in( $this->tmp, static fn (): mixed => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' ) );
 		} finally {
 			\Newspack_Nodes\Command_Interpreter_Node::$around_dispatch = null;
 		}
@@ -6659,7 +6638,8 @@ class PerformanceCITest extends TestCase {
 
 	public function test_a_verb_that_never_read_the_mirror_logs_no_summary(): void {
 		$this->activate_shipped_topology( 'performance', 1 );
-		$entries = $this->logged(
+		$entries = $this->logged_in(
+			$this->tmp,
 			static fn (): mixed => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' ),
 			[ 'stats_mirror_node' => '' ]
 		);
@@ -6670,7 +6650,8 @@ class PerformanceCITest extends TestCase {
 
 	public function test_the_summary_says_a_spent_budget(): void {
 		$tally   = [ 'calls' => 37, 'asked' => 412, 'found' => 12, 'ns' => 4_980_400_000, 'budget_ns' => 2_500_000_000, 'spent' => true ];
-		$entries = $this->logged(
+		$entries = $this->logged_in(
+			$this->tmp,
 			static fn (): mixed => ( new \ReflectionMethod( Performance_CI_Node::class, 'log_mirror_reads' ) )->invoke( null, $tally )
 		);
 

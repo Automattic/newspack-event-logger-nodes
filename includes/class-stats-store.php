@@ -1347,13 +1347,14 @@ class Stats_Store {
 	/**
 	 * What the derived tiers hold for each of `$hours`: two batched reads.
 	 *
-	 * `folded` is the hour's server index, every shard each entry of it
-	 * names, and the global leaderboard's hour: a server missing a named
-	 * shard is an hour whose rows no reader sees whole, a missing
-	 * leaderboard hour is one the board skips, and the fold is what would
-	 * otherwise never revisit either. The index and the leaderboard go
-	 * first, because the index says which keys the second read asks for
-	 * (decision 6).
+	 * `missing` names what keeps the hour unfolded, or is null for a folded
+	 * one: its server index (`missing index`), the global leaderboard's hour
+	 * (`missing lb_h`), or a shard some entry of the index names (`missing
+	 * shard`). A server missing a named shard is an hour whose rows no reader
+	 * sees whole, a missing leaderboard hour is one the board skips, and the
+	 * fold is what would otherwise never revisit either. The index and the
+	 * leaderboard go first, because the index says which keys the second
+	 * read asks for (decision 6).
 	 *
 	 * `unranked` names every server the index names whose DONE marker is
 	 * missing. The marker alone is not enough: memcached evicts by slab
@@ -1367,7 +1368,7 @@ class Stats_Store {
 	 * @param array<int,string> $hours  Hour keys to probe.
 	 * @param ?bool             $failed Set true when the cache left some key unanswered.
 	 * @param-out bool          $failed
-	 * @return array<string,array{folded: bool, unranked: list<string>}> Only hours holding something.
+	 * @return array<string,array{missing: ?string, unranked: list<string>}> Only hours holding something.
 	 */
 	public function url_hours_derived( array $hours, ?bool &$failed = null ): array {
 		$reads = [];
@@ -1412,7 +1413,12 @@ class Stats_Store {
 				continue;
 			}
 			$out[ $hour ] = [
-				'folded'   => null !== $index && null !== $board && ! isset( $missing[ $hour ] ),
+				'missing'  => match ( true ) {
+					null === $index            => 'missing index',
+					null === $board            => 'missing lb_h',
+					isset( $missing[ $hour ] ) => 'missing shard',
+					default                    => null,
+				},
 				'unranked' => $unranked[ $hour ] ?? [],
 			];
 		}
@@ -1527,23 +1533,26 @@ class Stats_Store {
 	 * next call resumes: the keys still owed a probe, the first from touch
 	 * `at`. An index read the cache leaves unanswered is no index naming no
 	 * server, so the next call resumes at its slice; a touch the backend does
-	 * not answer is no evicted key, and ends the pass (decision 3).
+	 * not answer is no evicted key, and ends the pass, `unanswered` (decision
+	 * 3). `lost` names what each lost key lost, a `lost record` or a `lost
+	 * list`, and `touched` counts the touches this call made.
 	 *
 	 * @param list<string> $keys   Closed bucket keys, or hour keys.
 	 * @param bool         $hour   The coarse tier.
 	 * @param int          $at     Touches the first key already had.
 	 * @param int          $budget Touches this call may make.
 	 * @param int          $now    The flush's tick.
-	 * @return array{lost: list<string>, left: list<string>, at: int}
+	 * @return array{lost: array<string,string>, left: list<string>, at: int, touched: int, unanswered: bool}
 	 */
 	public function url_keys_unranked( array $keys, bool $hour, int $at, int $budget, int $now ): array {
-		$lost  = [];
-		$reach = 2 * ( \count( self::URL_SORTS ) * \count( self::URL_ORDERS ) + 1 );
+		$lost    = [];
+		$touched = 0;
+		$reach   = 2 * ( \count( self::URL_SORTS ) * \count( self::URL_ORDERS ) + 1 );
 		for ( $i = 0, $n = \count( $keys ); $i < $n; ) {
 			$slice = \array_slice( $keys, $i, \intdiv( $budget, $reach ) + 1 );
 			$index = $hour ? $this->server_index( $slice, [], $failed ) : $this->server_index( [], $slice, $failed );
 			if ( $failed ) {
-				return [ 'lost' => $lost, 'left' => \array_slice( $keys, $i ), 'at' => $at ];
+				return [ 'lost' => $lost, 'left' => \array_slice( $keys, $i ), 'at' => $at, 'touched' => $touched, 'unanswered' => false ];
 			}
 			foreach ( $slice as $key ) {
 				$ttl   = $hour ? $this->window_remaining( self::key( self::NS_URLRANK_HOUR_S, $key ), $now ) : $this->fine_life_remaining( $key, $now );
@@ -1551,14 +1560,15 @@ class Stats_Store {
 				$parts = self::ranking_parts( $names, $hour );
 				for ( $end = \count( $parts ); $at < $end; ++$at ) {
 					if ( $budget-- <= 0 ) {
-						return [ 'lost' => $lost, 'left' => \array_slice( $keys, $i ), 'at' => $at ];
+						return [ 'lost' => $lost, 'left' => \array_slice( $keys, $i ), 'at' => $at, 'touched' => $touched, 'unanswered' => false ];
 					}
+					++$touched;
 					$standing = $this->bucket_touch( $parts[ $at ], $key, $ttl );
 					if ( null === $standing ) {
-						return [ 'lost' => $lost, 'left' => [], 'at' => 0 ];
+						return [ 'lost' => $lost, 'left' => [], 'at' => 0, 'touched' => $touched, 'unanswered' => true ];
 					}
 					if ( ! $standing ) {
-						$lost[] = $key;
+						$lost[ $key ] = \in_array( $parts[ $at ][0], [ self::NS_URLHDR, self::NS_URLHDR_HOUR ], true ) ? 'lost record' : 'lost list';
 						break;
 					}
 				}
@@ -1566,7 +1576,7 @@ class Stats_Store {
 				++$i;
 			}
 		}
-		return [ 'lost' => $lost, 'left' => [], 'at' => 0 ];
+		return [ 'lost' => $lost, 'left' => [], 'at' => 0, 'touched' => $touched, 'unanswered' => false ];
 	}
 
 	/**

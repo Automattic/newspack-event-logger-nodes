@@ -267,6 +267,32 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Run `$work` inside a started request log over the runtime tree at
+	 * `$base`, then return every firehose entry it wrote.
+	 *
+	 * @param string              $base   The runtime tree the log writes under.
+	 * @param \Closure(): mixed   $work   What to log.
+	 * @param array<string,mixed> $extras Config beside logging, as `use_base_dir()` takes it.
+	 * @return list<array<string,mixed>>
+	 */
+	protected function logged_in( string $base, \Closure $work, array $extras = [] ): array {
+		$this->use_base_dir( $base, $extras + [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'enable_logging' => true, 'flush_every_line' => true ] );
+		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] = [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ] ];
+		$server                 = $_SERVER;
+		$_SERVER['REQUEST_URI'] = '/perf-probe-7731';
+		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'] );
+		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
+		self::assertTrue( \Newspack_Event_Logger_Nodes\Log_Manager::instance()->is_started(), 'the request logs' );
+		try {
+			$work();
+		} finally {
+			\Newspack_Event_Logger_Nodes\Log_Manager::reset();
+			$_SERVER = $server;
+		}
+		return self::firehose_entries( $base );
+	}
+
+	/**
 	 * The entries whose category `k` is one of `$categories`, in order.
 	 *
 	 * @param list<array<string,mixed>> $entries       What `firehose_entries()` read.
