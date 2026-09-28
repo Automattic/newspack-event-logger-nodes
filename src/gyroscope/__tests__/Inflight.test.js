@@ -15,8 +15,9 @@ jest.mock( '../hooks/useGyroscopeGraph', () => ( {
 } ) );
 
 import * as React from 'react';
-import { Core, mountExospine } from '@newspack-nodes/runtime';
+import { Core, Node, mountExospine } from '@newspack-nodes/runtime';
 import Inflight from '../Inflight';
+import { publishSkippedLines } from '@newspack-nodes/shared/test-utils/skippedLines';
 import {
 	countLabel,
 	logColumns,
@@ -99,6 +100,15 @@ describe( 'Inflight', () => {
 			jest.advanceTimersByTime( 4000 );
 		} );
 	};
+
+	it( 'shows the lines its stream skipped as unparseable', () => {
+		publishSkippedLines( 'gyroscope:link', 4 );
+		registerViewFixture();
+		const { container } = mount();
+		expect( container.textContent ).toContain(
+			'4 lines would not parse and were skipped.'
+		);
+	} );
 
 	it( 'leaves the page heading to the shell', () => {
 		registerViewFixture();
@@ -211,6 +221,35 @@ describe( 'Inflight', () => {
 		].find( ( el ) => 'option_home hook' === el.textContent );
 		expect( badge.style.backgroundColor ).toBe( 'rgb(205, 220, 57)' );
 		expect( badge.style.color ).toBe( 'rgb(30, 30, 30)' );
+	} );
+
+	it( 'titles the clipped state badge with the full state name', () => {
+		registerViewFixture( {
+			rows: [
+				{
+					rid: 'r-long',
+					url: '/x',
+					state: 'Performance_CI url_breakdown command',
+					what: 'x',
+				},
+				{
+					rid: 'r-template',
+					url: '/y',
+					state: 'include template',
+					what: 'y',
+				},
+			],
+		} );
+		const { container } = mount();
+		tickRefresh();
+		const titleOf = ( label ) =>
+			[
+				...container.querySelectorAll( '.event-logger-state-badge' ),
+			].find( ( el ) => label === el.textContent )?.title;
+		expect( titleOf( 'Performance_CI url_breakdown command' ) ).toBe(
+			'Performance_CI url_breakdown command'
+		);
+		expect( titleOf( 'template' ) ).toBe( 'include template' );
 	} );
 
 	it( 'displays the requests/second read from the node on a refresh tick', () => {
@@ -391,9 +430,9 @@ describe( 'Inflight', () => {
 
 	it( 'does not render stream staleness in the toolbar', () => {
 		registerViewFixture( { rps: 7.3 } );
-		Core.nodes.set( 'gyroscope:link', {
-			lastEventTime: () => Date.now() - 37_000,
-		} );
+		const link = new Node();
+		link.name = 'gyroscope:link';
+		link.lastEventTime = () => Date.now() - 37_000;
 		const { container } = mount();
 		tickRefresh();
 		const toolbar = container.querySelector( '.newspack-nodes-toolbar' );

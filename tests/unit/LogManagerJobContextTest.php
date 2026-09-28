@@ -244,10 +244,10 @@ class LogManagerJobContextTest extends TestCase {
 
 		Log_Manager::end_job_context( 'slow_handler', '', null );
 
-		$lines = $this->firehose_lines();
-		$this->assertNotEmpty( $lines, 'the job context wrote to the firehose' );
-		$this->assertStringContainsString( 'process (aborted)', $lines );
-		$this->assertStringNotContainsString( 'process (complete)', $lines );
+		$categories = \array_column( self::firehose_entries( self::TEST_DIR ), 'k' );
+		$this->assertNotEmpty( $categories, 'the job context wrote to the firehose' );
+		$this->assertContains( 'process (aborted)', $categories );
+		$this->assertNotContains( 'process (complete)', $categories );
 	}
 
 	/**
@@ -270,10 +270,10 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::instance()->message( 'work', [ 'm' => 'traced' ] );
 		Log_Manager::end_job_context();
 
-		$lines = $this->firehose_lines();
-		$this->assertStringContainsString( 'jobs.p3', $lines );
-		$this->assertStringContainsString( '0:58746220:127', $lines );
-		$this->assertStringContainsString( 'affinity-8842', $lines );
+		$this->assertSame(
+			[ [ 'FROM' => 'jobs.p3', 'ID' => '0:58746220:127', 'KEY' => 'affinity-8842' ] ],
+			\array_column( self::entries_of( self::firehose_entries( self::TEST_DIR ), 'message' ), 'm' )
+		);
 	}
 
 	/**
@@ -298,10 +298,10 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::end_job_context();
 		Log_Manager::end_job_context();
 
-		$lines = $this->firehose_lines();
+		$messages = \array_column( self::entries_of( self::firehose_entries( self::TEST_DIR ), 'message' ), 'm' );
 		$this->assertSame(
-			2,
-			\substr_count( $lines, '4:117:63' ),
+			[ '4:117:63', '4:117:63' ],
+			\array_column( $messages, 'ID' ),
 			'both the outer job and the nested render name the causing record'
 		);
 	}
@@ -318,9 +318,9 @@ class LogManagerJobContextTest extends TestCase {
 			[ 'status' => 'ok', 'message' => '', 'items_ok' => 1, 'items_err' => 0 ]
 		);
 
-		$lines = $this->firehose_lines();
-		$this->assertStringContainsString( 'process (complete)', $lines );
-		$this->assertStringNotContainsString( 'process (aborted)', $lines );
+		$categories = \array_column( self::firehose_entries( self::TEST_DIR ), 'k' );
+		$this->assertContains( 'process (complete)', $categories );
+		$this->assertNotContains( 'process (aborted)', $categories );
 	}
 
 	/**
@@ -345,13 +345,13 @@ class LogManagerJobContextTest extends TestCase {
 			[ 'status' => 'ok', 'message' => '', 'items_ok' => 3, 'items_err' => 0 ]
 		);
 
-		$lines = $this->firehose_lines();
-		$this->assertSame(
+		$entries = self::firehose_entries( self::TEST_DIR );
+		$this->assertCount(
 			1,
-			\substr_count( $lines, 'process (aborted)' ),
+			self::entries_of( $entries, 'process (aborted)' ),
 			'only the job that did not finish may be aborted'
 		);
-		$this->assertStringContainsString( 'process (complete)', $lines );
+		$this->assertNotSame( [], self::entries_of( $entries, 'process (complete)' ) );
 	}
 
 	/**
@@ -367,15 +367,6 @@ class LogManagerJobContextTest extends TestCase {
 
 		Log_Manager::end_job_context();
 
-		$this->assertStringNotContainsString( 'process (aborted)', $this->firehose_lines() );
-	}
-
-	/** Every firehose segment under the test base dir, concatenated. */
-	private function firehose_lines(): string {
-		$out = '';
-		foreach ( \glob( self::TEST_DIR . '/logs/firehose.p*/*.log' ) ?: [] as $path ) {
-			$out .= (string) \file_get_contents( $path );
-		}
-		return $out;
+		$this->assertSame( [], self::entries_of( self::firehose_entries( self::TEST_DIR ), 'process (aborted)' ) );
 	}
 }

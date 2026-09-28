@@ -85,6 +85,24 @@ class AskAssemblerTest extends TestCase {
 	public function test_an_unparseable_descriptor_is_refused(): void {
 		$this->assertNull( Ask_Assembler::parse_descriptor( 'nonsense' ) );
 		$this->assertNull( Ask_Assembler::parse_descriptor( 'wizard:x' ) );
+		$this->assertNull( Ask_Assembler::parse_descriptor( 'wizard:sql: SELECT kea_7740' ) );
+		$this->assertNull( Ask_Assembler::parse_descriptor( 'request::3' ), 'a request needs its id' );
+	}
+
+	/** Only `request` carries a qualifier; every other id keeps its colons. */
+	public function test_a_descriptor_id_keeps_its_colons(): void {
+		$this->assertSame(
+			[ 'type' => 'span', 'id' => 'sql: SELECT wp_posts', 'qualifier' => '' ],
+			Ask_Assembler::parse_descriptor( 'span:sql: SELECT wp_posts' )
+		);
+		$this->assertSame(
+			[ 'type' => 'span', 'id' => '{closure}:kea-7741.php:12 @10', 'qualifier' => '' ],
+			Ask_Assembler::parse_descriptor( 'span:{closure}:kea-7741.php:12 @10' )
+		);
+		$this->assertSame(
+			[ 'type' => 'request', 'id' => 'abc123', 'qualifier' => '3' ],
+			Ask_Assembler::parse_descriptor( 'request:abc123:3' )
+		);
 	}
 
 	public function test_a_request_brief_carries_the_numbers_and_the_findings(): void {

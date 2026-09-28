@@ -148,21 +148,27 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * Split `type:id[:qualifier]`. Null on anything outside the vocabulary, so
-	 * a hand-typed or stale descriptor is refused rather than half-honoured.
+	 * Split `type:id`, and a `request`'s id into `rid:partition`. Every other
+	 * id is taken whole, colons included, because a span or listener name
+	 * carries them. Null on anything outside the vocabulary, so a hand-typed
+	 * or stale descriptor is refused rather than half-honoured.
 	 *
-	 * @param string $descriptor `type:id[:qualifier]`, as a `data-ask` attribute carries it.
+	 * @param string $descriptor `type:id`, or `request:rid:partition`, as a `data-ask` attribute carries it.
 	 * @return array{type:string,id:string,qualifier:string}|null
 	 */
 	public static function parse_descriptor( string $descriptor ): ?array {
-		$parts = \explode( ':', $descriptor, 3 );
-		if ( \count( $parts ) < 2 || ! \in_array( $parts[0], self::TYPES, true ) || '' === $parts[1] ) {
+		[ $type, $id ] = \array_pad( \explode( ':', $descriptor, 2 ), 2, '' );
+		$qualifier     = '';
+		if ( 'request' === $type ) {
+			[ $id, $qualifier ] = \array_pad( \explode( ':', $id, 2 ), 2, '' );
+		}
+		if ( '' === $id || ! \in_array( $type, self::TYPES, true ) ) {
 			return null;
 		}
 		return [
-			'type'      => $parts[0],
-			'id'        => $parts[1],
-			'qualifier' => $parts[2] ?? '',
+			'type'      => $type,
+			'id'        => $id,
+			'qualifier' => $qualifier,
 		];
 	}
 

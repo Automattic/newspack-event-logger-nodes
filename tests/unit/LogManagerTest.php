@@ -268,7 +268,7 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 
 		$this->assertNotNull(
-			$this->find_last_entry( 'binstderr' ),
+			self::last_entry_of( $this->written_entries(), 'binstderr' ),
 			'oversized invalid-UTF8 data must hit the truncation branch, not be dropped'
 		);
 	}
@@ -453,7 +453,7 @@ class LogManagerTest extends TestCase {
 		$lm->alert( 'fleet sentinel 8842' );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'alert' );
+		$entry = self::last_entry_of( $this->written_entries(), 'alert' );
 		$this->assertNotNull( $entry, 'alert() must write a k=alert firehose entry' );
 		$this->assertSame( 'fleet sentinel 8842', $entry['m'] );
 	}
@@ -573,13 +573,126 @@ class LogManagerTest extends TestCase {
 		// after the terminal, the way Tap re-throws after its passthrough.
 		$this->assertTrue( $raised, 'the cooperative stop still reaches the worker' );
 		$this->assertNotNull(
-			$this->find_last_entry( 'process (aborted)' ),
+			self::last_entry_of( $this->written_entries(), 'process (aborted)' ),
 			'the record still gets its end, and says it was cut short'
 		);
 		$this->assertNull(
-			$this->find_last_entry( 'process (complete)' ),
+			self::last_entry_of( $this->written_entries(), 'process (complete)' ),
 			'a request the stop cut short never reads as a clean finish'
 		);
+	}
+
+	/**
+	 * Swap the manager's firehose Topic for one that refuses the entries
+	 * `$refuse` names, throwing `$failure`, and passes every other through.
+	 *
+	 * @param \Closure(array<string,mixed>): bool $refuse  Which entries to refuse.
+	 * @param \Throwable                          $failure What a refusal throws.
+	 */
+	private static function refuse_entries( Log_Manager $lm, \Closure $refuse, \Throwable $failure ): void {
+		$topic = new \ReflectionProperty( Log_Manager::class, 'topic' );
+		$topic->setValue(
+			$lm,
+			new class( $topic->getValue( $lm ), $refuse, $failure ) extends \Newspack_Nodes\Node {
+				public function __construct( private object $real, private \Closure $refuse, private \Throwable $failure ) {
+					parent::__construct();
+				}
+				public function fill( array $message ): void {
+					if ( ( $this->refuse )( $message[ Message::VALUE ] ) ) {
+						throw $this->failure;
+					}
+					$this->real->fill( $message );
+				}
+				public function flush(): void {
+					$this->real->flush();
+				}
+			}
+		);
+	}
+
+	public function test_finish_writes_the_terminal_past_a_failed_drain_write_then_raises_it(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm      = $this->fresh_log_manager();
+		$refusal = new \RuntimeException( 'firehose append refused 6612' );
+		self::refuse_entries( $lm, static fn ( array $entry ): bool => 'memory' === $entry['k'], $refusal );
+
+		$thrown = null;
+		try {
+			$lm->finish();
+		} catch ( \Throwable $e ) {
+			$thrown = $e;
+		}
+
+		$this->assertSame( $refusal, $thrown, 'the failed write escapes' );
+		$this->assertNotNull(
+			self::last_entry_of( $this->written_entries(), 'process (complete)' ),
+			'the terminal still lands, and a write failure is no abort'
+		);
+		$this->assertFalse( $lm->is_started() );
+	}
+
+	public function test_finish_keeps_an_abort_its_caller_declared_past_a_failed_drain_write(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm      = $this->fresh_log_manager();
+		$refusal = new \RuntimeException( 'firehose append refused 6614' );
+		self::refuse_entries( $lm, static fn ( array $entry ): bool => 'memory' === $entry['k'], $refusal );
+		( new \ReflectionProperty( Log_Manager::class, 'aborted' ) )->setValue( $lm, true );
+
+		$thrown = null;
+		try {
+			$lm->finish();
+		} catch ( \Throwable $e ) {
+			$thrown = $e;
+		}
+
+		$this->assertSame( $refusal, $thrown );
+		$this->assertNotNull( self::last_entry_of( $this->written_entries(), Log_Manager::REQUEST_ABORTED ), 'a drain failure does not make an aborted job complete' );
+	}
+
+	public function test_finish_raises_a_plain_stop_carrying_the_terminal_write_failure(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm      = $this->fresh_log_manager();
+		$refusal = new \RuntimeException( 'terminal append refused 6613' );
+		self::refuse_entries( $lm, static fn ( array $entry ): bool => \str_starts_with( $entry['k'], Log_Manager::REQUEST_LABEL . ' (' ), $refusal );
+		$disarm = self::arm_stop_on_next_write();
+
+		$thrown = null;
+		try {
+			$lm->finish();
+		} catch ( \Throwable $e ) {
+			$thrown = $e;
+		} finally {
+			$disarm();
+		}
+
+		$this->assertInstanceOf( Worker_Should_Stop::class, $thrown, 'the drain stop leaves' );
+		$this->assertFalse( Worker_Should_Stop::is_clean( $thrown ) );
+		$this->assertSame( $refusal, $thrown->getPrevious(), 'carrying the terminal it could not write' );
+	}
+
+	public function test_a_start_line_whose_stop_carries_a_failure_opens_no_span(): void {
+		// A stop carrying a failure says the line never became durable, so no
+		// span opened on the record and the drain has nothing to close.
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+		self::refuse_entries(
+			$lm,
+			static fn ( array $entry ): bool => 'takahe 6614 (start)' === $entry['k'],
+			new Worker_Should_Stop( 'deadline', 0, new \RuntimeException( 'flush failed 6614' ) )
+		);
+
+		try {
+			$lm->start( 'takahe 6614' );
+		} catch ( Worker_Should_Stop ) {
+			$this->addToAssertionCount( 1 );
+		}
+		$lm->finish();
+
+		$this->assertSame( [], self::entries_of( self::firehose_entries( self::TEST_DIR ), 'takahe 6614 (complete)' ) );
 	}
 
 	public function test_finish_writes_the_terminal_when_the_stop_lands_on_it(): void {
@@ -619,7 +732,7 @@ class LogManagerTest extends TestCase {
 
 		$this->assertTrue( $raised, 'the cooperative stop still reaches the worker' );
 		$this->assertNotNull(
-			$this->find_last_entry( 'process (aborted)' ),
+			self::last_entry_of( $this->written_entries(), 'process (aborted)' ),
 			'the terminal survives a stop that lands on the terminal write'
 		);
 		$this->assertFalse( $lm->is_started(), 'and the request state is still reset' );
@@ -630,12 +743,242 @@ class LogManagerTest extends TestCase {
 		// and the next entry reused the number. Request_Builder_Node drops a
 		// duplicate outright — terminal included — so the record stranded
 		// until its trace timed out, having written the terminal.
-		$numbers = \array_column( $this->read_firehose_entries(), 'n' );
+		$numbers = \array_column( $this->written_entries(), 'n' );
 		$this->assertSame(
 			\count( $numbers ),
 			\count( \array_unique( $numbers ) ),
 			'no two entries share a sequence number'
 		);
+	}
+
+	/** The reader orders partitions and segments by number, not by string. */
+	public function test_firehose_entries_read_in_numeric_partition_and_segment_order(): void {
+		$base = self::TEST_DIR . '/order-7742';
+		foreach ( [ [ 10, 1, 'p10-s1' ], [ 2, 1000, 'p2-s1000' ], [ 2, 999, 'p2-s999' ] ] as [ $partition, $segment, $mark ] ) {
+			@\mkdir( "{$base}/logs/firehose.p{$partition}", 0755, true );
+			$message                  = Message::new_message();
+			$message[ Message::VALUE ] = [ 'k' => $mark ];
+			\file_put_contents( "{$base}/logs/firehose.p{$partition}/{$segment}.log", Message::packed( $message ) . "\n" );
+		}
+
+		$this->assertSame( [ 'p2-s999', 'p2-s1000', 'p10-s1' ], \array_column( self::firehose_entries( $base ), 'k' ) );
+	}
+
+	/** A line whose VALUE is no entry is a producer regression, and the reader says so. */
+	public function test_firehose_entries_fail_on_a_line_that_carries_no_entry(): void {
+		$base = self::TEST_DIR . '/bytestream-7748';
+		@\mkdir( "{$base}/logs/firehose.p0", 0755, true );
+		$message                   = Message::new_message();
+		$message[ Message::VALUE ] = 'kea-7748 raw bytes';
+		\file_put_contents( "{$base}/logs/firehose.p0/1.log", Message::packed( $message ) . "\n" );
+
+		try {
+			self::firehose_entries( $base );
+		} catch ( \PHPUnit\Framework\AssertionFailedError $e ) {
+			$this->assertStringContainsString( 'firehose.p0/1.log', $e->getMessage() );
+			return;
+		}
+		$this->fail( 'a line carrying no entry must fail the read' );
+	}
+
+	// ── timed(): one span around a closure ────────────────────────────────
+
+	/**
+	 * Make the next firehose write raise the cooperative stop, as a lost lock
+	 * would. Returns the disarm.
+	 *
+	 * @return \Closure(): void
+	 */
+	private static function arm_stop_on_next_write(): \Closure {
+		$framework = Event_Framework::instance();
+		$predicate = new \ReflectionProperty( Event_Framework::class, 'continue_predicate' );
+		$last_pump = new \ReflectionProperty( Event_Framework::class, 'last_pump' );
+		$predicate->setValue( $framework, static fn (): bool => false );
+		$last_pump->setValue( $framework, 0.0 );
+		return static fn () => $predicate->setValue( $framework, null );
+	}
+
+	/** Describe a result the way a caller does, so the test reads what `m` got. */
+	private static function describe_result( mixed $result ): string {
+		return 'returned ' . \json_encode( $result );
+	}
+
+	public function test_timed_passes_the_result_through_one_span(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+
+		$result = $lm->timed( 'kea 4417', static fn (): array => [ 'rows' => 4417 ], self::describe_result( ... ), [ 'm' => 'kea-ci' ] );
+		$lm->finish();
+
+		$this->assertSame( [ 'rows' => 4417 ], $result );
+		$entries = self::firehose_entries( self::TEST_DIR );
+		$this->assertSame( 'kea-ci', self::last_entry_of( $entries, 'kea 4417 (start)' )['m'] ?? null );
+		$this->assertSame( 'returned {"rows":4417}', self::last_entry_of( $entries, 'kea 4417 (complete)' )['m'] ?? null );
+	}
+
+	/**
+	 * What a closure can throw, and the `(complete)` `m` it closes with.
+	 *
+	 * @return array<string,array{0:\Throwable,1:string}>
+	 */
+	public static function thrown_outcomes(): array {
+		return [
+			'a class'           => [ new \DomainException( 'weka 4418' ), 'DomainException' ],
+			'an anonymous one'  => [ new class( 'weka 4424' ) extends \DomainException {}, 'class@anonymous' ],
+			'a cooperative stop' => [ new Worker_Should_Stop(), 'stop' ],
+		];
+	}
+
+	/** One vocabulary for every span: timed() names what was thrown, never the caller. */
+	#[DataProvider( 'thrown_outcomes' )]
+	public function test_timed_names_what_the_closure_threw_and_propagates_it( \Throwable $thrown, string $outcome ): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm        = $this->fresh_log_manager();
+		$described = false;
+		$caught    = null;
+
+		try {
+			$lm->timed(
+				'kea 4418',
+				static fn (): never => throw $thrown,
+				static function () use ( &$described ): string {
+					$described = true;
+					return 'returned';
+				}
+			);
+		} catch ( \PHPUnit\Exception | \SebastianBergmann\Invoker\Exception $e ) {
+			throw $e;
+		} catch ( \Throwable $e ) {
+			$caught = $e;
+		}
+		$this->assertSame( $thrown, $caught, 'the closure\'s throwable must propagate' );
+		$lm->finish();
+
+		$this->assertFalse( $described, 'the description covers a result, and there was none' );
+		$this->assertSame( $outcome, self::last_entry_of( self::firehose_entries( self::TEST_DIR ), 'kea 4418 (complete)' )['m'] ?? null );
+	}
+
+	/** With no description the span carries no outcome at all, thrown or not. */
+	public function test_timed_without_a_description_writes_no_outcome(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+
+		$lm->timed( 'kea 4425', static fn (): string => 'moa-4425' );
+		try {
+			$lm->timed( 'weka 4425', static fn (): never => throw new \DomainException( 'weka 4425' ) );
+		} catch ( \DomainException ) {
+			$lm->finish();
+		}
+
+		$entries = self::firehose_entries( self::TEST_DIR );
+		foreach ( [ 'kea 4425 (complete)', 'weka 4425 (complete)' ] as $category ) {
+			$complete = self::last_entry_of( $entries, $category );
+			$this->assertNotNull( $complete, $category );
+			$this->assertArrayNotHasKey( 'm', $complete, $category );
+			$this->assertArrayHasKey( 'duration_ms', $complete, $category );
+		}
+	}
+
+	public function test_timed_start_that_throws_propagates_and_skips_the_closure(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm     = $this->fresh_log_manager();
+		$ran    = false;
+		$disarm = self::arm_stop_on_next_write();
+
+		try {
+			$lm->timed(
+				'kea 4419',
+				static function () use ( &$ran ): string {
+					$ran = true;
+					return 'ran';
+				},
+				self::describe_result( ... )
+			);
+			$this->fail( 'the start write\'s throwable must propagate' );
+		} catch ( Worker_Should_Stop ) {
+			$this->assertFalse( $ran, 'the closure never ran' );
+		} finally {
+			$disarm();
+		}
+	}
+
+	/**
+	 * The Partition flushes the start line to disk before it raises the stop,
+	 * so the span is open on the record: the frame must be pushed, or nothing
+	 * ever closes it and every later entry nests under it.
+	 */
+	public function test_a_stop_raised_by_the_start_write_leaves_the_span_for_the_drain_to_close(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm     = $this->fresh_log_manager();
+		$disarm = self::arm_stop_on_next_write();
+
+		try {
+			$lm->start( 'kea 4423' );
+			$this->fail( 'the stop must propagate' );
+		} catch ( Worker_Should_Stop ) {
+			$disarm();
+		}
+		$lm->finish();
+
+		$entries = self::firehose_entries( self::TEST_DIR );
+		$this->assertCount( 1, self::entries_of( $entries, 'kea 4423 (start)' ), 'the start line landed before the stop' );
+		$this->assertSame(
+			[ '(orphaned)' ],
+			\array_column( self::entries_of( $entries, 'kea 4423 (complete)' ), 'm' ),
+			'the drain closes the span the stop left open'
+		);
+	}
+
+	public function test_timed_complete_that_throws_propagates_after_a_normal_return(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm     = $this->fresh_log_manager();
+		$disarm = null;
+
+		try {
+			$lm->timed(
+				'kea 4420',
+				static function () use ( &$disarm ): string {
+					$disarm = self::arm_stop_on_next_write();
+					return 'kakapo-4420';
+				},
+				self::describe_result( ... )
+			);
+			$this->fail( 'the complete write\'s throwable must propagate' );
+		} catch ( Worker_Should_Stop $e ) {
+			$this->assertNull( $e->getPrevious(), 'nothing else was in flight' );
+		} finally {
+			$disarm && $disarm();
+		}
+	}
+
+	public function test_timed_complete_that_throws_keeps_the_closures_throwable_as_previous(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm     = $this->fresh_log_manager();
+		$thrown = new \DomainException( 'weka 4421' );
+		$disarm = null;
+
+		try {
+			$lm->timed(
+				'kea 4421',
+				static function () use ( &$disarm, $thrown ): never {
+					$disarm = self::arm_stop_on_next_write();
+					throw $thrown;
+				},
+				self::describe_result( ... )
+			);
+			$this->fail( 'the complete write\'s throwable must propagate' );
+		} catch ( Worker_Should_Stop $e ) {
+			$this->assertSame( $thrown, $e->getPrevious(), 'PHP chains the closure\'s throwable under the one finally raised' );
+		} finally {
+			$disarm && $disarm();
+		}
 	}
 
 	public function test_get_request_id_returns_string(): void {
@@ -660,9 +1003,9 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'], $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] );
 
-		$this->assertSame( 'reconcile-731', $this->find_last_entry( 'worker_type' )['m'] ?? null, 'the env var outranks the path' );
-		$this->assertSame( 2, $this->find_last_entry( 'worker_partition' )['m'] ?? null );
-		$this->assertArrayNotHasKey( 'worker_type', $this->find_last_entry( 'process (start)' ) );
+		$this->assertSame( 'reconcile-731', self::last_entry_of( $this->written_entries(), 'worker_type' )['m'] ?? null, 'the env var outranks the path' );
+		$this->assertSame( 2, self::last_entry_of( $this->written_entries(), 'worker_partition' )['m'] ?? null );
+		$this->assertArrayNotHasKey( 'worker_type', self::last_entry_of( $this->written_entries(), 'process (start)' ) );
 	}
 
 	// ── Governing rule resolution ────────────────────────────────────────────
@@ -710,7 +1053,34 @@ class LogManagerTest extends TestCase {
 			'log'      => [ '/wp-json/newspack-nodes/v1/log/stream?since=12', 'restapi' ],
 			'messages' => [ '/wp-json/newspack-nodes/v1/messages/stream', 'restapi' ],
 			'spawn'    => [ '/wp-json/newspack-nodes/v1/workers/spawn', 'restapi' ],
+			'auth'     => [ '/wp-json/newspack-nodes/v1/auth', 'restapi' ],
+			'mcp'      => [ '/wp-json/newspack-event-logger-nodes/v1/mcp', 'restapi' ],
+			'health'   => [ '/wp-json/newspack-nodes/v1/health/cache', 'restapi' ],
 		];
+	}
+
+	/**
+	 * `PLATFORM_WORKERS` spells its REST paths by hand, because two of the
+	 * substrate's controllers name their routes as literals. Registering every
+	 * route the platform serves is the drift guard: a route added, renamed or
+	 * removed on either side fails here.
+	 */
+	public function test_platform_rest_paths_are_the_routes_the_platform_registers(): void {
+		$saved                   = $GLOBALS['_rest_routes'] ?? [];
+		$GLOBALS['_rest_routes'] = [];
+		try {
+			\Newspack_Nodes\Bootstrap::register_rest_routes();
+			( new \Newspack_Event_Logger_Nodes\App\MCP_Controller() )->register_routes();
+			$registered = \array_map( static fn ( string $route ): string => "/wp-json/{$route}", \array_keys( $GLOBALS['_rest_routes'] ) );
+		} finally {
+			$GLOBALS['_rest_routes'] = $saved;
+		}
+		$workers = ( new \ReflectionClassConstant( Log_Manager::class, 'PLATFORM_WORKERS' ) )->getValue();
+		$rest    = \array_keys( \array_filter( $workers, static fn ( string $type ): bool => 'restapi' === $type ) );
+
+		\sort( $registered );
+		\sort( $rest );
+		$this->assertSame( $registered, $rest );
 	}
 
 	/**
@@ -729,8 +1099,8 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'noop' );
 		$lm->finish();
 
-		$this->assertSame( $worker_type, $this->find_last_entry( 'worker_type' )['m'] ?? null );
-		$this->assertNull( $this->find_last_entry( 'worker_partition' ) );
+		$this->assertSame( $worker_type, self::last_entry_of( $this->written_entries(), 'worker_type' )['m'] ?? null );
+		$this->assertNull( self::last_entry_of( $this->written_entries(), 'worker_partition' ) );
 	}
 
 	public function test_an_ordinary_page_carries_no_worker_type(): void {
@@ -743,7 +1113,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'noop' );
 		$lm->finish();
 
-		$this->assertNull( $this->find_last_entry( 'worker_type' ) );
+		$this->assertNull( self::last_entry_of( $this->written_entries(), 'worker_type' ) );
 	}
 
 	/**
@@ -759,7 +1129,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'noop' );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'process (start)' );
+		$entry = self::last_entry_of( $this->written_entries(), 'process (start)' );
 		$this->assertNotNull( $entry, 'Should have a process (start) entry' );
 		$this->assertSame( 'shop', $entry['rule'] );
 	}
@@ -778,7 +1148,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'noop' );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'process (start)' );
+		$entry = self::last_entry_of( $this->written_entries(), 'process (start)' );
 		$this->assertNotNull( $entry, 'Should have a process (start) entry' );
 		$this->assertMatchesRegularExpression(
 			'/^\d+ on \S+, WordPress 9\.9\.9$/',
@@ -840,8 +1210,8 @@ class LogManagerTest extends TestCase {
 		$this->assertTrue( $lm->message( 'error', [ 'm' => 'boom-9021' ] ) );
 		// Landed in the firehose, not just a truthy return.
 		$lm->finish();
-		$this->assertNotNull( $this->find_last_entry( 'metadatacache' ) );
-		$this->assertNotNull( $this->find_last_entry( 'query hook' ) );
+		$this->assertNotNull( self::last_entry_of( $this->written_entries(), 'metadatacache' ) );
+		$this->assertNotNull( self::last_entry_of( $this->written_entries(), 'query hook' ) );
 	}
 
 	public function test_matches_url_filter_directly(): void {
@@ -980,20 +1350,7 @@ class LogManagerTest extends TestCase {
 		\usleep( 5000 );
 		$lm->finish();
 
-		// Read the firehose output to find process (complete) entry.
-		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
-		$this->assertDirectoryExists( $log_dir );
-		$files = \glob( $log_dir . '/*.log' );
-		$this->assertNotEmpty( $files, 'Firehose should have written data' );
-
-		$complete_entry = null;
-		foreach ( $files as $file ) {
-			foreach ( $this->extract_jsonl_entries( $file ) as $decoded ) {
-				if ( isset( $decoded['k'] ) && 'process (complete)' === $decoded['k'] ) {
-					$complete_entry = $decoded;
-				}
-			}
-		}
+		$complete_entry = self::last_entry_of( $this->written_entries(), 'process (complete)' );
 
 		$this->assertNotNull( $complete_entry, 'Should have a process (complete) entry' );
 		$this->assertArrayHasKey( 'duration_ms', $complete_entry );
@@ -1031,17 +1388,17 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * Read ALL firehose log entries from the test directory.
+	 * Every firehose entry under the test base, each with its rid; the test
+	 * wrote at least one, or there is nothing its assertions could read.
 	 *
-	 * Each line on disk is a packed Tachikoma Message envelope (LogManager
-	 * routes through Topic::fill → Partition::fill, and Partition::fill writes
-	 * the canonical packed wire format). The original JSONL entries live on
-	 * Message::VALUE — and because LogManager batches multiple entries per
-	 * flush into a single buffered write, VALUE itself contains one-or-more
-	 * JSONL lines separated by `\n`. Unpack the envelope, then split + decode.
-	 *
-	 * @return array[] Decoded JSON entries.
+	 * @return list<array<string,mixed>>
 	 */
+	private function written_entries(): array {
+		$entries = self::firehose_entries( self::TEST_DIR, true );
+		$this->assertNotEmpty( $entries, 'Firehose should have written data' );
+		return $entries;
+	}
+
 	/**
 	 * The curated environment_v3 map (the single `m` map) from a firehose read.
 	 *
@@ -1055,56 +1412,6 @@ class LogManagerTest extends TestCase {
 			}
 		}
 		return [];
-	}
-
-	private function read_firehose_entries(): array {
-		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
-		$this->assertDirectoryExists( $log_dir );
-		$files = \glob( $log_dir . '/*.log' );
-		$this->assertNotEmpty( $files, 'Firehose should have written data' );
-
-		$entries = [];
-		foreach ( $files as $file ) {
-			foreach ( $this->extract_jsonl_entries( $file ) as $decoded ) {
-				$entries[] = $decoded;
-			}
-		}
-		return $entries;
-	}
-
-	/**
-	 * Extract entries from a single firehose segment file.
-	 *
-	 * Walks each packed Message line, unpacks, and returns each Message's
-	 * VALUE — which is now an entry array directly (one entry per Message).
-	 *
-	 * @return array[] Decoded entries in segment order.
-	 */
-	private function extract_jsonl_entries( string $file ): array {
-		$content = (string) \file_get_contents( $file );
-		$out     = [];
-		foreach ( \array_filter( \explode( "\n", $content ) ) as $packed_line ) {
-			$message   = Message::unpacked( $packed_line );
-			$value = $message[ Message::VALUE ] ?? null;
-			if ( \is_array( $value ) ) {
-				// Mirror production consumers — rid lives in Message::KEY on the
-				// wire; back-fill so test assertions on `$entry['rid']` work.
-				$value['rid'] = (string) ( $message[ Message::KEY ] ?? '' );
-				$out[]        = $value;
-			}
-		}
-		return $out;
-	}
-
-	private function find_last_entry( string $category ): ?array {
-		$entries = $this->read_firehose_entries();
-		$match   = null;
-		foreach ( $entries as $entry ) {
-			if ( isset( $entry['k'] ) && $category === $entry['k'] ) {
-				$match = $entry;
-			}
-		}
-		return $match;
 	}
 
 	/**
@@ -1125,11 +1432,11 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'job', [ 'k' => 'discovery', 'm' => 'test' ] );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'job' );
+		$entry = self::last_entry_of( $this->written_entries(), 'job' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=job' );
 		$this->assertSame( 'job', $entry['k'], 'Category must come from $category param, not $data' );
 
-		$bad_entry = $this->find_last_entry( 'discovery' );
+		$bad_entry = self::last_entry_of( $this->written_entries(), 'discovery' );
 		$this->assertNull( $bad_entry, 'Data array must not be able to override k field' );
 	}
 
@@ -1152,7 +1459,7 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'test', [ 'ts' => 12345.678, 'm' => 'hello' ] );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'test' );
+		$entry = self::last_entry_of( $this->written_entries(), 'test' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=test' );
 		$this->assertEqualsWithDelta( 12345.678, $entry['ts'], 0.001, 'ts field must be overridable by $data for profiler use' );
 	}
@@ -1176,7 +1483,7 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'test', [ 'rid' => 'fake_id', 'm' => 'hello' ] );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'test' );
+		$entry = self::last_entry_of( $this->written_entries(), 'test' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=test' );
 		$this->assertNotSame( 'fake_id', $entry['rid'], 'rid must not be overridable by $data' );
 		$this->assertSame( $lm->get_request_id(), $entry['rid'], 'rid must be the real request ID' );
@@ -1201,7 +1508,7 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'test', [ 'n' => 99999, 'm' => 'hello' ] );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'test' );
+		$entry = self::last_entry_of( $this->written_entries(), 'test' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=test' );
 		$this->assertNotSame( 99999, $entry['n'], 'n must not be overridable by $data' );
 		$this->assertIsInt( $entry['n'] );
@@ -1472,7 +1779,7 @@ class LogManagerTest extends TestCase {
 		$lm->complete( 'unit' );
 		$lm->finish();
 
-		$entries = $this->read_firehose_entries();
+		$entries = $this->written_entries();
 		$kinds   = \array_column( $entries, 'k' );
 
 		// log_environment emits exactly ONE curated environment_v3 message (not one-per-key).
@@ -1581,7 +1888,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$entries     = $this->read_firehose_entries();
+		$entries     = $this->written_entries();
 		$env_entries = \array_values( \array_filter( $entries, static fn( $e ) => Log_Manager::ENVIRONMENT === ( $e['k'] ?? '' ) ) );
 		$this->assertCount( 1, $env_entries, 'exactly one curated environment_v3 entry' );
 		$env = $env_entries[0]['m'];
@@ -1637,7 +1944,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$env = $this->env_map( $this->read_firehose_entries() );
+		$env = $this->env_map( $this->written_entries() );
 		$this->assertArrayHasKey( 'HTTP_USER_AGENT', $env );
 		$ua  = $env['HTTP_USER_AGENT'];
 		$this->assertStringEndsWith( '…', $ua, 'oversized value must be ellipsis-elided' );
@@ -1666,7 +1973,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$env = $this->env_map( $this->read_firehose_entries() );
+		$env = $this->env_map( $this->written_entries() );
 		$this->assertArrayHasKey( 'A8C_PROXIED_REQUEST', $env );
 		$this->assertStringContainsString( 'token=[REDACTED]', $env['A8C_PROXIED_REQUEST'] );
 		$this->assertStringNotContainsString( 'SHHH', $env['A8C_PROXIED_REQUEST'] );
@@ -1699,7 +2006,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$entries       = $this->read_firehose_entries();
+		$entries       = $this->written_entries();
 		$process_start = null;
 		foreach ( $entries as $entry ) {
 			if ( 'process (start)' === ( $entry['k'] ?? '' ) ) {
@@ -1740,7 +2047,7 @@ class LogManagerTest extends TestCase {
 			];
 			\do_action( 'plugins_loaded' );
 			$lm->finish();
-			return $this->read_firehose_entries();
+			return $this->written_entries();
 		} finally {
 			$GLOBALS['_wp_actions'] = $saved_actions;
 			unset( $GLOBALS['newspack_profiler'], $GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] );
@@ -1799,7 +2106,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$entries = $this->read_firehose_entries();
+		$entries = $this->written_entries();
 		$request = null;
 		foreach ( $entries as $entry ) {
 			if ( 'request' === ( $entry['k'] ?? '' ) ) {
@@ -1828,7 +2135,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$entries = $this->read_firehose_entries();
+		$entries = $this->written_entries();
 		$request = null;
 		foreach ( $entries as $entry ) {
 			if ( 'request' === ( $entry['k'] ?? '' ) ) {
@@ -1856,7 +2163,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$entries = $this->read_firehose_entries();
+		$entries = $this->written_entries();
 		$request = null;
 		foreach ( $entries as $entry ) {
 			if ( 'request' === ( $entry['k'] ?? '' ) ) {
@@ -1888,7 +2195,7 @@ class LogManagerTest extends TestCase {
 
 		$lm->finish();
 
-		$entries  = $this->read_firehose_entries();
+		$entries  = $this->written_entries();
 		$orphaned = [];
 		foreach ( $entries as $entry ) {
 			$k = $entry['k'] ?? '';
@@ -2010,7 +2317,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$env = $this->env_map( $this->read_firehose_entries() );
+		$env = $this->env_map( $this->written_entries() );
 		$this->assertSame( 'a8c-forged-rid', $env['HTTP_X_A8C_REQUEST_ID'] ?? null );
 		$this->assertNotSame( 'a8c-forged-rid', $lm->get_request_id() );
 
@@ -2095,7 +2402,7 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'oversized_event', [ 'm' => \str_repeat( 'A', 5000 ) ] );
 		$lm->finish();
 
-		$entries = $this->read_firehose_entries();
+		$entries = $this->written_entries();
 		$truncated_entry = null;
 		foreach ( $entries as $entry ) {
 			if ( isset( $entry['k'] ) && 'oversized_event' === $entry['k'] ) {
@@ -2131,7 +2438,7 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'oversized_event', [ 'm' => $long, 'l' => 'Newspack_Blocks::build_articles_query' ] );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'oversized_event' );
+		$entry = self::last_entry_of( $this->written_entries(), 'oversized_event' );
 		$this->assertNotNull( $entry );
 		$this->assertSame( 'Newspack_Blocks::build_articles_query', $entry['l'] ?? null );
 		$this->assertStringStartsWith( 'AAAA', (string) $entry['m'] );
@@ -2160,7 +2467,7 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'edge_event', [ 'm' => \str_repeat( 'A', 3800 ) ] );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'edge_event' );
+		$entry = self::last_entry_of( $this->written_entries(), 'edge_event' );
 		$this->assertNotNull( $entry );
 		$this->assertLessThanOrEqual(
 			3840,
@@ -2184,7 +2491,7 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'oversized_event', [ 'm' => \array_fill( 0, 400, \str_repeat( 'B', 40 ) ), 'l' => 'the_content' ] );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'oversized_event' );
+		$entry = self::last_entry_of( $this->written_entries(), 'oversized_event' );
 		$this->assertNotNull( $entry );
 		$this->assertSame( 'the_content', $entry['l'] ?? null );
 		$this->assertArrayNotHasKey( 'm', $entry );
@@ -2396,7 +2703,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$entries = $this->read_firehose_entries();
+		$entries = $this->written_entries();
 		$env     = $this->env_map( $entries );
 		$this->assertArrayHasKey( 'SERVER_NAME', $env, 'SERVER_NAME must surface in the curated env map' );
 		$value = (string) $env['SERVER_NAME'];
@@ -2428,7 +2735,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'init' );
 		$lm->finish();
 
-		$entries = $this->read_firehose_entries();
+		$entries = $this->written_entries();
 		$env     = $this->env_map( $entries );
 		$this->assertArrayNotHasKey( 'REMOTE_ADDR', $env, 'array-valued env keys must be skipped' );
 
@@ -2459,7 +2766,7 @@ class LogManagerTest extends TestCase {
 		$lm->complete( 'outer' ); // Splices all three off; inner+deeper are orphaned.
 		$lm->finish();
 
-		$entries = $this->read_firehose_entries();
+		$entries = $this->written_entries();
 		$orphan_labels = [];
 		$normal_completes = [];
 		foreach ( $entries as $entry ) {
@@ -2501,7 +2808,7 @@ class LogManagerTest extends TestCase {
 
 		// Without an injected fatal, the tagging block writes neither
 		// `fatal_error` nor `error_status` onto process (complete).
-		$entries       = $this->read_firehose_entries();
+		$entries       = $this->written_entries();
 		$process_entry = null;
 		foreach ( $entries as $entry ) {
 			if ( 'process (complete)' === ( $entry['k'] ?? '' ) ) {
@@ -2924,7 +3231,7 @@ class LogManagerTest extends TestCase {
 		] );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'job' );
+		$entry = self::last_entry_of( $this->written_entries(), 'job' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=job' );
 		$this->assertSame( $url, $entry['m']['parameters']['urls'][0] );
 	}
@@ -2955,7 +3262,7 @@ class LogManagerTest extends TestCase {
 		$lm->complete( 'sql', [ 'm' => $shape ], 'complete', true );
 		$lm->finish();
 
-		$entry = $this->find_last_entry( 'sql (complete)' );
+		$entry = self::last_entry_of( $this->written_entries(), 'sql (complete)' );
 		$this->assertNotNull( $entry, 'Should find an entry with k=sql (complete)' );
 		$this->assertSame( $shape, $entry['m'] );
 	}

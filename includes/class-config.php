@@ -91,6 +91,15 @@ class Config {
 	private static ?bool $is_hub = null;
 
 	/**
+	 * What the last `is_hub` derivation threw, raised again by every later
+	 * resolution until `reset_local_cache()`, so one unreadable topology is
+	 * walked once per process rather than once per `<eln:is_hub>`.
+	 *
+	 * @var \Throwable|null
+	 */
+	private static ?\Throwable $is_hub_failure = null;
+
+	/**
 	 * Set while `has_hub_topology()` is deriving, to break re-entrancy.
 	 *
 	 * @var bool
@@ -112,6 +121,33 @@ class Config {
 		self::OPTION_DISCOVERED_EVENTS => true,
 		self::OPTION_DISCOVERED_HOOKS  => true,
 	];
+
+	/**
+	 * The two globals a span takes its colour from, as one inline script:
+	 * `window.eventLoggerHookCategories`, `hook_categories.json` whole through
+	 * `Hook_Categorizer::get_base_config()`, and `window.eventLoggerCustomColors`,
+	 * {@see span_colors()}. The dashboards print it on their own bundle, and
+	 * the Request tab on every page where no dashboard bundle does.
+	 *
+	 * @return string Inline JS.
+	 */
+	public static function span_palette_js(): string {
+		return 'window.eventLoggerHookCategories = ' . \wp_json_encode( Hook_Categorizer::get_base_config() ) . ';'
+			. 'window.eventLoggerCustomColors = ' . \wp_json_encode( self::span_colors() ) . ';';
+	}
+
+	/**
+	 * The span colour map every page that draws a request profile prints as
+	 * `window.eventLoggerCustomColors`: the configured colours over
+	 * `Flame_Tree::PLATFORM_COLORS`, so an operator's colour of the same name
+	 * outranks the platform's. The rule editor's picker takes
+	 * `get_custom_colors()` alone, which offers no platform span as an event.
+	 *
+	 * @return array<string,mixed> Span name to color.
+	 */
+	public static function span_colors(): array {
+		return self::get_custom_colors() + Flame_Tree::PLATFORM_COLORS;
+	}
 
 	/**
 	 * The event-name-to-color map the dashboards render their swatches from.
@@ -297,14 +333,22 @@ class Config {
 
 	/**
 	 * Whether any active topology makes this install a hub, memoized because
-	 * deriving it walks every active topology's graph. `reset_local_cache()`
-	 * drops the memo; the guard below covers re-entrancy rather than cost.
+	 * deriving it walks every active topology's graph. A failed derivation is
+	 * memoized too, and re-raised; a cooperative stop is not a derivation's
+	 * answer and propagates unmemoized. `reset_local_cache()` drops both; the
+	 * guard below covers re-entrancy rather than cost. Rethrown inside a
+	 * `finally` during another exception, the memo gains that exception on its
+	 * chain — PHP's doing, harmless to classification.
 	 *
 	 * @return bool True when an active topology aggregates from spokes.
+	 * @throws \Throwable What the derivation threw, the same instance each time.
 	 */
 	private static function has_hub_topology(): bool {
 		if ( null !== self::$is_hub ) {
 			return self::$is_hub;
+		}
+		if ( null !== self::$is_hub_failure ) {
+			throw self::$is_hub_failure;
 		}
 		// @longform
 		// Re-entrancy, not just caching: graph_for() resolves the config
@@ -319,6 +363,11 @@ class Config {
 		self::$deriving_is_hub = true;
 		try {
 			self::$is_hub = self::derive_hub_topology();
+		} catch ( \Newspack_Nodes\Worker_Should_Stop $e ) {
+			throw $e;
+		} catch ( \Throwable $e ) {
+			self::$is_hub_failure = $e;
+			throw $e;
 		} finally {
 			self::$deriving_is_hub = false;
 		}
@@ -344,24 +393,23 @@ class Config {
 	 * that worker's whole life, even after Vault members arrive later — only a
 	 * restart re-derives it.
 	 *
+	 * An active topology whose `.tsl` will not read throws: it may be the
+	 * hub, so answering "spoke" would turn its per-server stats off unseen.
+	 *
 	 * @return bool True when either signal fires.
+	 * @throws \RuntimeException When an active topology will not read.
 	 */
 	private static function derive_hub_topology(): bool {
 		foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
 			$name = \Newspack_Nodes\Core::as_string( $active );
-			try {
-				// includes() THROWS on a bad .tsl; token resolution must not.
-				if ( 'aggregator' === $name
-					|| \in_array( 'aggregator', Topology_Analyzer::includes( $name ), true ) ) {
+			if ( 'aggregator' === $name
+				|| \in_array( 'aggregator', Topology_Analyzer::includes( $name ), true ) ) {
+				return true;
+			}
+			foreach ( Topology_Analyzer::graph_for( $name )['nodes'] as $node ) {
+				if ( 'Remote_Source' === ( $node['type'] ?? '' ) ) {
 					return true;
 				}
-				foreach ( Topology_Analyzer::graph_for( $name )['nodes'] as $node ) {
-					if ( 'Remote_Source' === ( $node['type'] ?? '' ) ) {
-						return true;
-					}
-				}
-			} catch ( \RuntimeException $e ) {
-				continue;
 			}
 		}
 		return false;
@@ -508,6 +556,7 @@ class Config {
 		self::$config          = null;
 		self::$config_defaults = null;
 		self::$is_hub          = null;
+		self::$is_hub_failure  = null;
 		self::$unrecognized    = [];
 	}
 

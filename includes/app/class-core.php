@@ -651,13 +651,10 @@ class Core {
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
 					$args = \array_slice( \func_get_args(), 0, $accepted_args );
 					$lm   = Log_Manager::started_instance();
-					$lm?->start( $label, [ 'l' => '' ] );
-					try {
-						$result = \call_user_func_array( $original, $args );
-					} finally {
-						$lm?->complete( $label );
+					if ( null === $lm ) {
+						return \call_user_func_array( $original, $args );
 					}
-					return $result;
+					return $lm->timed( $label, $original, null, [ 'l' => '' ], $args );
 				};
 
 				$this->wrapper_ids[ \spl_object_id( $wrapper ) ] = true;
@@ -713,8 +710,9 @@ class Core {
 	 *
 	 * Such a callback can't be timing-wrapped: the wrapper passes args via
 	 * func_get_args() + call_user_func_array(), which copy, so a by-ref param
-	 * receives a value (PHP warning + lost mutation). Reflect once; a failed
-	 * reflection reports false, so an uninspectable callback is wrapped.
+	 * receives a value (PHP warning + lost mutation). Reflect once; a
+	 * `\ReflectionException` reports false, so an uninspectable callback is
+	 * wrapped, and anything else the reflection raises propagates.
 	 *
 	 * @param mixed $function Callback (string|array|Closure|invokable object).
 	 * @return bool
@@ -737,7 +735,7 @@ class Core {
 			} else {
 				return false;
 			}
-		} catch ( \Throwable $e ) {
+		} catch ( \ReflectionException $e ) {
 			return false;
 		}
 		foreach ( $ref->getParameters() as $param ) {

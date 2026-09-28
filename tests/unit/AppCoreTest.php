@@ -2025,6 +2025,53 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( 'hi WRAPPED', \call_user_func( $wrapped, 'hi' ), 'wrapper must run the original and return its result' );
 	}
 
+	/** A listener this test binds, which returns. */
+	public static function kea_listener_7746( string $v ): string {
+		return "{$v} kea-7746";
+	}
+
+	/** A listener this test binds, which throws. */
+	public static function weka_listener_7746( string $v ): never {
+		throw new \DomainException( "{$v} weka-7746" );
+	}
+
+	/**
+	 * A listener's span is a bare pair: `l` empty on the start, no `m` on the
+	 * close — returned or thrown — and the throwable reaches the caller.
+	 */
+	public function test_a_listener_span_carries_no_outcome_returned_or_thrown(): void {
+		$core            = $this->significant_core();
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [
+			10 => [
+				'kea'  => [ 'function' => [ self::class, 'kea_listener_7746' ], 'accepted_args' => 1 ],
+				'weka' => [ 'function' => [ self::class, 'weka_listener_7746' ], 'accepted_args' => 1 ],
+			],
+		];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+		$core->hook_start( 'seed' );
+		$wrapped = $wp_filter['the_content']->callbacks[10];
+
+		$this->assertSame( 'hi kea-7746', \call_user_func( $wrapped['kea']['function'], 'hi', 'dropped past accepted_args' ) );
+		try {
+			\call_user_func( $wrapped['weka']['function'], 'hi' );
+			$this->fail( 'the listener\'s throwable must propagate' );
+		} catch ( \DomainException $e ) {
+			$this->assertSame( 'hi weka-7746', $e->getMessage() );
+		}
+
+		foreach ( [ 'AppCoreTest::kea_listener_7746 @10', 'AppCoreTest::weka_listener_7746 @10' ] as $label ) {
+			$start    = $this->last_entry( "{$label} (start)" );
+			$complete = $this->last_entry( "{$label} (complete)" );
+			$this->assertSame( '', $start['l'] ?? null, $label );
+			$this->assertArrayNotHasKey( 'm', $start ?? [], $label );
+			$this->assertNotNull( $complete, $label );
+			$this->assertArrayNotHasKey( 'm', $complete, $label );
+			$this->assertArrayHasKey( 'duration_ms', $complete, $label );
+		}
+	}
+
 	public function test_wrap_callbacks_returns_when_hook_absent_from_wp_filter(): void {
 		// significant is populated, but the hook has no wp_filter entry → the
 		// early `return;` guard fires. hook_start still passes the value through.
@@ -2118,6 +2165,29 @@ class AppCoreTest extends TestCase {
 		// ReflectionMethod on a nonexistent class throws → caught → false.
 		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
 		$this->assertFalse( $ref->invoke( null, [ 'No_Such_Class_ABC123', 'method' ] ) );
+	}
+
+	public function test_callback_has_ref_param_propagates_what_is_not_a_reflection_failure(): void {
+		// Only "cannot reflect this" reads as no by-ref param; an autoloader
+		// that throws while loading the target is a failure of its own.
+		$refusal  = new \RuntimeException( 'autoloader refused Quokka_Absent_7732' );
+		$autoload = static function ( string $class ) use ( $refusal ): void {
+			if ( 'Quokka_Absent_7732' === $class ) {
+				throw $refusal;
+			}
+		};
+		\spl_autoload_register( $autoload );
+		$ref    = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
+		$thrown = null;
+		try {
+			$ref->invoke( null, [ 'Quokka_Absent_7732', 'bound' ] );
+		} catch ( \RuntimeException $e ) {
+			$thrown = $e;
+		} finally {
+			\spl_autoload_unregister( $autoload );
+		}
+
+		$this->assertSame( $refusal, $thrown );
 	}
 
 	public function test_callback_has_ref_param_unsupported_type_is_false(): void {
@@ -2298,6 +2368,17 @@ class AppCoreTest extends TestCase {
 	 * @param string $field    The field to read.
 	 */
 	private function last_entry_field( string $category, string $field ): string {
+		return (string) ( $this->last_entry( $category )[ $field ] ?? '' );
+	}
+
+	/**
+	 * The last firehose entry emitted under $category, flushed or still
+	 * batched, or null when none was.
+	 *
+	 * @param string $category The entry's `k`.
+	 * @return array<string,mixed>|null
+	 */
+	private function last_entry( string $category ): ?array {
 		$topic = ( new \ReflectionProperty( Log_Manager::class, 'topic' ) )->getValue( Log_Manager::instance() );
 		if ( null === $topic ) {
 			$this->fail( 'no firehose topic; cannot read emitted entries' );
@@ -2305,7 +2386,7 @@ class AppCoreTest extends TestCase {
 		$parts = ( new \ReflectionProperty( \Newspack_Nodes\Topic_Node::class, 'partitions' ) )->getValue( $topic );
 		$batch = new \ReflectionProperty( \Newspack_Nodes\Partition_Node::class, 'batch' );
 		$path  = new \ReflectionProperty( \Newspack_Nodes\Partition_Node::class, 'current_log_path' );
-		$label = '';
+		$entry = null;
 		foreach ( (array) $parts as $partition ) {
 			$file = (string) ( $path->getValue( $partition ) ?? '' );
 			$raw  = ( '' !== $file && \is_file( $file ) ? (string) \file_get_contents( $file ) : '' )
@@ -2313,11 +2394,11 @@ class AppCoreTest extends TestCase {
 			foreach ( \array_filter( \explode( "\n", $raw ) ) as $line ) {
 				$value = \Newspack_Nodes\Message::unpacked( $line )[ \Newspack_Nodes\Message::VALUE ] ?? null;
 				if ( \is_array( $value ) && ( $value['k'] ?? '' ) === $category ) {
-					$label = (string) ( $value[ $field ] ?? '' );
+					$entry = $value;
 				}
 			}
 		}
-		return $label;
+		return $entry;
 	}
 
 	/**

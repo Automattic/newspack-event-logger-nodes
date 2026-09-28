@@ -122,13 +122,62 @@ final class ConfigReloadSignalTest extends TestCase {
 		$this->assertFleetAskedToReload();
 	}
 
-	public function test_saving_the_ruleset_survives_an_unresolvable_locks_directory(): void {
+	/**
+	 * The rule list is written first, then the signal: with the locks
+	 * directory unresolvable the row is in place and the failure surfaces to
+	 * the writer instead of the fleet silently serving the old ruleset.
+	 */
+	public function test_saving_the_ruleset_writes_the_row_then_propagates_an_unresolvable_locks_directory(): void {
 		$this->break_locks_directory();
 
-		( new Rule_Set( [] ) )->save( [ new Rule( 'ignored', '/tarot/', Rule::ACTION_SKIP ) ] );
+		$thrown = null;
+		try {
+			( new Rule_Set( [] ) )->save( [ new Rule( 'ignored', '/tarot/', Rule::ACTION_SKIP ) ] );
+		} catch ( \Throwable $e ) {
+			$thrown = $e;
+		}
 
-		// The write is the operation; the signal is best-effort.
-		$this->assertCount( 1, $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] );
+		$this->assertNotNull( $thrown, 'the signal failure reaches the caller' );
+		$this->assertSame( '/tarot/', $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0]['pattern'] ?? null );
+	}
+
+	/**
+	 * A reload flag that would not land is the write's failure too: the row is
+	 * stored, every other worker is told, and the writer hears which one was
+	 * not.
+	 */
+	public function test_saving_the_ruleset_propagates_a_reload_flag_that_would_not_land(): void {
+		$refusing = $this->lock_dir_for( 'moondial', 2 );
+		\chmod( $refusing, 0555 );
+
+		$thrown = null;
+		try {
+			( new Rule_Set( [] ) )->save( [ new Rule( 'ignored', '/tarot/', Rule::ACTION_SKIP ) ] );
+		} catch ( \RuntimeException $e ) {
+			$thrown = $e;
+		} finally {
+			\chmod( $refusing, 0755 );
+		}
+
+		$this->assertNotNull( $thrown, 'the failed signal reaches the caller' );
+		$this->assertStringContainsString( $refusing, $thrown->getMessage() );
+		$this->assertReloadFlagged( 'sundial', 0 );
+		$this->assertSame( '/tarot/', $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0]['pattern'] ?? null );
+	}
+
+	public function test_resetting_the_ruleset_propagates_an_unresolvable_locks_directory(): void {
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [ ( new Rule( 'ignored', '/tarot/', Rule::ACTION_SKIP ) )->to_array() ];
+		$this->break_locks_directory();
+
+		$thrown = null;
+		try {
+			Rule_Set::reset();
+		} catch ( \Throwable $e ) {
+			$thrown = $e;
+		}
+
+		$this->assertNotNull( $thrown, 'the signal failure reaches the caller' );
+		$this->assertArrayNotHasKey( Rule_Set::OPTION_RULES, $GLOBALS['_wp_options'], 'the row is deleted first' );
 	}
 
 	// ---- performance CI `set` --------------------------------------------
@@ -180,7 +229,12 @@ final class ConfigReloadSignalTest extends TestCase {
 		$this->assertFleetNotAskedToReload();
 	}
 
-	public function test_settings_set_verb_still_writes_the_option_with_an_unresolvable_locks_directory(): void {
+	/**
+	 * The option lands before the signal, and a signal with nowhere to land
+	 * is the verb's failure: it propagates as the reply's error rather than
+	 * reading as a clean write whose workers never heard of it.
+	 */
+	public function test_settings_set_verb_writes_the_option_and_refuses_with_an_unresolvable_locks_directory(): void {
 		$this->break_locks_directory();
 
 		$interpreter = new Performance_CI_Node();
@@ -191,7 +245,7 @@ final class ConfigReloadSignalTest extends TestCase {
 			'newspack_event_logger_nodes_log_memory 1'
 		);
 
-		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_log_memory', 'updated' => true ], $result );
+		$this->assertIsString( $result, 'the verb answers with its error, not a result' );
 		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
 	}
 }

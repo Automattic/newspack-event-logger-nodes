@@ -21,6 +21,13 @@ namespace {
 			return true;
 		}
 	}
+	if ( ! \function_exists( 'wp_script_is' ) ) {
+		// Status-controllable stub: a test marks a handle "enqueued" by adding it
+		// to $GLOBALS['_wp_test_enqueued_handles'].
+		function wp_script_is( string $handle, string $list = 'enqueued' ): bool {
+			return ! empty( $GLOBALS['_wp_test_enqueued_handles'][ $handle ] );
+		}
+	}
 	if ( ! \function_exists( 'wp_style_add_data' ) ) {
 		function wp_style_add_data( string $handle, string $key, $value ): bool {
 			$GLOBALS['_style_data'][ $handle ][ $key ] = $value;
@@ -37,6 +44,8 @@ namespace {
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
+	use Newspack_Event_Logger_Nodes\Current_Request_Overlay;
+	use Newspack_Event_Logger_Nodes\Log_Manager;
 	use Newspack_Event_Logger_Nodes\Tests\TestCase;
 	use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -169,6 +178,68 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 				[ 'wp-components', 'newspack-nodes-graph' ],
 				$style[2] ?? null
 			);
+		}
+
+		/**
+		 * The JSON one inline script assigned to `window.<name>` on `$handle`.
+		 *
+		 * @return array<string,mixed>
+		 */
+		private function window_json( string $handle, string $name ): array {
+			foreach ( $GLOBALS['_inline_scripts'] as $rec ) {
+				if ( ( $rec[0] ?? '' ) === $handle && \preg_match( '/window\.' . $name . ' = (\{.*?\}|\[\]);/', (string) ( $rec[1] ?? '' ), $m ) ) {
+					return (array) \json_decode( $m[1], true );
+				}
+			}
+			$this->fail( "no window.{$name} on {$handle}" );
+		}
+
+		/**
+		 * The dashboards' colour map carries the platform's own span names
+		 * beneath the configured colours; the rule editor's picker does not.
+		 */
+		public function test_dashboards_color_platform_spans_beneath_the_configured_colors(): void {
+			\add_filter( 'newspack_event_logger_nodes_custom_colors', static fn ( array $colors ): array => [ 'url fold' => '#7A1F3D' ] + $colors );
+			$_GET = [ 'page' => 'event-logger-overview' ];
+			try {
+				$this->dispatch( 'nodes_page_event-logger-overview' );
+			} finally {
+				unset( $GLOBALS['_wp_actions']['newspack_event_logger_nodes_custom_colors'] );
+			}
+
+			$colors = $this->window_json( 'newspack-nodes-overview', 'eventLoggerCustomColors' );
+			$this->assertSame( '#7A1F3D', $colors['url fold'] ?? null, 'a configured colour wins' );
+			$this->assertSame(
+				[ '#003DA5', '#BD8600', '#B32D2E', '#2055B0' ],
+				[ $colors['url page cache'] ?? null, $colors['url header cache'] ?? null, $colors['url rank lists'] ?? null, $colors['stats mirror'] ?? null ]
+			);
+			$picker = $this->window_json( 'newspack-nodes-overview', 'newspackNodesCustomColors' );
+			$this->assertArrayNotHasKey( 'url page cache', $picker, 'the picker offers only the operator\'s events' );
+			$this->assertSame( '#7A1F3D', $picker['url fold'] ?? null );
+		}
+
+		/**
+		 * A dashboard page loads two bundles that both draw spans — its own tree
+		 * and the Request tab — and each span-palette global lands on it once.
+		 */
+		#[DataProvider( 'graph_dashboard_pages' )]
+		public function test_a_dashboard_page_carries_each_palette_global_once( string $page ): void {
+			$_GET = [ 'page' => $page ];
+			$this->dispatch( "nodes_page_{$page}" );
+			Current_Request_Overlay::enqueue_on_overlay_pages();
+			$tab = 'newspack-eln-current-request';
+			$GLOBALS['_wp_test_enqueued_handles'] = [ $tab => null !== $this->enqueued_script_for( $tab ) ];
+			try {
+				Current_Request_Overlay::enqueue_inline_data();
+			} finally {
+				Log_Manager::reset();
+				unset( $GLOBALS['_wp_test_enqueued_handles'] );
+			}
+
+			$printed = \implode( "\n", \array_map( static fn ( $rec ) => (string) ( $rec[1] ?? '' ), $GLOBALS['_inline_scripts'] ) );
+			$this->assertStringContainsString( 'currentRequest', $printed, 'the Request tab loaded here' );
+			$this->assertSame( 1, \substr_count( $printed, 'window.eventLoggerHookCategories =' ) );
+			$this->assertSame( 1, \substr_count( $printed, 'window.eventLoggerCustomColors =' ) );
 		}
 
 		public function test_settings_page_keeps_per_tree_extras(): void {

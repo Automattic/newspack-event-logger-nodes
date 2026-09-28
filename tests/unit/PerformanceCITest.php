@@ -27,8 +27,10 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
@@ -100,7 +102,7 @@ class PerformanceCITest extends TestCase {
 
 		$method = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
 		/** @var array<int,Stats_Store> $stores */
-		$stores = $method->invoke( null );
+		$stores = $method->invoke( null, self::tick() );
 
 		$this->assertNotEmpty( $stores );
 		$this->assertSame( 4321, $stores[0]->ttl() );
@@ -112,7 +114,7 @@ class PerformanceCITest extends TestCase {
 
 		$method = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
 		/** @var array<int,Stats_Store> $stores */
-		$stores = $method->invoke( null );
+		$stores = $method->invoke( null, self::tick() );
 
 		$this->assertNotEmpty( $stores );
 		$this->assertSame(
@@ -2914,9 +2916,30 @@ class PerformanceCITest extends TestCase {
 
 		$method = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
 		/** @var array<int,Stats_Store> $stores */
-		$stores = $method->invoke( null );
+		$stores = $method->invoke( null, self::tick() );
 
 		$this->assertCount( 3, $stores );
+	}
+
+	/**
+	 * Each reply's stores date their absences from the reply's clock, not
+	 * from a tick a line logged mid-reply has since moved (decision 29).
+	 */
+	public function test_stats_stores_date_their_absences_from_the_replys_clock(): void {
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'stats_mirror_node' => 'flames-stats' ] );
+		$now      = self::tick();
+		$previous = Core::$now;
+		// A line the reply logged before its stores were built moved the tick.
+		Core::$now = $now + 2 * Stats_Store::BUCKET_SECONDS;
+		try {
+			/** @var array<int,Stats_Store> $stores */
+			$stores = ( new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' ) )->invoke( null, $now );
+			$held   = ( $stores[0]->absence )( 'lb:' . Stats_Store::bucket_key( $now ) );
+		} finally {
+			Core::$now = $previous;
+		}
+
+		$this->assertSame( Stats_Store::ABSENCE_HOLD_SECONDS, $held );
 	}
 
 	// -------------------------------------------------------------------------
@@ -3084,6 +3107,31 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [], $result['results'] );
 		$this->assertFalse( $result['truncated'] );
 		$this->assertSame( 1, $result['scanned_partitions'] );
+	}
+
+	public function test_grep_requests_skips_and_counts_torn_lines(): void {
+		$this->write_firehose( 0, [
+			[ 'rid' => 'oakum7', 'k' => 'request', 'm' => 'GET /oakum-3391', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'oakum7', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
+		] );
+		$log = $this->tmp . '/logs/firehose.p0/0.log';
+		\file_put_contents( $log, "{\"torn\n[1,2]\nnot json\n" . \file_get_contents( $log ) );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', '/oakum-3391' );
+
+		$this->assertIsArray( $result, 'a torn line no longer fails the scan' );
+		$this->assertSame( 3, $result['unparseable_lines'] );
+		$this->assertSame( 'oakum7', $result['results'][0]['rid'] );
+	}
+
+	public function test_grep_requests_reports_no_unparseable_lines_on_a_clean_log(): void {
+		$this->write_firehose( 0, [
+			[ 'rid' => 'clean1', 'k' => 'request', 'm' => 'GET /bilge-812', 'ts' => 1700000000.0, 'n' => 1 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', '/bilge-812' );
+
+		$this->assertSame( 0, $result['unparseable_lines'] );
 	}
 
 	public function test_grep_requests_requires_pattern(): void {
@@ -3314,6 +3362,49 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'request', $result['subject'] );
 		$this->assertSame( '/asked-about', $result['url'] );
 		$this->assertEquals( 120.0, $result['duration_ms'] );
+	}
+
+	/**
+	 * Request descriptors whose partition is no canonical decimal, as the
+	 * target and as a span's context.
+	 *
+	 * @return array<string,array{0:string,1:bool}>
+	 */
+	public static function non_canonical_partitions(): array {
+		$cases = [];
+		foreach ( [ 'abc', '-3', '', '07' ] as $partition ) {
+			$cases[ "target '{$partition}'" ]  = [ $partition, false ];
+			$cases[ "context '{$partition}'" ] = [ $partition, true ];
+		}
+		return $cases;
+	}
+
+	/**
+	 * A partition that is not a canonical decimal is refused: cast, `abc`
+	 * named p0 and `-3` p-3, and the record was found anyway.
+	 */
+	#[DataProvider( 'non_canonical_partitions' )]
+	public function test_ask_refuses_a_request_descriptor_whose_partition_is_not_canonical( string $partition, bool $as_context ): void {
+		$rid = $this->write_request( [
+			'rid'            => 'rid-ask-part-1234567890123456',
+			'url'            => '/asked-partition',
+			'timestamp'      => 1700000900,
+			'duration_ms'    => 500,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+			'flame'          => [
+				'name'     => 'request',
+				'value'    => 500.0,
+				'children' => [ [ 'name' => 'wp_loaded', 'value' => 480.0, 'children' => [] ] ],
+			],
+		] );
+		$request = "request:{$rid}:{$partition}";
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', $as_context ? [ 'span:wp_loaded', $request ] : [ $request ] );
+
+		$this->assertIsString( $result );
+		$this->assertSame( "invalid partition in {$request}", \trim( $result ) );
 	}
 
 	public function test_ask_resolves_a_span_through_its_request_context(): void {
@@ -3727,13 +3818,19 @@ class PerformanceCITest extends TestCase {
 	// `set <option> <value>`.
 	// -------------------------------------------------------------------------
 
-	public function test_decode_array_value_rejects_non_json(): void {
+	public function test_a_non_json_ruleset_push_is_refused_and_saves_nothing(): void {
 		// A synced array-option value is JSON on the wire — Settings_Sync_Node
-		// scalarizes arrays via wp_json_encode unconditionally. A non-JSON value is
-		// a contract violation, explicitly rejected to [] (NOT csv-split into a
-		// 2-element list — the old "legacy senders" comma fallback was unreachable).
-		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'decode_array_value' );
-		$this->assertSame( [], $ref->invoke( null, 'zebra.example,quux.example' ) );
+		// scalarizes arrays via wp_json_encode unconditionally. Decoded to [],
+		// a malformed push reached apply_synced( [] ) and SAVED an empty
+		// ruleset, clearing the spoke's rules; it must refuse instead.
+		( new Rule_Set( [] ) )->save( [ new Rule( 'ignored', '/marmot/', Rule::ACTION_LOG, hooks: [ 'init' ] ) ] );
+		$args = \Newspack_Nodes\Command_Args::format( [ Rule_Set::OPTION_RULES, 'zebra.example,quux.example' ], [] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', $args );
+
+		$this->assertIsString( $result, 'the verb answers with its refusal' );
+		$this->assertStringContainsString( 'JSON', $result );
+		$this->assertSame( '/marmot/', $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0]['pattern'] ?? null, 'the stored ruleset stands' );
 	}
 
 	public function test_array_option_json_preserves_associative_keys(): void {
@@ -3884,17 +3981,19 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'option required', \strtolower( $result ) );
 	}
 
-	public function test_set_verb_empty_array_value_yields_empty_list(): void {
-		// An empty value is not JSON (json_decode('') is null) → explicitly rejected to [].
+	public function test_set_verb_refuses_an_empty_array_value(): void {
+		// An empty value is not JSON (json_decode('') is null): refused, so it
+		// never saves an empty ruleset over the one the spoke holds.
 		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire(
+		$result      = VerbHarness::fire(
 			$interpreter,
 			'performance',
 			'set',
 			'newspack_event_logger_nodes_rules ""'
 		);
 
-		$this->assertSame( [], $GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] );
+		$this->assertIsString( $result );
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_rules', $GLOBALS['_wp_options'] );
 	}
 
 	public function test_sanitize_settings_value_rejects_non_array_and_unknown_type(): void {
@@ -4238,11 +4337,26 @@ class PerformanceCITest extends TestCase {
 	public function test_each_command_gets_its_own_mirror_read_budget(): void {
 		$url = $this->seed_evicted_bucket_on_the_mirror();
 		// A predecessor spent the whole budget; this command still gets one.
-		( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->setValue( null, \PHP_INT_MAX );
+		self::set_mirror_budget_ns( \PHP_INT_MAX );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
 		$this->assertContains( $url, \array_column( $result['data'] ?? [], 'url' ) );
+	}
+
+	/**
+	 * Charge the answer's mirror read budget, as a walk ahead of it would.
+	 */
+	private static function set_mirror_budget_ns( int $ns ): void {
+		$reads = new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_reads' );
+		$reads->setValue( null, [ 'budget_ns' => $ns ] + $reads->getValue() );
+	}
+
+	/**
+	 * What the answer's mirror reads have charged to its budget so far.
+	 */
+	private static function mirror_budget_ns(): int {
+		return Flame_Builder_Node::mirror_read_tally()['budget_ns'];
 	}
 
 	/**
@@ -4290,14 +4404,13 @@ class PerformanceCITest extends TestCase {
 		$url  = $this->seed_evicted_bucket_on_the_mirror();
 		$rows = [ [ 'hash' => 'ab12cd34ef56', 'url' => '' ] ];
 		// The index walk that preceded the names spent the whole budget.
-		( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->setValue( null, \PHP_INT_MAX );
+		self::set_mirror_budget_ns( \PHP_INT_MAX );
 
 		$resolve = new \ReflectionMethod( Performance_CI_Node::class, 'resolve_urls' );
 		$named   = $resolve->invoke( null, $rows, self::live_stores() );
 
 		$this->assertSame( $url, $named[0]['url'] ?? '', 'the mirror names the row within a budget of its own' );
-		$spent = ( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->getValue();
-		$this->assertSame( \PHP_INT_MAX, $spent, 'and a walk that follows inherits nothing' );
+		$this->assertSame( \PHP_INT_MAX, self::mirror_budget_ns(), 'and a walk that follows inherits nothing' );
 	}
 
 	/**
@@ -4309,7 +4422,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_a_direct_dispatch_gets_its_own_mirror_read_budget(): void {
 		$url = $this->seed_evicted_bucket_on_the_mirror();
-		( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->setValue( null, \PHP_INT_MAX );
+		self::set_mirror_budget_ns( \PHP_INT_MAX );
 
 		$node = new Performance_CI_Node();
 		$node->name( 'performance' );
@@ -4530,7 +4643,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	private static function live_stores(): array {
 		$m = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
-		return (array) $m->invoke( null );
+		return (array) $m->invoke( null, self::tick() );
 	}
 
 	/** The read window the loader plans over. */
@@ -5832,23 +5945,22 @@ class PerformanceCITest extends TestCase {
 	 * `mirror_budget_spent()` then refuses to cache it.
 	 */
 	public function test_a_searched_pages_candidate_reads_carry_their_own_budget(): void {
-		$url   = $this->seed_evicted_bucket_on_the_mirror();
-		$spent = new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' );
+		$url = $this->seed_evicted_bucket_on_the_mirror();
 
 		// The names: the walk before them spent everything, and the mirror
 		// still answers, exactly as it does for a page `resolve_urls()` names.
-		$spent->setValue( null, \PHP_INT_MAX );
+		self::set_mirror_budget_ns( \PHP_INT_MAX );
 		$names = ( new \ReflectionMethod( Performance_CI_Node::class, 'url_names' ) )
 			->invoke( null, [ 'ab12cd34ef56' ], self::live_stores() );
 		$this->assertSame( $url, $names['ab12cd34ef56']['url'] ?? null );
-		$this->assertSame( \PHP_INT_MAX, $spent->getValue(), 'the walk that follows inherits nothing' );
+		$this->assertSame( \PHP_INT_MAX, self::mirror_budget_ns(), 'the walk that follows inherits nothing' );
 
 		// The token sets: an unmirrored key's absence is never remembered, so
 		// the seam runs on every poll and its spend would be the fold's.
-		$spent->setValue( null, 4_242 );
+		self::set_mirror_budget_ns( 4_242 );
 		( new \ReflectionMethod( Performance_CI_Node::class, 'search_candidates' ) )
 			->invoke( null, [ 'kakapo' ], '', self::live_stores(), Stats_Store::read_plan( \array_values( self::read_window_for_test() ) ) );
-		$this->assertSame( 4_242, $spent->getValue(), 'a token miss spends a budget of its own, not the one the fold needs' );
+		$this->assertSame( 4_242, self::mirror_budget_ns(), 'a token miss spends a budget of its own, not the one the fold needs' );
 	}
 
 	public function test_a_saturated_token_falls_through_to_the_fold(): void {
@@ -5995,5 +6107,283 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsArray( $page );
 		$this->assertSame( 0, $page['totals']['requests'], 'moa.test served none of kea.test\'s 11' );
 		$this->assertSame( [], $page['data'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// The URL read's own record: what each verb's firehose lines say.
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Run `$work` inside a started request log, then return what it wrote.
+	 *
+	 * @param \Closure(): mixed   $work   The reads to log.
+	 * @param array<string,mixed> $extras Config beside logging, as `use_base_dir()` takes it.
+	 * @return list<array<string,mixed>>
+	 */
+	private function logged( \Closure $work, array $extras = [] ): array {
+		$this->use_base_dir( $this->tmp, $extras + [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'enable_logging' => true, 'flush_every_line' => true ] );
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ] ];
+		$server                 = $_SERVER;
+		$_SERVER['REQUEST_URI'] = '/perf-probe-7731';
+		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'] );
+		Log_Manager::reset();
+		$this->assertTrue( Log_Manager::instance()->is_started(), 'the request logs' );
+		try {
+			$work();
+		} finally {
+			Log_Manager::reset();
+			$_SERVER = $server;
+		}
+		return self::firehose_entries( $this->tmp );
+	}
+
+	/**
+	 * The `m` each `(complete)` of one span carried, in order.
+	 *
+	 * @param list<array<string,mixed>> $entries What `logged()` returned.
+	 * @return list<mixed>
+	 */
+	private static function completed( array $entries, string $span ): array {
+		return \array_column( self::entries_of( $entries, "{$span} (complete)" ), 'm' );
+	}
+
+	public function test_a_url_page_logs_its_caches_built_then_hit_and_its_fold_rows(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
+			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => self::tick() ],
+			'd9953e02bc01' => [ 'url' => 'https://kea.test/weka-9953', 'count' => 2, 'last_seen' => self::tick() ],
+		] );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$entries = $this->logged( static function () use ( $fire ): void {
+				$fire( '--sort=count', '--order=desc', '--limit=100' );
+				$fire( '--sort=count', '--order=desc', '--limit=100' );
+			} );
+		} finally {
+			$restore();
+		}
+
+		$this->assertSame( [ 'built', 'hit' ], self::completed( $entries, Flame_Tree::URL_PAGE_CACHE ) );
+		$this->assertSame( [ 'built' ], self::completed( $entries, Flame_Tree::URL_HEADER_CACHE ), 'the hit reads no header' );
+		$this->assertSame( [ 3 ], self::completed( $entries, Flame_Tree::URL_FOLD ), 'the fold says the rows it folded' );
+		$this->assertSame( [], self::entries_of( $entries, Flame_Tree::URL_RANK_LISTS ), 'a header miss answers before the lists' );
+	}
+
+	public function test_a_budget_cut_page_logs_built_not_stored(): void {
+		$extras = [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 0 ];
+		$this->activate_shipped_topology( 'performance', 3 );
+		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
+		] );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$entries = $this->logged( static fn (): array => $fire( '--sort=avg_ms', '--order=asc', '--limit=40' ), $extras );
+		} finally {
+			$restore();
+		}
+
+		$this->assertSame( [ 'built, not stored' ], self::completed( $entries, Flame_Tree::URL_PAGE_CACHE ) );
+	}
+
+	public function test_a_page_with_no_cache_backend_logs_built_not_stored(): void {
+		$this->activate_shipped_topology( 'performance', 1 );
+		Core::$memd                                 = null;
+		\Newspack_Nodes\Cache_Backend::$apcu_usable = static fn (): bool => false;
+		try {
+			$entries = $this->logged(
+				static fn (): mixed => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--sort=count', '--order=desc', '--limit=100' ] )
+			);
+		} finally {
+			\Newspack_Nodes\Cache_Backend::$apcu_usable = null;
+		}
+
+		$this->assertSame( [ 'built, not stored' ], self::completed( $entries, Flame_Tree::URL_PAGE_CACHE ) );
+		$this->assertSame( [ 'built, not stored' ], self::completed( $entries, Flame_Tree::URL_HEADER_CACHE ) );
+	}
+
+	/**
+	 * Read one page whose build throws `$thrown`, and return what was logged.
+	 *
+	 * @return list<array<string,mixed>>
+	 */
+	private function logged_throwing_page_read( \Throwable $thrown ): array {
+		return $this->logged(
+			static function () use ( $thrown ): void {
+				try {
+					( new \ReflectionMethod( Performance_CI_Node::class, 'read_through_page' ) )->invoke(
+						null,
+						Flame_Tree::URL_PAGE_CACHE,
+						[ 'kea-7737' ],
+						[ 'data' ],
+						60,
+						static fn (): never => throw $thrown
+					);
+				} catch ( \Throwable $e ) {
+					if ( $thrown === $e ) {
+						return;
+					}
+					throw $e;
+				}
+				throw new \LogicException( 'the build\'s throwable must propagate' );
+			}
+		);
+	}
+
+	/** A build that throws closes the span with what it threw, in the verb span's words. */
+	public function test_a_page_build_that_throws_closes_its_span_with_the_short_class(): void {
+		$this->assertSame(
+			[ 'DomainException' ],
+			self::completed( $this->logged_throwing_page_read( new \DomainException( 'kea-7737' ) ), Flame_Tree::URL_PAGE_CACHE )
+		);
+	}
+
+	public function test_a_stop_during_a_page_build_closes_its_span_as_stop(): void {
+		$this->assertSame(
+			[ 'stop' ],
+			self::completed( $this->logged_throwing_page_read( new \Newspack_Nodes\Worker_Should_Stop() ), Flame_Tree::URL_PAGE_CACHE )
+		);
+	}
+
+	public function test_a_page_build_that_throws_with_no_cache_backend_closes_its_span_with_the_short_class(): void {
+		Core::$memd                                 = null;
+		\Newspack_Nodes\Cache_Backend::$apcu_usable = static fn (): bool => false;
+		try {
+			$entries = $this->logged_throwing_page_read( new \DomainException( 'kea-7744' ) );
+		} finally {
+			\Newspack_Nodes\Cache_Backend::$apcu_usable = null;
+		}
+
+		$this->assertSame( [ 'DomainException' ], self::completed( $entries, Flame_Tree::URL_PAGE_CACHE ) );
+	}
+
+	/** A fold that throws still closes its span, saying so, and the throwable propagates. */
+	public function test_a_fold_that_throws_closes_its_span_with_the_short_class(): void {
+		$entries = $this->logged(
+			function (): void {
+				try {
+					( new \ReflectionMethod( Performance_CI_Node::class, 'fold_page' ) )->invoke(
+						new Performance_CI_Node(),
+						'',
+						'',
+						false,
+						false,
+						'count',
+						'desc',
+						0,
+						100,
+						[ new \stdClass() ],
+						self::tick()
+					);
+				} catch ( \Error ) {
+					return;
+				}
+				$this->fail( 'the fold\'s throwable must propagate' );
+			}
+		);
+
+		$this->assertSame( [ 'Error' ], self::completed( $entries, Flame_Tree::URL_FOLD ) );
+	}
+
+	public function test_a_ranked_page_logs_that_the_lists_served(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ] ] );
+		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 9, 'last_seen' => self::tick() ] ] );
+		$this->seed_hour_lists();
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$entries = $this->logged( function () use ( $fire ): void {
+				$this->warm_url_header( $fire );
+				$this->assertTrue( $fire( '--sort=count', '--order=desc', '--limit=100' )['ranked'] );
+			} );
+		} finally {
+			$restore();
+		}
+
+		$lists = self::entries_of( $entries, Flame_Tree::URL_RANK_LISTS );
+		$this->assertCount( 1, $lists, 'once per attempt that reached the lists' );
+		$this->assertSame( 'ranked', $lists[0]['m'] );
+		$this->assertGreaterThan( 0, $lists[0]['found'] );
+		$this->assertSame( 0, $lists[0]['holes'] );
+		$this->assertSame( 1, $lists[0]['keep'], 'kept through a folded record' );
+	}
+
+	public function test_a_page_over_a_hole_logs_the_hours_the_fold_answers_for(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/weka-3308', 'count' => 5, 'last_seen' => self::tick() ] ] );
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) );
+		$gap  = $plan['hours'][2];
+		$this->seed_hour_lists( [ $gap ] );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$entries = $this->logged( function () use ( $fire ): void {
+				$this->warm_url_header( $fire );
+				$this->assertFalse( $fire( '--sort=count', '--order=desc', '--limit=100' )['ranked'] );
+			} );
+		} finally {
+			$restore();
+		}
+
+		$lists = self::entries_of( $entries, Flame_Tree::URL_RANK_LISTS );
+		$this->assertCount( 1, $lists );
+		$this->assertSame( "fold: holes {$gap}", $lists[0]['m'] );
+		$this->assertSame( 1, $lists[0]['holes'] );
+		$this->assertSame( 1, $lists[0]['keep'] );
+	}
+
+	/**
+	 * One summary per verb, after it: the mirror the reply fell through to.
+	 * Through the verb seam, so the order against the verb's span is real.
+	 */
+	public function test_a_verb_that_read_the_mirror_logs_one_summary_after_its_span(): void {
+		$this->seed_evicted_bucket_on_the_mirror();
+		\Newspack_Nodes\Command_Interpreter_Node::$around_dispatch = \Newspack_Event_Logger_Nodes\Diagnostics_Bridge::around_dispatch( null );
+		try {
+			$entries = $this->logged( static fn (): mixed => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' ) );
+		} finally {
+			\Newspack_Nodes\Command_Interpreter_Node::$around_dispatch = null;
+		}
+
+		$mirror = self::entries_of( $entries, Flame_Tree::STATS_MIRROR );
+		$this->assertCount( 1, $mirror );
+		$this->assertGreaterThan( 0, $mirror[0]['calls'] );
+		$this->assertGreaterThanOrEqual( 1, $mirror[0]['found'], 'the evicted bucket came back from the mirror' );
+		$this->assertMatchesRegularExpression( '/^\d+ keys asked, \d+ found, \d+ms$/', $mirror[0]['m'] );
+		$this->assertSame( "{$mirror[0]['asked']} keys asked, {$mirror[0]['found']} found", \implode( ',', \array_slice( \explode( ',', $mirror[0]['m'] ), 0, 2 ) ) );
+		$this->assertFalse( $mirror[0]['budget_spent'] );
+		$this->assertSame( 1, $mirror[0]['keep'] );
+		$keys = \array_column( $entries, 'k' );
+		$this->assertGreaterThan(
+			\array_search( 'Performance_CI urls command (complete)', $keys, true ),
+			\array_search( Flame_Tree::STATS_MIRROR, $keys, true ),
+			'it lands just after the verb span closes'
+		);
+	}
+
+	public function test_a_verb_that_never_read_the_mirror_logs_no_summary(): void {
+		$this->activate_shipped_topology( 'performance', 1 );
+		$entries = $this->logged(
+			static fn (): mixed => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' ),
+			[ 'stats_mirror_node' => '' ]
+		);
+
+		$this->assertNotSame( [], self::entries_of( $entries, Flame_Tree::URL_PAGE_CACHE . ' (complete)' ), 'the verb ran and logged' );
+		$this->assertSame( [], self::entries_of( $entries, Flame_Tree::STATS_MIRROR ) );
+	}
+
+	public function test_the_summary_says_a_spent_budget(): void {
+		$tally   = [ 'calls' => 37, 'asked' => 412, 'found' => 12, 'ns' => 4_980_400_000, 'budget_ns' => 2_500_000_000, 'spent' => true ];
+		$entries = $this->logged(
+			static fn (): mixed => ( new \ReflectionMethod( Performance_CI_Node::class, 'log_mirror_reads' ) )->invoke( null, $tally )
+		);
+
+		$mirror = self::entries_of( $entries, Flame_Tree::STATS_MIRROR );
+		$this->assertCount( 1, $mirror );
+		$this->assertSame( '412 keys asked, 12 found, 4980ms, budget spent', $mirror[0]['m'] );
+		$this->assertSame( [ 37, 412, 12, 4980.4, true ], [ $mirror[0]['calls'], $mirror[0]['asked'], $mirror[0]['found'], $mirror[0]['ms'], $mirror[0]['budget_spent'] ] );
 	}
 }

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Every dispatched verb is a `<class> <verb> command` span on the record**, workers included, with the interpreter's node name on the `(start)` line, through the substrate's `Command_Interpreter_Node::$around_dispatch`, wrapped around any wrapper already there; the architecture guide's *Wire shape* states it.
+- **`Log_Manager::timed()` runs a closure inside one span and propagates every throwable**, its own writes' included; the verb span, the URL read's three spans and every listener span go through it. A thrown span closes in one vocabulary — `stop`, the short class, or `class@anonymous` — so a `url fold` that throws closes as `Error` rather than orphaning; a listener span still carries no outcome. Its caller checks for a started logger first, so an unlogged process never names a verb's span, and a listener passes its callback and arguments rather than a closure per firing.
+- **The dashboards and the current-request tab colour the URL read's five names from the product chart palette** (`Flame_Tree::PLATFORM_COLORS`), a step each and none the command span's, beneath the configured custom colours and outside the rule editor's picker; `Config::span_colors()` builds the map for both.
+- **A `performance` verb logs its URL read** as three spans and two point events, stated in the same place.
+- **The Ask findings read a dominant verb span as a frame to look inside, and a URL-read step as a leaf**, proposing no rule edit for either.
+- **The Gyroscope state badge titles itself with the full state**, so a name the 90px badge clips reads in full on hover.
+
+### Changed
+
+- **Saving an Event Logger setting surfaces a failure to signal the workers.** `Admin::maybe_request_worker_restart()` no longer swallows an unresolvable locks directory or a failed restart flag: the option is already written, and the exception propagates out of `update_option()`, so the settings form fails loudly instead of reporting a save the live fleet never heard of.
+- **A ruleset write surfaces a failure to signal the workers.** `Rule_Set::save()` and `Rule_Set::reset()` store or delete the rule list first, then propagate an unresolvable locks directory rather than logging a notice, so the `rules` verbs, the synced `set` and the auto-tuner report it.
+- **The `performance` `set` verb answers with the error when it cannot signal the workers to re-read**, the option already written, rather than logging a notice and reporting a clean write.
+- **`/wp-json/newspack-nodes/v1/auth`, `/wp-json/newspack-nodes/v1/health/cache` and `/wp-json/newspack-event-logger-nodes/v1/mcp` are worker traffic (`restapi`)**, beside the substrate's other four REST endpoints, so a rule that logs them keeps them on the worker rows and off the global averages.
+- **Every exception propagates.** Request_Builder and Flame_Builder run each `fill()` inside the substrate's `deferring()` bracket: a stop a forward raised is held until the message's bookkeeping is done, and a stop carrying a failure is plain, so the reader replays the message. Flame_Builder counts a replayed record once, by the crumb of the last record it folded (decision 31).
+- **Flame_Builder flushes on its own tick.** It is a `Timer_Node` flushing every `FLUSH_INTERVAL_SEC` from `fire()`, not inside `fill()`, so a failing store raises from the tick instead of dead-lettering whichever record arrived. The tick also applies auto-tune decisions a sibling's lock held back and rolls up an hour that closed after traffic stopped; a tick owing nothing touches no store.
+- **`Log_Manager::finish()` writes the terminal line whatever the drain threw, then raises both**, and keeps an abort the caller declared.
+- **`grep_requests` and `wp nodes reqgrep` skip and count an unparseable firehose line** instead of failing every search until the segment rotates: the reply gains `unparseable_lines`, the CLI warns with the count, and every stream view shows it.
+- **An active `.tsl` that will not read fails the hub check** instead of reading as a spoke; the failure is memoized for the process.
+- **A non-JSON synced array value throws** instead of saving an empty ruleset, and `Rule_Set::hydrate_array()` raises a pointer rule it cannot represent. The admin settings page and `Rule_Set` signal workers through the substrate's `Restart_Planner::plan()`.
+- **Requires newspack-nodes 2.69.0**, which declares `Command_Interpreter_Node::$around_dispatch`, `Worker_Should_Stop::raise()` and `attempt()`, `Deferred_Clean_Stop::deferring()` and `Consumer_Node::scan()`.
+
+### Fixed
+
+- **An auto-tune save that fails no longer double-counts stats.** `flush()` empties its accumulators before applying auto-tune decisions, and a stop raised by the held-frame backstop no longer cuts a flush short, so each sum lands once.
+- **`App\Core` catches only `\ReflectionException`** when it inspects a callback for by-reference parameters.
+- **The current-request tab colours hook spans by category on the station**, which printed no `window.eventLoggerHookCategories` and drew every hook the default green. `Config::span_palette_js()` prints both span-colour globals from one source, once per page: a dashboard on its own bundle, the tab everywhere else.
+- **An Ask descriptor keeps the colons in its id**: `span:sql: SELECT wp_posts` asks about `sql: SELECT wp_posts`, and a listener's `{closure}:file.php:12 @10` survives whole. Only `request:<rid>:<partition>` splits its id.
+- **A `request:` descriptor whose partition is no canonical decimal is refused** (`invalid partition in request:<rid>:<partition>`); a cast read `abc` as p0 and `-3` as p-3.
+- **A span whose start line raised a cooperative stop is closed.** The Partition flushes the line before it raises, but `Log_Manager::start()` pushed no frame, so nothing wrote the `(complete)` and later entries nested under the open span; the frame is pushed before the stop propagates, and the drain closes it `(orphaned)`.
+- **A reply's remembered absences date from its own clock** (decision 29). A line logged mid-reply re-pins `Core::$now`, and `Stats_Store::absence_holds()` read it, so near a bucket boundary a still-open bucket could read as closed and its absence be held all window; `arm_stats_reader()` and `absence_holds()` now take the reply's `$now`.
+
 ## [0.103.2] - 2026-09-27
 
 ### Fixed

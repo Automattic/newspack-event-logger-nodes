@@ -313,6 +313,17 @@ final class RuleSetTest extends TestCase {
 		$this->assertNull( $sync[0]['hooks'] );
 	}
 
+	/**
+	 * A stored pointer the rest of the system cannot represent must fail the
+	 * push that would carry it, not ship to the spoke with its hooks missing.
+	 */
+	public function test_hydrate_array_refuses_an_unrepresentable_pointer(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'rule pattern is required' );
+
+		Rule_Set::hydrate_array( [ [ 'id' => 'orrery', 'pattern' => '', 'action' => 'log', 'hooks' => null, 'hooks_in' => Rule::HOOKS_MC ] ] );
+	}
+
 	public function test_hydrate_array_passes_inline_and_skip_rules_through(): void {
 		( new Rule_Set( [] ) )->save( [
 			new Rule( 'log1', '/x/', Rule::ACTION_LOG, hooks: [ 'init' ] ),

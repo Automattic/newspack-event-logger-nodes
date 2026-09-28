@@ -70,8 +70,9 @@ return [
 	// Custom-event name => hex swatch. `Config::get_custom_colors()` reads it
 	// through the `newspack_event_logger_nodes_custom_colors` filter, so a
 	// plugin loading after this one can still register its events, then folds
-	// in the events spokes reported to the hub. Every dashboard reads the
-	// merged map as `window.eventLoggerCustomColors`; the settings and
+	// in the events spokes reported to the hub. Every dashboard and the
+	// current-request tab read it over the platform's span colours as
+	// `window.eventLoggerCustomColors`; the settings and
 	// overview event pickers read it as `window.newspackNodesCustomColors`.
 	// Hook-category colors are a different thing entirely: they come from
 	// `hook_categories.json`.

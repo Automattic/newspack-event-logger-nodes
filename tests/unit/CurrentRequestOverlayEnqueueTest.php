@@ -35,6 +35,7 @@ namespace {
 namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 
 	use Newspack_Event_Logger_Nodes\Current_Request_Overlay;
+	use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 	use Newspack_Event_Logger_Nodes\Log_Manager;
 	use Newspack_Event_Logger_Nodes\Tests\TestCase;
 	use PHPUnit\Framework\Attributes\CoversClass;
@@ -56,6 +57,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 
 		protected function tearDown(): void {
 			Log_Manager::reset();
+			Hook_Categorizer::$read_file = null;
+			Hook_Categorizer::clear_cache();
 			$_GET = [];
 			unset( $GLOBALS['_wp_test_enqueued_handles'] );
 			parent::tearDown();
@@ -142,6 +145,48 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 			$this->assertStringContainsString( 'currentRequest', (string) ( $rec[1] ?? '' ) );
 			// 'before' placement so the global exists before the bundle runs.
 			$this->assertSame( 'before', $rec[2] ?? '' );
+		}
+
+		/**
+		 * The tab draws `RequestProfile` on the station too, where no dashboard
+		 * printed the colour map: it carries the dashboards' map itself, the
+		 * platform spans beneath the configured colours.
+		 */
+		public function test_inline_data_carries_the_dashboards_span_colours(): void {
+			$GLOBALS['_wp_test_enqueued_handles'][ self::HANDLE ] = true;
+			\add_filter( 'newspack_event_logger_nodes_custom_colors', static fn ( array $colors ): array => [ 'url fold' => '#7A1F3D' ] + $colors );
+
+			Current_Request_Overlay::enqueue_inline_data();
+
+			$script = (string) ( $GLOBALS['_inline_scripts'][0][1] ?? '' );
+			$this->assertMatchesRegularExpression( '/window\.eventLoggerCustomColors = (\{.*?\});/', $script );
+			\preg_match( '/window\.eventLoggerCustomColors = (\{.*?\});/', $script, $m );
+			$this->assertSame(
+				\Newspack_Event_Logger_Nodes\Config::get_custom_colors() + \Newspack_Event_Logger_Nodes\Flame_Tree::PLATFORM_COLORS,
+				\json_decode( $m[1], true )
+			);
+			$this->assertSame( '#7A1F3D', \json_decode( $m[1], true )['url fold'], 'a configured colour wins' );
+		}
+
+		/**
+		 * The station prints no dashboard bundle, so the tab carries the hook
+		 * taxonomy the dashboards print, or its hook spans draw the default.
+		 */
+		public function test_inline_data_carries_the_dashboards_hook_categories_on_the_station(): void {
+			$taxonomy = [
+				'_colors'   => [ 'Kakapo' => '#5E2D79' ],
+				'_patterns' => [ 'Kakapo' => [ '^kakapo_' ] ],
+			];
+			Hook_Categorizer::$read_file = static fn ( string $path ): string => (string) \wp_json_encode( $taxonomy );
+			Hook_Categorizer::clear_cache();
+			$_GET = [ 'page' => 'newspack-nodes-station' ];
+			$GLOBALS['_wp_test_enqueued_handles'][ self::HANDLE ] = true;
+
+			Current_Request_Overlay::enqueue_inline_data();
+
+			$script = (string) ( $GLOBALS['_inline_scripts'][0][1] ?? '' );
+			$this->assertSame( 1, \preg_match( '/window\.eventLoggerHookCategories = (\{.*?\}\});/', $script, $m ), $script );
+			$this->assertSame( $taxonomy, \json_decode( $m[1], true ) );
 		}
 
 		// ── init ────────────────────────────────────────────────────────────

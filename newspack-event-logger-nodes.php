@@ -62,7 +62,8 @@ if ( \function_exists( 'add_action' ) ) {
 }
 
 /**
- * Deferred bootstrap: every registration that needs a substrate class.
+ * Deferred bootstrap: the substrate version gate, then every registration
+ * that needs a substrate class, in `newspack_event_logger_nodes_boot()`.
  *
  * Runs on `plugins_loaded` priority 11, once both plugins are loaded. Don't
  * lower the priority. A missing substrate — or one older than
@@ -98,14 +99,28 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// which mints the discovery probes, and an invalidate_options_cache() that
 	// drops every cached option, which the discovery merge relies on.
 	// 2.68.0 is Table_Node::touch(), which the reprobe checks hour lists with.
+	// 2.69.0 is Command_Interpreter_Node::$around_dispatch, the verb spans.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.68.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.69.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
+	\newspack_event_logger_nodes_boot();
+};
+
+\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
+
+/**
+ * Every registration the deferred bootstrap makes once the substrate is known
+ * to be new enough. Named, rather than inline in the closure, so a test can
+ * run it past the version gate the harness never reaches.
+ *
+ * @api Called by the deferred bootstrap on `plugins_loaded`.
+ */
+function newspack_event_logger_nodes_boot(): void {
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\Reqgrep_Command' );
 		\WP_CLI::add_command( 'nodes ruleset-bench', '\\Newspack_Event_Logger_Nodes\\CLI\\Ruleset_Bench_Command' );
@@ -120,6 +135,9 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// Give each substrate job its own /jobs/{handler}/{id} request context.
 	\add_filter( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'begin_job_context_filter' ], 10, 4 );
 	\add_action( 'newspack_nodes/job_worker/after_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'end_job_context' ], 10, 3 );
+
+	// Every dispatched verb opens its own span in the request's record.
+	\Newspack_Event_Logger_Nodes\Diagnostics_Bridge::install();
 
 	// Prefix resolves node classes; the dir supplies stock topologies.
 	\Newspack_Nodes\Topology_Registry::register_plugin(
@@ -172,9 +190,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		new \Newspack_Event_Logger_Nodes\Admin\Admin();
 		\Newspack_Event_Logger_Nodes\Current_Request_Overlay::init();
 	}
-};
-
-\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
+}
 
 /**
  * Add this plugin's request-scope producers to the substrate's registered set,
@@ -437,16 +453,6 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 
 		// Dashboards size their time axis from the retention window.
 		$retention_seconds = \Newspack_Event_Logger_Nodes\Config::stats_retention_seconds();
-		$hook_categories = [ '_colors' => [], '_patterns' => [] ];
-		$hook_categories_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'hook_categories.json';
-		if ( \file_exists( $hook_categories_path ) ) {
-			// phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsUnknown -- local plugin-bundled file, not a remote URL.
-			$decoded = \json_decode( (string) \file_get_contents( $hook_categories_path ), true );
-			if ( \is_array( $decoded ) ) {
-				$hook_categories = $decoded;
-			}
-		}
-		$custom_colors = \Newspack_Event_Logger_Nodes\Config::get_custom_colors();
 		$rest_root = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
 		\wp_add_inline_script(
 			$handle,
@@ -455,8 +461,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 				'nonce'             => $nonce,
 				'retentionSeconds'  => $retention_seconds,
 			] ) . ';'
-			. 'window.eventLoggerHookCategories = ' . \wp_json_encode( $hook_categories ) . ';'
-			. 'window.eventLoggerCustomColors = ' . \wp_json_encode( $custom_colors ) . ';',
+			. \Newspack_Event_Logger_Nodes\Config::span_palette_js(),
 			'before'
 		);
 

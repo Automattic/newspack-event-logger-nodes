@@ -274,6 +274,7 @@ export default function RequestStream( {
 			pickerLabel={ browse.pickerLabel }
 			isPaused={ isPaused }
 			connectionError={ connectionError }
+			linkNode="request-log:link"
 			onTogglePause={ () => setPaused( ! isPaused ) }
 			onStep={ step }
 			onJump={ browse.jump }

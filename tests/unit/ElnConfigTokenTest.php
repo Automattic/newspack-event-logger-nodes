@@ -144,6 +144,52 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
+	public function test_an_unreadable_active_topology_fails_the_hub_derivation_loud(): void {
+		// Unread, the broken one might be the hub: answering "spoke" would turn
+		// its per-server stats off in silence.
+		$dir = $this->make_temp_dir( 'eln-hub-broken-' );
+		\file_put_contents( "{$dir}/okapi-shard.tsl", "make_node Echo okapi-twin-7719\nmake_node Null okapi-twin-7719\n" );
+		Topology_Registry::register_user_dir( $dir );
+
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'okapi-shard', 'combined' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->expectException( \RuntimeException::class );
+		Core::resolve_config_token( 'eln', 'is_hub' );
+	}
+
+	public function test_a_failed_hub_derivation_is_memoized_until_the_local_cache_resets(): void {
+		// Every <eln:is_hub> resolution would otherwise re-walk every active
+		// topology: the failure is derived once and raised again as it was.
+		$dir = $this->make_temp_dir( 'eln-hub-memo-' );
+		\file_put_contents( "{$dir}/quokka-shard.tsl", "make_node Echo quokka-twin-4417\nmake_node Null quokka-twin-4417\n" );
+		Topology_Registry::register_user_dir( $dir );
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'quokka-shard', 'aggregator' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$first = $this->resolution_failure();
+		// Repaired on disk: only a fresh derivation could see it.
+		\file_put_contents( "{$dir}/quokka-shard.tsl", "make_node Echo quokka-twin-4417\n" );
+		\Newspack_Nodes\Topology_Analyzer::reset_caches();
+		$second = $this->resolution_failure();
+
+		$this->assertSame( $first, $second, 'the second resolution re-raises the first failure' );
+		Config::reset_local_cache();
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ), 'a reset derives afresh' );
+	}
+
+	/** What resolving `<eln:is_hub>` threw; fails the test when it threw nothing. */
+	private function resolution_failure(): \Throwable {
+		try {
+			Core::resolve_config_token( 'eln', 'is_hub' );
+		} catch ( \Throwable $e ) {
+			return $e;
+		}
+		$this->fail( 'expected the hub derivation to throw' );
+	}
+
 	// --- schema-token / owned-empty guards ----------------------------------
 
 	public function test_an_owned_but_empty_token_is_resolved_not_unresolvable(): void {

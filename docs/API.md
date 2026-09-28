@@ -108,6 +108,8 @@ Backs the "Logging Rules" editor on the settings page. All five verbs route thro
 | `delete` | TUNE | `id` (required, positional) | `{ deleted: bool }` — drop the matching rule and re-save. |
 | `reset` | TUNE | — | `{ reset: int }` — DELETE the stored ruleset option so the file config seeds again, and report the seeded rule count. Storing `[]` instead would pin an explicit "log nothing" over the config seed; only an absent row reseeds. Sweeps every pointer rule's durable hooks option on the way out. |
 
+Every write verb ends by asking the live workers to re-read. When the locks directory does not resolve, the verb answers with that error, the rule list already stored — `save`, `upsert` and `delete` write it, `reset` deletes it.
+
 `save` and `upsert` read their blob as the raw first token, not through `Command_Args`: a
 JSON blob carries its own structure and there is nothing to classify.
 
@@ -151,11 +153,11 @@ interpreter wraps the throw as a TM_ERROR reply, so no handler returns an error 
 | `dump_url` | READ | `hash` (required, positional, `[a-f0-9]{8,64}`), `--server`, `--breakdown`, `--categories`, `--since` | `{ stats, requests, scan_stopped_early, requests_window_start, aggregate_flame, aggregate_profiles, last_modified }`. The aggregate is the URL's memcache blob, which lives an hour past its last request; once it is gone, a full read (no `--since`) rebuilds `aggregate_flame` from the stored flames of the requests it lists, under the same `MAX_SCAN_S` as the request walk and only in the partitions those requests sit in, with `aggregate_profiles` null; a rebuild that budget cuts short answers `aggregate_flame` null and sets `scan_stopped_early`, and a tailing read answers both null for the caller to keep what it holds. Either way `last_modified` is then the newest listed request's start. Plus `breakdown_time_series` and `category_time_series` when asked for — the former in the positional `DIM_SUMS` shape `overview`'s `breakdowns` carry, the latter in the same `{ names, buckets }` shape `overview` uses, so one encoder and one chart serve both. Without `--server`, it reads the one server `urlmap` names for the hash, and every server when the name has expired or that server holds no row. `--breakdown` refuses any dimension but the six a URL carries, `server` included, because a URL belongs to one server. Throws `URL not found` for an unknown hash and `invalid hash format` for a malformed one. |
 | `url_breakdown` | READ | `hash` (required, positional), `--breakdown` (required) | `{ breakdown_time_series }` in the positional `DIM_SUMS` shape, and nothing else — memcache only, no index walk, for the chart that polls one dimension while the URL modal is open. Throws `invalid hash format` / `invalid breakdown dimension`; `server` is not a dimension here, because a URL belongs to one server. |
 | `search_requests` | READ | `rid` (required, positional) | `{ rid, partition, url_hash }`, so the dashboard can deep-link without scanning every partition. Throws `Request not found` for an unknown rid, and `request index scan budget spent before rid <rid> was reached` when the walk ended first — an incomplete search is not a definite negative. |
-| `grep_requests` | READ | `pattern` (required, positional), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count }` — literal, case-insensitive search across the recent firehose window, grouped by request. `scope` is always `recent`: every partition's walk starts at the second-to-last segment. `truncated` reports any of the three bounds — the result `limit`, the grouping engine's per-request byte and line caps, or `MAX_SCAN_S`, the same 10 seconds of reading the index walks spend, after which the walk stops reading and leaves any later partition unread. `scanned_partitions` counts the partitions the walk entered, so beside `truncated: true` the last of them may have been read only in part. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and `first_match_excerpt`. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. Where the CLI hangs a history-miss callback on that engine, this verb wires none: a match on a late line whose earlier lines have already rotated out of the fixed 250-entry × 10-bucket history ring answers with `url` and `method` empty and `truncated` still false, so nothing in the reply says the request was reassembled from its tail alone. |
+| `grep_requests` | READ | `pattern` (required, positional), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count, unparseable_lines }` — literal, case-insensitive search across the recent firehose window, grouped by request. `scope` is always `recent`: every partition's walk starts at the second-to-last segment. `truncated` reports any of the three bounds — the result `limit`, the grouping engine's per-request byte and line caps, or `MAX_SCAN_S`, the same 10 seconds of reading the index walks spend, after which the walk stops reading and leaves any later partition unread. `scanned_partitions` counts the partitions the walk entered, so beside `truncated: true` the last of them may have been read only in part. `unparseable_lines` counts the torn lines the walk skipped: it keeps no cursor to replay one from, so a line that will not unpack is counted and passed over rather than failing every search until its segment rotates. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and `first_match_excerpt`. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. Where the CLI hangs a history-miss callback on that engine, this verb wires none: a match on a late line whose earlier lines have already rotated out of the fixed 250-entry × 10-bucket history ring answers with `url` and `method` empty and `truncated` still false, so nothing in the reply says the request was reassembled from its tail alone. |
 | `dump_request` | READ | `rid` (required, positional), `--partition` (default 0) | The full request body and merged flame data, plus computed `findings` and the measurement `caveat`. `partition` is a hint: searched first, then the rest, so any rid `search_requests` locates resolves here too. Throws `invalid partition` for an out-of-range partition, `Request not found` for an unknown rid, and the `budget spent` message above. |
 | `ask` | READ | `descriptor` (required, positional; further context descriptors follow it, outermost last), `--server`, `--context`, `--search`, `--errors_only`, `--include_workers` | The brief for one picker descriptor. A `span:` or `category:` resolves in its container: under a `request:` from that request, under a `url:` from that URL's aggregate flame or profile as per-request means. An `overview:` answers for the page as it is being read, so the three filter options narrow it exactly as they narrow `urls`; every other descriptor ignores them. |
 | `list_hooks` | READ | — | `{ total_hooks, categories, category_descriptions, hooks_by_category }`. |
-| `set` | TUNE | `option` and `value` (both required, positional) | `{ option, updated: bool }`. |
+| `set` | TUNE | `option` and `value` (both required, positional) | `{ option, updated: bool }`. A write that could not signal the workers to re-read, because the locks directory does not resolve, answers with that error, the option already written. |
 
 Notable bounds, all [`Performance_CI_Node`](../includes/app/class-performance-ci-node.php) constants: `MAX_SCAN_S` 10 seconds,
 `RECENT_REQUEST_LIMIT` 500, `SLOWEST_ROWS` 10,
@@ -184,11 +186,10 @@ elements. Nothing is truncated to fit. A set to the value already in place answe
 sweep whether or not it moved and a reload fires `Config::RESET_ACTION` on every worker,
 which re-parses every `.tsl` for the same answer. The ruleset routes to
 `Rule_Set::apply_synced()` instead, which re-tiers and holds its own gate, and that is where
-the decode's one footgun lands: a `rules` value that fails to parse as JSON is taken as an
-empty array rather than refused, and `apply_synced()` SAVES it — so a malformed hub push
-clears the spoke's rules and pins the explicit "log nothing" that `reset` exists to avoid
-storing. A rate-limited `PerformanceCI: rejected non-JSON synced array-option value` notice
-is the only sign. Autoload follows `Config::autoload_for()`, and the write emits a settings
+the decode matters most: an array-option value that is not a JSON array is refused with
+`synced array-option value is not a JSON array` before anything is written, because read as
+an empty array, `apply_synced()` would SAVE it — clearing the spoke's rules and pinning the
+explicit "log nothing" that `reset` exists to avoid storing. Autoload follows `Config::autoload_for()`, and the write emits a settings
 event that [`Settings_Sync_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-sync-node.php) fans out to spokes.
 
 ## Substrate verbs the dashboards use
@@ -358,7 +359,7 @@ false.
 | `error/warning/info/alert( string ): bool` | One-line writes under those categories. `error` and `warning` reach the Error Log; `alert` routes to `Request_Builder_Node`'s `alerts_target`, the fleet journal, and nowhere else. |
 | `start( string $label, array $data = [], bool $shaped = false ): void` | Open a timed span and push its frame. `$shaped` marks `m` as a query shape, whose literals the producer already replaced, so it is not redacted as a URL would be. Drops the frame at `MAX_TIMER_DEPTH` (100), or when the start line could not be written. |
 | `complete( string $label, array $data = [], string $suffix = 'complete', bool $shaped = false ): void` | Close the innermost frame carrying that label; frames above it drain as `(orphaned)`. An unknown label matches nothing. |
-| `finish(): void` | Idempotent. Drain the timer stack, then write the terminal. Registered as a shutdown function, so it runs after a fatal too. |
+| `finish(): void` | Idempotent. Drain the timer stack, then write the terminal whatever the drain threw, and raise what either threw through `Worker_Should_Stop::raise()`. Registered as a shutdown function, so it runs after a fatal too. |
 | `flush(): void` | Drain every materialized Partition batch. Nuclear Gyrobase calls it before `proc_open` and after a `job` entry. |
 | `is_started(): bool` | The rule said `log` and `finish()` has not run. |
 | `governing_rule(): ?Rule` / `governing_rule_id(): string` | The rule admitting this request. The id rides `process (start)` as `rule`. |
@@ -366,7 +367,7 @@ false.
 | `get_request_id(): string` / `get_partition(): int` | An empty rid means an unlogged request. |
 | `refresh_firehose(): void` | Re-read the firehose segment state from disk, after a subprocess that may have written to or rotated it. |
 | `relay_topic_to_ci( array ): void` | Lazy Topic→interpreter relay for an early-wired Topic. |
-| `static suspend(): void` / `static resume(): void` | LIFO context stack. `suspend()` flushes the shared Topic and saves `UNIQUE_ID`; `resume()` restores in a `finally`, because `finish()` re-raises a cooperative stop. |
+| `static suspend(): void` / `static resume(): void` | LIFO context stack. `suspend()` flushes the shared Topic and saves `UNIQUE_ID`; `resume()` restores in a `finally`, because `finish()` raises what its writes threw, a cooperative stop included. |
 | `static begin_job_context( string $handler, string $id = '', array $message = [], array $server = [] ): void` | Snapshot `$_SERVER`, suspend, then rewrite to a synthetic `/jobs/{handler}/{id}`. Fires `newspack_event_logger_nodes_scope_changed`. |
 | `static begin_job_context_filter( mixed $run, string $handler, string $id = '', array $message = [] ): mixed` | The `newspack_nodes/job_worker/before_job` shape: opens the context unless an earlier listener declined, passing the decision through untouched. |
 | `static end_job_context( string $handler = '', string $id = '', ?array $outcome = null ): void` | The symmetric restore; the `$_SERVER` stack IS the pairing record, so an empty stack no-ops. Arity is the abort discriminator: `func_num_args() >= 3` with a null outcome marks the context aborted. |
@@ -439,6 +440,10 @@ Named substrate callables the bootstrap registers alongside them:
   widens the mirror with it.
 - Three `Formatters` — `request-index`, `flame-index` and `stats-index` — that the topology
   index legs reference, TSL having no closures.
+- `Command_Interpreter_Node::$around_dispatch`, wrapped by
+  [`Diagnostics_Bridge::install()`](../includes/class-diagnostics-bridge.php) around
+  whatever it already held; the architecture guide states the verb span it opens and
+  `Log_Manager::timed()`'s rule that every throwable propagates.
 
 The plugin binds `newspack_nodes/periodic`, `newspack_nodes/job_handlers` and
 `newspack_nodes/remote_job_handlers` nowhere; the last two are read by the substrate's

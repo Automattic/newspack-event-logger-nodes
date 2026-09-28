@@ -36,6 +36,7 @@ import {
 } from '@newspack-nodes/shared/utils/formatUtils';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
+import UnparseableLinesNotice from '@newspack-nodes/shared/components/UnparseableLinesNotice';
 import ColumnPicker from '@newspack-nodes/shared/components/ColumnPicker';
 import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
 import { useColumnPicker } from '@newspack-nodes/shared/hooks/useColumnPicker';
@@ -239,8 +240,8 @@ const renderRate = rateLabel(
  * `est` falls back to `time_ms` and then to zero, so a row the producer has not
  * estimated yet shows what its logs do account for rather than a dash. The
  * State badge shortens `include template` to `template` — the badge clips at
- * 90px, so the full name would render as an ellipsis — while its color still
- * resolves from the unshortened state.
+ * 90px, so the full name would render as an ellipsis — while its color and
+ * its title, which a hover reads in full, resolve from the unshortened state.
  *
  * @type {(col: string, req: Object) => import('react').ReactElement}
  */
@@ -255,6 +256,7 @@ const renderCell = cellRenderer( {
 			<span
 				className="event-logger-state-badge newspack-nodes-badge"
 				style={ badgeStyle( getStateColor( req.state ) ) }
+				title={ req.state }
 			>
 				{ req.state === 'include template' ? 'template' : req.state }
 			</span>
@@ -455,6 +457,7 @@ export default function Inflight( { maxRows = 20, headerControlsSlot } ) {
 					'newspack-event-logger-nodes'
 				) }
 			/>
+			<UnparseableLinesNotice node="gyroscope:link" />
 
 			{ showColumnPicker && (
 				<ColumnPicker

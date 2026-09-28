@@ -215,6 +215,61 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Every firehose entry written under a base directory's `logs/`, in
+	 * partition and segment order: each packed Message's VALUE, the entry hash
+	 * `k`, `m` and the rest ride in. A line whose VALUE is no entry fails the
+	 * test, because a producer regression would otherwise drop out unseen.
+	 *
+	 * @param string $base     The base directory the logger wrote under.
+	 * @param bool   $with_rid Set `rid` from the Message KEY, where the wire keeps it.
+	 * @return list<array<string,mixed>>
+	 */
+	protected static function firehose_entries( string $base, bool $with_rid = false ): array {
+		$entries = [];
+		$files   = \glob( "{$base}/logs/firehose.p*/*.log" ) ?: [];
+		// Natural order: `p2` before `p10`, segment `999` before `1000`.
+		\sort( $files, \SORT_NATURAL );
+		foreach ( $files as $file ) {
+			foreach ( \array_filter( \explode( "\n", (string) \file_get_contents( $file ) ) ) as $line ) {
+				$message = \Newspack_Nodes\Message::unpacked( $line );
+				$value   = $message[ \Newspack_Nodes\Message::VALUE ] ?? null;
+				self::assertIsArray( $value, "a line in {$file} carries no firehose entry" );
+				if ( $with_rid ) {
+					$value['rid'] = (string) ( $message[ \Newspack_Nodes\Message::KEY ] ?? '' );
+				}
+				$entries[] = $value;
+			}
+		}
+		return $entries;
+	}
+
+	/**
+	 * The entries whose category `k` is one of `$categories`, in order.
+	 *
+	 * @param list<array<string,mixed>> $entries       What `firehose_entries()` read.
+	 * @param string                    ...$categories Categories to keep.
+	 * @return list<array<string,mixed>>
+	 */
+	protected static function entries_of( array $entries, string ...$categories ): array {
+		return \array_values( \array_filter(
+			$entries,
+			static fn ( array $entry ): bool => \in_array( $entry['k'] ?? null, $categories, true )
+		) );
+	}
+
+	/**
+	 * The last entry of one category, or null when none was written.
+	 *
+	 * @param list<array<string,mixed>> $entries  What `firehose_entries()` read.
+	 * @param string                    $category The category `k`.
+	 * @return array<string,mixed>|null
+	 */
+	protected static function last_entry_of( array $entries, string $category ): ?array {
+		$matches = self::entries_of( $entries, $category );
+		return [] === $matches ? null : $matches[ \count( $matches ) - 1 ];
+	}
+
+	/**
 	 * Drop the process-wide Log_Manager any test left behind.
 	 *
 	 * The substrate's `newspack_nodes/stderr` seam feeds every stderr line to

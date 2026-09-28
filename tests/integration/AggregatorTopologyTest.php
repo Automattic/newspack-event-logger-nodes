@@ -122,12 +122,10 @@ class AggregatorTopologyTest extends TestCase {
 	}
 
 	/**
-	 * A Vault id colliding with an already-declared sibling name is skipped
-	 * loudly rather than aborting the whole load: the group must be declared
-	 * AFTER the node whose name it could collide with, so the collision is the
-	 * group's own catch rather than an uncaught `make_node` conflict.
+	 * A Vault id colliding with a declared node name fails the load, naming the
+	 * id, and leaves the node it collided with standing.
 	 */
-	public function test_a_vault_id_colliding_with_the_topic_name_is_skipped_not_fatal(): void {
+	public function test_a_vault_id_colliding_with_the_topic_name_fails_the_load(): void {
 		$this->seed_vault_servers(
 			[
 				'tw7'   => [ 'url' => 'https://tw7.example', 'group' => 'spoke' ],
@@ -135,10 +133,28 @@ class AggregatorTopologyTest extends TestCase {
 			]
 		);
 
-		$this->load_aggregator();
+		$caught = $this->caught( fn () => $this->load_aggregator(), 'a colliding Vault id must fail the load' );
+		$this->assertStringContainsString( 'building Vault id topic', $caught->getMessage() );
 
 		$this->assertInstanceOf( Topic_Node::class, Core::node( 'firehose:topic' ) );
+	}
+
+	/**
+	 * A colliding id the group meets on reload escapes, and every other spoke
+	 * the group holds or gains stays built beside the node it collided with.
+	 */
+	public function test_a_vault_id_colliding_on_reload_escapes_and_keeps_the_other_children(): void {
+		$this->seed_vault( 'tw7', [ 'url' => 'https://tw7.example', 'group' => 'spoke' ] );
+		$this->load_aggregator();
+		Vault::get_instance()->add( 'topic', [ 'url' => 'https://topic.example', 'group' => 'spoke' ] );
+		Vault::get_instance()->add( 'tw8', [ 'url' => 'https://tw8.example', 'group' => 'spoke' ] );
+
+		$caught = $this->caught( fn () => Core::node( 'firehose' )->update_graph(), 'a colliding Vault id must escape the reload' );
+		$this->assertStringContainsString( 'building Vault id topic', $caught->getMessage() );
+
 		$this->assertInstanceOf( Remote_Source_Node::class, Core::node( 'firehose:tw7' ) );
+		$this->assertInstanceOf( Remote_Source_Node::class, Core::node( 'firehose:tw8' ) );
+		$this->assertInstanceOf( Topic_Node::class, Core::node( 'firehose:topic' ) );
 	}
 
 	public function test_does_not_mount_stream_merger(): void {

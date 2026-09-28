@@ -515,10 +515,20 @@ class Admin {
 	 * `[]` for it; the inline branch classifies it against `Flame_Builder`, the
 	 * node its `Stats_Store` runs in.
 	 *
-	 * Best-effort throughout: a planner failure is swallowed because the next
-	 * worker loads the new config regardless.
+	 * `Restart_Planner::plan()` is the recipe, the same one the substrate's
+	 * own settings save runs: restart what the classification names, then ask
+	 * every live worker to re-read.
+	 *
+	 * The option row is already written when this runs, so a failure to
+	 * resolve the locks directory, or a flag that would not land, propagates
+	 * to the writer after every lock dir was offered its flag: the save
+	 * stands, and the error says which workers never heard of it. WordPress
+	 * fires this from inside `update_option()`, so `options.php` stops at the
+	 * first option whose signal throws and the fields after it in that
+	 * submission go unsaved.
 	 *
 	 * @param string $option Option name (full WP option key).
+	 * @throws \Throwable What `Restart_Planner::plan()` raised.
 	 */
 	public function maybe_request_worker_restart( string $option ): void {
 		if ( ! \str_starts_with( $option, self::OPTION_PREFIX ) ) {
@@ -533,16 +543,6 @@ class Admin {
 			? [ 'Flame_Builder' ]
 			: Settings_Schema::get()->restart_for( $short );
 
-		// resolve+touch: planner re-enters Config::load_config() via Bootstrap.
-		try {
-			$locks_dir = Config::get_locks_directory();
-			Restart_Planner::request_restarts( $restart, $locks_dir );
-			// @longform Every live worker's option cache is frozen at boot, so
-			// the ones this save does not recycle must be told to re-read.
-			Restart_Planner::request_reloads( $locks_dir );
-		} catch ( \Throwable $e ) {
-			// Best-effort: the next worker generation loads the new config.
-			return;
-		}
+		Restart_Planner::plan( $restart );
 	}
 }
