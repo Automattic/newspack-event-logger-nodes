@@ -229,7 +229,7 @@ class Log_Manager {
 	private ?string $saved_unique_id = null;
 	/** @var bool|null True while logging, false after finish(), null when no rule started it. */
 	private $started = null;
-	/** @var array<int,array{label: string,ts: int|float,m?: mixed}> Timer-frame stack. */
+	/** @var array<int,array{label: string,ts: int|float,m?: mixed,keep?: mixed}> Timer-frame stack. */
 	private $times = [];
 	/** @var \Newspack_Nodes\Topic_Node|null The firehose Topic; null until init_firehose() runs. */
 	private $topic = null;
@@ -242,8 +242,10 @@ class Log_Manager {
 	 * one keeps it on the worker rows and off the global averages. Every REST
 	 * endpoint here — the substrate's six and this plugin's MCP route —
 	 * shares `restapi`: the path already names each, and the type rides the
-	 * URL as its query, so a per-endpoint name read `…/workers/spawn?spawn`.
-	 * The paths are literals because two substrate controllers declare no
+	 * URL as its query, so a per-endpoint name would only repeat the path.
+	 * `restapi` names a spawn request only until the substrate validates the
+	 * worker it became; `identify_worker()` then names that worker, so each
+	 * spawned worker keeps a row of its own. The paths are literals because two substrate controllers declare no
 	 * route constant; a test registers every route and compares.
 	 *
 	 * @var array<string,string>
@@ -413,21 +415,31 @@ class Log_Manager {
 	 *
 	 * With `$describe`, the `(complete)` `m` is what it makes of the result,
 	 * or `outcome()` of the throwable; without it the span carries no `m`.
+	 * A `keep` in `$start` rides the `(complete)` too — see start().
 	 *
 	 * `$args` reach `$run` spread, so a listener hands over its callback and
 	 * the hook's arguments as they are: a closure per firing would cost the
 	 * hottest path an allocation.
 	 *
+	 * With `$write`, each of the span's two writes runs through it: a snapshot
+	 * node hands its `guarded()`, so a stop either write raises waits for the
+	 * node's bracket while the step still runs and still closes.
+	 *
 	 * @template T
-	 * @param string                           $label    The span's name.
-	 * @param callable(mixed...): T            $run      The work the span times.
-	 * @param (\Closure(T): (string|int))|null $describe The `(complete)` `m` a returned result gets.
-	 * @param array<string,mixed>              $start    Extra keys for the `(start)` entry.
-	 * @param list<mixed>                      $args     What `$run` is called with.
+	 * @param string                                $label    The span's name.
+	 * @param callable(mixed...): T                 $run      The work the span times.
+	 * @param (\Closure(T): (string|int))|null      $describe The `(complete)` `m` a returned result gets.
+	 * @param array<string,mixed>                   $start    Extra keys for the `(start)` entry.
+	 * @param list<mixed>                           $args     What `$run` is called with.
+	 * @param (\Closure(\Closure): void)|null       $write    What the `(start)` and `(complete)` writes run through.
 	 * @return T What `$run` returned.
 	 */
-	public function timed( string $label, callable $run, ?\Closure $describe = null, array $start = [], array $args = [] ): mixed {
-		$this->start( $label, $start );
+	public function timed( string $label, callable $run, ?\Closure $describe = null, array $start = [], array $args = [], ?\Closure $write = null ): mixed {
+		if ( null === $write ) {
+			$this->start( $label, $start );
+		} else {
+			$write( fn () => $this->start( $label, $start ) );
+		}
 		$done = [];
 		try {
 			$result = $run( ...$args );
@@ -441,7 +453,11 @@ class Log_Manager {
 			}
 			throw $e;
 		} finally {
-			$this->complete( $label, $done );
+			if ( null === $write ) {
+				$this->complete( $label, $done );
+			} else {
+				$write( fn () => $this->complete( $label, $done ) );
+			}
 		}
 	}
 
@@ -488,6 +504,7 @@ class Log_Manager {
 			$this->emit_orphaned_complete( $removed[ $i ], $now );
 		}
 		if ( ! empty( $match ) ) {
+			$data += \array_intersect_key( $match, [ 'keep' => true ] );
 			$data['duration_ms'] = \max( 0, ( $now - $start ) / self::NS_PER_MS );
 			if ( $this->log_memory ) {
 				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
@@ -501,12 +518,13 @@ class Log_Manager {
 	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
 	 * end-of-request stack close.
 	 *
-	 * @param array{label: string,ts: int|float,m?: mixed} $entry Timer-stack frame.
+	 * @param array{label: string,ts: int|float,m?: mixed,keep?: mixed} $entry Timer-stack frame.
 	 * @param int|float $now Reference hrtime() reading.
 	 */
 	private function emit_orphaned_complete( array $entry, $now ): void {
 		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
-		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
+		$data        = [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ];
+		$this->message( "{$entry['label']} (complete)", $data + \array_intersect_key( $entry, [ 'keep' => true ] ) );
 	}
 
 	/**
@@ -568,6 +586,10 @@ class Log_Manager {
 				$entry = [ 'label' => $label, 'ts' => \hrtime( true ) ];
 				if ( ! empty( $data['m'] ) ) {
 					$entry['m'] = $data['m'];
+				}
+				// A kept start whose close folds away would read as severed.
+				if ( isset( $data['keep'] ) ) {
+					$entry['keep'] = $data['keep'];
 				}
 				$this->times[] = $entry;
 			}
@@ -900,6 +922,21 @@ class Log_Manager {
 	}
 
 	/**
+	 * `newspack_nodes/worker_identified` listener. A spawn request named
+	 * itself at its start, before the spawn controller validated which worker
+	 * it is; this names that worker, and the later pair of entries wins.
+	 *
+	 * Writes only into a request already logging, so an announcement never
+	 * builds a logger of its own.
+	 *
+	 * @param string $type      The validated worker type.
+	 * @param int    $partition The validated partition.
+	 */
+	public static function identify_worker( string $type, int $partition ): void {
+		self::started_instance()?->write_worker( $type, $partition );
+	}
+
+	/**
 	 * The active instance IFF it has already started logging — the seam for "is
 	 * there somewhere to log this line?". Never creates or starts an instance
 	 * (unlike instance()), so an unmatched / rule-gated / root context yields
@@ -979,9 +1016,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * Finish the active instance and drop it, so the next instance() call
-	 * resolves a fresh context. Call before changing REQUEST_URI to log a
-	 * different request.
+	 * Finish the active instance and drop it, with the job message a past
+	 * context carried in, so the next instance() call resolves a fresh
+	 * context. Call before changing REQUEST_URI to log a different request.
 	 *
 	 * @api Used by tests.
 	 */
@@ -989,7 +1026,8 @@ class Log_Manager {
 		if ( null !== self::$instance ) {
 			self::$instance->finish();
 		}
-		self::$instance = null;
+		self::$instance    = null;
+		self::$job_message = [];
 	}
 
 	/**
@@ -1255,6 +1293,11 @@ class Log_Manager {
 	 * Name the worker this request runs in, as two entries of its own. The
 	 * substrate's env var wins; a platform request without one is named by
 	 * its path; a page writes neither.
+	 *
+	 * A job context names the type alone. The job is a run inside the worker,
+	 * so its row is `/jobs/{handler}/{id}?<type>` whichever partition ran it,
+	 * and the partition entry belongs to the worker's own record. `$_SERVER`
+	 * keeps the partition, because a job handler reads it for its lease.
 	 */
 	private function log_worker(): void {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
@@ -1265,12 +1308,22 @@ class Log_Manager {
 		if ( '' === $worker_type ) {
 			return;
 		}
-		$this->message( self::WORKER_TYPE, [ 'm' => $worker_type ] );
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- is_numeric() validates; (int) sanitizes.
-		$partition = $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ?? null;
-		// A value that is not a number names no partition; write nothing.
-		if ( \is_numeric( $partition ) ) {
-			$this->message( self::WORKER_PARTITION, [ 'm' => (int) $partition ] );
+		$partition = [] === self::$job_server_stack ? $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ?? null : null;
+		// A value that is not a number names no partition.
+		$this->write_worker( $worker_type, \is_numeric( $partition ) ? (int) $partition : null );
+	}
+
+	/**
+	 * The two worker entries: the type, then the partition where one exists.
+	 *
+	 * @param string   $type      Worker type.
+	 * @param int|null $partition Partition, or null when the worker has none.
+	 */
+	private function write_worker( string $type, ?int $partition ): void {
+		$this->message( self::WORKER_TYPE, [ 'm' => $type ] );
+		if ( null !== $partition ) {
+			$this->message( self::WORKER_PARTITION, [ 'm' => $partition ] );
 		}
 	}
 

@@ -60,61 +60,94 @@ final class Flame_Tree {
 	/** `Performance_CI_Node`'s point event: whether the ranked lists served. */
 	public const URL_RANK_LISTS = 'url rank lists';
 
-	/**
-	 * The stats mirror's point event: one verb's reads of it on a reader, and
-	 * on the flame builder a checkpoint's frames written to it.
-	 */
+	/** The stats mirror's point event: one verb's reads of it on a reader. */
 	public const STATS_MIRROR = 'stats mirror';
 
-	/** The flame builder's routine writes, one summary a `URL_PAGE_REFRESH_S`. */
+	/**
+	 * The flame builder's routine writes, one summary a
+	 * `Narration::ROLLUP_EVERY_S`.
+	 */
 	public const STATS_WRITES = 'stats writes';
 
-	/** The flame builder's ranking of a bucket that has closed. */
+	/** The flame builder's span ranking a bucket that has closed. */
 	public const STATS_RANK_CLOSE = 'stats rank close';
 
-	/** A flame builder probe pass, as it starts and as it ends. */
+	/** A flame builder probe pass's point event, as it starts and as it ends. */
 	public const STATS_PROBE = 'stats probe';
 
-	/** A key the flame builder healed, with what it had lost. */
+	/** The flame builder's span probing the coarse tier in one flush. */
+	public const STATS_PROBE_HOUR = 'stats probe hour';
+
+	/** The flame builder's span probing the fine tier in one flush. */
+	public const STATS_PROBE_FINE = 'stats probe fine';
+
+	/** A key the flame builder's probe re-queued, with what it had lost. */
 	public const STATS_HEAL = 'stats heal';
 
-	/** The flame builder's checkpoint, as it restored it. */
+	/** The flame builder's span folding one hour missing a derived key. */
+	public const STATS_FOLD = 'stats fold';
+
+	/** The flame builder's span re-ranking one stale hour from its rows. */
+	public const STATS_RE_RANK = 'stats re-rank';
+
+	/** The flame builder's span for a checkpoint that wrote to the mirror. */
+	public const STATS_CHECKPOINT = 'stats checkpoint';
+
+	/** The flame builder's span restoring its checkpoint. */
 	public const STATS_RESTORE = 'stats restore';
 
-	/** The flame builder's clean stop. */
+	/** The flame builder's span for its clean stop. */
 	public const STATS_SWEEP = 'stats sweep';
 
-	/**
-	 * Every name above in the product chart palette (`--np-chart-*`). The
-	 * three URL-read spans nest, so they take three unlike steps; the point
-	 * events never nest, so they share steps by what they say — cobalt for
-	 * the builder's routine writes and reads, emerald for a close or a
-	 * worker's start and stop, the warning step for a heal. None takes
-	 * Morganite, the command span's. The dashboards' colour map carries them
-	 * beneath the operator's own colours.
-	 *
-	 * @var array<string,string>
-	 */
-	public const PLATFORM_COLORS = [
-		self::URL_PAGE_CACHE   => '#003DA5',
-		self::URL_HEADER_CACHE => '#BD8600',
-		self::URL_FOLD         => '#117644',
-		self::URL_RANK_LISTS   => '#B32D2E',
-		self::STATS_MIRROR     => '#2055B0',
-		self::STATS_WRITES     => '#003DA5',
-		self::STATS_PROBE      => '#2055B0',
-		self::STATS_RANK_CLOSE => '#117644',
-		self::STATS_RESTORE    => '#117644',
-		self::STATS_SWEEP      => '#117644',
-		self::STATS_HEAL       => '#BD8600',
-	];
+	/** The request builder's rollup of what it assembled and wrote, once a minute. */
+	public const REQUESTS_WRITES = 'requests writes';
+
+	/** The request builder's span snapshotting its in-flight envelopes. */
+	public const REQUESTS_CHECKPOINT = 'requests checkpoint';
+
+	/** The request builder's span restoring its in-flight envelopes. */
+	public const REQUESTS_RESTORE = 'requests restore';
+
+	/** An envelope the request builder let go before it completed, and why. */
+	public const REQUESTS_EXPIRE = 'requests expire';
 
 	/**
-	 * The URL read's steps logged as spans, whatever the governing rule.
+	 * Every name above: its step of the product chart palette
+	 * (`--np-chart-*`), and the `Findings` kind of a span no rule edit
+	 * reaches inside — `url_read` for a step of the URL read, `upkeep` for
+	 * a builder's own work — or null for a point event. The three URL-read
+	 * spans nest, so they take three unlike steps. The two builders' names
+	 * share steps by what they say — cobalt for a rollup, light cobalt for a
+	 * probe or a checkpoint, emerald for a close or a restore, the warning
+	 * step for a heal, a fold or an operator's purge — and the flame
+	 * builder's sweep, which runs a flush and so holds every other flush
+	 * span, takes cobalt, which none of them does. None takes Morganite, the
+	 * command span's.
 	 *
-	 * @var list<string>
+	 * @var array<string,array{0: string, 1: 'url_read'|'upkeep'|null}>
 	 */
-	private const URL_READ_SPANS = [ self::URL_PAGE_CACHE, self::URL_HEADER_CACHE, self::URL_FOLD ];
+	private const PLATFORM = [
+		self::URL_PAGE_CACHE      => [ '#003DA5', 'url_read' ],
+		self::URL_HEADER_CACHE    => [ '#BD8600', 'url_read' ],
+		self::URL_FOLD            => [ '#117644', 'url_read' ],
+		self::URL_RANK_LISTS      => [ '#B32D2E', null ],
+		self::STATS_MIRROR        => [ '#2055B0', null ],
+		self::STATS_WRITES        => [ '#003DA5', null ],
+		self::STATS_PROBE         => [ '#2055B0', null ],
+		self::STATS_PROBE_HOUR    => [ '#2055B0', 'upkeep' ],
+		self::STATS_PROBE_FINE    => [ '#2055B0', 'upkeep' ],
+		self::STATS_CHECKPOINT    => [ '#2055B0', 'upkeep' ],
+		self::STATS_RANK_CLOSE    => [ '#117644', 'upkeep' ],
+		self::STATS_RESTORE       => [ '#117644', 'upkeep' ],
+		self::STATS_SWEEP         => [ '#003DA5', 'upkeep' ],
+		self::STATS_HEAL          => [ '#BD8600', null ],
+		self::STATS_FOLD          => [ '#BD8600', 'upkeep' ],
+		self::STATS_RE_RANK       => [ '#BD8600', 'upkeep' ],
+		self::REQUESTS_WRITES     => [ '#003DA5', null ],
+		self::REQUESTS_CHECKPOINT => [ '#2055B0', 'upkeep' ],
+		self::REQUESTS_RESTORE    => [ '#117644', 'upkeep' ],
+		self::REQUESTS_EXPIRE     => [ '#BD8600', null ],
+	];
 
 	/** What `listener_name()` puts between a listener's callable and its priority. */
 	private const LISTENER_SEPARATOR = ' @';
@@ -595,14 +628,15 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * Whether a span is one step of the performance CI's URL read, which is
-	 * logged whatever the rule says, so no rule edit reaches inside it.
+	 * The `Findings` kind of one of the platform's own spans, told whatever
+	 * the rule says, so no rule edit reaches inside it: `url_read` or
+	 * `upkeep`. Null for anything else, a point event's name included.
 	 *
 	 * @param string $span A span name, as the flame carries it.
-	 * @return bool
+	 * @return 'url_read'|'upkeep'|null
 	 */
-	public static function is_url_read_span( string $span ): bool {
-		return \in_array( self::base_name( $span ), self::URL_READ_SPANS, true );
+	public static function platform_span_kind( string $span ): ?string {
+		return self::PLATFORM[ self::base_name( $span ) ][1] ?? null;
 	}
 
 	/**
@@ -745,6 +779,16 @@ final class Flame_Tree {
 		foreach ( $children as $child ) {
 			self::index_nodes( $child, $id, $node_bytes, $nodes );
 		}
+	}
+
+	/**
+	 * Every platform name's chart step, which the dashboards' colour map
+	 * carries beneath the operator's own colours.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function platform_colors(): array {
+		return \array_map( static fn ( array $row ): string => $row[0], self::PLATFORM );
 	}
 
 	/**

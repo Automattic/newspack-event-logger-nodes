@@ -561,9 +561,10 @@ class Stats_Store {
 	public const BUCKET_SECONDS = self::BUCKET_MINUTES * 60;
 
 	/**
-	 * Seconds an absence holds for a key whose frame may still land: the open
-	 * bucket, or a key that is no bucket. Long enough that a polling dashboard
-	 * walks for it a few times a minute rather than every poll.
+	 * Seconds an absence holds for a key whose frame may still land over it
+	 * unseen: a key that is no bucket, or a bucket the writer's pass may still
+	 * be replacing. Long enough that one reply walks for it once; a dashboard
+	 * polling past it walks for it again.
 	 */
 	public const ABSENCE_HOLD_SECONDS = 20;
 
@@ -2141,6 +2142,41 @@ class Stats_Store {
 	}
 
 	/**
+	 * Put each written frame in the absence a reader remembered for its key,
+	 * for what is left of its window: the life a read-through would give it.
+	 * A key holding a value keeps it and a key holding nothing stays empty,
+	 * so no live entry is evicted. Every role's table shares this
+	 * partition's namespace, so one table replaces for all; a key of
+	 * another partition is left alone.
+	 *
+	 * A refused write fails soft, as every stats write does, but says so:
+	 * each refused key keeps serving its absence until it expires, and a
+	 * rate-limited warning counts them.
+	 *
+	 * @api The flame builder, once the frames are on disk.
+	 * @param array<string,array<array-key,mixed>> $frames Durable key,
+	 *        `entry_key()`-shaped for this partition => the frame's data.
+	 * @param int                                  $now    The writer's tick.
+	 */
+	public function replace_absent( array $frames, int $now ): void {
+		$head    = self::entry_key( $this->partition, '' );
+		$entries = [];
+		foreach ( $frames as $key => $data ) {
+			if ( \str_starts_with( $key, $head ) ) {
+				$relative             = \substr( $key, \strlen( $head ) );
+				$entries[ $relative ] = [
+					'value' => $data,
+					'ttl'   => $this->window_remaining( $relative, $now ),
+				];
+			}
+		}
+		$refused = $this->table( self::ROLE_AGGREGATE )?->replace_absent( $entries ) ?? [];
+		if ( [] !== $refused ) {
+			Core::print_less_often( 'Stats_Store: replace refused; absences stand until they expire: ', (string) \count( $refused ) );
+		}
+	}
+
+	/**
 	 * Durable key for one entry — what the mirror records its frames under.
 	 *
 	 * Deliberately NOT the Table's cache key: that one carries the install
@@ -2396,26 +2432,31 @@ class Stats_Store {
 	/**
 	 * How long an absence the mirror answered for `$key` holds.
 	 *
-	 * A closed bucket gains no frame, so its absence holds for what is left of
-	 * the window, and the walk that found nothing is not repeated all window
-	 * long — a sparse server has such buckets in every window, and asked on
-	 * every poll they spent the read budget before the series was reached. The
-	 * open bucket's frame may still land, and a key that is no bucket may be
-	 * written any time, so those hold only `ABSENCE_HOLD_SECONDS`. A bucket
-	 * counts as closed one further bucket after its span, which covers the
-	 * flush that writes it.
+	 * A bucket's absence holds for what is left of the window, so the walk
+	 * that found nothing runs once per closed bucket rather than on every
+	 * poll: a sparse server has such buckets in every window, and each walk
+	 * spends read budget the series needs. Only a CLOSED bucket reaches here:
+	 * the reader walks for no bucket closed less than `MIRROR_LAG_S` ago
+	 * (`Flame_Builder_Node::arm_stats_reader()`), by which a running worker
+	 * has written its frames. A worker writing a frame later — restored,
+	 * delayed or re-held — puts the frame in the marker once it is on disk.
+	 *
+	 * That replacement reads the markers once, so a walk that straddles the
+	 * pass marks its key after the read and nothing replaces it. A bucket
+	 * closed less than `$settle` before the reply may be in that race, and
+	 * so may a key that is no bucket, whose write waits for its checkpoint:
+	 * both hold only `ABSENCE_HOLD_SECONDS`.
 	 *
 	 * @api The `$absence` seam, per key the mirror did not return.
-	 * @param string $key Table-relative entry key.
-	 * @param int    $now The reply's clock, read once at its entry (decision 29).
+	 * @param string $key    Table-relative entry key.
+	 * @param int    $now    The reply's clock, read once at its entry (decision 29).
+	 * @param int    $settle Seconds after its close the writer's pass may still
+	 *                       miss a marker: its lag plus the longest walk.
 	 * @return int Seconds the absence holds; 0 holds none.
 	 */
-	public function absence_holds( string $key, int $now ): int {
-		$bucket = self::bucket_span( $key );
-		if ( null === $bucket || $bucket[0] + $bucket[1] + self::BUCKET_SECONDS > $now ) {
-			return self::ABSENCE_HOLD_SECONDS;
-		}
-		return $this->window_remaining( $key, $now );
+	public function absence_holds( string $key, int $now, int $settle ): int {
+		$close = self::bucket_end( $key );
+		return null === $close || $now < $close + $settle ? self::ABSENCE_HOLD_SECONDS : $this->window_remaining( $key, $now );
 	}
 
 	/**
@@ -2481,40 +2522,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * The bucket a key names — its start and its span in seconds — or null for
-	 * a key that names none.
-	 *
-	 * ISO 8601 through `strtotime()`, because that function reads many
-	 * non-dates as dates, `x` included; the shape is pinned first.
-	 *
-	 * @param string $key Table-relative entry key: `<ns>:…:<bucket>`.
-	 * @return array{0: int, 1: int}|null
-	 */
-	private static function bucket_span( string $key ): ?array {
-		$bucket = self::bucket_of( $key );
-		if ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{2})$/D', $bucket, $m ) ) {
-			$stamp = \strtotime( "{$m[1]}T{$m[2]}:{$m[3]}:00+00:00" );
-			$span  = self::BUCKET_SECONDS;
-		} elseif ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})$/D', $bucket, $m ) ) {
-			$stamp = \strtotime( "{$m[1]}T{$m[2]}:00:00+00:00" );
-			$span  = 3600;
-		} else {
-			return null;
-		}
-		return false === $stamp ? null : [ $stamp, $span ];
-	}
-
-	/**
-	 * The bucket a key names: its last segment, whatever sits between.
-	 *
-	 * @param string $key `…:<bucket>` — a bare segment answers itself.
-	 */
-	public static function bucket_of( string $key ): string {
-		$at = \strrpos( $key, ':' );
-		return false === $at ? $key : \substr( $key, $at + 1 );
-	}
-
-	/**
 	 * A table-relative key's namespace: its first segment (decision 1).
 	 *
 	 * @param string $key `<ns>:…` — a bare namespace answers itself.
@@ -2567,6 +2574,51 @@ class Stats_Store {
 			self::NS_URLHDR    => self::ROLE_URL_FINE,
 			default            => self::ROLE_AGGREGATE,
 		};
+	}
+
+	/**
+	 * When the bucket a key names closes, or null for a key that names none.
+	 *
+	 * @api The flame builder, saying how long a held frame keeps it busy.
+	 * @param string $key Entry key, table-relative or durable: `…:<bucket>`.
+	 */
+	public static function bucket_end( string $key ): ?int {
+		$span = self::bucket_span( $key );
+		return null === $span ? null : $span[0] + $span[1];
+	}
+
+	/**
+	 * The bucket a key names — its start and its span in seconds — or null for
+	 * a key that names none.
+	 *
+	 * ISO 8601 through `strtotime()`, because that function reads many
+	 * non-dates as dates, `x` included; the shape is pinned first.
+	 *
+	 * @param string $key Table-relative entry key: `<ns>:…:<bucket>`.
+	 * @return array{0: int, 1: int}|null
+	 */
+	private static function bucket_span( string $key ): ?array {
+		$bucket = self::bucket_of( $key );
+		if ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{2})$/D', $bucket, $m ) ) {
+			$stamp = \strtotime( "{$m[1]}T{$m[2]}:{$m[3]}:00+00:00" );
+			$span  = self::BUCKET_SECONDS;
+		} elseif ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})$/D', $bucket, $m ) ) {
+			$stamp = \strtotime( "{$m[1]}T{$m[2]}:00:00+00:00" );
+			$span  = 3600;
+		} else {
+			return null;
+		}
+		return false === $stamp ? null : [ $stamp, $span ];
+	}
+
+	/**
+	 * The bucket a key names: its last segment, whatever sits between.
+	 *
+	 * @param string $key `…:<bucket>` — a bare segment answers itself.
+	 */
+	public static function bucket_of( string $key ): string {
+		$at = \strrpos( $key, ':' );
+		return false === $at ? $key : \substr( $key, $at + 1 );
 	}
 
 	/**

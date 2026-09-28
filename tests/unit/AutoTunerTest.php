@@ -43,6 +43,8 @@ class AutoTunerTest extends TestCase {
 		\delete_option( 'newspack_nodes_allowed_users' );
 		\delete_option( Roles::OPTION );
 		\Newspack_Nodes\Config::reset();
+		// A later record would name this worker; `worker_context()` set it.
+		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
 		parent::tearDown();
 	}
 

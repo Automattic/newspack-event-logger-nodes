@@ -354,6 +354,23 @@ class LogManagerJobContextTest extends TestCase {
 		$this->assertNotSame( [], self::entries_of( $entries, 'process (complete)' ) );
 	}
 
+	/** A fresh context after reset() names no record a past job carried in. */
+	public function test_reset_forgets_the_job_message(): void {
+		$this->arrange_logging();
+		$message                                = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::FROM ] = 'jobs:consumer-7731';
+		Log_Manager::begin_job_context( 'kea_handler', '', $message );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'kea 7731' ] );
+		Log_Manager::end_job_context( 'kea_handler', '', [ 'status' => 'ok', 'message' => '', 'items_ok' => 1, 'items_err' => 0 ] );
+		$this->assertCount( 1, self::entries_of( self::firehose_entries( self::TEST_DIR ), 'message' ), 'the job names its record' );
+
+		$this->arrange_logging();
+		Log_Manager::instance()->message( 'work', [ 'm' => 'weka 7731' ] );
+		Log_Manager::reset();
+
+		$this->assertSame( [], self::entries_of( self::firehose_entries( self::TEST_DIR ), 'message' ) );
+	}
+
 	/**
 	 * A bare `end_job_context()` is a context RESTORE, not an abort signal. The
 	 * reconcile bridge calls it with no arguments around every WP-Cron pass, so

@@ -101,7 +101,7 @@ final class ConfigReloadSignalTest extends TestCase {
 
 	/**
 	 * Repoint Config at a base directory holding a null byte, which
-	 * `Config::ensure_path()` rejects — so `get_locks_directory()` throws and the
+	 * `Config::ensure_path()` rejects — so `get_base_directory()` throws and the
 	 * signal has nowhere to land.
 	 */
 	private function break_locks_directory(): void {
@@ -247,5 +247,29 @@ final class ConfigReloadSignalTest extends TestCase {
 
 		$this->assertIsString( $result, 'the verb answers with its error, not a result' );
 		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+	}
+
+	/**
+	 * A `{base}/locks` planted as a symlink would carry the synced write's
+	 * reload flags wherever it points, so the verb refuses and flags nothing.
+	 */
+	public function test_settings_set_verb_refuses_a_symlinked_locks_directory(): void {
+		\rename( "{$this->base_dir}/locks", "{$this->base_dir}/elsewhere-5521" );
+		\symlink( "{$this->base_dir}/elsewhere-5521", "{$this->base_dir}/locks" );
+
+		try {
+			$result = VerbHarness::fire(
+				new Performance_CI_Node(),
+				'performance',
+				'set',
+				'newspack_event_logger_nodes_log_memory 1'
+			);
+		} finally {
+			\unlink( "{$this->base_dir}/locks" );
+		}
+
+		$this->assertIsString( $result, 'the verb answers with its error, not a result' );
+		$this->assertStringContainsString( 'symlink or path traversal detected', $result );
+		$this->assertFileDoesNotExist( "{$this->base_dir}/elsewhere-5521/sundial.p0.lock.d/" . \Newspack_Nodes\Lock_Node::RELOAD_FLAG );
 	}
 }

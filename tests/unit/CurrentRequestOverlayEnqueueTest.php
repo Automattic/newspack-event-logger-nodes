@@ -162,7 +162,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 			$this->assertMatchesRegularExpression( '/window\.eventLoggerCustomColors = (\{.*?\});/', $script );
 			\preg_match( '/window\.eventLoggerCustomColors = (\{.*?\});/', $script, $m );
 			$this->assertSame(
-				\Newspack_Event_Logger_Nodes\Config::get_custom_colors() + \Newspack_Event_Logger_Nodes\Flame_Tree::PLATFORM_COLORS,
+				\Newspack_Event_Logger_Nodes\Config::get_custom_colors() + \Newspack_Event_Logger_Nodes\Flame_Tree::platform_colors(),
 				\json_decode( $m[1], true )
 			);
 			$this->assertSame( '#7A1F3D', \json_decode( $m[1], true )['url fold'], 'a configured colour wins' );

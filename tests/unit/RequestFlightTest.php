@@ -124,6 +124,63 @@ class RequestFlightTest extends TestCase {
 		);
 	}
 
+	/**
+	 * A spawn request names itself `restapi` at its start, then the worker it
+	 * became. The gyroscope row and the completed record both land on that
+	 * worker's own row, not the one every spawn shares.
+	 */
+	public function test_a_spawned_worker_rides_its_worker_id_row_in_flight_and_complete(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-spawned-worker' );
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+		$lines = [
+			[ 'process (start)' ],
+			[ 'worker_type', 'restapi' ],
+			[ 'request', 'POST https://x.test/wp-json/newspack-nodes/v1/workers/spawn' ],
+			[ 'worker_type', 'kea-7713' ],
+			[ 'worker_partition', 3 ],
+		];
+		foreach ( $lines as $n => $line ) {
+			$rb->fill( self::firehose_line( $n + 1, 'spawn-7713', $line[0], $line[1] ?? null ) );
+		}
+
+		$flight = $rb->flight();
+		$flight->target( 'gyroscope_partition' );
+		$flight->fire_cb();
+		$inflight = $this->inflight_messages( $got );
+		$got      = [];
+		$rb->fill( self::firehose_line( 6, 'spawn-7713', 'process (complete)' ) );
+		$completed = \array_column(
+			\array_filter( $got, static fn ( array $m ): bool => isset( $m[ Message::VALUE ]['url'] ) ),
+			Message::VALUE
+		);
+
+		$row = 'https://x.test/wp-json/newspack-nodes/v1/workers/spawn?kea-7713.p3';
+		$this->assertSame( $row, $inflight[0][ Message::VALUE ]['url'] );
+		$this->assertNotEmpty( $completed );
+		$this->assertSame( [ $row ], \array_values( \array_unique( \array_column( $completed, 'url' ) ) ) );
+	}
+
+	/**
+	 * One firehose line, as Log_Manager writes it.
+	 *
+	 * @param int    $n   Line number.
+	 * @param string $rid Request id, which rides KEY.
+	 * @param string $k   Category.
+	 * @param mixed  $m   The line's `m`, or null for none.
+	 */
+	private static function firehose_line( int $n, string $rid, string $k, mixed $m = null ): array {
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::KEY ]   = $rid;
+		$message[ Message::VALUE ] = \array_filter(
+			[ 'n' => $n, 'k' => $k, 'm' => $m, 'ts' => 1_700_000_000 ],
+			static fn ( mixed $v ): bool => null !== $v
+		);
+		return $message;
+	}
+
 	public function test_fire_stamps_a_string_key_for_an_all_digits_rid(): void {
 		// PHP coerces the all-digits map key to int; the wire KEY must come
 		// back as the STRING rid regardless.

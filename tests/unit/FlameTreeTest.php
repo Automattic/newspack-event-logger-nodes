@@ -454,7 +454,7 @@ class FlameTreeTest extends TestCase {
 		$palette = \array_combine( $m[1], \array_map( 'strtoupper', $m[2] ) );
 		$this->assertCount( 6, $palette, 'the six-step palette DESIGN.product.md names' );
 
-		$colours = \array_map( 'strtoupper', Flame_Tree::PLATFORM_COLORS );
+		$colours = \array_map( 'strtoupper', Flame_Tree::platform_colors() );
 		$this->assertSame( [], \array_diff( $colours, $palette ), 'every colour is a chart step' );
 		$named = [
 			Flame_Tree::URL_PAGE_CACHE,
@@ -468,23 +468,46 @@ class FlameTreeTest extends TestCase {
 			Flame_Tree::STATS_HEAL,
 			Flame_Tree::STATS_RESTORE,
 			Flame_Tree::STATS_SWEEP,
+			Flame_Tree::STATS_PROBE_HOUR,
+			Flame_Tree::STATS_PROBE_FINE,
+			Flame_Tree::STATS_FOLD,
+			Flame_Tree::STATS_RE_RANK,
+			Flame_Tree::STATS_CHECKPOINT,
+			Flame_Tree::REQUESTS_WRITES,
+			Flame_Tree::REQUESTS_CHECKPOINT,
+			Flame_Tree::REQUESTS_RESTORE,
+			Flame_Tree::REQUESTS_EXPIRE,
 		];
-		$keys = \array_keys( Flame_Tree::PLATFORM_COLORS );
+		$keys = \array_keys( Flame_Tree::platform_colors() );
 		\sort( $named );
 		\sort( $keys );
 		$this->assertSame( $named, $keys, 'every platform name has a step' );
 		$spans = \array_intersect_key( $colours, \array_flip( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD ] ) );
 		$this->assertCount( 3, \array_unique( $spans ), 'the three spans nest, so no two share a step' );
 		$this->assertNotContains( $palette['6'], $colours, 'Morganite is the command span\'s' );
+		// A stop's sweep runs a flush, so every flush span nests in it.
+		foreach ( [ Flame_Tree::STATS_PROBE_HOUR, Flame_Tree::STATS_PROBE_FINE, Flame_Tree::STATS_FOLD, Flame_Tree::STATS_RE_RANK, Flame_Tree::STATS_RANK_CLOSE ] as $inner ) {
+			$this->assertNotSame( $colours[ Flame_Tree::STATS_SWEEP ], $colours[ $inner ], $inner );
+		}
+	}
+
+	/** The builders' own upkeep spans — never their point lines, nor a reader's. */
+	public function test_platform_span_kind_names_the_builders_upkeep(): void {
+		foreach ( [ Flame_Tree::STATS_PROBE_HOUR, Flame_Tree::STATS_PROBE_FINE, Flame_Tree::STATS_FOLD . ' (complete)', Flame_Tree::STATS_RE_RANK, Flame_Tree::STATS_RANK_CLOSE, Flame_Tree::STATS_CHECKPOINT, Flame_Tree::STATS_RESTORE, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE ] as $span ) {
+			$this->assertSame( 'upkeep', Flame_Tree::platform_span_kind( $span ), $span );
+		}
+		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::STATS_PROBE, Flame_Tree::STATS_HEAL, Flame_Tree::STATS_MIRROR, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats folds' ] as $span ) {
+			$this->assertNull( Flame_Tree::platform_span_kind( $span ), $span );
+		}
 	}
 
 	/** The URL read's three steps are its spans — never its point events, nor a verb. */
-	public function test_is_url_read_span_names_the_three_steps(): void {
+	public function test_platform_span_kind_names_the_url_reads_three_steps(): void {
 		foreach ( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD . ': 3' ] as $span ) {
-			$this->assertTrue( Flame_Tree::is_url_read_span( $span ), $span );
+			$this->assertSame( 'url_read', Flame_Tree::platform_span_kind( $span ), $span );
 		}
 		foreach ( [ Flame_Tree::URL_RANK_LISTS, Flame_Tree::STATS_MIRROR, 'Discovery_CI get command', 'url folds', 'wp_loaded hook', 'sql' ] as $span ) {
-			$this->assertFalse( Flame_Tree::is_url_read_span( $span ), $span );
+			$this->assertNull( Flame_Tree::platform_span_kind( $span ), $span );
 		}
 	}
 

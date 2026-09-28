@@ -10,9 +10,9 @@
  * (the hub->spoke settings-sync receive path) — and they share this rather than
  * each copying the fixture dance.
  *
- * Lock dirs resolve through `Config::get_locks_directory()`, the same accessor
- * production uses, so a test cannot assert against a path the code under test
- * never writes to.
+ * Lock dirs resolve through `Spawn_Coordinator::lock_path()` under the
+ * configured base directory, as production resolves them, so a test cannot
+ * assert against a path the code under test never writes to.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -22,6 +22,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Helpers;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Lock_Node;
+use Newspack_Nodes\Spawn_Coordinator;
 use Newspack_Nodes\Topology_Registry;
 
 trait TopologyLockHarness {
@@ -90,11 +91,6 @@ trait TopologyLockHarness {
 		$this->tsl_dir = null;
 	}
 
-	/** The configured locks directory, resolved exactly as production resolves it. */
-	protected function locks_dir(): string {
-		return Config::get_locks_directory();
-	}
-
 	/**
 	 * Create one partition lock dir. Both flag channels require the dir to
 	 * already exist; neither requires a live holder, so no heartbeat is written.
@@ -109,7 +105,7 @@ trait TopologyLockHarness {
 	}
 
 	protected function lock_dir_for( string $topology, int $partition ): string {
-		return $this->locks_dir() . "/{$topology}.p{$partition}.lock.d";
+		return Spawn_Coordinator::lock_path( RuntimeConfig::get_base_directory(), $topology, $partition );
 	}
 
 	protected function assertRestartFlagged( string $topology, int $partition ): void {

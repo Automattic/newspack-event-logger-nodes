@@ -783,21 +783,6 @@ class LogManagerTest extends TestCase {
 
 	// ── timed(): one span around a closure ────────────────────────────────
 
-	/**
-	 * Make the next firehose write raise the cooperative stop, as a lost lock
-	 * would. Returns the disarm.
-	 *
-	 * @return \Closure(): void
-	 */
-	private static function arm_stop_on_next_write(): \Closure {
-		$framework = Event_Framework::instance();
-		$predicate = new \ReflectionProperty( Event_Framework::class, 'continue_predicate' );
-		$last_pump = new \ReflectionProperty( Event_Framework::class, 'last_pump' );
-		$predicate->setValue( $framework, static fn (): bool => false );
-		$last_pump->setValue( $framework, 0.0 );
-		return static fn () => $predicate->setValue( $framework, null );
-	}
-
 	/** Describe a result the way a caller does, so the test reads what `m` got. */
 	private static function describe_result( mixed $result ): string {
 		return 'returned ' . \json_encode( $result );
@@ -815,6 +800,42 @@ class LogManagerTest extends TestCase {
 		$entries = self::firehose_entries( self::TEST_DIR );
 		$this->assertSame( 'kea-ci', self::last_entry_of( $entries, 'kea 4417 (start)' )['m'] ?? null );
 		$this->assertSame( 'returned {"rows":4417}', self::last_entry_of( $entries, 'kea 4417 (complete)' )['m'] ?? null );
+	}
+
+	/** A span the producer keeps through a fold keeps both halves, or it severs. */
+	public function test_timed_keeps_the_close_of_a_kept_start(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+
+		$lm->timed( 'kea 4426', static fn (): int => 4426, self::describe_result( ... ), [ 'keep' => 1 ] );
+		$lm->timed( 'weka 4426', static fn (): int => 4426, self::describe_result( ... ) );
+		$lm->finish();
+
+		$entries = self::firehose_entries( self::TEST_DIR );
+		$this->assertSame( 1, self::last_entry_of( $entries, 'kea 4426 (start)' )['keep'] ?? null );
+		$this->assertSame( 1, self::last_entry_of( $entries, 'kea 4426 (complete)' )['keep'] ?? null );
+		$this->assertArrayNotHasKey( 'keep', self::last_entry_of( $entries, 'weka 4426 (complete)' ) ?? [] );
+	}
+
+	/** A kept frame keeps its close however it closes: by label or drained. */
+	public function test_a_kept_start_keeps_every_close_of_its_frame(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+
+		$lm->start( 'kea 4432', [ 'keep' => 3 ] );
+		$lm->complete( 'kea 4432' );
+		$lm->start( 'ruru 4432', [ 'keep' => 5 ] );
+		$lm->start( 'weka 4432' );
+		$lm->finish();
+
+		$entries = self::firehose_entries( self::TEST_DIR );
+		$this->assertSame( 3, self::last_entry_of( $entries, 'kea 4432 (complete)' )['keep'] ?? null );
+		$orphan = self::last_entry_of( $entries, 'ruru 4432 (complete)' ) ?? [];
+		$this->assertSame( '(orphaned)', $orphan['m'] ?? null );
+		$this->assertSame( 5, $orphan['keep'] ?? null );
+		$this->assertArrayNotHasKey( 'keep', self::last_entry_of( $entries, 'weka 4432 (complete)' ) ?? [] );
 	}
 
 	/**
@@ -957,6 +978,39 @@ class LogManagerTest extends TestCase {
 		}
 	}
 
+	/**
+	 * Both of a span's writes run through `$write`, so a node whose `guarded()`
+	 * holds the stop the start write raises still runs the step and closes it.
+	 */
+	public function test_timed_runs_both_writes_through_the_write_wrapper(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm      = $this->fresh_log_manager();
+		$held    = [];
+		$wrapped = [];
+		$write   = static function ( \Closure $one ) use ( &$held, &$wrapped ): void {
+			$wrapped[] = 'write';
+			try {
+				$one();
+			} catch ( Worker_Should_Stop $stop ) {
+				$held[] = $stop;
+			}
+		};
+		$disarm = self::arm_stop_on_next_write();
+
+		try {
+			$result = $lm->timed( 'kea 4431', static fn (): int => 4431, self::describe_result( ... ), [ 'keep' => 1 ], [], $write );
+		} finally {
+			$disarm();
+		}
+		$lm->finish();
+
+		$this->assertSame( 4431, $result, 'the step ran past the held stop' );
+		$this->assertSame( [ 'write', 'write' ], $wrapped, 'the start and the close' );
+		$this->assertCount( 1, $held, 'the start write raised it' );
+		$this->assertSame( 'returned 4431', self::last_entry_of( self::firehose_entries( self::TEST_DIR ), 'kea 4431 (complete)' )['m'] ?? null );
+	}
+
 	public function test_timed_complete_that_throws_keeps_the_closures_throwable_as_previous(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
@@ -1006,6 +1060,107 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( 'reconcile-731', self::last_entry_of( $this->written_entries(), 'worker_type' )['m'] ?? null, 'the env var outranks the path' );
 		$this->assertSame( 2, self::last_entry_of( $this->written_entries(), 'worker_partition' )['m'] ?? null );
 		$this->assertArrayNotHasKey( 'worker_type', self::last_entry_of( $this->written_entries(), 'process (start)' ) );
+	}
+
+	/**
+	 * A spawn request names itself `restapi` at its start, before REST
+	 * dispatch reaches the controller. The substrate's `worker_identified`
+	 * then names the worker it became, through the listener the deferred
+	 * bootstrap registers, and the later pair of entries wins.
+	 */
+	public function test_the_substrates_identity_announcement_renames_a_spawned_worker(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
+		$_SERVER['REQUEST_URI'] = '/wp-json/newspack-nodes/v1/workers/spawn';
+		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'], $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] );
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'noop' );
+		self::with_deferred_bootstrap(
+			static fn () => \do_action( 'newspack_nodes/worker_identified', 'kea-7713', 3 )
+		);
+		$lm->finish();
+
+		$entries = $this->written_entries();
+		$types   = \array_column(
+			\array_filter( $entries, static fn ( array $e ): bool => 'worker_type' === ( $e['k'] ?? null ) ),
+			'm'
+		);
+		$this->assertSame( [ 'restapi', 'kea-7713' ], $types );
+		$this->assertSame( 3, self::last_entry_of( $entries, 'worker_partition' )['m'] ?? null );
+	}
+
+	/**
+	 * A job is a run inside a worker, not the worker: its record names the
+	 * worker type, which gives it the `/jobs/{handler}/{id}?<type>` row, and no
+	 * partition, which only the worker's own record carries. The process keeps
+	 * its partition throughout, since a job handler reads it.
+	 */
+	public function test_a_job_inside_a_worker_partition_names_the_type_and_no_partition(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
+		$_SERVER['REQUEST_URI']                     = '/wp-json/newspack-nodes/v1/workers/spawn';
+		$_SERVER['NEWSPACK_NODES_WORKER_TYPE']      = 'kea-7713';
+		$_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] = '3';
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'noop' );
+		Log_Manager::begin_job_context( 'kea-probe', 'job-4431' );
+		$partition_in_job = $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ?? null;
+		Log_Manager::instance()->start( 'noop' );
+		Log_Manager::end_job_context( 'kea-probe', 'job-4431', [ 'status' => 'ok' ] );
+		$lm->finish();
+		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'], $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] );
+
+		$entries = $this->written_entries();
+		$job_rid = null;
+		foreach ( $entries as $entry ) {
+			if ( 'request' === ( $entry['k'] ?? null ) && \str_contains( (string) ( $entry['m'] ?? '' ), '/jobs/kea-probe/job-4431' ) ) {
+				$job_rid = $entry['rid'];
+			}
+		}
+		$this->assertNotNull( $job_rid, 'the job wrote a record of its own' );
+		$job    = \array_values( \array_filter( $entries, static fn ( array $e ): bool => $job_rid === $e['rid'] ) );
+		$worker = \array_values( \array_filter( $entries, static fn ( array $e ): bool => $job_rid !== $e['rid'] ) );
+
+		$this->assertSame( '3', $partition_in_job, 'the process keeps its partition inside the job' );
+		$this->assertSame( 'kea-7713', self::last_entry_of( $job, 'worker_type' )['m'] ?? null );
+		$this->assertNull( self::last_entry_of( $job, 'worker_partition' ), 'a job carries no partition' );
+		$this->assertSame( 3, self::last_entry_of( $worker, 'worker_partition' )['m'] ?? null, 'the worker record keeps it' );
+	}
+
+	/** With no logging request open, the announcement builds no logger. */
+	public function test_an_identity_announcement_outside_a_logged_request_builds_no_logger(): void {
+		Log_Manager::identify_worker( 'kea-7713', 3 );
+
+		$this->assertFalse( Log_Manager::has_instance() );
+	}
+
+	/**
+	 * Run the deferred bootstrap, then `$body`, then put back every static the
+	 * bootstrap registers into.
+	 *
+	 * @param \Closure(): void $body What to run while the registrations stand.
+	 */
+	private static function with_deferred_bootstrap( \Closure $body ): void {
+		$formatters = new \ReflectionProperty( \Newspack_Nodes\Formatters::class, 'registry' );
+		$saved      = [
+			'actions'    => $GLOBALS['_wp_actions'],
+			'filters'    => $GLOBALS['_wp_test_filters'] ?? [],
+			'around'     => \Newspack_Nodes\Command_Interpreter_Node::$around_dispatch,
+			'resolvers'  => \Newspack_Nodes\Core::$config_resolvers,
+			'formatters' => $formatters->getValue(),
+		];
+		try {
+			\newspack_event_logger_nodes_boot();
+			$body();
+		} finally {
+			$GLOBALS['_wp_actions']                                    = $saved['actions'];
+			$GLOBALS['_wp_test_filters']                               = $saved['filters'];
+			\Newspack_Nodes\Command_Interpreter_Node::$around_dispatch = $saved['around'];
+			\Newspack_Nodes\Core::$config_resolvers                    = $saved['resolvers'];
+			$formatters->setValue( null, $saved['formatters'] );
+		}
 	}
 
 	// ── Governing rule resolution ────────────────────────────────────────────

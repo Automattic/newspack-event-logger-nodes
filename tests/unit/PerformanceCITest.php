@@ -2778,6 +2778,28 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0.2, $result['category_time_series']['buckets'][ $bucket ][0][1] );
 	}
 
+	/**
+	 * Both URL series cover the whole read window, not the reader row's
+	 * `last_seen`: worker traffic files url_cat and url_dim buckets for the
+	 * hash after the reader row's last request.
+	 */
+	public function test_dump_url_series_reach_past_the_reader_rows_last_seen(): void {
+		$store   = new Stats_Store( 0, 86400 );
+		$old     = self::tick() - 3 * Stats_Store::BUCKET_SECONDS;
+		$current = $this->current_url_bucket();
+		$this->set_url_bucket( $store, Stats_Store::bucket_key( $old ), [
+			'd06e5a1b7c43' => [ 'url' => '/quokka-5a1b', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 52.0, 'last_seen' => $old ],
+		] );
+		$this->set_url_category_bucket( $store, 'd06e5a1b7c43', $current, [ 'wpdb' => self::cat_entry( 41.5, 6, 3 ) ] );
+		$this->set_url_dimensional_bucket( $store, 'd06e5a1b7c43', $current, [ 'status' => [ '418' => self::dim_entry( 7, 2.9, 0.6 ) ] ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'd06e5a1b7c43 --breakdown=status --categories' );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 7, $result['breakdown_time_series'][ $current ]['418'][ Stats_Store::DIM_COUNT ] ?? null, 'the url_dim bucket after last_seen' );
+		$this->assertSame( 41.5, $result['category_time_series']['buckets'][ $current ][0][1] ?? null, 'the url_cat bucket after last_seen' );
+	}
+
 	public function test_dump_url_verb_refuses_an_unknown_dim(): void {
 		// An unknown dim is refused, as `url_breakdown` refuses it, rather
 		// than answered without the series it asked for.
@@ -2935,13 +2957,13 @@ class PerformanceCITest extends TestCase {
 		try {
 			/** @var array<int,Stats_Store> $stores */
 			$stores = ( new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' ) )->invoke( null, $now );
-			// Just closed at the reply's clock, so its flush may still land.
-			$held   = ( $stores[0]->absence )( 'lb:' . Stats_Store::bucket_key( $now - Stats_Store::BUCKET_SECONDS ) );
+			$key    = 'lb:' . Stats_Store::bucket_key( $now - Stats_Store::BUCKET_SECONDS );
+			$held   = ( $stores[0]->absence )( $key );
 		} finally {
 			Core::$now = $previous;
 		}
 
-		$this->assertSame( Stats_Store::ABSENCE_HOLD_SECONDS, $held );
+		$this->assertSame( $stores[0]->window_remaining( $key, $now ), $held, 'the window left at the reply\'s clock' );
 	}
 
 	// -------------------------------------------------------------------------
@@ -6126,7 +6148,7 @@ class PerformanceCITest extends TestCase {
 		// dated from the wall lands a bucket later whenever a five-minute
 		// boundary falls between the two, and the page it seeded reads empty.
 		$previous  = Core::$now;
-		Core::$now = (float) ( \time() + Stats_Store::BUCKET_SECONDS );
+		Core::$now = 1_600_000_517.25;
 		try {
 			$this->assertSame( Stats_Store::bucket_key( (int) Core::$now ), $this->current_url_bucket() );
 		} finally {
