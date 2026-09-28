@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`newspack_event_logger_nodes_register_cli_commands()`** registers `wp nodes reqgrep` and `wp nodes ruleset-bench`, and `CliUsageOverviewTest` holds them, beside the substrate's verbs, to the `wp nodes` overview. The test calls the substrate's new `newspack_nodes_register_cli_commands()`, so release newspack-nodes first.
+
 ## [0.104.0] - 2026-09-27
 
 ### Added
