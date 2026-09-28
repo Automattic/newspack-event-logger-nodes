@@ -119,7 +119,7 @@ Push back on any diff introducing a hub flag — an `enable_aggregator` / `enabl
 
 ### 10. The substrate floor is a version, not a presence check
 
-The deferred bootstrap on `plugins_loaded` priority 11 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.70.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
+The deferred bootstrap on `plugins_loaded` priority 11 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.71.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
 
 A diff calling a newer substrate API must raise the floor. `scripts/check-substrate-floor.sh` audits the declared floor against every substrate API PHPStan resolves this plugin as calling, and `lint-docs.sh` rule 6 holds the prose to the loader — **a floor set too LOW is worse than none**, because the handshake passes and the plugin fatals later. Don't lower priority 11.
 
@@ -163,7 +163,7 @@ Flag a new blocking command that bakes the stream in with no injection seam and 
 
 Inherited from the substrate: array VALUE → `TM_STRUCT`, string VALUE → `TM_BYTESTREAM`. A consumer reading array VALUE gates on `TM_STRUCT`. Mixing them makes a consumer's own gate drop its own data.
 
-`Log_Manager`, `Request_Builder_Node` (`emit_request` / `emit_entry` / `emit_compact_summary`), `Flame_Builder_Node` and `Job_Intake` all use `TM_STRUCT`. Hub fan-in is the substrate `Remote_Source_Node`, which forwards the remote envelope's TYPE; `Remote_Job_Rewrite_Node` reads array VALUE, gated on it being an array, and forwards in place. TM_INFO and firehose-log VALUEs stay flat strings; only the command envelope is a token array.
+`Log_Manager`, `Request_Builder_Node` (`emit_request` / `emit_entry` / `emit_compact_summary`), `Flame_Builder_Node` and `Job_Intake` all use `TM_STRUCT`. Hub fan-in is the substrate `Remote_Source_Node`, which forwards the remote envelope's TYPE; `Remote_Job_Rewrite_Node` reads array VALUE, gated on it being an array, and forwards in place. A TM_INFO VALUE stays a flat `KEY VALUE` string, and only the command envelope is a token array.
 
 ### 16. Index formatters receive the unpacked message array
 
@@ -260,7 +260,7 @@ Preserve each `accepted_args` exactly when re-registering one: inflating it hand
 
 ### 25. Topologies compose the substrate's stock four
 
-Ten `.tsl` files ship in `topologies/`, and a topology's name is its filename — there is no `name:` frontmatter to write. Five are primitives (`request-builder`, `flame-builder`, `job-router`, `job-feed`, `aggregator`) and five compose them (`performance`, `job-hub`, `job-spoke`, `complete`, `hub-control`). Four substrate stock topologies arrive by `include`, and the primitives pull two: `topic-probe` into `request-builder`, `flame-builder` and `aggregator`, and `job-intake` into `job-router` and `job-feed`. The composites pull the other two — `job-worker` into `job-hub` and `job-spoke`, and `settings-sync` into `hub-control`. Four gates:
+Eleven `.tsl` files ship in `topologies/`, and a topology's name is its filename — there is no `name:` frontmatter to write. Five are primitives (`request-builder`, `flame-builder`, `job-router`, `job-feed`, `aggregator`) and six compose them (`performance`, `job-hub`, `job-spoke`, `complete`, `hub-control`, `hub`). Four substrate stock topologies arrive by `include`, and the primitives pull two: `topic-probe` into `request-builder`, `flame-builder` and `aggregator`, and `job-intake` into `job-router` and `job-feed`. The composites pull the other two — `job-worker` into `job-hub` and `job-spoke`, and `settings-sync` into `hub-control`. Four gates:
 
 - **Job DISPATCH is never declared here.** `Job_Worker_Node` arrives with the stock `job-worker`, which `job-hub` and `job-spoke` include. A `make_node Job_Worker` in an ELN file is a second executor on the same queue.
 - **Frontmatter is read from the TOP-LEVEL file only** (`Topology_Analyzer::frontmatter()` parses that file's own `var` statements and expands no `include`), which is why `hub-control` pins `num_partitions = 1` in its own body rather than in the `settings-sync` it includes. A `var` moved into an included file is silently skipped, and the topology spawns at the fleet default.
@@ -288,7 +288,7 @@ Two rules hold it, and a diff must keep both:
 ### 28. Which clock, and what a late stamp does
 
 - **Buckets key on UTC.** `Stats_Store::bucket_key()` formats with `gmdate()`, so DST never yields a 23- or 25-hour day and a bucket key never repeats. A diff that buckets through `date()`, `wp_date()` or a site timezone splits one instant across two keys twice a year.
-- **Durations are monotonic.** `Log_Manager`'s spans, `Flame_Builder_Node`'s mirror read budget and its narration's `ms`, and `wp nodes ruleset-bench` measure with `hrtime()`. A duration taken from `microtime()` or `Core::$now` goes negative or doubles when the wall clock steps.
+- **Durations are monotonic.** `Log_Manager`'s spans, `Flame_Builder_Node`'s mirror read budget and its probe pass's `ms`, and `wp nodes ruleset-bench` measure with `hrtime()`. A duration taken from `microtime()` or `Core::$now` goes negative or doubles when the wall clock steps.
 - **The hub files a stamp where it happened, never in the future.** `Flame_Builder_Node::fill()` clamps a record's completion stamp to its own `now` — a spoke's skewed clock or a bogus duration cannot file a future bucket readers never reach (decision 19) — files a late record under its own stamp rather than the arrival, and `hour_tier_intents()` merges a write into an hour it already folded into the coarse key the readers take. A backlog lands where it happened. A diff that files by arrival time, or drops a late record because its hour closed, loses exactly the backlog decision 19 keeps.
 - **A held absence is a value, not a deadline.** The absence `Stats_Store::absence_holds()` sizes is a memcached value under the key it answers for, so the next flush's write into that key replaces it; its TTL bounds only how long a reader skips the mirror walk.
 
