@@ -75,10 +75,10 @@
 			"sh -c 'npm run lint:types --silent'"
 		],
 		"includes/**/*.php": [
-			"php scripts/reorder-node-methods.php --all-classes --check"
+			"php scripts/reorder-node-methods.php --check"
 		],
 		"src/**/*.{js,jsx}": [
-			"node scripts/reorder-node-methods.js --all-classes --check"
+			"node scripts/reorder-node-methods.js --check"
 		],
 		"*.scss": [
 			"stylelint --customSyntax postcss-scss",
