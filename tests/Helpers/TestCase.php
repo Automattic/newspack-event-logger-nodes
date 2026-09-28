@@ -82,6 +82,29 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param list<string> $shards  Shard tokens each wrote.
 	 * @return array<string,array{0:string,1:int}>
 	 */
+	/**
+	 * A cache whose batch reads fail, as memcache does when it is down,
+	 * while `$failing` is set and a read asks a key carrying `$needle`.
+	 *
+	 * @param string $needle What a failing read's key carries, e.g. `:urlsrv:`.
+	 */
+	protected static function unanswering_memd( string $needle ): \Newspack_Nodes\Tests\Helpers\InMemoryMemcached {
+		$memd         = new class() extends \Newspack_Nodes\Tests\Helpers\InMemoryMemcached {
+			public string $needle  = '';
+			public bool $failing   = false;
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				foreach ( $this->failing ? $keys : [] as $key ) {
+					if ( \str_contains( (string) $key, $this->needle ) ) {
+						return false;
+					}
+				}
+				return parent::getMulti( $keys, $get_flags );
+			}
+		};
+		$memd->needle = $needle;
+		return $memd;
+	}
+
 	protected static function index_of( array $servers, array $shards = [] ): array {
 		$out = [];
 		foreach ( $servers as $server ) {
@@ -605,7 +628,9 @@ abstract class TestCase extends RuntimeTestCase {
 	 * Seed every ranked list of one server for one bucket or hour from NAMED
 	 * rows, through the production ranker, and name the server in the key's
 	 * index so the site's merge reads it. The rows are the LIST's content,
-	 * which a test may deliberately seed apart from the stored rows.
+	 * which a test may deliberately seed apart from the stored rows. The
+	 * site's lists are that one server's: `set_url_rank_lists_of()` ranks a
+	 * key's servers together, as the writer does.
 	 *
 	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
 	 * @param string                                   $key    Bucket or hour key.
@@ -614,19 +639,40 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param string                                   $server Reporting server.
 	 */
 	protected function set_url_rank_lists( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, array $rows, bool $hour = false, string $server = self::SEED_SERVER ): bool {
-		$positional = [];
-		foreach ( $rows as $hash => $row ) {
-			$row          = \Newspack_Nodes\Core::arr( $row );
-			$row['path']  = \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( [ $hash => \Newspack_Nodes\Core::str( $row['url'] ?? '' ) ] )[ (string) $hash ] ?? '';
-			unset( $row['url'] );
-			$positional[ $hash ] = self::positional_url_row( $row );
+		return $this->set_url_rank_lists_of( $store, $key, [ $server => $rows ], $hour );
+	}
+
+	/**
+	 * Seed every ranked list of several servers for one key from NAMED rows,
+	 * ranked together as one ranking of the key writes them, the site's
+	 * lists and record included, and name each server in the key's index.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store     Destination.
+	 * @param string                                   $key       Bucket or hour key.
+	 * @param array<string,array<array-key,mixed>>     $by_server Server => named rows by hash.
+	 * @param bool                                     $hour      The coarse tier.
+	 */
+	protected function set_url_rank_lists_of( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, array $by_server, bool $hour = false ): bool {
+		$servers = [];
+		foreach ( $by_server as $server => $rows ) {
+			foreach ( $rows as $hash => $row ) {
+				$row         = \Newspack_Nodes\Core::arr( $row );
+				$row['path'] = \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( [ $hash => \Newspack_Nodes\Core::str( $row['url'] ?? '' ) ] )[ (string) $hash ] ?? '';
+				unset( $row['url'] );
+				$servers[ $server ][ $hash ] = self::positional_url_row( $row );
+			}
+			$servers[ $server ] ??= [];
 		}
-		$writes = \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( [ $server => $positional ], $hour, $key );
-		// As the writer does: the server's DONE marker for the hour beside its lists.
-		if ( $hour ) {
-			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts( \Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ) ), $key, [] ];
+		$writes = \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( $servers, $hour, $key );
+		// As the writer does: each server's DONE marker for the hour beside its lists.
+		foreach ( $hour ? \array_keys( $servers ) : [] as $server ) {
+			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts( \Newspack_Event_Logger_Nodes\Stats_Store::server_key( (string) $server ) ), $key, [] ];
 		}
-		return ! \in_array( false, $store->bucket_set_multi( $writes ), true ) && self::index_server( $store, $key, $server, $hour, [] );
+		$ok = ! \in_array( false, $store->bucket_set_multi( $writes ), true );
+		foreach ( \array_keys( $servers ) as $server ) {
+			$ok = self::index_server( $store, $key, (string) $server, $hour, [] ) && $ok;
+		}
+		return $ok;
 	}
 
 	// ── Stats_Store named bucket access ─────────────────────────────────────

@@ -43,6 +43,7 @@ import HeadlineStats from './HeadlineStats';
  * @param {Object|null}             props.overview               Overview slice payload; it supplies `global_leaderboard` and gates the card, so null renders nothing.
  * @param {Object|null}             props.urlTotals              Headline numbers for the URL set the filters selected; null until the first reply.
  * @param {boolean}                 props.urlsEstimated          Whether `urlTotals.urls` is the writer's estimate rather than the fold's count.
+ * @param {boolean}                 props.urlsProvisional        Whether `urlTotals` skipped a record the writer has yet to rank.
  * @param {number}                  props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's.
  * @param {string}                  props.serverFilter           Selected server name, or '' for all servers; it also captions the Time Breakdown.
  * @param {(value: string) => void} props.setServerFilter        Server filter setter.
@@ -73,6 +74,7 @@ export default function OverviewSection( {
 	overview,
 	urlTotals,
 	urlsEstimated,
+	urlsProvisional,
 	breakdownAvgMs,
 	serverFilter,
 	setServerFilter,
@@ -274,6 +276,7 @@ export default function OverviewSection( {
 					<HeadlineStats
 						totals={ urlTotals }
 						estimated={ urlsEstimated }
+						provisional={ urlsProvisional }
 					/>
 
 					{ /* Unconditional: the Metric, Breakdown and Server

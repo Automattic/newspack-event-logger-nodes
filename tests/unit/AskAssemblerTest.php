@@ -830,14 +830,16 @@ class AskAssemblerTest extends TestCase {
 			[
 				// The shape `urls` actually answers with — not the per-URL row
 				// shape, which is what this brief first read and printed as 0.
-				'totals' => [
+				'totals'    => [
 					'urls'                => 137,
 					'requests'            => 4210,
 					'avg_ms'              => 812.5,
 					'avg_peak_mb'         => 44.25,
 					'requests_per_second' => 0.83,
 				],
-				'data'   => [
+				'estimated' => false,
+				'provisional' => false,
+				'data'      => [
 					[ 'hash' => '5efdf8a72d74', 'url' => 'https://example.com/slow', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4 ],
 					[ 'hash' => 'aaaaaaaaaaaa', 'url' => 'https://example.com/fast', 'count' => 4000, 'avg_ms' => 40.0, 'max_ms' => 120.0 ],
 				],
@@ -884,8 +886,10 @@ class AskAssemblerTest extends TestCase {
 	public function test_an_overview_brief_offers_no_hash_for_the_overflow_row(): void {
 		$brief = Ask_Assembler::for_overview(
 			[
-				'totals' => [ 'requests' => 4210 ],
-				'data'   => [
+				'totals'    => [ 'requests' => 4210 ],
+				'estimated' => false,
+				'provisional' => false,
+				'data'      => [
 					[ 'hash' => 'other', 'url' => '', 'aggregate' => true, 'count' => 9100, 'avg_ms' => 61.5, 'max_ms' => 940.0 ],
 					[ 'hash' => '5efdf8a72d74', 'url' => 'https://example.com/slow', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4 ],
 				],
@@ -911,8 +915,10 @@ class AskAssemblerTest extends TestCase {
 	public function test_an_errors_only_brief_counts_errors_beside_traffic(): void {
 		$brief = Ask_Assembler::for_overview(
 			[
-				'totals' => [ 'urls' => 2, 'requests' => 6150, 'errors' => 7 ],
-				'data'   => [ [ 'hash' => '0e11a5c3b2d9', 'url' => 'https://example.com/erring', 'count' => 6100, 'errors' => 6 ] ],
+				'totals'    => [ 'urls' => 2, 'requests' => 6150, 'errors' => 7 ],
+				'estimated' => false,
+				'provisional' => false,
+				'data'      => [ [ 'hash' => '0e11a5c3b2d9', 'url' => 'https://example.com/erring', 'count' => 6100, 'errors' => 6 ] ],
 			],
 			[ 'categories' => [] ],
 			'',
@@ -927,7 +933,7 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_an_overview_pointer_carries_every_filter_in_force(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'requests' => 4210 ], 'data' => [] ],
+			[ 'totals' => [ 'requests' => 4210 ], 'estimated' => false, 'provisional' => false, 'data' => [] ],
 			[ 'categories' => [] ],
 			'spoke-07',
 			[ 'search' => 'checkout', 'errors_only' => true, 'include_workers' => true ]
@@ -957,7 +963,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_an_overview_brief_says_when_the_totals_cannot_be_scoped(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => null, 'data' => [] ],
+			[ 'totals' => null, 'estimated' => false, 'provisional' => false, 'data' => [] ],
 			[ 'categories' => [] ],
 			'spoke-01',
 			[]
@@ -967,10 +973,24 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 'spoke-01', $brief['server'] );
 	}
 
+	/** The writer's URL count is a sketch's; a brief stating it bare reads as exact. */
+	public function test_an_overview_brief_carries_whether_its_url_count_is_estimated(): void {
+		$page = [ 'totals' => [ 'urls' => 4217, 'requests' => 9001 ], 'data' => [] ];
+
+		$estimated = Ask_Assembler::for_overview( $page + [ 'estimated' => true, 'provisional' => true ], [ 'categories' => [] ], '', [] );
+		$counted   = Ask_Assembler::for_overview( $page + [ 'estimated' => false, 'provisional' => false ], [ 'categories' => [] ], '', [] );
+
+		$this->assertTrue( $estimated['estimated'] );
+		$this->assertTrue( $estimated['provisional'], 'short of records the writer has yet to rank' );
+		$this->assertSame( 4217, $estimated['stats']['urls'] );
+		$this->assertFalse( $counted['estimated'] );
+		$this->assertFalse( $counted['provisional'] );
+	}
+
 	/** No server filter is the fleet, and the brief says so rather than ''. */
 	public function test_an_overview_brief_with_no_server_answers_for_the_fleet(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'requests' => 7 ], 'data' => [] ],
+			[ 'totals' => [ 'requests' => 7 ], 'estimated' => false, 'provisional' => false, 'data' => [] ],
 			[ 'categories' => [] ],
 			'',
 			[]

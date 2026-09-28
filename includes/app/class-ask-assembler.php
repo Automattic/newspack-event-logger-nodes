@@ -711,7 +711,7 @@ class Ask_Assembler {
 	 * A page carrying no `totals` leaves the brief's null rather than zeros,
 	 * which would read as an idle site.
 	 *
-	 * @param array<string,mixed> $page    A `urls` reply: its totals and data.
+	 * @param array<string,mixed> $page    A `urls` reply: its totals, whether its URL count is estimated and whether they are provisional, and its data.
 	 * @param array<string,mixed> $board   A `build_leaderboard()` reply.
 	 * @param string              $server  Server the page is scoped to; '' is every server.
 	 * @param array<string,mixed> $filters The url filters in force: search, errors_only, include_workers.
@@ -739,6 +739,10 @@ class Ask_Assembler {
 				'avg_peak_mb'         => Core::num_float( $totals['avg_peak_mb'] ?? 0 ),
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
 			] + self::errors_of( $totals ),
+			// Whether `stats.urls` is a sketch's estimate.
+			'estimated'   => true === $page['estimated'],
+			// Whether `stats` skipped records the writer has yet to rank.
+			'provisional' => true === $page['provisional'],
 			'urls'       => \array_map(
 				self::overview_url_shape( ... ),
 				\array_slice( $rows, 0, self::TOP_SPANS )

@@ -78,30 +78,45 @@ export function headlineStats( totals, keys, estimated = false ) {
  * to hold each figure.
  *
  * @param {Object}      props
- * @param {Object|null} props.totals    The `urls` reply's totals; null until it answers.
- * @param {boolean}     props.estimated The reply's `estimated`: its URL count is a sketch's.
+ * @param {Object|null} props.totals      The `urls` reply's totals; null until it answers.
+ * @param {boolean}     props.estimated   The reply's `estimated`: its URL count is a sketch's.
+ * @param {boolean}     props.provisional The reply's `provisional`: the totals skipped a record the writer has yet to rank.
  * @return {import('react').ReactElement} The stats grid.
  */
-export default function HeadlineStats( { totals, estimated } ) {
+export default function HeadlineStats( { totals, estimated, provisional } ) {
 	return (
-		<div className="newspack-nodes-stats-grid event-logger-overview-stats">
-			{ headlineStats(
-				totals,
-				[
-					'urls',
-					'requests',
-					'errors',
-					'avg_ms',
-					'requests_per_second',
-					'avg_peak_mb',
-				],
-				estimated
-			).map( ( { key, label, value } ) => (
-				<div className="newspack-nodes-stat" key={ key }>
-					<span className="newspack-nodes-stat-value">{ value }</span>
-					<span className="newspack-nodes-stat-label">{ label }</span>
-				</div>
-			) ) }
-		</div>
+		<>
+			<div className="newspack-nodes-stats-grid event-logger-overview-stats">
+				{ headlineStats(
+					totals,
+					[
+						'urls',
+						'requests',
+						'errors',
+						'avg_ms',
+						'requests_per_second',
+						'avg_peak_mb',
+					],
+					estimated
+				).map( ( { key, label, value } ) => (
+					<div className="newspack-nodes-stat" key={ key }>
+						<span className="newspack-nodes-stat-value">
+							{ value }
+						</span>
+						<span className="newspack-nodes-stat-label">
+							{ label }
+						</span>
+					</div>
+				) ) }
+			</div>
+			{ provisional && (
+				<p className="newspack-nodes-banner is-info" role="status">
+					{ __(
+						'Provisional: the latest buckets are not yet ranked, so these totals may run short.',
+						'newspack-event-logger-nodes'
+					) }
+				</p>
+			) }
+		</>
 	);
 }

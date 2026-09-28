@@ -39,6 +39,35 @@ final class Url_Sketch {
 	private const LANE_MASK = 0x3F;
 
 	/**
+	 * The sketch of every set: each register's largest value; of none, the
+	 * empty sketch.
+	 *
+	 * Eight registers a word rather than one a step, a quarter of the time
+	 * over a reply's hundred-odd unions, and the words stay unpacked across
+	 * the whole fold, packed once at the end. It needs every register under
+	 * 64, which a rank of at most `RANK_BITS + 1` (35) keeps: `$lanes |
+	 * LANE_TOP` less the other word then borrows across no lane, and each
+	 * lane's bit 6 says whether this word's register is the larger.
+	 *
+	 * @param string ...$sketches Sketches.
+	 */
+	public static function union( string ...$sketches ): string {
+		/** @var array<int,int> $ours `P*` unpacks to ints alone. */
+		$ours = \unpack( 'P*', \array_shift( $sketches ) ?? self::of( [] ) ) ?: [];
+		foreach ( $sketches as $sketch ) {
+			/** @var array<int,int> $theirs */
+			$theirs = \unpack( 'P*', $sketch ) ?: [];
+			foreach ( $ours as $at => $lanes ) {
+				$other       = $theirs[ $at ];
+				$larger      = ( ( ( $lanes | self::LANE_TOP ) - $other ) & self::LANE_TOP ) >> 6;
+				$mask        = $larger * self::LANE_MASK;
+				$ours[ $at ] = ( $lanes & $mask ) | ( $other & ~$mask );
+			}
+		}
+		return \pack( 'P*', ...$ours );
+	}
+
+	/**
 	 * A sketch of `$hashes`.
 	 *
 	 * Each hash is mixed through xxh64 before its bits are read. A url_hash
@@ -61,30 +90,6 @@ final class Url_Sketch {
 			}
 		}
 		return $registers;
-	}
-
-	/**
-	 * The sketch of both sets: each register's larger value.
-	 *
-	 * Eight registers a word rather than one a step, a quarter of the time
-	 * over a reply's hundred-odd unions. It needs every register under 64,
-	 * which a rank of at most `RANK_BITS + 1` (35) keeps: `$lanes | LANE_TOP`
-	 * less the other word then borrows across no lane, and each lane's bit 6
-	 * says whether this word's register is the larger.
-	 *
-	 * @param string $a A sketch.
-	 * @param string $b Another.
-	 */
-	public static function union( string $a, string $b ): string {
-		$ours   = \array_filter( \unpack( 'P*', $a ) ?: [], 'is_int' );
-		$theirs = \array_filter( \unpack( 'P*', $b ) ?: [], 'is_int' );
-		foreach ( $ours as $at => $lanes ) {
-			$other       = $theirs[ $at ];
-			$larger      = ( ( ( $lanes | self::LANE_TOP ) - $other ) & self::LANE_TOP ) >> 6;
-			$mask        = $larger * self::LANE_MASK;
-			$ours[ $at ] = ( $lanes & $mask ) | ( $other & ~$mask );
-		}
-		return \pack( 'P*', ...$ours );
 	}
 
 	/**
