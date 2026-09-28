@@ -2682,8 +2682,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		foreach ( $chunk as $bucket => $entries ) {
 			$rows = [];
 			foreach ( Stats_Store::index_names( $entries ) as $server ) {
-				$rows[ $server ] = \array_replace(
-					[],
+				$rows[ $server ] = Stats_Store::merge_shard_rows(
 					...\array_values( $this->flushed_rows[ $bucket ][ $server ] ?? [] ),
 					...( $read_maps[ $bucket ][ $server ] ?? [] )
 				);
@@ -3017,7 +3016,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				$writes[]   = [ Stats_Store::url_hour_parts( $key, $shard ), $hour, $shard_rows ];
 				// The lists rank the READER family; a worker row never ranks.
 				if ( ! self::is_worker_shard( $shard ) ) {
-					$ranked[ (string) $server ] = ( $ranked[ (string) $server ] ?? [] ) + Stats_Store::string_keys( $shard_rows );
+					$ranked[ (string) $server ] = Stats_Store::merge_shard_rows( $ranked[ (string) $server ] ?? [], $shard_rows );
 				}
 			}
 		}
@@ -3110,7 +3109,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		foreach ( \array_chunk( $hours, self::ROLLUP_HOURS_PER_FLUSH ) as $chunk ) {
 			$rows = [];
 			foreach ( $stats_store->url_hour_sources( $chunk ) as [ $hour, $shard_rows, $server ] ) {
-				$rows[ $hour ][ $server ] = ( $rows[ $hour ][ $server ] ?? [] ) + Stats_Store::string_keys( $shard_rows );
+				$rows[ $hour ][ $server ] = Stats_Store::merge_shard_rows( $rows[ $hour ][ $server ] ?? [], $shard_rows );
 			}
 			foreach ( $chunk as $hour ) {
 				$this->write_url_ranks( $stats_store, $hour, $rows[ $hour ] ?? [], true );
