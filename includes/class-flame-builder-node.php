@@ -406,6 +406,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** Flushes since the memo was last emptied; see REPROBE_EVERY_FLUSHES. */
 	private int $folds_since_reprobe = 0;
 
+	/**
+	 * Whether the next flush probes the read plan's closed fine buckets for
+	 * a lost header record or list: a new worker's first flush, and every
+	 * reprobe's. Nothing else asks after a fine bucket once its last ranking
+	 * has run, and a hole in the tail sends every header back to the fold.
+	 */
+	private bool $fine_probe_due = true;
+
 	/** @var array<string,bool> Custom-event-name set ({name => true}). */
 	private array $custom_event_names = [];
 
@@ -1434,6 +1442,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$this->ranked_at     = [];
 		$this->rank_pending  = [];
 		$this->plan_memo     = null;
+		// The new keyspace's fine tail is unknown until probed.
+		$this->fine_probe_due = true;
 		$this->arm_stats_mirror();
 	}
 
@@ -2268,6 +2278,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			// Probing before the writes are placed keeps the first flush after
 			// one from leaving rows in fine buckets a folded hour replaced.
 			$this->roll_up_hours( $stats_store, $plan, $now );
+			$this->probe_fine_tail( $stats_store, $plan, $now );
 			// Lexical order IS chronological, which is what bucket_key() buys.
 			$this->persist_aggregate_stats( $stats_store, $now, (string) \end( $plan['fine'] ) );
 		}
@@ -2293,6 +2304,26 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			];
 		}
 		return $this->plan_memo['plan'];
+	}
+
+	/**
+	 * Queue each closed bucket of the read plan's fine tail whose ranking
+	 * lost a header record or a list, when a probe is due; `rank_owed()`
+	 * ranks it from its stored rows in the same flush. The tail's first
+	 * bucket is the open one, which this flush's own writes rank.
+	 *
+	 * @param Stats_Store                                    $stats_store Source.
+	 * @param array{fine: list<string>, hours: list<string>} $plan        The flush's read plan.
+	 * @param int                                            $now         The flush's one read of the tick.
+	 */
+	private function probe_fine_tail( Stats_Store $stats_store, array $plan, int $now ): void {
+		if ( ! $this->fine_probe_due ) {
+			return;
+		}
+		$this->fine_probe_due = false;
+		foreach ( $stats_store->url_buckets_unranked( \array_slice( $plan['fine'], 1 ), $now ) as $bucket ) {
+			$this->rank_pending[ $bucket ] = true;
+		}
 	}
 
 	/**
@@ -2883,6 +2914,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		if ( ++$this->folds_since_reprobe >= self::REPROBE_EVERY_FLUSHES ) {
 			$this->folds_since_reprobe = 0;
 			$this->folded_hours        = [];
+			$this->fine_probe_due      = true;
 		}
 		$planned            = \array_flip( $plan['hours'] );
 		$this->folded_hours = \array_intersect_key( $this->folded_hours, $planned );
@@ -3101,9 +3133,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 *
 	 * A refused list is logged and not retried here: the lists are top-N
 	 * bounded to fit, so a refusal is a wrong N, and a transient failure
-	 * heals at the ranking the next write into the key brings. On the hour
-	 * tier each server's DONE marker rides the same batch whatever the lists
-	 * answer, and `url_hours_derived()` decides whether the hour ranks again.
+	 * heals at the ranking the next write into the key brings, or at the
+	 * reprobe, which touches every list and header record the batch carries.
+	 * On the hour tier each server's DONE marker rides the same batch
+	 * whatever the lists answer, and `url_hours_derived()` decides whether
+	 * the hour ranks again.
 	 *
 	 * @param Stats_Store                             $stats_store Destination.
 	 * @param string                                  $key         Bucket or hour key.
@@ -3112,7 +3146,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 */
 	private function write_url_ranks( Stats_Store $stats_store, string $key, array $servers, bool $hour ): void {
 		$writes = Stats_Store::ranked_writes( $servers, $hour, $key );
-		// Nothing probes the fine tier; the marker's PRESENCE is the fact.
+		// Fine buckets carry no marker: their probe asks the lists.
 		foreach ( $hour ? \array_keys( $servers ) : [] as $server ) {
 			$writes[] = [ Stats_Store::url_rank_done_parts( Stats_Store::server_key( (string) $server ) ), $key, [] ];
 		}

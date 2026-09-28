@@ -55,6 +55,7 @@ use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Event_Logger_Nodes\Url_Sketch;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Callback_Node;
@@ -233,7 +234,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const PAGE_FIELDS = [ 'data', 'ranked', 'as_of', ...self::HEADER_FIELDS ];
 
 	/** The subset `url_header()` answers for; a ranked page takes them whole. */
-	private const HEADER_FIELDS = [ 'rows', 'totals', 'slowest' ];
+	private const HEADER_FIELDS = [ 'rows', 'totals', 'slowest', 'estimated' ];
 
 	/**
 	 * Buckets read per `lookup_multi` while folding the index.
@@ -809,10 +810,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Two paths answer. A page with no filter and an end inside the fine
 	 * tier's list depth reads the writer's ranked lists — `URL_RANK_N`
 	 * entries per bucket, cut and folded here — and takes its header from
-	 * the fold through `url_header()`, once per bucket. Everything else
-	 * folds. A ranked page says so with `ranked`, because its averages are
-	 * the means of the bucket averages it ranked with, and a count outside
-	 * every bucket's list is a count the page cannot see.
+	 * the writer's header records through `url_header()`, once per bucket.
+	 * Everything else folds. A ranked page says so with `ranked`, because
+	 * its averages are the means of the bucket averages it ranked with, and
+	 * a count outside every bucket's list is a count the page cannot see.
 	 *
 	 * It is read THROUGH the cache for `Stats_Store::URL_PAGE_REFRESH_S` under every filter,
 	 * the window bucket, the retention and the store count: a fold over a
@@ -830,7 +831,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $limit   Page size.
 	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
 	 * @param int                    $now     The reply's clock, read once at its entry.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,ranked:bool,as_of:int}
 	 */
 	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
 		// @longform Normalized ONCE, here: `Womb`, `womb` and `womb ` are one
@@ -847,7 +848,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( $limit > self::URLS_PAGE_CACHE_MAX_ROWS ) {
 			return $build();
 		}
-		/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int} */
+		/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,ranked:bool,as_of:int} */
 		return self::read_through_page(
 			Flame_Tree::URL_PAGE_CACHE,
 			[ $server, $search, $errors, $workers, $sort, $order, $offset, $limit, Stats_Store::bucket_key( $now ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
@@ -888,13 +889,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $limit  Page size.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @param int                    $now    The reply's clock, read once at its entry.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}|null
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,ranked:bool,as_of:int}|null
 	 */
 	private function ranked_page( string $server, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): ?array {
 		// The header first: its own miss folds the page this poll answers with.
 		$header = $this->url_header( $server, $sort, $order, $offset, $limit, $stores, $now );
 		if ( isset( $header['data'] ) ) {
-			/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int} */
+			/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,ranked:bool,as_of:int} */
 			return $header;
 		}
 		$plan   = Stats_Store::read_plan( \array_values( self::read_window( $now ) ) );
@@ -959,6 +960,118 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The header of the unfiltered page of one scope, summed from the
+	 * writer's header records (`recorded_header()`), held for
+	 * `Stats_Store::BUCKET_SECONDS`, the bucket's own life, so a ranked
+	 * page's totals lag by that rather than by the page cache's own minute.
+	 *
+	 * A hole in the records folds instead, and the fold folds THIS page —
+	 * the caller's sort, order, offset and limit — and returns it whole, so
+	 * the poll that pays for the walk answers with what it walked and the
+	 * next one reads the lists. A hit carries `HEADER_FIELDS` alone.
+	 *
+	 * @param string                 $server Reporting server; '' is the site.
+	 * @param string                 $sort   A URL_SORTS field.
+	 * @param string                 $order  'asc' or 'desc'.
+	 * @param int                    $offset Page offset.
+	 * @param int                    $limit  Page size.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * @return array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,data?:array<int,array<array-key,mixed>>,ranked?:bool,as_of?:int}
+	 */
+	private function url_header( string $server, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
+		$page  = null;
+		$build = function () use ( $server, $sort, $order, $offset, $limit, $stores, $now, &$page ): array {
+			$header = self::recorded_header( $server, $stores, $now );
+			if ( null !== $header ) {
+				return $header;
+			}
+			$page = $this->fold_page( $server, '', false, false, $sort, $order, $offset, $limit, $stores, $now );
+			return \array_intersect_key( $page, \array_flip( self::HEADER_FIELDS ) );
+		};
+		/** @var array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool} $header */
+		$header = self::read_through_page(
+			Flame_Tree::URL_HEADER_CACHE,
+			[ 'header', $server, Stats_Store::bucket_key( $now ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
+			self::HEADER_FIELDS,
+			Stats_Store::BUCKET_SECONDS,
+			$build
+		);
+		return $page ?? $header;
+	}
+
+	/**
+	 * The unfiltered header of one scope, summed from the writer's header
+	 * records over the read plan, or null where a record is missing.
+	 *
+	 * Each store answers the plan's hours and fine tail in one round trip
+	 * after its server index's own, and a second only for the leading
+	 * hour's fine buckets where that hour has no record, as
+	 * `ranked_page()` reads its lists. A hole anywhere is null: a header
+	 * summed over a window with a key missing understates the site's
+	 * traffic and still reads as the site's, so the caller folds instead.
+	 *
+	 * `totals.urls` is the merged `Url_Sketch`'s estimate, and the reply says
+	 * so with `estimated`; `rows` adds the overflow row where any record
+	 * holds one. The rate sums `recent_buckets()`' records. `slowest` comes
+	 * from the `avg_ms` lists, each URL's mean weighted by request over the
+	 * entries it made, and like a ranked page is exact only over the keys
+	 * where it made one.
+	 *
+	 * @param string                 $server Reporting server; '' is the site.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * @return array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:true}|null
+	 */
+	private static function recorded_header( string $server, array $stores, int $now ): ?array {
+		$plan    = Stats_Store::read_plan( \array_values( self::read_window( $now ) ) );
+		$hours   = \array_flip( $plan['hours'] );
+		$recent  = \array_flip( self::recent_buckets( $now ) );
+		$total   = Stats_Store::url_header_of( [] );
+		$rated   = 0;
+		$slowest = [];
+		// Per-bucket means are a ranked page's; the header weighs by request.
+		$means = [];
+		foreach ( $stores as $store ) {
+			$records = $store->url_headers( $plan['hours'], $plan['fine'], $server );
+			$gap     = Stats_Store::fine_fallback( $plan['hours'], \array_filter( $records ) );
+			if ( [] !== $gap['holes'] ) {
+				return null;
+			}
+			$records += $store->url_headers( [], $gap['buckets'], $server );
+			foreach ( $records as $key => $record ) {
+				// A leading hour missing one is answered by its fine buckets.
+				if ( null === $record && isset( $hours[ $key ] ) ) {
+					continue;
+				}
+				if ( null === $record ) {
+					return null;
+				}
+				$total  = Stats_Store::merge_url_header( $total, $record );
+				$rated += isset( $recent[ $key ] ) ? $record[ Stats_Store::HDR_COUNT ] : 0;
+			}
+			foreach ( $store->url_rank_window( $plan['hours'], [ ...$plan['fine'], ...$gap['buckets'] ], 'avg_ms', 'desc', $server ) as [ , $entries ] ) {
+				self::fold_rank_entries( $slowest, $means, $entries, false );
+			}
+		}
+		$top = \array_map( self::project_row( ... ), \array_values( $slowest ) );
+		\usort( $top, self::by_sort( 'avg_ms', 'desc' ) );
+		$urls = Url_Sketch::estimate( $total[ Stats_Store::HDR_URLS ] );
+		return [
+			'rows'      => $urls + ( $total[ Stats_Store::HDR_HAS_OTHER ] ? 1 : 0 ),
+			'totals'    => [
+				'urls'                => $urls,
+				'requests'            => $total[ Stats_Store::HDR_COUNT ],
+				'avg_ms'              => self::mean_of( $total[ Stats_Store::HDR_SUM_MS ], $total[ Stats_Store::HDR_TIMED_COUNT ] ),
+				'avg_peak_mb'         => self::mean_of( $total[ Stats_Store::HDR_SUM_PEAK_MB ], $total[ Stats_Store::HDR_COUNT ] ),
+				'requests_per_second' => self::recent_rate( $rated ),
+			],
+			'slowest'   => self::resolve_urls( \array_slice( $top, 0, self::SLOWEST_ROWS ), $stores ),
+			'estimated' => true,
+		];
+	}
+
+	/**
 	 * Fold one list's entries into the merged rows, and note each bucket's
 	 * two averages beside them.
 	 *
@@ -991,45 +1104,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				++$means[ $hash ][3];
 			}
 		}
-	}
-
-	/**
-	 * The fold's header for the unfiltered page of one scope — `totals.urls`
-	 * is the count of DISTINCT URLs in the window, which no list can answer —
-	 * held for `Stats_Store::BUCKET_SECONDS`, the bucket's own life. So the
-	 * thirty-second fold runs once per bucket while the lists answer the
-	 * table every poll, and a ranked page's totals lag by that rather than by
-	 * the page cache's own minute.
-	 *
-	 * The miss folds THIS page — the caller's sort, order, offset and limit —
-	 * and returns it whole, so the poll that pays for the walk answers with
-	 * what it walked and the next one reads the lists. A hit carries
-	 * `HEADER_FIELDS` alone.
-	 *
-	 * @param string                 $server Reporting server; '' is the site.
-	 * @param string                 $sort   A URL_SORTS field.
-	 * @param string                 $order  'asc' or 'desc'.
-	 * @param int                    $offset Page offset.
-	 * @param int                    $limit  Page size.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
-	 * @return array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,data?:array<int,array<array-key,mixed>>,ranked?:bool,as_of?:int}
-	 */
-	private function url_header( string $server, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
-		$page  = null;
-		$build = function () use ( $server, $sort, $order, $offset, $limit, $stores, $now, &$page ): array {
-			$page = $this->fold_page( $server, '', false, false, $sort, $order, $offset, $limit, $stores, $now );
-			return \array_intersect_key( $page, \array_flip( self::HEADER_FIELDS ) );
-		};
-		/** @var array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>} $header */
-		$header = self::read_through_page(
-			Flame_Tree::URL_HEADER_CACHE,
-			[ 'header', $server, Stats_Store::bucket_key( $now ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
-			self::HEADER_FIELDS,
-			Stats_Store::BUCKET_SECONDS,
-			$build
-		);
-		return $page ?? $header;
 	}
 
 	/**
@@ -2113,7 +2187,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $limit   Page size.
 	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
 	 * @param int                    $now     The reply's clock, read once at its entry.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,ranked:bool,as_of:int}
 	 */
 	private function fold_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
 		$walk = fn (): array => $this->walk_url_index( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores, $now );
@@ -2150,7 +2224,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $limit   Page size.
 	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
 	 * @param int                    $now     The reply's clock, read once at its entry.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,ranked:bool,as_of:int}
 	 */
 	private function walk_url_index( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
 		// `$search` is normalized by `url_page()`, which keys its cache on it.
@@ -2287,9 +2361,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
 				'requests_per_second' => self::recent_rate( $recent ),
 			] + ( $errors ? [ 'errors' => $errored ] : [] ),
-			'slowest' => \array_slice( $named, \count( $page ) ),
-			'ranked'  => false,
-			'as_of'   => $now,
+			'slowest'   => \array_slice( $named, \count( $page ) ),
+			'estimated' => false,
+			'ranked'    => false,
+			'as_of'     => $now,
 		];
 	}
 
@@ -3040,6 +3115,8 @@ class Performance_CI_Node extends Service_CI_Node {
 					// Zeros for a scope holding no rows, never null.
 					'totals'  => $page['totals'],
 					'slowest' => $page['slowest'],
+					// `totals.urls` is the sketch's where the records answered.
+					'estimated' => $page['estimated'],
 					'ranked'  => $page['ranked'],
 					'as_of'   => $page['as_of'],
 					// What the totals are OF, or they read as the site's.

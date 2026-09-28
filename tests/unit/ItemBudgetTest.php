@@ -298,7 +298,7 @@ class ItemBudgetTest extends TestCase {
 		self::assert_fits_both( $index, 'a server index of the longest names, every shard named' );
 	}
 
-	// ----- urlrank_s / urlrank_sh -----
+	// ----- urlrank_s / urlrank_sh, and urlhdr / urlhdr_h beside them -----
 
 	public function test_a_ranked_hour_list_of_the_longest_paths_fits_the_item_budget(): void {
 		$rows = [];
@@ -309,7 +309,11 @@ class ItemBudgetTest extends TestCase {
 		$writes = Stats_Store::ranked_writes( [ self::SEED_SERVER => $rows ], true, '2026-09-22-10' );
 
 		// A count, not the lists: an assertion exports its value, megabytes here.
-		$this->assertSame( \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ), \count( $writes ) );
+		$this->assertSame(
+			\count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ) + 2,
+			\count( $writes ),
+			'the lists, the server\'s header record and the site\'s'
+		);
 		foreach ( $writes as [ $parts, , $entries ] ) {
 			self::assert_fits_both( $entries, \implode( ':', $parts ) );
 		}

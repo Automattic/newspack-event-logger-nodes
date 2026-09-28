@@ -1021,9 +1021,9 @@ class PerformanceCITest extends TestCase {
 	 * 288 five-minute buckets it used to enumerate — plus the server index,
 	 * read once per reply rather than once per shard.
 	 *
-	 * The header this scope's ranked pages take their totals from is not
-	 * cached either, so `urls`' default page folds — this same per-shard walk
-	 * — and answers from that fold, reading no ranked list at all.
+	 * The hours name a server and hold no header record, so the header
+	 * reads one record an hour, finds the hole, and `urls`' default page
+	 * folds — this same per-shard walk — reading no ranked list at all.
 	 */
 	public function test_a_folded_window_reads_two_tiers_not_every_bucket(): void {
 		$memd = Core::$memd;
@@ -1042,9 +1042,9 @@ class PerformanceCITest extends TestCase {
 		$this->assertLessThan( 48, $per_shard, 'two tiers, not 288 buckets' );
 		// Only the hours name a server, so only they hold row keys to read.
 		$this->assertSame(
-			\count( $plan['hours'] ) * Stats_Store::URL_SHARDS + $per_shard,
+			\count( $plan['hours'] ) * ( Stats_Store::URL_SHARDS + 1 ) + $per_shard,
 			$memd->multi_keys,
-			'a folded window reads no fine bucket behind the recent tail, no list, and each index once'
+			'a folded window reads no fine bucket behind the recent tail, no list, a record an hour, and each index once'
 		);
 	}
 
@@ -4877,7 +4877,7 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
-	public function test_the_header_miss_answers_from_its_fold_and_the_next_page_reads_the_lists(): void {
+	public function test_a_header_hole_answers_from_its_fold_and_the_next_page_reads_the_lists(): void {
 		$this->activate_shipped_topology( 'performance', 3 );
 		// Two commands date themselves independently, so pin the clock both
 		// read: unpinned, a page built either side of a second reports two.
@@ -4898,6 +4898,8 @@ class PerformanceCITest extends TestCase {
 				'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 9, 'last_seen' => $now ],
 			] );
 			$this->seed_hour_lists();
+			// The bucket's lists stand and its site record is gone: a hole.
+			$store->bucket_forget( Stats_Store::url_header_parts( '', false ), $bucket );
 			[ $fire, $reads, $restore ] = $this->counting_urls_fire();
 			try {
 				// The header had to be folded, and that fold IS this page: the
@@ -4932,6 +4934,91 @@ class PerformanceCITest extends TestCase {
 		} finally {
 			Core::$clock = $previous;
 			Core::$now   = $ticked;
+		}
+	}
+
+	/**
+	 * Seed two buckets as the writer leaves them — rows, index, lists and
+	 * header records — the older one inside the last-hour rate, plus every
+	 * planned hour, and pin the clock both commands read.
+	 *
+	 * @return array{0: Stats_Store, 1: string, 2: \Closure(): void} The store,
+	 *         the older bucket, and the clock's restore.
+	 */
+	private function seed_recorded_window(): array {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$now      = self::tick();
+		$previous = Core::$clock;
+		$ticked   = Core::$now;
+		Core::$clock = static fn (): float => (float) $now;
+		Core::right_now();
+		$store   = new Stats_Store( 1, 86400 );
+		$recent  = Stats_Store::bucket_key( $now - Stats_Store::BUCKET_SECONDS );
+		$wombat  = [ 'url' => 'https://kea.test/wombat-7731', 'last_seen' => $now ];
+		$buckets = [
+			$recent                         => [
+				'b7731ce0fa11'         => $wombat + [ 'count' => 17, 'timed_count' => 13, 'sum_ms' => 390.0, 'sum_peak_mb' => 51.0 ],
+				Stats_Store::OTHER_KEY => [ 'count' => 6, 'timed_count' => 4, 'sum_ms' => 20.0, 'sum_peak_mb' => 3.0, 'last_seen' => $now ],
+			],
+			Stats_Store::bucket_key( $now ) => [
+				'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 1000.0, 'sum_peak_mb' => 10.0, 'last_seen' => $now ],
+				'b7731ce0fa11' => $wombat + [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 60.0, 'sum_peak_mb' => 4.0 ],
+			],
+		];
+		foreach ( $buckets as $bucket => $rows ) {
+			$this->set_url_bucket( $store, $bucket, $rows );
+			$this->set_url_rank_lists( $store, $bucket, $rows );
+		}
+		$this->seed_hour_lists();
+		return [
+			$store,
+			$recent,
+			static function () use ( $previous, $ticked ): void {
+				Core::$clock = $previous;
+				Core::$now   = $ticked;
+			},
+		];
+	}
+
+	public function test_the_url_header_sums_the_writer_s_records_and_folds_nothing(): void {
+		[ , , $unpin ]              = $this->seed_recorded_window();
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=50' );
+
+			$this->assertSame( 0, $reads(), 'no shard of the index was read' );
+			$this->assertTrue( $page['ranked'] );
+			$this->assertTrue( $page['estimated'], 'the URL count is the sketch\'s' );
+			$this->assertSame( 2, $page['totals']['urls'], 'wombat-7731 counts once across its two buckets' );
+			$this->assertSame( 3, $page['rows'], 'and the Other row is a row' );
+			$this->assertSame( 30, $page['totals']['requests'] );
+			$this->assertEqualsWithDelta( 1470.0 / 24, $page['totals']['avg_ms'], 0.0001 );
+			$this->assertEqualsWithDelta( 68.0 / 30, $page['totals']['avg_peak_mb'], 0.0001 );
+			$this->assertEqualsWithDelta( 23 / 3600, $page['totals']['requests_per_second'], 0.0001, 'the older bucket alone is inside the rate' );
+			$this->assertSame( [ 'c8842df1ab90', 'b7731ce0fa11' ], \array_column( $page['slowest'], 'hash' ) );
+			$this->assertEqualsWithDelta( 450.0 / 15, $page['slowest'][1]['avg_ms'], 0.0001, 'weighted by request across the lists it made' );
+			$this->assertSame( 'https://kea.test/kiwi-8842', $page['slowest'][0]['url'] );
+		} finally {
+			$restore();
+			$unpin();
+		}
+	}
+
+	public function test_a_record_missing_from_the_fine_tail_takes_the_header_back_to_the_fold(): void {
+		[ $store, $recent, $unpin ] = $this->seed_recorded_window();
+		$store->bucket_forget( Stats_Store::url_header_parts( '', false ), $recent );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=50' );
+
+			$this->assertGreaterThan( 0, $reads(), 'a window summed short would read as the site\'s' );
+			$this->assertFalse( $page['ranked'] );
+			$this->assertFalse( $page['estimated'], 'the fold counts exactly' );
+			$this->assertSame( 2, $page['totals']['urls'] );
+			$this->assertSame( 30, $page['totals']['requests'] );
+		} finally {
+			$restore();
+			$unpin();
 		}
 	}
 
@@ -5034,9 +5121,11 @@ class PerformanceCITest extends TestCase {
 			$this->assertSame( [ 'c8842df1ab90' ], \array_column( $page['data'], 'hash' ) );
 			$this->assertSame( 3, $page['data'][0]['count'], 'the server\'s own list, not the site\'s count' );
 			$this->assertSame( 3, $page['totals']['requests'] );
+			// No index names tui.test: idle in every key, lists and records alike.
 			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--server=tui.test' );
-			$this->assertFalse( $page['ranked'], 'no list for that server: the fold answers' );
+			$this->assertTrue( $page['ranked'] );
 			$this->assertSame( [], $page['data'] );
+			$this->assertSame( 0, $page['totals']['requests'] );
 		} finally {
 			$restore();
 		}
@@ -5281,9 +5370,10 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * Fold the header a scope's ranked pages take their totals from, so the
-	 * poll after it reads the lists. The poll that MISSES the header answers
-	 * from the fold it had to run, and its page is thrown away here.
+	 * Build the header a scope's ranked pages take their totals from, so the
+	 * poll after it reads the lists: from the records, or from the fold where
+	 * one is missing, whose poll answers with the page it folded. That page
+	 * is thrown away here.
 	 *
 	 * @param \Closure(string ...$args): array<string,mixed> $fire  The runner `counting_urls_fire()` returns.
 	 * @param string                                        ...$args Options naming the scope.
@@ -6327,7 +6417,6 @@ class PerformanceCITest extends TestCase {
 		[ $fire, , $restore ] = $this->counting_urls_fire();
 		try {
 			$entries = $this->logged( function () use ( $fire ): void {
-				$this->warm_url_header( $fire );
 				$this->assertTrue( $fire( '--sort=count', '--order=desc', '--limit=100' )['ranked'] );
 			} );
 		} finally {

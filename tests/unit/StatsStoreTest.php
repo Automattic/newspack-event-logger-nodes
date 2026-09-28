@@ -4,6 +4,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Event_Logger_Nodes\Url_Sketch;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
@@ -1554,9 +1555,10 @@ class StatsStoreTest extends TestCase {
 		$hash   = '123456789012';
 		$row    = self::positional_url_row( [ 'count' => 17, 'timed_count' => 2, 'sum_ms' => 34.0, 'min_ms' => 15.0, 'max_ms' => 19.0, 'last_seen' => 1758500017, 'path' => '/digits-1701' ] );
 		$writes = Stats_Store::ranked_writes( [ 'kea.test' => [ $hash => $row ] ], false, '2026-09-22-14-05' );
-		$this->assertNotEmpty( $writes );
-		foreach ( $writes as [ $parts, , $entries ] ) {
-			$this->assertSame( [ $hash ], \array_column( $entries, Stats_Store::RANK_HASH ), \implode( ':', $parts ) );
+		$lists = self::ranked_lists( $writes )[ Stats_Store::server_key( 'kea.test' ) ];
+		$this->assertCount( 14, $lists );
+		foreach ( $lists as $list => $entries ) {
+			$this->assertSame( [ $hash ], \array_column( $entries, Stats_Store::RANK_HASH ), $list );
 		}
 	}
 
@@ -1632,6 +1634,54 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( '/kea-13', $lists[ Stats_Store::server_key( 'kea.test' ) ]['url:asc'][0][ Stats_Store::RANK_PATH ] );
 	}
 
+	public function test_ranked_writes_keep_a_header_record_of_every_reader_row(): void {
+		// The Other row never ranks, but its requests are real: the header
+		// sums it and says it was there. A worker row is no reader row.
+		$kea    = [
+			'a7a7a7a7a7a7'         => self::positional_url_row( [ 'count' => 41, 'timed_count' => 37, 'sum_ms' => 410.5, 'sum_peak_mb' => 82.25, 'path' => '/kea-41' ] ),
+			'b8b8b8b8b8b8'         => self::positional_url_row( [ 'count' => 13, 'timed_count' => 11, 'sum_ms' => 130.25, 'sum_peak_mb' => 26.5, 'path' => '/kea-13' ] ),
+			Stats_Store::OTHER_KEY => self::positional_url_row( [ 'count' => 9, 'timed_count' => 7, 'sum_ms' => 63.75, 'sum_peak_mb' => 4.5 ] ),
+			'e5e5e5e5e5e5'         => self::positional_url_row( [ 'count' => 1000, 'timed_count' => 1000, 'sum_ms' => 9e6, 'worker' => true, 'path' => '/cron' ] ),
+		];
+		$moa    = [ 'c9c9c9c9c9c9' => self::positional_url_row( [ 'count' => 6, 'timed_count' => 5, 'sum_ms' => 60.125, 'sum_peak_mb' => 3.0, 'path' => '/moa-6' ] ) ];
+		$writes = Stats_Store::ranked_writes( [ 'kea.test' => $kea, 'moa.test' => $moa ], false, '2026-09-22-14-05' );
+
+		$record = static function ( string $server ) use ( $writes ): array {
+			foreach ( $writes as [ $parts, $key, $value ] ) {
+				if ( Stats_Store::url_header_parts( $server, false ) === $parts ) {
+					self::assertSame( '2026-09-22-14-05', $key );
+					return $value;
+				}
+			}
+			self::fail( "no header record for '{$server}'" );
+		};
+		$this->assertSame(
+			[
+				Stats_Store::HDR_COUNT       => 63,
+				Stats_Store::HDR_TIMED_COUNT => 55,
+				Stats_Store::HDR_SUM_MS      => 604.5,
+				Stats_Store::HDR_SUM_PEAK_MB => 113.25,
+				Stats_Store::HDR_HAS_OTHER   => true,
+				Stats_Store::HDR_URLS        => Url_Sketch::of( [ 'a7a7a7a7a7a7', 'b8b8b8b8b8b8' ] ),
+			],
+			$record( 'kea.test' )
+		);
+		$this->assertFalse( $record( 'moa.test' )[ Stats_Store::HDR_HAS_OTHER ] );
+		$this->assertSame(
+			[
+				Stats_Store::HDR_COUNT       => 69,
+				Stats_Store::HDR_TIMED_COUNT => 60,
+				Stats_Store::HDR_SUM_MS      => 664.625,
+				Stats_Store::HDR_SUM_PEAK_MB => 116.25,
+				Stats_Store::HDR_HAS_OTHER   => true,
+				Stats_Store::HDR_URLS        => Url_Sketch::of( [ 'a7a7a7a7a7a7', 'b8b8b8b8b8b8', 'c9c9c9c9c9c9' ] ),
+			],
+			$record( '' ),
+			'the site record is the union of the servers\''
+		);
+		$this->assertSame( Stats_Store::NS_URLHDR_HOUR, Stats_Store::url_header_parts( 'kea.test', true )[0] );
+	}
+
 	public function test_ranked_writes_carry_one_triple_per_list_of_each_server(): void {
 		$rows   = [
 			'a7a7a7a7a7a7' => self::positional_url_row( [ 'count' => 47, 'timed_count' => 2, 'sum_ms' => 88.0, 'sum_peak_mb' => 17.0, 'min_ms' => 41.0, 'max_ms' => 47.0, 'last_seen' => 1758500047, 'path' => '/kakapo-4417' ] ),
@@ -1645,8 +1695,10 @@ class StatsStoreTest extends TestCase {
 				$expected[] = Stats_Store::url_rank_parts( $sort, $order, 'takahe.test', true );
 			}
 		}
-		$this->assertSame( $expected, \array_column( $writes, 0 ), 'the server\'s fourteen, nothing else' );
-		$this->assertSame( \array_fill( 0, 14, '2026-09-22-14' ), \array_column( $writes, 1 ) );
+		$expected[] = Stats_Store::url_header_parts( 'takahe.test', true );
+		$expected[] = Stats_Store::url_header_parts( '', true );
+		$this->assertSame( $expected, \array_column( $writes, 0 ), 'the server\'s fourteen and its record, then the site\'s' );
+		$this->assertSame( \array_fill( 0, 16, '2026-09-22-14' ), \array_column( $writes, 1 ) );
 		// The entries are the ranker's, list for list.
 		$this->assertSame(
 			self::rank_url_rows( $rows, Stats_Store::URL_RANK_N_HOUR )['count']['desc'],
@@ -1993,6 +2045,57 @@ class StatsStoreTest extends TestCase {
 		);
 	}
 
+	public function test_the_derived_probe_names_an_hour_that_lost_a_header_record(): void {
+		// A missing record is a hole the reader folds over, so the probe
+		// re-ranks the hour, which writes it back.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hour       = '2026-09-21-16';
+		self::seed_folded_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
+		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
+		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
+
+		$store->bucket_forget( Stats_Store::url_header_parts( 'moa.test', true ), $hour );
+		$this->assertSame(
+			[ $hour => [ 'folded' => true, 'unranked' => [ 'moa.test' ] ] ],
+			$store->url_hours_derived( [ $hour ], self::PROBE_NOW ),
+			'the server\'s record'
+		);
+
+		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
+		$store->bucket_forget( Stats_Store::url_header_parts( '', true ), $hour );
+		$this->assertSame(
+			[ $hour => [ 'folded' => true, 'unranked' => [ 'kea.test' ] ] ],
+			$store->url_hours_derived( [ $hour ], self::PROBE_NOW ),
+			'the site\'s record, which re-ranking any server of the hour rewrites'
+		);
+	}
+
+	public function test_the_fine_probe_names_each_bucket_that_lost_a_record_or_a_list(): void {
+		// A fine list evicted after its last ranking stayed missing: nothing
+		// asked. A bucket its index names no server in wrote nothing to lose.
+		$mc      = $this->seed_memd();
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$buckets = [ '2026-09-21-22-35', '2026-09-21-22-40', '2026-09-21-22-45', '2026-09-21-22-50' ];
+		$rows    = [ 'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 29, 'path' => '/kea-29' ] ) ];
+		foreach ( \array_slice( $buckets, 0, 3 ) as $bucket ) {
+			$store->bucket_set_multi( [
+				...Stats_Store::ranked_writes( [ 'kea.test' => $rows, 'moa.test' => $rows ], false, $bucket ),
+				[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test', 'moa.test' ] ) ],
+			] );
+		}
+		$store->bucket_forget( Stats_Store::url_header_parts( 'moa.test', false ), $buckets[0] );
+		$store->bucket_forget( Stats_Store::url_rank_parts( 'max_ms', 'desc', 'kea.test', false ), $buckets[2] );
+		$mc->touches = 0;
+
+		$this->assertSame( [ $buckets[0], $buckets[2] ], $store->url_buckets_unranked( $buckets, self::PROBE_NOW ) );
+		$this->assertSame(
+			( 1 + 1 + 14 + 1 ) + ( 1 + 15 + 15 ) + ( 1 + 1 + 10 ),
+			$mc->touches,
+			'up to moa.test\'s missing record, every key of a whole bucket, up to kea.test\'s tenth list'
+		);
+	}
+
 	public function test_the_derived_probe_holds_a_list_it_finds_to_the_hour_s_window(): void {
 		// Finding a list refreshes it, which keeps it off the LRU tail; the
 		// refresh lasts until the hour's last bucket leaves the window, not a
@@ -2087,7 +2190,7 @@ class StatsStoreTest extends TestCase {
 		$found = $store->url_hours_derived( [ $hour ], self::PROBE_NOW );
 
 		$this->assertSame( [ 'folded' => true, 'unranked' => [ 'kea.test' ] ], $found[ $hour ] );
-		$this->assertSame( 3, $mc->touches, 'count asc, count desc, then the missing url asc; moa.test is never asked' );
+		$this->assertSame( 5, $mc->touches, 'the site\'s record, kea.test\'s, count asc, count desc, then the missing url asc; moa.test is never asked' );
 	}
 
 	public function test_a_touch_the_backend_does_not_answer_names_no_server_and_stops_the_hour(): void {
@@ -2100,13 +2203,14 @@ class StatsStoreTest extends TestCase {
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		$store->bucket_forget( Stats_Store::url_rank_parts( 'url', 'asc', 'moa.test', true ), $hour );
-		$first = Stats_Store::key( ...[ ...Stats_Store::url_rank_parts( Stats_Store::URL_SORTS[0], Stats_Store::URL_ORDERS[0], 'kea.test', true ), $hour ] );
+		// The site's record is the first thing a probe touches.
+		$first = Stats_Store::key( ...[ ...Stats_Store::url_header_parts( '', true ), $hour ] );
 		$mc->fail_touch( self::cache_key( 0, $first ), \Memcached::RES_TIMEOUT );
 
 		$found = $store->url_hours_derived( [ $hour ], self::PROBE_NOW );
 
 		$this->assertSame( [ 'folded' => true, 'unranked' => [] ], $found[ $hour ] );
-		$this->assertSame( 1, $mc->touches, 'no list after the unanswered one is asked' );
+		$this->assertSame( 1, $mc->touches, 'nothing after the unanswered touch is asked' );
 	}
 
 	public function test_an_hour_missing_one_server_s_shard_is_not_folded(): void {
@@ -2130,6 +2234,14 @@ class StatsStoreTest extends TestCase {
 		$m     = new \ReflectionMethod( $store, 'ttl_for' );
 		$this->assertSame( $store->ttl_url_fine(), $m->invoke( $store, Stats_Store::NS_URLRANK_S ) );
 		$this->assertSame( $store->ttl(), $m->invoke( $store, Stats_Store::NS_URLRANK_HOUR_S ) );
+		$this->assertSame( $store->ttl_url_fine(), $m->invoke( $store, Stats_Store::NS_URLHDR ), 'a record lives as long as its lists' );
+		$this->assertSame( $store->ttl(), $m->invoke( $store, Stats_Store::NS_URLHDR_HOUR ) );
+	}
+
+	public function test_the_header_records_are_derived_and_never_mirrored(): void {
+		// Rebuilt from the mirrored `urls` rows whenever the lists are.
+		$this->assertTrue( Stats_Store::is_derived( Stats_Store::NS_URLHDR ) );
+		$this->assertTrue( Stats_Store::is_derived( Stats_Store::NS_URLHDR_HOUR ) );
 	}
 
 	public function test_term_tokens_are_lowercase_alphanumeric_runs_of_two_or_more(): void {
@@ -2294,7 +2406,8 @@ class StatsStoreTest extends TestCase {
 	}
 
 	/**
-	 * `ranked_writes()` triples as server key => `sort:order` => entries.
+	 * `ranked_writes()` lists as server key => `sort:order` => entries,
+	 * leaving out the header records beside them.
 	 *
 	 * @param list<array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes
 	 * @return array<string,array<string,array<array-key,mixed>>>
@@ -2302,6 +2415,9 @@ class StatsStoreTest extends TestCase {
 	private static function ranked_lists( array $writes ): array {
 		$lists = [];
 		foreach ( $writes as [ $parts, , $entries ] ) {
+			if ( \in_array( $parts[0], [ Stats_Store::NS_URLHDR, Stats_Store::NS_URLHDR_HOUR ], true ) ) {
+				continue;
+			}
 			$lists[ $parts[1] ][ $parts[ \count( $parts ) - 2 ] . ':' . $parts[ \count( $parts ) - 1 ] ] = $entries;
 		}
 		return $lists;

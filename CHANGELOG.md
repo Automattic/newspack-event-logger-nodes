@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The flame builder keeps the URL header, so no poll folds the index for it.** `Stats_Store::ranked_writes()` writes a header record beside each server's fourteen lists and one for the site after them, in the new derived, unmirrored namespaces `urlhdr` (fine) and `urlhdr_h` (hour): the request, timed-request, milliseconds and peak-memory sums over every reader row, the `Other` overflow row included, whether one was there, and a `Url_Sketch` of the URLs, a 16KB HyperLogLog at precision 14 whose registers merge by per-register max. `url_header()` sums the records over the read plan instead of folding the whole index, which on the eln staging hub spent 26–42 seconds of CPU over 757,445 rows on the first poll after every five-minute boundary. A record missing where a key's index names the scope is a hole, and the header folds, as it did before. Filtered pages still fold.
+- **The `urls` reply carries `estimated`**, true when its header came from the records: `totals.urls` is then an estimate, about 0.8% standard error, and the dashboard marks it `≈`.
+- **The fine tier is probed.** At a worker's first flush and at every reprobe the flame builder touches each closed bucket of the read plan's fine tail, its header records and lists, and re-ranks a bucket that lost one from its stored rows. A fine list evicted after its bucket's last ranking used to stay missing. The hour probe touches the hour's header records beside its lists.
+
 ### Changed
 
 - **A verb span's `(start)` line is the full command line.** Where it carried only the interpreter's name, it now reads as the REPL echoes it — `/performance> overview --categories --breakdown=server` — rendered by the substrate's `$around_dispatch` closure. A verb whose schema declares any argument `secret` — only `vault add` and `vault update`, on `--password` — logs `--password=<redacted>` and every other token verbatim. A logged dispatch runs whatever arguments it was handed, a nested or keyed array included, where the renderer used to throw a `TypeError` and fail a verb that ran unlogged. The line renders only once a logger has started, so an unlogged REST call or worker-boot statement pays nothing for it, and a wrapper assigned before this one receives the same closure unrendered. A substrate that hands none leaves the interpreter's name, so the loader's floor stays 2.69.0. The request detail's folded row puts the `(complete)` line below the command rather than beside it.

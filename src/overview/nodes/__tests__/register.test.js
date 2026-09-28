@@ -149,6 +149,7 @@ describe( 'UrlsView — the envelope slice', () => {
 			slowest: [],
 			filters: null,
 			ranked: false,
+			estimated: false,
 			as_of: 0,
 			loading: false,
 			error: null,
@@ -175,13 +176,14 @@ describe( 'UrlsView — the envelope slice', () => {
 			slowest: [ { url: '/slow', avg_ms: 2600 } ],
 			filters: { server: 'edge-01', search: '', errors_only: false },
 			ranked: false,
+			estimated: false,
 			as_of: 0,
 			loading: false,
 			error: null,
 		} );
 	} );
 
-	test( 'carries ranked and as_of off the reply when present', () => {
+	test( 'carries ranked, estimated and as_of off the reply when present', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
 		v.fill(
 			reply( 'urls', {
@@ -191,11 +193,13 @@ describe( 'UrlsView — the envelope slice', () => {
 				slowest: [],
 				filters: null,
 				ranked: true,
+				estimated: true,
 				as_of: 1758500000,
 			} )
 		);
 
 		expect( v.view.ranked ).toBe( true );
+		expect( v.view.estimated ).toBe( true );
 		expect( v.view.as_of ).toBe( 1758500000 );
 	} );
 

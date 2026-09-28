@@ -1324,6 +1324,57 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 11, $list[0][1][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] );
 	}
 
+	public function test_a_first_flush_re_ranks_a_closed_fine_bucket_whose_record_is_missing(): void {
+		// Rows written before the records existed, or a record evicted after
+		// its bucket's last ranking: nothing writes that bucket again, so the
+		// probe is what puts it back. Seeds distinct from every default.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$bucket     = Stats_Store::bucket_key( $now - 600 );
+		$this->set_url_bucket( $store, $bucket, [
+			'b3b3b3b3b3b3' => [ 'url' => 'https://kea.test/pukeko-23', 'count' => 23, 'timed_count' => 19, 'sum_ms' => 437.0, 'last_seen' => $now - 600 ],
+		] );
+		$record = static fn (): ?array => $store->bucket_get_multi( [ [ Stats_Store::url_header_parts( '', false ), $bucket ] ] )[0];
+		$this->assertNull( $record() );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		Core::$now = $now;
+		$fb->flush();
+
+		$this->assertSame( 23, $record()[ Stats_Store::HDR_COUNT ] ?? null, 'ranked from its stored rows' );
+		$this->assertSame( 437.0, $record()[ Stats_Store::HDR_SUM_MS ] ?? null );
+		$this->assertSame( [], ( new \ReflectionProperty( $fb, 'rank_pending' ) )->getValue( $fb ) );
+	}
+
+	public function test_the_fine_probe_asks_again_at_the_reprobe_and_not_between(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$bucket     = Stats_Store::bucket_key( $now - 600 );
+		$this->set_url_bucket( $store, $bucket, [
+			'c4c4c4c4c4c4' => [ 'url' => 'https://kea.test/tieke-31', 'count' => 31, 'last_seen' => $now - 600 ],
+		] );
+		$record = static fn (): ?array => $store->bucket_get_multi( [ [ Stats_Store::url_header_parts( self::SEED_SERVER, false ), $bucket ] ] )[0];
+		$fb     = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		Core::$now = $now;
+		$fb->flush();
+		$store->bucket_forget( Stats_Store::url_header_parts( self::SEED_SERVER, false ), $bucket );
+
+		Core::$now = $now + 5;
+		$fb->flush();
+		$this->assertNull( $record(), 'between reprobes the fine tier is not probed' );
+
+		// The flush that empties the hour memo probes the fine tail too.
+		$every = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'REPROBE_EVERY_FLUSHES' ) )->getValue();
+		( new \ReflectionProperty( $fb, 'folds_since_reprobe' ) )->setValue( $fb, $every - 1 );
+		Core::$now = $now + Stats_Store::URL_PAGE_REFRESH_S + 5;
+		$fb->flush();
+		$this->assertSame( 31, $record()[ Stats_Store::HDR_COUNT ] ?? null );
+	}
+
 	public function test_a_closed_bucket_the_cadence_deferred_ranks_on_a_later_flush(): void {
 		// A flush inside `RANK_EVERY_S` of the last ranking defers the bucket
 		// and drops its collected rows. Nothing writes into that bucket once
@@ -5279,7 +5330,8 @@ class FlameBuilderTest extends TestCase {
 	 * runs every few seconds — asking per hour paid 23 trips to learn that,
 	 * against an API that takes a list (decision 6: per-key `get` is a
 	 * latency cliff). The lists are the one exception: memcached has no
-	 * batched touch, so each marked server's fourteen are touched apiece.
+	 * batched touch, so each marked server's fourteen are touched apiece,
+	 * with its header record and the hour's site record.
 	 */
 	public function test_the_rollup_probe_asks_once_for_every_hour(): void {
 		$memd       = new InMemoryMemcached();
@@ -5307,7 +5359,11 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame( 2, $memd->multi_calls, 'one probe for the whole window: its heads, then the rows they name' );
 		$this->assertSame( 0, $memd->get_calls, 'and nothing folded, so no per-key reads' );
-		$this->assertSame( \count( $hours ) * \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ), $memd->touches, 'one touch a list' );
+		$this->assertSame(
+			\count( $hours ) * ( \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ) + 2 ),
+			$memd->touches,
+			'one touch a list, one the server\'s record and one the site\'s'
+		);
 	}
 
 	/**
