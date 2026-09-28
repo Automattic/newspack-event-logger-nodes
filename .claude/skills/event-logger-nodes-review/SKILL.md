@@ -285,6 +285,13 @@ Two rules hold it, and a diff must keep both:
 
 **Rejected, on measurement, so it is not re-proposed.** A whole-window locator PREFETCH — present every key the window can name to `locate_by()` once, so its per-directory memo answers every batch behind it — is correct and does reduce 3,456 walks to one per partition. It was built and measured: end-to-end 1,708ms against 1,661ms for the budget alone, because `Log_Manager::url_hash()` is a hand-rolled FNV-1a run twice over each ~70-char scoped key, so hashing a window costs ~740ms across four partitions. It also tripled the PHP suite's runtime and pushed against the ADR-14 memory guard `test_the_urls_verb_does_not_hold_a_second_full_index`. **Reopen it if `url_hash()` ever becomes cheap** — the walk-count argument is sound and only the hashing made it a wash. Exhaustive locator indexing stays rejected outright: the mirror keeps a `urlmap:{hash}` key per URL, so a 668,918-URL hub is ~200MB of locators.
 
+### 28. Which clock, and what a late stamp does
+
+- **Buckets key on UTC.** `Stats_Store::bucket_key()` formats with `gmdate()`, so DST never yields a 23- or 25-hour day and a bucket key never repeats. A diff that buckets through `date()`, `wp_date()` or a site timezone splits one instant across two keys twice a year.
+- **Durations are monotonic.** `Log_Manager`'s spans, `Flame_Builder_Node`'s mirror read budget and its narration's `ms`, and `wp nodes ruleset-bench` measure with `hrtime()`. A duration taken from `microtime()` or `Core::$now` goes negative or doubles when the wall clock steps.
+- **The hub files a stamp where it happened, never in the future.** `Flame_Builder_Node::fill()` clamps a record's completion stamp to its own `now` — a spoke's skewed clock or a bogus duration cannot file a future bucket readers never reach (decision 19) — files a late record under its own stamp rather than the arrival, and `hour_tier_intents()` merges a write into an hour it already folded into the coarse key the readers take. A backlog lands where it happened. A diff that files by arrival time, or drops a late record because its hour closed, loses exactly the backlog decision 19 keeps.
+- **A held absence is a value, not a deadline.** The absence `Stats_Store::absence_holds()` sizes is a memcached value under the key it answers for, so the next flush's write into that key replaces it; its TTL bounds only how long a reader skips the mirror walk.
+
 ## Service CI specifics
 
 Every dashboard endpoint is a verb on an `App\*_CI_Node` service CI, mounted on `newspack_nodes/request_graph_ready`. The MCP server below is this plugin's only `register_rest_route` call, so a second one needs a reason a service-CI verb cannot serve. This plugin owns THREE CIs:

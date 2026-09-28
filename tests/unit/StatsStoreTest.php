@@ -1999,7 +1999,7 @@ class StatsStoreTest extends TestCase {
 		$mc->asked = [];
 
 		$this->assertSame(
-			[ $hour => [ 'folded' => true, 'unranked' => [ 'kea.test' ] ] ],
+			[ $hour => [ 'missing' => null, 'unranked' => [ 'kea.test' ] ] ],
 			$store->url_hours_derived( [ $hour ] )
 		);
 		$this->assertSame( [ "{$kea}:d:{$hour}" ], self::asked_url_keys( $mc->asked, Stats_Store::NS_URLS_HOUR ) );
@@ -2028,9 +2028,9 @@ class StatsStoreTest extends TestCase {
 		] );
 		$this->assertSame(
 			[
-				'2026-09-21-07' => [ 'folded' => true, 'unranked' => [ 'kea.test' ] ],
-				'2026-09-21-08' => [ 'folded' => false, 'unranked' => [] ],
-				'2026-09-21-09' => [ 'folded' => false, 'unranked' => [ 'kea.test' ] ],
+				'2026-09-21-07' => [ 'missing' => null, 'unranked' => [ 'kea.test' ] ],
+				'2026-09-21-08' => [ 'missing' => 'missing index', 'unranked' => [] ],
+				'2026-09-21-09' => [ 'missing' => 'missing lb_h', 'unranked' => [ 'kea.test' ] ],
 			],
 			$store->url_hours_derived( [ '2026-09-21-07', '2026-09-21-08', '2026-09-21-09' ] )
 		);
@@ -2046,13 +2046,13 @@ class StatsStoreTest extends TestCase {
 		self::seed_ranked_hour( $store, '2026-09-21-11', [ 'kea.test' ] );
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), '2026-09-21-11', [] ] ] );
 		$this->assertSame(
-			[ '2026-09-21-11' => [ 'folded' => true, 'unranked' => [ 'moa.test' ] ] ],
+			[ '2026-09-21-11' => [ 'missing' => null, 'unranked' => [ 'moa.test' ] ] ],
 			$store->url_hours_derived( [ '2026-09-21-11' ] )
 		);
 
 		self::seed_ranked_hour( $store, '2026-09-21-11', [ 'moa.test' ] );
 		$this->assertSame(
-			[ '2026-09-21-11' => [ 'folded' => true, 'unranked' => [] ] ],
+			[ '2026-09-21-11' => [ 'missing' => null, 'unranked' => [] ] ],
 			$store->url_hours_derived( [ '2026-09-21-11' ] )
 		);
 	}
@@ -2068,7 +2068,7 @@ class StatsStoreTest extends TestCase {
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		$this->assertSame(
-			[ $hour => [ 'folded' => true, 'unranked' => [] ] ],
+			[ $hour => [ 'missing' => null, 'unranked' => [] ] ],
 			$store->url_hours_derived( [ $hour ] ),
 			'every marker standing'
 		);
@@ -2076,7 +2076,7 @@ class StatsStoreTest extends TestCase {
 
 		$store->bucket_forget( Stats_Store::url_rank_parts( 'last_updated', 'asc', 'moa.test', true ), $hour );
 
-		$this->assertSame( [ $hour ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'] );
+		$this->assertSame( [ $hour => 'lost list' ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'] );
 	}
 
 	public function test_the_derived_probe_names_an_hour_that_lost_a_header_record(): void {
@@ -2090,11 +2090,11 @@ class StatsStoreTest extends TestCase {
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 
 		$store->bucket_forget( Stats_Store::url_header_parts( 'moa.test', true ), $hour );
-		$this->assertSame( [ $hour ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'], 'the server\'s record' );
+		$this->assertSame( [ $hour => 'lost record' ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'], 'the server\'s record' );
 
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		$store->bucket_forget( Stats_Store::url_header_parts( '', true ), $hour );
-		$this->assertSame( [ $hour ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'], 'the site\'s record' );
+		$this->assertSame( [ $hour => 'lost record' ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'], 'the site\'s record' );
 	}
 
 	public function test_the_fine_probe_names_each_bucket_that_lost_a_record_or_a_list(): void {
@@ -2107,7 +2107,7 @@ class StatsStoreTest extends TestCase {
 		$mc->touches = 0;
 
 		$this->assertSame(
-			[ 'lost' => [ $buckets[0], $buckets[2] ], 'left' => [], 'at' => 0 ],
+			[ 'lost' => [ $buckets[0] => 'lost record', $buckets[2] => 'lost list' ], 'left' => [], 'at' => 0, 'touched' => 102, 'unanswered' => false ],
 			$store->url_keys_unranked( $buckets, false, 0, 1000, self::PROBE_NOW )
 		);
 		$this->assertSame(
@@ -2127,7 +2127,7 @@ class StatsStoreTest extends TestCase {
 		$mc->touches = 0;
 
 		$probe = $store->url_keys_unranked( $buckets, false, 0, 20, self::PROBE_NOW );
-		$this->assertSame( [ 'lost' => [], 'left' => $buckets, 'at' => 20 ], $probe );
+		$this->assertSame( [ 'lost' => [], 'left' => $buckets, 'at' => 20, 'touched' => 20, 'unanswered' => false ], $probe );
 		$this->assertSame( 20, $mc->touches );
 
 		$lost  = $probe['lost'];
@@ -2139,7 +2139,7 @@ class StatsStoreTest extends TestCase {
 			$this->assertLessThanOrEqual( 20, $mc->touches - $before );
 			++$calls;
 		}
-		$this->assertSame( [ $buckets[0], $buckets[2] ], $lost, 'a miss past the first call still names its bucket' );
+		$this->assertSame( [ $buckets[0] => 'lost record', $buckets[2] => 'lost list' ], $lost, 'a miss past the first call still names its bucket' );
 		$this->assertSame( ( 15 + 15 + 1 ) + ( 15 + 15 + 15 ) + ( 15 + 1 + 10 ), $mc->touches, 'no key asked twice' );
 		$this->assertSame( 6, $calls, '102 touches at 20 a call' );
 	}
@@ -2217,7 +2217,7 @@ class StatsStoreTest extends TestCase {
 		] );
 
 		$this->assertSame( [ $bucket => null ], $store->url_headers( [], [ $bucket ], 'kea.test' ) );
-		$this->assertSame( [ $bucket ], $store->url_keys_unranked( [ $bucket ], false, 0, 100, self::PROBE_NOW )['lost'] );
+		$this->assertSame( [ $bucket => 'lost record' ], $store->url_keys_unranked( [ $bucket ], false, 0, 100, self::PROBE_NOW )['lost'] );
 	}
 
 	public function test_a_record_of_another_shape_reads_missing_and_the_probe_names_its_bucket(): void {
@@ -2241,7 +2241,7 @@ class StatsStoreTest extends TestCase {
 		] );
 
 		$this->assertSame( [ $bucket => null ], $store->url_headers( [], [ $bucket ], 'kea.test' ) );
-		$this->assertSame( [ $bucket ], $store->url_keys_unranked( [ $bucket ], false, 0, 100, self::PROBE_NOW )['lost'], 'missing, so the probe heals it' );
+		$this->assertSame( [ $bucket => 'lost record' ], $store->url_keys_unranked( [ $bucket ], false, 0, 100, self::PROBE_NOW )['lost'], 'missing, so the probe heals it' );
 	}
 
 	public function test_the_derived_probe_holds_a_list_it_finds_to_the_hour_s_window(): void {
@@ -2304,7 +2304,7 @@ class StatsStoreTest extends TestCase {
 
 		$found = $store->url_hours_derived( [ $hour ] );
 
-		$this->assertSame( [ 'folded' => false, 'unranked' => [] ], $found[ $hour ] );
+		$this->assertSame( [ 'missing' => 'missing shard', 'unranked' => [] ], $found[ $hour ] );
 		$this->assertSame( 0, $mc->touches );
 	}
 
@@ -2320,7 +2320,7 @@ class StatsStoreTest extends TestCase {
 
 		$found = $store->url_hours_derived( [ $hour ] );
 
-		$this->assertSame( [ 'folded' => true, 'unranked' => [ 'moa.test' ] ], $found[ $hour ] );
+		$this->assertSame( [ 'missing' => null, 'unranked' => [ 'moa.test' ] ], $found[ $hour ] );
 		$this->assertSame( 0, $mc->touches );
 	}
 
@@ -2337,7 +2337,7 @@ class StatsStoreTest extends TestCase {
 
 		$found = $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW );
 
-		$this->assertSame( [ $hour ], $found['lost'] );
+		$this->assertSame( [ $hour => 'lost list' ], $found['lost'] );
 		$this->assertSame( 15 + 4, $mc->touches, 'the site\'s record and lists, kea.test\'s record, count asc, count desc, then the missing url asc; moa.test is never asked' );
 	}
 
@@ -2357,7 +2357,7 @@ class StatsStoreTest extends TestCase {
 
 		$found = $store->url_keys_unranked( [ $hour, '2026-09-21-18' ], true, 0, 1000, self::PROBE_NOW );
 
-		$this->assertSame( [ 'lost' => [], 'left' => [], 'at' => 0 ], $found, 'no cursor to hold a flush every tick' );
+		$this->assertSame( [ 'lost' => [], 'left' => [], 'at' => 0, 'touched' => 1, 'unanswered' => true ], $found, 'no cursor to hold a flush every tick' );
 		$this->assertSame( 1, $mc->touches, 'nothing after the unanswered touch is asked' );
 	}
 
@@ -2377,7 +2377,7 @@ class StatsStoreTest extends TestCase {
 		$mc->touches = 0;
 
 		$probe = $store->url_keys_unranked( [ $hour ], true, 0, 97, self::PROBE_NOW );
-		$this->assertSame( [ 'lost' => [], 'left' => [ $hour ], 'at' => 97 ], $probe );
+		$this->assertSame( [ 'lost' => [], 'left' => [ $hour ], 'at' => 97, 'touched' => 97, 'unanswered' => false ], $probe );
 		$calls = 1;
 		while ( [] !== $probe['left'] ) {
 			$before = $mc->touches;
@@ -2385,7 +2385,7 @@ class StatsStoreTest extends TestCase {
 			$this->assertLessThanOrEqual( 97, $mc->touches - $before );
 			++$calls;
 		}
-		$this->assertSame( [ $hour ], $probe['lost'] );
+		$this->assertSame( [ $hour => 'lost list' ], $probe['lost'] );
 		// Up to weka-19's max_ms asc: the site's 15, 19 servers' 15, then 10.
 		$this->assertSame( 15 + 19 * 15 + 10, $mc->touches, 'no key asked twice' );
 		$this->assertSame( 4, $calls );
@@ -2407,7 +2407,7 @@ class StatsStoreTest extends TestCase {
 
 		$probe = $store->url_keys_unranked( $hours, true, 5, 59, self::PROBE_NOW );
 
-		$this->assertSame( [ 'lost' => [], 'left' => $hours, 'at' => 5 ], $probe, 'the next flush asks the slice again, from the same touch' );
+		$this->assertSame( [ 'lost' => [], 'left' => $hours, 'at' => 5, 'touched' => 0, 'unanswered' => false ], $probe, 'the next flush asks the slice again, from the same touch' );
 		$this->assertSame( 0, $mc->touches, 'nothing past the failed read is asked' );
 	}
 
@@ -2494,7 +2494,7 @@ class StatsStoreTest extends TestCase {
 
 		$probe = $store->url_keys_unranked( $hours, true, 0, 97, self::PROBE_NOW );
 
-		$this->assertSame( [ 'lost' => [], 'left' => \array_slice( $hours, 3 ), 'at' => 7 ], $probe );
+		$this->assertSame( [ 'lost' => [], 'left' => \array_slice( $hours, 3 ), 'at' => 7, 'touched' => 97, 'unanswered' => false ], $probe );
 		$this->assertLessThanOrEqual( 4, $mc->multi_keys, 'the indexes of the four hours it touches' );
 	}
 
@@ -2507,11 +2507,11 @@ class StatsStoreTest extends TestCase {
 		$hour       = '2026-09-21-13';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
-		$this->assertTrue( $store->url_hours_derived( [ $hour ] )[ $hour ]['folded'] );
+		$this->assertNull( $store->url_hours_derived( [ $hour ] )[ $hour ]['missing'] );
 
 		$store->bucket_forget( Stats_Store::url_hour_parts( Stats_Store::server_key( 'moa.test' ), 'w7' ), $hour );
 
-		$this->assertFalse( $store->url_hours_derived( [ $hour ] )[ $hour ]['folded'] );
+		$this->assertSame( 'missing shard', $store->url_hours_derived( [ $hour ] )[ $hour ]['missing'] );
 	}
 
 	public function test_the_fine_rank_tiers_take_the_fine_ttl(): void {

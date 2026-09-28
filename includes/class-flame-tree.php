@@ -60,14 +60,38 @@ final class Flame_Tree {
 	/** `Performance_CI_Node`'s point event: whether the ranked lists served. */
 	public const URL_RANK_LISTS = 'url rank lists';
 
-	/** `Performance_CI_Node`'s point event: one verb's reads of the stats mirror. */
+	/**
+	 * The stats mirror's point event: one verb's reads of it on a reader, and
+	 * on the flame builder a checkpoint's frames written to it.
+	 */
 	public const STATS_MIRROR = 'stats mirror';
 
+	/** The flame builder's routine writes, one summary a `URL_PAGE_REFRESH_S`. */
+	public const STATS_WRITES = 'stats writes';
+
+	/** The flame builder's ranking of a bucket that has closed. */
+	public const STATS_RANK_CLOSE = 'stats rank close';
+
+	/** A flame builder probe pass, as it starts and as it ends. */
+	public const STATS_PROBE = 'stats probe';
+
+	/** A key the flame builder healed, with what it had lost. */
+	public const STATS_HEAL = 'stats heal';
+
+	/** The flame builder's checkpoint, as it restored it. */
+	public const STATS_RESTORE = 'stats restore';
+
+	/** The flame builder's clean stop. */
+	public const STATS_SWEEP = 'stats sweep';
+
 	/**
-	 * The five names above in the product chart palette (`--np-chart-*`), a
-	 * step each: the three spans nest, so they take three unlike hues, and
-	 * none takes Morganite, the command span's. The dashboards' colour map
-	 * carries them beneath the operator's own colours.
+	 * Every name above in the product chart palette (`--np-chart-*`). The
+	 * three URL-read spans nest, so they take three unlike steps; the point
+	 * events never nest, so they share steps by what they say — cobalt for
+	 * the builder's routine writes and reads, emerald for a close or a
+	 * worker's start and stop, the warning step for a heal. None takes
+	 * Morganite, the command span's. The dashboards' colour map carries them
+	 * beneath the operator's own colours.
 	 *
 	 * @var array<string,string>
 	 */
@@ -77,6 +101,12 @@ final class Flame_Tree {
 		self::URL_FOLD         => '#117644',
 		self::URL_RANK_LISTS   => '#B32D2E',
 		self::STATS_MIRROR     => '#2055B0',
+		self::STATS_WRITES     => '#003DA5',
+		self::STATS_PROBE      => '#2055B0',
+		self::STATS_RANK_CLOSE => '#117644',
+		self::STATS_RESTORE    => '#117644',
+		self::STATS_SWEEP      => '#117644',
+		self::STATS_HEAL       => '#BD8600',
 	];
 
 	/**

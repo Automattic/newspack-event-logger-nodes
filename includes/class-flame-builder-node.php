@@ -245,10 +245,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 */
 	private const PROBE_TOUCHES_PER_FLUSH = 250;
 
-	/** Both tiers owe a pass: a new worker's, and every reprobe's. */
+	/** Both tiers owe a pass, a new worker's: what `stats probe` names it. */
 	private const PROBE_DUE = [
-		'hour' => true,
-		'fine' => true,
+		'hour' => 'respawn',
+		'fine' => 'respawn',
 	];
 
 	/** Neither tier owes a probe. */
@@ -388,10 +388,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/**
 	 * Folded hours the probe found with a server unranked, each until its
 	 * servers are ranked from the stored rows, and pruned to the read plan's
-	 * hours. The store holds the debt, not this: the next probe finds it
-	 * again, so a stop that leaves one loses nothing.
+	 * hours, each beside the loss that made it stale, which its `stats heal`
+	 * line names. The store holds the debt, not this: the next probe finds
+	 * it again, so a stop that leaves one loses nothing.
 	 *
-	 * @var array<string,true>
+	 * @var array<string,string>
 	 */
 	private array $stale_hours = [];
 
@@ -437,15 +438,54 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	private int $folds_since_reprobe = 0;
 
 	/**
-	 * Whether each tier's next pass is due: the read plan's closed fine
-	 * buckets, or its folded hours, listed for the probe to ask after a lost
-	 * header record or list, at a new worker's first flush and every
-	 * reprobe's. Nothing else asks after a key once its last ranking has
-	 * run, and a hole sends every header back to the fold.
+	 * What makes each tier's next pass due, or null while none is: the read
+	 * plan's closed fine buckets, or its folded hours, listed for the probe
+	 * to ask after a lost header record or list, at a new worker's first
+	 * flush (`respawn`) and every `reprobe`. Nothing else asks after a key
+	 * once its last ranking has run, and a hole sends every header back to
+	 * the fold.
 	 *
-	 * @var array{hour: bool, fine: bool}
+	 * @var array{hour: ?string, fine: ?string}
 	 */
 	private array $probe_due = self::PROBE_DUE;
+
+	/**
+	 * Each tier's pass in progress, for its `stats probe` line: what started
+	 * it, the keys it listed, and what it has spent and found so far.
+	 *
+	 * @var array<string,array{trigger: string, keys: int, touches: int, lost: int, flushes: int, ms: float}>
+	 */
+	private array $passes = [];
+
+	/**
+	 * Hours a late write took off the fold memo (`persist_aggregate_stats()`'s
+	 * `$unfold`), until the roll-up reads them again and says so as a
+	 * `stats probe` line: an `unfold`.
+	 *
+	 * @var array<string,true>
+	 */
+	private array $unfolded = [];
+
+	/**
+	 * The narration not yet told, by category: counters each line of it
+	 * carries, reset as the line is written. GET_STATS carries it too.
+	 *
+	 * @var array<string,array<string,int>>
+	 */
+	private array $tally = [];
+
+	/** The partition of the last store set, which a null store leaves standing. */
+	private ?int $partition = null;
+
+	/** When `stats writes` last told its summary; 0 before the first. */
+	private int $writes_told_at = 0;
+
+	/**
+	 * Held frames the last checkpoint left out of its carry. They stay held
+	 * and reach the mirror when their bucket closes, so `stats mirror` tells
+	 * a change in the number rather than the same frames every checkpoint.
+	 */
+	private int $left_out = 0;
 
 	/**
 	 * Each tier's probe still owed: the keys left, newest first, the first
@@ -722,6 +762,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				'is_hub'                   => $this->is_hub,
 				'significant_events_count' => self::map_total( $this->significant_events ),
 				'mirror_held_frames'       => $this->widest_namespace_frames(),
+				'narration'                => $this->tally,
 				'mirror_held_bytes'        => \array_sum(
 					\array_map( self::frame_bytes( ... ), \array_column( $this->mirror_frames(), 'frame' ) )
 				),
@@ -868,6 +909,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 		/** @var array<string,mixed> $aggregate */
 		$this->stats_store?->accumulate_url_stats( $url_hash, $aggregate );
+		$this->tally( Flame_Tree::STATS_WRITES, 'url blobs' );
 	}
 
 	/**
@@ -1479,18 +1521,39 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 */
 	public function set_stats_store( ?Stats_Store $store ): void {
 		$this->stats_store = $store;
-		// Every one of these names keys in the OLD store's keyspace.
+		$this->plan_memo   = null;
+		$partition         = $store?->partition();
+		// @longform A partition IS the keyspace. A null store keeps the last,
+		// so A, none, then B is a swap; a first keeps a restored checkpoint's.
+		if ( null !== $partition && $partition !== $this->partition ) {
+			if ( null !== $this->partition ) {
+				$this->forget_keyspace();
+			}
+			$this->partition = $partition;
+		}
+		$this->arm_stats_mirror();
+	}
+
+	/**
+	 * Forget every memo keyed in the old store's keyspace, the fold memo and
+	 * the names told included, and probe the new one afresh, as a `store`
+	 * pass with the reprobe count restarted: its derived keys are unknown
+	 * until probed.
+	 */
+	private function forget_keyspace(): void {
 		$this->folded_hours  = [];
 		$this->stale_hours   = [];
+		$this->unfolded      = [];
 		$this->flushed_rows  = [];
 		$this->flushed_index = [];
 		$this->ranked_at     = [];
 		$this->rank_pending  = [];
-		$this->plan_memo     = null;
-		// The new keyspace's derived keys are unknown until probed.
-		$this->probe_due = self::PROBE_DUE;
-		$this->probes    = self::NO_PROBES;
-		$this->arm_stats_mirror();
+		$this->named_urls    = new LRU_Cache( self::NAMED_URL_BUCKET_SIZE, self::NAMED_URL_BUCKETS );
+		$this->probe_due     = [ 'hour' => 'store', 'fine' => 'store' ];
+		$this->probes        = self::NO_PROBES;
+		$this->passes        = [];
+		// Counted afresh, as a respawn starts, or a reprobe relabels the pass.
+		$this->folds_since_reprobe = 0;
 	}
 
 	/**
@@ -1527,8 +1590,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$store->mirror    = '' === $this->stats_partition ? null : $this->buffer_mirror_write( ... );
 		$from_partition   = self::mirror_seam( $store, $this->stats_partition );
 		// Unbudgeted, so a null is only an unresolved partition: a miss.
-		$store->rehydrate = null === $from_partition ? null : fn ( array $keys ): array =>
-			$this->held_frames( $keys, $store ) + ( ( $from_partition )( self::keys_walked( $keys, self::mirrors_key( ... ) ) ) ?? [] );
+		$store->rehydrate = null === $from_partition ? null : function ( array $keys ) use ( $store, $from_partition ): array {
+			$held = $this->held_frames( $keys, $store );
+			$read = ( $from_partition )( self::keys_walked( $keys, self::mirrors_key( ... ) ) ) ?? [];
+			$this->tally( Flame_Tree::STATS_WRITES, 'rehydrated held', \count( $held ) );
+			$this->tally( Flame_Tree::STATS_WRITES, 'rehydrated partition', \count( $read ) );
+			return $held + $read;
+		};
 	}
 
 	/**
@@ -1761,6 +1829,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			// A stop waits for the flush this spill interrupts to finish.
 			$this->guarded( fn () => $this->write_mirror_frame( $partition, $key, $data, $ttl ) );
 			unset( $this->mirror[ $ns ][ $key ] );
+			$this->tally( Flame_Tree::STATS_MIRROR, 'spilled' );
 		}
 		$this->print_less_often(
 			\sprintf(
@@ -1831,9 +1900,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		// Co-commit the current flame trees with the cursor, like pending.
 		$this->mirror_url_stats( $now );
 		$this->flush_stats_mirror( $now );
+		$mirror = $this->checkpoint_mirror( $now );
+		$this->tell_mirror( $mirror );
 		return [
 			'pending' => $this->pending,
-			'mirror'  => $this->checkpoint_mirror( $now ),
+			'mirror'  => $mirror,
 			'counted' => $this->counted,
 			'probes'  => $this->probes,
 		];
@@ -1865,6 +1936,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 		$remaining = self::MAX_CHECKPOINT_MIRROR_BYTES;
 		$out    = [ 'at' => $now, 'frames' => [] ];
+		$left   = 0;
 		foreach ( $held as $i => [ 'ns' => $ns, 'key' => $key, 'frame' => $frame ] ) {
 			$size = self::frame_bytes( $frame );
 			if ( $size > $remaining ) {
@@ -1883,12 +1955,46 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 						self::frame_bytes( $widest['frame'] )
 					)
 				);
+				$left = \count( $held ) - $i;
 				break;
 			}
 			$remaining                   -= $size;
 			$out['frames'][ $ns ][ $key ] = $frame;
 		}
+		// The carry is the latest checkpoint's, never a sum of them.
+		$this->tally[ Flame_Tree::STATS_MIRROR ]['bytes carried'] = self::MAX_CHECKPOINT_MIRROR_BYTES - $remaining;
+		// Still held, so only a change in how many is news.
+		if ( $left !== $this->left_out ) {
+			$this->left_out = $left;
+			$this->tally[ Flame_Tree::STATS_MIRROR ]['left out of the carry'] = $left;
+		}
 		return $out;
+	}
+
+	/**
+	 * Say what the checkpoints since the last line did to the stats mirror,
+	 * once one wrote or spilled a frame, or left a different number out of
+	 * its carry; until then the counters keep accumulating.
+	 *
+	 * @param array{at: int, frames: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>} $mirror What the checkpoint carries.
+	 */
+	private function tell_mirror( array $mirror ): void {
+		$tally = $this->tally[ Flame_Tree::STATS_MIRROR ] ?? [];
+		if ( 0 === ( $tally['written'] ?? 0 ) + ( $tally['spilled'] ?? 0 ) && ! isset( $tally['left out of the carry'] ) ) {
+			return;
+		}
+		$this->narrate(
+			Flame_Tree::STATS_MIRROR,
+			fn (): array => [
+				'checkpoint',
+				[
+					'held'    => \array_sum( \array_map( 'count', $this->mirror ) ),
+					'carried' => \array_sum( \array_map( 'count', $mirror['frames'] ) ),
+				],
+				// A change to none left out is the recovery, zero or not.
+				[ 'left out of the carry' ],
+			]
+		);
 	}
 
 	/**
@@ -1970,6 +2076,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		}
 		foreach ( $this->mirror as $ns => $entries ) {
 			$this->mirror[ $ns ] = $this->write_closed_frames( $partition, $entries, $now );
+			$written             = \count( $entries ) - \count( $this->mirror[ $ns ] );
+			$this->tally( Flame_Tree::STATS_MIRROR, 'written', $written );
+			$this->tally( Flame_Tree::STATS_MIRROR, "written {$ns}", $written );
 		}
 	}
 
@@ -2073,9 +2182,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 					static fn ( array $a, array $b ): int =>
 						static::mirror_traffic_rank( $b[0], $ns ) <=> static::mirror_traffic_rank( $a[0], $ns )
 				);
+				$this->tally( Flame_Tree::STATS_RESTORE, "trimmed {$ns}", \count( $restored ) - $cap );
 				$restored = \array_slice( $restored, 0, $cap, true );
 			}
 			$this->mirror[ $ns ] = $restored;
+			$this->tally( Flame_Tree::STATS_RESTORE, "frames {$ns}", \count( $restored ) );
 		}
 		foreach ( $pending as $bucket => $acc ) {
 			// `Y-m-d-H-i` is a string PHP never re-types to int.
@@ -2087,6 +2198,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				$this->pending[ $bucket ]   = $merged;
 			}
 		}
+		$this->narrate(
+			Flame_Tree::STATS_RESTORE,
+			fn (): array => [
+				'restored',
+				[
+					'pending' => \count( $this->pending ),
+					'crumb'   => '' !== $this->counted,
+					'probes'  => \count( $this->probes['hour']['left'] ) + \count( $this->probes['fine']['left'] ),
+				],
+			]
+		);
 	}
 
 	/**
@@ -2308,6 +2430,19 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				$this->ranked_at = [];
 				$this->flush();
 				$this->apply_auto_tune( self::AUTO_TUNE_LOCK_WAIT_MS );
+				// The last minute's writes would otherwise go untold.
+				$this->tell_writes();
+				$this->narrate(
+					Flame_Tree::STATS_SWEEP,
+					fn (): array => [
+						'stopped',
+						[
+							'ranked'      => \count( $this->ranked_at ),
+							'owed'        => \count( $this->rank_pending ),
+							'stale hours' => \count( $this->stale_hours ),
+						],
+					]
+				);
 			}
 		);
 	}
@@ -2358,8 +2493,35 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		}
 		$this->stats_store?->reset_url_stats();
 		$this->pending = [];
+		$this->tally( Flame_Tree::STATS_WRITES, 'flushes' );
+		// Once a refresh rather than once a flush: a handful a lifetime.
+		if ( $now - $this->writes_told_at >= Stats_Store::URL_PAGE_REFRESH_S ) {
+			$this->writes_told_at = $now;
+			$this->tell_writes();
+		}
 
 		$this->apply_auto_tune();
+	}
+
+	/**
+	 * Tell `stats writes`: what the flushes since the last line wrote, the
+	 * flushes, writes and unchanged merges first. Nothing pending, no line.
+	 */
+	private function tell_writes(): void {
+		if ( ! isset( $this->tally[ Flame_Tree::STATS_WRITES ] ) ) {
+			return;
+		}
+		$this->narrate(
+			Flame_Tree::STATS_WRITES,
+			static fn ( array $tally ): array => [
+				'',
+				[
+					'flushes'   => $tally['flushes'] ?? 0,
+					'writes'    => $tally['writes'] ?? 0,
+					'unchanged' => $tally['unchanged'] ?? 0,
+				],
+			]
+		);
 	}
 
 	/**
@@ -2417,6 +2579,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$indexes  = $stats_store->server_index( [], \array_map( 'strval', \array_keys( $this->pending ) ), $failed );
 		$dropped  = $failed ? \array_diff_key( $this->pending, $indexes ) : [];
 		if ( [] !== $dropped ) {
+			$this->tally( Flame_Tree::STATS_WRITES, 'url buckets dropped', \count( $dropped ) );
 			$this->print_less_often( 'stats flush dropped URL rows whose index the cache did not answer (or no cache backend)', ' — ' . \count( $dropped ) );
 		}
 		$admitted = [];
@@ -2430,6 +2593,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		}
 		foreach ( $this->persist_url_names( $stats_store, $now, $admitted ) as $server => $tokens ) {
 			$key = Stats_Store::server_key( (string) $server );
+			$this->tally( Flame_Tree::STATS_WRITES, 'tokens', \count( $tokens ) );
 			foreach ( $tokens as $token => $hashes ) {
 				self::add_intent( $intents, self::intent(
 					Stats_Store::url_token_parts( $key ),
@@ -2509,6 +2673,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				}
 			}
 		}
+		// Only an hour a late write took OFF the memo is read again for it.
+		$this->unfolded    += \array_intersect_key( $unfold, $this->folded_hours );
 		$this->folded_hours = \array_diff_key( $this->folded_hours, $unfold );
 		// @longform Ranked per CHUNK, not after the flush: the collectors hold
 		// every merged reader shard of every bucket still waiting to rank, and
@@ -2540,7 +2706,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				$stats_store->bucket_forget( Stats_Store::url_rank_done_parts( (string) $key ), $hour );
 			}
 			// Its lists, the site's too, no longer count its rows: rank it now.
-			$this->stale_hours[ $hour ] = true;
+			$this->stale_hours[ $hour ] = 'late write';
+			$this->tally( Flame_Tree::STATS_WRITES, 'done forgets', \count( $keys ) );
 		}
 		$this->unranked_hours = [];
 		$this->rank_owed( $stats_store, $now, $floor );
@@ -2758,6 +2925,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				$short[ $bucket ] = true;
 			}
 		}
+		$open = Stats_Store::bucket_key( $now );
 		foreach ( \array_diff_key( $chunk, $short ) as $bucket => $entries ) {
 			$rows = [];
 			foreach ( Stats_Store::index_names( $entries ) as $server ) {
@@ -2766,9 +2934,24 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 					...( $read_maps[ $bucket ][ $server ] ?? [] )
 				);
 			}
-			$this->write_url_ranks( $stats_store, $bucket, $rows, false );
+			$ranks = $this->write_url_ranks( $stats_store, $bucket, $rows, false );
+			$this->tally( Flame_Tree::STATS_WRITES, 'buckets ranked' );
 			$this->ranked_at[ $bucket ] = $now;
 			unset( $this->rank_pending[ $bucket ] );
+			// The open bucket's routine rankings are the summary's to count.
+			if ( $bucket < $open ) {
+				$this->narrate(
+					Flame_Tree::STATS_RANK_CLOSE,
+					static fn (): array => [
+						$bucket,
+						[
+							'servers'   => \count( $rows ),
+							'rows'      => \array_sum( \array_map( 'count', $rows ) ),
+							'gap reads' => \count( \array_keys( \array_column( $owner, 0 ), $bucket, true ) ),
+						] + $ranks,
+					]
+				);
+			}
 		}
 	}
 
@@ -2846,6 +3029,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			}
 		}
 		$stats_store->set_url_names( $filed );
+		$this->tally( Flame_Tree::STATS_WRITES, 'names', \array_sum( \array_map( 'count', $filed ) ) );
 		return \array_map(
 			static fn ( array $names ): array => Stats_Store::token_sets_of( Stats_Store::paths_of( $names ) ),
 			$filed
@@ -2879,13 +3063,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 *                                                 groups the chunk completed.
 	 */
 	private function flush_writes( Stats_Store $stats_store, array $intents, ?\Closure $after_chunk = null ): void {
+		$this->tally( Flame_Tree::STATS_WRITES, 'intents', \count( $intents ) );
 		foreach ( self::chunk_intents( $intents ) as $chunk ) {
 			$reads = [];
 			foreach ( $chunk as $key => $intent ) {
 				$reads[ $key ] = [ $intent['parts'], $intent['bucket'] ];
 			}
 			$existing = $stats_store->bucket_get_multi( $reads, $failed );
+			$this->tally( Flame_Tree::STATS_WRITES, 'reads' );
 			if ( $failed ) {
+				$this->tally( Flame_Tree::STATS_WRITES, 'failed chunks' );
+				$this->tally( Flame_Tree::STATS_WRITES, 'dropped keys', \count( $chunk ) );
 				$this->print_less_often( 'stats flush read failed; a chunk\'s deltas are dropped', ' — ' . \count( $chunk ) . ' keys' );
 				continue;
 			}
@@ -2894,6 +3082,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			foreach ( $chunk as $key => $intent ) {
 				if ( $intent['present'] && null === $existing[ $key ] ) {
 					$stats_store->bucket_forget( $intent['parts'], $intent['bucket'] );
+					$this->tally( Flame_Tree::STATS_WRITES, 'forgets' );
 					continue;
 				}
 				if ( null !== $intent['group'] ) {
@@ -2905,19 +3094,23 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				// would cost a round trip and refresh a TTL the value has not
 				// earned, so a key nothing adds to ages out on the one it has.
 				if ( $value === $read ) {
+					$this->tally( Flame_Tree::STATS_WRITES, 'unchanged' );
 					( $intent['landed'] ?? null )?->__invoke( $value );
 					continue;
 				}
 				$writes[ $key ] = [ $intent['parts'], $intent['bucket'], $value ];
 			}
 			$keys = \array_keys( $writes );
+			$this->tally( Flame_Tree::STATS_WRITES, 'writes', \count( $writes ) );
 			foreach ( $stats_store->bucket_set_multi( \array_values( $writes ) ) as $at => $landed ) {
 				$key    = $keys[ $at ];
 				$intent = $chunk[ $key ];
 				if ( $landed ) {
+					$this->tally( Flame_Tree::STATS_WRITES, 'late hour writes', $intent['present'] ? 1 : 0 );
 					( $intent['landed'] ?? null )?->__invoke( $writes[ $key ][2] );
 					continue;
 				}
+				$this->tally( Flame_Tree::STATS_WRITES, "refused {$intent['parts'][0]}" );
 				( $intent['refused'] ?? null )?->__invoke( $key );
 			}
 			if ( null !== $after_chunk ) {
@@ -2994,12 +3187,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		if ( ++$this->folds_since_reprobe >= self::REPROBE_EVERY_FLUSHES ) {
 			$this->folds_since_reprobe = 0;
 			$this->folded_hours        = [];
-			$this->probe_due           = self::PROBE_DUE;
+			$this->probe_due           = [ 'hour' => 'reprobe', 'fine' => 'reprobe' ];
 		}
 		$planned            = \array_flip( $plan['hours'] );
 		$this->folded_hours = \array_intersect_key( $this->folded_hours, $planned );
 		// No reader plans an hour the window passed; its lists are owed no one.
 		$this->stale_hours = \array_intersect_key( $this->stale_hours, $planned );
+		$this->unfolded    = \array_intersect_key( $this->unfolded, $planned );
 		$unknown = \array_values( \array_diff( $plan['hours'], \array_keys( $this->folded_hours ) ) );
 		// @longform Only for hours this process did not fold itself. The
 		// probe reads presence but `getMulti` fetches and unserializes the
@@ -3016,20 +3210,22 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		if ( $failed ) {
 			return $fresh;
 		}
+		$this->tell_unfold( $unknown, $found );
 		foreach ( $unknown as $hour ) {
 			// @longform A partial fold — a crash between shards — reads as
 			// unfolded and is simply redone, which costs a repeat and cannot
 			// corrupt: the fold overwrites rather than adding.
-			$folded   = ! empty( $found[ $hour ]['folded'] );
+			$missing  = \array_key_exists( $hour, $found ) ? $found[ $hour ]['missing'] : 'missing index';
 			$unranked = $found[ $hour ]['unranked'] ?? [];
 			// @longform Folded with a server unranked: one whose marker or list
 			// was evicted or refused, or one a late write landed in. Its fine
 			// buckets may be gone, so folding again would overwrite it with
 			// nothing; its lists come from the coarse rows, which is what they
 			// are derived from anyway.
-			if ( $folded ) {
+			if ( null === $missing ) {
 				if ( [] !== $unranked ) {
-					$this->stale_hours[ $hour ] = true;
+					// A late write that forgot the marker is the truer cause.
+					$this->stale_hours[ $hour ] ??= 'DONE missing';
 				}
 				$this->folded_hours[ $hour ] = true;
 				continue;
@@ -3039,13 +3235,59 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				continue;
 			}
 			--$budget;
-			if ( ! $this->fold_hour_into_store( $stats_store, $hour ) ) {
+			$at   = self::narration_clock();
+			$fold = $this->fold_hour_into_store( $stats_store, $hour );
+			if ( null === $fold ) {
 				continue;
 			}
+			$this->narrate(
+				Flame_Tree::STATS_HEAL,
+				static fn (): array => [ "{$hour} fold: {$missing}", $fold + [ 'ms' => self::ms_since( $at ) ] ]
+			);
 			$this->folded_hours[ $hour ] = true;
 			$fresh[ $hour ]              = true;
 		}
 		return $fresh;
+	}
+
+	/**
+	 * Say that the roll-up read again hours a late write took off the fold
+	 * memo, as a `stats probe` line with the `unfold` trigger: how many, and
+	 * what the read found of them.
+	 *
+	 * @param list<string>                                                 $unknown The hours it read.
+	 * @param array<string,array{missing: ?string, unranked: list<string>}> $found   What it found.
+	 */
+	private function tell_unfold( array $unknown, array $found ): void {
+		$again = \array_intersect_key( $this->unfolded, \array_flip( $unknown ) );
+		if ( [] === $again ) {
+			return;
+		}
+		$this->unfolded = \array_diff_key( $this->unfolded, $again );
+		$this->narrate(
+			Flame_Tree::STATS_PROBE,
+			static function () use ( $again, $found ): array {
+				// As the loop acts: an hour it did not find folds, too.
+				$unfolded = 0;
+				$stale    = 0;
+				foreach ( \array_keys( $again ) as $hour ) {
+					$read = $found[ $hour ] ?? null;
+					if ( null === $read || null !== $read['missing'] ) {
+						++$unfolded;
+					} elseif ( [] !== $read['unranked'] ) {
+						++$stale;
+					}
+				}
+				return [
+					'hour derive (unfold)',
+					[
+						'hours'    => \count( $again ),
+						'unfolded' => $unfolded,
+						'stale'    => $stale,
+					],
+				];
+			}
+		);
 	}
 
 	/**
@@ -3063,23 +3305,80 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * @param int          $now         The flush's one read of the tick.
 	 */
 	private function probe( Stats_Store $stats_store, bool $hour, array $live, int $now ): void {
-		$tier = $hour ? 'hour' : 'fine';
-		if ( $this->probe_due[ $tier ] && [] === $this->probes[ $tier ]['left'] ) {
-			$this->probe_due[ $tier ] = false;
+		$tier    = $hour ? 'hour' : 'fine';
+		$trigger = $this->probe_due[ $tier ];
+		$started = false;
+		if ( null !== $trigger && [] === $this->probes[ $tier ]['left'] ) {
+			$this->probe_due[ $tier ] = null;
 			$this->probes[ $tier ]    = [ 'left' => $live, 'at' => 0 ];
+			$started                  = true;
+		} elseif ( [] !== $this->probes[ $tier ]['left'] && ! isset( $this->passes[ $tier ] ) ) {
+			// A pass a checkpoint carried in from the last worker.
+			$trigger = 'checkpoint';
+			$started = true;
 		}
+		if ( $started ) {
+			$this->passes[ $tier ] = [ 'trigger' => $trigger, 'keys' => \count( $this->probes[ $tier ]['left'] ), 'touches' => 0, 'lost' => 0, 'flushes' => 0, 'ms' => 0.0 ];
+		}
+		$clock = self::narration_clock();
 		$owed  = $this->probes[ $tier ];
 		$left  = \array_values( \array_intersect( $owed['left'], $live ) );
 		$at    = ( $left[0] ?? null ) === ( $owed['left'][0] ?? null ) ? $owed['at'] : 0;
 		$probe = $stats_store->url_keys_unranked( $left, $hour, $at, self::PROBE_TOUCHES_PER_FLUSH, $now );
-		foreach ( $probe['lost'] as $key ) {
+		foreach ( $probe['lost'] as $key => $cause ) {
 			if ( $hour ) {
-				$this->stale_hours[ $key ] = true;
+				$this->stale_hours[ $key ] = $cause;
 			} else {
 				$this->rank_pending[ $key ] = true;
+				$this->narrate( Flame_Tree::STATS_HEAL, static fn (): array => [ "{$key} re-queue: {$cause}", [] ] );
 			}
 		}
 		$this->probes[ $tier ] = [ 'left' => $probe['left'], 'at' => $probe['at'] ];
+		$this->tell_pass( $tier, $started, $probe, self::ms_since( $clock ) );
+	}
+
+	/**
+	 * Count one probe call into its tier's pass, and say so as a pass starts
+	 * that this call did not end, and as it ends. A pass of no keys says
+	 * nothing.
+	 *
+	 * @param string                                                                       $tier    `hour` or `fine`.
+	 * @param bool                                                                         $started Whether this call started the pass.
+	 * @param array{lost: array<string,string>, left: list<string>, at: int, touched: int, unanswered: bool} $probe What the call found.
+	 * @param float                                                                        $ms      How long it took, where told.
+	 */
+	private function tell_pass( string $tier, bool $started, array $probe, float $ms ): void {
+		$pass = $this->passes[ $tier ] ?? null;
+		if ( null === $pass ) {
+			return;
+		}
+		$pass['touches'] += $probe['touched'];
+		$pass['lost']    += \count( $probe['lost'] );
+		$pass['ms']      += $ms;
+		++$pass['flushes'];
+		$ended = [] === $probe['left'];
+		if ( $ended ) {
+			unset( $this->passes[ $tier ] );
+		} else {
+			$this->passes[ $tier ] = $pass;
+		}
+		if ( 0 === $pass['keys'] || ! ( $ended || $started ) ) {
+			return;
+		}
+		$event = $ended ? ( $probe['unanswered'] ? 'ended unanswered' : 'ended' ) : 'started';
+		$this->narrate(
+			Flame_Tree::STATS_PROBE,
+			static fn (): array => [
+				"{$tier} pass ({$pass['trigger']}) {$event}",
+				[
+					'keys'    => $pass['keys'],
+					'touches' => $pass['touches'],
+					'lost'    => $pass['lost'],
+					'flushes' => $pass['flushes'],
+					'ms'      => $pass['ms'],
+				],
+			]
+		);
 	}
 
 	/**
@@ -3102,9 +3401,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 *
 	 * @param Stats_Store $stats_store Source and destination.
 	 * @param string      $hour        Hour key.
-	 * @return bool Whether the hour folded.
+	 * @return array{servers: int, rows: int, writes: int, refused: int}|null What
+	 *         the fold wrote, for its `stats heal` line; null where it folded nothing.
 	 */
-	private function fold_hour_into_store( Stats_Store $stats_store, string $hour ): bool {
+	private function fold_hour_into_store( Stats_Store $stats_store, string $hour ): ?array {
 		$shards  = Stats_Store::every_shard();
 		$names   = [];
 		$reads   = [];
@@ -3112,7 +3412,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$indexes = $stats_store->server_index( [], Stats_Store::buckets_in_hour( $hour ), $failed );
 		$board   = self::fold_hour_leaderboard( $stats_store, $hour, $board_failed );
 		if ( $failed || $board_failed ) {
-			return false;
+			return null;
 		}
 		foreach ( $indexes as $bucket => $entries ) {
 			foreach ( $entries as $key => [ Stats_Store::SRV_NAME => $server, Stats_Store::SRV_SHARDS => $mask ] ) {
@@ -3127,7 +3427,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		foreach ( \array_chunk( $reads, self::WRITE_BATCH_KEYS, true ) as $chunk ) {
 			$values = $stats_store->bucket_get_multi( $chunk, $chunk_failed );
 			if ( Stats_Store::unanswered( $values, $chunk_failed ) ) {
-				return false;
+				return null;
 			}
 			foreach ( $values as $at => $value ) {
 				if ( null !== $value ) {
@@ -3159,6 +3459,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			}
 		}
 		$writes[] = [ Stats_Store::url_srv_parts( true ), $hour, $named ];
+		$refused  = 0;
 		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
 			// @longform The batch answers per write, so a refusal names the
 			// KEY that was lost rather than the hour holding its candidates.
@@ -3166,14 +3467,20 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				if ( $ok ) {
 					continue;
 				}
+				++$refused;
 				$this->print_less_often(
 					'hour fold write refused; a shard is lost',
 					' — ' . Stats_Store::key( ...[ ...$chunk[ $at ][0], $chunk[ $at ][1] ] )
 				);
 			}
 		}
-		$this->write_url_ranks( $stats_store, $hour, $ranked, true );
-		return true;
+		$ranks = $this->write_url_ranks( $stats_store, $hour, $ranked, true );
+		return [
+			'servers' => \count( $named ),
+			'rows'    => \array_sum( \array_map( 'count', $ranked ) ),
+			'writes'  => \count( $writes ) + $ranks['writes'],
+			'refused' => $refused + $ranks['refused'],
+		];
 	}
 
 	/**
@@ -3262,10 +3569,84 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				$rows[ $hour ][ $server ] = Stats_Store::merge_shard_rows( $rows[ $hour ][ $server ], $shard_rows );
 			}
 			foreach ( $chunk as $hour ) {
-				$this->write_url_ranks( $stats_store, $hour, $rows[ $hour ] ?? [], true );
+				$at      = self::narration_clock();
+				$servers = $rows[ $hour ] ?? [];
+				$ranks   = $this->write_url_ranks( $stats_store, $hour, $servers, true );
+				$cause   = $this->stale_hours[ $hour ] ?? 'stale';
+				$this->narrate(
+					Flame_Tree::STATS_HEAL,
+					static fn (): array => [
+						"{$hour} re-rank: {$cause}",
+						[
+							'servers' => \count( $servers ),
+							'rows'    => \array_sum( \array_map( 'count', $servers ) ),
+							'writes'  => $ranks['writes'],
+							'refused' => $ranks['refused'],
+							'ms'      => self::ms_since( $at ),
+						],
+					]
+				);
 				unset( $this->stale_hours[ $hour ] );
 			}
 		}
+	}
+
+	/**
+	 * One line of the builder's narration on the worker's own record: what
+	 * it wrote and what it healed. Never stderr, which lands in the Error Log.
+	 *
+	 * Everything rides `m`, because the request record keeps an entry's `m`
+	 * and drops its other fields: the line's head, then each counter it and
+	 * the category's tally name, zeros left out — `12 flushes · 120 writes ·
+	 * 3 refused urlrank_s`. `$line` builds the head and its counters, and
+	 * runs only where a record is started; the tally resets either way.
+	 *
+	 * @param string                                                                         $category A `Flame_Tree::STATS_*` category.
+	 * @param \Closure(array<string,int>): array{0: string, 1: array<string,int|float|bool>, 2?: list<string>} $line The head, the
+	 *                                                                                                          counters it leads with,
+	 *                                                                                                          and any it tells even
+	 *                                                                                                          at zero, given the tally.
+	 */
+	private function narrate( string $category, \Closure $line ): void {
+		$tally = $this->tally[ $category ] ?? [];
+		unset( $this->tally[ $category ] );
+		$lm = Log_Manager::started_instance();
+		if ( null === $lm ) {
+			return;
+		}
+		$said              = $line( $tally );
+		[ $head, $counts ] = $said;
+		$kept              = $said[2] ?? [];
+		$told              = '' === $head ? [] : [ $head ];
+		foreach ( $counts + $tally as $name => $n ) {
+			if ( true === $n ) {
+				$told[] = $name;
+			} elseif ( \is_int( $n ) || \is_float( $n ) ) {
+				// Rounded to a tenth first: what would show as 0 says nothing.
+				$n = \is_float( $n ) ? \round( $n, 1 ) : $n;
+				if ( 0.0 !== (float) $n || \in_array( $name, $kept, true ) ) {
+					$told[] = "{$n} {$name}";
+				}
+			}
+		}
+		$lm->message( $category, [ 'm' => \implode( ' · ', $told ), 'keep' => 1 ] );
+	}
+
+	/**
+	 * An `hrtime()` reading to time a narrated step from, taken only where a
+	 * record is started to tell it; 0 otherwise.
+	 */
+	private static function narration_clock(): int|float {
+		return null === Log_Manager::started_instance() ? 0 : \hrtime( true );
+	}
+
+	/**
+	 * Milliseconds since a `narration_clock()` reading; 0 for none.
+	 *
+	 * @param int|float $at The reading at the start.
+	 */
+	private static function ms_since( int|float $at ): float {
+		return 0 === $at ? 0.0 : ( \hrtime( true ) - $at ) / 1e6;
 	}
 
 	/**
@@ -3293,19 +3674,49 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * @param string                                  $key         Bucket or hour key.
 	 * @param array<array-key,array<array-key,mixed>> $servers     Server => the tier's merged rows by hash.
 	 * @param bool                                    $hour        The coarse tier.
+	 * @return array{writes: int, lists: int, records: int, refused: int} What the batch
+	 *         carried, and how much of it was refused.
 	 */
-	private function write_url_ranks( Stats_Store $stats_store, string $key, array $servers, bool $hour ): void {
+	private function write_url_ranks( Stats_Store $stats_store, string $key, array $servers, bool $hour ): array {
 		$writes = Stats_Store::ranked_writes( $servers, $hour, $key );
 		// Fine buckets carry no marker: their probe asks the lists.
 		foreach ( $hour ? \array_keys( $servers ) : [] as $server ) {
 			$writes[] = [ Stats_Store::url_rank_done_parts( Stats_Store::server_key( (string) $server ) ), $key, [] ];
 		}
-		$landed = true;
+		// `ranked_writes()`' fixed shape, counted rather than classified.
+		$named = \count( $servers );
+		$site  = $named > 0 ? 1 : 0;
+		$each  = \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS );
+		$this->tally( Flame_Tree::STATS_WRITES, 'lists', $each * $named );
+		$this->tally( Flame_Tree::STATS_WRITES, 'site lists', $each * $site );
+		$this->tally( Flame_Tree::STATS_WRITES, 'records', $named );
+		$this->tally( Flame_Tree::STATS_WRITES, 'site records', $site );
+		$this->tally( Flame_Tree::STATS_WRITES, 'markers', $hour ? $named : 0 );
+		$out = [ 'writes' => \count( $writes ), 'lists' => $each * ( $named + $site ), 'records' => $named + $site, 'refused' => 0 ];
 		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
-			$landed = ! \in_array( false, $stats_store->bucket_set_multi( $chunk ), true ) && $landed;
+			foreach ( $stats_store->bucket_set_multi( $chunk ) as $at => $ok ) {
+				if ( ! $ok ) {
+					++$out['refused'];
+					$this->tally( Flame_Tree::STATS_WRITES, "refused {$chunk[ $at ][0][0]}" );
+				}
+			}
 		}
-		if ( ! $landed ) {
+		if ( $out['refused'] > 0 ) {
 			$this->print_less_often( 'URL rank write refused', " — {$key}" );
+		}
+		return $out;
+	}
+
+	/**
+	 * Add to a counter the next line of `$category` carries.
+	 *
+	 * @param string $category A `Flame_Tree::STATS_*` category.
+	 * @param string $counter  The field it lands under.
+	 * @param int    $by       How much.
+	 */
+	private function tally( string $category, string $counter, int $by = 1 ): void {
+		if ( 0 !== $by ) {
+			$this->tally[ $category ][ $counter ] = ( $this->tally[ $category ][ $counter ] ?? 0 ) + $by;
 		}
 	}
 

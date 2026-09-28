@@ -94,9 +94,13 @@ npm run build
 # analyses anything.
 #
 # Read the dead-code findings rather than obeying them. Tests are excluded as consumers,
-# so an export only its test imports reads as unused — mark those `@testonly` in the
-# docblock. Most findings are live by hook, by reflection, by `.tsl` topology or from JS;
-# verify every call path first. knip's jest plugin is off, so a module reachable only from
+# so an export only tests import reads as unused, and it is one of two things. Code only
+# its own tests call is dead: delete it and those tests. Code that enables testing other
+# code is test-only only if that other code exists only for tests, so a helper or seam a
+# test uses to exercise PRODUCTION code is live: mark it, or a shared fixture, `@testonly`
+# in the docblock. The tag inventories candidates; it is never a reason to keep one. Most
+# findings are live by hook, by reflection, by `.tsl` topology or from JS; verify every
+# call path first. knip's jest plugin is off, so a module reachable only from
 # its own test reads as dead, the same rule phpstan-deadcode applies. knip cannot parse
 # JSX in a `.js` file, which drops that file's `import()` expressions, so each
 # `lazy( () => import( './X' ) )` target is `entry` in knip.json.

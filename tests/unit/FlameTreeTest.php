@@ -456,7 +456,25 @@ class FlameTreeTest extends TestCase {
 
 		$colours = \array_map( 'strtoupper', Flame_Tree::PLATFORM_COLORS );
 		$this->assertSame( [], \array_diff( $colours, $palette ), 'every colour is a chart step' );
-		$this->assertCount( 5, \array_unique( $colours ), 'no two names share a step' );
+		$named = [
+			Flame_Tree::URL_PAGE_CACHE,
+			Flame_Tree::URL_HEADER_CACHE,
+			Flame_Tree::URL_FOLD,
+			Flame_Tree::URL_RANK_LISTS,
+			Flame_Tree::STATS_MIRROR,
+			Flame_Tree::STATS_WRITES,
+			Flame_Tree::STATS_RANK_CLOSE,
+			Flame_Tree::STATS_PROBE,
+			Flame_Tree::STATS_HEAL,
+			Flame_Tree::STATS_RESTORE,
+			Flame_Tree::STATS_SWEEP,
+		];
+		$keys = \array_keys( Flame_Tree::PLATFORM_COLORS );
+		\sort( $named );
+		\sort( $keys );
+		$this->assertSame( $named, $keys, 'every platform name has a step' );
+		$spans = \array_intersect_key( $colours, \array_flip( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD ] ) );
+		$this->assertCount( 3, \array_unique( $spans ), 'the three spans nest, so no two share a step' );
 		$this->assertNotContains( $palette['6'], $colours, 'Morganite is the command span\'s' );
 	}
 

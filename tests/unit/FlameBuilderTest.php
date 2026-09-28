@@ -1103,7 +1103,7 @@ class FlameBuilderTest extends TestCase {
 		( new \ReflectionProperty( $fb, 'folded_hours' ) )->setValue( $fb, [ $hour => true ] );
 		( new \ReflectionProperty( $fb, 'stale_hours' ) )->setValue( $fb, [ $hour => true ] );
 		// A worker past its first flush, whose passes then ran.
-		( new \ReflectionProperty( $fb, 'probe_due' ) )->setValue( $fb, [ 'hour' => false, 'fine' => false ] );
+		( new \ReflectionProperty( $fb, 'probe_due' ) )->setValue( $fb, [ 'hour' => null, 'fine' => null ] );
 		// Hour 06 names a server, so its fold has a list to refuse.
 		$this->set_url_bucket( $store, '2026-09-22-06-10', [
 			'e7e7e7e7e7e7' => [ 'url' => '/refused-fold-6610', 'count' => 11, 'last_seen' => $at - 10000 ],
@@ -4205,7 +4205,7 @@ class FlameBuilderTest extends TestCase {
 		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [] );
 
 		$this->assertContains( 'late-7731.test', Stats_Store::index_names( $store->server_index( [ '2026-08-27-13' ], [] )['2026-08-27-13'] ) );
-		$this->assertFalse( $store->url_hours_derived( [ '2026-08-27-13' ] )['2026-08-27-13']['folded'], 'its hour keys are missing' );
+		$this->assertSame( 'missing shard', $store->url_hours_derived( [ '2026-08-27-13' ] )['2026-08-27-13']['missing'], 'its hour keys are missing' );
 
 		( new \ReflectionProperty( $fb, 'folds_since_reprobe' ) )->setValue( $fb, PHP_INT_MAX - 1 );
 		self::roll_up( $fb, (int) Core::$now );
@@ -4910,7 +4910,7 @@ class FlameBuilderTest extends TestCase {
 
 		$folded = ( new \ReflectionMethod( $fb, 'fold_hour_into_store' ) )->invoke( $fb, $store, '2026-08-27-13' );
 
-		$this->assertFalse( $folded );
+		$this->assertNull( $folded );
 		$this->assertSame( 0, $store->writes, 'no hour folded serverless or short' );
 	}
 
@@ -5008,6 +5008,641 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 18, $store->get_leaderboard_buckets( [ $bucket ] )[ $bucket ]['count'] ?? null, 'and the leaderboard' );
 		$this->assertStringContainsString( ' — 1', $err );
 		$this->assertSame( 1, \substr_count( $err, 'stats flush dropped URL rows' ), 'one key whatever the count, so the second is rate-limited' );
+	}
+
+	// -------------------------------------------------------------------------
+	// Narration: what the builder writes and heals, on its own record.
+	// -------------------------------------------------------------------------
+
+	/** The narration categories, every one the builder writes. */
+	private const NARRATION = [
+		Flame_Tree::STATS_WRITES,
+		Flame_Tree::STATS_RANK_CLOSE,
+		Flame_Tree::STATS_PROBE,
+		Flame_Tree::STATS_HEAL,
+		Flame_Tree::STATS_MIRROR,
+		Flame_Tree::STATS_RESTORE,
+		Flame_Tree::STATS_SWEEP,
+	];
+
+	/**
+	 * Every hour of the plan at `$now` derived as a steady worker leaves it:
+	 * folded, indexed and ranked, the site's lists and records beside one
+	 * server's, each server marked DONE.
+	 *
+	 * @param list<string> $hours The hours to settle.
+	 */
+	private function settle_hours( Stats_Store $store, array $hours ): void {
+		foreach ( $hours as $hour ) {
+			foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $shard ) {
+				$this->seed_url_hour( $store, $hour, $shard, [] );
+			}
+			$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
+			$this->set_url_rank_lists( $store, $hour, [], true );
+		}
+	}
+
+	/**
+	 * Run one worker lifetime — a restore, a flush every five seconds with a
+	 * request in each, a checkpoint every thirty, a clean stop — and return
+	 * the narration it wrote, with what reached stderr.
+	 *
+	 * @return array{0: list<array<string,mixed>>, 1: string}
+	 */
+	private function narrated_lifetime( Flame_Builder_Node $fb, int $from ): array {
+		$err = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+		$t           = $from;
+		$previous    = Core::$clock;
+		Core::$clock = static function () use ( &$t ): float {
+			return (float) $t;
+		};
+		try {
+			$entries = $this->logged_in(
+				$this->make_temp_dir(),
+				function () use ( $fb, $from, &$t ): void {
+					$fb->restore_state( [] );
+					for ( $t = $from; $t < $from + 595; $t += 5 ) {
+						Core::$now = $t;
+						$this->fill_request( $fb, $this->completed_request( [ 'url' => '/lifetime-' . ( $t % 7 ), 'timestamp' => $t ] ) );
+						$fb->flush();
+						if ( 0 === ( $t - $from ) % 30 ) {
+							$fb->save_state();
+						}
+					}
+					Core::$now = $t;
+					$fb->shutdown_sweep();
+				}
+			);
+		} finally {
+			Core::$clock = $previous;
+		}
+		return [ self::entries_of( $entries, ...self::NARRATION ), $err . \implode( '', \array_column( self::entries_of( $entries, 'stderr' ), 'm' ) ) ];
+	}
+
+	/** What a narration line says before its counters: `m` up to the first ` · `. */
+	private static function head_of( array $entry ): string {
+		return \explode( ' · ', (string) ( $entry['m'] ?? '' ) )[0];
+	}
+
+	/** @return array<string,int> Category => lines. */
+	private static function lines_by_category( array $narration ): array {
+		return \array_count_values( \array_map( static fn ( array $entry ): string => (string) $entry['k'], $narration ) );
+	}
+
+	public function test_a_steady_worker_lifetime_narrates_a_couple_dozen_lines(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$from       = \gmmktime( 14, 1, 0, 9, 22, 2026 );
+		$this->settle_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $from ) )['hours'] );
+		$fb = new Flame_Builder_Node();
+		$fb->sink( new Capture_Sink_Node() );
+		$fb->set_stats_store( $store );
+
+		[ $narration, $err ] = $this->narrated_lifetime( $fb, $from );
+
+		$lines = self::lines_by_category( $narration );
+		$this->assertSame( 11, $lines[ Flame_Tree::STATS_WRITES ] ?? 0, 'one summary a refresh, not one a flush, and the stop\'s' );
+		$this->assertSame( 1, $lines[ Flame_Tree::STATS_RESTORE ] ?? 0 );
+		$this->assertSame( 1, $lines[ Flame_Tree::STATS_SWEEP ] ?? 0 );
+		$this->assertSame( 2, $lines[ Flame_Tree::STATS_RANK_CLOSE ] ?? 0, 'the two buckets that closed' );
+		$this->assertArrayNotHasKey( Flame_Tree::STATS_HEAL, $lines, 'nothing lost, nothing healed' );
+		$this->assertGreaterThanOrEqual( 2, $lines[ Flame_Tree::STATS_PROBE ] ?? 0, 'the respawn pass and the reprobe' );
+		$this->assertLessThanOrEqual( 25, \count( $narration ) );
+		$this->assertSame( '', $err, 'nothing reaches the Error Log' );
+		$first = $narration[ \array_search( Flame_Tree::STATS_WRITES, \array_column( $narration, 'k' ), true ) ];
+		$this->assertMatchesRegularExpression( '/^1 flushes · \d+ writes · /', $first['m'] );
+		$this->assertStringContainsString( ' · 14 lists · 14 site lists · 1 records · 1 site records', $first['m'], 'the open bucket\'s first ranking' );
+		$this->assertSame( 1, $first['keep'] );
+		$sweep = self::entries_of( $narration, Flame_Tree::STATS_SWEEP )[0];
+		$this->assertStringContainsString( '1 ranked', $sweep['m'], 'the bucket the stop still owed' );
+		foreach ( $narration as $entry ) {
+			$this->assertSame( [], \array_diff( \array_keys( $entry ), [ 'n', 'k', 'm', 'keep', 'ts' ] ), 'the counters ride m, which the record keeps' );
+			$this->assertLessThanOrEqual( 3840, \strlen( (string) \wp_json_encode( $entry ) ), 'every entry fits one firehose line' );
+		}
+	}
+
+	public function test_a_cold_backfill_lifetime_narrates_each_fold_and_stays_under_a_hundred(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$from       = \gmmktime( 14, 1, 0, 9, 22, 2026 );
+		$hours      = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $from ) )['hours'];
+		$fb         = new Flame_Builder_Node();
+		$fb->sink( new Capture_Sink_Node() );
+		$fb->set_stats_store( $store );
+
+		[ $narration, $err ] = $this->narrated_lifetime( $fb, $from );
+
+		$heals = self::entries_of( $narration, Flame_Tree::STATS_HEAL );
+		$this->assertSame( \count( $hours ), \count( $heals ), 'one line a fold' );
+		foreach ( $heals as $heal ) {
+			$this->assertMatchesRegularExpression( '/^\S+ fold: missing index$/', self::head_of( $heal ) );
+		}
+		$this->assertLessThanOrEqual( 100, \count( $narration ) );
+		$this->assertSame( '', $err );
+	}
+
+	public function test_each_heal_names_its_cause(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$hours      = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'];
+		$this->settle_hours( $store, \array_slice( $hours, 0, 6 ) );
+		// One of each loss the builder heals, each on its own key.
+		$store->bucket_forget( Stats_Store::url_rank_parts( 'count', 'desc', self::SEED_SERVER, true ), $hours[1] );
+		$store->bucket_forget( Stats_Store::url_rank_done_parts( Stats_Store::server_key( self::SEED_SERVER ) ), $hours[2] );
+		$store->bucket_forget( Stats_Store::lb_hour_parts(), $hours[3] );
+		$store->bucket_forget( Stats_Store::url_hour_parts( Stats_Store::server_key( self::SEED_SERVER ), Stats_Store::url_shards()[3] ), $hours[4] );
+		$bucket = Stats_Store::bucket_key( $now - 3 * Stats_Store::BUCKET_SECONDS );
+		$store->bucket_set_multi( [
+			...Stats_Store::ranked_writes( [ 'kea.test' => [] ], false, $bucket ),
+			[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ] ) ],
+		] );
+		$store->bucket_forget( Stats_Store::url_header_parts( '', false ), $bucket );
+		$fb = new Flame_Builder_Node();
+		$fb->sink( new Capture_Sink_Node() );
+		$fb->set_stats_store( $store );
+		$late = \gmmktime( (int) \substr( $hours[0], 11, 2 ), 20, 0, 9, 22, 2026 );
+
+		$entries = $this->logged_in(
+			$this->make_temp_dir(),
+			function () use ( $fb, $now, $late ): void {
+				Core::$now = $now;
+				$fb->flush();
+				$this->fill_request( $fb, $this->completed_request( [ 'url' => '/late-4471', 'timestamp' => $late ] ) );
+				Core::$now = $now + 5;
+				$fb->flush();
+			}
+		);
+
+		$heals = \array_map( self::head_of( ... ), self::entries_of( $entries, Flame_Tree::STATS_HEAL ) );
+		foreach ( [
+			"{$hours[1]} re-rank: lost list",
+			"{$hours[2]} re-rank: DONE missing",
+			"{$hours[3]} fold: missing lb_h",
+			"{$hours[4]} fold: missing shard",
+			"{$bucket} re-queue: lost record",
+			"{$hours[0]} re-rank: late write",
+		] as $heal ) {
+			$this->assertContains( $heal, $heals );
+		}
+	}
+
+	public function test_a_checkpoint_that_wrote_mirror_frames_narrates_them(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+		$fb         = new Flame_Builder_Node();
+		$fb->sink( new Capture_Sink_Node() );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_target( $p->name() );
+		$now = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+
+		$entries = $this->logged_in(
+			$this->make_temp_dir(),
+			function () use ( $fb, $now ): void {
+				Core::$now = $now;
+				$this->fill_request( $fb, $this->completed_request( [ 'url' => '/mirrored-6617', 'timestamp' => $now ] ) );
+				$fb->flush();
+				$fb->save_state();
+				Core::$now = $now + Stats_Store::BUCKET_SECONDS;
+				$fb->save_state();
+			}
+		);
+
+		$mirror = self::entries_of( $entries, Flame_Tree::STATS_MIRROR );
+		$this->assertCount( 1, $mirror, 'only the checkpoint that wrote' );
+		$this->assertMatchesRegularExpression( '/ · \d+ written/', $mirror[0]['m'] );
+	}
+
+	public function test_a_pass_a_checkpoint_carried_in_says_it_resumed(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$bucket     = Stats_Store::bucket_key( $now - 3 * Stats_Store::BUCKET_SECONDS );
+		$store->bucket_set_multi( [
+			...Stats_Store::ranked_writes( [ 'kea.test' => [] ], false, $bucket ),
+			[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ] ) ],
+		] );
+		$fb = new Flame_Builder_Node();
+		$fb->sink( new Capture_Sink_Node() );
+		$fb->set_stats_store( $store );
+
+		// A logged line re-reads the clock, so the whole run is pinned to it.
+		$previous    = Core::$clock;
+		Core::$clock = static fn (): float => (float) $now;
+		try {
+			$entries = $this->logged_in(
+				$this->make_temp_dir(),
+				static function () use ( $fb, $now, $bucket ): void {
+					Core::$now = $now;
+					$fb->restore_state( [ 'probes' => [ 'hour' => [ 'left' => [], 'at' => 0 ], 'fine' => [ 'left' => [ $bucket ], 'at' => 23 ] ] ] );
+					$fb->flush();
+				}
+			);
+		} finally {
+			Core::$clock = $previous;
+		}
+
+		$fine = \array_values( \array_filter( self::entries_of( $entries, Flame_Tree::STATS_PROBE ), static fn ( array $e ): bool => \str_starts_with( $e['m'], 'fine pass' ) ) );
+		$this->assertSame( 'fine pass (checkpoint) ended', self::head_of( $fine[0] ?? [] ) );
+		$this->assertStringContainsString( ' · 7 touches', $fine[0]['m'], 'the seven the last worker left' );
+	}
+
+	public function test_a_pass_an_unanswered_touch_ended_says_so(): void {
+		$memd       = new class() extends InMemoryMemcached {
+			public function touch( string $key, int $expiration = 0 ): bool {
+				$this->fail_touch( $key, \Memcached::RES_TIMEOUT );
+				return parent::touch( $key, $expiration );
+			}
+		};
+		Core::$memd = $memd;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$bucket     = Stats_Store::bucket_key( $now - 3 * Stats_Store::BUCKET_SECONDS );
+		$store->bucket_set_multi( [
+			...Stats_Store::ranked_writes( [ 'kea.test' => [] ], false, $bucket ),
+			[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ] ) ],
+		] );
+		$fb = new Flame_Builder_Node();
+		$fb->sink( new Capture_Sink_Node() );
+		$fb->set_stats_store( $store );
+
+		$entries = $this->logged_in(
+			$this->make_temp_dir(),
+			static function () use ( $fb, $now ): void {
+				Core::$now = $now;
+				$fb->flush();
+			}
+		);
+
+		$fine = \array_values( \array_filter( self::entries_of( $entries, Flame_Tree::STATS_PROBE ), static fn ( array $e ): bool => \str_starts_with( $e['m'], 'fine pass' ) ) );
+		$this->assertSame( 'fine pass (respawn) ended unanswered', self::head_of( $fine[0] ?? [] ) );
+	}
+
+	public function test_a_worker_record_keeps_the_narration_counters(): void {
+		// The builder files the record's entries through an allowlist that keeps
+		// `m` and drops every other producer field: the counters must be in it.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->sink( new Capture_Sink_Node() );
+		$fb->set_stats_store( $store );
+		$now = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+
+		$entries = $this->logged_in(
+			$this->make_temp_dir(),
+			function () use ( $fb, $now ): void {
+				Core::$now = $now;
+				$this->fill_request( $fb, $this->completed_request( [ 'url' => '/narrated-3301', 'timestamp' => $now ] ) );
+				$fb->flush();
+			}
+		);
+		$told = self::entries_of( $entries, Flame_Tree::STATS_WRITES )[0];
+
+		$rb      = new \Newspack_Event_Logger_Nodes\Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$n = 0;
+		foreach ( [
+			[ 'k' => 'process (start)', 'm' => '4471 on host', 'l' => '' ],
+			[ 'k' => 'request', 'm' => 'POST /wp-json/newspack-nodes/v1/workers/spawn' ],
+			[ 'k' => $told['k'], 'm' => $told['m'], 'keep' => 1 ],
+			[ 'k' => 'process (complete)', 'duration_ms' => 595000.0, 'status_code' => 200 ],
+		] as $entry ) {
+			$message                   = Message::new_message();
+			$message[ Message::TYPE ]  = Message::TM_STRUCT;
+			$message[ Message::KEY ]   = 'worker-7731';
+			$message[ Message::VALUE ] = $entry + [ 'n' => ++$n, 'rid' => 'worker-7731', 'ts' => $now ];
+			$rb->fill( $message );
+		}
+		$stored = [];
+		foreach ( $capture->captured as $captured ) {
+			foreach ( Core::arr( $captured[ Message::VALUE ] )['entries'] ?? [] as $entry ) {
+				if ( Flame_Tree::STATS_WRITES === ( $entry['k'] ?? null ) ) {
+					$stored = $entry;
+				}
+			}
+		}
+		$this->assertStringContainsString( ' · 1 url blobs', (string) ( $stored['m'] ?? '' ), 'the record shows what the flush counted' );
+	}
+
+	public function test_frames_left_out_of_the_carry_are_told_once_a_change(): void {
+		// They stay held and reach the mirror when their bucket closes, so
+		// only a change in how many are left out is news.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb ]     = $this->mirrored_builder( $store, 'flames-stats' );
+		$open       = 1_700_000_000;
+		$bucket     = Stats_Store::bucket_key( $open );
+		Core::$now  = $open;
+		$this->set_hourly_bucket( $store, $bucket, [ 'count' => 3 ] );
+		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 16900000 ) ] );
+
+		$previous    = Core::$clock;
+		Core::$clock = static fn (): float => (float) $open;
+		try {
+			$entries = $this->logged_in(
+				$this->make_temp_dir(),
+				static function () use ( $fb ): void {
+					$fb->save_state();
+					$fb->save_state();
+				}
+			);
+		} finally {
+			Core::$clock = $previous;
+		}
+
+		$mirror = self::entries_of( $entries, Flame_Tree::STATS_MIRROR );
+		$this->assertCount( 1, $mirror, 'the second checkpoint left the same frame out' );
+		$this->assertStringContainsString( ' · 1 left out of the carry', $mirror[0]['m'] );
+	}
+
+	public function test_a_carry_that_fits_again_says_none_is_left_out(): void {
+		// Zeros go unsaid, but a count that fell to zero is the recovery.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb ]     = $this->mirrored_builder( $store, 'flames-stats' );
+		$open       = 1_700_000_000;
+		// The last checkpoint left five out; this one holds none at all.
+		( new \ReflectionProperty( $fb, 'left_out' ) )->setValue( $fb, 5 );
+
+		$previous    = Core::$clock;
+		Core::$clock = static fn (): float => (float) $open;
+		try {
+			$entries = $this->logged_in(
+				$this->make_temp_dir(),
+				static function () use ( $fb, $open ): void {
+					Core::$now = $open;
+					$fb->save_state();
+				}
+			);
+		} finally {
+			Core::$clock = $previous;
+		}
+
+		$mirror = self::entries_of( $entries, Flame_Tree::STATS_MIRROR );
+		$this->assertStringContainsString( ' · 0 left out of the carry', $mirror[0]['m'] ?? '' );
+	}
+
+	/**
+	 * Invoke a private narration method under a started record, with the
+	 * clock pinned, and return the narration it wrote.
+	 *
+	 * @return list<array<string,mixed>>
+	 */
+	private function narrated( Flame_Builder_Node $fb, string $method, array $args ): array {
+		$previous    = Core::$clock;
+		$now         = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		Core::$clock = static fn (): float => (float) $now;
+		try {
+			$entries = $this->logged_in(
+				$this->make_temp_dir(),
+				static fn (): mixed => ( new \ReflectionMethod( $fb, $method ) )->invoke( $fb, ...$args )
+			);
+		} finally {
+			Core::$clock = $previous;
+		}
+		return self::entries_of( $entries, ...self::NARRATION );
+	}
+
+	public function test_a_count_that_rounds_to_zero_is_left_out(): void {
+		$told = $this->narrated(
+			new Flame_Builder_Node(),
+			'narrate',
+			[ Flame_Tree::STATS_HEAL, static fn (): array => [ '2026-09-22-11 fold: missing index', [ 'ms' => 0.03, 'writes' => 0.06 ] ] ]
+		);
+
+		$this->assertSame( '2026-09-22-11 fold: missing index · 0.1 writes', $told[0]['m'] ?? null );
+	}
+
+	public function test_an_unfold_line_counts_as_the_fold_that_follows_it(): void {
+		// An hour the read did not find folds as `missing index`; one found
+		// unfolded folds too, whatever its markers; only a folded one is stale.
+		$fb = new Flame_Builder_Node();
+		( new \ReflectionProperty( $fb, 'unfolded' ) )->setValue( $fb, [ 'h1' => true, 'h2' => true, 'h3' => true ] );
+		$told = $this->narrated(
+			$fb,
+			'tell_unfold',
+			[
+				[ 'h1', 'h2', 'h3' ],
+				[
+					'h1' => [ 'missing' => 'missing lb_h', 'unranked' => [ 'kea.test' ] ],
+					'h2' => [ 'missing' => null, 'unranked' => [ 'kea.test' ] ],
+				],
+			]
+		);
+
+		$this->assertSame( 'hour derive (unfold) · 3 hours · 2 unfolded · 1 stale', $told[0]['m'] ?? null );
+	}
+
+	public function test_a_late_write_keeps_its_cause_when_the_roll_up_finds_the_marker_gone(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$hour       = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'][2];
+		$this->settle_hours( $store, [ $hour ] );
+		$store->bucket_forget( Stats_Store::url_rank_done_parts( Stats_Store::server_key( self::SEED_SERVER ) ), $hour );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$stale = new \ReflectionProperty( $fb, 'stale_hours' );
+		$stale->setValue( $fb, [ $hour => 'late write' ] );
+
+		self::roll_up( $fb, $now );
+
+		$this->assertSame( 'late write', $stale->getValue( $fb )[ $hour ] ?? null, 'the write that forgot the marker is the cause' );
+	}
+
+	public function test_a_store_of_the_same_keyspace_keeps_the_restored_cursor(): void {
+		// configure_stats run again for the same partition is no swap.
+		Core::$memd = new InMemoryMemcached();
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( new Stats_Store( partition: 3, max_lifespan: 86400 ) );
+		$fb->restore_state( [ 'probes' => [ 'hour' => [ 'left' => [], 'at' => 0 ], 'fine' => [ 'left' => [ '2026-09-22-14-05' ], 'at' => 23 ] ] ] );
+
+		$fb->set_stats_store( new Stats_Store( partition: 3, max_lifespan: 86400 ) );
+
+		$this->assertSame( [ 'left' => [ '2026-09-22-14-05' ], 'at' => 23 ], ( new \ReflectionProperty( $fb, 'probes' ) )->getValue( $fb )['fine'] );
+		$this->assertSame( [ 'hour' => 'respawn', 'fine' => 'respawn' ], ( new \ReflectionProperty( $fb, 'probe_due' ) )->getValue( $fb ) );
+	}
+
+	public function test_a_store_swapped_in_after_none_is_a_swap_from_the_last(): void {
+		Core::$memd = new InMemoryMemcached();
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( new Stats_Store( partition: 3, max_lifespan: 86400 ) );
+		$fb->set_stats_store( null );
+		( new \ReflectionProperty( $fb, 'named_urls' ) )->getValue( $fb )->set( 'a1b2c3d4:e5e5e5e5e5e5', 1790000000 );
+
+		$fb->set_stats_store( new Stats_Store( partition: 4, max_lifespan: 86400 ) );
+
+		$this->assertSame( [ 'hour' => 'store', 'fine' => 'store' ], ( new \ReflectionProperty( $fb, 'probe_due' ) )->getValue( $fb ) );
+		$this->assertNull( ( new \ReflectionProperty( $fb, 'named_urls' ) )->getValue( $fb )->get( 'a1b2c3d4:e5e5e5e5e5e5' ), 'names the old store was told are owed the new one' );
+	}
+
+	public function test_a_hour_a_late_write_folds_first_is_no_unfold(): void {
+		// A new server's late rows in an hour this worker never folded take
+		// nothing off the memo, so no `unfold` line follows.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [ '2026-08-27-13-40' => \array_replace(
+			( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null ),
+			[ 'url_stats' => [ 'late-7733.test' => [ 'c9c9c9c9c9c9' => self::positional_url_row( [ 'count' => 13, 'path' => '/late-7733' ] ) ] ] ]
+		) ] );
+
+		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, $now, self::fine_floor( $store, $now ) );
+
+		$this->assertSame( [], ( new \ReflectionProperty( $fb, 'unfolded' ) )->getValue( $fb ) );
+	}
+
+	public function test_a_swap_near_a_reprobe_is_its_own_pass(): void {
+		// A new keyspace starts its reprobe count afresh, as a respawn does,
+		// so the next flush's roll-up neither relabels nor repeats the pass.
+		Core::$memd = new InMemoryMemcached();
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$store      = new Stats_Store( partition: 4, max_lifespan: 86400 );
+		$this->settle_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'] );
+		$fb = new Flame_Builder_Node();
+		$fb->sink( new Capture_Sink_Node() );
+		$fb->set_stats_store( new Stats_Store( partition: 3, max_lifespan: 86400 ) );
+		$reprobe = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'REPROBE_EVERY_FLUSHES' ) )->getValue();
+		( new \ReflectionProperty( $fb, 'folds_since_reprobe' ) )->setValue( $fb, $reprobe - 1 );
+		$fb->set_stats_store( $store );
+
+		$previous    = Core::$clock;
+		Core::$clock = static fn (): float => (float) $now;
+		try {
+			$entries = $this->logged_in(
+				$this->make_temp_dir(),
+				static function () use ( $fb, $now ): void {
+					Core::$now = $now;
+					$fb->flush();
+					$fb->flush();
+				}
+			);
+		} finally {
+			Core::$clock = $previous;
+		}
+
+		$heads = \array_map( self::head_of( ... ), self::entries_of( $entries, Flame_Tree::STATS_PROBE ) );
+		$this->assertContains( 'hour pass (store) started', $heads );
+		$this->assertSame( [], \preg_grep( '/\(reprobe\)/', $heads ), 'no second pass behind it' );
+	}
+
+	public function test_a_store_swap_forgets_its_passes_and_says_why_it_probes(): void {
+		Core::$memd = new InMemoryMemcached();
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( new Stats_Store( partition: 0, max_lifespan: 86400 ) );
+		$due = new \ReflectionProperty( $fb, 'probe_due' );
+		$this->assertSame( [ 'hour' => 'respawn', 'fine' => 'respawn' ], $due->getValue( $fb ), 'a new worker' );
+		( new \ReflectionProperty( $fb, 'passes' ) )->setValue( $fb, [ 'hour' => [ 'trigger' => 'respawn', 'keys' => 23, 'touches' => 97, 'lost' => 1, 'flushes' => 1, 'ms' => 4.5 ] ] );
+		( new \ReflectionProperty( $fb, 'unfolded' ) )->setValue( $fb, [ '2026-09-22-11' => true ] );
+
+		$fb->set_stats_store( new Stats_Store( partition: 1, max_lifespan: 86400 ) );
+
+		$this->assertSame( [ 'hour' => 'store', 'fine' => 'store' ], $due->getValue( $fb ) );
+		$this->assertSame( [], ( new \ReflectionProperty( $fb, 'passes' ) )->getValue( $fb ) );
+		$this->assertSame( [], ( new \ReflectionProperty( $fb, 'unfolded' ) )->getValue( $fb ) );
+	}
+
+	public function test_an_unlogged_worker_builds_no_narration(): void {
+		// With no started record the line is never built; its counters reset.
+		$fb    = new Flame_Builder_Node();
+		$tally = new \ReflectionProperty( $fb, 'tally' );
+		$tally->setValue( $fb, [ Flame_Tree::STATS_WRITES => [ 'flushes' => 3 ] ] );
+		$built = false;
+
+		( new \ReflectionMethod( $fb, 'narrate' ) )->invoke(
+			$fb,
+			Flame_Tree::STATS_WRITES,
+			static function () use ( &$built ): array {
+				$built = true;
+				return [ '', [] ];
+			}
+		);
+
+		$this->assertNull( Log_Manager::started_instance() );
+		$this->assertFalse( $built );
+		$this->assertSame( [], $tally->getValue( $fb ) );
+	}
+
+	public function test_an_hour_a_late_write_unfolded_is_probed_again_and_says_why(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hash       = 'c5c5c5c5c5c5';
+		$fb         = $this->folded_builder( $store, Stats_Store::url_shard( $hash ), [
+			$hash => [ 'url' => '/folded-5512', 'count' => 3 ],
+		] );
+		$now = (int) Core::$now;
+		( new \ReflectionProperty( $fb, 'probe_due' ) )->setValue( $fb, [ 'hour' => null, 'fine' => null ] );
+
+		$previous    = Core::$clock;
+		Core::$clock = static fn (): float => (float) $now;
+		try {
+			$entries = $this->logged_in(
+				$this->make_temp_dir(),
+				function () use ( $fb, $store, $now ): void {
+					( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [ '2026-08-27-13-40' => \array_replace(
+						( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null ),
+						[ 'url_stats' => [ 'late-7732.test' => [ 'c9c9c9c9c9c9' => self::positional_url_row( [ 'count' => 13, 'path' => '/late-7732' ] ) ] ] ]
+					) ] );
+					( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, $now, self::fine_floor( $store, $now ) );
+					( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [] );
+					Core::$now = $now;
+					$fb->flush();
+				}
+			);
+		} finally {
+			Core::$clock = $previous;
+		}
+
+		$heads = \array_map( self::head_of( ... ), self::entries_of( $entries, Flame_Tree::STATS_PROBE ) );
+		$this->assertContains( 'hour derive (unfold)', $heads );
+	}
+
+	public function test_a_restore_says_how_many_frames_each_namespace_trimmed(): void {
+		Core::$memd = new InMemoryMemcached();
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$frames     = [];
+		for ( $i = 0; $i < 6; ++$i ) {
+			$frames[ Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . Stats_Store::bucket_key( $now - $i * Stats_Store::BUCKET_SECONDS ) ) ] = [ [ 'count' => 7 + $i ], 3600 ];
+		}
+		$fb = new TinyHoldFlameBuilder();
+
+		$previous    = Core::$clock;
+		Core::$clock = static fn (): float => (float) $now;
+		try {
+			$entries = $this->logged_in(
+				$this->make_temp_dir(),
+				static function () use ( $fb, $now, $frames ): void {
+					Core::$now = $now;
+					$fb->restore_state( [ 'mirror' => [ 'at' => $now, 'frames' => [ Stats_Store::NS_HOURLY => $frames ] ] ] );
+				}
+			);
+		} finally {
+			Core::$clock = $previous;
+		}
+
+		$restore = self::entries_of( $entries, Flame_Tree::STATS_RESTORE )[0];
+		$this->assertStringContainsString( ' · 2 trimmed ' . Stats_Store::NS_HOURLY, $restore['m'], 'six carried, four held' );
+	}
+
+	public function test_get_stats_carries_the_narration_not_yet_told(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->sink( new Capture_Sink_Node() );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$fb->flush();
+		Core::$now += 5;
+		$fb->flush();
+
+		$this->assertSame( 1, $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ]['flushes'] ?? null, 'the flush since the last summary' );
 	}
 
 	public function test_a_refused_hour_list_is_ranked_again_at_the_next_reprobe(): void {

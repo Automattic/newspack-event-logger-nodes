@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The flame builder narrates what it writes and what it heals, on the worker's own record.** Seven point events, each carrying `keep`: `stats writes`, a summary of the flushes' memcache writes once a minute and at a stop; `stats rank close`, each closed bucket's ranking; `stats probe`, each probe pass as it starts and as it ends, with what started it (`respawn`, `reprobe`, a `store` swap, or a `checkpoint` the last worker left), and the roll-up reading again an hour a late write `unfold`ed; `stats heal`, each hour folded, stale hour re-ranked and fine bucket re-queued, with its cause (`missing index`, `missing lb_h`, `missing shard`, `DONE missing`, `lost list`, `lost record`, `late write`); `stats mirror`, the frames a checkpoint wrote to or spilled into the durable mirror, and how many it left out of its carry, told when that changes; `stats restore`; and `stats sweep`. Every counter rides the line's `m`, which the stored record keeps. None goes to stderr, so none reaches the Error Log, and an unlogged worker builds none of it. A steady worker's lifetime tells about twenty lines, one catching up a few hundred, and `GET_STATS` carries the counters not yet told as `narration`.
+
 ### Changed
 
 - **`Stats_Store::url_hours_derived()` reads and no longer touches, so it takes no `$now`.** The list and record touches of both tiers move to `Stats_Store::url_keys_unranked()`, which takes a touch budget and the position to resume from.
 - **`Flame_Builder_Node::roll_up_hours()` returns the hours it folded**, which the hour pass leaves out, their fold having just ranked them.
+- **`Stats_Store::url_hours_derived()` names what keeps an hour unfolded, and `url_keys_unranked()` what a key lost.** An hour's `folded` flag becomes `missing`, null for a folded hour or `missing index`, `missing lb_h` or `missing shard`; the probe's `lost` becomes a map of key to `lost list` or `lost record`, beside the `touched` count and whether an `unanswered` touch ended the pass.
 
 ### Fixed
 
