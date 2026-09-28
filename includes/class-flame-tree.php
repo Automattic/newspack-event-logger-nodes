@@ -98,6 +98,12 @@ final class Flame_Tree {
 	 */
 	private const LISTENER_PATTERN = '/' . self::LISTENER_SEPARATOR . '-?\d+$/';
 
+	/**
+	 * The one trim set, shared with the substrate's `spanBaseName()`: ASCII
+	 * alone, because a `/u` pattern fails on a name that is not valid UTF-8.
+	 */
+	private const ASCII_WHITESPACE = " \t\n\r\v\f";
+
 	/** A plugin file's load, as the profiler drop-in names it: `<slug> plugin`. */
 	private const PLUGIN_LOAD_PATTERN = '/^\S+' . self::PLUGIN_LOAD_SUFFIX . '$/';
 
@@ -606,17 +612,21 @@ final class Flame_Tree {
 	 * The inverse of `node_name()`: the span's own name, without the label it
 	 * was logged with. A traced hook frame is `<hook> hook: <caller>`, and what
 	 * kind of span it is — and what a rule can bind — is decided by the base.
-	 * The split is at the first `: `, so it inverts `node_name()` only for a
-	 * base that carries none, which every hook, transport and plugin span
-	 * satisfies; a custom event named with one is cut at it. `spanBase()` in
-	 * `src/overview/utils/logEntryUtils.js` is the same split for the dashboard.
 	 *
-	 * @param string $name A frame's name, as the flame carries it.
+	 * The substrate's `spanBaseName()` in PHP, rule for rule: a trailing
+	 * ` (start)` or ` (complete)` comes off, ASCII whitespace is trimmed, then
+	 * the name is cut at its first `: ` and trimmed again. A custom event named
+	 * with a `: ` is cut at it; a name opening with one has no base before it
+	 * and stays whole. The substrate's `tests/fixtures/span-base-names.json`
+	 * holds both to one case list.
+	 *
+	 * @param string $name A frame's name, or a span keyword.
 	 * @return string The base name.
 	 */
 	public static function base_name( string $name ): string {
-		$at = \strpos( $name, ': ' );
-		return false === $at ? $name : \substr( $name, 0, $at );
+		$base = \trim( (string) \preg_replace( '/ \((?:start|complete)\)$/D', '', $name ), self::ASCII_WHITESPACE );
+		$at   = \strpos( $base, ': ' );
+		return false === $at || 0 === $at ? $base : \trim( \substr( $base, 0, $at ), self::ASCII_WHITESPACE );
 	}
 
 	/**

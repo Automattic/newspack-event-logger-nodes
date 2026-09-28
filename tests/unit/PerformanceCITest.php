@@ -2934,7 +2934,8 @@ class PerformanceCITest extends TestCase {
 		try {
 			/** @var array<int,Stats_Store> $stores */
 			$stores = ( new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' ) )->invoke( null, $now );
-			$held   = ( $stores[0]->absence )( 'lb:' . Stats_Store::bucket_key( $now ) );
+			// Just closed at the reply's clock, so its flush may still land.
+			$held   = ( $stores[0]->absence )( 'lb:' . Stats_Store::bucket_key( $now - Stats_Store::BUCKET_SECONDS ) );
 		} finally {
 			Core::$now = $previous;
 		}
@@ -4498,7 +4499,8 @@ class PerformanceCITest extends TestCase {
 		$this->assertNotSame( '', $dir, 'the shipped topology declares a mirror partition' );
 
 		$url    = 'https://example.test/jobs/import-film-times';
-		$bucket = Stats_Store::bucket_key( self::tick() );
+		// Closed: the writer never mirrors the open bucket, nor reads for it.
+		$bucket = Stats_Store::bucket_key( self::tick() - Stats_Store::BUCKET_SECONDS );
 		$hash   = 'ab12cd34ef56';
 		$srv    = Stats_Store::server_key( 'example.test' );
 		$key    = Stats_Store::entry_key( 0, "urls:{$srv}:" . Stats_Store::url_shard( $hash ) . ':' . $bucket );
@@ -5961,6 +5963,36 @@ class PerformanceCITest extends TestCase {
 		( new \ReflectionMethod( Performance_CI_Node::class, 'search_candidates' ) )
 			->invoke( null, [ 'kakapo' ], '', self::live_stores(), Stats_Store::read_plan( \array_values( self::read_window_for_test() ) ) );
 		$this->assertSame( 4_242, self::mirror_budget_ns(), 'a token miss spends a budget of its own, not the one the fold needs' );
+	}
+
+	/**
+	 * A later partition is asked only for the hashes still unnamed, and none
+	 * once every one is named: each hash it misses on is a mirror walk for a
+	 * name an earlier partition already gave.
+	 */
+	public function test_url_names_asks_each_later_store_only_for_what_is_unnamed(): void {
+		$first  = new Stats_Store( 0, 86400 );
+		$second = new Stats_Store( 1, 86400 );
+		$third  = new Stats_Store( 2, 86400 );
+		$first->set_url_names( [ 'kea.example' => [ 'a7713ab0c0de' => 'https://kea.example/wombat-7713' ] ] );
+		$asked             = [];
+		$second->rehydrate = static function ( array $keys ) use ( &$asked ): array {
+			\array_push( $asked, ...\array_map( 'strval', $keys ) );
+			return [ Stats_Store::NS_URLMAP . ':b7714ab0c0de' => [ 'value' => [ 'moa.example', '/wombat-7714' ], 'ttl' => 60 ] ];
+		};
+		$late             = [];
+		$third->rehydrate = static function ( array $keys ) use ( &$late ): array {
+			\array_push( $late, ...\array_map( 'strval', $keys ) );
+			return [];
+		};
+
+		$names = ( new \ReflectionMethod( Performance_CI_Node::class, 'url_names' ) )
+			->invoke( null, [ 'a7713ab0c0de', 'b7714ab0c0de' ], [ $first, $second, $third ] );
+
+		$this->assertSame( 'https://kea.example/wombat-7713', $names['a7713ab0c0de']['url'] ?? null );
+		$this->assertSame( 'https://moa.example/wombat-7714', $names['b7714ab0c0de']['url'] ?? null );
+		$this->assertSame( [ Stats_Store::NS_URLMAP . ':b7714ab0c0de' ], $asked, 'the second store is asked for the one name the first lacked' );
+		$this->assertSame( [], $late, 'and once every hash is named, no store is asked again' );
 	}
 
 	public function test_a_saturated_token_falls_through_to_the_fold(): void {

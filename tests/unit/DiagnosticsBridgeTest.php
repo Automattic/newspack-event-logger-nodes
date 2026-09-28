@@ -90,13 +90,24 @@ class DiagnosticsBridgeTest extends TestCase {
 	}
 
 	/** One verb run through the wrapper with no wrapper before it. */
-	private static function wrapped( Command_Interpreter_Node $ci, string $verb, \Closure $run ): mixed {
-		return Diagnostics_Bridge::around_dispatch( null )( $ci, $verb, $run );
+	private static function wrapped( Command_Interpreter_Node $ci, string $verb, \Closure $run, ?string $command = null ): mixed {
+		return Diagnostics_Bridge::around_dispatch( null )( $ci, $verb, $run, null === $command ? null : static fn (): string => $command );
+	}
+
+	/**
+	 * The one `(start)` line a verb span wrote.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private static function start_line( string $category ): array {
+		$start = self::entries_of( self::firehose_entries( self::TEST_DIR ), "{$category} (start)" );
+		self::assertCount( 1, $start );
+		return $start[0];
 	}
 
 	public function test_a_verb_is_one_span_named_for_its_class_with_the_node_in_start(): void {
 		$lm     = $this->started_log_manager();
-		$result = self::wrapped( self::interpreter( 'wombat-ci' ), 'probe7731', static fn (): array => [ 'rows' => 7731 ] );
+		$result = self::wrapped( self::interpreter( 'wombat-ci' ), 'probe7731', static fn (): array => [ 'rows' => 7731 ], '/wombat-ci> probe7731 --kea=7731' );
 		$lm->finish();
 
 		$this->assertSame( [ 'rows' => 7731 ], $result, 'the verb\'s result passes through' );
@@ -105,7 +116,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$done    = self::entries_of( $entries, 'Command_Interpreter probe7731 command (complete)' );
 		$this->assertCount( 1, $start );
 		$this->assertCount( 1, $done );
-		$this->assertSame( 'wombat-ci', $start[0]['m'], 'the node name rides the start line' );
+		$this->assertSame( '/wombat-ci> probe7731 --kea=7731', $start[0]['m'], 'the command line rides the start line' );
 		$this->assertSame( 'ok', $done[0]['m'] );
 		$this->assertArrayNotHasKey( 'l', $start[0], 'a label would split the span from the picker' );
 		$this->assertArrayNotHasKey( 'l', $done[0] );
@@ -117,9 +128,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		self::wrapped( self::interpreter( 'kakapo:config', new \Newspack_Nodes\Tee_Node() ), 'probe7735', static fn (): string => 'ok' );
 		$lm->finish();
 
-		$start = self::entries_of( self::firehose_entries( self::TEST_DIR ), 'Tee probe7735 command (start)' );
-		$this->assertCount( 1, $start );
-		$this->assertSame( 'kakapo:config', $start[0]['m'] );
+		$this->assertSame( 'kakapo:config', self::start_line( 'Tee probe7735 command' )['m'] );
 	}
 
 	public function test_a_service_ci_names_its_span_without_namespace_or_suffix(): void {
@@ -129,9 +138,111 @@ class DiagnosticsBridgeTest extends TestCase {
 		self::wrapped( $ci, 'get', static fn (): string => 'ok' );
 		$lm->finish();
 
-		$start = self::entries_of( self::firehose_entries( self::TEST_DIR ), 'Discovery_CI get command (start)' );
-		$this->assertCount( 1, $start );
-		$this->assertSame( 'discovery-7739', $start[0]['m'] );
+		$this->assertSame( 'discovery-7739', self::start_line( 'Discovery_CI get command' )['m'] );
+	}
+
+	/**
+	 * Through the substrate's own dispatch, the start line is the command as
+	 * the REPL echoes it: options kept, a spaced token quoted.
+	 */
+	public function test_the_start_line_is_the_command_line_the_substrate_renders(): void {
+		$lm    = $this->started_log_manager();
+		$saved = Command_Interpreter_Node::$around_dispatch;
+		try {
+			Command_Interpreter_Node::$around_dispatch = null;
+			Diagnostics_Bridge::install();
+			self::interpreter( 'kea-7713' )->dispatch( 'uptime', [ '--categories', 'takahe 7713' ] );
+		} finally {
+			Command_Interpreter_Node::$around_dispatch = $saved;
+		}
+		$lm->finish();
+
+		$this->assertSame(
+			"/kea-7713> uptime --categories 'takahe 7713'",
+			self::start_line( 'Command_Interpreter uptime command' )['m']
+		);
+	}
+
+	/**
+	 * Logging never changes whether a verb runs: a dispatch whose arguments
+	 * are no token list — a nested array, a keyed map — runs and is logged.
+	 */
+	public function test_a_logged_verb_runs_whatever_arguments_it_was_dispatched_with(): void {
+		$lm    = $this->started_log_manager();
+		$saved = Command_Interpreter_Node::$around_dispatch;
+		try {
+			Command_Interpreter_Node::$around_dispatch = null;
+			Diagnostics_Bridge::install();
+			$ci = self::interpreter( 'kea-7713' );
+			$ci->commands( [ 'probe7713' => static fn (): string => 'moa-7713' ] );
+			$nested = $ci->dispatch( 'probe7713', [ [ 'kea' ] ] );
+			$keyed  = $ci->dispatch( 'probe7713', [ 'spoke' => 'takahe-7713' ] );
+		} finally {
+			Command_Interpreter_Node::$around_dispatch = $saved;
+		}
+		$lm->finish();
+
+		$this->assertSame( [ 'moa-7713', 'moa-7713' ], [ $nested, $keyed ] );
+		$this->assertSame(
+			[ "/kea-7713> probe7713 ''", '/kea-7713> probe7713 takahe-7713' ],
+			\array_column( self::entries_of( self::firehose_entries( self::TEST_DIR ), 'Command_Interpreter probe7713 command (start)' ), 'm' )
+		);
+	}
+
+	/**
+	 * A process that logs nothing never renders the command line: every
+	 * unlogged REST call and worker-boot statement dispatches through here.
+	 */
+	public function test_a_verb_with_no_started_logger_never_renders_the_command_line(): void {
+		Log_Manager::reset();
+		$rendered = 0;
+		$command  = static function () use ( &$rendered ): string {
+			++$rendered;
+			return '/kea-7713> probe7713';
+		};
+
+		$result = Diagnostics_Bridge::around_dispatch( null )( self::interpreter( 'kea-7713' ), 'probe7713', static fn (): string => 'moa-7713', $command );
+
+		$this->assertSame( 'moa-7713', $result );
+		$this->assertSame( 0, $rendered );
+	}
+
+	/** A wrapper before this one gets the same closure, still unrendered. */
+	public function test_a_previous_wrapper_is_handed_the_command_line_closure_unchanged(): void {
+		Log_Manager::reset();
+		$command = static fn (): string => '/kea-7713> probe7713';
+		$handed  = null;
+		$inner   = static function ( Command_Interpreter_Node $ci, string $verb, \Closure $run, ?\Closure $line ) use ( &$handed ): mixed {
+			$handed = $line;
+			return $run();
+		};
+
+		Diagnostics_Bridge::around_dispatch( $inner )( self::interpreter( 'kea-7713' ), 'probe7713', static fn (): string => 'ok', $command );
+
+		$this->assertSame( $command, $handed );
+	}
+
+	/** An argument list past the entry cap clips the line; the span still opens. */
+	public function test_an_oversized_command_line_truncates_rather_than_dropping_the_span(): void {
+		$lm = $this->started_log_manager();
+		self::wrapped( self::interpreter( 'perf-7713' ), 'upsert', static fn (): string => 'ok', '/perf-7713> upsert ' . \str_repeat( 'k', 9000 ) );
+		$lm->finish();
+
+		$start = self::start_line( 'Command_Interpreter upsert command' );
+		$this->assertTrue( $start['truncated'] ?? false );
+		$this->assertStringStartsWith( '/perf-7713> upsert kkkk', $start['m'] );
+		$this->assertLessThan( 9000, \strlen( $start['m'] ) );
+		$this->assertCount( 1, self::entries_of( self::firehose_entries( self::TEST_DIR ), 'Command_Interpreter upsert command (complete)' ) );
+	}
+
+	/** A substrate predating the command line calls with three arguments; the span holds. */
+	public function test_a_three_argument_call_names_the_interpreter(): void {
+		$lm = $this->started_log_manager();
+		$result = Diagnostics_Bridge::around_dispatch( null )( self::interpreter( 'perf-7713' ), 'overview', static fn (): string => 'kea-7713' );
+		$lm->finish();
+
+		$this->assertSame( 'kea-7713', $result );
+		$this->assertSame( 'perf-7713', self::start_line( 'Command_Interpreter overview command' )['m'] );
 	}
 
 	/**
@@ -216,15 +327,15 @@ class DiagnosticsBridgeTest extends TestCase {
 	 */
 	public function test_a_previous_wrapper_runs_inside_the_span_and_its_result_threads_through(): void {
 		$lm       = $this->started_log_manager();
-		$previous = static function ( Command_Interpreter_Node $ci, string $verb, \Closure $run ): string {
+		$previous = static function ( Command_Interpreter_Node $ci, string $verb, \Closure $run, \Closure $command ): string {
 			Log_Manager::started_instance()?->message( 'moa-7738', [ 'm' => $ci->name() ] );
-			return "{$verb} via moa: " . $run();
+			return $command() . ' via moa: ' . $run();
 		};
 
-		$result = Diagnostics_Bridge::around_dispatch( $previous )( self::interpreter( 'weka-ci' ), 'probe7738', static fn (): string => 'kea-7738' );
+		$result = Diagnostics_Bridge::around_dispatch( $previous )( self::interpreter( 'weka-ci' ), 'probe7738', static fn (): string => 'kea-7738', static fn (): string => '/weka-ci> probe7738 --weka=7738' );
 		$lm->finish();
 
-		$this->assertSame( 'probe7738 via moa: kea-7738', $result );
+		$this->assertSame( '/weka-ci> probe7738 --weka=7738 via moa: kea-7738', $result, 'the wrapper before it gets the same command line' );
 		$categories = \array_column( self::firehose_entries( self::TEST_DIR ), 'k' );
 		$inner      = \array_search( 'moa-7738', $categories, true );
 		$this->assertIsInt( $inner, 'the previous wrapper ran' );
@@ -257,7 +368,7 @@ class DiagnosticsBridgeTest extends TestCase {
 			'Command_Interpreter uptime command (complete)'
 		);
 		$this->assertCount( 2, $lines );
-		$this->assertSame( 'kiwi-7734', $lines[0]['m'] );
+		$this->assertSame( '/kiwi-7734> uptime', $lines[0]['m'], 'a bare verb has no trailing space' );
 	}
 
 	// ── bootstrap wiring ──────────────────────────────────────────────────────

@@ -673,6 +673,20 @@ describe( 'computeIndentedEntries', () => {
 		}
 	);
 
+	// A name opening with `: ` has no base before its label, so it pairs by
+	// its whole name: cut at index 0, every such span shares the empty base.
+	it( 'pairs a span whose name opens with ": " by its whole name', () => {
+		const { entries: out } = computeIndentedEntries( [
+			{ n: 1, k: ': kea 7713 (start)', ts: 1 },
+			{ n: 2, k: ': moa 7713 (start)', ts: 1 },
+			{ n: 3, k: ': kea 7713 (complete)', ts: 1 },
+			{ n: 4, k: ': moa 7713 (complete)', ts: 1 },
+		] );
+
+		expect( out[ 2 ].pairId ).toBe( out[ 0 ].pairId );
+		expect( out[ 3 ].pairId ).toBe( out[ 1 ].pairId );
+	} );
+
 	// The pressure fold merges entries out of the MIDDLE of a span. Both ends
 	// survive, so `gyrobase` spans the break exactly as the request does.
 	const CUT_INSIDE = [

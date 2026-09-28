@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
@@ -400,6 +401,30 @@ class FlameTreeTest extends TestCase {
 		$this->assertSame( 'the_content hook', Flame_Tree::base_name( Flame_Tree::node_name( 'the_content hook', 'Yoast\\WP\\SEO\\Builders\\Indexable_Link_Builder->build' ) ) );
 		$this->assertSame( 'sql', Flame_Tree::base_name( 'sql: WP_Query->get_posts' ) );
 		$this->assertSame( 'wp_loaded hook', Flame_Tree::base_name( 'wp_loaded hook' ) );
+	}
+
+	/**
+	 * `base_name()` is the substrate's `spanBaseName()` in PHP. The one case
+	 * list is the substrate's `tests/fixtures/span-base-names.json`, read from
+	 * the sibling checkout as the bootstrap reads its test helpers, and the
+	 * substrate's own jest suite holds the JS function to it.
+	 */
+	#[DataProvider( 'span_base_name_provider' )]
+	public function test_base_name_matches_the_shared_case_list( string $name, string $expected ): void {
+		$this->assertSame( $expected, Flame_Tree::base_name( $name ) );
+	}
+
+	/**
+	 * @return array<string,array{string,string}>
+	 */
+	public static function span_base_name_provider(): array {
+		$cases = \json_decode( (string) \file_get_contents( \dirname( __DIR__, 3 ) . '/newspack-nodes/tests/fixtures/span-base-names.json' ), true );
+		\assert( \is_array( $cases ) );
+		$out = [];
+		foreach ( $cases as $case ) {
+			$out[ (string) $case[0] ] = [ (string) $case[1], (string) $case[2] ];
+		}
+		return $out;
 	}
 
 	/** A hook span is known by its base name's suffix, beside the transport and plugin classifiers. */

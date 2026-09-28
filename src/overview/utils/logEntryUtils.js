@@ -33,7 +33,10 @@
  * marker was selected out of the middle rather than kept consecutive.
  */
 
-import { formatDuration } from '@newspack-nodes/shared/utils/formatUtils';
+import {
+	formatDuration,
+	spanBaseName,
+} from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
  * Matches a `<name> (start)` keyword, capturing the pair's name.
@@ -91,31 +94,24 @@ const FOLD_MARKER = 'entries (aggregated)';
 const SEQUENCE_BREAK_KEYWORDS = new Set( [ 'entries (lost)', FOLD_MARKER ] );
 
 /**
- * A span name without its argument.
- *
- * A span carries its argument in the entry's `l` field, and the flame fuses
- * the two into one node name — so the same span is `include` where the record
- * closes it and `include: /Macros/Global.html` where the tree names it. Pairing
- * has to see through that or a spliced frame can never be closed.
- * `Flame_Tree::base_name()` is the same split for the findings, and shares
- * its one caveat: a span whose own name carries `: ` is cut at it.
- *
- * @param {string} name Span name, decorated or not.
- * @return {string} The part before `: `.
- */
-const spanBase = ( name ) => String( name ).split( ': ' )[ 0 ];
-
-/**
  * The base name of the pair a `<name> (start)` keyword opens, or null when the
  * keyword does not open one.
  *
  * @param {string} keyword Entry keyword.
  * @return {?string} Base name, or null.
  */
-const pairBaseName = ( keyword ) => {
-	const match = ( keyword || '' ).match( START_REGEX );
-	return match ? match[ 1 ] : null;
-};
+export const pairBaseName = ( keyword ) =>
+	( keyword || '' ).match( START_REGEX )?.[ 1 ] ?? null;
+
+/**
+ * The base name of the pair a `<name> (complete)` keyword closes, or null when
+ * the keyword does not close one.
+ *
+ * @param {string} keyword Entry keyword.
+ * @return {?string} Base name, or null.
+ */
+export const pairCompleteName = ( keyword ) =>
+	( keyword || '' ).match( COMPLETE_REGEX )?.[ 1 ] ?? null;
 
 /**
  * Whether a keyword opens a pair the reader may fold.
@@ -140,7 +136,7 @@ export const isFoldablePairStart = ( keyword ) =>
  * @return {boolean} True when the pair is foldable.
  */
 export const isFoldablePairComplete = ( keyword ) =>
-	isFoldableBase( ( keyword || '' ).match( COMPLETE_REGEX )?.[ 1 ] ?? null );
+	isFoldableBase( pairCompleteName( keyword ) );
 
 /**
  * Whether a pair of this base name may fold: any but the outermost.
@@ -402,7 +398,7 @@ const spansClosedAfter = ( entries, from ) => {
 		( name, at ) => {
 			if ( at < 0 ) {
 				// Keyed by BASE, so a decorated frame finds its bare close.
-				const base = spanBase( name );
+				const base = spanBaseName( name );
 				closed.set( base, ( closed.get( base ) || 0 ) + 1 );
 			}
 		}
@@ -432,7 +428,7 @@ const pruneUnclosedAbove = ( pairStack, matchedIdx, entries, from ) => {
 	}
 	const budget = spansClosedAfter( entries, from );
 	for ( let i = pairStack.length - 1; i > matchedIdx; i-- ) {
-		const name = spanBase( pairStack[ i ].name );
+		const name = spanBaseName( pairStack[ i ].name );
 		const owed = budget.get( name ) || 0;
 		if ( owed < 1 ) {
 			pairStack.splice( i, 1 );
@@ -466,7 +462,7 @@ const pruneSeveredSpans = ( pairStack, entries, from ) => {
 		if ( 0 === i && OUTERMOST_PAIR === pairStack[ i ].name ) {
 			continue;
 		}
-		const name = spanBase( pairStack[ i ].name );
+		const name = spanBaseName( pairStack[ i ].name );
 		const owed = budget.get( name ) || 0;
 		if ( owed < 1 ) {
 			pairStack.splice( i, 1 );
@@ -535,9 +531,9 @@ export const computeIndentedEntries = ( entries ) => {
 			// own `include (complete)` name one span in two spellings —
 			// `foldedSpanEntries()` already defers to that complete rather
 			// than emitting its own, which only works if they can pair.
-			const wanted = spanBase( baseName );
+			const wanted = spanBaseName( baseName );
 			for ( let i = pairStack.length - 1; i >= 0; i-- ) {
-				if ( spanBase( pairStack[ i ].name ) === wanted ) {
+				if ( spanBaseName( pairStack[ i ].name ) === wanted ) {
 					matchedIdx = i;
 					break;
 				}

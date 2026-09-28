@@ -124,7 +124,7 @@ class StatsStoreTest extends TestCase {
 		// the whole thing is read-modify-written on each five-second flush and
 		// unserialized whole on each poll, so rows and splits both
 		// competed for one item's budget. The bucket stays LAST in the key, so
-		// `is_open_bucket()` and the durable read-through are untouched.
+		// `open_bucket_at()` and the durable read-through are untouched.
 		$this->seed_memd();
 		$store = $this->make_store( partition: 2 );
 		$hash  = 'a1b2c3d4e5f6';
@@ -1059,16 +1059,19 @@ class StatsStoreTest extends TestCase {
 	public function test_the_open_bucket_is_recognised_by_its_key_suffix(): void {
 		// ADR-1 puts the bucket LAST in every bucketed key, which is what lets a
 		// caller decide openness from the key alone.
-		$now  = \gmmktime( 12, 47, 33, 2, 3, 2026 );
-		$open = Stats_Store::bucket_key( $now );
+		$now     = \gmmktime( 12, 47, 33, 2, 3, 2026 );
+		$current = Stats_Store::bucket_key( $now );
+		$open    = Stats_Store::open_bucket_at( $now );
 
-		$this->assertTrue( Stats_Store::is_open_bucket( "evlog:p0:url_dim:9f21ab04cd77:{$open}", $now ) );
-		$this->assertFalse( Stats_Store::is_open_bucket( 'evlog:p0:url_dim:9f21ab04cd77:2026-02-03-12-40', $now ) );
-		$this->assertFalse( Stats_Store::is_open_bucket( 'evlog:p0:url:9f21ab04cd77', $now ), 'url is unbucketed' );
+		$this->assertTrue( $open( "evlog:p0:url_dim:9f21ab04cd77:{$current}" ) );
+		$this->assertTrue( $open( "url_dim:9f21ab04cd77:{$current}" ), 'a Table-relative key reads alike' );
+		$this->assertFalse( $open( 'evlog:p0:url_dim:9f21ab04cd77:2026-02-03-12-40' ) );
+		$this->assertFalse( $open( 'evlog:p0:url:9f21ab04cd77' ), 'url is unbucketed' );
+		$this->assertFalse( $open( 'lb_h:2026-02-03-12' ), 'an hour key is no bucket' );
 		// A producer whose clock runs slightly ahead writes a bucket we have not
 		// reached; a broken one writes a bucket we must not hold forever.
-		$this->assertTrue( Stats_Store::is_open_bucket( 'evlog:p0:hourly:2026-02-03-12-50', $now ), 'a near-future bucket is open' );
-		$this->assertFalse( Stats_Store::is_open_bucket( 'evlog:p0:hourly:2100-01-01-00-00', $now ), 'a broken clock is not held' );
+		$this->assertTrue( $open( 'evlog:p0:hourly:2026-02-03-12-50' ), 'a near-future bucket is open' );
+		$this->assertFalse( $open( 'evlog:p0:hourly:2100-01-01-00-00' ), 'a broken clock is not held' );
 	}
 
 	public function test_the_read_window_is_derived_from_retention(): void {

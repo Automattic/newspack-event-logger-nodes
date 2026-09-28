@@ -2474,9 +2474,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * URLs is no page, and a fold that inherits the naming's spend answers
 	 * null for every mirror read after it. `with_own_mirror_read_budget()`
 	 * keeps the two apart for the page `resolve_urls()` returns. One
-	 * `lookup_multi` per partition asks for every missing name at once, so
-	 * what that second budget bounds is one mirror pass per partition beyond
-	 * it: the walk it cannot cut short.
+	 * `lookup_multi` per partition asks for every name still missing at once,
+	 * and none once every hash is named: a partition asked for a name another
+	 * already gave misses memcache and walks its mirror to say so. What that
+	 * second budget bounds is one mirror pass per partition beyond it: the walk
+	 * it cannot cut short.
 	 *
 	 * @param array<int,string>      $hashes 12-char URL hashes.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
@@ -2491,7 +2493,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$names = [];
 				foreach ( $stores as $store ) {
 					// Named in the partition that saw it; first name wins.
-					$names += $store->get_url_names( $hashes );
+					$names += $store->get_url_names( \array_diff( $hashes, \array_keys( $names ) ) );
 				}
 				return $names;
 			}

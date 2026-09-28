@@ -915,6 +915,95 @@ describe( 'LogEntriesTable', () => {
 		jest.useRealTimers();
 	} );
 
+	/**
+	 * Reveal `span` under a hook whose label the path does not share, so the
+	 * node-name path misses and only the base-name fallback can resolve it.
+	 *
+	 * @param {string} span The span's name, as its `(start)` keyword carries it.
+	 * @return {?string} The pair id of the row the reveal lit.
+	 */
+	const revealByBase = ( span ) => {
+		const entries = [
+			{ k: 'process (start)', pairId: 1, indent: 0 },
+			{ k: 'hook (start)', l: 'kea-7713', pairId: 2, indent: 1 },
+			{ k: `${ span } (start)`, pairId: 3, indent: 2 },
+			{ k: `${ span } (complete)`, pairId: 3, indent: 2 },
+			{ k: 'hook (complete)', pairId: 2, indent: 1 },
+			{ k: 'process (complete)', pairId: 1, indent: 0 },
+		].map( ( e, idx ) => ( { ...e, n: idx + 1, originalIdx: idx } ) );
+		const revealRef = { current: null };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries, revealRef } )
+		);
+		act( () =>
+			revealRef.current( null, [
+				'request',
+				'process',
+				'hook: moa-7713',
+				span,
+			] )
+		);
+		act( () => {
+			jest.advanceTimersByTime( 20 );
+		} );
+		const lit = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+		);
+		unmount();
+		return lit?.dataset.pairId;
+	};
+
+	it( 'resolves a span named with a ": " by its base on both sides', () => {
+		jest.useFakeTimers();
+		expect( revealByBase( 'kea: moa 7713' ) ).toBe( '3' );
+		jest.useRealTimers();
+	} );
+
+	it( 'resolves a span whose name opens with ": " by its whole name', () => {
+		jest.useFakeTimers();
+		expect( revealByBase( ': takahe 7713' ) ).toBe( '3' );
+		jest.useRealTimers();
+	} );
+
+	it( 'closes a spliced span by its base, so a later span resolves by its path', () => {
+		jest.useFakeTimers();
+		// The start carries its label in the keyword and the complete does not.
+		const entries = [
+			{ k: 'process (start)', pairId: 1, indent: 0 },
+			{
+				k: 'include: /Macros/Kea7713.html (start)',
+				pairId: 2,
+				indent: 1,
+			},
+			{ k: 'include (complete)', pairId: 2, indent: 1 },
+			{ k: 'hook (start)', l: 'moa-7713', pairId: 3, indent: 1 },
+			{ k: 'hook (complete)', pairId: 3, indent: 1 },
+			{ k: 'process (complete)', pairId: 1, indent: 0 },
+		].map( ( e, idx ) => ( { ...e, n: idx + 1, originalIdx: idx } ) );
+		const revealRef = { current: null };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries, revealRef } )
+		);
+
+		act( () =>
+			revealRef.current( null, [
+				'request',
+				'process',
+				'hook: moa-7713',
+			] )
+		);
+		act( () => {
+			jest.advanceTimersByTime( 20 );
+		} );
+
+		const lit = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+		);
+		expect( lit?.dataset.pairId ).toBe( '3' );
+		unmount();
+		jest.useRealTimers();
+	} );
+
 	it( 'leaves an empty pair merged when revealing it', () => {
 		jest.useFakeTimers();
 		const revealRef = { current: null };
@@ -1211,6 +1300,44 @@ describe( 'LogEntriesTable', () => {
 			( r ) => r.textContent.includes( 'count' )
 		);
 		expect( row.textContent ).toContain( '0' );
+		unmount();
+	} );
+
+	it( "puts a folded command span's result on the line below its command", () => {
+		const entries = makeEntries();
+		entries[ 1 ] = {
+			...entries[ 1 ],
+			k: 'Performance_CI overview command (start)',
+			m: '/perf-7713> overview --categories --breakdown=server',
+		};
+		entries[ 3 ] = {
+			...entries[ 3 ],
+			k: 'Performance_CI overview command (complete)',
+			m: 'ok-7713',
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const row = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( r ) => r.textContent.includes( 'Performance_CI overview command' )
+		);
+		expect( row.textContent ).toContain(
+			'/perf-7713> overview --categories --breakdown=server\nok-7713'
+		);
+		unmount();
+	} );
+
+	it( "keeps any other folded span's two messages on one line", () => {
+		const entries = makeEntries();
+		entries[ 1 ] = { ...entries[ 1 ], m: 'SELECT 7713' };
+		entries[ 3 ] = { ...entries[ 3 ], m: 'rows-7713' };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const row = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( r ) => r.textContent.includes( 'SELECT 7713' )
+		);
+		expect( row.textContent ).toContain( 'SELECT 7713 rows-7713' );
 		unmount();
 	} );
 

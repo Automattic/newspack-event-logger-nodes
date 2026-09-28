@@ -42,7 +42,7 @@
       <div class="seg fixed"><div class="box">p{N}</div><div class="lbl">the flame-builder partition that wrote it</div></div><div class="colon">:</div>
       <div class="seg ns"><div class="box">{namespace}</div><div class="lbl">one of seventeen, below</div></div><div class="colon">:</div>
       <div class="seg mid"><div class="box">{scope…}</div><div class="lbl">a dimension, a server key, a shard or a url_hash: zero or more components, each a pure prefix</div></div><div class="colon">:</div>
-      <div class="seg last"><div class="box">{Y-m-d-H-i}</div><div class="lbl">the five-minute bucket, LAST. Lexical order is chronological order; <span class="m">is_open_bucket()</span> reads it off the key</div></div>
+      <div class="seg last"><div class="box">{Y-m-d-H-i}</div><div class="lbl">the five-minute bucket, LAST. Lexical order is chronological order; <span class="m">open_bucket_at()</span> reads it off the key</div></div>
     </div>
     <div style="padding:6px 14px 12px;font-size:12px;color:#50575E;line-height:1.45">The durable mirror files the same key under <span class="m">evlog:p{N}:{key}</span> instead, with NO site scope and no version component (decision 10).</div>
   </div>
