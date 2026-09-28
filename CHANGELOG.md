@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.105.0] - 2026-09-28
+
 ### Added
 
 - **The flame builder keeps the URL header, so no poll folds the index for it.** `Stats_Store::ranked_writes()` writes a header record beside each server's fourteen lists and one for the site after them, in the new derived, unmirrored namespaces `urlhdr` (fine) and `urlhdr_h` (hour): the request, timed-request, milliseconds and peak-memory sums over every reader row, the `Other` overflow row included, whether one was there, and a `Url_Sketch` of the URLs, a 16KB HyperLogLog at precision 14 whose registers merge by per-register max. `url_header()` sums the records over the read plan instead of folding the whole index, which on the eln staging hub spent 26–42 seconds of CPU over 757,445 rows on the first poll after every five-minute boundary. A record missing where a key's index names the scope is a hole, and the header folds, as it did before. Filtered pages still fold.
