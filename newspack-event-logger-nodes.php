@@ -100,11 +100,12 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// drops every cached option, which the discovery merge relies on.
 	// 2.68.0 is Table_Node::touch(), which the reprobe checks hour lists with.
 	// 2.69.0 is Command_Interpreter_Node::$around_dispatch, the verb spans.
+	// 2.70.0 is that hook handing the command line the spans' (start) carries.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.69.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.70.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
