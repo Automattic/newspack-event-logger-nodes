@@ -91,7 +91,7 @@ class DiagnosticsBridgeTest extends TestCase {
 
 	/** One verb run through the wrapper with no wrapper before it. */
 	private static function wrapped( Command_Interpreter_Node $ci, string $verb, \Closure $run, ?string $command = null ): mixed {
-		return Diagnostics_Bridge::around_dispatch( null )( $ci, $verb, $run, null === $command ? null : static fn (): string => $command );
+		return Diagnostics_Bridge::around_dispatch( null )( $ci, $verb, $run, static fn (): string => $command ?? "/{$ci->name()}> {$verb}" );
 	}
 
 	/**
@@ -128,7 +128,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		self::wrapped( self::interpreter( 'kakapo:config', new \Newspack_Nodes\Tee_Node() ), 'probe7735', static fn (): string => 'ok' );
 		$lm->finish();
 
-		$this->assertSame( 'kakapo:config', self::start_line( 'Tee probe7735 command' )['m'] );
+		$this->assertSame( '/kakapo:config> probe7735', self::start_line( 'Tee probe7735 command' )['m'] );
 	}
 
 	public function test_a_service_ci_names_its_span_without_namespace_or_suffix(): void {
@@ -138,7 +138,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		self::wrapped( $ci, 'get', static fn (): string => 'ok' );
 		$lm->finish();
 
-		$this->assertSame( 'discovery-7739', self::start_line( 'Discovery_CI get command' )['m'] );
+		$this->assertSame( '/discovery-7739> get', self::start_line( 'Discovery_CI get command' )['m'] );
 	}
 
 	/**
@@ -235,14 +235,11 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertCount( 1, self::entries_of( self::firehose_entries( self::TEST_DIR ), 'Command_Interpreter upsert command (complete)' ) );
 	}
 
-	/** A substrate predating the command line calls with three arguments; the span holds. */
-	public function test_a_three_argument_call_names_the_interpreter(): void {
-		$lm = $this->started_log_manager();
-		$result = Diagnostics_Bridge::around_dispatch( null )( self::interpreter( 'perf-7713' ), 'overview', static fn (): string => 'kea-7713' );
-		$lm->finish();
+	/** The command line is required: the floor is the substrate that passes it. */
+	public function test_a_three_argument_call_is_refused(): void {
+		$this->expectException( \ArgumentCountError::class );
 
-		$this->assertSame( 'kea-7713', $result );
-		$this->assertSame( 'perf-7713', self::start_line( 'Command_Interpreter overview command' )['m'] );
+		Diagnostics_Bridge::around_dispatch( null )( self::interpreter( 'perf-7713' ), 'overview', static fn (): string => 'kea-7713' );
 	}
 
 	/**
@@ -316,7 +313,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertSame( 'kea-7743', self::wrapped( $ci, 'probe7743', static fn (): string => 'kea-7743' ) );
 		$this->assertSame(
 			'probe7743: kea-7743',
-			Diagnostics_Bridge::around_dispatch( $previous )( $ci, 'probe7743', static fn (): string => 'kea-7743' ),
+			Diagnostics_Bridge::around_dispatch( $previous )( $ci, 'probe7743', static fn (): string => 'kea-7743', static fn (): string => '/probe> probe7743' ),
 			'the wrapper before it still runs'
 		);
 	}
