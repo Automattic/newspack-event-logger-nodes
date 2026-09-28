@@ -828,8 +828,8 @@ class StatsStoreTest extends TestCase {
 			$asked[] = $keys;
 			return [];
 		};
-		$store->absence = static fn ( string $key ): int => $store->absence_holds( $key );
 		$now    = self::tick();
+		$store->absence = static fn ( string $key ): int => $store->absence_holds( $key, $now );
 		$closed = Stats_Store::bucket_key( $now - 3600 );
 		$open   = Stats_Store::bucket_key( $now );
 		// The cache double dates an expiry from the wall.
@@ -849,7 +849,7 @@ class StatsStoreTest extends TestCase {
 	}
 
 	public function test_the_open_bucket_is_the_one_the_tick_names(): void {
-		// `absence_holds()` reads the tick; two buckets ahead of the wall, a
+		// The reply's clock is the tick; two buckets ahead of the wall, a
 		// bucket dated from the wall is already closed to it.
 		$this->shift_tick( 2 * Stats_Store::BUCKET_SECONDS );
 		$this->test_an_absent_closed_bucket_is_not_asked_of_the_mirror_again();
@@ -864,7 +864,7 @@ class StatsStoreTest extends TestCase {
 		$previous  = Core::$now;
 		Core::$now = $pinned;
 		try {
-			$store->absence_holds( Stats_Store::NS_HOURLY . ':2026-01-01-00' );
+			$store->absence_holds( Stats_Store::NS_HOURLY . ':2026-01-01-00', 1_600_000_000 );
 			$this->assertSame( $pinned, Core::$now, 'the reader takes the tick and never re-pins it' );
 		} finally {
 			Core::$now = $previous;

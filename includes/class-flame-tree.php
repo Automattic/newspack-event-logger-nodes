@@ -45,6 +45,47 @@ final class Flame_Tree {
 	/** What `App\Core::hook_start()` appends to a hook's name to make its span's. */
 	public const HOOK_SUFFIX = ' hook';
 
+	/** What `Diagnostics_Bridge` appends to `<class> <verb>` to name a verb's span. */
+	public const COMMAND_SUFFIX = ' command';
+
+	/** `Performance_CI_Node`'s page cache around one `urls` page. */
+	public const URL_PAGE_CACHE = 'url page cache';
+
+	/** `Performance_CI_Node`'s cache of the fold's header for the ranked pages. */
+	public const URL_HEADER_CACHE = 'url header cache';
+
+	/** `Performance_CI_Node`'s walk of the whole URL index. */
+	public const URL_FOLD = 'url fold';
+
+	/** `Performance_CI_Node`'s point event: whether the ranked lists served. */
+	public const URL_RANK_LISTS = 'url rank lists';
+
+	/** `Performance_CI_Node`'s point event: one verb's reads of the stats mirror. */
+	public const STATS_MIRROR = 'stats mirror';
+
+	/**
+	 * The five names above in the product chart palette (`--np-chart-*`), a
+	 * step each: the three spans nest, so they take three unlike hues, and
+	 * none takes Morganite, the command span's. The dashboards' colour map
+	 * carries them beneath the operator's own colours.
+	 *
+	 * @var array<string,string>
+	 */
+	public const PLATFORM_COLORS = [
+		self::URL_PAGE_CACHE   => '#003DA5',
+		self::URL_HEADER_CACHE => '#BD8600',
+		self::URL_FOLD         => '#117644',
+		self::URL_RANK_LISTS   => '#B32D2E',
+		self::STATS_MIRROR     => '#2055B0',
+	];
+
+	/**
+	 * The URL read's steps logged as spans, whatever the governing rule.
+	 *
+	 * @var list<string>
+	 */
+	private const URL_READ_SPANS = [ self::URL_PAGE_CACHE, self::URL_HEADER_CACHE, self::URL_FOLD ];
+
 	/** What `listener_name()` puts between a listener's callable and its priority. */
 	private const LISTENER_SEPARATOR = ' @';
 
@@ -515,6 +556,27 @@ final class Flame_Tree {
 	 */
 	public static function is_hook_span( string $span ): bool {
 		return \str_ends_with( self::base_name( $span ), self::HOOK_SUFFIX );
+	}
+
+	/**
+	 * Whether a span is one step of the performance CI's URL read, which is
+	 * logged whatever the rule says, so no rule edit reaches inside it.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_url_read_span( string $span ): bool {
+		return \in_array( self::base_name( $span ), self::URL_READ_SPANS, true );
+	}
+
+	/**
+	 * Whether a span is one command verb's, as `Diagnostics_Bridge` names it.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_command_span( string $span ): bool {
+		return \str_ends_with( self::base_name( $span ), self::COMMAND_SUFFIX );
 	}
 
 	/**

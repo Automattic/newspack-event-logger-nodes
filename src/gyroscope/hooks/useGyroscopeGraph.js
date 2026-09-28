@@ -28,9 +28,10 @@ import { useStreamGraph } from '@newspack-nodes/shared/hooks/useStreamGraph';
  * another bundle, whose `includeNodes` never registered `GyroscopeView`
  * (ADR-16).
  *
- * Returns nothing: this dashboard offers no pause, step or filter control, and
- * React reads the model off the node. Reset Graph needs no wiring here either
- * — `useStreamGraph` mounts through `mountExospine`, which subscribes the
+ * Returns nothing: this dashboard offers no pause, step or filter control,
+ * and React reads the model off `gyroscope:view` and the skipped-line count
+ * off `gyroscope:link`. Reset Graph needs no wiring here either —
+ * `useStreamGraph` mounts through `mountExospine`, which subscribes the
  * rebuild to `Core.bumpGraphGeneration()`.
  */
 export function useGyroscopeGraph() {

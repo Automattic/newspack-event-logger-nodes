@@ -1194,6 +1194,93 @@ class ReqgrepCommandTest extends TestCase {
 		}
 	}
 
+	public function test_cat_mode_skips_torn_lines_and_warns_with_the_count(): void {
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-cat-torn-' . \uniqid();
+		\mkdir( $tmp, 0755, true );
+		try {
+			$this->seed_partition( $tmp, 0, [
+				[ 'n' => 1, 'rid' => 'hawser-rid', 'k' => 'process (start)',    'm' => '/hawser-5520', 'ts' => 1700000000.0 ],
+				[ 'n' => 2, 'rid' => 'hawser-rid', 'k' => 'process (complete)', 'm' => '/hawser-5520', 'ts' => 1700000000.5 ],
+			] );
+			$log = "{$tmp}.p0/0.log";
+			\file_put_contents( $log, "{\"torn\n[9]\n" . \file_get_contents( $log ) );
+
+			$cmd = $this->make_cmd( '/hawser-5520' );
+			( new \ReflectionProperty( $cmd, 'partition_dirs' ) )->setValue( $cmd, [ "{$tmp}.p0" ] );
+			$captured = $this->capture_output( $cmd );
+			( new \ReflectionMethod( $cmd, 'cat_mode' ) )->invoke( $cmd );
+
+			$this->assertStringContainsString( 'hawser-rid', self::joined( $captured ), 'the read carries on past the torn lines' );
+			$this->assertSame( [ '2 unparseable line(s) skipped' ], $GLOBALS['_test_wp_cli_warns'] );
+		} finally {
+			$this->rmdir_recursive( "{$tmp}.p0" );
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	public function test_cat_mode_warns_nothing_on_a_clean_log(): void {
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-cat-clean-' . \uniqid();
+		\mkdir( $tmp, 0755, true );
+		try {
+			$this->seed_partition( $tmp, 0, [
+				[ 'n' => 1, 'rid' => 'clean-rid', 'k' => 'process (start)', 'm' => '/clean', 'ts' => 1700000000.0 ],
+			] );
+			$cmd = $this->make_cmd( '/clean' );
+			( new \ReflectionProperty( $cmd, 'partition_dirs' ) )->setValue( $cmd, [ "{$tmp}.p0" ] );
+			$this->capture_output( $cmd );
+			( new \ReflectionMethod( $cmd, 'cat_mode' ) )->invoke( $cmd );
+
+			$this->assertSame( [], $GLOBALS['_test_wp_cli_warns'] );
+		} finally {
+			$this->rmdir_recursive( "{$tmp}.p0" );
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	public function test_follow_mode_warns_as_soon_as_it_skips_a_torn_line(): void {
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-follow-torn-' . \uniqid();
+		$dir = "{$tmp}.p0";
+		\mkdir( $dir, 0755, true );
+		try {
+			$slept   = 0.0;
+			$written = false;
+			\Newspack_Nodes\Core::$clock = static function () use ( &$slept ): float {
+				return \microtime( true ) + $slept;
+			};
+			// The first wait is after the tail seek: land three torn lines then.
+			Event_Framework::$sleep = static function ( int $us ) use ( &$slept, &$written, $dir ): void {
+				if ( ! $written ) {
+					\file_put_contents( "{$dir}/0.log", "{\"a\n{\"b\n{\"c\n" );
+					$written = true;
+				}
+				$slept += $us / 1_000_000;
+			};
+
+			$cmd = $this->make_cmd();
+			( new \ReflectionProperty( $cmd, 'partition_dirs' ) )->setValue( $cmd, [ $dir ] );
+			$this->capture_output( $cmd );
+			( new \ReflectionMethod( $cmd, 'follow_mode' ) )->invoke( $cmd, 5 );
+
+			$this->assertSame( [ '3 unparseable line(s) skipped' ], $GLOBALS['_test_wp_cli_warns'] );
+		} finally {
+			$this->rmdir_recursive( $dir );
+			$this->rmdir_recursive( $tmp );
+		}
+	}
+
+	public function test_process_stdin_warns_with_the_count_of_lines_it_skips(): void {
+		$cmd    = $this->make_cmd( '.' );
+		$stream = \fopen( 'php://memory', 'r+' );
+		\fwrite( $stream, "not-a-message\n{\"just\":\"a hash\"}\n[1,2,3,4]\nhalf\n" );
+		\rewind( $stream );
+		$this->capture_output( $cmd );
+
+		( new \ReflectionMethod( $cmd, 'process_stdin' ) )->invoke( $cmd, $stream );
+		\fclose( $stream );
+
+		$this->assertSame( [ '4 unparseable line(s) skipped' ], $GLOBALS['_test_wp_cli_warns'] );
+	}
+
 	public function test_cat_mode_recent_offset_skips_older_segments(): void {
 		// `cat_offset = 'recent'` seeds the Consumer at the second-to-last segment
 		// so a long-running cat doesn't replay ancient history.

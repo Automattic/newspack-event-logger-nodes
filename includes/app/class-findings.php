@@ -157,6 +157,14 @@ class Findings {
 			'detail' => 'This is one plugin file\'s load, timed by the profiler before any hook can run, so no rule edit reaches inside it.',
 			'why'    => '%s is a plugin file\'s load: the cost is that plugin\'s bootstrap, and nothing a rule can switch on runs inside it.',
 		],
+		'command'          => [
+			'detail' => 'This is one command verb\'s handler: its time is that verb\'s, and the SQL, HTTP, hook and URL-read spans it ran nest inside it.',
+			'why'    => '%s is a command verb, timed whatever the rule says; the time is inside that verb, so read its children — no rule edit reaches the handler itself.',
+		],
+		'url_read'         => [
+			'detail' => 'The event logger times this step of the URL read itself, whatever the rule says, so no rule edit reaches inside it.',
+			'why'    => '%s is a step of `Performance_CI_Node`\'s URL read, whose `(complete)` line says whether its cache hit or how many rows it folded. Look there — nothing a rule can switch on runs inside it.',
+		],
 		'listener'         => [
 			'detail' => 'This is one listener on a significant hook — the time is inside this callback.',
 			'why'    => '%s is a listener, logged because its hook is already a significant event — this is the finest grain the logger has, and the answer is inside that callback.',
@@ -639,16 +647,18 @@ class Findings {
 	}
 
 	/**
-	 * The five kinds of span the flame carries, classified once so every caller
-	 * reaches the same `SPAN_ADVICE` row. A custom event has no listeners, and
-	 * prose crediting it with any sends the reader hunting a callback that does
-	 * not exist. A query or HTTP span is the logger's own, and a plugin span is
-	 * one plugin file's load; calling either a custom event proposes a rule
-	 * edit that changes nothing. A hook is known by its BASE name: with hook
-	 * tracing on, the frame carries the caller too.
+	 * The seven kinds of span the flame carries, classified once so every
+	 * caller reaches the same `SPAN_ADVICE` row. A custom event has no
+	 * listeners, and prose crediting it with any sends the reader hunting a
+	 * callback that does not exist. A query or HTTP span is the logger's own,
+	 * a plugin span is one plugin file's load, a command span is the frame of
+	 * one verb, and a URL-read span is one step inside such a verb; the last
+	 * two are logged whatever the rule says, and calling any of these a custom
+	 * event proposes a rule edit that changes nothing. A hook is known by its
+	 * BASE name: with hook tracing on, the frame carries the caller too.
 	 *
 	 * @param string $base The span's base name, per `Flame_Tree::base_name()`.
-	 * @return string `transport`, `plugin`, `hook`, `listener` or `custom`.
+	 * @return string `transport`, `plugin`, `command`, `url_read`, `hook`, `listener` or `custom`.
 	 */
 	private static function span_kind( string $base ): string {
 		if ( Flame_Tree::is_transport_span( $base ) ) {
@@ -656,6 +666,12 @@ class Findings {
 		}
 		if ( Flame_Tree::is_plugin_load_span( $base ) ) {
 			return 'plugin';
+		}
+		if ( Flame_Tree::is_command_span( $base ) ) {
+			return 'command';
+		}
+		if ( Flame_Tree::is_url_read_span( $base ) ) {
+			return 'url_read';
 		}
 		if ( Flame_Tree::is_hook_span( $base ) ) {
 			return 'hook';

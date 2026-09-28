@@ -239,19 +239,24 @@ class Log_Manager {
 	 * substrate's own endpoints. Each is worker traffic whether or not the
 	 * substrate set `NEWSPACK_NODES_WORKER_TYPE` in the serving process, and
 	 * the value is what the `worker_type` entry carries, so a rule that logs
-	 * one keeps it on the worker rows and off the global averages. The four
-	 * REST endpoints share `restapi`: the path already names each, and the
-	 * type rides the URL as its query, so a per-endpoint name read
-	 * `…/workers/spawn?spawn`.
+	 * one keeps it on the worker rows and off the global averages. Every REST
+	 * endpoint here — the substrate's six and this plugin's MCP route —
+	 * shares `restapi`: the path already names each, and the type rides the
+	 * URL as its query, so a per-endpoint name read `…/workers/spawn?spawn`.
+	 * The paths are literals because two substrate controllers declare no
+	 * route constant; a test registers every route and compares.
 	 *
 	 * @var array<string,string>
 	 */
 	private const PLATFORM_WORKERS = [
-		'/wp-cron.php'                                  => 'cron',
-		'/wp-json/newspack-nodes/v1/command'            => 'restapi',
-		'/wp-json/newspack-nodes/v1/log/stream'         => 'restapi',
-		'/wp-json/newspack-nodes/v1/messages/stream'    => 'restapi',
-		'/wp-json/newspack-nodes/v1/workers/spawn'      => 'restapi',
+		'/wp-cron.php'                                => 'cron',
+		'/wp-json/newspack-nodes/v1/auth'             => 'restapi',
+		'/wp-json/newspack-nodes/v1/command'          => 'restapi',
+		'/wp-json/newspack-nodes/v1/health/cache'     => 'restapi',
+		'/wp-json/newspack-nodes/v1/log/stream'       => 'restapi',
+		'/wp-json/newspack-nodes/v1/messages/stream'  => 'restapi',
+		'/wp-json/newspack-nodes/v1/workers/spawn'    => 'restapi',
+		'/wp-json/newspack-event-logger-nodes/v1/mcp' => 'restapi',
 	];
 
 	/**
@@ -306,6 +311,8 @@ class Log_Manager {
 	 * slug, and `error_status` = `F`.
 	 *
 	 * Idempotent: a second call after the first returns immediately.
+	 *
+	 * @throws \Throwable The drain's and the terminal's throwables, combined by `Worker_Should_Stop::raise()`.
 	 */
 	public function finish(): void {
 		if ( $this->finished || ! $this->started ) {
@@ -313,34 +320,21 @@ class Log_Manager {
 		}
 		$this->finished = true;
 
-		// @longform The terminal outranks everything else here. A cooperative
-		// stop lands on a WRITE, and every line finish() emits is one, so
-		// letting one propagate skips the terminal while `finished` stays
-		// latched: nothing retries, and the record strands in flight until
-		// eviction. ADR-14's Tap carve-out is this shape — do the thing that
-		// IS the pipeline, then re-raise. Terminal-LAST is a wire contract,
+		// @longform The terminal outranks everything else here. A stop or a
+		// failed write lands on a WRITE, and every line finish() emits is one,
+		// so letting either propagate skips the terminal while `finished`
+		// stays latched: nothing retries, and the record strands in flight
+		// until eviction. So the terminal is written whatever the drain threw,
+		// and both escape together after it. Terminal-LAST is a wire contract,
 		// not a preference: `Reqgrep_Core` finalizes and evicts the rid on it.
-		$stop = null;
-		try {
-			$this->drain_before_terminal();
-		} catch ( Worker_Should_Stop $e ) {
-			// It reached us mid-finish: this request did not run to its end.
-			$this->aborted = true;
-			$stop          = $e;
-		}
-		try {
-			$this->write_terminal();
-		} catch ( Worker_Should_Stop $e ) {
-			// Durable anyway: maybe_stop() flushes before it raises.
-			$stop ??= $e;
-		} finally {
-			$this->started = false;
-			// Per-request: a latched flag marks every later request.
-			$this->aborted = false;
-		}
-		if ( null !== $stop ) {
-			throw $stop;
-		}
+		$caught = Worker_Should_Stop::attempt( $this->drain_before_terminal( ... ) );
+		// A stop mid-finish means this request did not run to its end.
+		$this->aborted = $this->aborted || ( $caught[0] ?? null ) instanceof Worker_Should_Stop;
+		$caught        = [ ...$caught, ...Worker_Should_Stop::attempt( $this->write_terminal( ... ) ) ];
+		$this->started = false;
+		// Per-request: a latched flag marks every later request.
+		$this->aborted = false;
+		Worker_Should_Stop::raise( $caught );
 	}
 
 	/**
@@ -368,6 +362,87 @@ class Log_Manager {
 			$this->aborted ? 'aborted' : 'complete'
 		);
 		$this->topic?->flush();
+	}
+
+	/**
+	 * Extract plugin slug from a file path.
+	 *
+	 * @param string $file File path from error_get_last().
+	 * @return string|null Plugin slug or null if not in plugins dir.
+	 */
+	private static function extract_plugin_slug( string $file ): ?string {
+		if ( ! \defined( 'WP_PLUGIN_DIR' ) ) {
+			return null;
+		}
+		$plugins_dir = \trailingslashit( WP_PLUGIN_DIR );
+		if ( 0 !== \strpos( $file, $plugins_dir ) ) {
+			return null;
+		}
+		$relative = \substr( $file, \strlen( $plugins_dir ) );
+		$slug     = \explode( '/', $relative )[0];
+		if ( '.php' === \substr( $slug, -4 ) ) {
+			$slug = \substr( $slug, 0, -4 );
+		}
+		return $slug;
+	}
+
+	/**
+	 * Everything the record carries before its terminal: the spans left open,
+	 * this request's memory high-water mark, and its resource usage.
+	 */
+	private function drain_before_terminal(): void {
+		$now = \hrtime( true );
+		while ( \count( $this->times ) > 1 ) {
+			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
+		}
+		$this->message( 'memory', [
+			'm' => [
+				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+			],
+		] );
+		$this->log_resources();
+	}
+
+	/**
+	 * Run `$run` inside a `$label` span. Every throwable propagates; the
+	 * architecture guide states the rule.
+	 *
+	 * The caller asks `started_instance()` first and runs `$run` bare on null,
+	 * so a process that logs nothing never builds the label.
+	 *
+	 * With `$describe`, the `(complete)` `m` is what it makes of the result,
+	 * or `outcome()` of the throwable; without it the span carries no `m`.
+	 *
+	 * `$args` reach `$run` spread, so a listener hands over its callback and
+	 * the hook's arguments as they are: a closure per firing would cost the
+	 * hottest path an allocation.
+	 *
+	 * @template T
+	 * @param string                           $label    The span's name.
+	 * @param callable(mixed...): T            $run      The work the span times.
+	 * @param (\Closure(T): (string|int))|null $describe The `(complete)` `m` a returned result gets.
+	 * @param array<string,mixed>              $start    Extra keys for the `(start)` entry.
+	 * @param list<mixed>                      $args     What `$run` is called with.
+	 * @return T What `$run` returned.
+	 */
+	public function timed( string $label, callable $run, ?\Closure $describe = null, array $start = [], array $args = [] ): mixed {
+		$this->start( $label, $start );
+		$done = [];
+		try {
+			$result = $run( ...$args );
+			if ( null !== $describe ) {
+				$done['m'] = $describe( $result );
+			}
+			return $result;
+		} catch ( \Throwable $e ) {
+			if ( null !== $describe ) {
+				$done['m'] = self::outcome( $e );
+			}
+			throw $e;
+		} finally {
+			$this->complete( $label, $done );
+		}
 	}
 
 	/**
@@ -422,46 +497,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Extract plugin slug from a file path.
-	 *
-	 * @param string $file File path from error_get_last().
-	 * @return string|null Plugin slug or null if not in plugins dir.
-	 */
-	private static function extract_plugin_slug( string $file ): ?string {
-		if ( ! \defined( 'WP_PLUGIN_DIR' ) ) {
-			return null;
-		}
-		$plugins_dir = \trailingslashit( WP_PLUGIN_DIR );
-		if ( 0 !== \strpos( $file, $plugins_dir ) ) {
-			return null;
-		}
-		$relative = \substr( $file, \strlen( $plugins_dir ) );
-		$slug     = \explode( '/', $relative )[0];
-		if ( '.php' === \substr( $slug, -4 ) ) {
-			$slug = \substr( $slug, 0, -4 );
-		}
-		return $slug;
-	}
-
-	/**
-	 * Everything the record carries before its terminal: the spans left open,
-	 * this request's memory high-water mark, and its resource usage.
-	 */
-	private function drain_before_terminal(): void {
-		$now = \hrtime( true );
-		while ( \count( $this->times ) > 1 ) {
-			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
-		}
-		$this->message( 'memory', [
-			'm' => [
-				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-			],
-		] );
-		$this->log_resources();
-	}
-
-	/**
 	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
 	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
 	 * end-of-request stack close.
@@ -472,6 +507,71 @@ class Log_Manager {
 	private function emit_orphaned_complete( array $entry, $now ): void {
 		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
 		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
+	}
+
+	/**
+	 * A thrown span's `(complete)` `m`: `stop` for a cooperative stop, else
+	 * the short class — `class@anonymous` for an anonymous one, whose name
+	 * carries a file path and a NUL.
+	 *
+	 * @param \Throwable $thrown What the span's work threw.
+	 */
+	private static function outcome( \Throwable $thrown ): string {
+		return match ( true ) {
+			$thrown instanceof Worker_Should_Stop           => 'stop',
+			\str_contains( $thrown::class, '@anonymous' ) => 'class@anonymous',
+			default                                         => \basename( \strtr( $thrown::class, '\\', '/' ) ),
+		};
+	}
+
+	/**
+	 * Start timing a labeled operation and push its frame on the timer stack.
+	 *
+	 * Two things drop a frame: a stack already MAX_TIMER_DEPTH deep, and a start
+	 * line that could not be written. Pair every start() with a complete()
+	 * carrying the same label — an unmatched frame drains as `(orphaned)`. A
+	 * bare cooperative stop the write raises still pushes the frame before it
+	 * propagates, because the Partition flushed the line before raising it, and
+	 * the drain closes it. A stop carrying a failure says that flush threw, so
+	 * the line never landed and no frame is pushed.
+	 *
+	 * `$shaped` says `m` is a query SHAPE rather than prose or a URL, and so
+	 * must not be redacted. A shape needs no redaction: the producer's
+	 * `sql_shape()` — `App\Core::without_literals()` here — has already replaced
+	 * every literal and stripped every comment, which is where a credential in
+	 * SQL can sit, and a URL carrying a query string reaches a statement only
+	 * inside a literal. What is left is keywords, identifiers and placeholders.
+	 *
+	 * Redacting one is worse than wasted. `URL_REDACT_PATTERN` reads a
+	 * placeholder as a query delimiter, and its value half runs to the next `&`
+	 * — which SQL has none of — so a single column named like a credential
+	 * truncates the statement from that `=` to the end. `Gyrobase::Log::start`
+	 * carries the same flag.
+	 *
+	 * @param string              $label  Label for the timer (e.g. 'query', 'template').
+	 * @param array<string,mixed> $data   Extra keys for the emitted start entry.
+	 * @param bool                $shaped Whether `m` is a query shape.
+	 */
+	public function start( string $label, array $data = [], bool $shaped = false ): void {
+		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
+			return;
+		}
+		$written = false;
+		try {
+			$written = $this->message( "{$label} (start)", $data, $shaped );
+		} catch ( Worker_Should_Stop $stop ) {
+			// A bare stop follows a flushed line; a failure lost it.
+			$written = null === $stop->getPrevious();
+			throw $stop;
+		} finally {
+			if ( $written ) {
+				$entry = [ 'label' => $label, 'ts' => \hrtime( true ) ];
+				if ( ! empty( $data['m'] ) ) {
+					$entry['m'] = $data['m'];
+				}
+				$this->times[] = $entry;
+			}
+		}
 	}
 
 	/**
@@ -519,44 +619,6 @@ class Log_Manager {
 	 */
 	public function alert( string $message ): bool {
 		return $this->message( 'alert', [ 'm' => $message ] );
-	}
-
-	/**
-	 * Start timing a labeled operation and push its frame on the timer stack.
-	 *
-	 * Two things drop a frame: a stack already MAX_TIMER_DEPTH deep, and a start
-	 * line that could not be written. Pair every start() with a complete()
-	 * carrying the same label — an unmatched frame drains as `(orphaned)`.
-	 *
-	 * `$shaped` says `m` is a query SHAPE rather than prose or a URL, and so
-	 * must not be redacted. A shape needs no redaction: the producer's
-	 * `sql_shape()` — `App\Core::without_literals()` here — has already replaced
-	 * every literal and stripped every comment, which is where a credential in
-	 * SQL can sit, and a URL carrying a query string reaches a statement only
-	 * inside a literal. What is left is keywords, identifiers and placeholders.
-	 *
-	 * Redacting one is worse than wasted. `URL_REDACT_PATTERN` reads a
-	 * placeholder as a query delimiter, and its value half runs to the next `&`
-	 * — which SQL has none of — so a single column named like a credential
-	 * truncates the statement from that `=` to the end. `Gyrobase::Log::start`
-	 * carries the same flag.
-	 *
-	 * @param string              $label  Label for the timer (e.g. 'query', 'template').
-	 * @param array<string,mixed> $data   Extra keys for the emitted start entry.
-	 * @param bool                $shaped Whether `m` is a query shape.
-	 */
-	public function start( string $label, array $data = [], bool $shaped = false ): void {
-		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
-			return;
-		}
-		if ( false === $this->message( "{$label} (start)", $data, $shaped ) ) {
-			return;
-		}
-		$entry = [ 'label' => $label, 'ts' => \hrtime( true ) ];
-		if ( ! empty( $data['m'] ) ) {
-			$entry['m'] = $data['m'];
-		}
-		$this->times[] = $entry;
 	}
 
 	/**
@@ -838,6 +900,19 @@ class Log_Manager {
 	}
 
 	/**
+	 * The active instance IFF it has already started logging — the seam for "is
+	 * there somewhere to log this line?". Never creates or starts an instance
+	 * (unlike instance()), so an unmatched / rule-gated / root context yields
+	 * null and the caller drops the line, writes elsewhere, or opens a job
+	 * context of its own.
+	 *
+	 * @api Used by the diagnostics bridge and by external plugins' cron managers.
+	 */
+	public static function started_instance(): ?self {
+		return ( null !== self::$instance && self::$instance->is_started() ) ? self::$instance : null;
+	}
+
+	/**
 	 * Resolve the rule governing a URL and keep it as this request's.
 	 *
 	 * No match means skip: there is no log-all baseline, so a deployment that
@@ -860,19 +935,6 @@ class Log_Manager {
 	 */
 	public function is_started(): bool {
 		return true === $this->started;
-	}
-
-	/**
-	 * The active instance IFF it has already started logging — the seam for "is
-	 * there somewhere to log this line?". Never creates or starts an instance
-	 * (unlike instance()), so an unmatched / rule-gated / root context yields
-	 * null and the caller drops the line, writes elsewhere, or opens a job
-	 * context of its own.
-	 *
-	 * @api Used by the diagnostics bridge and by external plugins' cron managers.
-	 */
-	public static function started_instance(): ?self {
-		return ( null !== self::$instance && self::$instance->is_started() ) ? self::$instance : null;
 	}
 
 	/**

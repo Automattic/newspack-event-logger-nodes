@@ -409,6 +409,42 @@ class FlameTreeTest extends TestCase {
 		$this->assertFalse( Flame_Tree::is_hook_span( 'sync remote plugin' ) );
 	}
 
+	/** A verb's span is `<class> <verb> command`, read by its base's suffix. */
+	public function test_is_command_span_reads_the_suffix(): void {
+		$this->assertTrue( Flame_Tree::is_command_span( 'Performance_CI urls' . Flame_Tree::COMMAND_SUFFIX ) );
+		$this->assertTrue( Flame_Tree::is_command_span( 'Rules_CI dump command: traced' ) );
+		$this->assertFalse( Flame_Tree::is_command_span( 'Performance_CI urls' ) );
+		$this->assertFalse( Flame_Tree::is_command_span( 'wp_loaded hook' ) );
+	}
+
+	/**
+	 * The platform's five names take the product chart palette, each its own
+	 * hue, and none the command span's Morganite: `url fold` nests in either
+	 * cache and the header cache in the page cache, so a shared or near
+	 * colour would draw two frames as one.
+	 */
+	public function test_platform_colours_are_distinct_steps_of_the_chart_palette(): void {
+		$theme = (string) \file_get_contents( \dirname( __DIR__, 3 ) . '/newspack-nodes/src/theme/newspack-theme.scss' );
+		\preg_match_all( '/--np-chart-(\d): (#[0-9a-f]{6});/', $theme, $m );
+		$palette = \array_combine( $m[1], \array_map( 'strtoupper', $m[2] ) );
+		$this->assertCount( 6, $palette, 'the six-step palette DESIGN.product.md names' );
+
+		$colours = \array_map( 'strtoupper', Flame_Tree::PLATFORM_COLORS );
+		$this->assertSame( [], \array_diff( $colours, $palette ), 'every colour is a chart step' );
+		$this->assertCount( 5, \array_unique( $colours ), 'no two names share a step' );
+		$this->assertNotContains( $palette['6'], $colours, 'Morganite is the command span\'s' );
+	}
+
+	/** The URL read's three steps are its spans — never its point events, nor a verb. */
+	public function test_is_url_read_span_names_the_three_steps(): void {
+		foreach ( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD . ': 3' ] as $span ) {
+			$this->assertTrue( Flame_Tree::is_url_read_span( $span ), $span );
+		}
+		foreach ( [ Flame_Tree::URL_RANK_LISTS, Flame_Tree::STATS_MIRROR, 'Discovery_CI get command', 'url folds', 'wp_loaded hook', 'sql' ] as $span ) {
+			$this->assertFalse( Flame_Tree::is_url_read_span( $span ), $span );
+		}
+	}
+
 	/** The name the minter builds is the name the classifier reads, sign included. */
 	public function test_listener_name_is_what_is_listener_span_reads(): void {
 		$this->assertTrue( Flame_Tree::is_listener_span( Flame_Tree::listener_name( 'Image_CDN::filter_the_content', -5 ) ) );

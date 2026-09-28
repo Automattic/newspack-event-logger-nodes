@@ -609,8 +609,9 @@ class Stats_Store {
 	 * window and a sparse server has buckets the mirror holds no frame for,
 	 * each a full walk to say so — and never the writer's, whose own folds
 	 * read a bucket once and whose writes must not compete with a marker.
-	 * `Flame_Builder_Node::arm_stats_reader()` sets it to `absence_holds()`
-	 * for a namespace the mirror can hold and to 0 for one it refuses.
+	 * `Flame_Builder_Node::arm_stats_reader()` sets it to `absence_holds()`,
+	 * dated from the reply's clock, for a namespace the mirror can hold and to
+	 * 0 for one it refuses.
 	 * Signature: `function (string $key): int`, seconds. Read when a table is
 	 * built, so it is set before the first read, as `arm_stats_reader()` does.
 	 *
@@ -2263,11 +2264,10 @@ class Stats_Store {
 	 *
 	 * @api The `$absence` seam, per key the mirror did not return.
 	 * @param string $key Table-relative entry key.
+	 * @param int    $now The reply's clock, read once at its entry (decision 29).
 	 * @return int Seconds the absence holds; 0 holds none.
 	 */
-	public function absence_holds( string $key ): int {
-		// The tick, never a fresh read.
-		$now    = (int) Core::$now;
+	public function absence_holds( string $key, int $now ): int {
 		$bucket = self::bucket_span( $key );
 		if ( null === $bucket || $bucket[0] + $bucket[1] + self::BUCKET_SECONDS > $now ) {
 			return self::ABSENCE_HOLD_SECONDS;

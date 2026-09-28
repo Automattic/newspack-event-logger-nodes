@@ -7,11 +7,11 @@
  * list. The categories, their colors, their one-line descriptions and the
  * regular expressions that assign hooks to them ship in `hook_categories.json`
  * at the plugin root; a site adds to or overrides any of it through the
- * `newspack_event_logger_nodes_hook_customizations` option. The file has a
- * second reader that does not come through this class:
- * `newspack-event-logger-nodes.php` publishes it whole on
- * `window.eventLoggerHookCategories`, where the Gyroscope legend takes its
- * colors, so a change to its shape has to answer for both.
+ * `newspack_event_logger_nodes_hook_customizations` option. The file also
+ * ships whole, through `get_base_config()`, as
+ * `window.eventLoggerHookCategories` (`Config::span_palette_js()`), where the
+ * Gyroscope legend and every span take their colors, so a change to its shape
+ * has to answer for both.
  *
  * @package Newspack_Event_Logger_Nodes
  */

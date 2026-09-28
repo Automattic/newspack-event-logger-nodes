@@ -416,6 +416,18 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
+	it( 'shows the lines the search skipped as unparseable, even with no results', () => {
+		const { container, unmount } = mount(
+			{},
+			{ searchResults: null, searchUnparseableLines: 3 }
+		);
+		expect(
+			container.querySelector( '.newspack-nodes-banner.is-warning' )
+				.textContent
+		).toBe( '3 lines would not parse and were skipped.' );
+		unmount();
+	} );
+
 	it( 'renders no results list when searchResults is empty', () => {
 		const { container, unmount } = mount( {}, { searchResults: [] } );
 		expect(

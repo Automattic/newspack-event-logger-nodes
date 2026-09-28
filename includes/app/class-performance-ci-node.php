@@ -489,9 +489,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * stops the drain itself, so the partitions after it go unread — and a
 	 * result cap. Every limit is reported honestly in `truncated`.
 	 *
+	 * Many processes append to the firehose, so a torn line can sit in it until
+	 * its segment rotates. Having no cursor to replay it from, the scan skips
+	 * one and counts it in `unparseable_lines` rather than failing every search.
+	 *
 	 * @param string $pattern Raw user pattern; matched case-insensitively.
 	 * @param int    $limit   Maximum matching requests to return.
-	 * @return array{pattern:string, scope:string, scanned_partitions:int, results:array<int,array<string,mixed>>, truncated:bool, result_count:int}
+	 * @return array{pattern:string, scope:string, scanned_partitions:int, results:array<int,array<string,mixed>>, truncated:bool, result_count:int, unparseable_lines:int}
 	 */
 	private static function run_grep_requests( string $pattern, int $limit ): array {
 		$results   = [];
@@ -538,7 +542,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$core->push( $entry, $rid, Message::packed( \array_values( $message ) ) );
 		};
 
-		$scanned_partitions = 0;
+		$scanned = [];
 		foreach ( Log_Manager::firehose_dirs() as $p => $source_dir ) {
 			if ( $spent ) {
 				break;
@@ -546,12 +550,10 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( ! \is_dir( $source_dir ) ) {
 				continue;
 			}
-			$consumer = new Consumer_Node();
-			self::name_scratch_consumer( $consumer, $p );
-			$consumer->sink( new Callback_Node( $on_message ) );
+			$consumer = Consumer_Node::scan( $source_dir );
 			try {
-				// source_dir only: no offsetlog/deadletter (ephemeral).
-				$consumer->arguments( [ $source_dir ] );
+				self::name_scratch_consumer( $consumer, $p );
+				$consumer->sink( new Callback_Node( $on_message ) );
 				$consumer->next_offset( 'recent' );
 				// By reference: an arrow fn would freeze $spent at false.
 				$consumer->drain(
@@ -559,19 +561,20 @@ class Performance_CI_Node extends Service_CI_Node {
 						return $spent;
 					}
 				);
+				$scanned[] = $consumer;
 			} finally {
 				$consumer->remove_node();
 			}
-			++$scanned_partitions;
 		}
 
 		return [
 			'pattern'            => $pattern,
 			'scope'              => 'recent',
-			'scanned_partitions' => $scanned_partitions,
+			'scanned_partitions' => \count( $scanned ),
 			'results'            => $results,
 			'truncated'          => $truncated,
 			'result_count'       => \count( $results ),
+			'unparseable_lines'  => Consumer_Node::take_unparseable_lines_of( $scanned ),
 		];
 	}
 
@@ -712,9 +715,9 @@ class Performance_CI_Node extends Service_CI_Node {
 			case 'url':
 				return $this->ask_url( $target['id'], $server, $now );
 			case 'request':
-				return self::ask_request( $target['id'], (int) $target['qualifier'], $context, $server );
+				return self::ask_request( $target['id'], self::descriptor_partition( $target ), $context, $server );
 			case 'span':
-				return self::ask_span( $target['id'], $context );
+				return self::ask_span( $target['id'], $context, $now );
 			case 'entry':
 				return self::ask_entry( $target['id'], $context );
 			case 'category':
@@ -743,7 +746,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private function ask_overview( string $server, array $filters, int $now ): array {
-		$stores = self::stats_stores();
+		$stores = self::stats_stores( $now );
 		$page   = $this->url_page(
 			$server,
 			Core::as_string( $filters['search'] ?? '' ),
@@ -785,7 +788,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		// output raw quotes a confident 0 for every average. Scoped, because
 		// the facts block stamps the filters onto every surface, and an
 		// unscoped number under a server's name is quotable and wrong.
-		$stats = $this->row( $hash, $server, self::stats_stores(), $now );
+		$stats = $this->row( $hash, $server, self::stats_stores( $now ), $now );
 		if ( null === $stats ) {
 			throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 		}
@@ -846,6 +849,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int} */
 		return self::read_through_page(
+			Flame_Tree::URL_PAGE_CACHE,
 			[ $server, $search, $errors, $workers, $sort, $order, $offset, $limit, Stats_Store::bucket_key( $now ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
 			self::PAGE_FIELDS,
 			Stats_Store::URL_PAGE_REFRESH_S,
@@ -899,6 +903,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged = [];
 		$means  = [];
 		$found  = 0;
+		$holes  = [];
 		foreach ( $stores as $store ) {
 			$covered = [];
 			foreach ( $store->url_rank_window( $plan['hours'], $plan['fine'], $sort, $order, $server ) as [ $key, $entries ] ) {
@@ -910,15 +915,30 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 			$gap = Stats_Store::fine_fallback( $plan['hours'], $covered );
 			// A hole no fine tier still backs, not an idle hour.
-			if ( [] !== $gap['holes'] ) {
-				return null;
+			$holes = $gap['holes'];
+			if ( [] !== $holes ) {
+				break;
 			}
 			foreach ( $store->url_rank_window( [], $gap['buckets'], $sort, $order, $server ) as [ $bucket, $entries ] ) {
 				self::fold_rank_entries( $merged, $means, $entries, isset( $recent[ $bucket ] ) );
 				++$found;
 			}
 		}
-		if ( 0 === $found ) {
+		$m = match ( true ) {
+			[] !== $holes => 'fold: holes ' . \implode( ' ', $holes ),
+			0 === $found  => 'fold: no lists',
+			default       => 'ranked',
+		};
+		Log_Manager::started_instance()?->message(
+			Flame_Tree::URL_RANK_LISTS,
+			[
+				'm'     => $m,
+				'found' => $found,
+				'holes' => \count( $holes ),
+				'keep'  => 1,
+			]
+		);
+		if ( 'ranked' !== $m ) {
 			return null;
 		}
 		$rows = [];
@@ -1003,6 +1023,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		};
 		/** @var array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>} $header */
 		$header = self::read_through_page(
+			Flame_Tree::URL_HEADER_CACHE,
 			[ 'header', $server, Stats_Store::bucket_key( $now ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
 			self::HEADER_FIELDS,
 			Stats_Store::BUCKET_SECONDS,
@@ -1024,329 +1045,36 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Its own namespace rather than a partition's: a page folds every
 	 * partition, so it belongs to none, and the install salt still scopes it.
 	 *
+	 * The read is the span `$span` on the request's record; the architecture
+	 * guide lists what its `(complete)` says.
+	 *
+	 * @param string                             $span   The span the read is logged as.
 	 * @param array<array-key,mixed>             $parts  What the key covers.
 	 * @param list<string>                       $fields The keys the value carries.
 	 * @param int                                $ttl    Entry lifetime in seconds.
 	 * @param \Closure():array<array-key,mixed>  $build  Produces the value on a miss.
 	 * @return mixed The stored value, or what `$build` produced.
 	 */
-	private static function read_through_page( array $parts, array $fields, int $ttl, \Closure $build ): mixed {
-		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
-			return $build();
-		}
-		$parts[] = \md5( \implode( ',', $fields ) );
-		return \Newspack_Nodes\Table_Node::table( self::URLS_PAGE_NS, $ttl )->backed_by(
-			static fn ( array $keys ): array => [
-				$keys[0] => [
-					'value' => $build(),
-					'ttl'   => Flame_Builder_Node::mirror_budget_spent() ? 0 : $ttl,
-				],
-			]
-		)->lookup( \md5( (string) \wp_json_encode( $parts ) ) );
-	}
-
-	/**
-	 * One page of the URL set, walked from the raw index: its totals, its
-	 * slowest, and one page of it.
-	 *
-	 * Folded ONE SHARD AT A TIME. A url_hash's shard is its first hex digit, so
-	 * shards are disjoint and a shard's fold is complete for every URL it
-	 * holds — there is no cross-shard merge to miss. The whole merged index is
-	 * otherwise the count of distinct URLs across the retention window, which
-	 * nothing bounds: each stored bucket fits one cache item, the MERGE of
-	 * them does not, and folding all sixteen at once exhausts a production
-	 * hub's 512MB inside the fold itself. A server scope reads
-	 * that server's keys alone; no scope reads every server the index names.
-	 *
-	 * The union of the per-shard top-N is exactly the global top-N, because
-	 * every row belongs to exactly one shard — so keeping each shard's best
-	 * `$offset + $limit` by the sort key, and its best `SLOWEST_ROWS` by
-	 * `avg_ms`, loses nothing. `rows` and `totals` accumulate across shards and
-	 * stay site-wide (decision 15).
-	 *
-	 * @param string                 $server  Reporting server to scope to; '' reads every server.
-	 * @param string                 $search  Case-insensitive URL word or word prefix; '' matches all.
-	 * @param bool                   $errors  Keep only rows with unclassified requests.
-	 * @param bool                   $workers Keep worker traffic (the default excludes it).
-	 * @param string                 $sort    A URL_SORTS field.
-	 * @param string                 $order   'asc' or 'desc'.
-	 * @param int                    $offset  Page offset.
-	 * @param int                    $limit   Page size.
-	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
-	 * @param int                    $now     The reply's clock, read once at its entry.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
-	 */
-	private function fold_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
-		// `$search` is normalized by `url_page()`, which keys its cache on it.
-		$page_keep = \max( 0, $offset ) + \max( 0, $limit );
-		$ranked    = [];
-		$slowest   = [];
-		$rows      = 0;
-		$urls      = 0;
-		$requests  = 0;
-		$errored   = 0;
-		$timed     = 0;
-		$recent    = 0;
-		$sum_ms    = 0.0;
-		$sum_peak  = 0.0;
-
-		// Under the filter a count ranks the errors, not the traffic.
-		$by_sort = self::by_sort( $errors && 'count' === $sort ? 'errors' : $sort, $order );
-		$by_mean = static fn ( array $a, array $b ): int =>
-			( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 );
-
-		$tokens     = '' === $search ? [] : Stats_Store::term_tokens( $search );
-		$candidates = '' === $search
-			? null
-			: self::search_candidates( $tokens, $server, $stores, Stats_Store::read_plan( \array_values( self::read_window( $now ) ) ) );
-
-		// Worker traffic is its own shard family
-		$families = $workers ? [ false, true ] : [ false ];
-		$shards   = [];
-		foreach ( $families as $worker ) {
-			$shards = \array_merge( $shards, Stats_Store::url_shards( $worker ) );
-		}
-
-		// The walk drops to the shards the term's candidates fall in.
-		if ( null !== $candidates ) {
-			$in_play = [];
-			foreach ( \array_keys( $candidates ) as $hash ) {
-				foreach ( $families as $worker ) {
-					$in_play[ Stats_Store::url_shard( $hash, $worker ) ] = true;
-				}
+	private static function read_through_page( string $span, array $parts, array $fields, int $ttl, \Closure $build ): mixed {
+		$outcome = 'hit';
+		$read    = static function () use ( $parts, $fields, $ttl, $build, &$outcome ): mixed {
+			if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
+				$outcome = 'built, not stored';
+				return $build();
 			}
-			$shards = \array_values( \array_intersect( $shards, \array_keys( $in_play ) ) );
-		}
-
-		$overflow = [];
-		foreach ( $shards as $shard ) {
-			$kept = [];
-			foreach ( self::read_index( $shard, $server, $stores, $now ) as $raw ) {
-				$raw_row = Core::arr( $raw );
-				// @longform Every shard's overflow row shares ONE key, so a
-				// per-shard fold must collapse all sixteen deliberately —
-				// decision 17 says a merge on the url_hash collapses sixteen
-				// into one. Held raw and projected once below, so the means
-				// divide a whole row.
-				$hash = Core::as_string( $raw_row['hash'] ?? '' );
-				if ( Stats_Store::is_other_key( $hash ) ) {
-					$overflow[ $hash ] = isset( $overflow[ $hash ] )
-						? self::merge_overflow_rows( $overflow[ $hash ], $raw_row )
-						: $raw_row;
-					continue;
+			$parts[] = \md5( \implode( ',', $fields ) );
+			return \Newspack_Nodes\Table_Node::table( self::URLS_PAGE_NS, $ttl )->backed_by(
+				static function ( array $keys ) use ( $build, $ttl, &$outcome ): array {
+					$value   = $build();
+					$outcome = Flame_Builder_Node::mirror_budget_spent() ? 'built, not stored' : 'built';
+					return [ $keys[0] => [ 'value' => $value, 'ttl' => 'built' === $outcome ? $ttl : 0 ] ];
 				}
-				// @longform Filtered on the PATH before the row is projected:
-				// the term speaks about the path, and projecting a row it
-				// rejects is the index's whole work for nothing. An overflow
-				// row is held out above; no term speaks for one.
-				if ( null !== $candidates && ! isset( $candidates[ $hash ] ) ) {
-					continue;
-				}
-				$path = Stats_Store::path_of( Core::as_string( $raw_row['url'] ?? '' ) );
-				if ( '' !== $search && ! Stats_Store::term_matches( $path, $search, $tokens ) ) {
-					continue;
-				}
-				$row       = self::project_row( $raw_row );
-				$aggregate = ! empty( $row['aggregate'] );
-				$row       = $errors ? self::errors_only_row( $row ) : $row;
-				if ( null === $row ) {
-					continue;
-				}
-				++$rows;
-				// The overflow row stands for many URLs; not one of them.
-				$urls     += $aggregate ? 0 : 1;
-				$requests += Core::num_int( $row['count'] ?? null );
-				$errored  += Core::num_int( $row['errors'] ?? null );
-				$recent   += Core::num_int( $row['recent_count'] ?? null );
-				// Denominator from the SAME row as its numerator.
-				$timed    += Core::num_int( $row['timed_count'] ?? null );
-				$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
-				$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
-				$kept[]    = $row;
-			}
-
-			// This shard's contenders only; the rest of it is dropped here.
-			\usort( $kept, $by_mean );
-			$slowest = \array_merge( $slowest, \array_slice( $kept, 0, self::SLOWEST_ROWS ) );
-			\usort( $kept, $by_sort );
-			$ranked  = \array_merge( $ranked, \array_slice( $kept, 0, $page_keep ) );
-		}
-
-		foreach ( $overflow as $raw_row ) {
-			$row = self::project_row( $raw_row );
-			// Not one of `totals.urls`, but its requests are real.
-			if ( '' !== $search ) {
-				continue;
-			}
-			$row = $errors ? self::errors_only_row( $row ) : $row;
-			if ( null === $row ) {
-				continue;
-			}
-			++$rows;
-			$requests += Core::num_int( $row['count'] ?? null );
-			$errored  += Core::num_int( $row['errors'] ?? null );
-			$recent   += Core::num_int( $row['recent_count'] ?? null );
-			$timed    += Core::num_int( $row['timed_count'] ?? null );
-			$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
-			$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
-			$ranked[]  = $row;
-			$slowest[] = $row;
-		}
-
-		\usort( $slowest, $by_mean );
-		\usort( $ranked, $by_sort );
-
-		// The page and its slowest rows are named together, once.
-		$page  = \array_slice( $ranked, $offset, $limit );
-		$top   = \array_slice( $slowest, 0, self::SLOWEST_ROWS );
-		$named = self::resolve_urls( \array_merge( $page, $top ), $stores );
-		return [
-			'data'    => \array_slice( $named, 0, \count( $page ) ),
-			// The pager's question; `totals.urls` is another.
-			'rows'    => $rows,
-			'totals'  => [
-				'urls'                => $urls,
-				'requests'            => $requests,
-				'avg_ms'              => self::mean_of( $sum_ms, $timed ),
-				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
-				'requests_per_second' => self::recent_rate( $recent ),
-			] + ( $errors ? [ 'errors' => $errored ] : [] ),
-			'slowest' => \array_slice( $named, \count( $page ) ),
-			'ranked'  => false,
-			'as_of'   => $now,
-		];
-	}
-
-	/**
-	 * The hashes the token index names for a term, or null when it cannot
-	 * answer: a term with no token, EVERY token unanswerable, or more
-	 * candidates than `URL_SEARCH_MAX`. Which tokens can be answered is the
-	 * store's to say — `false` is one no read can answer, and one token
-	 * unanswerable among several narrows nothing while the rest still do,
-	 * because the fold matches the whole term against the names anyway. A
-	 * token no partition holds is a real answer — an empty set — and folds
-	 * nothing.
-	 *
-	 * Each server files its own sets, so a scope reads its server's and the
-	 * site reads those of every server an index the fold may read names.
-	 *
-	 * The reads take a budget of their own, for the reason `url_names()`
-	 * states: naming and narrowing are answers, not steps of the walk that
-	 * follows them.
-	 *
-	 * @param list<string>                                   $tokens The term's tokens.
-	 * @param string                                         $server Reporting server; '' is the site.
-	 * @param array<int,Stats_Store>                         $stores Stores the caller resolved once.
-	 * @param array{fine: list<string>, hours: list<string>} $plan   The reply's read plan.
-	 * @return array<string,true>|null
-	 */
-	private static function search_candidates( array $tokens, string $server, array $stores, array $plan ): ?array {
-		if ( [] === $tokens ) {
-			return null;
-		}
-		$buckets = [ ...$plan['fine'], ...Stats_Store::fine_fallback( $plan['hours'], [] )['buckets'] ];
-		$sets    = [];
-		Flame_Builder_Node::with_own_mirror_read_budget( static function () use ( $tokens, $server, $plan, $buckets, $stores, &$sets ): void {
-			foreach ( $stores as $store ) {
-				$servers = '' === $server
-					? \array_values( Stats_Store::index_names( \array_replace( [], ...\array_values( $store->server_index( $plan['hours'], $buckets ) ) ) ) )
-					: [ $server ];
-				foreach ( $store->url_token_sets( $tokens, $servers ) as $token => $hashes ) {
-					// One partition's set unanswerable is the token's answer.
-					if ( false === $hashes || false === ( $sets[ $token ] ?? null ) ) {
-						$sets[ $token ] = false;
-						continue;
-					}
-					$sets[ $token ] = ( $sets[ $token ] ?? [] ) + \array_fill_keys( $hashes, true );
-				}
-			}
+			)->lookup( \md5( (string) \wp_json_encode( $parts ) ) );
+		};
+		$lm = Log_Manager::started_instance();
+		return null === $lm ? $read() : $lm->timed( $span, $read, static function () use ( &$outcome ): string {
+			return $outcome;
 		} );
-		$usable = [];
-		foreach ( $tokens as $token ) {
-			if ( false !== ( $sets[ $token ] ?? null ) ) {
-				$usable[ $token ] = Core::arr( $sets[ $token ] ?? [] );
-			}
-		}
-		if ( [] === $usable ) {
-			return null;
-		}
-		// Smallest first: every intersection after it walks the smallest side.
-		\uasort( $usable, static fn ( array $a, array $b ): int => \count( $a ) <=> \count( $b ) );
-		$result = null;
-		foreach ( $usable as $set ) {
-			$result = null === $result ? $set : \array_intersect_key( $result, $set );
-		}
-		if ( \count( $result ) > Stats_Store::URL_SEARCH_MAX ) {
-			return null;
-		}
-		/** @var array<string,true> */
-		return $result;
-	}
-
-	/**
-	 * The `urls` sort comparator for one `URL_SORTS` field and direction —
-	 * shared by the fold and the ranked reader, so the two agree on ties.
-	 *
-	 * @param string $sort  A URL_SORTS field.
-	 * @param string $order 'asc' or 'desc'.
-	 */
-	private static function by_sort( string $sort, string $order ): \Closure {
-		return static fn ( array $a, array $b ): int => 'asc' === $order
-			? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
-			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 );
-	}
-
-	/**
-	 * Merge one shard's overflow row into another's.
-	 *
-	 * The same accumulation `fold_index_row()` performs, over two MERGED rows
-	 * rather than a merged row and a stored one: sums add, extremes take the
-	 * extreme, and `last_updated` takes the later. Only the overflow rows need
-	 * this — every other hash lives in one shard.
-	 *
-	 * @param array<array-key,mixed> $into A merged overflow row.
-	 * @param array<array-key,mixed> $from Another shard's, same key.
-	 * @return array<array-key,mixed>
-	 */
-	private static function merge_overflow_rows( array $into, array $from ): array {
-		foreach ( [ 'count', 'timed_count', 'recent_count' ] as $field ) {
-			$into[ $field ] = Core::num_int( $into[ $field ] ?? null ) + Core::num_int( $from[ $field ] ?? null );
-		}
-		foreach ( Stats_Store::ROW_STATUS_COUNTS as $name ) {
-			$into[ $name ] = Core::num_int( $into[ $name ] ?? null ) + Core::num_int( $from[ $name ] ?? null );
-		}
-		foreach ( [ 'sum_ms', 'sum_peak_mb' ] as $field ) {
-			$into[ $field ] = Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
-		}
-		foreach ( [ 'max_ms', 'max_peak_mb' ] as $field ) {
-			$into[ $field ] = \max( Core::num_float( $into[ $field ] ?? null ), Core::num_float( $from[ $field ] ?? null ) );
-		}
-		// Null means nothing timed; a real minimum always wins over it.
-		$from_min = $from['min_ms'] ?? null;
-		if ( null !== $from_min ) {
-			$into['min_ms'] = null === ( $into['min_ms'] ?? null )
-				? Core::num_float( $from_min )
-				: \min( Core::num_float( $into['min_ms'] ), Core::num_float( $from_min ) );
-		}
-		$into['last_updated'] = \max(
-			Core::num_int( $into['last_updated'] ?? null ),
-			Core::num_int( $from['last_updated'] ?? null )
-		);
-		$into['worker'] = ! empty( $into['worker'] ) || ! empty( $from['worker'] );
-		return $into;
-	}
-
-	/**
-	 * Requests per second over those buckets.
-	 *
-	 * The divisor is the WINDOW, not the buckets that carried traffic: dividing
-	 * by the buckets a URL appeared in makes one seen in two of twelve read six
-	 * times its rate.
-	 *
-	 * @param int $requests Requests counted across `recent_buckets()`.
-	 */
-	private static function recent_rate( int $requests ): float {
-		return $requests / ( self::RECENT_BUCKETS * Stats_Store::BUCKET_SECONDS );
 	}
 
 	/**
@@ -1494,10 +1222,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string       $name    Span name the descriptor carries.
 	 * @param list<string> $context Container descriptors, outermost last.
+	 * @param int          $now     The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException With neither context, or an absent span.
 	 */
-	private static function ask_span( string $name, array $context ): array {
+	private static function ask_span( string $name, array $context, int $now ): array {
 		$record = self::request_in_context( $context );
 		if ( null !== $record ) {
 			$brief = Ask_Assembler::for_span( $record, $name, self::rule_for_record( $record ), self::descriptor_of( $context, 'request' ) );
@@ -1506,7 +1235,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 			return $brief;
 		}
-		$url = self::url_in_context( $context, self::stats_stores() );
+		$url = self::url_in_context( $context, self::stats_stores( $now ) );
 		if ( null === $url ) {
 			throw new \RuntimeException( \esc_html( 'a span needs its request or its URL for context' ) );
 		}
@@ -1612,7 +1341,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				return $brief;
 			}
 		}
-		$stores = self::stats_stores();
+		$stores = self::stats_stores( $now );
 		$url    = self::url_in_context( $context, $stores );
 		if ( null !== $url && null !== $url['aggregate'] ) {
 			$brief = Ask_Assembler::for_url_category( Core::arr( $url['aggregate']['profiles'] ?? null ), $name, $url['name'] );
@@ -1870,10 +1599,27 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( $context as $descriptor ) {
 			$parsed = Ask_Assembler::parse_descriptor( Core::as_string( $descriptor ) );
 			if ( null !== $parsed && 'request' === $parsed['type'] ) {
-				return self::load_request( $parsed['id'], (int) $parsed['qualifier'] );
+				return self::load_request( $parsed['id'], self::descriptor_partition( $parsed ) );
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * The partition a `request:` descriptor names, read through the
+	 * substrate's refusing decimal parse: a cast would read `abc` as p0 and
+	 * `-3` as p-3, and the record would be found under a partition nobody
+	 * named.
+	 *
+	 * @param array{type:string,id:string,qualifier:string} $parsed What `Ask_Assembler::parse_descriptor()` returned.
+	 * @throws \RuntimeException When the qualifier is no canonical non-negative decimal.
+	 */
+	private static function descriptor_partition( array $parsed ): int {
+		$partition = Core::canonical_decimal( $parsed['qualifier'] );
+		if ( null === $partition ) {
+			throw new \RuntimeException( \esc_html( "invalid partition in request:{$parsed['id']}:{$parsed['qualifier']}" ) );
+		}
+		return $partition;
 	}
 
 	/**
@@ -2221,6 +1967,465 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * One URL's merged row, read from the ONE shard its hash names.
+	 *
+	 * `Stats_Store::url_shard()` is the first hex digit of the hash, so a single
+	 * URL lives in a single shard and the other fifteen answer nothing. Reaching
+	 * this row through the whole index makes the detail modal pay the URL
+	 * TABLE's fan-out — 18,432 keys and 54 MB on the staging hub, for one row.
+	 *
+	 * The reader population answers first and the worker one only when it has
+	 * nothing: a URL served both ways shows the row the default table showed,
+	 * and a job-only URL still opens.
+	 *
+	 * @param string                 $hash   12-char URL hash.
+	 * @param string                 $server Reporting server; '' reads every server.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * @return array<array-key,mixed>|null The merged row, or null when absent.
+	 */
+	public static function load_row( string $hash, string $server, array $stores, int $now ): ?array {
+		foreach ( [ false, true ] as $worker ) {
+			$found = self::row_in_shard( $hash, Stats_Store::url_shard( $hash, $worker ), $server, $stores, $now );
+			if ( null !== $found ) {
+				return $found;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * One URL's merged row from one shard, or null when that shard has none.
+	 *
+	 * @param string                 $hash   12-char URL hash.
+	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
+	 * @param string                 $server Reporting server; '' reads every server.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * @return array<array-key,mixed>|null
+	 */
+	private static function row_in_shard( string $hash, string $shard, string $server, array $stores, int $now ): ?array {
+		foreach ( self::read_index( $shard, $server, $stores, $now ) as $row ) {
+			if ( Core::as_string( $row['hash'] ?? '' ) === $hash ) {
+				return $row;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * One Stats_Store per flame-builder worker. `configure_stats <partition>`
+	 * keys each store by the WORKER index, and nothing of it lands on disk — so
+	 * the index space comes from the declaring topology's count, not from a dir
+	 * listing.
+	 *
+	 * With no shared cache backend at all this returns an empty list, which is
+	 * what makes every stats reader above degrade to an empty or zeroed shape
+	 * instead of throwing. Each store's TTL comes from the substrate
+	 * `min_lifetime` key.
+	 *
+	 * @param int $now The reply's clock, read once at its entry; each store's absences date from it.
+	 * @return array<int,Stats_Store>
+	 */
+	private static function stats_stores( int $now ): array {
+		// Not Core::$memd: an APCu-only pool reaches stats via the mirror.
+		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
+			return [];
+		}
+		$max_lifespan = AppConfig::stats_retention_seconds();
+		$stores       = [];
+		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
+			$store = new Stats_Store( $p, $max_lifespan );
+			// No worker here to arm it: a miss must still reach the mirror.
+			Flame_Builder_Node::arm_stats_reader( $store, $now );
+			// One reply's stores: every shard asks the same buckets' index.
+			$store->server_indexes = [];
+			$stores[] = $store;
+		}
+		return $stores;
+	}
+
+	/**
+	 * One verb is one answer, and the durable mirror may be read only inside
+	 * that answer's budget — so the budget starts here, and the answer's
+	 * `stats mirror` event is written here (see the architecture guide).
+	 *
+	 * `dispatch()` rather than `fill()`: `interpret()` routes every inbound
+	 * TM_COMMAND through here, and `Mcp_Controller` calls it straight with no
+	 * Message behind it. Hung on `fill()` the MCP path would be covered only
+	 * by the accident of a JSON-RPC request being one method in one process.
+	 *
+	 * @param string           $name     Verb name.
+	 * @param list<string>     $args     Argument tokens.
+	 * @param array<int,mixed> $envelope Inbound TM_COMMAND, or [] for an inline call.
+	 */
+	public function dispatch( string $name, array $args = [], array $envelope = [] ): mixed {
+		Flame_Builder_Node::reset_mirror_read_budget();
+		try {
+			return parent::dispatch( $name, $args, $envelope );
+		} finally {
+			self::log_mirror_reads( Flame_Builder_Node::mirror_read_tally() );
+		}
+	}
+
+	/**
+	 * The `stats mirror` event for one verb's mirror reads, when it made any;
+	 * the architecture guide states its fields.
+	 *
+	 * @param array{calls:int,asked:int,found:int,ns:int,budget_ns:int,spent:bool} $tally `Flame_Builder_Node::mirror_read_tally()`.
+	 */
+	private static function log_mirror_reads( array $tally ): void {
+		if ( 0 === $tally['calls'] ) {
+			return;
+		}
+		$ms = $tally['ns'] / 1e6;
+		Log_Manager::started_instance()?->message(
+			Flame_Tree::STATS_MIRROR,
+			[
+				'm'            => \sprintf(
+					'%d keys asked, %d found, %dms%s',
+					$tally['asked'],
+					$tally['found'],
+					(int) $ms,
+					$tally['spent'] ? ', budget spent' : ''
+				),
+				'calls'        => $tally['calls'],
+				'asked'        => $tally['asked'],
+				'found'        => $tally['found'],
+				'ms'           => \round( $ms, 1 ),
+				'budget_spent' => $tally['spent'],
+				'keep'         => 1,
+			]
+		);
+	}
+
+	/**
+	 * One page of the URL set, walked from the raw index inside the `url fold`
+	 * span; `walk_url_index()` states the walk.
+	 *
+	 * @param string                 $server  Reporting server to scope to; '' reads every server.
+	 * @param string                 $search  Case-insensitive URL word or word prefix; '' matches all.
+	 * @param bool                   $errors  Keep only rows with unclassified requests.
+	 * @param bool                   $workers Keep worker traffic (the default excludes it).
+	 * @param string                 $sort    A URL_SORTS field.
+	 * @param string                 $order   'asc' or 'desc'.
+	 * @param int                    $offset  Page offset.
+	 * @param int                    $limit   Page size.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
+	 */
+	private function fold_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
+		$walk = fn (): array => $this->walk_url_index( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores, $now );
+		$lm   = Log_Manager::started_instance();
+		return null === $lm ? $walk() : $lm->timed( Flame_Tree::URL_FOLD, $walk, static fn ( array $page ): int => $page['rows'] );
+	}
+
+	/**
+	 * One page of the URL set, walked from the raw index: its totals, its
+	 * slowest, and one page of it.
+	 *
+	 * Folded ONE SHARD AT A TIME. A url_hash's shard is its first hex digit, so
+	 * shards are disjoint and a shard's fold is complete for every URL it
+	 * holds — there is no cross-shard merge to miss. The whole merged index is
+	 * otherwise the count of distinct URLs across the retention window, which
+	 * nothing bounds: each stored bucket fits one cache item, the MERGE of
+	 * them does not, and folding all sixteen at once exhausts a production
+	 * hub's 512MB inside the fold itself. A server scope reads
+	 * that server's keys alone; no scope reads every server the index names.
+	 *
+	 * The union of the per-shard top-N is exactly the global top-N, because
+	 * every row belongs to exactly one shard — so keeping each shard's best
+	 * `$offset + $limit` by the sort key, and its best `SLOWEST_ROWS` by
+	 * `avg_ms`, loses nothing. `rows` and `totals` accumulate across shards and
+	 * stay site-wide (decision 15).
+	 *
+	 * @param string                 $server  Reporting server to scope to; '' reads every server.
+	 * @param string                 $search  Case-insensitive URL word or word prefix; '' matches all.
+	 * @param bool                   $errors  Keep only rows with unclassified requests.
+	 * @param bool                   $workers Keep worker traffic (the default excludes it).
+	 * @param string                 $sort    A URL_SORTS field.
+	 * @param string                 $order   'asc' or 'desc'.
+	 * @param int                    $offset  Page offset.
+	 * @param int                    $limit   Page size.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
+	 */
+	private function walk_url_index( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
+		// `$search` is normalized by `url_page()`, which keys its cache on it.
+		$page_keep = \max( 0, $offset ) + \max( 0, $limit );
+		$ranked    = [];
+		$slowest   = [];
+		$rows      = 0;
+		$urls      = 0;
+		$requests  = 0;
+		$errored   = 0;
+		$timed     = 0;
+		$recent    = 0;
+		$sum_ms    = 0.0;
+		$sum_peak  = 0.0;
+
+		// Under the filter a count ranks the errors, not the traffic.
+		$by_sort = self::by_sort( $errors && 'count' === $sort ? 'errors' : $sort, $order );
+		$by_mean = static fn ( array $a, array $b ): int =>
+			( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 );
+
+		$tokens     = '' === $search ? [] : Stats_Store::term_tokens( $search );
+		$candidates = '' === $search
+			? null
+			: self::search_candidates( $tokens, $server, $stores, Stats_Store::read_plan( \array_values( self::read_window( $now ) ) ) );
+
+		// Worker traffic is its own shard family
+		$families = $workers ? [ false, true ] : [ false ];
+		$shards   = [];
+		foreach ( $families as $worker ) {
+			$shards = \array_merge( $shards, Stats_Store::url_shards( $worker ) );
+		}
+
+		// The walk drops to the shards the term's candidates fall in.
+		if ( null !== $candidates ) {
+			$in_play = [];
+			foreach ( \array_keys( $candidates ) as $hash ) {
+				foreach ( $families as $worker ) {
+					$in_play[ Stats_Store::url_shard( $hash, $worker ) ] = true;
+				}
+			}
+			$shards = \array_values( \array_intersect( $shards, \array_keys( $in_play ) ) );
+		}
+
+		$overflow = [];
+		foreach ( $shards as $shard ) {
+			$kept = [];
+			foreach ( self::read_index( $shard, $server, $stores, $now ) as $raw ) {
+				$raw_row = Core::arr( $raw );
+				// @longform Every shard's overflow row shares ONE key, so a
+				// per-shard fold must collapse all sixteen deliberately —
+				// decision 17 says a merge on the url_hash collapses sixteen
+				// into one. Held raw and projected once below, so the means
+				// divide a whole row.
+				$hash = Core::as_string( $raw_row['hash'] ?? '' );
+				if ( Stats_Store::is_other_key( $hash ) ) {
+					$overflow[ $hash ] = isset( $overflow[ $hash ] )
+						? self::merge_overflow_rows( $overflow[ $hash ], $raw_row )
+						: $raw_row;
+					continue;
+				}
+				// @longform Filtered on the PATH before the row is projected:
+				// the term speaks about the path, and projecting a row it
+				// rejects is the index's whole work for nothing. An overflow
+				// row is held out above; no term speaks for one.
+				if ( null !== $candidates && ! isset( $candidates[ $hash ] ) ) {
+					continue;
+				}
+				$path = Stats_Store::path_of( Core::as_string( $raw_row['url'] ?? '' ) );
+				if ( '' !== $search && ! Stats_Store::term_matches( $path, $search, $tokens ) ) {
+					continue;
+				}
+				$row       = self::project_row( $raw_row );
+				$aggregate = ! empty( $row['aggregate'] );
+				$row       = $errors ? self::errors_only_row( $row ) : $row;
+				if ( null === $row ) {
+					continue;
+				}
+				++$rows;
+				// The overflow row stands for many URLs; not one of them.
+				$urls     += $aggregate ? 0 : 1;
+				$requests += Core::num_int( $row['count'] ?? null );
+				$errored  += Core::num_int( $row['errors'] ?? null );
+				$recent   += Core::num_int( $row['recent_count'] ?? null );
+				// Denominator from the SAME row as its numerator.
+				$timed    += Core::num_int( $row['timed_count'] ?? null );
+				$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
+				$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
+				$kept[]    = $row;
+			}
+
+			// This shard's contenders only; the rest of it is dropped here.
+			\usort( $kept, $by_mean );
+			$slowest = \array_merge( $slowest, \array_slice( $kept, 0, self::SLOWEST_ROWS ) );
+			\usort( $kept, $by_sort );
+			$ranked  = \array_merge( $ranked, \array_slice( $kept, 0, $page_keep ) );
+		}
+
+		foreach ( $overflow as $raw_row ) {
+			$row = self::project_row( $raw_row );
+			// Not one of `totals.urls`, but its requests are real.
+			if ( '' !== $search ) {
+				continue;
+			}
+			$row = $errors ? self::errors_only_row( $row ) : $row;
+			if ( null === $row ) {
+				continue;
+			}
+			++$rows;
+			$requests += Core::num_int( $row['count'] ?? null );
+			$errored  += Core::num_int( $row['errors'] ?? null );
+			$recent   += Core::num_int( $row['recent_count'] ?? null );
+			$timed    += Core::num_int( $row['timed_count'] ?? null );
+			$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
+			$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
+			$ranked[]  = $row;
+			$slowest[] = $row;
+		}
+
+		\usort( $slowest, $by_mean );
+		\usort( $ranked, $by_sort );
+
+		// The page and its slowest rows are named together, once.
+		$page  = \array_slice( $ranked, $offset, $limit );
+		$top   = \array_slice( $slowest, 0, self::SLOWEST_ROWS );
+		$named = self::resolve_urls( \array_merge( $page, $top ), $stores );
+		return [
+			'data'    => \array_slice( $named, 0, \count( $page ) ),
+			// The pager's question; `totals.urls` is another.
+			'rows'    => $rows,
+			'totals'  => [
+				'urls'                => $urls,
+				'requests'            => $requests,
+				'avg_ms'              => self::mean_of( $sum_ms, $timed ),
+				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
+				'requests_per_second' => self::recent_rate( $recent ),
+			] + ( $errors ? [ 'errors' => $errored ] : [] ),
+			'slowest' => \array_slice( $named, \count( $page ) ),
+			'ranked'  => false,
+			'as_of'   => $now,
+		];
+	}
+
+	/**
+	 * The hashes the token index names for a term, or null when it cannot
+	 * answer: a term with no token, EVERY token unanswerable, or more
+	 * candidates than `URL_SEARCH_MAX`. Which tokens can be answered is the
+	 * store's to say — `false` is one no read can answer, and one token
+	 * unanswerable among several narrows nothing while the rest still do,
+	 * because the fold matches the whole term against the names anyway. A
+	 * token no partition holds is a real answer — an empty set — and folds
+	 * nothing.
+	 *
+	 * Each server files its own sets, so a scope reads its server's and the
+	 * site reads those of every server an index the fold may read names.
+	 *
+	 * The reads take a budget of their own, for the reason `url_names()`
+	 * states: naming and narrowing are answers, not steps of the walk that
+	 * follows them.
+	 *
+	 * @param list<string>                                   $tokens The term's tokens.
+	 * @param string                                         $server Reporting server; '' is the site.
+	 * @param array<int,Stats_Store>                         $stores Stores the caller resolved once.
+	 * @param array{fine: list<string>, hours: list<string>} $plan   The reply's read plan.
+	 * @return array<string,true>|null
+	 */
+	private static function search_candidates( array $tokens, string $server, array $stores, array $plan ): ?array {
+		if ( [] === $tokens ) {
+			return null;
+		}
+		$buckets = [ ...$plan['fine'], ...Stats_Store::fine_fallback( $plan['hours'], [] )['buckets'] ];
+		$sets    = [];
+		Flame_Builder_Node::with_own_mirror_read_budget( static function () use ( $tokens, $server, $plan, $buckets, $stores, &$sets ): void {
+			foreach ( $stores as $store ) {
+				$servers = '' === $server
+					? \array_values( Stats_Store::index_names( \array_replace( [], ...\array_values( $store->server_index( $plan['hours'], $buckets ) ) ) ) )
+					: [ $server ];
+				foreach ( $store->url_token_sets( $tokens, $servers ) as $token => $hashes ) {
+					// One partition's set unanswerable is the token's answer.
+					if ( false === $hashes || false === ( $sets[ $token ] ?? null ) ) {
+						$sets[ $token ] = false;
+						continue;
+					}
+					$sets[ $token ] = ( $sets[ $token ] ?? [] ) + \array_fill_keys( $hashes, true );
+				}
+			}
+		} );
+		$usable = [];
+		foreach ( $tokens as $token ) {
+			if ( false !== ( $sets[ $token ] ?? null ) ) {
+				$usable[ $token ] = Core::arr( $sets[ $token ] ?? [] );
+			}
+		}
+		if ( [] === $usable ) {
+			return null;
+		}
+		// Smallest first: every intersection after it walks the smallest side.
+		\uasort( $usable, static fn ( array $a, array $b ): int => \count( $a ) <=> \count( $b ) );
+		$result = null;
+		foreach ( $usable as $set ) {
+			$result = null === $result ? $set : \array_intersect_key( $result, $set );
+		}
+		if ( \count( $result ) > Stats_Store::URL_SEARCH_MAX ) {
+			return null;
+		}
+		/** @var array<string,true> */
+		return $result;
+	}
+
+	/**
+	 * The `urls` sort comparator for one `URL_SORTS` field and direction —
+	 * shared by the fold and the ranked reader, so the two agree on ties.
+	 *
+	 * @param string $sort  A URL_SORTS field.
+	 * @param string $order 'asc' or 'desc'.
+	 */
+	private static function by_sort( string $sort, string $order ): \Closure {
+		return static fn ( array $a, array $b ): int => 'asc' === $order
+			? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
+			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 );
+	}
+
+	/**
+	 * Merge one shard's overflow row into another's.
+	 *
+	 * The same accumulation `fold_index_row()` performs, over two MERGED rows
+	 * rather than a merged row and a stored one: sums add, extremes take the
+	 * extreme, and `last_updated` takes the later. Only the overflow rows need
+	 * this — every other hash lives in one shard.
+	 *
+	 * @param array<array-key,mixed> $into A merged overflow row.
+	 * @param array<array-key,mixed> $from Another shard's, same key.
+	 * @return array<array-key,mixed>
+	 */
+	private static function merge_overflow_rows( array $into, array $from ): array {
+		foreach ( [ 'count', 'timed_count', 'recent_count' ] as $field ) {
+			$into[ $field ] = Core::num_int( $into[ $field ] ?? null ) + Core::num_int( $from[ $field ] ?? null );
+		}
+		foreach ( Stats_Store::ROW_STATUS_COUNTS as $name ) {
+			$into[ $name ] = Core::num_int( $into[ $name ] ?? null ) + Core::num_int( $from[ $name ] ?? null );
+		}
+		foreach ( [ 'sum_ms', 'sum_peak_mb' ] as $field ) {
+			$into[ $field ] = Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
+		}
+		foreach ( [ 'max_ms', 'max_peak_mb' ] as $field ) {
+			$into[ $field ] = \max( Core::num_float( $into[ $field ] ?? null ), Core::num_float( $from[ $field ] ?? null ) );
+		}
+		// Null means nothing timed; a real minimum always wins over it.
+		$from_min = $from['min_ms'] ?? null;
+		if ( null !== $from_min ) {
+			$into['min_ms'] = null === ( $into['min_ms'] ?? null )
+				? Core::num_float( $from_min )
+				: \min( Core::num_float( $into['min_ms'] ), Core::num_float( $from_min ) );
+		}
+		$into['last_updated'] = \max(
+			Core::num_int( $into['last_updated'] ?? null ),
+			Core::num_int( $from['last_updated'] ?? null )
+		);
+		$into['worker'] = ! empty( $into['worker'] ) || ! empty( $from['worker'] );
+		return $into;
+	}
+
+	/**
+	 * Requests per second over those buckets.
+	 *
+	 * The divisor is the WINDOW, not the buckets that carried traffic: dividing
+	 * by the buckets a URL appeared in makes one seen in two of twelve read six
+	 * times its rate.
+	 *
+	 * @param int $requests Requests counted across `recent_buckets()`.
+	 */
+	private static function recent_rate( int $requests ): float {
+		return $requests / ( self::RECENT_BUCKETS * Stats_Store::BUCKET_SECONDS );
+	}
+
+	/**
 	 * Fill in each row's URL from the name table.
 	 *
 	 * A stored row carries the path its server's key does not imply, so the
@@ -2291,53 +2496,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				return $names;
 			}
 		);
-	}
-
-	/**
-	 * One URL's merged row, read from the ONE shard its hash names.
-	 *
-	 * `Stats_Store::url_shard()` is the first hex digit of the hash, so a single
-	 * URL lives in a single shard and the other fifteen answer nothing. Reaching
-	 * this row through the whole index makes the detail modal pay the URL
-	 * TABLE's fan-out — 18,432 keys and 54 MB on the staging hub, for one row.
-	 *
-	 * The reader population answers first and the worker one only when it has
-	 * nothing: a URL served both ways shows the row the default table showed,
-	 * and a job-only URL still opens.
-	 *
-	 * @param string                 $hash   12-char URL hash.
-	 * @param string                 $server Reporting server; '' reads every server.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
-	 * @return array<array-key,mixed>|null The merged row, or null when absent.
-	 */
-	public static function load_row( string $hash, string $server, array $stores, int $now ): ?array {
-		foreach ( [ false, true ] as $worker ) {
-			$found = self::row_in_shard( $hash, Stats_Store::url_shard( $hash, $worker ), $server, $stores, $now );
-			if ( null !== $found ) {
-				return $found;
-			}
-		}
-		return null;
-	}
-
-	/**
-	 * One URL's merged row from one shard, or null when that shard has none.
-	 *
-	 * @param string                 $hash   12-char URL hash.
-	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
-	 * @param string                 $server Reporting server; '' reads every server.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
-	 * @return array<array-key,mixed>|null
-	 */
-	private static function row_in_shard( string $hash, string $shard, string $server, array $stores, int $now ): ?array {
-		foreach ( self::read_index( $shard, $server, $stores, $now ) as $row ) {
-			if ( Core::as_string( $row['hash'] ?? '' ) === $hash ) {
-				return $row;
-			}
-		}
-		return null;
 	}
 
 	/**
@@ -2630,37 +2788,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One Stats_Store per flame-builder worker. `configure_stats <partition>`
-	 * keys each store by the WORKER index, and nothing of it lands on disk — so
-	 * the index space comes from the declaring topology's count, not from a dir
-	 * listing.
-	 *
-	 * With no shared cache backend at all this returns an empty list, which is
-	 * what makes every stats reader above degrade to an empty or zeroed shape
-	 * instead of throwing. Each store's TTL comes from the substrate
-	 * `min_lifetime` key.
-	 *
-	 * @return array<int,Stats_Store>
-	 */
-	private static function stats_stores(): array {
-		// Not Core::$memd: an APCu-only pool reaches stats via the mirror.
-		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
-			return [];
-		}
-		$max_lifespan = AppConfig::stats_retention_seconds();
-		$stores       = [];
-		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
-			$store = new Stats_Store( $p, $max_lifespan );
-			// No worker here to arm it: a miss must still reach the mirror.
-			Flame_Builder_Node::arm_stats_reader( $store );
-			// One reply's stores: every shard asks the same buckets' index.
-			$store->server_indexes = [];
-			$stores[] = $store;
-		}
-		return $stores;
-	}
-
-	/**
 	 * A URL row as the dashboard's "Errors" filter shows it, carrying `errors`:
 	 * the requests no status bucket accounted for — timeouts (T) and fatals
 	 * (F), not 5xx, which IS a response — or null when it had none.
@@ -2704,24 +2831,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function now(): int {
 		return (int) Core::$now;
-	}
-
-	/**
-	 * One verb is one answer, and the durable mirror may be read only inside
-	 * that answer's budget — so the budget starts here.
-	 *
-	 * `dispatch()` rather than `fill()`: `interpret()` routes every inbound
-	 * TM_COMMAND through here, and `Mcp_Controller` calls it straight with no
-	 * Message behind it. Hung on `fill()` the MCP path would be covered only
-	 * by the accident of a JSON-RPC request being one method in one process.
-	 *
-	 * @param string           $name     Verb name.
-	 * @param list<string>     $args     Argument tokens.
-	 * @param array<int,mixed> $envelope Inbound TM_COMMAND, or [] for an inline call.
-	 */
-	public function dispatch( string $name, array $args = [], array $envelope = [] ): mixed {
-		Flame_Builder_Node::reset_mirror_read_budget();
-		return parent::dispatch( $name, $args, $envelope );
 	}
 
 	/**
@@ -2774,43 +2883,20 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Decode a synced array-option value. Settings_Sync_Node::scalarize()
 	 * JSON-encodes arrays unconditionally, so the wire form is always JSON. A
-	 * non-JSON value is a contract violation: reject it explicitly to [] with a
-	 * rate-limited notice rather than silently mis-parsing it.
-	 *
-	 * Footgun: the empty array is not inert downstream. For the ruleset option
-	 * it reaches `Rule_Set::apply_synced( [] )`, which SAVES an empty ruleset —
-	 * so a malformed push clears the spoke's rules rather than leaving them be.
-	 * Watch the notice.
+	 * non-JSON value is a contract violation, refused before anything is
+	 * written: read as [], the ruleset option would reach
+	 * `Rule_Set::apply_synced( [] )` and SAVE an empty ruleset.
 	 *
 	 * @param string $raw The raw positional value off the wire.
 	 * @return array<array-key,mixed>
+	 * @throws \RuntimeException When the value is not a JSON array.
 	 */
 	private static function decode_array_value( string $raw ): array {
 		$decoded = \json_decode( $raw, true );
-		if ( \is_array( $decoded ) ) {
-			return $decoded;
+		if ( ! \is_array( $decoded ) ) {
+			throw new \RuntimeException( 'synced array-option value is not a JSON array' );
 		}
-		Core::print_less_often( 'PerformanceCI: rejected non-JSON synced array-option value' );
-		return [];
-	}
-
-	/**
-	 * Ask every live worker to re-read its boot-frozen option cache.
-	 *
-	 * This is the hub→spoke settings-sync RECEIVE path, and it runs outside
-	 * `is_admin()`, so the settings form's `updated_option` signal never fires
-	 * for it — without this the spoke's workers serve the old value until they
-	 * recycle. The ruleset branch signals through `Rule_Set::save()` instead.
-	 *
-	 * Best-effort: the next worker generation loads the new value regardless, so
-	 * an unresolvable locks directory must not fail the write or the response.
-	 */
-	private static function request_reloads(): void {
-		try {
-			Restart_Planner::request_reloads( AppConfig::get_locks_directory() );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'PerformanceCI: reload signalling failed: ', $e->getMessage() );
-		}
+		return $decoded;
 	}
 
 	/**
@@ -2889,7 +2975,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				\assert( $self instanceof self );
 				$now                           = self::now();
-				$stores                        = self::stats_stores();
+				$stores                        = self::stats_stores( $now );
 				$payload                       = self::build_overview_payload( $stores, $now );
 				$payload['global_leaderboard'] = self::build_leaderboard( $server, $stores, $now );
 
@@ -2943,7 +3029,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				\assert( $self instanceof self );
-				$page = $self->url_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, self::stats_stores(), self::now() );
+				$now  = self::now();
+				$page = $self->url_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, self::stats_stores( $now ), $now );
 
 				return [
 					'data'    => $page['data'],
@@ -2996,7 +3083,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				\assert( $self instanceof self );
 				$now    = self::now();
-				$stores = self::stats_stores();
+				$stores = self::stats_stores( $now );
 				$entry  = $self->row( $hash, $server, $stores, $now );
 				$stats  = null;
 				if ( null !== $entry ) {
@@ -3069,7 +3156,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$breakdown = (string) ( $parsed['options']['breakdown'] ?? '' );
 				self::assert_dimension( $breakdown, self::URL_DIMENSIONS );
-				return [ 'breakdown_time_series' => self::merge_url_dim( $hash, $breakdown, self::stats_stores(), self::now() ) ];
+				$now = self::now();
+				return [ 'breakdown_time_series' => self::merge_url_dim( $hash, $breakdown, self::stats_stores( $now ), $now ) ];
 					},
 				],
 				[
@@ -3257,7 +3345,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				// Autoload per Config::autoload_for; emits settings event.
 				$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
 				AppConfig::reset();
-				self::request_reloads();
+				// Outside is_admin(): no updated_option tells the workers.
+				Restart_Planner::request_reloads( AppConfig::get_locks_directory() );
 
 				return [
 					'option'  => $option,

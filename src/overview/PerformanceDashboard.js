@@ -125,6 +125,8 @@ export default function PerformanceDashboard( {
 	const [ searchResults, setSearchResults ] = useState( null );
 	const [ searchResultsTruncated, setSearchResultsTruncated ] =
 		useState( false );
+	// Lines the last grep skipped as unparseable; undefined until it answers.
+	const [ searchUnparseableLines, setSearchUnparseableLines ] = useState();
 	const [ requestPartition, setRequestPartition ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = usePersistedChoice(
 		'event-logger-refresh-interval',
@@ -512,6 +514,7 @@ export default function PerformanceDashboard( {
 			setSearchLoading( true );
 			setSearchError( null );
 			setSearchResults( null );
+			setSearchUnparseableLines( undefined );
 			searchForRequest( formatCommandArgs( [ rid.trim() ] ) );
 		},
 		[ searchForRequest ]
@@ -529,6 +532,7 @@ export default function PerformanceDashboard( {
 		subjectOf: () => null,
 		onDone: ( { result, error } ) => {
 			setSearchLoading( false );
+			setSearchUnparseableLines( result?.unparseable_lines );
 			const results = result?.results ?? [];
 			if ( results.length > 0 ) {
 				setSearchResults( results );
@@ -557,6 +561,7 @@ export default function PerformanceDashboard( {
 			setSearchError( null );
 			setSearchResults( null );
 			setSearchResultsTruncated( false );
+			setSearchUnparseableLines( undefined );
 			requestGrep(
 				formatCommandArgs( [ pattern.trim() ], {
 					limit: GREP_RESULT_LIMIT,
@@ -882,6 +887,7 @@ export default function PerformanceDashboard( {
 				onSearch={ handleSearch }
 				searchResults={ searchResults }
 				searchResultsTruncated={ searchResultsTruncated }
+				searchUnparseableLines={ searchUnparseableLines }
 				onSelectResult={ selectSearchResult }
 				refreshInterval={ refreshInterval }
 				setRefreshInterval={ setRefreshInterval }

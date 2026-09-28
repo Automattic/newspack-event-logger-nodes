@@ -30,7 +30,7 @@ const RAW_LOGS = 'raw-logs';
  * @param {number}   [opts.maxEntries] View ring cap; the view class's own
  *                                     default when unset.
  * @return {{ setPaused: (paused: boolean) => void, clear: () => void, step: ?() => void, browse: Object, setFilter: (term: string) => void }}
- *   Control callbacks plus the browse model for the thin React view; the view's
+ *   Control callbacks and the browse model for the thin React view; the view's
  *   own `view` field is read through `useNodeField`.
  */
 export function useGlobStreamGraph( { prefix, glob, viewClass }, opts = {} ) {

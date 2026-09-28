@@ -271,6 +271,31 @@ class AdminTest extends TestCase {
 		}
 	}
 
+	/**
+	 * A flag that would not land propagates: the option row is written, and
+	 * the save must learn that one live worker never heard of it — after
+	 * every other worker was told.
+	 */
+	public function test_maybe_request_worker_restart_propagates_a_flag_that_would_not_land(): void {
+		$this->register_topologies();
+		$refusing = $this->prepare_lock_dir( 'combined', 0 );
+		$this->prepare_lock_dir( 'aggregator', 0 );
+		\chmod( $refusing, 0555 );
+
+		$thrown = null;
+		try {
+			( new Admin() )->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_memory' );
+		} catch ( \RuntimeException $e ) {
+			$thrown = $e;
+		} finally {
+			\chmod( $refusing, 0755 );
+		}
+
+		$this->assertNotNull( $thrown, 'a flag write that failed must reach the save' );
+		$this->assertStringContainsString( $refusing, $thrown->getMessage() );
+		$this->assertRestartFlagged( 'aggregator', 0 );
+	}
+
 	// ---- render_settings_page --------------------------------------------
 
 	public function test_render_settings_page_outputs_settings_fields_markup(): void {
@@ -848,16 +873,16 @@ class AdminTest extends TestCase {
 		);
 	}
 
-	public function test_maybe_request_worker_restart_swallows_throwables_in_worker_groups_path(): void {
-		// Same defensive path on the regular (request-workers / job-workers)
-		// branch — Config::load_config() failing is caught and the handler
-		// silently returns rather than fatal-erroring on a save.
-		$this->use_base_dir( $this->base_dir, [ 'base_directory' => '/proc/this/cannot/be/created' ] );
+	/**
+	 * A save the fleet never hears of must not read as a clean one: with the
+	 * locks directory unresolvable, the signal's failure reaches the writer.
+	 */
+	public function test_maybe_request_worker_restart_propagates_an_unresolvable_locks_directory(): void {
+		$this->use_base_dir( $this->base_dir, [ 'base_directory' => '/proc/lantern-moth/cannot/be/created' ] );
 
-		$admin = new Admin();
-		// Must not throw.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
-		$this->addToAssertionCount( 1 );
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( '/proc/lantern-moth/cannot/be/created' );
+		( new Admin() )->maybe_request_worker_restart( 'newspack_event_logger_nodes_significant_events' );
 	}
 
 	// ---- additional edge cases for higher coverage --------------------------

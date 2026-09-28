@@ -196,12 +196,16 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$this->assertNull( Core::node( 'anemometer:config' ), 'no addressed command can reach the table' );
 		$this->assertNull( $interpreter->patron(), 'the handler is refused at the patron link' );
 		foreach ( [ 'set_inflight_target' => 'gyroscope.p9', 'set_inflight_delta' => '1' ] as $verb => $arg ) {
+			$caught = null;
 			try {
 				$verbs[ $verb ]( $interpreter, [ $arg ] );
-				$this->fail( "expected {$verb} to refuse a torn-down builder" );
+			} catch ( \PHPUnit\Exception | \SebastianBergmann\Invoker\Exception $e ) {
+				throw $e;
 			} catch ( \Throwable $e ) {
-				$this->assertNotSame( 'ok', $e->getMessage() );
+				$caught = $e;
 			}
+			$this->assertInstanceOf( \Throwable::class, $caught, "expected {$verb} to refuse a torn-down builder" );
+			$this->assertNotSame( 'ok', $caught->getMessage() );
 		}
 	}
 }

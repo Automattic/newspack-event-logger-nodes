@@ -1590,6 +1590,33 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	it( 'hands the section the lines a grep skipped as unparseable, matches or none', async () => {
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( '/torn' );
+		} );
+		answerCommand( GREP, {
+			result: { results: [], truncated: false, unparseable_lines: 14 },
+			args: [ '/torn' ],
+		} );
+		expect( globalThis.__overviewProps.searchUnparseableLines ).toBe( 14 );
+
+		// A new search clears the last one's count until its own answer lands.
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( '/again' );
+		} );
+		expect(
+			globalThis.__overviewProps.searchUnparseableLines
+		).toBeUndefined();
+		unmount();
+	} );
+
 	it( 'an empty grep result surfaces the no-matches message', async () => {
 		mockView = loadedView();
 		const { unmount } = renderComponent(

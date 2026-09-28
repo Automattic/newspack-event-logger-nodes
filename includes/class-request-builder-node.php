@@ -334,12 +334,34 @@ class Request_Builder_Node extends Timer_Node {
 	 * and drops it immediately, to get the state back out of RAM rather than
 	 * wait for eviction.
 	 *
+	 * The whole fold runs inside `deferring()`, so a stop a forward raises
+	 * waits for the message's bookkeeping and then leaves as a clean stop.
+	 *
 	 * @param array<int,mixed> $message The firehose line or command to fold in.
 	 */
 	public function fill( array $message ): void {
 		++$this->counter;
-		// Per-message deferral: clear a stale stop from a prior fill().
-		$this->clear_pending_stop();
+		$this->deferring( fn () => $this->fold_line( $message ) );
+	}
+
+	/**
+	 * Router-TIMER tick. Drives the cache's idle rotation so a stalled in-flight
+	 * request times out (error_status='T') and reaches both the primary sink and
+	 * the completed target even on a partition with no inbound firehose traffic.
+	 * An eviction's emit holds its stop in the bracket until the pass is done.
+	 *
+	 * @api Used by substrate.
+	 */
+	protected function fire(): void {
+		$this->deferring( fn () => $this->cache->rotate_if_due() );
+	}
+
+	/**
+	 * Fold one message into its request envelope; `fill()` documents the rules.
+	 *
+	 * @param array<int,mixed> $message The firehose line or command to fold in.
+	 */
+	private function fold_line( array $message ): void {
 		$type_raw = $message[ Message::TYPE ];
 		$type     = Core::as_int( $type_raw );
 		if ( $type & Message::TM_REQUEST ) {
@@ -473,7 +495,6 @@ class Request_Builder_Node extends Timer_Node {
 
 		// Runaways stay visible (Perl gyroscope parity); still evicted+bounded.
 		if ( $request->is_runaway ?? false ) {
-			$this->raise_pending_stop();
 			return;
 		}
 
@@ -544,21 +565,6 @@ class Request_Builder_Node extends Timer_Node {
 			}
 			$this->cache->delete( $rid );
 		}
-
-		$this->raise_pending_stop();
-	}
-
-	/**
-	 * Router-TIMER tick. Drives the cache's idle rotation so a stalled in-flight
-	 * request times out (error_status='T') and reaches both the primary sink and
-	 * the completed target even on a partition with no inbound firehose traffic.
-	 *
-	 * @api Used by substrate.
-	 */
-	protected function fire(): void {
-		$this->cache->rotate_if_due();
-		// An eviction emit parks a stop through guarded(); the tick raises it.
-		$this->raise_pending_stop();
 	}
 
 	/**

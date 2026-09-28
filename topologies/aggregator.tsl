@@ -40,10 +40,8 @@
 # remote:firehose:<id>:firehose.p0). SSL/HTTPS policy comes from the substrate
 # vault_verify_ssl / vault_require_ssl config — not a per-topology setter.
 #
-# A Vault id colliding with an already-declared node name (e.g. `topic`) is
-# skipped loudly rather than aborting the load, because this group is declared
-# AFTER the nodes it could collide with — keep it last among the make_node
-# lines below.
+# A Vault id colliding with a declared node name (e.g. `topic`) fails the
+# load, naming the id; on reload it escapes after every other spoke is built.
 
 include topic-probe
 

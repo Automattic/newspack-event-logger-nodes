@@ -24,6 +24,7 @@ jest.mock( '@newspack-nodes/shared/components/LogRowList', () => ( {
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
 import RequestStream from '../RequestStream';
+import { publishSkippedLines } from '@newspack-nodes/shared/test-utils/skippedLines';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useRequestLogGraph } = require( '../hooks/useRequestLogGraph' );
@@ -128,6 +129,15 @@ describe( 'RequestStream', () => {
 		mounted.push( r );
 		return r;
 	}
+
+	it( 'shows the lines its stream skipped as unparseable', () => {
+		publishSkippedLines( 'request-log:link', 2 );
+		registerViewFixture();
+		const { container } = mount();
+		expect( container.textContent ).toContain(
+			'2 lines would not parse and were skipped.'
+		);
+	} );
 
 	it( 'leaves the page heading to the shell (no source picker)', () => {
 		registerViewFixture();

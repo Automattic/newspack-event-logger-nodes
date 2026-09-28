@@ -1139,6 +1139,55 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
+	 * A verb's span is a FRAME: the verb's time, with the spans it ran inside.
+	 * It is logged whatever the rule, so the finding sends the reader to its
+	 * children and proposes no rule edit.
+	 */
+	public function test_a_dominant_command_span_sends_the_reader_to_its_children(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[
+				'name'     => 'Performance_CI urls command',
+				'value'    => 372.0,
+				'children' => [ [ 'name' => Flame_Tree::URL_FOLD, 'value' => 41.0, 'children' => [] ] ],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'Performance_CI urls command', $found['metric']['name'] );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertArrayNotHasKey( 'field', $found['proposal'] );
+		$this->assertSame( '', $found['proposal']['undo'] );
+		$this->assertStringContainsString( 'Performance_CI urls command', $found['proposal']['why'] );
+		$this->assertStringContainsString( 'children', $found['proposal']['why'] );
+		$this->assertStringContainsString( 'verb', $found['detail'] );
+		$this->assertStringNotContainsString( 'Performance_CI_Node', $found['proposal']['why'] );
+		$this->assertStringNotContainsString( 'custom event', $found['detail'] );
+	}
+
+	/** The URL read's steps are leaves the platform times; no rule edit reaches inside. */
+	public function test_a_dominant_url_read_step_proposes_nothing(): void {
+		foreach ( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD ] as $step ) {
+			$record = $this->healthy_record();
+			$record['flame']['children'] = [
+				[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+				[ 'name' => $step, 'value' => 372.0, 'children' => [] ],
+			];
+
+			$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+			$this->assertNotNull( $found, $step );
+			$this->assertSame( 'none', $found['proposal']['action'], $step );
+			$this->assertStringContainsString( 'Performance_CI_Node', $found['proposal']['why'], $step );
+			$this->assertStringNotContainsString( 'command', $found['proposal']['why'], $step );
+			$this->assertStringNotContainsString( 'custom event', $found['detail'], $step );
+		}
+	}
+
+	/**
 	 * Only a single-token slug is the profiler's: an application event whose
 	 * name merely ends in "plugin" is still the application's own.
 	 */

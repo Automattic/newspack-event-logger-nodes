@@ -306,21 +306,63 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 0, $this->cache_size( $rb ), 'the completed request was evicted before the stop unwound' );
 	}
 
-	public function test_a_stale_pending_stop_does_not_leak_into_a_later_message(): void {
-		// pending_stop is a PER-MESSAGE deferral. If a non-Worker_Should_Stop throwable
-		// escapes one fill() after a guarded() catch (the Consumer dead-letters it and the
-		// worker survives), the stale deferral must not strand into the next message — else
-		// that innocent, RAM-only line would be clean-stopped and dropped on the resume.
+	public function test_a_stop_held_by_one_message_never_reaches_the_next(): void {
+		// The bracket is per message: a stop the completing forward raised
+		// ends with that message, so the next line folds in and raises nothing.
+		$rb       = new Request_Builder_Node();
+		$stopping = true;
+		$rb->name( 'request-builder' );
+		$rb->sink( new class( $stopping ) extends \Newspack_Nodes\Node {
+			public function __construct( private bool &$stopping ) {
+				parent::__construct();
+			}
+			public function fill( array $message ): void {
+				if ( $this->stopping ) {
+					throw new \Newspack_Nodes\Worker_Should_Stop();
+				}
+			}
+		} );
+		$this->fill( $rb, 1, 'r-quince', 'process (start)' );
+		$this->fill( $rb, 2, 'r-quince', 'request', [ 'm' => 'GET /quince' ] );
+		try {
+			$this->fill( $rb, 3, 'r-quince', 'process (complete)', [ 'duration_ms' => 7.0, 'status_code' => 200 ] );
+		} catch ( \Newspack_Nodes\Worker_Should_Stop_Clean $e ) {
+			$this->addToAssertionCount( 1 );
+		}
+		$stopping = false;
+
+		$this->fill( $rb, 1, 'r-medlar', 'process (start)' );
+
+		$this->assertSame( 1, $this->cache_size( $rb ), 'the next message folded in with no stop' );
+	}
+
+	public function test_a_stop_beside_a_failure_raises_plain_carrying_it(): void {
+		// The primary emit stops and the summary emit fails: the message did not
+		// finish, so the stop is PLAIN (the reader replays) and carries the failure.
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
-		$rb->sink( new Capture_Sink_Node() );
+		$rb->set_completed_target( 'completed:partition' );
+		$rb->sink( new class() extends \Newspack_Nodes\Node {
+			public function fill( array $message ): void {
+				if ( 'completed:partition' === $message[ Message::TO ] ) {
+					throw new \RuntimeException( 'summary partition refused the append' );
+				}
+				throw new \Newspack_Nodes\Worker_Should_Stop();
+			}
+		} );
+		$this->fill( $rb, 1, 'r-sorrel', 'process (start)' );
+		$this->fill( $rb, 2, 'r-sorrel', 'request', [ 'm' => 'GET /sorrel' ] );
 
-		$ref = new \ReflectionProperty( $rb, 'pending_stop' );
-		$ref->setValue( $rb, new \Newspack_Nodes\Worker_Should_Stop() );
+		$thrown = null;
+		try {
+			$this->fill( $rb, 3, 'r-sorrel', 'process (complete)', [ 'duration_ms' => 9.0, 'status_code' => 200 ] );
+		} catch ( \Throwable $e ) {
+			$thrown = $e;
+		}
 
-		// A benign mid-request line (no durable forward) must NOT re-raise the stale stop.
-		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
-		$this->assertNull( $ref->getValue( $rb ), 'fill() clears any stale pending_stop at entry' );
+		$this->assertInstanceOf( \Newspack_Nodes\Worker_Should_Stop::class, $thrown );
+		$this->assertFalse( \Newspack_Nodes\Worker_Should_Stop::is_clean( $thrown ), 'a failure beside the stop is never clean' );
+		$this->assertSame( 'summary partition refused the append', $thrown->getPrevious()?->getMessage() );
 	}
 
 	public function test_complete_without_url_skipped(): void {
@@ -2460,13 +2502,9 @@ class RequestBuilderTest extends TestCase {
 		$blocker = new Request_Flight_Node();
 		$blocker->name( 'taken:flight' );
 		$rb = new Request_Builder_Node();
-		try {
-			$rb->name( 'taken' );
-			$this->fail( 'expected collision exception' );
-		} catch ( \RuntimeException $e ) {
-			$this->assertNull( Core::node( 'taken' ) );
-			$this->assertSame( $blocker, Core::node( 'taken:flight' ) );
-		}
+		$this->caught( fn () => $rb->name( 'taken' ), 'expected collision exception' );
+		$this->assertNull( Core::node( 'taken' ) );
+		$this->assertSame( $blocker, Core::node( 'taken:flight' ) );
 	}
 	public function test_the_index_parser_takes_the_current_line_only(): void {
 		// The writer emits one width. Accepting the four shorter historical

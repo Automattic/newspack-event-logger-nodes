@@ -33,6 +33,7 @@ import { ProfileWithCaption } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
 import { AskButton } from './AskPanel';
 import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
+import UnparseableLinesNotice from '@newspack-nodes/shared/components/UnparseableLinesNotice';
 import HeadlineStats from './HeadlineStats';
 
 /**
@@ -52,6 +53,7 @@ import HeadlineStats from './HeadlineStats';
  * @param {(query: string) => void} props.onSearch               Search submit handler, given the raw query.
  * @param {Array|null}              props.searchResults          Pattern-search rows — `{ rid, method, url, match_count }` — or null before a search.
  * @param {boolean}                 props.searchResultsTruncated Whether the server capped the result set.
+ * @param {number|undefined}        props.searchUnparseableLines Lines the last pattern search skipped as unparseable; undefined before one answers.
  * @param {(rid: string) => void}   props.onSelectResult         Row-click handler; deep-links by request id.
  * @param {string}                  props.refreshInterval        Poll interval in milliseconds, as a string.
  * @param {(value: string) => void} props.setRefreshInterval     Refresh interval setter.
@@ -80,6 +82,7 @@ export default function OverviewSection( {
 	onSearch,
 	searchResults,
 	searchResultsTruncated,
+	searchUnparseableLines,
 	onSelectResult,
 	refreshInterval,
 	setRefreshInterval,
@@ -264,6 +267,7 @@ export default function OverviewSection( {
 							) }
 						</div>
 					) }
+				<UnparseableLinesNotice count={ searchUnparseableLines } />
 				<CardBody>
 					<HeadlineStats totals={ urlTotals } />
 

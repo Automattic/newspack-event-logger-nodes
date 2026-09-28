@@ -105,12 +105,11 @@ class HubControlTopologyTest extends TestCase {
 	}
 
 	/**
-	 * hub-control's `settings-sync` include already declares `settings:consumer`
-	 * before the `settings` Vault_Group, so a colliding Vault id is skipped
-	 * loudly rather than aborting the load — no reorder needed here, unlike
-	 * aggregator.tsl.
+	 * hub-control's `settings-sync` include declares `settings:consumer` before
+	 * the `settings` Vault_Group, so a Vault id `consumer` collides with it and
+	 * fails the load, naming the id.
 	 */
-	public function test_a_vault_id_colliding_with_the_settings_consumer_name_is_skipped_not_fatal(): void {
+	public function test_a_vault_id_colliding_with_the_settings_consumer_name_fails_the_load(): void {
 		$this->seed_vault_servers(
 			[
 				'tw7'      => [ 'url' => 'https://tw7.example', 'group' => 'spoke' ],
@@ -118,10 +117,24 @@ class HubControlTopologyTest extends TestCase {
 			]
 		);
 
-		$this->load_hub_control();
+		$caught = $this->caught( fn () => $this->load_hub_control(), 'a colliding Vault id must fail the load' );
+		$this->assertStringContainsString( 'building Vault id consumer', $caught->getMessage() );
 
 		$this->assertInstanceOf( Consumer_Node::class, Core::node( 'settings:consumer' ) );
+	}
+
+	public function test_a_vault_id_colliding_on_reload_escapes_and_keeps_the_other_egresses(): void {
+		$this->seed_vault( 'tw7', [ 'url' => 'https://tw7.example', 'group' => 'spoke' ] );
+		$this->load_hub_control();
+		Vault::get_instance()->add( 'consumer', [ 'url' => 'https://consumer.example', 'group' => 'spoke' ] );
+		Vault::get_instance()->add( 'tw8', [ 'url' => 'https://tw8.example', 'group' => 'spoke' ] );
+
+		$caught = $this->caught( fn () => Core::node( 'settings' )->update_graph(), 'a colliding Vault id must escape the reload' );
+		$this->assertStringContainsString( 'building Vault id consumer', $caught->getMessage() );
+
 		$this->assertInstanceOf( HTTP_Out_Node::class, Core::node( 'settings:tw7' ) );
+		$this->assertInstanceOf( HTTP_Out_Node::class, Core::node( 'settings:tw8' ) );
+		$this->assertInstanceOf( Consumer_Node::class, Core::node( 'settings:consumer' ) );
 	}
 
 	public function test_settings_spoke_child_dump_config_shows_both_allow_replies_to_entries(): void {

@@ -113,19 +113,14 @@ final class Rule_Set {
 	 *
 	 * @param array<int|string,mixed> $rules_array Stored rule maps (Rule::to_array()).
 	 * @return array<int,mixed>
+	 * @throws \InvalidArgumentException When a stored pointer entry is unrepresentable, so the push fails rather than ship it hookless.
 	 */
 	public static function hydrate_array( array $rules_array ): array {
 		$out = [];
 		foreach ( $rules_array as $entry ) {
 			if ( \is_array( $entry ) && Rule::HOOKS_MC === ( $entry['hooks_in'] ?? '' ) ) {
-				try {
-					/** @var array<string,mixed> $entry pointer rule map. */
-					$hooks = self::hooks_for( Rule::from_array( $entry ) );
-				} catch ( \InvalidArgumentException $e ) {
-					// Unrepresentable at rest — load() skips it; ship as found.
-					Core::print_less_often( 'Newspack ELN: cannot inline hooks for stored rule: ', $e->getMessage() );
-					$hooks = [];
-				}
+				/** @var array<string,mixed> $entry pointer rule map. */
+				$hooks = self::hooks_for( Rule::from_array( $entry ) );
 				// Stay a pointer on []: inlining empty wipes the spoke's hooks.
 				if ( [] !== $hooks ) {
 					$entry['hooks']    = $hooks;
@@ -221,7 +216,8 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Ask every live worker to re-read its boot-frozen option cache.
+	 * Ask every live worker to re-read its boot-frozen option cache: the
+	 * settings-save recipe with nothing to recycle, `Restart_Planner::plan( [] )`.
 	 *
 	 * Signalled from `save()` rather than its callers because save() is the one
 	 * origin every ruleset write passes through — `Rules_CI_Node`, the synced
@@ -232,15 +228,15 @@ final class Rule_Set {
 	 * along with its peers; intended, because a reload also purges the option
 	 * cache its own later reads go through.
 	 *
-	 * Best-effort: the next worker generation loads the new ruleset regardless,
-	 * so an unresolvable locks directory must not fail the write.
+	 * Runs after the rule row is written or deleted, so a failure here — an
+	 * unresolvable locks directory, or a reload flag that would not land —
+	 * leaves the ruleset stored and propagates to the writer, which learns that
+	 * the live fleet was never told. Every lock dir is offered its flag first.
+	 *
+	 * @throws \Throwable What `Restart_Planner::plan()` raised.
 	 */
 	private static function request_reloads(): void {
-		try {
-			Restart_Planner::request_reloads( Config::get_locks_directory() );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'rules: reload signalling failed: ', $e->getMessage() );
-		}
+		Restart_Planner::plan( [] );
 	}
 
 	/**

@@ -270,6 +270,7 @@ export default function ErrorLog( { headerControlsSlot } ) {
 			pickerLabel={ browse.pickerLabel }
 			isPaused={ isPaused }
 			connectionError={ connectionError }
+			linkNode="error-log:link"
 			onTogglePause={ () => setPaused( ! isPaused ) }
 			onStep={ step }
 			onJump={ browse.jump }

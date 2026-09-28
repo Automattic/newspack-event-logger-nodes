@@ -43,6 +43,7 @@ use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 use Newspack_Nodes\Shutdown_Sweeper;
+use Newspack_Nodes\Timer_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -70,7 +71,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *   leaderboard_by_server: array<string,Leaderboard_Acc>
  * }
  */
-class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
+class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	use \Newspack_Nodes\Schema_Reflection;
 	use \Newspack_Nodes\Deferred_Clean_Stop;
 
@@ -131,7 +132,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	/** Per-URL profile entry trim trigger. See ENTRY_LIMIT_GLOBAL_LOWER. */
 	const ENTRY_LIMIT_URL_UPPER    = 40;
 
-	/** Minimum seconds between flush() runs; fill() enforces the throttle. */
+	/** Seconds between periodic flush() runs: the cadence of the Router-tick timer. */
 	const FLUSH_INTERVAL_SEC = 5;
 
 	/** How long a clean stop waits for a sibling's auto-tune lock: its expiry. */
@@ -263,15 +264,24 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 */
 	private const HELD_FRAMES_SPILL_DIVISOR = 10;
 
+	/** The tally of an answer that has not read the mirror yet. */
+	private const NO_MIRROR_READS = [ 'calls' => 0, 'asked' => 0, 'found' => 0, 'ns' => 0, 'budget_ns' => 0 ];
+
 	/**
-	 * Nanoseconds spent reading the durable mirror for the answer in progress.
+	 * The durable-mirror reads of the answer in progress: calls, keys asked,
+	 * keys found, nanoseconds spent, and `budget_ns`, the part of that time
+	 * charged to the read budget.
 	 *
-	 * `Performance_CI_Node::dispatch()` zeroes it as each verb begins and
-	 * `arm_stats_reader()` stops reading once it passes the configured budget.
-	 * The WORKER's own seam (`arm_stats_mirror()`) is unbudgeted — it is
-	 * restoring its own state, not answering a poll.
+	 * `Performance_CI_Node::dispatch()` resets it as each verb begins and
+	 * `arm_stats_reader()` stops reading once `budget_ns` passes the configured
+	 * budget. `with_own_mirror_read_budget()` saves and restores `budget_ns`
+	 * alone, so its reads still count as the same answer's. The WORKER's own
+	 * seam (`arm_stats_mirror()`) is unbudgeted — it is restoring its own
+	 * state, not answering a poll.
+	 *
+	 * @var array{calls:int,asked:int,found:int,ns:int,budget_ns:int}
 	 */
-	private static int $mirror_read_ns = 0;
+	private static array $mirror_reads = self::NO_MIRROR_READS;
 
 	/**
 	 * Auto-tune decisions accrued since the last emit: the key `Auto_Tuner_Node`
@@ -294,6 +304,15 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @var array<string,bool>
 	 */
 	private array $folded_hours = [];
+
+	/**
+	 * The read plan last built, with the bucket it was built in. The plan is a
+	 * function of that bucket and the store's TTL alone, so every tick and
+	 * flush inside one bucket shares it; `set_stats_store()` drops it.
+	 *
+	 * @var array{bucket: string, plan: array{fine: list<string>, hours: list<string>}}|null
+	 */
+	private ?array $plan_memo = null;
 
 	/**
 	 * The merged rows the fine-tier intents landed this flush, by bucket then
@@ -406,7 +425,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	/** Hub mode: also accumulate the per-server namespaces. Derived from `<eln:is_hub>`. */
 	private bool $is_hub = false;
 
-	/** Unix time of the last flush(); fill() compares it against FLUSH_INTERVAL_SEC. */
+	/** Unix time of the last periodic flush(), which GET_STATS reports as an age. */
 	private float $last_flush_time = 0.0;
 
 	/**
@@ -421,6 +440,15 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 
 	/** @var array<string,Bucket_Acc> Accumulators by bucket key, drained at flush(). */
 	private array $pending = [];
+
+	/**
+	 * The crumb (`Message::ID`) of the last record folded into the
+	 * accumulators, carried in the checkpoint beside them. A plain stop leaves
+	 * the reader's cursor ON that record, so a successor restoring this can
+	 * tell its replay from new work and count it once (decision 31). '' matches
+	 * nothing.
+	 */
+	private string $counted = '';
 
 	/**
 	 * The per-PROCESS string-intern table, shared by every Flame_Builder in the
@@ -473,24 +501,88 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
+	 * Store the tokens and arm the periodic flush on the Router tick, every
+	 * FLUSH_INTERVAL_SEC. A node constructed but never given arguments never
+	 * fires; `shutdown_sweep()` still flushes it on a clean stop.
+	 *
+	 * @api Used by substrate.
+	 * @param list<string>|null $args Positional tokens, or null to read them back.
+	 * @return list<string> The tokens as given.
+	 */
+	public function arguments( ?array $args = null ): array {
+		if ( null !== $args ) {
+			$this->set_timer( self::FLUSH_INTERVAL_SEC * 1000 );
+		}
+		return parent::arguments( $args );
+	}
+
+	/**
 	 * Handle one message: a TM_REQUEST introspection verb, or a TM_STRUCT
 	 * completed-request record tailed off `requests.p{N}`.
 	 *
 	 * A completed request becomes a flame tree, is forwarded to the flames
-	 * partition, and is folded into every accumulator. The flush throttle then
-	 * runs at most once per FLUSH_INTERVAL_SEC. Anything else is dropped.
+	 * partition, and is folded into every accumulator. Anything else is dropped.
+	 * Nothing here flushes: the flush is the node's own periodic work, run from
+	 * `fire()`, so a failed store write raises from the tick rather than being
+	 * charged to whichever record happened to arrive.
 	 *
-	 * The `Deferred_Clean_Stop` bracket (`clear_pending_stop()` here,
-	 * `raise_pending_stop()` at the end) holds a cooperative stop raised by a
-	 * downstream forward until this message's own bookkeeping is finished, so the
-	 * Consumer commits past it rather than replaying it.
+	 * The message runs inside `deferring()`, which holds a cooperative stop a
+	 * downstream forward raises until this message's own bookkeeping is
+	 * finished, so the Consumer commits past it rather than replaying it.
 	 *
 	 * @param array<int,mixed> $message Positional Message array.
 	 */
 	public function fill( array $message ): void {
 		++$this->counter;
-		// Per-message deferral: clear a stale stop from a prior fill().
-		$this->clear_pending_stop();
+		$this->deferring( fn () => $this->fold_record( $message ) );
+	}
+
+	/**
+	 * Router-TIMER tick: flush whatever the last flush left owed. A failure
+	 * raises here, out of the drain, and the worker exits loudly with the
+	 * accumulators still in its last checkpoint. With nothing owed the tick
+	 * touches no store: it formats one bucket key and diffs the read plan's
+	 * hours against those rolled up, the plan built once per bucket. A stop
+	 * the backstop's partition write raises waits for the flush to finish, as
+	 * it does in `shutdown_sweep()`.
+	 *
+	 * @api Used by substrate.
+	 */
+	protected function fire(): void {
+		if ( ! $this->flush_owed( (int) Core::$now ) ) {
+			return;
+		}
+		$this->deferring( fn () => $this->flush() );
+		$this->last_flush_time = Core::$now;
+	}
+
+	/**
+	 * Whether `flush()` has work at `$now`, read from memory alone. Folded
+	 * records are one kind; the rest outlive them: auto-tune decisions a
+	 * sibling's lock held back, buckets waiting to rank, stale hours owed their
+	 * lists, and a closed hour of the read plan this process has not rolled up.
+	 *
+	 * @param int $now The tick.
+	 */
+	private function flush_owed( int $now ): bool {
+		if ( [] !== $this->pending || [] !== \array_filter( $this->auto_tune )
+			|| [] !== $this->rank_pending || [] !== $this->stale_hours ) {
+			return true;
+		}
+		$stats_store = $this->stats_store;
+		if ( null === $stats_store ) {
+			return false;
+		}
+		$hours = $this->plan_at( $stats_store, $now )['hours'];
+		return [] !== \array_diff( $hours, \array_keys( $this->folded_hours ) );
+	}
+
+	/**
+	 * Fold one message; `fill()` documents what each kind becomes.
+	 *
+	 * @param array<int,mixed> $message Positional Message array.
+	 */
+	private function fold_record( array $message ): void {
 		$type_raw = $message[ Message::TYPE ];
 		$type     = Core::int( $type_raw );
 		if ( $type & Message::TM_REQUEST ) {
@@ -537,16 +629,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		}
 
 		$this->store_flame( $rid, $url_hash, $flame_data );
-		$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
-
-		// Periodic flush; cached per-tick clock gates the throttle.
-		$now_f = Core::$now;
-		if ( $now_f - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
-			$this->guarded( fn () => $this->flush() );
-			$this->last_flush_time = $now_f;
+		// A replay of a counted record re-forwards only its flame.
+		$crumb = Core::str( $message[ Message::ID ] );
+		if ( '' === $crumb || $crumb !== $this->counted ) {
+			$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
+			$this->counted = $crumb;
 		}
 
-		$this->raise_pending_stop();
 	}
 
 	/**
@@ -1331,15 +1420,794 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
+	 * Inject the Stats_Store and re-arm the mirror seam on it.
+	 *
+	 * @param Stats_Store|null $store Store to write through, or null to go inert.
+	 */
+	public function set_stats_store( ?Stats_Store $store ): void {
+		$this->stats_store = $store;
+		// Every one of these names keys in the OLD store's keyspace.
+		$this->folded_hours  = [];
+		$this->stale_hours   = [];
+		$this->flushed_rows  = [];
+		$this->flushed_index = [];
+		$this->ranked_at     = [];
+		$this->rank_pending  = [];
+		$this->plan_memo     = null;
+		$this->arm_stats_mirror();
+	}
+
+	/**
+	 * Name the durable Partition that shadows stats writes (via the store's
+	 * mirror seam) and is read back whenever memcache misses. For deployments
+	 * where memcache is volatile; disabled when the name is empty.
+	 *
+	 * Stores the name only — the node is resolved by name lazily at flush/reload
+	 * (like add_snapshot_node), so this verb can't fail on a not-yet-built node
+	 * whose make_node comes later in a console-serialized override. The partition
+	 * lifts its own 4KB PIPE_BUF cap via `command_node <name>:config void_warranty` in the
+	 * topology, alongside its make_node.
+	 *
+	 * See `flush_stats_mirror()` for when a frame is written versus held.
+	 *
+	 * @param string $name Partition node name; '' disables the mirror.
+	 */
+	public function set_stats_target( string $name ): void {
+		$this->stats_partition = \trim( $name );
+		$this->arm_stats_mirror();
+	}
+
+	/**
+	 * Arm (or disarm) the store's mirror seam from the current store + partition
+	 * name. Called from BOTH setters so store and partition can be configured in
+	 * either order and a configure_stats re-run re-arms the fresh store. Needs
+	 * only the store — the partition node is resolved by name lazily at use.
+	 */
+	private function arm_stats_mirror(): void {
+		$store = $this->stats_store;
+		if ( null === $store ) {
+			return;
+		}
+		$store->mirror = '' === $this->stats_partition ? null : $this->buffer_mirror_write( ... );
+		self::arm_rehydrate( $store, $this->stats_partition );
+		$from_partition = $store->rehydrate;
+		if ( null !== $from_partition ) {
+			$partition        = $store->partition();
+			// Unbudgeted, so a null is only an unresolved partition: a miss.
+			$store->rehydrate = fn ( array $keys ): array =>
+				$this->held_frames( $keys, $partition ) + ( ( $from_partition )( $keys ) ?? [] );
+		}
+	}
+
+	/**
+	 * Arm `$store` to read the configured stats mirror without a live graph.
+	 *
+	 * The dashboard reads in a web request, where no Flame_Builder exists to arm
+	 * the seam — so the store resolves the mirror from the topology instead. An
+	 * unconfigured mirror leaves it memcache-only, exactly as before one existed.
+	 *
+	 * @api Readers building a Stats_Store outside the worker graph.
+	 * @param Stats_Store $store Store whose read seam is armed.
+	 * @param int         $now   The reply's clock its absences date from (decision 29).
+	 */
+	public static function arm_stats_reader( Stats_Store $store, int $now ): void {
+		self::arm_rehydrate( $store, \trim( Core::as_string( Config::value( 'stats_mirror_node' ), '' ) ) );
+		$seam = $store->rehydrate;
+		if ( null === $seam ) {
+			return;
+		}
+		// Absences walked for are remembered; a refused namespace is not.
+		$store->absence = static fn ( string $key ): int => self::mirrors_key( $key ) ? $store->absence_holds( $key, $now ) : 0;
+		// num_int: arithmetic, and a corrupt value must read as OFF.
+		$budget_ns        = 1_000_000 * \max( 0, Core::num_int( Config::value( 'stats_mirror_read_budget_ms' ) ) );
+		// Null, not []: a read that did not look is no absence to remember.
+		$store->rehydrate = static function ( array $keys ) use ( $seam, $budget_ns ): ?array {
+			if ( self::$mirror_reads['budget_ns'] >= $budget_ns ) {
+				return null;
+			}
+			$at    = \hrtime( true );
+			$found = $seam( $keys );
+			$spent = \hrtime( true ) - $at;
+			++self::$mirror_reads['calls'];
+			self::$mirror_reads['asked']     += \count( $keys );
+			self::$mirror_reads['found']     += \count( $found ?? [] );
+			self::$mirror_reads['ns']        += $spent;
+			self::$mirror_reads['budget_ns'] += $spent;
+			return $found;
+		};
+	}
+
+	/**
+	 * Point `$store`'s read seam at the named mirror, or unarm it when unnamed.
+	 *
+	 * ONE body for both callers. The worker names the mirror through
+	 * `set_stats_target` and a reader through config, but it is the same key —
+	 * and `mirror_partition()` already prefers the live node — so both want the
+	 * same resolution rather than two. Reading through a detached handle before
+	 * the worker's own node exists is safe precisely because it is read-only;
+	 * the WRITE path keeps `resolve_stats_partition()`, which never falls back.
+	 *
+	 * @param Stats_Store $store Store whose read seam is set.
+	 * @param string      $name  Mirror partition node name; '' unarms the seam.
+	 */
+	private static function arm_rehydrate( Stats_Store $store, string $name ): void {
+		$partition        = $store->partition();
+		$store->rehydrate = '' === $name
+			? null
+			: self::rehydrate_seam(
+				static fn (): ?\Newspack_Nodes\Partition_Node => self::mirror_partition( $name, $partition ),
+				$partition,
+				$store
+			);
+	}
+
+	/**
+	 * The rehydrate closure over a partition resolver.
+	 *
+	 * The keys are resolved through `Partition_Node::locate_by()`, which is
+	 * bounded by them: it walks only for keys nobody has looked up yet and
+	 * memoizes what it searched for as well as what it found, so a
+	 * leaderboard's hundreds of bucket misses cost one pass between them
+	 * rather than one each — and never a table of the whole partition.
+	 *
+	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve         Where the mirror is.
+	 * @param int                                            $partition_index Keyspace the Table's keys sit in.
+	 * @param Stats_Store                                    $store           Sizes what is handed back, by window.
+	 * @return \Closure(array<array-key,mixed>): ?array<array-key,array{value: array<array-key,mixed>, ttl: int}>
+	 *         Null when the mirror could not be looked at, which is no absence.
+	 */
+	private static function rehydrate_seam( \Closure $resolve, int $partition_index, Stats_Store $store ): \Closure {
+		$partition = null;
+		$resolved  = false;
+		return static function ( array $keys ) use ( $resolve, $partition_index, $store, &$partition, &$resolved ): ?array {
+			// Frames are filed under the durable key; the Table asks relative.
+			$hashes = [];
+			foreach ( $keys as $key ) {
+				// The seam is public and untyped; only strings name a key.
+				if ( ! \is_string( $key ) ) {
+					continue;
+				}
+				if ( ! self::mirrors_key( $key ) ) {
+					continue;
+				}
+				$hashes[ $key ] = Log_Manager::url_hash( Stats_Store::entry_key( $partition_index, $key ) );
+			}
+			// Nothing this mirror can hold: no walk, no partition to resolve.
+			if ( [] === $hashes ) {
+				return [];
+			}
+			// Once: null is no mirror declared; a late node resolves detached.
+			if ( ! $resolved ) {
+				$partition = $resolve();
+				$resolved  = true;
+			}
+			if ( null === $partition ) {
+				return null;
+			}
+			// Bounded: otherwise a locator per key in the WHOLE partition.
+			$locators = $partition->locate_by(
+				self::locate_stats_frame( ... ),
+				\array_values( $hashes )
+			);
+			$positions = [];
+			foreach ( $hashes as $key => $hash ) {
+				$at = $locators[ $hash ] ?? null;
+				if ( null !== $at ) {
+					$positions[ $key ] = $at;
+				}
+			}
+			// The tick: a read-back must not move the reply's own clock.
+			$now   = Core::$now;
+			$found = [];
+			foreach ( $partition->read_many( $positions ) as $key => $msg ) {
+				$frame = self::read_mirror_frame( $msg );
+				// A hash collision lands another key's frame; its key says so.
+				if ( null === $frame || $frame['key'] !== Stats_Store::entry_key( $partition_index, $key ) ) {
+					continue;
+				}
+				// What is left of the RETENTION window, not of the cache TTL.
+				$left = $store->window_remaining( $key, (int) $now );
+				if ( $left <= 0 ) {
+					continue;
+				}
+				$found[ $key ] = [
+					'value' => $frame['data'],
+					'ttl'   => $left,
+				];
+			}
+			return $found;
+		};
+	}
+
+	/**
+	 * Buffer a mirrored write until the next checkpoint.
+	 *
+	 * Every namespace is kept in full: a key is one (URL, bucket), and with the
+	 * open bucket held back (`flush_stats_mirror()`) what lands is that bucket's
+	 * whole and final state for every key it saw. Re-keying on `$key` means the
+	 * newest write for a key replaces the older one.
+	 *
+	 * Two bounds sit on top, and only one of them drops a frame. `mirror_topn()`
+	 * rank-caps NS_URL, whose profiles are the largest per-URL values and whose
+	 * cap is an operator's (`set_flame_topn`). `MAX_HELD_FRAMES` bounds what the
+	 * buffer may HOLD, and its overflow is written early rather than dropped.
+	 *
+	 * @param string                  $key  Durable key the frame is filed under.
+	 * @param array<array-key,mixed> $data Value written.
+	 * @param int                     $ttl  TTL the memcache write used.
+	 * @param string                  $ns   Stats_Store namespace the key belongs to.
+	 */
+	private function buffer_mirror_write( string $key, array $data, int $ttl, string $ns ): void {
+		$cap = $this->mirror_topn( $ns );
+		if ( 0 === $cap ) {
+			return; // 0 keeps nothing: NS_URLS_HOUR always, NS_URL by default.
+		}
+		// A URL with no merged requests would spend a slot on nothing.
+		if ( Stats_Store::NS_URL === $ns && static::mirror_traffic_rank( $data, $ns ) <= 0 ) {
+			return;
+		}
+		$this->mirror[ $ns ][ $key ] = [ $data, $ttl ];
+		if ( \count( $this->mirror[ $ns ] ) > $cap ) {
+			$this->evict_lowest_rank( $ns );
+		}
+		if ( \count( $this->mirror[ $ns ] ) > static::MAX_HELD_FRAMES ) {
+			$this->spill_over_backstop( $ns, $key );
+		}
+	}
+
+	/**
+	 * Write the lowest-ranked BAND of buffered frames NOW and stop holding them
+	 * — the held-frame backstop doing its job, so memory is bounded and nothing
+	 * is lost.
+	 *
+	 * The partition keeps only the last frame for a key, so an early copy of an
+	 * open bucket is superseded by the write that closes it: the cost is one
+	 * redundant record per frame, which is exactly what holding the bucket was
+	 * saving.
+	 *
+	 * A BAND rather than one frame, because ranking the buffer is a pass over
+	 * it and the buffer PINS at the bound under exactly the traffic the bound
+	 * exists for — a crawler, or a query-string spray of unique URLs. Spilling
+	 * one frame per write puts that pass on every write past the bound, which
+	 * is quadratic in the spray length inside the worker whose failure mode
+	 * this bound was added to prevent. Spilling `HELD_FRAMES_SPILL_DIVISOR` of
+	 * the bound leaves that much headroom to refill before the next pass, so
+	 * the pass is amortized across the band. Ranking a frame does not settle
+	 * once — a request merging into a key changes it — so a rank-ordered
+	 * structure would pay per write instead, which is the cost being removed.
+	 *
+	 * With no partition there is nothing to spill INTO, and the reading is
+	 * `flush_stats_mirror()`'s: a name that does not resolve may resolve next
+	 * checkpoint, so nothing already HELD is discarded. What the backstop
+	 * refuses instead is the arrival — new work, at the entry, whose value is
+	 * still in memcache and whose bucket's next write re-offers it. Loud
+	 * either way.
+	 *
+	 * @param string $ns      Namespace to spill from.
+	 * @param string $arrived Key whose arrival crossed the bound.
+	 */
+	private function spill_over_backstop( string $ns, string $arrived ): void {
+		$partition = $this->resolve_stats_partition();
+		if ( null === $partition ) {
+			unset( $this->mirror[ $ns ][ $arrived ] );
+			$this->print_less_often( "stats_partition '{$this->stats_partition}' not found; refusing {$ns} frames over the backstop" );
+			return;
+		}
+		$keep  = static::MAX_HELD_FRAMES - \max( 1, \intdiv( static::MAX_HELD_FRAMES, self::HELD_FRAMES_SPILL_DIVISOR ) );
+		$ranks = [];
+		foreach ( $this->mirror[ $ns ] as $k => [ $data ] ) {
+			$ranks[ $k ] = static::mirror_traffic_rank( $data, $ns );
+		}
+		\asort( $ranks );
+		foreach ( \array_slice( \array_keys( $ranks ), 0, \count( $ranks ) - $keep ) as $key ) {
+			[ $data, $ttl ] = $this->mirror[ $ns ][ $key ];
+			// A stop waits for the flush this spill interrupts to finish.
+			$this->guarded( fn () => $this->write_mirror_frame( $partition, $key, $data, $ttl ) );
+			unset( $this->mirror[ $ns ][ $key ] );
+		}
+		$this->print_less_often(
+			\sprintf(
+				'held stats frames at the backstop; open buckets are being written early — %s over %d frames',
+				$ns,
+				static::MAX_HELD_FRAMES
+			)
+		);
+	}
+
+	/**
+	 * Drop the lowest-ranked buffered write in a namespace — the rank cap doing
+	 * its job, so the frame never reaches the durable mirror.
+	 *
+	 * @param string $ns Namespace to evict from.
+	 */
+	private function evict_lowest_rank( string $ns ): void {
+		$key = $this->lowest_rank_key( $ns );
+		if ( null !== $key ) {
+			unset( $this->mirror[ $ns ][ $key ] );
+		}
+	}
+
+	/**
+	 * The lowest-ranked key a namespace is holding, or null when it holds none.
+	 * Linear scan, run once per overflow.
+	 *
+	 * @param string $ns Namespace to scan.
+	 */
+	private function lowest_rank_key( string $ns ): ?string {
+		$min_key  = null;
+		$min_rank = \PHP_INT_MAX;
+		foreach ( $this->mirror[ $ns ] as $k => [ $data ] ) {
+			$rank = static::mirror_traffic_rank( $data, $ns );
+			if ( $rank < $min_rank ) {
+				$min_rank = $rank;
+				$min_key  = $k;
+			}
+		}
+		return $min_key;
+	}
+
+	/**
+	 * Snapshot the in-flight bucket for the Consumer's checkpoint.
+	 *
+	 * The topology names this node in the requests-Consumer's `add_snapshot_node`,
+	 * so the returned array is co-committed with the read offset: a respawned
+	 * worker resumes the partial buckets instead of losing them. Draining the
+	 * flame trees and the closed buckets' mirror frames here — not only on the
+	 * FLUSH_INTERVAL_SEC cadence — is what makes that commit whole.
+	 *
+	 * The frames `flush_stats_mirror()` held ride it too, without their ranks —
+	 * `mirror_traffic_rank()` derives those on the way back in — and so does
+	 * `$counted`, the crumb of the last record those accumulators hold.
+	 *
+	 * This also WRITES — it drains the per-URL LRU to memcache and appends to the
+	 * stats partition before returning, because the frames have to land before
+	 * the cursor does; substrate ADR-14 lets a save write for exactly this. The
+	 * reader saves inside `Event_Framework::uninterruptible()`, so a stop due
+	 * at those partition writes raises only once the frame carrying this state
+	 * has committed.
+	 *
+	 * @api Used by substrate.
+	 * @return array<string,mixed>
+	 */
+	public function save_state(): array {
+		$now = (int) Core::$now;
+		// Co-commit the current flame trees with the cursor, like pending.
+		$this->mirror_url_stats( $now );
+		$this->flush_stats_mirror( $now );
+		return [
+			'pending' => $this->pending,
+			'mirror'  => $this->checkpoint_mirror( $now ),
+			'counted' => $this->counted,
+		];
+	}
+
+	/**
+	 * The held frames a checkpoint carries, smallest first, under the byte budget.
+	 *
+	 * Smallest-first keeps the most keys recoverable per byte, and drops the
+	 * biggest — which are the per-server leaderboards, the one axis that grows
+	 * with an operator input. Rank is not stored at all — `lowest_rank_key()`
+	 * derives it from the data it already holds.
+	 *
+	 * The ordering is by ENTRY COUNT, which is free, rather than by encoded
+	 * bytes, which is not: encoding every held frame to sort them measured the
+	 * whole buffer to carry a budget's worth of it. A frame is a map of small
+	 * numeric entries, so its count tracks its size closely — and the ordering
+	 * only has to be APPROXIMATE, because the budget below is enforced against
+	 * REAL encoded bytes as they accumulate. A proxy that mis-orders two frames
+	 * costs a slightly worse packing, never an oversize record; there is no
+	 * reason to restore the full encode.
+	 *
+	 * @param int $now `save_state()`'s one read of the tick, the `at` stamp.
+	 * @return array{at: int, frames: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>}
+	 */
+	private function checkpoint_mirror( int $now ): array {
+		$held = $this->mirror_frames();
+		\usort( $held, static fn ( array $a, array $b ): int => \count( $a['frame'][0] ) <=> \count( $b['frame'][0] ) );
+
+		$remaining = self::MAX_CHECKPOINT_MIRROR_BYTES;
+		$out    = [ 'at' => $now, 'frames' => [] ];
+		foreach ( $held as $i => [ 'ns' => $ns, 'key' => $key, 'frame' => $frame ] ) {
+			$size = self::frame_bytes( $frame );
+			if ( $size > $remaining ) {
+				// Ascending, so the widest held frame is the last of them.
+				$widest = $held[ \count( $held ) - 1 ];
+				$this->print_less_often(
+					'held stats frames over the checkpoint budget; they still reach the mirror at bucket close',
+					\sprintf(
+						' — %d of %d frames dropped; budget %d bytes, %d carried; widest held %s/%s at %d bytes',
+						\count( $held ) - $i,
+						\count( $held ),
+						self::MAX_CHECKPOINT_MIRROR_BYTES,
+						self::MAX_CHECKPOINT_MIRROR_BYTES - $remaining,
+						$widest['ns'],
+						$widest['key'],
+						self::frame_bytes( $widest['frame'] )
+					)
+				);
+				break;
+			}
+			$remaining                   -= $size;
+			$out['frames'][ $ns ][ $key ] = $frame;
+		}
+		return $out;
+	}
+
+	/**
+	 * The mirror frames being held, flattened out of their namespaces.
+	 *
+	 * One builder, two readers: the pack above, and the introspection payload.
+	 * Neither is handed a SIZE — the pack measures only what it reaches, and
+	 * `mirror_held_bytes` is asked for by an operator rather than every thirty
+	 * seconds, so it pays for the exact total where it is wanted.
+	 *
+	 * @return list<array{ns: string, key: string, frame: array{0: array<array-key,mixed>, 1: int}}>
+	 */
+	private function mirror_frames(): array {
+		$held = [];
+		foreach ( $this->mirror as $ns => $frames ) {
+			foreach ( $frames as $key => $frame ) {
+				$held[] = [ 'ns' => $ns, 'key' => $key, 'frame' => $frame ];
+			}
+		}
+		return $held;
+	}
+
+	/**
+	 * Frames held in the WIDEST single namespace — the number `MAX_HELD_FRAMES`
+	 * is against.
+	 *
+	 * The bound is per namespace, so a cross-namespace total cannot warn about
+	 * it: six namespaces holding five thousand each read as thirty thousand
+	 * with nothing near the bound, while one spilling on every write reads as
+	 * ten thousand and fifty.
+	 */
+	private function widest_namespace_frames(): int {
+		$widest = 0;
+		foreach ( $this->mirror as $frames ) {
+			$widest = \max( $widest, \count( $frames ) );
+		}
+		return $widest;
+	}
+
+	/**
+	 * What one held frame will cost the checkpoint. An unencodable frame reads as
+	 * unbounded, not as zero — zero would sort it first and always carry it.
+	 *
+	 * @param array{0: array<array-key,mixed>, 1: int} $frame Buffered [data, ttl].
+	 */
+	private static function frame_bytes( array $frame ): int {
+		$json = \wp_json_encode( $frame );
+		return false === $json ? \PHP_INT_MAX : \strlen( $json );
+	}
+
+	/**
+	 * Write the buffered mirror frames whose bucket has CLOSED, and hold the rest.
+	 *
+	 * The partition keeps only the last frame for a key, so writing the bucket
+	 * currently being accumulated into — once per checkpoint, ten times over a
+	 * bucket's life — is nine redundant copies of a value that is still growing.
+	 * A held key is re-keyed by every later write, so what finally lands is the
+	 * bucket's whole and final state. Near-once rather than exactly-once: a
+	 * request that started before a boundary completes after it, and re-writes
+	 * the bucket it belongs to, which is by then closed.
+	 *
+	 * A held frame is not undurable, just durable somewhere cheaper: it rides
+	 * `save_state()` into the offsetlog, a bounded ring of at most 60 keyframes,
+	 * and a respawn writes it when the bucket closes.
+	 *
+	 * Every namespace flushes in full: what a buffer holds is what the closing
+	 * bucket saw, less whatever the backstop already wrote early.
+	 *
+	 * @param int $now `save_state()`'s one read of the tick.
+	 */
+	private function flush_stats_mirror( int $now ): void {
+		if ( '' === $this->stats_partition ) {
+			return;
+		}
+		$partition = $this->resolve_stats_partition();
+		if ( null === $partition ) {
+			$this->print_less_often( "stats_partition '{$this->stats_partition}' not found at flush" );
+			return; // Keep the buffer; retry next checkpoint once the node exists.
+		}
+		foreach ( $this->mirror as $ns => $entries ) {
+			$this->mirror[ $ns ] = $this->write_closed_frames( $partition, $entries, $now );
+		}
+	}
+
+	/**
+	 * Write every frame in one buffer whose bucket has closed, and return what is
+	 * still held.
+	 *
+	 * @template T of array{0: array<array-key,mixed>, 1: int}
+	 * @param \Newspack_Nodes\Partition_Node $partition Resolved stats partition.
+	 * @param array<string,T>                $buffer    Frames by key.
+	 * @param int                            $now       Clock deciding which bucket is open.
+	 * @return array<string,T> The frames whose bucket is still open.
+	 */
+	private function write_closed_frames( \Newspack_Nodes\Partition_Node $partition, array $buffer, int $now ): array {
+		foreach ( $buffer as $key => [ $data, $ttl ] ) {
+			if ( Stats_Store::is_open_bucket( $key, $now ) ) {
+				continue;
+			}
+			$this->write_mirror_frame( $partition, $key, $data, $ttl );
+			unset( $buffer[ $key ] );
+		}
+		return $buffer;
+	}
+
+	/** Resolve the named stats partition to its live node, or null when disabled / not-yet-built. */
+	private function resolve_stats_partition(): ?\Newspack_Nodes\Partition_Node {
+		if ( '' === $this->stats_partition ) {
+			return null;
+		}
+		$node = Core::node( $this->stats_partition );
+		return $node instanceof \Newspack_Nodes\Partition_Node ? $node : null;
+	}
+
+	/**
+	 * The app's half of `locate_by()`: where the record for a stats-index line
+	 * sits, keyed by the hash that line carries.
+	 *
+	 * @param string $line Index line.
+	 * @return array{key: string, offset: int, length: int}|null
+	 */
+	private static function locate_stats_frame( string $line ): ?array {
+		$entry = self::parse_stats_index( $line );
+		return null === $entry ? null : [
+			'key'    => $entry['key_hash'],
+			'offset' => $entry['offset'],
+			'length' => $entry['length'],
+		];
+	}
+
+	/**
+	 * Parse one stats-index line back into its fields — the inverse of
+	 * `format_stats_index_entry()`, and bound to the same fixed widths.
+	 *
+	 * @param string $line Index line.
+	 * @return array{key_hash: string, segment: int, offset: int, length: int}|null Null when the line is short.
+	 */
+	public static function parse_stats_index( string $line ): ?array {
+		$line = \rtrim( $line, "\n" );
+		if ( \strlen( $line ) < 36 ) {
+			return null;
+		}
+		return [
+			'key_hash' => \substr( $line, 0, 12 ),
+			'segment'  => (int) \substr( $line, 12, 6 ),
+			'offset'   => (int) \substr( $line, 18, 10 ),
+			'length'   => (int) \substr( $line, 28, 8 ),
+		];
+	}
+
+	/**
+	 * Restore the in-flight buckets a previous worker checkpointed.
+	 *
+	 * Each bucket is merged over an empty accumulator, so a save from an older
+	 * shape that lacks a key keeps that key's default instead of leaving it unset.
+	 * A frame an older worker wrote under a different shape is skipped, costing
+	 * one worker's un-flushed delta once — far less than the retention window the
+	 * same release already resets. The URL rows are held to their shape here,
+	 * the one door a checkpoint comes through: see `restored_url_rows()`.
+	 * `$counted` comes back too, so the record a plain stop left the cursor on
+	 * replays without being counted again.
+	 *
+	 * @api Used by substrate.
+	 * @param array<string,mixed> $saved A prior `save_state()` return value.
+	 */
+	public function restore_state( array $saved ): void {
+		$pending       = Core::arr( $saved['pending'] ?? null );
+		$mirror        = Core::arr( $saved['mirror'] ?? null );
+		$this->counted = Core::str( $saved['counted'] ?? null );
+		// An unmerged delta, not durable: a spent one is dropped.
+		$elapsed                   = \max( 0, (int) Core::$now - Core::num_int( $mirror['at'] ?? null ) );
+		foreach ( Core::arr( $mirror['frames'] ?? null ) as $ns_raw => $carried ) {
+			$ns       = Core::as_string( $ns_raw );
+			$restored = self::restore_frames( $carried, $elapsed );
+			$cap      = \max( 0, \min( $this->mirror_topn( $ns ), static::MAX_HELD_FRAMES ) );
+			if ( \count( $restored ) > $cap ) {
+				// Re-bound by TRAFFIC; the carry's own order is smallest-first.
+				\uasort(
+					$restored,
+					static fn ( array $a, array $b ): int =>
+						static::mirror_traffic_rank( $b[0], $ns ) <=> static::mirror_traffic_rank( $a[0], $ns )
+				);
+				$restored = \array_slice( $restored, 0, $cap, true );
+			}
+			$this->mirror[ $ns ] = $restored;
+		}
+		foreach ( $pending as $bucket => $acc ) {
+			// `Y-m-d-H-i` is a string PHP never re-types to int.
+			if ( \is_string( $bucket ) && '' !== $bucket && \is_array( $acc ) ) {
+				/** @var Bucket_Acc $merged */
+				$merged                     = \array_merge( self::empty_bucket(), $acc );
+				$merged['url_stats']        = self::restored_url_rows( $merged['url_stats'] );
+				$merged['url_stats_worker'] = self::restored_url_rows( $merged['url_stats_worker'] );
+				$this->pending[ $bucket ]   = $merged;
+			}
+		}
+	}
+
+	/**
+	 * A checkpoint's URL rows, kept only where they are `server => hash =>
+	 * row` and each row names its path, and completed over an empty row so
+	 * the accumulator indexes every field unguarded.
+	 *
+	 * A checkpoint in any other shape — rows keyed by hash, carrying a
+	 * per-server split — would read its hashes as servers. No migration: its
+	 * URL delta is dropped, once.
+	 *
+	 * @param array<array-key,mixed> $servers A restored `url_stats` slot.
+	 * @return array<array-key,array<array-key,mixed>>
+	 */
+	private static function restored_url_rows( array $servers ): array {
+		$out = [];
+		foreach ( $servers as $server => $rows ) {
+			foreach ( Core::arr( $rows ) as $hash => $row ) {
+				if ( \is_array( $row ) && \is_string( $row[ Stats_Store::ROW_PATH ] ?? null ) ) {
+					$out[ $server ][ $hash ] = \array_replace( self::empty_url_row( PHP_INT_MAX ), $row );
+				}
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * The live RANK cap on one namespace's buffered frames: `$flame_topn` for
+	 * NS_URL (the flame profiles), 0 for a DERIVED namespace, which keeps
+	 * nothing at all, and no rank for everything else — where both
+	 * per-URL series and every aggregate land. `MAX_HELD_FRAMES` is the
+	 * separate bound on what those may HOLD.
+	 *
+	 * @param string $ns Namespace a frame was written under.
+	 */
+	private function mirror_topn( string $ns ): int {
+		if ( Stats_Store::NS_URL === $ns ) {
+			return $this->flame_topn;
+		}
+		// An aggregate namespace keeps all; a derived one keeps none.
+		return Stats_Store::is_derived( $ns ) ? 0 : \PHP_INT_MAX;
+	}
+
+	/**
+	 * Traffic rank (~request count) for the per-URL namespaces.
+	 *
+	 * Each namespace stores a different shape, so each derives the count its own
+	 * way. The result only has to order URLs against each other.
+	 *
+	 * Reached through `static::` and protected so a test double can COUNT the
+	 * reads — the backstop's cost is a complexity claim, and wall clock is not
+	 * evidence for one. An override delegates to this body, which still runs.
+	 *
+	 * @param array<array-key,mixed> $data Value being mirrored.
+	 * @param string                  $ns   Namespace it belongs to.
+	 */
+	protected static function mirror_traffic_rank( array $data, string $ns ): int {
+		if ( Stats_Store::NS_URL === $ns ) {
+			$flame = $data['flame'] ?? null;
+			return \is_array( $flame ) && \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0;
+		}
+		if ( Stats_Store::NS_URL_CAT === $ns ) {
+			// One bucket: the `total` pseudo-category's sampled requests.
+			$total = $data[ self::TOTAL_KEY ] ?? null;
+			return \is_array( $total ) && \is_numeric( $total[ Stats_Store::CAT_REQUESTS ] ?? null )
+				? (int) $total[ Stats_Store::CAT_REQUESTS ]
+				: 0;
+		}
+		// NS_URL_DIM: one bucket; take the first dimension's counts.
+		$sum   = 0;
+		$first = \reset( $data );
+		if ( \is_array( $first ) ) {
+			foreach ( $first as $vd ) {
+				$sum += \is_array( $vd ) && \is_numeric( $vd[ Stats_Store::DIM_COUNT ] ?? null ) ? (int) $vd[ Stats_Store::DIM_COUNT ] : 0;
+			}
+		}
+		return $sum;
+	}
+
+	/**
+	 * Held mirror frames from a checkpoint frame, coerced back to `[data, ttl]`.
+	 * A malformed entry is dropped rather than aborting the whole restore.
+	 *
+	 * @param mixed $saved   One buffer out of the checkpoint's `mirror` map.
+	 * @param int   $elapsed Seconds since the checkpoint was written, taken off each TTL.
+	 * @return array<string,array{0: array<array-key,mixed>, 1: int}>
+	 */
+	private static function restore_frames( mixed $saved, int $elapsed ): array {
+		$out = [];
+		foreach ( Core::arr( $saved ) as $key => $frame ) {
+			$frame = Core::arr( $frame );
+			$data  = $frame[0] ?? null;
+			$ttl   = Core::num_int( $frame[1] ?? null ) - $elapsed;
+			// A carry that is not an absolute key matches no lookup; drop it.
+			if ( \is_string( $key ) && Stats_Store::is_mirror_key( $key ) && \is_array( $data ) && $ttl > 0 ) {
+				$out[ $key ] = [ $data, $ttl ];
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * One bucket's empty accumulator. Seeded whole so every accumulate site can
+	 * index straight in, and so the leaderboard has its shape rather than [].
+	 *
+	 * @return Bucket_Acc
+	 */
+	private static function empty_bucket(): array {
+		return [
+			'hourly'                => [],
+			'dim'                   => [],
+			'dim_by_server'         => [],
+			'url_dim'               => [],
+			'url_stats'             => [],
+			'url_stats_worker'      => [],
+			'url_names'             => [],
+			'cat'                   => [],
+			'cat_by_server'         => [],
+			'cat_by_url'            => [],
+			'leaderboard'           => self::empty_leaderboard(),
+			'leaderboard_by_server' => [],
+		];
+	}
+
+	/**
+	 * What this answer read from the mirror, for the reply's own record.
+	 *
+	 * @api The dashboard reader, once its verb has answered.
+	 * @return array{calls:int,asked:int,found:int,ns:int,budget_ns:int,spent:bool}
+	 */
+	public static function mirror_read_tally(): array {
+		return self::$mirror_reads + [ 'spent' => self::mirror_budget_spent() ];
+	}
+
+	/**
+	 * Whether this answer's mirror read budget is spent.
+	 *
+	 * A reader that reached the budget answered null for every mirror read
+	 * after it, so the fold it produced is missing whatever those reads held.
+	 * That page is the answer for now, not one to keep.
+	 *
+	 * @api The dashboard reader, before it caches a page.
+	 */
+	public static function mirror_budget_spent(): bool {
+		return self::$mirror_reads['budget_ns'] >= 1_000_000 * \max( 0, Core::num_int( Config::value( 'stats_mirror_read_budget_ms' ) ) );
+	}
+
+	/**
+	 * Write one mirror frame (TM_STRUCT {data,ttl}, keyed by `Message::KEY`) to
+	 * the partition.
+	 *
+	 * Written straight to the partition rather than through the sink, so the
+	 * frame lands in the checkpoint regardless of how the graph is wired.
+	 *
+	 * The key rides in `Message::KEY` alone; a copy inside VALUE would repeat
+	 * it in every frame for nothing.
+	 *
+	 * @param \Newspack_Nodes\Partition_Node $partition Resolved stats partition.
+	 * @param string                         $key       Durable key the frame is filed under.
+	 * @param array<array-key,mixed>        $data      Value written.
+	 * @param int                            $ttl       TTL the memcache write used.
+	 */
+	private function write_mirror_frame( \Newspack_Nodes\Partition_Node $partition, string $key, array $data, int $ttl ): void {
+		$msg                       = Message::new_message();
+		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+		$msg[ Message::FROM ]      = $this->name;
+		$msg[ Message::KEY ]       = $key;
+		$msg[ Message::VALUE ]     = [ 'data' => $data, 'ttl' => $ttl ];
+		$partition->fill( $msg );
+	}
+
+	/**
 	 * Flush on a clean stop, so the checkpoint carries nothing forward.
 	 *
-	 * The periodic flush fires inside `fill()`, on a record arriving
-	 * FLUSH_INTERVAL_SEC or more after the last flush, and an on-demand worker
-	 * rarely sees one: it spawns on a backlog, folds it within the second and
-	 * idles out. Without this every record it folded rode `$pending` into the
-	 * checkpoint and out to the next worker, never reaching the store. The
-	 * substrate runs the sweep before the cursor handoff, while the graph is
-	 * intact, so `save_state()` then snapshots an empty `$pending`.
+	 * The periodic flush fires from `fire()` every FLUSH_INTERVAL_SEC, and an
+	 * on-demand worker may idle out before its first one: it spawns on a
+	 * backlog, folds it within the second and exits. Without this every record
+	 * it folded rode `$pending` into the checkpoint and out to the next worker,
+	 * never reaching the store. The substrate runs the sweep before the cursor
+	 * handoff, while the graph is intact, so `save_state()` then snapshots an
+	 * empty `$pending`.
 	 *
 	 * A sibling partition may hold the auto-tune lock at that moment. A
 	 * periodic flush leaves the decisions for the next flush; a stop has none,
@@ -1349,18 +2217,25 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * than a flush's bound: its missing marker is in the store, and the next
 	 * worker's probe finds it again.
 	 *
+	 * The sweep runs inside `deferring()`, as a message does, so a stop the
+	 * backstop's partition write raises waits for the flush to finish.
+	 *
 	 * @api Used by substrate.
 	 */
 	public function shutdown_sweep(): void {
-		$this->ranked_at = [];
-		$this->flush();
-		$this->apply_auto_tune( self::AUTO_TUNE_LOCK_WAIT_MS );
+		$this->deferring(
+			function (): void {
+				$this->ranked_at = [];
+				$this->flush();
+				$this->apply_auto_tune( self::AUTO_TUNE_LOCK_WAIT_MS );
+			}
+		);
 	}
 
 	/**
 	 * Drain every accumulator and start clean.
 	 *
-	 * `fill()` calls this at most once per FLUSH_INTERVAL_SEC, and every clean
+	 * `fire()` calls this once per FLUSH_INTERVAL_SEC, and every clean
 	 * stop calls it through `shutdown_sweep()`. The accumulators do not need
 	 * it to survive a fatal: `save_state()` co-commits `$pending` with the read
 	 * cursor, so the replay resumes from the cursor that last committed it.
@@ -1371,15 +2246,22 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * With no `Stats_Store` wired the drain is a no-op against storage: the
 	 * accumulators still reset, but nothing is written anywhere.
 	 *
-	 * It reads the tick ONCE and builds the read plan from it once, so the
-	 * hour plan, the ranking floor and the cadence agree on which hour closed.
+	 * It reads the tick ONCE and takes that tick's read plan through
+	 * `plan_at()`, memoized per bucket. `flush_owed()` asks for it on a tick,
+	 * and this method asks on every path, whether `fire()` or
+	 * `shutdown_sweep()` called it; whichever asked first inside the bucket
+	 * built it, so the hour plan, the ranking floor and the cadence agree on
+	 * which hour closed.
+	 *
+	 * The accumulators empty BEFORE the auto-tune emit: its sums are written
+	 * by then, and a throw there must not hand them to the next flush again.
 	 */
 	public function flush(): void {
 		$now = (int) Core::$now;
 		$this->mirror_url_stats( $now );
 		$stats_store = $this->stats_store;
 		if ( null !== $stats_store ) {
-			$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( $stats_store->ttl(), $now ) );
+			$plan = $this->plan_at( $stats_store, $now );
 			// @longform Roll up FIRST: it is what probes the coarse tier, and
 			// `folded_hours` is per-process while one partition has one
 			// worker, so a respawn is the only way the memo goes stale.
@@ -1389,10 +2271,28 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			// Lexical order IS chronological, which is what bucket_key() buys.
 			$this->persist_aggregate_stats( $stats_store, $now, (string) \end( $plan['fine'] ) );
 		}
-		$this->apply_auto_tune();
-
 		$this->stats_store?->reset_url_stats();
 		$this->pending = [];
+
+		$this->apply_auto_tune();
+	}
+
+	/**
+	 * The read plan for `$now`'s bucket, built on the first ask inside it.
+	 *
+	 * @param Stats_Store $stats_store Whose TTL bounds the window.
+	 * @param int         $now         The tick.
+	 * @return array{fine: list<string>, hours: list<string>}
+	 */
+	private function plan_at( Stats_Store $stats_store, int $now ): array {
+		$bucket = Stats_Store::bucket_key( $now );
+		if ( null === $this->plan_memo || $bucket !== $this->plan_memo['bucket'] ) {
+			$this->plan_memo = [
+				'bucket' => $bucket,
+				'plan'   => Stats_Store::read_plan( Stats_Store::retention_buckets( $stats_store->ttl(), $now ) ),
+			];
+		}
+		return $this->plan_memo['plan'];
 	}
 
 	/**
@@ -2734,456 +3634,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Inject the Stats_Store and re-arm the mirror seam on it.
-	 *
-	 * @param Stats_Store|null $store Store to write through, or null to go inert.
-	 */
-	public function set_stats_store( ?Stats_Store $store ): void {
-		$this->stats_store = $store;
-		// Every one of these names keys in the OLD store's keyspace.
-		$this->folded_hours  = [];
-		$this->stale_hours   = [];
-		$this->flushed_rows  = [];
-		$this->flushed_index = [];
-		$this->ranked_at     = [];
-		$this->rank_pending  = [];
-		$this->arm_stats_mirror();
-	}
-
-	/**
-	 * Name the durable Partition that shadows stats writes (via the store's
-	 * mirror seam) and is read back whenever memcache misses. For deployments
-	 * where memcache is volatile; disabled when the name is empty.
-	 *
-	 * Stores the name only — the node is resolved by name lazily at flush/reload
-	 * (like add_snapshot_node), so this verb can't fail on a not-yet-built node
-	 * whose make_node comes later in a console-serialized override. The partition
-	 * lifts its own 4KB PIPE_BUF cap via `command_node <name>:config void_warranty` in the
-	 * topology, alongside its make_node.
-	 *
-	 * See `flush_stats_mirror()` for when a frame is written versus held.
-	 *
-	 * @param string $name Partition node name; '' disables the mirror.
-	 */
-	public function set_stats_target( string $name ): void {
-		$this->stats_partition = \trim( $name );
-		$this->arm_stats_mirror();
-	}
-
-	/**
-	 * Arm (or disarm) the store's mirror seam from the current store + partition
-	 * name. Called from BOTH setters so store and partition can be configured in
-	 * either order and a configure_stats re-run re-arms the fresh store. Needs
-	 * only the store — the partition node is resolved by name lazily at use.
-	 */
-	private function arm_stats_mirror(): void {
-		$store = $this->stats_store;
-		if ( null === $store ) {
-			return;
-		}
-		$store->mirror = '' === $this->stats_partition ? null : $this->buffer_mirror_write( ... );
-		self::arm_rehydrate( $store, $this->stats_partition );
-		$from_partition = $store->rehydrate;
-		if ( null !== $from_partition ) {
-			$partition        = $store->partition();
-			// Unbudgeted, so a null is only an unresolved partition: a miss.
-			$store->rehydrate = fn ( array $keys ): array =>
-				$this->held_frames( $keys, $partition ) + ( ( $from_partition )( $keys ) ?? [] );
-		}
-	}
-
-	/**
-	 * Arm `$store` to read the configured stats mirror without a live graph.
-	 *
-	 * The dashboard reads in a web request, where no Flame_Builder exists to arm
-	 * the seam — so the store resolves the mirror from the topology instead. An
-	 * unconfigured mirror leaves it memcache-only, exactly as before one existed.
-	 *
-	 * @api Readers building a Stats_Store outside the worker graph.
-	 * @param Stats_Store $store Store whose read seam is armed.
-	 */
-	public static function arm_stats_reader( Stats_Store $store ): void {
-		self::arm_rehydrate( $store, \trim( Core::as_string( Config::value( 'stats_mirror_node' ), '' ) ) );
-		$seam = $store->rehydrate;
-		if ( null === $seam ) {
-			return;
-		}
-		// Absences walked for are remembered; a refused namespace is not.
-		$store->absence = static fn ( string $key ): int => self::mirrors_key( $key ) ? $store->absence_holds( $key ) : 0;
-		// num_int: arithmetic, and a corrupt value must read as OFF.
-		$budget_ns        = 1_000_000 * \max( 0, Core::num_int( Config::value( 'stats_mirror_read_budget_ms' ) ) );
-		// Null, not []: a read that did not look is no absence to remember.
-		$store->rehydrate = static function ( array $keys ) use ( $seam, $budget_ns ): ?array {
-			if ( self::$mirror_read_ns >= $budget_ns ) {
-				return null;
-			}
-			$at    = \hrtime( true );
-			$found = $seam( $keys );
-			self::$mirror_read_ns += \hrtime( true ) - $at;
-			return $found;
-		};
-	}
-
-	/**
-	 * Point `$store`'s read seam at the named mirror, or unarm it when unnamed.
-	 *
-	 * ONE body for both callers. The worker names the mirror through
-	 * `set_stats_target` and a reader through config, but it is the same key —
-	 * and `mirror_partition()` already prefers the live node — so both want the
-	 * same resolution rather than two. Reading through a detached handle before
-	 * the worker's own node exists is safe precisely because it is read-only;
-	 * the WRITE path keeps `resolve_stats_partition()`, which never falls back.
-	 *
-	 * @param Stats_Store $store Store whose read seam is set.
-	 * @param string      $name  Mirror partition node name; '' unarms the seam.
-	 */
-	private static function arm_rehydrate( Stats_Store $store, string $name ): void {
-		$partition        = $store->partition();
-		$store->rehydrate = '' === $name
-			? null
-			: self::rehydrate_seam(
-				static fn (): ?\Newspack_Nodes\Partition_Node => self::mirror_partition( $name, $partition ),
-				$partition,
-				$store
-			);
-	}
-
-	/**
-	 * The rehydrate closure over a partition resolver.
-	 *
-	 * The keys are resolved through `Partition_Node::locate_by()`, which is
-	 * bounded by them: it walks only for keys nobody has looked up yet and
-	 * memoizes what it searched for as well as what it found, so a
-	 * leaderboard's hundreds of bucket misses cost one pass between them
-	 * rather than one each — and never a table of the whole partition.
-	 *
-	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve         Where the mirror is.
-	 * @param int                                            $partition_index Keyspace the Table's keys sit in.
-	 * @param Stats_Store                                    $store           Sizes what is handed back, by window.
-	 * @return \Closure(array<array-key,mixed>): ?array<array-key,array{value: array<array-key,mixed>, ttl: int}>
-	 *         Null when the mirror could not be looked at, which is no absence.
-	 */
-	private static function rehydrate_seam( \Closure $resolve, int $partition_index, Stats_Store $store ): \Closure {
-		$partition = null;
-		$resolved  = false;
-		return static function ( array $keys ) use ( $resolve, $partition_index, $store, &$partition, &$resolved ): ?array {
-			// Frames are filed under the durable key; the Table asks relative.
-			$hashes = [];
-			foreach ( $keys as $key ) {
-				// The seam is public and untyped; only strings name a key.
-				if ( ! \is_string( $key ) ) {
-					continue;
-				}
-				if ( ! self::mirrors_key( $key ) ) {
-					continue;
-				}
-				$hashes[ $key ] = Log_Manager::url_hash( Stats_Store::entry_key( $partition_index, $key ) );
-			}
-			// Nothing this mirror can hold: no walk, no partition to resolve.
-			if ( [] === $hashes ) {
-				return [];
-			}
-			// Once: null is no mirror declared; a late node resolves detached.
-			if ( ! $resolved ) {
-				$partition = $resolve();
-				$resolved  = true;
-			}
-			if ( null === $partition ) {
-				return null;
-			}
-			// Bounded: otherwise a locator per key in the WHOLE partition.
-			$locators = $partition->locate_by(
-				self::locate_stats_frame( ... ),
-				\array_values( $hashes )
-			);
-			$positions = [];
-			foreach ( $hashes as $key => $hash ) {
-				$at = $locators[ $hash ] ?? null;
-				if ( null !== $at ) {
-					$positions[ $key ] = $at;
-				}
-			}
-			// The tick: a read-back must not move the reply's own clock.
-			$now   = Core::$now;
-			$found = [];
-			foreach ( $partition->read_many( $positions ) as $key => $msg ) {
-				$frame = self::read_mirror_frame( $msg );
-				// A hash collision lands another key's frame; its key says so.
-				if ( null === $frame || $frame['key'] !== Stats_Store::entry_key( $partition_index, $key ) ) {
-					continue;
-				}
-				// What is left of the RETENTION window, not of the cache TTL.
-				$left = $store->window_remaining( $key, (int) $now );
-				if ( $left <= 0 ) {
-					continue;
-				}
-				$found[ $key ] = [
-					'value' => $frame['data'],
-					'ttl'   => $left,
-				];
-			}
-			return $found;
-		};
-	}
-
-	/**
-	 * Buffer a mirrored write until the next checkpoint.
-	 *
-	 * Every namespace is kept in full: a key is one (URL, bucket), and with the
-	 * open bucket held back (`flush_stats_mirror()`) what lands is that bucket's
-	 * whole and final state for every key it saw. Re-keying on `$key` means the
-	 * newest write for a key replaces the older one.
-	 *
-	 * Two bounds sit on top, and only one of them drops a frame. `mirror_topn()`
-	 * rank-caps NS_URL, whose profiles are the largest per-URL values and whose
-	 * cap is an operator's (`set_flame_topn`). `MAX_HELD_FRAMES` bounds what the
-	 * buffer may HOLD, and its overflow is written early rather than dropped.
-	 *
-	 * @param string                  $key  Durable key the frame is filed under.
-	 * @param array<array-key,mixed> $data Value written.
-	 * @param int                     $ttl  TTL the memcache write used.
-	 * @param string                  $ns   Stats_Store namespace the key belongs to.
-	 */
-	private function buffer_mirror_write( string $key, array $data, int $ttl, string $ns ): void {
-		$cap = $this->mirror_topn( $ns );
-		if ( 0 === $cap ) {
-			return; // 0 keeps nothing: NS_URLS_HOUR always, NS_URL by default.
-		}
-		// A URL with no merged requests would spend a slot on nothing.
-		if ( Stats_Store::NS_URL === $ns && static::mirror_traffic_rank( $data, $ns ) <= 0 ) {
-			return;
-		}
-		$this->mirror[ $ns ][ $key ] = [ $data, $ttl ];
-		if ( \count( $this->mirror[ $ns ] ) > $cap ) {
-			$this->evict_lowest_rank( $ns );
-		}
-		if ( \count( $this->mirror[ $ns ] ) > static::MAX_HELD_FRAMES ) {
-			$this->spill_over_backstop( $ns, $key );
-		}
-	}
-
-	/**
-	 * Write the lowest-ranked BAND of buffered frames NOW and stop holding them
-	 * — the held-frame backstop doing its job, so memory is bounded and nothing
-	 * is lost.
-	 *
-	 * The partition keeps only the last frame for a key, so an early copy of an
-	 * open bucket is superseded by the write that closes it: the cost is one
-	 * redundant record per frame, which is exactly what holding the bucket was
-	 * saving.
-	 *
-	 * A BAND rather than one frame, because ranking the buffer is a pass over
-	 * it and the buffer PINS at the bound under exactly the traffic the bound
-	 * exists for — a crawler, or a query-string spray of unique URLs. Spilling
-	 * one frame per write puts that pass on every write past the bound, which
-	 * is quadratic in the spray length inside the worker whose failure mode
-	 * this bound was added to prevent. Spilling `HELD_FRAMES_SPILL_DIVISOR` of
-	 * the bound leaves that much headroom to refill before the next pass, so
-	 * the pass is amortized across the band. Ranking a frame does not settle
-	 * once — a request merging into a key changes it — so a rank-ordered
-	 * structure would pay per write instead, which is the cost being removed.
-	 *
-	 * With no partition there is nothing to spill INTO, and the reading is
-	 * `flush_stats_mirror()`'s: a name that does not resolve may resolve next
-	 * checkpoint, so nothing already HELD is discarded. What the backstop
-	 * refuses instead is the arrival — new work, at the entry, whose value is
-	 * still in memcache and whose bucket's next write re-offers it. Loud
-	 * either way.
-	 *
-	 * @param string $ns      Namespace to spill from.
-	 * @param string $arrived Key whose arrival crossed the bound.
-	 */
-	private function spill_over_backstop( string $ns, string $arrived ): void {
-		$partition = $this->resolve_stats_partition();
-		if ( null === $partition ) {
-			unset( $this->mirror[ $ns ][ $arrived ] );
-			$this->print_less_often( "stats_partition '{$this->stats_partition}' not found; refusing {$ns} frames over the backstop" );
-			return;
-		}
-		$keep  = static::MAX_HELD_FRAMES - \max( 1, \intdiv( static::MAX_HELD_FRAMES, self::HELD_FRAMES_SPILL_DIVISOR ) );
-		$ranks = [];
-		foreach ( $this->mirror[ $ns ] as $k => [ $data ] ) {
-			$ranks[ $k ] = static::mirror_traffic_rank( $data, $ns );
-		}
-		\asort( $ranks );
-		foreach ( \array_slice( \array_keys( $ranks ), 0, \count( $ranks ) - $keep ) as $key ) {
-			[ $data, $ttl ] = $this->mirror[ $ns ][ $key ];
-			$this->write_mirror_frame( $partition, $key, $data, $ttl );
-			unset( $this->mirror[ $ns ][ $key ] );
-		}
-		$this->print_less_often(
-			\sprintf(
-				'held stats frames at the backstop; open buckets are being written early — %s over %d frames',
-				$ns,
-				static::MAX_HELD_FRAMES
-			)
-		);
-	}
-
-	/**
-	 * Drop the lowest-ranked buffered write in a namespace — the rank cap doing
-	 * its job, so the frame never reaches the durable mirror.
-	 *
-	 * @param string $ns Namespace to evict from.
-	 */
-	private function evict_lowest_rank( string $ns ): void {
-		$key = $this->lowest_rank_key( $ns );
-		if ( null !== $key ) {
-			unset( $this->mirror[ $ns ][ $key ] );
-		}
-	}
-
-	/**
-	 * The lowest-ranked key a namespace is holding, or null when it holds none.
-	 * Linear scan, run once per overflow.
-	 *
-	 * @param string $ns Namespace to scan.
-	 */
-	private function lowest_rank_key( string $ns ): ?string {
-		$min_key  = null;
-		$min_rank = \PHP_INT_MAX;
-		foreach ( $this->mirror[ $ns ] as $k => [ $data ] ) {
-			$rank = static::mirror_traffic_rank( $data, $ns );
-			if ( $rank < $min_rank ) {
-				$min_rank = $rank;
-				$min_key  = $k;
-			}
-		}
-		return $min_key;
-	}
-
-	/**
-	 * Snapshot the in-flight bucket for the Consumer's checkpoint.
-	 *
-	 * The topology names this node in the requests-Consumer's `add_snapshot_node`,
-	 * so the returned array is co-committed with the read offset: a respawned
-	 * worker resumes the partial buckets instead of losing them. Draining the
-	 * flame trees and the closed buckets' mirror frames here — not only on the
-	 * FLUSH_INTERVAL_SEC cadence — is what makes that commit whole.
-	 *
-	 * The frames `flush_stats_mirror()` held ride it too, without their ranks —
-	 * `mirror_traffic_rank()` derives those on the way back in.
-	 *
-	 * This also WRITES — it drains the per-URL LRU to memcache and appends to the
-	 * stats partition before returning. The substrate calls `save_state()` as a
-	 * pure reader; this node borrows it as the pre-commit hook the contract does
-	 * not otherwise offer, because the frames have to land before the cursor does.
-	 *
-	 * @api Used by substrate.
-	 * @return array<string,mixed>
-	 */
-	public function save_state(): array {
-		$now = (int) Core::$now;
-		// Co-commit the current flame trees with the cursor, like pending.
-		$this->mirror_url_stats( $now );
-		$this->flush_stats_mirror( $now );
-		return [
-			'pending' => $this->pending,
-			'mirror'  => $this->checkpoint_mirror( $now ),
-		];
-	}
-
-	/**
-	 * The held frames a checkpoint carries, smallest first, under the byte budget.
-	 *
-	 * Smallest-first keeps the most keys recoverable per byte, and drops the
-	 * biggest — which are the per-server leaderboards, the one axis that grows
-	 * with an operator input. Rank is not stored at all — `lowest_rank_key()`
-	 * derives it from the data it already holds.
-	 *
-	 * The ordering is by ENTRY COUNT, which is free, rather than by encoded
-	 * bytes, which is not: encoding every held frame to sort them measured the
-	 * whole buffer to carry a budget's worth of it. A frame is a map of small
-	 * numeric entries, so its count tracks its size closely — and the ordering
-	 * only has to be APPROXIMATE, because the budget below is enforced against
-	 * REAL encoded bytes as they accumulate. A proxy that mis-orders two frames
-	 * costs a slightly worse packing, never an oversize record; there is no
-	 * reason to restore the full encode.
-	 *
-	 * @param int $now `save_state()`'s one read of the tick, the `at` stamp.
-	 * @return array{at: int, frames: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>}
-	 */
-	private function checkpoint_mirror( int $now ): array {
-		$held = $this->mirror_frames();
-		\usort( $held, static fn ( array $a, array $b ): int => \count( $a['frame'][0] ) <=> \count( $b['frame'][0] ) );
-
-		$remaining = self::MAX_CHECKPOINT_MIRROR_BYTES;
-		$out    = [ 'at' => $now, 'frames' => [] ];
-		foreach ( $held as $i => [ 'ns' => $ns, 'key' => $key, 'frame' => $frame ] ) {
-			$size = self::frame_bytes( $frame );
-			if ( $size > $remaining ) {
-				// Ascending, so the widest held frame is the last of them.
-				$widest = $held[ \count( $held ) - 1 ];
-				$this->print_less_often(
-					'held stats frames over the checkpoint budget; they still reach the mirror at bucket close',
-					\sprintf(
-						' — %d of %d frames dropped; budget %d bytes, %d carried; widest held %s/%s at %d bytes',
-						\count( $held ) - $i,
-						\count( $held ),
-						self::MAX_CHECKPOINT_MIRROR_BYTES,
-						self::MAX_CHECKPOINT_MIRROR_BYTES - $remaining,
-						$widest['ns'],
-						$widest['key'],
-						self::frame_bytes( $widest['frame'] )
-					)
-				);
-				break;
-			}
-			$remaining                   -= $size;
-			$out['frames'][ $ns ][ $key ] = $frame;
-		}
-		return $out;
-	}
-
-	/**
-	 * The mirror frames being held, flattened out of their namespaces.
-	 *
-	 * One builder, two readers: the pack above, and the introspection payload.
-	 * Neither is handed a SIZE — the pack measures only what it reaches, and
-	 * `mirror_held_bytes` is asked for by an operator rather than every thirty
-	 * seconds, so it pays for the exact total where it is wanted.
-	 *
-	 * @return list<array{ns: string, key: string, frame: array{0: array<array-key,mixed>, 1: int}}>
-	 */
-	private function mirror_frames(): array {
-		$held = [];
-		foreach ( $this->mirror as $ns => $frames ) {
-			foreach ( $frames as $key => $frame ) {
-				$held[] = [ 'ns' => $ns, 'key' => $key, 'frame' => $frame ];
-			}
-		}
-		return $held;
-	}
-
-	/**
-	 * Frames held in the WIDEST single namespace — the number `MAX_HELD_FRAMES`
-	 * is against.
-	 *
-	 * The bound is per namespace, so a cross-namespace total cannot warn about
-	 * it: six namespaces holding five thousand each read as thirty thousand
-	 * with nothing near the bound, while one spilling on every write reads as
-	 * ten thousand and fifty.
-	 */
-	private function widest_namespace_frames(): int {
-		$widest = 0;
-		foreach ( $this->mirror as $frames ) {
-			$widest = \max( $widest, \count( $frames ) );
-		}
-		return $widest;
-	}
-
-	/**
-	 * What one held frame will cost the checkpoint. An unencodable frame reads as
-	 * unbounded, not as zero — zero would sort it first and always carry it.
-	 *
-	 * @param array{0: array<array-key,mixed>, 1: int} $frame Buffered [data, ttl].
-	 */
-	private static function frame_bytes( array $frame ): int {
-		$json = \wp_json_encode( $frame );
-		return false === $json ? \PHP_INT_MAX : \strlen( $json );
-	}
-
-	/**
 	 * Drain the per-URL flame and profile aggregates into the store — memcache
 	 * and the mirror seam both.
 	 *
@@ -3414,199 +3864,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Write the buffered mirror frames whose bucket has CLOSED, and hold the rest.
-	 *
-	 * The partition keeps only the last frame for a key, so writing the bucket
-	 * currently being accumulated into — once per checkpoint, ten times over a
-	 * bucket's life — is nine redundant copies of a value that is still growing.
-	 * A held key is re-keyed by every later write, so what finally lands is the
-	 * bucket's whole and final state. Near-once rather than exactly-once: a
-	 * request that started before a boundary completes after it, and re-writes
-	 * the bucket it belongs to, which is by then closed.
-	 *
-	 * A held frame is not undurable, just durable somewhere cheaper: it rides
-	 * `save_state()` into the offsetlog, a bounded ring of at most 60 keyframes,
-	 * and a respawn writes it when the bucket closes.
-	 *
-	 * Every namespace flushes in full: what a buffer holds is what the closing
-	 * bucket saw, less whatever the backstop already wrote early.
-	 *
-	 * @param int $now `save_state()`'s one read of the tick.
-	 */
-	private function flush_stats_mirror( int $now ): void {
-		if ( '' === $this->stats_partition ) {
-			return;
-		}
-		$partition = $this->resolve_stats_partition();
-		if ( null === $partition ) {
-			$this->print_less_often( "stats_partition '{$this->stats_partition}' not found at flush" );
-			return; // Keep the buffer; retry next checkpoint once the node exists.
-		}
-		foreach ( $this->mirror as $ns => $entries ) {
-			$this->mirror[ $ns ] = $this->write_closed_frames( $partition, $entries, $now );
-		}
-	}
-
-	/**
-	 * Write every frame in one buffer whose bucket has closed, and return what is
-	 * still held.
-	 *
-	 * @template T of array{0: array<array-key,mixed>, 1: int}
-	 * @param \Newspack_Nodes\Partition_Node $partition Resolved stats partition.
-	 * @param array<string,T>                $buffer    Frames by key.
-	 * @param int                            $now       Clock deciding which bucket is open.
-	 * @return array<string,T> The frames whose bucket is still open.
-	 */
-	private function write_closed_frames( \Newspack_Nodes\Partition_Node $partition, array $buffer, int $now ): array {
-		foreach ( $buffer as $key => [ $data, $ttl ] ) {
-			if ( Stats_Store::is_open_bucket( $key, $now ) ) {
-				continue;
-			}
-			$this->write_mirror_frame( $partition, $key, $data, $ttl );
-			unset( $buffer[ $key ] );
-		}
-		return $buffer;
-	}
-
-	/** Resolve the named stats partition to its live node, or null when disabled / not-yet-built. */
-	private function resolve_stats_partition(): ?\Newspack_Nodes\Partition_Node {
-		if ( '' === $this->stats_partition ) {
-			return null;
-		}
-		$node = Core::node( $this->stats_partition );
-		return $node instanceof \Newspack_Nodes\Partition_Node ? $node : null;
-	}
-
-	/**
-	 * Write one mirror frame (TM_STRUCT {data,ttl}, keyed by `Message::KEY`) to
-	 * the partition.
-	 *
-	 * Written straight to the partition rather than through the sink, so the
-	 * frame lands in the checkpoint regardless of how the graph is wired.
-	 *
-	 * The key rides in `Message::KEY` alone; a copy inside VALUE would repeat
-	 * it in every frame for nothing.
-	 *
-	 * @param \Newspack_Nodes\Partition_Node $partition Resolved stats partition.
-	 * @param string                         $key       Durable key the frame is filed under.
-	 * @param array<array-key,mixed>        $data      Value written.
-	 * @param int                            $ttl       TTL the memcache write used.
-	 */
-	private function write_mirror_frame( \Newspack_Nodes\Partition_Node $partition, string $key, array $data, int $ttl ): void {
-		$msg                       = Message::new_message();
-		$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-		$msg[ Message::FROM ]      = $this->name;
-		$msg[ Message::KEY ]       = $key;
-		$msg[ Message::VALUE ]     = [ 'data' => $data, 'ttl' => $ttl ];
-		$partition->fill( $msg );
-	}
-
-	/**
-	 * The app's half of `locate_by()`: where the record for a stats-index line
-	 * sits, keyed by the hash that line carries.
-	 *
-	 * @param string $line Index line.
-	 * @return array{key: string, offset: int, length: int}|null
-	 */
-	private static function locate_stats_frame( string $line ): ?array {
-		$entry = self::parse_stats_index( $line );
-		return null === $entry ? null : [
-			'key'    => $entry['key_hash'],
-			'offset' => $entry['offset'],
-			'length' => $entry['length'],
-		];
-	}
-
-	/**
-	 * Parse one stats-index line back into its fields — the inverse of
-	 * `format_stats_index_entry()`, and bound to the same fixed widths.
-	 *
-	 * @param string $line Index line.
-	 * @return array{key_hash: string, segment: int, offset: int, length: int}|null Null when the line is short.
-	 */
-	public static function parse_stats_index( string $line ): ?array {
-		$line = \rtrim( $line, "\n" );
-		if ( \strlen( $line ) < 36 ) {
-			return null;
-		}
-		return [
-			'key_hash' => \substr( $line, 0, 12 ),
-			'segment'  => (int) \substr( $line, 12, 6 ),
-			'offset'   => (int) \substr( $line, 18, 10 ),
-			'length'   => (int) \substr( $line, 28, 8 ),
-		];
-	}
-
-	/**
-	 * Restore the in-flight buckets a previous worker checkpointed.
-	 *
-	 * Each bucket is merged over an empty accumulator, so a save from an older
-	 * shape that lacks a key keeps that key's default instead of leaving it unset.
-	 * A frame an older worker wrote under a different shape is skipped, costing
-	 * one worker's un-flushed delta once — far less than the retention window the
-	 * same release already resets. The URL rows are held to their shape here,
-	 * the one door a checkpoint comes through: see `restored_url_rows()`.
-	 *
-	 * @api Used by substrate.
-	 * @param array<string,mixed> $saved A prior `save_state()` return value.
-	 */
-	public function restore_state( array $saved ): void {
-		$pending = Core::arr( $saved['pending'] ?? null );
-		$mirror = Core::arr( $saved['mirror'] ?? null );
-		// An unmerged delta, not durable: a spent one is dropped.
-		$elapsed                   = \max( 0, (int) Core::$now - Core::num_int( $mirror['at'] ?? null ) );
-		foreach ( Core::arr( $mirror['frames'] ?? null ) as $ns_raw => $carried ) {
-			$ns       = Core::as_string( $ns_raw );
-			$restored = self::restore_frames( $carried, $elapsed );
-			$cap      = \max( 0, \min( $this->mirror_topn( $ns ), static::MAX_HELD_FRAMES ) );
-			if ( \count( $restored ) > $cap ) {
-				// Re-bound by TRAFFIC; the carry's own order is smallest-first.
-				\uasort(
-					$restored,
-					static fn ( array $a, array $b ): int =>
-						static::mirror_traffic_rank( $b[0], $ns ) <=> static::mirror_traffic_rank( $a[0], $ns )
-				);
-				$restored = \array_slice( $restored, 0, $cap, true );
-			}
-			$this->mirror[ $ns ] = $restored;
-		}
-		foreach ( $pending as $bucket => $acc ) {
-			// `Y-m-d-H-i` is a string PHP never re-types to int.
-			if ( \is_string( $bucket ) && '' !== $bucket && \is_array( $acc ) ) {
-				/** @var Bucket_Acc $merged */
-				$merged                     = \array_merge( self::empty_bucket(), $acc );
-				$merged['url_stats']        = self::restored_url_rows( $merged['url_stats'] );
-				$merged['url_stats_worker'] = self::restored_url_rows( $merged['url_stats_worker'] );
-				$this->pending[ $bucket ]   = $merged;
-			}
-		}
-	}
-
-	/**
-	 * A checkpoint's URL rows, kept only where they are `server => hash =>
-	 * row` and each row names its path, and completed over an empty row so
-	 * the accumulator indexes every field unguarded.
-	 *
-	 * A checkpoint in any other shape — rows keyed by hash, carrying a
-	 * per-server split — would read its hashes as servers. No migration: its
-	 * URL delta is dropped, once.
-	 *
-	 * @param array<array-key,mixed> $servers A restored `url_stats` slot.
-	 * @return array<array-key,array<array-key,mixed>>
-	 */
-	private static function restored_url_rows( array $servers ): array {
-		$out = [];
-		foreach ( $servers as $server => $rows ) {
-			foreach ( Core::arr( $rows ) as $hash => $row ) {
-				if ( \is_array( $row ) && \is_string( $row[ Stats_Store::ROW_PATH ] ?? null ) ) {
-					$out[ $server ][ $hash ] = \array_replace( self::empty_url_row( PHP_INT_MAX ), $row );
-				}
-			}
-		}
-		return $out;
-	}
-
-	/**
 	 * A zero-valued URL index row.
 	 *
 	 * Both sides of the write path seed one, differing only in the `min_ms`
@@ -3634,104 +3891,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			Stats_Store::ROW_LAST_SEEN   => 0,
 			Stats_Store::ROW_WORKER      => false,
 			Stats_Store::ROW_PATH        => '',
-		];
-	}
-
-	/**
-	 * The live RANK cap on one namespace's buffered frames: `$flame_topn` for
-	 * NS_URL (the flame profiles), 0 for a DERIVED namespace, which keeps
-	 * nothing at all, and no rank for everything else — where both
-	 * per-URL series and every aggregate land. `MAX_HELD_FRAMES` is the
-	 * separate bound on what those may HOLD.
-	 *
-	 * @param string $ns Namespace a frame was written under.
-	 */
-	private function mirror_topn( string $ns ): int {
-		if ( Stats_Store::NS_URL === $ns ) {
-			return $this->flame_topn;
-		}
-		// An aggregate namespace keeps all; a derived one keeps none.
-		return Stats_Store::is_derived( $ns ) ? 0 : \PHP_INT_MAX;
-	}
-
-	/**
-	 * Traffic rank (~request count) for the per-URL namespaces.
-	 *
-	 * Each namespace stores a different shape, so each derives the count its own
-	 * way. The result only has to order URLs against each other.
-	 *
-	 * Reached through `static::` and protected so a test double can COUNT the
-	 * reads — the backstop's cost is a complexity claim, and wall clock is not
-	 * evidence for one. An override delegates to this body, which still runs.
-	 *
-	 * @param array<array-key,mixed> $data Value being mirrored.
-	 * @param string                  $ns   Namespace it belongs to.
-	 */
-	protected static function mirror_traffic_rank( array $data, string $ns ): int {
-		if ( Stats_Store::NS_URL === $ns ) {
-			$flame = $data['flame'] ?? null;
-			return \is_array( $flame ) && \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0;
-		}
-		if ( Stats_Store::NS_URL_CAT === $ns ) {
-			// One bucket: the `total` pseudo-category's sampled requests.
-			$total = $data[ self::TOTAL_KEY ] ?? null;
-			return \is_array( $total ) && \is_numeric( $total[ Stats_Store::CAT_REQUESTS ] ?? null )
-				? (int) $total[ Stats_Store::CAT_REQUESTS ]
-				: 0;
-		}
-		// NS_URL_DIM: one bucket; take the first dimension's counts.
-		$sum   = 0;
-		$first = \reset( $data );
-		if ( \is_array( $first ) ) {
-			foreach ( $first as $vd ) {
-				$sum += \is_array( $vd ) && \is_numeric( $vd[ Stats_Store::DIM_COUNT ] ?? null ) ? (int) $vd[ Stats_Store::DIM_COUNT ] : 0;
-			}
-		}
-		return $sum;
-	}
-
-	/**
-	 * Held mirror frames from a checkpoint frame, coerced back to `[data, ttl]`.
-	 * A malformed entry is dropped rather than aborting the whole restore.
-	 *
-	 * @param mixed $saved   One buffer out of the checkpoint's `mirror` map.
-	 * @param int   $elapsed Seconds since the checkpoint was written, taken off each TTL.
-	 * @return array<string,array{0: array<array-key,mixed>, 1: int}>
-	 */
-	private static function restore_frames( mixed $saved, int $elapsed ): array {
-		$out = [];
-		foreach ( Core::arr( $saved ) as $key => $frame ) {
-			$frame = Core::arr( $frame );
-			$data  = $frame[0] ?? null;
-			$ttl   = Core::num_int( $frame[1] ?? null ) - $elapsed;
-			// A carry that is not an absolute key matches no lookup; drop it.
-			if ( \is_string( $key ) && Stats_Store::is_mirror_key( $key ) && \is_array( $data ) && $ttl > 0 ) {
-				$out[ $key ] = [ $data, $ttl ];
-			}
-		}
-		return $out;
-	}
-
-	/**
-	 * One bucket's empty accumulator. Seeded whole so every accumulate site can
-	 * index straight in, and so the leaderboard has its shape rather than [].
-	 *
-	 * @return Bucket_Acc
-	 */
-	private static function empty_bucket(): array {
-		return [
-			'hourly'                => [],
-			'dim'                   => [],
-			'dim_by_server'         => [],
-			'url_dim'               => [],
-			'url_stats'             => [],
-			'url_stats_worker'      => [],
-			'url_names'             => [],
-			'cat'                   => [],
-			'cat_by_server'         => [],
-			'cat_by_url'            => [],
-			'leaderboard'           => self::empty_leaderboard(),
-			'leaderboard_by_server' => [],
 		];
 	}
 
@@ -3817,6 +3976,39 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
+	 * The buffered frames for `$keys` that no durable log holds yet.
+	 *
+	 * The open bucket is deliberately withheld from the mirror, so these buffers
+	 * are its ONLY copy besides memcache — and `persist_aggregate_stats()` reads
+	 * a bucket back before adding to it. Without this tier an eviction mid-bucket
+	 * reads as empty and the merge restarts the bucket from zero.
+	 *
+	 * Held frames win over the partition: they are what was written last.
+	 *
+	 * @param array<array-key,mixed> $keys      Keys the Table missed on, relative to its namespace.
+	 * @param int                    $partition Keyspace those keys sit in; the buffer keys absolutely.
+	 * @return array<string,array{value: array<array-key,mixed>, ttl: int}>
+	 */
+	private function held_frames( array $keys, int $partition ): array {
+		$found = [];
+		foreach ( $keys as $key ) {
+			// The seam is public and untyped; only strings name a key.
+			if ( ! \is_string( $key ) ) {
+				continue;
+			}
+			$held  = Stats_Store::entry_key( $partition, $key );
+			$frame = null;
+			foreach ( $this->mirror as $entries ) {
+				$frame ??= $entries[ $held ] ?? null;
+			}
+			if ( null !== $frame ) {
+				$found[ $key ] = [ 'value' => $frame[0], 'ttl' => $frame[1] ];
+			}
+		}
+		return $found;
+	}
+
+	/**
 	 * Format one companion-index line for the stats mirror.
 	 *
 	 * Registered as `stats-index` and installed by
@@ -3856,20 +4048,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @api The dashboard reader, once per inbound command.
 	 */
 	public static function reset_mirror_read_budget(): void {
-		self::$mirror_read_ns = 0;
-	}
-
-	/**
-	 * Whether this answer's mirror read budget is spent.
-	 *
-	 * A reader that reached the budget answered null for every mirror read
-	 * after it, so the fold it produced is missing whatever those reads held.
-	 * That page is the answer for now, not one to keep.
-	 *
-	 * @api The dashboard reader, before it caches a page.
-	 */
-	public static function mirror_budget_spent(): bool {
-		return self::$mirror_read_ns >= 1_000_000 * \max( 0, Core::num_int( Config::value( 'stats_mirror_read_budget_ms' ) ) );
+		self::$mirror_reads = self::NO_MIRROR_READS;
 	}
 
 	/**
@@ -3888,46 +4067,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @return T What the read returned.
 	 */
 	public static function with_own_mirror_read_budget( \Closure $read ): mixed {
-		$spent                = self::$mirror_read_ns;
-		self::$mirror_read_ns = 0;
+		$spent                           = self::$mirror_reads['budget_ns'];
+		self::$mirror_reads['budget_ns'] = 0;
 		try {
 			return $read();
 		} finally {
-			self::$mirror_read_ns = $spent;
+			self::$mirror_reads['budget_ns'] = $spent;
 		}
-	}
-
-	/**
-	 * The buffered frames for `$keys` that no durable log holds yet.
-	 *
-	 * The open bucket is deliberately withheld from the mirror, so these buffers
-	 * are its ONLY copy besides memcache — and `persist_aggregate_stats()` reads
-	 * a bucket back before adding to it. Without this tier an eviction mid-bucket
-	 * reads as empty and the merge restarts the bucket from zero.
-	 *
-	 * Held frames win over the partition: they are what was written last.
-	 *
-	 * @param array<array-key,mixed> $keys      Keys the Table missed on, relative to its namespace.
-	 * @param int                    $partition Keyspace those keys sit in; the buffer keys absolutely.
-	 * @return array<string,array{value: array<array-key,mixed>, ttl: int}>
-	 */
-	private function held_frames( array $keys, int $partition ): array {
-		$found = [];
-		foreach ( $keys as $key ) {
-			// The seam is public and untyped; only strings name a key.
-			if ( ! \is_string( $key ) ) {
-				continue;
-			}
-			$held  = Stats_Store::entry_key( $partition, $key );
-			$frame = null;
-			foreach ( $this->mirror as $entries ) {
-				$frame ??= $entries[ $held ] ?? null;
-			}
-			if ( null !== $frame ) {
-				$found[ $key ] = [ 'value' => $frame[0], 'ttl' => $frame[1] ];
-			}
-		}
-		return $found;
 	}
 
 	/**

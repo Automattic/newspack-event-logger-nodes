@@ -65,9 +65,7 @@ class Current_Request_Overlay {
 		if ( ! \function_exists( 'wp_enqueue_script' ) ) {
 			return;
 		}
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only admin-page dispatch.
-		$page = isset( $_GET['page'] ) && \is_string( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
-		if ( ! self::is_overlay_page( $page ) ) {
+		if ( ! self::is_overlay_page( self::current_page() ) ) {
 			return;
 		}
 		$dir   = \NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/current-request';
@@ -122,6 +120,10 @@ class Current_Request_Overlay {
 	 * by either path (the substrate's filter on the station, ours everywhere else).
 	 * A page that never loaded the bundle gets no global and no inline script.
 	 *
+	 * The span palette, `Config::span_palette_js()`, rides along everywhere
+	 * but {@see OVERLAY_PAGES}: each of those is an ELN dashboard whose own
+	 * bundle prints it, and a page carries each global once.
+	 *
 	 * `Log_Manager` leaves the request id empty when the request went unlogged —
 	 * logging disabled, running as root, or no matching `log` rule — and the tab
 	 * renders its empty state from that.
@@ -135,11 +137,21 @@ class Current_Request_Overlay {
 		$log      = Log_Manager::instance();
 		$rid      = $log->get_request_id();
 		$perf_url = \admin_url( 'admin.php?page=event-logger-overview' );
-		\wp_add_inline_script(
-			self::HANDLE,
-			self::inline_data_js( $rid, $log->get_partition(), $perf_url ),
-			'before'
-		);
+		$js       = self::inline_data_js( $rid, $log->get_partition(), $perf_url );
+		if ( ! \in_array( self::current_page(), self::OVERLAY_PAGES, true ) ) {
+			$js .= Config::span_palette_js();
+		}
+		\wp_add_inline_script( self::HANDLE, $js, 'before' );
+	}
+
+	/**
+	 * The `?page=` admin slug this request renders, or '' off an admin page.
+	 *
+	 * @return string
+	 */
+	private static function current_page(): string {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only admin-page dispatch.
+		return isset( $_GET['page'] ) && \is_string( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
 	}
 
 	/**

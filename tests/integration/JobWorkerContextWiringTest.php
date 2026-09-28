@@ -102,12 +102,8 @@ class JobWorkerContextWiringTest extends TestCase {
 		$message = $this->job_message( 'boom' );
 		// A handler throw now PROPAGATES (the driving Consumer quarantines the job,
 		// dead-letter [42]) — but after_job still restores the request context first.
-		try {
-			$jw->fill( $message );
-			$this->fail( 'a throwing handler must propagate so the Consumer can quarantine it' );
-		} catch ( \RuntimeException $e ) {
-			$this->assertSame( 'x', $e->getMessage() );
-		}
+		$caught = $this->caught( fn () => $jw->fill( $message ), 'a throwing handler must propagate so the Consumer can quarantine it' );
+		$this->assertSame( 'x', $caught->getMessage() );
 
 		$this->assertSame( '/outer', $_SERVER['REQUEST_URI'], '$_SERVER restored by after_job even on a throw' );
 	}
