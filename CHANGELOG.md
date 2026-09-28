@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.107.0] - 2026-09-28
+
 ### Changed
 
 - **`Config::get_locks_directory()` is gone.** The settings-sync `set` verb signals workers through `Restart_Planner::plan( [] )`, which validates the lock tree through the substrate's `Config::get_base_directory_with_locks()` and refuses a symlinked `locks/` as before.
