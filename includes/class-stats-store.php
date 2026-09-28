@@ -176,7 +176,7 @@ class Stats_Store {
 	 * the url_hash: `urls:{server_key}:{shard}:{bucket}`. Per-server data has
 	 * the server in the key, so a busy server's rows never compete with a
 	 * quiet one's for a shard's cap. The bucket stays LAST, which is what lets
-	 * `is_open_bucket()`, expiry and the durable read-through work off the key
+	 * `open_bucket_at()`, expiry and the durable read-through work off the key
 	 * alone. Decision 1.
 	 */
 	public const NS_URLS        = 'urls';
@@ -610,8 +610,8 @@ class Stats_Store {
 	 * each a full walk to say so — and never the writer's, whose own folds
 	 * read a bucket once and whose writes must not compete with a marker.
 	 * `Flame_Builder_Node::arm_stats_reader()` sets it to `absence_holds()`,
-	 * dated from the reply's clock, for a namespace the mirror can hold and to
-	 * 0 for one it refuses.
+	 * dated from the reply's clock, for a key it walks the mirror for, and to 0
+	 * for one it does not: a namespace the mirror refuses, or the open bucket.
 	 * Signature: `function (string $key): int`, seconds. Read when a table is
 	 * built, so it is set before the first read, as `arm_stats_reader()` does.
 	 *
@@ -814,7 +814,9 @@ class Stats_Store {
 	}
 
 	/**
-	 * Whether a full entry key names a bucket that can still be written to.
+	 * Whether an entry key names a bucket that can still be written to, as a
+	 * predicate over keys: the bounds come from `$now` once, and each key costs
+	 * a slice and two string comparisons.
 	 *
 	 * The bucket is the LAST key component in every bucketed namespace, so the
 	 * bucket is read off the key; the unbucketed `url` namespace ends in a URL
@@ -826,16 +828,19 @@ class Stats_Store {
 	 * frames in memory indefinitely (MAX_FUTURE_SKEW_SEC). Lexical order IS
 	 * chronological order here, which is what `bucket_key()` buys.
 	 *
-	 * @param string $key Full entry key, as the mirror seam receives it.
-	 * @param int    $now Clock, so a test window matches its writer's keys.
+	 * @param int $now Clock, so a test window matches its writer's keys.
+	 * @return \Closure(string): bool Given an entry key — full as the mirror
+	 *                                seam receives it or Table-relative as a
+	 *                                reader asks — whether its bucket is open.
 	 */
-	public static function is_open_bucket( string $key, int $now ): bool {
-		$bucket = self::bucket_of( $key );
-		$opened = self::bucket_key( $now );
+	public static function open_bucket_at( int $now ): \Closure {
+		$opened  = self::bucket_key( $now );
+		$ceiling = self::bucket_key( $now + self::MAX_FUTURE_SKEW_SEC );
 		// Shape comes from bucket_key() itself, never a second spelling of it.
-		return \strlen( $bucket ) === \strlen( $opened )
-			&& $bucket >= $opened
-			&& $bucket <= self::bucket_key( $now + self::MAX_FUTURE_SKEW_SEC );
+		return static function ( string $key ) use ( $opened, $ceiling ): bool {
+			$bucket = self::bucket_of( $key );
+			return \strlen( $bucket ) === \strlen( $opened ) && $bucket >= $opened && $bucket <= $ceiling;
+		};
 	}
 
 	/**

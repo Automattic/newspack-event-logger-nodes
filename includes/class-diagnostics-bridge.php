@@ -46,13 +46,19 @@ class Diagnostics_Bridge {
 	 * started, before anything names the span. The architecture guide states
 	 * the span.
 	 *
+	 * The `(start)` line's `m` is what `$command` renders: the command line
+	 * as the REPL echoes it, a declared secret option's value masked. It
+	 * renders only once a logger has started, so an unlogged dispatch pays
+	 * nothing, and `$inner` is handed it unrendered. A substrate that passes
+	 * three arguments leaves it null, and `m` is the node's name.
+	 *
 	 * @param \Closure|null $inner The wrapper this one encloses; null runs the handler.
-	 * @return \Closure(Command_Interpreter_Node, string, \Closure(): mixed): mixed The `$around_dispatch` value.
+	 * @return \Closure(Command_Interpreter_Node, string, \Closure(): mixed, (\Closure(): string)|null=): mixed The `$around_dispatch` value.
 	 */
 	public static function around_dispatch( ?\Closure $inner ): \Closure {
-		return static function ( Command_Interpreter_Node $ci, string $verb, \Closure $run ) use ( $inner ): mixed {
+		return static function ( Command_Interpreter_Node $ci, string $verb, \Closure $run, ?\Closure $command = null ) use ( $inner ): mixed {
 			if ( null !== $inner ) {
-				$run = static fn (): mixed => $inner( $ci, $verb, $run );
+				$run = static fn (): mixed => $inner( $ci, $verb, $run, $command );
 			}
 			$lm = Log_Manager::started_instance();
 			if ( null === $lm ) {
@@ -62,7 +68,7 @@ class Diagnostics_Bridge {
 				Command_Interpreter_Node::shell_name_for( $ci->patron() ?? $ci ) . " {$verb}" . Flame_Tree::COMMAND_SUFFIX,
 				$run,
 				static fn (): string => 'ok',
-				[ 'm' => $ci->name() ]
+				[ 'm' => null === $command ? $ci->name() : $command() ]
 			);
 		};
 	}

@@ -6834,17 +6834,18 @@ class FlameBuilderTest extends TestCase {
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$now    = self::tick();
 		Flame_Builder_Node::arm_stats_reader( $reader, $now );
-		$open     = 'lb:' . Stats_Store::bucket_key( $now );
+		// Just closed: its flush may still land, so it holds only briefly.
+		$closing  = 'lb:' . Stats_Store::bucket_key( $now - Stats_Store::BUCKET_SECONDS );
 		$previous = Core::$now;
-		// Past the open bucket's close, as a write mid-reply would move it.
+		// Past that flush, as a write mid-reply would move it.
 		Core::$now = $now + 2 * Stats_Store::BUCKET_SECONDS;
 		try {
-			$held = ( $reader->absence )( $open );
+			$held = ( $reader->absence )( $closing );
 		} finally {
 			Core::$now = $previous;
 		}
 
-		$this->assertSame( Stats_Store::ABSENCE_HOLD_SECONDS, $held, 'open at the reply\'s clock, so held only briefly' );
+		$this->assertSame( Stats_Store::ABSENCE_HOLD_SECONDS, $held, 'still flushing at the reply\'s clock, so held only briefly' );
 	}
 
 	/** A namespace the mirror refuses earns no absence marker: nothing was walked for. */
@@ -6860,6 +6861,84 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [], $reader->get_leaderboard_hours( [ $hour ] ) );
 
 		$this->assertFalse( Core::$memd->get( self::cache_key( 0, Stats_Store::NS_LB_HOUR . ':' . $hour ) ), 'no marker for a key the mirror could never hold' );
+	}
+
+	/**
+	 * The writer never mirrors the open bucket, so a dashboard's walk for one
+	 * is a full pass that can find nothing — seconds a poll on a busy hub,
+	 * one bucket boundary after another. The reader answers it absent without
+	 * walking, and leaves no marker on the key the writer is filling, so the
+	 * frame that lands there is read on the next poll.
+	 */
+	public function test_a_reader_neither_walks_for_nor_marks_an_open_bucket(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		/** @var CountingIndexPartition $p */
+		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+		$open    = Stats_Store::bucket_key( self::tick() );
+		// Seeded ANYWAY, as a backstop spill would: what fails is the looking.
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'lb:' . $open ), [ 'count' => 7713, 'sum_req_time' => 3.0, 'categories' => [] ], 86400, self::tick() );
+		$p->flush();
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader, self::tick() );
+		$p->index_scans = 0;
+
+		$this->assertSame( [], $reader->get_leaderboard_buckets( [ $open ] ), 'the open bucket is memcache\'s alone' );
+		$this->assertSame( [], ( $reader->rehydrate )( [ 'lb:' . $open ] ), 'answered absent, where a read that did not look says null' );
+		$this->assertSame( 0, $p->index_scans, 'and no walk is spent on it' );
+		$this->assertSame( 0, Flame_Builder_Node::mirror_read_tally()['calls'], 'nor any read tallied' );
+		$this->assertFalse( Core::$memd->get( self::cache_key( 0, 'lb:' . $open ) ), 'nor a marker left on the key the writer fills' );
+	}
+
+	/**
+	 * `asked` means walked: an open bucket and a derived tier ride the same
+	 * batch as a closed bucket, and only the closed one is counted.
+	 */
+	public function test_the_tally_counts_only_the_keys_it_walks_for(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		/** @var CountingIndexPartition $p */
+		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+		$closed  = 'lb:' . Stats_Store::bucket_key( self::tick() - 3 * 3600 );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $closed ), [ 'count' => 7713, 'sum_req_time' => 3.0, 'categories' => [] ], 86400, self::tick() );
+		$p->flush();
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader, self::tick() );
+		$p->index_scans = 0;
+
+		$found = ( $reader->rehydrate )( [
+			'lb:' . Stats_Store::bucket_key( self::tick() ),
+			Stats_Store::NS_LB_HOUR . ':' . self::live_hour(),
+			$closed,
+		] );
+
+		$this->assertSame( 7713, $found[ $closed ]['value']['count'] ?? null, 'the closed bucket still walks' );
+		$this->assertSame( 1, $p->index_scans );
+		$tally = Flame_Builder_Node::mirror_read_tally();
+		$this->assertSame( 1, $tally['calls'] );
+		$this->assertSame( 1, $tally['asked'], 'the open and derived keys were never walked for' );
+		$this->assertSame( 1, $tally['found'] );
+	}
+
+	/**
+	 * The WORKER keeps reading the open bucket: past the backstop a spilled
+	 * frame is the only copy it can read back before adding to the bucket.
+	 */
+	public function test_the_workers_seam_still_reads_an_open_bucket(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ , $p ]    = $this->mirrored_builder( $store, 'flames-stats' );
+		$open       = 'lb:' . Stats_Store::bucket_key( self::tick() );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $open ), [ 'count' => 7719, 'sum_req_time' => 3.0, 'categories' => [] ], 86400, self::tick() );
+		$p->flush();
+
+		$found = ( $store->rehydrate )( [ $open ] );
+
+		$this->assertSame( 7719, $found[ $open ]['value']['count'] ?? null );
 	}
 
 	/** An unnamed mirror leaves the reader memcache-only: there is nothing to budget. */

@@ -1468,15 +1468,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		if ( null === $store ) {
 			return;
 		}
-		$store->mirror = '' === $this->stats_partition ? null : $this->buffer_mirror_write( ... );
-		self::arm_rehydrate( $store, $this->stats_partition );
-		$from_partition = $store->rehydrate;
-		if ( null !== $from_partition ) {
-			$partition        = $store->partition();
-			// Unbudgeted, so a null is only an unresolved partition: a miss.
-			$store->rehydrate = fn ( array $keys ): array =>
-				$this->held_frames( $keys, $partition ) + ( ( $from_partition )( $keys ) ?? [] );
-		}
+		$store->mirror    = '' === $this->stats_partition ? null : $this->buffer_mirror_write( ... );
+		$from_partition   = self::mirror_seam( $store, $this->stats_partition );
+		// Unbudgeted, so a null is only an unresolved partition: a miss.
+		$store->rehydrate = null === $from_partition ? null : fn ( array $keys ): array =>
+			$this->held_frames( $keys, $store ) + ( ( $from_partition )( self::keys_walked( $keys, self::mirrors_key( ... ) ) ) ?? [] );
 	}
 
 	/**
@@ -1486,30 +1482,49 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * the seam — so the store resolves the mirror from the topology instead. An
 	 * unconfigured mirror leaves it memcache-only, exactly as before one existed.
 	 *
+	 * A key is walked for only when the mirror can hold its namespace and its
+	 * bucket has closed: `write_closed_frames()` never writes the open one, and
+	 * `locate_by()` cannot stop early on an absent key, so asking for it is a
+	 * full pass that finds nothing. Only a walked key's absence is remembered,
+	 * so no marker sits on the key the writer is filling. The open bucket's
+	 * bounds come from `$now` once, through `Stats_Store::open_bucket_at()`.
+	 *
+	 * One frame this cannot reach: an open-bucket frame `spill_over_backstop()`
+	 * wrote early. Once memcache evicts its key, a dashboard read finds
+	 * nothing until the bucket closes, at most five minutes, and the next
+	 * checkpoint writes it. Only the lowest-ranked band spills, and only under
+	 * backstop pressure; stats fail soft (decision 3).
+	 *
 	 * @api Readers building a Stats_Store outside the worker graph.
 	 * @param Stats_Store $store Store whose read seam is armed.
 	 * @param int         $now   The reply's clock its absences date from (decision 29).
 	 */
 	public static function arm_stats_reader( Stats_Store $store, int $now ): void {
-		self::arm_rehydrate( $store, \trim( Core::as_string( Config::value( 'stats_mirror_node' ), '' ) ) );
-		$seam = $store->rehydrate;
+		$seam = self::mirror_seam( $store, \trim( Core::as_string( Config::value( 'stats_mirror_node' ), '' ) ) );
 		if ( null === $seam ) {
+			$store->rehydrate = null;
 			return;
 		}
-		// Absences walked for are remembered; a refused namespace is not.
-		$store->absence = static fn ( string $key ): int => self::mirrors_key( $key ) ? $store->absence_holds( $key, $now ) : 0;
+		$open           = Stats_Store::open_bucket_at( $now );
+		$walks          = static fn ( string $key ): bool => self::mirrors_key( $key ) && ! $open( $key );
+		$store->absence = static fn ( string $key ): int => $walks( $key ) ? $store->absence_holds( $key, $now ) : 0;
 		// num_int: arithmetic, and a corrupt value must read as OFF.
 		$budget_ns        = 1_000_000 * \max( 0, Core::num_int( Config::value( 'stats_mirror_read_budget_ms' ) ) );
-		// Null, not []: a read that did not look is no absence to remember.
-		$store->rehydrate = static function ( array $keys ) use ( $seam, $budget_ns ): ?array {
+		$store->rehydrate = static function ( array $keys ) use ( $seam, $walks, $budget_ns ): ?array {
+			$walk = self::keys_walked( $keys, $walks );
+			// Nothing to walk is an answer, and marks nothing: absence says 0.
+			if ( [] === $walk ) {
+				return [];
+			}
+			// Null, not []: a read that did not look is no absence to remember.
 			if ( self::$mirror_reads['budget_ns'] >= $budget_ns ) {
 				return null;
 			}
 			$at    = \hrtime( true );
-			$found = $seam( $keys );
+			$found = $seam( $walk );
 			$spent = \hrtime( true ) - $at;
 			++self::$mirror_reads['calls'];
-			self::$mirror_reads['asked']     += \count( $keys );
+			self::$mirror_reads['asked']     += \count( $walk );
 			self::$mirror_reads['found']     += \count( $found ?? [] );
 			self::$mirror_reads['ns']        += $spent;
 			self::$mirror_reads['budget_ns'] += $spent;
@@ -1518,7 +1533,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Point `$store`'s read seam at the named mirror, or unarm it when unnamed.
+	 * The read seam over the named mirror, or null when none is named.
 	 *
 	 * ONE body for both callers. The worker names the mirror through
 	 * `set_stats_target` and a reader through config, but it is the same key —
@@ -1527,58 +1542,42 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * the worker's own node exists is safe precisely because it is read-only;
 	 * the WRITE path keeps `resolve_stats_partition()`, which never falls back.
 	 *
-	 * @param Stats_Store $store Store whose read seam is set.
-	 * @param string      $name  Mirror partition node name; '' unarms the seam.
-	 */
-	private static function arm_rehydrate( Stats_Store $store, string $name ): void {
-		$partition        = $store->partition();
-		$store->rehydrate = '' === $name
-			? null
-			: self::rehydrate_seam(
-				static fn (): ?\Newspack_Nodes\Partition_Node => self::mirror_partition( $name, $partition ),
-				$partition,
-				$store
-			);
-	}
-
-	/**
-	 * The rehydrate closure over a partition resolver.
-	 *
 	 * The keys are resolved through `Partition_Node::locate_by()`, which is
 	 * bounded by them: it walks only for keys nobody has looked up yet and
 	 * memoizes what it searched for as well as what it found, so a
 	 * leaderboard's hundreds of bucket misses cost one pass between them
-	 * rather than one each — and never a table of the whole partition.
+	 * rather than one each — and never a table of the whole partition. Each
+	 * caller hands it only the keys it has chosen to walk for.
 	 *
-	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve         Where the mirror is.
-	 * @param int                                            $partition_index Keyspace the Table's keys sit in.
-	 * @param Stats_Store                                    $store           Sizes what is handed back, by window.
-	 * @return \Closure(array<array-key,mixed>): ?array<array-key,array{value: array<array-key,mixed>, ttl: int}>
-	 *         Null when the mirror could not be looked at, which is no absence.
+	 * @param Stats_Store $store Store whose keyspace the seam reads, and which sizes what it hands back.
+	 * @param string      $name  Mirror partition node name; '' is none.
+	 * @return (\Closure(list<string>): ?array<array-key,array{value: array<array-key,mixed>, ttl: int}>)|null
+	 *         Null when none is named. The closure answers null when the
+	 *         mirror could not be looked at, which is no absence.
 	 */
-	private static function rehydrate_seam( \Closure $resolve, int $partition_index, Stats_Store $store ): \Closure {
-		$partition = null;
-		$resolved  = false;
-		return static function ( array $keys ) use ( $resolve, $partition_index, $store, &$partition, &$resolved ): ?array {
+	private static function mirror_seam( Stats_Store $store, string $name ): ?\Closure {
+		if ( '' === $name ) {
+			return null;
+		}
+		$partition_index = $store->partition();
+		$partition       = null;
+		$resolved        = false;
+		return static function ( array $keys ) use ( $name, $partition_index, $store, &$partition, &$resolved ): ?array {
 			// Frames are filed under the durable key; the Table asks relative.
 			$hashes = [];
-			foreach ( $keys as $key ) {
-				// The seam is public and untyped; only strings name a key.
-				if ( ! \is_string( $key ) ) {
-					continue;
+			foreach ( $keys as $wanted ) {
+				// A closure's @param types nothing for PHPStan; this narrows.
+				if ( \is_string( $wanted ) ) {
+					$hashes[ $wanted ] = Log_Manager::url_hash( Stats_Store::entry_key( $partition_index, $wanted ) );
 				}
-				if ( ! self::mirrors_key( $key ) ) {
-					continue;
-				}
-				$hashes[ $key ] = Log_Manager::url_hash( Stats_Store::entry_key( $partition_index, $key ) );
 			}
-			// Nothing this mirror can hold: no walk, no partition to resolve.
+			// Nothing to walk: no partition to resolve.
 			if ( [] === $hashes ) {
 				return [];
 			}
 			// Once: null is no mirror declared; a late node resolves detached.
 			if ( ! $resolved ) {
-				$partition = $resolve();
+				$partition = self::mirror_partition( $name, $partition_index );
 				$resolved  = true;
 			}
 			if ( null === $partition ) {
@@ -1926,8 +1925,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * @return array<string,T> The frames whose bucket is still open.
 	 */
 	private function write_closed_frames( \Newspack_Nodes\Partition_Node $partition, array $buffer, int $now ): array {
+		$open = Stats_Store::open_bucket_at( $now );
 		foreach ( $buffer as $key => [ $data, $ttl ] ) {
-			if ( Stats_Store::is_open_bucket( $key, $now ) ) {
+			if ( $open( $key ) ) {
 				continue;
 			}
 			$this->write_mirror_frame( $partition, $key, $data, $ttl );
@@ -3930,6 +3930,23 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
+	 * The keys of a miss a read seam walks the mirror for.
+	 *
+	 * @param array<array-key,mixed>  $keys  Keys a Table missed on; the seam is public and untyped.
+	 * @param \Closure(string): bool $walks Whether a key is walked for.
+	 * @return list<string>
+	 */
+	private static function keys_walked( array $keys, \Closure $walks ): array {
+		$walked = [];
+		foreach ( $keys as $key ) {
+			if ( \is_string( $key ) && $walks( $key ) ) {
+				$walked[] = $key;
+			}
+		}
+		return $walked;
+	}
+
+	/**
 	 * Whether the mirror can hold a key's namespace AT ALL.
 	 *
 	 * `buffer_mirror_write()` drops a derived namespace, so reading one back can
@@ -3985,12 +4002,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 *
 	 * Held frames win over the partition: they are what was written last.
 	 *
-	 * @param array<array-key,mixed> $keys      Keys the Table missed on, relative to its namespace.
-	 * @param int                    $partition Keyspace those keys sit in; the buffer keys absolutely.
+	 * @param array<array-key,mixed> $keys  Keys the Table missed on, relative to its namespace.
+	 * @param Stats_Store            $store Whose keyspace those keys sit in; the buffer keys absolutely.
 	 * @return array<string,array{value: array<array-key,mixed>, ttl: int}>
 	 */
-	private function held_frames( array $keys, int $partition ): array {
-		$found = [];
+	private function held_frames( array $keys, Stats_Store $store ): array {
+		$partition = $store->partition();
+		$found     = [];
 		foreach ( $keys as $key ) {
 			// The seam is public and untyped; only strings name a key.
 			if ( ! \is_string( $key ) ) {

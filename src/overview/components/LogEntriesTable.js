@@ -29,6 +29,8 @@ import { TextControl } from '@wordpress/components';
 import {
 	getStateColor,
 	hexToRgba,
+	isCommandSpan,
+	spanBaseName,
 } from '@newspack-nodes/shared/utils/formatUtils';
 import {
 	computeVisibleEntries,
@@ -41,6 +43,8 @@ import {
 	isFoldablePairComplete,
 	isFoldablePairStart,
 	formatBody,
+	pairBaseName,
+	pairCompleteName,
 } from '../utils/logEntryUtils';
 
 /**
@@ -116,7 +120,7 @@ const collectDescendantPairIds = ( entries, startIdx, pairId ) => {
 		if (
 			hasPair( e ) &&
 			e.pairId !== pairId &&
-			( e.k || '' ).match( /\(start\)$/ ) &&
+			null !== pairBaseName( e.k ) &&
 			! isEmptyPairStart( entries, i )
 		) {
 			ids.push( e.pairId );
@@ -548,7 +552,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * (`name: label`), so each open pair keys its node-name path. A folded row
 	 * owns its path over a kept instance of it, because the merged frame is
 	 * the folded row; otherwise the first occurrence does. The base-name path
-	 * is the last resort, in a map of its own so it never shadows a node path.
+	 * is the last resort, in a map of its own so it never shadows a node path,
+	 * and both it and `pairForPath()` cut each name through `spanBaseName()`.
+	 * A `(complete)` closes the innermost open pair of its base, as
+	 * `computeIndentedEntries()` matches it, since a spliced start carries a
+	 * label its complete does not.
 	 */
 	const pathToPairId = useMemo( () => {
 		const byNode = {};
@@ -557,11 +565,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 		for ( const entry of entries ) {
 			const keyword = entry.k || '';
-			const startMatch = keyword.match( /^(.+?) \(start\)$/ );
-			const completeMatch = keyword.match( /^(.+?) \(complete\)$/ );
+			const name = pairBaseName( keyword );
+			const closes = pairCompleteName( keyword );
 
-			if ( startMatch && hasPair( entry ) ) {
-				const name = startMatch[ 1 ];
+			if ( null !== name && hasPair( entry ) ) {
 				const label =
 					typeof entry.l === 'string' && entry.l ? entry.l : '';
 				stack.push( {
@@ -572,13 +579,16 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				if ( entry.fromFold || ! ( nodeKey in byNode ) ) {
 					byNode[ nodeKey ] = entry.pairId;
 				}
-				const baseKey = stack.map( ( s ) => s.name ).join( '/' );
+				const baseKey = stack
+					.map( ( s ) => spanBaseName( s.name ) )
+					.join( '/' );
 				if ( ! ( baseKey in byBase ) ) {
 					byBase[ baseKey ] = entry.pairId;
 				}
-			} else if ( completeMatch ) {
+			} else if ( null !== closes ) {
+				const base = spanBaseName( closes );
 				for ( let i = stack.length - 1; i >= 0; i-- ) {
-					if ( stack[ i ].name === completeMatch[ 1 ] ) {
+					if ( spanBaseName( stack[ i ].name ) === base ) {
 						stack.splice( i, 1 );
 						break;
 					}
@@ -600,9 +610,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		( path ) => {
 			// Flame graph paths have an extra "request" root — strip it.
 			const cleanPath = path[ 0 ] === 'request' ? path.slice( 1 ) : path;
-			const baseKey = cleanPath
-				.map( ( seg ) => seg.replace( /: .+$/, '' ) )
-				.join( '/' );
+			const baseKey = cleanPath.map( spanBaseName ).join( '/' );
 			return (
 				pathToPairId.byNode[ cleanPath.join( '/' ) ] ??
 				pathToPairId.byBase[ baseKey ]
@@ -1036,7 +1044,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	/**
 	 * Render the message cell of a merged row.
 	 *
-	 * The start message and the complete message run together on one line. The
+	 * The start message and the complete message run together on one line,
+	 * unless the complete message spans several or the pair is a command span,
+	 * which reads as a REPL does: the command line, then its result below. The
 	 * stats and a badge counting the entries the fold hides follow on the next
 	 * line, and break to it only when the row has content to break away from —
 	 * an empty pair would otherwise open with a blank line.
@@ -1072,7 +1082,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				{ renderFoldedBody( entry, startMsg ) }
 				{ startMsg &&
 					completeMsg &&
-					( completeMsg.includes( '\n' ) ? '\n' : ' ' ) }
+					( completeMsg.includes( '\n' ) || isCommandSpan( entry.k )
+						? '\n'
+						: ' ' ) }
 				{ completeMsg &&
 					renderFoldedBody( entry, completeMsg, entry.completeI ) }
 				{ renderTruncatedMark( entry ) }

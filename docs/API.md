@@ -442,7 +442,9 @@ Named substrate callables the bootstrap registers alongside them:
   index legs reference, TSL having no closures.
 - `Command_Interpreter_Node::$around_dispatch`, wrapped by
   [`Diagnostics_Bridge::install()`](../includes/class-diagnostics-bridge.php) around
-  whatever it already held; the architecture guide states the verb span it opens and
+  whatever it already held, and passing on to it, unrendered, the command-line
+  closure the substrate hands each verb. The architecture guide states the verb
+  span it opens and
   `Log_Manager::timed()`'s rule that every throwable propagates.
 
 The plugin binds `newspack_nodes/periodic`, `newspack_nodes/job_handlers` and

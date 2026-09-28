@@ -39,7 +39,7 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
   <div class="s"><b>{scope parts}</b>a server's fnv1a32, a shard, a url_hash, a dimension</div>
   <div class="s bk"><b>{bucket}</b><span class="mono">Y-m-d-H-i</span> floored to 5 minutes, or <span class="mono">Y-m-d-H</span> for a coarse tier</div>
 </div>
-<p class="cap">Lexical order is chronological order, which is what lets expiry compare keys and <span class="mono">is_open_bucket()</span> decide from the key alone whether a bucket is still being written. Three namespaces end in something else: <span class="mono">url</span> and <span class="mono">urlmap</span> key on a hash, <span class="mono">urltoken</span> on a server and a token.</p>
+<p class="cap">Lexical order is chronological order, which is what lets expiry compare keys and <span class="mono">open_bucket_at()</span> decide from the key alone whether a bucket is still being written. Three namespaces end in something else: <span class="mono">url</span> and <span class="mono">urlmap</span> key on a hash, <span class="mono">urltoken</span> on a server and a token.</p>
 
 <table class="ns">
   <tr><th>key, under evlog:p{N}:</th><th>value</th><th>TTL</th></tr>
