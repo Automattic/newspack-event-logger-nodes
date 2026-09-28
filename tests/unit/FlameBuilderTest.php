@@ -1102,6 +1102,8 @@ class FlameBuilderTest extends TestCase {
 		] );
 		( new \ReflectionProperty( $fb, 'folded_hours' ) )->setValue( $fb, [ $hour => true ] );
 		( new \ReflectionProperty( $fb, 'stale_hours' ) )->setValue( $fb, [ $hour => true ] );
+		// A worker past its first flush, whose passes then ran.
+		( new \ReflectionProperty( $fb, 'probe_due' ) )->setValue( $fb, [ 'hour' => false, 'fine' => false ] );
 		// Hour 06 names a server, so its fold has a list to refuse.
 		$this->set_url_bucket( $store, '2026-09-22-06-10', [
 			'e7e7e7e7e7e7' => [ 'url' => '/refused-fold-6610', 'count' => 11, 'last_seen' => $at - 10000 ],
@@ -1231,10 +1233,10 @@ class FlameBuilderTest extends TestCase {
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			public int $later = 0;
 			public ?int $probed_at = null;
-			public function url_hours_derived( array $hours, int $now ): array {
-				$this->probed_at = $now;
-				Core::$now       = $this->later;
-				return parent::url_hours_derived( $hours, $now );
+			public function url_keys_unranked( array $keys, bool $hour, int $at, int $budget, int $now ): array {
+				$this->probed_at ??= $now;
+				Core::$now         = $this->later;
+				return parent::url_keys_unranked( $keys, $hour, $at, $budget, $now );
 			}
 		};
 		$first        = \gmmktime( 10, 3, 0, 9, 22, 2026 );
@@ -1346,6 +1348,162 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 23, $record()[ Stats_Store::HDR_COUNT ] ?? null, 'ranked from its stored rows' );
 		$this->assertSame( 437.0, $record()[ Stats_Store::HDR_SUM_MS ] ?? null );
 		$this->assertSame( [], ( new \ReflectionProperty( $fb, 'rank_pending' ) )->getValue( $fb ) );
+	}
+
+	public function test_the_fine_probe_spends_a_touch_budget_a_flush_whatever_the_servers(): void {
+		// Each touch is a round trip and a bucket's list grows with its
+		// servers: 300 of them is 4,501 touches, spread over flushes.
+		$memd       = new InMemoryMemcached();
+		Core::$memd = $memd;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$bucket     = Stats_Store::bucket_key( $now - 2 * Stats_Store::BUCKET_SECONDS );
+		$budget     = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'PROBE_TOUCHES_PER_FLUSH' ) )->getValue();
+		$servers    = [];
+		for ( $i = 0; $i < 300; ++$i ) {
+			$servers[ "weka-{$i}.test" ] = [];
+		}
+		$store->bucket_set_multi( [
+			...Stats_Store::ranked_writes( $servers, false, $bucket ),
+			[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( \array_keys( $servers ) ) ],
+		] );
+		// Past the first flush's budget, in the 29th server's lists.
+		$lost = Stats_Store::url_rank_parts( 'url', 'desc', 'weka-28.test', false );
+		$store->bucket_forget( $lost, $bucket );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$flushes = 0;
+		do {
+			$before    = $memd->touches;
+			Core::$now = $now + 5 * $flushes++;
+			$fb->flush();
+			$this->assertLessThanOrEqual( $budget, $memd->touches - $before, "flush {$flushes}" );
+		} while ( $memd->touches > $before && $flushes < 30 );
+
+		$this->assertNotNull( $store->bucket_get_multi( [ [ $lost, $bucket ] ] )[0], 'the miss queued the bucket, and its ranking wrote the list back' );
+		$this->assertGreaterThan( 1, $flushes, 'resumed across flushes rather than asking it all at once' );
+	}
+
+	public function test_a_recycled_worker_resumes_the_probe_where_the_last_one_stopped(): void {
+		// A new worker starting the fine probe at the newest bucket never
+		// reaches the oldest on a big hub, one 595s life after another.
+		$memd       = new InMemoryMemcached();
+		Core::$memd = $memd;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$bucket     = Stats_Store::bucket_key( $now - 3 * Stats_Store::BUCKET_SECONDS );
+		$store->bucket_set_multi( [
+			...Stats_Store::ranked_writes( [ 'kea.test' => [] ], false, $bucket ),
+			[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ] ) ],
+		] );
+		$old = new Flame_Builder_Node();
+		$old->set_stats_store( $store );
+		( new \ReflectionProperty( $old, 'probes' ) )->setValue( $old, [
+			'hour' => [ 'left' => [], 'at' => 0 ],
+			'fine' => [ 'left' => [ $bucket ], 'at' => 23 ],
+		] );
+		Core::$now = $now;
+		$saved = $old->save_state();
+
+		$new = new Flame_Builder_Node();
+		$new->set_stats_store( $store );
+		$new->restore_state( $saved );
+		$memd->touches = 0;
+		$new->flush();
+
+		$this->assertSame( 30 - 23, $memd->touches, 'the bucket\'s last seven keys, and nothing the old worker asked' );
+		$this->assertSame( [ 'left' => [], 'at' => 0 ], ( new \ReflectionProperty( $new, 'probes' ) )->getValue( $new )['fine'] );
+	}
+
+	public function test_a_restored_cursor_whose_bucket_left_the_tail_moves_on(): void {
+		$memd       = new InMemoryMemcached();
+		Core::$memd = $memd;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$bucket     = Stats_Store::bucket_key( $now - 3 * Stats_Store::BUCKET_SECONDS );
+		$store->bucket_set_multi( [
+			...Stats_Store::ranked_writes( [ 'kea.test' => [] ], false, $bucket ),
+			[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ] ) ],
+		] );
+		$old = new Flame_Builder_Node();
+		( new \ReflectionProperty( $old, 'probes' ) )->setValue( $old, [
+			'hour' => [ 'left' => [], 'at' => 0 ],
+			'fine' => [ 'left' => [ '2026-09-01-00-00', $bucket ], 'at' => 23 ],
+		] );
+		Core::$now = $now;
+		$saved = $old->save_state();
+
+		$new = new Flame_Builder_Node();
+		$new->set_stats_store( $store );
+		$new->restore_state( $saved );
+		$memd->touches = 0;
+		$new->flush();
+
+		$this->assertSame( 30, $memd->touches, 'the cursor counted the aged-out bucket\'s keys: the next starts at its first' );
+	}
+
+	public function test_a_running_hour_pass_takes_no_new_hour_until_it_ends(): void {
+		// Appending each hour the roll-up finds folded, a pass on a hub of
+		// many servers never ends; a reprobe waits for it instead.
+		$memd       = new InMemoryMemcached();
+		Core::$memd = $memd;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		$hours      = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'];
+		$servers    = [];
+		for ( $i = 0; $i < 23; ++$i ) {
+			$servers[ "weka-{$i}.test" ] = [];
+		}
+		$families = \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) );
+		foreach ( [ $hours[3] => $servers, $hours[5] => [ 'kea.test' => [] ] ] as $hour => $ranked ) {
+			foreach ( \array_keys( $ranked ) as $server ) {
+				foreach ( $families as $shard ) {
+					$this->seed_url_hour( $store, $hour, $shard, [], $server );
+				}
+			}
+			$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
+			$this->set_url_rank_lists_of( $store, $hour, $ranked, true );
+		}
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$probes = new \ReflectionProperty( $fb, 'probes' );
+		$probes->setValue( $fb, [ 'hour' => [ 'left' => [ $hours[3] ], 'at' => 0 ], 'fine' => [ 'left' => [], 'at' => 0 ] ] );
+
+		Core::$now = $now;
+		$fb->flush();
+
+		$this->assertSame( [ 'left' => [ $hours[3] ], 'at' => 250 ], $probes->getValue( $fb )['hour'] );
+	}
+
+	public function test_a_probe_the_backend_does_not_answer_owes_no_flush(): void {
+		// With memcache timing out every touch, a cursor that held its place
+		// would run a flush every tick and ride every checkpoint.
+		$memd       = new class() extends InMemoryMemcached {
+			public function touch( string $key, int $expiration = 0 ): bool {
+				$this->fail_touch( $key, \Memcached::RES_TIMEOUT );
+				return parent::touch( $key, $expiration );
+			}
+		};
+		Core::$memd = $memd;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$bucket     = Stats_Store::bucket_key( $now - 3 * Stats_Store::BUCKET_SECONDS );
+		$store->bucket_set_multi( [
+			...Stats_Store::ranked_writes( [ 'kea.test' => [] ], false, $bucket ),
+			[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ] ) ],
+		] );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$hours = Stats_Store::read_plan( Stats_Store::retention_buckets( $store->ttl(), $now ) )['hours'];
+		( new \ReflectionProperty( $fb, 'folded_hours' ) )->setValue( $fb, \array_fill_keys( $hours, true ) );
+		Core::$now = $now;
+
+		$fb->flush();
+
+		$this->assertSame( 1, $memd->touches, 'the pass ended at its first unanswered touch' );
+		$this->assertSame( [], ( new \ReflectionProperty( $fb, 'probes' ) )->getValue( $fb )['fine']['left'] );
+		$this->assertFalse( ( new \ReflectionMethod( $fb, 'flush_owed' ) )->invoke( $fb, $now ) );
 	}
 
 	public function test_the_fine_probe_asks_again_at_the_reprobe_and_not_between(): void {
@@ -1657,7 +1815,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_the_fine_tier_writes_its_lists_in_one_batch(): void {
-		// Only `url_hours_derived()` probes a sentinel, and it probes the HOUR
+		// Only `url_hours_derived()` reads a sentinel, and it reads the HOUR
 		// tier alone, so a fine bucket has nothing to hold its count list back
 		// for — and a second round trip per bucket per flush is what it would
 		// cost to do so anyway.
@@ -3991,7 +4149,9 @@ class FlameBuilderTest extends TestCase {
 		$fine = self::named_url_rows( $this->get_url_shard( $store, '2026-08-27-13-40', $shard ) );
 		$this->assertSame( 7, $fine[ $hash ]['count'] ?? null, 'and into the fine bucket the hour derives from' );
 		$this->assertNotContains( '2026-08-27-13-40', $store->bucket_ranks, 'which no one ranks' );
-		$this->assertNotContains( '2026-08-27-13', $store->hour_ranks, 'and the hour waits for the probe' );
+		$this->assertContains( '2026-08-27-13', $store->hour_ranks, 'the hour re-ranks at once, not at the reprobe' );
+		$site = $store->url_rank_window( [ '2026-08-27-13' ], [], 'count', 'desc', '' );
+		$this->assertSame( 10, $site[0][1][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] ?? null, 'its site list counts the late rows' );
 	}
 
 	public function test_a_refold_keeps_late_rows_merged_into_a_present_shard(): void {
@@ -4045,7 +4205,7 @@ class FlameBuilderTest extends TestCase {
 		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [] );
 
 		$this->assertContains( 'late-7731.test', Stats_Store::index_names( $store->server_index( [ '2026-08-27-13' ], [] )['2026-08-27-13'] ) );
-		$this->assertFalse( $store->url_hours_derived( [ '2026-08-27-13' ], (int) Core::$now )['2026-08-27-13']['folded'], 'its hour keys are missing' );
+		$this->assertFalse( $store->url_hours_derived( [ '2026-08-27-13' ] )['2026-08-27-13']['folded'], 'its hour keys are missing' );
 
 		( new \ReflectionProperty( $fb, 'folds_since_reprobe' ) )->setValue( $fb, PHP_INT_MAX - 1 );
 		self::roll_up( $fb, (int) Core::$now );
@@ -4056,9 +4216,9 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_a_late_write_from_a_new_server_is_ranked_by_the_next_flush(): void {
 		// The late write names a server the folded hour's index lacked, so the
-		// hour holds a server with no hour lists: a ranked page reads the
-		// hour as a hole. The flush forgets the memo for that hour, so the
-		// next flush's probe revisits it rather than waiting for the reprobe.
+		// hour holds a server with no hour lists, and a site list short of its
+		// URLs. The flush forgets the memo for that hour, so the next flush's
+		// probe revisits it rather than waiting for the reprobe.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$hash       = 'c5c5c5c5c5c5';
@@ -4072,7 +4232,12 @@ class FlameBuilderTest extends TestCase {
 		) ] );
 		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, (int) Core::$now, self::fine_floor( $store, (int) Core::$now ) );
 		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [] );
-		$this->assertSame( [], $store->url_rank_window( [ '2026-08-27-13' ], [], 'count', 'desc', '' ), 'the new server leaves the hour unranked' );
+		$this->assertSame(
+			[ $hash ],
+			\array_column( $store->url_rank_window( [ '2026-08-27-13' ], [], 'count', 'desc', '' )[0][1] ?? [], Stats_Store::RANK_HASH ),
+			'the site list lags the new server by a flush, as the site record does'
+		);
+		$this->assertSame( [], $store->url_rank_window( [ '2026-08-27-13' ], [], 'count', 'desc', 'late-7731.test' ), 'which the hour holds no list for' );
 
 		$fb->flush();
 
@@ -4302,12 +4467,8 @@ class FlameBuilderTest extends TestCase {
 		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
 			$err .= $text;
 		} );
-		$memd       = new class() extends InMemoryMemcached {
-			public bool $broken = false;
-			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
-				return $this->broken ? false : parent::getMulti( $keys, $get_flags );
-			}
-		};
+		// The index answers, so it is the leaderboard's read-merge that fails.
+		$memd       = self::unanswering_memd( ':lb:' );
 		Core::$memd = $memd;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
@@ -4315,9 +4476,9 @@ class FlameBuilderTest extends TestCase {
 		Core::$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		$this->set_leaderboard_bucket( $store, '2026-08-27-15-05', self::lb_sums( 4, 40.0 ) );
 
-		$memd->broken = true;
+		$memd->failing = true;
 		$this->flush_buckets( $fb, [ '2026-08-27-15-05' => [ 'leaderboard' => self::lb_sums( 6, 60.0 ) ] ] );
-		$memd->broken = false;
+		$memd->failing = false;
 
 		$fine = $store->get_leaderboard_buckets( [ '2026-08-27-15-05' ] )['2026-08-27-15-05'] ?? [];
 		$this->assertSame( 4, $fine['count'] ?? null, 'the stored bucket keeps its value' );
@@ -4362,9 +4523,11 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 10, self::lb_hour( $store, '2026-08-27-13' )['count'] ?? null, 'the hour key took the late write' );
 	}
 
-	public function test_a_late_write_forgets_the_hours_marker_and_the_reprobe_re_ranks_it(): void {
-		// Persistent, not in memory: the marker's absence is what the probe
-		// reads, so the re-rank survives a stop. Seeds: 3 folded, 7 late.
+	public function test_a_late_write_re_ranks_its_hour_in_the_same_flush(): void {
+		// Waiting for the reprobe left the hour's lists, the site's among
+		// them, short of the late rows for up to five minutes of ranked
+		// pages. The forgotten marker is what a stop before the ranking
+		// leaves the next worker's probe. Seeds: 3 folded, 7 late.
 		Core::$memd = new InMemoryMemcached();
 		$store      = self::hour_rank_recorder();
 		$hash       = Log_Manager::url_hash( '/marker-gone-7714' );
@@ -4378,16 +4541,10 @@ class FlameBuilderTest extends TestCase {
 			$hash => self::positional_url_row( [ 'url' => '/marker-gone-7714', 'count' => 7 ] ),
 		] );
 
-		$this->assertNull( $this->url_rank_done( $store, '2026-08-27-13' ), 'the landed late write forgets the marker' );
-		$this->assertSame( [], $store->hour_ranks, 'and ranks nothing itself' );
+		$this->assertSame( [ '2026-08-27-13' ], \array_values( \array_unique( $store->hour_ranks ) ), 'no reprobe waited for' );
+		$this->assertSame( 10, self::ranked_count( $store, '2026-08-27-13', true ), 'ranked from its stored rows' );
+		$this->assertSame( [], $this->url_rank_done( $store, '2026-08-27-13' ), 'and its marker written back' );
 		$this->assertSame( [], ( new \ReflectionProperty( $fb, 'stale_hours' ) )->getValue( $fb ) );
-
-		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [] );
-		( new \ReflectionProperty( $fb, 'folds_since_reprobe' ) )->setValue( $fb, PHP_INT_MAX - 1 );
-		$fb->flush();
-
-		$this->assertSame( 10, self::ranked_count( $store, '2026-08-27-13', true ), 'the reprobe re-ranks the hour from its stored rows' );
-		$this->assertSame( [], $this->url_rank_done( $store, '2026-08-27-13' ), 'and writes the marker back' );
 	}
 
 	public function test_a_server_left_unmarked_re_ranks_its_hour(): void {
@@ -4400,7 +4557,8 @@ class FlameBuilderTest extends TestCase {
 			public array $ranked = [];
 			public function bucket_set_multi( array $writes ): array {
 				foreach ( $writes as [ $parts ] ) {
-					if ( self::NS_URLRANK_HOUR_S === $parts[0] && 'done' !== $parts[1] ) {
+					// A server's list; the site's names none, the marker `done`.
+					if ( self::NS_URLRANK_HOUR_S === $parts[0] && 4 === \count( $parts ) ) {
 						$this->ranked[ $parts[1] ] = $parts[1];
 					}
 				}
@@ -4674,6 +4832,184 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 1, $store->folds, 'the refused shard is folded once' );
 	}
 
+	public function test_a_stale_hour_ranks_a_server_of_worker_rows_alone(): void {
+		// Cron's hour holds worker shards only, which no list ranks; unless the
+		// stale ranking names it, its DONE marker never lands and every
+		// reprobe finds the hour stale again.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hour       = '2026-08-27-13';
+		foreach ( Stats_Store::url_shards() as $shard ) {
+			$this->seed_url_hour( $store, $hour, $shard, [], 'kea.test' );
+		}
+		foreach ( Stats_Store::url_shards( true ) as $shard ) {
+			$this->seed_url_hour( $store, $hour, $shard, [], 'kea.test' );
+			$this->seed_url_hour( $store, $hour, $shard, [], 'cron-4417.test' );
+		}
+		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		( new \ReflectionMethod( $fb, 'rank_hours_from_store' ) )->invoke( $fb, $store, [ $hour ] );
+
+		$this->assertSame( [], $this->url_rank_done( $store, $hour, 'cron-4417.test' ) );
+		$this->assertSame( [], $store->url_hours_derived( [ $hour ] )[ $hour ]['unranked'] );
+	}
+
+	/**
+	 * A store counting its batch writes, over a cache failing reads of `$needle`.
+	 *
+	 * @return array{0: InMemoryMemcached, 1: Stats_Store}
+	 */
+	private static function unanswered_store( string $needle ): array {
+		$memd       = self::unanswering_memd( $needle );
+		Core::$memd = $memd;
+		$store      = new class( 0, 86400 ) extends Stats_Store {
+			public int $writes = 0;
+			public function bucket_set_multi( array $writes ): array {
+				$this->writes += \count( $writes );
+				return parent::bucket_set_multi( $writes );
+			}
+		};
+		return [ $memd, $store ];
+	}
+
+	public function test_a_failed_derived_read_folds_nothing_and_memoizes_nothing(): void {
+		// A settled hour read as absent would be folded again from fine
+		// buckets long evicted, overwriting its rows with nothing.
+		[ $memd, $store ] = self::unanswered_store( 'urlsrv_h:' );
+		$this->set_url_bucket( $store, '2026-08-27-13-05', [ 'c4c4c4c4c4c4' => [ 'url' => '/settled-4411', 'count' => 29 ] ] );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$store->writes = 0;
+		$memd->failing = true;
+
+		self::roll_up( $fb, \gmmktime( 15, 7, 0, 8, 27, 2026 ) );
+
+		$this->assertSame( 0, $store->writes );
+		$this->assertSame( [], ( new \ReflectionProperty( $fb, 'folded_hours' ) )->getValue( $fb ), 'every hour asked again next flush' );
+	}
+
+	/** @return array<string,array{0:string}> */
+	public static function fold_reads(): array {
+		return [
+			'the index'       => [ ':urlsrv:' ],
+			'the rows'        => [ ':urls:' ],
+			'the leaderboard' => [ ':lb:' ],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'fold_reads' )]
+	public function test_a_fold_whose_read_went_unanswered_writes_nothing( string $needle ): void {
+		[ $memd, $store ] = self::unanswered_store( $needle );
+		$this->set_url_bucket( $store, '2026-08-27-13-05', [ 'c4c4c4c4c4c4' => [ 'url' => '/unfolded-4412', 'count' => 31 ] ] );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$store->writes = 0;
+		$memd->failing = true;
+
+		$folded = ( new \ReflectionMethod( $fb, 'fold_hour_into_store' ) )->invoke( $fb, $store, '2026-08-27-13' );
+
+		$this->assertFalse( $folded );
+		$this->assertSame( 0, $store->writes, 'no hour folded serverless or short' );
+	}
+
+	/** @return array<string,array{0:string}> */
+	public static function rank_reads(): array {
+		return [
+			'the index' => [ ':urlsrv:' ],
+			'the rows'  => [ ':urls:' ],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'rank_reads' )]
+	public function test_a_ranking_whose_read_went_unanswered_leaves_the_bucket_owed( string $needle ): void {
+		[ $memd, $store ] = self::unanswered_store( $needle );
+		$now    = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$bucket = Stats_Store::bucket_key( $now - 3 * Stats_Store::BUCKET_SECONDS );
+		$this->set_url_bucket( $store, $bucket, [ 'd5d5d5d5d5d5' => [ 'url' => '/owed-5513', 'count' => 37 ] ] );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$store->writes = 0;
+		$memd->failing = true;
+
+		( new \ReflectionMethod( $fb, 'rank_buckets' ) )->invoke( $fb, $store, [ $bucket ], $now );
+
+		$this->assertSame( 0, $store->writes, 'no bucket ranked empty' );
+		$this->assertArrayHasKey( $bucket, ( new \ReflectionProperty( $fb, 'rank_pending' ) )->getValue( $fb ) );
+		$this->assertArrayNotHasKey( $bucket, ( new \ReflectionProperty( $fb, 'ranked_at' ) )->getValue( $fb ) );
+	}
+
+	/** @return array<string,array{0:string}> */
+	public static function stale_reads(): array {
+		return [
+			'the index' => [ 'urlsrv_h:' ],
+			'the rows'  => [ 'urls_h:' ],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'stale_reads' )]
+	public function test_a_stale_hour_whose_read_went_unanswered_stays_stale( string $needle ): void {
+		[ $memd, $store ] = self::unanswered_store( $needle );
+		$hour             = '2026-08-27-13';
+		$this->seed_url_hour( $store, $hour, Stats_Store::url_shard( 'e6e6e6e6e6e6' ), [ 'e6e6e6e6e6e6' => [ 'url' => '/stale-6614', 'count' => 41 ] ] );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		( new \ReflectionProperty( $fb, 'stale_hours' ) )->setValue( $fb, [ $hour => true ] );
+		$store->writes = 0;
+		$memd->failing = true;
+
+		( new \ReflectionMethod( $fb, 'rank_hours_from_store' ) )->invoke( $fb, $store, [ $hour ] );
+
+		$this->assertSame( 0, $store->writes );
+		$this->assertSame( [ $hour => true ], ( new \ReflectionProperty( $fb, 'stale_hours' ) )->getValue( $fb ) );
+	}
+
+	public function test_a_flush_whose_index_read_went_unanswered_drops_its_url_rows_alone(): void {
+		// Admitted against no index its servers would pass the cap, so the URL
+		// rows, index and names wait; nothing else reads the index, and fails
+		// soft only where its own read fails. Seeds: 7 requests, 9 on the board.
+		$err = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+		[ $memd, $store ] = self::unanswered_store( ':urlsrv:' );
+		$now     = \gmmktime( 14, 22, 0, 9, 22, 2026 );
+		$hash    = 'f7f7f7f7f7f7';
+		$fb      = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$pending = new \ReflectionProperty( $fb, 'pending' );
+		$flush   = function ( array $buckets ) use ( $fb, $pending, $now, $hash ): void {
+			$accs = [];
+			foreach ( $buckets as $bucket ) {
+				$acc                                  = ( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null );
+				$acc['url_stats']['kea.test'][ $hash ] = self::positional_url_row( [ 'count' => 7, 'last_seen' => $now, 'path' => '/dropped-7715' ] );
+				$acc['url_names'][ $hash ]            = 'https://kea.test/dropped-7715';
+				$acc['hourly']                        = [ 'count' => 7, 'sum_ms' => 700.0, 'sum_peak_mb' => 21.0 ];
+				$acc['leaderboard']                   = self::lb_sums( 9, 90.0 );
+				$accs[ $bucket ]                      = $acc;
+			}
+			$pending->setValue( $fb, $accs );
+			Core::$now = $now;
+			$fb->flush();
+		};
+		$bucket        = Stats_Store::bucket_key( $now );
+		$memd->failing = true;
+
+		$flush( [ $bucket ] );
+		$flush( [ $bucket, Stats_Store::bucket_key( $now - Stats_Store::BUCKET_SECONDS ) ] );
+
+		$this->assertSame( [], $pending->getValue( $fb ), 'nothing held' );
+		$memd->failing = false;
+		$this->assertSame( [], $store->url_row_sources( [ $bucket ] ), 'no row written against a missing index' );
+		$this->assertSame( [], $store->server_index( [], [ $bucket ] ), 'nor the index' );
+		$this->assertSame( [], $store->get_url_names( [ $hash ] ), 'nor the names' );
+		$this->assertSame( 14, $store->get_hourly_buckets( [ $bucket ] )[ $bucket ]['count'] ?? null, 'the site totals land, both flushes' );
+		$this->assertSame( 18, $store->get_leaderboard_buckets( [ $bucket ] )[ $bucket ]['count'] ?? null, 'and the leaderboard' );
+		$this->assertStringContainsString( ' — 1', $err );
+		$this->assertSame( 1, \substr_count( $err, 'stats flush dropped URL rows' ), 'one key whatever the count, so the second is rate-limited' );
+	}
+
 	public function test_a_refused_hour_list_is_ranked_again_at_the_next_reprobe(): void {
 		// memcached refuses every list; the done marker beside them lands, so
 		// only the reprobe's touch finds a list missing, and it re-ranks the
@@ -4709,7 +5045,8 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 		$this->assertSame( 1, $store->rankings, 'the fold ranked the hour' );
 
-		( new \ReflectionProperty( $fb, 'folded_hours' ) )->setValue( $fb, [] );
+		$reprobe = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'REPROBE_EVERY_FLUSHES' ) )->getValue();
+		( new \ReflectionProperty( $fb, 'folds_since_reprobe' ) )->setValue( $fb, $reprobe - 1 );
 		Core::$now += 5;
 		$fb->flush();
 
@@ -5331,7 +5668,8 @@ class FlameBuilderTest extends TestCase {
 	 * against an API that takes a list (decision 6: per-key `get` is a
 	 * latency cliff). The lists are the one exception: memcached has no
 	 * batched touch, so each marked server's fourteen are touched apiece,
-	 * with its header record and the hour's site record.
+	 * with its header record and the hour's site record and lists, a budget
+	 * of them a flush.
 	 */
 	public function test_the_rollup_probe_asks_once_for_every_hour(): void {
 		$memd       = new InMemoryMemcached();
@@ -5357,12 +5695,19 @@ class FlameBuilderTest extends TestCase {
 		Core::$now = $now;
 		self::roll_up( $fb, (int) Core::$now );
 
-		$this->assertSame( 2, $memd->multi_calls, 'one probe for the whole window: its heads, then the rows they name' );
+		$this->assertSame( 2, $memd->multi_calls, 'one read for the whole window: its heads, then the rows they name' );
 		$this->assertSame( 0, $memd->get_calls, 'and nothing folded, so no per-key reads' );
+		$this->assertSame( 0, $memd->touches, 'the lists are the probe\'s' );
+		$fb->flush();
+		$budget = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'PROBE_TOUCHES_PER_FLUSH' ) )->getValue();
+		$this->assertSame( $budget, $memd->touches, 'the flush spends its touch budget' );
+		for ( $flush = 1; $flush < 10; ++$flush ) {
+			$fb->flush();
+		}
 		$this->assertSame(
-			\count( $hours ) * ( \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ) + 2 ),
+			\count( $hours ) * 2 * ( \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ) + 1 ),
 			$memd->touches,
-			'one touch a list, one the server\'s record and one the site\'s'
+			'and later flushes the rest: one touch a list and one a record, the site\'s and the server\'s'
 		);
 	}
 
@@ -6888,7 +7233,8 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$now    = self::tick();
+		// Past the close's checkpoint, which is what makes the bucket walked.
+		$now    = self::tick() - self::tick() % Stats_Store::BUCKET_SECONDS + 100;
 		Flame_Builder_Node::arm_stats_reader( $reader, $now );
 		// Just closed: its flush may still land, so it holds only briefly.
 		$closing  = 'lb:' . Stats_Store::bucket_key( $now - Stats_Store::BUCKET_SECONDS );
@@ -6946,6 +7292,36 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 0, $p->index_scans, 'and no walk is spent on it' );
 		$this->assertSame( 0, Flame_Builder_Node::mirror_read_tally()['calls'], 'nor any read tallied' );
 		$this->assertFalse( Core::$memd->get( self::cache_key( 0, 'lb:' . $open ) ), 'nor a marker left on the key the writer fills' );
+	}
+
+	/**
+	 * The writer mirrors a closed bucket at its next checkpoint, a flush and
+	 * a checkpoint interval after the close at most, so until then its keys
+	 * cannot be in the mirror, and a walk for one is a full pass for nothing.
+	 */
+	public function test_a_reader_walks_for_a_closed_bucket_only_once_its_checkpoint_is_due(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		/** @var CountingIndexPartition $p */
+		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+		$start   = self::tick() - self::tick() % Stats_Store::BUCKET_SECONDS;
+		$closed  = 'lb:' . Stats_Store::bucket_key( $start - Stats_Store::BUCKET_SECONDS );
+		$lag     = \Newspack_Nodes\Consumer_Node::CHECKPOINT_INTERVAL_S + Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+
+		$early = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $early, $start + 10 );
+		$p->index_scans = 0;
+		$this->assertSame( [], ( $early->rehydrate )( [ $closed ] ), 'answered absent without looking' );
+		$this->assertSame( 0, $p->index_scans, '10s after the close, no walk' );
+		$this->assertSame( 0, ( $early->absence )( $closed ), 'and no marker on it' );
+
+		$due = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $due, $start + $lag + 1 );
+		$p->index_scans = 0;
+		( $due->rehydrate )( [ $closed ] );
+		$this->assertSame( 1, $p->index_scans, 'a checkpoint and a flush after the close, walked' );
 	}
 
 	/**

@@ -2927,7 +2927,8 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_stats_stores_date_their_absences_from_the_replys_clock(): void {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'stats_mirror_node' => 'flames-stats' ] );
-		$now      = self::tick();
+		// Past the close's checkpoint, which is what makes the bucket walked.
+		$now      = self::into_bucket( 100 );
 		$previous = Core::$now;
 		// A line the reply logged before its stores were built moved the tick.
 		Core::$now = $now + 2 * Stats_Store::BUCKET_SECONDS;
@@ -4499,8 +4500,8 @@ class PerformanceCITest extends TestCase {
 		$this->assertNotSame( '', $dir, 'the shipped topology declares a mirror partition' );
 
 		$url    = 'https://example.test/jobs/import-film-times';
-		// Closed: the writer never mirrors the open bucket, nor reads for it.
-		$bucket = Stats_Store::bucket_key( self::tick() - Stats_Store::BUCKET_SECONDS );
+		// Closed a checkpoint ago: the reader walks for no bucket younger.
+		$bucket = Stats_Store::bucket_key( self::tick() - 2 * Stats_Store::BUCKET_SECONDS );
 		$hash   = 'ab12cd34ef56';
 		$srv    = Stats_Store::server_key( 'example.test' );
 		$key    = Stats_Store::entry_key( 0, "urls:{$srv}:" . Stats_Store::url_shard( $hash ) . ':' . $bucket );
@@ -4888,7 +4889,8 @@ class PerformanceCITest extends TestCase {
 		Core::right_now();
 		try {
 			$store  = new Stats_Store( 1, 86400 );
-			$bucket = Stats_Store::bucket_key( $now );
+			// Older than the bucket just closed, whose missing record is lag.
+			$bucket = Stats_Store::bucket_key( $now - 2 * Stats_Store::BUCKET_SECONDS );
 			$this->set_url_bucket( $store, $bucket, [
 				'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => $now ],
 				'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => $now ],
@@ -4942,12 +4944,13 @@ class PerformanceCITest extends TestCase {
 	 * header records — the older one inside the last-hour rate, plus every
 	 * planned hour, and pin the clock both commands read.
 	 *
+	 * @param int|null $now The clock to pin; null pins the tick.
 	 * @return array{0: Stats_Store, 1: string, 2: \Closure(): void} The store,
 	 *         the older bucket, and the clock's restore.
 	 */
-	private function seed_recorded_window(): array {
+	private function seed_recorded_window( ?int $now = null ): array {
 		$this->activate_shipped_topology( 'performance', 3 );
-		$now      = self::tick();
+		$now    ??= self::tick();
 		$previous = Core::$clock;
 		$ticked   = Core::$now;
 		Core::$clock = static fn (): float => (float) $now;
@@ -4989,6 +4992,7 @@ class PerformanceCITest extends TestCase {
 			$this->assertSame( 0, $reads(), 'no shard of the index was read' );
 			$this->assertTrue( $page['ranked'] );
 			$this->assertTrue( $page['estimated'], 'the URL count is the sketch\'s' );
+			$this->assertFalse( $page['provisional'], 'every key\'s record stood' );
 			$this->assertSame( 2, $page['totals']['urls'], 'wombat-7731 counts once across its two buckets' );
 			$this->assertSame( 3, $page['rows'], 'and the Other row is a row' );
 			$this->assertSame( 30, $page['totals']['requests'] );
@@ -5004,9 +5008,31 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
-	public function test_a_record_missing_from_the_fine_tail_takes_the_header_back_to_the_fold(): void {
-		[ $store, $recent, $unpin ] = $this->seed_recorded_window();
-		$store->bucket_forget( Stats_Store::url_header_parts( '', false ), $recent );
+	/**
+	 * The tick's bucket, `$seconds` into it: a clock a test pins either side
+	 * of the writer's first flush after a close.
+	 */
+	private static function into_bucket( int $seconds ): int {
+		return self::tick() - self::tick() % Stats_Store::BUCKET_SECONDS + $seconds;
+	}
+
+	/** @return array<string,array{0:int}> */
+	public static function buckets_behind_the_lag(): array {
+		return [
+			'fine[2]' => [ 2 ],
+			'fine[3]' => [ 3 ],
+		];
+	}
+
+	#[DataProvider( 'buckets_behind_the_lag' )]
+	public function test_a_record_missing_from_an_older_bucket_takes_the_header_back_to_the_fold( int $back ): void {
+		// Behind the bucket just closed the writer owes no ranking: a hole.
+		[ $store, , $unpin ] = $this->seed_recorded_window();
+		$older = Stats_Store::bucket_key( self::tick() - $back * Stats_Store::BUCKET_SECONDS );
+		$tuatara = [ 'd6d6d6d6d6d6' => [ 'url' => 'https://kea.test/tuatara-19', 'count' => 19, 'last_seen' => self::tick() ] ];
+		$this->set_url_bucket( $store, $older, $tuatara );
+		$this->set_url_rank_lists( $store, $older, $tuatara );
+		$store->bucket_forget( Stats_Store::url_header_parts( '', false ), $older );
 		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
 		try {
 			$page = $fire( '--sort=count', '--order=desc', '--limit=50' );
@@ -5014,10 +5040,157 @@ class PerformanceCITest extends TestCase {
 			$this->assertGreaterThan( 0, $reads(), 'a window summed short would read as the site\'s' );
 			$this->assertFalse( $page['ranked'] );
 			$this->assertFalse( $page['estimated'], 'the fold counts exactly' );
-			$this->assertSame( 2, $page['totals']['urls'] );
-			$this->assertSame( 30, $page['totals']['requests'] );
+			$this->assertFalse( $page['provisional'] );
+			$this->assertSame( 3, $page['totals']['urls'] );
+			$this->assertSame( 30 + 19, $page['totals']['requests'] );
 		} finally {
 			$restore();
+			$unpin();
+		}
+	}
+
+	public function test_a_record_missing_from_the_bucket_just_closed_is_provisional_and_never_cached(): void {
+		// However late the writer's ranking of a close runs, a poll 30 seconds
+		// in is served without the record, says so, and stores nothing.
+		[ $store, $recent, $unpin ] = $this->seed_recorded_window( self::into_bucket( 30 ) );
+		$kereru = [ 'e9e9e9e9e9e9' => [ 'url' => 'https://tui.test/kereru-43', 'count' => 43, 'last_seen' => self::tick() ] ];
+		$this->set_url_bucket( $store, $recent, $kereru, 'tui.test' );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=50', '--server=tui.test' );
+			$this->assertSame( 0, $reads(), 'no fold' );
+			$this->assertTrue( $page['provisional'] );
+			$this->assertSame( 0, $page['totals']['requests'] );
+
+			// The ranking lands; the next poll reads it rather than a cache.
+			$this->set_url_rank_lists( $store, $recent, $kereru, false, 'tui.test' );
+			$page = $fire( '--sort=count', '--order=desc', '--limit=50', '--server=tui.test' );
+			$this->assertFalse( $page['provisional'] );
+			$this->assertSame( 43, $page['totals']['requests'] );
+			$this->assertSame( 0, $reads() );
+		} finally {
+			$restore();
+			$unpin();
+		}
+	}
+
+	public function test_a_server_the_site_record_has_yet_to_sum_leaves_the_header_exact_for_a_minute(): void {
+		// Tui files into the open bucket after its ranking; the site record
+		// still stands, so the header is no lag, and lives one refresh.
+		[ $store, , $unpin ] = $this->seed_recorded_window();
+		$this->set_url_bucket( $store, Stats_Store::bucket_key( self::tick() ), [
+			'e9e9e9e9e9e9' => [ 'url' => 'https://tui.test/kereru-43', 'count' => 43, 'last_seen' => self::tick() ],
+		], 'tui.test' );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=50' );
+
+			$this->assertSame( 0, $reads(), 'no fold' );
+			$this->assertFalse( $page['provisional'] );
+			$this->assertSame( 30, $page['totals']['requests'], 'short by tui until the next ranking' );
+			$memd  = Core::$memd;
+			$lives = [];
+			foreach ( $memd instanceof InMemoryMemcached ? $memd->expiries() : [] as $key => $expires ) {
+				if ( \str_contains( (string) $key, 'eln-urls-page' ) ) {
+					$lives[] = $expires - \time();
+				}
+			}
+			$this->assertNotEmpty( $lives, 'the header was stored' );
+			$this->assertLessThanOrEqual( Stats_Store::URL_PAGE_REFRESH_S, \max( $lives ), 'for one refresh, not the bucket' );
+		} finally {
+			$restore();
+			$unpin();
+		}
+	}
+
+	public function test_a_header_reads_each_store_s_server_index_once(): void {
+		// The records, the leading hour's fine buckets and the slowest lists
+		// all ask the same keys' index; one reply reads it once a store.
+		$memd = new class() extends InMemoryMemcached {
+			public int $index_reads = 0;
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				foreach ( $keys as $key ) {
+					if ( \str_contains( (string) $key, Stats_Store::NS_URLSRV ) ) {
+						++$this->index_reads;
+						break;
+					}
+				}
+				return parent::getMulti( $keys, $get_flags );
+			}
+		};
+		Core::$memd = $memd;
+		[ $store, , $unpin ] = $this->seed_recorded_window();
+		$hour = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) )['hours'][0];
+		$store->bucket_forget( Stats_Store::url_header_parts( '', true ), $hour );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$memd->index_reads = 0;
+			$page = $fire( '--sort=count', '--order=desc', '--limit=50' );
+
+			$this->assertTrue( $page['ranked'] );
+			$this->assertSame( 3 + 1, $memd->index_reads, 'the plan\'s keys a store, and the one store missing the hour\'s record reads its buckets; the lists re-read nothing' );
+		} finally {
+			$restore();
+			$unpin();
+		}
+	}
+
+	public function test_a_server_new_to_the_open_bucket_is_ranking_lag_not_a_hole(): void {
+		// Its rows name it in the open bucket's index, and its record waits
+		// for a ranking that runs once a minute; the lists wait alike.
+		[ $store, , $unpin ] = $this->seed_recorded_window();
+		$this->set_url_bucket( $store, Stats_Store::bucket_key( self::tick() ), [
+			'e9e9e9e9e9e9' => [ 'url' => 'https://tui.test/kereru-41', 'count' => 41, 'last_seen' => self::tick() ],
+		], 'tui.test' );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=50', '--server=tui.test' );
+
+			$this->assertSame( 0, $reads(), 'no fold, and no fold cached for the bucket' );
+			$this->assertTrue( $page['estimated'] );
+			$this->assertTrue( $page['provisional'], 'short by what the writer has yet to rank' );
+			$this->assertTrue( $page['ranked'] );
+			$this->assertSame( 0, $page['totals']['requests'], 'lagging the open bucket, as the lists do' );
+		} finally {
+			$restore();
+			$unpin();
+		}
+	}
+
+	public function test_slowest_reads_a_leading_hour_missing_its_record_once(): void {
+		// Its lists stand and its record is gone, so its twelve buckets answer
+		// for it; read as an hour too, its requests would count twice.
+		[ $store, , $unpin ] = $this->seed_recorded_window();
+		$hour   = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) )['hours'][0];
+		$wombat = [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 10, 'timed_count' => 10, 'sum_ms' => 3000.0, 'last_seen' => self::tick() ] ];
+		$this->set_url_rank_lists( $store, $hour, $wombat, true );
+		$this->set_url_rank_lists( $store, Stats_Store::buckets_in_hour( $hour )[5], $wombat );
+		$store->bucket_forget( Stats_Store::url_header_parts( '', true ), $hour );
+		$store->bucket_forget( Stats_Store::url_header_parts( self::SEED_SERVER, true ), $hour );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=50' );
+
+			$this->assertSame( 0, $reads() );
+			$slowest = \array_column( $page['slowest'], null, 'hash' )['b7731ce0fa11'];
+			$this->assertSame( 17 + 2 + 10, $slowest['count'] );
+			$this->assertEqualsWithDelta( ( 390.0 + 60.0 + 3000.0 ) / ( 13 + 2 + 10 ), $slowest['avg_ms'], 0.0001 );
+			$this->assertSame( 30 + 10, $page['totals']['requests'], 'the header reads it once too' );
+		} finally {
+			$restore();
+			$unpin();
+		}
+	}
+
+	public function test_the_overview_brief_says_its_url_count_is_an_estimate(): void {
+		[ , , $unpin ] = $this->seed_recorded_window();
+		try {
+			$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site' );
+
+			$this->assertSame( 2, $brief['stats']['urls'] );
+			$this->assertTrue( $brief['estimated'] ?? null, 'the sketch\'s count, which the brief must not state as exact' );
+			$this->assertFalse( $brief['provisional'] ?? null );
+		} finally {
 			$unpin();
 		}
 	}
@@ -5197,8 +5370,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_the_site_ranked_page_is_what_one_list_over_every_server_gives(): void {
-		// No list spans servers, so the site's page merges theirs, and it has
-		// to cut each bucket where a list over all of them would. 301 URLs in
+		// The writer merges the servers' lists into the site's, and has to
+		// cut each bucket where a list over all of them would. 301 URLs in
 		// the older bucket: moa.test's list keeps its heaviest, the one a
 		// site-wide `count asc` list cuts, so a union left uncut would add
 		// its 9999 requests to the newer bucket's one.
@@ -5214,8 +5387,7 @@ class PerformanceCITest extends TestCase {
 			$kea[ \sprintf( 'a%011x', $i ) ] = [ 'url' => "https://kea.test/k-{$i}", 'count' => 100 + $i, 'last_seen' => $now - 300 ];
 			$moa[ \sprintf( 'b%011x', $i ) ] = [ 'url' => "https://moa.test/m-{$i}", 'count' => 100 + $i, 'last_seen' => $now - 300 ];
 		}
-		$this->set_url_rank_lists( $store, $older, $kea, false, 'kea.test' );
-		$this->set_url_rank_lists( $store, $older, $moa, false, 'moa.test' );
+		$this->set_url_rank_lists_of( $store, $older, [ 'kea.test' => $kea, 'moa.test' => $moa ] );
 		$this->set_url_rank_lists( $store, $newer, [ $heavy => [ 'url' => 'https://moa.test/heavy-9999', 'count' => 1, 'last_seen' => $now ] ], false, 'moa.test' );
 		$this->set_url_bucket( $store, $newer, [ $heavy => [ 'url' => 'https://moa.test/heavy-9999', 'count' => 1, 'last_seen' => $now ] ], 'moa.test' );
 		$this->seed_hour_lists();

@@ -198,6 +198,34 @@ describe( 'OverviewSection', () => {
 		expect( statValue( exact, 'Unique URLs' ) ).toBe( '4,217' );
 	} );
 
+	it( 'says the totals are provisional when the writer has yet to rank a record', () => {
+		// The header skipped the records of buckets the writer has not
+		// ranked yet, so the totals are short of them, and say so.
+		const { container: provisional, unmount } = mount(
+			{ total_requests: 33049 },
+			{
+				urlTotals: { ...baseTotals, requests: 9001 },
+				urlsProvisional: true,
+			}
+		);
+		// The canonical info banner, a live region, and no bespoke class.
+		expect(
+			provisional.querySelector(
+				'.newspack-nodes-banner.is-info[role="status"]'
+			)?.textContent
+		).toMatch( /not yet ranked/ );
+		unmount();
+
+		const { container: settled } = mount(
+			{ total_requests: 33049 },
+			{
+				urlTotals: { ...baseTotals, requests: 9001 },
+				urlsProvisional: false,
+			}
+		);
+		expect( settled.querySelector( '.newspack-nodes-banner' ) ).toBeNull();
+	} );
+
 	it( 'says an absent total is absent, not zero', () => {
 		// A plausible zero is how the original bug hid: `0 Unique URLs` beside
 		// 33,049 requests read as a fact. Before the first reply lands there is

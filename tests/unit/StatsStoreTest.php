@@ -1589,8 +1589,8 @@ class StatsStoreTest extends TestCase {
 	}
 
 	public function test_ranked_writes_rank_each_named_server_from_its_own_rows(): void {
-		// Each server's lists come from its own rows and there is no site
-		// list: the reader merges the servers'. An overflow row and a worker
+		// Each server's lists come from its own rows, and the site's merge
+		// them, so a site page reads one list a key. An overflow row and a worker
 		// row never rank, but a server holding only those still gets its
 		// lists, empty, so a reader can tell a ranked server from a missing one.
 		$rows   = [
@@ -1618,9 +1618,14 @@ class StatsStoreTest extends TestCase {
 		);
 
 		$this->assertSame(
-			[ Stats_Store::server_key( 'kea.test' ), Stats_Store::server_key( 'moa.test' ), Stats_Store::server_key( 'weka.test' ) ],
+			[ Stats_Store::server_key( 'kea.test' ), Stats_Store::server_key( 'moa.test' ), Stats_Store::server_key( 'weka.test' ), '' ],
 			\array_keys( $lists ),
-			'every server named, and no site scope'
+			'every server named, then the site'
+		);
+		$this->assertSame(
+			[ 'a7a7a7a7a7a7' => 41, 'b8b8b8b8b8b8' => 13, 'c9c9c9c9c9c9' => 6 ],
+			$counts( $lists['']['count:desc'] ),
+			'the site\'s is every server\'s, merged'
 		);
 		$this->assertSame(
 			[ 'a7a7a7a7a7a7' => 41, 'b8b8b8b8b8b8' => 13 ],
@@ -1696,9 +1701,14 @@ class StatsStoreTest extends TestCase {
 			}
 		}
 		$expected[] = Stats_Store::url_header_parts( 'takahe.test', true );
+		foreach ( Stats_Store::URL_SORTS as $sort ) {
+			foreach ( Stats_Store::URL_ORDERS as $order ) {
+				$expected[] = Stats_Store::url_rank_parts( $sort, $order, '', true );
+			}
+		}
 		$expected[] = Stats_Store::url_header_parts( '', true );
 		$this->assertSame( $expected, \array_column( $writes, 0 ), 'the server\'s fourteen and its record, then the site\'s' );
-		$this->assertSame( \array_fill( 0, 16, '2026-09-22-14' ), \array_column( $writes, 1 ) );
+		$this->assertSame( \array_fill( 0, 30, '2026-09-22-14' ), \array_column( $writes, 1 ) );
 		// The entries are the ranker's, list for list.
 		$this->assertSame(
 			self::rank_url_rows( $rows, Stats_Store::URL_RANK_N_HOUR )['count']['desc'],
@@ -1710,7 +1720,8 @@ class StatsStoreTest extends TestCase {
 		// URLs are disjoint by server, so the site's top-N is the top-N of the
 		// union of each server's top-N. 150 URLs a server is 300 in the
 		// bucket: the merge has to cut to URL_RANK_N exactly as a list ranked
-		// over the union would, ties and all.
+		// over the union would, ties and all. The writer keeps it, so a site
+		// read takes one list a key, standing with its servers' gone.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 2, max_lifespan: 86400 );
 		$bucket     = '2026-09-22-14-05';
@@ -1734,6 +1745,13 @@ class StatsStoreTest extends TestCase {
 			self::index_of( [ 'kea.test', 'moa.test' ] ),
 		] ] );
 		$oracle = self::ranked_lists( Stats_Store::ranked_writes( [ 'site.test' => $union ], false, $bucket ) )[ Stats_Store::server_key( 'site.test' ) ];
+		foreach ( [ 'kea.test', 'moa.test' ] as $server ) {
+			foreach ( Stats_Store::URL_SORTS as $sort ) {
+				foreach ( Stats_Store::URL_ORDERS as $order ) {
+					$store->bucket_forget( Stats_Store::url_rank_parts( $sort, $order, $server, false ), $bucket );
+				}
+			}
+		}
 
 		foreach ( [ 'count:desc', 'count:asc', 'url:asc', 'avg_ms:desc' ] as $list ) {
 			[ $sort, $order ] = \explode( ':', $list );
@@ -1750,14 +1768,17 @@ class StatsStoreTest extends TestCase {
 		}
 	}
 
-	public function test_a_site_hour_answers_only_when_every_server_it_names_is_ranked(): void {
-		// The hour tier stands for twelve buckets, so a list missing for one
-		// server is an hour the reader must not serve as ranked. A fine
-		// bucket answers with the lists it has, as a stale site list did.
+	public function test_a_site_hour_answers_only_while_its_site_list_stands(): void {
+		// The hour tier stands for twelve buckets, so an hour missing its
+		// list is one the reader must not serve as ranked. A fine bucket
+		// answers with the lists it has.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 2, max_lifespan: 86400 );
 		$index      = self::index_of( [ 'kea.test', 'moa.test' ] );
-		$rows       = [ 'kea.test' => [ 'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 23, 'path' => '/kea-23' ] ) ] ];
+		$rows       = [
+			'kea.test' => [ 'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 23, 'path' => '/kea-23' ] ) ],
+			'moa.test' => [ 'b2b2b2b2b2b2' => self::positional_url_row( [ 'count' => 31, 'path' => '/moa-31' ] ) ],
+		];
 		$store->bucket_set_multi( [
 			...Stats_Store::ranked_writes( $rows, true, '2026-09-22-13' ),
 			...Stats_Store::ranked_writes( $rows, false, '2026-09-22-14-05' ),
@@ -1765,14 +1786,15 @@ class StatsStoreTest extends TestCase {
 			[ Stats_Store::url_srv_parts( false ), '2026-09-22-14-05', $index ],
 			[ Stats_Store::url_srv_parts( true ), '2026-09-22-12', [] ],
 		] );
+		$store->bucket_forget( Stats_Store::url_rank_parts( 'count', 'desc', '', true ), '2026-09-22-13' );
 
 		$this->assertSame(
 			[ [ '2026-09-22-12', [] ] ],
 			$store->url_rank_window( [ '2026-09-22-13', '2026-09-22-12' ], [], 'count', 'desc', '' ),
-			'moa.test has no list for hour 13; hour 12 is folded idle'
+			'hour 13 lost its site list; hour 12 is folded idle'
 		);
 		$fine = $store->url_rank_window( [], [ '2026-09-22-14-05' ], 'count', 'desc', '' );
-		$this->assertSame( [ 'a1a1a1a1a1a1' ], \array_column( $fine[0][1], Stats_Store::RANK_HASH ) );
+		$this->assertSame( [ 'b2b2b2b2b2b2', 'a1a1a1a1a1a1' ], \array_column( $fine[0][1], Stats_Store::RANK_HASH ) );
 	}
 
 	public function test_ranked_writes_cut_each_list_at_the_bound_of_its_own_tier(): void {
@@ -1785,6 +1807,20 @@ class StatsStoreTest extends TestCase {
 		$hour = Stats_Store::ranked_writes( [ 'kea.test' => $rows ], true, '2026-09-22-14' );
 		$this->assertCount( Stats_Store::URL_RANK_N, $fine[1][2] );
 		$this->assertCount( 201, $hour[1][2] );
+	}
+
+	public function test_an_all_digit_hash_ranks_as_a_string_in_server_and_site_lists(): void {
+		// PHP files an all-digit key as an int, and the reader matches hashes as strings.
+		$rows   = [ 112233445566 => self::positional_url_row( [ 'count' => 29, 'timed_count' => 3, 'sum_ms' => 87.0, 'path' => '/kakapo-29' ] ) ];
+		$writes = Stats_Store::ranked_writes( [ 'kea.test' => $rows ], false, '2026-09-22-14-05' );
+
+		foreach ( [ 'kea.test', '' ] as $scope ) {
+			foreach ( $writes as [ $parts, , $entries ] ) {
+				if ( Stats_Store::url_rank_parts( 'count', 'desc', $scope, false ) === $parts ) {
+					$this->assertSame( '112233445566', $entries[0][ Stats_Store::RANK_HASH ], "scope '{$scope}'" );
+				}
+			}
+		}
 	}
 
 	public function test_paths_of_names_each_url_by_its_path_and_drops_the_unnamed(): void {
@@ -1964,7 +2000,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->assertSame(
 			[ $hour => [ 'folded' => true, 'unranked' => [ 'kea.test' ] ] ],
-			$store->url_hours_derived( [ $hour ], self::PROBE_NOW )
+			$store->url_hours_derived( [ $hour ] )
 		);
 		$this->assertSame( [ "{$kea}:d:{$hour}" ], self::asked_url_keys( $mc->asked, Stats_Store::NS_URLS_HOUR ) );
 	}
@@ -1996,7 +2032,7 @@ class StatsStoreTest extends TestCase {
 				'2026-09-21-08' => [ 'folded' => false, 'unranked' => [] ],
 				'2026-09-21-09' => [ 'folded' => false, 'unranked' => [ 'kea.test' ] ],
 			],
-			$store->url_hours_derived( [ '2026-09-21-07', '2026-09-21-08', '2026-09-21-09' ], self::PROBE_NOW )
+			$store->url_hours_derived( [ '2026-09-21-07', '2026-09-21-08', '2026-09-21-09' ] )
 		);
 	}
 
@@ -2011,13 +2047,13 @@ class StatsStoreTest extends TestCase {
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), '2026-09-21-11', [] ] ] );
 		$this->assertSame(
 			[ '2026-09-21-11' => [ 'folded' => true, 'unranked' => [ 'moa.test' ] ] ],
-			$store->url_hours_derived( [ '2026-09-21-11' ], self::PROBE_NOW )
+			$store->url_hours_derived( [ '2026-09-21-11' ] )
 		);
 
 		self::seed_ranked_hour( $store, '2026-09-21-11', [ 'moa.test' ] );
 		$this->assertSame(
 			[ '2026-09-21-11' => [ 'folded' => true, 'unranked' => [] ] ],
-			$store->url_hours_derived( [ '2026-09-21-11' ], self::PROBE_NOW )
+			$store->url_hours_derived( [ '2026-09-21-11' ] )
 		);
 	}
 
@@ -2033,16 +2069,14 @@ class StatsStoreTest extends TestCase {
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		$this->assertSame(
 			[ $hour => [ 'folded' => true, 'unranked' => [] ] ],
-			$store->url_hours_derived( [ $hour ], self::PROBE_NOW ),
-			'every list standing is an hour ranked'
+			$store->url_hours_derived( [ $hour ] ),
+			'every marker standing'
 		);
+		$this->assertSame( [], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'], 'and every list' );
 
 		$store->bucket_forget( Stats_Store::url_rank_parts( 'last_updated', 'asc', 'moa.test', true ), $hour );
 
-		$this->assertSame(
-			[ $hour => [ 'folded' => true, 'unranked' => [ 'moa.test' ] ] ],
-			$store->url_hours_derived( [ $hour ], self::PROBE_NOW )
-		);
+		$this->assertSame( [ $hour ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'] );
 	}
 
 	public function test_the_derived_probe_names_an_hour_that_lost_a_header_record(): void {
@@ -2056,19 +2090,11 @@ class StatsStoreTest extends TestCase {
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 
 		$store->bucket_forget( Stats_Store::url_header_parts( 'moa.test', true ), $hour );
-		$this->assertSame(
-			[ $hour => [ 'folded' => true, 'unranked' => [ 'moa.test' ] ] ],
-			$store->url_hours_derived( [ $hour ], self::PROBE_NOW ),
-			'the server\'s record'
-		);
+		$this->assertSame( [ $hour ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'], 'the server\'s record' );
 
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		$store->bucket_forget( Stats_Store::url_header_parts( '', true ), $hour );
-		$this->assertSame(
-			[ $hour => [ 'folded' => true, 'unranked' => [ 'kea.test' ] ] ],
-			$store->url_hours_derived( [ $hour ], self::PROBE_NOW ),
-			'the site\'s record, which re-ranking any server of the hour rewrites'
-		);
+		$this->assertSame( [ $hour ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'], 'the site\'s record' );
 	}
 
 	public function test_the_fine_probe_names_each_bucket_that_lost_a_record_or_a_list(): void {
@@ -2077,7 +2103,56 @@ class StatsStoreTest extends TestCase {
 		$mc      = $this->seed_memd();
 		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$buckets = [ '2026-09-21-22-35', '2026-09-21-22-40', '2026-09-21-22-45', '2026-09-21-22-50' ];
-		$rows    = [ 'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 29, 'path' => '/kea-29' ] ) ];
+		self::seed_probed_buckets( $store, $buckets );
+		$mc->touches = 0;
+
+		$this->assertSame(
+			[ 'lost' => [ $buckets[0], $buckets[2] ], 'left' => [], 'at' => 0 ],
+			$store->url_keys_unranked( $buckets, false, 0, 1000, self::PROBE_NOW )
+		);
+		$this->assertSame(
+			( 15 + 15 + 1 ) + ( 15 + 15 + 15 ) + ( 15 + 1 + 10 ),
+			$mc->touches,
+			'up to moa.test\'s missing record, every key of a whole bucket, up to kea.test\'s tenth list'
+		);
+	}
+
+	public function test_the_fine_probe_spends_a_touch_budget_and_resumes_where_it_stopped(): void {
+		// A bucket's touch list grows with its servers, so a call stops at its
+		// budget mid-bucket, and the next resumes at that touch, not its first.
+		$mc      = $this->seed_memd();
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$buckets = [ '2026-09-21-22-35', '2026-09-21-22-40', '2026-09-21-22-45', '2026-09-21-22-50' ];
+		self::seed_probed_buckets( $store, $buckets );
+		$mc->touches = 0;
+
+		$probe = $store->url_keys_unranked( $buckets, false, 0, 20, self::PROBE_NOW );
+		$this->assertSame( [ 'lost' => [], 'left' => $buckets, 'at' => 20 ], $probe );
+		$this->assertSame( 20, $mc->touches );
+
+		$lost  = $probe['lost'];
+		$calls = 1;
+		while ( [] !== $probe['left'] ) {
+			$before = $mc->touches;
+			$probe  = $store->url_keys_unranked( $probe['left'], false, $probe['at'], 20, self::PROBE_NOW );
+			$lost   = [ ...$lost, ...$probe['lost'] ];
+			$this->assertLessThanOrEqual( 20, $mc->touches - $before );
+			++$calls;
+		}
+		$this->assertSame( [ $buckets[0], $buckets[2] ], $lost, 'a miss past the first call still names its bucket' );
+		$this->assertSame( ( 15 + 15 + 1 ) + ( 15 + 15 + 15 ) + ( 15 + 1 + 10 ), $mc->touches, 'no key asked twice' );
+		$this->assertSame( 6, $calls, '102 touches at 20 a call' );
+	}
+
+	/**
+	 * Three buckets ranked for two servers — the first missing moa.test's
+	 * record, the third kea.test's `max_ms desc` list — and a fourth whose
+	 * index names no server.
+	 *
+	 * @param list<string> $buckets Four bucket keys.
+	 */
+	private static function seed_probed_buckets( Stats_Store $store, array $buckets ): void {
+		$rows = [ 'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 29, 'path' => '/kea-29' ] ) ];
 		foreach ( \array_slice( $buckets, 0, 3 ) as $bucket ) {
 			$store->bucket_set_multi( [
 				...Stats_Store::ranked_writes( [ 'kea.test' => $rows, 'moa.test' => $rows ], false, $bucket ),
@@ -2086,14 +2161,87 @@ class StatsStoreTest extends TestCase {
 		}
 		$store->bucket_forget( Stats_Store::url_header_parts( 'moa.test', false ), $buckets[0] );
 		$store->bucket_forget( Stats_Store::url_rank_parts( 'max_ms', 'desc', 'kea.test', false ), $buckets[2] );
+	}
+
+	public function test_the_fine_probe_holds_what_it_finds_to_the_bucket_s_own_fine_life(): void {
+		// A fresh `ttl_url_fine()` from the probe would keep every probed
+		// key twice as long as its write did; one past its life is owed none.
+		$mc      = $this->seed_memd();
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$living  = '2026-09-21-22-00';
+		$spent   = '2026-09-21-20-50';
+		$rows    = [ 'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 29, 'path' => '/kea-29' ] ) ];
+		foreach ( [ $living, $spent ] as $bucket ) {
+			$store->bucket_set_multi( [
+				...Stats_Store::ranked_writes( [ 'kea.test' => $rows ], false, $bucket ),
+				[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ] ) ],
+			] );
+		}
+		$before = $mc->expiries();
+		// The cache double dates an expiry from the wall.
+		$wall        = \time();
 		$mc->touches = 0;
 
-		$this->assertSame( [ $buckets[0], $buckets[2] ], $store->url_buckets_unranked( $buckets, self::PROBE_NOW ) );
-		$this->assertSame(
-			( 1 + 1 + 14 + 1 ) + ( 1 + 15 + 15 ) + ( 1 + 1 + 10 ),
-			$mc->touches,
-			'up to moa.test\'s missing record, every key of a whole bucket, up to kea.test\'s tenth list'
-		);
+		$this->assertSame( [], $store->url_keys_unranked( [ $living, $spent ], false, 0, 1000, self::PROBE_NOW )['lost'] );
+
+		// 22:05 plus the two-hour fine life, less 23:00.
+		$left     = 300 + Stats_Store::FINE_TTL_SECONDS - 3600;
+		$expiries = $mc->expiries();
+		foreach ( [ Stats_Store::url_header_parts( '', false ), Stats_Store::url_header_parts( 'kea.test', false ) ] as $parts ) {
+			$key = self::cache_key( 0, Stats_Store::key( ...[ ...$parts, $living ] ) );
+			$this->assertEqualsWithDelta( $wall + $left, $expiries[ $key ] ?? 0, 2, $key );
+			$spent_key = self::cache_key( 0, Stats_Store::key( ...[ ...$parts, $spent ] ) );
+			$this->assertSame( $before[ $spent_key ], $expiries[ $spent_key ], 'past its life, left alone' );
+		}
+		$this->assertSame( 30, $mc->touches, 'the living bucket alone is asked, the site\'s and the server\'s records and lists' );
+	}
+
+	public function test_a_record_of_another_layout_at_the_same_precision_reads_missing(): void {
+		// Same precision, fields in another order: read by position it would
+		// stand, its sums swapped. Here, the layout keyed by precision alone.
+		$this->seed_memd();
+		$store  = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$bucket = '2026-09-21-22-40';
+		$rows   = [ 'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 29, 'path' => '/kea-29' ] ) ];
+		$store->bucket_set_multi( [
+			...Stats_Store::ranked_writes( [ 'kea.test' => $rows ], false, $bucket ),
+			[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ] ) ],
+		] );
+		$store->bucket_forget( Stats_Store::url_header_parts( '', false ), $bucket );
+		$store->bucket_forget( Stats_Store::url_header_parts( 'kea.test', false ), $bucket );
+		$older = [ 29, 437.0, 23, 11.5, false, Url_Sketch::of( [ 'a1a1a1a1a1a1' ] ) ];
+		$by_precision = 'p' . Url_Sketch::PRECISION;
+		$store->bucket_set_multi( [
+			[ [ Stats_Store::NS_URLHDR, $by_precision ], $bucket, $older ],
+			[ [ Stats_Store::NS_URLHDR, $by_precision, Stats_Store::server_key( 'kea.test' ) ], $bucket, $older ],
+		] );
+
+		$this->assertSame( [ $bucket => null ], $store->url_headers( [], [ $bucket ], 'kea.test' ) );
+		$this->assertSame( [ $bucket ], $store->url_keys_unranked( [ $bucket ], false, 0, 100, self::PROBE_NOW )['lost'] );
+	}
+
+	public function test_a_record_of_another_shape_reads_missing_and_the_probe_names_its_bucket(): void {
+		// A PRECISION change leaves the records it wrote before in place; read
+		// by length they fold every header, and a touch finds them present.
+		// Here, the records the release before this one wrote, at its key.
+		$this->seed_memd();
+		$store  = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$bucket = '2026-09-21-22-40';
+		$rows   = [ 'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 29, 'path' => '/kea-29' ] ) ];
+		$store->bucket_set_multi( [
+			...Stats_Store::ranked_writes( [ 'kea.test' => $rows ], false, $bucket ),
+			[ Stats_Store::url_srv_parts( false ), $bucket, self::index_of( [ 'kea.test' ] ) ],
+		] );
+		$store->bucket_forget( Stats_Store::url_header_parts( '', false ), $bucket );
+		$store->bucket_forget( Stats_Store::url_header_parts( 'kea.test', false ), $bucket );
+		$older = [ 29, 29, 0.0, 0.0, false, \str_repeat( "\1", 4096 ) ];
+		$store->bucket_set_multi( [
+			[ [ Stats_Store::NS_URLHDR ], $bucket, $older ],
+			[ [ Stats_Store::NS_URLHDR, Stats_Store::server_key( 'kea.test' ) ], $bucket, $older ],
+		] );
+
+		$this->assertSame( [ $bucket => null ], $store->url_headers( [], [ $bucket ], 'kea.test' ) );
+		$this->assertSame( [ $bucket ], $store->url_keys_unranked( [ $bucket ], false, 0, 100, self::PROBE_NOW )['lost'], 'missing, so the probe heals it' );
 	}
 
 	public function test_the_derived_probe_holds_a_list_it_finds_to_the_hour_s_window(): void {
@@ -2110,7 +2258,7 @@ class StatsStoreTest extends TestCase {
 		// The cache double dates an expiry from the wall.
 		$wall = \time();
 
-		$store->url_hours_derived( [ $hour ], $now );
+		$store->url_keys_unranked( [ $hour ], true, 0, 1000, $now );
 
 		// 12:00 + an hour + the 24-hour window, less 17:20.
 		$left     = 3600 + 86400 - ( 5 * 3600 + 1200 );
@@ -2136,9 +2284,9 @@ class StatsStoreTest extends TestCase {
 		$key    = Stats_Store::key( ...[ ...Stats_Store::url_rank_parts( 'url', 'asc', 'kea.test', true ), $hour ] );
 		$before = $mc->expiries()[ self::cache_key( 0, $key ) ];
 
-		$found = $store->url_hours_derived( [ $hour ], \gmmktime( 14, 0, 0, 9, 21, 2026 ) );
+		$found = $store->url_keys_unranked( [ $hour ], true, 0, 1000, \gmmktime( 14, 0, 0, 9, 21, 2026 ) );
 
-		$this->assertSame( [ 'folded' => true, 'unranked' => [] ], $found[ $hour ] );
+		$this->assertSame( [], $found['lost'] );
 		$this->assertSame( 0, $mc->touches );
 		$this->assertSame( $before, $mc->expiries()[ self::cache_key( 0, $key ) ] );
 	}
@@ -2154,7 +2302,7 @@ class StatsStoreTest extends TestCase {
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		$store->bucket_forget( Stats_Store::url_hour_parts( Stats_Store::server_key( 'kea.test' ), 'w7' ), $hour );
 
-		$found = $store->url_hours_derived( [ $hour ], self::PROBE_NOW );
+		$found = $store->url_hours_derived( [ $hour ] );
 
 		$this->assertSame( [ 'folded' => false, 'unranked' => [] ], $found[ $hour ] );
 		$this->assertSame( 0, $mc->touches );
@@ -2170,7 +2318,7 @@ class StatsStoreTest extends TestCase {
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test' ] );
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 
-		$found = $store->url_hours_derived( [ $hour ], self::PROBE_NOW );
+		$found = $store->url_hours_derived( [ $hour ] );
 
 		$this->assertSame( [ 'folded' => true, 'unranked' => [ 'moa.test' ] ], $found[ $hour ] );
 		$this->assertSame( 0, $mc->touches );
@@ -2187,15 +2335,15 @@ class StatsStoreTest extends TestCase {
 			$store->bucket_forget( Stats_Store::url_rank_parts( 'url', 'asc', $server, true ), $hour );
 		}
 
-		$found = $store->url_hours_derived( [ $hour ], self::PROBE_NOW );
+		$found = $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW );
 
-		$this->assertSame( [ 'folded' => true, 'unranked' => [ 'kea.test' ] ], $found[ $hour ] );
-		$this->assertSame( 5, $mc->touches, 'the site\'s record, kea.test\'s, count asc, count desc, then the missing url asc; moa.test is never asked' );
+		$this->assertSame( [ $hour ], $found['lost'] );
+		$this->assertSame( 15 + 4, $mc->touches, 'the site\'s record and lists, kea.test\'s record, count asc, count desc, then the missing url asc; moa.test is never asked' );
 	}
 
-	public function test_a_touch_the_backend_does_not_answer_names_no_server_and_stops_the_hour(): void {
+	public function test_a_touch_the_backend_does_not_answer_names_nothing_lost_and_ends_the_pass(): void {
 		// Stats fail soft (decision 3): a timeout is no evicted list, so it
-		// re-ranks nothing, and the next reprobe asks the hour again.
+		// re-ranks nothing, owes nothing, and the next reprobe asks again.
 		$mc    = $this->seed_memd();
 		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$hour  = '2026-09-21-19';
@@ -2207,10 +2355,147 @@ class StatsStoreTest extends TestCase {
 		$first = Stats_Store::key( ...[ ...Stats_Store::url_header_parts( '', true ), $hour ] );
 		$mc->fail_touch( self::cache_key( 0, $first ), \Memcached::RES_TIMEOUT );
 
-		$found = $store->url_hours_derived( [ $hour ], self::PROBE_NOW );
+		$found = $store->url_keys_unranked( [ $hour, '2026-09-21-18' ], true, 0, 1000, self::PROBE_NOW );
 
-		$this->assertSame( [ 'folded' => true, 'unranked' => [] ], $found[ $hour ] );
+		$this->assertSame( [ 'lost' => [], 'left' => [], 'at' => 0 ], $found, 'no cursor to hold a flush every tick' );
 		$this->assertSame( 1, $mc->touches, 'nothing after the unanswered touch is asked' );
+	}
+
+	public function test_the_hour_probe_spends_a_touch_budget_and_resumes_where_it_stopped(): void {
+		// An hour of 23 servers is 15 + 23 * 15 = 360 touches: a call stops at
+		// its budget mid-hour, and the next resumes there, missing list found.
+		$mc      = $this->seed_memd();
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hour    = '2026-09-21-20';
+		$servers = [];
+		for ( $i = 0; $i < 23; ++$i ) {
+			$servers[] = "weka-{$i}.test";
+		}
+		self::seed_folded_hour( $store, $hour, $servers );
+		self::seed_ranked_hour( $store, $hour, $servers );
+		$store->bucket_forget( Stats_Store::url_rank_parts( 'max_ms', 'asc', 'weka-19.test', true ), $hour );
+		$mc->touches = 0;
+
+		$probe = $store->url_keys_unranked( [ $hour ], true, 0, 97, self::PROBE_NOW );
+		$this->assertSame( [ 'lost' => [], 'left' => [ $hour ], 'at' => 97 ], $probe );
+		$calls = 1;
+		while ( [] !== $probe['left'] ) {
+			$before = $mc->touches;
+			$probe  = $store->url_keys_unranked( $probe['left'], true, $probe['at'], 97, self::PROBE_NOW );
+			$this->assertLessThanOrEqual( 97, $mc->touches - $before );
+			++$calls;
+		}
+		$this->assertSame( [ $hour ], $probe['lost'] );
+		// Up to weka-19's max_ms asc: the site's 15, 19 servers' 15, then 10.
+		$this->assertSame( 15 + 19 * 15 + 10, $mc->touches, 'no key asked twice' );
+		$this->assertSame( 4, $calls );
+	}
+
+	public function test_an_index_read_the_backend_does_not_answer_resumes_at_its_slice(): void {
+		// A failed read is no index naming no server: moving past its keys
+		// would skip them for the pass and touch the next slice's (decision 3).
+		$mc         = self::unanswering_memd( 'urlsrv_h:' );
+		Core::$memd = $mc;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hours      = [ '2026-09-21-19', '2026-09-21-18', '2026-09-21-17', '2026-09-21-16' ];
+		foreach ( $hours as $hour ) {
+			self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
+			self::seed_ranked_hour( $store, $hour, [ 'kea.test' ] );
+		}
+		$mc->touches = 0;
+		$mc->failing = true;
+
+		$probe = $store->url_keys_unranked( $hours, true, 5, 59, self::PROBE_NOW );
+
+		$this->assertSame( [ 'lost' => [], 'left' => $hours, 'at' => 5 ], $probe, 'the next flush asks the slice again, from the same touch' );
+		$this->assertSame( 0, $mc->touches, 'nothing past the failed read is asked' );
+	}
+
+	public function test_a_reader_memoizes_no_index_a_failed_read_missed(): void {
+		$mc         = self::unanswering_memd( 'urlsrv_h:' );
+		Core::$memd = $mc;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hour       = '2026-09-21-19';
+		self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
+		$store->server_indexes = [];
+		$mc->failing           = true;
+
+		$this->assertSame( [], $store->server_index( [ $hour ], [], $failed ) );
+		$this->assertTrue( $failed );
+		$mc->failing = false;
+		$this->assertSame( [ Stats_Store::server_key( 'kea.test' ) ], \array_keys( $store->server_index( [ $hour ], [] )[ $hour ] ?? [] ), 'the next read asks again' );
+	}
+
+	public function test_a_reader_memoizes_what_the_mirror_answered_for_a_failed_read(): void {
+		// Memcache down, the mirror holding one of two buckets: that bucket is
+		// an answer, and only the other is asked again.
+		$mc         = self::unanswering_memd( ':urlsrv:' );
+		Core::$memd = $mc;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $held, $lost ] = [ '2026-09-21-19-35', '2026-09-21-19-30' ];
+		$store->bucket_set_multi( [
+			[ Stats_Store::url_srv_parts( false ), $held, self::index_of( [ 'kea.test' ] ) ],
+			[ Stats_Store::url_srv_parts( false ), $lost, self::index_of( [ 'moa.test' ] ) ],
+		] );
+		$mirrored              = [ Stats_Store::key( Stats_Store::NS_URLSRV, $held ) => [ 'value' => self::index_of( [ 'kea.test' ] ) ] ];
+		$store->rehydrate      = static fn ( array $keys ): array => \array_intersect_key( $mirrored, \array_flip( $keys ) );
+		$store->server_indexes = [];
+		$mc->failing           = true;
+
+		$this->assertSame( [ $held ], \array_keys( $store->server_index( [], [ $held, $lost ], $failed ) ) );
+		$this->assertTrue( $failed, 'some keys went unanswered' );
+		$mc->failing    = false;
+		$mc->multi_keys = 0;
+		$this->assertSame( [ $held, $lost ], \array_keys( $store->server_index( [], [ $held, $lost ] ) ) );
+		$this->assertSame( 1, $mc->multi_keys, 'the mirror\'s answer was memoized' );
+	}
+
+	public function test_a_bucket_read_with_no_cache_backend_reads_as_failed(): void {
+		// Every read answers a missing backend alike: nothing, and failed.
+		Core::$memd                                 = null;
+		\Newspack_Nodes\Cache_Backend::$apcu_usable = static fn (): bool => false;
+		try {
+			$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+
+			$this->assertSame( [], $store->get_leaderboard_buckets( [ '2026-09-21-19-35' ], '', $failed ) );
+			$this->assertTrue( $failed );
+		} finally {
+			\Newspack_Nodes\Cache_Backend::$apcu_usable = null;
+		}
+	}
+
+	public function test_the_derived_read_says_when_the_cache_left_it_unanswered(): void {
+		$mc         = self::unanswering_memd( 'urlsrv_h:' );
+		Core::$memd = $mc;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hour       = '2026-09-21-19';
+		self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
+		$mc->failing = true;
+
+		$store->url_hours_derived( [ $hour ], $failed );
+
+		$this->assertTrue( $failed );
+	}
+
+	public function test_the_probe_reads_only_the_indexes_its_budget_can_reach(): void {
+		// Twelve hours of one server, 30 touches apiece: a budget of 97 spends
+		// itself inside the fourth, so a read of the other eight is waste.
+		$mc    = $this->seed_memd();
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hours = [];
+		for ( $h = 19; $h >= 8; --$h ) {
+			$hours[] = \sprintf( '2026-09-21-%02d', $h );
+		}
+		foreach ( $hours as $hour ) {
+			self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
+			self::seed_ranked_hour( $store, $hour, [ 'kea.test' ] );
+		}
+		$mc->multi_keys = 0;
+
+		$probe = $store->url_keys_unranked( $hours, true, 0, 97, self::PROBE_NOW );
+
+		$this->assertSame( [ 'lost' => [], 'left' => \array_slice( $hours, 3 ), 'at' => 7 ], $probe );
+		$this->assertLessThanOrEqual( 4, $mc->multi_keys, 'the indexes of the four hours it touches' );
 	}
 
 	public function test_an_hour_missing_one_server_s_shard_is_not_folded(): void {
@@ -2222,11 +2507,11 @@ class StatsStoreTest extends TestCase {
 		$hour       = '2026-09-21-13';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
-		$this->assertTrue( $store->url_hours_derived( [ $hour ], self::PROBE_NOW )[ $hour ]['folded'] );
+		$this->assertTrue( $store->url_hours_derived( [ $hour ] )[ $hour ]['folded'] );
 
 		$store->bucket_forget( Stats_Store::url_hour_parts( Stats_Store::server_key( 'moa.test' ), 'w7' ), $hour );
 
-		$this->assertFalse( $store->url_hours_derived( [ $hour ], self::PROBE_NOW )[ $hour ]['folded'] );
+		$this->assertFalse( $store->url_hours_derived( [ $hour ] )[ $hour ]['folded'] );
 	}
 
 	public function test_the_fine_rank_tiers_take_the_fine_ttl(): void {
@@ -2406,8 +2691,8 @@ class StatsStoreTest extends TestCase {
 	}
 
 	/**
-	 * `ranked_writes()` lists as server key => `sort:order` => entries,
-	 * leaving out the header records beside them.
+	 * `ranked_writes()` lists as server key, '' for the site's, =>
+	 * `sort:order` => entries, leaving out the header records beside them.
 	 *
 	 * @param list<array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes
 	 * @return array<string,array<string,array<array-key,mixed>>>
@@ -2418,7 +2703,9 @@ class StatsStoreTest extends TestCase {
 			if ( \in_array( $parts[0], [ Stats_Store::NS_URLHDR, Stats_Store::NS_URLHDR_HOUR ], true ) ) {
 				continue;
 			}
-			$lists[ $parts[1] ][ $parts[ \count( $parts ) - 2 ] . ':' . $parts[ \count( $parts ) - 1 ] ] = $entries;
+			// The site's lists name no server: `urlrank_s:{sort}:{order}`.
+			$scope = 4 === \count( $parts ) ? $parts[1] : '';
+			$lists[ $scope ][ $parts[ \count( $parts ) - 2 ] . ':' . $parts[ \count( $parts ) - 1 ] ] = $entries;
 		}
 		return $lists;
 	}

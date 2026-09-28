@@ -254,6 +254,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 			filters: null,
 			ranked: false,
 			estimated: false,
+			provisional: false,
 			as_of: 0,
 			loading: false,
 			error: null,

@@ -51,6 +51,21 @@ class UrlSketchTest extends TestCase {
 		$this->assertEqualsWithDelta( 5000, Url_Sketch::estimate( $union ), 5000 * self::THREE_SIGMA );
 	}
 
+	public function test_a_union_of_many_is_one_sketch_of_them_all(): void {
+		// A reader folding a window's records unions them in one call, the
+		// accumulator unpacked throughout; none of the three is left out.
+		$sets = [
+			self::hashes( '/kea-%d', 0, 700 ),
+			self::hashes( '/moa-%d', 0, 1300 ),
+			self::hashes( '/tui-%d', 0, 2100 ),
+		];
+
+		$union = Url_Sketch::union( ...\array_map( Url_Sketch::of( ... ), $sets ) );
+
+		$this->assertSame( Url_Sketch::of( \array_merge( ...$sets ) ), $union );
+		$this->assertSame( Url_Sketch::of( [] ), Url_Sketch::union(), 'of none, the empty sketch' );
+	}
+
 	public function test_an_empty_sketch_counts_nothing(): void {
 		$this->assertSame( 0, Url_Sketch::estimate( Url_Sketch::of( [] ) ) );
 		$this->assertSame( Url_Sketch::BYTES, \strlen( Url_Sketch::of( [] ) ) );

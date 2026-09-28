@@ -155,6 +155,7 @@ export default function PerformanceDashboard( {
 	// The filtered set's own numbers, computed once, server-side.
 	const urlTotals = urlsSlice?.totals ?? null;
 	const urlsEstimated = urlsSlice?.estimated ?? false;
+	const urlsProvisional = urlsSlice?.provisional ?? false;
 	// The same set's slowest, and what the set is, as the server applied it.
 	const urlSlowest = urlsSlice?.slowest ?? null;
 	const urlFilters = urlsSlice?.filters ?? null;
@@ -878,6 +879,7 @@ export default function PerformanceDashboard( {
 				overview={ overview }
 				urlTotals={ urlTotals }
 				urlsEstimated={ urlsEstimated }
+				urlsProvisional={ urlsProvisional }
 				breakdownAvgMs={ breakdownAvgMs }
 				serverFilter={ serverFilter }
 				setServerFilter={ setServerFilter }
