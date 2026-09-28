@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.104.0] - 2026-09-27
+
 ### Added
 
 - **Every dispatched verb is a `<class> <verb> command` span on the record**, workers included, with the interpreter's node name on the `(start)` line, through the substrate's `Command_Interpreter_Node::$around_dispatch`, wrapped around any wrapper already there; the architecture guide's *Wire shape* states it.
