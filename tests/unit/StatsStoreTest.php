@@ -2500,4 +2500,25 @@ class StatsStoreTest extends TestCase {
 		$this->expectException( \LogicException::class );
 		Stats_Store::overhead( 'no_such_part' );
 	}
+
+	/**
+	 * A hash lives in one shard, but every shard carries its own overflow row
+	 * under the one key, so merging a server's shards sums those and keeps
+	 * the rest.
+	 */
+	public function test_merge_shard_rows_sums_every_shards_overflow_row(): void {
+		$row = static fn ( int $count, float $ms ): array => [ Stats_Store::ROW_COUNT => $count, Stats_Store::ROW_TIMED_COUNT => $count, Stats_Store::ROW_SUM_MS => $ms ];
+
+		$merged = Stats_Store::merge_shard_rows(
+			[ 'a7713' => $row( 3, 30.0 ), Stats_Store::OTHER_KEY => $row( 70, 700.0 ) ],
+			[ 'b7713' => $row( 5, 50.0 ), Stats_Store::OTHER_KEY => $row( 13, 130.0 ) ]
+		);
+
+		$this->assertSame( 83, $merged[ Stats_Store::OTHER_KEY ][ Stats_Store::ROW_COUNT ] );
+		$this->assertEqualsWithDelta( 830.0, $merged[ Stats_Store::OTHER_KEY ][ Stats_Store::ROW_SUM_MS ], 0.001 );
+		$this->assertSame( 3, $merged['a7713'][ Stats_Store::ROW_COUNT ] );
+		$this->assertSame( 5, $merged['b7713'][ Stats_Store::ROW_COUNT ] );
+		$this->assertSame( 91, Stats_Store::url_header_of( $merged )[ Stats_Store::HDR_COUNT ] );
+	}
+
 }

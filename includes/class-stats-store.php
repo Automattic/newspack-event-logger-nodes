@@ -2556,6 +2556,28 @@ class Stats_Store {
 	}
 
 	/**
+	 * One server's shard maps as one map by hash. A hash lives in one shard,
+	 * so a later map's row replaces; the overflow row lives in every shard
+	 * under one key, so its rows are summed through `fold_url_rows()`.
+	 *
+	 * @param array<array-key,mixed> ...$maps Shard maps, hash => stored row.
+	 * @return array<string,array<array-key,mixed>>
+	 */
+	public static function merge_shard_rows( array ...$maps ): array {
+		$merged = [];
+		foreach ( $maps as $map ) {
+			foreach ( $map as $raw_hash => $raw ) {
+				$hash            = (string) $raw_hash;
+				$row             = Core::arr( $raw );
+				$merged[ $hash ] = isset( $merged[ $hash ] ) && self::is_other_key( $hash )
+					? self::fold_url_rows( $merged[ $hash ], $row )
+					: $row;
+			}
+		}
+		return $merged;
+	}
+
+	/**
 	 * Add one URL row into another, for the synthetic overflow row only.
 	 *
 	 * Only the fields that ADD (`ROW_SUMS`) plus `last_seen`: an extreme over
