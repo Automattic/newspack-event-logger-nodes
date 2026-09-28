@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.106.0] - 2026-09-28
+
 ### Added
 
 - **The flame builder narrates what it writes and what it heals, on the worker's own record.** Seven point events, each carrying `keep`: `stats writes`, a summary of the flushes' memcache writes once a minute and at a stop; `stats rank close`, each closed bucket's ranking; `stats probe`, each probe pass as it starts and as it ends, with what started it (`respawn`, `reprobe`, a `store` swap, or a `checkpoint` the last worker left), and the roll-up reading again an hour a late write `unfold`ed; `stats heal`, each hour folded, stale hour re-ranked and fine bucket re-queued, with its cause (`missing index`, `missing lb_h`, `missing shard`, `DONE missing`, `lost list`, `lost record`, `late write`); `stats mirror`, the frames a checkpoint wrote to or spilled into the durable mirror, and how many it left out of its carry, told when that changes; `stats restore`; and `stats sweep`. Every counter rides the line's `m`, which the stored record keeps. None goes to stderr, so none reaches the Error Log, and an unlogged worker builds none of it. A steady worker's lifetime tells about twenty lines, one catching up a few hundred, and `GET_STATS` carries the counters not yet told as `narration`.
