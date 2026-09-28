@@ -42,6 +42,7 @@ import HeadlineStats from './HeadlineStats';
  * @param {Object}                  props                        Component props.
  * @param {Object|null}             props.overview               Overview slice payload; it supplies `global_leaderboard` and gates the card, so null renders nothing.
  * @param {Object|null}             props.urlTotals              Headline numbers for the URL set the filters selected; null until the first reply.
+ * @param {boolean}                 props.urlsEstimated          Whether `urlTotals.urls` is the writer's estimate rather than the fold's count.
  * @param {number}                  props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's.
  * @param {string}                  props.serverFilter           Selected server name, or '' for all servers; it also captions the Time Breakdown.
  * @param {(value: string) => void} props.setServerFilter        Server filter setter.
@@ -71,6 +72,7 @@ import HeadlineStats from './HeadlineStats';
 export default function OverviewSection( {
 	overview,
 	urlTotals,
+	urlsEstimated,
 	breakdownAvgMs,
 	serverFilter,
 	setServerFilter,
@@ -269,7 +271,10 @@ export default function OverviewSection( {
 					) }
 				<UnparseableLinesNotice count={ searchUnparseableLines } />
 				<CardBody>
-					<HeadlineStats totals={ urlTotals } />
+					<HeadlineStats
+						totals={ urlTotals }
+						estimated={ urlsEstimated }
+					/>
 
 					{ /* Unconditional: the Metric, Breakdown and Server
 					     selectors are the only way out of a dimension with

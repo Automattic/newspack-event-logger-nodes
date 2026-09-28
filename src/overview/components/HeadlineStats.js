@@ -3,13 +3,16 @@ import { __ } from '@wordpress/i18n';
 /**
  * Every headline number, in its display format and under its labels: the
  * Overview card's full `label`, and the `short` one the URL modal header uses.
+ * An `estimable` one is marked `≈` when the reply says it was estimated.
  *
- * @type {Object<string,{label: string, short?: string, format: (n: number) => string, onlyWhenPositive?: boolean}>}
+ * @type {Object<string,{label: string, short?: string, format: (n: number) => string, onlyWhenPositive?: boolean, estimable?: boolean}>}
  */
 const STATS = {
 	urls: {
 		label: __( 'Unique URLs', 'newspack-event-logger-nodes' ),
 		format: ( n ) => n.toLocaleString(),
+		// The writer's records count URLs with a sketch; the fold, exactly.
+		estimable: true,
 	},
 	requests: {
 		label: __( 'Total Requests', 'newspack-event-logger-nodes' ),
@@ -46,11 +49,12 @@ const STATS = {
  * A number that has not arrived renders as absent, because a plausible zero
  * beside a real total reads as a measurement.
  *
- * @param {?Object}  totals Totals keyed as STATS is; null until they answer.
- * @param {string[]} keys   Which stats, in display order.
+ * @param {?Object}  totals      Totals keyed as STATS is; null until they answer.
+ * @param {string[]} keys        Which stats, in display order.
+ * @param {boolean}  [estimated] Whether the estimable stats were estimated.
  * @return {Array<{key: string, label: string, short?: string, value: string}>} One entry per stat shown.
  */
-export function headlineStats( totals, keys ) {
+export function headlineStats( totals, keys, estimated = false ) {
 	return keys
 		.filter(
 			( key ) => ! STATS[ key ].onlyWhenPositive || totals?.[ key ] > 0
@@ -61,7 +65,8 @@ export function headlineStats( totals, keys ) {
 			short: STATS[ key ].short,
 			value:
 				'number' === typeof totals?.[ key ]
-					? STATS[ key ].format( totals[ key ] )
+					? ( estimated && STATS[ key ].estimable ? '≈' : '' ) +
+					  STATS[ key ].format( totals[ key ] )
 					: '—',
 		} ) );
 }
@@ -73,20 +78,25 @@ export function headlineStats( totals, keys ) {
  * to hold each figure.
  *
  * @param {Object}      props
- * @param {Object|null} props.totals The `urls` reply's totals; null until it answers.
+ * @param {Object|null} props.totals    The `urls` reply's totals; null until it answers.
+ * @param {boolean}     props.estimated The reply's `estimated`: its URL count is a sketch's.
  * @return {import('react').ReactElement} The stats grid.
  */
-export default function HeadlineStats( { totals } ) {
+export default function HeadlineStats( { totals, estimated } ) {
 	return (
 		<div className="newspack-nodes-stats-grid event-logger-overview-stats">
-			{ headlineStats( totals, [
-				'urls',
-				'requests',
-				'errors',
-				'avg_ms',
-				'requests_per_second',
-				'avg_peak_mb',
-			] ).map( ( { key, label, value } ) => (
+			{ headlineStats(
+				totals,
+				[
+					'urls',
+					'requests',
+					'errors',
+					'avg_ms',
+					'requests_per_second',
+					'avg_peak_mb',
+				],
+				estimated
+			).map( ( { key, label, value } ) => (
 				<div className="newspack-nodes-stat" key={ key }>
 					<span className="newspack-nodes-stat-value">{ value }</span>
 					<span className="newspack-nodes-stat-label">{ label }</span>
