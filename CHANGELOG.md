@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.109.1] - 2026-09-29
+
 ### Fixed
 
 - **The document canvas lays out flame-builder's Tables.** The canvas drew flame-builder's edges to its three stats Tables only live, from `extra_targets()`, so a topology document gave `autoLayout` no edge to place them by. `Flame_Builder_Node` gains `set_aggregate_target`, `set_url_target` and `set_url_fine_target`, declared setters taking a `node_name` as Request_Builder's `set_*_target` verbs do, and `flame-builder.tsl` names `flame-stats:aggregate`, `flame-stats:url` and `flame-stats:url-fine` with them, so the document canvas and `Topology_Analyzer` draw each edge. `extra_targets()` returns what the verbs named, and `configure_stats` builds the store's Table map from them. Each verb refuses any name but the Table the `performance` readers mount for its role, and `configure_stats` refuses to run until all three are named, so a builder cannot write to a Table no dashboard reads, or to none. `dump_config()` replays the three verbs ahead of `configure_stats`.
