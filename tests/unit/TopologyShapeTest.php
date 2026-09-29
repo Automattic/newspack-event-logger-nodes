@@ -70,6 +70,25 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
+	/** The document canvas lays the stats Tables out below the builder only along these edges. */
+	public function test_the_dashboard_graphs_draw_the_flame_builders_tables(): void {
+		\Newspack_Nodes\Topology_Registry::reset();
+		\Newspack_Nodes\Topology_Registry::register_plugin(
+			'Newspack_Event_Logger_Nodes\\',
+			NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
+		);
+		\Newspack_Nodes\Topology_Registry::register_builtin_dir(
+			\dirname( __DIR__, 3 ) . '/newspack-nodes/topologies'
+		);
+
+		foreach ( [ 'complete', 'performance', 'flame-builder' ] as $topology ) {
+			$edges = \Newspack_Nodes\Topology_Analyzer::graph_for( $topology )['edges'];
+			foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::TABLES as $table ) {
+				$this->assertContains( [ 'flame-builder', $table ], $edges, "$topology: flame-builder draws no edge to $table" );
+			}
+		}
+	}
+
 	/** Staleness lives in the Age_Sieve between job-router and disk, not in Job_Router. */
 	public function test_job_router_topologies_sieve_by_age_before_disk(): void {
 		foreach ( [ 'job-router', 'complete' ] as $topology ) {
@@ -98,6 +117,23 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
+	/** Every Flame_Builder names its three stats Tables before configure_stats builds a store over them. */
+	public function test_flame_builder_topologies_name_every_stats_table_before_configuring_stats(): void {
+		foreach ( $this->topology_files() as $path ) {
+			$name = \basename( $path );
+			$topo = $this->parse_topology( $path );
+			foreach ( $this->nodes_of_type( $topo['nodes'], 'Flame_Builder' ) as $fb ) {
+				$configure = $this->first_cmd_index( $topo['cmds'], $fb, 'configure_stats' );
+				$this->assertNotNull( $configure, "$name: flame-builder '$fb' never runs configure_stats" );
+				foreach ( [ 'set_aggregate_target', 'set_url_target', 'set_url_fine_target' ] as $verb ) {
+					$named = $this->first_cmd_index( $topo['cmds'], $fb, $verb );
+					$this->assertNotNull( $named, "$name: flame-builder '$fb' missing $verb" );
+					$this->assertLessThan( $configure, $named, "$name: flame-builder '$fb' runs $verb after configure_stats" );
+				}
+			}
+		}
+	}
+
 	/** connect_node endpoints and cmd targets must reference a node declared in the same topology. */
 	public function test_every_directive_references_a_declared_node(): void {
 		foreach ( $this->topology_files() as $path ) {
@@ -115,7 +151,7 @@ class TopologyShapeTest extends TestCase {
 
 	/** Wiring verbs whose first arg names another node must reference a declared node (token/number args excluded). */
 	public function test_wiring_target_args_reference_declared_nodes(): void {
-		$node_ref_verbs = [ 'set_completed_target', 'set_errors_target', 'set_inflight_target', 'add_snapshot_node' ];
+		$node_ref_verbs = [ 'set_completed_target', 'set_errors_target', 'set_inflight_target', 'set_aggregate_target', 'set_url_target', 'set_url_fine_target', 'add_snapshot_node' ];
 		foreach ( $this->topology_files() as $path ) {
 			$name = \basename( $path );
 			$topo = $this->parse_topology( $path );
