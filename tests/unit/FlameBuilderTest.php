@@ -63,8 +63,15 @@ class FlameBuilderTest extends TestCase {
 		return self::live_hour() . '-05';
 	}
 
+	/** The monotonic clock tracks the tick, as every test here dates by it. */
+	protected function setUp(): void {
+		parent::setUp();
+		Flame_Builder_Node::$hrtime_fn = static fn (): int => (int) ( Core::$now * 1e9 );
+	}
+
 	protected function tearDown(): void {
 		Flame_Builder_Node::$usleep_fn = null;
+		Flame_Builder_Node::$hrtime_fn = null;
 		parent::tearDown();
 	}
 
@@ -942,8 +949,10 @@ class FlameBuilderTest extends TestCase {
 		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
 			$err .= $text;
 		} );
-		$fb    = new Flame_Builder_Node();
-		$store = new class( ...$this->stats_store_args( 0, 86400, $fb ) ) extends Stats_Store {
+		$at        = \gmmktime( 9, 7, 0, 9, 22, 2026 );
+		Core::$now = $at;
+		$fb        = new Flame_Builder_Node();
+		$store     = new class( ...$this->stats_store_args( 0, 86400, $fb ) ) extends Stats_Store {
 			/** @var array<string,int> */
 			public array $attempts = [];
 			public function bucket_set_multi( array $writes ): array {
@@ -956,7 +965,6 @@ class FlameBuilderTest extends TestCase {
 			}
 		};
 		$fb->set_stats_store( $store );
-		$at     = \gmmktime( 9, 7, 0, 9, 22, 2026 );
 		$bucket = Stats_Store::bucket_key( $at );
 		$hour   = '2026-09-22-07';
 		// Folded with no marker: the roll-up's find, ranked from its rows.
@@ -970,7 +978,6 @@ class FlameBuilderTest extends TestCase {
 			'e7e7e7e7e7e7' => [ 'url' => '/refused-fold-6610', 'count' => 11, 'last_seen' => $at - 10000 ],
 		] );
 
-		Core::$now = $at;
 		$this->flush_buckets( $fb, [
 			$bucket => [ 'url_stats' => [ 'b5b5b5b5b5b5' => self::positional_url_row( [ 'count' => 13, 'last_seen' => $at ] ) ] ],
 		] );
@@ -978,8 +985,9 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 1, $store->attempts[ $hour ] ?? 0, 'the hour ranked once' );
 		$this->assertStringContainsString( 'URL rank write refused', $err );
 
-		// Full flushes: the first also folds the next hour, whose ranking the
-		// roll-up must memoize like a landed one rather than re-rank.
+		// Full flushes: the first once the builder is idle also folds the
+		// next hour, whose ranking the roll-up must memoize like a landed
+		// one rather than re-rank.
 		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [] );
 		foreach ( [ Stats_Store::URL_PAGE_REFRESH_S, 400, 400 + Stats_Store::URL_PAGE_REFRESH_S ] as $later ) {
 			Core::$now = $at + $later;
@@ -1237,6 +1245,36 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 11, $count(), 'the deferred rows reach the lists once the bucket closes' );
 	}
 
+	/**
+	 * A second `configure_stats` rebuilds the store over the same three
+	 * Tables, because each target verb refuses any other, so the memos
+	 * still describe it: a ranking the cadence deferred before the rebuild
+	 * still lands once its bucket closes.
+	 */
+	public function test_a_store_rebuilt_over_the_same_tables_keeps_the_rankings_owed(): void {
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb ) );
+		$hash   = 'e6e6e6e6e6e6';
+		$at     = \gmmktime( 16, 12, 0, 9, 22, 2026 );
+		$bucket = Stats_Store::bucket_key( $at );
+		$flush  = function ( int $now, int $rows ) use ( $fb, $hash, $bucket ): void {
+			Core::$now = $now;
+			$this->flush_buckets( $fb, [
+				$bucket => [ 'url_stats' => [ $hash => self::positional_url_row( [ 'count' => $rows, 'last_seen' => $now ] ) ] ],
+			] );
+		};
+		$flush( $at, 6 );
+		$flush( $at + 20, 9 );
+
+		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = $at + 400;
+		$this->flush_buckets( $fb, [] );
+
+		$list = $store->url_rank_window( [], [ $bucket ], 'count', 'desc', '' );
+		$this->assertSame( 15, $list[0][1][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] ?? null );
+	}
+
 	public function test_two_intents_for_one_key_compose_before_the_read(): void {
 		// Two fine buckets of a FOLDED hour land on one `urls_h` key. Composed
 		// as the intents are built, one pre-read serves one write and both
@@ -1370,9 +1408,9 @@ class FlameBuilderTest extends TestCase {
 		$merge   = static fn ( array $value ): array => $value;
 		$refused = static function (): void {};
 		$collect = static function ( array $merged ): void {};
-		$intents = static fn ( ?\Closure $collects ): array => \array_map(
+		$intents = static fn ( ?\Closure $collects, ?string $server = 'c0ffee42' ): array => \array_map(
 			static fn ( array $i ): array => [ $i['parts'], $i['bucket'], $i['landed'], $i['group'] ],
-			$for->invoke( $fb, '2026-09-21-11-15', [ 'fine' ], [ 'coarse' ], $merge, $refused, $collects, 'c0ffee42' )
+			$for->invoke( $fb, '2026-09-21-11-15', [ 'fine' ], [ 'coarse' ], $merge, $refused, $collects, $server )
 		);
 
 		$this->assertSame(
@@ -1405,7 +1443,7 @@ class FlameBuilderTest extends TestCase {
 			( new \ReflectionProperty( $fb, 'unranked_hours' ) )->getValue( $fb ),
 			'for that server alone'
 		);
-		$this->assertNull( $intents( null )[1][2], 'and a folded write that never ranks still reports to no one' );
+		$this->assertNull( $intents( null, null )[1][2], 'and a folded write naming no server still reports to no one' );
 	}
 
 	public function test_the_buckets_of_one_chunk_gap_fill_in_one_read(): void {
@@ -1618,7 +1656,7 @@ class FlameBuilderTest extends TestCase {
 		$this->set_url_shard( $store, "{$hour}-10", 'w5', [ '5b5b5b5b5b5b' => self::positional_url_row( [ 'count' => 2, 'worker' => true, 'path' => '/moa' ] ) ], 'moa.test' );
 		$this->forget_stats_asks();
 
-		$fb->roll_up_hours( $store, [ 'fine' => [], 'hours' => [ $hour ] ], self::tick() );
+		$fb->roll_up_hours( $store, [ 'fine' => [], 'hours' => [ $hour ] ], [ $hour ] );
 
 		$kea  = Stats_Store::server_key( 'kea.test' );
 		$moa  = Stats_Store::server_key( 'moa.test' );
@@ -2811,14 +2849,14 @@ class FlameBuilderTest extends TestCase {
 
 	// --- Checkpoint: a flush, and the crumb alone ---------------------------
 
-	public function test_a_checkpoint_writes_every_pending_bucket_and_carries_only_the_crumb(): void {
+	public function test_a_checkpoint_writes_every_pending_bucket_and_carries_the_crumb_and_the_data_clock(): void {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
 		$fb->set_stats_store( $store );
 		$this->fill_request_at( $fb, $this->completed_request( [] ), 'crumb-7731' );
 
-		$this->assertSame( [ 'counted' => 'crumb-7731' ], $fb->save_state() );
+		$this->assertSame( [ 'counted' => 'crumb-7731', 'data_clock' => Stats_Store::bucket_key( self::tick() ), 'data_clock_hour_since' => Core::$now ], $fb->save_state() );
 		$this->assertSame( 1, $this->get_hour_slot( $store, Stats_Store::hourly_parts(), Stats_Store::bucket_key( self::tick() ) )['count'] ?? null, 'the open bucket is in its Table' );
 	}
 
@@ -2843,7 +2881,7 @@ class FlameBuilderTest extends TestCase {
 			$this->fill_request_at( $fb, $this->completed_request( [ 'duration_ms' => 211.0, 'profiles' => $noisy ] ), $crumb );
 		}
 
-		$this->assertSame( [ 'counted' => '3:300:43' ], $fb->save_state() );
+		$this->assertSame( '3:300:43', $fb->save_state()['counted'] );
 		$this->assertSame( 3, \array_sum( \array_column( $this->recent_hourly( $store ), 'count' ) ), 'the buckets are written' );
 		$this->expectExceptionMessage( 'auto-tuner refused the rewrite' );
 		$fb->flush();
@@ -2897,7 +2935,7 @@ class FlameBuilderTest extends TestCase {
 		$checkpoint = \json_decode( (string) \wp_json_encode( $first->save_state() ), true );
 		$first->remove_node();
 
-		$this->assertSame( [ 'counted' => '3:200:42' ], $checkpoint );
+		$this->assertSame( [ 'counted' => '3:200:42', 'data_clock' => Stats_Store::bucket_key( self::tick() ), 'data_clock_hour_since' => Core::$now ], $checkpoint );
 		$this->assertSame( 2, \array_sum( \array_column( $this->recent_hourly( $store ), 'count' ) ), 'both records are written before the cursor commits' );
 
 		$successor = new Flame_Builder_Node();
@@ -3625,6 +3663,359 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 3, self::hour_count( $store->get_slots( Stats_Store::dim_parts( 'country', '' ), [ $hour ] ), 'TK' ) );
 	}
 
+	/** The wall clock every data-clock test replays behind: 15:07 on 2026-09-23. */
+	private const REPLAY_WALL_H = 15;
+
+	/** The replayed hour, two hours behind that wall. */
+	private const REPLAY_HOUR = '2026-09-23-13';
+
+	/**
+	 * A store that files every write it is asked for as `{ns} {key}`, one
+	 * list per flush, so a test counts the flushes that wrote a key.
+	 *
+	 * @return Stats_Store&object{flushes: list<list<string>>}
+	 */
+	private function write_recorder( int $max_lifespan ): Stats_Store {
+		return new class( ...$this->stats_store_args( 0, $max_lifespan ) ) extends Stats_Store {
+			/** @var list<list<string>> */
+			public array $flushes = [ [] ];
+			public function bucket_set_multi( array $writes ): array {
+				foreach ( $writes as [ $parts, $key ] ) {
+					$this->flushes[ \array_key_last( $this->flushes ) ][] = "{$parts[0]} {$key}";
+				}
+				return parent::bucket_set_multi( $writes );
+			}
+		};
+	}
+
+	/**
+	 * A builder over `write_recorder()`, constructed on the replay wall.
+	 *
+	 * @param int $max_lifespan The store's window; a day unless a test narrows it.
+	 * @return array{0: Flame_Builder_Node, 1: Stats_Store&object{flushes: list<list<string>>}}
+	 */
+	private function replay_builder( int $max_lifespan = 86400 ): array {
+		$this->set_rule();
+		Core::$now = \gmmktime( self::REPLAY_WALL_H, 7, 0, 9, 23, 2026 );
+		$store     = $this->write_recorder( $max_lifespan );
+		$fb        = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->sink( new Capture_Sink_Node() );
+		return [ $fb, $store ];
+	}
+
+	/**
+	 * One flush of a replay: a record of `/replayed-6127` completing at each
+	 * `H:MM` of the day, then `flush()` five seconds on.
+	 *
+	 * @param list<string> $times `H:MM` completion times.
+	 */
+	private function replay_flush( Flame_Builder_Node $fb, Stats_Store $store, array $times ): void {
+		foreach ( $times as $time ) {
+			[ $h, $m ] = \array_map( 'intval', \explode( ':', $time ) );
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => '/replayed-6127',
+				'duration_ms' => 37.0,
+				'timestamp'   => \gmmktime( $h, $m, 11, 9, 23, 2026 ),
+			] ) );
+		}
+		Core::$now += Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+		$fb->flush();
+		$store->flushes[] = [];
+	}
+
+	/**
+	 * The flushes, by position, that wrote a `$ns` key of `$key`.
+	 *
+	 * @return list<int>
+	 */
+	private static function flushes_writing( Stats_Store $store, string $ns, string $key ): array {
+		$out = [];
+		foreach ( $store->flushes as $at => $writes ) {
+			foreach ( $writes as $write ) {
+				if ( \str_starts_with( $write, "{$ns} " ) && \str_ends_with( $write, " {$key}" ) ) {
+					$out[] = $at;
+					break;
+				}
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * A replay files an hour two hours behind the wall across four flushes.
+	 * The hour waits for the data clock: its buckets take the fine writes
+	 * alone, and it folds and ranks once, on the flush after the first write
+	 * past it, holding every replayed request.
+	 */
+	public function test_a_replayed_hour_folds_and_ranks_once_after_the_data_clock_leaves_it(): void {
+		[ $fb, $store ] = $this->replay_builder();
+		foreach ( [ [ '13:05' ], [ '13:21' ], [ '13:42', '13:44' ], [ '13:57' ] ] as $times ) {
+			$this->replay_flush( $fb, $store, $times );
+		}
+		$this->replay_flush( $fb, $store, [ '14:06' ] );
+
+		$this->assertSame( [], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, self::REPLAY_HOUR ), 'no hour key while its data still arrives' );
+		$this->assertSame( [], self::flushes_writing( $store, Stats_Store::NS_URLRANK_HOUR_S, self::REPLAY_HOUR ), 'no hour lists either' );
+
+		$this->replay_flush( $fb, $store, [ '14:13' ] );
+		$this->replay_flush( $fb, $store, [ '14:24' ] );
+
+		$this->assertSame( [ 5 ], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, self::REPLAY_HOUR ), 'one fold' );
+		$this->assertSame( [ 5 ], self::flushes_writing( $store, Stats_Store::NS_URLRANK_HOUR_S, self::REPLAY_HOUR ), 'one rank' );
+		$hash = Log_Manager::url_hash( '/replayed-6127' );
+		$rows = self::named_url_rows( $this->get_url_hour( $store, self::REPLAY_HOUR, Stats_Store::url_shard( $hash ) ) );
+		$this->assertSame( 5, $rows[ $hash ]['count'] ?? 0, 'the fold holds every replayed request' );
+	}
+
+	/**
+	 * A record into an hour the data clock already passed and folded is a
+	 * straggler, and takes the late-write path: one hour-key write and one
+	 * re-rank, in its own flush, and none after it.
+	 */
+	public function test_a_straggler_into_an_hour_the_data_clock_passed_takes_the_late_path_once(): void {
+		[ $fb, $store ] = $this->replay_builder();
+		$this->replay_flush( $fb, $store, [ '13:18' ] );
+		$this->replay_flush( $fb, $store, [ '14:02' ] );
+		$this->replay_flush( $fb, $store, [ '14:09' ] );
+		$this->assertSame( [ 2 ], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, self::REPLAY_HOUR ), 'the fixture folds the hour' );
+
+		$this->replay_flush( $fb, $store, [ '13:46', '14:14' ] );
+		$this->replay_flush( $fb, $store, [ '14:19' ] );
+
+		$this->assertSame( [ 2, 3 ], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, self::REPLAY_HOUR ), 'the late write, once' );
+		$this->assertSame( [ 2, 3 ], self::flushes_writing( $store, Stats_Store::NS_URLRANK_HOUR_S, self::REPLAY_HOUR ), 'its re-rank, once' );
+		$hash = Log_Manager::url_hash( '/replayed-6127' );
+		$rows = self::named_url_rows( $this->get_url_hour( $store, self::REPLAY_HOUR, Stats_Store::url_shard( $hash ) ) );
+		$this->assertSame( 2, $rows[ $hash ]['count'] ?? 0 );
+	}
+
+	/**
+	 * A builder that has drained nothing for `IDLE_AFTER_SEC` is idle, and
+	 * its clock is the wall: an hour the wall closed folds with no record
+	 * past it. A second short of that, it is not idle yet.
+	 */
+	public function test_a_quiet_builder_folds_a_hour_the_wall_closed(): void {
+		[ $fb, $store ] = $this->replay_builder();
+		$hash  = Log_Manager::url_hash( '/quiet-5903' );
+		$shard = Stats_Store::url_shard( $hash );
+		$this->seed_url_shard( $store, self::REPLAY_HOUR . '-35', $shard, [
+			$hash => [ 'url' => '/quiet-5903', 'count' => 41, 'timed_count' => 41, 'sum_ms' => 902.0 ],
+		] );
+		$built = (int) Core::$now;
+		$quiet = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'IDLE_AFTER_SEC' ) )->getValue();
+
+		Core::$now = $built + $quiet - 1;
+		$fb->flush();
+		$this->assertSame( [], $this->get_url_hour( $store, self::REPLAY_HOUR, $shard ), 'a second short of quiet' );
+
+		Core::$now = $built + $quiet;
+		$fb->flush();
+		$rows = self::named_url_rows( $this->get_url_hour( $store, self::REPLAY_HOUR, $shard ) );
+		$this->assertSame( 41, $rows[ $hash ]['count'] ?? 0, 'quiet long enough, the wall folds it' );
+	}
+
+	/**
+	 * A restart mid-replay crawls: each record is checkpointed as it lands,
+	 * so the builder holds nothing pending at every tick. That is not
+	 * idleness, and no hour folds ahead of the data clock.
+	 */
+	public function test_a_crawl_that_checkpoints_every_record_folds_nothing_early(): void {
+		[ $fb, $store ] = $this->replay_builder();
+		$fb->name( 'fb' );
+		foreach ( [ 8, 23, 39 ] as $minute ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => '/crawled-2281',
+				'duration_ms' => 53.0,
+				'timestamp'   => \gmmktime( 13, $minute, 4, 9, 23, 2026 ),
+			] ) );
+			$fb->save_state();
+			Core::$now += Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+			$fb->fire_cb();
+		}
+
+		$this->assertSame( [], self::flushes_writing( $store, Stats_Store::NS_URLSRV_HOUR, self::REPLAY_HOUR ), 'nothing folded the crawled hour' );
+		$this->assertSame( [], self::flushes_writing( $store, Stats_Store::NS_URLSRV_HOUR, '2026-09-23-14' ), 'nor the hour after it' );
+	}
+
+	/**
+	 * A replay slower than the fine tier's lifetime would lose its hour's
+	 * first buckets before the data clock left it, so an hour the clock has
+	 * stood in for all but a bucket of that lifetime folds regardless.
+	 */
+	public function test_an_hour_the_data_clock_holds_past_the_fine_lifetime_folds(): void {
+		[ $fb, $store ] = $this->replay_builder();
+		$this->replay_flush( $fb, $store, [ '13:03' ] );
+		$deadline = (int) Core::$now + Stats_Store::FINE_TTL_SECONDS - Stats_Store::BUCKET_SECONDS;
+
+		Core::$now = $deadline - 1 - Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+		$this->replay_flush( $fb, $store, [ '13:04' ] );
+		$this->assertSame( [], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, self::REPLAY_HOUR ), 'a second inside the lifetime' );
+
+		Core::$now = $deadline - Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+		$this->replay_flush( $fb, $store, [ '13:06' ] );
+		$this->assertSame( [ 2 ], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, self::REPLAY_HOUR ), 'at the deadline it folds' );
+	}
+
+	/**
+	 * Quiet is a duration, measured on the monotonic clock: a wall clock
+	 * stepped an hour ahead is no quiet, and a minute of monotonic quiet is,
+	 * whatever the wall says.
+	 */
+	public function test_idleness_is_measured_on_the_monotonic_clock_not_the_wall(): void {
+		$mono = 7_300_000_000_000;
+		Flame_Builder_Node::$hrtime_fn = static function () use ( &$mono ): int {
+			return $mono;
+		};
+		[ $fb, $store ] = $this->replay_builder();
+		$hash  = Log_Manager::url_hash( '/steady-6604' );
+		$shard = Stats_Store::url_shard( $hash );
+		// The newest hour the stepped wall has closed, which folds first.
+		$closed = '2026-09-23-15';
+		$this->seed_url_shard( $store, $closed . '-25', $shard, [
+			$hash => [ 'url' => '/steady-6604', 'count' => 29, 'timed_count' => 29, 'sum_ms' => 377.0 ],
+		] );
+		$quiet = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'IDLE_AFTER_SEC' ) )->getValue();
+
+		Core::$now += Stats_Store::HOUR_SECONDS;
+		$mono      += 7 * 1_000_000_000;
+		$fb->flush();
+		$this->assertSame( [], $this->get_url_hour( $store, $closed, $shard ), 'the wall stepped an hour; seven seconds passed' );
+
+		$mono += $quiet * 1_000_000_000;
+		$fb->flush();
+		$rows = self::named_url_rows( $this->get_url_hour( $store, $closed, $shard ) );
+		$this->assertSame( 29, $rows[ $hash ]['count'] ?? 0, 'a monotonic minute of quiet folds it, the wall standing still' );
+	}
+
+	/**
+	 * A builder whose traffic stops at the hour's close folds that hour
+	 * inside the next hour's first bucket, the window `lagging()` covers:
+	 * its last records drain four seconds into 14:00, and 13 folds by 14:05.
+	 */
+	public function test_a_builder_quiet_from_the_close_folds_the_hour_inside_the_next_first_bucket(): void {
+		$this->set_rule();
+		Core::$now = \gmmktime( 13, 56, 0, 9, 23, 2026 );
+		$store     = $this->write_recorder( 86400 );
+		$fb        = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->sink( new Capture_Sink_Node() );
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => '/closing-4418',
+			'duration_ms' => 43.0,
+			'timestamp'   => \gmmktime( 13, 59, 57, 9, 23, 2026 ),
+		] ) );
+		Core::$now = \gmmktime( 14, 0, 4, 9, 23, 2026 );
+		$fb->flush();
+
+		$first_bucket_ends = \gmmktime( 14, 5, 0, 9, 23, 2026 );
+		while ( Core::$now + Flame_Builder_Node::FLUSH_INTERVAL_SEC < $first_bucket_ends ) {
+			Core::$now += Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+			$fb->fire_cb();
+		}
+
+		$this->assertNotSame( [], self::flushes_writing( $store, Stats_Store::NS_URLSRV_HOUR, '2026-09-23-13' ), 'folded inside 14:00-14:05' );
+	}
+
+	/**
+	 * The data clock and the moment it entered its hour ride the checkpoint,
+	 * so a successor restoring them still folds that hour at the fine
+	 * deadline its predecessor started, and not a second before.
+	 */
+	public function test_a_restored_builder_folds_the_clocks_hour_at_its_predecessors_deadline(): void {
+		[ $fb, $store ] = $this->replay_builder();
+		$this->replay_flush( $fb, $store, [ '13:03' ] );
+		$deadline = (int) Core::$now + Stats_Store::FINE_TTL_SECONDS - Stats_Store::BUCKET_SECONDS;
+		$saved    = $fb->save_state();
+
+		Core::$now = $deadline - 1 - Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+		$next      = new Flame_Builder_Node();
+		$next->set_stats_store( $store );
+		$next->sink( new Capture_Sink_Node() );
+		$next->restore_state( $saved );
+		$this->replay_flush( $next, $store, [ '13:08' ] );
+		$this->assertSame( [], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, self::REPLAY_HOUR ), 'a second inside the lifetime' );
+
+		Core::$now = $deadline - Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+		$this->replay_flush( $next, $store, [ '13:09' ] );
+		$this->assertSame( [ 2 ], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, self::REPLAY_HOUR ), 'the successor folds at the deadline' );
+	}
+
+	/**
+	 * One partition has one writer, so an hour the roll-up found holding no
+	 * index stays that way until this process folds it: a replay reads a
+	 * waiting hour's index once, not once a flush.
+	 */
+	public function test_a_waiting_hour_is_probed_once_across_a_replay(): void {
+		[ $fb, $store ] = $this->replay_builder( 3 * Stats_Store::HOUR_SECONDS );
+		$this->forget_stats_asks();
+		foreach ( [ '13:11', '13:26', '13:38', '13:52' ] as $time ) {
+			$this->replay_flush( $fb, $store, [ $time ] );
+		}
+
+		$probes = \array_filter(
+			VerbHarness::ask_recorder()->asked,
+			static fn ( array $ask ): bool => \is_string( $ask['value'] ) && \str_starts_with( $ask['value'], 'MGET ' )
+				&& \str_contains( $ask['value'], Stats_Store::NS_URLSRV_HOUR . ':2026-09-23-14' )
+		);
+		$this->assertCount( 1, $probes, 'hour 14 waits on the clock across four flushes' );
+	}
+
+	/**
+	 * A reader-shard write into a bucket behind the fine floor, which never
+	 * ranks, collects nothing and joins no ranking group; into a folded hour
+	 * it still forgets its server's marker.
+	 */
+	public function test_a_shard_write_behind_the_fine_floor_collects_nothing(): void {
+		$fb    = new Flame_Builder_Node();
+		$for   = new \ReflectionMethod( $fb, 'url_shard_intent' );
+		$shard = Stats_Store::url_shard( 'a3b5c7d9e1f2' );
+		$rows  = [ 'a3b5c7d9e1f2' => self::positional_url_row( [ 'count' => 19 ] ) ];
+
+		$behind = $for->invoke( $fb, '2026-09-21-11-15', 'kea.test', $shard, $rows, false );
+		$this->assertSame( [ null, null ], [ $behind[0]['landed'], $behind[0]['group'] ], 'behind the floor: nothing collected' );
+
+		$ranked = $for->invoke( $fb, '2026-09-21-11-15', 'kea.test', $shard, $rows, true );
+		$this->assertNotNull( $ranked[0]['landed'], 'inside the fine tail it collects' );
+
+		( new \ReflectionProperty( $fb, 'folded_hours' ) )->setValue( $fb, [ '2026-09-21-11' => true ] );
+		$folded = $for->invoke( $fb, '2026-09-21-11-15', 'kea.test', $shard, $rows, false );
+		$this->assertNotNull( $folded[1]['landed'], 'a folded hour still re-ranks' );
+	}
+
+	/**
+	 * A data clock that jumps two hours in one flush leaves both behind it,
+	 * and the fold budget folds both in the flush after.
+	 */
+	public function test_a_clock_jumping_two_hours_folds_both_in_one_flush(): void {
+		[ $fb, $store ] = $this->replay_builder();
+		$this->replay_flush( $fb, $store, [ '13:14', '14:29', '15:01' ] );
+		$this->replay_flush( $fb, $store, [ '15:03' ] );
+
+		$this->assertSame( [ 1 ], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, self::REPLAY_HOUR ) );
+		$this->assertSame( [ 1 ], self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, '2026-09-23-14' ) );
+	}
+
+	/**
+	 * Once a replay stops short of the wall, its last hour waits on the data
+	 * clock, and a tick with nothing pending owes the store nothing for it.
+	 * The window holds hours 13 and 14 alone, so no older hour owes a fold.
+	 */
+	public function test_a_tick_behind_a_waiting_hour_touches_no_store(): void {
+		[ $fb, $store ] = $this->replay_builder( 3 * Stats_Store::HOUR_SECONDS );
+		$fb->name( 'fb' );
+		$this->replay_flush( $fb, $store, [ '13:27' ] );
+		$this->replay_flush( $fb, $store, [ '14:31' ] );
+		$this->replay_flush( $fb, $store, [ '14:33' ] );
+		$this->forget_stats_asks();
+
+		Core::$now += Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+		$fb->fire_cb();
+
+		$this->assertSame( [], VerbHarness::ask_recorder()->asked, 'hour 14 waits on the clock; the tick owes nothing' );
+	}
+
 	/** Seed one bucket's URL rows into the node's pending state and persist them. */
 	private function flush_pending( Flame_Builder_Node $fb, string $bucket, array $url_stats ): void {
 		$this->flush_buckets( $fb, [ $bucket => [ 'url_stats' => $url_stats ] ] );
@@ -3655,10 +4046,11 @@ class FlameBuilderTest extends TestCase {
 		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, (int) Core::$now, self::fine_floor( $store, (int) Core::$now ) );
 	}
 
-	/** Run `roll_up_hours()` as a flush at `$now` would. */
+	/** Run `roll_up_hours()` as an idle builder's flush at `$now` would: every hour ripe. */
 	private static function roll_up( Flame_Builder_Node $fb, int $now ): void {
 		$store = self::store_of( $fb );
-		$fb->roll_up_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( $store->max_lifespan(), $now ) ), $now );
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( $store->max_lifespan(), $now ) );
+		$fb->roll_up_hours( $store, $plan, $plan['hours'] );
 	}
 
 	/** The oldest bucket of the read plan's fine tail at `$now`. */
@@ -6468,7 +6860,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_save_state_without_partition_does_not_throw(): void {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
-		$this->assertSame( [ 'counted' => '' ], $fb->save_state() );
+		$this->assertSame( [ 'counted' => '', 'data_clock' => '', 'data_clock_hour_since' => 0.0 ], $fb->save_state() );
 	}
 
 	public function test_configure_stats_refuses_the_partition_it_no_longer_takes(): void {
@@ -6991,7 +7383,7 @@ class FlameBuilderTest extends TestCase {
 			$store->url_token_sets( [ 'wombat' ], [ 'moa.test' ] ),
 			'each server files its own'
 		);
-		$sets = $store->url_token_sets( [ 'womb', 'wombat', '7731', '8842', '884' ], [ self::SEED_SERVER ] );
+		$sets = $store->url_token_sets( [ 'wombat', '7731', '8842' ], [ self::SEED_SERVER ] ) + $store->url_token_sets( [ 'womb', '884' ], [ self::SEED_SERVER ] );
 		$a    = Log_Manager::url_hash( 'https://kea.test/wombat-7731' );
 		$b    = Log_Manager::url_hash( 'https://kea.test/wombat-8842' );
 		$this->assertSame( [ $a, $b ], $sets['wombat'], 'the second flush unions' );
@@ -7016,27 +7408,37 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ '481169627974' ], $store->url_token_sets( [ '20260922' ], [ self::SEED_SERVER ] )['20260922'] ?? null );
 	}
 
-	public function test_a_saturated_token_key_is_not_rewritten(): void {
-		// A saturated set says "fold for this token"; restamping it every
-		// flush would hold that key alive forever. Skipping the write lets it
-		// expire on the TTL it already had, and the token rebuilds live-only.
+	public function test_a_second_flush_adds_members_only_for_its_new_pairs_and_reads_nothing_first(): void {
+		// The set is never read back and rewritten: a flush adds one member
+		// per new (word, URL) pair, blind, and a URL already filed adds none.
 		$fb    = new Flame_Builder_Node();
-		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 86400, $fb ) );
-		$store->bucket_set_multi( [
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), 'wombat', [ Stats_Store::TOKEN_SATURATED => self::tick() ] ],
-		] );
+		$store = $this->stats_store( partition: 0, max_lifespan: 86_417, asker: $fb );
 		$fb->set_stats_store( $store );
+		$old = Log_Manager::url_hash( 'https://kea.test/wombat-7731' );
+		$new = Log_Manager::url_hash( 'https://kea.test/wombat-4486' );
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-7731' ] ) );
-		$store->writes = [];
+		$fb->flush();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-7731' ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-4486' ] ) );
+		$this->forget_stats_asks();
 		$fb->flush();
 
-		$this->assertNotContains( 'wombat', $store->writes, 'the saturated token is read and left alone' );
-		$this->assertContains( '7731', $store->writes, 'its unsaturated siblings are still written' );
+		$set = static fn ( string $word ): string => Stats_Store::key( ...[ ...Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), $word ] );
+		$this->assertSame( [ 'SADD' => [ [ $set( 'wombat' ), $set( '4486' ) ] ] ], $this->asked_verbs( Stats_Store::NS_URLTOKEN ), 'one add, and no read' );
+		$this->assertSame(
+			[
+				$set( 'wombat' ) => [ [ $new => self::tick() ], 86_417 ],
+				$set( '4486' )   => [ [ $new => self::tick() ], 86_417 ],
+			],
+			self::token_adds()[0],
+			'the new URL alone, living the retention window'
+		);
+		$this->assertEqualsCanonicalizing( [ $old, $new ], Core::arr( $store->url_token_sets( [ 'wombat' ], [ self::SEED_SERVER ] )['wombat'] ?? null ) );
 	}
 
 	public function test_a_refused_token_write_is_logged_and_not_written_again(): void {
-		// Nothing retries a refused cache write: the refusal is logged, the
-		// URL stays named, and the next flush writes no token for it.
+		// Nothing retries a refused write: the refusal is logged, the URL
+		// stays named, and the next flush files no token for it.
 		$err = '';
 		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
 			$err .= $text;
@@ -7047,10 +7449,11 @@ class FlameBuilderTest extends TestCase {
 		$url = 'https://kea.test/takahe-4410';
 
 		$store->refuse_tokens = true;
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
-		$fb->flush();
+		$hash                 = Log_Manager::url_hash( $url );
+		$this->flush_buckets( $fb, [ self::live_bucket() => [ 'url_stats' => [ $hash => self::positional_url_row( [ 'count' => 3 ] ) ], 'url_names' => [ $hash => $url ] ] ] );
 		$this->assertSame( [], $store->url_token_sets( [ 'takahe' ], [ self::SEED_SERVER ] ), 'the write was refused' );
-		$this->assertStringContainsString( 'token index write refused', $err );
+		$this->assertStringContainsString( 'token index write refused; 2 word sets left unfiled', $err );
+		$this->assertSame( 2, $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ][ 'refused ' . Stats_Store::NS_URLTOKEN ] ?? null );
 
 		$store->refuse_tokens = false;
 		$store->writes        = [];
@@ -7060,10 +7463,10 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotContains( 'takahe', $store->writes, 'the refused token is not written again' );
 	}
 
-	public function test_a_flush_files_one_set_per_distinct_word_in_batched_msets(): void {
+	public function test_a_flush_files_one_set_per_distinct_word_in_batched_adds(): void {
 		// 600 URLs sharing `kea` and `kiwi`, each with a word of its own, is
-		// 602 sets: read and written in ceil( 602 / 500 ) MGETs and MSETs,
-		// never one per word, and a flush filing no new name writes none.
+		// 602 sets: added in ceil( 602 / 500 ) SADDs, never one per word, and
+		// read by none. A flush filing no new name adds nothing.
 		$fb    = new Flame_Builder_Node();
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
 		$fb->set_stats_store( $store );
@@ -7077,32 +7480,34 @@ class FlameBuilderTest extends TestCase {
 		$this->forget_stats_asks();
 		$this->flush_buckets( $fb, [ self::live_bucket() => [ 'url_stats' => $stats, 'url_names' => $names ] ] );
 
-		$this->assertSame( [ 500, 102 ], \array_map( 'count', $this->asked_batches( Stats_Store::NS_URLTOKEN ) ), 'the sets are read in the flush chunks' );
-		$this->assertSame( [ 500, 102 ], self::token_msets(), 'and written in them' );
+		$this->assertSame( [ 'SADD' ], \array_keys( $this->asked_verbs( Stats_Store::NS_URLTOKEN ) ), 'no set is read' );
+		$this->assertSame( [ 500, 102 ], \array_map( 'count', self::token_adds() ), 'the sets are added in the flush chunks' );
 		$this->assertSame( 602, $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ]['tokens'] ?? null, 'one set a distinct word' );
 		$own = [ '00', ...\array_map( 'strval', \range( 10, 5990, 10 ) ) ];
-		$this->assertSame( [ 'kea', 'kiwi', ...$own ], \array_map( 'strval', \array_keys( $store->url_token_sets( [ 'kea', 'kiwi', ...$own ], [ self::SEED_SERVER ] ) ) ), 'each word its set' );
+		$read = [];
+		foreach ( \array_chunk( [ 'kea', 'kiwi', ...$own ], Stats_Store::SEARCH_WORDS_READ ) as $words ) {
+			$read += \array_filter( $store->url_token_sets( $words, [ self::SEED_SERVER ] ) );
+		}
+		$this->assertSame( [ 'kea', 'kiwi', ...$own ], \array_map( 'strval', \array_keys( $read ) ), 'each word its set' );
 
 		$this->forget_stats_asks();
 		$this->flush_buckets( $fb, [ self::live_bucket() => [ 'url_stats' => $stats, 'url_names' => $names ] ] );
-		$this->assertSame( [], self::token_msets(), 'names already filed rewrite no set' );
+		$this->assertSame( [], self::token_adds(), 'names already filed add no member' );
 	}
 
 	/**
-	 * The urltoken keys of each recorded `MSET` that wrote any, counted.
+	 * Each recorded `SADD`: set key => [ member map, ttl ].
 	 *
-	 * @return list<int>
+	 * @return list<array<array-key,mixed>>
 	 */
-	private static function token_msets(): array {
-		$batches = [];
+	private static function token_adds(): array {
+		$adds = [];
 		foreach ( VerbHarness::ask_recorder()->asked as $asked ) {
-			$items  = \is_array( $asked['value'] ) ? Core::arr( $asked['value']['MSET'] ?? null ) : [];
-			$tokens = \array_filter( \array_keys( $items ), static fn ( $key ): bool => \str_starts_with( (string) $key, Stats_Store::NS_URLTOKEN . ':' ) );
-			if ( [] !== $tokens ) {
-				$batches[] = \count( $tokens );
+			if ( \is_array( $asked['value'] ) && isset( $asked['value']['SADD'] ) ) {
+				$adds[] = Core::arr( $asked['value']['SADD'] );
 			}
 		}
-		return $batches;
+		return $adds;
 	}
 
 	/**
@@ -7246,17 +7651,17 @@ class TinyInternFlameBuilder extends Flame_Builder_Node {
 }
 
 /**
- * A Stats_Store that records which token buckets a flush wrote, and can
- * refuse the token writes outright.
+ * A Stats_Store that records every key a flush wrote and every word it
+ * filed, and can refuse the word filings outright.
  */
 class RecordingStatsStore extends Stats_Store {
-	/** @var array<int,string> Token buckets written since a test last zeroed it. */
+	/** @var list<string> Words filed since a test last zeroed it. */
 	public array $writes = [];
 
 	/** @var list<string> Every key asked to be written since a test last zeroed it. */
 	public array $written = [];
 
-	/** @var bool Whether a token write is refused. */
+	/** @var bool Whether a word filing is refused. */
 	public bool $refuse_tokens = false;
 
 	/**
@@ -7264,28 +7669,21 @@ class RecordingStatsStore extends Stats_Store {
 	 * @return array<int,bool>
 	 */
 	public function bucket_set_multi( array $writes ): array {
-		$refused = [];
-		foreach ( $writes as $at => [ $parts, $bucket ] ) {
+		foreach ( $writes as [ $parts, $bucket ] ) {
 			$this->written[] = Stats_Store::key( ...[ ...$parts, $bucket ] );
-			if ( Stats_Store::NS_URLTOKEN !== ( $parts[0] ?? '' ) ) {
-				continue;
-			}
-			$this->writes[] = $bucket;
-			if ( $this->refuse_tokens ) {
-				$refused[ $at ] = true;
-			}
 		}
-		if ( [] === $refused ) {
-			return parent::bucket_set_multi( $writes );
+		return parent::bucket_set_multi( $writes );
+	}
+
+	/**
+	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets `[ server_key, word, hashes ]`.
+	 * @return array<int,bool>
+	 */
+	public function add_url_tokens( array $sets, int $now ): array {
+		foreach ( $sets as [ , $word ] ) {
+			$this->writes[] = $word;
 		}
-		$kept = \array_diff_key( $writes, $refused );
-		$out  = [] === $kept ? [] : parent::bucket_set_multi( \array_values( $kept ) );
-		$done = [];
-		$next = 0;
-		foreach ( \array_keys( $writes ) as $at ) {
-			$done[ $at ] = isset( $refused[ $at ] ) ? false : ( $out[ $next++ ] ?? false );
-		}
-		return $done;
+		return $this->refuse_tokens ? \array_fill( 0, \count( $sets ), false ) : parent::add_url_tokens( $sets, $now );
 	}
 }
 

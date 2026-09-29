@@ -212,14 +212,9 @@ class Config {
 			'is_hub'             => self::has_hub_topology(),
 			'stats_ttl'          => (string) self::stats_ttl(),
 			'stats_url_ttl'      => (string) self::stats_url_ttl(),
-			'stats_url_fine_ttl' => (string) self::stats_url_fine_ttl(),
+			'stats_url_fine_ttl' => (string) Stats_Store::fine_ttl( self::stats_retention_seconds() ),
 			default              => null,
 		};
-	}
-
-	/** The fine tier's lifetime: its read window, never past the whole window. */
-	private static function stats_url_fine_ttl(): int {
-		return \min( self::stats_retention_seconds(), Stats_Store::FINE_TTL_SECONDS );
 	}
 
 	/** The per-URL blob's lifetime: a twenty-fourth of the window, floored at an hour. */

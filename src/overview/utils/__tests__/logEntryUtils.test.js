@@ -22,6 +22,7 @@ import {
 	computeVisibleEntries,
 	getAncestorPairIds,
 	isFoldablePairStart,
+	isRequestTerminal,
 	spliceFoldedSpans,
 	structuredValue,
 	prettyJson,
@@ -2439,5 +2440,23 @@ describe( 'formatBody', () => {
 		expect( formatBody( undefined ) ).toBe( '' );
 		expect( formatBody( null ) ).toBe( '' );
 		expect( formatBody( '-' ) ).toBe( '' );
+	} );
+} );
+
+describe( 'isRequestTerminal', () => {
+	it.each( [ 'process (complete)', 'process (aborted)' ] )(
+		'names %s, a close the record takes its fatal from',
+		( keyword ) => {
+			expect( isRequestTerminal( keyword ) ).toBe( true );
+		}
+	);
+
+	it.each( [
+		'process (start)',
+		'gyrobase (complete)',
+		'weka 4440 (aborted)',
+		'process (complete) (truncated)',
+	] )( 'does not name %s', ( keyword ) => {
+		expect( isRequestTerminal( keyword ) ).toBe( false );
 	} );
 } );

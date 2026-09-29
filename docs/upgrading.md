@@ -6,6 +6,32 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **The substrate floor is newspack-nodes 2.76.0, and search starts from an
+  empty index.** Deploy the substrate first, then restart the workers, so
+  each flame builder's SQLite file gains its members table. The word sets
+  earlier releases wrote are no longer read and age out on
+  `<eln:stats_ttl>`. A restarted flame builder files every URL it sees
+  afresh, so a URL with traffic is searchable after its first flush; one
+  with no traffic since the upgrade is found once its name is filed again.
+
+- **The search index's PHP API changed.** `Stats_Store::merge_token_set()`,
+  `holds_expired()` and `TOKEN_SATURATED` are gone; file words through
+  `Stats_Store::add_url_tokens( [ [ server_key, word, hashes ] ], $now )`.
+  `url_token_sets()` reads at most `Stats_Store::SEARCH_WORDS_READ` (3)
+  words and throws a `LogicException` past it: read a term through
+  `Stats_Store::search_groups()`, one group at a time.
+
+- **`Flame_Builder_Node::roll_up_hours()` takes the hours it may fold.** Its
+  third parameter is a list of hour keys where it took the tick: pass
+  `$plan['hours']` to fold every hour of the read plan, as an idle builder
+  does.
+
+- **A span that ends on a throwable carries its message.** Its `m` reads
+  `Class: message` where it read the short class alone, so a client
+  matching `m` against a bare class name matches the prefix before `: `
+  instead. A throwable with an empty message still reads the bare class,
+  and `Worker_Should_Stop` still reads `stop`.
+
 - **A flame builder names its three stats Tables before `configure_stats`.**
   A user-dir or console-saved topology carrying
   `command_node flame-builder:config configure_stats` without the three
@@ -15,6 +41,13 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `set_url_target flame-stats:url` and `set_url_fine_target
   flame-stats:url-fine`, as `flame-builder.tsl` does. Each verb refuses any
   other name.
+
+- **`provisional` on a `urls` reply means more.** It marks a reply short of
+  an hour or record the writer has yet to fold or rank, or of an index read
+  that went unanswered, not only the latest buckets' ranking. A replay can
+  hold many hours unfolded at once, and each adds nothing until it folds,
+  so a client treating a provisional page's `totals` as the site's reads a
+  replay's missing hours as no traffic. The dashboard banner says so.
 
 ## 0.109.0
 

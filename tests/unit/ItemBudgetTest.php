@@ -327,21 +327,6 @@ class ItemBudgetTest extends TestCase {
 		$this->assertLessThanOrEqual( Stats_Store::MAX_PATH_BYTES, \strlen( $name[1] ) );
 	}
 
-	// ----- urltoken -----
-
-	public function test_a_full_token_set_fits_the_item_budget(): void {
-		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
-		$hashes     = [];
-		for ( $i = 0; $i < Stats_Store::URL_SEARCH_MAX; $i++ ) {
-			$hashes[] = \sprintf( '%012x', $i );
-		}
-
-		$set = $store->merge_token_set( [], \array_fill_keys( $hashes, self::LAST_SEEN ), self::LAST_SEEN );
-
-		$this->assertCount( Stats_Store::URL_SEARCH_MAX, $set, 'the largest set short of the sentinel' );
-		self::assert_fits_both( $set, 'a token set at URL_SEARCH_MAX' );
-	}
-
 	// ----- dim_h, url_dim_h, categories_h, url_cat_h: counted per slot -----
 
 	/** `$n` distinct names as long as one firehose entry allows. */

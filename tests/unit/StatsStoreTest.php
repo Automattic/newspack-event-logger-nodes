@@ -1597,110 +1597,64 @@ class StatsStoreTest extends TestCase {
 		);
 	}
 
-	public function test_a_seeded_token_set_is_stamped_with_the_tick_as_the_flush_stamps_it(): void {
-		// The flush stamps a token set from the tick, and the prune dates
-		// the window from it, so a seed stamped from the wall is a set no
-		// flush wrote.
-		$store     = $this->stats_store();
-		$previous  = Core::$now;
-		Core::$now = 1_600_000_321.75;
+	/**
+	 * A filed word is a set of members: each URL's hash, valued by the tick
+	 * its name was written at, living the retention window from that add.
+	 */
+	public function test_a_filed_member_carries_its_tick_and_lives_the_window(): void {
+		[ $window, $client, $names ] = $this->stats_store_args( 3, 7_411 );
+		$store = new Stats_Store( $window, $client, $names );
+		$set   = Stats_Store::key( ...[ ...Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'kokako' ] );
+		$read  = static fn (): array => $client->members( $names[ Stats_Store::TABLE_AGGREGATE ], [ $set ], 10 );
+		$clock = Core::$clock;
 		try {
-			$this->set_url_bucket( $store, '2020-09-13-12-10', [ 'a1a1a1a1a1a1' => [ 'url' => 'https://example.com/kokako-6173', 'count' => 3 ] ] );
-			$parts = Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) );
+			Core::$clock = static fn (): int => 1_700_000_321;
+			$this->assertSame( [ true ], $store->add_url_tokens( [ [ Stats_Store::server_key( 'kea.test' ), 'kokako', [ 'a1a1a1a1a1a1' ] ] ], 1_600_000_321 ) );
+			$this->assertSame( [ $set => [ 'a1a1a1a1a1a1' => 1_600_000_321 ] ], $read() );
 
-			$this->assertSame( [ [ 'a1a1a1a1a1a1' => 1_600_000_321 ] ], $store->bucket_get_multi( [ [ $parts, 'kokako' ] ] ) );
+			Core::$clock = static fn (): int => 1_700_000_321 + 7_410;
+			$this->assertSame( [ $set => [ 'a1a1a1a1a1a1' => 1_600_000_321 ] ], $read(), 'a second short of the window' );
+			Core::$clock = static fn (): int => 1_700_000_321 + 7_411;
+			$this->assertSame( [], $read(), 'the window from its add retires it' );
 		} finally {
-			Core::$now = $previous;
+			Core::$clock = $clock;
 		}
 	}
 
-	public function test_a_token_set_unions_and_drops_a_hash_a_window_has_passed_over(): void {
-		// A set of three, nowhere near the cap: the dead entry still goes,
-		// because a reader names every hash it holds and counts each against
-		// `URL_SEARCH_MAX`. Deciding costs one pass over the stamps, which is
-		// less than the prune it decides on.
-		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
-		$now   = 1_700_000_000;
+	/** Filing a URL again refreshes its member's stamp and expiry, and a new URL joins the set. */
+	public function test_a_refiled_url_refreshes_its_member_and_a_new_one_joins(): void {
+		[ $window, $client, $names ] = $this->stats_store_args( 3, 7_411 );
+		$store = new Stats_Store( $window, $client, $names );
+		$key   = Stats_Store::server_key( 'kea.test' );
+		$set   = Stats_Store::key( ...[ ...Stats_Store::url_token_parts( $key ), 'kokako' ] );
+		$clock = Core::$clock;
+		try {
+			Core::$clock = static fn (): int => 1_700_000_000;
+			$store->add_url_tokens( [ [ $key, 'kokako', [ 'a1a1a1a1a1a1' ] ] ], 1_600_000_100 );
+			Core::$clock = static fn (): int => 1_700_005_000;
+			$store->add_url_tokens( [ [ $key, 'kokako', [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2' ] ] ], 1_600_005_200 );
+			Core::$clock = static fn (): int => 1_700_000_000 + 7_411;
 
-		$this->assertSame(
-			[ 'a1a1a1a1a1a1' => $now, 'b2b2b2b2b2b2' => $now ],
-			$store->merge_token_set(
-				[ 'a1a1a1a1a1a1' => $now - 90, 'c3c3c3c3c3c3' => $now - 86_401 ],
-				[ 'b2b2b2b2b2b2' => $now, 'a1a1a1a1a1a1' => $now ],
-				$now
-			),
-			'this flush restamps what it names and the window retires the rest'
-		);
-	}
-
-	public function test_a_token_set_keeps_the_later_stamp_of_a_hash(): void {
-		// The flush stamps every name with its tick, so an older incoming
-		// stamp means only a clock that stepped back: it must not age out an
-		// entry a later tick stamped.
-		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
-		$now   = 1_700_000_000;
-
-		$this->assertSame(
-			[ 'a1a1a1a1a1a1' => $now - 90, 'b2b2b2b2b2b2' => $now - 7_207 ],
-			$store->merge_token_set(
-				[ 'a1a1a1a1a1a1' => $now - 90 ],
-				[ 'a1a1a1a1a1a1' => $now - 5_113, 'b2b2b2b2b2b2' => $now - 7_207 ],
-				$now
-			),
-			'an older stamp never shortens a hash, and a new hash keeps its own'
-		);
-	}
-
-	public function test_a_token_set_at_the_cap_prunes_the_dead_rather_than_saturating(): void {
-		// The cap is the other trigger, and the cheaper one: a flush that
-		// would pass it prunes without scanning the stamps at all.
-		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
-		$now   = 1_700_000_000;
-		$dead  = [];
-		for ( $i = 0; $i < Stats_Store::URL_SEARCH_MAX; $i++ ) {
-			$dead[ \sprintf( '%012x', 0xd0000 + $i ) ] = $now - 86_401;
+			$this->assertSame(
+				[ $set => [ 'a1a1a1a1a1a1' => 1_600_005_200, 'b2b2b2b2b2b2' => 1_600_005_200 ] ],
+				$client->members( $names[ Stats_Store::TABLE_AGGREGATE ], [ $set ], 10 ),
+				'the first add\'s window has passed; the second add\'s has not'
+			);
+		} finally {
+			Core::$clock = $clock;
 		}
-
-		$this->assertSame(
-			[ 'b2b2b2b2b2b2' => $now ],
-			$store->merge_token_set( $dead, [ 'b2b2b2b2b2b2' => $now ], $now ),
-			'a set nothing has named for a window makes room rather than saturating'
-		);
 	}
 
-	public function test_a_token_set_saturates_when_its_live_count_passes_the_cap(): void {
-		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
-		$now   = 1_700_000_000;
-		$live  = [];
-		for ( $i = 0; $i < Stats_Store::URL_SEARCH_MAX; $i++ ) {
-			$live[ \sprintf( '%012x', 0xe0000 + $i ) ] = $now - 90;
-		}
-
-		$this->assertSame(
-			[ Stats_Store::TOKEN_SATURATED => $now ],
-			$store->merge_token_set( $live, [ 'b2b2b2b2b2b2' => $now ], $now )
+	public function test_token_sets_read_the_tokens_the_store_holds_in_one_members_exchange(): void {
+		$store = $this->stats_store( partition: 3, max_lifespan: 86400 );
+		$store->add_url_tokens(
+			[
+				[ Stats_Store::server_key( 'kea.test' ), 'womb', [ 'a1a1a1a1a1a1' ] ],
+				[ Stats_Store::server_key( 'moa.test' ), 'womb', [ 'b2b2b2b2b2b2' ] ],
+				[ Stats_Store::server_key( 'tui.test' ), 'womb', [ 'c3c3c3c3c3c3' ] ],
+			],
+			1_700_000_000
 		);
-	}
-
-	public function test_a_live_sentinel_is_returned_unchanged_so_its_key_keeps_its_ttl(): void {
-		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
-		$now   = 1_700_000_000;
-
-		$this->assertSame(
-			[ Stats_Store::TOKEN_SATURATED => $now - 90 ],
-			$store->merge_token_set( [ Stats_Store::TOKEN_SATURATED => $now - 90 ], [ 'e5e5e5e5e5e5' => $now ], $now ),
-			'flush_writes() skips a write whose value equals what it read'
-		);
-	}
-
-	public function test_token_sets_read_the_tokens_the_store_holds(): void {
-		$store      = $this->stats_store( partition: 3, max_lifespan: 86400 );
-		// Stored as `hash => last named`; the reader takes the hashes alone.
-		$store->bucket_set_multi( [
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'womb', [ 'a1a1a1a1a1a1' => 1_700_000_000 ] ],
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'moa.test' ) ), 'womb', [ 'b2b2b2b2b2b2' => 1_700_000_000 ] ],
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'tui.test' ) ), 'womb', [ 'c3c3c3c3c3c3' => 1_700_000_000 ] ],
-		] );
 		$this->forget_stats_asks();
 		$this->assertSame(
 			[ 'womb' => [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2' ] ],
@@ -1708,12 +1662,33 @@ class StatsStoreTest extends TestCase {
 			'the servers named, unioned; tui.test is not asked'
 		);
 		$this->assertSame(
-			[ \array_map( static fn ( array $pair ): string => Stats_Store::key( Stats_Store::NS_URLTOKEN, Stats_Store::server_key( $pair[1] ), $pair[0] ), [ [ 'womb', 'kea.test' ], [ 'womb', 'moa.test' ], [ 'kiwi', 'kea.test' ], [ 'kiwi', 'moa.test' ] ] ) ],
-			$this->asked_batches( Stats_Store::NS_URLTOKEN ),
-			'every word of every server in one MGET, never one a server'
+			[ 'SMEMBERS' => [ \array_map( static fn ( array $pair ): string => Stats_Store::key( Stats_Store::NS_URLTOKEN, Stats_Store::server_key( $pair[1] ), $pair[0] ), [ [ 'womb', 'kea.test' ], [ 'womb', 'moa.test' ], [ 'kiwi', 'kea.test' ], [ 'kiwi', 'moa.test' ] ] ) ] ],
+			$this->asked_verbs( Stats_Store::NS_URLTOKEN ),
+			'every word of every server in one exchange, never one a server'
 		);
+		$asked = \Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness::ask_recorder()->asked;
+		$this->assertStringStartsWith( 'SMEMBERS ' . Stats_Store::URL_SEARCH_MAX . ' ', (string) \end( $asked )['value'], 'a set past the max answers over, not its members' );
 		$this->assertSame( [ 'womb' => [ 'b2b2b2b2b2b2' ] ], $store->url_token_sets( [ 'womb' ], [ 'moa.test' ] ) );
 		$this->assertSame( [], $store->url_token_sets( [ 'womb' ], [] ), 'no server, nothing held' );
+	}
+
+	public function test_filing_many_words_is_one_add_and_no_read(): void {
+		$store = $this->stats_store( partition: 3, max_lifespan: 86400 );
+		$this->forget_stats_asks();
+
+		$landed = $store->add_url_tokens(
+			[
+				[ Stats_Store::server_key( 'kea.test' ), 'wombat', [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2' ] ],
+				[ Stats_Store::server_key( 'kea.test' ), '7731', [ 'a1a1a1a1a1a1' ] ],
+				[ Stats_Store::server_key( 'moa.test' ), 'wombat', [ 'c3c3c3c3c3c3' ] ],
+			],
+			1_700_000_000
+		);
+
+		$this->assertSame( [ true, true, true ], $landed );
+		$verbs = $this->asked_verbs( Stats_Store::NS_URLTOKEN );
+		$this->assertSame( [ 'SADD' ], \array_keys( $verbs ), 'written blind: nothing is read first' );
+		$this->assertCount( 1, $verbs['SADD'] );
 	}
 
 	public function test_forgetting_many_keys_asks_each_table_once(): void {
@@ -1737,9 +1712,7 @@ class StatsStoreTest extends TestCase {
 	public function test_a_token_read_that_goes_unanswered_answers_no_token(): void {
 		// Decision 3: an unanswered set is no absence, so no token narrows.
 		$store = $this->stats_store( partition: 3, max_lifespan: 86400 );
-		$store->bucket_set_multi( [
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'kereru', [ 'a1a1a1a1a1a1' => 1_700_000_000 ] ],
-		] );
+		$store->add_url_tokens( [ [ Stats_Store::server_key( 'kea.test' ), 'kereru', [ 'a1a1a1a1a1a1' ] ] ], 1_700_000_000 );
 		$this->refuse_stats_reads( ':' . Stats_Store::NS_URLTOKEN . ':' );
 
 		$sets = $store->url_token_sets( [ 'kereru', 'hoiho' ], [ 'kea.test' ], $failed );
@@ -1748,23 +1721,59 @@ class StatsStoreTest extends TestCase {
 		$this->assertTrue( $failed );
 	}
 
-	public function test_the_store_answers_a_saturated_token_false_and_a_two_character_one_by_its_set(): void {
-		// A saturated set narrows nothing, so no read can answer it; a
-		// two-character word is filed like any other and read like one. An
-		// unheld token is absent, and a held one is its hashes.
-		$store      = $this->stats_store( partition: 3, max_lifespan: 86400 );
-		// One server's set saturated is the token's answer across both.
-		$store->bucket_set_multi( [
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'wombat', [ Stats_Store::TOKEN_SATURATED => 1_700_000_000 ] ],
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'moa.test' ) ), 'wombat', [ 'd4d4d4d4d4d4' => 1_700_000_000 ] ],
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'at', [ 'e5e5e5e5e5e5' => 1_700_000_000 ] ],
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'takahe', [ 'b2b2b2b2b2b2' => 1_700_000_000 ] ],
-		] );
-
-		$this->assertSame(
-			[ 'at' => [ 'e5e5e5e5e5e5' ], 'wombat' => false, 'takahe' => [ 'b2b2b2b2b2b2' ] ],
-			$store->url_token_sets( [ 'at', 'wombat', 'takahe', 'kiwi' ], [ 'moa.test', 'kea.test' ] )
+	public function test_a_word_past_the_search_max_narrows_nothing_and_a_two_character_one_reads_its_set(): void {
+		// A set of more than URL_SEARCH_MAX members reads null, over the
+		// limit, and narrows nothing; one at the max still does. A
+		// two-character word is filed and read like any other.
+		$store = $this->stats_store( partition: 3, max_lifespan: 86400 );
+		$over  = [];
+		$at    = [];
+		for ( $i = 0; $i <= Stats_Store::URL_SEARCH_MAX; $i++ ) {
+			$over[] = \sprintf( 'e%011x', $i );
+			$at[]   = \sprintf( 'f%011x', $i );
+		}
+		\array_pop( $at );
+		$store->add_url_tokens(
+			[
+				// One server's set past the max is the word's answer across both.
+				[ Stats_Store::server_key( 'kea.test' ), 'wombat', $over ],
+				[ Stats_Store::server_key( 'moa.test' ), 'wombat', [ 'd4d4d4d4d4d4' ] ],
+				[ Stats_Store::server_key( 'kea.test' ), 'at', [ 'e5e5e5e5e5e5' ] ],
+				[ Stats_Store::server_key( 'kea.test' ), 'takahe', $at ],
+			],
+			1_700_000_000
 		);
+
+		$sets = $store->url_token_sets( [ 'at', 'wombat', 'takahe' ], [ 'moa.test', 'kea.test' ] );
+
+		$this->assertSame( [ 'at', 'wombat', 'takahe' ], \array_keys( $sets ) );
+		$this->assertSame( [ 'e5e5e5e5e5e5' ], $sets['at'] );
+		$this->assertFalse( $sets['wombat'], 'URL_SEARCH_MAX + 1 members narrow nothing' );
+		$this->assertCount( Stats_Store::URL_SEARCH_MAX, Core::arr( $sets['takahe'] ), 'the max itself still narrows' );
+	}
+
+	/** A term's words are read longest first, ties in term order, three at a time. */
+	public function test_search_groups_are_the_longest_words_first_three_at_a_time(): void {
+		$this->assertSame( 3, Stats_Store::SEARCH_WORDS_READ );
+		$this->assertSame(
+			[ [ 'category', 'kakapo', 'blog' ], [ '2026', 'post', 'ox' ], [ 'x7' ] ],
+			Stats_Store::search_groups( [ 'blog', '2026', 'category', 'post', 'kakapo', 'ox', 'x7' ] )
+		);
+		$this->assertSame( [], Stats_Store::search_groups( [] ) );
+	}
+
+	/** One read names one group at most, so no caller's term sets the read's multiplier. */
+	public function test_a_read_of_more_words_than_one_group_is_refused(): void {
+		$store = $this->stats_store( partition: 3, max_lifespan: 86400 );
+		$this->forget_stats_asks();
+
+		try {
+			$store->url_token_sets( [ 'kakapo', 'takahe', 'kiwi', 'kea' ], [ 'kea.test' ] );
+			$this->fail( 'four words read at once' );
+		} catch ( \LogicException $e ) {
+			$this->assertStringContainsString( 'reads at most 3 words', $e->getMessage() );
+		}
+		$this->assertSame( [], $this->asked_verbs( Stats_Store::NS_URLTOKEN ), 'refused before any read' );
 	}
 
 	/**

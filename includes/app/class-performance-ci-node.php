@@ -267,11 +267,11 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The switch for the name scan, OFF: the fold a term the token index
-	 * cannot answer falls back to — no token, every token saturated, or more
-	 * candidates than `URL_SEARCH_MAX` — walking every name for it. Off,
-	 * `urls --search` reads the token index alone: a term none of whose
-	 * tokens it can answer names nothing, and no reply walks names beyond
-	 * the candidates. Either way each candidate is checked against the whole
+	 * cannot answer falls back to — no token, every token's set past
+	 * `URL_SEARCH_MAX`, or more candidates than that — walking every name
+	 * for it. Off, `urls --search` reads the token index alone: a term none
+	 * of whose tokens it can answer names nothing, and no reply walks names
+	 * beyond the candidates. Either way each candidate is checked against the whole
 	 * term on its row's own path. The name scan's tests turn it on.
 	 *
 	 * @var bool
@@ -893,9 +893,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * Both tiers are known before the first read, so they go out together:
 	 * one round trip per store after the site's server index. An hour whose
-	 * list is present stands for its twelve buckets, and a missing one takes
-	 * the whole page back to the fold, which reads the hour's rows, rather
-	 * than serving a window one hour short as ranked.
+	 * list is present stands for its twelve buckets, and a folded hour
+	 * missing its list takes the whole page back to the fold, which reads the
+	 * hour's rows, rather than serving a window one hour short as ranked. An
+	 * hour the writer still owes, holding no index or missing a DONE marker,
+	 * is no hole: it adds nothing, and the page says `provisional`.
 	 *
 	 * The two averages are the mean of the per-BUCKET averages at each
 	 * bucket's own tier — a five-minute bucket of the current hour, a folded
@@ -933,15 +935,16 @@ class Performance_CI_Node extends Service_CI_Node {
 		$skipped = false;
 		foreach ( $stores as $store ) {
 			$covered = [];
-			foreach ( $store->url_rank_window( $plan['hours'], $plan['fine'], $sort, $order, $server ) as [ $key, $entries ] ) {
+			foreach ( $store->url_rank_window( $plan['hours'], $plan['fine'], $sort, $order, $server, $waiting ) as [ $key, $entries ] ) {
 				$covered[ $key ] = true;
 				self::note_bucket_means( $means, self::fold_rank_entries( $merged, $entries, isset( $recent[ $key ] ) ) );
 				++$found;
 			}
-			// An hour the lists leave out is a hole, but for ranking lag.
+			// Left out of the lists: a hole, but for lag or a fold owed.
+			$owed    = $lagging + \array_fill_keys( $waiting, true );
 			$missing = \array_fill_keys( \array_diff( $plan['hours'], \array_keys( $covered ) ), true );
-			$skipped = $skipped || [] !== \array_intersect_key( $missing, $lagging );
-			$holes   = \array_map( 'strval', \array_keys( \array_diff_key( $missing, $lagging ) ) );
+			$skipped = $skipped || [] !== \array_intersect_key( $missing, $owed );
+			$holes   = \array_map( 'strval', \array_keys( \array_diff_key( $missing, $owed ) ) );
 			if ( [] !== $holes ) {
 				break;
 			}
@@ -1033,8 +1036,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * summed over a window with a key missing understates the site's traffic
 	 * and still reads as the site's, so the caller folds instead. A record
 	 * the writer can still owe is no hole but ranking lag (`lagging()`),
-	 * skipped as `url_rank_window()` skips a list not yet written. A header
-	 * that skipped one says so with `provisional`, and is never cached.
+	 * skipped as `url_rank_window()` skips a list not yet written, and so is
+	 * an hour whose fold it still owes (`Stats_Store::url_headers()`'s
+	 * `$waiting`). A header that skipped one says so with `provisional`, and
+	 * is never cached.
 	 *
 	 * `totals.urls` is the merged `Url_Sketch`'s estimate, and the reply says
 	 * so with `estimated`; `rows` adds the overflow row where any record
@@ -1060,11 +1065,12 @@ class Performance_CI_Node extends Service_CI_Node {
 		$rated            = 0;
 		$slowest          = [];
 		foreach ( $stores as $store ) {
-			// An hour holding no index is as much a hole as one with no record.
-			$records = \array_replace( \array_fill_keys( $plan['hours'], null ), $store->url_headers( $plan['hours'], $plan['fine'], $server ) );
+			// A folded hour missing its record is a hole; an owed one waits.
+			$records = \array_replace( \array_fill_keys( $plan['hours'], null ), $store->url_headers( $plan['hours'], $plan['fine'], $server, $waiting ) );
+			$owed    = $lagging + \array_fill_keys( $waiting, true );
 			foreach ( $records as $key => $record ) {
 				if ( null === $record ) {
-					if ( ! isset( $lagging[ $key ] ) ) {
+					if ( ! isset( $owed[ $key ] ) ) {
 						return null;
 					}
 					$provisional = true;
@@ -2189,6 +2195,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$store = new Stats_Store( $max_lifespan, $this->client, $by_table );
 			// One reply's stores: every shard asks the same buckets' index.
 			$store->server_indexes = [];
+			$store->done_markers   = [];
 			$stores[]              = $store;
 		}
 		return $stores;
@@ -2405,7 +2412,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * unanswerable among several narrows nothing while the rest still do,
 	 * because the walk checks the whole term against each candidate's path
 	 * anyway. A token no partition holds is a real answer — an empty set —
-	 * and folds nothing.
+	 * and folds nothing. The term is read in `Stats_Store::search_groups()`,
+	 * each group from every store, and the next group only while every token
+	 * of the last is unanswerable somewhere: whether a group narrows is the
+	 * site's answer, so a word one store holds over the limit reads the next
+	 * group in every store.
 	 *
 	 * Each server files its own sets, so a scope reads its server's and the
 	 * site reads those of every server an index the fold may read names.
@@ -2423,23 +2434,34 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( [] === $tokens ) {
 			return null;
 		}
-		$sets = [];
-		foreach ( $stores as $store ) {
-			$servers = '' === $server
+		$servers_of = [];
+		foreach ( $stores as $at => $store ) {
+			$servers_of[ $at ] = '' === $server
 				? \array_values( Stats_Store::index_names( \array_replace( [], ...\array_values( $store->server_index( $plan['hours'], $plan['fine'] ) ) ) ) )
 				: [ $server ];
-			foreach ( $store->url_token_sets( $tokens, $servers, $failed ) as $token => $hashes ) {
-				// One partition's set unanswerable is the token's answer.
-				if ( false === $hashes || false === ( $sets[ $token ] ?? null ) ) {
-					$sets[ $token ] = false;
-					continue;
+		}
+		$sets = [];
+		$read = [];
+		foreach ( Stats_Store::search_groups( $tokens ) as $group ) {
+			foreach ( $stores as $at => $store ) {
+				foreach ( $store->url_token_sets( $group, $servers_of[ $at ], $failed ) as $token => $hashes ) {
+					// One partition's set unanswerable is the token's answer.
+					if ( false === $hashes || false === ( $sets[ $token ] ?? null ) ) {
+						$sets[ $token ] = false;
+						continue;
+					}
+					$sets[ $token ] = ( $sets[ $token ] ?? [] ) + \array_fill_keys( $hashes, true );
 				}
-				$sets[ $token ] = ( $sets[ $token ] ?? [] ) + \array_fill_keys( $hashes, true );
+				$unread = $unread || $failed;
 			}
-			$unread = $unread || $failed;
+			$read = [ ...$read, ...$group ];
+			// The next group is read only while this one narrows nowhere.
+			if ( $unread || [] !== \array_filter( $group, static fn ( string $token ): bool => false !== ( $sets[ $token ] ?? null ) ) ) {
+				break;
+			}
 		}
 		$usable = [];
-		foreach ( $tokens as $token ) {
+		foreach ( $read as $token ) {
 			if ( false !== ( $sets[ $token ] ?? null ) ) {
 				$usable[ $token ] = Core::arr( $sets[ $token ] ?? [] );
 			}
@@ -3238,7 +3260,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'slowest' => $page['slowest'],
 					// `totals.urls` is the sketch's where the records answered.
 					'estimated' => $page['estimated'],
-					// Short of what the writer has yet to rank; never cached.
+					// Short of a fold, a ranking or a read; never cached.
 					'provisional' => $page['provisional'],
 					'ranked'  => $page['ranked'],
 					'as_of'   => $page['as_of'],

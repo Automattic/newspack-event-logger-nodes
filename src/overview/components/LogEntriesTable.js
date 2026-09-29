@@ -42,6 +42,7 @@ import {
 	isEmptyPairStart,
 	isFoldablePairComplete,
 	isFoldablePairStart,
+	isRequestTerminal,
 	formatBody,
 	pairBaseName,
 	pairCompleteName,
@@ -249,9 +250,15 @@ const STATEMENT_LEAD =
  * @param {Array}  props.entries     Array of indented log entries (from computeIndentedEntries).
  * @param {number} [props.realCount] Count of real (non-placeholder) entries; the heading falls back to entries.length.
  * @param {Object} [props.revealRef] Ref the component fills with `reveal( n, path )`, the flame graph's way in.
+ * @param {Object} [props.request]   The record the entries belong to; its `fatal_*` fields render on the request's terminal row, `(complete)` or `(aborted)`, whose stored entry `Request_Builder_Node` keeps without them.
  * @return {import('react').ReactElement|null} Rendered component or null if no entries.
  */
-export default function LogEntriesTable( { entries, realCount, revealRef } ) {
+export default function LogEntriesTable( {
+	entries,
+	realCount,
+	revealRef,
+	request,
+} ) {
 	const tableRef = useRef( null );
 	const searchContainerRef = useRef( null );
 	const [ expandedSet, setExpandedSet ] = useState( () => new Set() );
@@ -287,11 +294,48 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	}, [ entries ] );
 
 	/**
+	 * The fatal the request ended on, as its row draws it: the message, then
+	 * `file:line` with the plugin it was raised in. Null for a record with none.
+	 */
+	const fatal = useMemo( () => {
+		if ( ! request?.fatal_error ) {
+			return null;
+		}
+		const where = `${ request.fatal_file }:${ request.fatal_line }`;
+		return {
+			message: request.fatal_error,
+			where: request.fatal_plugin
+				? sprintf(
+						// translators: 1: file:line the fatal was raised at, 2: plugin slug.
+						__(
+							'%1$s (plugin %2$s)',
+							'newspack-event-logger-nodes'
+						),
+						where,
+						request.fatal_plugin
+				  )
+				: where,
+		};
+	}, [ request ] );
+
+	/**
+	 * The fatal a row draws: the record's, on the request's terminal row.
+	 *
+	 * @param {Object} entry Log entry object.
+	 * @return {?{message: string, where: string}} The fatal, or null.
+	 */
+	const fatalOf = useCallback(
+		( entry ) => ( isRequestTerminal( entry.k ) ? fatal : null ),
+		[ fatal ]
+	);
+
+	/**
 	 * Recompute matches 150ms after the query settles.
 	 *
 	 * A match is a case-insensitive substring hit on the keyword or on the
-	 * message (objects are matched against their JSON); the trace labels `l`
-	 * and `caller` render on the row but are not searched. One start/complete
+	 * message (objects are matched against their JSON), which on the
+	 * request's terminal row includes the fatal it draws; the trace labels
+	 * `l` and `caller` render on the row but are not searched. One start/complete
 	 * pair counts once: when the query matched the start's keyword, the
 	 * complete's identical keyword is skipped unless its own message also
 	 * matched. Keywords are tested suffix-anchored, like the parser, so a
@@ -321,7 +365,14 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					continue;
 				}
 				const keyword = ( e.k || '' ).toLowerCase();
-				const message = ( bodies.get( e.m ) ?? '' ).toLowerCase();
+				const ended = fatalOf( e );
+				const message = [
+					bodies.get( e.m ) ?? '',
+					ended?.message ?? '',
+					ended?.where ?? '',
+				]
+					.join( '\n' )
+					.toLowerCase();
 
 				const keywordHit = keyword.includes( query );
 				const messageHit = message.includes( query );
@@ -353,7 +404,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				clearTimeout( searchTimerRef.current );
 			}
 		};
-	}, [ searchQuery, entries, bodies ] );
+	}, [ searchQuery, entries, bodies, fatalOf ] );
 
 	/**
 	 * Every pairId that can be unfolded — the set "Unfold All" applies and
@@ -1191,8 +1242,31 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		) : null;
 
 	/**
+	 * The fatal that ended the request, on the row that ends it: the message,
+	 * folding under the row's own `i` as its empty body never does, then where
+	 * it was raised, muted as the trace labels are.
+	 *
+	 * @param {Object} entry Log entry object.
+	 * @return {import('react').ReactNode} The fatal, or null.
+	 */
+	const renderFatal = ( entry ) => {
+		const ended = fatalOf( entry );
+		return ended ? (
+			<div className="log-entries-fatal">
+				<div className="newspack-nodes-status is-error">
+					{ renderFoldedBody( entry, ended.message ) }
+				</div>
+				<div className="newspack-nodes-status is-muted">
+					{ markSearchTerm( ended.where ) }
+				</div>
+			</div>
+		) : null;
+	};
+
+	/**
 	 * Render the message cell of a non-merged row: the trace labels, the
-	 * message body, the truncation mark, then the stats inline after them.
+	 * message body, a fatal the request ended on, the truncation mark, then
+	 * the stats inline after them.
 	 *
 	 * @param {Object} entry Entry object.
 	 * @return {import('react').ReactNode} Message content.
@@ -1206,6 +1280,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			<>
 				{ renderTraceLines( entry ) }
 				{ renderFoldedBody( entry, msg ) }
+				{ renderFatal( entry ) }
 				{ renderTruncatedMark( entry ) }
 				{ renderStatsLine( entry ) }
 			</>

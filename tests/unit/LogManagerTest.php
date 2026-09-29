@@ -845,9 +845,10 @@ class LogManagerTest extends TestCase {
 	 */
 	public static function thrown_outcomes(): array {
 		return [
-			'a class'           => [ new \DomainException( 'weka 4418' ), 'DomainException' ],
-			'an anonymous one'  => [ new class( 'weka 4424' ) extends \DomainException {}, 'class@anonymous' ],
-			'a cooperative stop' => [ new Worker_Should_Stop(), 'stop' ],
+			'a class'                => [ new \DomainException( 'weka 4418' ), 'DomainException: weka 4418' ],
+			'a class with no message' => [ new \DomainException(), 'DomainException' ],
+			'an anonymous one'       => [ new class( 'weka 4424' ) extends \DomainException {}, 'class@anonymous: weka 4424' ],
+			'a cooperative stop'     => [ new Worker_Should_Stop( 'kakapo 4418' ), 'stop' ],
 		];
 	}
 
@@ -879,6 +880,29 @@ class LogManagerTest extends TestCase {
 
 		$this->assertFalse( $described, 'the description covers a result, and there was none' );
 		$this->assertSame( $outcome, self::last_entry_of( self::firehose_entries( self::TEST_DIR ), 'kea 4418 (complete)' )['m'] ?? null );
+	}
+
+	/** A thrown message too long for one firehose line clips; its class leads. */
+	public function test_timed_clips_a_long_thrown_message_to_fit_the_line(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+
+		try {
+			$lm->timed(
+				'kea 4419',
+				static fn (): never => throw new \DomainException( \str_repeat( 'takahe 4419 ', 900 ) ),
+				static fn (): string => 'returned'
+			);
+		} catch ( \DomainException ) {
+			$lm->finish();
+		}
+
+		$complete = self::last_entry_of( self::firehose_entries( self::TEST_DIR ), 'kea 4419 (complete)' ) ?? [];
+		$this->assertStringStartsWith( 'DomainException: takahe 4419 takahe', (string) ( $complete['m'] ?? '' ) );
+		$this->assertTrue( $complete['truncated'] ?? false );
+		$this->assertArrayHasKey( 'duration_ms', $complete );
+		$this->assertLessThanOrEqual( 3840, \strlen( (string) \wp_json_encode( $complete ) ) );
 	}
 
 	/** With no description the span carries no outcome at all, thrown or not. */

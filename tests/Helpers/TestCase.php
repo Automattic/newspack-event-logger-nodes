@@ -622,6 +622,37 @@ abstract class TestCase extends RuntimeTestCase {
 		return $out;
 	}
 
+	/**
+	 * The requests a test's askers sent naming a key of any of `$namespaces`,
+	 * by verb: one list each of the keys it named of them. A structured
+	 * request names its item keys, and `SMEMBERS` the set keys after its
+	 * limit.
+	 *
+	 * @param string ...$namespaces `NS_*` namespaces.
+	 * @return array<string,list<list<string>>>
+	 */
+	protected function asked_verbs( string ...$namespaces ): array {
+		$out = [];
+		foreach ( VerbHarness::ask_recorder()->asked as $asked ) {
+			$value = $asked['value'];
+			if ( \is_array( $value ) ) {
+				$verb = (string) \array_key_first( $value );
+				$keys = \array_map( 'strval', \array_keys( \Newspack_Nodes\Core::arr( $value[ $verb ] ) ) );
+			} else {
+				$keys = \preg_split( '/\s+/', \trim( $value ), -1, \PREG_SPLIT_NO_EMPTY ) ?: [];
+				$verb = (string) \array_shift( $keys );
+				if ( 'SMEMBERS' === $verb ) {
+					\array_shift( $keys );
+				}
+			}
+			$of = \array_values( \array_filter( $keys, static fn ( string $key ): bool => \in_array( Stats_Store::namespace_of( $key ), $namespaces, true ) ) );
+			if ( [] !== $of ) {
+				$out[ $verb ][] = $of;
+			}
+		}
+		return $out;
+	}
+
 	/** How many `MGET` requests a test's askers sent: a read's round trips, one per Table asked. */
 	protected function stats_reads(): int {
 		return \count( $this->stats_mgets() );
@@ -633,9 +664,9 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * Answer every `MGET` asking a key that carries `$needle` (matched
-	 * against `:{key}`) with a read failure, as a Table that did not answer
-	 * the batch would; '' answers every one again.
+	 * Answer every `MGET` or `SMEMBERS` asking a key that carries `$needle`
+	 * (matched against `:{key}`) with a read failure, as a Table that did not
+	 * answer the batch would; '' answers every one again.
 	 */
 	protected function refuse_stats_reads( string $needle ): void {
 		VerbHarness::ask_recorder()->refuse = $needle;
@@ -755,31 +786,42 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/**
 	 * File the search tokens of named paths under one server, as the flush
-	 * does: read each token's set, union, write.
+	 * does: one member per word per URL, stamped with the tick.
 	 *
 	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
 	 * @param array<string,string>                     $paths  hash => path.
 	 * @param string                                   $server The server the URLs are filed under.
 	 */
 	protected function set_url_tokens( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $paths, string $server = self::SEED_SERVER ): bool {
-		$by_token = \Newspack_Event_Logger_Nodes\Stats_Store::token_sets_of( $paths );
-		$parts    = \Newspack_Event_Logger_Nodes\Stats_Store::url_token_parts( \Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ) );
-		$reads    = [];
-		foreach ( \array_keys( $by_token ) as $token ) {
-			$reads[ (string) $token ] = [ $parts, (string) $token ];
+		$sets = [];
+		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::token_sets_of( $paths ) as $token => $hashes ) {
+			$sets[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ), (string) $token, $hashes ];
 		}
-		// The stored MAP, not `url_token_sets()`'s hashes: the stamps merge.
-		$existing = $store->bucket_get_multi( $reads );
-		$now      = self::tick();
-		$writes   = [];
-		foreach ( $by_token as $token => $hashes ) {
-			$writes[] = [
-				$parts,
-				(string) $token,
-				$store->merge_token_set( $existing[ (string) $token ] ?? [], \array_fill_keys( $hashes, $now ), $now ),
-			];
+		return ! \in_array( false, $store->add_url_tokens( $sets, self::tick() ), true );
+	}
+
+	/**
+	 * File hashes under one word of one server, as the flush adds them.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
+	 * @param string                                   $word   The word, as `term_tokens()` spells it.
+	 * @param list<string>                             $hashes URL hashes.
+	 * @param string                                   $server The server the URLs are filed under.
+	 */
+	protected function file_url_token( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $word, array $hashes, string $server = self::SEED_SERVER ): bool {
+		return [ true ] === $store->add_url_tokens( [ [ \Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ), $word, $hashes ] ], self::tick() );
+	}
+
+	/**
+	 * Saturate one word of one server: file one hash past `URL_SEARCH_MAX`,
+	 * none of them a row, so the word narrows no search.
+	 */
+	protected function saturate_url_token( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $word, string $server = self::SEED_SERVER ): bool {
+		$hashes = [];
+		for ( $i = 0; $i <= \Newspack_Event_Logger_Nodes\Stats_Store::URL_SEARCH_MAX; $i++ ) {
+			$hashes[] = \sprintf( 'f%011x', $i );
 		}
-		return [] === $writes || ! \in_array( false, $store->bucket_set_multi( $writes ), true );
+		return $this->file_url_token( $store, $word, $hashes, $server );
 	}
 
 	/**

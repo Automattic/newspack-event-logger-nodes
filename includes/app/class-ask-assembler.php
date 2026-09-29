@@ -742,7 +742,7 @@ class Ask_Assembler {
 			] + self::errors_of( $totals ),
 			// Whether `stats.urls` is a sketch's estimate.
 			'estimated'   => true === $page['estimated'],
-			// Whether `stats` skipped records the writer has yet to rank.
+			// Short of what the writer owes, or of an unanswered read.
 			'provisional' => true === $page['provisional'],
 			'urls'       => \array_map(
 				self::overview_url_shape( ... ),
