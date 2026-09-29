@@ -152,8 +152,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	public const DEFAULT_NUM_BUCKETS = 3;
 
 	/**
-	 * Bucket rotation interval in seconds; see DEFAULT_EVICTION_WINDOW_SEC
-	 * below. A request is evicted at the THIRD rotation after it lands, and
+	 * Bucket rotation interval in seconds. Under `DEFAULT_NUM_BUCKETS` a
+	 * request is evicted at the THIRD rotation after it lands, and
 	 * the first of those is a partial window, so the floor is two whole
 	 * rotations: 720 seconds, two minutes past a worker's 595-second lifetime, which
 	 * is what lets its spawn request land complete rather than timed out.
@@ -162,21 +162,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * the lifetime monotonic, so a clock step eats into the margin.
 	 */
 	private const BUCKET_ROTATION_S = 360;
-
-	/**
-	 * The longest a request stays in flight under the DEFAULT declaration.
-	 *
-	 * Timed rotation evicts the oldest bucket, and `evict_request()` writes
-	 * whatever is still open as timed out, so no request outlives every bucket.
-	 * `Stats_Store::MAX_FUTURE_SKEW_SEC` borrows that magnitude as the lateness
-	 * it tolerates from a producer's clock.
-	 *
-	 * It measures `DEFAULT_NUM_BUCKETS`, not `$this->num_buckets`, because a
-	 * constant cannot follow a per-topology declaration — so a topology that
-	 * declares another count says so through `build_cache()` rather than
-	 * leaving the borrow quietly wrong.
-	 */
-	public const DEFAULT_EVICTION_WINDOW_SEC = self::DEFAULT_NUM_BUCKETS * self::BUCKET_ROTATION_S;
 
 	/** Longest keyword the intern table accepts; longer ones pass through. */
 	private const INTERN_MAX_KEY_LENGTH  = 256;
@@ -872,22 +857,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 *
 	 * The timed rotation is what makes a stalled request time out; its eviction
 	 * callback is `evict_request()`, which writes the request out as timed out.
-	 * A bucket count off the default moves the eviction window with it, and
-	 * `DEFAULT_EVICTION_WINDOW_SEC` cannot follow — so the declaration that
-	 * moved it is where that gets said.
 	 *
 	 * @return LRU_Cache The constructed cache instance.
 	 */
 	private function build_cache(): LRU_Cache {
-		if ( self::DEFAULT_NUM_BUCKETS !== $this->num_buckets ) {
-			$this->print_less_often(
-				'WARNING: eviction window is now ',
-				(string) ( $this->num_buckets * self::BUCKET_ROTATION_S ),
-				's, not the ',
-				(string) self::DEFAULT_EVICTION_WINDOW_SEC,
-				's other code borrows'
-			);
-		}
 		return ( new LRU_Cache( $this->bucket_size, $this->num_buckets ) )
 			->with_timed_rotation(
 				self::BUCKET_ROTATION_S,

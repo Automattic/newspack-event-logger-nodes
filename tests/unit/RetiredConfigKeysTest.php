@@ -31,7 +31,13 @@ class RetiredConfigKeysTest extends TestCase {
 		'significant_events',
 		'auto_disable_threshold',
 		'auto_protect_time_threshold',
+		// No dashboard reads the stats mirror, so none spends a budget on it.
+		'stats_mirror_read_budget_ms',
 	];
+
+	public function test_schema_no_longer_defines_the_mirror_read_budget(): void {
+		$this->assertArrayNotHasKey( 'stats_mirror_read_budget_ms', \Newspack_Event_Logger_Nodes\Settings_Schema::get()->defaults() );
+	}
 
 	public function test_schema_no_longer_defines_the_retired_ruleset_fields(): void {
 		$names = \Newspack_Event_Logger_Nodes\Settings_Schema::get()->setting_option_names();

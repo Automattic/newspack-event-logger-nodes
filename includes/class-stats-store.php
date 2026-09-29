@@ -19,6 +19,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Table_Node;
 
@@ -167,11 +168,37 @@ class Stats_Store {
 	 * production hub, each with its own entry map, across 288 buckets and four
 	 * partitions. Decision 17 already answers that shape for `urls`; this is the
 	 * same answer for the same reason, and the readers ask at the same two
-	 * resolutions. The per-SERVER tier keeps the fine path: a shard count is a
-	 * constant the schema chooses, but the servers present in an hour cannot be
-	 * enumerated from the keyspace.
+	 * resolutions. Every chart namespace below has the same twin.
 	 */
 	public const NS_LB_HOUR     = 'lb_h';
+	/** The per-server leaderboard's coarse tier, `lb_sh:{server_key}:{Y-m-d-H}`. */
+	public const NS_LB_S_HOUR   = 'lb_sh';
+	/** The request totals' coarse tier, `hourly_h:{Y-m-d-H}`. */
+	public const NS_HOURLY_HOUR = 'hourly_h';
+	/** The dimensional series' coarse tier, `dim_h:{dim}[:{server_key}]:{Y-m-d-H}`. */
+	public const NS_DIM_HOUR    = 'dim_h';
+	/** The category series' coarse tier, `categories_h[:{server_key}]:{Y-m-d-H}`. */
+	public const NS_CAT_HOUR    = 'categories_h';
+	/** One URL's dimensional series' coarse tier, `url_dim_h:{hash}:{Y-m-d-H}`. */
+	public const NS_URL_DIM_HOUR = 'url_dim_h';
+	/** One URL's category series' coarse tier, `url_cat_h:{hash}:{Y-m-d-H}`. */
+	public const NS_URL_CAT_HOUR = 'url_cat_h';
+
+	/**
+	 * Each chart namespace's hour twin. A read names the tier by its key's
+	 * shape — an hour key reads the twin (`hour_parts()`) — so the readers
+	 * ask the current hour's buckets and every older hour's key in one call,
+	 * and the flush writes each twin in the chunk that writes its buckets.
+	 */
+	public const HOUR_TWIN = [
+		self::NS_HOURLY     => self::NS_HOURLY_HOUR,
+		self::NS_DIM        => self::NS_DIM_HOUR,
+		self::NS_CATEGORIES => self::NS_CAT_HOUR,
+		self::NS_LB         => self::NS_LB_HOUR,
+		self::NS_LB_S       => self::NS_LB_S_HOUR,
+		self::NS_URL_DIM    => self::NS_URL_DIM_HOUR,
+		self::NS_URL_CAT    => self::NS_URL_CAT_HOUR,
+	];
 	/** Per-URL stats blob: flame tree and profiles. */
 	public const NS_URL         = 'url';
 	/**
@@ -179,8 +206,7 @@ class Stats_Store {
 	 * the url_hash: `urls:{server_key}:{shard}:{bucket}`. Per-server data has
 	 * the server in the key, so a busy server's rows never compete with a
 	 * quiet one's for a shard's cap. The bucket stays LAST, which is what lets
-	 * `open_bucket_at()`, expiry and the durable read-through work off the key
-	 * alone. Decision 1.
+	 * expiry, the mirror and its sweep work off the key alone. Decision 1.
 	 */
 	public const NS_URLS        = 'urls';
 
@@ -213,8 +239,8 @@ class Stats_Store {
 
 	/**
 	 * The search index: `urltoken:{server_key}:{token}` => the hashes of every
-	 * URL of one server whose path carries a token, or a token prefix,
-	 * spelled so. TTL is the retention window, refreshed by every flush that
+	 * URL of one server whose path carries a word, spelled as `term_tokens()`
+	 * spells it. TTL is the retention window, refreshed by every flush that
 	 * names such a URL, so a live token stays and a dead one ages out.
 	 */
 	public const NS_URLTOKEN = 'urltoken';
@@ -222,25 +248,10 @@ class Stats_Store {
 	/** Candidates a search takes from the index before it falls back to the fold. */
 	public const URL_SEARCH_MAX = 5000;
 
-	/** Longest prefix the index files; a longer term is cut to it on both sides. */
-	public const URL_TOKEN_PREFIX_MAX = 12;
+	/** Longest word the index files; a longer one is cut to it on both sides. */
+	public const TERM_WORD_MAX = 12;
 
-	/**
-	 * Shortest prefix the index files. A two-character prefix names most of a
-	 * real site's URLs, so it saturates at once and narrows nothing the fold
-	 * would not; a term token that short is answered by the fold instead.
-	 */
-	public const URL_TOKEN_PREFIX_MIN = 3;
-
-	/**
-	 * Shortest run of characters that counts as a WORD, filing or matching.
-	 *
-	 * One below `URL_TOKEN_PREFIX_MIN` deliberately: a two-character word is
-	 * never FILED, because its one prefix is itself and that prefix names most
-	 * of a real site, but `term_matches()` still matches it as a word when the
-	 * fold answers the term — so a term of `/at/88` reaches its URLs through
-	 * the fold rather than matching nothing at all.
-	 */
+	/** Shortest run of characters that counts as a WORD, filing or matching. */
 	public const TERM_WORD_MIN = 2;
 
 	/**
@@ -560,27 +571,8 @@ class Stats_Store {
 	/** The same width in seconds — the geometry every rate over these buckets divides by. */
 	public const BUCKET_SECONDS = self::BUCKET_MINUTES * 60;
 
-	/**
-	 * Seconds an absence holds for a key whose frame may still land over it
-	 * unseen: a key that is no bucket, or a bucket the writer's pass may still
-	 * be replacing. Long enough that one reply walks for it once; a dashboard
-	 * polling past it walks for it again.
-	 */
-	public const ABSENCE_HOLD_SECONDS = 20;
-
-	/**
-	 * How far ahead of our clock a producer's bucket still counts as open.
-	 *
-	 * A hub takes each record's own timestamp, so a spoke running slightly fast
-	 * writes a bucket we have not reached. Holding those is right. Holding them
-	 * without a ceiling is not: one corrupt timestamp would pin its frames until
-	 * that year arrives. Past this, a skewed producer pays redundant last-wins
-	 * copies instead — which is a cost, where the other is a leak. One
-	 * `Request_Builder` eviction window under its DEFAULT declaration, the same
-	 * lateness the shipped pipeline tolerates; a topology that declares another
-	 * bucket count warns that this stops matching it.
-	 */
-	private const MAX_FUTURE_SKEW_SEC = Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC;
+	/** Seconds an hour key spans. */
+	public const HOUR_SECONDS = 3600;
 
 	/**
 	 * Ceiling on one reader's bucket enumeration (24h at the 300s width).
@@ -594,24 +586,17 @@ class Stats_Store {
 	public const MAX_READ_BUCKETS = 288;
 
 	/**
-	 * Fine buckets a read keeps: the twelve `RECENT_BUCKETS` a "last hour" rate
-	 * divides by, plus the one still filling that the rate drops.
-	 */
-	public const FINE_BUCKETS = 13;
-
-	/**
 	 * How long a FINE `urls` or `urlsrv` bucket is kept, against
 	 * `min_lifetime` for the coarse tier that outlives it.
 	 *
-	 * The tier has exactly two consumers: `RECENT_BUCKETS` twelve buckets, which
-	 * are the last-hour rate, and `roll_up_hours()`, which builds every coarse
-	 * tier out of a closed hour's fine buckets. It is the window's EDGE and the
-	 * fold's input — never a tier to read old hours from, which is what
-	 * `unfolded_hour_buckets()` holds the readers to.
+	 * The tier has exactly two consumers: a reader, which reads the current
+	 * hour's buckets and no others (`read_plan()`), and `roll_up_hours()`,
+	 * which builds every coarse tier out of a closed hour's fine buckets. It
+	 * is the window's EDGE and the fold's input — never a tier to read old
+	 * hours from.
 	 *
-	 * Two hours covers both: the read plan asks for `FINE_BUCKETS` plus the rest
-	 * of their hour, just under two at the worst minute, and the fold folds an
-	 * hour within a re-probe of it closing. At that width the tier holds 24
+	 * Two hours covers both: the current hour, and the hour just closed for
+	 * the fold and for a late write into it. At that width the tier holds 24
 	 * buckets a shard, where the coarse tier holds one per hour of the
 	 * retention window — twelve at the 43,200 s `min_lifetime` default.
 	 * `ttl_url_fine()` caps it at that window, so a window under two hours
@@ -642,29 +627,13 @@ class Stats_Store {
 	 * Rehydrate seam — the read counterpart of `$mirror`, invoked with the
 	 * keys a read missed on. Handed to every Table as its durable backing, so a
 	 * miss falls through to the mirror and lands back in memcache without any
-	 * caller here knowing. Null (default) leaves the tables memcache-only.
-	 * `Flame_Builder_Node::arm_stats_mirror()` wires the worker's and
-	 * `arm_stats_reader()` a reader's.
+	 * caller here knowing. Null (default) leaves the tables memcache-only,
+	 * which is what a dashboard reader is: only the flame builder's own store
+	 * reads its mirror, through `Flame_Builder_Node::arm_stats_mirror()`.
 	 *
 	 * @var (\Closure(array<array-key,mixed>): ?array<array-key,array{value: mixed, ttl?: int}>)|null
 	 */
 	public ?\Closure $rehydrate = null;
-
-	/**
-	 * Whether an absence the mirror answered is remembered, and for how long:
-	 * null remembers none. A READER's concern — a dashboard polls the same
-	 * window and a sparse server has buckets the mirror holds no frame for,
-	 * each a full walk to say so — and never the writer's, whose own folds
-	 * read a bucket once and whose writes must not compete with a marker.
-	 * `Flame_Builder_Node::arm_stats_reader()` sets it to `absence_holds()`,
-	 * dated from the reply's clock, for a key it walks the mirror for, and to 0
-	 * for one it does not: a namespace the mirror refuses, or the open bucket.
-	 * Signature: `function (string $key): int`, seconds. Read when a table is
-	 * built, so it is set before the first read, as `arm_stats_reader()` does.
-	 *
-	 * @var (\Closure(string): int)|null
-	 */
-	public ?\Closure $absence = null;
 
 	/**
 	 * A reader's memo of the server index, `key => index`, for the one
@@ -814,6 +783,39 @@ class Stats_Store {
 	}
 
 	/**
+	 * When the window a reader reads begins: the start of the oldest hour
+	 * `read_plan()` reads, or of the current hour where it reads none.
+	 *
+	 * The floor of the window as a TIMESTAMP, for readers that compare against
+	 * one rather than against keys — and it is read off the same plan, so
+	 * MAX_READ_BUCKETS caps both alike and no reader can bound itself by a
+	 * window wider than the one it reads.
+	 *
+	 * @param int $retention_seconds How far back the window reaches.
+	 * @param int $now               Clock, so a test window matches its writer's keys.
+	 * @return int Unix timestamp of the oldest read hour's start.
+	 */
+	public static function window_start( int $retention_seconds, int $now ): int {
+		$hours = self::read_plan( self::retention_buckets( $retention_seconds, $now ) )['hours'];
+		$first = [] === $hours ? self::hour_of( self::bucket_key( $now ) ) : \end( $hours );
+		return self::bucket_span( self::buckets_in_hour( $first )[0] )[0] ?? 0;
+	}
+
+	/**
+	 * The fine buckets one hour covers, oldest first.
+	 *
+	 * @param string $hour A `Y-m-d-H` hour key.
+	 * @return list<string>
+	 */
+	public static function buckets_in_hour( string $hour ): array {
+		$out = [];
+		for ( $m = 0; $m < 60; $m += self::BUCKET_MINUTES ) {
+			$out[] = $hour . \sprintf( '-%02d', $m );
+		}
+		return $out;
+	}
+
+	/**
 	 * Every bucket key inside a retention window, newest first — what a reader
 	 * enumerates to walk a bucketed namespace. Static because the window turns
 	 * on retention alone: asking an instance means building the whole store
@@ -833,20 +835,14 @@ class Stats_Store {
 	}
 
 	/**
-	 * When the oldest bucket `retention_buckets()` enumerates begins.
+	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
+	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
+	 * order, which is what lets expiry compare keys with `<` against a cutoff.
 	 *
-	 * The floor of the window as a TIMESTAMP, for readers that compare against
-	 * one rather than against keys — and it is read off the same bucket count,
-	 * so MAX_READ_BUCKETS caps both alike and no reader can bound itself by a
-	 * window wider than the one it enumerates.
-	 *
-	 * @param int $retention_seconds How far back the window reaches.
-	 * @param int $now               Clock, so a test window matches its writer's keys.
-	 * @return int Unix timestamp of the oldest enumerated bucket's start.
+	 * @param int $timestamp Unix timestamp.
 	 */
-	public static function window_start( int $retention_seconds, int $now ): int {
-		return $now - ( $now % self::BUCKET_SECONDS )
-			- ( ( self::window_bucket_count( $retention_seconds ) - 1 ) * self::BUCKET_SECONDS );
+	public static function bucket_key( int $timestamp ): string {
+		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
 	}
 
 	/**
@@ -861,60 +857,17 @@ class Stats_Store {
 	}
 
 	/**
-	 * Whether an entry key names a bucket that can still be written to, as a
-	 * predicate over keys: the bounds come from `$now` once, and each key costs
-	 * a slice and two string comparisons.
+	 * What a read of the whole window covers, by TIER: the current hour's
+	 * buckets, then every hour before it. Both newest first.
 	 *
-	 * The bucket is the LAST key component in every bucketed namespace, so the
-	 * bucket is read off the key; the unbucketed `url` namespace ends in a URL
-	 * hash, which is not bucket-shaped and is never open.
-	 *
-	 * The window is bounded at BOTH ends. Not equality, because a producer's
-	 * clock can run slightly ahead and a bucket we have not reached has not
-	 * finished either; not open-ended, because a broken clock would then pin its
-	 * frames in memory indefinitely (MAX_FUTURE_SKEW_SEC). Lexical order IS
-	 * chronological order here, which is what `bucket_key()` buys.
-	 *
-	 * `$held` stretches the lower end back over buckets that closed that many
-	 * seconds ago or less: a reader of what is written only after a close.
-	 *
-	 * @param int $now  Clock, so a test window matches its writer's keys.
-	 * @param int $held Seconds after its close a bucket still counts as open.
-	 * @return \Closure(string): bool Given an entry key — full as the mirror
-	 *                                seam receives it or Table-relative as a
-	 *                                reader asks — whether its bucket is open.
-	 */
-	public static function open_bucket_at( int $now, int $held = 0 ): \Closure {
-		$opened  = self::bucket_key( $now - $held );
-		$ceiling = self::bucket_key( $now + self::MAX_FUTURE_SKEW_SEC );
-		// Shape comes from bucket_key() itself, never a second spelling of it.
-		return static function ( string $key ) use ( $opened, $ceiling ): bool {
-			$bucket = self::bucket_of( $key );
-			return \strlen( $bucket ) === \strlen( $opened ) && $bucket >= $opened && $bucket <= $ceiling;
-		};
-	}
-
-	/**
-	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
-	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
-	 * order, which is what lets expiry compare keys with `<` against a cutoff.
-	 *
-	 * @param int $timestamp Unix timestamp.
-	 */
-	public static function bucket_key( int $timestamp ): string {
-		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
-	}
-
-	/**
-	 * What a read of the whole window covers, by TIER: the recent fine buckets,
-	 * then the closed hours behind them. Both newest first.
-	 *
-	 * The hours stop where the fine tail begins, so nothing is counted twice —
-	 * the hour the fine tail reaches into is NOT in `hours`, and the fine tail
-	 * is what covers it. The OLDEST hour is whole, so the window's far edge is
-	 * hour-granular and rounds outward: a 24h read may carry up to 59 extra
-	 * minutes rather than drop traffic inside its own window. Retention is a
-	 * floor, and five-minute precision at that edge answered no question.
+	 * The fine tier answers the current hour alone, which no hour key covers
+	 * yet, and every closed hour is its hour key or nothing: an hour key a
+	 * reader misses is the flame builder's to derive again, never the reader's
+	 * to rebuild from twelve buckets. So nothing is counted twice. The window
+	 * starts on the hour: the oldest hour it holds only part of is not read,
+	 * so every hour read is whole, and a total, a rate or a leaderboard sums
+	 * whole hour keys exactly — the current hour so far and the whole hours
+	 * before it, never an hour key standing in for part of an hour.
 	 *
 	 * @param list<string> $window The window to split, newest first —
 	 *                             `retention_buckets()` at the reply's one clock read.
@@ -924,25 +877,20 @@ class Stats_Store {
 	 * @return array{fine: list<string>, hours: list<string>}
 	 */
 	public static function read_plan( array $window ): array {
-		$fine = \array_slice( $window, 0, self::FINE_BUCKETS );
-		// @longform The hour the fine tail lands IN is read fine-grained to its
-		// END, not to wherever the tail stopped. Handing it to the coarse tier
-		// instead would read it twice; leaving it out reads the rest of that
-		// hour at NEITHER resolution, and that hole is a function of the
-		// minute — nothing at :00, eleven buckets of it at :59. So
-		// FINE_BUCKETS is a floor, and the boundary does the rest.
-		$covered = self::hour_of( (string) \end( $fine ) );
+		$current = self::hour_of( $window[0] ?? '' );
+		$fine    = [];
 		$hours   = [];
-		foreach ( \array_slice( $window, self::FINE_BUCKETS ) as $bucket ) {
+		foreach ( $window as $bucket ) {
 			$hour = self::hour_of( $bucket );
-			if ( $hour === $covered ) {
+			if ( $hour === $current ) {
 				$fine[] = $bucket;
 				continue;
 			}
 			// Keyed: distinctness is structural, order stays newest-first.
-			$hours[ $hour ] = true;
+			$hours[ $hour ] = ( $hours[ $hour ] ?? 0 ) + 1;
 		}
-		return [ 'fine' => $fine, 'hours' => \array_keys( $hours ) ];
+		$whole = \array_filter( $hours, static fn ( int $held ): bool => \intdiv( 60, self::BUCKET_MINUTES ) === $held );
+		return [ 'fine' => $fine, 'hours' => \array_map( 'strval', \array_keys( $whole ) ) ];
 	}
 
 	/**
@@ -1105,16 +1053,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read many COARSE leaderboard hours in a single round-trip.
-	 *
-	 * @param array<int,string> $hours Hour keys.
-	 * @return array<string,mixed> Bucket sums keyed by hour; misses absent.
-	 */
-	public function get_leaderboard_hours( array $hours ): array {
-		return $this->lookup_buckets( self::lb_hour_parts(), $hours );
-	}
-
-	/**
 	 * Read many leaderboard buckets, global or per server.
 	 *
 	 * @param array<int,string> $buckets Bucket keys.
@@ -1142,53 +1080,45 @@ class Stats_Store {
 	 * Read many buckets of one namespace in a single round-trip.
 	 *
 	 * A dashboard walks the whole retention window — hundreds of buckets — and
-	 * per-key gets across it are the latency cliff this exists to avoid.
+	 * per-key gets across it are the latency cliff this exists to avoid. An
+	 * hour key reads the namespace's hour twin (`hour_parts()`), so a reader
+	 * hands the current hour's buckets and the older hours together.
+	 *
+	 * Decisions 1 and 6, through `bucket_get_multi()`, so it answers a failed
+	 * read, and a missing backend, as every read does.
 	 *
 	 * @param array<int,string> $parts   Namespace prefix parts, before the bucket.
-	 * @param array<int,string> $buckets Bucket keys.
+	 * @param array<int,string> $buckets Bucket or hour keys.
 	 * @param ?bool             $failed  Set true when the cache left some bucket unanswered.
 	 * @param-out bool          $failed
 	 * @return array<string,mixed> Values keyed by bucket; misses absent.
 	 */
 	private function lookup_buckets( array $parts, array $buckets, ?bool &$failed = null ): array {
-		$out = [];
-		foreach ( $this->lookup_bucket_sets( [ $parts ], $buckets, $failed ) as [ $bucket, $value ] ) {
-			$out[ $bucket ] = $value;
-		}
-		return $out;
-	}
-
-	/**
-	 * Read several namespace prefixes across the same buckets in ONE round-trip,
-	 * as `[bucket, value]` pairs.
-	 *
-	 * Decisions 1 and 6, through `bucket_get_multi()`, so it answers a failed
-	 * read, and a missing backend, as every read does. Which prefix answered
-	 * is not carried, because no caller needs it: every read is of one prefix.
-	 * Each read keeps its own slot, so one prefix cannot shadow another's.
-	 *
-	 * @param array<int,array<int,string>> $prefix_sets Namespace prefix parts, before the bucket.
-	 * @param array<int,string>            $buckets     Bucket keys.
-	 * @param ?bool                        $failed      Set true when the cache left some key unanswered.
-	 * @param-out bool                     $failed
-	 * @return list<array{0: string, 1: array<array-key,mixed>}>
-	 */
-	private function lookup_bucket_sets( array $prefix_sets, array $buckets, ?bool &$failed = null ): array {
 		$reads = [];
-		foreach ( $prefix_sets as $parts ) {
-			foreach ( $buckets as $bucket ) {
-				$reads[] = [ $parts, $bucket ];
-			}
+		foreach ( $buckets as $bucket ) {
+			$reads[] = [ 1 === \preg_match( '/^\d{4}-\d{2}-\d{2}-\d{2}$/D', $bucket ) ? self::hour_parts( $parts ) : $parts, $bucket ];
 		}
 		$values = $this->bucket_get_multi( $reads, $batch_failed );
 		$failed = self::unanswered( $values, $batch_failed );
 		$out    = [];
 		foreach ( $values as $at => $value ) {
 			if ( null !== $value ) {
-				$out[] = [ $reads[ $at ][1], $value ];
+				$out[ $reads[ $at ][1] ] = $value;
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * A chart namespace's prefix in its hour tier: the same scope under the
+	 * namespace's hour twin (`HOUR_TWIN`).
+	 *
+	 * @param array<int,string> $parts A fine-tier prefix, its namespace first.
+	 * @return array<int,string>
+	 */
+	public static function hour_parts( array $parts ): array {
+		$parts[0] = self::HOUR_TWIN[ $parts[0] ] ?? throw new \LogicException( "no hour tier for {$parts[0]}" );
+		return $parts;
 	}
 
 	/**
@@ -1349,13 +1279,12 @@ class Stats_Store {
 	 * What the derived tiers hold for each of `$hours`: two batched reads.
 	 *
 	 * `missing` names what keeps the hour unfolded, or is null for a folded
-	 * one: its server index (`missing index`), the global leaderboard's hour
-	 * (`missing lb_h`), or a shard some entry of the index names (`missing
-	 * shard`). A server missing a named shard is an hour whose rows no reader
-	 * sees whole, a missing leaderboard hour is one the board skips, and the
-	 * fold is what would otherwise never revisit either. The index and the
-	 * leaderboard go first, because the index says which keys the second
-	 * read asks for (decision 6).
+	 * one: its server index (`missing index`), or a shard some entry of the
+	 * index names (`missing shard`). A server missing a named shard is an
+	 * hour whose rows no reader sees whole, and the fold is what would
+	 * otherwise never revisit it. The index goes first, because it says which
+	 * keys the second read asks for (decision 6). No chart hour key is asked
+	 * after: the flush writes those through, so none is the fold's.
 	 *
 	 * `unranked` names every server the index names whose DONE marker is
 	 * missing. The marker alone is not enough: memcached evicts by slab
@@ -1369,19 +1298,18 @@ class Stats_Store {
 	 * @param array<int,string> $hours  Hour keys to probe.
 	 * @param ?bool             $failed Set true when the cache left some key unanswered.
 	 * @param-out bool          $failed
-	 * @return array<string,array{missing: ?string, unranked: list<string>}> Only hours holding something.
+	 * @return array<string,array{missing: ?string, unranked: list<string>}> Only hours holding an index.
 	 */
 	public function url_hours_derived( array $hours, ?bool &$failed = null ): array {
 		$reads = [];
 		foreach ( $hours as $hour ) {
 			$reads[] = [ self::url_srv_parts( true ), $hour ];
-			$reads[] = [ self::lb_hour_parts(), $hour ];
 		}
-		$heads = $this->bucket_get_multi( $reads, $heads_failed );
+		$read  = $this->bucket_get_multi( $reads, $heads_failed );
 		$keys  = [];
 		$owner = [];
 		foreach ( \array_values( $hours ) as $at => $hour ) {
-			foreach ( self::index_entries( $heads[ 2 * $at ] ?? [] ) as $key => [ self::SRV_NAME => $name, self::SRV_SHARDS => $mask ] ) {
+			foreach ( self::index_entries( $read[ $at ] ?? [] ) as $key => [ self::SRV_NAME => $name, self::SRV_SHARDS => $mask ] ) {
 				$keys[]  = [ self::url_rank_done_parts( $key ), $hour ];
 				$owner[] = $name;
 				foreach ( self::shards_in( $mask, true ) as $shard ) {
@@ -1393,7 +1321,7 @@ class Stats_Store {
 		$missing  = [];
 		$unranked = [];
 		$values   = $this->bucket_get_multi( $keys, $values_failed );
-		$failed   = self::unanswered( $heads, $heads_failed ) || self::unanswered( $values, $values_failed );
+		$failed   = self::unanswered( $read, $heads_failed ) || self::unanswered( $values, $values_failed );
 		foreach ( $values as $at => $value ) {
 			$hour = $keys[ $at ][1];
 			$name = $owner[ $at ];
@@ -1409,17 +1337,11 @@ class Stats_Store {
 		}
 		$out = [];
 		foreach ( \array_values( $hours ) as $at => $hour ) {
-			[ $index, $board ] = \array_slice( $heads, 2 * $at, 2 );
-			if ( null === $index && null === $board ) {
+			if ( null === ( $read[ $at ] ?? null ) ) {
 				continue;
 			}
 			$out[ $hour ] = [
-				'missing'  => match ( true ) {
-					null === $index            => 'missing index',
-					null === $board            => 'missing lb_h',
-					isset( $missing[ $hour ] ) => 'missing shard',
-					default                    => null,
-				},
+				'missing'  => isset( $missing[ $hour ] ) ? 'missing shard' : null,
 				'unranked' => $unranked[ $hour ] ?? [],
 			];
 		}
@@ -1509,15 +1431,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Namespace prefix for the coarse global leaderboard.
-	 *
-	 * @return list<string>
-	 */
-	public static function lb_hour_parts(): array {
-		return [ self::NS_LB_HOUR ];
-	}
-
-	/**
 	 * The keys of one tier whose ranking lost a header record or a list,
 	 * touching each derived key it finds for what is left of its key's life,
 	 * `ranking_parts()` in order, at most `$budget` touches in all: a round
@@ -1527,10 +1440,9 @@ class Stats_Store {
 	 * one past its life is owed nothing, and one found missing a key asks no
 	 * more of its keys.
 	 *
-	 * An hour's keys live until its last bucket leaves the window
-	 * (`window_remaining()`), a bucket's for its fine life
-	 * (`fine_life_remaining()`), so a touch holds a key no longer than its
-	 * write did. Where the budget runs out, `left` and `at` say where the
+	 * Each key is touched for what is left of its life (`life_left()`): an
+	 * hour's until its last bucket leaves the window, a bucket's for its fine
+	 * life, so a touch holds a key no longer than its write did. Where the budget runs out, `left` and `at` say where the
 	 * next call resumes: the keys still owed a probe, the first from touch
 	 * `at`. An index read the cache leaves unanswered is no index naming no
 	 * server, so the next call resumes at its slice; a touch the backend does
@@ -1556,7 +1468,7 @@ class Stats_Store {
 				return [ 'lost' => $lost, 'left' => \array_slice( $keys, $i ), 'at' => $at, 'touched' => $touched, 'unanswered' => false ];
 			}
 			foreach ( $slice as $key ) {
-				$ttl   = $hour ? $this->window_remaining( self::key( self::NS_URLRANK_HOUR_S, $key ), $now ) : $this->fine_life_remaining( $key, $now );
+				$ttl   = $this->life_left( self::key( $hour ? self::NS_URLRANK_HOUR_S : self::NS_URLRANK_S, $key ), $now, $now );
 				$names = $ttl > 0 ? \array_values( self::index_names( $index[ $key ] ?? [] ) ) : [];
 				$parts = self::ranking_parts( $names, $hour );
 				for ( $end = \count( $parts ); $at < $end; ++$at ) {
@@ -1623,20 +1535,6 @@ class Stats_Store {
 	 */
 	public static function index_names( array $entries ): array {
 		return \array_map( static fn ( array $entry ): string => $entry[ self::SRV_NAME ], $entries );
-	}
-
-	/**
-	 * What is left of a fine bucket's life: `ttl_url_fine()` from its END,
-	 * which is about when its last ranking wrote it, so a touch holds a key
-	 * no longer than that write did.
-	 *
-	 * @param string $bucket A `Y-m-d-H-i` bucket key.
-	 * @param int    $now    The flush's tick.
-	 * @return int Seconds, 0 when spent or when `$bucket` names no bucket.
-	 */
-	private function fine_life_remaining( string $bucket, int $now ): int {
-		$span = self::bucket_span( $bucket );
-		return null === $span ? 0 : self::life_after( $span, $this->ttl_url_fine(), $now );
 	}
 
 	/**
@@ -1753,7 +1651,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * Group named paths by every token each is filed under — the one place
+	 * Group named paths by every word each is filed under — the one place
 	 * the tokenize-and-group loop is spelled, for the flush and for a test
 	 * seeding what the flush would have written.
 	 *
@@ -1763,7 +1661,7 @@ class Stats_Store {
 	public static function token_sets_of( array $names ): array {
 		$out = [];
 		foreach ( $names as $hash => $path ) {
-			foreach ( self::url_tokens( $path ) as $token ) {
+			foreach ( self::term_tokens( $path ) as $token ) {
 				$out[ $token ][] = (string) $hash;
 			}
 		}
@@ -1771,50 +1669,13 @@ class Stats_Store {
 	}
 
 	/**
-	 * Every key a path is filed under: each prefix of each of its tokens, so
-	 * a term typed halfway still names it.
-	 *
-	 * @param string $path The URL's path, as `path_of()` returns it.
-	 * @return list<string>
-	 */
-	public static function url_tokens( string $path ): array {
-		$out = [];
-		foreach ( self::term_tokens( $path ) as $token ) {
-			for ( $len = self::URL_TOKEN_PREFIX_MIN, $max = \strlen( $token ); $len <= $max; $len++ ) {
-				$out[ \substr( $token, 0, $len ) ] = true;
-			}
-		}
-		return \array_map( 'strval', \array_keys( $out ) );
-	}
-
-	/**
-	 * A search term's tokens, or a path's: lowercase alphanumeric runs of
-	 * `TERM_WORD_MIN` characters or more, cut to `URL_TOKEN_PREFIX_MAX`, in
-	 * source order.
-	 *
-	 * @param string $text Search term or path.
-	 * @return list<string>
-	 */
-	public static function term_tokens( string $text ): array {
-		$out = [];
-		foreach ( \preg_split( '/' . self::TOKEN_SEP . '+/', \strtolower( $text ) ) ?: [] as $token ) {
-			if ( \strlen( $token ) >= self::TERM_WORD_MIN ) {
-				$out[ \substr( $token, 0, self::URL_TOKEN_PREFIX_MAX ) ] = true;
-			}
-		}
-		// An all-digit token is an INT key; every reader promises a string.
-		return \array_map( 'strval', \array_keys( $out ) );
-	}
-
-	/**
 	 * The token sets this partition holds for `$servers`, unioned per token,
 	 * in one round trip.
 	 *
 	 * WHICH tokens can be answered at all is the schema's to say, so a caller
-	 * tests neither floor nor sentinel: `false` is a token no read can answer —
-	 * one shorter than `URL_TOKEN_PREFIX_MIN`, refused here rather than asked
-	 * for, or one whose set has saturated for any server asked — and a token
-	 * none of them holds is ABSENT, which is a real answer narrowing to nothing.
+	 * tests no sentinel: `false` is a token whose set has saturated for any
+	 * server asked, and a token none of them holds is ABSENT, which is a real
+	 * answer narrowing to nothing.
 	 *
 	 * @param list<string> $tokens  Tokens, as `term_tokens()` spells them.
 	 * @param list<string> $servers Server names whose sets to read.
@@ -1825,10 +1686,6 @@ class Stats_Store {
 		$sets  = [];
 		$reads = [];
 		foreach ( $tokens as $token ) {
-			if ( \strlen( $token ) < self::URL_TOKEN_PREFIX_MIN ) {
-				$sets[ $token ] = false;
-				continue;
-			}
 			foreach ( $servers as $server ) {
 				$reads[] = [ self::url_token_parts( self::server_key( $server ) ), $token ];
 			}
@@ -1855,7 +1712,7 @@ class Stats_Store {
 	/**
 	 * Read many buckets across DIFFERENT namespaces in one round trip.
 	 *
-	 * `lookup_bucket_sets()` reads one namespace over many buckets; this reads
+	 * `lookup_buckets()` reads one namespace over many buckets; this reads
 	 * an arbitrary mix, which is what a flush touches. Every read keeps its own
 	 * slot, under the key `$reads` carried, because a caller merges `result[i]`
 	 * onto `reads[i]` and a collapsed miss would land every later merge on the
@@ -2142,38 +1999,105 @@ class Stats_Store {
 	}
 
 	/**
-	 * Put each written frame in the absence a reader remembered for its key,
-	 * for what is left of its window: the life a read-through would give it.
-	 * A key holding a value keeps it and a key holding nothing stays empty,
-	 * so no live entry is evicted. Every role's table shares this
-	 * partition's namespace, so one table replaces for all; a key of
-	 * another partition is left alone.
+	 * Add back each frame memcache no longer holds, in one read and an add a
+	 * missing key, and say which it added.
 	 *
-	 * A refused write fails soft, as every stats write does, but says so:
-	 * each refused key keeps serving its absence until it expires, and a
-	 * rate-limited warning counts them.
+	 * An add, never a set: a value the builder wrote since the frame stands.
+	 * Each key lives what it would have had memcache kept it (`life_left()`),
+	 * so a spent one is left out. A read the cache leaves unanswered adds
+	 * nothing (decision 3), and a key of another partition is left alone.
 	 *
-	 * @api The flame builder, once the frames are on disk.
-	 * @param array<string,array<array-key,mixed>> $frames Durable key,
-	 *        `entry_key()`-shaped for this partition => the frame's data.
-	 * @param int                                  $now    The writer's tick.
+	 * @api The flame builder's sweep of its own mirror.
+	 * @param array<string,array{data: array<array-key,mixed>, ts: float}> $frames Durable key,
+	 *        `entry_key()`-shaped => the frame's data and when it was written.
+	 * @param int                                                          $now    The sweep's tick.
+	 * @return list<string> The table-relative keys added.
 	 */
-	public function replace_absent( array $frames, int $now ): void {
+	public function add_missing( array $frames, int $now ): array {
+		$backend = Cache_Backend::shared_first();
 		$head    = self::entry_key( $this->partition, '' );
-		$entries = [];
-		foreach ( $frames as $key => $data ) {
-			if ( \str_starts_with( $key, $head ) ) {
-				$relative             = \substr( $key, \strlen( $head ) );
-				$entries[ $relative ] = [
-					'value' => $data,
-					'ttl'   => $this->window_remaining( $relative, $now ),
-				];
+		$wanted  = [];
+		$failed  = false;
+		foreach ( $frames as $key => [ 'data' => $data, 'ts' => $written ] ) {
+			$relative = \substr( $key, \strlen( $head ) );
+			$life     = \str_starts_with( $key, $head ) ? $this->life_left( $relative, (int) $written, $now ) : 0;
+			if ( $life > 0 ) {
+				$wanted[ Table_Node::entry_key( self::namespace_for( $this->partition ), $relative ) ] = [ $relative, $data, $life ];
 			}
 		}
-		$refused = $this->table( self::ROLE_AGGREGATE )?->replace_absent( $entries ) ?? [];
-		if ( [] !== $refused ) {
-			Core::print_less_often( 'Stats_Store: replace refused; absences stand until they expire: ', (string) \count( $refused ) );
+		$held = [] === $wanted || null === $backend ? [] : $backend->read_multi( \array_keys( $wanted ), $failed );
+		if ( null === $backend || $failed ) {
+			return [];
 		}
+		$added = [];
+		foreach ( \array_diff_key( $wanted, $held ) as $entry_key => [ $relative, $data, $life ] ) {
+			if ( $backend->add( $entry_key, $data, $life ) ) {
+				$added[] = $relative;
+			}
+		}
+		return $added;
+	}
+
+	/**
+	 * What is left of a key's life had memcache kept it: its role's TTL from
+	 * its bucket's END, or from `$written` for a key naming no bucket. Every
+	 * restore sizes a key through this — the sweep's add, and the builder's
+	 * own read of its mirror — and so does the probe's touch.
+	 *
+	 * A bucket is read until its END leaves the window, so an hour dated from
+	 * its start would lapse up to an hour early. The role's TTL is what the
+	 * write gave the key: the fine tier's is a memcache FOOTPRINT, 24 buckets
+	 * a shard rather than 288, so a fine bucket restored for the whole window
+	 * would put back what that tier exists to keep out. `bucket_span()`'s HOUR
+	 * branch serves the hour keys the probe touches: without it an hour key
+	 * falls to the hash-keyed branch and reports a full role TTL.
+	 *
+	 * @api The sweep, the builder's mirror read and the probe's touch window.
+	 * @param string $key     Table-RELATIVE entry key.
+	 * @param int    $written When the key's last value was written; read only
+	 *                        for a key naming no bucket.
+	 * @param int    $now     The caller's tick.
+	 * @return int Seconds, 0 when spent.
+	 */
+	public function life_left( string $key, int $written, int $now ): int {
+		$ttl  = $this->ttl_for( self::namespace_of( $key ) );
+		$span = self::bucket_span( $key );
+		return null === $span ? \max( 0, $written + $ttl - $now ) : self::life_after( $span, $ttl, $now );
+	}
+
+	/**
+	 * What is left of a key's life when it lives `$lifespan` from the END of
+	 * the span it names, which is about when its last write landed.
+	 *
+	 * @param array{0: int, 1: int} $span     `bucket_span()`'s start and span.
+	 * @param int                   $lifespan Seconds the key lives past that end.
+	 * @param int                   $now      The caller's tick.
+	 * @return int Seconds, 0 when spent.
+	 */
+	private static function life_after( array $span, int $lifespan, int $now ): int {
+		return \max( 0, $span[0] + $span[1] + $lifespan - $now );
+	}
+
+	/**
+	 * A table-relative key's namespace: its first segment (decision 1).
+	 *
+	 * @param string $key `<ns>:…` — a bare namespace answers itself.
+	 */
+	public static function namespace_of( string $key ): string {
+		return \explode( ':', $key, 2 )[0];
+	}
+
+	/**
+	 * How long a namespace's value is kept — the role's own TTL.
+	 *
+	 * @param string $ns Namespace, an `NS_*` value.
+	 */
+	private function ttl_for( string $ns ): int {
+		return match ( $this->role_for( $ns ) ) {
+			self::ROLE_URL      => $this->ttl_url_stats(),
+			self::ROLE_URL_FINE => $this->ttl_url_fine(),
+			default             => $this->ttl(),
+		};
 	}
 
 	/**
@@ -2289,6 +2213,29 @@ class Stats_Store {
 	}
 
 	/**
+	 * Which table a namespace is written through.
+	 *
+	 * Two groups leave the aggregate table. `url` takes its own, for the
+	 * accumulator tier and `ttl_url_stats()`. The fine `urls` and `urlsrv`
+	 * tiers are read at the window's EDGE and answered behind that by `urls_h`
+	 * and `urlsrv_h`, so their TTL is their read window rather than the
+	 * retention window.
+	 *
+	 * @param string $ns Namespace, an `NS_*` value.
+	 */
+	private function role_for( string $ns ): string {
+		return match ( $ns ) {
+			self::NS_URL => self::ROLE_URL,
+			// An index outliving the fine rows it names is one nothing reads.
+			self::NS_URLS,
+			self::NS_URLSRV,
+			self::NS_URLRANK_S,
+			self::NS_URLHDR    => self::ROLE_URL_FINE,
+			default            => self::ROLE_AGGREGATE,
+		};
+	}
+
+	/**
 	 * Whether a key is an absolute mirror key rather than one relative to its
 	 * namespace — what the checkpoint carry keeps, and what a reader may file a
 	 * frame as.
@@ -2384,7 +2331,7 @@ class Stats_Store {
 	 *                     a miss.
 	 */
 	private function table( string $role ): ?Table_Node {
-		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
+		if ( null === Cache_Backend::shared_first() ) {
 			return null;
 		}
 		if ( ! isset( $this->tables[ $role ] ) ) {
@@ -2400,15 +2347,24 @@ class Stats_Store {
 			if ( $is_url ) {
 				$table->accumulator( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
 			} else {
-				// Read seam indirect (re-armed later); absence seam as is.
+				// Indirect: the read seam is re-armed after the table is built.
 				$table->backed_by(
-					fn ( array $keys ): ?array => null !== $this->rehydrate ? ( $this->rehydrate )( $keys ) : [],
-					$this->absence
+					fn ( array $keys ): ?array => null !== $this->rehydrate ? ( $this->rehydrate )( $keys ) : []
 				);
 			}
 			$this->tables[ $role ] = $table;
 		}
 		return $this->tables[ $role ];
+	}
+
+	/** Retention for a FINE `urls` or `urlsrv` bucket: its read window, never the whole one. */
+	public function ttl_url_fine(): int {
+		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
+	}
+
+	/** Retention for the high-volume `url` namespace: the retention window cut to a 24th, floored at an hour. */
+	public function ttl_url_stats(): int {
+		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
 	}
 
 	/**
@@ -2427,153 +2383,6 @@ class Stats_Store {
 	 */
 	private static function mirror_prefix(): string {
 		return self::PREFIX_BASE . ':p';
-	}
-
-	/**
-	 * How long an absence the mirror answered for `$key` holds.
-	 *
-	 * A bucket's absence holds for what is left of the window, so the walk
-	 * that found nothing runs once per closed bucket rather than on every
-	 * poll: a sparse server has such buckets in every window, and each walk
-	 * spends read budget the series needs. Only a CLOSED bucket reaches here:
-	 * the reader walks for no bucket closed less than `MIRROR_LAG_S` ago
-	 * (`Flame_Builder_Node::arm_stats_reader()`), by which a running worker
-	 * has written its frames. A worker writing a frame later — restored,
-	 * delayed or re-held — puts the frame in the marker once it is on disk.
-	 *
-	 * That replacement reads the markers once, so a walk that straddles the
-	 * pass marks its key after the read and nothing replaces it. A bucket
-	 * closed less than `$settle` before the reply may be in that race, and
-	 * so may a key that is no bucket, whose write waits for its checkpoint:
-	 * both hold only `ABSENCE_HOLD_SECONDS`.
-	 *
-	 * @api The `$absence` seam, per key the mirror did not return.
-	 * @param string $key    Table-relative entry key.
-	 * @param int    $now    The reply's clock, read once at its entry (decision 29).
-	 * @param int    $settle Seconds after its close the writer's pass may still
-	 *                       miss a marker: its lag plus the longest walk.
-	 * @return int Seconds the absence holds; 0 holds none.
-	 */
-	public function absence_holds( string $key, int $now, int $settle ): int {
-		$close = self::bucket_end( $key );
-		return null === $close || $now < $close + $settle ? self::ABSENCE_HOLD_SECONDS : $this->window_remaining( $key, $now );
-	}
-
-	/**
-	 * How long an entry is still read: what is left of the RETENTION window,
-	 * bounded by its own role's TTL.
-	 *
-	 * The TTL it was written with bounds the CACHE and decays from the WRITE, so
-	 * a spent one says nothing about how long the data is still READ: the window
-	 * does, and it is a pure function of the bucket key, which is the last
-	 * segment and sorts chronologically. A bucket is read until its END leaves
-	 * the window — the read plan names an hour while any of its twelve buckets
-	 * is in it — so an hour dated from its start would lapse up to an hour
-	 * early. Zero or less means genuinely past retention — nothing asks for
-	 * it, and nothing should warm it.
-	 *
-	 * That end is exact for a retention of whole buckets up to 86,100s. Past
-	 * it `window_bucket_count()` caps the plan at `MAX_READ_BUCKETS`, so the
-	 * answer outlasts the last read by the retention less 86,100s — 300s at
-	 * eln's 24 hours, six days at `min_lifetime`'s 604,800s ceiling — which
-	 * errs long, and the role TTL keeps it from ever being immortal.
-	 *
-	 * The role's TTL is the other bound and is not the same statement.
-	 * `ttl_url_fine()` is a memcache FOOTPRINT: 24 buckets a shard rather than
-	 * 288, because decision 17's coarse tier answers for everything behind the
-	 * edge. Warming a rehydrated fine bucket for the whole window instead puts
-	 * all 288 back in the cache that tier exists to keep out — up to twelve
-	 * times its footprint, for buckets no reader asks for.
-	 *
-	 * Two callers ask. The mirror seam sizes the FINE buckets it hands back,
-	 * and never an hour, since `NS_URLS_HOUR` is a DERIVED namespace it
-	 * filters out. `url_keys_unranked()` asks of an HOUR key on every
-	 * reprobe, to date the touches holding a folded hour's ranked lists.
-	 * `bucket_span()`'s HOUR branch must stay for it: without it an hour key
-	 * falls to the hash-keyed branch and reports a full role TTL.
-	 *
-	 * @api The mirror seam, sizing what it hands back; also the reprobe's
-	 *      touch window.
-	 * @param string $key Table-RELATIVE entry key: `<ns>:…:<bucket>`.
-	 * @param int    $now Clock, so one answer cannot straddle a boundary.
-	 * @return int Seconds remaining, 0 when the key names no readable bucket.
-	 */
-	public function window_remaining( string $key, int $now ): int {
-		$role   = $this->ttl_for( self::namespace_of( $key ) );
-		$bucket = self::bucket_span( $key );
-		if ( null === $bucket ) {
-			// `url` and `urlmap` key on a hash; neither is bucket-shaped.
-			return $role;
-		}
-		return \min( $role, self::life_after( $bucket, $this->max_lifespan, $now ) );
-	}
-
-	/**
-	 * What is left of a key's life when it lives `$lifespan` from the END of
-	 * the span it names, which is about when its last write landed.
-	 *
-	 * @param array{0: int, 1: int} $span     `bucket_span()`'s start and span.
-	 * @param int                   $lifespan Seconds the key lives past that end.
-	 * @param int                   $now      The caller's tick.
-	 * @return int Seconds, 0 when spent.
-	 */
-	private static function life_after( array $span, int $lifespan, int $now ): int {
-		return \max( 0, $span[0] + $span[1] + $lifespan - $now );
-	}
-
-	/**
-	 * A table-relative key's namespace: its first segment (decision 1).
-	 *
-	 * @param string $key `<ns>:…` — a bare namespace answers itself.
-	 */
-	public static function namespace_of( string $key ): string {
-		return \explode( ':', $key, 2 )[0];
-	}
-
-	/**
-	 * How long a namespace's value is kept — the role's own TTL.
-	 *
-	 * @param string $ns Namespace, an `NS_*` value.
-	 */
-	private function ttl_for( string $ns ): int {
-		return match ( $this->role_for( $ns ) ) {
-			self::ROLE_URL      => $this->ttl_url_stats(),
-			self::ROLE_URL_FINE => $this->ttl_url_fine(),
-			default             => $this->ttl(),
-		};
-	}
-
-	/** Retention for a FINE `urls` or `urlsrv` bucket: its read window, never the whole one. */
-	public function ttl_url_fine(): int {
-		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
-	}
-
-	/** Retention for the high-volume `url` namespace: the retention window cut to a 24th, floored at an hour. */
-	public function ttl_url_stats(): int {
-		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
-	}
-
-	/**
-	 * Which table a namespace is written through.
-	 *
-	 * Two groups leave the aggregate table. `url` takes its own, for the
-	 * accumulator tier and `ttl_url_stats()`. The fine `urls` and `urlsrv`
-	 * tiers are read at the window's EDGE and answered behind that by `urls_h`
-	 * and `urlsrv_h`, so their TTL is their read window rather than the
-	 * retention window.
-	 *
-	 * @param string $ns Namespace, an `NS_*` value.
-	 */
-	private function role_for( string $ns ): string {
-		return match ( $ns ) {
-			self::NS_URL => self::ROLE_URL,
-			// An index outliving the fine rows it names is one nothing reads.
-			self::NS_URLS,
-			self::NS_URLSRV,
-			self::NS_URLRANK_S,
-			self::NS_URLHDR    => self::ROLE_URL_FINE,
-			default            => self::ROLE_AGGREGATE,
-		};
 	}
 
 	/**
@@ -2604,7 +2413,7 @@ class Stats_Store {
 			$span  = self::BUCKET_SECONDS;
 		} elseif ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})$/D', $bucket, $m ) ) {
 			$stamp = \strtotime( "{$m[1]}T{$m[2]}:00:00+00:00" );
-			$span  = 3600;
+			$span  = self::HOUR_SECONDS;
 		} else {
 			return null;
 		}
@@ -2741,86 +2550,6 @@ class Stats_Store {
 			if ( \is_array( $stats ) ) {
 				$out[ (string) $key ] = self::sum_entry( Core::arr( $out[ (string) $key ] ?? null ), $stats, $fields );
 			}
-		}
-		return $out;
-	}
-
-	/**
-	 * What answers for every hour the coarse tier did not: the fine buckets
-	 * that stand in, and the hours nothing stands in for.
-	 *
-	 * Every tier reader asks this one question of a plan, and the two facts
-	 * are independent, so both come back and each caller reads the half it
-	 * acts on. A folded hour's fine buckets are NOT read — they outlive the
-	 * fold, and taking both counts the hour twice — and only the GRACE hour
-	 * falls back, so an older uncovered hour is a HOLE. A fold tolerates one
-	 * and comes up short there; the ranked reader cannot, because serving a
-	 * window an hour short as ranked is worse than folding.
-	 *
-	 * @api `Performance_CI_Node`'s `ranked_page()`, `walk_shard_tiers()` and
-	 *      `build_leaderboard()`.
-	 * @param list<string>        $hours   The plan's hours, newest first.
-	 * @param array<string,mixed> $covered Hours the coarse tier answered, keyed.
-	 * @return array{buckets: list<string>, holes: list<string>}
-	 */
-	public static function fine_fallback( array $hours, array $covered ): array {
-		$out   = [];
-		$holes = [];
-		foreach ( $hours as $hour ) {
-			if ( isset( $covered[ $hour ] ) ) {
-				continue;
-			}
-			$buckets = self::unfolded_hour_buckets( $hour, $hours );
-			if ( [] === $buckets ) {
-				$holes[] = $hour;
-				continue;
-			}
-			$out = \array_merge( $out, $buckets );
-		}
-		return [
-			'buckets' => $out,
-			'holes'   => $holes,
-		];
-	}
-
-	/**
-	 * The fine buckets that answer for an unfolded hour.
-	 *
-	 * The fine tier answers the last hour and feeds the fold; it is not a tier
-	 * to read old hours from. So the fallback reaches the GRACE hour — the one
-	 * immediately behind the fine tail, which the fold may simply not have
-	 * caught yet — and stops. Everything older is the coarse tier's.
-	 *
-	 * All twelve, whatever their age against `ttl_url_fine()`. That TTL bounds
-	 * the CACHE — the fine tier is the largest thing this schema puts in a
-	 * 512MB one — and says nothing about how long the data is available: `urls`
-	 * and `urlsrv` mirror in full, the mirror retains for twice the stats
-	 * window, and a spent remainder re-warms rather than reading as a miss.
-	 * That is what lets decision 17 leave the coarse tier UNMIRRORED — an
-	 * evicted hour is rebuilt from buckets that outlive it — and it needs
-	 * `Table_Node::read_through()` to keep serving a record whose cache
-	 * lifetime ran out.
-	 *
-	 * @api `fine_fallback()`, which is how every reader asks it.
-	 * @param string       $hour  A `Y-m-d-H` hour key.
-	 * @param list<string> $hours The plan's hours, newest first; `$hour` is
-	 *                            read finely only when it leads them.
-	 * @return list<string>
-	 */
-	public static function unfolded_hour_buckets( string $hour, array $hours ): array {
-		return $hour === ( $hours[0] ?? null ) ? self::buckets_in_hour( $hour ) : [];
-	}
-
-	/**
-	 * The fine buckets one hour covers, oldest first.
-	 *
-	 * @param string $hour A `Y-m-d-H` hour key.
-	 * @return list<string>
-	 */
-	public static function buckets_in_hour( string $hour ): array {
-		$out = [];
-		for ( $m = 0; $m < 60; $m += self::BUCKET_MINUTES ) {
-			$out[] = $hour . \sprintf( '-%02d', $m );
 		}
 		return $out;
 	}
@@ -3234,22 +2963,26 @@ class Stats_Store {
 	 * `flush_writes()` skips the write, the key keeps the TTL it had, and the
 	 * token rebuilds live-only when that expires.
 	 *
+	 * A hash keeps the later of its stored stamp and the one it arrives with:
+	 * a name the sweep restores carries its own write time, so its entry ages
+	 * out with the name, and never shortens a newer one.
+	 *
 	 * @param array<array-key,mixed> $existing The stored set, `hash => ts`.
-	 * @param list<string>           $hashes   This flush's.
+	 * @param array<string,int>      $stamped  This flush's, `hash => when its name was written`.
 	 * @param int                    $now      Unix seconds this flush is at.
 	 * @return array<string,int> hash => last named.
 	 */
-	public function merge_token_set( array $existing, array $hashes, int $now ): array {
+	public function merge_token_set( array $existing, array $stamped, int $now ): array {
 		$set    = self::string_keys( $existing );
 		$oldest = $now - $this->ttl();
-		if ( \count( $set ) + \count( $hashes ) > self::URL_SEARCH_MAX || self::holds_expired( $set, $oldest ) ) {
+		if ( \count( $set ) + \count( $stamped ) > self::URL_SEARCH_MAX || self::holds_expired( $set, $oldest ) ) {
 			$set = \array_filter( $set, static fn ( $seen ): bool => Core::num_int( $seen ) > $oldest );
 		}
 		if ( isset( $set[ self::TOKEN_SATURATED ] ) ) {
 			return [ self::TOKEN_SATURATED => Core::num_int( $set[ self::TOKEN_SATURATED ] ) ];
 		}
-		foreach ( $hashes as $hash ) {
-			$set[ $hash ] = $now;
+		foreach ( $stamped as $hash => $seen ) {
+			$set[ $hash ] = \max( Core::num_int( $set[ $hash ] ?? 0 ), $seen );
 		}
 		return \count( $set ) > self::URL_SEARCH_MAX
 			? [ self::TOKEN_SATURATED => $now ]
@@ -3298,6 +3031,48 @@ class Stats_Store {
 	}
 
 	/**
+	 * Whether a name answers a term: every token of the term is a WORD of it,
+	 * or the whole term appears when the term has no token at all.
+	 *
+	 * The index files whole words, so the fold it falls back to has to read
+	 * a term the same way. Matching a substring here instead would make `77`
+	 * name `/wombat-1177` through the fold and not through the index, so
+	 * which rows a search returned would turn on whether some other token
+	 * happened to have saturated.
+	 *
+	 * @api The fold, for a candidate the token index already named.
+	 * @param string       $name   The URL's path.
+	 * @param string       $term   The lowercased search term.
+	 * @param list<string> $tokens The term's tokens, as `term_tokens()` spells them.
+	 */
+	public static function term_matches( string $name, string $term, array $tokens ): bool {
+		$name = \strtolower( $name );
+		if ( [] === $tokens ) {
+			return \str_contains( $name, $term );
+		}
+		return [] === \array_diff( $tokens, self::term_tokens( $name ) );
+	}
+
+	/**
+	 * A search term's words, or a path's: distinct lowercase alphanumeric runs
+	 * of `TERM_WORD_MIN` characters or more, cut to `TERM_WORD_MAX`, in
+	 * source order.
+	 *
+	 * @param string $text Search term or path.
+	 * @return list<string>
+	 */
+	public static function term_tokens( string $text ): array {
+		$out = [];
+		foreach ( \preg_split( '/' . self::TOKEN_SEP . '+/', \strtolower( $text ) ) ?: [] as $token ) {
+			if ( \strlen( $token ) >= self::TERM_WORD_MIN ) {
+				$out[ \substr( $token, 0, self::TERM_WORD_MAX ) ] = true;
+			}
+		}
+		// An all-digit token is an INT key; every reader promises a string.
+		return \array_map( 'strval', \array_keys( $out ) );
+	}
+
+	/**
 	 * The index two writes of one key make between them: each server's name
 	 * from `$entries`, and its shards the union of both.
 	 *
@@ -3317,8 +3092,9 @@ class Stats_Store {
 	 *
 	 * Membership is the whole fact, and it sits beside `role_for()` because it
 	 * is the same kind of statement about a namespace: each of these is
-	 * re-derivable, so a durable copy would store one thing twice. The three
-	 * coarse tiers are re-folded from the mirrored fine buckets, the two
+	 * re-derivable, so a durable copy would store one thing twice. The coarse
+	 * tiers, every chart's hour twin among them, are re-folded from the
+	 * mirrored fine buckets, the two
 	 * ranked lists and their header records are re-ranked from those rows on
 	 * the next flush, fold or probe,
 	 * and a token set is rewritten whenever its URL is next named. Every other
@@ -3330,10 +3106,9 @@ class Stats_Store {
 	 * @param string $ns Namespace, an `NS_*` value.
 	 */
 	public static function is_derived( string $ns ): bool {
-		return match ( $ns ) {
+		return \in_array( $ns, self::HOUR_TWIN, true ) || match ( $ns ) {
 			self::NS_URLS_HOUR,
 			self::NS_URLSRV_HOUR,
-			self::NS_LB_HOUR,
 			self::NS_URLRANK_S,
 			self::NS_URLRANK_HOUR_S,
 			self::NS_URLHDR,
@@ -3341,34 +3116,6 @@ class Stats_Store {
 			self::NS_URLTOKEN => true,
 			default           => false,
 		};
-	}
-
-	/**
-	 * Whether a name answers a term: every token of the term begins a WORD of
-	 * it, or the whole term appears when the term has no token at all.
-	 *
-	 * The index files word prefixes, so the fold it falls back to has to read
-	 * a term the same way. Matching a substring here instead would make `77`
-	 * name `/wombat-1177` through the fold and not through the index, so
-	 * which rows a search returned would turn on whether some other token
-	 * happened to have saturated.
-	 *
-	 * @api The fold, for a candidate the token index already named.
-	 * @param string       $name   The URL's path.
-	 * @param string       $term   The lowercased search term.
-	 * @param list<string> $tokens The term's tokens, as `term_tokens()` spells them.
-	 */
-	public static function term_matches( string $name, string $term, array $tokens ): bool {
-		$name = \strtolower( $name );
-		if ( [] === $tokens ) {
-			return \str_contains( $name, $term );
-		}
-		foreach ( $tokens as $token ) {
-			if ( 1 !== \preg_match( '/(?:^|' . self::TOKEN_SEP . ')' . \preg_quote( $token, '/' ) . '/', $name ) ) {
-				return false;
-			}
-		}
-		return true;
 	}
 
 	/**

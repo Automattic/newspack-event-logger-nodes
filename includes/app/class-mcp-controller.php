@@ -101,7 +101,7 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'verb'    => 'overview',
 			'role'    => Capabilities::READ,
-			'summary' => 'Site-wide request totals and the aggregate time series. Per-URL facts live in performance_urls.',
+			'summary' => 'Site-wide request totals and the aggregate time series, over the current clock hour so far and the whole hours before it. Each time-series row carries `span`, the seconds it sums: 3600 for an hour, 300 for a five-minute bucket of the current hour, so compare rows as rates, never as raw counts. Per-URL facts live in performance_urls.',
 			'args'    => [ 'server' => 'Optional server name; scopes the leaderboard and breakdowns, not the site totals.', 'breakdown' => 'Comma-separated dimensions. Each value is the positional triple [ requests, summed ms, summed peak MB ] — sums, never means.' ],
 		],
 		'performance_urls'         => [
@@ -109,7 +109,7 @@ class MCP_Controller {
 			'verb'    => 'urls',
 			'role'    => Capabilities::READ,
 			'summary' => 'The URL leaderboard, sortable and paginated, plus totals and the slowest ten for whatever the filters left. Worker traffic is excluded unless asked for.',
-			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Substring filter.', 'server' => 'Optional server name to scope every row and total to.', 'errors_only' => 'Keeps only URLs with timeouts or fatals (a 5xx is a response, not one); each row and the totals gain `errors`, and a count sort ranks by it.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
+			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Whole words from the search index: a URL matches when every word of the term, two characters or more, is a whole word of its path (`wombat` finds /wombat-7731, `wom` does not). A word too common to index narrows nothing, and a term whose every word is that common finds nothing.','server' => 'Optional server name to scope every row and total to.', 'errors_only' => 'Keeps only URLs with timeouts or fatals (a 5xx is a response, not one); each row and the totals gain `errors`, and a count sort ranks by it.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
 		],
 		'dump_url'                 => [
 			'node'    => 'performance',
@@ -144,7 +144,7 @@ class MCP_Controller {
 			'verb'    => 'ask',
 			'role'    => Capabilities::READ,
 			'summary' => 'The brief for one thing: `overview:site` (the dashboard as scoped), `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<i>` (an entry\'s `i`, its position in the request) or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument; a span or a category given a `url:` descriptor instead answers from that URL\'s aggregate.',
-			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'search' => 'Substring filter an `overview:` brief answers under; ignored by every other descriptor.', 'include_workers' => 'Worker traffic an `overview:` brief counts; excluded by default, as performance_urls excludes it.', 'errors_only' => 'Narrows an `overview:` brief to URLs with timeouts or fatals, and counts their errors.', 'server' => 'Optional server name; scopes an overview: brief, a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate, which is every server\'s.' ],
+			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'search' => 'The search an `overview:` brief answers under: whole words from the search index, matched as performance_urls matches them; ignored by every other descriptor.','include_workers' => 'Worker traffic an `overview:` brief counts; excluded by default, as performance_urls excludes it.', 'errors_only' => 'Narrows an `overview:` brief to URLs with timeouts or fatals, and counts their errors.', 'server' => 'Optional server name; scopes an overview: brief, a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate, which is every server\'s.' ],
 		],
 		'dump_rules'               => [
 			'node'    => 'rules',

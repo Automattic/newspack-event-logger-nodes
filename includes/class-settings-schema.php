@@ -35,11 +35,10 @@ use Newspack_Nodes\Config_System\Schema;
  * The application's Field/Schema declaration.
  *
  * Three settings render as checkboxes — `enable_logging`, `log_memory`, and
- * `flush_every_line`. Eight more keys overlay the config file with no settings
+ * `flush_every_line`. Seven more keys overlay the config file with no settings
  * field at all (`ui: false`): `rules`, `hook_start_priority`, `custom_colors`,
- * `stats_mirror_node`, `stats_mirror_read_budget_ms`,
- * `stats_mirror_segment_size`, `stats_mirror_num_segments` and
- * `recommended_log_events`. URL filters, hook lists, and auto-tune thresholds
+ * `stats_mirror_node`, `stats_mirror_segment_size`,
+ * `stats_mirror_num_segments` and `recommended_log_events`. URL filters, hook lists, and auto-tune thresholds
  * are per-rule fields of the `rules` ruleset, which the React rules editor owns
  * through the `rules` service CI — never the Settings API.
  *
@@ -238,28 +237,12 @@ class Settings_Schema {
 					ui: false,
 					default: [],
 				),
-				// Durable Partition shadowing memcache stats; '' turns it off.
+				// The Partition the builder sweeps into memcache; '' is off.
 				new Field(
 					key: 'stats_mirror_node',
 					type: 'text',
 					ui: false,
 					default: 'flame-stats:partition',
-				),
-				// @longform What the DASHBOARD may spend walking the durable
-				// mirror in ONE verb — a poll batches `overview` and `urls`
-				// into one POST, so a response can spend it twice, and naming
-				// the rows a verb shows spends one more on top of each.
-				// `locate_by()` has no early stop for an absent key, so every
-				// batch that misses costs a full index pass, and a cold `urls`
-				// poll issues thousands of them across sixteen shards and four
-				// partitions. Past the budget the reader answers from memcache
-				// alone (decision 3), which the next poll completes. 0 turns
-				// the reader's mirror read off outright.
-				new Field(
-					key: 'stats_mirror_read_budget_ms',
-					type: 'int',
-					ui: false,
-					default: 5000,
 				),
 				// @longform The stats mirror's own ring geometry, 0 meaning
 				// "follow the substrate value in force". `flame-stats` holds

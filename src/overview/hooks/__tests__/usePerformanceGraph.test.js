@@ -397,6 +397,85 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 	} );
 } );
 
+describe( 'usePerformanceGraph — a newer urls question retires the older', () => {
+	/**
+	 * A wire that holds every `urls` reply sorted by count open until the test
+	 * releases it, and answers any other sort at once.
+	 *
+	 * @return {Array<Function>} The resolvers of the held replies.
+	 */
+	function holdCountSortedUrls() {
+		const held = [];
+		installFakeCommandWire( ( m ) => {
+			if ( 'urls' !== m[ VALUE ]?.name ) {
+				return null;
+			}
+			if (
+				'url' === parseCommandArgs( m[ VALUE ].arguments ).options.sort
+			) {
+				return {
+					data: [ { hash: 'c0ffee7731aa' } ],
+					totals: { urls: 1 },
+				};
+			}
+			return new Promise( ( resolve ) => held.push( resolve ) );
+		} );
+		return held;
+	}
+
+	const bySort = { search: '', order: 'desc', offset: 0 };
+
+	test( 'a sort change aborts the pending request for the old sort', async () => {
+		holdCountSortedUrls();
+		let api;
+		renderHook( () => {
+			api = usePerformanceGraph();
+			return api;
+		} );
+		await act( async () => {} );
+		const fetcher = Core.node( 'urls:fetch' );
+		expect(
+			fetcher.outbox.map(
+				( ask ) => parseCommandArgs( ask.args ).options.sort
+			)
+		).toEqual( [ 'count' ] );
+
+		api.handleUrlParamsChange( { ...bySort, sort: 'url' } );
+
+		expect(
+			fetcher.outbox.map(
+				( ask ) => parseCommandArgs( ask.args ).options.sort
+			)
+		).toEqual( [ 'url' ] );
+	} );
+
+	test( 'a slower stale reply arriving after the newer one is ignored', async () => {
+		const held = holdCountSortedUrls();
+		let api;
+		renderHook( () => {
+			api = usePerformanceGraph();
+			return api;
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			api.handleUrlParamsChange( { ...bySort, sort: 'url' } );
+		} );
+		const view = Core.node( 'urls:view' );
+		expect( view.view.data ).toEqual( [ { hash: 'c0ffee7731aa' } ] );
+
+		await act( async () => {
+			held.forEach( ( resolve ) =>
+				resolve( {
+					data: [ { hash: 'dead0beef111' } ],
+					totals: { urls: 1 },
+				} )
+			);
+		} );
+
+		expect( view.view.data ).toEqual( [ { hash: 'c0ffee7731aa' } ] );
+	} );
+} );
+
 describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 	test( 'debounces a search change (300ms)', async () => {
 		jest.useFakeTimers();

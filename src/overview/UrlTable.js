@@ -506,7 +506,7 @@ export default function UrlTable( {
 					<TextControl
 						__next40pxDefaultSize
 						placeholder={ __(
-							'Search by URL word or prefix…',
+							'Search by whole URL word…',
 							'newspack-event-logger-nodes'
 						) }
 						value={ searchTerm }

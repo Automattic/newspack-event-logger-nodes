@@ -104,7 +104,7 @@
   <div class="cols">
     <div class="card">
       <h3>The trigger is routine, not exotic</h3>
-      <p><span class="m">wp nodes deactivate complete; wp nodes gc --force; wp nodes activate complete</span> replays the whole retention window, and every replayed record carries its original timestamp. A hub sees it without one: a single flame-builder partition takes every spoke's records, so a spoke feeding a backlog while its peers are caught up lands rows in hours already folded. A caught-up spoke's records reach the builder about 14 s old against a fine tail of 65 to 120 minutes.</p>
+      <p><span class="m">wp nodes deactivate complete; wp nodes gc --force; wp nodes activate complete</span> replays the whole retention window, and every replayed record carries its original timestamp. A hub sees it without one: a single flame-builder partition takes every spoke's records, so a spoke feeding a backlog while its peers are caught up lands rows in hours already folded. A caught-up spoke's records reach the builder about 14 s old, and an hour folds at its close.</p>
     </div>
   </div>
 

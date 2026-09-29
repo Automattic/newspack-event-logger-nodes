@@ -74,7 +74,7 @@ table.g td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monos
 <div class="globals">
   <table class="g">
     <tr><th>page global, bound to the bundle's script handle</th><th>carries</th><th>pages</th></tr>
-    <tr><td class="k">eventLoggerDashboards</td><td><span class="mono">restUrl</span>, <span class="mono">nonce</span>, <span class="mono">retentionSeconds</span>; a falsy reading takes the substrate's 24 h default</td><td>all five</td></tr>
+    <tr><td class="k">eventLoggerDashboards</td><td><span class="mono">restUrl</span>, <span class="mono">nonce</span>; the charts' window comes from each reply's <span class="mono">plan</span>, not the page</td><td>all five</td></tr>
     <tr><td class="k">eventLoggerHookCategories</td><td><span class="mono">hook_categories.json</span> whole, <span class="mono">_colors</span> and <span class="mono">_patterns</span> included; the Gyroscope legend's contents are a fixed array in <span class="mono">Inflight.js</span></td><td>all five</td></tr>
     <tr><td class="k">eventLoggerCustomColors</td><td><span class="mono">Config::get_custom_colors()</span>, custom-event name to swatch, read by the substrate's shared <span class="mono">formatUtils</span></td><td>all five</td></tr>
     <tr><td class="k">newspackNodesRecommendedHooks</td><td><span class="mono">recommended_log_events</span>, what the picker's "Recommended" button selects</td><td>settings, overview</td></tr>

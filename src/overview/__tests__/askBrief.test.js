@@ -137,7 +137,7 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 	expect( md ).toContain( '4,210 requests' );
 	expect( md ).toContain( '137 urls' );
 	// `num()` gives a sub-1 value three decimals, as it does everywhere else.
-	expect( md ).toContain( '0.830/s' );
+	expect( md ).toContain( '0.830/s recent' );
 	expect( md ).toContain( '/wp-admin/post.php' );
 	expect( md ).toContain( '5efdf8a72d74' );
 	expect( md ).toContain( 'sql' );

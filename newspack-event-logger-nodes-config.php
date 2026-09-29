@@ -78,22 +78,12 @@ return [
 	// `hook_categories.json`.
 	// 'custom_colors' => [],
 
-	// Name of the durable Partition that shadows memcache stats and is read
-	// back when memcache misses. `flame-builder.tsl` resolves it as the
-	// `<eln:stats_mirror_node>` token and hands it to
+	// Name of the durable Partition that shadows memcache stats, which the
+	// flame builder sweeps back into memcache. `flame-builder.tsl` resolves
+	// it as the `<eln:stats_mirror_node>` token and hands it to
 	// `Flame_Builder_Node::set_stats_target()`, which treats an empty name as
 	// off. The topology already builds `flame-stats:partition` for the job.
 	// 'stats_mirror_node' => 'flame-stats:partition',
-
-	// Milliseconds a DASHBOARD response may spend reading that mirror.
-	// `Partition_Node::locate_by()` has no early stop for a key that is absent,
-	// so every batch missing on memcache costs a full pass over the mirror's
-	// index — measured at ~192ms over 150,000 lines — and one cold `urls` poll
-	// issues thousands of them across sixteen shards and four partitions. Past
-	// the budget the reader answers from memcache alone and the next poll
-	// completes it. 0 turns the reader's mirror read off; the WORKER restoring
-	// its own state is never budgeted.
-	// 'stats_mirror_read_budget_ms' => 5000,
 
 	// The stats mirror's OWN ring geometry, in bytes per segment and segments
 	// kept. 0 means "follow the substrate value in force"

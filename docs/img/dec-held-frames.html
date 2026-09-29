@@ -36,7 +36,7 @@
     <div class="arrow">&rarr;</div>
     <div class="st"><h3>2 · Every 30 s the checkpoint carries the held frames</h3><p><span class="m">save_state()</span> packs them into the Consumer's offsetlog keyframe beside the cursor; <span class="m">restore_state()</span> takes them back. The worker's <span class="m">rehydrate</span> seam consults held frames FIRST, or a mid-bucket eviction makes the read-modify-write restart the bucket from zero. A restored frame carries what is LEFT of the retention window, bounded by its role's TTL (substrate ADR-18): a frame whose CACHE lifetime ran out is still read.</p></div>
     <div class="arrow">&rarr;</div>
-    <div class="st"><h3>3 · The bucket closes: written once to <span class="m">flame-stats</span></h3><p>At the first checkpoint after <span class="m">open_bucket_at()</span> says it closed, the frames go to the partition under the unscoped mirror key and leave the buffer.</p></div>
+    <div class="st"><h3>3 · The bucket closes: written once to <span class="m">flame-stats</span></h3><p>At the first checkpoint after its bucket closes, the frames go to the partition under the unscoped mirror key and leave the buffer.</p></div>
   </div>
 
   <div class="budget">

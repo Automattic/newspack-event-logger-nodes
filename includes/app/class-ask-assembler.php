@@ -737,6 +737,7 @@ class Ask_Assembler {
 				'requests'            => Core::num_int( $totals['requests'] ?? 0 ),
 				'avg_ms'              => Core::num_float( $totals['avg_ms'] ?? 0 ),
 				'avg_peak_mb'         => Core::num_float( $totals['avg_peak_mb'] ?? 0 ),
+				// This hour's closed buckets, or the last hour until :05.
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
 			] + self::errors_of( $totals ),
 			// Whether `stats.urls` is a sketch's estimate.

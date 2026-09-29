@@ -230,7 +230,8 @@ class ItemBudgetTest extends TestCase {
 		}
 		$store->bucket_set_multi( $writes );
 
-		$folded = self::builder( 'fold_hour_leaderboard', $store, $hour );
+		( new \ReflectionMethod( Flame_Builder_Node::class, 'refold_site_hours' ) )->invoke( new Flame_Builder_Node(), $store, [ $hour ] );
+		$folded = $store->get_leaderboard_buckets( [ $hour ] )[ $hour ] ?? [];
 
 		self::assert_fits( $folded, 'an hour of twelve disjoint wide buckets' );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_LB_CATEGORIES, \count( $folded['categories'] ) );
@@ -348,7 +349,7 @@ class ItemBudgetTest extends TestCase {
 			$hashes[] = \sprintf( '%012x', $i );
 		}
 
-		$set = $store->merge_token_set( [], $hashes, self::LAST_SEEN );
+		$set = $store->merge_token_set( [], \array_fill_keys( $hashes, self::LAST_SEEN ), self::LAST_SEEN );
 
 		$this->assertCount( Stats_Store::URL_SEARCH_MAX, $set, 'the largest set short of the sentinel' );
 		self::assert_fits_both( $set, 'a token set at URL_SEARCH_MAX' );

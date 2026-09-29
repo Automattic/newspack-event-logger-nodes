@@ -23,15 +23,11 @@
 
 import { useCallback, useMemo } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
-import {
-	BUCKET_SECONDS,
-	buildTimeSlots,
-	chartColor,
-} from '@newspack-nodes/shared/hooks/useTimeChart';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 import { compactFixed } from '@newspack-nodes/shared/utils/formatters';
 import { hasBuckets } from './AggregateTimeChart';
 import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
-import { RETENTION_SECONDS } from './retention';
+import { buildChartSlots } from './chartSlots';
 
 /**
  * Height of one chart frame, in pixels. Three of them stack in one panel, so
@@ -120,13 +116,17 @@ const formatYValue = ( val, mode ) => {
  *
  * Every series gets a point in every slot, zero where the bucket holds nothing,
  * because `AreaTimeChart` takes its x-domain from the first series alone and
- * reads the rest by that index.
+ * reads the rest by that index. A slot is an hour for each whole hour the
+ * reply read and five minutes inside the current one (`buildChartSlots()`);
+ * both rates divide by the seconds the slot spans, so the two resolutions
+ * share one scale.
  *
- * @param {Object} data Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`.
- * @param {string} mode One of 'time', 'count', or 'average'.
+ * @param {Object}                                             data  Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`.
+ * @param {string}                                             mode  One of 'time', 'count', or 'average'.
+ * @param {Array<{date:Date,bucketKey:string,seconds:number}>} slots The axis, from the reply's plan.
  * @return {Array<{label:string,values:Array<{date:Date,value:number}>}>} Series in rank order.
  */
-const buildSeries = ( data, mode ) => {
+const buildSeries = ( data, mode, slots ) => {
 	const names = data?.names ?? [];
 	const buckets = data?.buckets ?? {};
 	// Positional row: [ nameIndex, t, c, n ] — named only here.
@@ -143,7 +143,6 @@ const buildSeries = ( data, mode ) => {
 	const ranked = Object.keys( totals ).sort(
 		( a, b ) => totals[ b ] - totals[ a ]
 	);
-	const slots = buildTimeSlots( RETENTION_SECONDS );
 	// One lookup per bucket, built once, rather than a scan per slot per band.
 	const byBucket = {};
 	Object.entries( buckets ).forEach( ( [ key, rows ] ) => {
@@ -166,9 +165,9 @@ const buildSeries = ( data, mode ) => {
 			if ( mode === 'average' ) {
 				value = c > 0 ? t / c : 0;
 			} else if ( mode === 'time' ) {
-				value = t / 1000 / BUCKET_SECONDS;
+				value = t / 1000 / slot.seconds;
 			} else {
-				value = c / BUCKET_SECONDS;
+				value = c / slot.seconds;
 			}
 			return { date: slot.date, value };
 		} ),
@@ -182,17 +181,19 @@ const buildSeries = ( data, mode ) => {
  * whenever `series`, `yFormatFor` or `colorAt` changes, and the URL modal
  * re-renders on every scroll event.
  *
- * @param {Object}      props      Component props.
- * @param {Object|null} props.data Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
+ * @param {Object}                                 props      Component props.
+ * @param {Object|null}                            props.data Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
+ * @param {{fine: string[], hours: string[]}|null} props.plan The read plan the reply named; the axis splits where it did.
  * @return {import('react').ReactElement[]|null} One chart per view, or null when data is empty.
  */
-export default function CategoryTimeChart( { data } ) {
+export default function CategoryTimeChart( { data, plan } ) {
+	const slots = useMemo( () => buildChartSlots( plan ), [ plan ] );
 	const series = useMemo(
 		() =>
 			CATEGORY_VIEWS.map( ( { mode } ) =>
-				data ? buildSeries( data, mode ) : []
+				data ? buildSeries( data, mode, slots ) : []
 			),
-		[ data ]
+		[ data, slots ]
 	);
 
 	// Each mode's unit is fixed, so the peak the chart draws changes nothing.
@@ -211,7 +212,7 @@ export default function CategoryTimeChart( { data } ) {
 	const colorAt = useCallback( ( _label, index ) => chartColor( index ), [] );
 
 	// Emptiness asks about the BUCKETS, and below every hook: order matters.
-	if ( ! hasBuckets( data?.buckets ) ) {
+	if ( ! hasBuckets( data?.buckets ) || 0 === slots.length ) {
 		return null;
 	}
 

@@ -1,8 +1,10 @@
 /**
  * Aggregate time chart — the Performance dashboard's main time series.
  *
- * Plots the whole retention window in 5-minute buckets (`buildTimeSlots`),
- * one translucent area per series, overlaid; the chart's own corner toggle
+ * Plots the window the reply read (`buildChartSlots`): an hour a point for
+ * each whole hour before the current one and five minutes a point inside it,
+ * each sum read per five minutes so the two resolutions share one scale. One
+ * translucent area per series, overlaid; the chart's own corner toggle
  * stacks them, and the total row appears with the stack. `AreaTimeChart` owns
  * the frame; this file owns the sampling.
  *
@@ -31,12 +33,9 @@ import {
  * @type {number}
  */
 const MS_PER_SECOND = 1000;
-import {
-	buildTimeSlots,
-	chartColor,
-} from '@newspack-nodes/shared/hooks/useTimeChart';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
-import { RETENTION_SECONDS } from './retention';
+import { buildChartSlots, perBucket } from './chartSlots';
 
 /**
  * Total SVG height in pixels, margins included, handed to `AreaTimeChart`.
@@ -95,17 +94,19 @@ const Y_FORMATS = {
 };
 
 /**
- * Reduce one bucket's totals to the plotted value for a metric.
+ * Reduce one slot's totals to the plotted value for a metric.
  *
- * @param {string} metric    'volume' | 'avg' | 'cumulative' | 'memory'.
- * @param {number} count     Requests in the bucket.
- * @param {number} sumMs     Milliseconds of response time in the bucket.
- * @param {number} sumPeakMb Megabytes of peak memory in the bucket.
- * @return {number} Requests for `volume`, mean milliseconds for `avg`, summed
- * seconds for `cumulative`, mean megabytes for `memory`. An empty bucket
- * averages to 0 rather than dividing by zero.
+ * @param {string}            metric    'volume' | 'avg' | 'cumulative' | 'memory'.
+ * @param {number}            count     Requests in the slot.
+ * @param {number}            sumMs     Milliseconds of response time in the slot.
+ * @param {number}            sumPeakMb Megabytes of peak memory in the slot.
+ * @param {{seconds: number}} slot      The slot, an hour or five minutes.
+ * @return {number} Requests per five minutes for `volume`, mean milliseconds
+ * for `avg`, summed seconds per five minutes for `cumulative`, mean megabytes
+ * for `memory`: a sum reads per bucket, so an hour sits on the buckets'
+ * scale. An empty slot averages to 0 rather than dividing by zero.
  */
-const bucketValue = ( metric, count, sumMs, sumPeakMb ) => {
+const slotValue = ( metric, count, sumMs, sumPeakMb, slot ) => {
 	if ( 'memory' === metric ) {
 		return count > 0 ? sumPeakMb / count : 0;
 	}
@@ -113,9 +114,9 @@ const bucketValue = ( metric, count, sumMs, sumPeakMb ) => {
 		return count > 0 ? Math.round( sumMs / count ) : 0;
 	}
 	if ( 'cumulative' === metric ) {
-		return sumMs / 1000;
+		return perBucket( sumMs / 1000, slot );
 	}
-	return count;
+	return perBucket( count, slot );
 };
 
 /**
@@ -185,25 +186,29 @@ export function breakdownState( breakdownData = null ) {
  * may mount it before the first fetch returns — and must keep the dropdowns up
  * around it, since they are the only way to pick a dimension that does.
  *
- * @param {Object}      props                Component props.
- * @param {Object|null} props.breakdownData  Bucket key => dimension value => `[ count, sumMs, sumPeakMb ]`.
- * @param {string}      [props.metric]       'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
- * @param {string}      [props.breakdown]    Dimension `breakdownData` was fetched for, defaulting to 'status'; picks the palette only.
- * @param {string}      [props.serverFilter] Server name for the heading; the caller has already filtered the data.
+ * @param {Object}                                 props                Component props.
+ * @param {Object|null}                            props.breakdownData  Bucket key => dimension value => `[ count, sumMs, sumPeakMb ]`.
+ * @param {{fine: string[], hours: string[]}|null} props.plan           The read plan the reply named; the axis splits where it did.
+ * @param {string}                                 [props.metric]       'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
+ * @param {string}                                 [props.breakdown]    Dimension `breakdownData` was fetched for, defaulting to 'status'; picks the palette only.
+ * @param {string}                                 [props.serverFilter] Server name for the heading; the caller has already filtered the data.
  * @return {import('react').ReactElement|null} Rendered chart, or null when the dimension has no series.
  */
 export default function AggregateTimeChart( {
 	breakdownData,
+	plan,
 	metric = 'volume',
 	breakdown = 'status',
 	serverFilter = '',
 } ) {
 	const chartState = useMemo( () => {
-		if ( 'series' !== breakdownState( breakdownData ) ) {
+		const slots = buildChartSlots( plan );
+		if (
+			'series' !== breakdownState( breakdownData ) ||
+			0 === slots.length
+		) {
 			return { series: [], colorMap: {} };
 		}
-
-		const slots = buildTimeSlots( RETENTION_SECONDS );
 
 		const valueSet = new Set();
 		Object.values( breakdownData ).forEach( ( bucket ) => {
@@ -216,23 +221,24 @@ export default function AggregateTimeChart( {
 
 		const series = dimValues.map( ( label ) => ( {
 			label,
-			values: slots.map( ( { date, bucketKey } ) => {
+			values: slots.map( ( slot ) => {
 				// DIM_SUMS, positional from the store to here: decision 18.
-				const s = breakdownData[ bucketKey ]?.[ label ] || [];
+				const s = breakdownData[ slot.bucketKey ]?.[ label ] || [];
 				return {
-					date,
-					value: bucketValue(
+					date: slot.date,
+					value: slotValue(
 						metric,
 						s[ 0 ] || 0,
 						s[ 1 ] || 0,
-						s[ 2 ] || 0
+						s[ 2 ] || 0,
+						slot
 					),
 				};
 			} ),
 		} ) );
 
 		return { series, colorMap };
-	}, [ breakdownData, metric, breakdown ] );
+	}, [ breakdownData, plan, metric, breakdown ] );
 
 	// The unit follows the DOMAIN: the chart builds it from the peak it draws.
 	const yFormatFor = Y_FORMATS[ metric ];
@@ -257,26 +263,14 @@ export default function AggregateTimeChart( {
 		memory: __( 'Avg Peak Memory', 'newspack-event-logger-nodes' ),
 	};
 
-	// No unit in an axis title: the ticks carry it, and it moves with the data.
+	// A title names a summed point's span; the ticks carry the unit.
 	const yLabels = {
 		...metricLabels,
-		volume: __( 'Requests', 'newspack-event-logger-nodes' ),
-		cumulative: __( 'Cumulative Time', 'newspack-event-logger-nodes' ),
+		volume: __( 'Requests per 5 min', 'newspack-event-logger-nodes' ),
+		cumulative: __( 'Time per 5 min', 'newspack-event-logger-nodes' ),
 	};
 
 	const titleSuffix = serverFilter ? ` — ${ serverFilter }` : '';
-	const retentionLabel =
-		RETENTION_SECONDS >= 3600
-			? sprintf(
-					// translators: %d: number of hours of data retention shown.
-					__( '%d Hours', 'newspack-event-logger-nodes' ),
-					Math.round( RETENTION_SECONDS / 3600 )
-			  )
-			: sprintf(
-					// translators: %d: number of minutes of data retention shown.
-					__( '%d Minutes', 'newspack-event-logger-nodes' ),
-					Math.round( RETENTION_SECONDS / 60 )
-			  );
 
 	// Keyed on the metric: a stack of means is no total, so a pick retires.
 	return (
@@ -291,11 +285,14 @@ export default function AggregateTimeChart( {
 			totalLabel={ __( 'Total', 'newspack-event-logger-nodes' ) }
 			title={
 				sprintf(
-					// translators: 1: metric name (e.g. Request Volume), 2: retention window (e.g. 24 Hours).
-					__( '%1$s (Last %2$s)', 'newspack-event-logger-nodes' ),
+					// translators: 1: metric name (e.g. Request Volume), 2: whole hours read before the current one.
+					__(
+						'%1$s (This Hour and the %2$d Before It)',
+						'newspack-event-logger-nodes'
+					),
 					metricLabels[ metric ] ||
 						__( 'Chart', 'newspack-event-logger-nodes' ),
-					retentionLabel
+					plan?.hours?.length ?? 0
 				) + titleSuffix
 			}
 		/>
