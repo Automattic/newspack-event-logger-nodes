@@ -75,8 +75,8 @@ export const views = {
 		 * since. `ranked`, `provisional` and `as_of` ride straight off the
 		 * reply, never derived: `ranked` says whether the server answered
 		 * from its per-bucket ranked lists, `provisional` whether those
-		 * totals skipped a record the
-		 * writer has yet to rank, and `as_of` is
+		 * totals are short of an hour or record the writer has yet to fold
+		 * or rank, or of an index read that went unanswered, and `as_of` is
 		 * the server clock the page's rows were current at, which
 		 * `<UrlTable>` ages every row against.
 		 *

@@ -48,9 +48,10 @@ final class Stats_Ask_Recorder_Node extends Node {
 	public array $asked = [];
 
 	/**
-	 * While set, an `MGET` asking a key that carries this (matched against
-	 * `:{key}`) is answered here with the TM_ERROR its Table sends when the
-	 * read fails, and never reaches the Table: a batch that went unanswered.
+	 * While set, an `MGET` or `SMEMBERS` asking a key that carries this
+	 * (matched against `:{key}`) is answered here with the TM_ERROR its Table
+	 * sends when the read fails, and never reaches the Table: a batch that
+	 * went unanswered.
 	 */
 	public string $refuse = '';
 
@@ -64,13 +65,14 @@ final class Stats_Ask_Recorder_Node extends Node {
 				'to'    => Core::as_string( $message[ Message::TO ], '' ),
 				'value' => \is_array( $value ) || \is_string( $value ) ? $value : '',
 			];
-			if ( $this->refuses( $value ) ) {
+			$verb = $this->refuses( $value );
+			if ( null !== $verb ) {
 				$error                   = Message::new_message();
 				$error[ Message::TYPE ]  = Message::TM_ERROR;
 				$error[ Message::FROM ]  = $message[ Message::TO ];
 				$error[ Message::TO ]    = $message[ Message::FROM ];
 				$error[ Message::ID ]    = $message[ Message::ID ];
-				$error[ Message::VALUE ] = "MGET: backend read failed\n";
+				$error[ Message::VALUE ] = "{$verb}: backend read failed\n";
 				parent::fill( $error );
 				return;
 			}
@@ -79,20 +81,24 @@ final class Stats_Ask_Recorder_Node extends Node {
 	}
 
 	/**
-	 * Whether a request is an `MGET` asking a key `$refuse` names.
+	 * The read verb of a request asking a key `$refuse` names, or null.
 	 *
 	 * @param mixed $value The request's VALUE.
 	 */
-	private function refuses( mixed $value ): bool {
+	private function refuses( mixed $value ): ?string {
 		$words = '' !== $this->refuse && \is_string( $value ) ? ( \preg_split( '/\s+/', \trim( $value ), -1, \PREG_SPLIT_NO_EMPTY ) ?: [] ) : [];
-		if ( 'MGET' !== \array_shift( $words ) ) {
-			return false;
+		$verb  = \array_shift( $words );
+		if ( 'SMEMBERS' === $verb ) {
+			// Its limit comes before the keys.
+			\array_shift( $words );
+		} elseif ( 'MGET' !== $verb ) {
+			return null;
 		}
 		foreach ( $words as $key ) {
 			if ( \str_contains( ':' . $key, $this->refuse ) ) {
-				return true;
+				return $verb;
 			}
 		}
-		return false;
+		return null;
 	}
 }

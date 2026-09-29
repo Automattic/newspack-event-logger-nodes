@@ -154,6 +154,7 @@ export default function RequestDetailView( {
 					entries={ indentedEntries }
 					realCount={ realEntryCount }
 					revealRef={ revealRef }
+					request={ requestDetail }
 				/>
 			) }
 		</div>

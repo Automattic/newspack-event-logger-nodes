@@ -266,6 +266,44 @@ class RequestBuilderTest extends TestCase {
 		$this->assertStringContainsString( 'USER_SWITCHING_SECURE_COOKIE', $req['fatal_error'] );
 	}
 
+	/**
+	 * A stop latched mid-request makes the terminal `process (aborted)`, and
+	 * `write_terminal()` still puts the fatal on it. The record keeps both:
+	 * the abort as its status, the fatal's detail as its fields.
+	 */
+	public function test_an_aborted_terminal_carries_its_fatal_onto_the_record(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /kokako-4438' ] );
+		$this->fill(
+			$rb,
+			3,
+			'r1',
+			'process (aborted)',
+			[
+				'duration_ms'  => 44.38,
+				'status_code'  => 503,
+				'error_status' => 'A',
+				'fatal_error'  => 'Uncaught Error: Call to undefined method Kokako_4438::sing()',
+				'fatal_file'   => '/srv/htdocs/wp-content/plugins/kokako-4438/kokako.php',
+				'fatal_line'   => 4438,
+				'fatal_type'   => 16,
+				'fatal_plugin' => 'kokako-4438',
+			]
+		);
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( 'A', $req['error_status'] );
+		$this->assertSame( 'Uncaught Error: Call to undefined method Kokako_4438::sing()', $req['fatal_error'] ?? null );
+		$this->assertSame( '/srv/htdocs/wp-content/plugins/kokako-4438/kokako.php', $req['fatal_file'] ?? null );
+		$this->assertSame( 4438, $req['fatal_line'] ?? null );
+		$this->assertSame( 16, $req['fatal_type'] ?? null );
+		$this->assertSame( 'kokako-4438', $req['fatal_plugin'] ?? null );
+	}
+
 	public function test_a_clean_completion_carries_no_fatal_fields(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();

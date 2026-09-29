@@ -40,7 +40,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * read window, because the hour tiers answer for it behind the recent tail,
  * and `flame-stats:aggregate` holds every other namespace for the window,
  * floored at the `CHART_HOURS` a chart reads. A write states no TTL of its
- * own; `max_lifespan()` is the READ window alone.
+ * own, but for one: a `urltoken` member lives `max_lifespan()`, the window,
+ * from its last add. Otherwise `max_lifespan()` is the READ window alone.
  *
  * Bucketing is part of the key schema, so it lives here: `bucket_key()` is the
  * five-minute `Y-m-d-H-i` derivation every producer and reader shares, and
@@ -48,10 +49,11 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * chart namespace keys by the hour instead, its value holding the hour's
  * twelve five-minute slots (`slot_of()`, decision 35).
  *
- * The store asks each Table through its owner's `Table_Client`: MGET, MSET and
- * RM by message, TO the Table's node name, the reply coming back TO the
- * owner. Every exchange stays in-process — the builder's Tables live in its
- * own worker graph, and a reader mounts them into its own request graph —
+ * The store asks each Table through its owner's `Table_Client`: MGET, MSET,
+ * RM, and SADD and SMEMBERS for the search index, by message, TO the Table's
+ * node name, the reply coming back TO the owner. Every exchange stays
+ * in-process — the builder's Tables live in its own worker graph, and a
+ * reader mounts them into its own request graph —
  * because one value reply may outgrow the 4 KB a message may carry across
  * an IPC hop (ADR-4). Reads and writes fail soft: a Table that does not
  * answer yields `[]`, `null` or `false`, and the dashboards render "no data"
@@ -197,19 +199,35 @@ class Stats_Store {
 	public const SRV_SHARDS = 1;
 
 	/**
-	 * The search index, one set per server per whole word:
-	 * `urltoken:{server_key}:{word}` => `hash => last named`, the unix second
-	 * each URL of that server whose path carries the word was last filed, the
-	 * word spelled as `term_tokens()` spells it. `merge_token_set()` drops a
-	 * hash the retention window has passed over and caps the set at
-	 * `URL_SEARCH_MAX`; one hash past it the set becomes `TOKEN_SATURATED`
-	 * alone, which narrows no search. The key lives the aggregate Table's TTL
-	 * from its last write, so a word no flush names ages out.
+	 * The search index, one set per server per whole word, the word spelled
+	 * as `term_tokens()` spells it: `urltoken:{server_key}:{word}`, a set KEY
+	 * whose members are the hashes of that server's URLs whose paths carry
+	 * the word, each valued by the unix second its name was last filed. A
+	 * member lives the retention window from its last add, so a URL no flush
+	 * names again leaves the set on its own.
 	 */
 	public const NS_URLTOKEN = 'urltoken';
 
-	/** Candidates a search takes from the index before it falls back to the fold. */
+	/**
+	 * Members a search takes from one word's set. A set holding more answers
+	 * the Table's over-limit marker and no member, and narrows nothing.
+	 */
 	public const URL_SEARCH_MAX = 5000;
+
+	/**
+	 * Words of one search term one read names, longest first, since a
+	 * longer word is the rarer (`search_groups()`). Each word read costs up
+	 * to `URL_SEARCH_MAX` members for every server searched, all held until
+	 * the read returns, so a caller's term must not set the multiplier:
+	 * three words at 5,000 members across a 9-server hub is 135,000 members,
+	 * where a term of ten read at once would be 450,000. The next three are
+	 * read only when every word of the last came back over the limit, which
+	 * costs one message a set and no member, so the bound holds for any
+	 * term. Three is enough to narrow, because the intersection is at most
+	 * its smallest set and the walk checks every word of the term, read or
+	 * not, against each candidate's own path.
+	 */
+	public const SEARCH_WORDS_READ = 3;
 
 	/** Longest word the index files; a longer one is cut to it on both sides. */
 	public const TERM_WORD_MAX = 12;
@@ -223,9 +241,6 @@ class Stats_Store {
 	 * on one alphabet and match on another.
 	 */
 	private const TOKEN_SEP = '[^a-z0-9]';
-
-	/** The one entry a token set holds once it passed `URL_SEARCH_MAX`: no hash spells so. */
-	public const TOKEN_SATURATED = '*';
 
 	/**
 	 * The URL index's COARSE tier: `urls_h:{server_key}:{shard}:{Y-m-d-H}`, one
@@ -565,11 +580,13 @@ class Stats_Store {
 	 * hours from.
 	 *
 	 * Two hours covers both: the current hour, and the hour just closed for
-	 * the fold and for a late write into it. At that width the tier holds 24
-	 * buckets a shard, where the coarse tier keeps one per hour for
+	 * the fold and for a late write into it. The fold waits on the builder's
+	 * data clock, so a replay holds an hour open longer; an hour held for all
+	 * but a bucket of `fine_ttl()` folds regardless. At that width the tier
+	 * holds 24 buckets a shard, where the coarse tier keeps one per hour for
 	 * `<eln:stats_ttl>`, 25 at the 43,200 s `min_lifetime` default.
-	 * `<eln:stats_url_fine_ttl>` caps it at that window, so a window under two hours
-	 * bounds the fine tier instead.
+	 * `fine_ttl()` caps it at the window, so a window under two hours bounds
+	 * the fine tier instead.
 	 */
 	public const FINE_TTL_SECONDS = 7200;
 
@@ -595,6 +612,18 @@ class Stats_Store {
 	 * @var array<string,array<string,array{0:string,1:int}>|null>|null
 	 */
 	public ?array $server_indexes = null;
+
+	/**
+	 * A reader's memo of the DONE markers, `{server_key}:{hour} => present`,
+	 * for the one reply the store serves: the header, its `slowest` lists and
+	 * the ranked page each ask whether an hour is owed. Null, the default,
+	 * reads every time. `Performance_CI_Node::stats_stores()` sets it to []
+	 * beside `$server_indexes`. A marker a Table left unanswered is never
+	 * kept.
+	 *
+	 * @var array<string,bool>|null
+	 */
+	public ?array $done_markers = null;
 
 	/** @var int Retention window in seconds, as Config::stats_retention_seconds() floored it. */
 	private int $max_lifespan;
@@ -801,17 +830,20 @@ class Stats_Store {
 	 * An hour answers only when its list stands, since the hour stands for
 	 * twelve buckets and a reader serving it ranked must see all of it; an
 	 * hour whose index does not name the scope answers with an empty list,
-	 * the scope idle in it. A fine bucket answers with the list it holds,
-	 * which is what a ranking not yet due leaves.
+	 * the scope idle in it. An hour the writer still owes (`waiting_hours()`)
+	 * answers nothing and is named in `$waiting`. A fine bucket answers with
+	 * the list it holds, which is what a ranking not yet due leaves.
 	 *
 	 * @param array<int,string> $hours   Hour keys.
 	 * @param array<int,string> $buckets Bucket keys.
 	 * @param string            $sort    A `URL_SORTS` value.
 	 * @param string            $order   A `URL_ORDERS` value.
 	 * @param string            $server  Reporting server; '' is the site.
+	 * @param-out list<string>  $waiting
+	 * @param list<string>|null $waiting Set to the hours the writer still owes.
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
-	public function url_rank_window( array $hours, array $buckets, string $sort, string $order, string $server ): array {
+	public function url_rank_window( array $hours, array $buckets, string $sort, string $order, string $server, ?array &$waiting = null ): array {
 		$tiers = [
 			[ true, $hours ],
 			[ false, $buckets ],
@@ -825,20 +857,23 @@ class Stats_Store {
 				}
 			}
 		}
+		$done    = $this->done_reads( $hours, $index );
+		$values  = $this->bucket_get_multi( [ ...$reads, ...$done ], $failed );
+		$waiting = $this->waiting_hours( $hours, $index, $done, \array_slice( $values, \count( $reads ) ), $failed );
+		$owed    = \array_flip( $waiting );
 		$lists   = [];
 		$missing = [];
-		foreach ( [] === $reads ? [] : $this->bucket_get_multi( $reads ) as $at => $entries ) {
-			$key = $reads[ $at ][1];
-			if ( null === $entries ) {
+		foreach ( $reads as $at => [ , $key ] ) {
+			if ( null === $values[ $at ] ) {
 				$missing[ $key ] = true;
 				continue;
 			}
-			$lists[ $key ] = $entries;
+			$lists[ $key ] = $values[ $at ];
 		}
 		$out = [];
 		foreach ( $tiers as [ $hour, $keys ] ) {
 			foreach ( $keys as $key ) {
-				$whole = isset( $index[ $key ] ) && ! isset( $missing[ $key ] );
+				$whole = isset( $index[ $key ] ) && ! isset( $missing[ $key ] ) && ! isset( $owed[ $key ] );
 				if ( $hour ? ! $whole : ! isset( $lists[ $key ] ) ) {
 					continue;
 				}
@@ -856,14 +891,17 @@ class Stats_Store {
 	 * record: the scope idle there, or an hour folded idle. One whose index
 	 * names the scope answers with the scope's record — the site's, or the
 	 * server's — or null where that record is missing, a HOLE. A key holding
-	 * no index is absent: a bucket nothing wrote, or an hour not yet folded.
+	 * no index is absent: a bucket nothing wrote. An hour the writer still
+	 * owes (`waiting_hours()`) is absent too, and named in `$waiting`.
 	 *
 	 * @param array<int,string> $hours   Hour keys.
 	 * @param array<int,string> $buckets Bucket keys.
 	 * @param string            $server  Reporting server; '' is the site.
+	 * @param-out list<string>  $waiting
+	 * @param list<string>|null $waiting Set to the hours the writer still owes.
 	 * @return array<string,Url_Header|null>
 	 */
-	public function url_headers( array $hours, array $buckets, string $server ): array {
+	public function url_headers( array $hours, array $buckets, string $server, ?array &$waiting = null ): array {
 		$index = $this->scope_index( $hours, $buckets, $server );
 		$out   = [];
 		$reads = [];
@@ -878,10 +916,13 @@ class Stats_Store {
 				}
 			}
 		}
-		foreach ( [] === $reads ? [] : $this->bucket_get_multi( $reads ) as $at => $record ) {
-			$out[ $reads[ $at ][1] ] = self::url_header_record( $record );
+		$done    = $this->done_reads( $hours, $index );
+		$values  = $this->bucket_get_multi( [ ...$reads, ...$done ], $failed );
+		$waiting = $this->waiting_hours( $hours, $index, $done, \array_slice( $values, \count( $reads ) ), $failed );
+		foreach ( $reads as $at => [ , $key ] ) {
+			$out[ $key ] = self::url_header_record( $values[ $at ] );
 		}
-		return $out;
+		return \array_diff_key( $out, \array_flip( $waiting ) );
 	}
 
 	/**
@@ -904,6 +945,70 @@ class Stats_Store {
 			self::HDR_HAS_OTHER   => true === ( $raw[ self::HDR_HAS_OTHER ] ?? null ),
 			self::HDR_URLS        => $sketch,
 		];
+	}
+
+	/**
+	 * The hours of `$hours` the writer still owes the scope: one holding no
+	 * index, or one a server it names has no DONE marker for. Such an hour
+	 * waits on the builder's data clock, or on the re-rank a late write
+	 * owes, so a reader reads it as provisional-empty and never as a hole:
+	 * a hole sends the page to the whole-index fold. A read a Table left
+	 * unanswered lands here too, the index's or the marker's, and the
+	 * provisional, uncached answer is the one decision 3 wants for it. What
+	 * this read answered joins `$done_markers`; what it left unanswered does
+	 * not, so the next reply asks again.
+	 *
+	 * @param array<int,string>                                  $hours  Hour keys.
+	 * @param array<string,array<string,array{0:string,1:int}>> $index  The scope's index.
+	 * @param list<array{0: array<int,string>, 1: string}>       $done   `done_reads()`.
+	 * @param array<array<string,mixed>|null>                    $values What each of `$done` read.
+	 * @param bool                                               $failed A Table left some key of the batch unanswered.
+	 * @return list<string>
+	 */
+	private function waiting_hours( array $hours, array $index, array $done, array $values, bool $failed ): array {
+		$seen     = [];
+		$answered = [];
+		foreach ( \array_values( $values ) as $at => $marker ) {
+			[ $parts, $hour ] = $done[ $at ];
+			$key              = "{$parts[2]}:{$hour}";
+			$seen[ $key ]     = null !== $marker;
+			if ( null !== $marker || ! $failed ) {
+				$answered[ $key ] = null !== $marker;
+			}
+		}
+		if ( null !== $this->done_markers ) {
+			$this->done_markers = $answered + $this->done_markers;
+		}
+		$known = $seen + ( $this->done_markers ?? [] );
+		$owed  = \array_fill_keys( \array_diff( $hours, \array_keys( $index ) ), true );
+		foreach ( $hours as $hour ) {
+			foreach ( \array_keys( $index[ $hour ] ?? [] ) as $server_key ) {
+				if ( ! ( $known[ "{$server_key}:{$hour}" ] ?? false ) ) {
+					$owed[ $hour ] = true;
+				}
+			}
+		}
+		return \array_map( 'strval', \array_keys( $owed ) );
+	}
+
+	/**
+	 * The DONE marker of every server a scope's index names in each hour of
+	 * `$hours`, as reads to ride the hour's own list or record read.
+	 *
+	 * @param array<int,string>                                  $hours Hour keys.
+	 * @param array<string,array<string,array{0:string,1:int}>> $index The scope's index.
+	 * @return list<array{0: array<int,string>, 1: string}>
+	 */
+	private function done_reads( array $hours, array $index ): array {
+		$reads = [];
+		foreach ( $hours as $hour ) {
+			foreach ( \array_map( 'strval', \array_keys( $index[ $hour ] ?? [] ) ) as $server_key ) {
+				if ( ! isset( $this->done_markers[ "{$server_key}:{$hour}" ] ) ) {
+					$reads[] = [ self::url_rank_done_parts( $server_key ), $hour ];
+				}
+			}
+		}
+		return $reads;
 	}
 
 	/**
@@ -1304,6 +1409,18 @@ class Stats_Store {
 	}
 
 	/**
+	 * Whether a batch read left any key unanswered: the batch failed and a
+	 * key came back null, which the backing could not fill and which is
+	 * therefore no absence.
+	 *
+	 * @param array<array-key,mixed> $values What the read answered, a null for each miss.
+	 * @param bool                   $failed The read's `$failed`.
+	 */
+	public static function unanswered( array $values, bool $failed ): bool {
+		return $failed && \in_array( null, $values, true );
+	}
+
+	/**
 	 * Namespace prefix of one server's DONE marker for an hour:
 	 * `urlrank_sh:done:{server_key}:{hour}`.
 	 *
@@ -1337,6 +1454,52 @@ class Stats_Store {
 			if ( \is_string( $name ) && \is_int( $shards ) ) {
 				$out[ (string) $key ] = [ self::SRV_NAME => $name, self::SRV_SHARDS => $shards ];
 			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Read many buckets across DIFFERENT namespaces in one round trip.
+	 *
+	 * `lookup_hours()` reads one namespace over many hours; this reads
+	 * an arbitrary mix, which is what a flush touches. Every read keeps its own
+	 * slot, under the key `$reads` carried, because a caller merges `result[i]`
+	 * onto `reads[i]` and a collapsed miss would land every later merge on the
+	 * wrong key.
+	 *
+	 * A MISS is null and a stored value is itself, `[]` included: an hour folded
+	 * with no rows is written empty, and a probe reading that as absence folds
+	 * it again for the rest of the window.
+	 *
+	 * A read that never happened is null too, so a caller merging onto the
+	 * result passes `$failed` and reads nothing into a null while it is set.
+	 *
+	 * @param array<array-key,array{0: array<int,string>, 1: string}> $reads  `[ parts, bucket ]` pairs.
+	 * @param ?bool                                                   $failed Set true when a Table
+	 *                                                                        asked did not answer.
+	 * @param-out bool                                                $failed
+	 * @return array<array-key,array<string,mixed>|null> One entry per read, keyed as `$reads` was.
+	 */
+	public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
+		$failed = false;
+		if ( [] === $reads ) {
+			return [];
+		}
+		$keys  = [];
+		$asked = [];
+		foreach ( $reads as $i => [ $parts, $bucket ] ) {
+			$keys[ $i ]                              = self::key( ...[ ...$parts, $bucket ] );
+			$asked[ $this->table_for( $parts[0] ) ][] = $keys[ $i ];
+		}
+		$found = [];
+		foreach ( $asked as $table => $table_keys ) {
+			$found += $this->client->get_multi( $table, $table_keys, $one_failed );
+			$failed = $failed || $one_failed;
+		}
+		$out = [];
+		foreach ( $keys as $i => $key ) {
+			$value     = $found[ $key ] ?? null;
+			$out[ $i ] = \is_array( $value ) ? self::string_keys( $value ) : null;
 		}
 		return $out;
 	}
@@ -1403,47 +1566,49 @@ class Stats_Store {
 
 	/**
 	 * The token sets this partition holds for `$servers`, unioned per token,
-	 * in one round trip.
+	 * in one `SMEMBERS` exchange asking each set for `URL_SEARCH_MAX`
+	 * members.
 	 *
-	 * WHICH tokens can be answered at all is the schema's to say, so a caller
-	 * tests no sentinel: `false` is a token whose set has saturated for any
-	 * server asked, or every token when the read went unanswered, and a token
-	 * none of them holds is ABSENT, which is a real answer narrowing to
-	 * nothing.
+	 * WHICH tokens can be answered at all is the schema's to say: `false` is
+	 * a token whose set holds more than `URL_SEARCH_MAX` members for any
+	 * server asked, or every token when the read went unanswered, and a
+	 * token none of them holds is ABSENT, which is a real answer narrowing
+	 * to nothing.
 	 *
-	 * @param list<string> $tokens  Tokens, as `term_tokens()` spells them.
+	 * @param list<string> $tokens  At most `SEARCH_WORDS_READ` tokens, one of
+	 *                              `search_groups()`, as `term_tokens()` spells them.
 	 * @param list<string> $servers Server names whose sets to read.
 	 * @param-out bool     $failed
-	 * @param ?bool        $failed  Set true when a Table left some set unanswered.
+	 * @param ?bool        $failed  Set true when the Table left the read unanswered.
 	 * @return array<string,list<string>|false> token => hashes, or false when
 	 *                                          no read can answer it; absent when unheld.
+	 * @throws \LogicException On more tokens than one read names.
 	 */
 	public function url_token_sets( array $tokens, array $servers, ?bool &$failed = null ): array {
-		$sets  = [];
-		$reads = [];
+		if ( \count( $tokens ) > self::SEARCH_WORDS_READ ) {
+			throw new \LogicException( 'Stats_Store::url_token_sets() reads at most ' . self::SEARCH_WORDS_READ . ' words; read a term through search_groups()' );
+		}
+		$tokens_of = [];
 		foreach ( $tokens as $token ) {
 			foreach ( $servers as $server ) {
-				$reads[] = [ self::url_token_parts( self::server_key( $server ) ), $token ];
+				$tokens_of[ self::key( ...[ ...self::url_token_parts( self::server_key( $server ) ), $token ] ) ] = $token;
 			}
 		}
-		$values = $this->bucket_get_multi( $reads, $read_failed );
-		$failed = self::unanswered( $values, $read_failed );
+		$found = $this->client->members( $this->table_for( self::NS_URLTOKEN ), \array_keys( $tokens_of ), self::URL_SEARCH_MAX, $failed );
 		if ( $failed ) {
 			return \array_fill_keys( $tokens, false );
 		}
-		foreach ( $values as $at => $set ) {
-			$token = $reads[ $at ][1];
-			if ( null === $set || false === ( $sets[ $token ] ?? null ) ) {
-				continue;
+		$sets = [];
+		foreach ( $found as $key => $members ) {
+			$token = $tokens_of[ (string) $key ];
+			if ( false !== ( $sets[ $token ] ?? null ) ) {
+				$sets[ $token ] = null === $members ? false : ( $sets[ $token ] ?? [] ) + $members;
 			}
-			// The hashes are the KEYS; the stamps are the writer's alone.
-			$sets[ $token ] = isset( $set[ self::TOKEN_SATURATED ] )
-				? false
-				: ( $sets[ $token ] ?? [] ) + $set;
 		}
 		$out = [];
 		foreach ( $tokens as $token ) {
 			if ( isset( $sets[ $token ] ) ) {
+				// The hashes are the members; the stamps are the writer's.
 				$out[ $token ] = false === $sets[ $token ] ? false : \array_map( 'strval', \array_keys( $sets[ $token ] ) );
 			}
 		}
@@ -1451,61 +1616,24 @@ class Stats_Store {
 	}
 
 	/**
-	 * Whether a batch read left any key unanswered: the batch failed and a
-	 * key came back null, which the backing could not fill and which is
-	 * therefore no absence.
+	 * File URL hashes under their words in one `SADD`: each hash a member of
+	 * its server's set for the word, valued by `$now`, living the retention
+	 * window from this add. Nothing is read first, and a hash filed again
+	 * refreshes its value and its expiry.
 	 *
-	 * @param array<array-key,mixed> $values What the read answered, a null for each miss.
-	 * @param bool                   $failed The read's `$failed`.
+	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets `[ server_key, word, hashes ]`.
+	 * @param int                                                $now  When the names were written.
+	 * @return array<int,bool> Whether each set landed, in order.
 	 */
-	public static function unanswered( array $values, bool $failed ): bool {
-		return $failed && \in_array( null, $values, true );
-	}
-
-	/**
-	 * Read many buckets across DIFFERENT namespaces in one round trip.
-	 *
-	 * `lookup_hours()` reads one namespace over many hours; this reads
-	 * an arbitrary mix, which is what a flush touches. Every read keeps its own
-	 * slot, under the key `$reads` carried, because a caller merges `result[i]`
-	 * onto `reads[i]` and a collapsed miss would land every later merge on the
-	 * wrong key.
-	 *
-	 * A MISS is null and a stored value is itself, `[]` included: an hour folded
-	 * with no rows is written empty, and a probe reading that as absence folds
-	 * it again for the rest of the window.
-	 *
-	 * A read that never happened is null too, so a caller merging onto the
-	 * result passes `$failed` and reads nothing into a null while it is set.
-	 *
-	 * @param array<array-key,array{0: array<int,string>, 1: string}> $reads  `[ parts, bucket ]` pairs.
-	 * @param ?bool                                                   $failed Set true when a Table
-	 *                                                                        asked did not answer.
-	 * @param-out bool                                                $failed
-	 * @return array<array-key,array<string,mixed>|null> One entry per read, keyed as `$reads` was.
-	 */
-	public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
-		$failed = false;
-		if ( [] === $reads ) {
-			return [];
+	public function add_url_tokens( array $sets, int $now ): array {
+		$keys    = [];
+		$members = [];
+		foreach ( $sets as $i => [ $server_key, $word, $hashes ] ) {
+			$keys[ $i ]              = self::key( ...[ ...self::url_token_parts( $server_key ), $word ] );
+			$members[ $keys[ $i ] ] = \array_fill_keys( $hashes, $now );
 		}
-		$keys  = [];
-		$asked = [];
-		foreach ( $reads as $i => [ $parts, $bucket ] ) {
-			$keys[ $i ]                              = self::key( ...[ ...$parts, $bucket ] );
-			$asked[ $this->table_for( $parts[0] ) ][] = $keys[ $i ];
-		}
-		$found = [];
-		foreach ( $asked as $table => $table_keys ) {
-			$found += $this->client->get_multi( $table, $table_keys, $one_failed );
-			$failed = $failed || $one_failed;
-		}
-		$out = [];
-		foreach ( $keys as $i => $key ) {
-			$value     = $found[ $key ] ?? null;
-			$out[ $i ] = \is_array( $value ) ? self::string_keys( $value ) : null;
-		}
-		return $out;
+		$landed = \array_fill_keys( $this->client->add_members( $this->table_for( self::NS_URLTOKEN ), $members, $this->max_lifespan ), true );
+		return \array_map( static fn ( string $key ): bool => isset( $landed[ $key ] ), $keys );
 	}
 
 	/**
@@ -1983,73 +2111,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Union one flush's hashes into a token's set, as `hash => last named`.
-	 *
-	 * The stamp per hash is what lets the set SHRINK: every entry a retention
-	 * window has passed over is dropped, so a URL that has gone quiet stops
-	 * holding a slot and stops being named to a reader that counts it against
-	 * `URL_SEARCH_MAX`. A hash leaves a set when its URL stops being named,
-	 * not when the key dies.
-	 *
-	 * The walk is decided before it runs, because re-reading a set of four
-	 * entry by entry on every flush of every token of every URL is the cost
-	 * the cap is there to bound. A flush that would pass the cap prunes
-	 * outright, and is tested first so it skips the scan; otherwise one pass
-	 * over the stamps says whether the prune has anything to do, stopping at
-	 * the first expired one.
-	 *
-	 * Past the cap the set is the sentinel under its own stamp, and the reader
-	 * folds. A live sentinel is returned UNCHANGED rather than restamped, so
-	 * `flush_writes()` skips the write and the stamp stays the saturation's:
-	 * the first flush naming the word a retention window later prunes it and
-	 * rebuilds the set live-only, and a word nothing names again starts empty
-	 * once `<eln:stats_ttl>` passes the row's last write.
-	 *
-	 * A hash keeps the later of its stored stamp and the one it arrives with,
-	 * so a stamp never shortens a newer one.
-	 *
-	 * @param array<array-key,mixed> $existing The stored set, `hash => ts`.
-	 * @param array<string,int>      $stamped  This flush's, `hash => when its name was written`.
-	 * @param int                    $now      Unix seconds this flush is at.
-	 * @return array<string,int> hash => last named.
-	 */
-	public function merge_token_set( array $existing, array $stamped, int $now ): array {
-		$set    = self::string_keys( $existing );
-		$oldest = $now - $this->max_lifespan;
-		if ( \count( $set ) + \count( $stamped ) > self::URL_SEARCH_MAX || self::holds_expired( $set, $oldest ) ) {
-			$set = \array_filter( $set, static fn ( $seen ): bool => Core::num_int( $seen ) > $oldest );
-		}
-		if ( isset( $set[ self::TOKEN_SATURATED ] ) ) {
-			return [ self::TOKEN_SATURATED => Core::num_int( $set[ self::TOKEN_SATURATED ] ) ];
-		}
-		foreach ( $stamped as $hash => $seen ) {
-			$set[ $hash ] = \max( Core::num_int( $set[ $hash ] ?? 0 ), $seen );
-		}
-		return \count( $set ) > self::URL_SEARCH_MAX
-			? [ self::TOKEN_SATURATED => $now ]
-			: \array_map( static fn ( $seen ): int => Core::num_int( $seen ), $set );
-	}
-
-	/**
-	 * Whether a token set holds a stamp the window has passed over.
-	 *
-	 * The prune's own predicate, asked before the prune: it stops at the
-	 * first expired entry, so a live set costs a walk and no allocation
-	 * where the prune costs both.
-	 *
-	 * @param array<string,mixed> $set    The stored set, `hash => ts`.
-	 * @param int                 $oldest The oldest stamp still live.
-	 */
-	private static function holds_expired( array $set, int $oldest ): bool {
-		foreach ( $set as $seen ) {
-			if ( Core::num_int( $seen ) <= $oldest ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/**
 	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
 	 * int on decode, so a value read back from a Table is `array-key` typed
 	 * even though every namespace stores a string-keyed map; the setters and the
@@ -2423,7 +2484,7 @@ class Stats_Store {
 	 * a term the same way. Matching a substring here instead would make `77`
 	 * name `/wombat-1177` through the fold and not through the index, so
 	 * which rows a search returned would turn on whether some other token
-	 * happened to have saturated.
+	 * happened to be too common to narrow.
 	 *
 	 * @api The fold, for a candidate the token index already named.
 	 * @param string       $name   The URL's path.
@@ -2455,6 +2516,29 @@ class Stats_Store {
 		}
 		// An all-digit token is an INT key; every reader promises a string.
 		return \array_map( 'strval', \array_keys( $out ) );
+	}
+
+	/**
+	 * A term's tokens as the reads that name them: longest first, ties in
+	 * term order, `SEARCH_WORDS_READ` to a read. A reader reads the next
+	 * group only when every token of the last came back over the limit.
+	 *
+	 * @param list<string> $tokens Tokens, as `term_tokens()` spells them.
+	 * @return list<list<string>>
+	 */
+	public static function search_groups( array $tokens ): array {
+		\usort( $tokens, static fn ( string $a, string $b ): int => \strlen( $b ) <=> \strlen( $a ) );
+		return \array_chunk( $tokens, self::SEARCH_WORDS_READ );
+	}
+
+	/**
+	 * The fine tier's lifetime for a window: FINE_TTL_SECONDS, never past
+	 * the window, what `<eln:stats_url_fine_ttl>` gives its Table.
+	 *
+	 * @param int $retention_seconds The retention window.
+	 */
+	public static function fine_ttl( int $retention_seconds ): int {
+		return \min( $retention_seconds, self::FINE_TTL_SECONDS );
 	}
 
 	/**
@@ -2562,7 +2646,7 @@ class Stats_Store {
 		);
 	}
 
-	/** The retention window a reader reads and a token set keeps, in seconds. */
+	/** The retention window a reader reads and a token member lives, in seconds. */
 	public function max_lifespan(): int {
 		return $this->max_lifespan;
 	}

@@ -951,6 +951,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$request->duration_ms  = Core::num_float( $entry['duration_ms'] ?? null );
 			$request->status_code  = Core::num_int( $entry['status_code'] ?? null );
 			$request->error_status = 'A';
+			self::carry_fatal( $request, $entry );
 			$request->state        = 'complete';
 		};
 

@@ -260,21 +260,21 @@ class DiagnosticsBridgeTest extends TestCase {
 		return [ $caught, self::entries_of( self::firehose_entries( self::TEST_DIR ), 'Command_Interpreter boom7732 command (complete)' ) ];
 	}
 
-	public function test_a_throwing_verb_closes_its_span_with_the_short_class_and_rethrows(): void {
+	public function test_a_throwing_verb_closes_its_span_with_what_was_thrown_and_rethrows(): void {
 		$thrown               = new \DomainException( 'refused 7732' );
 		[ $caught, $complete ] = $this->thrown_through( $thrown );
 
 		$this->assertSame( $thrown, $caught, 'the throwable propagates untouched' );
 		$this->assertCount( 1, $complete );
-		$this->assertSame( 'DomainException', $complete[0]['m'] );
+		$this->assertSame( 'DomainException: refused 7732', $complete[0]['m'] );
 	}
 
-	/** An anonymous class's name carries a file path and a NUL; the span says only that. */
+	/** An anonymous class's name carries a file path and a NUL; the span names it `class@anonymous`. */
 	public function test_an_anonymous_throwable_closes_its_span_as_class_at_anonymous(): void {
 		[ $caught, $complete ] = $this->thrown_through( new class( 'refused 7736' ) extends \DomainException {} );
 
 		$this->assertSame( 'refused 7736', $caught->getMessage() );
-		$this->assertSame( 'class@anonymous', $complete[0]['m'] );
+		$this->assertSame( 'class@anonymous: refused 7736', $complete[0]['m'] );
 	}
 
 	/** A cooperative stop is signalling, not a failure: the span says `stop`. */

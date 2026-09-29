@@ -264,6 +264,141 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( "renders the record's fatal on the terminal row and nowhere else", () => {
+		const request = {
+			fatal_error:
+				'Uncaught Error: Call to undefined method Newspack_Nodes\\Table_Node::kea_4431()',
+			fatal_file:
+				'/srv/wp-content/plugins/newspack-weka/includes/class-weka.php',
+			fatal_line: 4431,
+			fatal_plugin: 'newspack-weka',
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: makeEntries(),
+				request,
+			} )
+		);
+		const rows = [ ...container.querySelectorAll( 'tbody tr' ) ];
+		const terminal = rows.find( ( row ) =>
+			row.textContent.includes( 'process (complete)' )
+		);
+		const fatal = terminal.querySelector( '.log-entries-fatal' );
+		expect( fatal.textContent ).toContain(
+			'Call to undefined method Newspack_Nodes\\Table_Node::kea_4431()'
+		);
+		expect( fatal.textContent ).toContain(
+			'/srv/wp-content/plugins/newspack-weka/includes/class-weka.php:4431'
+		);
+		expect( fatal.textContent ).toContain( 'newspack-weka' );
+		expect( [
+			...fatal.querySelector( '.newspack-nodes-status' ).classList,
+		] ).toContain( 'is-error' );
+		// The duration still rides the row, below the fatal.
+		expect( terminal.textContent ).toContain( '(10000.000ms)' );
+		expect(
+			rows.filter( ( row ) => row.textContent.includes( 'kea_4431' ) )
+		).toHaveLength( 1 );
+		unmount();
+	} );
+
+	it( "folds a fatal's stack trace under its own Show more", () => {
+		const trace = Array.from(
+			{ length: 9 },
+			( _, frame ) => `#${ frame } /srv/kea-4435.php(${ frame }): moa()`
+		).join( '\n' );
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: makeEntries(),
+				request: {
+					fatal_error: `Uncaught Error: kea 4435\nStack trace:\n${ trace }`,
+					fatal_file: '/srv/kea-4435.php',
+					fatal_line: 4435,
+					fatal_plugin: '',
+				},
+			} )
+		);
+		const fatal = container.querySelector( '.log-entries-fatal' );
+		expect( fatal.textContent ).not.toContain( '#8 /srv/kea-4435.php' );
+		act( () => {
+			fatal.querySelector( 'button' ).click();
+		} );
+		expect(
+			container.querySelector( '.log-entries-fatal' ).textContent
+		).toContain( '#8 /srv/kea-4435.php' );
+		unmount();
+	} );
+
+	it( 'renders and searches the fatal on an aborted terminal row', () => {
+		const entries = makeEntries();
+		entries[ 6 ] = { ...entries[ 6 ], k: 'process (aborted)' };
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries,
+				request: {
+					fatal_error: 'Uncaught Error: kokako_4439 never sang',
+					fatal_file: '/srv/wp-content/plugins/kokako/sing.php',
+					fatal_line: 4439,
+					fatal_plugin: 'kokako',
+				},
+			} )
+		);
+		const terminal = [ ...container.querySelectorAll( 'tbody tr' ) ].find(
+			( row ) => row.textContent.includes( 'process (aborted)' )
+		);
+		const fatal = terminal.querySelector( '.log-entries-fatal' );
+		expect( fatal.textContent ).toContain( 'kokako_4439 never sang' );
+		expect( fatal.textContent ).toContain(
+			'/srv/wp-content/plugins/kokako/sing.php:4439'
+		);
+		const input = container.querySelector( 'input' );
+		act( () => {
+			Object.getOwnPropertyDescriptor(
+				window.HTMLInputElement.prototype,
+				'value'
+			).set.call( input, 'kokako_4439' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		act( () => {
+			jest.advanceTimersByTime( 200 );
+		} );
+		expect( container.textContent ).toContain( '1 match' );
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	it( 'renders no fatal on a terminal row whose record carries none', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: makeEntries(),
+				request: { url: '/kea-4432' },
+			} )
+		);
+		expect( container.querySelector( '.log-entries-fatal' ) ).toBeNull();
+		unmount();
+	} );
+
+	it( 'leaves the plugin out of a fatal no plugin raised', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: makeEntries(),
+				request: {
+					fatal_error: 'Allowed memory size exhausted kakapo 4433',
+					fatal_file: '/srv/wp-includes/class-kakapo.php',
+					fatal_line: 4433,
+					fatal_plugin: '',
+				},
+			} )
+		);
+		const fatal = container.querySelector( '.log-entries-fatal' );
+		expect( fatal.textContent ).toContain(
+			'/srv/wp-includes/class-kakapo.php:4433'
+		);
+		expect( fatal.textContent ).not.toMatch( /plugin/i );
+		unmount();
+	} );
+
 	it( 'renders duration, peak memory, and child count with shared metadata tiers', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( LogEntriesTable, {
@@ -1232,6 +1367,80 @@ describe( 'LogEntriesTable', () => {
 		expect( container.querySelector( 'mark' ) ).not.toBeNull();
 		jest.useRealTimers();
 		unmount();
+	} );
+
+	describe( "search over the terminal row's fatal", () => {
+		const trace = Array.from(
+			{ length: 9 },
+			( _, frame ) => `#${ frame } /srv/ruru-4437.php(${ frame }): moa()`
+		).join( '\n' );
+		const request = {
+			fatal_error: `Uncaught Error: Call to undefined method Newspack_Nodes\\Table_Node::tieke_4437()\nStack trace:\n${ trace }\n#9 kaka_4437_frame()`,
+			fatal_file: '/srv/wp-content/plugins/hoiho-4437/hoiho.php',
+			fatal_line: 4437,
+			fatal_plugin: 'pukeko-4437',
+		};
+
+		function search( container, term ) {
+			const input = container.querySelector( 'input' );
+			const setter = Object.getOwnPropertyDescriptor(
+				window.HTMLInputElement.prototype,
+				'value'
+			).set;
+			act( () => {
+				setter.call( input, term );
+				input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+			} );
+			act( () => {
+				jest.advanceTimersByTime( 200 );
+			} );
+		}
+
+		beforeEach( () => jest.useFakeTimers() );
+		afterEach( () => jest.useRealTimers() );
+
+		it.each( [
+			[ 'the message', 'tieke_4437' ],
+			[ 'the file:line', 'hoiho.php:4437' ],
+			[ 'the plugin', 'pukeko-4437' ],
+		] )( 'matches %s on the terminal row alone', ( _, term ) => {
+			const { container, unmount } = renderComponent(
+				React.createElement( LogEntriesTable, {
+					entries: makeEntries(),
+					request,
+				} )
+			);
+			search( container, term );
+			expect( container.textContent ).toContain( '1 match' );
+			const fatal = container.querySelector( '.log-entries-fatal' );
+			expect( fatal.querySelector( 'mark' )?.textContent ).toBe( term );
+			unmount();
+		} );
+
+		it( "opens the fold over a hit past the stack trace's fifth line", () => {
+			const { container, unmount } = renderComponent(
+				React.createElement( LogEntriesTable, {
+					entries: makeEntries(),
+					request,
+				} )
+			);
+			search( container, 'kaka_4437_frame' );
+			expect( container.textContent ).toContain( '1 match' );
+			expect(
+				container.querySelector( '.log-entries-fatal' ).textContent
+			).not.toContain( 'kaka_4437_frame' );
+			act( () => {
+				Array.from( container.querySelectorAll( 'button' ) )
+					.find( ( b ) => '▼' === b.textContent )
+					.click();
+			} );
+			const fatal = container.querySelector( '.log-entries-fatal' );
+			expect( fatal.textContent ).toContain( 'kaka_4437_frame' );
+			expect( fatal.querySelector( 'mark' )?.textContent ).toBe(
+				'kaka_4437_frame'
+			);
+			unmount();
+		} );
 	} );
 
 	it( "reveals a search hit behind the fold on a merged row's complete side", () => {

@@ -529,17 +529,21 @@ class Log_Manager {
 
 	/**
 	 * A thrown span's `(complete)` `m`: `stop` for a cooperative stop, else
-	 * the short class — `class@anonymous` for an anonymous one, whose name
-	 * carries a file path and a NUL.
+	 * `Class: message` — the short class, `class@anonymous` for an anonymous
+	 * one, whose name carries a file path and a NUL. message() clips a
+	 * message too long for the line, so the class always survives.
 	 *
 	 * @param \Throwable $thrown What the span's work threw.
 	 */
 	private static function outcome( \Throwable $thrown ): string {
-		return match ( true ) {
-			$thrown instanceof Worker_Should_Stop           => 'stop',
-			\str_contains( $thrown::class, '@anonymous' ) => 'class@anonymous',
-			default                                         => \basename( \strtr( $thrown::class, '\\', '/' ) ),
-		};
+		if ( $thrown instanceof Worker_Should_Stop ) {
+			return 'stop';
+		}
+		$class = \str_contains( $thrown::class, '@anonymous' )
+			? 'class@anonymous'
+			: \basename( \strtr( $thrown::class, '\\', '/' ) );
+		$said  = $thrown->getMessage();
+		return '' === $said ? $class : "{$class}: {$said}";
 	}
 
 	/**

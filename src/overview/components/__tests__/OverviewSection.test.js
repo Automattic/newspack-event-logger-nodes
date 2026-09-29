@@ -197,9 +197,9 @@ describe( 'OverviewSection', () => {
 		expect( container.textContent ).not.toContain( 'all servers' );
 	} );
 
-	it( 'says the totals are provisional when the writer has yet to rank a record', () => {
-		// The header skipped the records of buckets the writer has not
-		// ranked yet, so the totals are short of them, and say so.
+	it( 'says the totals are provisional when the writer still owes a fold or a ranking', () => {
+		// The header skipped an hour the writer has yet to fold or rank, or
+		// a read that went unanswered, so the totals run short, and say so.
 		const { container: provisional, unmount } = mount(
 			{ total_requests: 33049 },
 			{
@@ -212,7 +212,7 @@ describe( 'OverviewSection', () => {
 			provisional.querySelector(
 				'.newspack-nodes-banner.is-info[role="status"]'
 			)?.textContent
-		).toMatch( /not yet ranked/ );
+		).toMatch( /not yet folded or ranked, or a read went unanswered/ );
 		unmount();
 
 		const { container: settled } = mount(

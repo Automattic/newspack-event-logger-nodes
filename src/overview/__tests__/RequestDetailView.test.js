@@ -66,6 +66,26 @@ describe( 'RequestDetailView folded requests', () => {
 		expect( container.textContent ).toMatch( /process \(complete\)/ );
 	} );
 
+	it( "names the record's fatal on its kept terminal row", () => {
+		const { container } = render(
+			{
+				...FOLDED,
+				error_status: 'F',
+				fatal_error: 'Call to undefined method Kea_4434::takahe()',
+				fatal_file: '/srv/wp-content/plugins/kea-4434/kea.php',
+				fatal_line: 4434,
+				fatal_plugin: 'kea-4434',
+			},
+			KEPT
+		);
+		const fatal =
+			container.querySelector( '.log-entries-fatal' ).textContent;
+		expect( fatal ).toContain( 'Kea_4434::takahe()' );
+		expect( fatal ).toContain(
+			'/srv/wp-content/plugins/kea-4434/kea.php:4434'
+		);
+	} );
+
 	it( 'leaves an ordinary request untouched', () => {
 		const { container } = render( { ...FOLDED, folded: false } );
 		expect( container.textContent ).not.toMatch( /Aggregated under load/ );

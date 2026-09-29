@@ -147,6 +147,26 @@ export const isFoldablePairComplete = ( keyword ) =>
 const isFoldableBase = ( base ) => null !== base && base !== OUTERMOST_PAIR;
 
 /**
+ * The request's own closes, `Request_Builder_Node::TERMINAL_KEYWORDS`: the
+ * entries a fatal is read off, which `Request_Builder_Node::carry_fatal()`
+ * lifts onto the record as `fatal_*`. The one deliberate duplicate, because
+ * the dashboard is a separate deploy unit.
+ */
+const TERMINAL_KEYWORDS = new Set( [
+	`${ OUTERMOST_PAIR } (complete)`,
+	`${ OUTERMOST_PAIR } (aborted)`,
+] );
+
+/**
+ * Whether a keyword is the request's own terminal, complete or aborted.
+ *
+ * @param {string} keyword Entry keyword.
+ * @return {boolean} True for either of the request's terminals.
+ */
+export const isRequestTerminal = ( keyword ) =>
+	TERMINAL_KEYWORDS.has( keyword );
+
+/**
  * Whether an entry belongs to a `(start)`/`(complete)` pair.
  *
  * @param {Object} entry Log entry.
