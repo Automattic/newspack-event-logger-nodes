@@ -35,7 +35,7 @@
 </style>
 <div class="sheet">
   <h1>A stored URL row is positional, and its indexes are named constants</h1>
-  <p class="sub"><span class="m">serialize()</span> writes every key NAME into every entry, so a named row spends <span class="m">s:11:"timed_count";</span>, 19 bytes, to say what <span class="m">i:1;</span> says in 4, once per row per field, on a read that fans out to thousands of keys. The URL index earns the shape on memcache; the category and dimensional series earn it on the mirror, which keeps a whole window of frames. <span class="m">$row[3]</span> is forbidden: the constants buy back the readability the shape spends.</p>
+  <p class="sub"><span class="m">serialize()</span> writes every key NAME into every entry, so a named row spends <span class="m">s:11:"timed_count";</span>, 19 bytes, to say what <span class="m">i:1;</span> says in 4, once per row per field, on a read that fans out to thousands of keys. The URL index earns the shape on its read; the category and dimensional series earn it on their count, spelled once per bucket per scope across the window. <span class="m">$row[3]</span> is forbidden: the constants buy back the readability the shape spends.</p>
 
   <div class="panel">
     <header>One row: fourteen slots, each <span class="m">Stats_Store::ROW_&lt;name&gt;</span>, and the eight that ADD come first</header>
@@ -65,7 +65,7 @@
   <div class="nums">
     <div class="n"><div class="big">672 → 398 B</div><div class="k">per row, named against positional, measured on live rows through the real pipeline: 40.9%, taking the hub's 36.1 MB across 58,415 rows to roughly 21</div></div>
     <div class="n"><div class="big">1,024 B</div><div class="k"><span class="m">MAX_PATH_BYTES</span>: the longest path a row keeps, <span class="m">…</span> included, so a query-string flood cannot grow one row past it</div></div>
-    <div class="n"><div class="big">44.1%</div><div class="k">off the entries of a JSON mirror frame, measured across 66,966 of them: <span class="m">CAT_SUMS</span> (<span class="m">CAT_MS</span> 0, <span class="m">CAT_CALLS</span> 1, <span class="m">CAT_REQUESTS</span> 2) and <span class="m">DIM_SUMS</span> (<span class="m">DIM_COUNT</span> 0, <span class="m">DIM_SUM_MS</span> 1, <span class="m">DIM_SUM_PEAK_MB</span> 2) are positional too</div></div>
+    <div class="n"><div class="big">44.1%</div><div class="k">off JSON-encoded category and dimension entries, measured across 66,966 of them: <span class="m">CAT_SUMS</span> (<span class="m">CAT_MS</span> 0, <span class="m">CAT_CALLS</span> 1, <span class="m">CAT_REQUESTS</span> 2) and <span class="m">DIM_SUMS</span> (<span class="m">DIM_COUNT</span> 0, <span class="m">DIM_SUM_MS</span> 1, <span class="m">DIM_SUM_PEAK_MB</span> 2, <span class="m">DIM_TIMED</span> 3) are positional too</div></div>
   </div>
 
   <div class="cols">
@@ -73,7 +73,7 @@
       <h3>Where an index becomes a name</h3>
       <p><span class="m">ROW_FIELD_NAMES</span> is the one map, beside the constants it names, in the shape <span class="m">Message::TYPE_NAMES</span> sets, because a private copy is how a reader ends up omitting a field. <span class="m">Performance_CI_Node::fold_index_row()</span> is the one storage/display boundary for the ROW: everything above it is positional, the display row keeps its names because it crosses the wire as JSON, and a second copy of the translation is how the table and the modal come to disagree about one URL.</p>
       <p>The PATH crosses as <span class="m">url</span>: <span class="m">fold_index_row()</span> puts it on the display row, and <span class="m">resolve_urls()</span> replaces it with the whole URL <span class="m">urlmap</span> joins for the rows a page shows. A thing crosses a boundary where it is CONSUMED, not where it is convenient to convert.</p>
-      <p><span class="m">CAT_SUMS</span> has no <span class="m">CAT_FIELD_NAMES</span>, and that is not an omission: <span class="m">compact_category_series()</span> emits a POSITIONAL wire row, so no index ever becomes a name, and a name table with no naming site is a second shape waiting to drift. <span class="m">DIM_SUMS</span> has none for the same reason — it stays positional to the wire, where two React sites index it.</p>
+      <p><span class="m">CAT_SUMS</span> has no <span class="m">CAT_FIELD_NAMES</span>, and that is not an omission: <span class="m">compact_category_series()</span> emits a POSITIONAL wire row, so no index ever becomes a name, and a name table with no naming site is a second shape waiting to drift. <span class="m">DIM_SUMS</span> has none for the same reason: <span class="m">compact_dim_series()</span> emits it positional to the wire, <span class="m">[ nameIndex, count, sumMs, sumPeakMb, timed ]</span>, and the dashboard's one decoder, <span class="m">decodeNameTable()</span>, names those fields through <span class="m">DIM_FIELDS</span>.</p>
     </div>
     <div class="card">
       <h3>The path is display, and the host is the key's</h3>

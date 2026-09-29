@@ -14,7 +14,7 @@ The logger defends against these actors:
 - **A holder of a `read` session.** A dashboard user, or an agent holding a read-scoped session, with the lowest capability the substrate grants; `read` alone opens the `dump_request` and `grep_requests` commands and the `performance_ask` MCP tool.
 - **The hub.** A peer that pulls the firehose as the `newspack_nodes_hub` role, `read` and `tune` only, and so sees every line the spoke writes.
 - **A compromised spoke.** An authenticated peer whose `remote_job` entries the hub runs, and whose discovery replies land in the hub-wide lists. The substrate's security model describes what else such a spoke can reach.
-- **A neighbour on the shared cache pool.** Another site on the same memcached pool; the substrate's per-install salt is the defence, and the logger's `Stats_Store` is one of the readers that trust it.
+- **A neighbour on the shared cache pool.** Another site on the same memcached pool; the substrate's per-install salt is the defence, and the logger's `Rule_Set` hook Table and `urls` page cache are among the readers that trust it. The statistics live in SQLite files on the flame builder's own host, out of the pool's reach.
 - **The operator's terminal.** The display that renders whatever a log holds, including bytes a visitor chose; the substrate's `Core::terminal_safe()` is the defence, and [its security model](https://github.com/Automattic/newspack-nodes/blob/main/docs/security-model.md#what-reaches-the-operators-terminal) describes the chain from a visitor's request to the terminal.
 - **A hostile page a `read` user visits.** A page that opens a stream in that user's name.
 - **An AI assistant.** The recipient of an Ask brief, reached by paste or by the "Ask Claude" query string.

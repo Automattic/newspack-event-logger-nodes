@@ -63,7 +63,7 @@ import HeadlineStats from './HeadlineStats';
  * @param {string}                  props.chartBreakdown         Aggregate chart breakdown dimension, already resolved by the caller against `canBreakDownByServer`.
  * @param {(value: string) => void} props.setChartBreakdown      Breakdown dimension setter.
  * @param {boolean}                 props.canBreakDownByServer   Whether the page can chart the server axis: no server filter, and the server list either unknown or holding two or more names. A filter would split one server against itself, and withholding the axis before the first reply lands would strand the `server` default on `status` for the session.
- * @param {Object|null}             props.breakdownData          Time series for the selected breakdown dimension; null until that dimension's reply lands.
+ * @param {Object}                  props.breakdownRead          The `breakdownState()` read of the selected dimension's reply, `{ state, series }`.
  * @param {Object|null}             props.categoryData           Category time series, or null.
  * @param {Object}                  props.ask                    The `useAsk` state driving the Ask trigger.
  * @param {?Element}                [props.headerControlsSlot]   Shell header slot to portal the Ask, search and refresh controls into; null while it is pending, undefined renders them inline.
@@ -93,7 +93,7 @@ export default function OverviewSection( {
 	chartBreakdown,
 	setChartBreakdown,
 	canBreakDownByServer,
-	breakdownData,
+	breakdownRead,
 	categoryData,
 	ask,
 	headerControlsSlot,
@@ -281,8 +281,8 @@ export default function OverviewSection( {
 					     nothing to draw, and the panel says which kind of
 					     nothing it is. */ }
 					<BreakdownControls
-						breakdownData={ breakdownData }
-						plan={ overview.plan ?? null }
+						breakdownRead={ breakdownRead }
+						slots={ overview.slots ?? null }
 						metric={ chartMetric }
 						setMetric={ setChartMetric }
 						breakdown={ chartBreakdown }
@@ -296,7 +296,7 @@ export default function OverviewSection( {
 
 					<CategoryTimeChart
 						data={ categoryData }
-						plan={ overview.plan ?? null }
+						slots={ overview.slots ?? null }
 					/>
 
 					{ overview.global_leaderboard?.categories && (

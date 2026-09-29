@@ -119,11 +119,12 @@ class McpControllerTest extends TestCase {
 	}
 
 	/**
-	 * A search is whole words from the index, and an overview row spans an
-	 * hour or five minutes: an agent reading a description written for a
-	 * substring match, or summing rows as equal spans, misreads the answer.
+	 * A search is whole words from the index, and an overview names its 288
+	 * five-minute slots and divides an average by the timed requests: an
+	 * agent reading a description written for a substring match, or for a
+	 * three-field row, misreads the answer.
 	 */
-	public function test_the_tools_say_how_search_matches_and_what_a_row_spans(): void {
+	public function test_the_tools_say_how_search_matches_and_what_an_overview_row_holds(): void {
 		[ , $bearer ] = $this->session( Capabilities::READ );
 		$controller   = new MCP_Controller();
 		$controller->check_permission( $this->request( [], $bearer ) );
@@ -139,7 +140,14 @@ class McpControllerTest extends TestCase {
 			$this->assertStringContainsString( 'whole word', $search, $tool );
 			$this->assertStringNotContainsString( 'ubstring', $search, $tool );
 		}
-		$this->assertStringContainsString( '`span`', $tools['performance_overview']['description'] );
+		$overview = $tools['performance_overview'];
+		$this->assertStringContainsString( '`slots`', $overview['description'] );
+		$this->assertStringContainsString( '`avg_ms`', $overview['description'] );
+		$this->assertStringNotContainsString( 'span', $overview['description'] );
+		$this->assertStringNotContainsString( 'aggregate time series', $overview['description'] );
+		$breakdown = $overview['inputSchema']['properties']['breakdown']['description'];
+		$this->assertStringContainsString( '[ nameIndex, count, sumMs, sumPeakMb, timed ]', $breakdown );
+		$this->assertStringNotContainsString( 'triple', $breakdown );
 	}
 
 	public function test_a_tune_scope_is_offered_the_ruleset(): void {

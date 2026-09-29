@@ -96,14 +96,16 @@ class VerbRoleDeclarationsTest extends TestCase {
 		);
 		$GLOBALS['_wp_test_current_user_can'] = [ 'edit_pages' => true, 'manage_options' => false ];
 
-		$performance = new Performance_CI_Node();
-		$performance->name( 'performance' );
+		// A verb reads through the request graph a request mounts, CIs and all.
+		\Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness::request_graph();
+		$performance = \Newspack_Nodes\Core::node( 'performance' );
+		$this->assertInstanceOf( Performance_CI_Node::class, $performance );
 		$payload = $performance->commands()['overview']( $performance, [], [] );
 		$this->assertIsArray( $payload );
 		$this->assertArrayHasKey( 'total_requests', $payload );
 
-		$rules = new Rules_CI_Node();
-		$rules->name( 'rules' );
+		$rules = \Newspack_Nodes\Core::node( 'rules' );
+		$this->assertInstanceOf( Rules_CI_Node::class, $rules );
 		$this->expectException( \RuntimeException::class );
 		$this->expectExceptionMessageMatches( '/permission denied/' );
 		$rules->commands()['reset']( $rules, [], [] );

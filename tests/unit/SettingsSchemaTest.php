@@ -27,8 +27,8 @@ class SettingsSchemaTest extends TestCase {
 	 * auto_disable_threshold/auto_protect_time_threshold) were retired to
 	 * per-rule fields in Task 10.
 	 *
-	 * Nine keys, because the schema declares every key the application has:
-	 * `custom_colors`, `stats_mirror_node` and `recommended_log_events` carry no
+	 * Seven keys, because the schema declares every key the application has:
+	 * `custom_colors` and `recommended_log_events` carry no
 	 * option and no settings field, but a key declared only by the config file
 	 * is null on every install whose file predates it.
 	 */
@@ -42,11 +42,6 @@ class SettingsSchemaTest extends TestCase {
 		// owns its option, not the WP Settings API.
 		'rules',
 		'custom_colors',
-		'stats_mirror_node',
-		// The mirror's own ring geometry, so an operator can budget for its
-		// volume without inflating every other partition by the same factor.
-		'stats_mirror_segment_size',
-		'stats_mirror_num_segments',
 		'recommended_log_events',
 	];
 

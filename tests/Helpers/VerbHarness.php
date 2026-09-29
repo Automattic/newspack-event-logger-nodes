@@ -9,24 +9,27 @@
  * no special "for tests" shortcut — but assert on the verb's logical
  * result rather than parsing the on-wire Message themselves.
  *
- * Lifecycle: each fire() call builds a fresh request-scope graph
- * (_router / _command_interpreter / _http) plus the supplied interpreter; the
- * accompanying reset() (called from tearDown) clears Core's registry so
- * the next test's graph construction doesn't collide on names.
+ * Lifecycle: fire() mounts the request-scope graph once per test through
+ * `Bootstrap::mount_request_graph()`, as `/command` does, then names the
+ * supplied interpreter and a fresh `_http` onto it; the accompanying reset()
+ * (called from tearDown) clears Core's registry for the next test.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes\Tests\Helpers;
 
+use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Rest\HTTP_In_Node;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Router_Node;
 
 class VerbHarness {
+
+	/** The recorder's node name. */
+	private const ASK_RECORDER = 'stats-ask-recorder';
 	/**
 	 * Build a request-scope graph and fire a verb against the supplied interpreter.
 	 * Returns the verb's payload from the captured TM_RESPONSE.
@@ -51,10 +54,14 @@ class VerbHarness {
 	 */
 	public static function fire( Command_Interpreter_Node $interpreter, string $name, string $verb, array|string $args = [], string $key = '' ): mixed {
 		$arg_tokens = \is_array( $args ) ? \array_values( $args ) : ( '' === $args ? [] : \preg_split( '/\s+/', $args ) );
-		$router = new Router_Node(); $router->name( Node_Names::ROUTER );
-		$base   = new Command_Interpreter_Node(); $base->name( Node_Names::COMMAND_INTERPRETER ); $base->sink( $router );
+		// The request graph mounts this plugin's CIs; the one under test stands in for its namesake.
+		$mounted = Core::node( $name );
+		if ( null !== $mounted && $mounted !== $interpreter ) {
+			$mounted->remove_node();
+		}
 		$interpreter->name( $name );
-		$interpreter->sink( $base );
+		$interpreter->sink( self::ask_recorder() );
+		Core::node( Node_Names::HTTP )?->remove_node();
 
 		// status_header seam is unused — tests assert on the verb's return
 		// value, not which HTTP status code HTTP_In emitted. The closure
@@ -96,6 +103,31 @@ class VerbHarness {
 			throw new \RuntimeException( 'response missing payload field' );
 		}
 		return $command['payload'];
+	}
+
+	/**
+	 * This request's `_command_interpreter`, sinking into `_router`: the one
+	 * `Bootstrap::mount_request_graph()` builds, mounted on the first ask so a
+	 * second ask in one test cannot mount this plugin's CIs twice.
+	 */
+	public static function request_graph(): Command_Interpreter_Node {
+		$interpreter = Core::node( Node_Names::COMMAND_INTERPRETER );
+		return $interpreter instanceof Command_Interpreter_Node ? $interpreter : Bootstrap::mount_request_graph();
+	}
+
+	/**
+	 * The node a test's askers send through on their way into the request
+	 * graph, recording every Table request that passes.
+	 */
+	public static function ask_recorder(): Stats_Ask_Recorder_Node {
+		$recorder = Core::node( self::ASK_RECORDER );
+		if ( $recorder instanceof Stats_Ask_Recorder_Node ) {
+			return $recorder;
+		}
+		$recorder = new Stats_Ask_Recorder_Node();
+		$recorder->name( self::ASK_RECORDER );
+		$recorder->sink( self::request_graph() );
+		return $recorder;
 	}
 
 	/**

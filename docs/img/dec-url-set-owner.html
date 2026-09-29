@@ -48,7 +48,7 @@
 </style>
 <div class="sheet">
 <h1>The <span class="mono">urls</span> verb owns every URL-set fact; <span class="mono">overview</span> owns the site</h1>
-<p class="sub">One <span class="mono">urls</span> request carries the filters into one fold of the URL index, and one reply feeds the header, the table and the slowest ten, so they cannot disagree. <span class="mono">overview</span> reads the site totals from <span class="mono">hourly</span>, where <span class="mono">server</span> never reaches.</p>
+<p class="sub">One <span class="mono">urls</span> request carries the filters into one fold of the URL index, and one reply feeds the header, the table and the slowest ten, so they cannot disagree. <span class="mono">overview</span> reads the site totals from <span class="mono">hourly_h</span>, where <span class="mono">server</span> never reaches.</p>
 
 <div class="lanes">
   <div class="lane"><header>One <span class="mono">urls</span> poll: one fold, one reply</header>
@@ -83,10 +83,10 @@
           <g stroke="#003DA5" stroke-width="2" fill="#003DA5"><line x1="16" y1="102" x2="50" y2="102"/><path d="M50 97 L57 102 L50 107 Z"/><line x1="16" y1="162" x2="50" y2="162"/><path d="M50 157 L57 162 L50 167 Z"/><line x1="16" y1="222" x2="50" y2="222"/><path d="M50 217 L57 222 L50 227 Z"/></g>
         </svg>
         <div style="height:14px"></div>
-        <div class="src blocked"><div class="store">hourly<small>no server dimension</small></div><div class="fn"><span class="k">total_requests · global_avg_ms · global_avg_peak_mb</span><br>the site totals: <span class="red">never scoped</span>, so the payload never contradicts itself</div></div>
-        <div class="src"><div class="store">lb · lb_h · lb_s</div><div class="fn"><span class="m">build_leaderboard( $server )</span><br>→ <span class="k">global_leaderboard</span></div></div>
-        <div class="src"><div class="store">dim</div><div class="fn"><span class="m">merge_dim_across_partitions( $dim, $server )</span><br>→ <span class="k">breakdowns[ $dim ]</span></div></div>
-        <div class="src"><div class="store">categories</div><div class="fn"><span class="m">merge_categories_across_partitions( $server )</span><br>→ <span class="k">category_time_series</span></div></div>
+        <div class="src blocked"><div class="store">hourly_h<small>no server dimension</small></div><div class="fn"><span class="k">total_requests · global_avg_ms · global_avg_peak_mb</span><br>the site totals: <span class="red">never scoped</span>, so the payload never contradicts itself</div></div>
+        <div class="src"><div class="store">lb_h · lb_sh</div><div class="fn"><span class="m">build_leaderboard( $server )</span><br>→ <span class="k">global_leaderboard</span></div></div>
+        <div class="src"><div class="store">dim_h</div><div class="fn"><span class="m">merge_dim_across_partitions( $dim, $server )</span><br>→ <span class="k">breakdowns[ $dim ]</span></div></div>
+        <div class="src"><div class="store">categories_h</div><div class="fn"><span class="m">merge_categories_across_partitions( $server )</span><br>→ <span class="k">category_time_series</span></div></div>
       </div>
       <p class="lanenote"><span class="mono">overview</span> never touches the URL index, which holds a filtered poll to one fan-out of it.</p>
     </div></div>
@@ -103,9 +103,10 @@
 </div>
 
 <div class="diff"><table>
-  <tr><th>Why the two totals differ by construction</th><th><span class="mono">hourly</span> (overview)</th><th>The URL index (urls)</th></tr>
+  <tr><th>Why the two totals differ by construction</th><th><span class="mono">hourly_h</span> (overview)</th><th>The URL index (urls)</th></tr>
   <tr><td class="k">Worker requests</td><td>dropped</td><td>kept, on their own rows</td></tr>
-  <tr><td class="k">Evicted and aborted records (decision 24)</td><td>not counted: <span class="mono">count</span> takes only timed requests</td><td>counted</td></tr>
+  <tr><td class="k">Evicted and aborted records (decision 24)</td><td>not in <span class="mono">count</span>, which <span class="mono">total_requests</span> reads; in <span class="mono">requests</span></td><td>counted</td></tr>
+  <tr><td class="k">Window (decision 35)</td><td>the 288 five-minute slots the charts draw, the last 24 hours</td><td>the retention window</td></tr>
 </table></div>
 
 <div class="rule">

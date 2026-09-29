@@ -8,7 +8,6 @@ use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
 /**
  * One size test per memcache namespace: the LARGEST value each producer's
@@ -24,6 +23,9 @@ use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
  * counts of twelve digits and doubles such as -1.2345678901234567E+300. The
  * strings are all distinct, because igbinary stores a repeated string once
  * and would otherwise measure small.
+ *
+ * A slotted chart hour value takes no byte cap (decision 35), so its tests
+ * pin the count cap each slot keeps instead.
  */
 #[CoversClass( Flame_Builder_Node::class )]
 #[CoversClass( Flame_Tree::class )]
@@ -42,25 +44,9 @@ class ItemBudgetTest extends TestCase {
 	/** A timestamp as the rows carry one. */
 	private const LAST_SEEN = 1_790_000_000;
 
-	/** Every serializer an estimate is kept for. */
-	public static function serializers(): array {
-		return [
-			'php'      => [ Stats_Store::SERIALIZER_PHP ],
-			'igbinary' => [ Stats_Store::SERIALIZER_IGBINARY ],
-		];
-	}
-
-	/** Estimate for `$serializer`, as `Stats_Store` would on a handle configured so. */
-	private static function estimate_for( string $serializer ): void {
-		if ( Stats_Store::SERIALIZER_IGBINARY === $serializer && ! \function_exists( 'igbinary_serialize' ) ) {
-			self::markTestSkipped( 'igbinary is not loaded' );
-		}
-		Stats_Store::$serializer = $serializer;
-	}
-
 	/** Bytes `$value` takes under the serializer the estimate was made for. */
 	private static function stored_bytes( mixed $value ): int {
-		return Stats_Store::SERIALIZER_IGBINARY === Stats_Store::$serializer
+		return Stats_Store::SERIALIZER_IGBINARY === \Newspack_Nodes\Durable_Arm::serializer()
 			? \strlen( (string) \igbinary_serialize( $value ) )
 			: \strlen( \serialize( $value ) );
 	}
@@ -220,18 +206,22 @@ class ItemBudgetTest extends TestCase {
 	#[DataProvider( 'serializers' )]
 	public function test_an_hour_leaderboard_folded_from_twelve_wide_buckets_fits_the_item_budget( string $serializer ): void {
 		self::estimate_for( $serializer );
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$hour       = '2026-09-22-10';
-		$writes     = [];
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$pending = [];
 		foreach ( Stats_Store::buckets_in_hour( $hour ) as $n => $bucket ) {
-			$board    = self::builder( 'cap_leaderboard', self::wide_leaderboard( 150, 10, "b{$n}" ), Stats_Store::ITEM_BUDGET );
-			$writes[] = [ Stats_Store::lb_parts( '' ), $bucket, $board ];
+			$pending[ $bucket ] = \array_replace(
+				self::builder( 'empty_bucket' ),
+				[ 'leaderboard' => self::wide_leaderboard( 150, 10, "b{$n}" ) ]
+			);
 		}
-		$store->bucket_set_multi( $writes );
+		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, $pending );
 
-		( new \ReflectionMethod( Flame_Builder_Node::class, 'refold_site_hours' ) )->invoke( new Flame_Builder_Node(), $store, [ $hour ] );
-		$folded = $store->get_leaderboard_buckets( [ $hour ] )[ $hour ] ?? [];
+		$now = \gmmktime( 10, 58, 0, 9, 22, 2026 );
+		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, $now, Stats_Store::bucket_key( $now ) );
+		$folded = $store->get_leaderboard_hours( [ $hour ] )[ $hour ] ?? [];
 
 		self::assert_fits( $folded, 'an hour of twelve disjoint wide buckets' );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_LB_CATEGORIES, \count( $folded['categories'] ) );
@@ -242,8 +232,7 @@ class ItemBudgetTest extends TestCase {
 	#[DataProvider( 'serializers' )]
 	public function test_a_url_blob_of_the_widest_tree_and_profiles_fits_the_item_budget( string $serializer ): void {
 		self::estimate_for( $serializer );
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
@@ -262,7 +251,7 @@ class ItemBudgetTest extends TestCase {
 		}
 		unset( $category );
 		$hash = 'a1b2c3d4e5f6';
-		$store->accumulate_url_stats(
+		( new \ReflectionProperty( $fb, 'url_acc' ) )->getValue( $fb )->set(
 			$hash,
 			[
 				'flame'    => [ 'name' => 'aggregate', 'sum_value' => self::WIDE_FLOAT, 'count' => self::WIDE_COUNT, 'children' => $children ],
@@ -270,7 +259,7 @@ class ItemBudgetTest extends TestCase {
 			]
 		);
 
-		( new \ReflectionMethod( $fb, 'mirror_url_stats' ) )->invoke( $fb, $now );
+		( new \ReflectionMethod( $fb, 'drain_url_stats' ) )->invoke( $fb, $now );
 		$blob = $store->bucket_get_multi( [ [ [ Stats_Store::NS_URL ], $hash ] ] )[0] ?? null;
 
 		$this->assertIsArray( $blob, 'the blob was written, not refused' );
@@ -326,8 +315,7 @@ class ItemBudgetTest extends TestCase {
 	// ----- urlmap, and the one path cap every stored path takes -----
 
 	public function test_a_url_name_of_a_path_past_the_cap_fits_and_is_cut_to_it(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$url        = 'https://' . self::SEED_SERVER . self::wide( '/long/', 8192 );
 
 		$store->set_url_names( [ self::SEED_SERVER => [ 'a1b2c3d4e5f6' => $url ] ] );
@@ -342,8 +330,7 @@ class ItemBudgetTest extends TestCase {
 	// ----- urltoken -----
 
 	public function test_a_full_token_set_fits_the_item_budget(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$hashes     = [];
 		for ( $i = 0; $i < Stats_Store::URL_SEARCH_MAX; $i++ ) {
 			$hashes[] = \sprintf( '%012x', $i );
@@ -355,7 +342,7 @@ class ItemBudgetTest extends TestCase {
 		self::assert_fits_both( $set, 'a token set at URL_SEARCH_MAX' );
 	}
 
-	// ----- dim, url_dim, categories, url_cat: counted, names firehose-bound -----
+	// ----- dim_h, url_dim_h, categories_h, url_cat_h: counted per slot -----
 
 	/** `$n` distinct names as long as one firehose entry allows. */
 	private static function firehose_names( int $n, string $tag ): array {
@@ -372,45 +359,41 @@ class ItemBudgetTest extends TestCase {
 		return ( $write['merge'] )( [] );
 	}
 
-	public function test_a_server_dimension_of_the_longest_values_fits_the_item_budget(): void {
+	public function test_a_server_dimension_slot_keeps_its_count_cap(): void {
 		$values = [];
 		foreach ( self::firehose_names( 3 * Stats_Store::MAX_SERVER_VALUES, 'v' ) as $n => $name ) {
-			$values[ $name ] = [ self::WIDE_COUNT - $n, self::WIDE_FLOAT, self::WIDE_FLOAT ];
+			$values[ $name ] = [ self::WIDE_COUNT - $n, self::WIDE_FLOAT, self::WIDE_FLOAT, self::WIDE_COUNT - $n ];
 		}
 
-		$dim = self::merged( 'dimension_intent', '2026-09-22-10-05', Stats_Store::DIM_SERVER, $values, '' );
+		$hour = self::merged( 'dimension_intent', Stats_Store::dim_parts( Stats_Store::DIM_SERVER, '' ), '2026-09-22-10-05', Stats_Store::DIM_SERVER, $values, Stats_Store::MAX_DIM_VALUES );
 
-		$this->assertCount( Stats_Store::MAX_SERVER_VALUES, $dim );
-		self::assert_fits_both( $dim, 'dim:server, the widest axis' );
+		$this->assertSame( [ 1 ], \array_keys( $hour ), 'the 10:05 bucket is slot 1' );
+		$this->assertCount( Stats_Store::MAX_SERVER_VALUES, $hour[1] );
 	}
 
-	public function test_a_url_dimension_bucket_of_the_longest_values_fits_the_item_budget(): void {
-		$dims = [];
+	public function test_a_url_dimension_slot_keeps_its_count_cap(): void {
 		foreach ( [ 'status', 'method', 'country', 'from', 'ua', 'ja4' ] as $dim ) {
+			$values = [];
 			foreach ( self::firehose_names( 5 * Stats_Store::MAX_URL_DIM_VALUES, $dim ) as $n => $name ) {
-				$dims[ $dim ][ $name ] = [ self::WIDE_COUNT - $n, self::WIDE_FLOAT, self::WIDE_FLOAT ];
+				$values[ $name ] = [ self::WIDE_COUNT - $n, self::WIDE_FLOAT, self::WIDE_FLOAT, self::WIDE_COUNT - $n ];
 			}
-		}
 
-		$url_dim = self::merged( 'url_dimensions_intent', '2026-09-22-10-05', 'a1b2c3d4e5f6', $dims );
+			$hour = self::merged( 'dimension_intent', Stats_Store::url_dim_parts( 'a1b2c3d4e5f6', $dim ), '2026-09-22-10-05', $dim, $values, Stats_Store::MAX_URL_DIM_VALUES );
 
-		foreach ( $url_dim as $values ) {
-			$this->assertCount( Stats_Store::MAX_URL_DIM_VALUES, $values );
+			$this->assertCount( Stats_Store::MAX_URL_DIM_VALUES, $hour[1], $dim );
 		}
-		self::assert_fits_both( $url_dim, 'url_dim, every axis full' );
 	}
 
-	public function test_a_category_bucket_of_the_longest_names_fits_the_item_budget(): void {
+	public function test_a_category_slot_keeps_its_count_cap(): void {
 		$cats = [];
 		foreach ( self::firehose_names( 4 * Stats_Store::MAX_CAT_VALUES, 'c' ) as $n => $name ) {
 			$cats[ $name ] = [ self::WIDE_FLOAT - $n, self::WIDE_COUNT, self::WIDE_COUNT ];
 		}
 
-		$global  = self::merged( 'categories_intent', '2026-09-22-10-05', $cats, '' );
-		$per_url = self::merged( 'url_categories_intent', '2026-09-22-10-05', 'a1b2c3d4e5f6', $cats );
+		$global  = self::merged( 'categories_intent', Stats_Store::cat_parts( '' ), '2026-09-22-10-05', $cats );
+		$per_url = self::merged( 'categories_intent', Stats_Store::url_cat_parts( 'a1b2c3d4e5f6' ), '2026-09-22-10-05', $cats );
 
-		$this->assertCount( Stats_Store::MAX_CAT_VALUES, $global );
-		self::assert_fits_both( $global, 'categories' );
-		self::assert_fits_both( $per_url, 'url_cat' );
+		$this->assertCount( Stats_Store::MAX_CAT_VALUES, $global[1] );
+		$this->assertCount( Stats_Store::MAX_CAT_VALUES, $per_url[1] );
 	}
 }

@@ -42,11 +42,11 @@
   <tr><td class="ns">The per-URL flame aggregate<span>url</span></td>
     <td class="all"><span class="m">count</span></td>
     <td class="timed"><span class="m">sum_value</span> and the children merge</td></tr>
-  <tr><td class="ns">Every dimensional slot<span>dim, url_dim</span></td>
-    <td class="all"><span class="m">c</span></td>
-    <td class="timed"><span class="m">s</span>; an untimed request leaves it at zero</td></tr>
-  <tr><td class="ns">The site totals<span>hourly, non-worker only</span></td>
-    <td class="all"><span class="m">sum_peak_mb</span>, from every non-worker request</td>
+  <tr><td class="ns">Every dimensional slot<span>dim_h, url_dim_h</span></td>
+    <td class="all"><span class="m">DIM_COUNT</span>, <span class="m">DIM_SUM_PEAK_MB</span></td>
+    <td class="timed"><span class="m">DIM_SUM_MS</span> and <span class="m">DIM_TIMED</span>; an untimed request leaves both alone</td></tr>
+  <tr><td class="ns">The site totals<span>hourly_h, non-worker only</span></td>
+    <td class="all"><span class="m">requests</span> and <span class="m">sum_peak_mb</span>, from every non-worker request</td>
     <td class="timed"><span class="m">count</span> and <span class="m">sum_ms</span></td></tr>
   <tr><td class="ns">The profiles<span>accumulate_profiles()</span></td>
     <td class="all skip">nothing: the call is skipped whole</td>
@@ -56,7 +56,7 @@
 <div class="foot">
   <div class="card"><h3>So <span class="mono">count</span> and <span class="mono">timed_count</span> diverge</h3>
     <p>For a reason that has nothing to do with workers: the row records worker traffic separately, in <span class="mono">ROW_WORKER</span>. <span class="mono">Performance_CI_Node::mean_ms()</span> divides <span class="mono">sum_ms</span> by <span class="mono">timed_count</span>, while <span class="mono">avg_peak_mb</span> divides by <span class="mono">count</span>.</p></div>
-  <div class="callout"><h4><span class="mono">hourly</span> mixes the two populations</h4>
-    <p>Its <span class="mono">sum_peak_mb</span> takes every non-worker request while its <span class="mono">count</span> takes only the timed ones, so <span class="mono">overview</span>'s <span class="mono">global_avg_peak_mb</span> divides across a wider set than its divisor.</p></div>
+  <div class="callout"><h4>Every average divides the population it summed</h4>
+    <p><span class="mono">hourly_h</span> keeps both counts: <span class="mono">global_avg_ms</span> divides <span class="mono">sum_ms</span> by the timed <span class="mono">count</span>, and <span class="mono">global_avg_peak_mb</span> divides <span class="mono">sum_peak_mb</span> by <span class="mono">requests</span>. A dimensional row does the same through <span class="mono">DIM_TIMED</span> and <span class="mono">DIM_COUNT</span>.</p></div>
 </div>
 </div>

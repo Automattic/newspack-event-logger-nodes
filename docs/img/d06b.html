@@ -57,12 +57,10 @@
 
     <path d="M522 636 L550 636 L550 560 L578 560" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
     <path d="M522 636 L578 636" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
-    <path d="M522 636 L550 636 L550 712 L578 712" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
 
     <path d="M752 560 L786 560 L786 600" stroke="#003DA5" stroke-width="1.8" fill="none"/>
     <path d="M752 636 L786 636 L786 600" stroke="#003DA5" stroke-width="1.8" fill="none"/>
     <path d="M752 462 L786 462 L786 600" stroke="#003DA5" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>
-    <path d="M752 712 L786 712 L786 600" stroke="#003DA5" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>
     <path d="M786 600 L808 600" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
   </svg>
 
@@ -113,10 +111,8 @@
   </div>
 
   <div class="chip part" style="left:580px;top:527px"><div class="nm mono">flames.pN</div><div class="cp">one flame tree per request</div></div>
-  <div class="chip part mem" style="left:580px;top:603px"><div class="nm mono">memcache</div><div class="cp">the aggregates, in buckets</div></div>
-  <div class="chip part" style="left:580px;top:679px"><div class="nm mono">flame-stats.pN</div><div class="cp">the durable mirror of every memcache write</div></div>
+  <div class="chip part mem" style="left:580px;top:603px"><div class="nm mono">SQLite Tables</div><div class="cp">the aggregates, in buckets, on disk</div></div>
 
-  <div class="abs" style="left:556px;top:749px;width:230px;text-align:right;font-size:11.5px;color:#50575E">on a memcache miss</div>
 
   <div class="reader" style="left:810px;top:543px"><div class="panel"><header>Performance</header><div class="body">Reads the statistics and the requests index through the <span class="mono">performance</span> verbs: site totals, the URL leaderboard, one URL's aggregate flame, and one request's trace with its findings.</div></div></div>
   <div class="reader" style="left:810px;top:704px"><div class="panel"><header>Settings</header><div class="body">The three switches, the effective configuration, and the ruleset editor. A change applies at once through the <span class="mono">rules</span> verbs.</div></div></div>

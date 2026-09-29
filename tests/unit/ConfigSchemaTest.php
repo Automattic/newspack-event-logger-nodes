@@ -30,7 +30,6 @@ class ConfigSchemaTest extends TestCase {
 	/** Overrides seeded here are distinct from every schema default. */
 	private const OVERRIDES = [
 		'hook_start_priority' => -4242,
-		'stats_mirror_node'   => 'drift-canary:partition',
 		'log_memory'          => true,
 	];
 
@@ -102,7 +101,7 @@ class ConfigSchemaTest extends TestCase {
 	public function test_the_option_less_keys_are_declared_but_never_rendered(): void {
 		$schema = Settings_Schema::get();
 
-		foreach ( [ 'custom_colors', 'stats_mirror_node', 'recommended_log_events' ] as $key ) {
+		foreach ( [ 'custom_colors', 'hook_start_priority', 'recommended_log_events' ] as $key ) {
 			$field = $schema->field_for_short( $key );
 			$this->assertNotNull( $field, "{$key} must be declared" );
 			$this->assertFalse( $field->ui, "{$key} must never render in the settings page" );
@@ -116,7 +115,6 @@ class ConfigSchemaTest extends TestCase {
 		Config::$read_shipped_config = static fn ( array $base ): array => $base;
 		Config::reset();
 
-		$this->assertSame( 'flame-stats:partition', Config::value( 'stats_mirror_node' ) );
 		$this->assertSame( -10000, Config::value( 'hook_start_priority' ) );
 		$this->assertSame( [], Config::value( 'custom_colors' ) );
 		$this->assertContains( 'template_redirect', Config::value( 'recommended_log_events' ) );
@@ -130,15 +128,14 @@ class ConfigSchemaTest extends TestCase {
 		$this->use_base_dir( $dir, self::OVERRIDES );
 
 		$this->assertSame( -4242, Config::value( 'hook_start_priority' ) );
-		$this->assertSame( 'drift-canary:partition', Config::value( 'stats_mirror_node' ) );
 		$this->assertTrue( Config::load_config()['log_memory'] );
 	}
 
 	/** A key the schema does not know is an operator typo, and it is NAMED. */
 	public function test_unknown_keys_names_the_stray_key(): void {
 		$this->assertSame(
-			[ 'stats_miror_node' ],
-			Config::unknown_keys( [ 'stats_miror_node' => 'flame-stats:partition' ] )
+			[ 'hook_start_priorty' ],
+			Config::unknown_keys( [ 'hook_start_priorty' => -4242 ] )
 		);
 	}
 
@@ -162,7 +159,7 @@ class ConfigSchemaTest extends TestCase {
 			[ ...$base, 'retired_knob' => 'left over from a rename' ];
 		Config::reset();
 
-		$this->assertSame( 'flame-stats:partition', Config::value( 'stats_mirror_node' ) );
+		$this->assertSame( -10000, Config::value( 'hook_start_priority' ) );
 		$this->assertSame( [ 'retired_knob' ], Config::unrecognized_keys() );
 	}
 
@@ -170,7 +167,7 @@ class ConfigSchemaTest extends TestCase {
 	public function test_a_clean_shipped_file_reports_no_unrecognized_keys(): void {
 		Config::$read_shipped_config = static fn ( array $base ): array => $base;
 		Config::reset();
-		Config::value( 'stats_mirror_node' );
+		Config::value( 'hook_start_priority' );
 
 		$this->assertSame( [], Config::unrecognized_keys() );
 	}
@@ -192,7 +189,7 @@ class ConfigSchemaTest extends TestCase {
 		Config::register_config_keys();
 
 		$this->assertArrayNotHasKey( 'retired_knob', $keys->getValue() );
-		$this->assertArrayHasKey( 'stats_mirror_node', $keys->getValue() );
+		$this->assertArrayHasKey( 'hook_start_priority', $keys->getValue() );
 	}
 
 	/**

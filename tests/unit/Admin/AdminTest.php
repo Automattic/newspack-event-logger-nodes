@@ -636,18 +636,6 @@ class AdminTest extends TestCase {
 		$this->assertRestartFlagged( 'aggregator', 0 );
 	}
 
-	public function test_maybe_request_worker_restart_stats_salt_targets_flame_builder(): void {
-		$this->register_topologies();
-		$this->prepare_lock_dir( 'combined', 0 );
-		$this->prepare_lock_dir( 'aggregator', 0 );
-		$admin = new Admin();
-		// stats_salt is rotated by the flush handler (not a settings Field); its
-		// stats producer is Stats_Store, which runs inside Flame_Builder.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_stats_salt' );
-		$this->assertRestartFlagged( 'combined', 0 );
-		$this->assertRestartNotFlagged( 'aggregator', 0 );
-	}
-
 	public function test_maybe_request_worker_restart_skips_unknown_application_option(): void {
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'combined', 0 );

@@ -7,10 +7,10 @@
  * declares functions, not classes, so the classmap autoloader never maps it and
  * it costs nothing at runtime.
  *
- * The sweep is options-only by design. On-disk state — logs, locks, offsets,
- * IPC — lives under the substrate's base directory, and the `newspack-nodes`
- * uninstall removes that tree; memcache stats carry TTLs and expire on their
- * own.
+ * Two sweeps: every option row the plugin wrote, and the three stats Tables'
+ * SQLite files. The rest of the on-disk state — logs, locks, offsets, IPC —
+ * lives under the substrate's base directory, and the `newspack-nodes`
+ * uninstall removes that tree, which leaves `tables/` behind.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -53,6 +53,42 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
 		}
 	}
 	// phpcs:enable
+	return $deleted;
+}
+
+/**
+ * Delete the stats Tables' SQLite files: each partition's file, and the WAL
+ * files SQLite keeps beside it, named by the substrate's `Table_Node::file()`
+ * across every partition a fleet can run.
+ *
+ * Only under a base directory this install configured. The schema default
+ * is the one every unconfigured install on a host shares, and so are the
+ * files under it, as the substrate's own uninstall holds. Nothing to do
+ * where the substrate is not loaded, since only it can name the files.
+ *
+ * @param list<string> $tables The stats Tables, `Stats_Store::TABLES`.
+ * @return int Files deleted.
+ */
+function delete_stats_tables( array $tables ): int {
+	if ( ! \class_exists( '\Newspack_Nodes\Table_Node' ) ) {
+		return 0;
+	}
+	$base = \Newspack_Nodes\Config::configured_base_directory();
+	if ( '' === $base || \Newspack_Nodes\Settings_Schema::get()->defaults()['base_directory'] === $base ) {
+		return 0;
+	}
+	$deleted = 0;
+	foreach ( $tables as $table ) {
+		for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
+			$file = \Newspack_Nodes\Table_Node::file( $table, $partition );
+			foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
+				// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.
+				if ( \is_file( $path ) && \unlink( $path ) ) {
+					++$deleted;
+				}
+			}
+		}
+	}
 	return $deleted;
 }
 

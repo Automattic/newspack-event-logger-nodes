@@ -66,6 +66,7 @@ import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
 
 import UrlTable from './UrlTable';
+import { breakdownState } from './AggregateTimeChart';
 
 /**
  * The stand-in title for a URL whose hash is selected but whose name has not
@@ -171,6 +172,12 @@ export default function PerformanceDashboard( {
 		() => overview?.breakdowns?.server ?? null,
 		[ overview ]
 	);
+	// @longform Read once: the server names, the Time Breakdown and a chart
+	// broken down by server all share it.
+	const serverRead = useMemo(
+		() => breakdownState( serverBreakdownData ),
+		[ serverBreakdownData ]
+	);
 	// Sticky across a scoped reply, and null until the first one lands.
 	const [ serverNames, setServerNames ] = useState( null );
 	// @longform Read, never depended on: keying the effect on the filter
@@ -179,17 +186,21 @@ export default function PerformanceDashboard( {
 	const serverFilterRef = useRef( serverFilter );
 	serverFilterRef.current = serverFilter;
 	useEffect( () => {
-		if ( ! serverBreakdownData || serverFilterRef.current ) {
+		if ( 'pending' === serverRead.state || serverFilterRef.current ) {
 			return;
 		}
-		const names = new Set();
-		Object.values( serverBreakdownData ).forEach( ( bucket ) =>
-			Object.keys( bucket ).forEach( ( n ) => names.add( n ) )
-		);
+		// A reply the decoder refuses landed, and names no server.
+		if ( ! serverRead.series ) {
+			setServerNames( [] );
+			return;
+		}
 		// The overflow fold, not a server: a read scoped to it matches nothing.
-		names.delete( 'Other' );
-		setServerNames( Array.from( names ).sort() );
-	}, [ serverBreakdownData ] );
+		setServerNames(
+			serverRead.series.names
+				.filter( ( name ) => 'Other' !== name )
+				.sort()
+		);
+	}, [ serverRead ] );
 
 	// @longform One server draws a single bar, and a server filter draws that
 	// server against itself, so neither can chart this axis. Derived rather
@@ -206,19 +217,23 @@ export default function PerformanceDashboard( {
 			: chartBreakdown;
 
 	/**
-	 * The drawn dimension's series, or null while none is in hand.
+	 * The drawn dimension's `breakdownState()` read.
 	 *
 	 * Keyed off `activeBreakdown` rather than the operator's choice, so the
 	 * chart and the dropdown never disagree when `server` falls back. An absent
 	 * key is a dropdown switch the reply has not caught up with, which
-	 * `breakdownState` reads as `pending` instead of as an empty dimension.
+	 * `breakdownState` reads as `pending` instead of as an empty dimension. The
+	 * server axis takes `serverRead` itself, so that reply decodes once.
 	 */
-	const chartBreakdownData = useMemo( () => {
-		if ( ! overview?.breakdowns ) {
-			return null;
-		}
-		return overview.breakdowns[ activeBreakdown ] ?? null;
-	}, [ overview, activeBreakdown ] );
+	const chartBreakdownRead = useMemo(
+		() =>
+			'server' === activeBreakdown
+				? serverRead
+				: breakdownState(
+						overview?.breakdowns?.[ activeBreakdown ] ?? null
+				  ),
+		[ overview, activeBreakdown, serverRead ]
+	);
 
 	const {
 		selectedUrl,
@@ -657,29 +672,13 @@ export default function PerformanceDashboard( {
 	);
 
 	/**
-	 * The wall clock the Time Breakdown divides by.
+	 * The wall clock the Time Breakdown divides by: the board's own `avg_ms`.
 	 *
-	 * Its categories come from `build_leaderboard( server )`, so the average has
-	 * to be that server's — not the site's, which is the wider question, and not
-	 * the filtered URL set's, which is a narrower one. Unfiltered the first two
-	 * are the same number.
+	 * Its categories come from `build_leaderboard( server )`, over the board's
+	 * 25 hour keys, so the average is that board's, over those same keys — a
+	 * server's under a server filter — and never the charts' 288 slots.
 	 */
-	const breakdownAvgMs = useMemo( () => {
-		if ( ! serverFilter || ! serverBreakdownData ) {
-			return overview?.global_avg_ms ?? 0;
-		}
-		let totalC = 0;
-		let totalS = 0;
-		for ( const bucket of Object.values( serverBreakdownData ) ) {
-			// DIM_SUMS: [ count, sumMs, sumPeakMb ] — decision 18.
-			const entry = bucket?.[ serverFilter ];
-			if ( entry ) {
-				totalC += entry[ 0 ] || 0;
-				totalS += entry[ 1 ] || 0;
-			}
-		}
-		return totalC > 0 ? totalS / totalC : 0;
-	}, [ serverFilter, serverBreakdownData, overview?.global_avg_ms ] );
+	const breakdownAvgMs = overview?.global_leaderboard?.avg_ms ?? 0;
 
 	// Inline "Log this URL" state: the open draft, the ruleset, and the error.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
@@ -899,7 +898,7 @@ export default function PerformanceDashboard( {
 				chartBreakdown={ activeBreakdown }
 				canBreakDownByServer={ canBreakDownByServer }
 				setChartBreakdown={ setChartBreakdown }
-				breakdownData={ chartBreakdownData }
+				breakdownRead={ chartBreakdownRead }
 				categoryData={ categoryData }
 			/>
 

@@ -31,8 +31,7 @@
  *    POSTs per user per window, so a polling dashboard is bounded upstream.
  *  - Stats reads fail soft, as `Stats_Store` and the dashboards' "no data"
  *    state do.
- *  - Stats come from memcache alone. The durable stats mirror is the
- *    flame builder's, which sweeps it back into memcache; no reply reads it.
+ *  - Stats come from the flame builder's store alone.
  *  - Disk scans are bounded twice. The per-URL walk stops at `scan_floor()`,
  *    in a segment that closed before it, because its index carries time.
  *    Every walk, a missing-rid lookup included, also stops after
@@ -67,6 +66,8 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Service_CI_Node;
+use Newspack_Nodes\Table_Client;
+use Newspack_Nodes\Table_Unavailable;
 
 \defined( 'ABSPATH' ) || exit;
 
@@ -144,9 +145,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `gyroscope.p0` while `requests.p<partition>` expands, so any assumption
 	 * about the naming scheme is wrong for most of its partitions.
 	 */
-	private const NODE_FLAMES        = 'flames:partition';
-	private const NODE_FLAME_BUILDER = 'flame-builder';
-	private const NODE_REQUESTS      = 'requests:partition';
+	private const NODE_FLAMES   = 'flames:partition';
+	private const NODE_REQUESTS = 'requests:partition';
 
 	/** `dump_url` per-URL request-list cap, applied to the index walk. */
 	private const RECENT_REQUEST_LIMIT = 500;
@@ -165,7 +165,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Valid breakdown dimensions for the `dump_url` / `url_breakdown` verbs —
-	 * typos fall through without surfacing arbitrary memcache reads. A URL
+	 * typos fall through without surfacing arbitrary stats reads. A URL
 	 * belongs to one server, so it keeps no server axis.
 	 */
 	private const URL_DIMENSIONS = [ 'status', 'method', 'country', 'from', 'ua', 'ja4' ];
@@ -208,6 +208,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** @var string What `$read_window` was built for: its bucket AND its retention. */
 	private static string $read_window_at = '';
 
+	/** @var array<string,list<string>> Memoized `chart_slots()`, under the one bucket it ends at. */
+	private static array $chart_slots = [];
+
 	/** Table namespace of the URL page cache, beside `Rule_Set::TABLE_HOOKS`. */
 	private const URLS_PAGE_NS = 'eln-urls-page';
 
@@ -228,7 +231,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const HEADER_FIELDS = [ 'rows', 'totals', 'slowest', 'estimated', 'provisional' ];
 
 	/**
-	 * Buckets read per `lookup_multi` while folding the index.
+	 * Buckets read per `MGET` while folding the index.
 	 *
 	 * Decision 6 wants ONE round trip per read, not one per key; it does not
 	 * want the whole retention window resident. Twelve is an hour of fine
@@ -274,6 +277,22 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @var bool
 	 */
 	public static bool $match_names = false;
+
+	/** This CI's asker for the stats Tables, built on the first read. */
+	private ?Table_Client $client = null;
+
+	/**
+	 * A stats Table's reply goes to the client; every other message is this
+	 * CI's input.
+	 *
+	 * @param array<int,mixed> $message The 7-field positional message array.
+	 */
+	public function fill( array $message ): void {
+		if ( null !== $this->client && $this->client->accepts( $message ) ) {
+			return;
+		}
+		parent::fill( $message );
+	}
 
 	/**
 	 * Coerce and bounds-check one value for `set`.
@@ -348,12 +367,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string                 $server    Server scope; ignored for the `server` dimension.
 	 * @param array<int,Stats_Store> $stores    Stores the caller resolved once.
 	 * @param int                    $now       The reply's clock, read once at its entry.
-	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
+	 * @return array<array-key,mixed> Bucket keys derive from decoded stored values.
 	 */
 	private static function merge_dim_across_partitions( string $dimension, string $server, array $stores, int $now ): array {
 		$store_server = 'server' === $dimension ? '' : $server;
 		return self::merged_across_stores(
-			static fn ( Stats_Store $store, array $buckets ): array => $store->get_dimensional_buckets( $dimension, $buckets, $store_server ),
+			static fn ( Stats_Store $store, array $hours ): array => $store->get_slots( Stats_Store::dim_parts( $dimension, $store_server ), $hours ),
 			Stats_Store::DIM_SUMS,
 			Stats_Store::DIM_COUNT,
 			$stores,
@@ -372,7 +391,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function merge_categories_across_partitions( string $server, array $stores, int $now ): array {
 		return self::merged_across_stores(
-			static fn ( Stats_Store $store, array $buckets ): array => $store->get_category_buckets( $buckets, $server ),
+			static fn ( Stats_Store $store, array $hours ): array => $store->get_slots( Stats_Store::cat_parts( $server ), $hours ),
 			Stats_Store::CAT_SUMS,
 			Stats_Store::CAT_REQUESTS,
 			$stores,
@@ -390,7 +409,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function merge_url_categories( string $hash, array $stores, int $now ): array {
 		return self::merged_across_stores(
-			static fn ( Stats_Store $store, array $buckets ): array => $store->get_url_category_buckets( $hash, $buckets ),
+			static fn ( Stats_Store $store, array $hours ): array => $store->get_slots( Stats_Store::url_cat_parts( $hash ), $hours ),
 			Stats_Store::CAT_SUMS,
 			Stats_Store::CAT_REQUESTS,
 			$stores,
@@ -401,58 +420,57 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The site-wide half of the dashboard: request totals and the chart series.
 	 *
-	 * These are the SITE's: `hourly` has no server dimension, so scoping one of
+	 * These are the SITE's: `hourly_h` has no server dimension, so scoping one of
 	 * them and not the others is how a payload comes to contradict itself. Every
 	 * URL-set fact — how many, which are slowest, which are busiest — belongs to
 	 * the `urls` verb, which owns the filters and answers all of it in one scope
 	 * (decision 15). Nothing here touches the URL index, which is what keeps a
-	 * filtered poll to ONE fan-out across the retention window.
+	 * filtered poll to ONE fan-out across the chart window.
 	 *
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * The totals sum the slots of `hourly_slots()` that `chart_slots()`
+	 * draws, so they cover what the charts beside them draw; the reply names
+	 * those slots. `total_requests` and the average duration count the timed
+	 * requests (decision 24), and the average peak divides every request its
+	 * peak sum covers.
+	 *
+	 * @param array<string,array<array-key,mixed>> $hourly `hourly_slots()`.
+	 * @param int                                  $now    The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 */
-	private static function build_overview_payload( array $stores, int $now ): array {
-		$time_series       = self::merge_hourly_across_partitions( $stores, $now );
-		$total_requests    = 0;
-		$total_sum_ms      = 0.0;
-		$total_sum_peak_mb = 0.0;
-		foreach ( $time_series as $row ) {
-			$row_arr            = Core::arr( $row );
-			$total_requests    += Core::num_int( $row_arr['count'] ?? 0 );
-			$total_sum_ms      += Core::num_float( $row_arr['sum_ms'] ?? 0 );
-			$total_sum_peak_mb += Core::num_float( $row_arr['sum_peak_mb'] ?? 0 );
+	private static function build_overview_payload( array $hourly, int $now ): array {
+		$slots  = self::chart_slots( $now );
+		$totals = [];
+		foreach ( \array_intersect_key( $hourly, \array_flip( $slots ) ) as $slot ) {
+			$totals = Stats_Store::add_totals( $totals, $slot );
 		}
-
+		$count    = Core::num_int( $totals['count'] ?? null );
+		$requests = Core::num_int( $totals['requests'] ?? null );
 		return [
-			'total_requests'        => $total_requests,
-			'global_avg_ms'         => $total_requests > 0 ? $total_sum_ms / $total_requests : 0.0,
-			'global_avg_peak_mb'    => $total_requests > 0 ? $total_sum_peak_mb / $total_requests : 0.0,
-			'aggregate_time_series' => $time_series,
-			'plan'                  => self::read_plan( $now ),
+			'total_requests'     => $count,
+			'global_avg_ms'      => $count > 0 ? Core::num_float( $totals['sum_ms'] ?? null ) / $count : 0.0,
+			'global_avg_peak_mb' => $requests > 0 ? Core::num_float( $totals['sum_peak_mb'] ?? null ) / $requests : 0.0,
+			'slots'              => $slots,
 		];
 	}
 
 	/**
-	 * Sum-merge per-partition hourly buckets into one sorted time_series, each
-	 * row under its key and the seconds that key spans: 3600 for an hour key,
-	 * a bucket's width for a bucket of the current hour.
+	 * The site's request totals over `chart_keys()`, every slot of them,
+	 * summed across the stores by bucket: the one `hourly_h` read an
+	 * `overview` makes, for its totals and the board's average alike.
 	 *
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @param int                    $now    The reply's clock, read once at its entry.
-	 * @return array<int,mixed>
+	 * @return array<string,array<array-key,mixed>>
 	 */
-	private static function merge_hourly_across_partitions( array $stores, int $now ): array {
-		$merged  = [];
-		$buckets = self::chart_keys( $now );
+	private static function hourly_slots( array $stores, int $now ): array {
+		$hours  = self::chart_keys( $now );
+		$merged = [];
 		foreach ( $stores as $store ) {
-			foreach ( $store->get_hourly_buckets( $buckets ) as $key => $row ) {
-				$span           = Stats_Store::hour_of( $key ) === $key ? 3600 : Stats_Store::BUCKET_SECONDS;
-				$merged[ $key ] = Stats_Store::add_totals( $merged[ $key ] ?? [ 'hour' => $key, 'span' => $span ], Core::arr( $row ) );
+			foreach ( $store->get_slots( Stats_Store::hourly_parts(), $hours ) as $bucket => $slot ) {
+				$merged[ $bucket ] = Stats_Store::add_totals( $merged[ $bucket ] ?? [], Core::arr( $slot ) );
 			}
 		}
-		\ksort( $merged );
-		return \array_values( $merged );
+		return $merged;
 	}
 
 	/**
@@ -725,11 +743,11 @@ class Performance_CI_Node extends Service_CI_Node {
 			case 'request':
 				return self::ask_request( $target['id'], self::descriptor_partition( $target ), $context, $server );
 			case 'span':
-				return self::ask_span( $target['id'], $context, $now );
+				return $this->ask_span( $target['id'], $context, $now );
 			case 'entry':
 				return self::ask_entry( $target['id'], $context );
 			case 'category':
-				return self::ask_category( $target['id'], $context, $server, $now );
+				return $this->ask_category( $target['id'], $context, $server, $now );
 		}
 		throw new \RuntimeException( \esc_html( 'unknown descriptor: ' . $target['type'] ) );
 	}
@@ -754,7 +772,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private function ask_overview( string $server, array $filters, int $now ): array {
-		$stores = self::stats_stores();
+		$stores = $this->stats_stores( [ Stats_Store::TABLE_AGGREGATE, Stats_Store::TABLE_URL_FINE ] );
 		$page   = $this->url_page(
 			$server,
 			Core::as_string( $filters['search'] ?? '' ),
@@ -798,7 +816,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		// output raw quotes a confident 0 for every average. Scoped, because
 		// the facts block stamps the filters onto every surface, and an
 		// unscoped number under a server's name is quotable and wrong.
-		$stats = $this->row( $hash, $server, self::stats_stores(), $now );
+		$stats = $this->row( $hash, $server, $this->stats_stores( [ Stats_Store::TABLE_AGGREGATE, Stats_Store::TABLE_URL_FINE ] ), $now );
 		if ( null === $stats ) {
 			throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 		}
@@ -1183,11 +1201,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string                 $dimension One of URL_DIMENSIONS.
 	 * @param array<int,Stats_Store> $stores    Stores the caller resolved once.
 	 * @param int                    $now       The reply's clock, read once at its entry.
-	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
+	 * @return array<array-key,mixed> Bucket keys derive from decoded stored values.
 	 */
 	private static function merge_url_dim( string $hash, string $dimension, array $stores, int $now ): array {
 		return self::merged_across_stores(
-			static fn ( Stats_Store $store, array $buckets ): array => $store->get_url_dimension_buckets( $hash, $dimension, $buckets ),
+			static fn ( Stats_Store $store, array $hours ): array => $store->get_slots( Stats_Store::url_dim_parts( $hash, $dimension ), $hours ),
 			Stats_Store::DIM_SUMS,
 			Stats_Store::DIM_COUNT,
 			$stores,
@@ -1200,7 +1218,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * rows summed into the buckets under one field table, the values nothing
 	 * measured dropped once at the end, and the buckets sorted.
 	 *
-	 * @param callable(Stats_Store, array<int,string>): array<string,mixed> $rows_of     A store's rows for the series, over `chart_keys()`.
+	 * @param callable(Stats_Store, array<int,string>): array<string,mixed> $rows_of     A store's slots for the series, over `chart_keys()`, keyed by bucket.
 	 * @param array<int|string,bool>                                        $fields      Field table for the sum.
 	 * @param int                                                           $count_field The entry index a value's request count sits at.
 	 * @param array<int,Stats_Store>                                        $stores      Stores the caller resolved once.
@@ -1208,13 +1226,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,array<array-key,mixed>> Bucket key => value name => summed entry.
 	 */
 	private static function merged_across_stores( callable $rows_of, array $fields, int $count_field, array $stores, int $now ): array {
-		$merged  = [];
-		$buckets = self::chart_keys( $now );
+		$merged = [];
+		$hours  = self::chart_keys( $now );
 		foreach ( $stores as $store ) {
-			foreach ( $rows_of( $store, $buckets ) as $bucket => $values ) {
+			foreach ( $rows_of( $store, $hours ) as $bucket => $values ) {
 				$merged[ $bucket ] = Stats_Store::sum_fields( $merged[ $bucket ] ?? [], Core::arr( $values ), $fields );
 			}
 		}
+		// The oldest hour's head and any slot past now are not drawn.
+		$merged = \array_intersect_key( $merged, \array_flip( self::chart_slots( $now ) ) );
 		foreach ( $merged as $bucket => $values ) {
 			$merged[ $bucket ] = Stats_Store::measured( $values, $count_field );
 		}
@@ -1325,7 +1345,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException With neither context, or an absent span.
 	 */
-	private static function ask_span( string $name, array $context, int $now ): array {
+	private function ask_span( string $name, array $context, int $now ): array {
 		$record = self::request_in_context( $context );
 		if ( null !== $record ) {
 			$brief = Ask_Assembler::for_span( $record, $name, self::rule_for_record( $record ), self::descriptor_of( $context, 'request' ) );
@@ -1334,7 +1354,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 			return $brief;
 		}
-		$url = self::url_in_context( $context, self::stats_stores() );
+		$url = self::url_in_context( $context, $this->stats_stores( [ Stats_Store::TABLE_URL, Stats_Store::TABLE_AGGREGATE ] ) );
 		if ( null === $url ) {
 			throw new \RuntimeException( \esc_html( 'a span needs its request or its URL for context' ) );
 		}
@@ -1428,7 +1448,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When no board holds the category, or the name is a callback row.
 	 */
-	private static function ask_category( string $name, array $context, string $server, int $now ): array {
+	private function ask_category( string $name, array $context, string $server, int $now ): array {
 		// A callback row is no board; its time counts inside its hook.
 		if ( Flame_Tree::is_listener_span( $name ) ) {
 			throw new \RuntimeException( \esc_html( "'{$name}' is a callback row; ask about the hook it ran under" ) );
@@ -1440,7 +1460,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				return $brief;
 			}
 		}
-		$stores = self::stats_stores();
+		$stores = $this->stats_stores( [ Stats_Store::TABLE_URL, Stats_Store::TABLE_AGGREGATE ] );
 		$url    = self::url_in_context( $context, $stores );
 		if ( null !== $url && null !== $url['aggregate'] ) {
 			$brief = Ask_Assembler::for_url_category( Core::arr( $url['aggregate']['profiles'] ?? null ), $name, $url['name'] );
@@ -1510,8 +1530,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * A URL aggregate rebuilt from the flames its listed requests stored, for a
-	 * URL whose blob has left memcache: it lives an hour past the URL's last
-	 * request, and the durable mirror keeps none.
+	 * URL whose blob has left the store: it lives an hour past the URL's last
+	 * request.
 	 *
 	 * Rebuilt only on a full read. A tailing read lists only the newest few, and
 	 * a flame folded from them would describe those, not the URL, so it answers
@@ -1595,11 +1615,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Build the category leaderboard for the retention window, global or scoped
-	 * to one reporting server — one function, because the scope is the only
-	 * thing separating them, and the window is read in ONE round trip per store
-	 * over `chart_keys()`, the current hour's buckets and every older hour's
-	 * key. A missing hour leaves the board short there: the sweep's to fold.
+	 * Build the category leaderboard, global or scoped to one reporting
+	 * server — one function, because the scope is the only thing separating
+	 * them. It sums `chart_keys()`, the current hour's key and the 24 whole
+	 * hours before it, in ONE round trip per store: an hour key is one sum,
+	 * so the board cannot trim to the 288 slots the charts draw, and its own
+	 * averages divide its own counts. A missing hour leaves the board short
+	 * there. `overview` alone adds the board's `avg_ms` (`board_avg_ms()`),
+	 * so an ask, which reads the categories alone, spends no read on it.
 	 *
 	 * @param string                 $server Server to scope to; '' builds the global board.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
@@ -1620,10 +1643,44 @@ class Performance_CI_Node extends Service_CI_Node {
 				$sums          = Stats_Store::sum_fields( $sums, Core::arr( $row['categories'] ?? null ), Stats_Store::LB_CAT_SUMS );
 			}
 		};
+		$hours = self::chart_keys( $now );
 		foreach ( $stores as $store ) {
-			$fold( $store->get_leaderboard_buckets( self::chart_keys( $now ), $server ) );
+			$fold( $store->get_leaderboard_hours( $hours, $server ) );
 		}
 		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
+	}
+
+	/**
+	 * The mean duration of the timed requests over a board's hour keys,
+	 * every slot of them, the wall clock the Time Breakdown divides the
+	 * board's categories by: the site's from the `hourly_h` slots `overview`
+	 * already read, and a server's from its row of the `server` dimension,
+	 * the one read this costs.
+	 *
+	 * @param string                               $server Server the board is scoped to; '' is the site.
+	 * @param array<string,array<array-key,mixed>> $hourly `hourly_slots()`, the site's.
+	 * @param array<int,Stats_Store>               $stores Stores the caller resolved once.
+	 * @param int                                  $now    The reply's clock, read once at its entry.
+	 */
+	private static function board_avg_ms( string $server, array $hourly, array $stores, int $now ): float {
+		$timed  = 0;
+		$sum_ms = 0.0;
+		if ( '' === $server ) {
+			foreach ( $hourly as $slot ) {
+				$timed  += Core::num_int( $slot['count'] ?? null );
+				$sum_ms += Core::num_float( $slot['sum_ms'] ?? null );
+			}
+			return $timed > 0 ? $sum_ms / $timed : 0.0;
+		}
+		$hours = self::chart_keys( $now );
+		foreach ( $stores as $store ) {
+			foreach ( $store->get_slots( Stats_Store::dim_parts( Stats_Store::DIM_SERVER, '' ), $hours ) as $slot ) {
+				$row     = Core::arr( $slot[ $server ] ?? null );
+				$timed  += Core::num_int( $row[ Stats_Store::DIM_TIMED ] ?? null );
+				$sum_ms += Core::num_float( $row[ Stats_Store::DIM_SUM_MS ] ?? null );
+			}
+		}
+		return $timed > 0 ? $sum_ms / $timed : 0.0;
 	}
 
 	/**
@@ -2090,31 +2147,49 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One Stats_Store per flame-builder worker. `configure_stats <partition>`
-	 * keys each store by the WORKER index, and nothing of it lands on disk — so
-	 * the index space comes from the declaring topology's count, not from a dir
-	 * listing.
+	 * One Stats_Store per flame-builder partition, over the stats Tables this
+	 * verb reads, mounted into the request graph — read-only, in-process, one
+	 * catalog read for all of them. A mount lives for the rest of the request,
+	 * so a later verb in the same POST reads through it rather than mounting
+	 * again (substrate ADR-23). A store asks only the Tables named here, and
+	 * a partition whose worker has written no file yet reads as empty.
 	 *
-	 * With no shared cache backend at all this returns an empty list, which is
-	 * what makes every stats reader above degrade to an empty or zeroed shape
-	 * instead of throwing. Each store's TTL comes from the substrate
-	 * `min_lifetime` key. A store reads memcache alone: a key it misses is
-	 * the flame builder's sweep to put back.
+	 * A Table whose backend cannot open here (`Table_Unavailable`) reads as
+	 * none — a missing pdo_sqlite, or a path SQLite cannot open: the list
+	 * comes back empty, and every stats reader degrades to an empty or zeroed
+	 * shape instead of throwing (decision 3). Any other refusal is the
+	 * operator's to fix, and fails the verb: a mount in a process running as
+	 * root, a Table two topologies declare differently, a TTL that is not
+	 * one, a declaration its arm refuses, a topology that will not read, or a
+	 * tables directory the runtime refuses to adopt — a symlink, another
+	 * owner, group- or world-writable. Each store's read window comes from
+	 * the substrate `min_lifetime` key.
 	 *
+	 * @param list<string> $tables `Stats_Store::TABLE_*` names the verb reads.
 	 * @return array<int,Stats_Store>
+	 * @throws \Throwable Every refusal but a backend that cannot open.
 	 */
-	private static function stats_stores(): array {
-		// Not Core::$memd: an APCu-only pool is a shared backend too.
-		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
+	private function stats_stores( array $tables ): array {
+		try {
+			$stems = Bootstrap::mount_table( $tables );
+		} catch ( Table_Unavailable $e ) {
+			Core::print_less_often( 'performance: stats Tables did not mount', ' — ' . $e->getMessage() );
 			return [];
 		}
-		$max_lifespan = AppConfig::stats_retention_seconds();
-		$stores       = [];
-		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
-			$store = new Stats_Store( $p, $max_lifespan );
+		$names = [];
+		foreach ( $stems as $table => $partitions ) {
+			foreach ( $partitions as $p => $stem ) {
+				$names[ $p ][ $table ] = $stem;
+			}
+		}
+		$this->client ??= new Table_Client( $this );
+		$max_lifespan   = AppConfig::stats_retention_seconds();
+		$stores         = [];
+		foreach ( $names as $p => $by_table ) {
+			$store = new Stats_Store( $max_lifespan, $this->client, $by_table );
 			// One reply's stores: every shard asks the same buckets' index.
 			$store->server_indexes = [];
-			$stores[] = $store;
+			$stores[]              = $store;
 		}
 		return $stores;
 	}
@@ -2193,9 +2268,10 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		$plan       = self::read_plan( $now );
 		$tokens     = '' === $search ? [] : Stats_Store::term_tokens( $search );
+		$unread     = false;
 		$candidates = '' === $search
 			? null
-			: self::search_candidates( $tokens, $server, $stores, $plan ) ?? ( self::$match_names ? null : [] );
+			: self::search_candidates( $tokens, $server, $stores, $plan, $unread ) ?? ( self::$match_names ? null : [] );
 
 		// Worker traffic is its own shard family
 		$families = $workers ? [ false, true ] : [ false ];
@@ -2312,7 +2388,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			] + ( $errors ? [ 'errors' => $errored ] : [] ),
 			'slowest'     => \array_slice( $named, \count( $page ) ),
 			'estimated'   => false,
-			'provisional' => self::unfolded( $plan, $stores ),
+			'provisional' => $unread || self::unfolded( $plan, $stores ),
 			'ranked'      => false,
 			'as_of'       => $now,
 		];
@@ -2338,9 +2414,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string                                         $server Reporting server; '' is the site.
 	 * @param array<int,Stats_Store>                         $stores Stores the caller resolved once.
 	 * @param array{fine: list<string>, hours: list<string>} $plan   The reply's read plan.
+	 * @param-out bool                                       $unread
+	 * @param ?bool                                          $unread Set true when a store left a set unanswered.
 	 * @return array<string,true>|null
 	 */
-	private static function search_candidates( array $tokens, string $server, array $stores, array $plan ): ?array {
+	private static function search_candidates( array $tokens, string $server, array $stores, array $plan, ?bool &$unread = null ): ?array {
+		$unread = false;
 		if ( [] === $tokens ) {
 			return null;
 		}
@@ -2349,7 +2428,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$servers = '' === $server
 				? \array_values( Stats_Store::index_names( \array_replace( [], ...\array_values( $store->server_index( $plan['hours'], $plan['fine'] ) ) ) ) )
 				: [ $server ];
-			foreach ( $store->url_token_sets( $tokens, $servers ) as $token => $hashes ) {
+			foreach ( $store->url_token_sets( $tokens, $servers, $failed ) as $token => $hashes ) {
 				// One partition's set unanswerable is the token's answer.
 				if ( false === $hashes || false === ( $sets[ $token ] ?? null ) ) {
 					$sets[ $token ] = false;
@@ -2357,6 +2436,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$sets[ $token ] = ( $sets[ $token ] ?? [] ) + \array_fill_keys( $hashes, true );
 			}
+			$unread = $unread || $failed;
 		}
 		$usable = [];
 		foreach ( $tokens as $token ) {
@@ -2452,7 +2532,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * A stored row carries the path its server's key does not imply, so the
 	 * whole URL is read for the rows a response actually SHOWS — one
-	 * `lookup_multi` per partition. Every displayed row is named here,
+	 * `MGET` per partition. Every displayed row is named here,
 	 * including one carrying the PATH it was folded or ranked by; only the
 	 * synthetic overflow rows are skipped, and they name no URL to look up.
 	 *
@@ -2489,7 +2569,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Name hashes from whichever partition saw them: one `lookup_multi` per
+	 * Name hashes from whichever partition saw them: one `MGET` per
 	 * partition asks for every name still missing at once, and none once
 	 * every hash is named.
 	 *
@@ -2616,10 +2696,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the current hour's buckets through `$fine`, each `[ bucket, data ]`
 	 * pair handed to `$fold`.
 	 *
-	 * An hour with no coarse key — evicted, or not folded yet — leaves the
-	 * fold short there, and the flame builder's sweep folds it again; its
-	 * buckets are never read, since reading both would count the hour twice
-	 * wherever the fold stands.
+	 * An hour with no coarse key — not folded yet — leaves the fold short
+	 * there, a lag `unfolded()` reports; its buckets are never read, since
+	 * reading both would count the hour twice wherever the fold stands.
 	 *
 	 * Each chunk is read, folded and DROPPED before the next is read: holding
 	 * the whole window's buckets beside the index they build exhausts a
@@ -2751,17 +2830,43 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The keys a chart series reads: the current hour's buckets and every
-	 * older hour's key, which `Stats_Store` reads from the hour tier. An hour
-	 * whose key memcache lost is a short answer (decision 3), which the
-	 * builder's sweep refolds.
+	 * The hour keys a chart reads, newest first: the current hour and the
+	 * `CHART_HOURS - 1` before it, which together hold every slot
+	 * `chart_slots()` draws (decision 35).
 	 *
 	 * @param int $now The reply's clock, read once at its entry.
 	 * @return list<string>
 	 */
 	private static function chart_keys( int $now ): array {
-		$plan = self::read_plan( $now );
-		return [ ...$plan['fine'], ...$plan['hours'] ];
+		return \array_map(
+			static fn ( int $back ): string => Stats_Store::hour_of( Stats_Store::bucket_key( $now - $back * Stats_Store::HOUR_SECONDS ) ),
+			\range( 0, Stats_Store::CHART_HOURS - 1 )
+		);
+	}
+
+	/**
+	 * The five-minute slots a chart draws, newest first: the
+	 * `MAX_READ_BUCKETS` (288) ending at the current bucket. The reply names
+	 * them as `slots`, and the dashboard's axis is exactly these.
+	 *
+	 * Memoized while that bucket is current, as `read_window()` is: one
+	 * `overview` asks for them once per series it draws, and each would
+	 * otherwise spend 288 `gmdate()` calls.
+	 *
+	 * @param int $now The reply's clock, read once at its entry.
+	 * @return list<string>
+	 */
+	private static function chart_slots( int $now ): array {
+		$at = Stats_Store::bucket_key( $now );
+		if ( ! isset( self::$chart_slots[ $at ] ) ) {
+			self::$chart_slots = [
+				$at => \array_map(
+					static fn ( int $back ): string => Stats_Store::bucket_key( $now - $back * Stats_Store::BUCKET_SECONDS ),
+					\range( 0, Stats_Store::MAX_READ_BUCKETS - 1 )
+				),
+			];
+		}
+		return self::$chart_slots[ $at ];
 	}
 
 	/**
@@ -2793,7 +2898,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Whether a fold is short of the hour just closed, whose fold the writer
 	 * may still owe (`lagging()`): some store holds no index for it. An
-	 * older hour's hole is a short answer (decision 3), which the sweep fills.
+	 * older hour's hole is a short answer (decision 3).
 	 *
 	 * @param array{fine: list<string>, hours: list<string>} $plan   The reply's read plan.
 	 * @param array<int,Stats_Store>                         $stores Stores the caller resolved once.
@@ -2825,11 +2930,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The bucket keys a reader walks — the configured retention window.
 	 *
-	 * Memoized for as long as the current bucket is current. One `overview` calls
-	 * this ten times (seven dimensions, plus hourly, leaderboard and categories),
-	 * each otherwise rebuilding up to 288 keys with a `gmdate()` apiece. The
-	 * caller's `$now` is what makes those ten one window: a reply reads the
-	 * clock once and hands the same instant to every call.
+	 * Memoized for as long as the current bucket is current. One `urls` page
+	 * calls this once per shard it loads, each otherwise rebuilding up to 288
+	 * keys with a `gmdate()` apiece. The caller's `$now` is what makes those
+	 * calls one window: a reply reads the clock once and hands the same
+	 * instant to every call.
 	 *
 	 * @param int $now The reply's clock, read once at its entry.
 	 * @return array<int,string>
@@ -2884,25 +2989,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Epoch seconds from `Core::$now`, read once per verb and passed down,
-	 * per ELN decision 29.
-	 */
-	private static function now(): int {
-		return (int) Core::$now;
-	}
-
-	/**
-	 * The category series in its WIRE shape: a name table and positional rows.
-	 *
-	 * Nothing is dropped — every category and every bucket survives. What goes
-	 * is repetition: one category's NAME is spelled once per bucket it appears
-	 * in — 288 times across a retention window. Measured on a production hub:
-	 * the series is the largest thing the `overview` reply carries, and the
-	 * reply was being cut off before it finished.
-	 *
-	 * This is decision 18's argument at the WIRE rather than in the store, and
-	 * the boundary is the same one — but only the NAME crosses it here: a
-	 * stored entry is already `CAT_SUMS`-indexed, so the row is a re-order.
+	 * The category series on the wire: `[ nameIndex, t, c, n ]` rows.
 	 *
 	 * `CAT_MS` is rounded all the same, and the store having rounded it is not
 	 * the reason it can be skipped — it is the reason it CANNOT. What arrives
@@ -2916,26 +3003,74 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * multi-partition install.
 	 *
 	 * @param array<string,mixed> $merged `{ bucket => { name => CAT_SUMS entry } }`.
-	 * @return array{names:list<string>,buckets:array<string,list<array{0:int,1:float,2:int,3:int}>>}
+	 * @return array{names: list<string>, buckets: array<string,list<list<int|float>>>}
 	 */
 	private static function compact_category_series( array $merged ): array {
+		return self::name_table(
+			$merged,
+			static fn ( array $stat ): array => [
+				\round( Core::num_float( $stat[ Stats_Store::CAT_MS ] ?? null ), Stats_Store::CAT_MS_DECIMALS ),
+				Core::num_int( $stat[ Stats_Store::CAT_CALLS ] ?? null ),
+				Core::num_int( $stat[ Stats_Store::CAT_REQUESTS ] ?? null ),
+			]
+		);
+	}
+
+	/**
+	 * A dimensional series on the wire: `[ nameIndex, count, sumMs,
+	 * sumPeakMb, timed ]` rows, `DIM_SUMS` in its stored order.
+	 *
+	 * @param array<array-key,mixed> $merged `{ bucket => { value => DIM_SUMS entry } }`.
+	 * @return array{names: list<string>, buckets: array<string,list<list<int|float>>>}
+	 */
+	private static function compact_dim_series( array $merged ): array {
+		return self::name_table(
+			$merged,
+			static fn ( array $entry ): array => [
+				Core::num_int( $entry[ Stats_Store::DIM_COUNT ] ?? null ),
+				Core::num_float( $entry[ Stats_Store::DIM_SUM_MS ] ?? null ),
+				Core::num_float( $entry[ Stats_Store::DIM_SUM_PEAK_MB ] ?? null ),
+				Core::num_int( $entry[ Stats_Store::DIM_TIMED ] ?? null ),
+			]
+		);
+	}
+
+	/**
+	 * A bucketed series in its WIRE shape: a name table, and per bucket
+	 * positional rows `[ nameIndex, ...$row( entry ) ]`.
+	 *
+	 * Nothing is dropped — every name and every bucket survives. What goes is
+	 * repetition: a name is spelled once per bucket it appears in, 288 times
+	 * across a chart. Measured on a production hub, the category series was
+	 * the largest thing the `overview` reply carried, and the reply was being
+	 * cut off before it finished; a `ua` breakdown at 288 slots is about 1 MB
+	 * a poll spelled out. Decision 18's argument at the wire. A name PHP keys
+	 * as an integer goes out a string, as the dashboard compares it.
+	 *
+	 * @param array<array-key,mixed>                            $merged `{ bucket => { name => entry } }`.
+	 * @param \Closure(array<array-key,mixed>): list<int|float> $row    An entry's positional fields.
+	 * @return array{names: list<string>, buckets: array<string,list<list<int|float>>>}
+	 */
+	private static function name_table( array $merged, \Closure $row ): array {
 		$names   = [];
 		$buckets = [];
 		foreach ( $merged as $bucket => $entries ) {
 			$rows = [];
-			foreach ( Core::arr( $entries ) as $name => $stats ) {
+			foreach ( Core::arr( $entries ) as $name => $entry ) {
 				$names[ $name ] ??= \count( $names );
-				$stat           = Core::arr( $stats );
-				$rows[]         = [
-					$names[ $name ],
-					\round( Core::num_float( $stat[ Stats_Store::CAT_MS ] ?? null ), Stats_Store::CAT_MS_DECIMALS ),
-					Core::num_int( $stat[ Stats_Store::CAT_CALLS ] ?? null ),
-					Core::num_int( $stat[ Stats_Store::CAT_REQUESTS ] ?? null ),
-				];
+				$rows[]         = [ $names[ $name ], ...$row( Core::arr( $entry ) ) ];
 			}
-			$buckets[ $bucket ] = $rows;
+			$buckets[ (string) $bucket ] = $rows;
 		}
-		return [ 'names' => \array_keys( $names ), 'buckets' => $buckets ];
+		return [ 'names' => \array_map( 'strval', \array_keys( $names ) ), 'buckets' => $buckets ];
+	}
+
+	/**
+	 * Epoch seconds from `Core::$now`, read once per verb and passed down,
+	 * per ELN decision 29.
+	 */
+	private static function now(): int {
+		return (int) Core::$now;
 	}
 
 	/**
@@ -2999,8 +3134,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Schema-driven dispatch: each verb is declared once in
 	 * `commands[]` carrying its `handler`. The inherited Service_CI_Node ctor
 	 * builds the commands table from this schema. Stats-reading verbs build a
-	 * per-partition Stats_Store off the shared cache backend; with none, they
-	 * answer with empty or zeroed shapes. Disk-walking verbs work regardless.
+	 * per-partition Stats_Store over the mounted Tables; when the mount throws
+	 * `Table_Unavailable` they answer with empty or zeroed shapes. Disk-walking
+	 * verbs work regardless.
 	 *
 	 * Every handler throws a RuntimeException on bad input; the interpreter
 	 * turns the throw into a TM_COMMAND|TM_ERROR reply, so no handler returns
@@ -3033,16 +3169,20 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				\assert( $self instanceof self );
 				$now                           = self::now();
-				$stores                        = self::stats_stores();
-				$payload                       = self::build_overview_payload( $stores, $now );
-				$payload['global_leaderboard'] = self::build_leaderboard( $server, $stores, $now );
+				$stores                        = $self->stats_stores( [ Stats_Store::TABLE_AGGREGATE ] );
+				$hourly                        = self::hourly_slots( $stores, $now );
+				$payload                       = self::build_overview_payload( $hourly, $now );
+				$payload['global_leaderboard'] = [
+					...self::build_leaderboard( $server, $stores, $now ),
+					'avg_ms' => self::board_avg_ms( $server, $hourly, $stores, $now ),
+				];
 
 				// One key per dimension ASKED for, whatever the count.
 				if ( '' !== $breakdown ) {
 					$payload['breakdowns'] = [];
 					foreach ( \array_map( 'trim', \explode( ',', $breakdown ) ) as $dim ) {
 						self::assert_dimension( $dim, self::DIMENSIONS );
-						$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server, $stores, $now );
+						$payload['breakdowns'][ $dim ] = self::compact_dim_series( self::merge_dim_across_partitions( $dim, $server, $stores, $now ) );
 					}
 				}
 
@@ -3088,7 +3228,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				\assert( $self instanceof self );
 				$now  = self::now();
-				$page = $self->url_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, self::stats_stores(), $now );
+				$page = $self->url_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $self->stats_stores( [ Stats_Store::TABLE_AGGREGATE, Stats_Store::TABLE_URL_FINE ] ), $now );
 
 				return [
 					'data'    => $page['data'],
@@ -3143,12 +3283,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				// surfaces too far apart to compare.
 				$server = (string) ( $opts['server'] ?? '' );
 
-				// A tail reads its URL blob from memcache alone.
+				// A tail reads its URL blob from its Table alone.
 				$since = self::require_option_int( $opts, 'since', 0 );
 
 				\assert( $self instanceof self );
 				$now    = self::now();
-				$stores = self::stats_stores();
+				$stores = $self->stats_stores( Stats_Store::TABLES );
 				$entry  = $self->row( $hash, $server, $stores, $now );
 				$stats  = null;
 				if ( null !== $entry ) {
@@ -3187,11 +3327,11 @@ class Performance_CI_Node extends Service_CI_Node {
 					'aggregate_flame'    => $flame,
 					'aggregate_profiles' => $aggregate['profiles'] ?? null,
 					'last_modified'      => $aggregate['last_modified'] ?? 0,
-					'plan'               => self::read_plan( $now ),
+					'slots'              => self::chart_slots( $now ),
 				];
 
 				if ( '' !== $breakdown ) {
-					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown, $stores, $now );
+					$payload['breakdown_time_series'] = self::compact_dim_series( self::merge_url_dim( $hash, $breakdown, $stores, $now ) );
 				}
 
 				if ( self::flag( $opts, 'categories' ) ) {
@@ -3211,8 +3351,8 @@ class Performance_CI_Node extends Service_CI_Node {
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				// @longform The chart polls this while the modal is open and
-				// keeps only the series, so it reads memcache and never the
-				// index: `dump_url` walks every partition's index to build
+				// keeps only the series, so it reads the stats Tables and never
+				// the index: `dump_url` walks every partition's index to build
 				// `requests`, which a breakdown fetch throws away.
 				$parsed = Command_Args::parse( self::arg_strings( $args ) );
 				$hash   = $parsed['positional'][0] ?? '';
@@ -3221,10 +3361,11 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$breakdown = (string) ( $parsed['options']['breakdown'] ?? '' );
 				self::assert_dimension( $breakdown, self::URL_DIMENSIONS );
+				\assert( $self instanceof self );
 				$now = self::now();
 				return [
-					'breakdown_time_series' => self::merge_url_dim( $hash, $breakdown, self::stats_stores(), $now ),
-					'plan'                  => self::read_plan( $now ),
+					'breakdown_time_series' => self::compact_dim_series( self::merge_url_dim( $hash, $breakdown, $self->stats_stores( [ Stats_Store::TABLE_AGGREGATE ] ), $now ) ),
+					'slots'                 => self::chart_slots( $now ),
 				];
 					},
 				],

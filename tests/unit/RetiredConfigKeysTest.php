@@ -31,12 +31,19 @@ class RetiredConfigKeysTest extends TestCase {
 		'significant_events',
 		'auto_disable_threshold',
 		'auto_protect_time_threshold',
-		// No dashboard reads the stats mirror, so none spends a budget on it.
+		// The durable stats mirror is gone: stats live in named Tables.
 		'stats_mirror_read_budget_ms',
+		'stats_mirror_node',
+		'stats_mirror_lifetime',
+		'stats_mirror_segment_size',
+		'stats_mirror_num_segments',
 	];
 
-	public function test_schema_no_longer_defines_the_mirror_read_budget(): void {
-		$this->assertArrayNotHasKey( 'stats_mirror_read_budget_ms', \Newspack_Event_Logger_Nodes\Settings_Schema::get()->defaults() );
+	public function test_schema_defines_no_retired_key(): void {
+		$defaults = \Newspack_Event_Logger_Nodes\Settings_Schema::get()->defaults();
+		foreach ( self::RETIRED_KEYS as $key ) {
+			$this->assertArrayNotHasKey( $key, $defaults, "retired key '$key' must be gone from the schema" );
+		}
 	}
 
 	public function test_schema_no_longer_defines_the_retired_ruleset_fields(): void {

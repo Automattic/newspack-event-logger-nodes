@@ -4,6 +4,53 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 **Maintenance rule:** a release that changes any consumer-facing contract adds its entry here in the same commit as its CHANGELOG entry. No entry means nothing to do.
 
+## 0.109.0
+
+- **The substrate floor is newspack-nodes 2.75.0, and the flame builder's host
+  needs `pdo_sqlite`.** The stats live in three SQLite Tables
+  `flame-builder.tsl` declares; without the extension `flame-builder`,
+  `performance` and `complete` refuse to load, naming the Table that cannot
+  open, and the `performance` verbs answer no stats.
+
+- **Stats start empty, and no flush is required.** The Tables are new
+  files, so nothing carries memcache's stats over, and they fill as traffic
+  arrives. Nothing reads the old memcache stats keys, and memcache reclaims
+  them by TTL or eviction. `wp nodes memcache flush` deletes nothing: it
+  rotates the salt, which orphans every memcache key, and restarts every
+  worker.
+
+- **The stats mirror is gone.** A user-dir or console-saved topology that
+  still names `set_stats_target` or `set_flame_topn` fails to load on the
+  unknown verb, and one naming the `stats-index` formatter fails on
+  `unknown formatter: stats-index`. A leftover `flame-stats:partition` node
+  still loads, and so does an `<eln:stats_mirror_*>` token, which resolves to
+  `''` with a rate-limited warning. Drop all of those lines. The
+  `stats_mirror_*` config keys are retired, and `GET_STATS` no longer carries
+  `mirror_held_frames` or `mirror_held_bytes`.
+
+- **`configure_stats` takes no argument.** A user-dir or console-saved
+  topology still carrying `command_node flame-builder:config configure_stats
+  <partition>` fails to load, `usage: configure_stats`; drop the argument.
+  PHP building a `Stats_Store` passes `( $max_lifespan, $client,
+  $table_names )`, the map required, and reads a slotted series through
+  `get_slots( $parts, $hours )`.
+
+- **Every chart reply names 288 five-minute `slots`, and the dimensional
+  series is a name table.** `overview`, `dump_url` and `url_breakdown` answer
+  `slots`, the 288 `Y-m-d-H-i` bucket keys of the last 24 hours, newest
+  first, where they answered `plan`; every series key falls inside them, and
+  no key is an hour. `overview` no longer carries `aggregate_time_series`, or
+  the `span` its rows held. `breakdowns[ $dim ]` and `breakdown_time_series`
+  are `{ names, buckets }`, each row `[ nameIndex, count, sumMs, sumPeakMb,
+  timed ]`, where they were `bucket => value => [ count, sumMs, sumPeakMb ]`:
+  decode through `names`, and divide `sumMs` by `timed`, not `count`, for an
+  average duration. `total_requests`, `global_avg_ms` and
+  `global_avg_peak_mb` cover those 288 slots rather than the retention window,
+  and `global_avg_peak_mb` divides by every non-worker request, timed or not.
+  `global_leaderboard` gains `avg_ms`, the timed mean over its own 25 hour
+  keys, which is the divisor for its categories. The `performance_overview`
+  MCP tool returns the same reply.
+
 ## 0.96.1
 
 - **An MCP tool result is fenced and JSON-HEX-escaped.** `tools/call` answers

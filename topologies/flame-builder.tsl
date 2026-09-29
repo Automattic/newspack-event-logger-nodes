@@ -1,24 +1,25 @@
 # Flame_Builder topology.
 #
 #   Consumer (requests.log) ─→ FlameBuilder ─→ Partition (flames:partition)
-#                                            └→ Stats_Store (memcache, hidden via configure_stats)
-#                                            └→ Partition (flame-stats:partition — stats mirror = every aggregate and every per-URL frame in full; the three derived hour tiers keep nothing, and the flame profiles only when set_flame_topn raises the default 0. One write per bucket at close, or earlier for whatever a namespace holds past MAX_HELD_FRAMES; read back on a memcache miss; <eln:stats_mirror_node> empty turns it off. Its ring is sized by <eln:stats_mirror_segment_size> and <eln:stats_mirror_num_segments>, both 0 = follow the substrate)
+#                                            └→ Stats_Store (asks the three Tables by message; hidden via configure_stats)
 #                                            └→ flame-builder:auto-tuner (owned sibling, hidden)
+#                                            └→ Table (flame-stats:aggregate, SQLite, <eln:stats_ttl>)
+#                                            └→ Table (flame-stats:url, SQLite, <eln:stats_url_ttl>)
+#                                            └→ Table (flame-stats:url-fine, SQLite, <eln:stats_url_fine_ttl>)
 
 include topic-probe
 
 make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/<topology>.requests.p<partition> <config:deadletter_dir>/<topology>.requests.p<partition>
 make_node Flame_Builder flame-builder
 make_node Partition flames:partition <config:logs_dir>/flames.p<partition>
-make_node Partition flame-stats:partition <config:logs_dir>/flame-stats.p<partition> <eln:stats_mirror_segment_size> <config:min_segments> <eln:stats_mirror_num_segments> <config:max_segments> <config:min_lifetime> <eln:stats_mirror_lifetime>
+make_node Table flame-stats:aggregate evlog:p<partition> <eln:stats_ttl> sqlite
+make_node Table flame-stats:url evlog:p<partition> <eln:stats_url_ttl> sqlite
+make_node Table flame-stats:url-fine evlog:p<partition> <eln:stats_url_fine_ttl> sqlite
 command_node requests:consumer:config add_snapshot_node flame-builder
-command_node flame-builder:config configure_stats <partition>
-command_node flame-builder:config set_stats_target <eln:stats_mirror_node>
+command_node flame-builder:config configure_stats
 command_node flame-builder:config set_is_hub <eln:is_hub>
 command_node flames:partition:config void_warranty
 command_node flames:partition:config with_index flame-index
-command_node flame-stats:partition:config void_warranty
-command_node flame-stats:partition:config with_index stats-index
 connect_node requests:consumer flame-builder
 connect_node flame-builder flames:partition
 secure

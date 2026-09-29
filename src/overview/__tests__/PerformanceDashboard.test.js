@@ -288,7 +288,10 @@ jest.mock( '@wordpress/components', () => ( {
 import * as React from 'react';
 import { DEFAULT_CHART_BREAKDOWN } from '../constants';
 import PerformanceDashboard from '../PerformanceDashboard';
+import { breakdownState } from '../AggregateTimeChart';
+import * as chartSlots from '../chartSlots';
 import { renderComponent, act } from '../../test-helpers/renderHook';
+import { nameTable, slotsEndingAt } from '../../test-helpers/chartWire';
 
 /**
  * Flush React's async passive effects inside `act` so state updates settle
@@ -302,14 +305,23 @@ async function flushEffects( ms = 60 ) {
 	} );
 }
 
+/**
+ * A dimension the reply carried with nothing in the window.
+ */
+const NO_SERIES = { names: [], buckets: {} };
+
+/**
+ * The newest bucket every server fixture here writes.
+ */
+const [ NOW ] = slotsEndingAt( '2026-09-29-14-35', 1 );
+
 // A fully-populated, "loaded" view model (lastRefresh stamped).
 function loadedView( overrides = {} ) {
 	return {
 		overview: {
 			data: {
 				total_requests: 100,
-				aggregate_time_series: {},
-				breakdowns: { server: {}, status: {} },
+				breakdowns: { server: NO_SERIES, status: NO_SERIES },
 			},
 			loading: false,
 			error: null,
@@ -478,15 +490,16 @@ describe( 'PerformanceDashboard', () => {
 				overview: {
 					data: {
 						total_requests: 100,
-						aggregate_time_series: {},
-						breakdowns: { server: bucket, status: {} },
+						breakdowns: { server: bucket, status: NO_SERIES },
 					},
 					loading: false,
 					error: null,
 				},
 			} );
-		const hub = { b: { 'edge-01': { c: 9 }, 'edge-02': { c: 4 } } };
-		const single = { b: { 'edge-01': { c: 9 } } };
+		const hub = nameTable( {
+			[ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ], 'edge-02': [ 4, 40, 3, 4 ] },
+		} );
+		const single = nameTable( { [ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ] } } );
 
 		const mountDash = () =>
 			renderComponent(
@@ -538,7 +551,9 @@ describe( 'PerformanceDashboard', () => {
 		it( 'falls back when the only key is the overflow key', async () => {
 			// `Other` is deleted as a non-server, so this reply HAS landed and
 			// carries zero servers — an answer, not a wait.
-			mockView = serverView( { b: { Other: { c: 9 } } } );
+			mockView = serverView(
+				nameTable( { [ NOW ]: { Other: [ 9, 90, 3, 9 ] } } )
+			);
 			const { unmount } = mountDash();
 			await flushEffects();
 
@@ -568,7 +583,9 @@ describe( 'PerformanceDashboard', () => {
 
 			// The scoped reply lands while the filter is on, and is still what
 			// is in hand when it clears — no new payload arrives at that moment.
-			mockView = serverView( { b: { 'edge-01': { c: 9 } } } );
+			mockView = serverView(
+				nameTable( { [ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ] } } )
+			);
 			await act( async () => {
 				globalThis.__overviewProps.setRefreshInterval( '5000' );
 			} );
@@ -628,6 +645,41 @@ describe( 'PerformanceDashboard', () => {
 		} );
 	} );
 
+	it( 'reads the server breakdown once, and charts that same read', async () => {
+		const server = nameTable( {
+			[ NOW ]: {
+				'edge-01': [ 41, 820, 3, 41 ],
+				'edge-02': [ 43, 4300, 4, 43 ],
+			},
+		} );
+		mockView = loadedView( {
+			overview: {
+				data: {
+					total_requests: 84,
+					breakdowns: { server, status: NO_SERIES },
+				},
+				loading: false,
+				error: null,
+			},
+		} );
+		const decode = jest.spyOn( chartSlots, 'decodeNameTable' );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		expect( globalThis.__overviewProps.chartBreakdown ).toBe( 'server' );
+		expect(
+			decode.mock.calls.filter( ( [ wire ] ) => server === wire )
+		).toHaveLength( 1 );
+		expect( globalThis.__overviewProps.breakdownRead.series.names ).toEqual(
+			[ 'edge-01', 'edge-02' ]
+		);
+		decode.mockRestore();
+		unmount();
+	} );
+
 	it( 'derives categoryData / breakdownData / serverNames from the overview slice', async () => {
 		mockView = loadedView( {
 			overview: {
@@ -635,15 +687,15 @@ describe( 'PerformanceDashboard', () => {
 					total_requests: 100,
 					category_time_series: { x: {} },
 					breakdowns: {
-						server: {
-							b: {
-								'edge-01': { c: 10, s: 100 },
-								'edge-02': { c: 4, s: 40 },
+						server: nameTable( {
+							[ NOW ]: {
+								'edge-01': [ 10, 100, 3, 10 ],
+								'edge-02': [ 4, 40, 3, 4 ],
 							},
-						},
-						status: {
-							b: { '2xx': { c: 10, s: 100 } },
-						},
+						} ),
+						status: nameTable( {
+							[ NOW ]: { '2xx': [ 10, 100, 3, 10 ] },
+						} ),
 					},
 				},
 				loading: false,
@@ -658,10 +710,12 @@ describe( 'PerformanceDashboard', () => {
 		await flushEffects();
 		// categoryData truthy.
 		expect( globalThis.__overviewProps.categoryData ).toBeTruthy();
-		// Whatever the default dim is, breakdownData is THAT slice — naming it
+		// Whatever the default dim is, the chart reads THAT slice — naming it
 		// here rather than a literal keeps the test honest if the default moves.
-		expect( globalThis.__overviewProps.breakdownData ).toEqual(
-			mockView.overview.data.breakdowns[ DEFAULT_CHART_BREAKDOWN ]
+		expect( globalThis.__overviewProps.breakdownRead ).toEqual(
+			breakdownState(
+				mockView.overview.data.breakdowns[ DEFAULT_CHART_BREAKDOWN ]
+			)
 		);
 		// serverNames extracted from the server breakdown.
 		expect( globalThis.__overviewProps.serverNames ).toContain( 'edge-01' );
@@ -675,13 +729,13 @@ describe( 'PerformanceDashboard', () => {
 				data: {
 					total_requests: 100,
 					breakdowns: {
-						server: {
-							b: {
-								'edge-01': { c: 10, s: 100 },
-								'edge-02': { c: 5, s: 50 },
+						server: nameTable( {
+							[ NOW ]: {
+								'edge-01': [ 10, 100, 3, 10 ],
+								'edge-02': [ 5, 50, 3, 5 ],
 							},
-						},
-						status: {},
+						} ),
+						status: NO_SERIES,
 					},
 				},
 				loading: false,
@@ -706,10 +760,10 @@ describe( 'PerformanceDashboard', () => {
 				data: {
 					total_requests: 50,
 					breakdowns: {
-						server: {
-							b: { 'edge-01': { c: 10, s: 100 } },
-						},
-						status: {},
+						server: nameTable( {
+							[ NOW ]: { 'edge-01': [ 10, 100, 3, 10 ] },
+						} ),
+						status: NO_SERIES,
 					},
 				},
 				loading: false,
@@ -738,8 +792,7 @@ describe( 'PerformanceDashboard', () => {
 				data: {
 					total_requests: 33049,
 					total_urls: 412,
-					aggregate_time_series: {},
-					breakdowns: { server: {}, status: {} },
+					breakdowns: { server: NO_SERIES, status: NO_SERIES },
 				},
 				loading: false,
 				error: null,
@@ -779,14 +832,16 @@ describe( 'PerformanceDashboard', () => {
 		// capped, but buckets written before that change carry it for a whole
 		// retention window, and selecting it scopes the table to nothing.
 		const serverBuckets = {
-			b01: { 'edge-01': { c: 5 }, Other: { c: 9 } },
+			[ NOW ]: { 'edge-01': [ 5, 50, 3, 5 ], Other: [ 9, 90, 3, 9 ] },
 		};
 		mockView = loadedView( {
 			overview: {
 				data: {
 					total_requests: 100,
-					aggregate_time_series: {},
-					breakdowns: { server: serverBuckets, status: {} },
+					breakdowns: {
+						server: nameTable( serverBuckets ),
+						status: NO_SERIES,
+					},
 				},
 				loading: false,
 				error: null,
@@ -802,24 +857,31 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( "divides the Time Breakdown by the selected server's average", async () => {
-		// The breakdown's categories are that server's, so its denominator has
-		// to be too: 86,200ms over 780 requests, not the site's 91.
+	it( "divides the Time Breakdown by the leaderboard's own average", async () => {
+		// The categories are the board's, over its 25 hour keys, so the
+		// divisor is the board's avg_ms: not the charts' 91 over 288 slots,
+		// nor a server row summed off the breakdown.
 		const serverBuckets = {};
-		for ( let i = 0; i < 20; i++ ) {
-			serverBuckets[ `b${ String( i ).padStart( 2, '0' ) }` ] = {
-				// DIM_SUMS: [ count, sumMs, sumPeakMb ].
-				'edge-01': i % 2 === 0 ? [ 37, 3700, 259 ] : [ 41, 4920, 328 ],
-				'edge-02': [ 11, 1430, 99 ],
+		slotsEndingAt( '2026-09-29-14-35', 20 ).forEach( ( bucket ) => {
+			serverBuckets[ bucket ] = {
+				'edge-01': [ 11, 1430, 99, 11 ],
+				'edge-02': [ 37, 3700, 259, 37 ],
 			};
-		}
+		} );
 		mockView = loadedView( {
 			overview: {
 				data: {
 					total_requests: 2000,
 					global_avg_ms: 91,
-					aggregate_time_series: {},
-					breakdowns: { server: serverBuckets, status: {} },
+					global_leaderboard: {
+						count: 780,
+						avg_ms: 73.5,
+						categories: {},
+					},
+					breakdowns: {
+						server: nameTable( serverBuckets ),
+						status: NO_SERIES,
+					},
 				},
 				loading: false,
 				error: null,
@@ -831,15 +893,40 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
-		expect( globalThis.__overviewProps.breakdownAvgMs ).toBe( 91 );
+		expect( globalThis.__overviewProps.breakdownAvgMs ).toBe( 73.5 );
 
 		act( () => {
-			globalThis.__overviewProps.setServerFilter( 'edge-01' );
+			globalThis.__overviewProps.setServerFilter( 'edge-02' );
 		} );
 		await flushEffects();
-		expect( globalThis.__overviewProps.breakdownAvgMs ).toBeCloseTo(
-			86200 / 780
+		expect( globalThis.__overviewProps.breakdownAvgMs ).toBe( 73.5 );
+		unmount();
+	} );
+
+	it( 'reads a malformed server breakdown as naming no server', async () => {
+		// A row one field short: a reply the decoder refuses whole.
+		const malformed = {
+			names: [ 'edge-01', 'edge-02' ],
+			buckets: { [ NOW ]: [ [ 1, 37, 3700, 259 ] ] },
+		};
+		mockView = loadedView( {
+			overview: {
+				data: {
+					total_requests: 2000,
+					global_avg_ms: 91,
+					breakdowns: { server: malformed, status: NO_SERIES },
+				},
+				loading: false,
+				error: null,
+			},
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
 		);
+		await flushEffects();
+		expect( globalThis.__overviewProps.serverNames ).toEqual( [] );
 		unmount();
 	} );
 

@@ -5,11 +5,10 @@
  *
  * Renders exactly three checkboxes, the only application options with a
  * settings field: `enable_logging`, `log_memory`, and `flush_every_line`. The
- * seven remaining keys `Settings_Schema` declares — `rules`,
- * `hook_start_priority`, `custom_colors`, `stats_mirror_node`,
- * `stats_mirror_segment_size`, `stats_mirror_num_segments` and
- * `recommended_log_events` — are overlay-only (`ui: false`): Config loads
- * them, and this class neither renders nor resets them.
+ * four remaining keys `Settings_Schema` declares — `rules`,
+ * `hook_start_priority`, `custom_colors` and `recommended_log_events` — are
+ * overlay-only (`ui: false`): Config loads them, and this class neither
+ * renders nor resets them.
  *
  * URL filters, hook lists, and auto-tune thresholds are per-rule fields in the
  * `newspack_event_logger_nodes_rules` option, not global settings. That option
@@ -511,9 +510,7 @@ class Admin {
 	 * to the set of live topologies whose graphs instantiate that node and touches
 	 * each one's per-partition lock dir. A worker sees the flag on its next
 	 * `Worker_Base::should_continue()` check and exits for a peer's scan to
-	 * respawn. `stats_salt` is no Field of the Schema, so `restart_for()` returns
-	 * `[]` for it; the inline branch classifies it against `Flame_Builder`, the
-	 * node its `Stats_Store` runs in.
+	 * respawn.
 	 *
 	 * `Restart_Planner::plan()` is the recipe, the same one the substrate's
 	 * own settings save runs: restart what the classification names, then ask
@@ -538,11 +535,7 @@ class Admin {
 		// Reset cached config so a later read this request sees the new value.
 		Config::reset();
 
-		$short   = \substr( $option, \strlen( self::OPTION_PREFIX ) );
-		$restart = 'stats_salt' === $short
-			? [ 'Flame_Builder' ]
-			: Settings_Schema::get()->restart_for( $short );
-
-		Restart_Planner::plan( $restart );
+		$short = \substr( $option, \strlen( self::OPTION_PREFIX ) );
+		Restart_Planner::plan( Settings_Schema::get()->restart_for( $short ) );
 	}
 }

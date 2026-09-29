@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stats_Store namespace doc-drift lint: every `public const NS_*` in
-# includes/class-stats-store.php must have a matching row in the Memcache
-# Schema table of docs/architecture-guide.md, and no row may name a token no
+# includes/class-stats-store.php must have a matching row in the Stats Schema
+# table of docs/architecture-guide.md, and no row may name a token no
 # constant declares. ELN-only, so it can't live in the vendored lint-docs.sh.
 
 set -euo pipefail
@@ -18,7 +18,7 @@ constants=$( { grep -oE "public const NS_[A-Z_]+ *= *'[^']+'" "$STORE" || true; 
 	| sed -E "s/.*= *'([^']+)'/\1/" | sort -u)
 [ -z "$constants" ] && report "no NS_* constants found in $STORE"
 
-# The Memcache Schema table's row region: from the "| Namespace | Use | TTL |"
+# The Stats Schema table's row region: from the "| Namespace | Use | TTL |"
 # header through the last consecutive "| ..." line after it.
 table=$(awk '
 	/^\| Namespace \| Use \| TTL \|$/ { inhdr = 1; next }
@@ -26,7 +26,7 @@ table=$(awk '
 	intable == 1 && /^\|/ { print; next }
 	intable == 1 { exit }
 ' "$GUIDE")
-[ -z "$table" ] && report "no Memcache Schema namespace table found in $GUIDE"
+[ -z "$table" ] && report "no Stats Schema namespace table found in $GUIDE"
 
 # Tokens the table names: every backtick-quoted, NS_*-shaped (letters and
 # underscores only) string in each row's first cell. A row may name two, as

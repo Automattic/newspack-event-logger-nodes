@@ -16,7 +16,7 @@ If the report names one publisher and you are on a hub, pick that site's host in
 
 ### 2. Find the slow URL
 
-The table **URLs by Request Count** lists every URL the site served in the retention window, 24 hours unless the site sets another, busiest first.
+The table **URLs by Request Count** lists every URL the site served in the retention window, 12 hours unless the site sets another, busiest first. The charts above it always cover the last 24 hours.
 
 | Column | What it means |
 |---|---|
@@ -136,4 +136,4 @@ When you are done, revoke the session under **Sessions** rather than waiting for
 
 - **Anything the rule does not time.** Step 5 is how you widen it.
 - **Anything below PHP**: the web server, the edge cache, the network before WordPress starts. A request that is fast here but slow for the reader is slow somewhere this dashboard cannot see.
-- **Anything older than the retention window**, 24 hours by default.
+- **Anything older than the retention window**, 12 hours by default, or than 24 hours on the charts.
