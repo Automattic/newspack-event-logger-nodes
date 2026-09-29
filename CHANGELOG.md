@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.109.0] - 2026-09-29
+
 ### Added
 
 - **`flame-builder.tsl` declares the three stats Tables on SQLite.** `flame-stats:aggregate`, `flame-stats:url` and `flame-stats:url-fine` each take namespace `evlog:p<partition>` and backend `sqlite`, and their TTLs come from three new tokens: `<eln:stats_ttl>` (`Config::stats_ttl()`, the retention window floored at the 25 hours a chart reads, `Stats_Store::CHART_HOURS`, so 90,000 seconds), `<eln:stats_url_ttl>` (`Config::stats_url_ttl()`, a twenty-fourth of the window, floored at an hour) and `<eln:stats_url_fine_ttl>` (`Config::stats_url_fine_ttl()`, two hours capped at the window). **`flame-builder`, `performance` and `complete` now need the `pdo_sqlite` extension**: without it each refuses to load, throwing at topology load with an error naming the Table that cannot open.
