@@ -6481,15 +6481,95 @@ class FlameBuilderTest extends TestCase {
 		$this->read_private( $fb, 'interpreter' )->dispatch( 'configure_stats', [ '3' ] );
 	}
 
-	public function test_configure_stats_builds_the_store_over_the_declared_tables(): void {
+	public function test_configure_stats_builds_the_store_over_the_named_tables(): void {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$this->assertStringNotContainsString( 'configure_stats', $fb->dump_config(), 'inert until configured' );
+		$this->name_stats_tables( $fb );
 
 		$result = $this->read_private( $fb, 'interpreter' )->dispatch( 'configure_stats', [] );
 
 		$this->assertSame( 'ok', $result );
-		$this->assertStringContainsString( "command_node fb:config configure_stats\n", $fb->dump_config() );
+		$this->assertStringEndsWith(
+			"command_node fb:config set_aggregate_target flame-stats:aggregate\n"
+			. "command_node fb:config set_url_target flame-stats:url\n"
+			. "command_node fb:config set_url_fine_target flame-stats:url-fine\n"
+			. "command_node fb:config configure_stats\n",
+			$fb->dump_config(),
+			'the Tables replay ahead of the store built over them'
+		);
+	}
+
+	/** An unnamed Table would take the store's writes to no node at all. */
+	public function test_configure_stats_refuses_a_builder_whose_tables_were_never_named(): void {
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$interpreter = $this->read_private( $fb, 'interpreter' );
+		$interpreter->dispatch( 'set_aggregate_target', [ Stats_Store::TABLE_AGGREGATE ] );
+
+		try {
+			$interpreter->dispatch( 'configure_stats', [] );
+			$this->fail( 'configure_stats built a store with two Tables unnamed' );
+		} catch ( \LogicException $e ) {
+			$this->assertSame( 'configure_stats: no Table named by set_url_target, set_url_fine_target', $e->getMessage() );
+		}
+		$this->assertNull( $this->read_private( $fb, 'stats_store' ), 'no store over unnamed Tables' );
+	}
+
+	/**
+	 * The readers mount each Table by role, so a write under any other name
+	 * is one no dashboard reads: another role's Table, a stranger, or none.
+	 *
+	 * @return array<string,array{0: string, 1: string, 2: string}>
+	 */
+	public static function refused_stats_tables(): array {
+		return [
+			'another role\'s Table' => [ 'set_aggregate_target', Stats_Store::TABLE_URL, "set_aggregate_target: 'flame-stats:url' is not flame-stats:aggregate, the Table the performance readers mount" ],
+			'a stranger'            => [ 'set_url_fine_target', 'wombat-stats:url-fine-4471', "set_url_fine_target: 'wombat-stats:url-fine-4471' is not flame-stats:url-fine, the Table the performance readers mount" ],
+			'none'                  => [ 'set_url_target', '', "set_url_target: '' is not flame-stats:url, the Table the performance readers mount" ],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'refused_stats_tables' )]
+	public function test_a_stats_table_verb_refuses_a_table_the_readers_do_not_mount( string $verb, string $table, string $refusal ): void {
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( $refusal );
+		$this->read_private( $fb, 'interpreter' )->dispatch( $verb, [ $table ] );
+	}
+
+	/** The console draws a Table edge from what the verbs named, not from a constant. */
+	public function test_the_stats_tables_are_display_targets_once_their_verbs_name_them(): void {
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->target( 'flames:partition' );
+		$this->assertSame( [ 'flames:partition' ], $fb->display_targets(), 'no edge to a Table nothing named' );
+
+		$this->name_stats_tables( $fb );
+
+		$this->assertSame( [ 'flames:partition', ...Stats_Store::TABLES ], $fb->display_targets() );
+	}
+
+	/** Each Table verb takes a `node_name`, which the document canvas draws as an edge. */
+	public function test_each_stats_table_verb_takes_a_node_name(): void {
+		$verbs = \array_column( Flame_Builder_Node::node_schema()['commands'], null, 'name' );
+		foreach ( [ 'set_aggregate_target', 'set_url_target', 'set_url_fine_target' ] as $verb ) {
+			$this->assertSame( [ 'node_name' ], \array_column( $verbs[ $verb ]['args'] ?? [], 'type' ), $verb );
+		}
+	}
+
+	/** Name each stats Table through its verb, as `flame-builder.tsl` does. */
+	private function name_stats_tables( Flame_Builder_Node $fb ): void {
+		$interpreter = $this->read_private( $fb, 'interpreter' );
+		foreach ( [
+			'set_aggregate_target' => Stats_Store::TABLE_AGGREGATE,
+			'set_url_target'       => Stats_Store::TABLE_URL,
+			'set_url_fine_target'  => Stats_Store::TABLE_URL_FINE,
+		] as $verb => $table ) {
+			$this->assertSame( "ok\n", $interpreter->dispatch( $verb, [ $table ] ) );
+		}
 	}
 
 	// --- Requests excluded from timing ------------------------------------

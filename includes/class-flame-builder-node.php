@@ -369,6 +369,15 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** @var Stats_Store|null The stats store; null until `configure_stats` runs. */
 	private $stats_store = null;
 
+	/** Node NAME of the Table every other namespace is written to ('' = unnamed). */
+	private string $aggregate_target = '';
+
+	/** Node NAME of the Table the per-URL blob is written to ('' = unnamed). */
+	private string $url_target = '';
+
+	/** Node NAME of the Table the fine URL tier is written to ('' = unnamed). */
+	private string $url_fine_target = '';
+
 	/** The builder's asker for its three stats Tables. */
 	private Table_Client $client;
 
@@ -3244,6 +3253,39 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
 	}
 
+	/** @param string $table The Table every other namespace is written to. */
+	public function set_aggregate_target( string $table ): void {
+		$this->aggregate_target = self::mounted_table( 'set_aggregate_target', Stats_Store::TABLE_AGGREGATE, $table );
+	}
+
+	/** @param string $table The Table the per-URL blob is written to. */
+	public function set_url_target( string $table ): void {
+		$this->url_target = self::mounted_table( 'set_url_target', Stats_Store::TABLE_URL, $table );
+	}
+
+	/** @param string $table The Table the fine URL tier is written to. */
+	public function set_url_fine_target( string $table ): void {
+		$this->url_fine_target = self::mounted_table( 'set_url_fine_target', Stats_Store::TABLE_URL_FINE, $table );
+	}
+
+	/**
+	 * The Table a verb names, refused unless it is the one the readers mount
+	 * for that role: `Performance_CI_Node` mounts `Stats_Store::TABLES` by
+	 * role, so a write under any other name is one no dashboard reads.
+	 *
+	 * @param string $verb    The verb naming it, for the refusal.
+	 * @param string $mounted The Table the readers mount for the role.
+	 * @param string $table   The Table named.
+	 * @return string The Table named.
+	 * @throws \InvalidArgumentException When it is not the mounted one.
+	 */
+	private static function mounted_table( string $verb, string $mounted, string $table ): string {
+		if ( $mounted !== $table ) {
+			throw new \InvalidArgumentException( "{$verb}: '{$table}' is not {$mounted}, the Table the performance readers mount" );
+		}
+		return $table;
+	}
+
 	/**
 	 * Inject the Stats_Store the flush writes through.
 	 *
@@ -3266,13 +3308,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * The stats Tables the flush writes, which no target names.
+	 * The stats Tables the verbs named, which the flush writes past its
+	 * primary target, so the console draws an edge to each.
 	 *
-	 * @api Used by substrate: the console draws an edge to each.
+	 * @api Unioned into display_targets() by the substrate's Node.
 	 * @return list<string>
 	 */
 	protected function extra_targets(): array {
-		return Stats_Store::TABLES;
+		return [ $this->aggregate_target, $this->url_target, $this->url_fine_target ];
 	}
 
 	/**
@@ -3285,6 +3328,31 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	public function idle_since(): ?float {
 		return [] === $this->pending ? $this->worked_at : null;
+	}
+
+	/**
+	 * Each declared stats Table => the node its verb named: the map the
+	 * store asks through.
+	 *
+	 * @return array<string,string>
+	 * @throws \LogicException When a verb never named its Table, which would
+	 *                         take that Table's writes to no node at all.
+	 */
+	private function stats_tables(): array {
+		$named   = [
+			'set_aggregate_target' => $this->aggregate_target,
+			'set_url_target'       => $this->url_target,
+			'set_url_fine_target'  => $this->url_fine_target,
+		];
+		$unnamed = \array_keys( $named, '', true );
+		if ( [] !== $unnamed ) {
+			throw new \LogicException( 'configure_stats: no Table named by ' . \implode( ', ', $unnamed ) );
+		}
+		return [
+			Stats_Store::TABLE_AGGREGATE => $this->aggregate_target,
+			Stats_Store::TABLE_URL       => $this->url_target,
+			Stats_Store::TABLE_URL_FINE  => $this->url_fine_target,
+		];
 	}
 
 	/**
@@ -3332,13 +3400,15 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
 	 *
 	 * A verb missing here silently drops its setting on a console serialize →
-	 * replay round trip, so a new persistent verb needs a line added.
+	 * replay round trip, so a new persistent verb needs a line added. The
+	 * Table setters dump ahead of `configure_stats`, which refuses to run
+	 * before they have.
 	 *
 	 * @api Used by substrate.
 	 * @return string TSL lines, newline-terminated.
 	 */
 	public function dump_config(): string {
-		$out = parent::dump_config() . $this->dump_toggles();
+		$out = parent::dump_config() . $this->dump_setters() . $this->dump_toggles();
 		if ( null !== $this->stats_store ) {
 			$out .= $this->config_line( 'configure_stats' );
 		}
@@ -3446,8 +3516,35 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					'toggle'      => 'is_hub',
 				],
 				[
+					'name'        => 'set_aggregate_target',
+					'description' => 'Name the stats Table every namespace but the per-URL ones is written to: flame-stats:aggregate, the one the performance readers mount.',
+					'args'        => [
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+					],
+					// Declarative: the substrate trims, assigns and dumps it.
+					'setter'      => 'aggregate_target',
+				],
+				[
+					'name'        => 'set_url_target',
+					'description' => 'Name the stats Table the per-URL blob is written to: flame-stats:url, the one the performance readers mount.',
+					'args'        => [
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+					],
+					// Declarative: the substrate trims, assigns and dumps it.
+					'setter'      => 'url_target',
+				],
+				[
+					'name'        => 'set_url_fine_target',
+					'description' => 'Name the stats Table the fine URL tier is written to: flame-stats:url-fine, the one the performance readers mount.',
+					'args'        => [
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+					],
+					// Declarative: the substrate trims, assigns and dumps it.
+					'setter'      => 'url_fine_target',
+				],
+				[
 					'name'        => 'configure_stats',
-					'description' => 'Build the Stats_Store over the stats Tables, with the retention window.',
+					'description' => 'Build the Stats_Store over the three Tables the set_*_target verbs named, with the retention window. Refused until all three are named.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
 						// A topology still passing a partition fails to load.
@@ -3460,7 +3557,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 							new Stats_Store(
 								Config::stats_retention_seconds(),
 								$patron->client,
-								\array_combine( Stats_Store::TABLES, Stats_Store::TABLES )
+								$patron->stats_tables()
 							)
 						);
 						return 'ok';

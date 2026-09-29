@@ -4,6 +4,18 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 **Maintenance rule:** a release that changes any consumer-facing contract adds its entry here in the same commit as its CHANGELOG entry. No entry means nothing to do.
 
+## Unreleased
+
+- **A flame builder names its three stats Tables before `configure_stats`.**
+  A user-dir or console-saved topology carrying
+  `command_node flame-builder:config configure_stats` without the three
+  `set_*_target` lines fails to load, `configure_stats: no Table named by
+  set_aggregate_target, set_url_target, set_url_fine_target`.
+  Add, ahead of it, `set_aggregate_target flame-stats:aggregate`,
+  `set_url_target flame-stats:url` and `set_url_fine_target
+  flame-stats:url-fine`, as `flame-builder.tsl` does. Each verb refuses any
+  other name.
+
 ## 0.109.0
 
 - **The substrate floor is newspack-nodes 2.75.0, and the flame builder's host

@@ -307,6 +307,9 @@ make_node Table flame-stats:aggregate evlog:p<partition> <eln:stats_ttl> sqlite
 make_node Table flame-stats:url evlog:p<partition> <eln:stats_url_ttl> sqlite
 make_node Table flame-stats:url-fine evlog:p<partition> <eln:stats_url_fine_ttl> sqlite
 cmd requests:consumer:config add_snapshot_node flame-builder
+cmd flame-builder:config set_aggregate_target flame-stats:aggregate
+cmd flame-builder:config set_url_target flame-stats:url
+cmd flame-builder:config set_url_fine_target flame-stats:url-fine
 cmd flame-builder:config configure_stats
 cmd flame-builder:config set_is_hub <eln:is_hub>
 cmd flames:partition:config void_warranty
@@ -316,7 +319,7 @@ connect_node flame-builder flames:partition
 secure
 ```
 
-`configure_stats` constructs the `Stats_Store` over the three stats Tables this worker's graph declares, taking its retention window from `Config::stats_retention_seconds()` — the substrate's `min_lifetime` (default 43200), floored at `Stats_Store::MIN_RETENTION_SECONDS` (3600). The partition is in each Table's file, not in the store. Auto-tune thresholds live on each LOG rule, not on a topology token; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)).
+`set_aggregate_target`, `set_url_target` and `set_url_fine_target` name the three stats Tables, the way `set_errors_target` names request-builder's errors partition: each takes a `node_name`, so the document canvas draws flame-builder's edge to each Table and lays the Tables out below it, and `extra_targets()` returns what they named, so the live canvas draws the same edges. Each refuses any name but the Table the `performance` readers mount for its role. `configure_stats` then constructs the `Stats_Store` over the Tables they named, refusing to run until all three have, taking its retention window from `Config::stats_retention_seconds()` — the substrate's `min_lifetime` (default 43200), floored at `Stats_Store::MIN_RETENTION_SECONDS` (3600). The partition is in each Table's file, not in the store. Auto-tune thresholds live on each LOG rule, not on a topology token; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)).
 
 The three `make_node Table` lines declare the stats Tables, each `evlog:p<partition>` on the substrate's `sqlite` backend at its TTL token: `flame-stats:aggregate` holds every namespace but two groups, `flame-stats:url` the per-URL blob, and `flame-stats:url-fine` the fine `urls`, `urlsrv`, `urlrank_s` and `urlhdr` buckets ([Stats Schema](#stats-schema)). Each keeps one file per partition, `{base}/tables/{table}.p{N}.sqlite`, and a Table that cannot open — `pdo_sqlite` missing, `{base}/tables` unwritable — fails the topology at load, naming the Table ([decision 34](architecture-decisions.md#decision-34-stats-live-in-sqlite-tables-and-nothing-repairs-a-loss)). The builder asks them by message through its `Table_Client`; the `performance` CI mounts the ones a verb reads, read-only, for the rest of the request.
 
@@ -650,7 +653,7 @@ Hub-side periodic discovery fan-out. [`Discovery_Collector_Node`](../includes/cl
 
 ### Stats production (owned by Flame_Builder_Node)
 
-There is no separate stats Node. `Flame_Builder_Node` is the single stats producer, owning flame generation AND the stats writes via its injected [`Stats_Store`](../includes/class-stats-store.php). The `flame-builder` topology (and therefore `performance` and `complete`) wires the store with `cmd flame-builder:config configure_stats`.
+There is no separate stats Node. `Flame_Builder_Node` is the single stats producer, owning flame generation AND the stats writes via its injected [`Stats_Store`](../includes/class-stats-store.php). The `flame-builder` topology (and therefore `performance` and `complete`) names the three Tables with `set_aggregate_target`, `set_url_target` and `set_url_fine_target`, then wires the store over them with `cmd flame-builder:config configure_stats`.
 
 Each completed request is folded into `Flame_Builder_Node`'s `$pending` map across the same dimension set the reader paths whitelist — `DIM_FIELDS`, listed under [Flame_Builder_Node](#flame_builder_node). `$pending` holds one accumulator per 5-minute bucket, keyed by the bucket the request FINISHED in: `timestamp + duration_ms`, clamped to now. A record reaches the builder at completion, so filing it under its START would put a long request in a bucket that may already have closed, and a skewed spoke clock filing into a future bucket is the same written-then-unreadable failure. For an aborted request that completion is its abort moment, because `Request_Builder` sets `duration_ms = now - start` at eviction.
 

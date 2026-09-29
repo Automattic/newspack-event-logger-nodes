@@ -1,7 +1,7 @@
 # Flame_Builder topology.
 #
 #   Consumer (requests.log) ─→ FlameBuilder ─→ Partition (flames:partition)
-#                                            └→ Stats_Store (asks the three Tables by message; hidden via configure_stats)
+#                                            └→ Stats_Store (asks the Tables set_*_target names, by message; hidden via configure_stats)
 #                                            └→ flame-builder:auto-tuner (owned sibling, hidden)
 #                                            └→ Table (flame-stats:aggregate, SQLite, <eln:stats_ttl>)
 #                                            └→ Table (flame-stats:url, SQLite, <eln:stats_url_ttl>)
@@ -16,6 +16,9 @@ make_node Table flame-stats:aggregate evlog:p<partition> <eln:stats_ttl> sqlite
 make_node Table flame-stats:url evlog:p<partition> <eln:stats_url_ttl> sqlite
 make_node Table flame-stats:url-fine evlog:p<partition> <eln:stats_url_fine_ttl> sqlite
 command_node requests:consumer:config add_snapshot_node flame-builder
+command_node flame-builder:config set_aggregate_target flame-stats:aggregate
+command_node flame-builder:config set_url_target flame-stats:url
+command_node flame-builder:config set_url_fine_target flame-stats:url-fine
 command_node flame-builder:config configure_stats
 command_node flame-builder:config set_is_hub <eln:is_hub>
 command_node flames:partition:config void_warranty
