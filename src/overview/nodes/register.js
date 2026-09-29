@@ -29,6 +29,7 @@
 import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import { registerSliceViews } from '@newspack-nodes/shared/nodes/slice-view-node';
 import { UrlDetailMergeNode } from './url-detail-merge-node';
+import { UrlsCurrentNode } from './urls-current-node';
 
 /**
  * A slice whose payload IS its data, plus the status fields the graph drives.
@@ -139,5 +140,11 @@ export const views = {
 		 * payload `usePerformanceGraph` reads the `since` watermark off.
 		 */
 		UrlDetailMerge: UrlDetailMergeNode,
+
+		/**
+		 * The gate on the `urls` slice's edge: it lets through only the
+		 * answer to a question the `urls` Fetcher still asks.
+		 */
+		UrlsCurrent: UrlsCurrentNode,
 	} ),
 };

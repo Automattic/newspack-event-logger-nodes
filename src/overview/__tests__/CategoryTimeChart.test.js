@@ -95,9 +95,19 @@ jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
 import * as React from 'react';
 import * as d3 from 'd3';
 import CategoryTimeChart from '../CategoryTimeChart';
+import { buildChartSlots } from '../chartSlots';
 import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
+
+/**
+ * The read plan every reply here names, newest first: two buckets of the
+ * current hour and the three whole hours before it.
+ */
+const PLAN = {
+	fine: [ '2026-09-29-07-05', '2026-09-29-07-00' ],
+	hours: [ '2026-09-29-06', '2026-09-29-05', '2026-09-29-04' ],
+};
 
 // The panel's views, in render order: time, count, average.
 const [ TIME_VIEW, COUNT_VIEW, AVERAGE_VIEW ] = [ 0, 1, 2 ];
@@ -117,6 +127,7 @@ describe( 'CategoryTimeChart', () => {
 	it( 'draws exactly one chart per declared view, in render order', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, {
+				plan: PLAN,
 				data: {
 					names: [ 'redis' ],
 					buckets: { '2019-07-04-13-45': [ [ 0, 8123, 419, 419 ] ] },
@@ -137,6 +148,7 @@ describe( 'CategoryTimeChart', () => {
 	it( 'titles every view Y-axis with the quantity it plots', () => {
 		const { unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, {
+				plan: PLAN,
 				data: {
 					names: [ 'redis' ],
 					buckets: { [ bucketKeyNow() ]: [ [ 0, 8123, 419, 419 ] ] },
@@ -148,6 +160,20 @@ describe( 'CategoryTimeChart', () => {
 			.map( ( [ text ] ) => text )
 			.filter( ( text ) => expected.includes( text ) );
 		expect( yLabels ).toEqual( expected );
+		unmount();
+	} );
+
+	it( 'draws nothing before a reply names the window it read', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( CategoryTimeChart, {
+				plan: null,
+				data: {
+					names: [ 'redis' ],
+					buckets: { [ bucketKeyNow() ]: [ [ 0, 8123, 419, 419 ] ] },
+				},
+			} )
+		);
+		expect( container.textContent ).toBe( '' );
 		unmount();
 	} );
 
@@ -174,6 +200,7 @@ describe( 'CategoryTimeChart', () => {
 		// emptiness is a question about the buckets, not about the envelope.
 		const empty = renderComponent(
 			React.createElement( CategoryTimeChart, {
+				plan: PLAN,
 				data: { names: [], buckets: {} },
 			} )
 		);
@@ -182,6 +209,7 @@ describe( 'CategoryTimeChart', () => {
 
 		const drawn = renderComponent(
 			React.createElement( CategoryTimeChart, {
+				plan: PLAN,
 				data: {
 					names: [ 'total', 'db' ],
 					buckets: {
@@ -214,7 +242,7 @@ describe( 'CategoryTimeChart', () => {
 		};
 
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data } )
+			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
 		);
 
 		// renderFn must have been wired up by useTimeChart.
@@ -240,7 +268,7 @@ describe( 'CategoryTimeChart', () => {
 		};
 
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data } )
+			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
 		);
 		expect( d3Mock.select ).toHaveBeenCalled();
 		unmount();
@@ -265,18 +293,7 @@ describe( 'CategoryTimeChart', () => {
 	}
 
 	function bucketKeyNow() {
-		const now = new Date();
-		now.setMinutes( Math.floor( now.getMinutes() / 5 ) * 5, 0, 0 );
-		return [
-			now.getUTCFullYear(),
-			String( now.getUTCMonth() + 1 ).padStart( 2, '0' ),
-			String( now.getUTCDate() ).padStart( 2, '0' ),
-			String( now.getUTCHours() ).padStart( 2, '0' ),
-			String( Math.floor( now.getUTCMinutes() / 5 ) * 5 ).padStart(
-				2,
-				'0'
-			),
-		].join( '-' );
+		return PLAN.fine[ 0 ];
 	}
 
 	/**
@@ -285,11 +302,30 @@ describe( 'CategoryTimeChart', () => {
 	 * formatYValue with real (nonzero) values.
 	 */
 	function lastSlotIndex() {
-		const {
-			NUM_BUCKETS,
-		} = require( '@newspack-nodes/shared/hooks/useTimeChart' );
-		return NUM_BUCKETS - 1;
+		return buildChartSlots( PLAN ).length - 1;
 	}
+
+	it( 'reads an older hour as a rate over its hour, beside the current buckets', () => {
+		const slots = buildChartSlots( PLAN );
+		const hour = slots.findLastIndex( ( slot ) => 3600 === slot.seconds );
+		const data = {
+			names: [ 'memcache' ],
+			buckets: {
+				[ slots[ hour ].bucketKey ]: [ [ 0, 1, 7200, 7200 ] ],
+				[ bucketKeyNow() ]: [ [ 0, 1, 900, 900 ] ],
+			},
+		};
+		const { unmount } = renderComponent(
+			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
+		);
+		const rateAt = ( index ) =>
+			getFormatEntry( COUNT_VIEW )( index ).find(
+				( entry ) => 'memcache' === entry.label
+			)?.value;
+		expect( rateAt( hour ) ).toBe( '2/s' );
+		expect( rateAt( lastSlotIndex() ) ).toBe( '3/s' );
+		unmount();
+	} );
 
 	it( 'formatYValue covers all branches via tooltip formatEntry callback', () => {
 		// varying magnitudes drive the <0.001 / <1 / >=1 time-mode branches.
@@ -304,7 +340,7 @@ describe( 'CategoryTimeChart', () => {
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data } )
+			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
 		);
 		const entries = getFormatEntry( TIME_VIEW )( lastSlotIndex() );
 		expect( Array.isArray( entries ) ).toBe( true );
@@ -326,7 +362,7 @@ describe( 'CategoryTimeChart', () => {
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data } )
+			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
 		);
 		const formatEntry = getFormatEntry( AVERAGE_VIEW );
 		expect( Array.isArray( formatEntry( lastSlotIndex() ) ) ).toBe( true );
@@ -346,7 +382,7 @@ describe( 'CategoryTimeChart', () => {
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data } )
+			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
 		);
 		const formatEntry = getFormatEntry( COUNT_VIEW );
 		expect( Array.isArray( formatEntry( lastSlotIndex() ) ) ).toBe( true );
@@ -357,6 +393,7 @@ describe( 'CategoryTimeChart', () => {
 		// Re-invoke captured renderFn with null containerRef → early return.
 		const { unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, {
+				plan: PLAN,
 				data: {
 					names: [ 'foo' ],
 					buckets: { [ bucketKeyNow() ]: [ [ 0, 10, 1, 1 ] ] },
@@ -379,6 +416,7 @@ describe( 'CategoryTimeChart', () => {
 	it( 'offers no stack toggle: a callback counts inside its hook', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, {
+				plan: PLAN,
 				data: {
 					names: [ 'db', 'http' ],
 					buckets: {

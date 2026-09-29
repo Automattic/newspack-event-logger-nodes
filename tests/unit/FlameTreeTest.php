@@ -461,7 +461,6 @@ class FlameTreeTest extends TestCase {
 			Flame_Tree::URL_HEADER_CACHE,
 			Flame_Tree::URL_FOLD,
 			Flame_Tree::URL_RANK_LISTS,
-			Flame_Tree::STATS_MIRROR,
 			Flame_Tree::STATS_WRITES,
 			Flame_Tree::STATS_RANK_CLOSE,
 			Flame_Tree::STATS_PROBE,
@@ -496,7 +495,7 @@ class FlameTreeTest extends TestCase {
 		foreach ( [ Flame_Tree::STATS_PROBE_HOUR, Flame_Tree::STATS_PROBE_FINE, Flame_Tree::STATS_FOLD . ' (complete)', Flame_Tree::STATS_RE_RANK, Flame_Tree::STATS_RANK_CLOSE, Flame_Tree::STATS_CHECKPOINT, Flame_Tree::STATS_RESTORE, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE ] as $span ) {
 			$this->assertSame( 'upkeep', Flame_Tree::platform_span_kind( $span ), $span );
 		}
-		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::STATS_PROBE, Flame_Tree::STATS_HEAL, Flame_Tree::STATS_MIRROR, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats folds' ] as $span ) {
+		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::STATS_PROBE, Flame_Tree::STATS_HEAL, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats folds' ] as $span ) {
 			$this->assertNull( Flame_Tree::platform_span_kind( $span ), $span );
 		}
 	}
@@ -506,7 +505,7 @@ class FlameTreeTest extends TestCase {
 		foreach ( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD . ': 3' ] as $span ) {
 			$this->assertSame( 'url_read', Flame_Tree::platform_span_kind( $span ), $span );
 		}
-		foreach ( [ Flame_Tree::URL_RANK_LISTS, Flame_Tree::STATS_MIRROR, 'Discovery_CI get command', 'url folds', 'wp_loaded hook', 'sql' ] as $span ) {
+		foreach ( [ Flame_Tree::URL_RANK_LISTS, 'Discovery_CI get command', 'url folds', 'wp_loaded hook', 'sql' ] as $span ) {
 			$this->assertNull( Flame_Tree::platform_span_kind( $span ), $span );
 		}
 	}

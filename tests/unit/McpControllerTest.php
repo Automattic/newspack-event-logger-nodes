@@ -118,6 +118,30 @@ class McpControllerTest extends TestCase {
 		$this->assertNotContains( 'rules_upsert', $names, 'a read scope may not edit the ruleset' );
 	}
 
+	/**
+	 * A search is whole words from the index, and an overview row spans an
+	 * hour or five minutes: an agent reading a description written for a
+	 * substring match, or summing rows as equal spans, misreads the answer.
+	 */
+	public function test_the_tools_say_how_search_matches_and_what_a_row_spans(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$tools = \array_column(
+			$controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 4, 'method' => 'tools/list' ], $bearer ) )['result']['tools'],
+			null,
+			'name'
+		);
+
+		foreach ( [ 'performance_urls', 'performance_ask' ] as $tool ) {
+			$search = $tools[ $tool ]['inputSchema']['properties']['search']['description'];
+			$this->assertStringContainsString( 'whole word', $search, $tool );
+			$this->assertStringNotContainsString( 'ubstring', $search, $tool );
+		}
+		$this->assertStringContainsString( '`span`', $tools['performance_overview']['description'] );
+	}
+
 	public function test_a_tune_scope_is_offered_the_ruleset(): void {
 		[ , $bearer ] = $this->session( Capabilities::TUNE );
 		$controller   = new MCP_Controller();

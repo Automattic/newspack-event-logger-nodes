@@ -87,8 +87,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// the current-request tab registers on: below it the station has no
 	// Request tab and every rail's fetch is refused. 2.57.0 is the
 	// /auth reply naming the signing key `secret`, which the bundled auth
-	// client and MCP_Controller read. 2.58.0 is the Table's remembered
-	// absence, which Stats_Store's `$absence` seam sets. 2.60.0 is the
+	// client and MCP_Controller read. 2.60.0 is the
 	// shared AreaTimeChart and the chart roles its `ui` sheet paints, which
 	// every dashboard chart draws on. 2.65.12 is lookup_multi() reporting a
 	// failed batch read, without which a stats flush writes its deltas over
@@ -102,11 +101,9 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// 2.69.0 is Command_Interpreter_Node::$around_dispatch, the verb spans.
 	// 2.70.0 is that hook handing the command line the spans' (start) carries.
 	// 2.71.0 is Schema_Reflection::answer_request(), which both builders
-	// answer their requests through, CLI::worker_id(), which spells a spawned
-	// worker's row, and Table_Node::replace_absent(), which gives a late
-	// mirror write's frame to the absence a reader remembered; below it each
-	// call fatals. It is also newspack_nodes/worker_identified, naming the
-	// worker a spawn became.
+	// answer their requests through, and CLI::worker_id(), which spells a
+	// spawned worker's row; below it each call fatals. It is also
+	// newspack_nodes/worker_identified, naming the worker a spawn became.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
@@ -470,15 +467,12 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 			return;
 		}
 
-		// Dashboards size their time axis from the retention window.
-		$retention_seconds = \Newspack_Event_Logger_Nodes\Config::stats_retention_seconds();
 		$rest_root = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
 		\wp_add_inline_script(
 			$handle,
 			'window.eventLoggerDashboards = ' . \wp_json_encode( [
-				'restUrl'           => $rest_root,
-				'nonce'             => $nonce,
-				'retentionSeconds'  => $retention_seconds,
+				'restUrl' => $rest_root,
+				'nonce'   => $nonce,
 			] ) . ';'
 			. \Newspack_Event_Logger_Nodes\Config::span_palette_js(),
 			'before'

@@ -37,16 +37,16 @@ jest.mock( '../../ResponseTimeChart', () => ( {
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { breakdown, breakdownData } ) =>
+	default: ( { breakdown, breakdownData, plan } ) =>
 		`AGGREGATE[breakdown=${ breakdown },series=${
 			breakdownData ? 'set' : 'none'
 		}] keys:${ Object.values( breakdownData ?? {} )
 			.flatMap( ( bucket ) => Object.keys( bucket ) )
-			.join( ',' ) }`,
+			.join( ',' ) } plan:${ plan?.fine?.[ 0 ] ?? 'none' } `,
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: () => 'CATEGORY',
+	default: ( { plan } ) => `CATEGORY plan:${ plan?.fine?.[ 0 ] ?? 'none' }`,
 } ) );
 
 import * as React from 'react';
@@ -445,6 +445,31 @@ describe( 'UrlDetailView', () => {
 					'AGGREGATE[breakdown=status,series=set]'
 				),
 			{ timeout: 6000 }
+		);
+		unmount();
+	}, 20000 );
+
+	it( 'draws each chart on the plan its own reply named', async () => {
+		wire = installFakeCommandWire( () => ( {
+			breakdown_time_series: { 1748960000: { '5xx': { c: 7 } } },
+			plan: { fine: [ '2026-09-29-07-10' ], hours: [] },
+		} ) );
+		const { container, unmount } = mount( {
+			urlDetail: {
+				...baseUrlDetail,
+				category_time_series: { hooks: [] },
+				plan: { fine: [ '2026-09-29-07-05' ], hours: [] },
+			},
+		} );
+		await waitFor(
+			() =>
+				expect( container.textContent ).toContain(
+					'plan:2026-09-29-07-10 '
+				),
+			{ timeout: 6000 }
+		);
+		expect( container.textContent ).toContain(
+			'CATEGORY plan:2026-09-29-07-05'
 		);
 		unmount();
 	}, 20000 );

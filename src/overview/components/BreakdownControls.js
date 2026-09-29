@@ -33,6 +33,7 @@ import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
  *
  * @param {Object}                  props                   Component props.
  * @param {Object|null}             props.breakdownData     Bucket key => dimension value => `[ count, sumMs, sumPeakMb ]` — count, summed ms, summed peak MB — or null before the reply.
+ * @param {Object|null}             props.plan              The read plan the reply named, `{ fine, hours }`, which the chart's axis splits on.
  * @param {string}                  props.metric            'volume' | 'avg' | 'cumulative' | 'memory'.
  * @param {(value: string) => void} props.setMetric         Metric setter.
  * @param {string}                  props.breakdown         Selected dimension, a value from `breakdownOptions`.
@@ -48,6 +49,7 @@ import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
  */
 export default function BreakdownControls( {
 	breakdownData,
+	plan,
 	metric,
 	setMetric,
 	breakdown,
@@ -116,6 +118,7 @@ export default function BreakdownControls( {
 			</div>
 			<AggregateTimeChart
 				breakdownData={ breakdownData }
+				plan={ plan }
 				metric={ metric }
 				breakdown={ breakdown }
 				serverFilter={ serverFilter }

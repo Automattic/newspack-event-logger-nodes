@@ -103,6 +103,8 @@ const URLS_VIEW = 'urls:view';
 const URLS_RECV = 'urls:in';
 /** Fetcher turning each `performance:tee` tick into one `urls` command. */
 const URLS_FETCHER = 'urls:fetch';
+/** Gate on the `urls:in` to `urls:view` edge: the answer to a standing ask. */
+const URLS_CURRENT = 'urls:current';
 /** View node for the on-demand URL detail modal. */
 const URLDETAIL_VIEW = 'url-detail:view';
 /** Reply-address Tee for `dump_url`, for the Fetcher and the modal alike. */
@@ -372,6 +374,12 @@ export function usePerformanceGraph( opts = {} ) {
 				controlFrom: URLS_VIEW,
 				tee,
 				target: TARGET,
+				// Only the answer to a question still asked reaches the table.
+				transform: {
+					name: URLS_CURRENT,
+					nodeClass: views.UrlsCurrent,
+					args: [ URLS_FETCHER ],
+				},
 				argsFn: () =>
 					urlsArgs( {
 						urlParams: urlParamsRef.current,
@@ -665,17 +673,26 @@ export function usePerformanceGraph( opts = {} ) {
 			if ( urlFetchTimerRef.current ) {
 				clearTimeout( urlFetchTimerRef.current );
 			}
-			// One command: a lock/flush bracket would coalesce nothing.
+			// @longform The new question SUPERSEDES every ask for the old one,
+			// so `urls:current` drops their late answers; its subject is the
+			// question itself, so a late pathless poll reply cannot settle it.
+			// The trigger sends it at once, in a POST of its own.
 			const doFetch = () => {
+				const fetcher = Core.node( URLS_FETCHER );
+				if ( ! fetcher ) {
+					return;
+				}
+				const args = urlsArgs( {
+					urlParams: urlParamsRef.current,
+					serverFilter: serverFilterRef.current,
+				} );
 				sendControl( URLS_VIEW, { action: 'loading' } );
-				sendCommand(
-					'urls',
-					urlsArgs( {
-						urlParams: urlParamsRef.current,
-						serverFilter: serverFilterRef.current,
-					} ),
-					URLS_RECV
+				fetcher.send(
+					args,
+					encodeURIComponent( args.join( '\n' ) ),
+					true
 				);
+				fetcher.fill( newMessage() );
 			};
 			if ( searchChanged ) {
 				urlFetchTimerRef.current = setTimeout( doFetch, 300 );
@@ -683,7 +700,7 @@ export function usePerformanceGraph( opts = {} ) {
 				doFetch();
 			}
 		},
-		[ sendCommand, sendControl ]
+		[ sendControl ]
 	);
 
 	return { handleUrlParamsChange };

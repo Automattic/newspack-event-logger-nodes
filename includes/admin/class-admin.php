@@ -5,11 +5,11 @@
  *
  * Renders exactly three checkboxes, the only application options with a
  * settings field: `enable_logging`, `log_memory`, and `flush_every_line`. The
- * six remaining keys `Settings_Schema` declares — `rules`,
+ * seven remaining keys `Settings_Schema` declares — `rules`,
  * `hook_start_priority`, `custom_colors`, `stats_mirror_node`,
- * `stats_mirror_read_budget_ms`, and `recommended_log_events` — are
- * overlay-only (`ui: false`): Config loads them, and this class neither
- * renders nor resets them.
+ * `stats_mirror_segment_size`, `stats_mirror_num_segments` and
+ * `recommended_log_events` — are overlay-only (`ui: false`): Config loads
+ * them, and this class neither renders nor resets them.
  *
  * URL filters, hook lists, and auto-tune thresholds are per-rule fields in the
  * `newspack_event_logger_nodes_rules` option, not global settings. That option

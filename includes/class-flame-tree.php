@@ -60,9 +60,6 @@ final class Flame_Tree {
 	/** `Performance_CI_Node`'s point event: whether the ranked lists served. */
 	public const URL_RANK_LISTS = 'url rank lists';
 
-	/** The stats mirror's point event: one verb's reads of it on a reader. */
-	public const STATS_MIRROR = 'stats mirror';
-
 	/**
 	 * The flame builder's routine writes, one summary a
 	 * `Narration::ROLLUP_EVERY_S`.
@@ -131,7 +128,6 @@ final class Flame_Tree {
 		self::URL_HEADER_CACHE    => [ '#BD8600', 'url_read' ],
 		self::URL_FOLD            => [ '#117644', 'url_read' ],
 		self::URL_RANK_LISTS      => [ '#B32D2E', null ],
-		self::STATS_MIRROR        => [ '#2055B0', null ],
 		self::STATS_WRITES        => [ '#003DA5', null ],
 		self::STATS_PROBE         => [ '#2055B0', null ],
 		self::STATS_PROBE_HOUR    => [ '#2055B0', 'upkeep' ],

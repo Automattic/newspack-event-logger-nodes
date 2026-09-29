@@ -30,7 +30,7 @@ The table **URLs by Request Count** lists every URL the site served in the reten
 To find the culprit:
 
 - **Sort by Avg** for a URL that is slow every time. **Sort by Max** for one that is slow now and then.
-- **A URL the report names:** type a word from its path into **Search by URL word or prefix…**. `sports` finds `/blog/sports-news`; each word you type must begin a word of the path.
+- **A URL the report names:** type a word from its path into **Search by whole URL word…**. `sports` finds `/blog/sports-news` and `sport` does not; each word you type must be a whole word of the path.
 - **Errors Only** keeps the URLs where requests timed out or died. The first column then counts those errors. A 5xx is a response, not an error here.
 - Cron, WP-CLI and job traffic is hidden until you press **Include Workers**.
 - The row **traffic from URLs beyond the per-shard cap** is many quiet URLs folded together, not one URL. It cannot be opened.

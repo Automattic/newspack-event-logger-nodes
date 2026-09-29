@@ -11,10 +11,10 @@
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { metric, breakdown, serverFilter } ) =>
+	default: ( { metric, breakdown, serverFilter, plan } ) =>
 		`AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
-		}]`,
+		}] plan:${ plan?.fine?.[ 0 ] ?? 'none' }`,
 } ) );
 
 import * as React from 'react';
@@ -37,6 +37,14 @@ function mountBreakdown( overrides = {} ) {
 }
 
 describe( 'BreakdownControls', () => {
+	it( 'hands the chart the plan its reply named', () => {
+		const { container, unmount } = mountBreakdown( {
+			plan: { fine: [ '2026-09-29-07-05' ], hours: [ '2026-09-29-06' ] },
+		} );
+		expect( container.textContent ).toContain( 'plan:2026-09-29-07-05' );
+		unmount();
+	} );
+
 	it( 'names the dimension the reply came back empty for', () => {
 		// A blank frame under a dropdown reading "User Agent" says nothing;
 		// the panel has to say WHICH dimension has no values in the window,

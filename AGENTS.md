@@ -18,7 +18,7 @@ WordPress loads plugins alphabetically, and `newspack-event-logger-nodes` sorts 
 
 So `newspack-event-logger-nodes.php` defers everything that touches a substrate class — the two WP-CLI commands, the `Config::RESET_ACTION` cache-reset listener, the job-context hooks, the verb-span seam (`Command_Interpreter_Node::$around_dispatch`, which `Diagnostics_Bridge::install()` wraps around any wrapper already there), the `Topology_Registry` mount, the `App\` CommandInterpreter namespace, the `<eln:>` config-token resolver, the three named TSL formatters, the `newspack_nodes/settings_sync/value` resolver, the MCP route, `App\Core`, and in admin the settings page and the current-request overlay — to a closure on `plugins_loaded` priority 11. That bootstrap is version-gated, not merely presence-gated: it checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.71.0', … )`. A substrate below the floor leaves an admin notice naming both versions and the plugin goes dormant; a missing substrate, or one predating `version_at_least()` itself, returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but says nothing about its version, and WordPress does not order plugin updates, so this plugin really can land ahead of the substrate it needs.
 
-2.71.0 is `Schema_Reflection::answer_request()`, `CLI::worker_id()`, `Table_Node::replace_absent()` and the `newspack_nodes/worker_identified` action. `Request_Builder_Node` and `Flame_Builder_Node` answer their `GET_CACHE` and `GET_STATS` requests through the first, `Request_Builder_Node::resolved_request_url()` calls the second to spell a spawned worker's row, `…/workers/spawn?performance.p0`, `Stats_Store::replace_absent()` calls the third to put each frame a late mirror write lands in the absence a reader remembered for its key, and `Log_Manager::identify_worker()` listens on the fourth to rename a spawn request to the worker it became. Below it each call fatals. Why each earlier floor was raised is in the CHANGELOG entry that raised it.
+2.71.0 is `Schema_Reflection::answer_request()`, `CLI::worker_id()` and the `newspack_nodes/worker_identified` action. `Request_Builder_Node` and `Flame_Builder_Node` answer their `GET_CACHE` and `GET_STATS` requests through the first, `Request_Builder_Node::resolved_request_url()` calls the second to spell a spawned worker's row, `…/workers/spawn?performance.p0`, and `Log_Manager::identify_worker()` listens on the third to rename a spawn request to the worker it became. Below it each call fatals. Why each earlier floor was raised is in the CHANGELOG entry that raised it.
 
 Raise the floor by hand whenever a new hard requirement appears — `bump-version.sh` repins `release.yml`, not this — and two gates cover the two ways it drifts. `scripts/lint-docs.sh` rule 6 holds every `version_at_least` mention in `README.md`, `AGENTS.md`, `docs/` and `.claude/skills/` to the 2.71.0 the loader enforces, line by line. `scripts/check-substrate-floor.sh` resolves each substrate API PHPStan sees this plugin call to its DECLARING class, binary-searches the substrate's tags for the first one carrying it, and takes the maximum — a floor set too LOW is the failure it exists for, because the handshake then passes and the plugin fatals later. Priority 11 is intentional; don't lower it. Tests bypass this and require the runtime explicitly in `tests/bootstrap.php`.
 
@@ -103,6 +103,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 30 | Every memcache value is one server's, carries nothing its key implies, and fits one item |
 | 31 | A snapshot node's replay is idempotent by the last folded crumb |
 | 32 | A builder tells its upkeep on its own worker record, and every narration write is a guarded forward |
+| 33 | No dashboard reads the mirror; the flame builder sweeps it back into memcache |
 
 ## Layout
 
@@ -161,7 +162,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 
 - `docs/README.md` — the documentation map
 - `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, memcache schema
-- `docs/architecture-decisions.md` — the 32 decisions
+- `docs/architecture-decisions.md` — the 33 decisions
 - `docs/security-model.md` — what the logger captures and what crosses to the hub
 - `docs/API.md` — the MCP route, every service-CI verb, the WP-CLI verbs, the PHP API and the hooks
 - `README.md` — requirements, quick start, configuration, dashboards

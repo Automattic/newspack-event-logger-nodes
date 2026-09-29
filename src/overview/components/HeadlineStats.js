@@ -27,7 +27,7 @@ const STATS = {
 		format: ( n ) => `${ n.toFixed( 0 ) }ms`,
 	},
 	requests_per_second: {
-		label: __( 'Req/s (last hour)', 'newspack-event-logger-nodes' ),
+		label: __( 'Req/s (recent)', 'newspack-event-logger-nodes' ),
 		short: __( 'req/s', 'newspack-event-logger-nodes' ),
 		format: ( n ) => n.toFixed( 2 ),
 	},
@@ -80,7 +80,13 @@ export function headlineStats( totals, keys ) {
 export default function HeadlineStats( { totals, provisional } ) {
 	return (
 		<>
-			<div className="newspack-nodes-stats-grid event-logger-overview-stats">
+			<div
+				className="newspack-nodes-stats-grid event-logger-overview-stats"
+				title={ __(
+					'The current hour so far and the whole hours before it: the window starts on the hour.',
+					'newspack-event-logger-nodes'
+				) }
+			>
 				{ headlineStats( totals, [
 					'urls',
 					'requests',

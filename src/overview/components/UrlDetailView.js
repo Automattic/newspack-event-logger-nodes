@@ -214,6 +214,7 @@ export default function UrlDetailView( {
 	}, [ filteredRequests, chartMetric ] );
 	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
 	const [ breakdownData, setBreakdownData ] = useState( null );
+	const [ breakdownPlan, setBreakdownPlan ] = useState( null );
 	const [ breakdownLoading, setBreakdownLoading ] = useState( false );
 	const [ breakdownError, setBreakdownError ] = useState( null );
 
@@ -239,6 +240,7 @@ export default function UrlDetailView( {
 		onDone: ( { result, error } ) => {
 			setBreakdownError( error );
 			setBreakdownData( result?.breakdown_time_series ?? null );
+			setBreakdownPlan( result?.plan ?? null );
 			setBreakdownLoading( false );
 		},
 	} );
@@ -312,6 +314,7 @@ export default function UrlDetailView( {
 			{ /* Always mounted: a gate here can strand the operator. */ }
 			<BreakdownControls
 				breakdownData={ breakdownData }
+				plan={ breakdownPlan }
 				metric={ chartMetric }
 				setMetric={ setChartMetric }
 				breakdown={ chartBreakdown }
@@ -321,7 +324,10 @@ export default function UrlDetailView( {
 				error={ breakdownError }
 			/>
 
-			<CategoryTimeChart data={ urlDetail?.category_time_series } />
+			<CategoryTimeChart
+				data={ urlDetail?.category_time_series }
+				plan={ urlDetail?.plan ?? null }
+			/>
 
 			{ urlDetail.requests?.length > 0 && (
 				<ResponseTimeChart

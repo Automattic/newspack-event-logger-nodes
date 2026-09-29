@@ -84,11 +84,6 @@ class ConfigSchemaTest extends TestCase {
 		);
 	}
 
-	/** A cold dashboard poll reads the mirror for up to five seconds. */
-	public function test_the_mirror_read_budget_defaults_to_five_seconds(): void {
-		$this->assertSame( 5000, Settings_Schema::get()->defaults()['stats_mirror_read_budget_ms'] );
-	}
-
 	/**
 	 * The shipped file's ledger matches the schema, key for key and value for
 	 * value. A documented default drifts silently, which is the whole failure
@@ -107,7 +102,7 @@ class ConfigSchemaTest extends TestCase {
 	public function test_the_option_less_keys_are_declared_but_never_rendered(): void {
 		$schema = Settings_Schema::get();
 
-		foreach ( [ 'custom_colors', 'stats_mirror_node', 'stats_mirror_read_budget_ms', 'recommended_log_events' ] as $key ) {
+		foreach ( [ 'custom_colors', 'stats_mirror_node', 'recommended_log_events' ] as $key ) {
 			$field = $schema->field_for_short( $key );
 			$this->assertNotNull( $field, "{$key} must be declared" );
 			$this->assertFalse( $field->ui, "{$key} must never render in the settings page" );

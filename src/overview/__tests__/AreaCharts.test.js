@@ -12,16 +12,17 @@ import CategoryTimeChart from '../CategoryTimeChart';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 
+/**
+ * The read plan every reply here names, newest first: two buckets of the
+ * current hour and the three whole hours before it.
+ */
+const PLAN = {
+	fine: [ '2026-09-29-07-05', '2026-09-29-07-00' ],
+	hours: [ '2026-09-29-06', '2026-09-29-05', '2026-09-29-04' ],
+};
+
 function bucketKeyNow() {
-	const now = new Date();
-	now.setMinutes( Math.floor( now.getMinutes() / 5 ) * 5, 0, 0 );
-	return [
-		now.getUTCFullYear(),
-		String( now.getUTCMonth() + 1 ).padStart( 2, '0' ),
-		String( now.getUTCDate() ).padStart( 2, '0' ),
-		String( now.getUTCHours() ).padStart( 2, '0' ),
-		String( Math.floor( now.getUTCMinutes() / 5 ) * 5 ).padStart( 2, '0' ),
-	].join( '-' );
+	return PLAN.fine[ 0 ];
 }
 
 /**
@@ -91,6 +92,7 @@ describe( 'area chart frame', () => {
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
+				plan: PLAN,
 				breakdownData,
 				metric: 'volume',
 				breakdown: 'ua',
@@ -125,6 +127,7 @@ describe( 'area chart frame', () => {
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
+				plan: PLAN,
 				breakdownData,
 				metric: 'volume',
 				breakdown: 'status',
@@ -160,6 +163,7 @@ describe( 'area chart frame', () => {
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
+				plan: PLAN,
 				breakdownData,
 				metric: 'avg',
 				breakdown: 'ua',
@@ -186,7 +190,7 @@ describe( 'area chart frame', () => {
 			},
 		};
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data } )
+			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
 		);
 		// The panel draws three views; the first answers for the frame.
 		expect( legendRows( container ).length ).toBeGreaterThanOrEqual( 2 );
@@ -203,6 +207,7 @@ describe( 'area chart frame', () => {
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
+				plan: PLAN,
 				breakdownData,
 				metric: 'cumulative',
 				breakdown: 'status',
@@ -232,6 +237,7 @@ describe( 'area chart frame', () => {
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
+				plan: PLAN,
 				breakdownData,
 				metric: 'volume',
 				breakdown: 'ua',
@@ -239,7 +245,10 @@ describe( 'area chart frame', () => {
 		);
 
 		expect(
-			valueLabels( container, 'Request Volume (Last 24 Hours)' )
+			valueLabels(
+				container,
+				'Request Volume (This Hour and the 3 Before It)'
+			)
 		).toEqual( [ '0', '1', '2', '3' ] );
 		unmount();
 	} );
@@ -250,7 +259,7 @@ describe( 'area chart frame', () => {
 			buckets: { [ bucketKeyNow() ]: [ [ 0, 6, 2, 2 ] ] },
 		};
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data } )
+			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
 		);
 
 		expect( valueLabels( container, 'Average Time per Event' ) ).toEqual( [
@@ -273,6 +282,7 @@ describe( 'chart frame', () => {
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
+				plan: PLAN,
 				breakdownData,
 				metric: 'volume',
 				breakdown: 'ua',

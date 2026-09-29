@@ -24,14 +24,16 @@
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { metric, breakdown, serverFilter, data } ) =>
+	default: ( { metric, breakdown, serverFilter, data, plan } ) =>
 		`AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
-		},totals=${ undefined === data ? 'none' : 'given' }]`,
+		},totals=${ undefined === data ? 'none' : 'given' }] plan:${
+			plan?.fine?.[ 0 ] ?? 'none'
+		}`,
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: () => 'CATEGORY',
+	default: ( { plan } ) => `CATEGORY plan:${ plan?.fine?.[ 0 ] ?? 'none' }`,
 } ) );
 
 import * as React from 'react';
@@ -100,6 +102,29 @@ describe( 'OverviewSection', () => {
 		).toBeTruthy();
 		trigger.dispatchEvent( new MouseEvent( 'click', { bubbles: true } ) );
 		expect( start ).toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'hands both charts the plan the overview reply named', () => {
+		const { container, unmount } = mount( {
+			plan: { fine: [ '2026-09-29-07-05' ], hours: [ '2026-09-29-06' ] },
+		} );
+		expect( container.textContent ).toContain( '] plan:2026-09-29-07-05' );
+		expect( container.textContent ).toContain(
+			'CATEGORY plan:2026-09-29-07-05'
+		);
+		unmount();
+	} );
+
+	it( 'says the totals start on the hour', () => {
+		const { container, unmount } = mount( {} );
+		expect(
+			container
+				.querySelector( '.event-logger-overview-stats' )
+				.getAttribute( 'title' )
+		).toBe(
+			'The current hour so far and the whole hours before it: the window starts on the hour.'
+		);
 		unmount();
 	} );
 
@@ -209,6 +234,16 @@ describe( 'OverviewSection', () => {
 
 		expect( container.textContent ).toContain( '—' );
 		expect( container.textContent ).not.toContain( '0Unique URLs' );
+	} );
+
+	it( 'labels the rate recent, since its window straddles the hour', () => {
+		const { container } = mount( {}, { urlTotals: baseTotals } );
+
+		expect(
+			Array.from(
+				container.querySelectorAll( '.newspack-nodes-stat-label' )
+			).map( ( label ) => label.textContent )
+		).toContain( 'Req/s (recent)' );
 	} );
 
 	it( 'shows the peak-memory stat only when the displayed stats include it', () => {

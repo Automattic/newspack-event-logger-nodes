@@ -313,7 +313,7 @@ function bodyLines( brief ) {
 									`${ num( brief.stats.avg_ms ) }ms avg`,
 									`${ num(
 										brief.stats.requests_per_second
-									) }/s`,
+									) }/s recent`,
 							  ].join( ', ' )
 							: 'no per-server totals — these rows are pre-split',
 					],

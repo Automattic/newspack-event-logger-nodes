@@ -1454,38 +1454,9 @@ class RequestBuilderTest extends TestCase {
 	 * every `v1/workers/spawn` timed out mid-life.
 	 */
 	public function test_the_eviction_window_outlasts_a_workers_lifetime(): void {
-		$this->assertSame( 1080, Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC );
+		$rotation = ( new \ReflectionClassConstant( Request_Builder_Node::class, 'BUCKET_ROTATION_S' ) )->getValue();
 		// The floor is two whole rotations: the first after landing is partial.
-		$rotation = \intdiv( Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC, Request_Builder_Node::DEFAULT_NUM_BUCKETS );
 		$this->assertGreaterThan( 595, $rotation * ( Request_Builder_Node::DEFAULT_NUM_BUCKETS - 1 ) );
-	}
-
-	public function test_a_bucket_count_off_the_default_says_the_borrowed_eviction_window_no_longer_measures_it(): void {
-		// `DEFAULT_EVICTION_WINDOW_SEC` is a magnitude other code borrows, and a
-		// constant cannot follow a per-topology declaration. Declaring a
-		// different one has to say so rather than leave the borrow quietly wrong.
-		$buf = '';
-		Core::set_stderr_handler( static function ( $message ) use ( &$buf ): void { $buf .= $message; } );
-		$node = new Request_Builder_Node();
-		$node->name( 'request-builder-off-default' );
-
-		$node->arguments( [ '137', '7' ] );
-
-		$this->assertStringContainsString( 'eviction window', $buf );
-		$this->assertStringContainsString( '2520', $buf, 'the window this declaration actually has' );
-		$node->remove_node();
-	}
-
-	public function test_the_default_bucket_count_says_nothing(): void {
-		$buf = '';
-		Core::set_stderr_handler( static function ( $message ) use ( &$buf ): void { $buf .= $message; } );
-		$node = new Request_Builder_Node();
-		$node->name( 'request-builder-at-default' );
-
-		$node->arguments( [ '137', (string) Request_Builder_Node::DEFAULT_NUM_BUCKETS ] );
-
-		$this->assertSame( '', $buf, 'the shipped declaration is what the constant measures' );
-		$node->remove_node();
 	}
 
 	/**

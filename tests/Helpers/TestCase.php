@@ -538,7 +538,7 @@ abstract class TestCase extends RuntimeTestCase {
 			$writes[] = [
 				$parts,
 				(string) $token,
-				$store->merge_token_set( $existing[ (string) $token ] ?? [], $hashes, $now ),
+				$store->merge_token_set( $existing[ (string) $token ] ?? [], \array_fill_keys( $hashes, $now ), $now ),
 			];
 		}
 		return [] === $writes || ! \in_array( false, $store->bucket_set_multi( $writes ), true );

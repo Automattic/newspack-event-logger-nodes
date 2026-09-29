@@ -129,7 +129,7 @@ class StatsStoreTest extends TestCase {
 		// the whole thing is read-modify-written on each five-second flush and
 		// unserialized whole on each poll, so rows and splits both
 		// competed for one item's budget. The bucket stays LAST in the key, so
-		// `open_bucket_at()` and the durable read-through are untouched.
+		// expiry and the durable read-through are untouched.
 		$this->seed_memd();
 		$store = $this->make_store( partition: 2 );
 		$hash  = 'a1b2c3d4e5f6';
@@ -250,34 +250,40 @@ class StatsStoreTest extends TestCase {
 	}
 
 	public function test_the_read_plan_splits_the_window_into_fine_buckets_and_hours(): void {
-		// The readers need TWO resolutions — the whole window, and the last
-		// complete hour — so the window edge is the only thing five-minute
-		// buckets buy, and only at the recent end. Everything behind the recent
-		// tail reads as hours: 13 + 23 keys per shard rather than 288.
+		// No hour key covers the current hour yet, so it is read in buckets;
+		// every hour before it reads as its hour key: 8 + 24 keys per shard
+		// at :37 rather than 289.
 		$now  = \gmmktime( 14, 37, 0, 8, 27, 2026 );
 		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) );
 
-		// FINE_BUCKETS is a FLOOR: the tail runs to the end of the hour it
-		// lands in, so that hour is read at one resolution rather than half at
-		// each. At :37 that is 13 + the seven below 13-35.
-		$this->assertCount( 20, $plan['fine'] );
+		$this->assertCount( 8, $plan['fine'] );
 		$this->assertSame( '2026-08-27-14-35', $plan['fine'][0], 'newest first, floored to the width' );
-		$this->assertSame( '2026-08-27-13-00', \end( $plan['fine'] ) );
-		// The hours behind them, newest first. The hour the fine tail reaches
-		// into is NOT among them, or its traffic would be counted twice.
-		$this->assertSame( '2026-08-27-12', $plan['hours'][0] );
+		$this->assertSame( '2026-08-27-14-00', \end( $plan['fine'] ) );
+		// The hours behind them, newest first, the current hour not among
+		// them, or its traffic would be counted twice.
+		$this->assertSame( '2026-08-27-13', $plan['hours'][0] );
 		$this->assertSame( 23, \count( $plan['hours'] ) );
-		// The oldest is WHOLE, so the window's far edge is hour-granular and
-		// rounds outward — a 24h read may carry up to 59 extra minutes rather
-		// than drop real traffic. Five-minute precision there bought nothing.
-		$this->assertSame( '2026-08-26-14', \end( $plan['hours'] ) );
+		// The window starts on the hour: the oldest hour it holds only part
+		// of is not read, so every hour read is whole and exact.
+		$this->assertSame( '2026-08-26-15', \end( $plan['hours'] ) );
+	}
+
+	/** At 11:07 a twelve-hour window reads hour 00 whole, and none of 23. */
+	public function test_the_window_starts_on_the_hour(): void {
+		$now  = \gmmktime( 11, 7, 0, 9, 29, 2026 );
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 43200, $now ) );
+
+		$this->assertSame( '2026-09-29-00', \end( $plan['hours'] ) );
+		$this->assertNotContains( '2026-09-28-23', $plan['hours'] );
+		$this->assertSame( \gmmktime( 0, 0, 0, 9, 29, 2026 ), Stats_Store::window_start( 43200, $now ) );
 	}
 
 	/**
-	 * The plan must COVER the window. Reading it at two resolutions is the
-	 * point; reading part of it at neither is a hole, and a hole here is
-	 * traffic missing from every `urls` and `dump_url` answer — silently,
-	 * and by an amount that breathes with the clock.
+	 * The plan must COVER the window from its first whole hour on. Reading it
+	 * at two resolutions is the point; reading part of it at neither is a
+	 * hole, and a hole here is traffic missing from every `urls` and
+	 * `dump_url` answer — silently, and by an amount that breathes with the
+	 * clock. Nor may it read past the window: the hours it reads are whole.
 	 */
 	public function test_the_read_plan_covers_every_bucket_in_the_window(): void {
 		// Every minute of an hour, because the hole is a function of the
@@ -291,11 +297,13 @@ class StatsStoreTest extends TestCase {
 			foreach ( $plan['hours'] as $hour ) {
 				$read = \array_merge( $read, Stats_Store::buckets_in_hour( $hour ) );
 			}
+			$first = Stats_Store::bucket_key( Stats_Store::window_start( 86400, $now ) );
 			$this->assertSame(
 				[],
-				\array_values( \array_diff( $window, $read ) ),
+				\array_values( \array_filter( \array_diff( $window, $read ), static fn ( string $bucket ): bool => $bucket >= $first ) ),
 				"buckets in the window that no tier reads, at :{$minute}"
 			);
+			$this->assertSame( [], \array_values( \array_diff( $read, $window ) ), "buckets read past the window, at :{$minute}" );
 		}
 	}
 
@@ -569,9 +577,9 @@ class StatsStoreTest extends TestCase {
 
 	public function test_set_and_get_hourly_round_trip(): void {
 		$store = $this->make_store();
-		$this->set_hourly_bucket( $store, '2026-01-01-00', [ 'count' => 5, 'sum_ms' => 100, 'sum_peak_mb' => 10 ] );
-		$h = $store->get_hourly_buckets( [ '2026-01-01-00' ] );
-		$this->assertSame( 5, $h['2026-01-01-00']['count'] );
+		$this->set_hourly_bucket( $store, '2026-01-01-00-05', [ 'count' => 5, 'sum_ms' => 100, 'sum_peak_mb' => 10 ] );
+		$h = $store->get_hourly_buckets( [ '2026-01-01-00-05' ] );
+		$this->assertSame( 5, $h['2026-01-01-00-05']['count'] );
 	}
 
 	public function test_set_and_get_leaderboard_bucket_round_trip(): void {
@@ -787,98 +795,6 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [ 'count' => 42 ], $this->get_hourly_bucket( $store, '2026-02-03-04-05' ) );
 	}
 
-	/**
-	 * An absence the mirror answered is remembered, for as long as it holds.
-	 *
-	 * A bucket the mirror has no frame for costs the walk its whole index to
-	 * say so, and a sparse server has such buckets in every window; asked on
-	 * every poll, they spend the read budget before the series is reached. A
-	 * bucket that closed gains no frame, so its absence holds for the window;
-	 * the open bucket's frame may still land, so its absence holds only
-	 * briefly. A key that is no bucket, `urlmap`, holds briefly too.
-	 */
-	public function test_absences_are_not_remembered_unless_a_reader_asks_for_it(): void {
-		// The writer's own folds read a bucket once; a marker there would
-		// only compete with the write that follows.
-		$store = $this->make_store();
-		$asked = 0;
-		$store->rehydrate = static function ( array $keys ) use ( &$asked ): array {
-			++$asked;
-			return [];
-		};
-		$this->assertSame( [], $store->get_leaderboard_buckets( [ '2026-01-01-00-00' ] ) );
-		$this->assertSame( [], $store->get_leaderboard_buckets( [ '2026-01-01-00-00' ] ) );
-		$this->assertSame( 2, $asked );
-	}
-
-	public function test_a_writer_reads_a_readers_marker_as_an_ordinary_miss(): void {
-		// The worker's store shares the key and holds no absences; a marker a
-		// dashboard left must not be its miss, or an evicted open bucket
-		// merges from nothing instead of from the held-frame tier.
-		$reader = $this->make_store();
-		$reader->rehydrate = static fn ( array $keys ): array => [];
-		$reader->absence   = static fn ( string $key ): int => 20;
-		$open = Stats_Store::bucket_key( self::tick() );
-		$this->assertSame( [], $reader->get_leaderboard_buckets( [ $open ] ) );
-
-		$writer = $this->make_store();
-		$writer->rehydrate = static fn ( array $keys ): array => [ 'lb:' . $open => [ 'value' => [ 'count' => 47, 'sum_req_time' => 2.0, 'categories' => [] ], 'ttl' => 60 ] ];
-		$this->assertSame( 47, $writer->get_leaderboard_buckets( [ $open ] )[ $open ]['count'] ?? null, 'the held frame answers through the marker' );
-	}
-
-	public function test_an_absent_closed_bucket_is_not_asked_of_the_mirror_again(): void {
-		$store = $this->make_store( max_lifespan: 7200 );
-		$asked = [];
-		$store->rehydrate = static function ( array $keys ) use ( &$asked ): array {
-			$asked[] = $keys;
-			return [];
-		};
-		$now    = self::tick();
-		$store->absence = static fn ( string $key ): int => $store->absence_holds( $key, $now, 11 );
-		$closed = Stats_Store::bucket_key( $now - 3600 );
-		$hash   = 'c0ffee4471ab';
-		// The cache double dates an expiry from the wall.
-		$wall   = \time();
-
-		foreach ( [ 1, 2 ] as $poll ) {
-			$this->assertSame( [], $store->get_leaderboard_buckets( [ $closed ] ), "poll {$poll}" );
-			$this->assertNull( $store->get_url_stats( $hash ), "poll {$poll}" );
-		}
-		// Both were asked once; the closed bucket holds for the window, the
-		// URL's blob only briefly, since a write to it may still land.
-		$this->assertSame( [ [ 'lb:' . $closed ], [ 'url:' . $hash ] ], $asked );
-		$expiries = Core::$memd->expiries();
-		$brief    = $expiries[ self::cache_key( 0, 'url:' . $hash ) ] ?? 0;
-		$this->assertEqualsWithDelta( $wall + Stats_Store::ABSENCE_HOLD_SECONDS, $brief, 2, 'a key that is no bucket holds briefly' );
-		$held     = $expiries[ self::cache_key( 0, 'lb:' . $closed ) ] ?? 0;
-		// The tick dates the window's 7200s from the bucket's end; the wall, the write.
-		$left     = (int) Stats_Store::bucket_end( 'lb:' . $closed ) + 7200 - $now;
-		$this->assertEqualsWithDelta( $wall + $left, $held, 2, 'held for what is left of the window, not the table lifetime' );
-	}
-
-	public function test_the_open_bucket_is_the_one_the_tick_names(): void {
-		// The reply's clock is the tick; two buckets ahead of the wall, a
-		// bucket dated from the wall is already closed to it.
-		$this->shift_tick( 2 * Stats_Store::BUCKET_SECONDS );
-		$this->test_an_absent_closed_bucket_is_not_asked_of_the_mirror_again();
-	}
-
-	public function test_an_absence_read_does_not_move_the_tick(): void {
-		// `Core::right_now()` WRITES `Core::$now`, and a fold asks this once
-		// per absent key: a fresh read would re-pin the tick the reply is
-		// dated from, and at a bucket boundary rebuild its read window.
-		$store     = $this->make_store();
-		$pinned    = 1_600_000_000.5;
-		$previous  = Core::$now;
-		Core::$now = $pinned;
-		try {
-			$store->absence_holds( Stats_Store::NS_HOURLY . ':2026-01-01-00', 1_600_000_000, 11 );
-			$this->assertSame( $pinned, Core::$now, 'the reader takes the tick and never re-pins it' );
-		} finally {
-			Core::$now = $previous;
-		}
-	}
-
 	public function test_a_miss_is_filled_from_the_durable_backing(): void {
 		$store = $this->make_store();
 		$value = [ 'count' => 9 ];
@@ -1069,24 +985,6 @@ class StatsStoreTest extends TestCase {
 	public function test_bucket_key_floors_to_the_bucket_width(): void {
 		// 12:47 UTC belongs to the 12:45 bucket.
 		$this->assertSame( '2026-02-03-12-45', Stats_Store::bucket_key( \gmmktime( 12, 47, 33, 2, 3, 2026 ) ) );
-	}
-
-	public function test_the_open_bucket_is_recognised_by_its_key_suffix(): void {
-		// ADR-1 puts the bucket LAST in every bucketed key, which is what lets a
-		// caller decide openness from the key alone.
-		$now     = \gmmktime( 12, 47, 33, 2, 3, 2026 );
-		$current = Stats_Store::bucket_key( $now );
-		$open    = Stats_Store::open_bucket_at( $now );
-
-		$this->assertTrue( $open( "evlog:p0:url_dim:9f21ab04cd77:{$current}" ) );
-		$this->assertTrue( $open( "url_dim:9f21ab04cd77:{$current}" ), 'a Table-relative key reads alike' );
-		$this->assertFalse( $open( 'evlog:p0:url_dim:9f21ab04cd77:2026-02-03-12-40' ) );
-		$this->assertFalse( $open( 'evlog:p0:url:9f21ab04cd77' ), 'url is unbucketed' );
-		$this->assertFalse( $open( 'lb_h:2026-02-03-12' ), 'an hour key is no bucket' );
-		// A producer whose clock runs slightly ahead writes a bucket we have not
-		// reached; a broken one writes a bucket we must not hold forever.
-		$this->assertTrue( $open( 'evlog:p0:hourly:2026-02-03-12-50' ), 'a near-future bucket is open' );
-		$this->assertFalse( $open( 'evlog:p0:hourly:2100-01-01-00-00' ), 'a broken clock is not held' );
 	}
 
 	public function test_the_read_window_is_derived_from_retention(): void {
@@ -1360,138 +1258,50 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [], $read[2], 'a stored empty value is empty, not absent' );
 	}
 
-	/**
-	 * The fine tier answers the LAST HOUR and feeds the fold. Nothing else.
-	 *
-	 * `RECENT_BUCKETS` twelve buckets are one hour, and `roll_up_hours()` builds
-	 * the coarse tiers out of a closed hour's fine buckets. It was never a tier
-	 * to read old hours from, so the fallback for an unfolded hour reaches at
-	 * most the hour immediately behind the fine tail — the one the fold has not
-	 * caught yet — and no further.
-	 */
-	public function test_the_hour_behind_the_fine_tail_still_answers(): void {
-		$hour = \gmdate( 'Y-m-d-H', self::MID_HOUR_NOW - 3600 );
-
-		$this->assertSame(
-			Stats_Store::buckets_in_hour( $hour ),
-			Stats_Store::unfolded_hour_buckets( $hour, [ $hour, \gmdate( 'Y-m-d-H', self::MID_HOUR_NOW - 7200 ) ] )
-		);
-	}
-
-	public function test_the_fine_fallback_answers_the_grace_hour_and_reports_a_hole(): void {
-		// The rule every tier reader shares: an hour with no coarse key has
-		// not been folded YET, and only the grace hour — the one the fold may
-		// simply not have caught — is answered from its fine buckets. The two
-		// facts are independent, so one call reports both and each caller
-		// reads the half it acts on.
-		$hours = [ '2026-09-22-14', '2026-09-22-13', '2026-09-22-12' ];
-
-		$this->assertSame(
-			[
-				'buckets' => [],
-				'holes'   => [],
-			],
-			Stats_Store::fine_fallback( $hours, \array_fill_keys( $hours, true ) ),
-			'every hour folded, so nothing falls back'
-		);
-		$this->assertSame(
-			[
-				'buckets' => Stats_Store::buckets_in_hour( '2026-09-22-14' ),
-				'holes'   => [],
-			],
-			Stats_Store::fine_fallback( $hours, [ '2026-09-22-13' => true, '2026-09-22-12' => true ] )
-		);
-		$this->assertSame(
-			[
-				'buckets' => [],
-				'holes'   => [ '2026-09-22-13' ],
-			],
-			Stats_Store::fine_fallback( $hours, [ '2026-09-22-14' => true, '2026-09-22-12' => true ] ),
-			'an hour behind the grace hour that no coarse key answers is a HOLE'
-		);
-		$this->assertSame(
-			[
-				'buckets' => Stats_Store::buckets_in_hour( '2026-09-22-14' ),
-				'holes'   => [ '2026-09-22-13' ],
-			],
-			Stats_Store::fine_fallback( $hours, [ '2026-09-22-12' => true ] ),
-			'a hole behind it does not cost the grace hour its buckets'
-		);
-	}
-
-	/** An hour further back than that is the coarse tier's job, whatever its age. */
-	public function test_an_hour_behind_the_grace_hour_is_never_read_finely(): void {
-		$grace  = \gmdate( 'Y-m-d-H', self::MID_HOUR_NOW - 3600 );
-		$behind = \gmdate( 'Y-m-d-H', self::MID_HOUR_NOW - 7200 );
-
-		$this->assertSame( [], Stats_Store::unfolded_hour_buckets( $behind, [ $grace, $behind ] ) );
-	}
-
 	/** Two hours is the fold's margin, and the tier is sized to it. */
 	/**
-	 * What a re-materialized entry is warmed for: time left in the WINDOW.
-	 *
-	 * The TTL a frame was written with bounds the cache and decays from the
-	 * write, so a spent one says nothing about how long the data is still read.
-	 * The window does, and it is a pure function of the bucket key.
+	 * What a restored entry lives: its role's TTL from its bucket's END. The
+	 * TTL a frame was written with decays from the write; the key's life is a
+	 * pure function of the bucket key.
 	 */
-	public function test_window_remaining_decays_with_the_bucket_age(): void {
+	public function test_life_left_runs_from_the_bucket_end(): void {
 		$store = new Stats_Store( 0, 86400 );
 		$now   = self::MID_HOUR_NOW;
 
 		// Its 12:35 bucket ends at 12:40, and the window runs 24h past that.
 		$two_hours = 'hourly:' . Stats_Store::bucket_key( $now - 7200 );
-		$this->assertSame( 79200 + 300 - 133, $store->window_remaining( $two_hours, $now ), 'a two-hour-old bucket has 22h left' );
+		$this->assertSame( 79200 + 300 - 133, $store->life_left( $two_hours, $now, $now ), 'a two-hour-old bucket has 22h left' );
 
 		// Yesterday's 15:00 hour ends at 16:00, and the window runs 24h past that.
 		$old_hour = 'urls_h:3:' . \gmdate( 'Y-m-d-H', $now - ( 23 * 3600 ) );
-		$this->assertSame( 7200 - 2233, $store->window_remaining( $old_hour, $now ), 'with about an hour left, not a fresh one' );
+		$this->assertSame( 7200 - 2233, $store->life_left( $old_hour, $now, $now ), 'with about an hour left, not a fresh one' );
+		$this->assertSame( 6000, $store->life_left( 'urls_h:3:2026-09-21-11', \gmmktime( 10, 20, 0, 9, 22, 2026 ), \gmmktime( 10, 20, 0, 9, 22, 2026 ) ), 'an hour opened 23h20m ago' );
 	}
 
 	/**
-	 * A re-warmed entry is bounded by its ROLE's TTL, not by retention alone.
-	 *
-	 * `ttl_url_fine()` is a memcache FOOTPRINT bound: 24 buckets a shard rather
-	 * than 288. Sizing a rehydrated fine bucket by the retention window alone
-	 * warmed it for up to twelve times that and put the whole 288 back in the
-	 * cache the two-hour tier exists to keep out.
+	 * A fine bucket lives the fine tier's TTL from its end, not the window's:
+	 * `ttl_url_fine()` is a memcache FOOTPRINT bound, 24 buckets a shard
+	 * rather than 288, and a restore that warmed it for the window would put
+	 * the whole 288 back in the cache the two-hour tier exists to keep out.
 	 */
-	public function test_window_remaining_never_exceeds_the_role_ttl(): void {
+	public function test_a_fine_bucket_lives_its_fine_life(): void {
 		$store = new Stats_Store( 0, 86400 );
 		$now   = self::MID_HOUR_NOW;
 
 		$fine = 'urls:0a1b2c3d:3:' . Stats_Store::bucket_key( $now - 600 );
-		$this->assertSame( 7200, $store->window_remaining( $fine, $now ), 'a fine bucket is warmed for its own tier' );
-
+		$this->assertSame( (int) Stats_Store::bucket_end( $fine ) + 7200 - $now, $store->life_left( $fine, $now, $now ) );
 		$index = 'urlsrv:' . Stats_Store::bucket_key( $now - 600 );
-		$this->assertSame( 7200, $store->window_remaining( $index, $now ), 'the server index rides the same tier' );
+		$this->assertSame( (int) Stats_Store::bucket_end( $index ) + 7200 - $now, $store->life_left( $index, $now, $now ), 'the server index rides the same tier' );
+		$this->assertSame( 0, $store->life_left( 'urls:3:' . Stats_Store::bucket_key( $now - ( 48 * 3600 ) ), $now, $now ), 'spent' );
 	}
 
-	public function test_window_remaining_runs_to_the_end_of_the_bucket(): void {
-		$store = new Stats_Store( 0, 86400 );
-		$now   = \gmmktime( 10, 20, 0, 9, 22, 2026 );
-
-		$this->assertSame( 6000, $store->window_remaining( 'urls_h:3:2026-09-21-11', $now ), 'an hour opened 23h20m ago' );
-		$this->assertSame( \gmmktime( 10, 25, 0, 9, 21, 2026 ), Stats_Store::window_start( 86400, $now ), 'the capped window starts a bucket later' );
-		$this->assertSame( 600, $store->window_remaining( 'hourly:2026-09-21-10-25', $now ), 'the oldest bucket the capped window enumerates' );
-		$this->assertSame( 300, $store->window_remaining( 'hourly:2026-09-21-10-20', $now ), 'one bucket older, still dated to its end: the cap errs long' );
-	}
-
-	/** Past the window there is nothing left, and nothing should warm it. */
-	public function test_window_remaining_is_zero_past_retention(): void {
+	/** `url` and `urlmap` key on a hash, so each lives its role's TTL from its write. */
+	public function test_a_hash_keyed_entry_lives_its_role_ttl_from_its_write(): void {
 		$store = new Stats_Store( 0, 86400 );
 		$now   = self::MID_HOUR_NOW;
-		$gone  = 'urls:3:' . Stats_Store::bucket_key( $now - ( 48 * 3600 ) );
 
-		$this->assertSame( 0, $store->window_remaining( $gone, $now ) );
-	}
-
-	/** `url` and `urlmap` key on a hash, not a bucket, so both keep their role's TTL. */
-	public function test_window_remaining_gives_a_hash_keyed_entry_the_whole_window(): void {
-		$store = new Stats_Store( 0, 86400 );
-
-		$this->assertSame( 86400, $store->window_remaining( 'urlmap:ab12cd34ef56', self::MID_HOUR_NOW ) );
-		$this->assertSame( 3600, $store->window_remaining( 'url:ab12cd34ef56', self::MID_HOUR_NOW ), 'the per-URL flame role keeps its own' );
+		$this->assertSame( 86400 - 600, $store->life_left( 'urlmap:ab12cd34ef56', $now - 600, $now ) );
+		$this->assertSame( 3600, $store->life_left( 'url:ab12cd34ef56', $now, $now ), 'the per-URL flame role keeps its own' );
 	}
 
 	public function test_the_fine_tier_is_kept_for_two_hours(): void {
@@ -2007,7 +1817,6 @@ class StatsStoreTest extends TestCase {
 		$store->bucket_set_multi( [
 			[ Stats_Store::url_hour_parts( $kea, 'd' ), $hour, [] ],
 			[ Stats_Store::url_srv_parts( true ), $hour, [ $kea => [ Stats_Store::SRV_NAME => 'kea.test', Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( [ 'd' ] ) ] ] ],
-			[ Stats_Store::lb_hour_parts(), $hour, [] ],
 		] );
 		$mc->asked = [];
 
@@ -2031,19 +1840,19 @@ class StatsStoreTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		// Hours 07 and 09 hold every key of the one server their index names;
-		// 09 has no leaderboard hour.
+		// 08 holds a chart hour key and no index. A chart key is no URL fold's
+		// business: the flush writes it through.
 		foreach ( [ '2026-09-21-07', '2026-09-21-09' ] as $hour ) {
 			self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
 		}
 		$store->bucket_set_multi( [
-			[ Stats_Store::lb_hour_parts(), '2026-09-21-07', [] ],
-			[ Stats_Store::lb_hour_parts(), '2026-09-21-08', [] ],
+			[ Stats_Store::hour_parts( Stats_Store::lb_parts( '' ) ), '2026-09-21-07', [] ],
+			[ Stats_Store::hour_parts( Stats_Store::lb_parts( '' ) ), '2026-09-21-08', [] ],
 		] );
 		$this->assertSame(
 			[
 				'2026-09-21-07' => [ 'missing' => null, 'unranked' => [ 'kea.test' ] ],
-				'2026-09-21-08' => [ 'missing' => 'missing index', 'unranked' => [] ],
-				'2026-09-21-09' => [ 'missing' => 'missing lb_h', 'unranked' => [ 'kea.test' ] ],
+				'2026-09-21-09' => [ 'missing' => null, 'unranked' => [ 'kea.test' ] ],
 			],
 			$store->url_hours_derived( [ '2026-09-21-07', '2026-09-21-08', '2026-09-21-09' ] )
 		);
@@ -2057,7 +1866,6 @@ class StatsStoreTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		self::seed_folded_hour( $store, '2026-09-21-11', [ 'kea.test', 'moa.test' ] );
 		self::seed_ranked_hour( $store, '2026-09-21-11', [ 'kea.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), '2026-09-21-11', [] ] ] );
 		$this->assertSame(
 			[ '2026-09-21-11' => [ 'missing' => null, 'unranked' => [ 'moa.test' ] ] ],
 			$store->url_hours_derived( [ '2026-09-21-11' ] )
@@ -2079,7 +1887,6 @@ class StatsStoreTest extends TestCase {
 		$hour       = '2026-09-21-14';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		$this->assertSame(
 			[ $hour => [ 'missing' => null, 'unranked' => [] ] ],
 			$store->url_hours_derived( [ $hour ] ),
@@ -2100,7 +1907,6 @@ class StatsStoreTest extends TestCase {
 		$hour       = '2026-09-21-16';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 
 		$store->bucket_forget( Stats_Store::url_header_parts( 'moa.test', true ), $hour );
 		$this->assertSame( [ $hour => 'lost record' ], $store->url_keys_unranked( [ $hour ], true, 0, 1000, self::PROBE_NOW )['lost'], 'the server\'s record' );
@@ -2267,7 +2073,6 @@ class StatsStoreTest extends TestCase {
 		$hour       = '2026-09-21-12';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		// The cache double dates an expiry from the wall.
 		$wall = \time();
 
@@ -2292,7 +2097,6 @@ class StatsStoreTest extends TestCase {
 		$hour       = '2026-09-21-12';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		$store->bucket_forget( Stats_Store::url_rank_parts( 'count', 'desc', 'kea.test', true ), $hour );
 		$key    = Stats_Store::key( ...[ ...Stats_Store::url_rank_parts( 'url', 'asc', 'kea.test', true ), $hour ] );
 		$before = $mc->expiries()[ self::cache_key( 0, $key ) ];
@@ -2312,7 +2116,6 @@ class StatsStoreTest extends TestCase {
 		$hour  = '2026-09-21-16';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		$store->bucket_forget( Stats_Store::url_hour_parts( Stats_Store::server_key( 'kea.test' ), 'w7' ), $hour );
 
 		$found = $store->url_hours_derived( [ $hour ] );
@@ -2329,7 +2132,6 @@ class StatsStoreTest extends TestCase {
 		$hour  = '2026-09-21-17';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 
 		$found = $store->url_hours_derived( [ $hour ] );
 
@@ -2343,7 +2145,6 @@ class StatsStoreTest extends TestCase {
 		$hour  = '2026-09-21-18';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		foreach ( [ 'kea.test', 'moa.test' ] as $server ) {
 			$store->bucket_forget( Stats_Store::url_rank_parts( 'url', 'asc', $server, true ), $hour );
 		}
@@ -2362,7 +2163,6 @@ class StatsStoreTest extends TestCase {
 		$hour  = '2026-09-21-19';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
 		self::seed_ranked_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		$store->bucket_forget( Stats_Store::url_rank_parts( 'url', 'asc', 'moa.test', true ), $hour );
 		// The site's record is the first thing a probe touches.
 		$first = Stats_Store::key( ...[ ...Stats_Store::url_header_parts( '', true ), $hour ] );
@@ -2519,7 +2319,6 @@ class StatsStoreTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$hour       = '2026-09-21-13';
 		self::seed_folded_hour( $store, $hour, [ 'kea.test', 'moa.test' ] );
-		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [] ] ] );
 		$this->assertNull( $store->url_hours_derived( [ $hour ] )[ $hour ]['missing'] );
 
 		$store->bucket_forget( Stats_Store::url_hour_parts( Stats_Store::server_key( 'moa.test' ), 'w7' ), $hour );
@@ -2550,37 +2349,37 @@ class StatsStoreTest extends TestCase {
 
 	public function test_term_matches_reads_a_term_the_way_the_index_files_it(): void {
 		$path = '/kakapo/nest-9317';
-		$this->assertTrue( Stats_Store::term_matches( $path, 'kaka', [ 'kaka' ] ) );
-		$this->assertTrue( Stats_Store::term_matches( '/KAKAPO/nest-9317', 'kaka', [ 'kaka' ] ), 'the name is lowercased' );
+		$this->assertTrue( Stats_Store::term_matches( $path, 'kakapo', [ 'kakapo' ] ) );
+		$this->assertTrue( Stats_Store::term_matches( '/KAKAPO/nest-9317', 'kakapo', [ 'kakapo' ] ), 'the name is lowercased' );
 		$this->assertTrue( Stats_Store::term_matches( $path, 'kakapo nest', [ 'kakapo', 'nest' ] ), 'every token, in any order' );
 		$this->assertFalse( Stats_Store::term_matches( $path, 'kakapo weka', [ 'kakapo', 'weka' ] ), 'one token missing refuses' );
-		// The separator class is the index's: a token begins a word or nothing.
-		$this->assertFalse( Stats_Store::term_matches( $path, '317', [ '317' ] ), 'a word INFIX never matches' );
-		$this->assertTrue( Stats_Store::term_matches( $path, '931', [ '931' ] ), 'a word PREFIX does, as the index files it' );
+		// The index files whole words, so a token is a whole word or nothing.
+		$this->assertFalse( Stats_Store::term_matches( $path, 'kaka', [ 'kaka' ] ), 'a word PREFIX never matches' );
+		$this->assertFalse( Stats_Store::term_matches( $path, '317', [ '317' ] ), 'nor does an infix' );
+		$this->assertTrue( Stats_Store::term_matches( '/internationalization', 'internationalize', [ 'internationa' ] ), 'a long word, cut as it is filed' );
 		$this->assertTrue( Stats_Store::term_matches( $path, 'o/n', [] ), 'a term with no token is a substring' );
 	}
 
-	public function test_url_tokens_are_every_prefix_of_every_token(): void {
-		// From THREE: a two-character prefix names most of a real site, so it
-		// saturates at once and answers nothing the fold could not.
+	public function test_a_path_is_filed_under_exactly_its_whole_words(): void {
+		// A two-character word is filed; one character is no word; a word
+		// past TERM_WORD_MAX is filed as its first TERM_WORD_MAX characters.
 		$this->assertSame(
-			[ 'wom', 'womb', 'womba', 'wombat', '773', '7731' ],
-			Stats_Store::url_tokens( '/wombat-7731' )
+			[ 'wombat', '7731', 'at', 'internationa' ],
+			\array_map( 'strval', \array_keys( Stats_Store::token_sets_of( [ 'aa11bb22cc33' => '/wombat-7731/at/x/internationalization/wombat' ] ) ) )
 		);
-		$this->assertSame( 10, \count( Stats_Store::url_tokens( '/internationalization' ) ), 'cut at the prefix ceiling' );
-		$this->assertSame( [ 'kea' ], Stats_Store::url_tokens( '/kea/kea' ), 'deduplicated' );
-		$this->assertSame( [], Stats_Store::url_tokens( '/at/88' ), 'a two-character word files nothing' );
+		$this->assertSame( 12, Stats_Store::TERM_WORD_MAX );
 	}
 
 	public function test_token_sets_of_groups_every_named_path_by_token(): void {
 		$this->assertSame(
 			[
-				'tui'  => [ 'aa11bb22cc33', 'dd44ee55ff66' ],
+				'tui'  => [ 'aa11bb22cc33', 'ab12cd34ef56' ],
 				'tuis' => [ 'dd44ee55ff66' ],
 			],
 			Stats_Store::token_sets_of( [
 				'aa11bb22cc33' => '/tui',
 				'dd44ee55ff66' => '/tuis',
+				'ab12cd34ef56' => '/tui/9',
 			] )
 		);
 	}
@@ -2615,10 +2414,27 @@ class StatsStoreTest extends TestCase {
 			[ 'a1a1a1a1a1a1' => $now, 'b2b2b2b2b2b2' => $now ],
 			$store->merge_token_set(
 				[ 'a1a1a1a1a1a1' => $now - 90, 'c3c3c3c3c3c3' => $now - 86_401 ],
-				[ 'b2b2b2b2b2b2', 'a1a1a1a1a1a1' ],
+				[ 'b2b2b2b2b2b2' => $now, 'a1a1a1a1a1a1' => $now ],
 				$now
 			),
 			'this flush restamps what it names and the window retires the rest'
+		);
+	}
+
+	public function test_a_token_set_keeps_the_later_stamp_of_a_hash(): void {
+		// A name the sweep restores arrives with its own write time, which
+		// must not age out an entry a newer flush stamped.
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now   = 1_700_000_000;
+
+		$this->assertSame(
+			[ 'a1a1a1a1a1a1' => $now - 90, 'b2b2b2b2b2b2' => $now - 7_207 ],
+			$store->merge_token_set(
+				[ 'a1a1a1a1a1a1' => $now - 90 ],
+				[ 'a1a1a1a1a1a1' => $now - 5_113, 'b2b2b2b2b2b2' => $now - 7_207 ],
+				$now
+			),
+			'an older stamp never shortens a hash, and a new hash keeps its own'
 		);
 	}
 
@@ -2634,7 +2450,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->assertSame(
 			[ 'b2b2b2b2b2b2' => $now ],
-			$store->merge_token_set( $dead, [ 'b2b2b2b2b2b2' ], $now ),
+			$store->merge_token_set( $dead, [ 'b2b2b2b2b2b2' => $now ], $now ),
 			'a set nothing has named for a window makes room rather than saturating'
 		);
 	}
@@ -2649,7 +2465,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->assertSame(
 			[ Stats_Store::TOKEN_SATURATED => $now ],
-			$store->merge_token_set( $live, [ 'b2b2b2b2b2b2' ], $now )
+			$store->merge_token_set( $live, [ 'b2b2b2b2b2b2' => $now ], $now )
 		);
 	}
 
@@ -2659,7 +2475,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->assertSame(
 			[ Stats_Store::TOKEN_SATURATED => $now - 90 ],
-			$store->merge_token_set( [ Stats_Store::TOKEN_SATURATED => $now - 90 ], [ 'e5e5e5e5e5e5' ], $now ),
+			$store->merge_token_set( [ Stats_Store::TOKEN_SATURATED => $now - 90 ], [ 'e5e5e5e5e5e5' => $now ], $now ),
 			'flush_writes() skips a write whose value equals what it read'
 		);
 	}
@@ -2682,43 +2498,24 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [], $store->url_token_sets( [ 'womb' ], [] ), 'no server, nothing held' );
 	}
 
-	public function test_the_store_answers_a_saturated_token_and_a_sub_floor_one_alike(): void {
-		// Which tokens can be ANSWERED is the schema's to say: a saturated set
-		// narrows nothing, and a token below URL_TOKEN_PREFIX_MIN was never
-		// filed, so no read can answer either. Both come back false, an unheld
-		// token is absent, and a held one is its hashes.
+	public function test_the_store_answers_a_saturated_token_false_and_a_two_character_one_by_its_set(): void {
+		// A saturated set narrows nothing, so no read can answer it; a
+		// two-character word is filed like any other and read like one. An
+		// unheld token is absent, and a held one is its hashes.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 3, max_lifespan: 86400 );
 		// One server's set saturated is the token's answer across both.
 		$store->bucket_set_multi( [
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'wom', [ Stats_Store::TOKEN_SATURATED => 1_700_000_000 ] ],
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'moa.test' ) ), 'wom', [ 'd4d4d4d4d4d4' => 1_700_000_000 ] ],
+			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'wombat', [ Stats_Store::TOKEN_SATURATED => 1_700_000_000 ] ],
+			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'moa.test' ) ), 'wombat', [ 'd4d4d4d4d4d4' => 1_700_000_000 ] ],
+			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'at', [ 'e5e5e5e5e5e5' => 1_700_000_000 ] ],
 			[ Stats_Store::url_token_parts( Stats_Store::server_key( 'kea.test' ) ), 'takahe', [ 'b2b2b2b2b2b2' => 1_700_000_000 ] ],
 		] );
 
 		$this->assertSame(
-			[ 'at' => false, 'wom' => false, 'takahe' => [ 'b2b2b2b2b2b2' ] ],
-			$store->url_token_sets( [ 'at', 'wom', 'takahe', 'kiwi' ], [ 'moa.test', 'kea.test' ] )
+			[ 'at' => [ 'e5e5e5e5e5e5' ], 'wombat' => false, 'takahe' => [ 'b2b2b2b2b2b2' ] ],
+			$store->url_token_sets( [ 'at', 'wombat', 'takahe', 'kiwi' ], [ 'moa.test', 'kea.test' ] )
 		);
-	}
-
-	public function test_a_sub_floor_token_is_refused_without_a_read(): void {
-		// No read can answer it, so asking for one is a round trip spent to
-		// learn what URL_TOKEN_PREFIX_MIN already says.
-		Core::$memd = new InMemoryMemcached();
-		$store      = new class( partition: 3, max_lifespan: 86400 ) extends Stats_Store {
-			/** @var list<string> */
-			public array $asked = [];
-			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
-				foreach ( $reads as [ , $bucket ] ) {
-					$this->asked[] = (string) $bucket;
-				}
-				return parent::bucket_get_multi( $reads, $failed );
-			}
-		};
-
-		$this->assertSame( [ 'at' => false ], $store->url_token_sets( [ 'at', 'takahe' ], [ 'kea.test' ] ), 'takahe is unheld, so absent' );
-		$this->assertSame( [ 'takahe' ], $store->asked, 'only the token a read could answer' );
 	}
 
 	/**
@@ -2840,85 +2637,63 @@ class StatsStoreTest extends TestCase {
 	}
 
 	/**
-	 * A reader over one partition, remembering every absence for 900s.
-	 *
-	 * @return Stats_Store
+	 * Adding back a frame adds only this partition's keys: another's is its
+	 * own store's to add.
 	 */
-	private function marking_reader( int $partition ): Stats_Store {
-		$reader            = $this->make_store( partition: $partition );
-		$reader->rehydrate = static fn ( array $keys ): array => [];
-		$reader->absence   = static fn ( string $key ): int => 900;
-		return $reader;
-	}
-
-	/**
-	 * A frame written past its absence replaces the marker for what is left
-	 * of its window, the life a read-through would give it; a key of another
-	 * partition is that partition's store's to replace.
-	 */
-	public function test_replace_absent_gives_a_marked_bucket_its_frame_for_what_is_left_of_its_window(): void {
+	public function test_adding_missing_frames_leaves_another_partitions_keys_alone(): void {
 		$mc     = $this->seed_memd();
 		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now - 7 * Stats_Store::BUCKET_SECONDS );
+		$theirs = Stats_Store::bucket_key( $now - 9 * Stats_Store::BUCKET_SECONDS );
 		$lb     = [ 'count' => 4471, 'sum_req_time' => 9.5, 'categories' => [] ];
-		$this->assertSame( [], $this->marking_reader( 4 )->get_leaderboard_buckets( [ $bucket ] ) );
-		$this->assertSame( [], $this->marking_reader( 5 )->get_leaderboard_buckets( [ $bucket ] ) );
-		$store = $this->make_store( partition: 4 );
 
-		$store->replace_absent(
+		$added = $this->make_store( partition: 4 )->add_missing(
 			[
-				Stats_Store::entry_key( 4, 'lb:' . $bucket ) => $lb,
-				Stats_Store::entry_key( 5, 'lb:' . $bucket ) => $lb,
+				Stats_Store::entry_key( 4, 'lb:' . $bucket ) => [ 'data' => $lb, 'ts' => (float) $now ],
+				Stats_Store::entry_key( 5, 'lb:' . $theirs ) => [ 'data' => $lb, 'ts' => (float) $now ],
 			],
 			$now
 		);
 
+		$this->assertSame( [ 'lb:' . $bucket ], $added );
 		$this->assertSame( $lb, $mc->get( self::cache_key( 4, 'lb:' . $bucket ) ) );
-		$this->assertEqualsWithDelta(
-			\time() + $store->window_remaining( 'lb:' . $bucket, $now ),
-			$mc->expiries()[ self::cache_key( 4, 'lb:' . $bucket ) ] ?? 0,
-			2
+		$this->assertFalse( $mc->get( self::cache_key( 4, 'lb:' . $theirs ) ), 'partition 5\'s frame is not filed here' );
+		$this->assertFalse( $mc->get( self::cache_key( 5, 'lb:' . $theirs ) ), 'and is its own store\'s to add' );
+	}
+
+	/** A read the cache leaves unanswered is no miss, so nothing is added (decision 3). */
+	public function test_an_unanswered_read_adds_nothing(): void {
+		$memd          = self::unanswering_memd( ':lb:' );
+		$memd->failing = true;
+		Core::$memd    = $memd;
+		$now           = self::tick();
+		$bucket        = Stats_Store::bucket_key( $now - 7 * Stats_Store::BUCKET_SECONDS );
+
+		$added = $this->make_store( partition: 4 )->add_missing(
+			[ Stats_Store::entry_key( 4, 'lb:' . $bucket ) => [ 'data' => [ 'count' => 83 ], 'ts' => (float) $now ] ],
+			$now
 		);
-		$this->assertSame( [], $this->marking_reader( 5 )->get_leaderboard_buckets( [ $bucket ] ), 'partition 5 keeps its absence' );
+
+		$this->assertSame( [], $added );
+		$memd->failing = false;
+		$this->assertFalse( $memd->get( self::cache_key( 4, 'lb:' . $bucket ) ) );
 	}
 
 	/**
-	 * Replace one marked bucket, refusing its write when asked, and return
-	 * every stderr line the call wrote.
-	 *
-	 * @return list<string>
+	 * A key naming no bucket lives its role's TTL from the frame's write, so
+	 * one written longer ago than that is spent and left out.
 	 */
-	private function replace_absent_lines( bool $refuse ): array {
-		$mc     = $this->seed_memd();
-		$now    = self::tick();
-		$bucket = Stats_Store::bucket_key( $now - 9 * Stats_Store::BUCKET_SECONDS );
-		$this->marking_reader( 4 )->get_leaderboard_buckets( [ $bucket ] );
-		if ( $refuse ) {
-			$mc->fail_set( self::cache_key( 4, 'lb:' . $bucket ) );
-		}
-		$lines = [];
-		Core::set_stderr_handler(
-			static function ( string $line ) use ( &$lines ): void {
-				$lines[] = $line;
-			}
-		);
+	public function test_a_spent_frame_of_a_key_naming_no_bucket_is_left_out(): void {
+		$mc    = $this->seed_memd();
+		$now   = self::tick();
+		$store = $this->make_store( partition: 4 );
+		$names = [
+			Stats_Store::entry_key( 4, 'urlmap:e5e5e5e5e5e5' ) => [ 'data' => [ 'kea.test', '/weka' ], 'ts' => (float) ( $now - 86400 - 60 ) ],
+			Stats_Store::entry_key( 4, 'urlmap:f6f6f6f6f6f6' ) => [ 'data' => [ 'kea.test', '/tui' ], 'ts' => (float) ( $now - 3600 ) ],
+		];
 
-		$this->make_store( partition: 4 )->replace_absent( [ Stats_Store::entry_key( 4, 'lb:' . $bucket ) => [ 'count' => 5309 ] ], $now );
-
-		return \array_values( \array_filter( $lines, static fn ( string $l ): bool => \str_contains( $l, 'Stats_Store' ) ) );
-	}
-
-	/** Stats fail soft, never silently: a refused replace says what it leaves standing. */
-	public function test_a_refused_replace_warns_that_its_absences_stand(): void {
-		$lines = $this->replace_absent_lines( true );
-
-		$this->assertCount( 1, $lines );
-		$this->assertStringContainsString( 'until they expire: 1', $lines[0] );
-	}
-
-	/** A replace that landed warns nothing. */
-	public function test_a_replace_that_landed_warns_nothing(): void {
-		$this->assertSame( [], $this->replace_absent_lines( false ) );
+		$this->assertSame( [ 'urlmap:f6f6f6f6f6f6' ], $store->add_missing( $names, $now ) );
+		$this->assertEqualsWithDelta( \time() + 86400 - 3600, $mc->expiries()[ self::cache_key( 4, 'urlmap:f6f6f6f6f6f6' ) ] ?? 0, 2 );
 	}
 
 }

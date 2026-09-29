@@ -282,6 +282,7 @@ export default function OverviewSection( {
 					     nothing it is. */ }
 					<BreakdownControls
 						breakdownData={ breakdownData }
+						plan={ overview.plan ?? null }
 						metric={ chartMetric }
 						setMetric={ setChartMetric }
 						breakdown={ chartBreakdown }
@@ -293,7 +294,10 @@ export default function OverviewSection( {
 						setServerFilter={ setServerFilter }
 					/>
 
-					<CategoryTimeChart data={ categoryData } />
+					<CategoryTimeChart
+						data={ categoryData }
+						plan={ overview.plan ?? null }
+					/>
 
 					{ overview.global_leaderboard?.categories && (
 						<ProfileWithCaption
