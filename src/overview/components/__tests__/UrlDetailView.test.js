@@ -37,16 +37,16 @@ jest.mock( '../../ResponseTimeChart', () => ( {
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { breakdown, breakdownData, plan } ) =>
+	default: ( { breakdown, series, slots } ) =>
 		`AGGREGATE[breakdown=${ breakdown },series=${
-			breakdownData ? 'set' : 'none'
-		}] keys:${ Object.values( breakdownData ?? {} )
-			.flatMap( ( bucket ) => Object.keys( bucket ) )
-			.join( ',' ) } plan:${ plan?.fine?.[ 0 ] ?? 'none' } `,
+			series ? 'set' : 'none'
+		}] keys:${ ( series?.names ?? [] ).join( ',' ) } slots:${
+			slots?.[ 0 ] ?? 'none'
+		} `,
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { plan } ) => `CATEGORY plan:${ plan?.fine?.[ 0 ] ?? 'none' }`,
+	default: ( { slots } ) => `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`,
 } ) );
 
 import * as React from 'react';
@@ -58,6 +58,7 @@ import {
 	waitFor,
 	act,
 } from '../../../test-helpers/renderHook';
+import { nameTable, slotsEndingAt } from '../../../test-helpers/chartWire';
 
 const baseUrlDetail = {
 	stats: { avg_ms: 100 },
@@ -100,7 +101,9 @@ let wire;
 beforeEach( () => {
 	Core.reset();
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
-	wire = installFakeCommandWire( () => ( { breakdown_time_series: {} } ) );
+	wire = installFakeCommandWire( () => ( {
+		breakdown_time_series: { names: [], buckets: {} },
+	} ) );
 } );
 
 function mount( overrides = {} ) {
@@ -436,7 +439,9 @@ describe( 'UrlDetailView', () => {
 
 	it( 'charts the breakdown reply it asked for', async () => {
 		wire = installFakeCommandWire( () => ( {
-			breakdown_time_series: { 1748960000: { '5xx': { c: 7 } } },
+			breakdown_time_series: nameTable( {
+				'2026-09-29-14-35': { '5xx': [ 7, 70, 3, 7 ] },
+			} ),
 		} ) );
 		const { container, unmount } = mount();
 		await waitFor(
@@ -449,27 +454,29 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	}, 20000 );
 
-	it( 'draws each chart on the plan its own reply named', async () => {
+	it( 'draws each chart on the slots its own reply named', async () => {
 		wire = installFakeCommandWire( () => ( {
-			breakdown_time_series: { 1748960000: { '5xx': { c: 7 } } },
-			plan: { fine: [ '2026-09-29-07-10' ], hours: [] },
+			breakdown_time_series: nameTable( {
+				'2026-09-29-14-35': { '5xx': [ 7, 70, 3, 7 ] },
+			} ),
+			slots: slotsEndingAt( '2026-09-29-14-40' ),
 		} ) );
 		const { container, unmount } = mount( {
 			urlDetail: {
 				...baseUrlDetail,
 				category_time_series: { hooks: [] },
-				plan: { fine: [ '2026-09-29-07-05' ], hours: [] },
+				slots: slotsEndingAt( '2026-09-29-14-35' ),
 			},
 		} );
 		await waitFor(
 			() =>
 				expect( container.textContent ).toContain(
-					'plan:2026-09-29-07-10 '
+					'slots:2026-09-29-14-40 '
 				),
 			{ timeout: 6000 }
 		);
 		expect( container.textContent ).toContain(
-			'CATEGORY plan:2026-09-29-07-05'
+			'CATEGORY slots:2026-09-29-14-35'
 		);
 		unmount();
 	}, 20000 );
@@ -479,7 +486,9 @@ describe( 'UrlDetailView', () => {
 		// for the round trip it takes the new dimension to arrive — plausible
 		// numbers under the wrong question, which is worse than a blank.
 		wire = installFakeCommandWire( () => ( {
-			breakdown_time_series: { 1748960000: { '5xx': { c: 7 } } },
+			breakdown_time_series: nameTable( {
+				'2026-09-29-14-35': { '5xx': [ 7, 70, 3, 7 ] },
+			} ),
 		} ) );
 		const { container, unmount } = mount( { urlHash: '7f3c19ab52d0' } );
 		await waitFor(
@@ -542,7 +551,9 @@ describe( 'UrlDetailView', () => {
 
 		// The superseded status answer lands while User Agent is outstanding.
 		deferred.get( 'status' ).settle( {
-			breakdown_time_series: { 1748960000: { '5xx': { c: 7 } } },
+			breakdown_time_series: nameTable( {
+				'2026-09-29-14-35': { '5xx': [ 7, 70, 3, 7 ] },
+			} ),
 		} );
 		await flush();
 		expect( container.textContent ).toContain(
@@ -550,7 +561,9 @@ describe( 'UrlDetailView', () => {
 		);
 
 		deferred.get( 'ua' ).settle( {
-			breakdown_time_series: { 1748960000: { 'curl/8.4': { c: 3 } } },
+			breakdown_time_series: nameTable( {
+				'2026-09-29-14-35': { 'curl/8.4': [ 3, 30, 3, 3 ] },
+			} ),
 		} );
 		await waitFor(
 			() => expect( container.textContent ).toContain( 'series=set' ),
@@ -679,7 +692,7 @@ describe( 'UrlDetailView', () => {
 
 	it( 'keeps its dropdowns when the dimension has no rows to chart', async () => {
 		wire = installFakeCommandWire( () => ( {
-			breakdown_time_series: {},
+			breakdown_time_series: { names: [], buckets: {} },
 		} ) );
 		const { container, unmount } = mount( { urlHash: '7f3c19ab52d0' } );
 		await waitFor(

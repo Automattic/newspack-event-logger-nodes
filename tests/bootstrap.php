@@ -570,10 +570,6 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 	'flame-index',
 	\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( ... )
 );
-\Newspack_Nodes\Formatters::register(
-	'stats-index',
-	\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_stats_index_entry( ... )
-);
 
 // Register the application `eln` token namespace so `<eln:…>` resolves in
 // tests (mirrors the substrate bootstrap's register_token_namespace() call).
@@ -589,6 +585,7 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 \Newspack_Nodes\Core::right_now();
 
 require_once __DIR__ . '/Helpers/TestCase.php';
+require_once __DIR__ . '/Helpers/StatsAskerNode.php';
 require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';
 require_once __DIR__ . '/Helpers/TopologyLockHarness.php';

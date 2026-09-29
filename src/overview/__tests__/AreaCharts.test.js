@@ -10,19 +10,16 @@ import { MARGIN } from '@newspack-nodes/shared/hooks/useTimeChart';
 import AggregateTimeChart from '../AggregateTimeChart';
 import CategoryTimeChart from '../CategoryTimeChart';
 import { renderComponent, act } from '../../test-helpers/renderHook';
+import { dimTable, slotsEndingAt } from '../../test-helpers/chartWire';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
- * The read plan every reply here names, newest first: two buckets of the
- * current hour and the three whole hours before it.
+ * The slots every reply here names: 288 ending at 14:35.
  */
-const PLAN = {
-	fine: [ '2026-09-29-07-05', '2026-09-29-07-00' ],
-	hours: [ '2026-09-29-06', '2026-09-29-05', '2026-09-29-04' ],
-};
+const SLOTS = slotsEndingAt( '2026-09-29-14-35' );
 
 function bucketKeyNow() {
-	return PLAN.fine[ 0 ];
+	return SLOTS[ 0 ];
 }
 
 /**
@@ -83,17 +80,17 @@ describe( 'area chart frame', () => {
 		);
 
 	it( 'legends the aggregate beside the plot, one whole label per series', () => {
-		const breakdownData = {
+		const series = dimTable( {
 			[ bucketKeyNow() ]: {
 				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36':
-					[ 137, 4213, 91 ],
-				'curl/8.7.1': [ 12, 400, 30 ],
+					[ 137, 4213, 91, 137 ],
+				'curl/8.7.1': [ 12, 400, 30, 12 ],
 			},
-		};
+		} );
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				plan: PLAN,
-				breakdownData,
+				slots: SLOTS,
+				series,
 				metric: 'volume',
 				breakdown: 'ua',
 			} )
@@ -119,16 +116,16 @@ describe( 'area chart frame', () => {
 	} );
 
 	it( 'a picked series is drawn alone, and the axis rescales to it', () => {
-		const breakdownData = {
+		const series = dimTable( {
 			[ bucketKeyNow() ]: {
-				'2xx': [ 47, 5900 ],
-				'4xx': [ 3, 300 ],
+				'2xx': [ 47, 5900, 3, 47 ],
+				'4xx': [ 3, 300, 3, 3 ],
 			},
-		};
+		} );
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				plan: PLAN,
-				breakdownData,
+				slots: SLOTS,
+				series,
 				metric: 'volume',
 				breakdown: 'status',
 			} )
@@ -155,16 +152,16 @@ describe( 'area chart frame', () => {
 
 	it( "a picked series takes its own axis unit, not the full list's", () => {
 		// A slow bot beside a 44ms series: full max 12s, picked max 44ms.
-		const breakdownData = {
+		const series = dimTable( {
 			[ bucketKeyNow() ]: {
-				'SlowBot/1.0': [ 1, 12000 ],
-				'curl/8.7.1': [ 2, 88 ],
+				'SlowBot/1.0': [ 1, 12000, 3, 1 ],
+				'curl/8.7.1': [ 2, 88, 3, 2 ],
 			},
-		};
+		} );
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				plan: PLAN,
-				breakdownData,
+				slots: SLOTS,
+				series,
 				metric: 'avg',
 				breakdown: 'ua',
 			} )
@@ -190,7 +187,7 @@ describe( 'area chart frame', () => {
 			},
 		};
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
+			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
 		);
 		// The panel draws three views; the first answers for the frame.
 		expect( legendRows( container ).length ).toBeGreaterThanOrEqual( 2 );
@@ -199,16 +196,16 @@ describe( 'area chart frame', () => {
 	} );
 
 	it( 'overlays by default, and stacks a second series on top of the first on the toggle', () => {
-		const breakdownData = {
+		const series = dimTable( {
 			[ bucketKeyNow() ]: {
-				'2xx': [ 47, 5900 ],
-				'4xx': [ 14, 1400 ],
+				'2xx': [ 47, 5900, 3, 47 ],
+				'4xx': [ 14, 1400, 3, 14 ],
 			},
-		};
+		} );
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				plan: PLAN,
-				breakdownData,
+				slots: SLOTS,
+				series,
 				metric: 'cumulative',
 				breakdown: 'status',
 			} )
@@ -232,23 +229,20 @@ describe( 'area chart frame', () => {
 	} );
 
 	it( 'ticks a request-volume axis in whole requests', () => {
-		const breakdownData = {
-			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 3, 51 ] },
-		};
+		const series = dimTable( {
+			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 3, 51, 3, 3 ] },
+		} );
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				plan: PLAN,
-				breakdownData,
+				slots: SLOTS,
+				series,
 				metric: 'volume',
 				breakdown: 'ua',
 			} )
 		);
 
 		expect(
-			valueLabels(
-				container,
-				'Request Volume (This Hour and the 3 Before It)'
-			)
+			valueLabels( container, 'Request Volume (Last 24 Hours)' )
 		).toEqual( [ '0', '1', '2', '3' ] );
 		unmount();
 	} );
@@ -259,7 +253,7 @@ describe( 'area chart frame', () => {
 			buckets: { [ bucketKeyNow() ]: [ [ 0, 6, 2, 2 ] ] },
 		};
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, plan: PLAN } )
+			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
 		);
 
 		expect( valueLabels( container, 'Average Time per Event' ) ).toEqual( [
@@ -277,13 +271,13 @@ describe( 'area chart frame', () => {
 
 describe( 'chart frame', () => {
 	it( 'still renders both axes and the rotated Y title', () => {
-		const breakdownData = {
-			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 61, 7300 ] },
-		};
+		const series = dimTable( {
+			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 61, 7300, 3, 61 ] },
+		} );
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				plan: PLAN,
-				breakdownData,
+				slots: SLOTS,
+				series,
 				metric: 'volume',
 				breakdown: 'ua',
 			} )

@@ -10,17 +10,17 @@ Three things live in the substrate and have no alias here — call the substrate
 - **`Job_Worker_Node`**. This plugin keeps only the request-context glue, `Log_Manager::begin/end_job_context`, hooked onto `newspack_nodes/job_worker/{before,after}_job`.
 - **`Job_Intake`** is `\Newspack_Nodes\Job_Intake`. `job-router.tsl` and `job-feed.tsl` each `include job-intake` and add their own router leg, so the substrate's conflict gate refuses co-activating its stock `job-intake` with either.
 
-Caching goes through the one shared `\Newspack_Nodes\Core::$memd` handle; this plugin builds no cache of its own. Keyed stores use the substrate's `Table_Node`, whose keys are scoped per install: `Stats_Store` holds one Table per storage role over the `evlog:p{N}` namespace, and `Rule_Set` mirrors large hook lists into a fourth. The one raw-handle call is `Flame_Builder_Node::apply_auto_tune()`'s cross-worker lock, because `Memcached::add()` has no Table equivalent.
+This plugin builds no cache of its own. Keyed stores use the substrate's `Table_Node`, whose keys are scoped per install. The flame builder's stats live in three SQLite Tables `flame-builder.tsl` declares, reached by message through `Table_Client`; `Rule_Set`'s large hook lists and the `urls` verb's page cache keep an `auto` `Table_Node::table()`, memcached else APCu. `Flame_Builder_Node::apply_auto_tune()`'s cross-worker lock is an `add()` on `Cache_Backend::shared_first()`, the same tier.
 
 ## Plugin Load Order
 
 WordPress loads plugins alphabetically, and `newspack-event-logger-nodes` sorts BEFORE `newspack-nodes` (`-event-` < `-nodes`), so `\Newspack_Nodes\Node` is NOT available at this plugin's file-load time.
 
-So `newspack-event-logger-nodes.php` defers everything that touches a substrate class — the two WP-CLI commands, the `Config::RESET_ACTION` cache-reset listener, the job-context hooks, the verb-span seam (`Command_Interpreter_Node::$around_dispatch`, which `Diagnostics_Bridge::install()` wraps around any wrapper already there), the `Topology_Registry` mount, the `App\` CommandInterpreter namespace, the `<eln:>` config-token resolver, the three named TSL formatters, the `newspack_nodes/settings_sync/value` resolver, the MCP route, `App\Core`, and in admin the settings page and the current-request overlay — to a closure on `plugins_loaded` priority 11. That bootstrap is version-gated, not merely presence-gated: it checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.71.0', … )`. A substrate below the floor leaves an admin notice naming both versions and the plugin goes dormant; a missing substrate, or one predating `version_at_least()` itself, returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but says nothing about its version, and WordPress does not order plugin updates, so this plugin really can land ahead of the substrate it needs.
+So `newspack-event-logger-nodes.php` defers everything that touches a substrate class — the two WP-CLI commands, the `Config::RESET_ACTION` cache-reset listener, the job-context hooks, the verb-span seam (`Command_Interpreter_Node::$around_dispatch`, which `Diagnostics_Bridge::install()` wraps around any wrapper already there), the `Topology_Registry` mount, the `App\` CommandInterpreter namespace, the `<eln:>` config-token resolver, the two named TSL formatters, the `newspack_nodes/settings_sync/value` resolver, the MCP route, `App\Core`, and in admin the settings page and the current-request overlay — to a closure on `plugins_loaded` priority 11. That bootstrap is version-gated, not merely presence-gated: it checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.75.0', … )`. A substrate below the floor leaves an admin notice naming both versions and the plugin goes dormant; a missing substrate, or one predating `version_at_least()` itself, returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but says nothing about its version, and WordPress does not order plugin updates, so this plugin really can land ahead of the substrate it needs.
 
-2.71.0 is `Schema_Reflection::answer_request()`, `CLI::worker_id()` and the `newspack_nodes/worker_identified` action. `Request_Builder_Node` and `Flame_Builder_Node` answer their `GET_CACHE` and `GET_STATS` requests through the first, `Request_Builder_Node::resolved_request_url()` calls the second to spell a spawned worker's row, `…/workers/spawn?performance.p0`, and `Log_Manager::identify_worker()` listens on the third to rename a spawn request to the worker it became. Below it each call fatals. Why each earlier floor was raised is in the CHANGELOG entry that raised it.
+2.73.0 is `Table_Client`, `Bootstrap::mount_table()` and the SQLite Table arm the stats live on; below it the builder and the dashboards fatal. It is also the TTL and backend arguments `flame-builder.tsl` gives each Table, which `check-substrate-floor.sh` cannot see, because it reads PHP calls and not topologies. 2.74.0 is `Table_Unavailable`, the typed refusal of a Table whose backend cannot open on this host, and the public `Durable_Arm::serializer()`. 2.75.0 is the read-only mount the `performance` verbs read through, which lives for the rest of the request, opens only a file its worker wrote and refuses a process running as root. Why each earlier floor was raised is in the CHANGELOG entry that raised it.
 
-Raise the floor by hand whenever a new hard requirement appears — `bump-version.sh` repins `release.yml`, not this — and two gates cover the two ways it drifts. `scripts/lint-docs.sh` rule 6 holds every `version_at_least` mention in `README.md`, `AGENTS.md`, `docs/` and `.claude/skills/` to the 2.71.0 the loader enforces, line by line. `scripts/check-substrate-floor.sh` resolves each substrate API PHPStan sees this plugin call to its DECLARING class, binary-searches the substrate's tags for the first one carrying it, and takes the maximum — a floor set too LOW is the failure it exists for, because the handshake then passes and the plugin fatals later. Priority 11 is intentional; don't lower it. Tests bypass this and require the runtime explicitly in `tests/bootstrap.php`.
+Raise the floor by hand whenever a new hard requirement appears — `bump-version.sh` repins `release.yml`, not this — and two gates cover the two ways it drifts. `scripts/lint-docs.sh` rule 6 holds every `version_at_least` mention in `README.md`, `AGENTS.md`, `docs/` and `.claude/skills/` to the 2.75.0 the loader enforces, line by line. `scripts/check-substrate-floor.sh` resolves each substrate API PHPStan sees this plugin call to its DECLARING class, binary-searches the substrate's tags for the first one carrying it, and takes the maximum — a floor set too LOW is the failure it exists for, because the handshake then passes and the plugin fatals later. Priority 11 is intentional; don't lower it. Tests bypass this and require the runtime explicitly in `tests/bootstrap.php`.
 
 ## Workflow discipline
 
@@ -53,7 +53,7 @@ npm run lint:deadcode:js    # knip
 
 A test must not wait in real time: it pins `Core::$now` here, or the substrate's `Core::$clock` and `Event_Framework::$sleep`, and never buys time with `#[Medium]` or `#[Large]`. Read dead-code findings rather than obeying them — most are live by hook, reflection, `.tsl` or JS — and apply the test-only rule in `~/.claude/rules/test-seams.md`. The `event-logger-nodes-workflow` skill, Phase 3, carries the rest.
 
-`scripts/pre-push` is the gate, so don't repeat it by hand. It runs jest with its per-file 90% gate on every push and scopes the rest to the file types pushed; PHP takes phpcs, a container deploy, the PHPUnit coverage suite and a per-class 90% gate. Four checks run on every push, docs-only included: `scripts/lint-docs.sh`, `scripts/lint-eln-docs.sh` (every `Stats_Store::NS_*` constant has its row in the architecture guide's memcache table, and vice versa), `scripts/check-substrate-floor.sh`, and dndocker's `tools/check-firehose-parity.py`. The last two skip when the checkout they need is absent.
+`scripts/pre-push` is the gate, so don't repeat it by hand. It runs jest with its per-file 90% gate on every push and scopes the rest to the file types pushed; PHP takes phpcs, a container deploy, the PHPUnit coverage suite and a per-class 90% gate. Four checks run on every push, docs-only included: `scripts/lint-docs.sh`, `scripts/lint-eln-docs.sh` (every `Stats_Store::NS_*` constant has its row in the architecture guide's stats schema table, and vice versa), `scripts/check-substrate-floor.sh`, and dndocker's `tools/check-firehose-parity.py`. The last two skip when the checkout they need is absent.
 
 ### Git hooks
 
@@ -80,8 +80,8 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 7 | Job_Intake for >4KB jobs, the firehose for ≤4KB |
 | 8 | A spoke's job is re-keyed `remote_job` when the hub pulls it |
 | 9 | A request's partition is its id, hashed by the substrate |
-| 10 | The durable mirror writes a bucket once, when it closes, under a key that carries no install scope |
-| 11 | The open bucket is durable in the OFFSETLOG until it closes, and the carry is capped |
+| 10 | The durable mirror writes a bucket once, when it closes, under a key that carries no install scope — superseded by decision 34 |
+| 11 | The open bucket is durable in the OFFSETLOG until it closes, and the carry is capped — superseded by decision 34 |
 | 12 | A stat times the request; a flame value is a rendering artifact |
 | 13 | A sequence-break marker is missing detail, not idle time |
 | 14 | A server scope the key cannot carry rides inside the value, and is applied as a PROJECTION — superseded by decision 30 |
@@ -103,7 +103,9 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 30 | Every memcache value is one server's, carries nothing its key implies, and fits one item |
 | 31 | A snapshot node's replay is idempotent by the last folded crumb |
 | 32 | A builder tells its upkeep on its own worker record, and every narration write is a guarded forward |
-| 33 | No dashboard reads the mirror; the flame builder sweeps it back into memcache |
+| 33 | No dashboard reads the mirror; the flame builder sweeps it back into memcache — superseded by decision 34 |
+| 34 | Stats live in SQLite Tables, and nothing repairs a loss |
+| 35 | A chart hour is one key holding its twelve five-minute slots |
 
 ## Layout
 
@@ -119,11 +121,11 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/class-log-manager.php` | Per-request firehose writer; redacts URL secrets; refuses root |
 | `includes/class-{request-builder,request-flight,flame-builder,auto-tuner}-node.php` | Request assembly, the in-flight snapshot sibling, flame and stats fan-out, auto-tune |
 | `includes/class-{job-router,remote-job-rewrite,discovery-collector}-node.php` | Job normalization onto jobs.log, the hub's `job` → `remote_job` rewrite, the hub's discovery fan-out |
-| `includes/class-{flame-tree,flame-fold,stats-store,url-sketch}.php` | Flame algorithms, the memcache schema producer and reader, the URL-count HyperLogLog |
+| `includes/class-{flame-tree,flame-fold,stats-store,url-sketch}.php` | Flame algorithms, the stats key schema over the three Tables, the URL-count HyperLogLog |
 | `includes/class-{diagnostics-bridge,hook-categorizer,reqgrep-core,current-request-overlay}.php`, `trait-narration.php` | Verb spans and the stderr seam, hook categories, the reqgrep engine, the station's Request tab, builder narration |
 | `includes/app/` | `App\Core` (hook, HTTP and query instrumentation), the three service CIs, `Findings`, `Ask_Assembler`, `MCP_Controller` |
 | `includes/admin/`, `includes/cli/` | The settings page, which hosts the rules editor; `wp nodes reqgrep` and `wp nodes ruleset-bench` |
-| `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix; `uninstall.php` requires it by hand because the autoloader is gone on DELETE |
+| `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix and the stats Tables' files; `uninstall.php` requires it and the Composer autoloader by hand because the main file does not run on DELETE |
 | `topologies/` | Eleven `.tsl` graphs, named by filename: five primitives and six compositions |
 | `mu-plugins/00-newspack-profiler.php` | The standalone profiler drop-in, shipped as its own release asset |
 | `scripts/` | This plugin's `build.mjs`, `pre-push`, `lint-eln-docs.sh`, `render-diagram.sh` (a `docs/img/*.html` sheet to PNG; `CHROME=` overrides the browser path) and `bump-version.sh`; everything else is vendored |
@@ -141,8 +143,8 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 - **There is no operator hub toggle** (`enable_workers` and `enable_aggregator` are gone, and `RetiredConfigKeysTest` guards them). Hub mode derives from an active `aggregator` topology, by name or by include, or from any active graph carrying a `Remote_Source`. It is memoized per process, so a renamed fork reads as a spoke until its worker restarts. Settings fan-out is ungated: without `hub-control` active and at least one Vault entry in group `spoke`, a recorded settings event is tailed and dropped.
 - **Both request bounds FOLD.** `entry_budget` caps the entries in flight and `max_entries_per_request` caps one envelope; both are `Request_Builder_Node` arguments, not config keys. Never build a cap that merely stops appending and sets a flag — it loses every entry past it.
 - **Firehose writes stay under PIPE_BUF.** `Log_Manager::message()` fits the whole entry to `MAX_DATA_SIZE` (3840) by trimming `m`, and never renames the category `k`: `Flame_Tree::PATTERN_START` opens a span on it. Shape a large value at the producer or split it; a large job goes through `Job_Intake` (decision 7). The architecture guide's "PIPE_BUF and truncation" section carries the full algorithm.
-- **Read the shared `Core::$memd` handle; never build your own.** Request-path code reads it through `Core::memd()`; worker-only code may read the property null-safe. Tests assign the substrate's `InMemoryMemcached` double to it, since no cache interface exists to inject. Rotating the salt orphans every key, and each worker memoizes the install scope at boot, so it needs a worker restart.
-- **Stats fail soft, SSE slots fail closed. Don't unify them.** Dashboards show "no data" on a memcache failure; SSE connections get a 429, because the slot pool IS the rate limit.
+- **Reach the cache through `Cache_Backend`; never build your own.** `Cache_Backend::shared_first()` is memcached, else APCu, and null with neither. Tests assign the substrate's `InMemoryMemcached` double to `Core::$memd`, since no cache interface exists to inject. Rotating the salt orphans every key, the SQLite stats rows included, and `Cache_Backend::rotate_salt()` itself asks every live worker to restart, because each memoizes the install scope at boot.
+- **Stats fail soft, SSE slots fail closed. Don't unify them.** Dashboards show "no data" when a stats Table cannot open or answer; SSE connections get a 429, because the slot pool IS the rate limit.
 - **Application Node classes resolve by namespace prefix.** `make_node Flame_Builder` resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node`; a new node needs only the class under that namespace and `composer dump-autoload -o`.
 - **Command and constructor `arguments` are a token array** (`list<string>`), never a space-joined string. Verb handlers take `array $args` and parse through `Command_Args::parse( self::arg_strings( $args ) )`; the dashboards build args with `formatCommandArgs(...)`. A handler typed `string $args` is a stale port.
 - **Type flags**: an array VALUE takes `TM_STRUCT`, a string VALUE `TM_BYTESTREAM`. Consumers reading an array VALUE gate on `TM_STRUCT`.
@@ -155,14 +157,14 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 `.claude/skills/` (`.agents` is a symlink to `.claude`):
 
 - `event-logger-nodes-workflow` — handlers, REST, dashboards, topologies
-- `event-logger-nodes-debugging` — dashboards, memcache schema, hub/spoke routing, SSE
+- `event-logger-nodes-debugging` — dashboards, the stats Tables, hub/spoke routing, SSE
 - `event-logger-nodes-review` — application contract checklist
 
 ## References
 
 - `docs/README.md` — the documentation map
-- `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, memcache schema
-- `docs/architecture-decisions.md` — the 33 decisions
+- `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, stats schema
+- `docs/architecture-decisions.md` — the 35 decisions
 - `docs/security-model.md` — what the logger captures and what crosses to the hub
 - `docs/API.md` — the MCP route, every service-CI verb, the WP-CLI verbs, the PHP API and the hooks
 - `README.md` — requirements, quick start, configuration, dashboards

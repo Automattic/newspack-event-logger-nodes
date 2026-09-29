@@ -2,70 +2,61 @@
 /**
  * Stats Store
  *
- * The memcache schema for performance stats, expressed as one small key/value
- * API. Nineteen namespaces (`hourly`, `lb`, `lb_s`, `lb_h`, `urls`, `urls_h`,
- * `urlsrv`, `urlsrv_h`, `urlrank_s`, `urlrank_sh`, `urlhdr`, `urlhdr_h`,
- * `urltoken`, `urlmap`, `url`, `dim`, `url_dim`, `categories`, `url_cat`) live
- * under the per-partition prefix `evlog:p{N}:`, inside the
- * install scope Cache_Backend owns. `Flame_Builder_Node` produces every value
- * and `App\Performance_CI_Node` reads them for the dashboards.
- *
- * Stats live in memcache alone; nothing here writes durable state. The
- * `$mirror` and `$rehydrate` seams let a caller shadow them to a durable
- * partition without this schema knowing.
+ * The schema for performance stats, expressed as one small key/value
+ * API. Eighteen namespaces (`hourly_h`, `dim_h`, `categories_h`, `url_dim_h`,
+ * `url_cat_h`, `lb_h`, `lb_sh`, `urls`, `urls_h`, `urlsrv`, `urlsrv_h`,
+ * `urlrank_s`, `urlrank_sh`, `urlhdr`, `urlhdr_h`, `urltoken`, `urlmap`,
+ * `url`) live in three SQLite Tables that `flame-builder.tsl` declares, one file per
+ * partition. `Flame_Builder_Node` produces every value and
+ * `App\Performance_CI_Node` reads them for the dashboards.
  *
  * @package Newspack_Event_Logger_Nodes
  */
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Table_Node;
+use Newspack_Nodes\Durable_Arm;
+use Newspack_Nodes\Table_Client;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
 /**
- * Stats storage using memcache.
+ * Stats storage in three SQLite Tables, reached by message.
  *
- * Keys are `evlog:p{N}:{namespace}[:...]`, so every flame-builder
- * partition owns a disjoint keyspace and readers fan one store out per
- * partition. A value is a plain array, string-keyed, but two of the entries
- * inside one are POSITIONAL and read through named constants: a stored URL row
- * (`ROW_*`) and a category (`CAT_*`).
+ * Keys are `{namespace}[:...]` inside one partition's Table files, so every
+ * flame-builder partition owns a disjoint keyspace and readers fan one store
+ * out per partition. A value is a plain array, string-keyed, but three of
+ * the entries inside one are POSITIONAL and read through named constants: a
+ * stored URL row (`ROW_*`), a category (`CAT_*`) and a dimensional value
+ * (`DIM_*`).
  *
- * Retention runs at three lengths, one per table ROLE. Every aggregate
- * namespace expires at `ttl()`, the whole retention window. The per-URL blob
- * (`url`) is the high-volume one and takes `ttl_url_stats()`, a twenty-fourth
- * of that floored at an hour. A FINE `urls` or `urlsrv` bucket takes
- * `ttl_url_fine()`, its own read window, because `urls_h` and `urlsrv_h`
- * answer for it behind the recent tail.
+ * Retention runs at three lengths, one per Table, each the TTL its `make_node`
+ * line declares: `flame-stats:url` holds the high-volume per-URL blob
+ * (`url`) for a twenty-fourth of the retention window, `flame-stats:url-fine`
+ * holds a FINE `urls`, `urlsrv`, `urlrank_s` or `urlhdr` bucket for its own
+ * read window, because the hour tiers answer for it behind the recent tail,
+ * and `flame-stats:aggregate` holds every other namespace for the window,
+ * floored at the `CHART_HOURS` a chart reads. A write states no TTL of its
+ * own; `max_lifespan()` is the READ window alone.
  *
  * Bucketing is part of the key schema, so it lives here: `bucket_key()` is the
  * five-minute `Y-m-d-H-i` derivation every producer and reader shares, and
- * `retention_buckets()` is the window a reader enumerates. The `hourly`
- * namespace name misleads: its buckets are five minutes wide, like every other
- * bucketed namespace.
+ * `retention_buckets()` is the window the URL index's reader enumerates. A
+ * chart namespace keys by the hour instead, its value holding the hour's
+ * twelve five-minute slots (`slot_of()`, decision 35).
  *
- * Storage is a `Table_Node` per ROLE over one namespace (`evlog:p{N}`), so the
- * substrate owns key scoping and the backend handle. Reads and writes fail soft:
- * `Table_Node::table()` throws without a backing store, so the table is built
- * lazily behind that check and a missing backend yields `[]`, `null`, or `false`
- * — the dashboards render "no data" instead of an error. Keep it that way; the
- * SSE slot pool is deliberately the opposite, and unifying the two breaks its
- * rate limit.
- *
- * Only the per-URL table opts into the Table's accumulator tier, which holds
- * the aggregates `Flame_Builder_Node` is still folding; `backed_by()` hands
- * the other two the `$rehydrate` seam instead. `table()` carries why no table
- * takes both.
- *
- * Flushing is the substrate's one button (`Cache_Backend::rotate_salt()`),
- * which moves the install scope for every plugin at once; this keeps no salt
- * of its own. The scope is memoized per process, so a long-running worker
- * picks up a rotation when it restarts — which the flush handler triggers.
+ * The store asks each Table through its owner's `Table_Client`: MGET, MSET and
+ * RM by message, TO the Table's node name, the reply coming back TO the
+ * owner. Every exchange stays in-process — the builder's Tables live in its
+ * own worker graph, and a reader mounts them into its own request graph —
+ * because one value reply may outgrow the 4 KB a message may carry across
+ * an IPC hop (ADR-4). Reads and writes fail soft: a Table that does not
+ * answer yields `[]`, `null` or `false`, and the dashboards render "no data"
+ * instead of an error. Keep it that way; the SSE slot pool is deliberately
+ * the opposite, and unifying the two breaks its rate limit.
  *
  * @phpstan-type Url_Header array{0: int, 1: int, 2: float, 3: float, 4: bool, 5: string}
  * @phpstan-type Rank_Entry array{0: string, 1: array<array-key,mixed>, 2?: string}
@@ -75,7 +66,7 @@ class Stats_Store {
 	/** Distinct category values kept per bucket; `Flame_Builder_Node` rolls the overflow into "Other". */
 	public const MAX_CAT_VALUES           = 50;
 	/**
-	 * Categories a leaderboard bucket (`lb`, `lb_s`, `lb_h`) or a URL's
+	 * Categories a leaderboard hour (`lb_h`, `lb_sh`) or a URL's
 	 * profile keeps, the slowest first, the rest folded into "Other". A byte
 	 * estimate caps it lower when the categories run wide.
 	 */
@@ -96,13 +87,19 @@ class Stats_Store {
 	public const MAX_SERVER_VALUES        = 128;
 	/**
 	 * Bytes any one stored value may take, and what every byte cap derives
-	 * from: memcached's 1,048,576-byte item limit less a margin for the key
-	 * and the serializer's framing. Uncompressed, because nothing guarantees
-	 * production compresses. A producer caps before it writes, against an
-	 * estimate `overhead()` makes for the serializer `Core::$memd` is
-	 * configured with: igbinary's where it uses igbinary, and PHP's
-	 * `serialize()`, the larger, otherwise or when no handle is present. A
-	 * refused set is never how a size is found.
+	 * from. A SQLite Table sets no item limit, so for a stats value this
+	 * bounds what one costs to hold and to read: a worker's memory while its
+	 * flush merges the value, and the unserialize every reader pays. It sits
+	 * under memcached's 1,048,576-byte item, less a margin for the key and
+	 * the framing, because `Rule_Set`'s hook list rides memcached through an
+	 * `auto` Table and caps to it too. Uncompressed, because nothing
+	 * guarantees production compresses. A producer caps before it writes,
+	 * against an estimate `overhead()` makes for the serializer
+	 * `Durable_Arm::serializer()` names: igbinary's where `Core::$memd` uses
+	 * igbinary, and PHP's `serialize()`, the larger, otherwise or when no
+	 * handle is present. A refused set is never how a size is found. A
+	 * slotted hour value takes no byte cap: its count caps bound each slot
+	 * (decision 35).
 	 */
 	public const ITEM_BUDGET              = 900000;
 
@@ -134,71 +131,33 @@ class Stats_Store {
 	/** PHP's own `serialize()`: the larger, and what a handle-less estimate assumes. */
 	public const SERIALIZER_PHP = 'php';
 
-	/** igbinary, as a memcached built with it may be configured to use. */
+	/** igbinary: what a stored value takes where the memcached handle uses it. */
 	public const SERIALIZER_IGBINARY = 'igbinary';
 
-	/**
-	 * The serializer `overhead()` estimates for, read once from
-	 * `Core::$memd`'s `Memcached::OPT_SERIALIZER` and memoized here. Tests
-	 * assign it to estimate for one serializer, and reset it to null.
-	 *
-	 * @var self::SERIALIZER_*|null
-	 */
-	public static ?string $serializer = null;
-	/** Category time series, global or per server. */
-	public const NS_CATEGORIES  = 'categories';
-	/** Dimensional time series, global or per server. */
-	public const NS_DIM         = 'dim';
 	/** The dimension naming the reporting server — the axis the picker is built from. */
-	public const DIM_SERVER     = 'server';
-
-	/** Request totals per bucket; one key per partition. */
-	public const NS_HOURLY      = 'hourly';
-	/** Global leaderboard bucket. */
-	public const NS_LB          = 'lb';
-	/** Per-server leaderboard bucket. */
-	public const NS_LB_S        = 'lb_s';
+	public const DIM_SERVER      = 'server';
 
 	/**
-	 * The GLOBAL leaderboard's COARSE tier: `lb_h:{Y-m-d-H}`, one key an hour
-	 * holding the same shape a fine bucket holds.
-	 *
-	 * The leaderboard is the heaviest read the dashboard makes — one category
-	 * per hook, callback and plugin the site fires, 1,198 of them on a
-	 * production hub, each with its own entry map, across 288 buckets and four
-	 * partitions. Decision 17 already answers that shape for `urls`; this is the
-	 * same answer for the same reason, and the readers ask at the same two
-	 * resolutions. Every chart namespace below has the same twin.
+	 * The global leaderboard, one key an hour: `lb_h:{Y-m-d-H}`, ONE sum
+	 * over the hour, because nothing charts it (decision 35). The heaviest
+	 * value the dashboard reads — a category per hook, callback and plugin
+	 * the site fires, 1,198 of them on a production hub — so the hour sums
+	 * rather than keeping twelve slots of it.
 	 */
-	public const NS_LB_HOUR     = 'lb_h';
-	/** The per-server leaderboard's coarse tier, `lb_sh:{server_key}:{Y-m-d-H}`. */
-	public const NS_LB_S_HOUR   = 'lb_sh';
-	/** The request totals' coarse tier, `hourly_h:{Y-m-d-H}`. */
-	public const NS_HOURLY_HOUR = 'hourly_h';
-	/** The dimensional series' coarse tier, `dim_h:{dim}[:{server_key}]:{Y-m-d-H}`. */
-	public const NS_DIM_HOUR    = 'dim_h';
-	/** The category series' coarse tier, `categories_h[:{server_key}]:{Y-m-d-H}`. */
-	public const NS_CAT_HOUR    = 'categories_h';
-	/** One URL's dimensional series' coarse tier, `url_dim_h:{hash}:{Y-m-d-H}`. */
+	public const NS_LB_HOUR      = 'lb_h';
+	/** The per-server leaderboard, `lb_sh:{server_key}:{Y-m-d-H}`, summed as `lb_h` is. */
+	public const NS_LB_S_HOUR    = 'lb_sh';
+	/** Request totals, `hourly_h:{Y-m-d-H}`: twelve slots, each `{count, sum_ms, requests, sum_peak_mb}`. */
+	public const NS_HOURLY_HOUR  = 'hourly_h';
+	/** The dimensional series, `dim_h:{dim}[:{server_key}]:{Y-m-d-H}`: twelve slots. */
+	public const NS_DIM_HOUR     = 'dim_h';
+	/** The category series, `categories_h[:{server_key}]:{Y-m-d-H}`: twelve slots. */
+	public const NS_CAT_HOUR     = 'categories_h';
+	/** One URL's series in one dimension, `url_dim_h:{hash}:{dim}:{Y-m-d-H}`: twelve slots. */
 	public const NS_URL_DIM_HOUR = 'url_dim_h';
-	/** One URL's category series' coarse tier, `url_cat_h:{hash}:{Y-m-d-H}`. */
+	/** One URL's category series, `url_cat_h:{hash}:{Y-m-d-H}`: twelve slots. */
 	public const NS_URL_CAT_HOUR = 'url_cat_h';
 
-	/**
-	 * Each chart namespace's hour twin. A read names the tier by its key's
-	 * shape — an hour key reads the twin (`hour_parts()`) — so the readers
-	 * ask the current hour's buckets and every older hour's key in one call,
-	 * and the flush writes each twin in the chunk that writes its buckets.
-	 */
-	public const HOUR_TWIN = [
-		self::NS_HOURLY     => self::NS_HOURLY_HOUR,
-		self::NS_DIM        => self::NS_DIM_HOUR,
-		self::NS_CATEGORIES => self::NS_CAT_HOUR,
-		self::NS_LB         => self::NS_LB_HOUR,
-		self::NS_LB_S       => self::NS_LB_S_HOUR,
-		self::NS_URL_DIM    => self::NS_URL_DIM_HOUR,
-		self::NS_URL_CAT    => self::NS_URL_CAT_HOUR,
-	];
 	/** Per-URL stats blob: flame tree and profiles. */
 	public const NS_URL         = 'url';
 	/**
@@ -206,7 +165,7 @@ class Stats_Store {
 	 * the url_hash: `urls:{server_key}:{shard}:{bucket}`. Per-server data has
 	 * the server in the key, so a busy server's rows never compete with a
 	 * quiet one's for a shard's cap. The bucket stays LAST, which is what lets
-	 * expiry, the mirror and its sweep work off the key alone. Decision 1.
+	 * expiry work off the key alone. Decision 1.
 	 */
 	public const NS_URLS        = 'urls';
 
@@ -216,9 +175,9 @@ class Stats_Store {
 	 * or worker, and the shards it wrote there (`SRV_NAME`, `SRV_SHARDS`).
 	 *
 	 * The keyspace cannot list itself, so this is what every read of the URL
-	 * index, the fold, the probe and the ranker enumerate, and they ask for
-	 * the shards it names and no other: a key nobody wrote misses memcache
-	 * and costs the mirror a full walk to say so. Capped at
+	 * index, the fold and the ranker enumerate, and they ask for the shards
+	 * it names and no other: a key nobody wrote is a miss read for nothing.
+	 * Capped at
 	 * `MAX_SERVER_VALUES` names: past that a new server's rows go to the
 	 * `Other` server key (`admit_servers()`), so a bucket's keys stay bounded
 	 * whatever Host headers arrive.
@@ -238,10 +197,14 @@ class Stats_Store {
 	public const SRV_SHARDS = 1;
 
 	/**
-	 * The search index: `urltoken:{server_key}:{token}` => the hashes of every
-	 * URL of one server whose path carries a word, spelled as `term_tokens()`
-	 * spells it. TTL is the retention window, refreshed by every flush that
-	 * names such a URL, so a live token stays and a dead one ages out.
+	 * The search index, one set per server per whole word:
+	 * `urltoken:{server_key}:{word}` => `hash => last named`, the unix second
+	 * each URL of that server whose path carries the word was last filed, the
+	 * word spelled as `term_tokens()` spells it. `merge_token_set()` drops a
+	 * hash the retention window has passed over and caps the set at
+	 * `URL_SEARCH_MAX`; one hash past it the set becomes `TOKEN_SATURATED`
+	 * alone, which narrows no search. The key lives the aggregate Table's TTL
+	 * from its last write, so a word no flush names ages out.
 	 */
 	public const NS_URLTOKEN = 'urltoken';
 
@@ -283,7 +246,7 @@ class Stats_Store {
 	 * `urlrank_s:{server_key}:{sort}:{order}:{bucket}`, and the site's,
 	 * the merge of every server's, `urlrank_s:{sort}:{order}:{bucket}`: a
 	 * site-wide aggregate is one key (decision 30). Fine tier;
-	 * `ROLE_URL_FINE`.
+	 * `TABLE_URL_FINE`.
 	 */
 	public const NS_URLRANK_S      = 'urlrank_s';
 	/**
@@ -299,7 +262,7 @@ class Stats_Store {
 	 * table's totals, kept as sums, and a `Url_Sketch` of its URLs —
 	 * `urlhdr:{HDR_SHAPE}:{server_key}:{bucket}`, and the site's, the union
 	 * of every server's, `urlhdr:{HDR_SHAPE}:{bucket}`. Fine tier;
-	 * `ROLE_URL_FINE`. Written beside the lists, by `ranked_writes()`.
+	 * `TABLE_URL_FINE`. Written beside the lists, by `ranked_writes()`.
 	 */
 	public const NS_URLHDR = 'urlhdr';
 
@@ -327,8 +290,7 @@ class Stats_Store {
 	/**
 	 * The shape a header record is written in, its layout and its sketch's
 	 * precision, and a segment of its key: a record another layout or
-	 * `Url_Sketch::PRECISION` wrote reads as MISSING rather than standing,
-	 * so the probe re-ranks its key.
+	 * `Url_Sketch::PRECISION` wrote reads as MISSING rather than standing.
 	 */
 	public const HDR_SHAPE = 'v' . self::HDR_VERSION . 'p' . Url_Sketch::PRECISION;
 
@@ -367,44 +329,39 @@ class Stats_Store {
 	 */
 	public const NS_URLMAP      = 'urlmap';
 
-	/** Per-URL category time series. */
-	public const NS_URL_CAT     = 'url_cat';
-	/** Per-URL dimensional time series. */
-	public const NS_URL_DIM     = 'url_dim';
-
-	/** Key prefix under the install scope. */
-	private const PREFIX_BASE  = 'evlog';
-
-	/** Per-URL aggregates one accumulator bucket holds before it rotates. */
-	private const URL_ACCUMULATOR_SIZE    = 1000;
-	/** Accumulator buckets retained; capacity is roughly the product. */
-	private const URL_ACCUMULATOR_BUCKETS = 5;
-
-	/** Shortest retention window the stats keyspace works with, in seconds. */
-	public const PREFIX_FLOOR = 3600;
+	/** Shortest retention window the stats Tables work with, in seconds. */
+	public const MIN_RETENTION_SECONDS = 3600;
 
 	/**
 	 * A stored DIMENSIONAL entry is positional, indexed by these — decision 18's
-	 * shape, as `CAT_MS` below, on the third value to earn it. `{"c":29,"s":1.0,"m":1.0}`
-	 * is 24 bytes of JSON where `[29,1,1]` is 8, across `dim`, `dim`-by-server
-	 * and `url_dim` alike: seven dimensions per URL per five-minute bucket, and
-	 * the mirror carries every frame. The names are the row's, `DIM_COUNT` beside
-	 * `ROW_COUNT`, because they are the same three measurements, and the entry
-	 * stays positional to the wire, so no `DIM_FIELD_NAMES` exists.
+	 * shape, as `CAT_MS` below, on the third value to earn it. `{"c":29,"s":1.0,"m":1.0,"t":27}`
+	 * is 31 bytes of JSON where `[29,1,1,27]` is 11, across `dim_h`, `dim_h`-by-server
+	 * and `url_dim_h` alike: seven dimensions per URL per five-minute slot.
+	 * The names are the row's, `DIM_COUNT` beside `ROW_COUNT` and `DIM_TIMED`
+	 * beside `ROW_TIMED_COUNT`, because they are the same measurements: every
+	 * request counts for volume, and an average divides the timed ones alone
+	 * (decision 24). The entry stays positional to the wire, so no
+	 * `DIM_FIELD_NAMES` exists.
 	 */
 	public const DIM_COUNT       = 0;
 	public const DIM_SUM_MS      = 1;
 	public const DIM_SUM_PEAK_MB = 2;
+	public const DIM_TIMED       = 3;
 
 	/** Summed fields of one dimensional value => whether it is a whole count. */
-	public const DIM_SUMS = [ self::DIM_COUNT => true, self::DIM_SUM_MS => false, self::DIM_SUM_PEAK_MB => false ];
+	public const DIM_SUMS = [
+		self::DIM_COUNT       => true,
+		self::DIM_SUM_MS      => false,
+		self::DIM_SUM_PEAK_MB => false,
+		self::DIM_TIMED       => true,
+	];
 
 	/**
 	 * A stored CATEGORY entry is positional, indexed by these — decision 18's
 	 * shape on the second value dense enough to earn it. A category series
-	 * spells every one of its entries once per five-minute bucket per scope,
-	 * and the stats mirror carries the whole window: `{"t":913.207,"c":47,"n":11}`
-	 * is 30 bytes of JSON where `[913.207,47,11]` is 15.
+	 * spells every one of its entries once per five-minute bucket per scope
+	 * across the whole window: `{"t":913.207,"c":47,"n":11}` is 30 bytes of
+	 * JSON where `[913.207,47,11]` is 15.
 	 *
 	 * **Never a bare index**, exactly as `ROW_COUNT` and its neighbours below.
 	 *
@@ -534,9 +491,8 @@ class Stats_Store {
 
 	/**
 	 * Every stored index and what it holds — the ONE place an index becomes a
-	 * name. `fold_index_row()` names the row at the storage/display boundary;
-	 * dndocker's `tools/stats-shard-fields.php` reads it to label bytes per
-	 * field; a test helper reverses it to seed a row in names. Nothing else
+	 * name. `fold_index_row()` names the row at the storage/display boundary,
+	 * and a test helper reverses it to seed a row in names. Nothing else
 	 * should need it, and a stored row is never indexed through it in
 	 * production.
 	 */
@@ -575,19 +531,32 @@ class Stats_Store {
 	public const HOUR_SECONDS = 3600;
 
 	/**
+	 * Five-minute slots one chart hour value holds (decision 35), positional
+	 * and indexed by `slot_of()`. BUCKET_MINUTES divides 60, so this is exact.
+	 */
+	public const SLOTS_PER_HOUR = 60 / self::BUCKET_MINUTES;
+
+	/**
 	 * Ceiling on one reader's bucket enumeration (24h at the 300s width).
 	 *
 	 * This bounds BUCKETS, not keys: the URL index asks for one key per server
 	 * per shard per bucket, so a full read costs `URL_SHARDS x` this per
 	 * server. That is the trade sharding makes, and it is the right way
-	 * round: a point read for one URL costs a single shard, and no item
-	 * approaches memcached's 1MB limit, which one unsharded blob exceeds.
+	 * round: a point read for one URL costs a single shard, and no value
+	 * approaches `ITEM_BUDGET`, which one unsharded blob exceeds.
 	 */
 	public const MAX_READ_BUCKETS = 288;
 
 	/**
+	 * Hour keys a chart reads: the MAX_READ_BUCKETS slots it draws span 24
+	 * hours, and trailing from the current bucket they touch one hour more
+	 * (decision 35).
+	 */
+	public const CHART_HOURS = self::MAX_READ_BUCKETS * self::BUCKET_SECONDS / self::HOUR_SECONDS + 1;
+
+	/**
 	 * How long a FINE `urls` or `urlsrv` bucket is kept, against
-	 * `min_lifetime` for the coarse tier that outlives it.
+	 * `<eln:stats_ttl>` for the coarse tier that outlives it.
 	 *
 	 * The tier has exactly two consumers: a reader, which reads the current
 	 * hour's buckets and no others (`read_plan()`), and `roll_up_hours()`,
@@ -597,43 +566,24 @@ class Stats_Store {
 	 *
 	 * Two hours covers both: the current hour, and the hour just closed for
 	 * the fold and for a late write into it. At that width the tier holds 24
-	 * buckets a shard, where the coarse tier holds one per hour of the
-	 * retention window — twelve at the 43,200 s `min_lifetime` default.
-	 * `ttl_url_fine()` caps it at that window, so a window under two hours
+	 * buckets a shard, where the coarse tier keeps one per hour for
+	 * `<eln:stats_ttl>`, 25 at the 43,200 s `min_lifetime` default.
+	 * `<eln:stats_url_fine_ttl>` caps it at that window, so a window under two hours
 	 * bounds the fine tier instead.
 	 */
 	public const FINE_TTL_SECONDS = 7200;
 
-	/** Every namespace but `url` and the fine `urls`/`urlsrv` buckets; TTL is `ttl()`. */
-	private const ROLE_AGGREGATE = 'aggregate';
-	/** The per-URL blob; TTL is `ttl_url_stats()`, and it accumulates. */
-	private const ROLE_URL       = 'url';
-	/** A fine `urls` or `urlsrv` bucket; TTL is `ttl_url_fine()`, its own read window. */
-	private const ROLE_URL_FINE  = 'url_fine';
+	/** Every namespace but the two below, for the window floored at CHART_HOURS. */
+	public const TABLE_AGGREGATE = 'flame-stats:aggregate';
 
-	/**
-	 * Mirror seam — invoked after each memcache write that landed, so a durable
-	 * partition can shadow stats for a later read-back. The namespace lets the
-	 * mirror route aggregates apart from the bounded per-URL namespaces. Null,
-	 * the default, costs nothing. `Flame_Builder_Node::arm_stats_mirror()` is the
-	 * only production wiring; tests assign a recording closure in its place.
-	 * Signature: `function (string $key, array $data, int $ttl, string $ns): void`.
-	 *
-	 * @var \Closure|null
-	 */
-	public ?\Closure $mirror = null;
+	/** The per-URL blob, `url`, for `<eln:stats_url_ttl>`. */
+	public const TABLE_URL = 'flame-stats:url';
 
-	/**
-	 * Rehydrate seam — the read counterpart of `$mirror`, invoked with the
-	 * keys a read missed on. Handed to every Table as its durable backing, so a
-	 * miss falls through to the mirror and lands back in memcache without any
-	 * caller here knowing. Null (default) leaves the tables memcache-only,
-	 * which is what a dashboard reader is: only the flame builder's own store
-	 * reads its mirror, through `Flame_Builder_Node::arm_stats_mirror()`.
-	 *
-	 * @var (\Closure(array<array-key,mixed>): ?array<array-key,array{value: mixed, ttl?: int}>)|null
-	 */
-	public ?\Closure $rehydrate = null;
+	/** The fine tier — `urls`, `urlsrv`, `urlrank_s`, `urlhdr` — for `<eln:stats_url_fine_ttl>`. */
+	public const TABLE_URL_FINE = 'flame-stats:url-fine';
+
+	/** Every Table `flame-builder.tsl` declares: what a writer names and a reader mounts. */
+	public const TABLES = [ self::TABLE_AGGREGATE, self::TABLE_URL, self::TABLE_URL_FINE ];
 
 	/**
 	 * A reader's memo of the server index, `key => index`, for the one
@@ -649,14 +599,15 @@ class Stats_Store {
 	/** @var int Retention window in seconds, as Config::stats_retention_seconds() floored it. */
 	private int $max_lifespan;
 
-	/** @var array<string,Table_Node> Table per ROLE, over one namespace. */
-	private array $tables = [];
+	/** @var array<string,string> Declared Table => the node answering for it. */
+	private array $table_names;
 
-	/** @var int Flame-builder partition whose keyspace this store owns. */
-	private int $partition;
-
-	/** The hourly bucket's summed fields; anything else rides through. */
-	private const HOURLY_SUMS = [ 'count' => true, 'sum_ms' => false, 'sum_peak_mb' => false ];
+	/**
+	 * The hourly slot's summed fields; anything else rides through. `count`
+	 * and `sum_ms` are the timed requests' (decision 24), and `requests` and
+	 * `sum_peak_mb` every request's, since a peak is measured either way.
+	 */
+	private const HOURLY_SUMS = [ 'count' => true, 'sum_ms' => false, 'requests' => true, 'sum_peak_mb' => false ];
 
 	/** The leaderboard bucket's own summed fields. */
 	private const LB_SUMS = [ 'count' => true, 'sum_req_time' => false ];
@@ -674,29 +625,16 @@ class Stats_Store {
 	 */
 	private const LB_ENTRY_SUMS = [ 0 => false, 1 => false, 2 => true ];
 	/**
-	 * @param int $partition    Flame-builder partition to read and write.
-	 * @param int $max_lifespan Retention window in seconds; callers pass
-	 *                          `Config::stats_retention_seconds()`, which is
-	 *                          where that window is declared.
+	 * @param int                  $max_lifespan Retention window in seconds; callers pass
+	 *                                           `Config::stats_retention_seconds()`, which is
+	 *                                           where that window is declared.
+	 * @param Table_Client         $client       The owner's asker; every exchange is in-process.
+	 * @param array<string,string> $table_names  Declared Table => the node answering for it,
+	 *                                           for each Table this store may ask.
 	 */
-	public function __construct(
-		int $partition,
-		int $max_lifespan
-	) {
-		$this->partition    = $partition;
+	public function __construct( int $max_lifespan, private readonly Table_Client $client, array $table_names ) {
 		$this->max_lifespan = $max_lifespan;
-	}
-
-	/**
-	 * Read many of one dimension's buckets in a single round-trip.
-	 *
-	 * @param string            $dimension Dimension name.
-	 * @param array<int,string> $buckets   Bucket keys.
-	 * @param string            $server    Reporting server; '' reads the global series.
-	 * @return array<string,mixed> Value maps keyed by bucket; misses absent.
-	 */
-	public function get_dimensional_buckets( string $dimension, array $buckets, string $server = '' ): array {
-		return $this->lookup_buckets( self::dim_parts( $dimension, $server ), $buckets );
+		$this->table_names  = $table_names;
 	}
 
 	/**
@@ -707,48 +645,7 @@ class Stats_Store {
 	 * @return list<string>
 	 */
 	public static function dim_parts( string $dimension, string $server ): array {
-		return '' === $server ? [ self::NS_DIM, $dimension ] : [ self::NS_DIM, $dimension, self::server_key( $server ) ];
-	}
-
-	/**
-	 * One dimension of a URL's buckets in a single round-trip, cut out of the
-	 * bucket-major blob here, where its layout was chosen.
-	 *
-	 * @param string            $url_hash  12-char URL hash.
-	 * @param string            $dimension One of DIMENSIONS.
-	 * @param array<int,string> $buckets   Bucket keys.
-	 * @return array<string,array<array-key,mixed>> Value => entry, keyed by bucket; a bucket without the dimension is absent.
-	 */
-	public function get_url_dimension_buckets( string $url_hash, string $dimension, array $buckets ): array {
-		$series = [];
-		foreach ( $this->lookup_buckets( self::url_dim_parts( $url_hash ), $buckets ) as $bucket => $dims ) {
-			$values = Core::arr( $dims )[ $dimension ] ?? null;
-			if ( \is_array( $values ) ) {
-				$series[ $bucket ] = $values;
-			}
-		}
-		return $series;
-	}
-
-	/**
-	 * Namespace prefix for one URL's dimensional series.
-	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @return array<int,string>
-	 */
-	public static function url_dim_parts( string $url_hash ): array {
-		return [ self::NS_URL_DIM, $url_hash ];
-	}
-
-	/**
-	 * Read many category buckets in a single round-trip.
-	 *
-	 * @param array<int,string> $buckets Bucket keys.
-	 * @param string            $server  Reporting server; '' reads the global series.
-	 * @return array<string,mixed> Category maps keyed by bucket; misses absent.
-	 */
-	public function get_category_buckets( array $buckets, string $server = '' ): array {
-		return $this->lookup_buckets( self::cat_parts( $server ), $buckets );
+		return '' === $server ? [ self::NS_DIM_HOUR, $dimension ] : [ self::NS_DIM_HOUR, $dimension, self::server_key( $server ) ];
 	}
 
 	/**
@@ -758,28 +655,7 @@ class Stats_Store {
 	 * @return list<string>
 	 */
 	public static function cat_parts( string $server ): array {
-		return '' === $server ? [ self::NS_CATEGORIES ] : [ self::NS_CATEGORIES, self::server_key( $server ) ];
-	}
-
-	/**
-	 * Read many of one URL's category buckets in a single round-trip.
-	 *
-	 * @param string            $url_hash 12-char URL hash.
-	 * @param array<int,string> $buckets  Bucket keys.
-	 * @return array<string,mixed> Category maps keyed by bucket; misses absent.
-	 */
-	public function get_url_category_buckets( string $url_hash, array $buckets ): array {
-		return $this->lookup_buckets( self::url_cat_parts( $url_hash ), $buckets );
-	}
-
-	/**
-	 * Namespace prefix for one URL's category series.
-	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @return array<int,string>
-	 */
-	public static function url_cat_parts( string $url_hash ): array {
-		return [ self::NS_URL_CAT, $url_hash ];
+		return '' === $server ? [ self::NS_CAT_HOUR ] : [ self::NS_CAT_HOUR, self::server_key( $server ) ];
 	}
 
 	/**
@@ -796,23 +672,9 @@ class Stats_Store {
 	 * @return int Unix timestamp of the oldest read hour's start.
 	 */
 	public static function window_start( int $retention_seconds, int $now ): int {
-		$hours = self::read_plan( self::retention_buckets( $retention_seconds, $now ) )['hours'];
-		$first = [] === $hours ? self::hour_of( self::bucket_key( $now ) ) : \end( $hours );
-		return self::bucket_span( self::buckets_in_hour( $first )[0] )[0] ?? 0;
-	}
-
-	/**
-	 * The fine buckets one hour covers, oldest first.
-	 *
-	 * @param string $hour A `Y-m-d-H` hour key.
-	 * @return list<string>
-	 */
-	public static function buckets_in_hour( string $hour ): array {
-		$out = [];
-		for ( $m = 0; $m < 60; $m += self::BUCKET_MINUTES ) {
-			$out[] = $hour . \sprintf( '-%02d', $m );
-		}
-		return $out;
+		// The plan's hours run back whole and unbroken from the current one.
+		$hours = \count( self::read_plan( self::retention_buckets( $retention_seconds, $now ) )['hours'] );
+		return $now - $now % self::HOUR_SECONDS - $hours * self::HOUR_SECONDS;
 	}
 
 	/**
@@ -865,9 +727,11 @@ class Stats_Store {
 	 * reader misses is the flame builder's to derive again, never the reader's
 	 * to rebuild from twelve buckets. So nothing is counted twice. The window
 	 * starts on the hour: the oldest hour it holds only part of is not read,
-	 * so every hour read is whole, and a total, a rate or a leaderboard sums
+	 * so every hour read is whole, and the URL index's totals and rates sum
 	 * whole hour keys exactly — the current hour so far and the whole hours
-	 * before it, never an hour key standing in for part of an hour.
+	 * before it, never an hour key standing in for part of an hour. The
+	 * charts and the leaderboard read `CHART_HOURS` keys instead (decision
+	 * 35).
 	 *
 	 * @param list<string> $window The window to split, newest first —
 	 *                             `retention_buckets()` at the reply's one clock read.
@@ -889,7 +753,7 @@ class Stats_Store {
 			// Keyed: distinctness is structural, order stays newest-first.
 			$hours[ $hour ] = ( $hours[ $hour ] ?? 0 ) + 1;
 		}
-		$whole = \array_filter( $hours, static fn ( int $held ): bool => \intdiv( 60, self::BUCKET_MINUTES ) === $held );
+		$whole = \array_filter( $hours, static fn ( int $held ): bool => self::SLOTS_PER_HOUR === $held );
 		return [ 'fine' => $fine, 'hours' => \array_map( 'strval', \array_keys( $whole ) ) ];
 	}
 
@@ -918,7 +782,7 @@ class Stats_Store {
 	 * @param array<string,array<string,array{0:string,1:int}>>|null $index Set to the index the
 	 *                                                                     rows were read under.
 	 * @param-out bool $failed
-	 * @param ?bool    $failed Set true when the cache left some key of the index or the rows unanswered.
+	 * @param ?bool    $failed Set true when a Table left some key of the index or the rows unanswered.
 	 * @return list<array{0: string, 1: array<array-key,mixed>, 2: string}>
 	 */
 	public function url_hour_sources( array $hours, ?string $shard = null, bool $workers = false, string $server = '', ?array &$index = null, ?bool &$failed = null ): array {
@@ -1043,60 +907,84 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read many request-total buckets: `{ bucket => { count, sum_ms, sum_peak_mb } }`.
+	 * Read one scope's slotted hour values in a single round trip and lay
+	 * their slots out as the buckets they hold, `{hour}-{MM} => slot`
+	 * (decision 35). A slot the hour never filled, or filled with nothing
+	 * measured, is absent, as a bucket nothing wrote is.
 	 *
-	 * @param array<int,string> $buckets Bucket keys.
-	 * @return array<string,mixed> Totals keyed by bucket; misses absent.
+	 * @param array<int,string> $parts A slotted scope's prefix: `hourly_parts()`,
+	 *                                 `dim_parts()`, `url_dim_parts()`,
+	 *                                 `cat_parts()` or `url_cat_parts()`.
+	 * @param array<int,string> $hours `Y-m-d-H` hour keys.
+	 * @return array<string,array<array-key,mixed>> Slot values keyed by bucket.
 	 */
-	public function get_hourly_buckets( array $buckets ): array {
-		return $this->lookup_buckets( [ self::NS_HOURLY ], $buckets );
+	public function get_slots( array $parts, array $hours ): array {
+		$out = [];
+		foreach ( $this->lookup_hours( $parts, $hours ) as $hour => $slots ) {
+			$buckets = self::buckets_in_hour( $hour );
+			foreach ( Core::arr( $slots ) as $slot => $value ) {
+				if ( isset( $buckets[ $slot ] ) && \is_array( $value ) && [] !== $value ) {
+					$out[ $buckets[ $slot ] ] = $value;
+				}
+			}
+		}
+		return $out;
 	}
 
 	/**
-	 * Read many leaderboard buckets, global or per server.
+	 * The fine buckets one hour covers, oldest first.
 	 *
-	 * @param array<int,string> $buckets Bucket keys.
-	 * @param string            $server  Reporting server; '' reads the global series.
-	 * @param ?bool             $failed  Set true when the cache left some bucket unanswered.
-	 * @param-out bool          $failed
-	 * @return array<string,mixed> Bucket sums keyed by bucket; misses absent.
+	 * @param string $hour A `Y-m-d-H` hour key.
+	 * @return list<string>
 	 */
-	public function get_leaderboard_buckets( array $buckets, string $server = '', ?bool &$failed = null ): array {
-		return $this->lookup_buckets( self::lb_parts( $server ), $buckets, $failed );
+	public static function buckets_in_hour( string $hour ): array {
+		$out = [];
+		for ( $m = 0; $m < 60; $m += self::BUCKET_MINUTES ) {
+			$out[] = $hour . \sprintf( '-%02d', $m );
+		}
+		return $out;
+	}
+
+	/**
+	 * Read many leaderboard hours, global or per server: each one sum.
+	 *
+	 * @param array<int,string> $hours  `Y-m-d-H` hour keys.
+	 * @param string            $server Reporting server; '' reads the global board.
+	 * @param ?bool             $failed Set true when a Table left some hour unanswered.
+	 * @param-out bool          $failed
+	 * @return array<string,mixed> Sums keyed by hour; misses absent.
+	 */
+	public function get_leaderboard_hours( array $hours, string $server = '', ?bool &$failed = null ): array {
+		return $this->lookup_hours( self::lb_parts( $server ), $hours, $failed );
 	}
 
 	/**
 	 * The namespace prefix for a leaderboard scope — the one place the global
 	 * and per-server keyspaces differ.
 	 *
-	 * @param string $server Reporting server; '' for the global series.
+	 * @param string $server Reporting server; '' for the global board.
 	 * @return list<string>
 	 */
 	public static function lb_parts( string $server ): array {
-		return '' === $server ? [ self::NS_LB ] : [ self::NS_LB_S, self::server_key( $server ) ];
+		return '' === $server ? [ self::NS_LB_HOUR ] : [ self::NS_LB_S_HOUR, self::server_key( $server ) ];
 	}
 
 	/**
-	 * Read many buckets of one namespace in a single round-trip.
+	 * Read one scope's hour values in a single round trip.
 	 *
-	 * A dashboard walks the whole retention window — hundreds of buckets — and
-	 * per-key gets across it are the latency cliff this exists to avoid. An
-	 * hour key reads the namespace's hour twin (`hour_parts()`), so a reader
-	 * hands the current hour's buckets and the older hours together.
+	 * Decisions 1 and 6, through `bucket_get_multi()`, so it answers a
+	 * failed read, and a missing backend, as every read does.
 	 *
-	 * Decisions 1 and 6, through `bucket_get_multi()`, so it answers a failed
-	 * read, and a missing backend, as every read does.
-	 *
-	 * @param array<int,string> $parts   Namespace prefix parts, before the bucket.
-	 * @param array<int,string> $buckets Bucket or hour keys.
-	 * @param ?bool             $failed  Set true when the cache left some bucket unanswered.
+	 * @param array<int,string> $parts  The scope's prefix.
+	 * @param array<int,string> $hours  `Y-m-d-H` hour keys.
+	 * @param ?bool             $failed Set true when a Table left some hour unanswered.
 	 * @param-out bool          $failed
-	 * @return array<string,mixed> Values keyed by bucket; misses absent.
+	 * @return array<string,mixed> Values keyed by hour; misses absent.
 	 */
-	private function lookup_buckets( array $parts, array $buckets, ?bool &$failed = null ): array {
+	private function lookup_hours( array $parts, array $hours, ?bool &$failed = null ): array {
 		$reads = [];
-		foreach ( $buckets as $bucket ) {
-			$reads[] = [ 1 === \preg_match( '/^\d{4}-\d{2}-\d{2}-\d{2}$/D', $bucket ) ? self::hour_parts( $parts ) : $parts, $bucket ];
+		foreach ( $hours as $hour ) {
+			$reads[] = [ $parts, $hour ];
 		}
 		$values = $this->bucket_get_multi( $reads, $batch_failed );
 		$failed = self::unanswered( $values, $batch_failed );
@@ -1107,18 +995,6 @@ class Stats_Store {
 			}
 		}
 		return $out;
-	}
-
-	/**
-	 * A chart namespace's prefix in its hour tier: the same scope under the
-	 * namespace's hour twin (`HOUR_TWIN`).
-	 *
-	 * @param array<int,string> $parts A fine-tier prefix, its namespace first.
-	 * @return array<int,string>
-	 */
-	public static function hour_parts( array $parts ): array {
-		$parts[0] = self::HOUR_TWIN[ $parts[0] ] ?? throw new \LogicException( "no hour tier for {$parts[0]}" );
-		return $parts;
 	}
 
 	/**
@@ -1168,7 +1044,7 @@ class Stats_Store {
 	 * @param array<string,array<string,array{0:string,1:int}>>|null $index Set to the index the
 	 *                                                                     rows were read under.
 	 * @param-out bool $failed
-	 * @param ?bool    $failed Set true when the cache left some key of the index or the rows unanswered.
+	 * @param ?bool    $failed Set true when a Table left some key of the index or the rows unanswered.
 	 * @return list<array{0: string, 1: array<array-key,mixed>, 2: string}>
 	 */
 	private function shard_sources( bool $hour, array $buckets, ?string $shard, bool $workers, string $server, ?array &$index = null, ?bool &$failed = null ): array {
@@ -1210,157 +1086,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * The index entries each key of a scope is read under: every entry for
-	 * the site, the one naming the server for a server, and none where the
-	 * key's index does not name it, which is that server idle in the key.
-	 *
-	 * @param array<int,string> $hours   Hour keys.
-	 * @param array<int,string> $buckets Bucket keys.
-	 * @param string            $server  One server; '' is the site.
-	 * @param ?bool             $failed  Set true when the cache left some key unanswered.
-	 * @param-out bool          $failed
-	 * @return array<string,array<string,array{0:string,1:int}>> key => server_key =>
-	 *                                                         entry; a key holding no index is absent.
-	 */
-	private function scope_index( array $hours, array $buckets, string $server, ?bool &$failed = null ): array {
-		$index = $this->server_index( $hours, $buckets, $failed );
-		if ( '' === $server ) {
-			return $index;
-		}
-		$key = self::server_key( $server );
-		return \array_map(
-			static fn ( array $entries ): array => \array_intersect_key( $entries, [ $key => true ] ),
-			$index
-		);
-	}
-
-	/**
-	 * The bits a set of shard tokens sets in an index entry's mask.
-	 *
-	 * @param list<string> $shards Shard tokens, as `url_shard()` spells them.
-	 * @throws \LogicException On a token no shard answers to.
-	 */
-	public static function shard_mask( array $shards ): int {
-		$bits = \array_flip( self::every_shard() );
-		$mask = 0;
-		foreach ( $shards as $shard ) {
-			$mask |= 1 << ( $bits[ $shard ] ?? throw new \LogicException( "no such shard: {$shard}" ) );
-		}
-		return $mask;
-	}
-
-	/**
-	 * Which name each server's rows are filed under in a bucket whose index
-	 * is `$index`: its own while the index names it or has room, `OTHER_KEY`
-	 * once the index holds `MAX_SERVER_VALUES` others. The `Other` entry
-	 * holds no slot, so a bucket writes at most one server key past the cap.
-	 *
-	 * @param array<string,array{0:string,1:int}> $index The bucket's stored index.
-	 * @param list<string>                        $names Servers with rows to file.
-	 * @return array<string,string> name => the name its rows are filed under.
-	 */
-	public static function admit_servers( array $index, array $names ): array {
-		$held = \array_fill_keys( \array_keys( $index ), true );
-		unset( $held[ self::server_key( self::OTHER_KEY ) ] );
-		$out = [];
-		foreach ( $names as $name ) {
-			$key = self::server_key( $name );
-			if ( ! isset( $held[ $key ] ) && \count( $held ) >= self::MAX_SERVER_VALUES ) {
-				$out[ $name ] = self::OTHER_KEY;
-				continue;
-			}
-			$held[ $key ] = true;
-			$out[ $name ] = $name;
-		}
-		return $out;
-	}
-
-	/**
-	 * What the derived tiers hold for each of `$hours`: two batched reads.
-	 *
-	 * `missing` names what keeps the hour unfolded, or is null for a folded
-	 * one: its server index (`missing index`), or a shard some entry of the
-	 * index names (`missing shard`). A server missing a named shard is an
-	 * hour whose rows no reader sees whole, and the fold is what would
-	 * otherwise never revisit it. The index goes first, because it says which
-	 * keys the second read asks for (decision 6). No chart hour key is asked
-	 * after: the flush writes those through, so none is the fold's.
-	 *
-	 * `unranked` names every server the index names whose DONE marker is
-	 * missing. The marker alone is not enough: memcached evicts by slab
-	 * class, so a 30KB list goes long before the one-key marker beside it,
-	 * which is why a folded hour with every server marked is owed
-	 * `url_keys_unranked()`'s touches too.
-	 *
-	 * `$failed` says the cache left some key of either read unanswered, and
-	 * then an hour reading as unfolded may be one the read could not see.
-	 *
-	 * @param array<int,string> $hours  Hour keys to probe.
-	 * @param ?bool             $failed Set true when the cache left some key unanswered.
-	 * @param-out bool          $failed
-	 * @return array<string,array{missing: ?string, unranked: list<string>}> Only hours holding an index.
-	 */
-	public function url_hours_derived( array $hours, ?bool &$failed = null ): array {
-		$reads = [];
-		foreach ( $hours as $hour ) {
-			$reads[] = [ self::url_srv_parts( true ), $hour ];
-		}
-		$read  = $this->bucket_get_multi( $reads, $heads_failed );
-		$keys  = [];
-		$owner = [];
-		foreach ( \array_values( $hours ) as $at => $hour ) {
-			foreach ( self::index_entries( $read[ $at ] ?? [] ) as $key => [ self::SRV_NAME => $name, self::SRV_SHARDS => $mask ] ) {
-				$keys[]  = [ self::url_rank_done_parts( $key ), $hour ];
-				$owner[] = $name;
-				foreach ( self::shards_in( $mask, true ) as $shard ) {
-					$keys[]  = [ self::url_hour_parts( $key, $shard ), $hour ];
-					$owner[] = null;
-				}
-			}
-		}
-		$missing  = [];
-		$unranked = [];
-		$values   = $this->bucket_get_multi( $keys, $values_failed );
-		$failed   = self::unanswered( $read, $heads_failed ) || self::unanswered( $values, $values_failed );
-		foreach ( $values as $at => $value ) {
-			$hour = $keys[ $at ][1];
-			$name = $owner[ $at ];
-			if ( null === $name ) {
-				if ( null === $value ) {
-					$missing[ $hour ] = true;
-				}
-				continue;
-			}
-			if ( null === $value ) {
-				$unranked[ $hour ][] = $name;
-			}
-		}
-		$out = [];
-		foreach ( \array_values( $hours ) as $at => $hour ) {
-			if ( null === ( $read[ $at ] ?? null ) ) {
-				continue;
-			}
-			$out[ $hour ] = [
-				'missing'  => isset( $missing[ $hour ] ) ? 'missing shard' : null,
-				'unranked' => $unranked[ $hour ] ?? [],
-			];
-		}
-		return $out;
-	}
-
-	/**
-	 * Whether a batch read left any key unanswered: the batch failed and a
-	 * key came back null, which the backing could not fill and which is
-	 * therefore no absence.
-	 *
-	 * @param array<array-key,mixed> $values What the read answered, a null for each miss.
-	 * @param bool                   $failed The read's `$failed`.
-	 */
-	public static function unanswered( array $values, bool $failed ): bool {
-		return $failed && \in_array( null, $values, true );
-	}
-
-	/**
 	 * Namespace prefix for one server's shard of the COARSE hourly URL index.
 	 *
 	 * @param string $server_key The server's `server_key()`.
@@ -1390,151 +1115,28 @@ class Stats_Store {
 	}
 
 	/**
-	 * Every shard of both families, reader first: a shard's position is its
-	 * bit in an index entry's mask.
+	 * The index entries each key of a scope is read under: every entry for
+	 * the site, the one naming the server for a server, and none where the
+	 * key's index does not name it, which is that server idle in the key.
 	 *
-	 * @return list<string>
+	 * @param array<int,string> $hours   Hour keys.
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @param string            $server  One server; '' is the site.
+	 * @param ?bool             $failed  Set true when a Table left some key unanswered.
+	 * @param-out bool          $failed
+	 * @return array<string,array<string,array{0:string,1:int}>> key => server_key =>
+	 *                                                         entry; a key holding no index is absent.
 	 */
-	public static function every_shard(): array {
-		return [ ...self::url_shards(), ...self::url_shards( true ) ];
-	}
-
-	/**
-	 * Every shard the URL index is spread across.
-	 *
-	 * @param bool $worker Name the WORKER shard family instead of the default one.
-	 * @return list<string>
-	 */
-	public static function url_shards( bool $worker = false ): array {
-		$prefix = $worker ? self::WORKER_SHARD_PREFIX : '';
+	private function scope_index( array $hours, array $buckets, string $server, ?bool &$failed = null ): array {
+		$index = $this->server_index( $hours, $buckets, $failed );
+		if ( '' === $server ) {
+			return $index;
+		}
+		$key = self::server_key( $server );
 		return \array_map(
-			static fn ( int $i ): string => $prefix . \dechex( $i ),
-			\range( 0, self::URL_SHARDS - 1 )
+			static fn ( array $entries ): array => \array_intersect_key( $entries, [ $key => true ] ),
+			$index
 		);
-	}
-
-	/**
-	 * Namespace prefix of one server's DONE marker for an hour:
-	 * `urlrank_sh:done:{server_key}:{hour}`.
-	 *
-	 * A server's hour is fourteen lists, so none of them can stand for the
-	 * set. This one tiny key says the server's ranking of the hour ran, and
-	 * rides that ranking's batch whatever its lists answer;
-	 * `url_hours_derived()` also checks the lists. `done` is never a server
-	 * key, which is hex, so it can collide with no list.
-	 *
-	 * @param string $server_key The server's `server_key()`.
-	 * @return array<int,string>
-	 */
-	public static function url_rank_done_parts( string $server_key ): array {
-		return [ self::NS_URLRANK_HOUR_S, 'done', $server_key ];
-	}
-
-	/**
-	 * The keys of one tier whose ranking lost a header record or a list,
-	 * touching each derived key it finds for what is left of its key's life,
-	 * `ranking_parts()` in order, at most `$budget` touches in all: a round
-	 * trip a touch, after the server index of only the keys the budget can
-	 * reach, since a key naming any server costs the site's touches and a
-	 * server's. A key its index names no server in wrote nothing to lose,
-	 * one past its life is owed nothing, and one found missing a key asks no
-	 * more of its keys.
-	 *
-	 * Each key is touched for what is left of its life (`life_left()`): an
-	 * hour's until its last bucket leaves the window, a bucket's for its fine
-	 * life, so a touch holds a key no longer than its write did. Where the budget runs out, `left` and `at` say where the
-	 * next call resumes: the keys still owed a probe, the first from touch
-	 * `at`. An index read the cache leaves unanswered is no index naming no
-	 * server, so the next call resumes at its slice; a touch the backend does
-	 * not answer is no evicted key, and ends the pass, `unanswered` (decision
-	 * 3). `lost` names what each lost key lost, a `lost record` or a `lost
-	 * list`, and `touched` counts the touches this call made.
-	 *
-	 * @param list<string> $keys   Closed bucket keys, or hour keys.
-	 * @param bool         $hour   The coarse tier.
-	 * @param int          $at     Touches the first key already had.
-	 * @param int          $budget Touches this call may make.
-	 * @param int          $now    The flush's tick.
-	 * @return array{lost: array<string,string>, left: list<string>, at: int, touched: int, unanswered: bool}
-	 */
-	public function url_keys_unranked( array $keys, bool $hour, int $at, int $budget, int $now ): array {
-		$lost    = [];
-		$touched = 0;
-		$reach   = 2 * ( \count( self::URL_SORTS ) * \count( self::URL_ORDERS ) + 1 );
-		for ( $i = 0, $n = \count( $keys ); $i < $n; ) {
-			$slice = \array_slice( $keys, $i, \intdiv( $budget, $reach ) + 1 );
-			$index = $hour ? $this->server_index( $slice, [], $failed ) : $this->server_index( [], $slice, $failed );
-			if ( $failed ) {
-				return [ 'lost' => $lost, 'left' => \array_slice( $keys, $i ), 'at' => $at, 'touched' => $touched, 'unanswered' => false ];
-			}
-			foreach ( $slice as $key ) {
-				$ttl   = $this->life_left( self::key( $hour ? self::NS_URLRANK_HOUR_S : self::NS_URLRANK_S, $key ), $now, $now );
-				$names = $ttl > 0 ? \array_values( self::index_names( $index[ $key ] ?? [] ) ) : [];
-				$parts = self::ranking_parts( $names, $hour );
-				for ( $end = \count( $parts ); $at < $end; ++$at ) {
-					if ( $budget-- <= 0 ) {
-						return [ 'lost' => $lost, 'left' => \array_slice( $keys, $i ), 'at' => $at, 'touched' => $touched, 'unanswered' => false ];
-					}
-					++$touched;
-					$standing = $this->bucket_touch( $parts[ $at ], $key, $ttl );
-					if ( null === $standing ) {
-						return [ 'lost' => $lost, 'left' => [], 'at' => 0, 'touched' => $touched, 'unanswered' => true ];
-					}
-					if ( ! $standing ) {
-						$lost[ $key ] = \in_array( $parts[ $at ][0], [ self::NS_URLHDR, self::NS_URLHDR_HOUR ], true ) ? 'lost record' : 'lost list';
-						break;
-					}
-				}
-				$at = 0;
-				++$i;
-			}
-		}
-		return [ 'lost' => $lost, 'left' => [], 'at' => 0, 'touched' => $touched, 'unanswered' => false ];
-	}
-
-	/**
-	 * Refresh one bucket of a namespace in memcache without fetching it.
-	 *
-	 * @param array<int,string> $parts  Namespace prefix parts, before the bucket.
-	 * @param string            $bucket Bucket or hour key.
-	 * @param int               $ttl    New expiry in seconds.
-	 * @return bool|null True when the entry was there to refresh, false when
-	 *                   it is confirmed absent, null when no backend answered.
-	 */
-	private function bucket_touch( array $parts, string $bucket, int $ttl ): ?bool {
-		return $this->table( $this->role_for( $parts[0] ) )?->touch( self::key( ...[ ...$parts, $bucket ] ), $ttl );
-	}
-
-	/**
-	 * Every derived key one ranking of a key writes, in the order a probe
-	 * asks them: the site's header record and fourteen lists, then each
-	 * server's. None for a key naming no server.
-	 *
-	 * @param list<string> $servers Server names, as the key's index names them.
-	 * @param bool         $hour    The coarse tier.
-	 * @return list<array<int,string>>
-	 */
-	private static function ranking_parts( array $servers, bool $hour ): array {
-		$out = [];
-		foreach ( [] === $servers ? [] : [ '', ...$servers ] as $scope ) {
-			$out[] = self::url_header_parts( $scope, $hour );
-			foreach ( self::URL_SORTS as $sort ) {
-				foreach ( self::URL_ORDERS as $order ) {
-					$out[] = self::url_rank_parts( $sort, $order, $scope, $hour );
-				}
-			}
-		}
-		return $out;
-	}
-
-	/**
-	 * The name each entry of an index files its server under.
-	 *
-	 * @param array<string,array{0:string,1:int}> $entries server_key => entry.
-	 * @return array<string,string> server_key => name.
-	 */
-	public static function index_names( array $entries ): array {
-		return \array_map( static fn ( array $entry ): string => $entry[ self::SRV_NAME ], $entries );
 	}
 
 	/**
@@ -1542,15 +1144,14 @@ class Stats_Store {
 	 * through the reader's memo where it has one. An hour key never spells a
 	 * bucket key, so the answer and the memo key by the key itself.
 	 *
-	 * `$failed` says the cache left some keys unanswered: the batch failed,
-	 * and the backing (the mirror, on a reader) filled only some. What it
-	 * filled is answered and memoized; a key it left unanswered is neither,
+	 * `$failed` says a Table left some keys unanswered. What it answered
+	 * is answered and memoized; a key it left unanswered is neither,
 	 * and reads as holding no index, which a caller walking it must not take
 	 * for servers idle there.
 	 *
 	 * @param array<int,string> $hours   Hour keys.
 	 * @param array<int,string> $buckets Bucket keys.
-	 * @param ?bool             $failed  Set true when the cache left some key unanswered.
+	 * @param ?bool             $failed  Set true when a Table left some key unanswered.
 	 * @param-out bool          $failed
 	 * @return array<string,array<string,array{0:string,1:int}>> key => server_key =>
 	 *                                                         entry; a key holding no index is absent.
@@ -1585,6 +1186,138 @@ class Stats_Store {
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * The bits a set of shard tokens sets in an index entry's mask.
+	 *
+	 * @param list<string> $shards Shard tokens, as `url_shard()` spells them.
+	 * @throws \LogicException On a token no shard answers to.
+	 */
+	public static function shard_mask( array $shards ): int {
+		$bits = \array_flip( self::every_shard() );
+		$mask = 0;
+		foreach ( $shards as $shard ) {
+			$mask |= 1 << ( $bits[ $shard ] ?? throw new \LogicException( "no such shard: {$shard}" ) );
+		}
+		return $mask;
+	}
+
+	/**
+	 * Every shard of both families, reader first: a shard's position is its
+	 * bit in an index entry's mask.
+	 *
+	 * @return list<string>
+	 */
+	public static function every_shard(): array {
+		return [ ...self::url_shards(), ...self::url_shards( true ) ];
+	}
+
+	/**
+	 * Every shard the URL index is spread across.
+	 *
+	 * @param bool $worker Name the WORKER shard family instead of the default one.
+	 * @return list<string>
+	 */
+	public static function url_shards( bool $worker = false ): array {
+		$prefix = $worker ? self::WORKER_SHARD_PREFIX : '';
+		return \array_map(
+			static fn ( int $i ): string => $prefix . \dechex( $i ),
+			\range( 0, self::URL_SHARDS - 1 )
+		);
+	}
+
+	/**
+	 * Which name each server's rows are filed under in a bucket whose index
+	 * is `$index`: its own while the index names it or has room, `OTHER_KEY`
+	 * once the index holds `MAX_SERVER_VALUES` others. The `Other` entry
+	 * holds no slot, so a bucket writes at most one server key past the cap.
+	 *
+	 * @param array<string,array{0:string,1:int}> $index The bucket's stored index.
+	 * @param list<string>                        $names Servers with rows to file.
+	 * @return array<string,string> name => the name its rows are filed under.
+	 */
+	public static function admit_servers( array $index, array $names ): array {
+		$held = \array_fill_keys( \array_keys( $index ), true );
+		unset( $held[ self::server_key( self::OTHER_KEY ) ] );
+		$out = [];
+		foreach ( $names as $name ) {
+			$key = self::server_key( $name );
+			if ( ! isset( $held[ $key ] ) && \count( $held ) >= self::MAX_SERVER_VALUES ) {
+				$out[ $name ] = self::OTHER_KEY;
+				continue;
+			}
+			$held[ $key ] = true;
+			$out[ $name ] = $name;
+		}
+		return $out;
+	}
+
+	/**
+	 * Which servers each of `$hours` holds unranked: two batched reads, the
+	 * hour's server index, then the DONE marker of every server it names.
+	 *
+	 * A marker stands for its server's whole hour — the fold writes it only
+	 * when every shard it wrote landed, and a ranking only over every shard
+	 * the index names — so no row is fetched to say an hour is settled. An
+	 * hour holding no index is absent, unfolded; one whose every server is
+	 * marked answers with none. The index goes first, because it says which
+	 * markers the second read asks for (decision 6). No chart hour key is
+	 * asked after: the flush writes those through, so none is the fold's.
+	 *
+	 * `$failed` says a Table left some key of either read unanswered, and
+	 * then an hour reading as unfolded may be one the read could not see.
+	 *
+	 * @param array<int,string> $hours  Hour keys to probe.
+	 * @param ?bool             $failed Set true when a Table left some key unanswered.
+	 * @param-out bool          $failed
+	 * @return array<string,list<string>> Hour => the servers its index names
+	 *                                    with no marker; only hours holding an index.
+	 */
+	public function url_hours_derived( array $hours, ?bool &$failed = null ): array {
+		$reads = [];
+		foreach ( $hours as $hour ) {
+			$reads[] = [ self::url_srv_parts( true ), $hour ];
+		}
+		$read  = $this->bucket_get_multi( $reads, $heads_failed );
+		$keys  = [];
+		$owner = [];
+		$out   = [];
+		foreach ( \array_values( $hours ) as $at => $hour ) {
+			if ( null === ( $read[ $at ] ?? null ) ) {
+				continue;
+			}
+			$out[ $hour ] = [];
+			foreach ( self::index_entries( $read[ $at ] ) as $key => [ self::SRV_NAME => $name ] ) {
+				$keys[]  = [ self::url_rank_done_parts( $key ), $hour ];
+				$owner[] = $name;
+			}
+		}
+		$values = $this->bucket_get_multi( $keys, $values_failed );
+		$failed = self::unanswered( $read, $heads_failed ) || self::unanswered( $values, $values_failed );
+		foreach ( $values as $at => $value ) {
+			if ( null === $value ) {
+				$out[ $keys[ $at ][1] ][] = $owner[ $at ];
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Namespace prefix of one server's DONE marker for an hour:
+	 * `urlrank_sh:done:{server_key}:{hour}`.
+	 *
+	 * A server's hour is fourteen lists, so none of them can stand for the
+	 * set. This one tiny key says the server's ranking of the hour ran over
+	 * every shard its index names, and rides that ranking's batch whatever
+	 * its lists answer; a fold that lost a write leaves it unwritten. `done`
+	 * is never a server key, which is hex, so it can collide with no list.
+	 *
+	 * @param string $server_key The server's `server_key()`.
+	 * @return array<int,string>
+	 */
+	public static function url_rank_done_parts( string $server_key ): array {
+		return [ self::NS_URLRANK_HOUR_S, 'done', $server_key ];
 	}
 
 	/**
@@ -1674,15 +1407,18 @@ class Stats_Store {
 	 *
 	 * WHICH tokens can be answered at all is the schema's to say, so a caller
 	 * tests no sentinel: `false` is a token whose set has saturated for any
-	 * server asked, and a token none of them holds is ABSENT, which is a real
-	 * answer narrowing to nothing.
+	 * server asked, or every token when the read went unanswered, and a token
+	 * none of them holds is ABSENT, which is a real answer narrowing to
+	 * nothing.
 	 *
 	 * @param list<string> $tokens  Tokens, as `term_tokens()` spells them.
 	 * @param list<string> $servers Server names whose sets to read.
+	 * @param-out bool     $failed
+	 * @param ?bool        $failed  Set true when a Table left some set unanswered.
 	 * @return array<string,list<string>|false> token => hashes, or false when
 	 *                                          no read can answer it; absent when unheld.
 	 */
-	public function url_token_sets( array $tokens, array $servers ): array {
+	public function url_token_sets( array $tokens, array $servers, ?bool &$failed = null ): array {
 		$sets  = [];
 		$reads = [];
 		foreach ( $tokens as $token ) {
@@ -1690,7 +1426,12 @@ class Stats_Store {
 				$reads[] = [ self::url_token_parts( self::server_key( $server ) ), $token ];
 			}
 		}
-		foreach ( $this->bucket_get_multi( $reads ) as $at => $set ) {
+		$values = $this->bucket_get_multi( $reads, $read_failed );
+		$failed = self::unanswered( $values, $read_failed );
+		if ( $failed ) {
+			return \array_fill_keys( $tokens, false );
+		}
+		foreach ( $values as $at => $set ) {
 			$token = $reads[ $at ][1];
 			if ( null === $set || false === ( $sets[ $token ] ?? null ) ) {
 				continue;
@@ -1710,9 +1451,21 @@ class Stats_Store {
 	}
 
 	/**
+	 * Whether a batch read left any key unanswered: the batch failed and a
+	 * key came back null, which the backing could not fill and which is
+	 * therefore no absence.
+	 *
+	 * @param array<array-key,mixed> $values What the read answered, a null for each miss.
+	 * @param bool                   $failed The read's `$failed`.
+	 */
+	public static function unanswered( array $values, bool $failed ): bool {
+		return $failed && \in_array( null, $values, true );
+	}
+
+	/**
 	 * Read many buckets across DIFFERENT namespaces in one round trip.
 	 *
-	 * `lookup_buckets()` reads one namespace over many buckets; this reads
+	 * `lookup_hours()` reads one namespace over many hours; this reads
 	 * an arbitrary mix, which is what a flush touches. Every read keeps its own
 	 * slot, under the key `$reads` carried, because a caller merges `result[i]`
 	 * onto `reads[i]` and a collapsed miss would land every later merge on the
@@ -1726,8 +1479,8 @@ class Stats_Store {
 	 * result passes `$failed` and reads nothing into a null while it is set.
 	 *
 	 * @param array<array-key,array{0: array<int,string>, 1: string}> $reads  `[ parts, bucket ]` pairs.
-	 * @param ?bool                                                   $failed Set true when no cache
-	 *                                                                        backend answered the batch.
+	 * @param ?bool                                                   $failed Set true when a Table
+	 *                                                                        asked did not answer.
 	 * @param-out bool                                                $failed
 	 * @return array<array-key,array<string,mixed>|null> One entry per read, keyed as `$reads` was.
 	 */
@@ -1736,14 +1489,18 @@ class Stats_Store {
 		if ( [] === $reads ) {
 			return [];
 		}
-		$keys = [];
+		$keys  = [];
+		$asked = [];
 		foreach ( $reads as $i => [ $parts, $bucket ] ) {
-			$keys[ $i ] = self::key( ...[ ...$parts, $bucket ] );
+			$keys[ $i ]                              = self::key( ...[ ...$parts, $bucket ] );
+			$asked[ $this->table_for( $parts[0] ) ][] = $keys[ $i ];
 		}
-		$table  = $this->table( self::ROLE_AGGREGATE );
-		$failed = null === $table;
-		$found  = $table?->lookup_multi( \array_values( \array_unique( $keys ) ), $failed ) ?? [];
-		$out   = [];
+		$found = [];
+		foreach ( $asked as $table => $table_keys ) {
+			$found += $this->client->get_multi( $table, $table_keys, $one_failed );
+			$failed = $failed || $one_failed;
+		}
+		$out = [];
 		foreach ( $keys as $i => $key ) {
 			$value     = $found[ $key ] ?? null;
 			$out[ $i ] = \is_array( $value ) ? self::string_keys( $value ) : null;
@@ -1762,6 +1519,45 @@ class Stats_Store {
 	}
 
 	/**
+	 * The PATH of each URL, by hash — what the search index files. A hash
+	 * whose URL is '' is absent from the map rather than named '': nothing
+	 * named it, so nothing can find it.
+	 *
+	 * @param array<array-key,string> $urls hash => URL. An all-digit hash is
+	 *                                       an INT key, as PHP makes it.
+	 * @return array<string,string> hash => path.
+	 */
+	public static function paths_of( array $urls ): array {
+		$out = [];
+		foreach ( $urls as $hash => $url ) {
+			if ( '' !== $url ) {
+				$out[ (string) $hash ] = self::path_of( $url );
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * The PATH of a URL: what a search matches, with no scheme or host.
+	 *
+	 * The server is the picker's question, so a term matching the host would
+	 * make one box ask the dropdown's. A URL carrying no scheme is all path,
+	 * which is what a producer with no `SERVER_NAME` writes. The authority
+	 * ends at whichever delimiter comes first, so an authority with no path
+	 * keeps its query on the path.
+	 *
+	 * @param string $url A URL, or a row's path.
+	 */
+	public static function path_of( string $url ): string {
+		$at = \strpos( $url, '://' );
+		if ( false === $at ) {
+			return $url;
+		}
+		$host = $at + 3;
+		return \substr( $url, $host + \strcspn( $url, '/?#', $host ) );
+	}
+
+	/**
 	 * Read one URL's stats blob — flame tree, profiles, last_modified. Whole, not
 	 * summable: readers take the first partition that has it rather than merging.
 	 *
@@ -1769,8 +1565,8 @@ class Stats_Store {
 	 * @return array<array-key,mixed>|null Blob, or null on miss.
 	 */
 	public function get_url_stats( string $url_hash ): ?array {
-		$val = $this->lookup( self::key( self::NS_URL, $url_hash ) );
-		if ( ! \is_array( $val ) ) {
+		$val = $this->url_aggregate( $url_hash );
+		if ( null === $val ) {
 			return null;
 		}
 		// The profile is stored as sums; every reader wants per-request means.
@@ -1844,19 +1640,25 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read one key through the table; no backend and a miss both read as null.
+	 * One URL's stored aggregate as its writer merges onto it: the sums the
+	 * flush wrote, where `get_url_stats()` answers display means.
 	 *
-	 * @param string $key Entry key below the Table's namespace.
-	 * @return mixed The stored value, or null.
+	 * @param string    $url_hash 12-char URL hash.
+	 * @param-out bool  $failed
+	 * @param ?bool     $failed   Set true when the Table did not answer: then the
+	 *                            null is no absence, and nothing may replace it.
+	 * @return array<array-key,mixed>|null The aggregate, or null on a miss.
 	 */
-	private function lookup( string $key ): mixed {
-		return $this->table( self::ROLE_AGGREGATE )?->lookup( $key );
+	public function url_aggregate( string $url_hash, ?bool &$failed = null ): ?array {
+		$key   = self::key( self::NS_URL, $url_hash );
+		$value = $this->client->get_multi( $this->table_for( self::NS_URL ), [ $key ], $failed )[ $key ] ?? null;
+		return \is_array( $value ) ? $value : null;
 	}
 
 	/**
 	 * Resolve URL names for the hashes a reader is about to show or locate.
 	 *
-	 * One `lookup_multi`, like every other reader path (decision 6). Absent
+	 * One `MGET`, like every other reader path (decision 6). Absent
 	 * hashes are simply missing from the result: a name can expire while its
 	 * rows are still in the window, and a row with no name is still a row.
 	 *
@@ -1874,7 +1676,7 @@ class Stats_Store {
 			$map[ self::key( self::NS_URLMAP, $hash ) ] = $hash;
 		}
 		$out = [];
-		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
+		foreach ( $this->client->get_multi( $this->table_for( self::NS_URLMAP ), \array_keys( $map ) ) as $key => $value ) {
 			$stored = Core::arr( $value );
 			$server = $stored[0] ?? null;
 			$path   = $stored[1] ?? null;
@@ -1905,31 +1707,29 @@ class Stats_Store {
 	 *
 	 * One round trip for the whole flush, like every other write here: a name
 	 * per key would make the cost per URL, which is what the batch exists to
-	 * avoid. Wrapped in a list because the mirror and the memcache table both
-	 * carry arrays; the writer decides WHICH names are worth re-writing, since
+	 * avoid. Wrapped in a list because the table carries arrays; the writer
+	 * decides WHICH names are worth re-writing, since
 	 * a name never changes and re-storing it every flush would spend the saving.
 	 *
 	 * @param array<array-key,array<array-key,string>> $servers Filed server => hash => URL.
 	 *                                                          An all-digit key is an INT.
-	 * @return void
+	 * @return array<int,bool> Whether each name landed, as `bucket_set_multi()` answers.
 	 */
-	public function set_url_names( array $servers ): void {
+	public function set_url_names( array $servers ): array {
 		$writes = [];
 		foreach ( $servers as $server => $urls ) {
 			foreach ( $urls as $hash => $url ) {
 				$writes[] = [ [ self::NS_URLMAP ], (string) $hash, [ (string) $server, self::row_path( $url, (string) $server ) ] ];
 			}
 		}
-		$this->bucket_set_multi( $writes );
+		return $this->bucket_set_multi( $writes );
 	}
 
 	/**
-	 * Write many buckets across DIFFERENT namespaces in one round trip.
-	 *
-	 * Neither cache backend reports success per KEY, so a refused batch is
-	 * re-sent one key at a time — a caller that logs a specific refusal (a
-	 * URL shard) still learns which one, and the slow path only runs when
-	 * something actually failed.
+	 * Write many buckets across DIFFERENT namespaces: one `MSET` per Table,
+	 * each under the Table's declared TTL. The reply names every key that
+	 * landed, so a caller that logs a specific refusal (a URL shard) still
+	 * learns which one.
 	 *
 	 * @param array<int,array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes `[ parts, bucket, data ]`.
 	 * @return array<int,bool> One result per write, in order.
@@ -1938,186 +1738,19 @@ class Stats_Store {
 		if ( [] === $writes ) {
 			return [];
 		}
-		// One batch per ROLE
-		$values = [];
+		$by_table = [];
 		foreach ( $writes as [ $parts, $bucket, $data ] ) {
-			$values[ $this->role_for( $parts[0] ) ][ self::key( ...[ ...$parts, $bucket ] ) ] = $data;
+			$by_table[ $this->table_for( $parts[0] ) ][ self::key( ...[ ...$parts, $bucket ] ) ] = [ $data ];
 		}
-		$landed = true;
-		foreach ( $values as $role => $batch ) {
-			$landed = true === $this->table( $role )?->store_multi( $batch ) && $landed;
-		}
-		if ( $landed ) {
-			// Shadowed only once the set landed, as `store()` does.
-			if ( null !== $this->mirror ) {
-				foreach ( $writes as [ $parts, $bucket, $data ] ) {
-					$key = self::key( ...[ ...$parts, $bucket ] );
-					( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $this->ttl_for( $parts[0] ), $parts[0] );
-				}
-			}
-			return \array_fill( 0, \count( $writes ), true );
+		$landed = [];
+		foreach ( $by_table as $table => $items ) {
+			$landed += \array_fill_keys( $this->client->set_multi( $table, $items ), true );
 		}
 		$out = [];
-		foreach ( $writes as $i => [ $parts, $bucket, $data ] ) {
-			$out[ $i ] = $this->bucket_set( $parts, $bucket, $data );
+		foreach ( $writes as $i => [ $parts, $bucket ] ) {
+			$out[ $i ] = isset( $landed[ self::key( ...[ ...$parts, $bucket ] ) ] );
 		}
 		return $out;
-	}
-
-	/**
-	 * Overwrite one bucket of a namespace. The namespace token leads `$parts`,
-	 * so it is also what routes the mirror.
-	 *
-	 * @param array<int,string>      $parts  Namespace prefix parts, before the bucket.
-	 * @param string                 $bucket Bucket key.
-	 * @param array<array-key,mixed> $data   The bucket.
-	 * @return bool True when the set landed.
-	 */
-	private function bucket_set( array $parts, string $bucket, array $data ): bool {
-		return $this->store( self::key( ...[ ...$parts, $bucket ] ), $data, $this->ttl_for( $parts[0] ), $parts[0] );
-	}
-
-	/**
-	 * Write to memcache, then (if wired AND the set landed) shadow the same write
-	 * to the mirror seam — a rejected/failed set must not be durably recorded and
-	 * resurrected by a later read-back.
-	 *
-	 * @param string                 $key  Entry key below the Table's namespace.
-	 * @param array<array-key,mixed> $data Value to store.
-	 * @param int                    $ttl  Expiry in seconds, for the mirror only —
-	 *                                     the Table holds its role's own.
-	 * @param string                 $ns   Namespace routing hint for the mirror.
-	 * @return bool True when the set landed.
-	 */
-	private function store( string $key, array $data, int $ttl, string $ns ): bool {
-		$ok = (bool) $this->table( $this->role_for( $ns ) )?->store( $key, $data );
-		if ( $ok && null !== $this->mirror ) {
-			// The mirror records the durable key, which no salt rotation moves.
-			( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $ttl, $ns );
-		}
-		return $ok;
-	}
-
-	/**
-	 * Add back each frame memcache no longer holds, in one read and an add a
-	 * missing key, and say which it added.
-	 *
-	 * An add, never a set: a value the builder wrote since the frame stands.
-	 * Each key lives what it would have had memcache kept it (`life_left()`),
-	 * so a spent one is left out. A read the cache leaves unanswered adds
-	 * nothing (decision 3), and a key of another partition is left alone.
-	 *
-	 * @api The flame builder's sweep of its own mirror.
-	 * @param array<string,array{data: array<array-key,mixed>, ts: float}> $frames Durable key,
-	 *        `entry_key()`-shaped => the frame's data and when it was written.
-	 * @param int                                                          $now    The sweep's tick.
-	 * @return list<string> The table-relative keys added.
-	 */
-	public function add_missing( array $frames, int $now ): array {
-		$backend = Cache_Backend::shared_first();
-		$head    = self::entry_key( $this->partition, '' );
-		$wanted  = [];
-		$failed  = false;
-		foreach ( $frames as $key => [ 'data' => $data, 'ts' => $written ] ) {
-			$relative = \substr( $key, \strlen( $head ) );
-			$life     = \str_starts_with( $key, $head ) ? $this->life_left( $relative, (int) $written, $now ) : 0;
-			if ( $life > 0 ) {
-				$wanted[ Table_Node::entry_key( self::namespace_for( $this->partition ), $relative ) ] = [ $relative, $data, $life ];
-			}
-		}
-		$held = [] === $wanted || null === $backend ? [] : $backend->read_multi( \array_keys( $wanted ), $failed );
-		if ( null === $backend || $failed ) {
-			return [];
-		}
-		$added = [];
-		foreach ( \array_diff_key( $wanted, $held ) as $entry_key => [ $relative, $data, $life ] ) {
-			if ( $backend->add( $entry_key, $data, $life ) ) {
-				$added[] = $relative;
-			}
-		}
-		return $added;
-	}
-
-	/**
-	 * What is left of a key's life had memcache kept it: its role's TTL from
-	 * its bucket's END, or from `$written` for a key naming no bucket. Every
-	 * restore sizes a key through this — the sweep's add, and the builder's
-	 * own read of its mirror — and so does the probe's touch.
-	 *
-	 * A bucket is read until its END leaves the window, so an hour dated from
-	 * its start would lapse up to an hour early. The role's TTL is what the
-	 * write gave the key: the fine tier's is a memcache FOOTPRINT, 24 buckets
-	 * a shard rather than 288, so a fine bucket restored for the whole window
-	 * would put back what that tier exists to keep out. `bucket_span()`'s HOUR
-	 * branch serves the hour keys the probe touches: without it an hour key
-	 * falls to the hash-keyed branch and reports a full role TTL.
-	 *
-	 * @api The sweep, the builder's mirror read and the probe's touch window.
-	 * @param string $key     Table-RELATIVE entry key.
-	 * @param int    $written When the key's last value was written; read only
-	 *                        for a key naming no bucket.
-	 * @param int    $now     The caller's tick.
-	 * @return int Seconds, 0 when spent.
-	 */
-	public function life_left( string $key, int $written, int $now ): int {
-		$ttl  = $this->ttl_for( self::namespace_of( $key ) );
-		$span = self::bucket_span( $key );
-		return null === $span ? \max( 0, $written + $ttl - $now ) : self::life_after( $span, $ttl, $now );
-	}
-
-	/**
-	 * What is left of a key's life when it lives `$lifespan` from the END of
-	 * the span it names, which is about when its last write landed.
-	 *
-	 * @param array{0: int, 1: int} $span     `bucket_span()`'s start and span.
-	 * @param int                   $lifespan Seconds the key lives past that end.
-	 * @param int                   $now      The caller's tick.
-	 * @return int Seconds, 0 when spent.
-	 */
-	private static function life_after( array $span, int $lifespan, int $now ): int {
-		return \max( 0, $span[0] + $span[1] + $lifespan - $now );
-	}
-
-	/**
-	 * A table-relative key's namespace: its first segment (decision 1).
-	 *
-	 * @param string $key `<ns>:…` — a bare namespace answers itself.
-	 */
-	public static function namespace_of( string $key ): string {
-		return \explode( ':', $key, 2 )[0];
-	}
-
-	/**
-	 * How long a namespace's value is kept — the role's own TTL.
-	 *
-	 * @param string $ns Namespace, an `NS_*` value.
-	 */
-	private function ttl_for( string $ns ): int {
-		return match ( $this->role_for( $ns ) ) {
-			self::ROLE_URL      => $this->ttl_url_stats(),
-			self::ROLE_URL_FINE => $this->ttl_url_fine(),
-			default             => $this->ttl(),
-		};
-	}
-
-	/**
-	 * Durable key for one entry — what the mirror records its frames under.
-	 *
-	 * Deliberately NOT the Table's cache key: that one carries the install
-	 * scope, and the scope moves on every salt rotation. The mirror exists to
-	 * outlive `wp nodes memcache flush`, so its key carries the partition and
-	 * the entry and nothing else, and a rotation orphans nothing on disk.
-	 *
-	 * No version component either: a frame in a shape the merge does not name
-	 * sums to a zero count `measured()` drops, or ages out with its retention
-	 * window — decision 5 names which namespaces take which.
-	 *
-	 * @param int    $partition Flame-builder partition.
-	 * @param string $key       Entry key within the namespace.
-	 * @return string `evlog:p{N}:{key}`, stable across salt rotations.
-	 */
-	public static function entry_key( int $partition, string $key ): string {
-		return self::namespace_for( $partition ) . ':' . $key;
 	}
 
 	/**
@@ -2175,259 +1808,55 @@ class Stats_Store {
 	}
 
 	/**
-	 * What one stored part costs before its strings, under the serializer
-	 * memcached is configured with — the one place a cap learns it.
+	 * Drop many buckets across DIFFERENT namespaces: one `RM` per Table.
 	 *
-	 * @param string $part An `OVERHEADS` part: `url_row`, `lb_category`,
-	 *                     `lb_entry`, `flame_node` or `hook`.
-	 * @throws \LogicException When no estimate names the part.
+	 * @param list<array{0: array<int,string>, 1: string}> $forgets `[ parts, bucket ]` pairs.
 	 */
-	public static function overhead( string $part ): int {
-		self::$serializer ??= self::configured_serializer();
-		return self::OVERHEADS[ self::$serializer ][ $part ] ?? throw new \LogicException( "no size estimate for a stored {$part}" );
+	public function bucket_forget_multi( array $forgets ): void {
+		$by_table = [];
+		foreach ( $forgets as [ $parts, $bucket ] ) {
+			$by_table[ $this->table_for( $parts[0] ) ][] = self::key( ...[ ...$parts, $bucket ] );
+		}
+		foreach ( $by_table as $table => $keys ) {
+			$this->client->remove( $table, $keys );
+		}
 	}
 
 	/**
-	 * The serializer `Core::$memd` stores with: igbinary when it is configured
-	 * so, PHP's otherwise, and PHP's with no handle, being the larger.
-	 *
-	 * @return self::SERIALIZER_*
-	 */
-	private static function configured_serializer(): string {
-		$memd = Core::$memd;
-		return null !== $memd && \defined( '\Memcached::SERIALIZER_IGBINARY' )
-			&& \Memcached::SERIALIZER_IGBINARY === $memd->getOption( \Memcached::OPT_SERIALIZER )
-			? self::SERIALIZER_IGBINARY
-			: self::SERIALIZER_PHP;
-	}
-
-	/**
-	 * Drop one bucket of a namespace from memcache. Nothing reaches the
-	 * mirror: every caller forgets a derived key, which the mirror never holds.
-	 *
-	 * @param array<int,string> $parts  Namespace prefix parts, before the bucket.
-	 * @param string            $bucket Bucket or hour key.
-	 */
-	public function bucket_forget( array $parts, string $bucket ): void {
-		$this->table( $this->role_for( $parts[0] ) )?->forget( self::key( ...[ ...$parts, $bucket ] ) );
-	}
-
-	/**
-	 * Which table a namespace is written through.
-	 *
-	 * Two groups leave the aggregate table. `url` takes its own, for the
-	 * accumulator tier and `ttl_url_stats()`. The fine `urls` and `urlsrv`
-	 * tiers are read at the window's EDGE and answered behind that by `urls_h`
-	 * and `urlsrv_h`, so their TTL is their read window rather than the
-	 * retention window.
-	 *
-	 * @param string $ns Namespace, an `NS_*` value.
-	 */
-	private function role_for( string $ns ): string {
-		return match ( $ns ) {
-			self::NS_URL => self::ROLE_URL,
-			// An index outliving the fine rows it names is one nothing reads.
-			self::NS_URLS,
-			self::NS_URLSRV,
-			self::NS_URLRANK_S,
-			self::NS_URLHDR    => self::ROLE_URL_FINE,
-			default            => self::ROLE_AGGREGATE,
-		};
-	}
-
-	/**
-	 * Whether a key is an absolute mirror key rather than one relative to its
-	 * namespace — what the checkpoint carry keeps, and what a reader may file a
-	 * frame as.
-	 *
-	 * @param string $key A key read back from a checkpoint or a frame.
-	 */
-	public static function is_mirror_key( string $key ): bool {
-		return \str_starts_with( $key, self::mirror_prefix() );
-	}
-
-	/**
-	 * Per-URL aggregate accumulator: the un-drained value for a url_hash, or the
-	 * last persisted one when the accumulator holds none.
-	 *
-	 * @api Flame_Builder_Node's per-URL accumulation.
-	 * @param string $url_hash URL hash.
-	 * @return mixed The held aggregate, the last persisted one when none is
-	 *               held, or null with no cache backend.
-	 */
-	public function accumulated_url_stats( string $url_hash ): mixed {
-		return $this->table( self::ROLE_URL )?->accumulated( self::key( self::NS_URL, $url_hash ) );
-	}
-
-	/**
-	 * Fold a per-URL aggregate into the accumulator, without persisting it.
-	 *
-	 * @param string              $url_hash URL hash.
-	 * @param array<string,mixed> $data     Aggregate to hold.
-	 */
-	public function accumulate_url_stats( string $url_hash, array $data ): void {
-		$this->table( self::ROLE_URL )?->accumulate( self::key( self::NS_URL, $url_hash ), $data );
-	}
-
-	/**
-	 * Join the caller's parts into one entry key, namespace token first.
-	 *
-	 * The `evlog:p{N}` prefix and the install scope are NOT here: the Table
-	 * carries them, through `namespace_for()` and `Table_Node::entry_key()`, and
-	 * the mirror's durable key carries the prefix with no scope (`entry_key()`). That
-	 * scoping is what keeps two installs sharing one memcached server — an Atomic
-	 * pair — off each other's `hourly` key, which is otherwise a co-tenant's
-	 * request volume in this install's dashboard.
+	 * Join the caller's parts into one key, namespace token first. The
+	 * partition is not here: each partition's Tables are files of their own.
 	 *
 	 * @param string ...$parts Namespace token first, then any sub-keys.
-	 * @return string Entry key, below the Table's namespace.
+	 * @return string Key within a Table.
 	 */
 	public static function key( string ...$parts ): string {
 		return \implode( ':', $parts );
 	}
 
 	/**
-	 * Walk the accumulating per-URL aggregates, keyed by url_hash, for a drain.
+	 * The node answering for the Table a namespace lives in.
 	 *
-	 * @return iterable<string,mixed>
+	 * Two groups leave the aggregate Table. `url` takes its own, for its
+	 * shorter TTL. The fine `urls` and `urlsrv` tiers are read at the window's
+	 * EDGE and answered behind that by `urls_h` and `urlsrv_h`, so their TTL is
+	 * their read window rather than the retention window.
+	 *
+	 * @param string $ns Namespace, an `NS_*` value.
+	 * @throws \LogicException When the Table is not one this store was given.
 	 */
-	public function accumulating_url_stats(): iterable {
-		$table = $this->table( self::ROLE_URL );
-		if ( null === $table ) {
-			return;
-		}
-		$prefix = self::NS_URL . ':';
-		foreach ( $table->accumulating() as $key => $value ) {
-			yield \substr( $key, \strlen( $prefix ) ) => $value;
-		}
-	}
-
-	/** Drop the per-URL accumulator. */
-	public function reset_url_stats(): void {
-		$this->table( self::ROLE_URL )?->reset();
-	}
-
-	/**
-	 * The Table this store reads and writes, memoized per ROLE.
-	 *
-	 * Three TTLs are in play — `ttl()` for the aggregates, `ttl_url_stats()` for
-	 * the bounded per-URL blobs and `ttl_url_fine()` for a fine `urls` bucket —
-	 * and a Table's TTL is fixed at construction, so each role gets its own
-	 * instance over the SAME namespace. Built lazily behind the backend check
-	 * because `Table_Node::table()` throws without one, and every method here has
-	 * to fail soft instead.
-	 *
-	 * The per-URL table takes the accumulator and no backing; the other two take
-	 * the backing and no accumulator. `accumulated()` falls through to `lookup()`
-	 * on every request, and `flame_topn` is 0 in production, so backing the
-	 * per-URL table would pay an index scan per cold URL for a frame that is
-	 * never written.
-	 *
-	 * @param string $role ROLE_AGGREGATE, ROLE_URL or ROLE_URL_FINE; each resolves
-	 *        its own TTL. Keyed by role, never by TTL: all three coincide at
-	 *        PREFIX_FLOOR, and a shared table would hand aggregate reads the
-	 *        deliberately unbacked one.
-	 * @return ?Table_Node Null with no cache backend, which every caller reads as
-	 *                     a miss.
-	 */
-	private function table( string $role ): ?Table_Node {
-		if ( null === Cache_Backend::shared_first() ) {
-			return null;
-		}
-		if ( ! isset( $this->tables[ $role ] ) ) {
-			$is_url = self::ROLE_URL === $role;
-			$table  = Table_Node::table(
-				self::namespace_for( $this->partition ),
-				match ( $role ) {
-					self::ROLE_URL      => $this->ttl_url_stats(),
-					self::ROLE_URL_FINE => $this->ttl_url_fine(),
-					default             => $this->ttl(),
-				}
-			);
-			if ( $is_url ) {
-				$table->accumulator( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
-			} else {
-				// Indirect: the read seam is re-armed after the table is built.
-				$table->backed_by(
-					fn ( array $keys ): ?array => null !== $this->rehydrate ? ( $this->rehydrate )( $keys ) : []
-				);
-			}
-			$this->tables[ $role ] = $table;
-		}
-		return $this->tables[ $role ];
-	}
-
-	/** Retention for a FINE `urls` or `urlsrv` bucket: its read window, never the whole one. */
-	public function ttl_url_fine(): int {
-		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
-	}
-
-	/** Retention for the high-volume `url` namespace: the retention window cut to a 24th, floored at an hour. */
-	public function ttl_url_stats(): int {
-		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
-	}
-
-	/**
-	 * Table namespace owning one partition's keyspace.
-	 *
-	 * @api Tests derive cache keys from it; the mirror's durable key opens with it too.
-	 * @param int $partition Flame-builder partition.
-	 */
-	public static function namespace_for( int $partition ): string {
-		return self::mirror_prefix() . $partition;
-	}
-
-	/**
-	 * The head every durable key opens with — `namespace_for()`'s, minus the
-	 * partition, so the test and the writer cannot drift apart.
-	 */
-	private static function mirror_prefix(): string {
-		return self::PREFIX_BASE . ':p';
-	}
-
-	/**
-	 * When the bucket a key names closes, or null for a key that names none.
-	 *
-	 * @api The flame builder, saying how long a held frame keeps it busy.
-	 * @param string $key Entry key, table-relative or durable: `…:<bucket>`.
-	 */
-	public static function bucket_end( string $key ): ?int {
-		$span = self::bucket_span( $key );
-		return null === $span ? null : $span[0] + $span[1];
-	}
-
-	/**
-	 * The bucket a key names — its start and its span in seconds — or null for
-	 * a key that names none.
-	 *
-	 * ISO 8601 through `strtotime()`, because that function reads many
-	 * non-dates as dates, `x` included; the shape is pinned first.
-	 *
-	 * @param string $key Table-relative entry key: `<ns>:…:<bucket>`.
-	 * @return array{0: int, 1: int}|null
-	 */
-	private static function bucket_span( string $key ): ?array {
-		$bucket = self::bucket_of( $key );
-		if ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{2})$/D', $bucket, $m ) ) {
-			$stamp = \strtotime( "{$m[1]}T{$m[2]}:{$m[3]}:00+00:00" );
-			$span  = self::BUCKET_SECONDS;
-		} elseif ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})$/D', $bucket, $m ) ) {
-			$stamp = \strtotime( "{$m[1]}T{$m[2]}:00:00+00:00" );
-			$span  = self::HOUR_SECONDS;
-		} else {
-			return null;
-		}
-		return false === $stamp ? null : [ $stamp, $span ];
-	}
-
-	/**
-	 * The bucket a key names: its last segment, whatever sits between.
-	 *
-	 * @param string $key `…:<bucket>` — a bare segment answers itself.
-	 */
-	public static function bucket_of( string $key ): string {
-		$at = \strrpos( $key, ':' );
-		return false === $at ? $key : \substr( $key, $at + 1 );
+	private function table_for( string $ns ): string {
+		$table = match ( $ns ) {
+			self::NS_URL => self::TABLE_URL,
+			// An index outliving the fine rows it names is one nothing reads.
+			self::NS_URLS,
+			self::NS_URLSRV,
+			self::NS_URLRANK_S,
+			self::NS_URLHDR    => self::TABLE_URL_FINE,
+			default            => self::TABLE_AGGREGATE,
+		};
+		return $this->table_names[ $table ] ?? throw new \LogicException(
+			"Stats_Store: namespace {$ns} lives in Table {$table}, which this store was not given (it holds " . \implode( ', ', \array_keys( $this->table_names ) ) . ')'
+		);
 	}
 
 	/**
@@ -2476,15 +1905,14 @@ class Stats_Store {
 	}
 
 	/**
-	 * Sum two `{count, sum_ms, sum_peak_mb}` totals — the `hourly` namespace's
-	 * shape. The schema owns the triple, so it owns the addition over it, as
-	 * `sums_to_display()` owns the read-time division over its own. A non-numeric
-	 * field on either side reads as zero.
+	 * Sum two `{count, sum_ms, requests, sum_peak_mb}` totals — the
+	 * `hourly_h` slot's shape. The schema owns the totals, so it owns the
+	 * addition over them, as `sums_to_display()` owns the read-time division
+	 * over its own. A non-numeric field on either side reads as zero.
 	 *
-	 * Fields outside the triple ride through from `$a`, which is why the sum is
-	 * replaced ONTO it rather than returned on its own: the stored bucket is
-	 * the caller's — a merged time series carries the `hour` it is keyed by —
-	 * and rebuilding it here would drop a fourth field silently.
+	 * Fields outside the totals ride through from `$a`, which is why the sum
+	 * is replaced ONTO it rather than returned on its own: the stored slot is
+	 * the caller's, and rebuilding it here would drop a fifth field silently.
 	 *
 	 * @param array<string,mixed>    $a One side, and the shape that survives.
 	 * @param array<array-key,mixed> $b The other, read by name only.
@@ -2550,6 +1978,90 @@ class Stats_Store {
 			if ( \is_array( $stats ) ) {
 				$out[ (string) $key ] = self::sum_entry( Core::arr( $out[ (string) $key ] ?? null ), $stats, $fields );
 			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Union one flush's hashes into a token's set, as `hash => last named`.
+	 *
+	 * The stamp per hash is what lets the set SHRINK: every entry a retention
+	 * window has passed over is dropped, so a URL that has gone quiet stops
+	 * holding a slot and stops being named to a reader that counts it against
+	 * `URL_SEARCH_MAX`. A hash leaves a set when its URL stops being named,
+	 * not when the key dies.
+	 *
+	 * The walk is decided before it runs, because re-reading a set of four
+	 * entry by entry on every flush of every token of every URL is the cost
+	 * the cap is there to bound. A flush that would pass the cap prunes
+	 * outright, and is tested first so it skips the scan; otherwise one pass
+	 * over the stamps says whether the prune has anything to do, stopping at
+	 * the first expired one.
+	 *
+	 * Past the cap the set is the sentinel under its own stamp, and the reader
+	 * folds. A live sentinel is returned UNCHANGED rather than restamped, so
+	 * `flush_writes()` skips the write and the stamp stays the saturation's:
+	 * the first flush naming the word a retention window later prunes it and
+	 * rebuilds the set live-only, and a word nothing names again starts empty
+	 * once `<eln:stats_ttl>` passes the row's last write.
+	 *
+	 * A hash keeps the later of its stored stamp and the one it arrives with,
+	 * so a stamp never shortens a newer one.
+	 *
+	 * @param array<array-key,mixed> $existing The stored set, `hash => ts`.
+	 * @param array<string,int>      $stamped  This flush's, `hash => when its name was written`.
+	 * @param int                    $now      Unix seconds this flush is at.
+	 * @return array<string,int> hash => last named.
+	 */
+	public function merge_token_set( array $existing, array $stamped, int $now ): array {
+		$set    = self::string_keys( $existing );
+		$oldest = $now - $this->max_lifespan;
+		if ( \count( $set ) + \count( $stamped ) > self::URL_SEARCH_MAX || self::holds_expired( $set, $oldest ) ) {
+			$set = \array_filter( $set, static fn ( $seen ): bool => Core::num_int( $seen ) > $oldest );
+		}
+		if ( isset( $set[ self::TOKEN_SATURATED ] ) ) {
+			return [ self::TOKEN_SATURATED => Core::num_int( $set[ self::TOKEN_SATURATED ] ) ];
+		}
+		foreach ( $stamped as $hash => $seen ) {
+			$set[ $hash ] = \max( Core::num_int( $set[ $hash ] ?? 0 ), $seen );
+		}
+		return \count( $set ) > self::URL_SEARCH_MAX
+			? [ self::TOKEN_SATURATED => $now ]
+			: \array_map( static fn ( $seen ): int => Core::num_int( $seen ), $set );
+	}
+
+	/**
+	 * Whether a token set holds a stamp the window has passed over.
+	 *
+	 * The prune's own predicate, asked before the prune: it stops at the
+	 * first expired entry, so a live set costs a walk and no allocation
+	 * where the prune costs both.
+	 *
+	 * @param array<string,mixed> $set    The stored set, `hash => ts`.
+	 * @param int                 $oldest The oldest stamp still live.
+	 */
+	private static function holds_expired( array $set, int $oldest ): bool {
+		foreach ( $set as $seen ) {
+			if ( Core::num_int( $seen ) <= $oldest ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
+	 * int on decode, so a value read back from a Table is `array-key` typed
+	 * even though every namespace stores a string-keyed map; the setters and the
+	 * merge helpers want that guarantee back.
+	 *
+	 * @param array<array-key,mixed> $map Decoded value.
+	 * @return array<string,mixed>
+	 */
+	public static function string_keys( array $map ): array {
+		$out = [];
+		foreach ( $map as $key => $value ) {
+			$out[ (string) $key ] = $value;
 		}
 		return $out;
 	}
@@ -2904,133 +2416,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * The PATH of each URL, by hash — what the search index files. A hash
-	 * whose URL is '' is absent from the map rather than named '': nothing
-	 * named it, so nothing can find it.
-	 *
-	 * @param array<array-key,string> $urls hash => URL. An all-digit hash is
-	 *                                       an INT key, as PHP makes it.
-	 * @return array<string,string> hash => path.
-	 */
-	public static function paths_of( array $urls ): array {
-		$out = [];
-		foreach ( $urls as $hash => $url ) {
-			if ( '' !== $url ) {
-				$out[ (string) $hash ] = self::path_of( $url );
-			}
-		}
-		return $out;
-	}
-
-	/**
-	 * The PATH of a URL: what a search matches, with no scheme or host.
-	 *
-	 * The server is the picker's question, so a term matching the host would
-	 * make one box ask the dropdown's. A URL carrying no scheme is all path,
-	 * which is what a producer with no `SERVER_NAME` writes. The authority
-	 * ends at whichever delimiter comes first, so an authority with no path
-	 * keeps its query on the path.
-	 *
-	 * @param string $url A URL, or a row's path.
-	 */
-	public static function path_of( string $url ): string {
-		$at = \strpos( $url, '://' );
-		if ( false === $at ) {
-			return $url;
-		}
-		$host = $at + 3;
-		return \substr( $url, $host + \strcspn( $url, '/?#', $host ) );
-	}
-
-	/**
-	 * Union one flush's hashes into a token's set, as `hash => last named`.
-	 *
-	 * The stamp per hash is what lets the set SHRINK: every entry a retention
-	 * window has passed over is dropped, so a URL that has gone quiet stops
-	 * holding a slot and stops being named to a reader that counts it against
-	 * `URL_SEARCH_MAX`. A hash leaves a set when its URL stops being named,
-	 * not when the key dies.
-	 *
-	 * The walk is decided before it runs, because re-reading a set of four
-	 * entry by entry on every flush of every token of every URL is the cost
-	 * the cap is there to bound. A flush that would pass the cap prunes
-	 * outright, and is tested first so it skips the scan; otherwise one pass
-	 * over the stamps says whether the prune has anything to do, stopping at
-	 * the first expired one.
-	 *
-	 * Past the cap the set is the sentinel under its own stamp, and the reader
-	 * folds. A live sentinel is returned UNCHANGED rather than restamped, so
-	 * `flush_writes()` skips the write, the key keeps the TTL it had, and the
-	 * token rebuilds live-only when that expires.
-	 *
-	 * A hash keeps the later of its stored stamp and the one it arrives with:
-	 * a name the sweep restores carries its own write time, so its entry ages
-	 * out with the name, and never shortens a newer one.
-	 *
-	 * @param array<array-key,mixed> $existing The stored set, `hash => ts`.
-	 * @param array<string,int>      $stamped  This flush's, `hash => when its name was written`.
-	 * @param int                    $now      Unix seconds this flush is at.
-	 * @return array<string,int> hash => last named.
-	 */
-	public function merge_token_set( array $existing, array $stamped, int $now ): array {
-		$set    = self::string_keys( $existing );
-		$oldest = $now - $this->ttl();
-		if ( \count( $set ) + \count( $stamped ) > self::URL_SEARCH_MAX || self::holds_expired( $set, $oldest ) ) {
-			$set = \array_filter( $set, static fn ( $seen ): bool => Core::num_int( $seen ) > $oldest );
-		}
-		if ( isset( $set[ self::TOKEN_SATURATED ] ) ) {
-			return [ self::TOKEN_SATURATED => Core::num_int( $set[ self::TOKEN_SATURATED ] ) ];
-		}
-		foreach ( $stamped as $hash => $seen ) {
-			$set[ $hash ] = \max( Core::num_int( $set[ $hash ] ?? 0 ), $seen );
-		}
-		return \count( $set ) > self::URL_SEARCH_MAX
-			? [ self::TOKEN_SATURATED => $now ]
-			: \array_map( static fn ( $seen ): int => Core::num_int( $seen ), $set );
-	}
-
-	/**
-	 * Whether a token set holds a stamp the window has passed over.
-	 *
-	 * The prune's own predicate, asked before the prune: it stops at the
-	 * first expired entry, so a live set costs a walk and no allocation
-	 * where the prune costs both.
-	 *
-	 * @param array<string,mixed> $set    The stored set, `hash => ts`.
-	 * @param int                 $oldest The oldest stamp still live.
-	 */
-	private static function holds_expired( array $set, int $oldest ): bool {
-		foreach ( $set as $seen ) {
-			if ( Core::num_int( $seen ) <= $oldest ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/** Retention window, in seconds, for every namespace but `url`. */
-	public function ttl(): int {
-		return $this->max_lifespan;
-	}
-
-	/**
-	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
-	 * int on decode, so a value read back from the cache is `array-key` typed
-	 * even though every namespace stores a string-keyed map; the setters and the
-	 * merge helpers want that guarantee back.
-	 *
-	 * @param array<array-key,mixed> $map Decoded value.
-	 * @return array<string,mixed>
-	 */
-	public static function string_keys( array $map ): array {
-		$out = [];
-		foreach ( $map as $key => $value ) {
-			$out[ (string) $key ] = $value;
-		}
-		return $out;
-	}
-
-	/**
 	 * Whether a name answers a term: every token of the term is a WORD of it,
 	 * or the whole term appears when the term has no token at all.
 	 *
@@ -3073,6 +2458,79 @@ class Stats_Store {
 	}
 
 	/**
+	 * Namespace prefix for one URL's series in one dimension: a key per
+	 * dimension, so `url_breakdown` reads the one it draws.
+	 *
+	 * @param string $url_hash  12-char URL hash.
+	 * @param string $dimension One of the URL dimensions.
+	 * @return array<int,string>
+	 */
+	public static function url_dim_parts( string $url_hash, string $dimension ): array {
+		return [ self::NS_URL_DIM_HOUR, $url_hash, $dimension ];
+	}
+
+	/**
+	 * Namespace prefix for one URL's category series.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @return array<int,string>
+	 */
+	public static function url_cat_parts( string $url_hash ): array {
+		return [ self::NS_URL_CAT_HOUR, $url_hash ];
+	}
+
+	/**
+	 * Namespace prefix for the site-wide request totals.
+	 *
+	 * @return array<int,string>
+	 */
+	public static function hourly_parts(): array {
+		return [ self::NS_HOURLY_HOUR ];
+	}
+
+	/**
+	 * A table-relative key's namespace: its first segment (decision 1).
+	 *
+	 * @param string $key `<ns>:…` — a bare namespace answers itself.
+	 */
+	public static function namespace_of( string $key ): string {
+		return \explode( ':', $key, 2 )[0];
+	}
+
+	/**
+	 * What one stored part costs before its strings, under the serializer a
+	 * stats Table stores with — the one place a cap learns it.
+	 *
+	 * @param string $part An `OVERHEADS` part: `url_row`, `lb_category`,
+	 *                     `lb_entry`, `flame_node` or `hook`.
+	 * @throws \LogicException When no estimate names the part.
+	 */
+	public static function overhead( string $part ): int {
+		return self::OVERHEADS[ Durable_Arm::serializer() ][ $part ] ?? throw new \LogicException( "no size estimate for a stored {$part}" );
+	}
+
+	/**
+	 * The slot a bucket fills in its hour's value: its minute over
+	 * BUCKET_MINUTES, so `buckets_in_hour( $hour )[ slot_of( $bucket ) ]` is
+	 * `$bucket` (decision 35).
+	 *
+	 * @param string $bucket A `Y-m-d-H-i` bucket key.
+	 */
+	public static function slot_of( string $bucket ): int {
+		return \intdiv( (int) \substr( $bucket, 14, 2 ), self::BUCKET_MINUTES );
+	}
+
+	/**
+	 * The name each entry of an index files its server under.
+	 *
+	 * @param array<string,array{0:string,1:int}> $entries server_key => entry.
+	 * @return array<string,string> server_key => name.
+	 */
+	public static function index_names( array $entries ): array {
+		return \array_map( static fn ( array $entry ): string => $entry[ self::SRV_NAME ], $entries );
+	}
+
+	/**
 	 * The index two writes of one key make between them: each server's name
 	 * from `$entries`, and its shards the union of both.
 	 *
@@ -3085,37 +2543,6 @@ class Stats_Store {
 			$into[ $key ] = [ self::SRV_NAME => $name, self::SRV_SHARDS => ( $into[ $key ][ self::SRV_SHARDS ] ?? 0 ) | $shards ];
 		}
 		return $into;
-	}
-
-	/**
-	 * Whether a namespace is DERIVED from something the store already holds.
-	 *
-	 * Membership is the whole fact, and it sits beside `role_for()` because it
-	 * is the same kind of statement about a namespace: each of these is
-	 * re-derivable, so a durable copy would store one thing twice. The coarse
-	 * tiers, every chart's hour twin among them, are re-folded from the
-	 * mirrored fine buckets, the two
-	 * ranked lists and their header records are re-ranked from those rows on
-	 * the next flush, fold or probe,
-	 * and a token set is rewritten whenever its URL is next named. Every other
-	 * namespace is stored — `url` included, which is bounded by a RANK cap
-	 * instead (`Flame_Builder_Node::set_flame_topn()`, 0 until an operator
-	 * raises it).
-	 *
-	 * @api The durable stats mirror, deciding what it keeps and what it reads.
-	 * @param string $ns Namespace, an `NS_*` value.
-	 */
-	public static function is_derived( string $ns ): bool {
-		return \in_array( $ns, self::HOUR_TWIN, true ) || match ( $ns ) {
-			self::NS_URLS_HOUR,
-			self::NS_URLSRV_HOUR,
-			self::NS_URLRANK_S,
-			self::NS_URLRANK_HOUR_S,
-			self::NS_URLHDR,
-			self::NS_URLHDR_HOUR,
-			self::NS_URLTOKEN => true,
-			default           => false,
-		};
 	}
 
 	/**
@@ -3135,18 +2562,9 @@ class Stats_Store {
 		);
 	}
 
-	/** The retention window every TTL here derives from, in seconds. */
+	/** The retention window a reader reads and a token set keeps, in seconds. */
 	public function max_lifespan(): int {
 		return $this->max_lifespan;
-	}
-
-	/**
-	 * Namespace prefix for the site-wide request totals.
-	 *
-	 * @return array<int,string>
-	 */
-	public static function hourly_parts(): array {
-		return [ self::NS_HOURLY ];
 	}
 
 	/**
@@ -3172,11 +2590,6 @@ class Stats_Store {
 	 */
 	public static function dim_cap( string $dimension, int $cap ): int {
 		return self::DIM_SERVER === $dimension ? self::MAX_SERVER_VALUES : $cap;
-	}
-
-	/** Partition this store reads and writes. */
-	public function partition(): int {
-		return $this->partition;
 	}
 
 }

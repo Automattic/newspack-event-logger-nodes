@@ -1,12 +1,10 @@
 /**
  * Aggregate time chart — the Performance dashboard's main time series.
  *
- * Plots the window the reply read (`buildChartSlots`): an hour a point for
- * each whole hour before the current one and five minutes a point inside it,
- * each sum read per five minutes so the two resolutions share one scale. One
- * translucent area per series, overlaid; the chart's own corner toggle
- * stacks them, and the total row appears with the stack. `AreaTimeChart` owns
- * the frame; this file owns the sampling.
+ * Plots the 288 five-minute slots the reply names (`buildChartSlots`), the
+ * last 24 hours. One translucent area per series, overlaid; the chart's own
+ * corner toggle stacks them, and the total row appears with the stack.
+ * `AreaTimeChart` owns the frame; this file owns the sampling.
  *
  * A breakdown dimension is ALWAYS selected — there is no "None" — so the
  * selected dimension's series is the only thing this chart ever draws. It
@@ -18,7 +16,7 @@
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 import {
@@ -33,9 +31,24 @@ import {
  * @type {number}
  */
 const MS_PER_SECOND = 1000;
-import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
+
+/**
+ * Seconds in the hour the title counts the axis in.
+ *
+ * @type {number}
+ */
+const SECONDS_PER_HOUR = 3600;
+import {
+	BUCKET_SECONDS,
+	chartColor,
+} from '@newspack-nodes/shared/hooks/useTimeChart';
 import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
-import { buildChartSlots, perBucket } from './chartSlots';
+import {
+	buildChartSlots,
+	decodeNameTable,
+	DIM_FIELDS,
+	hasRows,
+} from './chartSlots';
 
 /**
  * Total SVG height in pixels, margins included, handed to `AreaTimeChart`.
@@ -96,87 +109,50 @@ const Y_FORMATS = {
 /**
  * Reduce one slot's totals to the plotted value for a metric.
  *
- * @param {string}            metric    'volume' | 'avg' | 'cumulative' | 'memory'.
- * @param {number}            count     Requests in the slot.
- * @param {number}            sumMs     Milliseconds of response time in the slot.
- * @param {number}            sumPeakMb Megabytes of peak memory in the slot.
- * @param {{seconds: number}} slot      The slot, an hour or five minutes.
- * @return {number} Requests per five minutes for `volume`, mean milliseconds
- * for `avg`, summed seconds per five minutes for `cumulative`, mean megabytes
- * for `memory`: a sum reads per bucket, so an hour sits on the buckets'
- * scale. An empty slot averages to 0 rather than dividing by zero.
+ * @param {string}                metric 'volume' | 'avg' | 'cumulative' | 'memory'.
+ * @param {Object<string,number>} row    The slot's `DIM_SUMS`, under `DIM_FIELDS`' names.
+ * @return {number} Requests for `volume`, mean milliseconds of the timed
+ * requests for `avg`, summed seconds for `cumulative`, mean megabytes for
+ * `memory`, each over the slot's five minutes. An empty slot averages to 0
+ * rather than dividing by zero.
  */
-const slotValue = ( metric, count, sumMs, sumPeakMb, slot ) => {
+const slotValue = ( metric, { count, sumMs, sumPeakMb, timed } ) => {
 	if ( 'memory' === metric ) {
 		return count > 0 ? sumPeakMb / count : 0;
 	}
 	if ( 'avg' === metric ) {
-		return count > 0 ? Math.round( sumMs / count ) : 0;
+		return timed > 0 ? Math.round( sumMs / timed ) : 0;
 	}
 	if ( 'cumulative' === metric ) {
-		return perBucket( sumMs / 1000, slot );
+		return sumMs / MS_PER_SECOND;
 	}
-	return perBucket( count, slot );
+	return count;
 };
 
 /**
- * True when a bucketed source carries anything to draw.
+ * Which of the selected dimension's three states its series is in, and the
+ * table decoded to decide it.
  *
- * `CategoryTimeChart` gates on this too, so the two charts agree on what an
- * empty source is.
- *
- * `for…in` rather than `Object.keys().length`: the URL modal re-renders on
- * every scroll event, and a key array per frame is an allocation per frame.
- *
- * @param {Object|null} source Bucket-keyed series, or null.
- * @return {boolean} True when it holds at least one bucket.
- */
-export const hasBuckets = ( source ) => {
-	for ( const key in source ) {
-		if ( Object.hasOwn( source, key ) ) {
-			return true;
-		}
-	}
-	return false;
-};
-
-/**
- * True when a dimensional source carries a value to draw a series for.
- *
- * Buckets alone are not content: a dimension key that merges to an empty map
- * leaves `{ '<bucket>': {} }`, which has a bucket and no series.
- *
- * @param {Object|null} source Bucket key => dimension value => totals, or null.
- * @return {boolean} True when at least one bucket names a dimension value.
- */
-const hasDimValues = ( source ) => {
-	for ( const key in source ) {
-		if ( Object.hasOwn( source, key ) && hasBuckets( source[ key ] ) ) {
-			return true;
-		}
-	}
-	return false;
-};
-
-/**
- * Which of the selected dimension's three states its series is in.
- *
- * The chart and the panel that wraps it both read this, so neither can hold a
- * different opinion about what there is to draw. `pending` and `empty` are
+ * The panel reads the state and hands the chart the table, so the two come
+ * from one decode and cannot hold different opinions about what to draw. `pending` and `empty` are
  * distinct answers with distinct wordings: the server always emits the key for
  * every dimension it was ASKED for, so an absent key means the payload in
  * state predates the dropdown switch, while a present-but-valueless one means
  * the dimension really has nothing in the window. Calling the first "no data"
- * is a lie that flickers.
+ * is a lie that flickers. A reply `decodeNameTable()` refuses is `empty`: it
+ * arrived, and it holds nothing this panel can draw.
  *
- * @param {Object|null} [breakdownData] Bucket key => dimension value => `[ count, sumMs, sumPeakMb ]`, or null.
- * @return {'pending'|'empty'|'series'} What the dimension has.
+ * @param {Object|null} [breakdownData] The name-table series, or null.
+ * @return {{state: 'pending'|'empty'|'series', series: ReturnType<typeof decodeNameTable>}}
+ * What the dimension has, and its decoded table: null while pending, or for a
+ * reply the decoder refuses.
  */
 export function breakdownState( breakdownData = null ) {
 	if ( null === breakdownData || undefined === breakdownData ) {
-		return 'pending';
+		return { state: 'pending', series: null };
 	}
-	return hasDimValues( breakdownData ) ? 'series' : 'empty';
+	const series = decodeNameTable( breakdownData, DIM_FIELDS );
+	return { state: hasRows( series ) ? 'series' : 'empty', series };
 }
 
 /**
@@ -186,59 +162,46 @@ export function breakdownState( breakdownData = null ) {
  * may mount it before the first fetch returns — and must keep the dropdowns up
  * around it, since they are the only way to pick a dimension that does.
  *
- * @param {Object}                                 props                Component props.
- * @param {Object|null}                            props.breakdownData  Bucket key => dimension value => `[ count, sumMs, sumPeakMb ]`.
- * @param {{fine: string[], hours: string[]}|null} props.plan           The read plan the reply named; the axis splits where it did.
- * @param {string}                                 [props.metric]       'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
- * @param {string}                                 [props.breakdown]    Dimension `breakdownData` was fetched for, defaulting to 'status'; picks the palette only.
- * @param {string}                                 [props.serverFilter] Server name for the heading; the caller has already filtered the data.
+ * @param {Object}        props                Component props.
+ * @param {Object|null}   props.series         The dimension's table, as `breakdownState()` decoded it.
+ * @param {string[]|null} props.slots          The bucket keys the reply drew, newest first.
+ * @param {string}        [props.metric]       'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
+ * @param {string}        [props.breakdown]    Dimension `series` was fetched for, defaulting to 'status'; picks the palette only.
+ * @param {string}        [props.serverFilter] Server name for the heading; the caller has already filtered the data.
  * @return {import('react').ReactElement|null} Rendered chart, or null when the dimension has no series.
  */
 export default function AggregateTimeChart( {
-	breakdownData,
-	plan,
+	series,
+	slots,
 	metric = 'volume',
 	breakdown = 'status',
 	serverFilter = '',
 } ) {
 	const chartState = useMemo( () => {
-		const slots = buildChartSlots( plan );
-		if (
-			'series' !== breakdownState( breakdownData ) ||
-			0 === slots.length
-		) {
-			return { series: [], colorMap: {} };
+		const axis = buildChartSlots( slots );
+		if ( ! hasRows( series ) || 0 === axis.length ) {
+			return { lines: [], colorMap: {}, hours: 0 };
 		}
-
-		const valueSet = new Set();
-		Object.values( breakdownData ).forEach( ( bucket ) => {
-			Object.keys( bucket ).forEach( ( v ) => valueSet.add( v ) );
-		} );
-		const dimValues = Array.from( valueSet );
 
 		// Status classes keep their semantic colours; the rest colour by rank.
 		const colorMap = 'status' === breakdown ? STATUS_COLORS : {};
 
-		const series = dimValues.map( ( label ) => ( {
+		const lines = series.names.map( ( label, index ) => ( {
 			label,
-			values: slots.map( ( slot ) => {
-				// DIM_SUMS, positional from the store to here: decision 18.
-				const s = breakdownData[ slot.bucketKey ]?.[ label ] || [];
+			values: axis.map( ( slot ) => {
+				const row = series.byBucket[ slot.bucketKey ]?.[ index ];
 				return {
 					date: slot.date,
-					value: slotValue(
-						metric,
-						s[ 0 ] || 0,
-						s[ 1 ] || 0,
-						s[ 2 ] || 0,
-						slot
-					),
+					value: row ? slotValue( metric, row ) : 0,
 				};
 			} ),
 		} ) );
 
-		return { series, colorMap };
-	}, [ breakdownData, plan, metric, breakdown ] );
+		const hours = Math.round(
+			( axis.length * BUCKET_SECONDS ) / SECONDS_PER_HOUR
+		);
+		return { lines, colorMap, hours };
+	}, [ series, slots, metric, breakdown ] );
 
 	// The unit follows the DOMAIN: the chart builds it from the peak it draws.
 	const yFormatFor = Y_FORMATS[ metric ];
@@ -249,7 +212,7 @@ export default function AggregateTimeChart( {
 	);
 
 	// Guard sits below every hook; hoisting it would break hook order.
-	if ( 0 === chartState.series.length ) {
+	if ( 0 === chartState.lines.length ) {
 		return null;
 	}
 
@@ -277,7 +240,7 @@ export default function AggregateTimeChart( {
 		<AreaTimeChart
 			key={ metric }
 			className="event-logger-aggregate-time-chart"
-			series={ chartState.series }
+			series={ chartState.lines }
 			colorAt={ colorAt }
 			yFormatFor={ yFormatFor }
 			yLabel={ yLabels[ metric ] }
@@ -285,14 +248,16 @@ export default function AggregateTimeChart( {
 			totalLabel={ __( 'Total', 'newspack-event-logger-nodes' ) }
 			title={
 				sprintf(
-					// translators: 1: metric name (e.g. Request Volume), 2: whole hours read before the current one.
-					__(
-						'%1$s (This Hour and the %2$d Before It)',
+					// translators: 1: metric name (e.g. Request Volume), 2: hours the axis spans.
+					_n(
+						'%1$s (Last %2$d Hour)',
+						'%1$s (Last %2$d Hours)',
+						chartState.hours,
 						'newspack-event-logger-nodes'
 					),
 					metricLabels[ metric ] ||
 						__( 'Chart', 'newspack-event-logger-nodes' ),
-					plan?.hours?.length ?? 0
+					chartState.hours
 				) + titleSuffix
 			}
 		/>

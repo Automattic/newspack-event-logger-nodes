@@ -101,8 +101,8 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'verb'    => 'overview',
 			'role'    => Capabilities::READ,
-			'summary' => 'Site-wide request totals and the aggregate time series, over the current clock hour so far and the whole hours before it. Each time-series row carries `span`, the seconds it sums: 3600 for an hour, 300 for a five-minute bucket of the current hour, so compare rows as rates, never as raw counts. Per-URL facts live in performance_urls.',
-			'args'    => [ 'server' => 'Optional server name; scopes the leaderboard and breakdowns, not the site totals.', 'breakdown' => 'Comma-separated dimensions. Each value is the positional triple [ requests, summed ms, summed peak MB ] — sums, never means.' ],
+			'summary' => 'Site-wide request totals over the last 24 hours, the leaderboard and the asked breakdowns. `slots` names the 288 five-minute buckets every series is keyed by, newest first; the totals sum those slots, and `global_avg_ms` divides by the timed requests alone. `global_leaderboard` sums the current hour and the 24 before it, and its `avg_ms` is the timed mean over those same hours, the divisor for its categories. Per-URL facts live in performance_urls.',
+			'args'    => [ 'server' => 'Optional server name; scopes the leaderboard and breakdowns, not the site totals.', 'breakdown' => 'Comma-separated dimensions. Each answers `{ names, buckets }`: per bucket, positional rows [ nameIndex, count, sumMs, sumPeakMb, timed ] — sums, never means. Divide sumMs by timed for an average duration, and sumPeakMb by count for an average peak.' ],
 		],
 		'performance_urls'         => [
 			'node'    => 'performance',

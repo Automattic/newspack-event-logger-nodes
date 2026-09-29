@@ -75,40 +75,43 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant when too old. 2.51.0 is locate_by()/scan_index()
-	// serving a record whose stated cache lifetime is spent — what lets an
-	// evicted `urls_h` rebuild from the fine buckets it derives from, and a
-	// BEHAVIOUR requirement check-substrate-floor.sh cannot see, since it
-	// audits which APIs exist rather than what they do. 2.53.0 is
-	// Capabilities::can() applying the operator's allowed_users list, after
-	// this plugin deleted its own copy of it: below the floor the capability
-	// still resolves and the list narrows nothing, a silent widening no gate
-	// can see. 2.56.0 is Admin::overlay_pages() and the station-tab filter
-	// the current-request tab registers on: below it the station has no
-	// Request tab and every rail's fetch is refused. 2.57.0 is the
-	// /auth reply naming the signing key `secret`, which the bundled auth
-	// client and MCP_Controller read. 2.60.0 is the
-	// shared AreaTimeChart and the chart roles its `ui` sheet paints, which
-	// every dashboard chart draws on. 2.65.12 is lookup_multi() reporting a
-	// failed batch read, without which a stats flush writes its deltas over
-	// the stored buckets — BEHAVIOUR again. 2.65.13 is the SSE stream
+	// @longform Dormant when too old. 2.53.0 is Capabilities::can() applying
+	// the operator's allowed_users list, after this plugin deleted its own
+	// copy of it: below the floor the capability still resolves and the list
+	// narrows nothing, a silent widening no gate can see. 2.56.0 is
+	// Admin::overlay_pages() and the station-tab filter the current-request
+	// tab registers on: below it the station has no Request tab and every
+	// rail's fetch is refused. 2.57.0 is the /auth reply naming the signing
+	// key `secret`, which the bundled auth client and MCP_Controller read.
+	// 2.60.0 is the shared AreaTimeChart and the chart roles its `ui` sheet
+	// paints, which every dashboard chart draws on. 2.65.13 is the SSE stream
 	// addressing replies to the command session the bundled stream client
 	// presents; below it the dashboards' streams receive no replies. 2.66.0
 	// is Fanout_Targets::egress_for(). 2.67.0 is Fanout_Targets::send_signed(),
 	// which mints the discovery probes, and an invalidate_options_cache() that
 	// drops every cached option, which the discovery merge relies on.
-	// 2.68.0 is Table_Node::touch(), which the reprobe checks hour lists with.
 	// 2.69.0 is Command_Interpreter_Node::$around_dispatch, the verb spans.
 	// 2.70.0 is that hook handing the command line the spans' (start) carries.
 	// 2.71.0 is Schema_Reflection::answer_request(), which both builders
 	// answer their requests through, and CLI::worker_id(), which spells a
 	// spawned worker's row; below it each call fatals. It is also
 	// newspack_nodes/worker_identified, naming the worker a spawn became.
+	// 2.73.0 is Table_Client, Bootstrap::mount_table() and the SQLite Table
+	// arm the stats live on; below it the builder and the dashboards fatal.
+	// It is also the TTL and backend arguments flame-builder.tsl gives each
+	// Table, which check-substrate-floor.sh cannot see, since it reads PHP
+	// calls and not topologies. 2.74.0 is Table_Unavailable, the typed
+	// refusal of a Table whose backend cannot open on this host, and the
+	// public Durable_Arm::serializer(), the rule a durable Table stores by.
+	// 2.75.0 is the read-only mount the performance verbs read through: it
+	// lives for the rest of the request, opens only a file its worker wrote,
+	// and refuses a process running as root; below it a dashboard poll
+	// creates the worker's file, and ADR-23 wants the mount removed.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.71.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.75.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
@@ -168,10 +171,6 @@ function newspack_event_logger_nodes_boot(): void {
 	\Newspack_Nodes\Formatters::register(
 		'flame-index',
 		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( ... )
-	);
-	\Newspack_Nodes\Formatters::register(
-		'stats-index',
-		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_stats_index_entry( ... )
 	);
 
 	// The settings-sync value resolver; the substrate owns the writer.

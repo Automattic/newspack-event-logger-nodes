@@ -69,29 +69,17 @@ final class Flame_Tree {
 	/** The flame builder's span ranking a bucket that has closed. */
 	public const STATS_RANK_CLOSE = 'stats rank close';
 
-	/** A flame builder probe pass's point event, as it starts and as it ends. */
+	/**
+	 * The flame builder's point event as its roll-up reads again the hours a
+	 * late write unfolded.
+	 */
 	public const STATS_PROBE = 'stats probe';
-
-	/** The flame builder's span probing the coarse tier in one flush. */
-	public const STATS_PROBE_HOUR = 'stats probe hour';
-
-	/** The flame builder's span probing the fine tier in one flush. */
-	public const STATS_PROBE_FINE = 'stats probe fine';
-
-	/** A key the flame builder's probe re-queued, with what it had lost. */
-	public const STATS_HEAL = 'stats heal';
 
 	/** The flame builder's span folding one hour missing a derived key. */
 	public const STATS_FOLD = 'stats fold';
 
 	/** The flame builder's span re-ranking one stale hour from its rows. */
 	public const STATS_RE_RANK = 'stats re-rank';
-
-	/** The flame builder's span for a checkpoint that wrote to the mirror. */
-	public const STATS_CHECKPOINT = 'stats checkpoint';
-
-	/** The flame builder's span restoring its checkpoint. */
-	public const STATS_RESTORE = 'stats restore';
 
 	/** The flame builder's span for its clean stop. */
 	public const STATS_SWEEP = 'stats sweep';
@@ -116,7 +104,7 @@ final class Flame_Tree {
 	 * spans nest, so they take three unlike steps. The two builders' names
 	 * share steps by what they say — cobalt for a rollup, light cobalt for a
 	 * probe or a checkpoint, emerald for a close or a restore, the warning
-	 * step for a heal, a fold or an operator's purge — and the flame
+	 * step for a fold or an operator's purge — and the flame
 	 * builder's sweep, which runs a flush and so holds every other flush
 	 * span, takes cobalt, which none of them does. None takes Morganite, the
 	 * command span's.
@@ -130,13 +118,8 @@ final class Flame_Tree {
 		self::URL_RANK_LISTS      => [ '#B32D2E', null ],
 		self::STATS_WRITES        => [ '#003DA5', null ],
 		self::STATS_PROBE         => [ '#2055B0', null ],
-		self::STATS_PROBE_HOUR    => [ '#2055B0', 'upkeep' ],
-		self::STATS_PROBE_FINE    => [ '#2055B0', 'upkeep' ],
-		self::STATS_CHECKPOINT    => [ '#2055B0', 'upkeep' ],
 		self::STATS_RANK_CLOSE    => [ '#117644', 'upkeep' ],
-		self::STATS_RESTORE       => [ '#117644', 'upkeep' ],
 		self::STATS_SWEEP         => [ '#003DA5', 'upkeep' ],
-		self::STATS_HEAL          => [ '#BD8600', null ],
 		self::STATS_FOLD          => [ '#BD8600', 'upkeep' ],
 		self::STATS_RE_RANK       => [ '#BD8600', 'upkeep' ],
 		self::REQUESTS_WRITES     => [ '#003DA5', null ],

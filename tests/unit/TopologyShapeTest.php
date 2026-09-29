@@ -37,7 +37,7 @@ class TopologyShapeTest extends TestCase {
 				$this->assertArrayHasKey(
 					$consumer,
 					$snapshots,
-					"$name: consumer '$consumer' feeds stateful node(s) [" . \implode( ', ', $stateful ) . "] but sets no snapshot_node — save_state() never co-commits (state lost on respawn; stats mirror never flushes)"
+					"$name: consumer '$consumer' feeds stateful node(s) [" . \implode( ', ', $stateful ) . "] but sets no snapshot_node — save_state() never co-commits (state lost on respawn)"
 				);
 				$this->assertContains(
 					$snapshots[ $consumer ],
@@ -48,43 +48,7 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
-	/** Every Flame_Builder wires its output partition + the stats mirror, configure_stats BEFORE set_stats_target. */
-	public function test_flame_builder_topologies_wire_the_stats_mirror(): void {
-		foreach ( $this->topology_files() as $path ) {
-			$name = \basename( $path );
-			$topo = $this->parse_topology( $path );
-			foreach ( $this->nodes_of_type( $topo['nodes'], 'Flame_Builder' ) as $fb ) {
-				$this->assertSame( 'Partition', $topo['nodes']['flames:partition'] ?? null, "$name: $fb has no flames:partition" );
-				$this->assertTrue( $this->has_edge( $topo['edges'], $fb, 'flames:partition' ), "$name: $fb not connected to flames:partition" );
-				$this->assertSame( 'Partition', $topo['nodes']['flame-stats:partition'] ?? null, "$name: $fb has no flame-stats:partition (stats mirror durable target)" );
-				$this->assertNotNull(
-					$this->first_cmd_index( $topo['cmds'], 'flame-stats:partition', 'void_warranty' ),
-					"$name: flame-stats:partition takes >4KB mirror writes but has no void_warranty — writes silently dropped at the PIPE_BUF cap"
-				);
-				$this->assertNotNull(
-					$this->first_cmd_index( $topo['cmds'], 'flame-stats:partition', 'with_index' ),
-					"$name: flame-stats:partition has no with_index — a memcache miss cannot locate its mirrored frame, so evicted stats never come back"
-				);
-				$this->assertStringContainsString(
-					'<eln:stats_mirror_lifetime>',
-					$topo['args']['flame-stats:partition'] ?? '',
-					"$name: flame-stats:partition keeps no derived lifetime — the mirror retains frames long past the window restore() can use them in"
-				);
-
-				$configure = $this->first_cmd_index( $topo['cmds'], $fb, 'configure_stats' );
-				$set_target = $this->first_cmd_index( $topo['cmds'], $fb, 'set_stats_target' );
-				$this->assertNotNull( $configure, "$name: $fb missing configure_stats" );
-				$this->assertNotNull( $set_target, "$name: $fb missing set_stats_target" );
-				$this->assertLessThan( $set_target, $configure, "$name: $fb runs set_stats_target before configure_stats — the mirror wires before the store it needs exists" );
-			}
-		}
-	}
-
-	public function test_dashboard_graph_places_the_stats_log_under_flame_builder(): void {
-		\Newspack_Nodes\Core::register_config_namespace(
-			'eln',
-			static fn ( string $key ): ?string => 'stats_mirror_node' === $key ? 'flame-stats:partition' : null
-		);
+	public function test_the_dashboard_graphs_keep_the_request_builders_branches(): void {
 		\Newspack_Nodes\Topology_Registry::reset();
 		\Newspack_Nodes\Topology_Registry::register_plugin(
 			'Newspack_Event_Logger_Nodes\\',
@@ -94,35 +58,14 @@ class TopologyShapeTest extends TestCase {
 			\dirname( __DIR__, 3 ) . '/newspack-nodes/topologies'
 		);
 
-		foreach ( [ 'complete', 'performance', 'flame-builder' ] as $topology ) {
+		foreach ( [ 'complete', 'performance' ] as $topology ) {
 			$edges = \Newspack_Nodes\Topology_Analyzer::graph_for( $topology )['edges'];
-			$this->assertContains(
-				[ 'flame-builder', 'flame-stats:partition' ],
-				$edges,
-				"$topology: flame-stats is not downstream of flame-builder"
-			);
-			if ( 'flame-builder' === $topology ) {
-				continue;
-			}
 			foreach ( [ 'completed:tee', 'errors:partition', 'gyroscope:partition' ] as $target ) {
 				$this->assertContains(
 					[ 'request-builder', $target ],
 					$edges,
 					"$topology: request-builder lost its $target branch"
 				);
-			}
-		}
-	}
-
-	/** set_stats_target is fed the config token, never a hardcoded node name (empty token = disabled). */
-	public function test_set_stats_target_uses_the_config_token(): void {
-		foreach ( $this->topology_files() as $path ) {
-			$name = \basename( $path );
-			$topo = $this->parse_topology( $path );
-			foreach ( $topo['cmds'] as $cmd ) {
-				if ( 'set_stats_target' === $cmd['verb'] ) {
-					$this->assertSame( '<eln:stats_mirror_node>', $cmd['args'][0] ?? null, "$name: set_stats_target must take <eln:stats_mirror_node>, not a hardcoded node" );
-				}
 			}
 		}
 	}
@@ -277,26 +220,19 @@ class TopologyShapeTest extends TestCase {
 	 */
 	public function test_shape_guards_are_not_vacuous(): void {
 		$flame_builders     = 0;
-		$stats_verbs        = 0;
 		$consumers          = 0;
 		$stateful_consumers = 0;
 		foreach ( $this->topology_files() as $path ) {
 			$topo            = $this->parse_topology( $path );
 			$flame_builders += \count( $this->nodes_of_type( $topo['nodes'], 'Flame_Builder' ) );
 			$consumers      += \count( $topo['consumers'] );
-			foreach ( $topo['cmds'] as $cmd ) {
-				if ( 'set_stats_target' === $cmd['verb'] ) {
-					++$stats_verbs;
-				}
-			}
 			foreach ( \array_keys( $topo['consumers'] ) as $consumer ) {
 				if ( ! empty( $this->reachable_stateful( $consumer, $topo['nodes'], $topo['edges'] ) ) ) {
 					++$stateful_consumers;
 				}
 			}
 		}
-		$this->assertGreaterThan( 0, $flame_builders, 'no Flame_Builder nodes — a rename silently disabled the stats-mirror guards' );
-		$this->assertGreaterThan( 0, $stats_verbs, 'no set_stats_target cmds — a rename silently disabled the token guard' );
+		$this->assertGreaterThan( 0, $flame_builders, 'no Flame_Builder nodes — a rename silently disabled the snapshot guard\'s stateful type' );
 		$this->assertGreaterThan( 0, $consumers, 'no Consumer nodes — a rename silently disabled the snapshot guard' );
 		$this->assertGreaterThan( 0, $stateful_consumers, 'no consumer reaches a stateful node — a rewire made the snapshot guard vacuous' );
 		$this->assertTrue( $this->is_stateful_type( 'Flame_Builder' ), 'Flame_Builder no longer resolves as stateful — a stale classmap makes the snapshot guard vacuous' );
@@ -317,11 +253,10 @@ class TopologyShapeTest extends TestCase {
 	 * Parse a .tsl into its structural elements. Comments (`#`), blank lines, and
 	 * directives other than make_node / connect_node / cmd are ignored.
 	 *
-	 * @return array{nodes: array<string,string>, args: array<string,string>, consumers: array<string,string>, edges: list<array{0:string,1:string}>, cmds: list<array{node:string, verb:string, args:list<string>}>}
+	 * @return array{nodes: array<string,string>, consumers: array<string,string>, edges: list<array{0:string,1:string}>, cmds: list<array{node:string, verb:string, args:list<string>}>}
 	 */
 	private function parse_topology( string $path ): array {
 		$nodes     = [];
-		$args      = [];
 		$consumers = [];
 		$edges     = [];
 		$cmds      = [];
@@ -347,7 +282,6 @@ class TopologyShapeTest extends TestCase {
 					$type                = $parts[1];
 					$node_name           = $parts[2];
 					$nodes[ $node_name ] = $type;
-					$args[ $node_name ]  = \implode( ' ', \array_slice( $parts, 3 ) );
 					if ( 'Consumer' === $type ) {
 						// make_node Consumer <name> <logpath> <offsetpath>
 						$consumers[ $node_name ] = $parts[4] ?? '';
@@ -367,7 +301,7 @@ class TopologyShapeTest extends TestCase {
 			}
 		}
 
-		return \compact( 'nodes', 'args', 'consumers', 'edges', 'cmds' );
+		return \compact( 'nodes', 'consumers', 'edges', 'cmds' );
 	}
 
 	/**
@@ -426,16 +360,6 @@ class TopologyShapeTest extends TestCase {
 		return \array_keys( \array_filter( $nodes, static fn( string $t ): bool => $t === $type ) );
 	}
 
-	/** @param list<array{0:string,1:string}> $edges */
-	private function has_edge( array $edges, string $from, string $to ): bool {
-		foreach ( $edges as [ $a, $b ] ) {
-			if ( $a === $from && $b === $to ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
 	/**
 	 * File-order index of the first cmd matching (node, verb), or null.
 	 *
@@ -459,5 +383,20 @@ class TopologyShapeTest extends TestCase {
 			}
 		}
 		return false;
+	}
+
+	/** The three stats Tables resolve per partition from the shipped graph, each on SQLite at its own TTL. */
+	public function test_the_flame_builder_declares_its_stats_tables_on_sqlite(): void {
+		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 5400 ] );
+		$this->activate_shipped( 'performance', 2 );
+		$table = static fn ( int $p, int $ttl ): array => [ 'namespace' => "evlog:p{$p}", 'ttl' => $ttl, 'backend' => 'sqlite' ];
+		$this->assertSame(
+			[
+				'flame-stats:aggregate' => [ $table( 0, 90000 ), $table( 1, 90000 ) ],
+				'flame-stats:url'       => [ $table( 0, 3600 ), $table( 1, 3600 ) ],
+				'flame-stats:url-fine'  => [ $table( 0, 5400 ), $table( 1, 5400 ) ],
+			],
+			\Newspack_Nodes\Bootstrap::node_tables( 'flame-stats:aggregate', 'flame-stats:url', 'flame-stats:url-fine' )
+		);
 	}
 }

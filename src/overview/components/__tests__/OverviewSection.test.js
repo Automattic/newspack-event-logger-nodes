@@ -24,21 +24,23 @@
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { metric, breakdown, serverFilter, data, plan } ) =>
+	default: ( { metric, breakdown, serverFilter, data, slots } ) =>
 		`AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
-		},totals=${ undefined === data ? 'none' : 'given' }] plan:${
-			plan?.fine?.[ 0 ] ?? 'none'
+		},totals=${ undefined === data ? 'none' : 'given' }] slots:${
+			slots?.[ 0 ] ?? 'none'
 		}`,
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { plan } ) => `CATEGORY plan:${ plan?.fine?.[ 0 ] ?? 'none' }`,
+	default: ( { slots } ) => `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`,
 } ) );
 
 import * as React from 'react';
 import OverviewSection from '../OverviewSection';
+import { breakdownState } from '../../AggregateTimeChart';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
+import { nameTable, slotsEndingAt } from '../../../test-helpers/chartWire';
 
 const baseTotals = {
 	urls: 7,
@@ -71,7 +73,7 @@ function mount( overview, overrides = {} ) {
 		chartBreakdown: 'status',
 		setChartBreakdown: jest.fn(),
 		canBreakDownByServer: true,
-		breakdownData: null,
+		breakdownRead: breakdownState( null ),
 		categoryData: null,
 		ask: { active: false, start: jest.fn(), cancel: jest.fn() },
 		...overrides,
@@ -105,13 +107,13 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
-	it( 'hands both charts the plan the overview reply named', () => {
+	it( 'hands both charts the slots the overview reply named', () => {
 		const { container, unmount } = mount( {
-			plan: { fine: [ '2026-09-29-07-05' ], hours: [ '2026-09-29-06' ] },
+			slots: slotsEndingAt( '2026-09-29-14-35' ),
 		} );
-		expect( container.textContent ).toContain( '] plan:2026-09-29-07-05' );
+		expect( container.textContent ).toContain( '] slots:2026-09-29-14-35' );
 		expect( container.textContent ).toContain(
-			'CATEGORY plan:2026-09-29-07-05'
+			'CATEGORY slots:2026-09-29-14-35'
 		);
 		unmount();
 	} );
@@ -270,7 +272,7 @@ describe( 'OverviewSection', () => {
 
 	it.each( [
 		[ 'has not arrived', null ],
-		[ 'arrived with no values', {} ],
+		[ 'arrived with no values', { names: [], buckets: {} } ],
 	] )(
 		'keeps the chart panel up when the dimension %s',
 		( _label, breakdownData ) => {
@@ -278,7 +280,10 @@ describe( 'OverviewSection', () => {
 			// and they are the only way to pick a dimension that draws.
 			const { container, unmount } = mount(
 				{},
-				{ breakdownData, chartBreakdown: 'ua' }
+				{
+					breakdownRead: breakdownState( breakdownData ),
+					chartBreakdown: 'ua',
+				}
 			);
 			expect( container.textContent ).toContain( 'AGGREGATE' );
 			expect( container.textContent ).toContain( 'Breakdown' );
@@ -293,7 +298,7 @@ describe( 'OverviewSection', () => {
 		const { container, unmount } = mount(
 			{},
 			{
-				breakdownData: {},
+				breakdownRead: breakdownState( { names: [], buckets: {} } ),
 				serverFilter: 'edge-01',
 				serverNames: [ 'edge-01', 'edge-02' ],
 			}
@@ -308,9 +313,13 @@ describe( 'OverviewSection', () => {
 		const { container, unmount } = mount(
 			{},
 			{
-				breakdownData: {
-					'2026-08-25-09-15': { 'curl/8.7.1': { c: 313 } },
-				},
+				breakdownRead: breakdownState(
+					nameTable( {
+						'2026-08-25-09-15': {
+							'curl/8.7.1': [ 313, 3130, 3, 313 ],
+						},
+					} )
+				),
 			}
 		);
 		expect( container.textContent ).toContain( 'totals=none' );

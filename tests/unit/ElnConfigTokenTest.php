@@ -4,8 +4,8 @@
  *
  * The substrate resolves `<ns:key>` tokens via per-namespace resolvers
  * (Core::register_config_namespace / resolve_config_token). This plugin
- * registers an `eln` namespace for its app-specific tokens (is_hub,
- * stats_mirror_node) so `<eln:KEY>` resolves to the same value the old
+ * registers an `eln` namespace for its app-specific tokens (is_hub and the
+ * stats Table TTLs) so `<eln:KEY>` resolves to the same value the old
  * merged-config `<config:KEY>` produced. The auto_disable_threshold /
  * auto_protect_time_threshold / significant_events_csv tokens were retired
  * with the seven global settings the per-URL ruleset absorbed (Task 10).
@@ -50,47 +50,6 @@ class ElnConfigTokenTest extends TestCase {
 		// logs_dir is substrate-owned (the `config` namespace), not ELN's —
 		// resolving it through the `eln` namespace yields ''.
 		$this->assertSame( '', Core::resolve_config_token( 'eln', 'logs_dir' ) );
-	}
-
-	// --- stats_mirror_lifetime resolver -------------------------------------
-
-	public function test_stats_mirror_lifetime_outlives_the_stats_window(): void {
-		// A window unlike every default, so a resolver ignoring it still fails.
-		$GLOBALS['_wp_options']['newspack_nodes_min_lifetime'] = 7200;
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->assertSame( '14400', Core::resolve_config_token( 'eln', 'stats_mirror_lifetime' ) );
-	}
-
-	// --- stats_mirror ring geometry -----------------------------------------
-
-	public function test_the_mirror_ring_follows_the_substrate_until_it_is_set(): void {
-		// Unset, each token is the substrate value IN FORCE — not the schema
-		// default — so an install that sets neither is unchanged.
-		$GLOBALS['_wp_options']['newspack_nodes_segment_size'] = 12582912;
-		$GLOBALS['_wp_options']['newspack_nodes_num_segments'] = 5;
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->assertSame( '12582912', Core::resolve_config_token( 'eln', 'stats_mirror_segment_size' ) );
-		$this->assertSame( '5', Core::resolve_config_token( 'eln', 'stats_mirror_num_segments' ) );
-	}
-
-	public function test_the_mirror_ring_is_sized_apart_from_every_other_partition(): void {
-		// `flame-stats` holds every per-URL frame now, so an operator has to be
-		// able to budget for its volume without inflating `requests`, `flames`
-		// and `jobs` by the same factor — which the shared `<config:*>` knobs
-		// forced. Set, the mirror's own value wins and nothing else moves.
-		$GLOBALS['_wp_options']['newspack_nodes_segment_size'] = 12582912;
-		$GLOBALS['_wp_options']['newspack_nodes_num_segments'] = 5;
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_stats_mirror_segment_size'] = 4194304;
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_stats_mirror_num_segments'] = 24;
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->assertSame( '4194304', Core::resolve_config_token( 'eln', 'stats_mirror_segment_size' ) );
-		$this->assertSame( '24', Core::resolve_config_token( 'eln', 'stats_mirror_num_segments' ) );
 	}
 
 	// --- is_hub resolver ----------------------------------------------------
@@ -202,12 +161,6 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '', Core::resolve_config_token( 'eln', 'is_hub', true ) );
 	}
 
-	public function test_stats_mirror_node_ships_pointing_at_the_durable_mirror(): void {
-		// Shipped armed: the mirror is what a memcache miss reads back, and an
-		// empty default would leave every install's stats memcache-only.
-		$this->assertSame( 'flame-stats:partition', Core::resolve_config_token( 'eln', 'stats_mirror_node', true ) );
-	}
-
 	public function test_flame_builder_schema_token_defaults_are_owned(): void {
 		// Every <ns:key> token default in a node schema must be owned by a
 		// registered namespace. A wrong-namespace token (the <config:is_hub>
@@ -242,5 +195,14 @@ class ElnConfigTokenTest extends TestCase {
 		if ( \is_string( $default ) && \preg_match( '/<[a-zA-Z_]\w*:[a-zA-Z_]\w*>/', $default ) ) {
 			$tokens[] = $default;
 		}
+	}
+
+	// --- the stats Tables' TTLs ---------------------------------------------
+
+	public function test_the_stats_table_ttls_derive_from_the_retention_window(): void {
+		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 259200 ] );
+		$this->assertSame( [ '259200', '10800', '7200' ], [ Config::resolve_eln_token( 'stats_ttl' ), Config::resolve_eln_token( 'stats_url_ttl' ), Config::resolve_eln_token( 'stats_url_fine_ttl' ) ] );
+		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 5400 ] );
+		$this->assertSame( [ '90000', '3600', '5400' ], [ Config::resolve_eln_token( 'stats_ttl' ), Config::resolve_eln_token( 'stats_url_ttl' ), Config::resolve_eln_token( 'stats_url_fine_ttl' ) ], 'the aggregate Table outlives the 25 hours a chart reads' );
 	}
 }

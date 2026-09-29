@@ -464,14 +464,9 @@ class FlameTreeTest extends TestCase {
 			Flame_Tree::STATS_WRITES,
 			Flame_Tree::STATS_RANK_CLOSE,
 			Flame_Tree::STATS_PROBE,
-			Flame_Tree::STATS_HEAL,
-			Flame_Tree::STATS_RESTORE,
 			Flame_Tree::STATS_SWEEP,
-			Flame_Tree::STATS_PROBE_HOUR,
-			Flame_Tree::STATS_PROBE_FINE,
 			Flame_Tree::STATS_FOLD,
 			Flame_Tree::STATS_RE_RANK,
-			Flame_Tree::STATS_CHECKPOINT,
 			Flame_Tree::REQUESTS_WRITES,
 			Flame_Tree::REQUESTS_CHECKPOINT,
 			Flame_Tree::REQUESTS_RESTORE,
@@ -485,17 +480,17 @@ class FlameTreeTest extends TestCase {
 		$this->assertCount( 3, \array_unique( $spans ), 'the three spans nest, so no two share a step' );
 		$this->assertNotContains( $palette['6'], $colours, 'Morganite is the command span\'s' );
 		// A stop's sweep runs a flush, so every flush span nests in it.
-		foreach ( [ Flame_Tree::STATS_PROBE_HOUR, Flame_Tree::STATS_PROBE_FINE, Flame_Tree::STATS_FOLD, Flame_Tree::STATS_RE_RANK, Flame_Tree::STATS_RANK_CLOSE ] as $inner ) {
+		foreach ( [ Flame_Tree::STATS_FOLD, Flame_Tree::STATS_RE_RANK, Flame_Tree::STATS_RANK_CLOSE ] as $inner ) {
 			$this->assertNotSame( $colours[ Flame_Tree::STATS_SWEEP ], $colours[ $inner ], $inner );
 		}
 	}
 
 	/** The builders' own upkeep spans — never their point lines, nor a reader's. */
 	public function test_platform_span_kind_names_the_builders_upkeep(): void {
-		foreach ( [ Flame_Tree::STATS_PROBE_HOUR, Flame_Tree::STATS_PROBE_FINE, Flame_Tree::STATS_FOLD . ' (complete)', Flame_Tree::STATS_RE_RANK, Flame_Tree::STATS_RANK_CLOSE, Flame_Tree::STATS_CHECKPOINT, Flame_Tree::STATS_RESTORE, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE ] as $span ) {
+		foreach ( [ Flame_Tree::STATS_FOLD . ' (complete)', Flame_Tree::STATS_RE_RANK, Flame_Tree::STATS_RANK_CLOSE, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE ] as $span ) {
 			$this->assertSame( 'upkeep', Flame_Tree::platform_span_kind( $span ), $span );
 		}
-		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::STATS_PROBE, Flame_Tree::STATS_HEAL, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats folds' ] as $span ) {
+		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::STATS_PROBE, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats folds' ] as $span ) {
 			$this->assertNull( Flame_Tree::platform_span_kind( $span ), $span );
 		}
 	}

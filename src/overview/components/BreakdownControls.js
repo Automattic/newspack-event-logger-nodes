@@ -11,7 +11,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { SelectControl } from '@wordpress/components';
 
 import { CHART_METRIC_OPTIONS } from '../constants';
-import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
+import AggregateTimeChart from '../AggregateTimeChart';
 
 /**
  * Draws a Server select where the caller offers one, then Metric, Breakdown,
@@ -27,13 +27,14 @@ import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
  * Both callers mount it unconditionally, because the selects are the only way
  * out of a dimension with no rows, a read still in flight or a refused reply.
  * The panel says which of those three it has: a Loading pill beside the
- * selects, the refusal and the empty-dimension line under the chart. The state
- * comes from `breakdownState`, which the chart reads too, so the blank frame
- * and the line beneath it cannot disagree.
+ * selects, the refusal and the empty-dimension line under the chart. The
+ * caller's one `breakdownState()` read yields both the state and the table the
+ * chart draws, so the blank frame and the line beneath it cannot disagree, and
+ * a reply the caller already read is never decoded again here.
  *
  * @param {Object}                  props                   Component props.
- * @param {Object|null}             props.breakdownData     Bucket key => dimension value => `[ count, sumMs, sumPeakMb ]` — count, summed ms, summed peak MB — or null before the reply.
- * @param {Object|null}             props.plan              The read plan the reply named, `{ fine, hours }`, which the chart's axis splits on.
+ * @param {Object}                  props.breakdownRead     The caller's `breakdownState()` read of the dimension's reply: `{ state, series }`.
+ * @param {string[]|null}           props.slots             The bucket keys the reply drew, which the chart's axis is.
  * @param {string}                  props.metric            'volume' | 'avg' | 'cumulative' | 'memory'.
  * @param {(value: string) => void} props.setMetric         Metric setter.
  * @param {string}                  props.breakdown         Selected dimension, a value from `breakdownOptions`.
@@ -48,8 +49,8 @@ import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
  * @return {import('react').ReactElement} Rendered panel.
  */
 export default function BreakdownControls( {
-	breakdownData,
-	plan,
+	breakdownRead,
+	slots,
 	metric,
 	setMetric,
 	breakdown,
@@ -63,7 +64,7 @@ export default function BreakdownControls( {
 	note = null,
 } ) {
 	// A refusal is terminal: it is why the dimension never arrived.
-	const state = error ? 'error' : breakdownState( breakdownData );
+	const state = error ? 'error' : breakdownRead.state;
 	const dimension =
 		breakdownOptions.find( ( option ) => option.value === breakdown )
 			?.label ?? breakdown;
@@ -117,8 +118,8 @@ export default function BreakdownControls( {
 				) }
 			</div>
 			<AggregateTimeChart
-				breakdownData={ breakdownData }
-				plan={ plan }
+				series={ breakdownRead.series }
+				slots={ slots }
 				metric={ metric }
 				breakdown={ breakdown }
 				serverFilter={ serverFilter }

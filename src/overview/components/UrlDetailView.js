@@ -52,6 +52,7 @@ import RequestTrace from './RequestTrace';
 import CategoryTimeChart from '../CategoryTimeChart';
 import { ProfileWithCaption } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
+import { breakdownState } from '../AggregateTimeChart';
 import { errorStatus } from '../../components/errorStatus';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
@@ -214,9 +215,14 @@ export default function UrlDetailView( {
 	}, [ filteredRequests, chartMetric ] );
 	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
 	const [ breakdownData, setBreakdownData ] = useState( null );
-	const [ breakdownPlan, setBreakdownPlan ] = useState( null );
+	const [ breakdownSlots, setBreakdownSlots ] = useState( null );
 	const [ breakdownLoading, setBreakdownLoading ] = useState( false );
 	const [ breakdownError, setBreakdownError ] = useState( null );
+	// Once per reply: the modal re-renders on every scroll event.
+	const breakdownRead = useMemo(
+		() => breakdownState( breakdownData ),
+		[ breakdownData ]
+	);
 
 	/**
 	 * `url_breakdown` for one dimension; `onDone` is the chart's only series
@@ -240,7 +246,7 @@ export default function UrlDetailView( {
 		onDone: ( { result, error } ) => {
 			setBreakdownError( error );
 			setBreakdownData( result?.breakdown_time_series ?? null );
-			setBreakdownPlan( result?.plan ?? null );
+			setBreakdownSlots( result?.slots ?? null );
 			setBreakdownLoading( false );
 		},
 	} );
@@ -313,8 +319,8 @@ export default function UrlDetailView( {
 		<div data-ask={ urlHash ? `url:${ urlHash }` : undefined }>
 			{ /* Always mounted: a gate here can strand the operator. */ }
 			<BreakdownControls
-				breakdownData={ breakdownData }
-				plan={ breakdownPlan }
+				breakdownRead={ breakdownRead }
+				slots={ breakdownSlots }
 				metric={ chartMetric }
 				setMetric={ setChartMetric }
 				breakdown={ chartBreakdown }
@@ -326,7 +332,7 @@ export default function UrlDetailView( {
 
 			<CategoryTimeChart
 				data={ urlDetail?.category_time_series }
-				plan={ urlDetail?.plan ?? null }
+				slots={ urlDetail?.slots ?? null }
 			/>
 
 			{ urlDetail.requests?.length > 0 && (

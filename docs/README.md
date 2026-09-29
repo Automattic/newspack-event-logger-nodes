@@ -16,7 +16,7 @@ Three chapters, in reading order.
 
 ## Reference
 
-- [architecture-guide.md](architecture-guide.md): the write path, the per-URL ruleset, every topology, the application nodes, the memcache schema, hub and spoke, configuration, hooks, REST and CLI.
+- [architecture-guide.md](architecture-guide.md): the write path, the per-URL ruleset, every topology, the application nodes, the stats schema, hub and spoke, configuration, hooks, REST and CLI.
 - [architecture-decisions.md](architecture-decisions.md): the decisions the design rests on, each with what it forbids.
 - [security-model.md](security-model.md): what the logger captures, what crosses to the hub, the remote-job rewrite and the tradeoffs the logger chooses; the substrate's [security-model.md](https://github.com/Automattic/newspack-nodes/blob/main/docs/security-model.md) carries the boundaries it enforces.
 - [API.md](API.md): the service-CI verbs, the command endpoint, SSE, MCP, the WP-CLI verbs, the PHP API sibling plugins log through, and the hooks this plugin fires and consumes.

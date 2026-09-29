@@ -191,7 +191,7 @@ class Config {
 	}
 
 	/**
-	 * `<eln:KEY>` topology-token resolver: the owned-key list plus each key's
+	 * `<eln:KEY>` topology-token resolver: each key this plugin owns and its
 	 * derivation. The plugin's `register_config_namespace` call and
 	 * `tests/bootstrap.php` both route through here, so the two resolve alike.
 	 *
@@ -204,65 +204,51 @@ class Config {
 	 * array-valued key must be flattened to a scalar here.
 	 *
 	 * @param string $key Token key after the `eln:` prefix.
-	 * @return mixed Resolved value, or null when `eln` does not own $key or the
-	 *               merged config carries no value for it.
+	 * @return mixed Resolved value, or null when `eln` does not own $key.
 	 */
 	public static function resolve_eln_token( string $key ) {
-		/** @var array<string,bool> $own */
-		static $own = [
-			'is_hub'                    => true,
-			'stats_mirror_node'         => true,
-			'stats_mirror_lifetime'     => true,
-			'stats_mirror_segment_size' => true,
-			'stats_mirror_num_segments' => true,
-		];
-		/**
-		 * The mirror's ring geometry, and the substrate key each falls back to
-		 * when the operator has set no value of its own.
-		 *
-		 * @var array<string,string> $inherits
-		 */
-		static $inherits = [
-			'stats_mirror_segment_size' => 'segment_size',
-			'stats_mirror_num_segments' => 'num_segments',
-		];
-		if ( ! isset( $own[ $key ] ) ) {
-			return null;
-		}
-		if ( 'is_hub' === $key ) {
-			return self::has_hub_topology();
-		}
+		// Derived, never constants: a widened stats window widens each.
+		return match ( $key ) {
+			'is_hub'             => self::has_hub_topology(),
+			'stats_ttl'          => (string) self::stats_ttl(),
+			'stats_url_ttl'      => (string) self::stats_url_ttl(),
+			'stats_url_fine_ttl' => (string) self::stats_url_fine_ttl(),
+			default              => null,
+		};
+	}
 
-		// Derived, never a constant: a widened stats window widens this too.
-		if ( 'stats_mirror_lifetime' === $key ) {
-			return (string) ( 2 * self::stats_retention_seconds() );
-		}
+	/** The fine tier's lifetime: its read window, never past the whole window. */
+	private static function stats_url_fine_ttl(): int {
+		return \min( self::stats_retention_seconds(), Stats_Store::FINE_TTL_SECONDS );
+	}
 
-		// @longform 0 is "follow the substrate", so an install setting neither
-		// gets the value IN FORCE rather than the schema default — the shipped
-		// geometry is unchanged, and only an operator budgeting for the mirror
-		// moves it. Both are illegal values for the knob itself, which is what
-		// makes the sentinel unambiguous.
-		if ( isset( $inherits[ $key ] ) ) {
-			$own_value = Core::num_int( self::value( $key ) );
-			return (string) ( $own_value > 0 ? $own_value : Core::num_int( self::value( $inherits[ $key ] ) ) );
-		}
-
-		return self::load_config()[ $key ] ?? null;
+	/** The per-URL blob's lifetime: a twenty-fourth of the window, floored at an hour. */
+	private static function stats_url_ttl(): int {
+		return \max( Stats_Store::HOUR_SECONDS, \intdiv( self::stats_retention_seconds(), 24 ) );
 	}
 
 	/**
-	 * THE retention window every stats consumer sizes itself by — the memcache
-	 * TTLs and the dashboards' time axis both come from here.
+	 * The aggregate Table's lifetime: the retention window, never under the
+	 * CHART_HOURS a chart reads, so every hour key it draws is still stored
+	 * (decision 35). `min_lifetime` sets substrate log retention too, so the
+	 * charts floor this instead of raising it.
+	 */
+	private static function stats_ttl(): int {
+		return \max( Stats_Store::CHART_HOURS * Stats_Store::HOUR_SECONDS, self::stats_retention_seconds() );
+	}
+
+	/**
+	 * THE retention window every stats consumer sizes itself by — the stats
+	 * Tables' TTLs and the dashboards' time axis both come from here.
 	 *
 	 * It is the substrate's `min_lifetime`, floored: a legal `min_lifetime` of 0
 	 * ("keep nothing extra") is neither a usable TTL nor a drawable axis.
 	 *
 	 * @api
-	 * @return int Retention window in seconds, at least Stats_Store::PREFIX_FLOOR.
+	 * @return int Retention window in seconds, at least Stats_Store::MIN_RETENTION_SECONDS.
 	 */
 	public static function stats_retention_seconds(): int {
-		return \max( Stats_Store::PREFIX_FLOOR, Core::num_int( self::value( 'min_lifetime' ) ) );
+		return \max( Stats_Store::MIN_RETENTION_SECONDS, Core::num_int( self::value( 'min_lifetime' ) ) );
 	}
 
 	/**

@@ -11,21 +11,36 @@
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { metric, breakdown, serverFilter, plan } ) =>
+	default: ( { metric, breakdown, serverFilter, slots, series } ) =>
 		`AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
-		}] plan:${ plan?.fine?.[ 0 ] ?? 'none' }`,
+		}] slots:${ slots?.[ 0 ] ?? 'none' } rows:${ series?.rows ?? 'none' }`,
 } ) );
 
 import * as React from 'react';
 import BreakdownControls from '../BreakdownControls';
+import { breakdownState } from '../../AggregateTimeChart';
+import * as chartSlots from '../../chartSlots';
 import { CHART_BREAKDOWN_OPTIONS } from '../../constants';
 import { renderComponent } from '../../../test-helpers/renderHook';
+import { nameTable, slotsEndingAt } from '../../../test-helpers/chartWire';
 
-function mountBreakdown( overrides = {} ) {
+/**
+ * Mount the panel on the read its caller would take of `breakdownData`.
+ *
+ * @param {Object}      [props]               The panel's props, but for the read.
+ * @param {Object|null} [props.breakdownData] The raw reply the caller reads.
+ * @return {Object} The mounted panel.
+ */
+function mountBreakdown( {
+	breakdownData = nameTable( {
+		'2026-09-29-14-35': { '5xx': [ 7, 70, 3, 7 ] },
+	} ),
+	...overrides
+} = {} ) {
 	return renderComponent(
 		React.createElement( BreakdownControls, {
-			breakdownData: { 1748960000: { '5xx': { c: 7 } } },
+			breakdownRead: breakdownState( breakdownData ),
 			metric: 'memory',
 			setMetric: jest.fn(),
 			breakdown: 'method',
@@ -37,11 +52,65 @@ function mountBreakdown( overrides = {} ) {
 }
 
 describe( 'BreakdownControls', () => {
-	it( 'hands the chart the plan its reply named', () => {
+	it( 'hands the chart the slots its reply named', () => {
 		const { container, unmount } = mountBreakdown( {
-			plan: { fine: [ '2026-09-29-07-05' ], hours: [ '2026-09-29-06' ] },
+			slots: slotsEndingAt( '2026-09-29-14-35' ),
 		} );
-		expect( container.textContent ).toContain( 'plan:2026-09-29-07-05' );
+		expect( container.textContent ).toContain( 'slots:2026-09-29-14-35' );
+		unmount();
+	} );
+
+	it( 'draws from the read it is handed, decoding nothing itself', () => {
+		const read = breakdownState(
+			nameTable( {
+				'2026-09-29-14-35': {
+					'kea-ua/7': [ 41, 820, 3, 41 ],
+					'weka-ua/9': [ 43, 4300, 4, 43 ],
+					'tui-ua/2': [ 37, 370, 2, 37 ],
+				},
+			} )
+		);
+		const decode = jest.spyOn( chartSlots, 'decodeNameTable' );
+		const { container, unmount } = renderComponent(
+			React.createElement( BreakdownControls, {
+				breakdownRead: read,
+				metric: 'volume',
+				setMetric: jest.fn(),
+				breakdown: 'ua',
+				setBreakdown: jest.fn(),
+				breakdownOptions: CHART_BREAKDOWN_OPTIONS,
+			} )
+		);
+		expect( container.textContent ).toContain( 'rows:3' );
+		expect( decode ).not.toHaveBeenCalled();
+		decode.mockRestore();
+		unmount();
+	} );
+
+	it( 'hands the chart the table it decoded, so the reply decodes once', () => {
+		const { container, unmount } = mountBreakdown( {
+			breakdownData: nameTable( {
+				'2026-09-29-14-35': {
+					'kea-ua/7': [ 41, 820, 3, 41 ],
+					'weka-ua/9': [ 43, 4300, 4, 43 ],
+				},
+			} ),
+		} );
+		expect( container.textContent ).toContain( 'rows:2' );
+		unmount();
+	} );
+
+	it( 'says the dimension is empty when its reply is malformed', () => {
+		const { container, unmount } = mountBreakdown( {
+			breakdown: 'ua',
+			breakdownData: {
+				names: [ 'kea-ua/7' ],
+				buckets: { '2026-09-29-14-35': [ [ 3, 41, 820, 3 ] ] },
+			},
+		} );
+		expect( container.textContent ).toContain(
+			'No User Agent data in this window.'
+		);
 		unmount();
 	} );
 
@@ -51,7 +120,7 @@ describe( 'BreakdownControls', () => {
 		// and keep the dropdowns that pick another one.
 		const { container, unmount } = mountBreakdown( {
 			breakdown: 'ua',
-			breakdownData: {},
+			breakdownData: { names: [], buckets: {} },
 		} );
 		expect( container.textContent ).toContain(
 			'No User Agent data in this window.'

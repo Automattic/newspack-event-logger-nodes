@@ -1,10 +1,10 @@
 /**
  * The Performance dashboard's profile-category panel.
  *
- * D3 area charts of profile-category timings across the retention window, from
- * the `category_time_series` payload the `performance` CI merges out of
- * `Stats_Store`'s per-bucket category blobs — site-wide (or per-server) on
- * the overview, per-URL in the URL detail view. `AggregateTimeChart` plots
+ * D3 area charts of profile-category timings over the last 24 hours, from the
+ * `category_time_series` payload the `performance` CI merges out of
+ * `Stats_Store`'s slotted category hours — site-wide (or per-server) on the
+ * overview, per-URL in the URL detail view. `AggregateTimeChart` plots
  * request-level metrics on the same `AreaTimeChart` frame; this one breaks the
  * window down by profile category.
  *
@@ -25,9 +25,13 @@ import { useCallback, useMemo } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 import { compactFixed } from '@newspack-nodes/shared/utils/formatters';
-import { hasBuckets } from './AggregateTimeChart';
 import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
-import { buildChartSlots } from './chartSlots';
+import {
+	buildChartSlots,
+	CAT_FIELDS,
+	decodeNameTable,
+	hasRows,
+} from './chartSlots';
 
 /**
  * Height of one chart frame, in pixels. Three of them stack in one panel, so
@@ -116,51 +120,36 @@ const formatYValue = ( val, mode ) => {
  *
  * Every series gets a point in every slot, zero where the bucket holds nothing,
  * because `AreaTimeChart` takes its x-domain from the first series alone and
- * reads the rest by that index. A slot is an hour for each whole hour the
- * reply read and five minutes inside the current one (`buildChartSlots()`);
- * both rates divide by the seconds the slot spans, so the two resolutions
- * share one scale.
+ * reads the rest by that index. A slot is five minutes of the 288 the reply
+ * drew (`buildChartSlots()`), and both rates divide by the seconds it spans.
  *
- * @param {Object}                                             data  Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`.
- * @param {string}                                             mode  One of 'time', 'count', or 'average'.
- * @param {Array<{date:Date,bucketKey:string,seconds:number}>} slots The axis, from the reply's plan.
+ * @param {{names: string[], byBucket: Object}}                decoded The category series, through `decodeNameTable()`.
+ * @param {string}                                             mode    One of 'time', 'count', or 'average'.
+ * @param {Array<{date:Date,bucketKey:string,seconds:number}>} axis    The axis, from the reply's slots.
  * @return {Array<{label:string,values:Array<{date:Date,value:number}>}>} Series in rank order.
  */
-const buildSeries = ( data, mode, slots ) => {
-	const names = data?.names ?? [];
-	const buckets = data?.buckets ?? {};
-	// Positional row: [ nameIndex, t, c, n ] — named only here.
+const buildSeries = ( { names, byBucket }, mode, axis ) => {
 	const totals = {};
-	Object.values( buckets ).forEach( ( rows ) => {
-		rows.forEach( ( [ index, t, c ] ) => {
-			if ( 'total' === names[ index ] ) {
-				return;
+	Object.values( byBucket ).forEach( ( row ) => {
+		Object.entries( row ).forEach( ( [ index, { t, c } ] ) => {
+			if ( 'total' !== names[ index ] ) {
+				totals[ index ] =
+					( totals[ index ] || 0 ) + ( mode === 'count' ? c : t );
 			}
-			const val = mode === 'count' ? c || 0 : t || 0;
-			totals[ index ] = ( totals[ index ] || 0 ) + val;
 		} );
 	} );
 	const ranked = Object.keys( totals ).sort(
 		( a, b ) => totals[ b ] - totals[ a ]
 	);
-	// One lookup per bucket, built once, rather than a scan per slot per band.
-	const byBucket = {};
-	Object.entries( buckets ).forEach( ( [ key, rows ] ) => {
-		const row = {};
-		rows.forEach( ( [ index, t, c ] ) => {
-			row[ index ] = [ t, c ];
-		} );
-		byBucket[ key ] = row;
-	} );
 
 	return ranked.map( ( index ) => ( {
 		label: names[ index ],
-		values: slots.map( ( slot ) => {
+		values: axis.map( ( slot ) => {
 			const stats = byBucket[ slot.bucketKey ]?.[ index ];
 			if ( ! stats ) {
 				return { date: slot.date, value: 0 };
 			}
-			const [ t, c ] = stats;
+			const { t, c } = stats;
 			let value;
 			if ( mode === 'average' ) {
 				value = c > 0 ? t / c : 0;
@@ -177,23 +166,28 @@ const buildSeries = ( data, mode, slots ) => {
 /**
  * Category time charts — one per view over the same category series.
  *
- * The three memos buy identity, not arithmetic: `AreaTimeChart` redraws
- * whenever `series`, `yFormatFor` or `colorAt` changes, and the URL modal
- * re-renders on every scroll event.
+ * The URL modal re-renders on every scroll event, so the memos decode the
+ * reply once per reply rather than once per frame, and hold `series`,
+ * `yFormatFor` and `colorAt` still, since `AreaTimeChart` redraws whenever
+ * one of them changes.
  *
- * @param {Object}                                 props      Component props.
- * @param {Object|null}                            props.data Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
- * @param {{fine: string[], hours: string[]}|null} props.plan The read plan the reply named; the axis splits where it did.
+ * @param {Object}        props       Component props.
+ * @param {Object|null}   props.data  Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
+ * @param {string[]|null} props.slots The bucket keys the reply drew, newest first.
  * @return {import('react').ReactElement[]|null} One chart per view, or null when data is empty.
  */
-export default function CategoryTimeChart( { data, plan } ) {
-	const slots = useMemo( () => buildChartSlots( plan ), [ plan ] );
+export default function CategoryTimeChart( { data, slots } ) {
+	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
+	const decoded = useMemo(
+		() => decodeNameTable( data, CAT_FIELDS ),
+		[ data ]
+	);
 	const series = useMemo(
 		() =>
 			CATEGORY_VIEWS.map( ( { mode } ) =>
-				data ? buildSeries( data, mode, slots ) : []
+				decoded ? buildSeries( decoded, mode, axis ) : []
 			),
-		[ data, slots ]
+		[ decoded, axis ]
 	);
 
 	// Each mode's unit is fixed, so the peak the chart draws changes nothing.
@@ -211,8 +205,8 @@ export default function CategoryTimeChart( { data, plan } ) {
 	// Colour by rank through the skin's own tokens.
 	const colorAt = useCallback( ( _label, index ) => chartColor( index ), [] );
 
-	// Emptiness asks about the BUCKETS, and below every hook: order matters.
-	if ( ! hasBuckets( data?.buckets ) || 0 === slots.length ) {
+	// Emptiness asks about the ROWS, and below every hook: order matters.
+	if ( ! hasRows( decoded ) || 0 === axis.length ) {
 		return null;
 	}
 

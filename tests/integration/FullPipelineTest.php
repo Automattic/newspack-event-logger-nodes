@@ -14,7 +14,6 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Tee_Node;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
-use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use Newspack_Nodes\Topic_Node;
 
 /**
@@ -93,8 +92,7 @@ class FullPipelineTest extends TestCase {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
 
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->name( 'flame-builder' );
 		$fb->set_stats_store( $store );

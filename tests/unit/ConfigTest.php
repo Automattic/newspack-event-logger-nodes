@@ -137,15 +137,16 @@ class ConfigTest extends TestCase {
 		$this->assertSame( 5711, Config::stats_retention_seconds() );
 	}
 
-	public function test_stats_retention_seconds_floors_at_the_stats_prefix_floor(): void {
+	public function test_stats_retention_seconds_floors_at_the_shortest_window(): void {
 		// A legal `min_lifetime` of 0 means "keep nothing extra", which is
-		// neither a usable memcache TTL nor a drawable time axis.
+		// neither a usable Table TTL nor a drawable time axis.
 		$override_path = $this->temp_dir . '/retention-97.php';
 		\file_put_contents( $override_path, "<?php return [ 'min_lifetime' => 97 ];\n" );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
 		Config::reset();
 
-		$this->assertSame( \Newspack_Event_Logger_Nodes\Stats_Store::PREFIX_FLOOR, Config::stats_retention_seconds() );
+		$this->assertSame( 3600, \Newspack_Event_Logger_Nodes\Stats_Store::MIN_RETENTION_SECONDS );
+		$this->assertSame( \Newspack_Event_Logger_Nodes\Stats_Store::MIN_RETENTION_SECONDS, Config::stats_retention_seconds() );
 	}
 
 	/**

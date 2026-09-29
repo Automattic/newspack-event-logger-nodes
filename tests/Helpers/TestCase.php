@@ -2,7 +2,10 @@
 namespace Newspack_Event_Logger_Nodes\Tests;
 
 use Newspack_Nodes\Tests\TestCase as RuntimeTestCase;
+use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\Stats_Asker_Node;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 
 abstract class TestCase extends RuntimeTestCase {
 
@@ -19,6 +22,9 @@ abstract class TestCase extends RuntimeTestCase {
 	 * delete. `ConfigParityTest` pins both halves.
 	 */
 	protected const TEST_DIR = '/tmp/newspack-event-logger-nodes-test-logging';
+
+	/** @var array<string,true> Directories a harness stats Table file was opened in. */
+	private array $stats_table_dirs = [];
 
 	/**
 	 * The server the URL seed helpers file rows under when a test names none:
@@ -37,36 +43,16 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * A memcached double that records every key a batch read asks for, so a
-	 * test can say which keys a reader reached for rather than how many
-	 * round trips it took.
+	 * The URL-index keys a test's askers asked of `$ns`, as
+	 * `{server_key}:{shard}:{key}`, sorted, one per ask.
 	 *
-	 * @return \Newspack_Nodes\Tests\Helpers\InMemoryMemcached&object{asked: list<string>}
-	 */
-	protected static function asking_memcached(): \Newspack_Nodes\Tests\Helpers\InMemoryMemcached {
-		return new class() extends \Newspack_Nodes\Tests\Helpers\InMemoryMemcached {
-			/** @var list<string> */
-			public array $asked = [];
-
-			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
-				\array_push( $this->asked, ...\array_map( 'strval', $keys ) );
-				return parent::getMulti( $keys, $get_flags );
-			}
-		};
-	}
-
-	/**
-	 * The URL-index keys among `$asked`, as `{server_key}:{shard}:{key}`,
-	 * sorted, one per ask.
-	 *
-	 * @param list<string> $asked Full cache keys, as `asking_memcached()` records them.
-	 * @param string       $ns    `Stats_Store::NS_URLS` or `NS_URLS_HOUR`.
+	 * @param string $ns `Stats_Store::NS_URLS` or `NS_URLS_HOUR`.
 	 * @return list<string>
 	 */
-	protected static function asked_url_keys( array $asked, string $ns = Stats_Store::NS_URLS ): array {
+	protected function asked_url_keys( string $ns = Stats_Store::NS_URLS ): array {
 		$out = [];
-		foreach ( $asked as $key ) {
-			if ( 1 === \preg_match( '/:' . \preg_quote( $ns, '/' ) . ':([0-9a-f]{8}:w?[0-9a-f]:[0-9-]+)$/', $key, $m ) ) {
+		foreach ( $this->asked_keys( $ns ) as $key ) {
+			if ( 1 === \preg_match( '/^' . \preg_quote( $ns, '/' ) . ':([0-9a-f]{8}:w?[0-9a-f]:[0-9-]+)$/', $key, $m ) ) {
 				$out[] = $m[1];
 			}
 		}
@@ -82,29 +68,6 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param list<string> $shards  Shard tokens each wrote.
 	 * @return array<string,array{0:string,1:int}>
 	 */
-	/**
-	 * A cache whose batch reads fail, as memcache does when it is down,
-	 * while `$failing` is set and a read asks a key carrying `$needle`.
-	 *
-	 * @param string $needle What a failing read's key carries, e.g. `:urlsrv:`.
-	 */
-	protected static function unanswering_memd( string $needle ): \Newspack_Nodes\Tests\Helpers\InMemoryMemcached {
-		$memd         = new class() extends \Newspack_Nodes\Tests\Helpers\InMemoryMemcached {
-			public string $needle  = '';
-			public bool $failing   = false;
-			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
-				foreach ( $this->failing ? $keys : [] as $key ) {
-					if ( \str_contains( (string) $key, $this->needle ) ) {
-						return false;
-					}
-				}
-				return parent::getMulti( $keys, $get_flags );
-			}
-		};
-		$memd->needle = $needle;
-		return $memd;
-	}
-
 	protected static function index_of( array $servers, array $shards = [] ): array {
 		$out = [];
 		foreach ( $servers as $server ) {
@@ -226,8 +189,11 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function setUp(): void {
 		parent::setUp();
-		// Each test's own handle decides the serializer its estimates assume.
-		\Newspack_Event_Logger_Nodes\Stats_Store::$serializer = null;
+		// The harness registers no RESET_ACTION listener, so drop ELN's memo here.
+		\Newspack_Event_Logger_Nodes\Config::reset_local_cache();
+		// A loaded topology's Tables open their files under the base, as the
+		// harness's do; resolved now, while the test's config still reads.
+		$this->stats_table_dirs[ \Newspack_Nodes\Bootstrap::base_dir() . '/tables' ] = true;
 		\Newspack_Nodes\Topology_Registry::register_plugin(
 			'Newspack_Event_Logger_Nodes\\',
 			NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
@@ -344,6 +310,10 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function tearDown(): void {
 		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
+		foreach ( \array_keys( $this->stats_table_dirs ) as $dir ) {
+			$this->rmdir_recursive( $dir );
+		}
+		$this->stats_table_dirs = [];
 		parent::tearDown();
 	}
 
@@ -416,6 +386,283 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Activate one SHIPPED topology, alone, across `$num_partitions` workers,
+	 * so a test reads the graph the release carries and a renamed node fails
+	 * it. ELN's own dir resolves first, the substrate's behind it for
+	 * `include topic-probe`.
+	 *
+	 * @param string $name           Topology name, as its `.tsl` file is named.
+	 * @param int    $num_partitions Worker count the catalog entry declares.
+	 */
+	protected function activate_shipped( string $name, int $num_partitions ): void {
+		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
+		\Newspack_Nodes\Topology_Registry::register_stock_dir( \dirname( __DIR__, 2 ) . '/topologies' );
+		\Newspack_Nodes\Topology_Registry::register_builtin_dir( \dirname( __DIR__, 3 ) . '/newspack-nodes/topologies' );
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ) use ( $name, $num_partitions ): array {
+				$topologies[ $name ] = [ 'topology' => $name, 'num_partitions' => $num_partitions, 'stale_timeout' => 60 ];
+				return $topologies;
+			}
+		);
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ $name ];
+		\Newspack_Event_Logger_Nodes\Config::reset();
+	}
+
+	/**
+	 * A Stats_Store over this test's SQLite stats Tables, as the flame builder
+	 * holds its own: each Table declared by an active topology, resolved
+	 * through `Bootstrap::node_tables()`, written by a Table node in this
+	 * process and asked by message. With no topology declaring partition
+	 * `$partition`, the shipped `flame-builder` is activated to declare it.
+	 *
+	 * The store asks through `$asker`'s own client, as `configure_stats`
+	 * wires one: the builder is named when it has no name and sunk into the
+	 * request graph when it has no sink, so its replies reach its `fill()`.
+	 * Without one, every store of a test shares the harness asker, rebuilt
+	 * when a registry reset dropped it.
+	 *
+	 * @param int                     $partition    Flame-builder partition.
+	 * @param int                     $max_lifespan Retention window, in seconds.
+	 * @param Flame_Builder_Node|null $asker        The builder asking, or the harness.
+	 */
+	protected function stats_store( int $partition = 0, int $max_lifespan = 86400, ?Flame_Builder_Node $asker = null ): Stats_Store {
+		return new Stats_Store( ...$this->stats_store_args( $partition, $max_lifespan, $asker ) );
+	}
+
+	/**
+	 * Every serializer a size estimate is kept for, one data set each.
+	 *
+	 * @return array<string,array{0: string}>
+	 */
+	public static function serializers(): array {
+		return [
+			'php'      => [ Stats_Store::SERIALIZER_PHP ],
+			'igbinary' => [ Stats_Store::SERIALIZER_IGBINARY ],
+		];
+	}
+
+	/**
+	 * Install a fresh in-memory handle configured with `$serializer`, the one
+	 * every size estimate then assumes; igbinary skips where it is not loaded.
+	 *
+	 * @param string $serializer A `Stats_Store::SERIALIZER_*` value.
+	 */
+	public static function estimate_for( string $serializer ): void {
+		if ( Stats_Store::SERIALIZER_IGBINARY === $serializer && ! \function_exists( 'igbinary_serialize' ) ) {
+			self::markTestSkipped( 'igbinary is not loaded' );
+		}
+		\Newspack_Nodes\Core::$memd = new \Newspack_Nodes\Tests\Helpers\InMemoryMemcached();
+		\Newspack_Nodes\Core::$memd->setOption( \Memcached::OPT_SERIALIZER, Stats_Store::SERIALIZER_IGBINARY === $serializer ? \Memcached::SERIALIZER_IGBINARY : \Memcached::SERIALIZER_PHP );
+	}
+
+	/**
+	 * `stats_store()`'s constructor arguments, for a test that subclasses
+	 * Stats_Store to watch or bend one call.
+	 *
+	 * @return array{0: int, 1: \Newspack_Nodes\Table_Client, 2: array<string,string>}
+	 */
+	protected function stats_store_args( int $partition = 0, int $max_lifespan = 86400, ?Flame_Builder_Node $asker = null ): array {
+		$names = [];
+		// Every declared partition's worker has run, or a reader cannot mount.
+		foreach ( $this->stats_table_specs( $partition ) as $table => $partitions ) {
+			foreach ( $partitions as $p => $spec ) {
+				$writer = $this->stats_table_writer( $table, $p, $spec );
+				if ( $p === $partition ) {
+					$names[ $table ] = $writer;
+				}
+			}
+		}
+		if ( null === $asker ) {
+			return [ $max_lifespan, $this->stats_asker()->client, $names ];
+		}
+		if ( '' === $asker->name() ) {
+			$asker->name( 'flame-builder-' . \spl_object_id( $asker ) );
+		}
+		if ( null === $asker->sink() ) {
+			$asker->sink( VerbHarness::ask_recorder() );
+		}
+		// The builder's own asker, as `configure_stats` hands it to its store.
+		return [ $max_lifespan, ( new \ReflectionProperty( $asker, 'client' ) )->getValue( $asker ), $names ];
+	}
+
+	/** The harness asker, sinking through the request graph's recorder. */
+	private function stats_asker(): Stats_Asker_Node {
+		$asker = \Newspack_Nodes\Core::node( 'stats-asker' );
+		if ( $asker instanceof Stats_Asker_Node ) {
+			return $asker;
+		}
+		$asker = new Stats_Asker_Node();
+		$asker->name( 'stats-asker' );
+		$asker->sink( VerbHarness::ask_recorder() );
+		return $asker;
+	}
+
+	/**
+	 * Each stats Table's partitions, as the active topologies declare them,
+	 * `$partition` among them.
+	 *
+	 * @return array<string,array<int,array{namespace: string, ttl: int, backend: string}>>
+	 * @throws \LogicException When an active topology declares the Tables without that partition.
+	 */
+	private function stats_table_specs( int $partition ): array {
+		$declared = \Newspack_Nodes\Bootstrap::node_tables( ...Stats_Store::TABLES );
+		if ( ! isset( $declared[ Stats_Store::TABLE_AGGREGATE ][ $partition ] ) ) {
+			$active = $GLOBALS['_wp_options']['newspack_nodes_topologies'] ?? [];
+			if ( [] !== $active && [ 'flame-builder' ] !== $active ) {
+				throw new \LogicException( "the active topologies declare no partition {$partition} of the stats Tables" );
+			}
+			$this->activate_shipped( 'flame-builder', $partition + 1 );
+			$declared = \Newspack_Nodes\Bootstrap::node_tables( ...Stats_Store::TABLES );
+		}
+		return $declared;
+	}
+
+	/**
+	 * The Table node writing one partition of a stats Table: opened under the
+	 * declared name with `<partition>` bound, as a worker opens it, then
+	 * renamed so one process can hold several partitions' writers and a
+	 * reader's mount of the same file keeps its own name.
+	 *
+	 * @param array{namespace: string, ttl: int, backend: string} $spec The resolved declaration.
+	 * @return string The writer's node name.
+	 */
+	private function stats_table_writer( string $table, int $partition, array $spec ): string {
+		$name = self::stats_writer( $table, $partition );
+		if ( \Newspack_Nodes\Core::node( $name ) instanceof \Newspack_Nodes\Table_Node ) {
+			return $name;
+		}
+		$bound = \array_key_exists( 'partition', \Newspack_Nodes\Core::$var ) ? [ \Newspack_Nodes\Core::$var['partition'] ] : [];
+		\Newspack_Nodes\Core::$var['partition'] = (string) $partition;
+		$writer = new \Newspack_Nodes\Table_Node();
+		try {
+			$writer->name( $table );
+			$writer->arguments( [ $spec['namespace'], (string) $spec['ttl'], $spec['backend'] ] );
+		} catch ( \Throwable $e ) {
+			$writer->remove_node();
+			throw $e;
+		} finally {
+			unset( \Newspack_Nodes\Core::$var['partition'] );
+			if ( [] !== $bound ) {
+				\Newspack_Nodes\Core::$var['partition'] = $bound[0];
+			}
+		}
+		$writer->name( $name );
+		$writer->sink( VerbHarness::request_graph() );
+		$this->stats_table_dirs[ \dirname( \Newspack_Nodes\Table_Node::file( $table, $partition ) ) ] = true;
+		return $name;
+	}
+
+	/** The node a harness store writes one partition of a stats Table through. */
+	protected static function stats_writer( string $table, int $partition ): string {
+		return \Newspack_Nodes\Table_Node::stem( $table, $partition ) . '.writer';
+	}
+
+	/**
+	 * Break one partition of a stats Table so every read and write of it
+	 * fails, until `mend_stats_table()`: the SQLite analogue of a memcached
+	 * that does not answer.
+	 */
+	protected function break_stats_table( string $table, int $partition = 0 ): void {
+		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( $table, $partition ) ) )->exec( 'ALTER TABLE kv RENAME TO kv_broken' );
+	}
+
+	/** Undo `break_stats_table()`, rows intact. */
+	protected function mend_stats_table( string $table, int $partition = 0 ): void {
+		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( $table, $partition ) ) )->exec( 'ALTER TABLE kv_broken RENAME TO kv' );
+	}
+
+	/**
+	 * What one partition of a stats Table holds under `$key`, read through a
+	 * reader's mount of its file: where a write landed, not what the writer
+	 * remembers.
+	 */
+	protected function stats_table_value( string $table, int $partition, string $key ): mixed {
+		$stem = \Newspack_Nodes\Bootstrap::mount_table( [ $table ] )[ $table ][ $partition ];
+		$node = \Newspack_Nodes\Core::node( $stem );
+		self::assertInstanceOf( \Newspack_Nodes\Table_Node::class, $node );
+		return $node->lookup( $key );
+	}
+
+	/**
+	 * Every key a test's askers — its stores and the CI under test — asked of
+	 * one namespace, in order, parsed off the recorded `MGET` requests.
+	 *
+	 * @param string $ns An `NS_*` namespace; '' takes every key.
+	 * @param string $to Only the requests sent TO this node; '' takes every one.
+	 * @return list<string>
+	 */
+	protected function asked_keys( string $ns = '', string $to = '' ): array {
+		$out = [];
+		foreach ( $this->stats_mgets( $to ) as $keys ) {
+			foreach ( $keys as $key ) {
+				if ( '' === $ns || \str_starts_with( $key, "{$ns}:" ) ) {
+					$out[] = $key;
+				}
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * The `MGET` requests that asked a key of any of `$namespaces`, one list
+	 * each of the keys it asked of them.
+	 *
+	 * @param string ...$namespaces `NS_*` namespaces.
+	 * @return list<list<string>>
+	 */
+	protected function asked_batches( string ...$namespaces ): array {
+		$out = [];
+		foreach ( $this->stats_mgets() as $keys ) {
+			$of = \array_values( \array_filter( $keys, static fn ( string $key ): bool => \in_array( Stats_Store::namespace_of( $key ), $namespaces, true ) ) );
+			if ( [] !== $of ) {
+				$out[] = $of;
+			}
+		}
+		return $out;
+	}
+
+	/** How many `MGET` requests a test's askers sent: a read's round trips, one per Table asked. */
+	protected function stats_reads(): int {
+		return \count( $this->stats_mgets() );
+	}
+
+	/** Forget every request the harness recorded, so a test counts from here. */
+	protected function forget_stats_asks(): void {
+		VerbHarness::ask_recorder()->asked = [];
+	}
+
+	/**
+	 * Answer every `MGET` asking a key that carries `$needle` (matched
+	 * against `:{key}`) with a read failure, as a Table that did not answer
+	 * the batch would; '' answers every one again.
+	 */
+	protected function refuse_stats_reads( string $needle ): void {
+		VerbHarness::ask_recorder()->refuse = $needle;
+	}
+
+	/**
+	 * The keys of each recorded `MGET`, one list per request.
+	 *
+	 * @param string $to Only the requests sent TO this node; '' takes every one.
+	 * @return list<list<string>>
+	 */
+	private function stats_mgets( string $to = '' ): array {
+		$out = [];
+		foreach ( VerbHarness::ask_recorder()->asked as $asked ) {
+			$value = $asked['value'];
+			if ( '' !== $to && $to !== $asked['to'] ) {
+				continue;
+			}
+			$words = \is_string( $value ) ? ( \preg_split( '/\s+/', \trim( $value ), -1, \PREG_SPLIT_NO_EMPTY ) ?: [] ) : [];
+			if ( 'MGET' === \array_shift( $words ) ) {
+				$out[] = $words;
+			}
+		}
+		return $out;
+	}
+
+	/**
 	 * Count the topology-catalog reads from here on. `newspack_nodes/topologies`
 	 * fires once per catalog read, which no memo spares, so the count is the
 	 * store builds and mirror resolutions a path pays.
@@ -446,15 +693,6 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected static function scoped( string $logical ): string {
 		return \Newspack_Nodes\Cache_Backend::site_key( $logical );
-	}
-
-	/**
-	 * The MEMCACHE key a stats entry sits under, scoped through the Table.
-	 * Distinct from `Stats_Store::entry_key()`, the durable key, which carries
-	 * no scope: a test evicting a row from memcache spells the cache key here.
-	 */
-	protected static function cache_key( int $partition, string $key ): string {
-		return \Newspack_Nodes\Table_Node::entry_key( \Newspack_Event_Logger_Nodes\Stats_Store::namespace_for( $partition ), $key );
 	}
 
 	/**
@@ -698,7 +936,7 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( $by_server as $server => $rows ) {
 			foreach ( $rows as $hash => $row ) {
 				$row         = \Newspack_Nodes\Core::arr( $row );
-				$row['path'] = \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( [ $hash => \Newspack_Nodes\Core::str( $row['url'] ?? '' ) ] )[ (string) $hash ] ?? '';
+				$row['path'] = \Newspack_Event_Logger_Nodes\Stats_Store::path_of( \Newspack_Nodes\Core::str( $row['url'] ?? '' ) );
 				unset( $row['url'] );
 				$servers[ $server ][ $hash ] = self::positional_url_row( $row );
 			}
@@ -716,12 +954,10 @@ abstract class TestCase extends RuntimeTestCase {
 		return $ok;
 	}
 
-	// ── Stats_Store named bucket access ─────────────────────────────────────
+	// ── Stats_Store one key at a time ───────────────────────────────────────
 	//
-	// The per-namespace accessors the flush used to own. Batching its writes
-	// left them with no production caller, so they live here, where their 160
-	// call sites already are — named and readable for a test, over the parts
-	// the batch pair takes.
+	// Production reads and writes in batches; a test seeds or reads one key,
+	// over the parts the batch pair takes.
 
 	/**
 	 * Overwrite one shard's rows for one coarse hour.
@@ -745,24 +981,9 @@ abstract class TestCase extends RuntimeTestCase {
 		return $store->bucket_set_multi( [ [ [ Stats_Store::NS_URL ], $url_hash, $data ] ] )[0];
 	}
 
-	/** @param array<string,mixed> $data */
-	protected function set_hourly_bucket( Stats_Store $store, string $bucket, array $data ): bool {
-		return $store->bucket_set_multi( [ [ Stats_Store::hourly_parts(), $bucket, $data ] ] )[0];
-	}
-
-	/** @return array<string,mixed> */
-	protected function get_hourly_bucket( Stats_Store $store, string $bucket ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::hourly_parts(), $bucket ] ] )[0] ?? [];
-	}
-
 	/** @return array<string,mixed> */
 	protected function get_url_hour( Stats_Store $store, string $hour, string $shard, string $server = self::SEED_SERVER ): array {
 		return $store->bucket_get_multi( [ [ Stats_Store::url_hour_parts( Stats_Store::server_key( $server ), $shard ), $hour ] ] )[0] ?? [];
-	}
-
-	/** @return array<string,mixed> */
-	protected function get_category_bucket( Stats_Store $store, string $bucket, string $server = '' ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::cat_parts( $server ), $bucket ] ] )[0] ?? [];
 	}
 
 	/**
@@ -784,64 +1005,75 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/**
 	 * One stored dimensional entry, named at the seed so a test never counts
-	 * indexes — decision 18's `DIM_SUMS` triple.
+	 * indexes — decision 18's `DIM_SUMS` row.
 	 *
 	 * @param int       $count Requests the value appeared in.
-	 * @param float|int $ms    Summed milliseconds, 0 when untimed.
+	 * @param float|int $ms    Summed milliseconds of the timed ones.
 	 * @param float|int $peak  Summed peak MB.
+	 * @param ?int      $timed Requests whose duration was a sample; null times every one.
 	 * @return array<int,float|int>
 	 */
-	protected static function dim_entry( int $count, float|int $ms = 0, float|int $peak = 0 ): array {
+	protected static function dim_entry( int $count, float|int $ms = 0, float|int $peak = 0, ?int $timed = null ): array {
 		return [
 			Stats_Store::DIM_COUNT       => $count,
 			Stats_Store::DIM_SUM_MS      => $ms,
 			Stats_Store::DIM_SUM_PEAK_MB => $peak,
+			Stats_Store::DIM_TIMED       => $timed ?? $count,
 		];
 	}
 
-	/** @param array<string,mixed> $data */
-	protected function set_category_bucket( Stats_Store $store, string $bucket, array $data, string $server = '' ): bool {
-		return $store->bucket_set_multi( [ [ Stats_Store::cat_parts( $server ), $bucket, $data ] ] )[0];
+	/**
+	 * Place one bucket's value in its slot of a slotted hour value, as the
+	 * flush places it (decision 35): read the hour, set the slot, write the
+	 * hour back.
+	 *
+	 * @param array<int,string>   $parts A slotted namespace's prefix.
+	 * @param array<string,mixed> $data  The slot's value.
+	 */
+	protected function set_hour_slot( Stats_Store $store, array $parts, string $bucket, array $data ): bool {
+		$hour                                     = Stats_Store::hour_of( $bucket );
+		$value                                    = $store->bucket_get_multi( [ [ $parts, $hour ] ] )[0] ?? [];
+		$value[ Stats_Store::slot_of( $bucket ) ] = $data;
+		return $store->bucket_set_multi( [ [ $parts, $hour, $value ] ] )[0];
+	}
+
+	/**
+	 * One bucket's slot of a slotted hour value; [] where the hour or the
+	 * slot is absent.
+	 *
+	 * @param array<int,string> $parts A slotted namespace's prefix.
+	 * @return array<string,mixed>
+	 */
+	protected function get_hour_slot( Stats_Store $store, array $parts, string $bucket ): array {
+		$value = $store->bucket_get_multi( [ [ $parts, Stats_Store::hour_of( $bucket ) ] ] )[0] ?? [];
+		return Stats_Store::string_keys( \Newspack_Nodes\Core::arr( $value[ Stats_Store::slot_of( $bucket ) ] ?? null ) );
+	}
+
+	/** @param array<string,mixed> $data The hour's whole sum. */
+	protected function set_leaderboard_hour( Stats_Store $store, string $hour, array $data, string $server = '' ): bool {
+		return $store->bucket_set_multi( [ [ Stats_Store::lb_parts( $server ), $hour, $data ] ] )[0];
 	}
 
 	/** @return array<string,mixed> */
-	protected function get_dimensional_bucket( Stats_Store $store, string $dimension, string $bucket, string $server = '' ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::dim_parts( $dimension, $server ), $bucket ] ] )[0] ?? [];
+	protected function get_leaderboard_hour( Stats_Store $store, string $hour, string $server = '' ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::lb_parts( $server ), $hour ] ] )[0] ?? [];
 	}
 
-	/** @param array<string,mixed> $data */
-	protected function set_dimensional_bucket( Stats_Store $store, string $dimension, string $bucket, array $data, string $server = '' ): bool {
-		return $store->bucket_set_multi( [ [ Stats_Store::dim_parts( $dimension, $server ), $bucket, $data ] ] )[0];
-	}
-
-	/** @return array<string,mixed> */
-	protected function get_leaderboard_bucket( Stats_Store $store, string $bucket, string $server = '' ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::lb_parts( $server ), $bucket ] ] )[0] ?? [];
-	}
-
-	/** @param array<string,mixed> $data */
-	protected function set_leaderboard_bucket( Stats_Store $store, string $bucket, array $data, string $server = '' ): bool {
-		return $store->bucket_set_multi( [ [ Stats_Store::lb_parts( $server ), $bucket, $data ] ] )[0];
-	}
-
-	/** @return array<string,mixed> */
-	protected function get_url_category_bucket( Stats_Store $store, string $url_hash, string $bucket ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::url_cat_parts( $url_hash ), $bucket ] ] )[0] ?? [];
-	}
-
-	/** @param array<string,mixed> $data */
-	protected function set_url_category_bucket( Stats_Store $store, string $url_hash, string $bucket, array $data ): bool {
-		return $store->bucket_set_multi( [ [ Stats_Store::url_cat_parts( $url_hash ), $bucket, $data ] ] )[0];
-	}
-
-	/** @return array<string,mixed> */
-	protected function get_url_dimensional_bucket( Stats_Store $store, string $url_hash, string $bucket ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::url_dim_parts( $url_hash ), $bucket ] ] )[0] ?? [];
-	}
-
-	/** @param array<string,mixed> $data */
-	protected function set_url_dimensional_bucket( Stats_Store $store, string $url_hash, string $bucket, array $data ): bool {
-		return $store->bucket_set_multi( [ [ Stats_Store::url_dim_parts( $url_hash ), $bucket, $data ] ] )[0];
+	/**
+	 * A name-table series decoded to `bucket => name => entry`, the entry
+	 * positional as stored, so an assertion names its field by constant.
+	 *
+	 * @param array{names: list<string>, buckets: array<string,list<list<int|float>>>} $wire
+	 * @return array<string,array<string,list<int|float>>>
+	 */
+	protected static function wire_series( array $wire ): array {
+		$out = [];
+		foreach ( $wire['buckets'] as $bucket => $rows ) {
+			foreach ( $rows as $row ) {
+				$out[ $bucket ][ $wire['names'][ $row[0] ] ] = \array_slice( $row, 1 );
+			}
+		}
+		return $out;
 	}
 
 	/** @return array<string,mixed> */

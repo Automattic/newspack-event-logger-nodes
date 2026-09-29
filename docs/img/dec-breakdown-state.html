@@ -41,19 +41,19 @@
   </div>
   <div class="mid">→</div>
   <div class="res">
-    <div class="fn"><span class="mono" style="display:inline;font-size:14px;opacity:1">breakdownState( breakdownData )</span><span>one resolver the chart and the panel both read; the panel checks a refusal first</span></div>
+    <div class="fn"><span class="mono" style="display:inline;font-size:14px;opacity:1">breakdownState( breakdownData )</span><span>one resolver each caller runs once per reply; it returns <span class="mono">{ state, series }</span>, the panel reads the state and hands the chart the decoded name table, and it checks a refusal first</span></div>
     <div class="states">
       <div class="st err"><span class="nm">error</span><span class="when">the read was refused</span><span class="shows">The refusal's message under the chart. A refusal is terminal: it is why the dimension never arrived.</span></div>
-      <div class="st pen"><span class="nm">pending</span><span class="when"><span class="mono">null</span> or <span class="mono">undefined</span>: no series in hand</span><span class="shows">"Loading…" beside the dropdowns; nothing drawn.</span></div>
-      <div class="st emp"><span class="nm">empty</span><span class="when">a series arrived carrying no values</span><span class="shows">"No User Agent data in this window.", naming the selected dimension; nothing drawn.</span></div>
-      <div class="st ser"><span class="nm">series</span><span class="when">values present</span><span class="shows">The chart. The only state that draws.</span></div>
+      <div class="st pen"><span class="nm">pending</span><span class="when"><span class="mono">null</span> or <span class="mono">undefined</span>: no reply in hand</span><span class="shows">"Loading…" beside the dropdowns; nothing drawn.</span></div>
+      <div class="st emp"><span class="nm">empty</span><span class="when">a reply arrived holding no row, or one <span class="mono">decodeNameTable()</span> refuses</span><span class="shows">"No User Agent data in this window.", naming the selected dimension; nothing drawn.</span></div>
+      <div class="st ser"><span class="nm">series</span><span class="when">some bucket holds a row</span><span class="shows">The chart. The only state that draws.</span></div>
     </div>
     <div class="mounted"><b>The dropdowns render in all four.</b> They are the only way out of a dimension with no rows, a read still in flight or a refused reply, so any gate that can unmount them can trap an operator. There is no "None" breakdown: the totals are never the requested view, and the chart holds no undifferentiated source to fall back to.</div>
   </div>
 </div>
 
 <div class="two">
-  <div class="callout"><h4>What a gate does</h4><p>A gate that falls back to <span class="mono">overview.aggregate_time_series</span> when the selected dimension has no values draws a flat series legended "Total" under a dropdown reading "User Agent". A gate on <span class="mono">breakdownData</span> unmounts, on an error, the only control that can recover from it, because <span class="mono">useCommandOnce</span> treats a refusal as an answer.</p></div>
+  <div class="callout"><h4>What a gate does</h4><p>A gate that falls back to a totals series when the selected dimension has no values draws a flat series legended "Total" under a dropdown reading "User Agent", which is why <span class="mono">overview</span> carries none. A gate on the reply unmounts, on an error, the only control that can recover from it, because <span class="mono">useCommandOnce</span> treats a refusal as an answer.</p></div>
   <div class="card"><h3>Why <span class="mono">pending</span> and <span class="mono">empty</span> stay apart</h3><p>"No User Agent data" during a fetch is a lie that flickers, and the totals under either state answer a question nobody asked.</p></div>
 </div>
 </div>
