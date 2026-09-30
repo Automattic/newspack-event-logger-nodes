@@ -256,10 +256,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * It takes the STORES too, resolved once by the caller: each resolution
 	 * builds the topology catalog, and a verb reads sixteen shards.
 	 *
-	 * It takes the reply's `$now` last, so every shard of one reply reads
-	 * one window.
+	 * It takes the reply's `$now`, so every shard of one reply reads one
+	 * window, and last whether the page folds each key's errored rows alone.
 	 *
-	 * Signature: `function ( string $shard, string $server, list<Stats_Store> $stores, int $now ): array<int,array<string,mixed>>`.
+	 * Signature: `function ( string $shard, string $server, list<Stats_Store> $stores, int $now, bool $errored ): array<int,array<string,mixed>>`.
 	 *
 	 * @var \Closure|null
 	 */
@@ -300,6 +300,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Rejection is signalled by null, so a legitimately-null sanitized value is
 	 * not representable — every accepted type here returns a scalar or array.
 	 *
+	 * A bool is one of the substrate's bool words, or a blank for false,
+	 * which is how a hub pushes one; any other word rejects.
+	 *
 	 * @param mixed  $value Raw input.
 	 * @param string $type  `bool` or `array`; anything else rejects.
 	 * @return mixed|null Sanitized value, or null to reject.
@@ -307,7 +310,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function sanitize_settings_value( mixed $value, string $type ): mixed {
 		switch ( $type ) {
 			case 'bool':
-				return (bool) $value;
+				return '' === $value ? false : Command_Args::typed( Core::as_string( $value ), 'bool' );
 			case 'array':
 				if ( ! \is_array( $value ) ) {
 					return null;
@@ -717,23 +720,17 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * already expresses that containment, so the picker sends it rather than
 	 * inventing a second attribute for scope.
 	 *
-	 * @param list<string>        $descriptors Target first, containers after.
-	 * @param string              $server      Reporting server the brief answers for; '' is every server.
-	 * @param array<string,mixed> $filters     The url filters in force, which only `overview:` reads: every other descriptor names one thing, and a filtered view of one thing is the same thing.
-	 * @param int                 $now         The reply's clock, read once at its entry.
+	 * @param string              $descriptor The target.
+	 * @param list<string>        $context    Its containers, outermost last.
+	 * @param string              $server     Reporting server the brief answers for; '' is every server.
+	 * @param array<string,mixed> $filters    The url filters in force, which only `overview:` reads: every other descriptor names one thing, and a filtered view of one thing is the same thing.
+	 * @param int                 $now        The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException On an unknown descriptor or a missing context.
 	 */
-	private function assemble_ask( array $descriptors, string $server, array $filters, int $now ): array {
-		$target = Ask_Assembler::parse_descriptor( Core::as_string( $descriptors[0] ?? '' ) );
-		if ( null === $target ) {
-			throw new \RuntimeException(
-				'' === Core::as_string( $descriptors[0] ?? '' )
-					? 'descriptor required'
-					: \esc_html( 'unknown descriptor: ' . Core::as_string( $descriptors[0] ) )
-			);
-		}
-		$context = \array_slice( $descriptors, 1 );
+	private function assemble_ask( string $descriptor, array $context, string $server, array $filters, int $now ): array {
+		$target = Ask_Assembler::parse_descriptor( $descriptor )
+			?? throw new \RuntimeException( \esc_html( "unknown descriptor: {$descriptor}" ) );
 
 		switch ( $target['type'] ) {
 			case 'overview':
@@ -867,8 +864,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		// raw value in `filters`, which is the only place it still matters.
 		$search = \strtolower( \trim( $search ) );
 		$build  = function () use ( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores, $now ): array {
-			$result = self::ranked_serves( $search, $errors, $workers, \max( 0, $offset ) + \max( 0, $limit ) )
-				? $this->ranked_page( $server, $sort, $order, $offset, $limit, $stores, $now )
+			$result = self::ranked_serves( $search, \max( 0, $offset ) + \max( 0, $limit ) )
+				? $this->ranked_page( $server, $workers, $errors, $sort, $order, $offset, $limit, $stores, $now )
 				: null;
 			return $result ?? $this->fold_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores, $now );
 		};
@@ -909,18 +906,20 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * header and a row's own average answer different questions. No list
 	 * anywhere reads as no tier to read, not as an empty site.
 	 *
-	 * @param string                 $server Reporting server; '' reads the site's lists.
-	 * @param string                 $sort   A `Stats_Store::URL_SORTS` value.
-	 * @param string                 $order  A `Stats_Store::URL_ORDERS` value.
-	 * @param int                    $offset Page offset.
-	 * @param int                    $limit  Page size.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * @param string                 $server  Reporting server; '' reads the site's lists.
+	 * @param bool                   $workers Read the worker family's lists beside the reader's.
+	 * @param bool                   $errors  Read the errored rows' lists alone.
+	 * @param string                 $sort    A `Stats_Store::URL_SORTS` value.
+	 * @param string                 $order   A `Stats_Store::URL_ORDERS` value.
+	 * @param int                    $offset  Page offset.
+	 * @param int                    $limit   Page size.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
 	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,provisional:bool,ranked:bool,as_of:int}|null
 	 */
-	private function ranked_page( string $server, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): ?array {
+	private function ranked_page( string $server, bool $workers, bool $errors, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): ?array {
 		// The header first: its own miss folds the page this poll answers with.
-		$header = $this->url_header( $server, $sort, $order, $offset, $limit, $stores, $now );
+		$header = $this->url_header( $server, $workers, $errors, $sort, $order, $offset, $limit, $stores, $now );
 		if ( isset( $header['data'] ) ) {
 			/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,provisional:bool,ranked:bool,as_of:int} */
 			return $header;
@@ -933,9 +932,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		$found   = 0;
 		$holes   = [];
 		$skipped = false;
+		$sets    = Stats_Store::rank_sets( $workers, $errors );
 		foreach ( $stores as $store ) {
 			$covered = [];
-			foreach ( $store->url_rank_window( $plan['hours'], $plan['fine'], $sort, $order, $server, $waiting ) as [ $key, $entries ] ) {
+			foreach ( $store->url_rank_window( $plan['hours'], $plan['fine'], $sort, $order, $server, $sets, $waiting ) as [ $key, $entries ] ) {
 				$covered[ $key ] = true;
 				self::note_bucket_means( $means, self::fold_rank_entries( $merged, $entries, isset( $recent[ $key ] ) ) );
 				++$found;
@@ -972,9 +972,9 @@ class Performance_CI_Node extends Service_CI_Node {
 			[ $ms_sum, $ms_n, $peak_sum, $peak_n ] = $means[ $hash ];
 			$row['avg_ms']      = self::mean_of( $ms_sum, $ms_n );
 			$row['avg_peak_mb'] = self::mean_of( $peak_sum, $peak_n );
-			$rows[]             = $row;
+			$rows[]             = $errors ? self::with_errors( $row ) : $row;
 		}
-		\usort( $rows, self::by_sort( $sort, $order ) );
+		\usort( $rows, self::by_sort( Stats_Store::rank_key( $sort, $errors ), $order ) );
 		// The header answers `HEADER_FIELDS`; these three are the page's own.
 		return [
 			'data'        => self::resolve_urls( \array_slice( $rows, $offset, $limit ), $stores ),
@@ -985,7 +985,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The header of the unfiltered page of one scope, summed from the
+	 * The header of a ranked page of one scope, summed from the
 	 * writer's header records (`recorded_header()`), held for
 	 * `Stats_Store::URL_PAGE_REFRESH_S`, the cadence the writer ranks the
 	 * open bucket at, which every header's window holds: a server filed
@@ -997,29 +997,31 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the poll that pays for the walk answers with what it walked and the
 	 * next one reads the lists. A hit carries `HEADER_FIELDS` alone.
 	 *
-	 * @param string                 $server Reporting server; '' is the site.
-	 * @param string                 $sort   A URL_SORTS field.
-	 * @param string                 $order  'asc' or 'desc'.
-	 * @param int                    $offset Page offset.
-	 * @param int                    $limit  Page size.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * @param string                 $server  Reporting server; '' is the site.
+	 * @param bool                   $workers Sum the worker family's records beside the reader's.
+	 * @param bool                   $errors  Sum the errored rows' records alone.
+	 * @param string                 $sort    A URL_SORTS field.
+	 * @param string                 $order   'asc' or 'desc'.
+	 * @param int                    $offset  Page offset.
+	 * @param int                    $limit   Page size.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
 	 * @return array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,provisional:bool,data?:array<int,array<array-key,mixed>>,ranked?:bool,as_of?:int}
 	 */
-	private function url_header( string $server, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
+	private function url_header( string $server, bool $workers, bool $errors, string $sort, string $order, int $offset, int $limit, array $stores, int $now ): array {
 		$page  = null;
-		$build = function () use ( $server, $sort, $order, $offset, $limit, $stores, $now, &$page ): array {
-			$header = self::recorded_header( $server, $stores, $now );
+		$build = function () use ( $server, $workers, $errors, $sort, $order, $offset, $limit, $stores, $now, &$page ): array {
+			$header = self::recorded_header( $server, $workers, $errors, $stores, $now );
 			if ( null !== $header ) {
 				return $header;
 			}
-			$page = $this->fold_page( $server, '', false, false, $sort, $order, $offset, $limit, $stores, $now );
+			$page = $this->fold_page( $server, '', $errors, $workers, $sort, $order, $offset, $limit, $stores, $now );
 			return \array_intersect_key( $page, \array_flip( self::HEADER_FIELDS ) );
 		};
 		/** @var array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,provisional:bool} $header */
 		$header = self::read_through_page(
 			Flame_Tree::URL_HEADER_CACHE,
-			[ 'header', $server, Stats_Store::bucket_key( $now ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
+			[ 'header', $server, $workers, $errors, Stats_Store::bucket_key( $now ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
 			self::HEADER_FIELDS,
 			Stats_Store::URL_PAGE_REFRESH_S,
 			$build
@@ -1028,7 +1030,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The unfiltered header of one scope, summed from the writer's header
+	 * The header of one scope's list sets, summed from the writer's header
 	 * records over the read plan, or null where a record is missing.
 	 *
 	 * Each store answers the plan's hours and the current hour's buckets in
@@ -1050,12 +1052,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * ranks the `Other` overflow row, so unlike the fold's this `slowest`
 	 * never carries it.
 	 *
-	 * @param string                 $server Reporting server; '' is the site.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * @param string                 $server  Reporting server; '' is the site.
+	 * @param bool                   $workers Sum the worker family's records beside the reader's.
+	 * @param bool                   $errors  Sum the errored rows' records alone, and their errors.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
 	 * @return array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:true,provisional:bool}|null
 	 */
-	private static function recorded_header( string $server, array $stores, int $now ): ?array {
+	private static function recorded_header( string $server, bool $workers, bool $errors, array $stores, int $now ): ?array {
 		$plan             = self::read_plan( $now );
 		$lagging          = self::lagging( $plan );
 		$provisional      = false;
@@ -1064,12 +1068,13 @@ class Performance_CI_Node extends Service_CI_Node {
 		$summed           = [];
 		$rated            = 0;
 		$slowest          = [];
+		$sets             = Stats_Store::rank_sets( $workers, $errors );
 		foreach ( $stores as $store ) {
-			// A folded hour missing its record is a hole; an owed one waits.
-			$records = \array_replace( \array_fill_keys( $plan['hours'], null ), $store->url_headers( $plan['hours'], $plan['fine'], $server, $waiting ) );
+			// A folded hour's missing record is a hole; an owed one waits.
+			$records = \array_replace( \array_fill_keys( $plan['hours'], null ), $store->url_headers( $plan['hours'], $plan['fine'], $server, $sets, $waiting ) );
 			$owed    = $lagging + \array_fill_keys( $waiting, true );
-			foreach ( $records as $key => $record ) {
-				if ( null === $record ) {
+			foreach ( $records as $key => $by_set ) {
+				if ( null === $by_set || \in_array( null, $by_set, true ) ) {
 					if ( ! isset( $owed[ $key ] ) ) {
 						return null;
 					}
@@ -1077,26 +1082,35 @@ class Performance_CI_Node extends Service_CI_Node {
 					unset( $records[ $key ] );
 					continue;
 				}
-				$summed[] = $record;
-				$rated   += isset( $recent[ $key ] ) ? $record[ Stats_Store::HDR_COUNT ] : 0;
+				foreach ( $by_set as $at => $record ) {
+					$summed[ $at ][] = $record;
+					$rated          += isset( $recent[ $key ] ) ? $record[ Stats_Store::HDR_COUNT ] : 0;
+				}
 			}
-			foreach ( $store->url_rank_window( \array_values( \array_intersect( $plan['hours'], \array_keys( $records ) ) ), $plan['fine'], $sort, $order, $server ) as [ , $entries ] ) {
+			foreach ( $store->url_rank_window( \array_values( \array_intersect( $plan['hours'], \array_keys( $records ) ) ), $plan['fine'], $sort, $order, $server, $sets ) as [ , $entries ] ) {
 				self::fold_rank_entries( $slowest, $entries, false );
 			}
 		}
-		$total = Stats_Store::merge_url_headers( $summed );
-		$top   = \array_map( self::project_row( ... ), \array_values( $slowest ) );
+		// Each set keeps an overflow row of its own, as the fold counts them.
+		$set_totals = \array_map( Stats_Store::merge_url_headers( ... ), $summed );
+		$others     = \count( \array_filter( \array_column( $set_totals, Stats_Store::HDR_HAS_OTHER ) ) );
+		$total      = Stats_Store::merge_url_headers( \array_values( $set_totals ) );
+		$top        = [];
+		foreach ( $slowest as $entry ) {
+			$row   = self::project_row( $entry );
+			$top[] = $errors ? self::with_errors( $row ) : $row;
+		}
 		\usort( $top, self::by_sort( $sort, $order ) );
 		$urls = Url_Sketch::estimate( $total[ Stats_Store::HDR_URLS ] );
 		return [
-			'rows'      => $urls + ( $total[ Stats_Store::HDR_HAS_OTHER ] ? 1 : 0 ),
+			'rows'      => $urls + $others,
 			'totals'    => [
 				'urls'                => $urls,
 				'requests'            => $total[ Stats_Store::HDR_COUNT ],
 				'avg_ms'              => self::mean_of( $total[ Stats_Store::HDR_SUM_MS ], $total[ Stats_Store::HDR_TIMED_COUNT ] ),
 				'avg_peak_mb'         => self::mean_of( $total[ Stats_Store::HDR_SUM_PEAK_MB ], $total[ Stats_Store::HDR_COUNT ] ),
 				'requests_per_second' => self::recent_rate( $rated, $recent ),
-			],
+			] + ( $errors ? [ 'errors' => $total[ Stats_Store::HDR_ERRORS ] ] : [] ),
 			'slowest'     => self::resolve_urls( \array_slice( $top, 0, self::SLOWEST_ROWS ), $stores ),
 			'estimated'   => true,
 			'provisional' => $provisional,
@@ -1211,7 +1225,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function merge_url_dim( string $hash, string $dimension, array $stores, int $now ): array {
 		return self::merged_across_stores(
-			static fn ( Stats_Store $store, array $hours ): array => $store->get_slots( Stats_Store::url_dim_parts( $hash, $dimension ), $hours ),
+			static fn ( Stats_Store $store, array $hours ): array => $store->get_slots( Stats_Store::url_dim_parts( $hash ), $hours, $dimension ),
 			Stats_Store::DIM_SUMS,
 			Stats_Store::DIM_COUNT,
 			$stores,
@@ -2124,7 +2138,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<array-key,mixed>|null The merged row, or null when absent.
 	 */
 	public static function load_row( string $hash, string $server, array $stores, int $now ): ?array {
-		foreach ( [ false, true ] as $worker ) {
+		foreach ( Stats_Store::families( true ) as $worker ) {
 			$found = self::row_in_shard( $hash, Stats_Store::url_shard( $hash, $worker ), $server, $stores, $now );
 			if ( null !== $found ) {
 				return $found;
@@ -2144,7 +2158,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<array-key,mixed>|null
 	 */
 	private static function row_in_shard( string $hash, string $shard, string $server, array $stores, int $now ): ?array {
-		foreach ( self::read_index( $shard, $server, $stores, $now ) as $row ) {
+		foreach ( self::read_index( $shard, $server, $stores, $now, false ) as $row ) {
 			if ( Core::as_string( $row['hash'] ?? '' ) === $hash ) {
 				return $row;
 			}
@@ -2269,9 +2283,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		$sum_peak  = 0.0;
 
 		// Under the filter a count ranks the errors, not the traffic.
-		$by_sort = self::by_sort( $errors && 'count' === $sort ? 'errors' : $sort, $order );
-		$by_mean = static fn ( array $a, array $b ): int =>
-			( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 );
+		$by_sort = self::by_sort( Stats_Store::rank_key( $sort, $errors ), $order );
+		$by_mean = self::by_sort( ...Stats_Store::SLOWEST_LIST );
 
 		$plan       = self::read_plan( $now );
 		$tokens     = '' === $search ? [] : Stats_Store::term_tokens( $search );
@@ -2281,7 +2294,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			: self::search_candidates( $tokens, $server, $stores, $plan, $unread ) ?? ( self::$match_names ? null : [] );
 
 		// Worker traffic is its own shard family
-		$families = $workers ? [ false, true ] : [ false ];
+		$families = Stats_Store::families( $workers );
 		$shards   = [];
 		foreach ( $families as $worker ) {
 			$shards = \array_merge( $shards, Stats_Store::url_shards( $worker ) );
@@ -2301,7 +2314,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$overflow = [];
 		foreach ( $shards as $shard ) {
 			$kept = [];
-			foreach ( self::read_index( $shard, $server, $stores, $now ) as $raw ) {
+			foreach ( self::read_index( $shard, $server, $stores, $now, $errors ) as $raw ) {
 				$raw_row = Core::arr( $raw );
 				// @longform Every shard's overflow row shares ONE key, so a
 				// per-shard fold must collapse all sixteen deliberately —
@@ -2330,10 +2343,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$row       = self::project_row( $raw_row );
 				$aggregate = ! empty( $row['aggregate'] );
-				$row       = $errors ? self::errors_only_row( $row ) : $row;
-				if ( null === $row ) {
-					continue;
-				}
+				$row       = $errors ? self::with_errors( $row ) : $row;
 				++$rows;
 				// The overflow row stands for many URLs; not one of them.
 				$urls     += $aggregate ? 0 : 1;
@@ -2360,10 +2370,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( '' !== $search ) {
 				continue;
 			}
-			$row = $errors ? self::errors_only_row( $row ) : $row;
-			if ( null === $row ) {
-				continue;
-			}
+			$row = $errors ? self::with_errors( $row ) : $row;
 			++$rows;
 			$requests += Core::num_int( $row['count'] ?? null );
 			$errored  += Core::num_int( $row['errors'] ?? null );
@@ -2484,15 +2491,18 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `urls` sort comparator for one `URL_SORTS` field and direction —
-	 * shared by the fold and the ranked reader, so the two agree on ties.
+	 * shared by the fold and the ranked reader. A tie breaks by hash,
+	 * ascending either way, as the writer's lists break it, so the two paths
+	 * agree on ties.
 	 *
 	 * @param string $sort  A URL_SORTS field.
 	 * @param string $order 'asc' or 'desc'.
 	 */
 	private static function by_sort( string $sort, string $order ): \Closure {
-		return static fn ( array $a, array $b ): int => 'asc' === $order
+		return static fn ( array $a, array $b ): int => ( 'asc' === $order
 			? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
-			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 );
+			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 ) )
+			?: \strcmp( Core::as_string( $a['hash'] ?? '' ), Core::as_string( $b['hash'] ?? '' ) );
 	}
 
 	/**
@@ -2645,16 +2655,17 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The read seam, resolved. One entry point for both shapes, so a test
 	 * counting reads counts a point read as well as a whole-index one.
 	 *
-	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
-	 * @param string                 $server Reporting server; '' reads every server.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * @param string                 $shard   Shard token from `Stats_Store::url_shard()`.
+	 * @param string                 $server  Reporting server; '' reads every server.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
+	 * @param bool                   $errored Fold each key's errored rows alone.
 	 * @return array<int,array<array-key,mixed>>
 	 */
-	private static function read_index( string $shard, string $server, array $stores, int $now ): array {
+	private static function read_index( string $shard, string $server, array $stores, int $now, bool $errored ): array {
 		$read = self::$load_index ?? self::load_index_default( ... );
 		$rows = [];
-		foreach ( Core::arr( $read( $shard, $server, $stores, $now ) ) as $row ) {
+		foreach ( Core::arr( $read( $shard, $server, $stores, $now, $errored ) ) as $row ) {
 			if ( \is_array( $row ) ) {
 				$rows[] = $row;
 			}
@@ -2675,13 +2686,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * record — never derive another, or the row indexes under a hash no rid
 	 * lookup can produce.
 	 *
-	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
-	 * @param string                 $server Reporting server; '' reads every server.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
+	 * An errored read folds each key's `Stats_Store::errored_rows()` alone,
+	 * the rows the writer ranks for an errored page, so a URL's row there
+	 * is the traffic of the keys it errored in.
+	 *
+	 * @param string                 $shard   Shard token from `Stats_Store::url_shard()`.
+	 * @param string                 $server  Reporting server; '' reads every server.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
+	 * @param bool                   $errored Fold each key's errored rows alone.
 	 * @return array<int,array<string,mixed>>
 	 */
-	public static function load_index_default( string $shard, string $server, array $stores, int $now ): array {
+	public static function load_index_default( string $shard, string $server, array $stores, int $now, bool $errored ): array {
 		$plan   = self::read_plan( $now );
 		$recent = self::recent_keys( $plan );
 		$result = [];
@@ -2690,8 +2706,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				$plan,
 				static fn ( array $hours ): array => $store->url_hour_sources( $hours, $shard, false, $server ),
 				static fn ( array $buckets ): array => $store->url_row_sources( $buckets, $shard, false, $server ),
-				static function ( string $bucket, array $data ) use ( &$result, $recent ): void {
-					self::fold_bucket( $result, $data, isset( $recent[ $bucket ] ) );
+				static function ( string $bucket, array $data ) use ( &$result, $recent, $errored ): void {
+					self::fold_bucket( $result, $errored ? Stats_Store::errored_rows( $data ) : $data, isset( $recent[ $bucket ] ) );
 				}
 			);
 		}
@@ -2975,39 +2991,36 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * A URL row as the dashboard's "Errors" filter shows it, carrying `errors`:
 	 * the requests no status bucket accounted for — timeouts (T) and fatals
-	 * (F), not 5xx, which IS a response — or null when it had none.
+	 * (F), not 5xx, which IS a response — by `Stats_Store::row_errors()`
+	 * over the stored row the named one folds. The row is already the sum of
+	 * the keys the URL errored in, whichever path built it
+	 * (`Stats_Store::errored_rows()`), so every row the filter reaches has
+	 * errors and none is an overflow row.
 	 *
 	 * Server-side so `total` counts what is rendered: applied on the client
 	 * alone, the filter leaves the footer stating an unfiltered count —
 	 * "1-100 of 5,000" above three rows. `errors` rides BESIDE `count`, so
 	 * every mean and share still divides the traffic it summed.
 	 *
-	 * @param array<array-key,mixed> $row A URL index row.
-	 * @return array<array-key,mixed>|null
+	 * @param array<array-key,mixed> $row A URL index row, named.
+	 * @return array<array-key,mixed>
 	 */
-	private static function errors_only_row( array $row ): ?array {
-		// A folded row mixes hundreds of URLs; no row test speaks for it.
-		if ( ! empty( $row['aggregate'] ) ) {
-			return null;
+	private static function with_errors( array $row ): array {
+		$stored = [];
+		foreach ( Stats_Store::ROW_FIELD_NAMES as $index => $name ) {
+			$stored[ $index ] = $row[ $name ] ?? null;
 		}
-		$classified = Core::num_int( $row['count_2xx'] ?? 0 )
-			+ Core::num_int( $row['count_3xx'] ?? 0 )
-			+ Core::num_int( $row['count_4xx'] ?? 0 )
-			+ Core::num_int( $row['count_5xx'] ?? 0 );
-		$errors     = Core::num_int( $row['count'] ?? 0 ) - $classified;
-		if ( $errors <= 0 ) {
-			return null;
-		}
-		$row['errors'] = $errors;
+		$row['errors'] = Stats_Store::row_errors( $stored );
 		return $row;
 	}
 
 	/**
-	 * Whether the ranked lists can answer a page: nothing filtered, and a page
-	 * that ends inside the fine tier's list depth.
+	 * Whether the ranked lists can answer a page: no search, and a page that
+	 * ends inside the fine tier's list depth. Worker traffic and the errored
+	 * rows each have lists of their own (`Stats_Store::RANK_SETS`).
 	 */
-	private static function ranked_serves( string $search, bool $errors, bool $workers, int $end ): bool {
-		return '' === $search && ! $errors && ! $workers && $end <= Stats_Store::URL_RANK_N;
+	private static function ranked_serves( string $search, int $end ): bool {
+		return '' === $search && $end <= Stats_Store::URL_RANK_N;
 	}
 
 	/**
@@ -3132,27 +3145,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Resolve a Command_Args boolean flag. A bare `--flag` and any value other
-	 * than `0` / `false` read as true; `--flag=0`, `--flag=false`, and an
-	 * absent key read as false. The JS `formatCommandArgs` only ever emits the
-	 * bare form or `--flag=false`, so the permissive middle is for hand-typed
-	 * commands.
-	 *
-	 * @param array<string,string|true> $options Parsed options.
-	 * @param string                    $key     Flag name.
-	 */
-	private static function flag( array $options, string $key ): bool {
-		if ( ! \array_key_exists( $key, $options ) ) {
-			return false;
-		}
-		$value = $options[ $key ];
-		if ( true === $value ) {
-			return true;
-		}
-		return ! \in_array( \strtolower( $value ), [ '0', 'false' ], true );
-	}
-
-	/**
 	 * Schema-driven dispatch: each verb is declared once in
 	 * `commands[]` carrying its `handler`. The inherited Service_CI_Node ctor
 	 * builds the commands table from this schema. Stats-reading verbs build a
@@ -3160,9 +3152,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `Table_Unavailable` they answer with empty or zeroed shapes. Disk-walking
 	 * verbs work regardless.
 	 *
-	 * Every handler throws a RuntimeException on bad input; the interpreter
-	 * turns the throw into a TM_COMMAND|TM_ERROR reply, so no handler returns
-	 * an error shape.
+	 * The substrate binds each verb's tokens against its `args` before the
+	 * handler runs, so a handler reads `$args['<name>']` typed and defaulted,
+	 * and a token that does not fit never reaches it. A handler throws a
+	 * RuntimeException on a value its declaration cannot rule out; the
+	 * interpreter turns either throw into a TM_COMMAND|TM_ERROR reply, so no
+	 * handler returns an error shape.
 	 *
 	 * @api Used by substrate.
 	 * @return array<string,mixed>
@@ -3180,14 +3175,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
+						[ 'name' => 'categories', 'type' => 'bool', 'required' => false, 'default' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				// Optional args: server scopes; breakdown = comma-sep dim list.
-				$opts       = Command_Args::parse( self::arg_strings( $args ) )['options'];
-				$server     = (string) ( $opts['server'] ?? '' );
-				$breakdown  = (string) ( $opts['breakdown'] ?? '' );
-				$categories = self::flag( $opts, 'categories' );
+				// Server scopes; breakdown is a comma-separated dimension list.
+				$server     = Core::as_string( $args['server'] );
+				$breakdown  = Core::as_string( $args['breakdown'] );
+				$categories = true === $args['categories'];
 
 				\assert( $self instanceof self );
 				$now                           = self::now();
@@ -3230,16 +3224,15 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$opts    = Command_Args::parse( self::arg_strings( $args ) )['options'];
-				$sort    = (string) ( $opts['sort']   ?? 'count' );
-				$order   = (string) ( $opts['order']  ?? 'desc' );
-				$limit   = \min( 1000, \max( 1, (int) ( $opts['limit']  ?? 50 ) ) );
-				$offset  = \min( 10000, \max( 0, (int) ( $opts['offset'] ?? 0 ) ) );
-				$search  = (string) ( $opts['search'] ?? '' );
-				$server  = (string) ( $opts['server'] ?? '' );
-				$errors  = self::flag( $opts, 'errors_only' );
+				$sort    = Core::as_string( $args['sort'] );
+				$order   = Core::as_string( $args['order'] );
+				$limit   = \min( 1000, \max( 1, Core::as_int( $args['limit'] ) ) );
+				$offset  = \min( 10000, Core::as_int( $args['offset'] ) );
+				$search  = Core::as_string( $args['search'] );
+				$server  = Core::as_string( $args['server'] );
+				$errors  = true === $args['errors_only'];
 				// Opts IN: the default EXCLUDES. See decision 15.
-				$workers = self::flag( $opts, 'include_workers' );
+				$workers = true === $args['include_workers'];
 
 				if ( ! \in_array( $sort, Stats_Store::URL_SORTS, true ) ) {
 					$sort = 'count';
@@ -3284,17 +3277,15 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
-						[ 'name' => 'since', 'type' => 'int', 'required' => false, 'description' => 'Watermark (epoch): tails the request list. Compared against COMPLETION, exclusively — a request sharing this second is still returned.' ],
+						[ 'name' => 'categories', 'type' => 'bool', 'required' => false, 'default' => false ],
+						[ 'name' => 'since', 'type' => 'int', 'required' => false, 'default' => 0, 'description' => 'Watermark (epoch): tails the request list. Compared against COMPLETION, exclusively — a request sharing this second is still returned.' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$parsed = Command_Args::parse( self::arg_strings( $args ) );
-				$opts   = $parsed['options'];
-				$hash   = $parsed['positional'][0] ?? '';
+				$hash = Core::as_string( $args['hash'] );
 				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/D', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
-				$breakdown = (string) ( $opts['breakdown'] ?? '' );
+				$breakdown = Core::as_string( $args['breakdown'] );
 				if ( '' !== $breakdown ) {
 					self::assert_dimension( $breakdown, self::URL_DIMENSIONS );
 				}
@@ -3303,10 +3294,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				// server's, so this answers for the same server — otherwise one
 				// click puts a site-wide average under a scoped count, on two
 				// surfaces too far apart to compare.
-				$server = (string) ( $opts['server'] ?? '' );
+				$server = Core::as_string( $args['server'] );
 
 				// A tail reads its URL blob from its Table alone.
-				$since = self::require_option_int( $opts, 'since', 0 );
+				$since = Core::as_int( $args['since'] );
 
 				\assert( $self instanceof self );
 				$now    = self::now();
@@ -3356,7 +3347,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					$payload['breakdown_time_series'] = self::compact_dim_series( self::merge_url_dim( $hash, $breakdown, $stores, $now ) );
 				}
 
-				if ( self::flag( $opts, 'categories' ) ) {
+				if ( true === $args['categories'] ) {
 					$payload['category_time_series'] = self::compact_category_series( self::merge_url_categories( $hash, $stores, $now ) );
 				}
 
@@ -3376,12 +3367,11 @@ class Performance_CI_Node extends Service_CI_Node {
 				// keeps only the series, so it reads the stats Tables and never
 				// the index: `dump_url` walks every partition's index to build
 				// `requests`, which a breakdown fetch throws away.
-				$parsed = Command_Args::parse( self::arg_strings( $args ) );
-				$hash   = $parsed['positional'][0] ?? '';
+				$hash = Core::as_string( $args['hash'] );
 				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/D', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
-				$breakdown = (string) ( $parsed['options']['breakdown'] ?? '' );
+				$breakdown = Core::as_string( $args['breakdown'] );
 				self::assert_dimension( $breakdown, self::URL_DIMENSIONS );
 				\assert( $self instanceof self );
 				$now = self::now();
@@ -3399,11 +3389,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$rid = Command_Args::parse( self::arg_strings( $args ) )['positional'][0] ?? '';
-				if ( '' === $rid ) {
-					throw new \RuntimeException( 'rid required' );
-				}
-
+				$rid   = Core::as_string( $args['rid'] );
 				$found = self::find_request_index_entry( $rid );
 				if ( null === $found ) {
 					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
@@ -3420,15 +3406,12 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => self::GREP_RESULT_LIMIT_DEFAULT ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$parsed  = Command_Args::parse( self::arg_strings( $args ) );
-				$pattern = Core::as_string( $parsed['positional'][0] ?? '' );
+				$pattern = Core::as_string( $args['pattern'] );
+				// The binder takes whitespace as a value; it matches too much.
 				if ( '' === \trim( $pattern ) ) {
 					throw new \RuntimeException( 'pattern required' );
 				}
-				$limit = \min(
-					self::GREP_RESULT_LIMIT_MAX,
-					\max( 1, self::require_option_int( $parsed['options'], 'limit', self::GREP_RESULT_LIMIT_DEFAULT ) )
-				);
+				$limit = \min( self::GREP_RESULT_LIMIT_MAX, \max( 1, Core::as_int( $args['limit'] ) ) );
 
 				return self::run_grep_requests( $pattern, $limit );
 					},
@@ -3442,12 +3425,8 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'partition', 'type' => 'int', 'required' => false, 'default' => 0 ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$parsed = Command_Args::parse( self::arg_strings( $args ) );
-				$rid    = $parsed['positional'][0] ?? '';
-				if ( '' === $rid ) {
-					throw new \RuntimeException( 'rid required' );
-				}
-				$partition = self::require_option_int( $parsed['options'], 'partition', 0 );
+				$rid       = Core::as_string( $args['rid'] );
+				$partition = Core::as_int( $args['partition'] );
 
 				$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
 				// No declared set: unfindable rid, not a bad partition.
@@ -3473,28 +3452,24 @@ class Performance_CI_Node extends Service_CI_Node {
 					'description' => 'Assemble the brief for one picker descriptor: `ask <descriptor> [<context-descriptor>…]`, outermost context last.',
 					'args'        => [
 						[ 'name' => 'descriptor', 'type' => 'string', 'required' => true ],
+						// The trailing descriptors, or `--context=` repeated.
+						[ 'name' => 'context', 'type' => 'string', 'required' => false, 'variadic' => true ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-						// Declared because the handler reads it, positionally.
-						[ 'name' => 'context', 'type' => 'string', 'required' => false ],
 						// The page's own scope; only `overview:` reads them.
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false ],
-						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false ],
+						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false ],
+						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				\assert( $self instanceof self );
-				$parsed  = Command_Args::parse( self::arg_strings( $args ) );
-				$context = (string) ( $parsed['options']['context'] ?? '' );
-				// Declared as an option; the descriptors stay positional.
 				return $self->assemble_ask(
-					'' === $context
-						? $parsed['positional']
-						: [ ...$parsed['positional'], $context ],
-					(string) ( $parsed['options']['server'] ?? '' ),
+					Core::as_string( $args['descriptor'] ),
+					\array_values( \array_map( Core::as_string( ... ), Core::arr( $args['context'] ) ) ),
+					Core::as_string( $args['server'] ),
 					[
-						'search'          => (string) ( $parsed['options']['search'] ?? '' ),
-						'errors_only'     => self::flag( $parsed['options'], 'errors_only' ),
-						'include_workers' => self::flag( $parsed['options'], 'include_workers' ),
+						'search'          => Core::as_string( $args['search'] ),
+						'errors_only'     => true === $args['errors_only'],
+						'include_workers' => true === $args['include_workers'],
 					],
 					self::now()
 				);
@@ -3523,26 +3498,25 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'set',
 					'capability'  => Capabilities::TUNE,
-					'description' => 'Normalized positional single-option perf setting write with sync guard.',
+					'description' => 'Normalized positional single-option perf setting write with sync guard. A bool option takes a bool word, or a blank for false, as a hub pushes one.',
 					'args'        => [
 						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
-						[ 'name' => 'value', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'value', 'type' => 'string', 'required' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				// One option per command; Settings_Sync_Node fans it out.
-				[ $option, $value_arg ] = \array_pad( Command_Args::parse( self::arg_strings( $args ) )['positional'], 2, null );
-
-				$option = Core::str( $option );
-				if ( '' === $option ) {
-					throw new \RuntimeException( 'option required' );
-				}
+				$option = Core::as_string( $args['option'] );
 				if ( ! isset( self::SETTINGS_OPTIONS[ $option ] ) ) {
 					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
 				}
 
+				if ( null === $args['value'] ) {
+					throw new \RuntimeException( 'value required' );
+				}
+
 				// Wire value is string; array options carry JSON, decoded here.
 				$type      = self::SETTINGS_OPTIONS[ $option ];
-				$raw_value = Core::str( $value_arg );
+				$raw_value = Core::as_string( $args['value'] );
 				$value     = 'array' === $type ? self::decode_array_value( $raw_value ) : $raw_value;
 
 				$sanitized = self::sanitize_settings_value( $value, $type );

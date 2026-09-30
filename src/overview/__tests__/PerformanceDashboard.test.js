@@ -1647,9 +1647,10 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( '/calendar' );
 		} );
-		// Pattern (has '/') → grep, NOT the exact-rid search_requests.
+		// Pattern (has '/') → grep, NOT the exact-rid search_requests. The
+		// pattern rides by name, so one opening `--` is never read as an option.
 		expect( sentTo( GREP ) ).toContainEqual( [
-			'/calendar',
+			'--pattern=/calendar',
 			'--limit=20',
 		] );
 		expect( sentTo( SEARCH ) ).toEqual( [] );

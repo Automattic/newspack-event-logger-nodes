@@ -199,9 +199,9 @@ class Config {
 	 * addressed under the `<config:KEY>` namespace instead. Null is not a
 	 * value — `Core::resolve_config_token()` treats it as unresolvable and
 	 * throws in strict mode (schema-arg defaults) or warns and yields '' in
-	 * non-strict mode. A scalar return is cast with `(string)`, so bools
-	 * surface as '1' / ''; a non-scalar is unresolvable too, so an
-	 * array-valued key must be flattened to a scalar here.
+	 * non-strict mode. A bool surfaces as '1' / '0', which a `bool` arg binds,
+	 * and any other scalar as its string; a non-scalar is unresolvable too, so
+	 * an array-valued key must be flattened to a scalar here.
 	 *
 	 * @param string $key Token key after the `eln:` prefix.
 	 * @return mixed Resolved value, or null when `eln` does not own $key.

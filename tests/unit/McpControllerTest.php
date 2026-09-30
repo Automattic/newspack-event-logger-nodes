@@ -458,14 +458,15 @@ class McpControllerTest extends TestCase {
 
 	/**
 	 * The named-object → token-array mapping, which is the whole seam between
-	 * MCP and the command protocol: the descriptor keys are POSITIONAL in the
-	 * order the verbs read them, and everything else is `--key=value`.
+	 * MCP and the command protocol: every argument rides by name, in the order
+	 * the agent gave it, because the verb binds by name and no table here has
+	 * to track which args a verb declares first.
 	 */
-	public function test_named_arguments_become_positionals_first_then_options(): void {
+	public function test_every_named_argument_rides_by_name(): void {
 		$tokens = new \ReflectionMethod( MCP_Controller::class, 'tokens' );
 
 		$this->assertSame(
-			[ 'span:wp_loaded hook', 'request:abc123', '--partition=3', '--limit=7' ],
+			[ '--partition=3', '--descriptor=span:wp_loaded hook', '--limit=7', '--context=request:abc123' ],
 			$tokens->invoke(
 				null,
 				[
@@ -473,11 +474,73 @@ class McpControllerTest extends TestCase {
 					'descriptor' => 'span:wp_loaded hook',
 					'limit'      => 7,
 					'context'    => 'request:abc123',
-					'nested'     => [ 'not scalar' => 'dropped' ],
 				]
 			)
 		);
 		$this->assertSame( [], $tokens->invoke( null, 'not an object' ) );
+	}
+
+	/** A list repeats its name, which is how a variadic arg binds by name. */
+	public function test_a_list_argument_rides_as_one_token_a_member(): void {
+		$tokens = new \ReflectionMethod( MCP_Controller::class, 'tokens' );
+
+		$this->assertSame(
+			[ '--descriptor=span:wp_loaded', '--context=request:kea4471:2', '--context=url:c0ffee4471ab' ],
+			$tokens->invoke(
+				null,
+				[
+					'descriptor' => 'span:wp_loaded',
+					'context'    => [ 'request:kea4471:2', 'url:c0ffee4471ab' ],
+				]
+			)
+		);
+	}
+
+	/** A map or a null names no value, so it refuses rather than vanishing. */
+	public function test_an_argument_that_is_neither_a_value_nor_a_list_is_refused(): void {
+		$tokens = new \ReflectionMethod( MCP_Controller::class, 'tokens' );
+
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'context' );
+		$tokens->invoke( null, [ 'context' => [ 'kea' => 'request:kea4471:2' ] ] );
+	}
+
+	/** An argument the verb does not declare answers a tool error, by name. */
+	public function test_an_undeclared_argument_answers_a_tool_error(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$reply = $controller->dispatch(
+			$this->request(
+				[
+					'jsonrpc' => '2.0',
+					'id'      => 9,
+					'method'  => 'tools/call',
+					'params'  => [ 'name' => 'performance_overview', 'arguments' => [ 'bogus' => '1' ] ],
+				],
+				$bearer
+			)
+		);
+
+		$this->assertTrue( $reply['result']['isError'] );
+		$this->assertStringContainsString( 'unknown option --bogus', $reply['result']['content'][0]['text'] );
+	}
+
+	/** tools/list tells the agent up front that nothing undeclared is taken. */
+	public function test_every_tool_schema_admits_its_declared_arguments_alone(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$tools = $controller->dispatch(
+			$this->request( [ 'jsonrpc' => '2.0', 'id' => 10, 'method' => 'tools/list' ], $bearer )
+		)['result']['tools'];
+
+		$this->assertNotEmpty( $tools );
+		foreach ( $tools as $tool ) {
+			$this->assertFalse( $tool['inputSchema']['additionalProperties'] ?? null, "{$tool['name']} admits undeclared arguments" );
+		}
 	}
 
 	public function test_a_verb_refusal_comes_back_as_a_tool_error_not_a_crash(): void {

@@ -39,10 +39,11 @@ PHPUNIT="$SCRIPT_DIR/../vendor/bin/phpunit"
 # Ensure xdebug coverage mode is enabled
 export XDEBUG_MODE=coverage
 
-# Clean up any previous test artifacts. One glob covers the baseline base
-# directory and the `-logging` tree beside it; make_temp_dir() dirs are
-# children of one of the two, so they go with their parent.
-rm -rf /tmp/newspack-event-logger-nodes-test* 2>/dev/null
+# Each run's bootstrap names a per-PID base and removes it, and the
+# `-logging` tree beside it, at exit; sweep only what a crashed run left,
+# never a tree a concurrent suite is using. make_temp_dir() dirs share the
+# prefix, so they age out the same way.
+find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'newspack-event-logger-nodes-test-*' -mmin +120 -exec rm -rf {} +
 
 # Run PHPUnit with coverage
 "$PHPUNIT" --configuration phpunit.xml \
@@ -53,6 +54,3 @@ rm -rf /tmp/newspack-event-logger-nodes-test* 2>/dev/null
 
 echo ""
 echo "Coverage report: ${OUT}/newspack-event-logger-nodes-coverage/index.html"
-
-rm -rf /tmp/newspack-event-logger-nodes-test* \
-       /tmp/phpunit-cache-newspack-event-logger-nodes

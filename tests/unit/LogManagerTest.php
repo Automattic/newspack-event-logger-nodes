@@ -52,7 +52,7 @@ class LogManagerTest extends TestCase {
 		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'], $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
 
 		// Point config to pre-written test config.
-		@\mkdir( self::TEST_DIR . '/logs', 0755, true );
+		@\mkdir( self::test_dir() . '/logs', 0755, true );
 		// Set both possible env-var names — Config (parallel agent) may either
 		// keep the legacy name or rename to match the new namespace.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -71,7 +71,7 @@ class LogManagerTest extends TestCase {
 		$_SERVER = $this->orig_server;
 
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		// Rules option is a fake-store global, not scoped to $_SERVER — drain it
 		// so it doesn't leak into other tests/suites.
 		unset( $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] );
@@ -259,7 +259,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_truncates_oversized_invalid_utf8_data(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'work', 'binstderr' ] ] ] );
 		$lm = $this->fresh_log_manager();
 		$lm->start( 'work' );
@@ -312,12 +312,12 @@ class LogManagerTest extends TestCase {
 		// longer resolves and the values land in the wrong slots.
 		$this->require_config_or_skip();
 
-		$config_path = self::TEST_DIR . '/retention-config.php';
+		$config_path = self::test_dir() . '/retention-config.php';
 		\file_put_contents(
 			$config_path,
 			'<?php return ' . \var_export(
 				[
-					'base_directory'   => self::TEST_DIR,
+					'base_directory'   => self::test_dir(),
 					'num_partitions'   => 1,
 					'segment_size'     => 4096,
 					'min_segments'     => 3,
@@ -363,7 +363,7 @@ class LogManagerTest extends TestCase {
 		// alone. If it doesn't fit, the Partition drops the record whole and this
 		// test sees no full-size line.
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 
 		// Max-length rid: init_firehose caps UNIQUE_ID at 64 chars.
 		$_SERVER['UNIQUE_ID'] = \str_repeat( 'R', 70 );
@@ -386,7 +386,7 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 
 		$max = 0;
-		foreach ( \glob( self::TEST_DIR . '/logs/firehose.p*/*.log' ) ?: [] as $file ) {
+		foreach ( \glob( self::test_dir() . '/logs/firehose.p*/*.log' ) ?: [] as $file ) {
 			foreach ( \array_filter( \explode( "\n", (string) \file_get_contents( $file ) ) ) as $line ) {
 				$max = \max( $max, \strlen( $line ) );
 			}
@@ -447,7 +447,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_alert_writes_a_k_alert_entry_to_the_firehose(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
 		$lm->start( 'work' );
 		$lm->alert( 'fleet sentinel 8842' );
@@ -548,7 +548,7 @@ class LogManagerTest extends TestCase {
 		// record then stranded in flight until eviction, on any job whose lock
 		// went away mid-request, not just a gyrobase render past its lease.
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
 		$lm->start( 'work' );
 		$lm->message( 'work', [ 'm' => 'before the stop' ] );
@@ -612,7 +612,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_finish_writes_the_terminal_past_a_failed_drain_write_then_raises_it(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm      = $this->fresh_log_manager();
 		$refusal = new \RuntimeException( 'firehose append refused 6612' );
 		self::refuse_entries( $lm, static fn ( array $entry ): bool => 'memory' === $entry['k'], $refusal );
@@ -634,7 +634,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_finish_keeps_an_abort_its_caller_declared_past_a_failed_drain_write(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm      = $this->fresh_log_manager();
 		$refusal = new \RuntimeException( 'firehose append refused 6614' );
 		self::refuse_entries( $lm, static fn ( array $entry ): bool => 'memory' === $entry['k'], $refusal );
@@ -653,7 +653,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_finish_raises_a_plain_stop_carrying_the_terminal_write_failure(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm      = $this->fresh_log_manager();
 		$refusal = new \RuntimeException( 'terminal append refused 6613' );
 		self::refuse_entries( $lm, static fn ( array $entry ): bool => \str_starts_with( $entry['k'], Log_Manager::REQUEST_LABEL . ' (' ), $refusal );
@@ -677,7 +677,7 @@ class LogManagerTest extends TestCase {
 		// A stop carrying a failure says the line never became durable, so no
 		// span opened on the record and the drain has nothing to close.
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
 		self::refuse_entries(
 			$lm,
@@ -692,7 +692,7 @@ class LogManagerTest extends TestCase {
 		}
 		$lm->finish();
 
-		$this->assertSame( [], self::entries_of( self::firehose_entries( self::TEST_DIR ), 'takahe 6614 (complete)' ) );
+		$this->assertSame( [], self::entries_of( self::firehose_entries( self::test_dir() ), 'takahe 6614 (complete)' ) );
 	}
 
 	public function test_finish_writes_the_terminal_when_the_stop_lands_on_it(): void {
@@ -701,7 +701,7 @@ class LogManagerTest extends TestCase {
 		// The predicate re-arms itself so the check falls on a LATER write than
 		// the first, which is the case a single guard around the drain misses.
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
 		$lm->start( 'work' );
 		$lm->message( 'work', [ 'm' => 'before the stop' ] );
@@ -753,7 +753,7 @@ class LogManagerTest extends TestCase {
 
 	/** The reader orders partitions and segments by number, not by string. */
 	public function test_firehose_entries_read_in_numeric_partition_and_segment_order(): void {
-		$base = self::TEST_DIR . '/order-7742';
+		$base = self::test_dir() . '/order-7742';
 		foreach ( [ [ 10, 1, 'p10-s1' ], [ 2, 1000, 'p2-s1000' ], [ 2, 999, 'p2-s999' ] ] as [ $partition, $segment, $mark ] ) {
 			@\mkdir( "{$base}/logs/firehose.p{$partition}", 0755, true );
 			$message                  = Message::new_message();
@@ -766,7 +766,7 @@ class LogManagerTest extends TestCase {
 
 	/** A line whose VALUE is no entry is a producer regression, and the reader says so. */
 	public function test_firehose_entries_fail_on_a_line_that_carries_no_entry(): void {
-		$base = self::TEST_DIR . '/bytestream-7748';
+		$base = self::test_dir() . '/bytestream-7748';
 		@\mkdir( "{$base}/logs/firehose.p0", 0755, true );
 		$message                   = Message::new_message();
 		$message[ Message::VALUE ] = 'kea-7748 raw bytes';
@@ -790,14 +790,14 @@ class LogManagerTest extends TestCase {
 
 	public function test_timed_passes_the_result_through_one_span(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
 
 		$result = $lm->timed( 'kea 4417', static fn (): array => [ 'rows' => 4417 ], self::describe_result( ... ), [ 'm' => 'kea-ci' ] );
 		$lm->finish();
 
 		$this->assertSame( [ 'rows' => 4417 ], $result );
-		$entries = self::firehose_entries( self::TEST_DIR );
+		$entries = self::firehose_entries( self::test_dir() );
 		$this->assertSame( 'kea-ci', self::last_entry_of( $entries, 'kea 4417 (start)' )['m'] ?? null );
 		$this->assertSame( 'returned {"rows":4417}', self::last_entry_of( $entries, 'kea 4417 (complete)' )['m'] ?? null );
 	}
@@ -805,14 +805,14 @@ class LogManagerTest extends TestCase {
 	/** A span the producer keeps through a fold keeps both halves, or it severs. */
 	public function test_timed_keeps_the_close_of_a_kept_start(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
 
 		$lm->timed( 'kea 4426', static fn (): int => 4426, self::describe_result( ... ), [ 'keep' => 1 ] );
 		$lm->timed( 'weka 4426', static fn (): int => 4426, self::describe_result( ... ) );
 		$lm->finish();
 
-		$entries = self::firehose_entries( self::TEST_DIR );
+		$entries = self::firehose_entries( self::test_dir() );
 		$this->assertSame( 1, self::last_entry_of( $entries, 'kea 4426 (start)' )['keep'] ?? null );
 		$this->assertSame( 1, self::last_entry_of( $entries, 'kea 4426 (complete)' )['keep'] ?? null );
 		$this->assertArrayNotHasKey( 'keep', self::last_entry_of( $entries, 'weka 4426 (complete)' ) ?? [] );
@@ -821,7 +821,7 @@ class LogManagerTest extends TestCase {
 	/** A kept frame keeps its close however it closes: by label or drained. */
 	public function test_a_kept_start_keeps_every_close_of_its_frame(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
 
 		$lm->start( 'kea 4432', [ 'keep' => 3 ] );
@@ -830,7 +830,7 @@ class LogManagerTest extends TestCase {
 		$lm->start( 'weka 4432' );
 		$lm->finish();
 
-		$entries = self::firehose_entries( self::TEST_DIR );
+		$entries = self::firehose_entries( self::test_dir() );
 		$this->assertSame( 3, self::last_entry_of( $entries, 'kea 4432 (complete)' )['keep'] ?? null );
 		$orphan = self::last_entry_of( $entries, 'ruru 4432 (complete)' ) ?? [];
 		$this->assertSame( '(orphaned)', $orphan['m'] ?? null );
@@ -856,7 +856,7 @@ class LogManagerTest extends TestCase {
 	#[DataProvider( 'thrown_outcomes' )]
 	public function test_timed_names_what_the_closure_threw_and_propagates_it( \Throwable $thrown, string $outcome ): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm        = $this->fresh_log_manager();
 		$described = false;
 		$caught    = null;
@@ -879,13 +879,13 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 
 		$this->assertFalse( $described, 'the description covers a result, and there was none' );
-		$this->assertSame( $outcome, self::last_entry_of( self::firehose_entries( self::TEST_DIR ), 'kea 4418 (complete)' )['m'] ?? null );
+		$this->assertSame( $outcome, self::last_entry_of( self::firehose_entries( self::test_dir() ), 'kea 4418 (complete)' )['m'] ?? null );
 	}
 
 	/** A thrown message too long for one firehose line clips; its class leads. */
 	public function test_timed_clips_a_long_thrown_message_to_fit_the_line(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
 
 		try {
@@ -898,7 +898,7 @@ class LogManagerTest extends TestCase {
 			$lm->finish();
 		}
 
-		$complete = self::last_entry_of( self::firehose_entries( self::TEST_DIR ), 'kea 4419 (complete)' ) ?? [];
+		$complete = self::last_entry_of( self::firehose_entries( self::test_dir() ), 'kea 4419 (complete)' ) ?? [];
 		$this->assertStringStartsWith( 'DomainException: takahe 4419 takahe', (string) ( $complete['m'] ?? '' ) );
 		$this->assertTrue( $complete['truncated'] ?? false );
 		$this->assertArrayHasKey( 'duration_ms', $complete );
@@ -908,7 +908,7 @@ class LogManagerTest extends TestCase {
 	/** With no description the span carries no outcome at all, thrown or not. */
 	public function test_timed_without_a_description_writes_no_outcome(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm = $this->fresh_log_manager();
 
 		$lm->timed( 'kea 4425', static fn (): string => 'moa-4425' );
@@ -918,7 +918,7 @@ class LogManagerTest extends TestCase {
 			$lm->finish();
 		}
 
-		$entries = self::firehose_entries( self::TEST_DIR );
+		$entries = self::firehose_entries( self::test_dir() );
 		foreach ( [ 'kea 4425 (complete)', 'weka 4425 (complete)' ] as $category ) {
 			$complete = self::last_entry_of( $entries, $category );
 			$this->assertNotNull( $complete, $category );
@@ -929,7 +929,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_timed_start_that_throws_propagates_and_skips_the_closure(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm     = $this->fresh_log_manager();
 		$ran    = false;
 		$disarm = self::arm_stop_on_next_write();
@@ -958,7 +958,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_a_stop_raised_by_the_start_write_leaves_the_span_for_the_drain_to_close(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm     = $this->fresh_log_manager();
 		$disarm = self::arm_stop_on_next_write();
 
@@ -970,7 +970,7 @@ class LogManagerTest extends TestCase {
 		}
 		$lm->finish();
 
-		$entries = self::firehose_entries( self::TEST_DIR );
+		$entries = self::firehose_entries( self::test_dir() );
 		$this->assertCount( 1, self::entries_of( $entries, 'kea 4423 (start)' ), 'the start line landed before the stop' );
 		$this->assertSame(
 			[ '(orphaned)' ],
@@ -981,7 +981,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_timed_complete_that_throws_propagates_after_a_normal_return(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm     = $this->fresh_log_manager();
 		$disarm = null;
 
@@ -1008,7 +1008,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_timed_runs_both_writes_through_the_write_wrapper(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm      = $this->fresh_log_manager();
 		$held    = [];
 		$wrapped = [];
@@ -1032,12 +1032,12 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( 4431, $result, 'the step ran past the held stop' );
 		$this->assertSame( [ 'write', 'write' ], $wrapped, 'the start and the close' );
 		$this->assertCount( 1, $held, 'the start write raised it' );
-		$this->assertSame( 'returned 4431', self::last_entry_of( self::firehose_entries( self::TEST_DIR ), 'kea 4431 (complete)' )['m'] ?? null );
+		$this->assertSame( 'returned 4431', self::last_entry_of( self::firehose_entries( self::test_dir() ), 'kea 4431 (complete)' )['m'] ?? null );
 	}
 
 	public function test_timed_complete_that_throws_keeps_the_closures_throwable_as_previous(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$lm     = $this->fresh_log_manager();
 		$thrown = new \DomainException( 'weka 4421' );
 		$disarm = null;
@@ -1071,7 +1071,7 @@ class LogManagerTest extends TestCase {
 	/** A worker process names itself and its partition as two entries of their own, not as environment. */
 	public function test_a_worker_process_logs_its_type_and_partition_as_entries(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
 		$_SERVER['REQUEST_URI']                     = '/wp-cron.php';
 		$_SERVER['NEWSPACK_NODES_WORKER_TYPE']      = 'reconcile-731';
@@ -1094,7 +1094,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_the_substrates_identity_announcement_renames_a_spawned_worker(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
 		$_SERVER['REQUEST_URI'] = '/wp-json/newspack-nodes/v1/workers/spawn';
 		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'], $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] );
@@ -1122,7 +1122,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_a_job_inside_a_worker_partition_names_the_type_and_no_partition(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
 		$_SERVER['REQUEST_URI']                     = '/wp-json/newspack-nodes/v1/workers/spawn';
 		$_SERVER['NEWSPACK_NODES_WORKER_TYPE']      = 'kea-7713';
@@ -1270,7 +1270,7 @@ class LogManagerTest extends TestCase {
 	#[DataProvider( 'platform_endpoints' )]
 	public function test_the_platforms_own_endpoints_log_as_worker_traffic( string $uri, string $worker_type ): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
 		$_SERVER['REQUEST_URI'] = $uri;
 		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
@@ -1284,7 +1284,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_an_ordinary_page_carries_no_worker_type(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
 		$_SERVER['REQUEST_URI'] = '/wp-json/wp/v2/pages/867431';
 		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
@@ -1301,7 +1301,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_process_start_frame_carries_the_governing_rule_id(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$this->set_rules_option( [ [ 'id' => 'shop', 'pattern' => '/shop/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
 		$_SERVER['REQUEST_URI'] = '/shop/cart';
 		$lm = $this->fresh_log_manager();
@@ -1320,7 +1320,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_process_start_frame_names_the_wordpress_version(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		$this->set_rules_option( [ [ 'id' => 'shop', 'pattern' => '/shop/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
 		$_SERVER['REQUEST_URI'] = '/shop/cart';
 		$lm = $this->fresh_log_manager();
@@ -1514,7 +1514,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_finish_computes_real_duration(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
@@ -1538,7 +1538,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_message_m_field_url_redaction(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
@@ -1552,7 +1552,7 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'test', [ 'm' => 'https://example.com?client_secret=SECRET&id=123' ] );
 		$lm->finish();
 
-		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
+		$log_dir = self::test_dir() . '/logs/firehose.p0';
 		$this->assertDirectoryExists( $log_dir );
 		$files = \glob( $log_dir . '/*.log' );
 		$this->assertNotEmpty( $files );
@@ -1573,7 +1573,7 @@ class LogManagerTest extends TestCase {
 	 * @return list<array<string,mixed>>
 	 */
 	private function written_entries(): array {
-		$entries = self::firehose_entries( self::TEST_DIR, true );
+		$entries = self::firehose_entries( self::test_dir(), true );
 		$this->assertNotEmpty( $entries, 'Firehose should have written data' );
 		return $entries;
 	}
@@ -1598,7 +1598,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_k_field_not_overridable_by_data(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
@@ -1624,7 +1624,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_ts_field_overridable_by_data(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
@@ -1648,7 +1648,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_rid_field_not_overridable_by_data(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
@@ -1673,7 +1673,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_n_field_not_overridable_by_data(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		// Set both possible env-var names — Config (parallel agent) may either
@@ -1894,7 +1894,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_flush_calls_topic_flush_after_start(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 
 		$lm = Log_Manager::instance();
 		$lm->start( 'work' );
@@ -1902,7 +1902,7 @@ class LogManagerTest extends TestCase {
 		$lm->flush();
 
 		// After flush, contents should be visible on disk for any future read.
-		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
+		$log_dir = self::test_dir() . '/logs/firehose.p0';
 		$this->assertDirectoryExists( $log_dir );
 		$files = \glob( $log_dir . '/*.log' );
 		$this->assertNotEmpty( $files, 'flush() must drain the buffered batch to disk' );
@@ -1919,7 +1919,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_refresh_firehose_after_start_succeeds(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 
 		$lm = Log_Manager::instance();
 		$lm->start( 'work' );
@@ -1939,7 +1939,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_finish_emits_environment_resources_memory_and_process_complete(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2035,7 +2035,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_environment_v3_full_allowlist_stays_under_cap_and_redacts(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2111,7 +2111,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_environment_v3_caps_oversized_value(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2140,7 +2140,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_environment_v3_redacts_url_secrets_in_any_value(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2168,7 +2168,7 @@ class LogManagerTest extends TestCase {
 		// microtime, which lands deep in WP bootstrap) so RequestBuilder's
 		// inflight_snapshot.start_time reflects the real PHP-request start.
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2208,7 +2208,7 @@ class LogManagerTest extends TestCase {
 	 * @return list<array<string,mixed>> The firehose entries it produced.
 	 */
 	private function flush_plugin_row_under_rule( array $rule ): array {
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2270,7 +2270,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_log_process_records_method_and_full_url(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2301,7 +2301,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_log_process_https_off_uses_http_scheme(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2328,7 +2328,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_log_process_without_server_name_uses_path_only(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2359,7 +2359,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_finish_emits_orphaned_complete_for_unclosed_starts(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2486,7 +2486,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_forged_header_still_reaches_environment_v3_for_correlation(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 
 		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'a8c-forged-rid';
 		unset( $_SERVER['UNIQUE_ID'] );
@@ -2568,7 +2568,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_emits_truncated_entry_when_data_exceeds_max_size(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2604,7 +2604,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_trims_an_oversized_string_and_keeps_the_other_keys(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2634,7 +2634,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_the_cap_bounds_the_entry_including_n_k_and_ts(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2658,7 +2658,7 @@ class LogManagerTest extends TestCase {
 	/** An oversized ARRAY `m` is dropped; the other keys still ride. */
 	public function test_message_drops_an_oversized_array_and_keeps_the_other_keys(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2749,7 +2749,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_flushes_immediately_when_flush_every_line_enabled(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		// logging-enabled config has flush_every_line=true.
@@ -2762,7 +2762,7 @@ class LogManagerTest extends TestCase {
 
 		// Without finish() AND without explicit $lm->flush(), the entry must
 		// already be on disk because flush_every_line forced a drain.
-		$log_dir = self::TEST_DIR . '/logs/firehose.p0';
+		$log_dir = self::test_dir() . '/logs/firehose.p0';
 		$this->assertDirectoryExists( $log_dir );
 		$files = \glob( $log_dir . '/*.log' );
 		$this->assertNotEmpty( $files, 'flush_every_line=true must drain on every message' );
@@ -2836,7 +2836,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_refresh_firehose_preserves_segment_layout_after_no_writes(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2847,7 +2847,7 @@ class LogManagerTest extends TestCase {
 		$lm->flush();
 
 		// Snapshot segment count.
-		$log_dir   = self::TEST_DIR . '/logs/firehose.p0';
+		$log_dir   = self::test_dir() . '/logs/firehose.p0';
 		$before    = \glob( $log_dir . '/*.log' );
 		$before_n  = \count( $before );
 
@@ -2869,7 +2869,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_log_environment_strips_full_control_char_range(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2901,7 +2901,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_log_environment_silently_skips_array_server_values(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2931,7 +2931,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_complete_emits_orphaned_for_nested_unfinished_starts(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -2975,7 +2975,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_finish_omits_fatal_tagging_when_no_fatal_error(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -3062,7 +3062,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_firehose_dirs_span_the_global_count_when_no_topology_declares_one(): void {
 		// 3 is distinct from the 1 a missing key would fall back to.
-		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 3 ] );
+		$this->use_base_dir( self::test_dir(), [ 'num_partitions' => 3 ] );
 
 		$dirs = Log_Manager::firehose_dirs();
 
@@ -3077,8 +3077,8 @@ class LogManagerTest extends TestCase {
 		// The writer hashes the rid over the config count on every request, so
 		// a topology pinning 1 worker must not shrink the reader's span to 1
 		// and hide two thirds of the data.
-		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 3 ] );
-		$stock = self::TEST_DIR . '/tsl';
+		$this->use_base_dir( self::test_dir(), [ 'num_partitions' => 3 ] );
+		$stock = self::test_dir() . '/tsl';
 		\mkdir( $stock, 0755, true );
 		\file_put_contents(
 			"{$stock}/narrow.tsl",
@@ -3116,8 +3116,8 @@ class LogManagerTest extends TestCase {
 		// about how many firehose partitions exist — the writer hashes the rid
 		// over the config count and nothing else, so the reader spans that and
 		// nothing else. A topology pinning 5 does not conjure two more.
-		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 3 ] );
-		$stock = self::TEST_DIR . '/tsl-wide';
+		$this->use_base_dir( self::test_dir(), [ 'num_partitions' => 3 ] );
+		$stock = self::test_dir() . '/tsl-wide';
 		\mkdir( $stock, 0755, true );
 		\file_put_contents(
 			"{$stock}/wide.tsl",
@@ -3151,7 +3151,7 @@ class LogManagerTest extends TestCase {
 	}
 
 	public function test_firehose_dirs_override_strips_the_log_suffix(): void {
-		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 2 ] );
+		$this->use_base_dir( self::test_dir(), [ 'num_partitions' => 2 ] );
 
 		$dirs = Log_Manager::firehose_dirs( '/somewhere/else/firehose' );
 
@@ -3167,7 +3167,7 @@ class LogManagerTest extends TestCase {
 	 * partition alone — keyed by the index it names, not re-based to 0.
 	 */
 	public function test_firehose_dirs_override_naming_a_partition_answers_for_it_alone(): void {
-		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 4 ] );
+		$this->use_base_dir( self::test_dir(), [ 'num_partitions' => 4 ] );
 
 		$dirs = Log_Manager::firehose_dirs( '/somewhere/else/firehose.p2' );
 
@@ -3392,7 +3392,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_leaves_a_job_transport_body_intact(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
@@ -3425,7 +3425,7 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_a_query_shape_survives_a_credential_shaped_column_name(): void {
 		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );

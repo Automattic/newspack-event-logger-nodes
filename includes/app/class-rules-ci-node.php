@@ -16,10 +16,9 @@
  * and `upsert` rekey what they are handed rather than trust an incoming id,
  * and list POSITION carries no meaning: `Rule_Matcher` ranks by specificity.
  *
- * `save` and `upsert` read their JSON blob as the raw first token
- * (`self::arg_strings( $args )[0]`); a blob carries its own structure, so
- * there is nothing for `Command_Args::parse()` to classify. `delete` takes a
- * plain positional id and parses normally. One unrepresentable entry throws
+ * `save` and `upsert` take their JSON blob as one declared arg, `rules` or
+ * `rule`, and decode it themselves; `delete` takes the `id`. The substrate
+ * binds each by name before the handler runs. One unrepresentable entry throws
  * out of `Rule::from_array()` before `Rule_Set::save()` is reached, so a
  * whole-list replace is all or nothing.
  *
@@ -31,8 +30,8 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Capabilities;
-use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
@@ -145,7 +144,7 @@ class Rules_CI_Node extends Service_CI_Node {
 						[ 'name' => 'rules', 'type' => 'string', 'required' => true ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-						$decoded = self::decode_json_array( self::arg_strings( $args )[0] ?? '' );
+						$decoded = self::decode_json_array( Core::as_string( $args['rules'] ) );
 						$rules   = [];
 						foreach ( $decoded as $entry ) {
 							if ( ! \is_array( $entry ) ) {
@@ -167,7 +166,7 @@ class Rules_CI_Node extends Service_CI_Node {
 						[ 'name' => 'rule', 'type' => 'string', 'required' => true ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-						$decoded = self::decode_json_array( self::arg_strings( $args )[0] ?? '' );
+						$decoded = self::decode_json_array( Core::as_string( $args['rule'] ) );
 						/** @var array<string,mixed> $decoded decoded rule object (Rule::to_array() shape). */
 						$incoming = Rule::from_array( $decoded );
 						$new_id   = Rule_Set::id_for( $incoming->pattern );
@@ -198,11 +197,7 @@ class Rules_CI_Node extends Service_CI_Node {
 						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-						$id = Command_Args::parse( self::arg_strings( $args ) )['positional'][0] ?? '';
-						if ( '' === $id ) {
-							throw new \RuntimeException( 'id required' );
-						}
-
+						$id        = Core::as_string( $args['id'] );
 						$set       = Rule_Set::load();
 						$remaining = [];
 						$found     = false;

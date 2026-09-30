@@ -607,8 +607,8 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped( 'performance', 1 );
 		Core::$now = (float) \gmmktime( 14, 37, 11, 9, 29, 2026 );
 		$store     = $this->stats_store( 0, 86400 );
-		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'c0ffee7731ab', 'ua' ), '2026-09-29-14-35', [ 'kea-ua/7' => self::dim_entry( 41, 4.1, 0.4 ) ] );
-		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'c0ffee7731ab', 'status' ), '2026-09-29-14-35', [ '5xx' => self::dim_entry( 43, 4.3, 0.4 ) ] );
+		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'c0ffee7731ab' ), '2026-09-29-14-35', [ 'kea-ua/7' => self::dim_entry( 41, 4.1, 0.4 ) ], 'ua' );
+		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'c0ffee7731ab' ), '2026-09-29-14-35', [ '5xx' => self::dim_entry( 43, 4.3, 0.4 ) ], 'status' );
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_breakdown', 'c0ffee7731ab --breakdown=ua' );
 
@@ -2935,7 +2935,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 		$bucket = $this->current_url_bucket();
-		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'abc123def456', 'method' ), $bucket, [ 'GET' => self::dim_entry( 3, 0.3, 0.1 ) ] );
+		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'abc123def456' ), $bucket, [ 'GET' => self::dim_entry( 3, 0.3, 0.1 ) ], 'method' );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -2957,7 +2957,7 @@ class PerformanceCITest extends TestCase {
 		$this->set_url_bucket( $store, $bucket, [
 			'e71b04ac9d33' => [ 'url' => '/breakdown-only', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 84.0, 'last_seen' => 1700006000 ],
 		] );
-		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'e71b04ac9d33', 'status' ), $bucket, [ '503' => self::dim_entry( 9, 1.7, 0.4 ) ] );
+		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'e71b04ac9d33' ), $bucket, [ '503' => self::dim_entry( 9, 1.7, 0.4 ) ], 'status' );
 		$detail = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
@@ -3064,7 +3064,7 @@ class PerformanceCITest extends TestCase {
 			'd06e5a1b7c43' => [ 'url' => '/quokka-5a1b', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 52.0, 'last_seen' => $old ],
 		] );
 		$this->set_hour_slot( $store, Stats_Store::url_cat_parts( 'd06e5a1b7c43' ), $current, [ 'wpdb' => self::cat_entry( 41.5, 6, 3 ) ] );
-		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'd06e5a1b7c43', 'status' ), $current, [ '418' => self::dim_entry( 7, 2.9, 0.6 ) ] );
+		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'd06e5a1b7c43' ), $current, [ '418' => self::dim_entry( 7, 2.9, 0.6 ) ], 'status' );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'd06e5a1b7c43 --breakdown=status --categories' );
 
@@ -3245,12 +3245,34 @@ class PerformanceCITest extends TestCase {
 		$this->assertNotEmpty( $result['url_hash'] );
 	}
 
+	/**
+	 * The binder hands a handler its args by name however they arrived, so a
+	 * caller naming the positional one — the MCP door names every arg — reads
+	 * the same answer as a caller placing it.
+	 */
+	public function test_search_requests_takes_its_rid_by_name(): void {
+		$rid = $this->write_request( [
+			'rid'            => 'rid-named-kea-4417',
+			'url'            => '/named-kea-4417',
+			'timestamp'      => 1700000400,
+			'duration_ms'    => 20,
+			'status_code'    => 200,
+			'peak_mb'        => 3,
+			'request_method' => 'GET',
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', [ '--rid=' . $rid ] );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'rid-named-kea-4417', $result['rid'] );
+	}
+
 	public function test_search_requests_verb_requires_rid(): void {
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire( $interpreter, 'performance', 'search_requests' );
 
 		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'rid required', \strtolower( $result ) );
+		$this->assertStringContainsString( 'missing required argument: rid', $result );
 	}
 
 	public function test_search_requests_verb_rejects_unauthorized(): void {
@@ -3397,7 +3419,15 @@ class PerformanceCITest extends TestCase {
 		$result      = VerbHarness::fire( $interpreter, 'performance', 'grep_requests' );
 
 		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'pattern required', \strtolower( $result ) );
+		$this->assertStringContainsString( 'missing required argument: pattern', $result );
+	}
+
+	/** The binder takes whitespace as a value; as a pattern it matches all. */
+	public function test_grep_requests_refuses_a_whitespace_pattern(): void {
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', [ '   ' ] );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'pattern required', $result );
 	}
 
 	public function test_grep_requests_rejects_unauthorized(): void {
@@ -3562,7 +3592,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', '' );
 
 		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'descriptor required', \strtolower( $result ) );
+		$this->assertStringContainsString( 'missing required argument: descriptor', $result );
 	}
 
 	/**
@@ -3964,7 +3994,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'rid required', \strtolower( $result ) );
+		$this->assertStringContainsString( 'missing required argument: rid', $result );
 	}
 
 	public function test_dump_request_verb_rejects_unauthorized(): void {
@@ -4199,6 +4229,57 @@ class PerformanceCITest extends TestCase {
 		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
 	}
 
+	/**
+	 * A hub pushes a false bool option as a blank token, which is what
+	 * `Core::as_string( false )` gives, so `set` takes its value optional and a
+	 * blank turns the spoke's copy off.
+	 */
+	public function test_set_verb_applies_the_blank_a_hub_pushes_for_false(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] = true;
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'set',
+			[ 'newspack_event_logger_nodes_flush_every_line', '' ]
+		);
+
+		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_flush_every_line', 'updated' => true ], $result );
+		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] );
+	}
+
+	/** A bool option reads its value as a bool word, so `false` turns it off. */
+	public function test_set_verb_turns_a_bool_option_off_on_false(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = true;
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', 'false' ] );
+
+		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_log_memory', 'updated' => true ], $result );
+		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+	}
+
+	/** A word no bool reads as is refused, never read as on. */
+	public function test_set_verb_refuses_a_bool_option_value_outside_the_bool_words(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = false;
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', 'kea-4471' ] );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid value for option', $result );
+		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+	}
+
+	/** A blank is a value; no value at all names nothing to write. */
+	public function test_set_verb_refuses_an_absent_value(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = true;
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory' ] );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'value required', $result );
+		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+	}
+
 	public function test_array_option_json_preserves_nested_structure(): void {
 		// A nested map recurses one level and keeps the structure (sanitize_array
 		// recursion branch), not flattened or rejected. Tested on the sanitizer
@@ -4231,12 +4312,12 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_set_verb_requires_option(): void {
-		// No positional args → 'option required'.
+		// No positional args → the binder's refusal for the required option.
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire( $interpreter, 'performance', 'set' );
 
 		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'option required', \strtolower( $result ) );
+		$this->assertStringContainsString( 'missing required argument: option', $result );
 	}
 
 	public function test_set_verb_refuses_an_empty_array_value(): void {
@@ -4335,9 +4416,9 @@ class PerformanceCITest extends TestCase {
 	public function test_the_index_is_read_per_request_not_shared_across_instances(): void {
 		$calls    = 0;
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( &$calls, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now, bool $errored ) use ( &$calls, $original ): array {
 			++$calls;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now, $errored );
 		};
 
 		try {
@@ -4459,6 +4540,17 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
+	public function test_ask_verb_declares_its_context_the_tail_of_the_descriptors(): void {
+		// `ask <descriptor> [<context-descriptor>…]`: every positional after
+		// the first binds to `context`, so the page's scope rides by name.
+		$args = self::args_by_name( 'ask' );
+		$this->assertSame( [ 'descriptor', 'context', 'server', 'search', 'errors_only', 'include_workers' ], \array_keys( $args ) );
+		$this->assertTrue( $args['descriptor']['required'] );
+		$this->assertTrue( $args['context']['variadic'] );
+		$this->assertFalse( $args['errors_only']['default'] );
+		$this->assertFalse( $args['include_workers']['default'] );
+	}
+
 	public function test_urls_verb_declares_sort_paging_filter_args(): void {
 		// urls reads sort/order/limit/offset/search/server/errors_only and
 		// include_workers — all optional. `include_workers` opts IN because its
@@ -4514,7 +4606,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_search_requests_verb_declares_required_rid(): void {
-		// search_requests throws 'rid required' when absent → required string.
+		// search_requests needs a rid to look up → required string.
 		$args = self::args_by_name( 'search_requests' );
 		$this->assertSame( [ 'rid' ], \array_keys( $args ) );
 		$this->assertSame( 'string', $args['rid']['type'] );
@@ -4522,7 +4614,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_dump_request_verb_declares_required_rid_optional_partition(): void {
-		// dump_request throws on empty rid; partition defaults to 0.
+		// dump_request needs a rid; partition defaults to 0.
 		$args = self::args_by_name( 'dump_request' );
 		$this->assertSame( [ 'rid', 'partition' ], \array_keys( $args ) );
 		$this->assertTrue( $args['rid']['required'] );
@@ -4531,8 +4623,8 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0, $args['partition']['default'] );
 	}
 
-	public function test_set_verb_declares_required_option_and_value(): void {
-		// set throws 'option required' / 'value required' → both required.
+	public function test_set_verb_declares_a_required_option_and_an_optional_value(): void {
+		// A hub pushes a false bool as a blank value, so value is optional.
 		$args = self::args_by_name( 'set' );
 		$this->assertSame( [ 'option', 'value' ], \array_keys( $args ) );
 		$this->assertSame( 'string', $args['option']['type'] );
@@ -4540,7 +4632,7 @@ class PerformanceCITest extends TestCase {
 		// $value is mixed (int|float|bool|array depending on the option) — string
 		// is the renderable catch-all the Inspector can collect.
 		$this->assertSame( 'string', $args['value']['type'] );
-		$this->assertTrue( $args['value']['required'] );
+		$this->assertFalse( $args['value']['required'] );
 	}
 
 	/**
@@ -4667,7 +4759,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'c0ffee123456' ), '', $this->live_stores(), (int) Core::$now );
+		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'c0ffee123456' ), '', $this->live_stores(), (int) Core::$now, false );
 
 		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'c0ffee123456' === $r['hash'] ) )[0] ?? null;
 		$this->assertIsArray( $row );
@@ -4763,9 +4855,9 @@ class PerformanceCITest extends TestCase {
 		$seen     = [];
 		$original = Performance_CI_Node::$load_index;
 
-		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( &$seen, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now, bool $errored ) use ( &$seen, $original ): array {
 			$seen[] = $shard;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now, $errored );
 		};
 		try {
 			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
@@ -5521,7 +5613,7 @@ class PerformanceCITest extends TestCase {
 			$healthy = $fire( '--search=wombat', '--limit=41' );
 			$this->assertSame( [ 'a1ce0fa11b77' ], \array_column( $healthy['data'], 'hash' ), 'a read that answers finds the row' );
 
-			$this->refuse_stats_reads( ':' . Stats_Store::NS_URLTOKEN );
+			$this->refuse_stats_reads( '/^' . Stats_Store::NS_URLTOKEN . ':/' );
 			$shards = $reads();
 			// A different page, so the answer is read rather than cached.
 			$page = $fire( '--search=wombat', '--limit=37' );
@@ -5663,9 +5755,9 @@ class PerformanceCITest extends TestCase {
 	private function counting_urls_fire(): array {
 		$reads    = 0;
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( &$reads, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now, bool $errored ) use ( &$reads, $original ): array {
 			++$reads;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now, $errored );
 		};
 		return [
 			static fn ( string ...$args ): array => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $args ),
@@ -5699,10 +5791,10 @@ class PerformanceCITest extends TestCase {
 		$read     = [];
 		$original = Performance_CI_Node::$load_index;
 		$sets     = [];
-		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( &$read, &$sets, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now, bool $errored ) use ( &$read, &$sets, $original ): array {
 			$read[] = \count( $stores );
 			$sets[ \implode( ',', \array_map( 'spl_object_id', $stores ) ) ] = true;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now, $errored );
 		};
 		try {
 			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', ...$args );
@@ -5848,7 +5940,7 @@ class PerformanceCITest extends TestCase {
 		$this->forget_stats_asks();
 
 		// Every hash is `%012x`, so all forty land in shard 0.
-		$out = Performance_CI_Node::load_index_default( '0', '', $this->live_stores(), (int) Core::$now );
+		$out = Performance_CI_Node::load_index_default( '0', '', $this->live_stores(), (int) Core::$now, false );
 
 		$this->assertCount( 40, $out, 'every seeded URL still folds' );
 		$this->assertGreaterThan( 1, $this->stats_reads(), 'the window must not be one read' );
@@ -5973,7 +6065,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'facade000777' ), '', $this->live_stores(), (int) Core::$now );
+		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'facade000777' ), '', $this->live_stores(), (int) Core::$now, false );
 
 		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'facade000777' === $r['hash'] ) )[0] ?? null;
 		$this->assertIsArray( $row );
@@ -6429,13 +6521,14 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * Every candidate is checked on the row the walk already read, so none is
-	 * cut: four partitions naming about 3,000 URLs each for one word, more
-	 * than `URL_SEARCH_MAX` together, are all in the totals.
+	 * cut: two partitions naming one URL more than half `URL_SEARCH_MAX` each
+	 * for one word, each set inside the read limit and more than the cap
+	 * together, are all in the totals.
 	 */
 	public function test_every_candidate_of_every_partition_reaches_the_totals(): void {
-		$this->activate_shipped( 'performance', 4 );
-		$per = 3001;
-		foreach ( \range( 0, 3 ) as $p ) {
+		$this->activate_shipped( 'performance', 2 );
+		$per = \intdiv( Stats_Store::URL_SEARCH_MAX, 2 ) + 1;
+		foreach ( \range( 0, 1 ) as $p ) {
 			$store = $this->stats_store( $p, 86400 );
 			$rows  = [];
 			foreach ( \range( 1, $per ) as $i ) {
@@ -6450,8 +6543,9 @@ class PerformanceCITest extends TestCase {
 		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--limit=10', '--search=news' ] );
 
 		$this->assertIsArray( $page, \is_string( $page ) ? $page : '' );
-		$this->assertSame( 4 * $per, $page['rows'] );
-		$this->assertSame( 8 * $per, $page['totals']['requests'] );
+		$this->assertGreaterThan( Stats_Store::URL_SEARCH_MAX, 2 * $per, 'more candidates than the cap' );
+		$this->assertSame( 2 * $per, $page['rows'] );
+		$this->assertSame( 4 * $per, $page['totals']['requests'] );
 	}
 
 	/**
@@ -6508,6 +6602,40 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * A page reading two list sets reads both in the round trip one set
+	 * takes: the same batches as a reader page, for its lists and for its
+	 * header records, each carrying both sets' keys.
+	 */
+	public function test_an_include_workers_page_reads_both_sets_in_one_round_trip_per_store_and_table(): void {
+		$this->seed_family_window();
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		$asked                = function ( string ...$args ) use ( $fire ): array {
+			$this->forget_stats_asks();
+			$this->assertTrue( $fire( '--sort=max_ms', '--order=desc', '--limit=40', ...$args )['ranked'] );
+			return [
+				$this->asked_batches( Stats_Store::NS_URLRANK_S, Stats_Store::NS_URLRANK_HOUR_S ),
+				$this->asked_batches( Stats_Store::NS_URLHDR, Stats_Store::NS_URLHDR_HOUR ),
+			];
+		};
+		try {
+			[ $reader_lists, $reader_records ] = $asked();
+			[ $lists, $records ]               = $asked( '--include_workers=1' );
+		} finally {
+			$restore();
+		}
+
+		$this->assertCount( \count( $reader_records ), $records, 'the reader page\'s round trips for both sets\' records' );
+		$this->assertCount( \count( $reader_lists ), $lists, 'and for both sets\' lists, the slowest and the page\'s' );
+		// A DONE marker shares the hour lists' namespace and belongs to no set.
+		$ranked = static fn ( array $batch ): array => \array_values( \array_filter( $batch, static fn ( string $key ): bool => ! \in_array( 'done', \explode( ':', $key ), true ) ) );
+		foreach ( \array_filter( \array_map( $ranked, [ ...$records, ...$lists ] ) ) as $batch ) {
+			$worker = \array_filter( $batch, static fn ( string $key ): bool => \in_array( Stats_Store::WORKER_SHARD_PREFIX, \explode( ':', $key ), true ) );
+			$this->assertNotSame( [], $worker, 'each batch carries the worker set' );
+			$this->assertNotSame( $batch, \array_values( $worker ), 'beside the reader set' );
+		}
+	}
+
+	/**
 	 * A reply reads its clock once. The firehose logger advances the tick
 	 * while a long reply runs, so a page keyed under one bucket must not be
 	 * built from, or dated by, the next bucket's window. Driven through the
@@ -6523,11 +6651,11 @@ class PerformanceCITest extends TestCase {
 		] );
 		$repinned                        = false;
 		$original                        = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( $next, $original, &$repinned ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now, bool $errored ) use ( $next, $original, &$repinned ): array {
 			// A firehose line logged mid-reply re-pins the tick.
 			Core::$now = $next;
 			$repinned  = true;
-			return ( $original ?? Performance_CI_Node::load_index_default( ... ) )( $shard, $server, $stores, $now );
+			return ( $original ?? Performance_CI_Node::load_index_default( ... ) )( $shard, $server, $stores, $now, $errored );
 		};
 		try {
 			Core::$now = $at;
@@ -6762,6 +6890,391 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( "fold: holes {$gap}", $lists[0]['m'] );
 		$this->assertSame( 1, $lists[0]['holes'] );
 		$this->assertSame( 1, $lists[0]['keep'] );
+	}
+
+	/**
+	 * Reader and worker rows in the open bucket and in one folded hour, as
+	 * the writer files them: the rows the fold walks, the lists and records
+	 * the ranked page reads, every other planned hour folded idle. Each URL
+	 * sits in one key alone, so the lists hold every row whole and the two
+	 * paths must answer the same numbers on every sort. Every value differs
+	 * on every sort, so no tie decides an order.
+	 *
+	 * @param array<string,array<string,mixed>> $overflow More named rows for the open bucket.
+	 * @return string The folded hour.
+	 */
+	private function seed_family_window( array $overflow = [] ): string {
+		$this->activate_shipped( 'performance', 3 );
+		$now    = self::tick();
+		$hour   = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'][2];
+		$at     = (int) \strtotime( \str_replace( '-', ' ', \substr( $hour, 0, 10 ) ) . ' ' . \substr( $hour, 11, 2 ) . ':00 UTC' );
+		$url    = static fn ( string $path, int $count, int $timed, float $sum_ms, float $peak, float $min, float $max, int $seen, bool $worker = false ): array => [
+			'url'         => 'https://' . self::SEED_SERVER . $path,
+			'count'       => $count,
+			'timed_count' => $timed,
+			'sum_ms'      => $sum_ms,
+			'sum_peak_mb' => $peak,
+			'min_ms'      => $min,
+			'max_ms'      => $max,
+			'max_peak_mb' => $peak / $count + 1.5,
+			'count_2xx'   => $count - 1,
+			'last_seen'   => $seen,
+			'worker'      => $worker,
+		];
+		$fine   = [
+			'a4417ce0fa11' => $url( '/kakapo-4417', 41, 37, 1517.0, 82.0, 12.5, 97.0, $now - 40 ),
+			'b1308df1ab90' => $url( '/weka-1308', 13, 11, 2860.0, 91.0, 55.0, 480.0, $now - 25 ),
+			'c0007e02bc01' => $url( '/jobs/cron-sweep/7?job', 29, 29, 8700.0, 435.0, 120.0, 910.0, $now - 10, true ),
+			'd0031f13cd12' => $url( '/jobs/reindex/31?job', 3, 2, 5000.0, 96.0, 1900.0, 3100.0, $now - 55, true ),
+		];
+		$coarse = [
+			'e9920a24de23' => $url( '/takahe-9920', 211, 200, 7000.0, 633.0, 4.0, 350.0, $at + 600 ),
+			'f0005b35ef34' => $url( '/jobs/digest/5?job', 67, 60, 42000.0, 1072.0, 260.0, 1500.0, $at + 1300, true ),
+		];
+		$store  = $this->stats_store( 1, 86400 );
+		$bucket = Stats_Store::bucket_key( $now );
+		$this->set_url_bucket( $store, $bucket, $fine + $overflow );
+		$this->set_url_rank_lists( $store, $bucket, $fine + $overflow );
+		foreach ( $coarse as $hash => $row ) {
+			$this->seed_url_hour( $store, $hour, Stats_Store::url_shard( $hash, $row['worker'] ), [ $hash => $row ] );
+		}
+		$this->set_url_rank_lists( $store, $hour, $coarse, true );
+		foreach ( [ 0, 2 ] as $partition ) {
+			$this->set_url_rank_lists( $this->stats_store( $partition, 86400 ), $hour, [], true );
+		}
+		$this->seed_hour_lists( [ $hour ] );
+		return $hour;
+	}
+
+	/** @return array<string,array{0:string,1:string}> */
+	public static function every_ranked_sort(): array {
+		$out = [];
+		foreach ( Stats_Store::URL_SORTS as $sort ) {
+			foreach ( Stats_Store::URL_ORDERS as $order ) {
+				$out[ "{$sort} {$order}" ] = [ $sort, $order ];
+			}
+		}
+		return $out;
+	}
+
+	#[DataProvider( 'every_ranked_sort' )]
+	public function test_an_include_workers_ranked_page_is_the_fold_s_page( string $sort, string $order ): void {
+		$this->seed_family_window();
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$ranked = $fire( "--sort={$sort}", "--order={$order}", '--limit=100', '--include_workers=1' );
+			$this->assertSame( 0, $reads(), 'the ranked page walked no shard' );
+			// One past the list depth: the page the fold answers.
+			$fold = $fire( "--sort={$sort}", "--order={$order}", '--limit=' . ( Stats_Store::URL_RANK_N + 1 ), '--include_workers=1' );
+		} finally {
+			$restore();
+		}
+
+		$this->assertTrue( $ranked['ranked'] );
+		$this->assertFalse( $fold['ranked'] );
+		$this->assertCount( 6, $fold['data'], 'both families, both tiers' );
+		$this->assertEqualsWithDelta( $fold['data'], $ranked['data'], 1e-9, 'row for row' );
+		$this->assertSame( $fold['rows'], $ranked['rows'] );
+		$this->assertEqualsWithDelta( $fold['totals'], $ranked['totals'], 1e-9 );
+		$this->assertEqualsWithDelta( $fold['slowest'], $ranked['slowest'], 1e-9 );
+	}
+
+	public function test_an_include_workers_page_runs_no_fold(): void {
+		$this->seed_family_window();
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$entries = $this->logged_in( $this->tmp, static function () use ( $fire ): void {
+				$fire( '--sort=avg_ms', '--order=desc', '--limit=100', '--include_workers=1' );
+			} );
+		} finally {
+			$restore();
+		}
+
+		$this->assertSame( [], self::completed( $entries, Flame_Tree::URL_FOLD ), 'no fold span ran' );
+		$this->assertSame( 0, $reads() );
+		$this->assertSame( [ 'ranked' ], \array_column( self::entries_of( $entries, Flame_Tree::URL_RANK_LISTS ), 'm' ) );
+	}
+
+	public function test_an_include_workers_header_counts_each_family_s_overflow_row(): void {
+		// The fold holds `Other` and `Other:worker` as two rows, one a family.
+		$this->seed_family_window( [
+			Stats_Store::OTHER_KEY        => [ 'count' => 17, 'timed_count' => 16, 'sum_ms' => 816.0, 'sum_peak_mb' => 34.0, 'last_seen' => self::tick() - 5 ],
+			Stats_Store::OTHER_WORKER_KEY => [ 'count' => 19, 'timed_count' => 19, 'sum_ms' => 1938.0, 'sum_peak_mb' => 57.0, 'worker' => true, 'last_seen' => self::tick() - 5 ],
+		] );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$ranked = $fire( '--sort=count', '--order=desc', '--limit=100', '--include_workers=1' );
+			$fold   = $fire( '--sort=count', '--order=desc', '--limit=' . ( Stats_Store::URL_RANK_N + 1 ), '--include_workers=1' );
+		} finally {
+			$restore();
+		}
+
+		$this->assertTrue( $ranked['ranked'] );
+		$this->assertSame( 8, $fold['rows'], 'six URLs and two overflow rows' );
+		$this->assertSame( $fold['rows'], $ranked['rows'] );
+		$this->assertEqualsWithDelta( $fold['totals'], $ranked['totals'], 1e-9 );
+	}
+
+	public function test_an_include_workers_hour_without_its_done_marker_reads_as_provisional(): void {
+		$hour = $this->seed_family_window();
+		( $this->stats_store( 1, 86400 ) )->bucket_forget_multi( [ [ Stats_Store::url_rank_done_parts( Stats_Store::server_key( self::SEED_SERVER ) ), $hour ] ] );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--include_workers=1' );
+		} finally {
+			$restore();
+		}
+
+		$this->assertTrue( $page['ranked'] );
+		$this->assertTrue( $page['provisional'], 'the waiting hour is owed, not a hole' );
+		$this->assertSame( 0, $reads(), 'no walk of the index' );
+		$this->assertSame( [ 'a4417ce0fa11', 'c0007e02bc01', 'b1308df1ab90', 'd0031f13cd12' ], \array_column( $page['data'], 'hash' ), 'the waiting hour adds neither family\'s rows' );
+		$this->assertSame( 86, $page['totals']['requests'] ?? null, 'nor either family\'s record' );
+	}
+
+	/**
+	 * Errored and clean rows in the open bucket and one folded hour, as the
+	 * writer files them, every other planned hour folded idle. `/weka-1308`
+	 * errors in the open bucket and runs clean, and far bigger, in the hour;
+	 * `/tui-9913` and `/jobs/purge/2?job` time out and carry no duration;
+	 * `/clean-5050` never errs. Two ties decide an order, both by hash: the
+	 * two rows of 2 errors, and the two timeouts at 0 on the timed sorts.
+	 *
+	 * @return string The folded hour.
+	 */
+	private function seed_errored_window(): string {
+		$this->activate_shipped( 'performance', 3 );
+		$now  = self::tick();
+		$hour = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'][2];
+		$at   = (int) \strtotime( \str_replace( '-', ' ', \substr( $hour, 0, 10 ) ) . ' ' . \substr( $hour, 11, 2 ) . ':00 UTC' );
+		$url  = static fn ( string $path, int $count, int $ok, int $timed, float $sum_ms, float $peak, float $min, float $max, int $seen, bool $worker = false ): array => [
+			'url'         => 'https://' . self::SEED_SERVER . $path,
+			'count'       => $count,
+			'count_2xx'   => $ok,
+			'timed_count' => $timed,
+			'sum_ms'      => $sum_ms,
+			'sum_peak_mb' => $peak,
+			'min_ms'      => $min,
+			'max_ms'      => $max,
+			'max_peak_mb' => $peak / $count + 0.5,
+			'last_seen'   => $seen,
+			'worker'      => $worker,
+		];
+		$fine   = [
+			'b2308df1ab90' => $url( '/weka-1308', 13, 11, 11, 2860.0, 26.0, 55.0, 480.0, $now - 25 ),
+			'c3913e02bc01' => $url( '/tui-9913', 4, 0, 0, 0.0, 12.0, 0.0, 0.0, $now - 40 ),
+			'e5050c1ea000' => $url( '/clean-5050', 50, 50, 50, 500.0, 50.0, 5.0, 20.0, $now - 5 ),
+			'a0002f13cd12' => $url( '/jobs/purge/2?job', 2, 0, 0, 0.0, 10.0, 0.0, 0.0, $now - 15, true ),
+		];
+		$coarse = [
+			'b2308df1ab90' => $url( '/weka-1308', 500, 500, 500, 5000.0, 1000.0, 1.0, 9000.0, $at + 600 ),
+			'f0009d35ef34' => $url( '/jobs/digest/9?job', 9, 6, 9, 810.0, 63.0, 30.0, 200.0, $at + 1300, true ),
+		];
+		$store  = $this->stats_store( 1, 86400 );
+		$bucket = Stats_Store::bucket_key( $now );
+		$this->set_url_bucket( $store, $bucket, $fine );
+		$this->set_url_rank_lists( $store, $bucket, $fine );
+		foreach ( $coarse as $hash => $row ) {
+			$this->seed_url_hour( $store, $hour, Stats_Store::url_shard( $hash, $row['worker'] ), [ $hash => $row ] );
+		}
+		$this->set_url_rank_lists( $store, $hour, $coarse, true );
+		foreach ( [ 0, 2 ] as $partition ) {
+			$this->set_url_rank_lists( $this->stats_store( $partition, 86400 ), $hour, [], true );
+		}
+		$this->seed_hour_lists( [ $hour ] );
+		return $hour;
+	}
+
+	/** @return array<string,array{0:string,1:string,2:bool}> */
+	public static function every_errored_sort(): array {
+		$out = [];
+		foreach ( self::every_ranked_sort() as $name => [ $sort, $order ] ) {
+			$out[ "{$name}, readers" ]       = [ $sort, $order, false ];
+			$out[ "{$name}, with workers" ] = [ $sort, $order, true ];
+		}
+		return $out;
+	}
+
+	#[DataProvider( 'every_errored_sort' )]
+	public function test_an_errors_only_ranked_page_is_the_fold_s_page( string $sort, string $order, bool $workers ): void {
+		$this->seed_errored_window();
+		$args = [ "--sort={$sort}", "--order={$order}", '--errors_only=1', ...( $workers ? [ '--include_workers=1' ] : [] ) ];
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$ranked = $fire( ...$args, ...[ '--limit=100' ] );
+			$this->assertSame( 0, $reads(), 'the ranked page walked no shard' );
+			$fold = $fire( ...$args, ...[ '--limit=' . ( Stats_Store::URL_RANK_N + 1 ) ] );
+		} finally {
+			$restore();
+		}
+
+		$this->assertTrue( $ranked['ranked'] );
+		$this->assertFalse( $fold['ranked'] );
+		$this->assertCount( $workers ? 4 : 2, $fold['data'], 'the URLs that errored, and none that did not' );
+		$this->assertEqualsWithDelta( $fold['data'], $ranked['data'], 1e-9, 'row for row' );
+		$this->assertSame( $fold['rows'], $ranked['rows'] );
+		$this->assertEqualsWithDelta( $fold['totals'], $ranked['totals'], 1e-9 );
+		$this->assertEqualsWithDelta( $fold['slowest'], $ranked['slowest'], 1e-9 );
+	}
+
+	public function test_an_errors_only_page_counts_only_the_buckets_each_url_errored_in(): void {
+		$this->seed_errored_window();
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--sort=count', '--order=desc', '--errors_only=1', '--limit=100' ] );
+
+		$this->assertTrue( $page['ranked'] );
+		$this->assertSame( [ 'c3913e02bc01' => 4, 'b2308df1ab90' => 2 ], \array_column( $page['data'], 'errors', 'hash' ), 'ranked by errors' );
+		$this->assertSame( 13, $page['data'][1]['count'], 'the open bucket alone: the clean hour\'s 500 requests are not errored traffic' );
+		$this->assertEqualsWithDelta( 480.0, $page['data'][1]['max_ms'], 1e-9, 'nor its 9000 ms' );
+		$this->assertSame( 17, $page['totals']['requests'] );
+		$this->assertSame( 6, $page['totals']['errors'] );
+		$this->assertEqualsWithDelta( 0.0, $page['data'][0]['avg_ms'], 1e-9, 'a timeout counts, and has no duration' );
+		$this->assertEqualsWithDelta( 2860.0 / 11, $page['totals']['avg_ms'], 1e-9, 'the timeouts count toward requests, not toward the mean' );
+	}
+
+	public function test_an_errors_only_page_runs_no_fold(): void {
+		$this->seed_errored_window();
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$entries = $this->logged_in( $this->tmp, static function () use ( $fire ): void {
+				$fire( '--sort=avg_ms', '--order=desc', '--limit=100', '--errors_only=1', '--include_workers=1' );
+			} );
+		} finally {
+			$restore();
+		}
+
+		$this->assertSame( [], self::completed( $entries, Flame_Tree::URL_FOLD ), 'no fold span ran' );
+		$this->assertSame( 0, $reads() );
+		$this->assertSame( [ 'ranked' ], \array_column( self::entries_of( $entries, Flame_Tree::URL_RANK_LISTS ), 'm' ) );
+	}
+
+	public function test_an_errors_only_hour_without_its_done_marker_reads_as_provisional(): void {
+		$hour = $this->seed_errored_window();
+		( $this->stats_store( 1, 86400 ) )->bucket_forget_multi( [ [ Stats_Store::url_rank_done_parts( Stats_Store::server_key( self::SEED_SERVER ) ), $hour ] ] );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--errors_only=1', '--include_workers=1' );
+		} finally {
+			$restore();
+		}
+
+		$this->assertTrue( $page['ranked'] );
+		$this->assertTrue( $page['provisional'], 'the waiting hour is owed, not a hole' );
+		$this->assertSame( 0, $reads() );
+		$this->assertSame( [ 'c3913e02bc01', 'a0002f13cd12', 'b2308df1ab90' ], \array_column( $page['data'], 'hash' ), 'the waiting hour adds nothing' );
+		$this->assertSame( 8, $page['totals']['errors'] ?? null );
+	}
+
+	/**
+	 * Two open-hour buckets of `URL_RANK_N + 5` rows each, the clock twenty
+	 * minutes into the hour so both are fine keys, over URLs spread across
+	 * both, every figure differing by URL and by bucket. Five URLs time out
+	 * in the earlier bucket, where they rank at 0, and run slowest in the
+	 * later one, whose `min_ms asc` list cuts them: `min_ms asc` is not
+	 * exact, and a row listed by its timeouts alone carries no minimum.
+	 *
+	 * @return array{0: array<string,list<array<string,mixed>>>, 1: \Closure(): void} Each URL's
+	 *         named rows by bucket, and the clock's restore.
+	 */
+	private function seed_spread_window(): array {
+		$this->activate_shipped( 'performance', 3 );
+		$previous    = Core::$clock;
+		$ticked      = Core::$now;
+		$now         = self::tick() - self::tick() % 3600 + 20 * 60 + 30;
+		Core::$clock = static fn (): float => (float) $now;
+		Core::right_now();
+		$store   = $this->stats_store( 1, 86400 );
+		$earlier = Stats_Store::bucket_key( $now - Stats_Store::BUCKET_SECONDS );
+		$later   = Stats_Store::bucket_key( $now );
+		$row     = static fn ( string $path, int $count, int $timed, float $avg, float $min, float $max, float $peak, int $seen ): array => [
+			'url'         => 'https://' . self::SEED_SERVER . $path,
+			'count'       => $count,
+			'count_2xx'   => $count,
+			'timed_count' => $timed,
+			'sum_ms'      => $avg * $timed,
+			'min_ms'      => $min,
+			'max_ms'      => $max,
+			'sum_peak_mb' => $peak * $count,
+			'max_peak_mb' => $peak + 1.5,
+			'last_seen'   => $seen,
+		];
+		$buckets = [ $earlier => [], $later => [] ];
+		for ( $i = 0; $i < Stats_Store::URL_RANK_N + 5; $i++ ) {
+			$hash = \sprintf( 'a%011x', $i );
+			$path = "/spread-{$i}";
+			$buckets[ $earlier ][ $hash ] = $row( $path, 10 + $i, 10 + $i, 100.0 + 3 * $i, 1000.0 + 11 * $i, 3000.0 + 13 * $i, 2.0 + $i / 100, $now - 400 - $i );
+			if ( $i >= 5 ) {
+				$j = Stats_Store::URL_RANK_N + 4 - $i;
+				$buckets[ $later ][ $hash ] = $row( $path, 300 - $i, 290 - $i, 700.0 - 2 * $i, 1005.0 + 11 * $j, 3007.0 + 13 * $j, 9.0 - $i / 100, $now - 10 - $i );
+			}
+		}
+		for ( $k = 0; $k < 5; $k++ ) {
+			$hash = \sprintf( 'b%011x', $k );
+			$path = "/timeout-{$k}";
+			$buckets[ $earlier ][ $hash ] = $row( $path, 3 + $k, 0, 0.0, 0.0, 0.0, 30.0 + $k, $now - 700 - $k );
+			$buckets[ $later ][ $hash ]   = $row( $path, 4 + $k, 4 + $k, 9200.0 + $k, 9000.0 + $k, 9500.0 + $k, 31.0 + $k, $now - 5 - $k );
+		}
+		$by_url = [];
+		foreach ( $buckets as $bucket => $rows ) {
+			$this->set_url_bucket( $store, $bucket, $rows );
+			$this->set_url_rank_lists( $store, $bucket, $rows );
+			foreach ( $rows as $hash => $named ) {
+				$by_url[ (string) $hash ][] = $named;
+			}
+		}
+		$this->seed_hour_lists();
+		return [
+			$by_url,
+			static function () use ( $previous, $ticked ): void {
+				Core::$clock = $previous;
+				Core::$now   = $ticked;
+			},
+		];
+	}
+
+	/** @return array<string,array{0:string,1:string,2:bool}> Sort, order, and whether decision 28 calls it exact. */
+	public static function every_sort_and_its_exactness(): array {
+		$exact = [ 'url asc', 'url desc', 'max_ms desc', 'last_updated desc' ];
+		$out   = [];
+		foreach ( self::every_ranked_sort() as $name => [ $sort, $order ] ) {
+			$out[ $name ] = [ $sort, $order, \in_array( $name, $exact, true ) ];
+		}
+		return $out;
+	}
+
+	#[DataProvider( 'every_sort_and_its_exactness' )]
+	public function test_a_page_over_urls_spread_across_cut_lists_is_exact_or_bounded( string $sort, string $order, bool $exact ): void {
+		[ $by_url, $unpin ]         = $this->seed_spread_window();
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$ranked = $fire( "--sort={$sort}", "--order={$order}", '--limit=100' );
+			$this->assertSame( 0, $reads(), 'the ranked page walked no shard' );
+			$fold = $fire( "--sort={$sort}", "--order={$order}", '--limit=' . ( Stats_Store::URL_RANK_N + 10 ) );
+		} finally {
+			$restore();
+			$unpin();
+		}
+
+		$this->assertTrue( $ranked['ranked'] );
+		$this->assertCount( Stats_Store::URL_RANK_N + 10, $fold['data'], 'the fold holds every URL' );
+		if ( $exact ) {
+			$top = \array_slice( $fold['data'], 0, 100 );
+			$this->assertSame( \array_column( $top, 'hash' ), \array_column( $ranked['data'], 'hash' ), 'exact: the order' );
+			$this->assertEqualsWithDelta( \array_column( $top, $sort ), \array_column( $ranked['data'], $sort ), 1e-9, 'exact: the sort key' );
+		}
+		// Every ranked row is the fold's, restricted to the keys it was listed in.
+		$folded = \array_column( $fold['data'], null, 'hash' );
+		foreach ( $ranked['data'] as $row ) {
+			$whole = $folded[ $row['hash'] ];
+			$means = \array_map( static fn ( array $named ): float => $named['sum_ms'] / \max( 1, $named['timed_count'] ), \array_filter( $by_url[ $row['hash'] ], static fn ( array $named ): bool => $named['timed_count'] > 0 ) );
+			$this->assertLessThanOrEqual( $whole['count'], $row['count'], "{$row['hash']}: a sum never over the fold's" );
+			$this->assertLessThanOrEqual( $whole['max_ms'], $row['max_ms'], "{$row['hash']}: a maximum never over the fold's" );
+			$this->assertLessThanOrEqual( $whole['last_updated'], $row['last_updated'] );
+			if ( $row['timed_count'] > 0 ) {
+				$this->assertGreaterThanOrEqual( $whole['min_ms'], $row['min_ms'], "{$row['hash']}: a minimum never under the fold's" );
+				$this->assertGreaterThanOrEqual( \min( $means ) - 1e-9, $row['avg_ms'], "{$row['hash']}: a mean within its buckets'" );
+				$this->assertLessThanOrEqual( \max( $means ) + 1e-9, $row['avg_ms'] );
+			}
+		}
 	}
 
 	/**

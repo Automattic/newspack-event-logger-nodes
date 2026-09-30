@@ -25,6 +25,9 @@ class DashboardReadTest extends TestCase {
 	/** The URL every seed and every detail verb names. */
 	private const HASH = 'a4471ab0c0de';
 
+	/** A page one past the list depth, which only the fold answers. */
+	private const FOLD = '--limit=' . ( Stats_Store::URL_RANK_N + 1 );
+
 	/** Flame-builder partitions, so every store of a reply is covered. */
 	private const PARTITIONS = 2;
 
@@ -165,7 +168,7 @@ class DashboardReadTest extends TestCase {
 		$this->forget_stats_asks();
 
 		self::fire( 'overview', '' );
-		$page = self::fire( 'urls', '--include_workers' );
+		$page = self::fire( 'urls', self::FOLD );
 
 		$this->assertSame( [], \array_filter( $this->asked_fine(), static fn ( string $b ): bool => \str_starts_with( $b, $previous ) ), 'no bucket of the evicted hour' );
 		$this->assertSame( [ 1 ], \array_column( \array_filter( $page['data'], static fn ( array $row ): bool => self::HASH === $row['hash'] ), 'count' ), 'nor does the fold' );
@@ -181,7 +184,7 @@ class DashboardReadTest extends TestCase {
 		$this->seed_url_shard( $store, $recent, $shard, [ self::HASH => [ 'url' => 'https://example.com/wombat', 'count' => 4 ] ] );
 		$this->seed_url_shard( $store, $old, $shard, [ self::HASH => [ 'url' => 'https://example.com/wombat', 'count' => 700 ] ] );
 
-		$rows = Performance_CI_Node::load_index_default( $shard, '', [ $store ], $now );
+		$rows = Performance_CI_Node::load_index_default( $shard, '', [ $store ], $now, false );
 
 		$this->assertSame( [ 4 ], \array_column( $rows, 'count' ) );
 	}
@@ -231,7 +234,7 @@ class DashboardReadTest extends TestCase {
 		$this->seed_site( [ \gmdate( 'Y-m-d-H', $at - 3600 ) ] );
 
 		$ranked = self::fire( 'urls', '' );
-		$folded = self::fire( 'urls', '--include_workers' );
+		$folded = self::fire( 'urls', self::FOLD );
 
 		$this->assertTrue( $ranked['ranked'], 'the lists answer, lagging the fold' );
 		$this->assertTrue( $ranked['provisional'] );
@@ -246,7 +249,7 @@ class DashboardReadTest extends TestCase {
 	public function test_a_fold_missing_an_older_hour_fails_soft(): void {
 		$this->seed_site( [ \gmdate( 'Y-m-d-H', self::tick() - 5 * 3600 ) ] );
 
-		$folded = self::fire( 'urls', '--include_workers' );
+		$folded = self::fire( 'urls', self::FOLD );
 
 		$this->assertFalse( $folded['provisional'] );
 		$this->assertNotSame( [], $this->cached_pages(), 'the page is cached' );
@@ -258,7 +261,7 @@ class DashboardReadTest extends TestCase {
 		$hour = \gmdate( 'Y-m-d-H', self::tick() - 5 * 3600 );
 		( $this->stats_store( 1, 86400 ) )->bucket_forget_multi( [ [ Stats_Store::url_hour_parts( Stats_Store::server_key( self::SEED_SERVER ), Stats_Store::url_shard( 'b8823bc1d2ef' ) ), $hour ] ] );
 
-		$folded = self::fire( 'urls', '--include_workers' );
+		$folded = self::fire( 'urls', self::FOLD );
 
 		$this->assertFalse( $folded['provisional'] );
 		$this->assertNotSame( [], $this->cached_pages(), 'the page is cached' );
@@ -271,14 +274,28 @@ class DashboardReadTest extends TestCase {
 	 */
 	public function test_a_fold_whose_shard_read_went_unanswered_fails_soft(): void {
 		$this->seed_site();
-		$shard = Stats_Store::NS_URLS_HOUR . ':' . Stats_Store::server_key( self::SEED_SERVER ) . ':' . Stats_Store::url_shard( 'b8823bc1d2ef' ) . ':';
-		$this->refuse_stats_reads( ":{$shard}" );
+		$parts = Stats_Store::url_hour_parts( Stats_Store::server_key( self::SEED_SERVER ), Stats_Store::url_shard( 'b8823bc1d2ef' ) );
+		$this->refuse_stats_reads( '/^' . Stats_Store::NS_URLS_HOUR . ':[0-9-]+:' . \preg_quote( "{$parts[1]}:{$parts[2]}", '/' ) . '$/' );
 
-		$folded = self::fire( 'urls', '--include_workers' );
+		$folded = self::fire( 'urls', self::FOLD );
 
-		$this->assertNotSame( [], \array_filter( $this->asked_keys( Stats_Store::NS_URLS_HOUR ), static fn ( string $key ): bool => \str_starts_with( $key, $shard ) ), 'the refused shard was asked' );
+		$every = \array_map(
+			static fn ( string $hour ): string => Stats_Store::key_at( $parts, $hour ),
+			Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) )['hours']
+		);
+		$this->assertSame( self::sorted_unique( $every ), self::sorted_unique( VerbHarness::ask_recorder()->refused ), 'the shard was asked, and refused, in every planned hour' );
 		$this->assertFalse( $folded['provisional'] );
 		$this->assertNotSame( [], $this->cached_pages(), 'the page is cached' );
+	}
+
+	/**
+	 * @param list<string> $keys Keys.
+	 * @return list<string>
+	 */
+	private static function sorted_unique( array $keys ): array {
+		$keys = \array_values( \array_unique( $keys ) );
+		\sort( $keys );
+		return $keys;
 	}
 
 	/** @return list<string> The URL page cache's keys memcache holds. */
@@ -352,19 +369,19 @@ class DashboardReadTest extends TestCase {
 		$charts = 'hourly|dim|categories|lb|lb_s|url_dim|url_cat';
 		$out    = [];
 		foreach ( $this->asked_keys() as $key ) {
-			if ( 1 !== \preg_match( '/^(' . $charts . ')(?:_h|h)?:(?:(.*):)?(\d{4}-\d{2}-\d{2}-\d{2}(?:-\d{2})?)$/', $key, $m ) ) {
+			if ( 1 !== \preg_match( '/^(' . $charts . ')(?:_h|h)?:(\d{4}-\d{2}-\d{2}-\d{2}(?:-\d{2})?)(?::(.*))?$/', $key, $m ) ) {
 				continue;
 			}
-			$scope = "{$m[1]}:{$m[2]}";
+			$scope = $m[1] . ':' . ( $m[3] ?? '' );
 			$out[ $scope ] ??= [ [], [] ];
-			$out[ $scope ][ 16 === \strlen( $m[3] ) ? 0 : 1 ][ $m[3] ] = $m[3];
+			$out[ $scope ][ 16 === \strlen( $m[2] ) ? 0 : 1 ][ $m[2] ] = $m[2];
 		}
 		return \array_map( static fn ( array $pair ): array => [ \array_values( $pair[0] ), \array_values( $pair[1] ) ], $out );
 	}
 
 	/**
-	 * The distinct last segments of the asked keys of a tiered namespace, or
-	 * of its hour twin, matching `$shape`.
+	 * The distinct time segments, each right after the namespace, of the
+	 * asked keys of a tiered namespace, or of its hour twin, matching `$shape`.
 	 *
 	 * @return list<string>
 	 */
@@ -372,7 +389,7 @@ class DashboardReadTest extends TestCase {
 		$tiers = \implode( '|', [ ...self::TIERED, Stats_Store::NS_URLS_HOUR, Stats_Store::NS_URLSRV_HOUR, Stats_Store::NS_URLRANK_HOUR_S, Stats_Store::NS_URLHDR_HOUR ] );
 		$out   = [];
 		foreach ( $this->asked_keys() as $key ) {
-			if ( 1 === \preg_match( '/^(' . $tiers . '):(?:.*:)?([0-9-]+)$/', $key, $m ) && 1 === \preg_match( $shape, $m[2] ) ) {
+			if ( 1 === \preg_match( '/^(' . $tiers . '):([0-9-]+)(?::|$)/', $key, $m ) && 1 === \preg_match( $shape, $m[2] ) ) {
 				$out[ $m[2] ] = true;
 			}
 		}

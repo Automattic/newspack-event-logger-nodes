@@ -55,11 +55,12 @@ class ElnConfigTokenTest extends TestCase {
 	// --- is_hub resolver ----------------------------------------------------
 
 	public function test_is_hub_false_when_aggregator_topology_inactive(): void {
-		// A site whose active topologies DON'T include `aggregator` is a spoke.
+		// A site whose active topologies DON'T include `aggregator` is a spoke,
+		// and a bool token renders as `0`, which a `bool` arg binds as false.
 		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined' ];
 		\Newspack_Nodes\Config::reset();
 		Config::reset();
-		$this->assertSame( '', Core::resolve_config_token( 'eln', 'is_hub' ) );
+		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
 	public function test_is_hub_true_when_aggregator_topology_active(): void {
@@ -152,13 +153,13 @@ class ElnConfigTokenTest extends TestCase {
 	// --- schema-token / owned-empty guards ----------------------------------
 
 	public function test_an_owned_but_empty_token_is_resolved_not_unresolvable(): void {
-		// A spoke's is_hub is owned-empty, NOT unresolvable — strict resolution
-		// must return '' and not throw.
+		// A spoke's is_hub is owned and false, NOT unresolvable — strict
+		// resolution must return '0' and not throw.
 		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined' ];
 		\Newspack_Nodes\Config::reset();
 		Config::reset();
 
-		$this->assertSame( '', Core::resolve_config_token( 'eln', 'is_hub', true ) );
+		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub', true ) );
 	}
 
 	public function test_flame_builder_schema_token_defaults_are_owned(): void {

@@ -1651,16 +1651,16 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				self::add_intent( $intents, self::hourly_intent( $bucket, $acc['hourly'] ) );
 			}
 			foreach ( $acc['dim'] as $dim => $values ) {
-				self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, '' ), $bucket, $dim, $values, Stats_Store::MAX_DIM_VALUES ) );
+				self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, '' ), $bucket, $dim, $values, Stats_Store::MAX_DIM_VALUES, null ) );
 			}
 			foreach ( $acc['dim_by_server'] as $server => $dims ) {
 				foreach ( $dims as $dim => $values ) {
-					self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, $server ), $bucket, $dim, $values, Stats_Store::MAX_DIM_VALUES ) );
+					self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, $server ), $bucket, $dim, $values, Stats_Store::MAX_DIM_VALUES, null ) );
 				}
 			}
 			foreach ( $acc['url_dim'] as $url_hash => $dims ) {
 				foreach ( $dims as $dim => $values ) {
-					self::add_intent( $intents, self::dimension_intent( Stats_Store::url_dim_parts( (string) $url_hash, $dim ), $bucket, $dim, $values, Stats_Store::MAX_URL_DIM_VALUES ) );
+					self::add_intent( $intents, self::dimension_intent( Stats_Store::url_dim_parts( (string) $url_hash ), $bucket, $dim, $values, Stats_Store::MAX_URL_DIM_VALUES, $dim ) );
 				}
 			}
 			if ( ! empty( $acc['cat'] ) ) {
@@ -1683,7 +1683,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$this->unfolded    += \array_intersect_key( $unfold, $this->folded_hours );
 		$this->folded_hours = \array_diff_key( $this->folded_hours, $unfold );
 		// @longform Ranked per CHUNK, not after the flush: the collectors hold
-		// every merged reader shard of every bucket still waiting to rank, and
+		// every merged shard of every bucket still waiting to rank, and
 		// a replay spanning the window would hold the whole window at once —
 		// which is the memory the chunking exists to bound. A bucket ranks once
 		// every one of its server groups has landed.
@@ -1907,8 +1907,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// A bucket whose index went unanswered is no bucket to rank empty.
 		$due     = $failed ? \array_values( \array_diff( $due, \array_diff( $unknown, \array_keys( $read ) ) ) ) : $due;
 		$indexes = $this->flushed_index + $read;
-		// A group is one (server, bucket) pair, a shard read apiece.
-		$budget = \intdiv( self::WRITE_BATCH_KEYS, Stats_Store::URL_SHARDS );
+		// A group is a (server, bucket) pair: one read a shard, either family.
+		$budget = \intdiv( self::WRITE_BATCH_KEYS, \count( Stats_Store::every_shard() ) );
 		$chunk  = [];
 		$size   = 0;
 		foreach ( $due as $bucket ) {
@@ -1927,13 +1927,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Rank each bucket over its whole STORED content: the reader-family rows
-	 * this flush landed, plus every other reader shard each index entry
+	 * Rank each bucket over its whole STORED content: the rows of both
+	 * families this flush landed, plus every other shard each index entry
 	 * names, read back for the whole chunk in ONE round trip — a read per
 	 * bucket would be a round trip per bucket on a replay — and the chunk's
 	 * lists written in its write batches, told as one `stats rank close`
-	 * span. A deferred bucket landed none, so it gap-fills every reader
-	 * shard its entries name. A bucket with a shard a Table left
+	 * span. A deferred bucket landed none, so it gap-fills every shard its
+	 * entries name. A bucket with a shard a Table left
 	 * unanswered ranks nothing and stays pending, since its rows are short
 	 * (decision 3).
 	 *
@@ -1949,9 +1949,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		foreach ( $chunk as $bucket => $entries ) {
 			foreach ( $entries as $key => [ Stats_Store::SRV_NAME => $server, Stats_Store::SRV_SHARDS => $mask ] ) {
 				$landed = $this->flushed_rows[ $bucket ][ $server ] ?? [];
-				foreach ( \array_diff( Stats_Store::shards_in( $mask, false ), \array_keys( $landed ) ) as $shard ) {
+				foreach ( \array_diff( Stats_Store::shards_in( $mask, true ), \array_keys( $landed ) ) as $shard ) {
 					$reads[] = [ Stats_Store::url_shard_parts( $key, $shard ), $bucket ];
-					$owner[] = [ $bucket, $server ];
+					$owner[] = [ $bucket, $server, $shard ];
 				}
 			}
 		}
@@ -1959,9 +1959,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$short     = [];
 		$failed    = false;
 		foreach ( [] === $reads ? [] : $stats_store->bucket_get_multi( $reads, $failed ) as $at => $value ) {
-			[ $bucket, $server ] = $owner[ $at ];
+			[ $bucket, $server, $shard ] = $owner[ $at ];
 			if ( null !== $value ) {
-				$read_maps[ $bucket ][ $server ][] = $value;
+				$read_maps[ $bucket ][ $server ][ $shard ] = $value;
 			} elseif ( $failed ) {
 				$short[ $bucket ] = true;
 			}
@@ -1969,10 +1969,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$ranked = [];
 		foreach ( \array_diff_key( $chunk, $short ) as $bucket => $entries ) {
 			foreach ( Stats_Store::index_names( $entries ) as $server ) {
-				$ranked[ $bucket ][ $server ] = Stats_Store::merge_shard_rows(
-					...\array_values( $this->flushed_rows[ $bucket ][ $server ] ?? [] ),
-					...( $read_maps[ $bucket ][ $server ] ?? [] )
-				);
+				// Disjoint: the gap-fill read the shards that did not land.
+				$ranked[ $bucket ][ $server ] = ( $this->flushed_rows[ $bucket ][ $server ] ?? [] ) + ( $read_maps[ $bucket ][ $server ] ?? [] );
 			}
 			$ranked[ $bucket ] ??= [];
 		}
@@ -1988,7 +1986,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				[
 					'buckets'   => \count( $keys ),
 					'servers'   => \array_sum( \array_map( 'count', $ranked ) ),
-					'rows'      => \array_sum( \array_map( static fn ( array $servers ): int => \array_sum( \array_map( 'count', $servers ) ), $ranked ) ),
+					'rows'      => \array_sum( \array_map( self::rows_in( ... ), $ranked ) ),
 					'gap reads' => \count( $reads ),
 				] + $ranks,
 			],
@@ -2153,8 +2151,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Cut the intents into write batches without splitting a ranking GROUP.
 	 *
-	 * A group is one server's reader-family row writes in one bucket —
-	 * sixteen keys — and it ranks when its last one is answered, so a group
+	 * A group is one server's row writes in one bucket, both families —
+	 * thirty-two keys — and it ranks when its last one is answered, so a group
 	 * split across chunks would rank the bucket twice and read back every
 	 * shard the second chunk still held.
 	 *
@@ -2352,8 +2350,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				[ $hour, $server, $shard ] = $owner[ $at ];
 				if ( null === $value ) {
 					$short[ $hour ] = true;
-				} elseif ( ! self::is_worker_shard( $shard ) ) {
-					$rows[ $hour ][ $server ] = Stats_Store::merge_shard_rows( $rows[ $hour ][ $server ], $value );
+				} else {
+					$rows[ $hour ][ $server ][ $shard ] = $value;
 				}
 			}
 			foreach ( $chunk as $hour ) {
@@ -2377,7 +2375,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 						"{$hour}: {$cause}",
 						[
 							'servers' => \count( $servers ),
-							'rows'    => \array_sum( \array_map( 'count', $servers ) ),
+							'rows'    => self::rows_in( $servers ),
 							'writes'  => $ranks['writes'],
 							'refused' => $ranks['refused'],
 						],
@@ -2463,10 +2461,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				// Capped ONCE, after twelve buckets rather than after each.
 				$shard_rows = self::cap_url_rows( $server_rows[ $shard ] ?? [] );
 				$writes[]   = [ Stats_Store::url_hour_parts( $key, $shard ), $hour, $shard_rows ];
-				// The lists rank the READER family; a worker row never ranks.
-				if ( ! self::is_worker_shard( $shard ) ) {
-					$ranked[ (string) $server ] = Stats_Store::merge_shard_rows( $ranked[ (string) $server ] ?? [], $shard_rows );
-				}
+				$ranked[ (string) $server ][ $shard ] = $shard_rows;
 			}
 		}
 		$writes[] = [ Stats_Store::url_srv_parts( true ), $hour, $named ];
@@ -2481,7 +2476,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				++$refused;
 				$this->print_less_often(
 					'hour fold write refused; a shard is lost',
-					' — ' . Stats_Store::key( ...[ ...$chunk[ $at ][0], $chunk[ $at ][1] ] )
+					' — ' . Stats_Store::key_at( $chunk[ $at ][0], $chunk[ $at ][1] )
 				);
 			}
 		}
@@ -2489,7 +2484,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$ranks = $this->write_url_ranks( $stats_store, [ $hour => $ranked ], true, 0 === $refused );
 		return [
 			'servers' => \count( $named ),
-			'rows'    => \array_sum( \array_map( 'count', $ranked ) ),
+			'rows'    => self::rows_in( $ranked ),
 			'writes'  => \count( $writes ) + $ranks['writes'],
 			'refused' => $refused + $ranks['refused'],
 		];
@@ -2554,14 +2549,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Overwrite every ranked list of each key — a bucket or an hour — from
-	 * its merged rows, fourteen and a header record for each server named
-	 * and for the site, the `Stats_Store::ranked_writes()` batch of every key
-	 * written a chunk at a time. An overwrite, not a merge — the lists are
-	 * derived from the stored rows, which one partition's one worker just
-	 * wrote.
-	 *
-	 * Every caller merges each server's shards by hash first: they are
-	 * disjoint by hash, so one union IS the per-shard union.
+	 * its shard maps, for each row family fourteen and a header record for
+	 * each server named and for the site, the `Stats_Store::ranked_writes()`
+	 * batch of every key written a chunk at a time. An overwrite, not a
+	 * merge — the lists are derived from the stored rows, which one
+	 * partition's one worker just wrote.
 	 *
 	 * The tier picks its own list depth, the way `cap_dim()` picks its field
 	 * table: a pairing that can only go one way is not a parameter.
@@ -2573,9 +2565,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * answer, and `url_hours_derived()` decides whether the hour ranks again.
 	 *
 	 * @param Stats_Store                                              $stats_store Destination.
-	 * @param array<array-key,array<array-key,array<array-key,mixed>>> $keys        Bucket or hour key =>
-	 *                                                                              server => the tier's
-	 *                                                                              merged rows by hash.
+	 * @param array<array-key,array<array-key,array<array-key,array<array-key,mixed>>>> $keys Bucket or
+	 *                                                                                        hour key =>
+	 *                                                                                        server =>
+	 *                                                                                        shard => rows.
 	 * @param bool                                                     $hour        The coarse tier.
 	 * @param bool                                                     $mark        Write each server's DONE
 	 *                                                                              marker: the caller vouches
@@ -2596,13 +2589,16 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$named += \count( $servers );
 			$site  += [] === $servers ? 0 : 1;
 		}
-		$each = \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS );
-		$this->tally( Flame_Tree::STATS_WRITES, 'lists', $each * $named );
-		$this->tally( Flame_Tree::STATS_WRITES, 'site lists', $each * $site );
-		$this->tally( Flame_Tree::STATS_WRITES, 'records', $named );
-		$this->tally( Flame_Tree::STATS_WRITES, 'site records', $site );
+		// Every set ranks every server named.
+		$records = \count( Stats_Store::RANK_SETS ) * $named;
+		$sites   = \count( Stats_Store::RANK_SETS ) * $site;
+		$each    = \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS );
+		$this->tally( Flame_Tree::STATS_WRITES, 'lists', $each * $records );
+		$this->tally( Flame_Tree::STATS_WRITES, 'site lists', $each * $sites );
+		$this->tally( Flame_Tree::STATS_WRITES, 'records', $records );
+		$this->tally( Flame_Tree::STATS_WRITES, 'site records', $sites );
 		$this->tally( Flame_Tree::STATS_WRITES, 'markers', $mark ? $named : 0 );
-		$out = [ 'writes' => \count( $writes ), 'lists' => $each * ( $named + $site ), 'records' => $named + $site, 'refused' => 0 ];
+		$out = [ 'writes' => \count( $writes ), 'lists' => $each * ( $records + $sites ), 'records' => $records + $sites, 'refused' => 0 ];
 		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
 			foreach ( $stats_store->bucket_set_multi( $chunk ) as $at => $ok ) {
 				if ( ! $ok ) {
@@ -2618,18 +2614,26 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
+	 * The rows a ranking holds, over one key's servers' shard maps.
+	 *
+	 * @param array<array-key,array<array-key,array<array-key,mixed>>> $servers Server => shard => rows.
+	 */
+	private static function rows_in( array $servers ): int {
+		return \array_sum( \array_map( static fn ( array $shards ): int => \array_sum( \array_map( 'count', $shards ) ), $servers ) );
+	}
+
+	/**
 	 * How one server's shard of accumulated rows folds into its stored bucket.
 	 *
 	 * @param string                 $bucket Bucket key.
 	 * @param string                 $server The server the rows are filed under.
 	 * @param string                 $shard  Shard name from `Stats_Store::url_shard()`.
 	 * @param array<array-key,mixed> $rows   That shard's accumulated rows.
-	 * @param bool                   $ranks  The bucket sits in the fine tail, so a reader shard collects.
+	 * @param bool                   $ranks  The bucket sits in the fine tail, so the shard collects.
 	 * @return list<Pending_Write>
 	 */
 	private function url_shard_intent( string $bucket, string $server, string $shard, array $rows, bool $ranks ): array {
-		$key    = Stats_Store::server_key( $server );
-		$reader = ! self::is_worker_shard( $shard );
+		$key = Stats_Store::server_key( $server );
 		return $this->hour_tier_intents(
 			$bucket,
 			Stats_Store::url_shard_parts( $key, $shard ),
@@ -2645,20 +2649,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					\sprintf( ' — %s, %d rows', $key, \count( $rows ) )
 				);
 			},
-			$reader && $ranks ? function ( array $merged ) use ( $bucket, $server, $shard ): void {
+			$ranks ? function ( array $merged ) use ( $bucket, $server, $shard ): void {
 				$this->flushed_rows[ $bucket ][ $server ][ $shard ] = $merged;
 			} : null,
-			$reader ? $key : null
+			$key
 		);
-	}
-
-	/**
-	 * Whether a shard holds the WORKER family, whose rows never rank.
-	 *
-	 * @param string $shard Shard name from `Stats_Store::url_shard()`.
-	 */
-	private static function is_worker_shard( string $shard ): bool {
-		return \str_starts_with( $shard, Stats_Store::WORKER_SHARD_PREFIX );
 	}
 
 	/**
@@ -2754,16 +2749,21 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param string                 $dim    Dimension name.
 	 * @param array<array-key,mixed> $values Accumulated values.
 	 * @param int                    $cap    Values a slot keeps on every axis but `server`.
+	 * @param ?string                $member The member of a URL-hour row holding
+	 *                                       the slotted hour, `$dim` for
+	 *                                       `url_dim_parts()`; null where the
+	 *                                       value is the slotted hour.
 	 * @return Pending_Write
 	 */
-	private static function dimension_intent( array $parts, string $bucket, string $dim, array $values, int $cap ): array {
+	private static function dimension_intent( array $parts, string $bucket, string $dim, array $values, int $cap, ?string $member ): array {
 		return self::slot_intent(
 			$parts,
 			$bucket,
 			static fn ( array $existing ): array => self::cap_dim(
 				Stats_Store::sum_fields( $existing, $values, Stats_Store::DIM_SUMS ),
 				Stats_Store::dim_cap( $dim, $cap )
-			)
+			),
+			$member
 		);
 	}
 
@@ -2786,19 +2786,26 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * five-minute bucket would, under the same caps (decision 35). Two
 	 * buckets of one hour compose onto one key through `add_intent()`.
 	 *
-	 * @param array<int,string>                                        $parts  A slotted namespace's prefix.
+	 * @param array<int,string>                                        $parts  A slotted namespace's key parts.
 	 * @param string                                                   $bucket Bucket key.
 	 * @param \Closure(array<array-key,mixed>): array<array-key,mixed> $merge  The bucket's own fold.
+	 * @param ?string                                                  $member The member of a URL-hour row
+	 *                                                                         holding the slotted hour; null
+	 *                                                                         where the value is the hour.
 	 * @return Pending_Write
 	 */
-	private static function slot_intent( array $parts, string $bucket, \Closure $merge ): array {
+	private static function slot_intent( array $parts, string $bucket, \Closure $merge, ?string $member = null ): array {
 		$slot = Stats_Store::slot_of( $bucket );
+		$fold = static function ( array $hour ) use ( $slot, $merge ): array {
+			$hour[ $slot ] = $merge( Core::arr( $hour[ $slot ] ?? null ) );
+			return $hour;
+		};
 		return self::intent(
 			$parts,
 			Stats_Store::hour_of( $bucket ),
-			static function ( array $hour ) use ( $slot, $merge ): array {
-				$hour[ $slot ] = $merge( Core::arr( $hour[ $slot ] ?? null ) );
-				return $hour;
+			null === $member ? $fold : static function ( array $row ) use ( $member, $fold ): array {
+				$row[ $member ] = $fold( Core::arr( $row[ $member ] ?? null ) );
+				return $row;
 			}
 		);
 	}
@@ -2837,24 +2844,24 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * write finds missing is one the fold never wrote, and the late rows are
 	 * that key's rows.
 	 *
-	 * Only one server's reader-shard write ranks. Into an unfolded hour it
-	 * collects for the ranker, and names its ranking GROUP, the (bucket,
-	 * server) pair, only where its bucket sits in the fine tail. Into a
-	 * folded hour its bucket sits behind that tail, and its hour-key write,
-	 * once it lands, forgets that server's DONE marker so the flush re-ranks
-	 * its hour from its rows.
+	 * Only one server's row write ranks, of either family. Into an unfolded
+	 * hour it collects for the ranker, and names its ranking GROUP, the
+	 * (bucket, server) pair, only where its bucket sits in the fine tail.
+	 * Into a folded hour its bucket sits behind that tail, and its hour-key
+	 * write, once it lands, forgets that server's DONE marker so the flush
+	 * re-ranks its hour from its rows.
 	 *
 	 * @param string                                                   $bucket  Bucket key.
-	 * @param array<int,string>                                        $fine    Namespace prefix in the fine tier.
-	 * @param array<int,string>                                        $coarse  Namespace prefix in the hour tier.
+	 * @param array<int,string>                                        $fine    Key parts in the fine tier.
+	 * @param array<int,string>                                        $coarse  Key parts in the hour tier.
 	 * @param \Closure(array<array-key,mixed>): array<array-key,mixed> $merge   Fold.
 	 * @param ?\Closure(string): void                                  $refused Called with the key a refused set lost.
 	 * @param ?\Closure(array<array-key,mixed>): void                  $collect What a write in the fine tail
 	 *                                                                          collects; null where its bucket
 	 *                                                                          ranks nothing.
-	 * @param ?string                                                  $server_key The server a reader-shard
-	 *                                                                             write's rows are filed under;
-	 *                                                                             null where nothing ranks.
+	 * @param ?string                                                  $server_key The server a row write's
+	 *                                                                             rows are filed under; null
+	 *                                                                             where nothing ranks.
 	 * @return list<Pending_Write>
 	 */
 	private function hour_tier_intents( string $bucket, array $fine, array $coarse, \Closure $merge, ?\Closure $refused, ?\Closure $collect, ?string $server_key = null ): array {
@@ -2883,7 +2890,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param Pending_Write               $intent  The intent to file.
 	 */
 	private static function add_intent( array &$intents, array $intent ): void {
-		$key  = Stats_Store::key( ...[ ...$intent['parts'], $intent['bucket'] ] );
+		$key  = Stats_Store::key_at( $intent['parts'], $intent['bucket'] );
 		$held = $intents[ $key ] ?? null;
 		if ( null === $held ) {
 			$intents[ $key ] = $intent;
@@ -2903,7 +2910,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * One pending write: where it goes, and how to fold this flush's numbers
 	 * onto whatever is already there.
 	 *
-	 * @param array<int,string>                        $parts   Namespace prefix.
+	 * @param array<int,string>                        $parts   Key parts, the namespace first.
 	 * @param string                                   $bucket  Bucket (or hour) key.
 	 * @param \Closure(array<array-key,mixed>): array<array-key,mixed> $merge Fold.
 	 * @param ?\Closure(string): void                  $refused Called with the key a rejected set lost.
@@ -3666,10 +3673,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					'description' => 'Build the Stats_Store over the three Tables the set_*_target verbs named, with the retention window. Refused until all three are named.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						// A topology still passing a partition fails to load.
-						if ( [] !== $args ) {
-							throw new \InvalidArgumentException( 'usage: configure_stats' );
-						}
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_stats_store(

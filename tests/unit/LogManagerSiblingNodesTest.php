@@ -41,7 +41,7 @@ class LogManagerSiblingNodesTest extends TestCase {
 		$_SERVER['SERVER_NAME']    = 'localhost';
 		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'], $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
 
-		@\mkdir( self::TEST_DIR . '/logs', 0755, true );
+		@\mkdir( self::test_dir() . '/logs', 0755, true );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			Config::reset();
@@ -55,7 +55,7 @@ class LogManagerSiblingNodesTest extends TestCase {
 		}
 		$_SERVER = $this->orig_server;
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		parent::tearDown();
 	}
 
@@ -97,7 +97,7 @@ class LogManagerSiblingNodesTest extends TestCase {
 		// Pre-register a configured Topic under the canonical name (stands in for the topology's).
 		$preexisting = new Topic_Node();
 		$preexisting->name( '_firehose:topic' );
-		$preexisting->arguments( [ self::TEST_DIR . '/logs/firehose.p{partition}', '1' ] );
+		$preexisting->arguments( [ self::test_dir() . '/logs/firehose.p{partition}', '1' ] );
 
 		$lm = Log_Manager::instance();
 		$lm->start( 'init' );

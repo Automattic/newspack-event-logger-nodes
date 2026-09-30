@@ -68,6 +68,28 @@ class UrlSketchTest extends TestCase {
 
 	public function test_an_empty_sketch_counts_nothing(): void {
 		$this->assertSame( 0, Url_Sketch::estimate( Url_Sketch::of( [] ) ) );
-		$this->assertSame( Url_Sketch::BYTES, \strlen( Url_Sketch::of( [] ) ) );
+	}
+
+	public function test_a_sketch_is_stored_deflated_and_its_registers_come_back_whole(): void {
+		// A header record carries one per list set, and a small set's is
+		// almost every register empty: 16 KiB stored raw.
+		$empty  = Url_Sketch::of( [] );
+		$fifty  = Url_Sketch::of( self::hashes( '/kakapo-%d', 0, 50 ) );
+		$dense  = Url_Sketch::of( self::hashes( '/weka-%d', 0, 30000 ) );
+
+		$this->assertSame( \gzdeflate( \str_repeat( "\0", Url_Sketch::BYTES ), 1 ), $empty, 'zlib\'s fastest level: a record is under 1% of a ranking\'s bytes' );
+		$this->assertLessThanOrEqual( 128, \strlen( $empty ) );
+		$this->assertLessThanOrEqual( 320, \strlen( $fifty ) );
+		$this->assertLessThan( 3000, \substr_count( (string) \gzinflate( $dense ), "\0" ), 'dense: most registers set' );
+		$this->assertLessThan( Url_Sketch::BYTES / 2, \strlen( $dense ), 'and still under half' );
+		$this->assertSame( Url_Sketch::BYTES, \strlen( (string) \gzinflate( $fifty ) ), 'one byte a register, inflated' );
+		$this->assertSame( 50, Url_Sketch::estimate( $fifty ) );
+	}
+
+	public function test_only_a_deflated_register_string_is_a_sketch(): void {
+		$this->assertTrue( Url_Sketch::is_sketch( Url_Sketch::of( self::hashes( '/tui-%d', 0, 7 ) ) ) );
+		$this->assertFalse( Url_Sketch::is_sketch( \str_repeat( "\0", Url_Sketch::BYTES ) ), 'the raw registers are not the stored form' );
+		$this->assertFalse( Url_Sketch::is_sketch( \gzdeflate( \str_repeat( "\0", Url_Sketch::BYTES - 1 ) ) ), 'nor a register short' );
+		$this->assertFalse( Url_Sketch::is_sketch( 'wombat-7731' ) );
 	}
 }

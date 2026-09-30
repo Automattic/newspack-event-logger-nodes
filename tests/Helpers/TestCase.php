@@ -10,7 +10,8 @@ use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 abstract class TestCase extends RuntimeTestCase {
 
 	/**
-	 * Scratch tree the `tests/configs/logging-*.php` configs point at.
+	 * Scratch tree the `tests/configs/logging-*.php` configs point at: this
+	 * process's base, `NEWSPACK_TEST_BASE_DIR`, with `-logging` after it.
 	 *
 	 * MUST match their `base_directory`: storage nodes refuse a path outside the
 	 * runtime tree, and the logging suites write `logs/` under it.
@@ -21,7 +22,9 @@ abstract class TestCase extends RuntimeTestCase {
 	 * one path puts every other test's live scratch tree under a recursive
 	 * delete. `ConfigParityTest` pins both halves.
 	 */
-	protected const TEST_DIR = '/tmp/newspack-event-logger-nodes-test-logging';
+	protected static function test_dir(): string {
+		return ( \getenv( 'NEWSPACK_TEST_BASE_DIR' ) ?: throw new \LogicException( 'NEWSPACK_TEST_BASE_DIR is unset; tests/bootstrap.php sets it' ) ) . '-logging';
+	}
 
 	/** @var array<string,true> Directories a harness stats Table file was opened in. */
 	private array $stats_table_dirs = [];
@@ -43,8 +46,9 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * The URL-index keys a test's askers asked of `$ns`, as
-	 * `{server_key}:{shard}:{key}`, sorted, one per ask.
+	 * The URL-index keys a test's askers asked of `$ns`, stored
+	 * `{ns}:{key}:{server_key}:{shard}`, as `{server_key}:{shard}:{key}`,
+	 * sorted, one per ask.
 	 *
 	 * @param string $ns `Stats_Store::NS_URLS` or `NS_URLS_HOUR`.
 	 * @return list<string>
@@ -52,8 +56,8 @@ abstract class TestCase extends RuntimeTestCase {
 	protected function asked_url_keys( string $ns = Stats_Store::NS_URLS ): array {
 		$out = [];
 		foreach ( $this->asked_keys( $ns ) as $key ) {
-			if ( 1 === \preg_match( '/^' . \preg_quote( $ns, '/' ) . ':([0-9a-f]{8}:w?[0-9a-f]:[0-9-]+)$/', $key, $m ) ) {
-				$out[] = $m[1];
+			if ( 1 === \preg_match( '/^' . \preg_quote( $ns, '/' ) . ':([0-9-]+):([0-9a-f]{8}:w?[0-9a-f])$/', $key, $m ) ) {
+				$out[] = "{$m[2]}:{$m[1]}";
 			}
 		}
 		\sort( $out );
@@ -319,10 +323,10 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/**
 	 * ELN-specific default prefix so app temp dirs live in their OWN namespace,
-	 * not the substrate's `newspack-nodes-test-`. Under parallel run-coverage the
-	 * nodes and ELN suites each `rm -rf` their prefix; sharing one prefix had each
-	 * suite deleting the other's LIVE temp dirs mid-run. Inherits the parent's
-	 * PID + more-entropy uniqueness and auto-cleanup.
+	 * not the substrate's `newspack-nodes-test-`: each suite's run-coverage.sh
+	 * sweeps its own prefix's stale dirs, and a shared prefix would put one
+	 * suite's dirs in the other's sweep. Inherits the parent's PID +
+	 * more-entropy uniqueness and auto-cleanup.
 	 */
 	protected function make_temp_dir( string $prefix = 'newspack-event-logger-nodes-test-' ): string {
 		return parent::make_temp_dir( $prefix );
@@ -660,16 +664,19 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/** Forget every request the harness recorded, so a test counts from here. */
 	protected function forget_stats_asks(): void {
-		VerbHarness::ask_recorder()->asked = [];
+		VerbHarness::ask_recorder()->asked   = [];
+		VerbHarness::ask_recorder()->refused = [];
 	}
 
 	/**
-	 * Answer every `MGET` or `SMEMBERS` asking a key that carries `$needle`
-	 * (matched against `:{key}`) with a read failure, as a Table that did not
-	 * answer the batch would; '' answers every one again.
+	 * Answer every `MGET` or `SMEMBERS` asking a key `$pattern` matches with a
+	 * read failure, as a Table that did not answer the batch would; '' answers
+	 * every one again.
+	 *
+	 * @param string $pattern A PCRE pattern over one table-relative key, or ''.
 	 */
-	protected function refuse_stats_reads( string $needle ): void {
-		VerbHarness::ask_recorder()->refuse = $needle;
+	protected function refuse_stats_reads( string $pattern ): void {
+		VerbHarness::ask_recorder()->refuse = $pattern;
 	}
 
 	/**
@@ -984,7 +991,7 @@ abstract class TestCase extends RuntimeTestCase {
 			}
 			$servers[ $server ] ??= [];
 		}
-		$writes = \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( $servers, $hour, $key );
+		$writes = \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( self::by_shard( $servers ), $hour, $key );
 		// As the writer does: each server's DONE marker for the hour beside its lists.
 		foreach ( $hour ? \array_keys( $servers ) : [] as $server ) {
 			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts( \Newspack_Event_Logger_Nodes\Stats_Store::server_key( (string) $server ) ), $key, [] ];
@@ -994,6 +1001,25 @@ abstract class TestCase extends RuntimeTestCase {
 			$ok = self::index_server( $store, $key, (string) $server, $hour, [] ) && $ok;
 		}
 		return $ok;
+	}
+
+	/**
+	 * Each server's stored rows as the shard maps `ranked_writes()` takes,
+	 * every row in the shard its hash and its family name, as the flush files it.
+	 *
+	 * @param array<array-key,array<array-key,mixed>> $servers Server => stored rows by hash.
+	 * @return array<array-key,array<array-key,array<array-key,mixed>>>
+	 */
+	protected static function by_shard( array $servers ): array {
+		$out = [];
+		foreach ( $servers as $server => $rows ) {
+			$out[ $server ] = [];
+			foreach ( $rows as $hash => $row ) {
+				$worker = ! empty( \Newspack_Nodes\Core::arr( $row )[ \Newspack_Event_Logger_Nodes\Stats_Store::ROW_WORKER ] ?? null );
+				$out[ $server ][ \Newspack_Event_Logger_Nodes\Stats_Store::url_shard( (string) $hash, $worker ) ][ $hash ] = $row;
+			}
+		}
+		return $out;
 	}
 
 	// ── Stats_Store one key at a time ───────────────────────────────────────
@@ -1069,13 +1095,18 @@ abstract class TestCase extends RuntimeTestCase {
 	 * flush places it (decision 35): read the hour, set the slot, write the
 	 * hour back.
 	 *
-	 * @param array<int,string>   $parts A slotted namespace's prefix.
-	 * @param array<string,mixed> $data  The slot's value.
+	 * @param array<int,string>   $parts     A slotted namespace's key parts.
+	 * @param array<string,mixed> $data      The slot's value.
+	 * @param ?string             $dimension The dimension of a `url_dim_parts()` row.
 	 */
-	protected function set_hour_slot( Stats_Store $store, array $parts, string $bucket, array $data ): bool {
-		$hour                                     = Stats_Store::hour_of( $bucket );
-		$value                                    = $store->bucket_get_multi( [ [ $parts, $hour ] ] )[0] ?? [];
-		$value[ Stats_Store::slot_of( $bucket ) ] = $data;
+	protected function set_hour_slot( Stats_Store $store, array $parts, string $bucket, array $data, ?string $dimension = null ): bool {
+		$hour  = Stats_Store::hour_of( $bucket );
+		$value = $store->bucket_get_multi( [ [ $parts, $hour ] ] )[0] ?? [];
+		if ( null === $dimension ) {
+			$value[ Stats_Store::slot_of( $bucket ) ] = $data;
+		} else {
+			$value[ $dimension ][ Stats_Store::slot_of( $bucket ) ] = $data;
+		}
 		return $store->bucket_set_multi( [ [ $parts, $hour, $value ] ] )[0];
 	}
 
@@ -1083,12 +1114,14 @@ abstract class TestCase extends RuntimeTestCase {
 	 * One bucket's slot of a slotted hour value; [] where the hour or the
 	 * slot is absent.
 	 *
-	 * @param array<int,string> $parts A slotted namespace's prefix.
+	 * @param array<int,string> $parts     A slotted namespace's key parts.
+	 * @param ?string           $dimension The dimension of a `url_dim_parts()` row.
 	 * @return array<string,mixed>
 	 */
-	protected function get_hour_slot( Stats_Store $store, array $parts, string $bucket ): array {
+	protected function get_hour_slot( Stats_Store $store, array $parts, string $bucket, ?string $dimension = null ): array {
 		$value = $store->bucket_get_multi( [ [ $parts, Stats_Store::hour_of( $bucket ) ] ] )[0] ?? [];
-		return Stats_Store::string_keys( \Newspack_Nodes\Core::arr( $value[ Stats_Store::slot_of( $bucket ) ] ?? null ) );
+		$hour  = null === $dimension ? $value : \Newspack_Nodes\Core::arr( $value[ $dimension ] ?? null );
+		return Stats_Store::string_keys( \Newspack_Nodes\Core::arr( $hour[ Stats_Store::slot_of( $bucket ) ] ?? null ) );
 	}
 
 	/** @param array<string,mixed> $data The hour's whole sum. */

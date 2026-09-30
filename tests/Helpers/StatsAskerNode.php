@@ -48,12 +48,14 @@ final class Stats_Ask_Recorder_Node extends Node {
 	public array $asked = [];
 
 	/**
-	 * While set, an `MGET` or `SMEMBERS` asking a key that carries this
-	 * (matched against `:{key}`) is answered here with the TM_ERROR its Table
-	 * sends when the read fails, and never reaches the Table: a batch that
-	 * went unanswered.
+	 * While set, a pattern: an `MGET` or `SMEMBERS` asking a key it matches is
+	 * answered here with the TM_ERROR its Table sends when the read fails, and
+	 * never reaches the Table: a batch that went unanswered.
 	 */
 	public string $refuse = '';
+
+	/** @var list<string> Every key the pattern matched in a refused request, in order. */
+	public array $refused = [];
 
 	/**
 	 * @param array<int,mixed> $message Any message on its way into the graph.
@@ -81,7 +83,8 @@ final class Stats_Ask_Recorder_Node extends Node {
 	}
 
 	/**
-	 * The read verb of a request asking a key `$refuse` names, or null.
+	 * The read verb of a request asking a key `$refuse` matches, or null;
+	 * each key it matches joins `$refused`.
 	 *
 	 * @param mixed $value The request's VALUE.
 	 */
@@ -94,11 +97,11 @@ final class Stats_Ask_Recorder_Node extends Node {
 		} elseif ( 'MGET' !== $verb ) {
 			return null;
 		}
-		foreach ( $words as $key ) {
-			if ( \str_contains( ':' . $key, $this->refuse ) ) {
-				return $verb;
-			}
+		$matched = \preg_grep( $this->refuse, $words ) ?: [];
+		if ( [] === $matched ) {
+			return null;
 		}
-		return null;
+		\array_push( $this->refused, ...\array_values( $matched ) );
+		return $verb;
 	}
 }

@@ -110,11 +110,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// 2.76.0 is SADD and SMEMBERS on a durable Table and Table_Client's
 	// add_members() and members(), which the search index files and reads
 	// its words through; below it the flush and every search fatal.
+	// 2.77.0 is Command_Interpreter_Node::dispatch() binding each verb's
+	// declared args and handing the handler them by name; below it every
+	// handler here reads a raw token list as named args and binds nothing.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.76.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.77.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

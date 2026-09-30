@@ -29,11 +29,23 @@ import {
 	FROM,
 	VALUE,
 	newMessage,
-	parseCommandArgs,
 	forgetSession,
 	__setAuthFetch,
 } from '@newspack-nodes/runtime';
 import { usePerformanceGraph } from '../usePerformanceGraph';
+
+/**
+ * The value a command's tokens carry for `--<name>=`, as the server's binder
+ * reads a named arg.
+ *
+ * @param {string[]|undefined} tokens The command's argument tokens.
+ * @param {string}             name   The arg's name.
+ * @return {string|undefined} Its value, or undefined when the tokens omit it.
+ */
+const option = ( tokens, name ) =>
+	tokens
+		?.find( ( token ) => token.startsWith( `--${ name }=` ) )
+		?.slice( name.length + 3 );
 
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
@@ -220,8 +232,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 			.find(
 				( m ) =>
 					m[ VALUE ]?.name === 'overview' &&
-					parseCommandArgs( m[ VALUE ]?.arguments ).options.server ===
-						'web1'
+					option( m[ VALUE ]?.arguments, 'server' ) === 'web1'
 			);
 		expect( overview ).toBeTruthy();
 	} );
@@ -340,9 +351,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		} );
 		const detail = findVerb( wire.batches, 'dump_url' );
 		expect( detail ).toBeTruthy();
-		expect(
-			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
-		).toBe( 'abc' );
+		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( 'abc' );
 		const view = Core.node( 'url-detail:view' );
 		expect( view.view.data ).toEqual( {
 			last_modified: 1,
@@ -391,9 +400,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		} );
 		const req = findVerb( wire.batches, 'dump_request' );
 		expect( req ).toBeTruthy();
-		expect(
-			parseCommandArgs( req[ VALUE ].arguments ).options.partition
-		).toBe( '2' );
+		expect( option( req[ VALUE ].arguments, 'partition' ) ).toBe( '2' );
 	} );
 } );
 
@@ -410,9 +417,7 @@ describe( 'usePerformanceGraph — a newer urls question retires the older', () 
 			if ( 'urls' !== m[ VALUE ]?.name ) {
 				return null;
 			}
-			if (
-				'url' === parseCommandArgs( m[ VALUE ].arguments ).options.sort
-			) {
+			if ( 'url' === option( m[ VALUE ].arguments, 'sort' ) ) {
 				return {
 					data: [ { hash: 'c0ffee7731aa' } ],
 					totals: { urls: 1 },
@@ -435,17 +440,13 @@ describe( 'usePerformanceGraph — a newer urls question retires the older', () 
 		await act( async () => {} );
 		const fetcher = Core.node( 'urls:fetch' );
 		expect(
-			fetcher.outbox.map(
-				( ask ) => parseCommandArgs( ask.args ).options.sort
-			)
+			fetcher.outbox.map( ( ask ) => option( ask.args, 'sort' ) )
 		).toEqual( [ 'count' ] );
 
 		api.handleUrlParamsChange( { ...bySort, sort: 'url' } );
 
 		expect(
-			fetcher.outbox.map(
-				( ask ) => parseCommandArgs( ask.args ).options.sort
-			)
+			fetcher.outbox.map( ( ask ) => option( ask.args, 'sort' ) )
 		).toEqual( [ 'url' ] );
 	} );
 
@@ -583,9 +584,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		const detail = findVerb( wire.batches, 'dump_url' );
 		expect( detail ).toBeTruthy();
-		expect(
-			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
-		).toBe( 'abc' );
+		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( 'abc' );
 	} );
 
 	/**
@@ -614,9 +613,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 		// The open fetch reads the whole window.
 		const opened = findVerb( wire.batches, 'dump_url' );
-		expect(
-			parseCommandArgs( opened[ VALUE ].arguments ).options.since
-		).toBeUndefined();
+		expect( option( opened[ VALUE ].arguments, 'since' ) ).toBeUndefined();
 
 		// The reply is now retained, so the next tick asks only for what is new.
 		wire.batches.length = 0;
@@ -624,9 +621,9 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 			Core.node( ROUTER ).fireCb();
 		} );
 		const refreshed = findVerb( wire.batches, 'dump_url' );
-		expect(
-			parseCommandArgs( refreshed[ VALUE ].arguments ).options.since
-		).toBe( '1787000900' );
+		expect( option( refreshed[ VALUE ].arguments, 'since' ) ).toBe(
+			'1787000900'
+		);
 	} );
 
 	test( 'stops the url-detail:timer when a request detail opens, re-arms when it closes', async () => {
@@ -777,9 +774,9 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		);
 		await act( async () => {} );
 		const overview = findVerb( wire.batches, 'overview' );
-		expect(
-			parseCommandArgs( overview[ VALUE ].arguments ).options.breakdown
-		).toBe( 'server' );
+		expect( option( overview[ VALUE ].arguments, 'breakdown' ) ).toBe(
+			'server'
+		);
 	} );
 
 	test( 'the selected server is emitted in the dump_url args', async () => {
@@ -797,9 +794,9 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		);
 		await act( async () => {} );
 		const detail = findVerb( wire.batches, 'dump_url' );
-		expect(
-			parseCommandArgs( detail[ VALUE ].arguments ).options.server
-		).toBe( 'alpha.example' );
+		expect( option( detail[ VALUE ].arguments, 'server' ) ).toBe(
+			'alpha.example'
+		);
 	} );
 
 	test( 'the selected server is emitted in the urls args', async () => {
@@ -812,9 +809,9 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		);
 		await act( async () => {} );
 		const urls = findVerb( wire.batches, 'urls' );
-		expect(
-			parseCommandArgs( urls[ VALUE ].arguments ).options.server
-		).toBe( 'alpha.example' );
+		expect( option( urls[ VALUE ].arguments, 'server' ) ).toBe(
+			'alpha.example'
+		);
 	} );
 
 	test( 'a non-zero offset is emitted in the urls args (immediate fetch on a page change)', async () => {
@@ -836,9 +833,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 			.flat()
 			.reverse()
 			.find( ( m ) => m[ VALUE ]?.name === 'urls' );
-		expect(
-			parseCommandArgs( urls[ VALUE ].arguments ).options.offset
-		).toBe( '50' );
+		expect( option( urls[ VALUE ].arguments, 'offset' ) ).toBe( '50' );
 	} );
 
 	test( 'an unchanged params object is a no-op (no extra urls fetch)', async () => {

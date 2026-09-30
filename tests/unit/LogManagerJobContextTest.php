@@ -31,8 +31,8 @@ class LogManagerJobContextTest extends TestCase {
 	 * assertions but not for anything reading the firehose off disk.
 	 */
 	private function arrange_logging(): void {
-		@\mkdir( self::TEST_DIR . '/logs', 0755, true );
-		foreach ( \glob( self::TEST_DIR . '/logs/firehose.p*/*.log' ) ?: [] as $stale ) {
+		@\mkdir( self::test_dir() . '/logs', 0755, true );
+		foreach ( \glob( self::test_dir() . '/logs/firehose.p*/*.log' ) ?: [] as $stale ) {
 			@\unlink( $stale );
 		}
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . \dirname( __DIR__ ) . '/configs/logging-enabled.php' );
@@ -244,7 +244,7 @@ class LogManagerJobContextTest extends TestCase {
 
 		Log_Manager::end_job_context( 'slow_handler', '', null );
 
-		$categories = \array_column( self::firehose_entries( self::TEST_DIR ), 'k' );
+		$categories = \array_column( self::firehose_entries( self::test_dir() ), 'k' );
 		$this->assertNotEmpty( $categories, 'the job context wrote to the firehose' );
 		$this->assertContains( 'process (aborted)', $categories );
 		$this->assertNotContains( 'process (complete)', $categories );
@@ -272,7 +272,7 @@ class LogManagerJobContextTest extends TestCase {
 
 		$this->assertSame(
 			[ [ 'FROM' => 'jobs.p3', 'ID' => '0:58746220:127', 'KEY' => 'affinity-8842' ] ],
-			\array_column( self::entries_of( self::firehose_entries( self::TEST_DIR ), 'message' ), 'm' )
+			\array_column( self::entries_of( self::firehose_entries( self::test_dir() ), 'message' ), 'm' )
 		);
 	}
 
@@ -298,7 +298,7 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::end_job_context();
 		Log_Manager::end_job_context();
 
-		$messages = \array_column( self::entries_of( self::firehose_entries( self::TEST_DIR ), 'message' ), 'm' );
+		$messages = \array_column( self::entries_of( self::firehose_entries( self::test_dir() ), 'message' ), 'm' );
 		$this->assertSame(
 			[ '4:117:63', '4:117:63' ],
 			\array_column( $messages, 'ID' ),
@@ -318,7 +318,7 @@ class LogManagerJobContextTest extends TestCase {
 			[ 'status' => 'ok', 'message' => '', 'items_ok' => 1, 'items_err' => 0 ]
 		);
 
-		$categories = \array_column( self::firehose_entries( self::TEST_DIR ), 'k' );
+		$categories = \array_column( self::firehose_entries( self::test_dir() ), 'k' );
 		$this->assertContains( 'process (complete)', $categories );
 		$this->assertNotContains( 'process (aborted)', $categories );
 	}
@@ -345,7 +345,7 @@ class LogManagerJobContextTest extends TestCase {
 			[ 'status' => 'ok', 'message' => '', 'items_ok' => 3, 'items_err' => 0 ]
 		);
 
-		$entries = self::firehose_entries( self::TEST_DIR );
+		$entries = self::firehose_entries( self::test_dir() );
 		$this->assertCount(
 			1,
 			self::entries_of( $entries, 'process (aborted)' ),
@@ -362,13 +362,13 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::begin_job_context( 'kea_handler', '', $message );
 		Log_Manager::instance()->message( 'work', [ 'm' => 'kea 7731' ] );
 		Log_Manager::end_job_context( 'kea_handler', '', [ 'status' => 'ok', 'message' => '', 'items_ok' => 1, 'items_err' => 0 ] );
-		$this->assertCount( 1, self::entries_of( self::firehose_entries( self::TEST_DIR ), 'message' ), 'the job names its record' );
+		$this->assertCount( 1, self::entries_of( self::firehose_entries( self::test_dir() ), 'message' ), 'the job names its record' );
 
 		$this->arrange_logging();
 		Log_Manager::instance()->message( 'work', [ 'm' => 'weka 7731' ] );
 		Log_Manager::reset();
 
-		$this->assertSame( [], self::entries_of( self::firehose_entries( self::TEST_DIR ), 'message' ) );
+		$this->assertSame( [], self::entries_of( self::firehose_entries( self::test_dir() ), 'message' ) );
 	}
 
 	/**
@@ -384,6 +384,6 @@ class LogManagerJobContextTest extends TestCase {
 
 		Log_Manager::end_job_context();
 
-		$this->assertSame( [], self::entries_of( self::firehose_entries( self::TEST_DIR ), 'process (aborted)' ) );
+		$this->assertSame( [], self::entries_of( self::firehose_entries( self::test_dir() ), 'process (aborted)' ) );
 	}
 }

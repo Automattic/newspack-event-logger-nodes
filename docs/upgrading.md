@@ -6,6 +6,107 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **Release newspack-nodes 2.77.0, this plugin's 0.111.0 and
+  newspack-intelligence 0.12.0 together, and deploy them together.** The
+  substrate now binds every verb's arguments against the `args` its schema
+  declares and hands the handler them by name, and every handler here reads
+  them by name, so no order of updating one plugin at a time works:
+  - nodes alone — 0.110.0's `performance` verbs (`overview`, `urls`,
+    `dump_url`, `url_breakdown`, `search_requests`, `grep_requests`,
+    `dump_request`, `ask`, `set`) and `rules delete` answer
+    `Call to undefined method Newspack_Nodes\Command_Args::parse()` or
+    `Service_CI_Node::require_option_int()` as a TM_ERROR, and
+    `request-builder:config set_inflight_target` reads no argument, so the
+    gyroscope's in-flight snapshots stop.
+  - this plugin alone — its `version_at_least( '2.77.0' )` floor fails
+    against nodes 2.76.0, and it stays dormant behind its admin notice, its
+    verbs and workers down.
+
+  Put all three zips on the host, then restart the workers once.
+
+- **Every verb argument binds by position or by name, and the binder
+  refuses what the verb does not declare.** A client may name any arg,
+  `--hash=<h>` as well as `<h>`. An option a verb does not declare, a token
+  past the last arg, a missing or blank required arg and a `bool` outside
+  `1/true/yes/on/0/false/no/off` are refused where they were ignored or
+  coerced, as `unknown option --<name>; this verb takes --<a>, --<b>`,
+  `too many arguments: <n> given, <m> accepted`, `missing required
+  argument: <name>` and `<name> wants a bool: …`; a malformed `--limit`,
+  `--partition` or `--since` reads `<name> wants a whole number, got
+  '<token>'`. `rid required`, `pattern required` for a missing pattern,
+  `descriptor required`, `option required`, `id required` and `usage:
+  configure_stats` are gone; match the binder's wording. An MCP tool call
+  naming an argument its verb does not declare answers a tool error.
+
+- **`ask` declares `context` second.** Its args are `descriptor`, `context`
+  (every descriptor after the first, or `--context=` repeated), `server`,
+  `search`, `errors_only` and `include_workers`; a caller that named its
+  scope, as the dashboard and the MCP door do, needs nothing. `set` takes
+  its `value` optional, so a blank value turns a bool option off, which is
+  how a hub pushes `false`; a bool option reads `1/true/yes/on/0/false/no/off`
+  and refuses any other word as `invalid value for option`, where every
+  word but `0` turned it on, and `set <option>` with no value at all is
+  refused, `value required`. The four `request-builder:config` target
+  setters take their target optional, and a blank still stops the output;
+  `set_inflight_target` answers `ok` with a newline, as its siblings do.
+  An MCP argument given as a list rides as one `--<name>=` token a member,
+  and a map or a null answers a tool error where it was dropped.
+
+- **Every stats dashboard starts empty after the upgrade.** Every
+  time-keyed stats key moved: the bucket or hour now follows the namespace
+  (`urls:{bucket}:{server_key}:{shard}`, `url_dim_h:{Y-m-d-H}:{hash}`), and
+  nothing reads the keys earlier releases wrote. The charts, including a
+  URL's per-dimension charts, the leaderboards and the URL table refill from
+  the next flushes: a chart over the following 24 hours, the URL table over
+  the retention window. The old rows age out on their Table's TTL. Until
+  each flame builder's roll-up has folded the window's earlier hours, two a
+  flush, a ranked `urls` page and its header read `provisional` and go
+  uncached; that takes seven flushes at the default 12-hour window,
+  under a minute on a builder with traffic. A PHP
+  caller composing a key by hand spells it through
+  `Stats_Store::key_at( $parts, $bucket )`, never `key( ...$parts, $bucket )`.
+
+- **`Stats_Store::url_dim_parts()` takes the hash alone.** A URL-hour is one
+  row holding every dimension's slots under the dimension's name. Read one
+  dimension with `get_slots( Stats_Store::url_dim_parts( $hash ), $hours,
+  $dimension )`.
+
+- **A header record's URL sketch is stored deflated.** Its layout is
+  `HDR_VERSION` 4, which also carries `HDR_ERRORS`, and a record in the v3
+  layout reads as missing. A PHP caller of `Url_Sketch` gets the deflated
+  form from `of()` and `union()`: compare sketches as returned, and test a
+  stored value with `Url_Sketch::is_sketch()`, never by its length.
+
+- **`errors_only` counts the buckets where a URL errored, not its window.**
+  A `urls` page, the `performance_urls` tool and an `overview:` brief under
+  the filter show, for each URL, the traffic of the five-minute buckets
+  (and, behind the current hour, the hours) in which it had a timeout or
+  fatal. A URL's `count`, `avg_ms` and the totals no longer include its clean
+  traffic, so they read lower than before for a URL that errs now and then;
+  `errors` is unchanged. A client that took `count` under the filter for
+  the URL's whole traffic reads it unfiltered instead.
+
+- **A row with no timed request ranks at 0 on `avg_ms`, `min_ms` and
+  `max_ms`** on a ranked page, as a folded page always ranked it. A client
+  expecting a ranked timing sort to omit timeout-only URLs filters on
+  `timed_count` itself.
+
+- **`Stats_Store`'s ranking API changed.** `ranked_writes()` takes
+  `server => shard => rows`, not `server => rows`: pass each server's shard
+  maps as the index stores them. `url_rank_parts()` and `url_header_parts()`
+  take ONE list set, one of `Stats_Store::RANK_SETS`, as their last key
+  argument; the default, `[]`, is the reader set. `url_rank_window()` and
+  `url_headers()` take a LIST of sets, `Stats_Store::rank_sets()`'s shape,
+  defaulting to `[ [] ]`, and read them all in one exchange:
+  `url_rank_window()` still answers `[ key, entries ]` pairs, each key's sets
+  end to end, while `url_headers()` answers `key => set position => record`
+  where it answered `key => record`. Pass `[ [ 'w' ] ]`, never `[ 'w' ]`, for
+  the worker set alone. `Performance_CI_Node::$load_index` and
+  `load_index_default()` take a fifth argument, `bool $errored`: a
+  replacement seam forwards it.
+
+## 0.110.0
+
 - **The substrate floor is newspack-nodes 2.76.0, and search starts from an
   empty index.** Deploy the substrate first, then restart the workers, so
   each flame builder's SQLite file gains its members table. The word sets
@@ -32,6 +133,15 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   instead. A throwable with an empty message still reads the bare class,
   and `Worker_Should_Stop` still reads `stop`.
 
+- **`provisional` on a `urls` reply means more.** It marks a reply short of
+  an hour or record the writer has yet to fold or rank, or of an index read
+  that went unanswered, not only the latest buckets' ranking. A replay can
+  hold many hours unfolded at once, and each adds nothing until it folds,
+  so a client treating a provisional page's `totals` as the site's reads a
+  replay's missing hours as no traffic. The dashboard banner says so.
+
+## 0.109.1
+
 - **A flame builder names its three stats Tables before `configure_stats`.**
   A user-dir or console-saved topology carrying
   `command_node flame-builder:config configure_stats` without the three
@@ -41,13 +151,6 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `set_url_target flame-stats:url` and `set_url_fine_target
   flame-stats:url-fine`, as `flame-builder.tsl` does. Each verb refuses any
   other name.
-
-- **`provisional` on a `urls` reply means more.** It marks a reply short of
-  an hour or record the writer has yet to fold or rank, or of an index read
-  that went unanswered, not only the latest buckets' ranking. A replay can
-  hold many hours unfolded at once, and each adds nothing until it folds,
-  so a client treating a provisional page's `totals` as the site's reads a
-  replay's missing hours as no traffic. The dashboard banner says so.
 
 ## 0.109.0
 
