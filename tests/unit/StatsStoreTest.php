@@ -1739,7 +1739,7 @@ class StatsStoreTest extends TestCase {
 	/**
 	 * A filed word is a set of members: each URL's hash, valued by the tick
 	 * its name was written at, living the retention window, an hour and a
-	 * flush from that add.
+	 * settle from that add.
 	 */
 	public function test_a_filed_member_carries_its_tick_and_lives_the_window_an_hour_and_a_flush(): void {
 		[ $window, $client, $names ] = $this->stats_store_args( 3, 7_411 );
@@ -1752,10 +1752,10 @@ class StatsStoreTest extends TestCase {
 			$this->assertSame( [ true ], $store->add_url_tokens( [ [ Stats_Store::server_key( 'kea.test' ), 'kokako', [ 'a1a1a1a1a1a1' ] ] ], 1_600_000_321 ) );
 			$this->assertSame( [ $set => [ 'a1a1a1a1a1a1' => 1_600_000_321 ] ], $read() );
 
-			Core::$clock = static fn (): int => 1_700_000_321 + 7_411 + 3_604;
-			$this->assertSame( [ $set => [ 'a1a1a1a1a1a1' => 1_600_000_321 ] ], $read(), 'a second short of the window, an hour and a flush' );
-			Core::$clock = static fn (): int => 1_700_000_321 + 7_411 + 3_605;
-			$this->assertSame( [], $read(), 'the window, an hour and a flush from its add retire it' );
+			Core::$clock = static fn (): int => 1_700_000_321 + 7_411 + 3_629;
+			$this->assertSame( [ $set => [ 'a1a1a1a1a1a1' => 1_600_000_321 ] ], $read(), 'a second short of the window, an hour and a settle' );
+			Core::$clock = static fn (): int => 1_700_000_321 + 7_411 + 3_630;
+			$this->assertSame( [], $read(), 'the window, an hour and a settle from its add retire it' );
 		} finally {
 			Core::$clock = $clock;
 		}
@@ -1887,10 +1887,10 @@ class StatsStoreTest extends TestCase {
 	}
 
 	/**
-	 * A URL name lives its Table's TTL, an hour and a flush from its write:
+	 * A URL name lives its Table's TTL, an hour and a settle from its write:
 	 * the aggregate Table keeps rows at least the 25 hours a chart reads, and
 	 * a reader resolving one of them must still find its name. At a 7,411 s
-	 * window that is 90,000 + 3,605 s, far past the words' 7,411 + 3,605.
+	 * window that is 90,000 + 3,630 s, far past the words' 7,411 + 3,630.
 	 */
 	public function test_a_url_name_lives_its_tables_ttl_an_hour_and_a_flush(): void {
 		$store = $this->stats_store( partition: 3, max_lifespan: 7_411 );
@@ -1903,9 +1903,9 @@ class StatsStoreTest extends TestCase {
 			$store->set_url_names( [ 'kea.test' => [ 'a1a1a1a1a1a1' => 'https://kea.test/kokako-7731' ] ] );
 			$at( 41_113 );
 			$this->assertSame( [ 'a1a1a1a1a1a1' ], \array_keys( $store->get_url_names( [ 'a1a1a1a1a1a1' ] ) ), 'unseen past the search window, and still named' );
-			$at( 90_000 + 3_604 );
+			$at( 90_000 + 3_629 );
 			$this->assertSame( [ 'a1a1a1a1a1a1' ], \array_keys( $store->get_url_names( [ 'a1a1a1a1a1a1' ] ) ), 'a second short' );
-			$at( 90_000 + 3_605 );
+			$at( 90_000 + 3_630 );
 			$this->assertSame( [], $store->get_url_names( [ 'a1a1a1a1a1a1' ] ), 'retired' );
 		} finally {
 			Core::$clock = $clock;

@@ -15,6 +15,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Durable_Arm;
 use Newspack_Nodes\Table_Client;
@@ -92,7 +93,7 @@ class Stats_Store {
 	 * Bytes any one stored value may take, and what every byte cap derives
 	 * from. A SQLite Table sets no item limit, so for a stats value this
 	 * bounds what one costs to hold and to read: a worker's memory while its
-	 * flush merges the value, and the unserialize every reader pays. It sits
+	 * settle merges the value, and the unserialize every reader pays. It sits
 	 * under memcached's 1,048,576-byte item, less a margin for the key and
 	 * the framing, because `Rule_Set`'s hook list rides memcached through an
 	 * `auto` Table and caps to it too. Uncompressed, because nothing
@@ -225,7 +226,7 @@ class Stats_Store {
 	 * hashes of that server's URLs whose paths carry the word, filed in that
 	 * bucket, each valued by the unix second its name was last filed. A
 	 * member lives the window and one refresh from its last add
-	 * (`filing_ttl()`), so a URL no flush names again leaves the set on its own.
+	 * (`filing_ttl()`), so a URL no settle names again leaves the set on its own.
 	 */
 	public const NS_URLTOKEN = 'urltoken';
 
@@ -236,14 +237,14 @@ class Stats_Store {
 	 * (word, URL) pair holds one member row in every bucket it was filed in
 	 * while the member lives, at most `ceil( window / width ) + 1` of them,
 	 * and a search reads that many sets per word per server. Every add of one
-	 * flush lands in the current bucket's key range, which is the whole of
-	 * what that flush dirties, and a narrower bucket makes that range
+	 * settle lands in the current bucket's key range, which is the whole of
+	 * what that settle dirties, and a narrower bucket makes that range
 	 * denser. An hour costs 13 rows and 13 reads at the 12-hour default
 	 * window, and makes every hourly refresh a new row rather than a
-	 * rewrite; twelve hours costs 2 of each and spreads a flush across half
+	 * rewrite; twelve hours costs 2 of each and spreads a settle across half
 	 * a day of members. Six costs 3 rows and 3 reads at the default window,
 	 * rewrites a URL's row in place for five hourly refreshes of every six,
-	 * keeps a flush inside a quarter of a day, and divides a day, so every
+	 * keeps a settle inside a quarter of a day, and divides a day, so every
 	 * bucket starts at 00, 06, 12 or 18 UTC.
 	 */
 	public const TOKEN_BUCKET_SECONDS = 6 * self::HOUR_SECONDS;
@@ -362,10 +363,9 @@ class Stats_Store {
 	 * lists are rewritten. ONE constant, because it is one number: the reader
 	 * looks this often, so ranking more often spends rankings nobody reads.
 	 * Under traffic a ranked row lags live traffic by up to twice it plus
-	 * `Flame_Builder_Node::FLUSH_INTERVAL_SEC`, the flush a ranking waits for.
-	 * The flame builder flushes from its Router tick whenever it owes work, a
-	 * pending bucket included, so on a partition that goes quiet a deferred
-	 * ranking runs at the first tick it comes due.
+	 * `Consumer_Node::CHECKPOINT_INTERVAL_S`, the settle a ranking waits for.
+	 * A settle runs only when the reader's cursor moved, so on a partition
+	 * that goes quiet a deferred ranking waits for the next record.
 	 */
 	public const URL_PAGE_REFRESH_S = 60;
 
@@ -653,9 +653,10 @@ class Stats_Store {
 	 * hours from.
 	 *
 	 * Two hours covers both: the current hour, and the hour just closed for
-	 * the fold and for a late write into it. The fold waits on the builder's
-	 * data clock, so a replay holds an hour open longer; an hour held for all
-	 * but a bucket of `fine_ttl()` folds regardless. At that width the tier
+	 * the fold and for a late write into it. An hour folds at the builder's
+	 * first settle after it closes, on the wall clock, so a replay's records
+	 * reach their already-folded hours by the late-write path, fine bucket
+	 * and hour key both, rather than through a later fold. At that width the tier
 	 * holds 24 buckets a shard, where the coarse tier keeps one per hour for
 	 * `<eln:stats_ttl>`, 25 at the 43,200 s `min_lifetime` default.
 	 * `fine_ttl()` caps it at the window, so a window under two hours bounds
@@ -925,8 +926,8 @@ class Stats_Store {
 	/**
 	 * The hours of `$hours` the writer still owes the scope: one holding no
 	 * index, or one a server it names has no DONE marker for. Such an hour
-	 * waits on the builder's data clock, or on the re-rank a late write
-	 * owes, so a reader reads it as provisional-empty and never as a hole:
+	 * waits on the builder's first settle after it closes, or on the re-rank
+	 * a late write owes, so a reader reads it as provisional-empty and never as a hole:
 	 * a hole sends the page to the whole-index fold. A read a Table left
 	 * unanswered lands here too, the index's or the marker's, and the
 	 * provisional, uncached answer is the one decision 3 wants for it. What
@@ -1347,7 +1348,7 @@ class Stats_Store {
 	 * hour holding no index is absent, unfolded; one whose every server is
 	 * marked answers with none. The index goes first, because it says which
 	 * markers the second read asks for (decision 6). No chart hour key is
-	 * asked after: the flush writes those through, so none is the fold's.
+	 * asked after: the settle writes those through, so none is the fold's.
 	 *
 	 * `$failed` says a Table left some key of either read unanswered, and
 	 * then an hour reading as unfolded may be one the read could not see.
@@ -1441,7 +1442,7 @@ class Stats_Store {
 	 * Read many buckets across DIFFERENT namespaces in one round trip.
 	 *
 	 * `lookup_hours()` reads one namespace over many hours; this reads
-	 * an arbitrary mix, which is what a flush touches. Every read keeps its own
+	 * an arbitrary mix, which is what a settle touches. Every read keeps its own
 	 * slot, under the key `$reads` carried, because a caller merges `result[i]`
 	 * onto `reads[i]` and a collapsed miss would land every later merge on the
 	 * wrong key.
@@ -1527,8 +1528,8 @@ class Stats_Store {
 
 	/**
 	 * Group named paths by every word each is filed under — the one place
-	 * the tokenize-and-group loop is spelled, for the flush and for a test
-	 * seeding what the flush would have written.
+	 * the tokenize-and-group loop is spelled, for the settle and for a test
+	 * seeding what the settle would have written.
 	 *
 	 * @param array<array-key,string> $names hash => path.
 	 * @return array<array-key,list<string>> token => hashes.
@@ -1844,7 +1845,7 @@ class Stats_Store {
 	 * partition writes the share of the URL's traffic it saw, so the sums add
 	 * (decision 2) — the running flames through `merge_url_flames()`, the
 	 * profiles as a leaderboard bucket merges — and the reader divides them
-	 * once. `last_modified` is the newest partition's flush.
+	 * once. `last_modified` is the newest partition's settle.
 	 *
 	 * A key present only when some blob held it: `flame` from a `flame_raw`,
 	 * `profiles` from a `profiles`.
@@ -1955,7 +1956,7 @@ class Stats_Store {
 	/**
 	 * Merge one leaderboard bucket's sums into another, in place.
 	 *
-	 * `Flame_Builder_Node` combines the current flush's bucket with the already
+	 * `Flame_Builder_Node` combines the current settle's bucket with the already
 	 * persisted bucket of the same key. Three shapes nest here and each has its
 	 * own field table: the bucket (`LB_SUMS`), a category inside it
 	 * (`LB_CAT_SUMS`) and one of that category's entries (`LB_ENTRY_SUMS`).
@@ -1986,7 +1987,7 @@ class Stats_Store {
 
 	/**
 	 * One URL's stored aggregate as its writer merges onto it: the sums the
-	 * flush wrote, where `url_stats()` answers display means.
+	 * settle wrote, where `url_stats()` answers display means.
 	 *
 	 * @param string    $url_hash 12-char URL hash.
 	 * @param-out bool  $failed
@@ -2048,14 +2049,14 @@ class Stats_Store {
 	}
 
 	/**
-	 * Record the names of URLs this flush touched. A name serves every
+	 * Record the names of URLs this settle touched. A name serves every
 	 * reader turning a hash into a URL, over rows the aggregate Table keeps
 	 * its whole TTL, so each lives that TTL and one refresh (`filing_ttl()`).
 	 *
-	 * One round trip for the whole flush, like every other write here: a name
+	 * One round trip for the whole settle, like every other write here: a name
 	 * per key would make the cost per URL, which is what the batch exists to
 	 * avoid. The writer decides WHICH names are worth re-writing, since a
-	 * name never changes and re-storing it every flush would spend the saving.
+	 * name never changes and re-storing it every settle would spend the saving.
 	 *
 	 * @param array<array-key,array<array-key,string>> $servers Filed server => hash => URL.
 	 *                                                          An all-digit key is an INT.
@@ -2091,13 +2092,13 @@ class Stats_Store {
 	 *
 	 * A URL is filed at most once an hour (`Flame_Builder_Node`'s
 	 * `persist_url_names()`), so its last filing can come up to an hour and
-	 * a flush before its last row. Living only as long as that row is read
+	 * a settle before its last row. Living only as long as that row is read
 	 * would retire the filing while the row still is.
 	 *
 	 * @param int $rows_read_for How long a reader reads the rows it indexes.
 	 */
 	private static function filing_ttl( int $rows_read_for ): int {
-		return $rows_read_for + self::HOUR_SECONDS + Flame_Builder_Node::FLUSH_INTERVAL_SEC;
+		return $rows_read_for + self::HOUR_SECONDS + Consumer_Node::CHECKPOINT_INTERVAL_S;
 	}
 
 	/**
@@ -2200,7 +2201,7 @@ class Stats_Store {
 	/**
 	 * The key a `[ parts, bucket ]` pair names: the namespace, the bucket,
 	 * then the rest of the parts (decision 1). Every key one bucket or hour
-	 * touches in a namespace shares one prefix, so a flush's keys sit together
+	 * touches in a namespace shares one prefix, so a settle's keys sit together
 	 * in the Table's key order. A `url` or `urlmap` pair carries a hash where
 	 * the time goes and no other part, so its key reads `{ns}:{hash}`.
 	 *
@@ -2515,7 +2516,7 @@ class Stats_Store {
 	/**
 	 * Merge one stored URL row into another for the SAME url.
 	 *
-	 * Both tiers of the write path fold this rule — a flush into its bucket,
+	 * Both tiers of the write path fold this rule — a settle into its bucket,
 	 * twelve buckets into their hour — so it lives once, beside the field table
 	 * it reads. Sums add, extremes take the larger, `min_ms` folds only from
 	 * TIMED buckets (0 is "nothing folded yet"), and whichever side names the
@@ -2887,7 +2888,7 @@ class Stats_Store {
 
 	/**
 	 * Key parts of one URL's dimensional series: one row an hour
-	 * holding every dimension, each a slotted hour, so a flush writes a URL
+	 * holding every dimension, each a slotted hour, so a settle writes a URL
 	 * once an hour whatever it measured. A reader names the dimension it
 	 * draws to `get_slots()`.
 	 *
@@ -2999,7 +3000,7 @@ class Stats_Store {
 	 * The entries of a bucket that measured anything. An entry in a shape a
 	 * sum table does not name reads its count as absent, and a zero count is
 	 * a slot with nothing in it: no request, no chart row. Writer and reader
-	 * drop it alike, until the flush ages it out.
+	 * drop it alike, until the settle ages it out.
 	 *
 	 * @param array<array-key,mixed> $values      Entries keyed by value name.
 	 * @param int                    $count_field The entry's count index.

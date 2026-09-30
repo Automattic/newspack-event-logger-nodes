@@ -139,6 +139,23 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	private const POSITION_COLUMNS = [ [ 65, 6 ], [ 71, 10 ] ];
 
 	/**
+	 * Seconds the builder consumes nothing before it is quiet and its stream
+	 * clock follows the wall: a minute. A replay consumes on every tick, and
+	 * the in-flight window is six minutes, so a minute costs a dead worker's
+	 * request no whole window.
+	 */
+	public const IDLE_AFTER_SEC = 60;
+
+	/**
+	 * Monotonic clock seam, replacing `hrtime( true )` where the builder
+	 * times its quiet. Tests reassign it to step the monotonic clock apart
+	 * from the wall one. Signature: `function (): int`, nanoseconds.
+	 *
+	 * @var \Closure|null
+	 */
+	public static ?\Closure $hrtime_fn = null;
+
+	/**
 	 * The keywords a request builder's narration is written under. Folded as
 	 * any line is, but no traffic: counted, a builder reading its own record
 	 * back, or two builders each reading the other's, tell for ever.
@@ -282,7 +299,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** Newest entry stamp consumed, never past the wall: 0 before the first. */
 	private float $stream_now = 0.0;
 
-	/** `Flame_Builder_Node::monotonic()` at the last entry consumed: what quiet is measured from. */
+	/** `monotonic()` at the last entry consumed: what quiet is measured from. */
 	private int $consumed_at_hr;
 
 	/**
@@ -296,7 +313,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * @api Used by substrate.
 	 */
 	public function __construct() {
-		$this->consumed_at_hr = Flame_Builder_Node::monotonic();
+		$this->consumed_at_hr = self::monotonic();
 		// Schema-default cache so the no-arg ctor works; arguments() rebuilds.
 		$this->cache = $this->build_cache();
 		$this->state_callbacks = $this->build_state_callbacks();
@@ -906,8 +923,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * @param mixed $ts The entry's `ts`.
 	 */
 	private function consume_stamp( mixed $ts ): void {
-		$resumed              = Flame_Builder_Node::quiet_since( $this->consumed_at_hr );
-		$this->consumed_at_hr = Flame_Builder_Node::monotonic();
+		$resumed              = self::quiet_since( $this->consumed_at_hr );
+		$this->consumed_at_hr = self::monotonic();
 		if ( ! \is_numeric( $ts ) ) {
 			return;
 		}
@@ -1123,7 +1140,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * request out three windows of ITS stream after it landed, and files it
 	 * there, rather than twenty hours long in the wall's bucket. In live
 	 * traffic it trails the wall by a flush. A builder that has consumed
-	 * nothing for `Flame_Builder_Node::IDLE_AFTER_SEC` is caught up and
+	 * nothing for `IDLE_AFTER_SEC` is caught up and
 	 * quiet, and follows the wall, so a request whose worker died still
 	 * times out on a quiet site.
 	 * 0 until the first stamp, which leaves the cache's grid unarmed.
@@ -1135,13 +1152,30 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * | this, a crowded-out request       | STREAM | measured to the stream, filed there |
 	 * | `tracker_ts`                      | WALL   | the in-flight view's age, a reader |
 	 * | `rollup_due()`                    | WALL   | narration cadence                  |
-	 * | `Flame_Builder_Node::quiet_since()` | MONO  | a duration inside this process     |
+	 * | `quiet_since()`                   | MONO   | a duration inside this process     |
 	 */
 	private function stream_clock(): float {
-		if ( Flame_Builder_Node::quiet_since( $this->consumed_at_hr ) ) {
+		if ( self::quiet_since( $this->consumed_at_hr ) ) {
 			return \max( $this->stream_now, Core::$now ?: Core::right_now() );
 		}
 		return $this->stream_now;
+	}
+
+	/**
+	 * Whether `IDLE_AFTER_SEC` of monotonic time has passed since `$mark`.
+	 *
+	 * Quiet is a duration inside one process, so it is measured on `hrtime()`,
+	 * never the wall: a wall clock stepped forward is no quiet.
+	 *
+	 * @param int $mark A `monotonic()` stamped at the last entry consumed.
+	 */
+	private static function quiet_since( int $mark ): bool {
+		return self::monotonic() - $mark >= self::IDLE_AFTER_SEC * 1_000_000_000;
+	}
+
+	/** The monotonic clock in ns, through the `$hrtime_fn` seam. */
+	private static function monotonic(): int {
+		return Core::num_int( ( self::$hrtime_fn ?? static fn (): int => (int) \hrtime( true ) )() );
 	}
 
 	/**

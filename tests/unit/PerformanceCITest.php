@@ -6266,9 +6266,9 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * Flush records through a real builder at the moments they finished,
-	 * one flush a moment, oldest first, then one at the tick, which folds
-	 * every hour the builder's data clock has left: the stored state a
+	 * Settle records through a real builder at the moments they finished,
+	 * one settle a moment, oldest first, then one at the tick, which folds
+	 * every hour the wall has closed: the stored state a
 	 * reader meets, fine buckets and folded hours alike, written by the
 	 * writer rather than by a seed helper.
 	 *
@@ -6303,10 +6303,10 @@ class PerformanceCITest extends TestCase {
 					], $record, [ 'timestamp' => $tick - $ago ] );
 					$fb->fill( $message );
 				}
-				$fb->flush();
+				$fb->settle();
 			}
 			Core::$now = (float) $tick;
-			$fb->flush();
+			$fb->settle();
 		} finally {
 			Core::$now = (float) $tick;
 			$fb->remove_node();
@@ -7538,7 +7538,7 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * An hour whose DONE markers are gone is one the writer still owes:
-	 * waiting on its data clock, or re-ranking a late write. Its lists stand
+	 * waiting on its first settle after the close, or re-ranking a late write. Its lists stand
 	 * but it contributes nothing, and the page is served ranked,
 	 * provisional, with no walk of the index.
 	 */

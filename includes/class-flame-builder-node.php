@@ -13,13 +13,18 @@
  * some way behind that moment, so around a boundary it routinely lands in a
  * bucket older than the newest one seen — which is why `$pending` is a map
  * rather than one rotating slot.
- * `flush()` merges each bucket into the stats Tables through `Stats_Store`
- * (the stats schema) at most once per FLUSH_INTERVAL_SEC, capping as it writes,
- * then drops them. It also folds each hour of the URL index its data clock
- * has left into the coarse `urls_h` tier, which is what keeps a reader off
- * 288 fine buckets per shard. Per-URL flame trees take a different route:
- * they are held in `$url_acc`, folded onto each URL's stored aggregate, and
- * drain through `drain_url_stats()`.
+ * What the node has folded since it last settled is the SPAN: `$pending` and
+ * the per-URL flame trees in `$url_acc`, each folded onto its URL's stored
+ * aggregate. The Consumer's interval checkpoint, once a
+ * `Consumer_Node::CHECKPOINT_INTERVAL_S`, calls `settle()`, which merges each
+ * bucket into the stats Tables through `Stats_Store` (the stats schema),
+ * capping as it writes, drains the trees through `drain_url_stats()`, and
+ * starts a new span. Every other checkpoint — a clean stop, a crawl's per
+ * record one — carries the span in the offsetlog through `save_state()`, and
+ * the successor's `restore_state()` takes it back, so what one span folded is
+ * written once. A settle also folds each closed hour of the URL index into
+ * the coarse `urls_h` tier, which is what keeps a reader off 288 fine buckets
+ * per shard.
  *
  * One side channel hangs off that pipeline: the request's governing `Rule`
  * drives auto-tune. Hooks that fire too often, custom events to disable, and
@@ -31,8 +36,8 @@
  *
  * Two clocks, and a reprocess of the firehose tells them apart. STREAM time
  * is the records' own stamps: what a record is filed under, what its per-URL
- * tree and categories age by, and what folds. WALL time is the readers' and
- * the store's: the window a reader reads, the ranking cadence its page cache
+ * tree and categories age by. WALL time is the readers' and the store's: the
+ * window a reader reads, which hours fold, the ranking cadence its page cache
  * sets, every TTL, and idleness. A read on the wrong side files a replay a
  * day late or expires it on arrival.
  *
@@ -41,10 +46,7 @@
  * | `$timestamp`, the completion, `$pending` key | STREAM | a record is filed where it finished  |
  * | clamp `min( $now, … )`                      | WALL   | readers walk back from the wall      |
  * | tree node `ts`, category cutoff (`$done`)   | STREAM | the per-URL aggregate ages as live   |
- * | `$data_clock`, `foldable()`'s hours         | STREAM | an hour folds once the data left it  |
- * | `foldable()`'s quiet, `worked_at_hr`        | MONO   | a duration inside this process       |
- * | `foldable()`'s `$expiring`                  | WALL   | the fine keys' TTL runs on the wall  |
- * | `plan_at()`, the read plan and fine floor   | WALL   | the window a reader reads            |
+ * | `plan_at()`, the plan, its floor and hours  | WALL   | the window a reader reads            |
  * | `rank_due()`, `$current`, `ranked_at`       | WALL   | the page cache's refresh, the reader's open bucket |
  * | `persist_url_names()`, `drain_url_stats()` hour | WALL | the filing refresh against the TTL |
  * | `persist_url_tokens()`                      | WALL   | a member's lifetime and a search's window |
@@ -60,7 +62,6 @@ use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Idle_Reporter;
-use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 use Newspack_Nodes\Shutdown_Sweeper;
@@ -153,24 +154,30 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** Per-URL profile entry trim trigger. See ENTRY_LIMIT_GLOBAL_LOWER. */
 	const ENTRY_LIMIT_URL_UPPER    = 40;
 
-	/** Seconds between periodic flush() runs: the cadence of the Router-tick timer. */
-	const FLUSH_INTERVAL_SEC = 5;
+	/** Seconds between the Router-tick timer's firings: the auto-tune emit's cadence. */
+	const AUTO_TUNE_INTERVAL_SEC = 5;
 
 	/**
-	 * Seconds a builder consumes nothing before it is quiet: twelve flushes,
-	 * a minute. A replay drains at every flush and every checkpoint, and its
-	 * slowest measured flush, 15.8 s, fits three times over, while a builder
-	 * quiet from an hour's close still folds it inside the next hour's first
-	 * bucket, the lag a reader forgives (`lagging()`). The request builder
-	 * consumes on every tick of a replay, and its window is six minutes, so a
-	 * minute costs a dead worker's request no whole window.
+	 * Bytes of per-URL flame trees a carried span holds, past which a tree is
+	 * left out and its URL keeps the aggregate it last settled.
+	 *
+	 * Sized from the OUTER limit, not from an observed size: the checkpoint
+	 * record is the reader's cursor and every snapshot's state, and
+	 * `add_snapshot_node` lifts its PIPE_BUF cap to
+	 * `Partition_Node::MAX_LARGE_LINE_SIZE` (32 MiB). This caps the trees
+	 * alone, so the crumb and `$pending`, which one span bounds, ride it
+	 * uncounted, and half the cliff leaves the other half for them. A staging
+	 * hub held 2.1–3.5 MB of trees a checkpoint.
+	 *
+	 * Protected so a test double can reach the cap without 16 MiB of trees.
 	 */
-	public const IDLE_AFTER_SEC = 12 * self::FLUSH_INTERVAL_SEC;
+	protected const CARRY_URL_BYTES = 16777216;
 
 	/**
-	 * Monotonic clock seam, replacing `hrtime( true )` where a builder times
-	 * its own quiet or a wait. Tests reassign it to step the monotonic clock
-	 * apart from the wall one. Signature: `function (): int`, nanoseconds.
+	 * Monotonic clock seam, replacing `hrtime( true )` where a clean stop
+	 * times its wait on a sibling's auto-tune lock. Tests reassign it to step
+	 * the monotonic clock apart from the wall one.
+	 * Signature: `function (): int`, nanoseconds.
 	 *
 	 * @var \Closure|null
 	 */
@@ -224,17 +231,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	];
 
 	/**
-	 * Keys per read/write batch in a flush. Bounds the held set: one chunk is
+	 * Keys per read/write batch in a settle. Bounds the held set: one chunk is
 	 * at most one shard's worth of rows, which is the largest value the schema
 	 * writes. Raise only against a measured peak.
 	 */
 	private const WRITE_BATCH_KEYS = 500;
 
 	/**
-	 * Closed hours one flush folds into the coarse tier, and stale hours it
+	 * Closed hours one settle folds into the coarse tier, and stale hours it
 	 * ranks. A bound, not a cadence: steady state has at most one hour to
 	 * fold, and this is what keeps a cold start's backfill, or a replay's
-	 * re-ranking, off a single flush. One number for both, because each holds
+	 * re-ranking, off a single settle. One number for both, because each holds
 	 * one hour's coarse rows in memory per unit spent.
 	 */
 	private const ROLLUP_HOURS_PER_FLUSH = 2;
@@ -251,7 +258,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Hours this worker has folded into the coarse tier, pruned to the window.
 	 *
-	 * Decision 17 puts the fold on the flush path precisely BECAUSE one
+	 * Decision 17 puts the fold on the settle path precisely BECAUSE one
 	 * partition has one writer — so the process that folded an hour is the
 	 * authority on whether it is folded, and steady state probes nothing. A
 	 * restart empties it and pays one probe, which re-adopts a predecessor's
@@ -263,15 +270,15 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * The read plan last built, with the bucket it was built in. The plan is a
-	 * function of that bucket and the store's TTL alone, so every tick and
-	 * flush inside one bucket shares it; `set_stats_store()` drops it.
+	 * function of that bucket and the store's TTL alone, so every settle
+	 * inside one bucket shares it; `set_stats_store()` drops it.
 	 *
 	 * @var array{bucket: string, plan: array{fine: list<string>, hours: list<string>}}|null
 	 */
 	private ?array $plan_memo = null;
 
 	/**
-	 * The merged rows the fine-tier intents landed this flush, by bucket then
+	 * The merged rows the fine-tier intents landed this settle, by bucket then
 	 * server then READER shard then hash — never worker-family, which never
 	 * ranks. The covered-shard set falls out of the keys, so ranking reads
 	 * back only the shards missing here, and a bucket with none landed is not
@@ -283,9 +290,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private array $flushed_rows = [];
 
 	/**
-	 * Each bucket this flush wrote rows into, and the index it holds once
-	 * this flush's entries were merged in: what ranking gap-fills from, so a
-	 * bucket the flush just wrote costs no second index read. Emptied with
+	 * Each bucket this settle wrote rows into, and the index it holds once
+	 * this settle's entries were merged in: what ranking gap-fills from, so a
+	 * bucket the settle just wrote costs no second index read. Emptied with
 	 * `$flushed_rows`.
 	 *
 	 * @var array<string,array<string,array{0:string,1:int}>>
@@ -300,7 +307,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private array $ranked_at = [];
 
 	/**
-	 * Buckets a flush wrote rows into that have not been ranked since,
+	 * Buckets a settle wrote rows into that have not been ranked since,
 	 * pruned the same way.
 	 *
 	 * The closed-bucket clause fires on a WRITE, and a bucket whose last
@@ -323,8 +330,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private array $stale_hours = [];
 
 	/**
-	 * Folded hours a late write landed in this flush, with the servers whose
-	 * DONE markers the flush forgets, once each, so the hour ranks again.
+	 * Folded hours a late write landed in this settle, with the servers whose
+	 * DONE markers the settle forgets, once each, so the hour ranks again.
 	 *
 	 * @var array<string,array<array-key,true>> An all-digit server key is an INT key.
 	 */
@@ -345,48 +352,39 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** Hub mode: also accumulate the per-server namespaces. Derived from `<eln:is_hub>`. */
 	private bool $is_hub = false;
 
-	/** Unix time of the last periodic flush(), which GET_STATS reports as an age. */
+	/** Unix time of the last settle(), which GET_STATS reports as an age. */
 	private float $last_flush_time = 0.0;
 
-	/** Unix time of the last flush that drained a folded record: `idle_since()`. */
+	/** Unix time of the last settle that drained a folded record: `idle_since()`. */
 	private float $worked_at = 0.0;
 
-	/** The same moment on the monotonic clock, in ns: what quiet is measured from. */
-	private int $worked_at_hr = 0;
+	/** Whether this process folded a record no settle wrote and no frame carries. */
+	private bool $uncommitted = false;
 
-	/**
-	 * The data clock: the newest bucket a flush that drained records wrote,
-	 * '' before the first. `foldable()` folds an hour once it has left it.
-	 */
-	private string $data_clock = '';
-
-	/** Unix time the data clock entered its hour: when that hour was first written. */
-	private float $data_clock_hour_since = 0.0;
+	/** URL trees the carry has left out of this span so far, told once each. */
+	private int $carry_left = 0;
 
 	/**
 	 * Hours the roll-up read holding no index and has not folded, each
-	 * waiting on the data clock or the fold budget. One partition has one
-	 * writer, so such an hour gains an index only when this process folds
-	 * it: the roll-up reads it once, not once a flush.
+	 * waiting on the fold budget. One partition has one writer, so such an
+	 * hour gains an index only when this process folds it: the roll-up reads
+	 * it once, not once a settle.
 	 *
 	 * @var array<string,true>
 	 */
 	private array $absent_hours = [];
 
-	/** @var array<string,Bucket_Acc> Accumulators by bucket key, drained at flush(). */
+	/** @var array<string,Bucket_Acc> Accumulators by bucket key, drained at settle(). */
 	private array $pending = [];
 
-	/** Per-URL aggregates one accumulator bucket holds before it rotates. */
-	private const URL_ACCUMULATOR_SIZE = 1000;
-
-	/** Accumulator buckets retained; capacity is roughly the product. */
-	private const URL_ACCUMULATOR_BUCKETS = 5;
-
 	/**
-	 * Each URL's aggregate — flame tree and profile sums — as this flush has
-	 * folded it onto the stored one, by url_hash; drained at flush().
+	 * Each URL's aggregate — flame tree and profile sums — as this span has
+	 * folded it onto the stored one, by url_hash: every URL the span touched,
+	 * held until settle() writes it, since a dropped entry is a lost fold.
+	 *
+	 * @var array<array-key,array<array-key,mixed>>
 	 */
-	private LRU_Cache $url_acc;
+	private array $url_acc = [];
 
 	/**
 	 * The crumb (`Message::ID`) of the last record folded into the
@@ -429,7 +427,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private Table_Client $client;
 
 	/**
-	 * Seed the flush clock, build the per-URL accumulator, and publish the
+	 * Seed the settle clock, build the per-URL accumulator, and publish the
 	 * owned auto-tuner sibling.
 	 *
 	 * The node is inert until `configure_stats` supplies a `Stats_Store`: it still
@@ -440,8 +438,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public function __construct() {
 		$this->last_flush_time = Core::$now;
 		$this->worked_at       = Core::$now;
-		$this->worked_at_hr    = self::monotonic();
-		$this->url_acc         = new LRU_Cache( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
 		$this->client          = new Table_Client( $this, Stats_Store::TABLES );
 
 		// Owned auto-tuner sibling (patron-linked; hidden from the canvas).
@@ -455,9 +451,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Store the tokens and arm the periodic flush on the Router tick, every
-	 * FLUSH_INTERVAL_SEC. A node constructed but never given arguments never
-	 * fires; `shutdown_sweep()` still flushes it on a clean stop.
+	 * Store the tokens and arm the auto-tune emit on the Router tick, every
+	 * AUTO_TUNE_INTERVAL_SEC. A node constructed but never given arguments
+	 * never fires; `shutdown_sweep()` still emits on a clean stop.
 	 *
 	 * @api Used by substrate.
 	 * @param list<string>|null $args Positional tokens, or null to read them back.
@@ -465,7 +461,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	public function arguments( ?array $args = null ): array {
 		if ( null !== $args ) {
-			$this->set_timer( self::FLUSH_INTERVAL_SEC * 1000 );
+			$this->set_timer( self::AUTO_TUNE_INTERVAL_SEC * 1000 );
 		}
 		return parent::arguments( $args );
 	}
@@ -475,13 +471,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * verb, or a TM_STRUCT completed-request record tailed off `requests.p{N}`.
 	 *
 	 * A Table's reply goes to the client first, never to the fold: it is the
-	 * answer to an ask the flush made, not a record.
+	 * answer to an ask a settle made, not a record.
 	 *
 	 * A completed request becomes a flame tree, is forwarded to the flames
-	 * partition, and is folded into every accumulator. Anything else is dropped.
-	 * Nothing here flushes: the flush is the node's own periodic work, run from
-	 * `fire()`, so a failed store write raises from the tick rather than being
-	 * charged to whichever record happened to arrive.
+	 * partition, and is folded into the span. Anything else is dropped.
+	 * Nothing here writes a stat: the span settles at the Consumer's interval
+	 * checkpoint, so a failed store write fails that checkpoint rather than
+	 * being charged to whichever record happened to arrive.
 	 *
 	 * The message runs inside `deferring()`, which holds a cooperative stop a
 	 * downstream forward raises until this message's own bookkeeping is
@@ -498,43 +494,39 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Router-TIMER tick: flush whatever the last flush left owed. A failure
-	 * raises here, out of the drain, and the worker exits loudly; its successor
-	 * replays from the last checkpoint's cursor. With nothing owed the tick
-	 * flushes nothing: it formats one bucket key and diffs the read plan's
-	 * hours against those rolled up, the plan built once per bucket. A stop
-	 * raised inside the flush waits for it to finish, as it does in
-	 * `shutdown_sweep()`.
+	 * Router-TIMER tick: emit the auto-tune decisions the folds accrued, and
+	 * once a minute tell what the settles since wrote. It writes no stat: the
+	 * span is the Consumer's to settle. A stop raised inside the emit waits
+	 * for it to finish, as it does in `shutdown_sweep()`.
 	 *
 	 * @api Used by substrate.
 	 */
 	protected function fire(): void {
-		if ( $this->flush_owed( (int) Core::$now ) ) {
-			$this->deferring( fn () => $this->flush() );
-			$this->last_flush_time = Core::$now;
-		}
+		$this->deferring(
+			function (): void {
+				$this->apply_auto_tune();
+				if ( $this->rollup_due( (int) Core::$now ) ) {
+					$this->tell_writes();
+				}
+			}
+		);
 	}
 
 	/**
-	 * Whether `flush()` has work at `$now`, read from memory alone. Folded
-	 * records are one kind; the rest outlive them: auto-tune decisions a
-	 * sibling's lock held back, buckets waiting to rank, stale hours owed
-	 * their lists, and an hour of the read plan the data clock has left that
-	 * this process has not rolled up.
+	 * Write the span through `Stats_Store` and start a new one: the
+	 * Consumer's interval checkpoint calls this, inside its uninterruptible
+	 * save and before `save_state()`, so the frame it commits carries an
+	 * empty span. A write the Tables refuse is dropped as decision 3 drops a
+	 * failed chunk, and a failure that raises fails the checkpoint, so its
+	 * cursor never commits past records whose deltas were lost.
 	 *
-	 * @param int $now The tick.
+	 * @api Used by substrate.
 	 */
-	private function flush_owed( int $now ): bool {
-		if ( [] !== $this->pending || [] !== \array_filter( $this->auto_tune )
-			|| [] !== $this->rank_pending || [] !== $this->stale_hours ) {
-			return true;
-		}
-		$stats_store = $this->stats_store;
-		if ( null === $stats_store ) {
-			return false;
-		}
-		$hours = $this->foldable( $stats_store, $this->plan_at( $stats_store, $now )['hours'], $now );
-		return [] !== \array_diff( $hours, \array_keys( $this->folded_hours ) );
+	public function settle(): void {
+		$this->write_pending();
+		$this->uncommitted     = false;
+		$this->carry_left      = 0;
+		$this->last_flush_time = Core::$now;
 	}
 
 	/**
@@ -592,7 +584,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$crumb = Core::str( $message[ Message::ID ] );
 		if ( '' === $crumb || $crumb !== $this->counted ) {
 			$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
-			$this->counted = $crumb;
+			$this->counted     = $crumb;
+			$this->uncommitted = true;
 		}
 
 	}
@@ -604,7 +597,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @return array<string,mixed>
 	 */
 	private function stats_report(): array {
-		$stats_count = \iterator_count( $this->url_acc->iterate() );
+		$stats_count = \count( $this->url_acc );
 		$now = Core::$now;
 		return [
 			'stats_count'              => $stats_count,
@@ -670,7 +663,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Fold one completed request into every accumulator.
 	 *
-	 * The order below is fixed: per-URL flame aggregate (LRU), bucket selection,
+	 * The order below is fixed: per-URL flame aggregate, bucket selection,
 	 * per-URL row, hourly totals, the seven dimensional axes, and finally the
 	 * profile loop that feeds the leaderboards, the category time series, and
 	 * auto-tune.
@@ -751,7 +744,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$this->print_less_often( 'stats: a URL blob read failed; its update is skipped' );
 			return;
 		}
-		$this->url_acc->set( $url_hash, $aggregate );
+		$this->url_acc[ $url_hash ] = $aggregate;
 		$this->tally( Flame_Tree::STATS_WRITES, 'url blobs' );
 	}
 
@@ -774,7 +767,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private function accumulate_url_aggregate( string $url_hash, array $flame_data, float $duration_ms, bool $record_timing, int $done, ?bool &$unread = null ): array {
 		$unread = false;
 		// Un-drained if held, else what was last persisted for a cold key.
-		$cached = $this->url_acc->get( $url_hash );
+		$cached = $this->url_acc[ $url_hash ] ?? null;
 		if ( null === $cached && null !== $this->stats_store ) {
 			$cached = $this->stats_store->url_aggregate( $url_hash, $unread );
 		}
@@ -1372,74 +1365,76 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Write the pending buckets, then hand the Consumer the crumb and the
-	 * data clock to co-commit with its cursor.
+	 * Hand the Consumer the crumb and the span to co-commit with its cursor.
 	 *
-	 * Every pending bucket, the open one too, is written to the Tables or
-	 * dropped as decision 3 drops a failed chunk or a refused write, the same
-	 * fail-soft loss a periodic flush takes; the carry comes back either way,
-	 * and the checkpoint carries no stats. The crumb says which record under
-	 * the cursor is already counted (decision 31). The data clock and the
-	 * moment it entered its hour describe data this write already drained,
-	 * so a successor restoring them folds nothing early, and still folds the
-	 * clock's hour at the fine deadline its predecessor started. Only the durable half of a
-	 * flush runs here: an auto-tune emit that throws would keep the cursor
-	 * from committing, so its decisions wait for the tick. In crawl mode the
-	 * Consumer checkpoints every message, so this runs per message until
-	 * `CHECKPOINT_INTERVAL_S` of crash-free progress ends the crawl. The
-	 * writes run inside the reader's uninterruptible save, so a stop due at
-	 * one raises once the cursor commits.
+	 * After the interval checkpoint's `settle()` the span is `[]`, so the
+	 * regular frame carries no stats. Every other frame — a clean stop's, a
+	 * crawl's per-record one, a boot recommit — carries what the span holds:
+	 * `pending`, the buckets as folded, and `urls`, each URL's flame tree as
+	 * folded onto its stored aggregate, under `CARRY_URL_BYTES`. The crumb
+	 * says which record under the cursor is already counted (decision 31).
+	 * Nothing here writes, so a stop costs the span no write and the frame
+	 * that carries it is the only copy: a successor restores it and settles
+	 * it once. What the frame carries keeps no worker up (`idle_since()`).
 	 *
 	 * @api Used by substrate.
-	 * @return array{counted: string, data_clock: string, data_clock_hour_since: float}
+	 * @return array{counted: string, span: array<string,array<array-key,mixed>>}
 	 */
 	public function save_state(): array {
-		$this->write_pending();
-		return [
-			'counted'               => $this->counted,
-			'data_clock'            => $this->data_clock,
-			'data_clock_hour_since' => $this->data_clock_hour_since,
+		$state             = [
+			'counted' => $this->counted,
+			'span'    => \array_filter( [ 'pending' => $this->pending, 'urls' => $this->carried_urls() ] ),
 		];
+		$this->uncommitted = false;
+		return $state;
 	}
 
 	/**
-	 * One bucket's empty accumulator. Seeded whole so every accumulate site can
-	 * index straight in, and so the leaderboard has its shape rather than [].
+	 * Each URL's flame tree the span holds, by url_hash, as many as fit
+	 * `CARRY_URL_BYTES` of JSON. A tree left out keeps its URL at the
+	 * aggregate it last settled, and is counted and logged once a span, not
+	 * once a frame: a crawl carries the same span at every record.
 	 *
-	 * @return Bucket_Acc
+	 * @return array<array-key,mixed>
 	 */
-	private static function empty_bucket(): array {
-		return [
-			'hourly'                => [],
-			'dim'                   => [],
-			'dim_by_server'         => [],
-			'url_dim'               => [],
-			'url_stats'             => [],
-			'url_stats_worker'      => [],
-			'url_names'             => [],
-			'cat'                   => [],
-			'cat_by_server'         => [],
-			'cat_by_url'            => [],
-			'leaderboard'           => self::empty_leaderboard(),
-			'leaderboard_by_server' => [],
-		];
+	private function carried_urls(): array {
+		$used = 0;
+		$urls = [];
+		$left = 0;
+		foreach ( $this->url_acc as $url_hash => $aggregate ) {
+			$bytes = \strlen( (string) \wp_json_encode( $aggregate ) );
+			if ( $used + $bytes > static::CARRY_URL_BYTES ) {
+				++$left;
+				continue;
+			}
+			$used             += $bytes;
+			$urls[ $url_hash ] = $aggregate;
+		}
+		if ( $left > $this->carry_left ) {
+			$this->tally( Flame_Tree::STATS_WRITES, 'left out of the carry', $left - $this->carry_left );
+			$this->print_less_often( 'stats: URL flame trees past the carry budget are left out of the checkpoint', " — {$left}" );
+			$this->carry_left = $left;
+		}
+		return $urls;
 	}
 
 	/**
-	 * Flush on a clean stop, ranking everything still owed and waiting out the
-	 * auto-tune lock. The substrate runs the sweep before the cursor handoff,
-	 * while the graph is intact.
+	 * On a clean stop, rank everything still owed and emit the auto-tune
+	 * decisions, waiting out their lock. The substrate runs the sweep before
+	 * the cursor handoff, while the graph is intact. It writes no stat: the
+	 * graceful frame carries the span unsettled, and the successor that
+	 * restores it settles it.
 	 *
-	 * A sibling partition may hold the auto-tune lock at that moment. A
-	 * periodic flush leaves the decisions for the next flush; a stop has none,
-	 * so it waits the lock out — the lock expires in seconds on its own. The
-	 * rankings the cadence still owes are in memory alone, so this flush
-	 * ranks every one of them whatever its stamp. A stale hour gets no more
-	 * than a flush's bound: its missing marker is in the store, and the next
+	 * A sibling partition may hold the auto-tune lock at that moment. A tick
+	 * leaves the decisions for the next tick; a stop has none, so it waits the
+	 * lock out — the lock expires in seconds on its own. The rankings the
+	 * cadence still owes are in memory alone, so the sweep ranks every one of
+	 * them from the stored rows whatever its stamp. A stale hour gets no more
+	 * than a settle's bound: its missing marker is in the store, and the next
 	 * worker's roll-up finds it again.
 	 *
 	 * The sweep runs inside `deferring()`, as a message does, so a stop raised
-	 * inside it waits for the flush to finish.
+	 * inside it waits for the sweep to finish.
 	 *
 	 * @api Used by substrate.
 	 */
@@ -1448,8 +1443,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			fn () => $this->spanned(
 				Flame_Tree::STATS_SWEEP,
 				function (): void {
-					$this->ranked_at = [];
-					$this->flush();
+					$stats_store = $this->stats_store;
+					if ( null !== $stats_store ) {
+						$now             = (int) Core::$now;
+						$this->ranked_at = [];
+						$this->rank_owed( $stats_store, $now, (string) \end( $this->plan_at( $stats_store, $now )['fine'] ) );
+					}
 					$this->apply_auto_tune( self::AUTO_TUNE_LOCK_WAIT_MS );
 					// The last minute's writes would otherwise go untold.
 					$this->tell_writes();
@@ -1467,35 +1466,18 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Drain every accumulator and start clean, then emit the auto-tune
-	 * decisions.
-	 *
-	 * `fire()` calls this once per FLUSH_INTERVAL_SEC and every clean stop
-	 * through `shutdown_sweep()`; a checkpoint runs `write_pending()` alone.
-	 * The accumulators empty BEFORE the auto-tune emit: its sums are written
-	 * by then, and a throw there must not hand them to the next flush again.
-	 */
-	public function flush(): void {
-		$this->write_pending();
-		$this->apply_auto_tune();
-	}
-
-	/**
-	 * The durable half of a flush: write every pending bucket and the per-URL
-	 * aggregates, and start clean. Every checkpoint runs it before its cursor
-	 * commits, so nothing the cursor has passed is left unwritten. What a
-	 * fatal costs is a double-count — the deltas between the last checkpoint
-	 * and the crash are already in the Tables and get replayed on top (see
-	 * the CHANGELOG's Known section).
+	 * Write every pending bucket and the per-URL aggregates, and empty both.
+	 * What a fatal between these writes and the frame that settles them costs
+	 * is a double-count — the successor restores the span the previous frame
+	 * carried and settles it again on top (see the CHANGELOG's Known
+	 * section).
 	 *
 	 * With no `Stats_Store` wired the drain is a no-op against storage: the
 	 * accumulators still reset, but nothing is written anywhere.
 	 *
 	 * It reads the tick ONCE and takes that tick's read plan through
-	 * `plan_at()`, memoized per bucket. `flush_owed()` asks for it on a tick,
-	 * and this method asks on every path; whichever asked first inside the
-	 * bucket built it, so the hour plan, the ranking floor and the cadence
-	 * agree on which hour closed.
+	 * `plan_at()`, memoized per bucket, so the hour plan, the ranking floor
+	 * and the cadence agree on which hour closed.
 	 */
 	private function write_pending(): void {
 		$now         = (int) Core::$now;
@@ -1505,40 +1487,28 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			// @longform Roll up FIRST: it is what reads the coarse tier, and
 			// `folded_hours` is per-process while one partition has one
 			// worker, so a respawn is the only way the memo goes stale.
-			// Reading before the writes are placed keeps the first flush after
+			// Reading before the writes are placed keeps the first settle after
 			// one from leaving rows in fine buckets a folded hour replaced.
-			$this->roll_up_hours( $stats_store, $plan, $this->foldable( $stats_store, $plan['hours'], $now ) );
+			$this->roll_up_hours( $stats_store, $plan );
 			// Lexical order IS chronological, which is what bucket_key() buys.
 			$filed = $this->persist_aggregate_stats( $stats_store, $now, (string) \end( $plan['fine'] ) );
 			$this->drain_url_stats( $stats_store, $now, $filed );
 		}
-		$this->url_acc->flush();
-		// A flush with nothing folded is upkeep, which never keeps a worker up.
+		$this->url_acc = [];
+		// A settle with nothing folded is upkeep; it moves no idle mark.
 		if ( [] !== $this->pending ) {
-			$this->worked_at    = Core::$now;
-			$this->worked_at_hr = self::monotonic();
-			$newest             = \max( \array_map( 'strval', \array_keys( $this->pending ) ) );
-			if ( $newest > $this->data_clock ) {
-				if ( Stats_Store::hour_of( $newest ) !== Stats_Store::hour_of( $this->data_clock ) ) {
-					$this->data_clock_hour_since = Core::$now;
-				}
-				$this->data_clock = $newest;
-			}
+			$this->worked_at = Core::$now;
 		}
 		$this->pending = [];
-		$this->tally( Flame_Tree::STATS_WRITES, 'flushes' );
-		// Once a minute rather than once a flush: a handful a lifetime.
-		if ( $this->rollup_due( $now ) ) {
-			$this->tell_writes();
-		}
+		$this->tally( Flame_Tree::STATS_WRITES, 'settles' );
 	}
 
 	/**
-	 * Tell `stats writes`: what the flushes since the last line wrote, the
-	 * flushes, writes and unchanged merges first.
+	 * Tell `stats writes`: what the settles since the last line wrote, the
+	 * settles, writes and unchanged merges first.
 	 */
 	private function tell_writes(): void {
-		$this->rollup( Flame_Tree::STATS_WRITES, [ 'flushes', 'writes', 'unchanged' ] );
+		$this->rollup( Flame_Tree::STATS_WRITES, [ 'settles', 'writes', 'unchanged' ] );
 	}
 
 	/**
@@ -1560,54 +1530,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * The hours of `$hours` a roll-up may fold: those the data clock has left.
-	 *
-	 * The data clock is the newest bucket a draining flush wrote, so a replay
-	 * folds each hour once, after its records arrive, where the wall clock
-	 * would fold it at once and send every later record down the late-write
-	 * path. The clock that decides is the one earlier flushes left: this
-	 * flush's rows land after the roll-up, so the fold reads them next time.
-	 *
-	 * A builder that has drained nothing for `IDLE_AFTER_SEC` is idle, and
-	 * its clock is the wall, so a quiet builder still folds the hours that
-	 * pass. An empty `pending` alone is no sign: a checkpoint drains it, and
-	 * a crawl checkpoints every record.
-	 *
-	 * The clock's own hour also folds once it has held it for all but a
-	 * bucket of the fine lifetime, whose first buckets would otherwise expire
-	 * unread under a replay slower than that.
-	 *
-	 * @param Stats_Store  $stats_store Whose window bounds the fine lifetime.
-	 * @param list<string> $hours       The read plan's hours, newest first.
-	 * @param int          $now         The flush's one read of the tick.
-	 * @return list<string>
-	 */
-	private function foldable( Stats_Store $stats_store, array $hours, int $now ): array {
-		if ( [] === $this->pending && self::quiet_since( $this->worked_at_hr ) ) {
-			return $hours;
-		}
-		$clock    = Stats_Store::hour_of( $this->data_clock );
-		$lifetime = Stats_Store::fine_ttl( $stats_store->max_lifespan() ) - Stats_Store::BUCKET_SECONDS;
-		$expiring = $now - $this->data_clock_hour_since >= $lifetime;
-		return \array_values( \array_filter(
-			$hours,
-			static fn ( string $hour ): bool => $hour < $clock || ( $expiring && $hour === $clock )
-		) );
-	}
-
-	/**
-	 * Whether `IDLE_AFTER_SEC` of monotonic time has passed since `$mark`.
-	 *
-	 * Quiet is a duration inside one process, so it is measured on `hrtime()`,
-	 * never the wall: a wall clock stepped forward is no quiet.
-	 *
-	 * @param int $mark A `monotonic()` the builder stamped when it last worked.
-	 */
-	public static function quiet_since( int $mark ): bool {
-		return self::monotonic() - $mark >= self::IDLE_AFTER_SEC * 1_000_000_000;
-	}
-
-	/**
 	 * Merge every pending bucket into the stats Tables through `Stats_Store`.
 	 *
 	 * Each namespace follows the same read-merge-cap-write shape: pull the
@@ -1620,12 +1542,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * No store means no call: the accumulators are dropped by the caller.
 	 *
 	 * A late write that landed in an hour key leaves that hour's DONE marker
-	 * forgotten and the hour stale before the flush ranks what it owes, so
-	 * this flush re-ranks it, the site's lists with its servers'; the marker
+	 * forgotten and the hour stale before the settle ranks what it owes, so
+	 * this settle re-ranks it, the site's lists with its servers'; the marker
 	 * is what a stop before that ranking leaves the next worker's roll-up.
 	 *
 	 * The URL index files each server's rows under the server's own key, so
-	 * the flush first reads the server index of every bucket it holds — one
+	 * the settle first reads the server index of every bucket it holds — one
 	 * round trip — to decide which servers each bucket admits. A bucket whose
 	 * index no Table answered drops its URL rows, index and names, as
 	 * a failed write chunk's deltas are dropped (decision 3): admitted against
@@ -1634,7 +1556,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * deltas read no index, so they land, or fail on their own chunk's read.
 	 *
 	 * @param Stats_Store $stats_store Destination.
-	 * @param int         $now         The flush's one read of the tick.
+	 * @param int         $now         The settle's one read of the tick.
 	 * @param string      $floor       The oldest bucket of the read plan's
 	 *                                 fine tail: nothing older ranks.
 	 * @return array<array-key,array<array-key,string>> The names it filed,
@@ -1669,7 +1591,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			// @longform A server new to the bucket may be new to its folded
 			// hour, whose index the late write then names beside no hour
 			// lists. Every intent is placed first, so the hour leaves the memo
-			// only for the next flush's roll-up, which ranks it then.
+			// only for the next settle's roll-up, which ranks it then.
 			foreach ( $admitted[ $bucket ] ?? [] as $as ) {
 				if ( ! isset( $indexes[ $bucket ][ Stats_Store::server_key( $as ) ] ) ) {
 					$unfold[ Stats_Store::hour_of( $bucket ) ] = true;
@@ -1710,7 +1632,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// Only an hour a late write took OFF the memo is read again for it.
 		$this->unfolded    += \array_intersect_key( $unfold, $this->folded_hours );
 		$this->folded_hours = \array_diff_key( $this->folded_hours, $unfold );
-		// @longform Ranked per CHUNK, not after the flush: the collectors hold
+		// @longform Ranked per CHUNK, not after the settle: the collectors hold
 		// every merged shard of every bucket still waiting to rank, and
 		// a replay spanning the window would hold the whole window at once —
 		// which is the memory the chunking exists to bound. A bucket ranks once
@@ -1760,7 +1682,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * @param Stats_Store                              $stats_store Destination.
 	 * @param array<array-key,array<array-key,string>> $names       server => hash => URL.
-	 * @param int                                      $now         The flush's one read of the tick.
+	 * @param int                                      $now         The settle's one read of the tick.
 	 */
 	private function persist_url_tokens( Stats_Store $stats_store, array $names, int $now ): void {
 		$sets = [];
@@ -1860,7 +1782,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * @param Stats_Store  $stats_store Source and destination.
 	 * @param list<string> $buckets     Buckets whose row writes have all landed.
-	 * @param int          $now         The flush's one read of the tick.
+	 * @param int          $now         The settle's one read of the tick.
 	 * @param string       $floor       The read plan's oldest fine bucket.
 	 */
 	private function rank_flushed_buckets( Stats_Store $stats_store, array $buckets, int $now, string $floor ): void {
@@ -1882,17 +1804,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * read plan's fine tail reads — then offer every deferred bucket left and
 	 * the stale hours to the ranker.
 	 *
-	 * Runs at the end of every flush, because a deferred bucket comes due by
+	 * Runs at the end of every settle, because a deferred bucket comes due by
 	 * the CLOCK: once it closes nothing writes into it again, so no chunk
 	 * ever completes for it and `rank_flushed_buckets()` is never reached.
-	 * A flush that places no write at all still runs this. Pruning first
+	 * A settle that places no write at all still runs this. Pruning first
 	 * keeps a bucket no reader plans from being ranked. A stale hour has
-	 * no cadence: at most `ROLLUP_HOURS_PER_FLUSH` of them rank per flush,
-	 * a stop's included, and the rest wait for the next flush or the next
+	 * no cadence: at most `ROLLUP_HOURS_PER_FLUSH` of them rank per settle,
+	 * a stop's included, and the rest wait for the next settle or the next
 	 * worker's roll-up, which finds each missing marker again.
 	 *
 	 * @param Stats_Store $stats_store Source and destination.
-	 * @param int         $now         The flush's one read of the tick.
+	 * @param int         $now         The settle's one read of the tick.
 	 * @param string      $floor       The read plan's oldest fine bucket.
 	 */
 	private function rank_owed( Stats_Store $stats_store, int $now, string $floor ): void {
@@ -1910,12 +1832,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Rank each bucket that is DUE, a write chunk's worth of ranking groups
-	 * at a time, so the rows held at once stay what one flush chunk holds.
+	 * at a time, so the rows held at once stay what one settle chunk holds.
 	 *
 	 * Every offered bucket is pending until it is ranked, and a ranking is
 	 * stamped and ends it whether its lists landed or were refused; a refusal
 	 * is logged and never retried. `rank_due()` decides which rank now. A
-	 * bucket's index entries come from what this flush filed, else from its
+	 * bucket's index entries come from what this settle filed, else from its
 	 * stored index, read for every such bucket in one round trip. A bucket
 	 * whose index a Table left unanswered stays pending and unstamped.
 	 *
@@ -1960,7 +1882,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Rank each bucket over its whole STORED content: the rows of both
-	 * families this flush landed, plus every other shard each index entry
+	 * families this settle landed, plus every other shard each index entry
 	 * names, read back for the whole chunk in ONE round trip — a read per
 	 * bucket would be a round trip per bucket on a replay — and the chunk's
 	 * lists written in its write batches, told as one `stats rank close`
@@ -2037,7 +1959,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * Due when it was never ranked, when its stamp is
 	 * `Stats_Store::URL_PAGE_REFRESH_S` old — the page cache holds a ranked
-	 * page that long, so ranking every five-second flush spends twelve
+	 * page that long, so ranking every thirty-second settle spends two
 	 * rankings on one read — or when the bucket has closed since it was
 	 * last ranked; `shutdown_sweep()` empties the stamps, so everything is
 	 * due before a stop. A closed bucket is what the reader reads for the
@@ -2057,7 +1979,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Store the names of URLs this flush saw, and file their words, at most
+	 * Store the names of URLs this settle saw, and file their words, at most
 	 * once an hour per server they are filed under.
 	 *
 	 * The name table is what a reader displays a row's whole URL through,
@@ -2068,20 +1990,20 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * `/blog/2026/my-post-title`.
 	 *
 	 * A name never changes and a member lives the retention window from its
-	 * last add, so re-filing them every flush would only refresh their
+	 * last add, so re-filing them every settle would only refresh their
 	 * expiry. Each URL's blob carries `filed`: server key => the hour the
 	 * URL was last filed under it. A pair stamped with the current hour is
 	 * skipped, and `drain_url_stats()` stamps the ones this returns into the
 	 * blob it writes anyway, so the rule outlives the worker and costs no
 	 * read and no write of its own. A blob without the stamp, or a URL whose
 	 * blob is not held, reads as never filed. So a URL's last filing can come
-	 * up to an hour and a flush before its last row, which is why its words
+	 * up to an hour and a settle before its last row, which is why its words
 	 * and name live one refresh past what their readers read
 	 * (`Stats_Store::filing_ttl()`). A hash filed under two
-	 * servers in one flush keeps the last name written.
+	 * servers in one settle keeps the last name written.
 	 *
 	 * @param Stats_Store                        $stats_store The wired store.
-	 * @param int                                $now         The flush's one read of the tick.
+	 * @param int                                $now         The settle's one read of the tick.
 	 * @param array<string,array<string,string>> $admitted    Bucket => server => the
 	 *                                                        name its rows are filed under.
 	 * @return array<array-key,array<array-key,string>> server => hash => URL, for the names written.
@@ -2089,9 +2011,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private function persist_url_names( Stats_Store $stats_store, int $now, array $admitted ): array {
 		$hour    = Stats_Store::hour_of( Stats_Store::bucket_key( $now ) );
 		$stamped = [];
-		// Iterated, not got: a get promotes, and a rotation evicts undrained.
-		foreach ( $this->url_acc->iterate() as $hash => $blob ) {
-			$stamped[ (string) $hash ] = Core::arr( Core::arr( $blob )['filed'] ?? null );
+		foreach ( $this->url_acc as $hash => $blob ) {
+			$stamped[ (string) $hash ] = Core::arr( $blob['filed'] ?? null );
 		}
 		$filed = [];
 		foreach ( \array_intersect_key( $this->pending, $admitted ) as $bucket => $acc ) {
@@ -2119,7 +2040,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Read, merge and write every pending key in batches.
 	 *
-	 * The flush's cost is its KEY COUNT, not its bytes: two of the loops above
+	 * The settle's cost is its KEY COUNT, not its bytes: two of the loops above
 	 * are per URL, so the fuller the retention window, the more round trips a
 	 * replay costs. The reader batches through `lookup_bucket_sets()`; this is
 	 * the write half. Chunked because batching trades round trips for held
@@ -2130,7 +2051,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * A chunk whose batch read FAILED writes nothing at all (decision 3):
 	 * merged onto a read that never happened, every write would replace a
-	 * stored bucket with this flush's delta alone. Its deltas are dropped.
+	 * stored bucket with this settle's delta alone. Its deltas are dropped.
 	 *
 	 * @param Stats_Store                 $stats_store Destination.
 	 * @param array<string,Pending_Write> $intents     Pending writes, by cache key.
@@ -2221,20 +2142,20 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Fold every hour the data clock has left that has not been folded yet
+	 * Fold every closed hour of the read plan that has not been folded yet
 	 * into its coarse key.
 	 *
 	 * The readers distinguish two resolutions — the whole window, and the last
 	 * complete hour — so five-minute buckets behind the recent tail are read at
 	 * a granularity nothing asks for. Folding them to hours takes a read from
-	 * 288 keys per shard to 36. It runs on flush, bounded to
-	 * `ROLLUP_HOURS_PER_FLUSH` so a cold start backfills over several flushes
+	 * 288 keys per shard to 36. It runs on settle, bounded to
+	 * `ROLLUP_HOURS_PER_FLUSH` so a cold start backfills over several settles
 	 * instead of stalling one, and it fills the whole window rather than only
 	 * the hour that just closed — which is what makes a fresh deploy reach the
 	 * cheap read without a 24-hour ramp.
 	 *
 	 * A fold is idempotent because it OVERWRITES from the fine buckets. Adding
-	 * into an hour incrementally would double-count every re-flush. It writes
+	 * into an hour incrementally would double-count every re-settle. It writes
 	 * the hour's ranked lists in the same pass, from the shard rows it just
 	 * folded, and each server's DONE marker once every write landed. An hour
 	 * holding an index with some server unmarked, as `url_hours_derived()`
@@ -2243,20 +2164,16 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * again where one is missing. One with every server marked is settled.
 	 * Only a fold spends the fold budget; a stale hour spends none, and a
 	 * spent budget stops the folds but never the reading, so every hour found
-	 * folded is memoized in the same flush.
+	 * folded is memoized in the same settle.
 	 *
-	 * Only an hour of `$foldable` folds. The rest of the plan is still read,
-	 * so a respawn adopts what its predecessor folded before it writes, but
-	 * an unfolded hour the data clock has not left waits: its records may
-	 * still arrive, and folding it now would send every one of them down
-	 * the late-write path. An hour read holding no index is not read again
-	 * until it folds (`$absent_hours`).
+	 * Every hour of the plan is read, so a respawn adopts what its
+	 * predecessor folded before it writes. An hour read holding no index is
+	 * not read again until it folds (`$absent_hours`).
 	 *
 	 * @param Stats_Store                                    $stats_store Source and destination.
-	 * @param array{fine: list<string>, hours: list<string>} $plan        The flush's read plan.
-	 * @param list<string>                                   $foldable    The plan hours `foldable()` names.
+	 * @param array{fine: list<string>, hours: list<string>} $plan        The settle's read plan.
 	 */
-	public function roll_up_hours( Stats_Store $stats_store, array $plan, array $foldable ): void {
+	public function roll_up_hours( Stats_Store $stats_store, array $plan ): void {
 		// Drop what left the window, so the memo cannot outgrow it.
 		$planned            = \array_flip( $plan['hours'] );
 		$this->folded_hours = \array_intersect_key( $this->folded_hours, $planned );
@@ -2270,8 +2187,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$failed = false;
 		$found  = [] === $unknown ? [] : $stats_store->url_hours_derived( $unknown, $failed );
 		$budget = self::ROLLUP_HOURS_PER_FLUSH;
-		$ripe   = \array_flip( $foldable );
-		// A settled hour it could not see would read unfolded: ask next flush.
+		// A settled hour it could not see would read unfolded: ask next settle.
 		if ( $failed ) {
 			return;
 		}
@@ -2291,8 +2207,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				continue;
 			}
 			$this->absent_hours[ $hour ] = true;
-			// Past the budget, or ahead of the data clock, a fold waits.
-			if ( $budget <= 0 || ! isset( $ripe[ $hour ] ) ) {
+			// Past the budget, a fold waits for the next settle.
+			if ( $budget <= 0 ) {
 				continue;
 			}
 			--$budget;
@@ -2437,13 +2353,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * arrive in one round trip per write chunk however many servers the
 	 * hour holds.
 	 *
-	 * A refused write is logged and not retried by the flush. The caller
+	 * A refused write is logged and not retried by the settle. The caller
 	 * memoizes the hour folded, and the fold writes no DONE marker, so the
 	 * next worker's roll-up finds the hour owed and the ranking that settles
 	 * it, missing a shard, folds it again. A read a Table leaves
 	 * unanswered — the index or a row shard — folds nothing (decision 3):
 	 * folded short, the hour would read settled with its rows lost, so it
-	 * stays unfolded for the next flush. An hour that holds an index and
+	 * stays unfolded for the next settle. An hour that holds an index and
 	 * whose buckets now name no server writes nothing: its fine tier has
 	 * expired, and overwriting from it would empty the index, the rows and
 	 * the lists the hour still holds.
@@ -2683,7 +2599,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			),
 			// A discarded refusal loses this server's shard of the bucket.
 			function ( string $key ) use ( $rows ): void {
-				// Rows, not bytes: sizing re-serialises a megabyte a flush.
+				// Rows, not bytes: sizing re-serialises a megabyte a settle.
 				$this->print_less_often(
 					'URL index write refused in ' . Stats_Store::namespace_of( $key ) . '; its rows are lost',
 					\sprintf( ' — %s, %d rows', $key, \count( $rows ) )
@@ -2732,7 +2648,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Add one bucket's rows into a row map, seeding a row the map lacks.
 	 *
-	 * Both writers of the URL index need this: the flush merges a shard's
+	 * Both writers of the URL index need this: the settle merges a shard's
 	 * accumulated rows into the stored ones, and the fold merges an hour's
 	 * twelve buckets into each other. Capping stays at the call site, because
 	 * the fold caps ONCE after all twelve rather than after each.
@@ -2921,7 +2837,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * hour it collects for the ranker, and names its ranking GROUP, the
 	 * (bucket, server) pair, only where its bucket sits in the fine tail.
 	 * Into a folded hour its bucket sits behind that tail, and its hour-key
-	 * write, once it lands, forgets that server's DONE marker so the flush
+	 * write, once it lands, forgets that server's DONE marker so the settle
 	 * re-ranks its hour from its rows.
 	 *
 	 * @param string                                                   $bucket  Bucket key.
@@ -2959,7 +2875,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * here one pre-read serves one write: a second merge built on the same
 	 * pre-read value would discard the first's rows outright.
 	 *
-	 * @param array<string,Pending_Write> $intents The flush's intents, by key.
+	 * @param array<string,Pending_Write> $intents The settle's intents, by key.
 	 * @param Pending_Write               $intent  The intent to file.
 	 */
 	private static function add_intent( array &$intents, array $intent ): void {
@@ -2980,7 +2896,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * One pending write: where it goes, and how to fold this flush's numbers
+	 * One pending write: where it goes, and how to fold this settle's numbers
 	 * onto whatever is already there.
 	 *
 	 * @param array<int,string>                        $parts   Key parts, the namespace first.
@@ -3036,7 +2952,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * A category bucket's STORED shape: this flush's numbers summed onto what is
+	 * A category bucket's STORED shape: this settle's numbers summed onto what is
 	 * already there, capped by time with `total` lifted clear of the ranking,
 	 * and each entry's `CAT_MS` rounded to display precision.
 	 *
@@ -3044,7 +2960,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * sum of rounded doubles is not itself rounded.
 	 *
 	 * @param array<array-key,mixed> $existing What the bucket already holds.
-	 * @param array<array-key,mixed> $cats     This flush's accumulated categories.
+	 * @param array<array-key,mixed> $cats     This settle's accumulated categories.
 	 * @return array<array-key,mixed>
 	 */
 	private static function fold_categories( array $existing, array $cats ): array {
@@ -3076,7 +2992,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * The decisions become a ruleset rewrite, and every flame-builder partition
 	 * accumulates its own. A shared-tier `add()` with a 5-second expiry serves as a
 	 * distributed lock so only one worker rewrites at a time; losing the race is
-	 * not an error, the decisions simply survive to the next flush.
+	 * not an error, the decisions simply survive to the next tick.
 	 *
 	 * Two escapes skip the lock and fire directly: no `Stats_Store` (the test
 	 * configuration) and no shared cache tier (single-process, nothing to
@@ -3105,7 +3021,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			return;
 		}
 
-		// Held by another worker: retry next flush, or wait out on hrtime.
+		// Held by another worker: retry next tick, or wait out on hrtime.
 		$deadline = self::monotonic() + $wait_ms * 1_000_000;
 		while ( ! $cache->add( $lock_key, $lock_value, $lock_timeout ) ) {
 			if ( self::monotonic() >= $deadline ) {
@@ -3127,11 +3043,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * The monotonic clock in ns, through the `$hrtime_fn` seam: the mark a
-	 * builder stamps when it works, and the clock any wait inside one is
-	 * timed on.
+	 * The monotonic clock in ns, through the `$hrtime_fn` seam: what the
+	 * auto-tune lock wait is timed on.
 	 */
-	public static function monotonic(): int {
+	private static function monotonic(): int {
 		return Core::num_int( ( self::$hrtime_fn ?? static fn (): int => (int) \hrtime( true ) )() );
 	}
 
@@ -3189,13 +3104,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * Drain the per-URL flame and profile aggregates into the store. The
 	 * batched `NS_URL` write overwrites with the whole aggregate.
 	 *
-	 * The blob of each URL this flush filed is stamped with the hour, under
+	 * The blob of each URL this settle filed is stamped with the hour, under
 	 * each server it was filed under (`persist_url_names()`); a stamp from an
 	 * earlier hour skips nothing, so it is dropped.
 	 *
 	 * @param Stats_Store                              $stats_store The wired store.
 	 * @param int                                      $now         The caller's one read of the tick, the `last_modified` stamp.
-	 * @param array<array-key,array<array-key,string>> $filed       server => hash => URL, the names this flush filed.
+	 * @param array<array-key,array<array-key,string>> $filed       server => hash => URL, the names this settle filed.
 	 */
 	private function drain_url_stats( Stats_Store $stats_store, int $now, array $filed ): void {
 		$hour   = Stats_Store::hour_of( Stats_Store::bucket_key( $now ) );
@@ -3206,11 +3121,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			}
 		}
 		$writes = [];
-		foreach ( $this->url_acc->iterate() as $url_hash => $aggregate ) {
-			if ( ! \is_array( $aggregate ) ) {
-				continue;
-			}
-			/** @var array<string,mixed> $aggregate */
+		foreach ( $this->url_acc as $url_hash => $aggregate ) {
 			// Half the item for profiles, a quarter for each copy of the tree.
 			$aggregate['profiles'] = self::cap_leaderboard( Core::arr( $aggregate['profiles'] ?? null ), \intdiv( Stats_Store::ITEM_BUDGET, 2 ) );
 			// Finalized flame for display; keep flame_raw for merging.
@@ -3220,7 +3131,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$aggregate['filed'] = $stamps[ (string) $url_hash ] + \array_filter( Core::arr( $aggregate['filed'] ?? null ), static fn ( mixed $at ): bool => $hour === $at );
 			}
 			// @longform One write per URL is one ROUND TRIP per URL, which is
-			// the cost this whole flush path is batched to avoid. Chunked on
+			// the cost this whole settle path is batched to avoid. Chunked on
 			// `flush_writes()`'s budget, which bounds what one `store_multi`
 			// serializes; the aggregates themselves are alive either way,
 			// because the accumulator this drains is already holding them.
@@ -3454,16 +3365,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		];
 	}
 
-	/**
-	 * One leaderboard scope's empty sums, so an accumulator cannot be seeded
-	 * differently from the value it merges into.
-	 *
-	 * @return Leaderboard_Acc
-	 */
-	private static function empty_leaderboard(): array {
-		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
-	}
-
 	/** @param string $table The Table every other namespace is written to. */
 	public function set_aggregate_target( string $table ): void {
 		$this->aggregate_target = self::mounted_table( 'set_aggregate_target', Stats_Store::TABLE_AGGREGATE, $table );
@@ -3498,6 +3399,68 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
+	 * Take back the crumb, so the record a plain stop left the cursor on is
+	 * replayed without being counted again, and the span a frame carried, so
+	 * the next settle writes it. Each bucket is merged over an empty
+	 * accumulator, so a carry lacking a key keeps that key's default. A key
+	 * the carry lacks reads as the start state a fresh process has. A restored span
+	 * alone keeps no worker busy: a stop carries it again.
+	 *
+	 * @api Used by substrate.
+	 * @param array<string,mixed> $saved A prior `save_state()`.
+	 */
+	public function restore_state( array $saved ): void {
+		$this->counted = Core::str( $saved['counted'] ?? null );
+		$span          = Core::arr( $saved['span'] ?? null );
+		foreach ( Core::arr( $span['pending'] ?? null ) as $bucket => $acc ) {
+			// `Y-m-d-H-i` is a string PHP never re-types to int.
+			if ( \is_string( $bucket ) && \is_array( $acc ) ) {
+				/** @var Bucket_Acc $merged */
+				$merged                   = \array_merge( self::empty_bucket(), $acc );
+				$this->pending[ $bucket ] = $merged;
+			}
+		}
+		foreach ( Core::arr( $span['urls'] ?? null ) as $url_hash => $aggregate ) {
+			if ( \is_array( $aggregate ) ) {
+				$this->url_acc[ $url_hash ] = $aggregate;
+			}
+		}
+	}
+
+	/**
+	 * One bucket's empty accumulator. Seeded whole so every accumulate site can
+	 * index straight in, and so the leaderboard has its shape rather than [].
+	 *
+	 * @return Bucket_Acc
+	 */
+	private static function empty_bucket(): array {
+		return [
+			'hourly'                => [],
+			'dim'                   => [],
+			'dim_by_server'         => [],
+			'url_dim'               => [],
+			'url_stats'             => [],
+			'url_stats_worker'      => [],
+			'url_names'             => [],
+			'cat'                   => [],
+			'cat_by_server'         => [],
+			'cat_by_url'            => [],
+			'leaderboard'           => self::empty_leaderboard(),
+			'leaderboard_by_server' => [],
+		];
+	}
+
+	/**
+	 * One leaderboard scope's empty sums, so an accumulator cannot be seeded
+	 * differently from the value it merges into.
+	 *
+	 * @return Leaderboard_Acc
+	 */
+	private static function empty_leaderboard(): array {
+		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+	}
+
+	/**
 	 * Fold another partition's running flame for the same URL into this one:
 	 * their requests and durations add, and their trees merge as a request's
 	 * does, each node keeping the newer stamp. The merge stamp is the newest
@@ -3522,7 +3485,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Inject the Stats_Store the flush writes through.
+	 * Inject the Stats_Store the settle writes through.
 	 *
 	 * Only the read plan is dropped, for the retention window it was built
 	 * over. A second `configure_stats` builds over the same three Tables,
@@ -3538,22 +3501,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Take back the crumb, so the record a plain stop left the cursor on is
-	 * replayed without being counted again, and the data clock, so the fine
-	 * deadline outlives the recycle. A key the carry lacks reads as the
-	 * start state a fresh process has.
-	 *
-	 * @api Used by substrate.
-	 * @param array<string,mixed> $saved A prior `save_state()`.
-	 */
-	public function restore_state( array $saved ): void {
-		$this->counted               = Core::str( $saved['counted'] ?? null );
-		$this->data_clock            = Core::str( $saved['data_clock'] ?? null );
-		$this->data_clock_hour_since = Core::num_float( $saved['data_clock_hour_since'] ?? null );
-	}
-
-	/**
-	 * The stats Tables the verbs named, which the flush writes past its
+	 * The stats Tables the verbs named, which the settle writes past its
 	 * primary target, so the console draws an edge to each.
 	 *
 	 * @api Unioned into display_targets() by the substrate's Node.
@@ -3564,15 +3512,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * When this node went idle: the last flush that drained a folded record
-	 * while nothing is pending, or null while one waits for the next flush.
-	 * An upkeep flush — a roll-up read a Table left unanswered repeats one
-	 * every tick — leaves it where it was.
+	 * When this node went idle: the last settle that drained a folded record,
+	 * or null while a record this process folded is in neither a settle nor
+	 * a committed frame, which the Consumer's next checkpoint brings. A span
+	 * a frame carries keeps nothing up — a restored one, or one a crawl
+	 * checkpointed record by record: a stop carries it again, and an idle
+	 * log moves no cursor, so no interval checkpoint would ever settle it.
 	 *
 	 * @api Used by substrate: `Cooperative_Stop`'s idle scan.
 	 */
 	public function idle_since(): ?float {
-		return [] === $this->pending ? $this->worked_at : null;
+		return $this->uncommitted ? null : $this->worked_at;
 	}
 
 	/**
