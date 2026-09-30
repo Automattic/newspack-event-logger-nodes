@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\CoversNothing;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Stats_Store;
@@ -278,30 +279,36 @@ class FlameBuilderSpanTest extends TestCase {
 
 	/**
 	 * A span holds every URL it folds, however many: 5,003 distinct URLs in
-	 * one span each land their own fold at the settle, and the carry before
-	 * it holds every one.
+	 * one span each ride the carry, and the settle hands each URL's fold to
+	 * the store. It collects no coverage: 5,003 folds under Xdebug's line
+	 * coverage outrun the one-second budget, and every line it runs is
+	 * covered by the tests beside it.
 	 */
+	#[CoversNothing]
 	public function test_a_span_holds_every_url_it_folds_past_five_thousand(): void {
-		$fb    = $this->builder();
-		$urls  = \array_map( static fn ( int $n ): string => "/kea-sku-{$n}", \range( 1, 5003 ) );
-		$store = ( new \ReflectionProperty( Flame_Builder_Node::class, 'stats_store' ) )->getValue( $fb );
-		// @longform Folded with no store wired, so no cold read per URL runs
-		// inside the test's budget; the settle writes through the store.
-		( new \ReflectionProperty( Flame_Builder_Node::class, 'stats_store' ) )->setValue( $fb, null );
-		foreach ( $urls as $i => $url ) {
-			self::fold( $fb, "3:{$i}:41", $url );
+		$fb    = new Flame_Builder_Node();
+		$fb->name( 'fb-kea' );
+		$store = new Url_Blob_Counting_Store( ...$this->stats_store_args( self::PARTITION, 86400, $fb ) );
+		// @longform A worker's untimed record, the cheapest a fold takes: it
+		// reaches its URL's flame and no global total, and no store is wired
+		// until the settle, so no cold read runs per URL.
+		$record = [ 'is_worker' => true, 'duration_ms' => 0.0 ] + self::record();
+		for ( $n = 1; $n <= 5003; $n++ ) {
+			$message                   = Message::new_message();
+			$message[ Message::TYPE ]  = Message::TM_STRUCT;
+			$message[ Message::ID ]    = "3:{$n}:41";
+			$message[ Message::VALUE ] = [ 'url' => "/kea-sku-{$n}" ] + $record;
+			$fb->fill( $message );
 		}
 		$fb->set_stats_store( $store );
-		$this->assertCount( 5003, self::as_stored( $fb->save_state() )['span']['urls'] ?? [], 'the carry holds every URL' );
-		// @longform The buckets' 15,000 per-URL hour keys are not this test's
-		// subject and would spend its budget, so the settle writes the trees.
-		( new \ReflectionProperty( Flame_Builder_Node::class, 'pending' ) )->setValue( $fb, [] );
 
+		$this->assertSame( 5003, \count( $fb->save_state()['span']['urls'] ?? [] ), 'the carry holds every URL' );
+		// @longform The buckets' per-URL hour keys are not this test's subject
+		// and would spend its budget, so the settle writes the trees alone.
+		( new \ReflectionProperty( Flame_Builder_Node::class, 'pending' ) )->setValue( $fb, [] );
 		$fb->settle();
 
-		$reads = \array_map( static fn ( string $url ): array => [ [ Stats_Store::NS_URL ], Log_Manager::url_hash( $url ) ], $urls );
-		$blobs = $this->stats_store( partition: self::PARTITION )->bucket_get_multi( $reads );
-		$this->assertSame( \array_fill( 0, 5003, 1 ), \array_map( static fn ( mixed $blob ): int => (int) ( Core::arr( Core::arr( $blob )['flame_raw'] ?? null )['count'] ?? 0 ), $blobs ), 'every URL\'s fold landed' );
+		$this->assertSame( 5003, $store->url_blobs, 'the settle writes every URL\'s fold' );
 	}
 
 	/**
@@ -326,4 +333,23 @@ class FlameBuilderSpanTest extends TestCase {
 /** A builder whose carry fits one `/kea-4x` blob, 125 bytes of JSON, and not two. */
 class Small_Carry_Flame_Builder extends Flame_Builder_Node {
 	protected const CARRY_URL_BYTES = 200;
+}
+
+/**
+ * A store that counts the URL blobs a settle hands it and lands them without
+ * a Table write, so a test of what the settle offers pays for no SQLite.
+ */
+class Url_Blob_Counting_Store extends Stats_Store {
+	/** @var int URL blobs written since the store was built. */
+	public int $url_blobs = 0;
+
+	/**
+	 * @param array<int,array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes `[ parts, key, data ]`.
+	 * @return array<int,bool>
+	 */
+	public function bucket_set_multi( array $writes ): array {
+		$urls             = \array_filter( $writes, static fn ( array $write ): bool => Stats_Store::NS_URL === $write[0][0] );
+		$this->url_blobs += \count( $urls );
+		return \array_replace( [] === \array_diff_key( $writes, $urls ) ? [] : parent::bucket_set_multi( \array_diff_key( $writes, $urls ) ), \array_fill_keys( \array_keys( $urls ), true ) );
+	}
 }

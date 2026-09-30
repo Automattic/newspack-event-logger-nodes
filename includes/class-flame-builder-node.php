@@ -1393,11 +1393,15 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * Each URL's flame tree the span holds, by url_hash, as many as fit
 	 * `CARRY_URL_BYTES` of JSON. A tree left out keeps its URL at the
 	 * aggregate it last settled, and is counted and logged once a span, not
-	 * once a frame: a crawl carries the same span at every record.
+	 * once a frame: a crawl carries the same span at every record. A span
+	 * under the budget, the usual one, is measured in one encode.
 	 *
 	 * @return array<array-key,mixed>
 	 */
 	private function carried_urls(): array {
+		if ( \strlen( (string) \wp_json_encode( $this->url_acc ) ) <= static::CARRY_URL_BYTES ) {
+			return $this->url_acc;
+		}
 		$used = 0;
 		$urls = [];
 		$left = 0;
