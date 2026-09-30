@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.112.0] - 2026-09-30
+
 ### Changed
 
 - **A settle whose read of the held servers goes unanswered fails, and appends nothing.** `Flame_Builder_Node::admitted()` read an unanswered `stats:names` read as no server held and admitted up to 128 new servers by name; it throws instead, so the Consumer's checkpoint fails and the span stays carried for the next settle. `Stats_Store::servers()` answers null for an unanswered read and false past `SERVERS_READ_MAX`, where null meant the second; `url_of()` and `search_urls()` report an unanswered read through `unanswered()`, so a page carrying one is `provisional`; `url_breakdown` carries `provisional` too, and `dump_url`, the `url:` brief and a `span:` or `category:` brief under a `url:` refuse naming `stats:names` (or `stats:url-rows`) rather than answer `URL not found`, or brief the URL unnamed, when its read went unanswered. A settle reads the tick once, so a URL blob's `last_modified`, the work mark `idle_since()` reports and the settle mark `GET_STATS` ages from are all the instant the settle began.
