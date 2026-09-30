@@ -1153,7 +1153,7 @@ class RequestBuilderTest extends TestCase {
 	 */
 	private function force_rotation_due( \Newspack_Nodes\LRU_Cache $cache ): void {
 		$next      = (float) ( new \ReflectionObject( $cache ) )->getProperty( 'next_window' )->getValue( $cache );
-		Core::$now = \max( $next, Core::$now + Flame_Builder_Node::IDLE_AFTER_SEC );
+		Core::$now = \max( $next, Core::$now + Request_Builder_Node::IDLE_AFTER_SEC );
 	}
 
 	public function test_builder_timer_times_out_stalled_request_with_no_traffic(): void {
@@ -1485,7 +1485,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 		$this->fill( $rb, 1, 'r-live', 'process (start)', [ 'ts' => Core::$now ] );
 		$this->fill( $rb, 2, 'r-live', 'process (complete)', [ 'ts' => Core::$now, 'duration_ms' => 9.0 ] );
-		Core::$now += Flame_Builder_Node::IDLE_AFTER_SEC;
+		Core::$now += Request_Builder_Node::IDLE_AFTER_SEC;
 		$rb->fire_cb();
 
 		$old = 1_797_408_050;
@@ -1519,7 +1519,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 1, 'r-dead', 'process (start)', [ 'ts' => Core::$now ] );
 		$this->fill( $rb, 2, 'r-dead', 'request', [ 'm' => 'GET /dead-worker', 'ts' => Core::$now ] );
 
-		Core::$now += Flame_Builder_Node::IDLE_AFTER_SEC - 1;
+		Core::$now += Request_Builder_Node::IDLE_AFTER_SEC - 1;
 		$rb->fire_cb();
 		$this->assertSame( 0, $rb->cache->get_state()['current'], 'a second short of quiet the wall crossed a boundary and rolled nothing' );
 
@@ -1529,6 +1529,27 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'r-dead', $evicted['rid'] );
 		$this->assertSame( 'T', $evicted['error_status'] );
 		$this->assertSame( 730_000, $evicted['duration_ms'], 'to 1_800_001_080, the boundary its window fell due at' );
+	}
+
+	/**
+	 * Quiet is a duration, measured on the monotonic clock: a wall stepped an
+	 * hour ahead is no quiet, and `IDLE_AFTER_SEC` of monotonic quiet is,
+	 * whatever the wall says.
+	 */
+	public function test_quiet_is_measured_on_the_monotonic_clock_not_the_wall(): void {
+		$mono                            = 7_300_000_000_000;
+		Request_Builder_Node::$hrtime_fn = static function () use ( &$mono ): int {
+			return $mono;
+		};
+		$quiet = new \ReflectionMethod( Request_Builder_Node::class, 'quiet_since' );
+		$mark  = $mono;
+
+		Core::$now += 3600;
+		$mono      += 7 * 1_000_000_000;
+		$this->assertFalse( $quiet->invoke( null, $mark ), 'the wall stepped an hour; seven seconds passed' );
+
+		$mono += Request_Builder_Node::IDLE_AFTER_SEC * 1_000_000_000;
+		$this->assertTrue( $quiet->invoke( null, $mark ), 'a monotonic minute of quiet, the wall standing still' );
 	}
 
 	// --- save / restore state --------------------------------------------

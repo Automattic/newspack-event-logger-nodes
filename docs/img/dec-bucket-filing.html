@@ -70,7 +70,7 @@
     <div class="fl" style="left:40px; top:84px; width:240px; text-align:right">filed in the five-minute bucket of the completion, not of the start</div>
     <div class="fl" style="left:40px; top:128px; width:520px"><span class="m">bucket = min( now, timestamp + round( duration_ms / 1000 ) )</span></div>
     <div class="fl" style="left:556px; top:64px; width:150px"><b style="color:#003DA5">H closes</b></div>
-    <div class="fl" style="left:626px; top:32px; width:178px; text-align:right">once its data clock leaves H, the builder folds H into <span class="m" style="white-space:nowrap">urls_h:{H}:{server_key}:{shard}</span> and records it in <span class="m">folded_hours</span></div>
+    <div class="fl" style="left:626px; top:32px; width:178px; text-align:right">at its first settle after H closes, the builder folds H into <span class="m" style="white-space:nowrap">urls_h:{H}:{server_key}:{shard}</span> and records it in <span class="m">folded_hours</span></div>
     <div class="fl" style="left:884px; top:74px; width:150px"><b style="color:#B32D2E">the record arrives</b> after the fold, as a spoke's backlog does</div>
     <div class="kbox live" style="left:250px; width:340px"><b>urls:{bucket}:{server_key}:{shard}</b>its fine bucket: the reader skips it, a re-fold reads it; kept at the fine TTL like any fold read</div>
     <div class="kbox live" style="left:690px; width:340px"><b>urls_h:{H}:{server_key}:{shard}</b><span class="m">hour_tier_intents()</span> merges into the hour key the reader takes, missing or not</div>
@@ -91,20 +91,20 @@
         <div class="b fine"><b>hour not in folded_hours</b><span class="m">url_shard_parts( server_key, shard )</span> under the five-minute bucket key</div>
         <div class="b hour"><b>hour in folded_hours</b>that bucket, and <span class="m">url_hour_parts( server_key, shard )</span> under the hour key, missing or not</div>
       </div>
-      <p style="margin-top:8px">One merge for both, for the rows and the server index alike. Nothing evicts an hour key, and a fold writes every shard it keeps, so a key the late write finds missing is one the fold never wrote, and the late rows are its rows. A write that lands in the hour key forgets that server's DONE marker, so a flush re-ranks the hour; a server new to the hour takes it off <span class="m">folded_hours</span>, so the next roll-up reads it again. The chart series and the leaderboards take no part: every flush writes their hour key (decision 35).</p>
+      <p style="margin-top:8px">One merge for both, for the rows and the server index alike. Nothing evicts an hour key, and a fold writes every shard it keeps, so a key the late write finds missing is one the fold never wrote, and the late rows are its rows. A write that lands in the hour key forgets that server's DONE marker, so a settle re-ranks the hour; a server new to the hour takes it off <span class="m">folded_hours</span>, so the next roll-up reads it again. The chart series and the leaderboards take no part: every settle writes their hour key (decision 35).</p>
     </div>
     <div class="arrow">&rarr;</div>
     <div class="step">
       <h3>3 · When the memo is right</h3>
       <p><span class="m">folded_hours</span> is per-process, and one partition has one worker (<span class="m">persist_aggregate_stats()</span>: read-then-write is not atomic), so a respawn is the only way it goes stale; there is no peer to race.</p>
-      <p><span class="m">flush()</span> therefore rolls up BEFORE it persists: the roll-up is what reads the coarse tier, so the first flush after a respawn has an accurate memo before a single row is placed. The fold budget stops folds, never that read.</p>
+      <p><span class="m">write_pending()</span> therefore rolls up BEFORE it persists: the roll-up is what reads the coarse tier, so the first settle after a respawn has an accurate memo before a single row is placed. The fold budget stops folds, never that read.</p>
     </div>
   </div>
 
   <div class="cols">
     <div class="card">
       <h3>The trigger is routine, not exotic</h3>
-      <p>A hub sees late writes with no replay at all: a single flame-builder partition takes every spoke's records, so a spoke feeding a backlog while its peers are caught up lands rows in hours already folded. A caught-up spoke's records reach the builder about 14 s old, and an hour folds on the flush after the first write past it, so a boundary sends into a folded hour only the records that trail the next hour's first by more than a flush.</p>
+      <p>A hub sees late writes with no replay at all: a single flame-builder partition takes every spoke's records, so a spoke feeding a backlog while its peers are caught up lands rows in hours already folded. A caught-up spoke's records reach the builder about 14 s old, and an hour folds at the first settle after it closes, so a boundary sends into a folded hour the records that reach the builder after that settle.</p>
     </div>
   </div>
 

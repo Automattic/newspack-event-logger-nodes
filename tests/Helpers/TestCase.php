@@ -196,7 +196,8 @@ abstract class TestCase extends RuntimeTestCase {
 		// No user is current until a test, or the request graph, logs one in.
 		unset( $GLOBALS['_current_user_id'] );
 		// The monotonic clock tracks the tick, as every test here dates by it.
-		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::$hrtime_fn = static fn (): int => (int) ( \Newspack_Nodes\Core::$now * 1e9 );
+		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::$hrtime_fn   = static fn (): int => (int) ( \Newspack_Nodes\Core::$now * 1e9 );
+		\Newspack_Event_Logger_Nodes\Request_Builder_Node::$hrtime_fn = static fn (): int => (int) ( \Newspack_Nodes\Core::$now * 1e9 );
 		// The harness registers no RESET_ACTION listener, so drop ELN's memo here.
 		\Newspack_Event_Logger_Nodes\Config::reset_local_cache();
 		// A loaded topology's Tables open their files under the base, as the
@@ -317,7 +318,8 @@ abstract class TestCase extends RuntimeTestCase {
 	 * every later test that pins it and then trips a `print_less_often()`.
 	 */
 	protected function tearDown(): void {
-		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::$hrtime_fn = null;
+		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::$hrtime_fn   = null;
+		\Newspack_Event_Logger_Nodes\Request_Builder_Node::$hrtime_fn = null;
 		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
 		foreach ( \array_keys( $this->stats_table_dirs ) as $dir ) {
 			$this->rmdir_recursive( $dir );
@@ -492,7 +494,7 @@ abstract class TestCase extends RuntimeTestCase {
 			$asker->sink( VerbHarness::ask_recorder() );
 		}
 		// The builder's own asker, as `configure_stats` hands it to its store.
-		return [ $max_lifespan, ( new \ReflectionProperty( $asker, 'client' ) )->getValue( $asker ), $names ];
+		return [ $max_lifespan, ( new \ReflectionProperty( Flame_Builder_Node::class, 'client' ) )->getValue( $asker ), $names ];
 	}
 
 	/** The harness asker, sinking through the request graph's recorder. */

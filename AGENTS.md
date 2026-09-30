@@ -121,7 +121,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/class-log-manager.php` | Per-request firehose writer; redacts URL secrets; refuses root |
 | `includes/class-{request-builder,request-flight,flame-builder,auto-tuner}-node.php` | Request assembly, the in-flight snapshot sibling, flame and stats fan-out, auto-tune |
 | `includes/class-{job-router,remote-job-rewrite,discovery-collector}-node.php` | Job normalization onto jobs.log, the hub's `job` → `remote_job` rewrite, the hub's discovery fan-out |
-| `includes/class-{flame-tree,flame-fold,stats-store,url-sketch,quiet}.php` | Flame algorithms, the stats key schema over the three Tables, the URL-count HyperLogLog, and the quiet rule on which both builders leave their stream clocks for the wall |
+| `includes/class-{flame-tree,flame-fold,stats-store,url-sketch}.php` | Flame algorithms, the stats key schema over the three Tables, and the URL-count HyperLogLog |
 | `includes/class-{diagnostics-bridge,hook-categorizer,reqgrep-core,current-request-overlay}.php`, `trait-narration.php` | Verb spans and the stderr seam, hook categories, the reqgrep engine, the station's Request tab, builder narration |
 | `includes/app/` | `App\Core` (hook, HTTP and query instrumentation), the three service CIs, `Findings`, `Ask_Assembler`, `MCP_Controller` |
 | `includes/admin/`, `includes/cli/` | The settings page, which hosts the rules editor; `wp nodes reqgrep` and `wp nodes ruleset-bench` |
