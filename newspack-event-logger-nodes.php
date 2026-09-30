@@ -97,7 +97,8 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// spawned worker's row; below it each call fatals. It is also
 	// newspack_nodes/worker_identified, naming the worker a spawn became.
 	// 2.73.0 is Table_Client, Bootstrap::mount_table() and the SQLite Table
-	// arm the stats live on; below it the builder and the dashboards fatal.
+	// arm each URL's flame blob lives on; below it the builder and the
+	// dashboards fatal.
 	// It is also the TTL and backend arguments flame-builder.tsl gives each
 	// Table, which check-substrate-floor.sh cannot see, since it reads PHP
 	// calls and not topologies. 2.74.0 is Table_Unavailable, the typed
@@ -107,9 +108,6 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// lives for the rest of the request, opens only a file its worker wrote,
 	// and refuses a process running as root; below it a dashboard poll
 	// creates the worker's file, and ADR-23 wants the mount removed.
-	// 2.76.0 is SADD and SMEMBERS on a durable Table and Table_Client's
-	// add_members() and members(), which the search index files and reads
-	// its words through; below it the flush and every search fatal.
 	// 2.77.0 is Command_Interpreter_Node::dispatch() binding each verb's
 	// declared args and handing the handler them by name; below it every
 	// handler here reads a raw token list as named args and binds nothing.
@@ -119,11 +117,15 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// 2.80.0 is Ledger_Node, Bootstrap::mount_ledger() and Table_Client's
 	// append(), sum(), top() and ledger_members(), which every stats write
 	// and read goes through; below it the builder and the dashboards fatal.
+	// 2.81.0 is the Ledger reads the stats pages send: TOP by a ratio or by
+	// x, SUM grouped by key, positive_each_t on both, nullable min and max
+	// columns, and MEMBERS with a limit, ledger_members()' fifth argument;
+	// below it each read is refused and the dashboards show no stats.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.80.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.81.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

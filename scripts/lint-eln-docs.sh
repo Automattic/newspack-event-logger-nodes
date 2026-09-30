@@ -39,6 +39,17 @@ extra=$(comm -13 <(printf '%s\n' "$constants") <(printf '%s\n' "$row_tokens"))
 [ -n "$missing" ] && report "Ledger(s) with no guide row: $(printf '%s' "$missing" | tr '\n' ' ')"
 [ -n "$extra" ] && report "guide row(s) naming no LEDGER_* constant: $(printf '%s' "$extra" | tr '\n' ' ')"
 
+# README's floor row; lint-docs.sh rule 6 reads only version_at_least lines.
+floor=$(grep -hoE "version_at_least\( *'[0-9]+\.[0-9]+\.[0-9]+'" newspack-event-logger-nodes.php \
+	| grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1 || true)
+[ -z "$floor" ] && report "no version_at_least floor found in newspack-event-logger-nodes.php"
+# shellcheck disable=SC2016 # backticks are grep regex, not a subshell.
+row=$(grep -E '^\| `newspack-nodes` \|' README.md || true)
+[ -z "$row" ] && report "no newspack-nodes row in README.md's requirements table"
+if [ -n "$floor" ] && [ -n "$row" ] && ! printf '%s' "$row" | grep -qF "| $floor,"; then
+	report "README.md's newspack-nodes row disagrees with the loader's floor ($floor): $row"
+fi
+
 if [ "$fail" -eq 0 ]; then
 	num_constants=$(printf '%s\n' "$constants" | grep -c .)
 	num_rows=$(printf '%s\n' "$table" | grep -c .)

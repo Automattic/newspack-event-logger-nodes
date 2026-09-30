@@ -12,8 +12,6 @@
   .down { text-align: center; color: #003DA5; font-size: 18px; font-weight: 700; line-height: 22px; }
   .fold { border: 1px solid #C3D3EC; background: #F0F4FB; border-radius: 7px; padding: 8px 10px; font-size: 12px; color: #50575E; line-height: 1.45; }
   .fold .m { color: #101517; }
-  .shards { display: grid; grid-template-columns: repeat(16, 1fr); gap: 3px; margin-top: 6px; }
-  .shards span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; text-align: center; background: #fff; border: 1px solid #C3D3EC; border-radius: 3px; color: #003DA5; padding: 2px 0; }
   .reply { background: #003DA5; color: #fff; border-radius: 6px; text-align: center; font-size: 12.5px; font-weight: 700; padding: 6px; }
   .fan { display: block; }
   .outs { display: flex; gap: 8px; }
@@ -48,15 +46,14 @@
 </style>
 <div class="sheet">
 <h1>The <span class="mono">urls</span> verb owns every URL-set fact; <span class="mono">overview</span> owns the site</h1>
-<p class="sub">One <span class="mono">urls</span> request carries the filters into one fold of the URL index, and one reply feeds the header, the table and the slowest ten, so they cannot disagree. <span class="mono">overview</span> reads the site totals from <span class="mono">hourly_h</span>, where <span class="mono">server</span> never reaches.</p>
+<p class="sub">One <span class="mono">urls</span> request carries the filters into the URL rows, and one reply feeds the header, the table and the slowest ten, so they describe one scope. <span class="mono">overview</span> reads the site totals from <span class="mono">stats:totals</span>, where <span class="mono">server</span> never reaches.</p>
 
 <div class="lanes">
-  <div class="lane"><header>One <span class="mono">urls</span> poll: one fold, one reply</header>
+  <div class="lane"><header>One <span class="mono">urls</span> poll: one scope, one reply</header>
     <div class="body">
       <div class="req">urls <b>server</b> · <b>search</b> · <b>errors_only</b> · <b>include_workers</b> · sort · order · offset · limit</div>
       <div class="down">↓</div>
-      <div class="fold"><span class="m">url_page()</span> applies every filter while it folds the URL index one shard at a time, keeping each shard's best <span class="m">offset + limit</span> rows and best ten by mean (decision 17):
-        <div class="shards"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span></div></div>
+      <div class="fold"><span class="m">url_page()</span> asks <span class="m">stats:url-rows</span> for the scope's keys, <span class="m">r:{server_key}</span> and with <span class="m">include_workers</span> <span class="m">w:{server_key}</span>: an unsearched page is one <span class="m">TOP</span>, a searched one reads its candidates' rows by URL (decision 28). The header and the page are each cached for <span class="m">URL_PAGE_REFRESH_S</span>, 60 s; a <span class="m">provisional</span> one is never cached.</div>
       <div class="down">↓</div>
       <div class="reply">one reply</div>
       <svg class="fan" width="100%" height="30" viewBox="0 0 486 30" preserveAspectRatio="none">
@@ -83,36 +80,36 @@
           <g stroke="#003DA5" stroke-width="2" fill="#003DA5"><line x1="16" y1="102" x2="50" y2="102"/><path d="M50 97 L57 102 L50 107 Z"/><line x1="16" y1="162" x2="50" y2="162"/><path d="M50 157 L57 162 L50 167 Z"/><line x1="16" y1="222" x2="50" y2="222"/><path d="M50 217 L57 222 L50 227 Z"/></g>
         </svg>
         <div style="height:14px"></div>
-        <div class="src blocked"><div class="store">hourly_h<small>no server dimension</small></div><div class="fn"><span class="k">total_requests · global_avg_ms · global_avg_peak_mb</span><br>the site totals: <span class="red">never scoped</span>, so the payload never contradicts itself</div></div>
-        <div class="src"><div class="store">lb_h · lb_sh</div><div class="fn"><span class="m">build_leaderboard( $server )</span><br>→ <span class="k">global_leaderboard</span></div></div>
-        <div class="src"><div class="store">dim_h</div><div class="fn"><span class="m">merge_dim_across_partitions( $dim, $server )</span><br>→ <span class="k">breakdowns[ $dim ]</span></div></div>
-        <div class="src"><div class="store">categories_h</div><div class="fn"><span class="m">merge_categories_across_partitions( $server )</span><br>→ <span class="k">category_time_series</span></div></div>
+        <div class="src blocked"><div class="store">stats:totals<small>no server scope</small></div><div class="fn"><span class="k">total_requests · global_avg_ms · global_avg_peak_mb</span><br>the site totals: <span class="red">never scoped</span>, so the payload never contradicts itself</div></div>
+        <div class="src"><div class="store">stats:leaderboard</div><div class="fn"><span class="m">leaderboard( $server, … )</span><br>→ <span class="k">global_leaderboard</span></div></div>
+        <div class="src"><div class="store">stats:dims</div><div class="fn"><span class="m">dimension( $dim, $server, … )</span><br>→ <span class="k">breakdowns[ $dim ]</span></div></div>
+        <div class="src"><div class="store">stats:categories</div><div class="fn"><span class="m">categories( $server, … )</span><br>→ <span class="k">category_time_series</span></div></div>
       </div>
-      <p class="lanenote"><span class="mono">overview</span> never touches the URL index, which holds a filtered poll to one fan-out of it.</p>
+      <p class="lanenote"><span class="mono">overview</span> never reads the URL rows. Every series it sends is one <span class="mono">SUM</span> over the 288 buckets the charts draw.</p>
     </div></div>
 </div>
 
 <div class="cards">
   <div class="card"><h3>Every rate divides by the window</h3>
-    <span class="rate">the seconds recent_keys() spans</span>
+    <span class="rate">the seconds recent_window() spans</span>
     <p>The current hour's closed buckets, or the hour before until one closes. It drops the bucket still filling, and never divides by the buckets that happened to carry traffic: a URL seen in two of twelve would read six times its rate beside a header that does not.</p></div>
   <div class="card"><h3>The totals are exact</h3>
-    <p>The byte cap folds each shard's tail into a synthetic <span class="mono">Other</span> row (<span class="mono">Stats_Store::OTHER_KEY</span>) carrying only the fields that ADD: exact site-wide, and per server for every server the index admits by name, since past <span class="mono">MAX_SERVER_VALUES</span> a server's rows file under an <span class="mono">Other</span> server no real fleet reaches. The row is marked <span class="mono">aggregate</span> and un-clickable.</p></div>
+    <p>Every figure is the Ledger's own aggregate over the window: the URL count a <span class="mono">TOP</span>'s total, the header sums one <span class="mono">SUM</span> grouped by key. Past <span class="mono">MAX_SERVER_VALUES</span> a server's rows file under the <span class="mono">Other</span> server, which folds the tail and keeps every total.</p></div>
   <div class="card"><h3>Workers are excluded by default</h3>
-    <p>The row RECORDS worker traffic, never guessing from <span class="mono">?worker_type</span>; <span class="mono">include_workers</span> opts IN, and the tail folds into TWO overflow rows (<span class="mono">Stats_Store::other_key()</span>). A header summed from rows keeping worker timing reads "Avg Response" as 227 ms of cron against 3 ms of reader traffic on a staging hub.</p></div>
+    <p>Worker traffic files in its own <span class="mono">w:</span> family, never guessed from <span class="mono">?worker_type</span>; <span class="mono">include_workers</span> opts IN. A header summed over worker rows reads "Avg Response" as 227 ms of cron against 3 ms of reader traffic on a staging hub.</p></div>
 </div>
 
 <div class="diff"><table>
-  <tr><th>Why the two totals differ by construction</th><th><span class="mono">hourly_h</span> (overview)</th><th>The URL index (urls)</th></tr>
-  <tr><td class="k">Worker requests</td><td>dropped</td><td>kept, on their own rows</td></tr>
+  <tr><th>Why the two totals differ by construction</th><th><span class="mono">stats:totals</span> (overview)</th><th>The URL rows (urls)</th></tr>
+  <tr><td class="k">Worker requests</td><td>dropped</td><td>kept, in their own family</td></tr>
   <tr><td class="k">Evicted and aborted records (decision 24)</td><td>not in <span class="mono">count</span>, which <span class="mono">total_requests</span> reads; in <span class="mono">requests</span></td><td>counted</td></tr>
-  <tr><td class="k">Window (decision 35)</td><td>the 288 five-minute slots the charts draw, the last 24 hours</td><td>the retention window</td></tr>
+  <tr><td class="k">Window</td><td>the 288 five-minute buckets the charts draw, the last 24 hours</td><td>the retention window, at most the same 24 hours</td></tr>
 </table></div>
 
 <div class="rule">
   <div class="ok"><h4>One scope rule across the surface</h4>
     <p>A FETCH sends the live selection, so <span class="mono">urls</span>, <span class="mono">dump_url</span> and <span class="mono">ask</span> all ask for what is selected now. A LABEL reads the scope the server echoed back, because it names numbers already on screen. <span class="mono">dump_url</span> takes the same <span class="mono">server</span>, because the modal opens from a row that filter scoped, and a site-wide average under a scoped count is the same defect one click in.</p></div>
   <div class="callout"><h4>Where the scope does not reach</h4>
-    <p><span class="mono">dump_url</span>'s <span class="mono">breakdown_time_series</span>, <span class="mono">category_time_series</span> and <span class="mono">aggregate_flame</span> are per-URL only: a per-URL-per-server series would be new storage on the axis decision 11 watches. <span class="mono">find_recent_requests_for_url()</span> has no server in the request index. Both are harmless while a stored <span class="mono">url</span> is absolute, which makes one URL one site.</p></div>
+    <p><span class="mono">dump_url</span>'s <span class="mono">breakdown_time_series</span>, <span class="mono">category_time_series</span> and <span class="mono">aggregate_flame</span> are per URL only, since <span class="mono">stats:url-dims</span>, <span class="mono">stats:url-cats</span> and the flame blob carry no server. <span class="mono">find_recent_requests_for_url()</span> has no server in the request index. Both are harmless because a URL carries its host, which makes one URL one site.</p></div>
 </div>
 </div>

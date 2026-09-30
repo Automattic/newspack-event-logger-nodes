@@ -1,6 +1,6 @@
 ---
 name: event-logger-nodes-debugging
-description: Debugging the event-logger-nodes application — dashboards, the stats Tables, hub/spoke routing, SSE slot pool, reqgrep, and the request-lifecycle pipeline. Use when something visible to users is wrong (stats not showing, dashboards stuck, SSE drops, requests not being assembled, jobs not running).
+description: Debugging the event-logger-nodes application — dashboards, the stats Ledgers, hub/spoke routing, SSE slot pool, reqgrep, and the request-lifecycle pipeline. Use when something visible to users is wrong (stats not showing, dashboards stuck, SSE drops, requests not being assembled, jobs not running).
 argument-hint: "[symptom]"
 ---
 
@@ -79,10 +79,9 @@ dump request-builder                       # every property of Request_Builder_N
 dump flame-builder                         # start here when flame or stats writes are missing
 dump completed:tee                         # the Tee's target list
 ls -a request-builder                      # every node whose NAME matches that glob
-command_node flame-stats:aggregate:config \
-    get urlmap:<hash>                      # a verb at <cwd>/<path>, cwd unchanged (aliases: command, cmd)
-request flame-stats:aggregate \
-    SMEMBERS 20 urltoken:2026-09-29-12:<server_key>:wombat  # a stats Table answers its protocol: GET, MGET, SMEMBERS, TOUCH, RM
+command_node flame-stats:url:config \
+    get <hash>                             # a verb at <cwd>/<path>, cwd unchanged (aliases: command, cmd)
+request flame-stats:url MGET <hash>        # the url Table answers its protocol: GET, MGET, TOUCH, RM
 request request-builder GET_CACHE          # in-flight depth (alias of request_node)
 request flame-builder GET_STATS            # stats accumulator + pending buckets
 cmd request-builder:config purge           # drop every in-flight request, reporting the count
@@ -91,12 +90,12 @@ cd request-builder:config                  # send later verbs TO that interprete
 
 Valid `ls` flags are `-a`, `-c`, `-l`, `-s` and `-t`, combinable as `-alst`. There is no `-o` flag: the connection model is `sink`/`target`, with no `owner`. That is also why `-a` is the form to reach for — without it the argument scopes by SINK, and every node in these graphs sinks into `_command_interpreter` and steers with `target`, so `ls request-builder` prints nothing at all.
 
-`GET_CACHE` and `GET_STATS` are the two TM_REQUEST verbs worth knowing, because they answer the questions the dashboards cannot:
+A stats Ledger answers `SUM`, `TOP` and `MEMBERS` to a structured query the prompt does not spell, so read one through its file with `sqlite3` (Stats schema, below). `GET_CACHE` and `GET_STATS` are the two TM_REQUEST verbs worth knowing, because they answer the questions the dashboards cannot:
 
 | Verb | Node | Reply |
 |---|---|---|
 | `GET_CACHE` | `request-builder` | `{ pending_count, oldest_rid, oldest_age_s, sample, line_counter }` |
-| `GET_STATS` | `flame-builder` | `{ stats_count, pending_url_count, intern_count, pending_buckets, last_flush_age_s, auto_tune_pending_count, is_hub, significant_events_count, narration }` |
+| `GET_STATS` | `flame-builder` | `{ stats_count, pending_url_count, intern_count, pending_buckets, last_settle_age_s, auto_tune_pending_count, is_hub, significant_events_count, narration }` |
 
 A `line_counter` of 0 on a busy site means the firehose Consumer is reading nothing. A climbing `oldest_age_s` means requests are stranding in flight — `Request_Builder_Node` evicts them 720 to 1080 seconds after their last line (three buckets rotating every 360 seconds, and the 720-second floor is what clears a worker's 595-second spawn request by two minutes) and writes them out with `error_status='T'`.
 
@@ -112,57 +111,50 @@ Scripted pivot sessions (`echo cmd | wp nodes cli performance.p0`) drain cleanly
 
 ## Stats schema
 
-The stats live in three SQLite Tables per flame-builder partition, which `flame-builder.tsl` declares: `flame-stats:aggregate`, `flame-stats:url` (the per-URL blob) and `flame-stats:url-fine` (the fine `urls`, `urlsrv`, `urlrank_s` and `urlhdr` buckets), each a file at `{base_dir}/tables/{table}.p{N}.sqlite` whose `kv` table holds `key`, `value` and `expires`. The builder asks them by message through its `Table_Client`; a `performance` verb mounts the ones it reads, read-only, for the rest of the request, and a mount opens only a file its worker wrote. Nothing evicts a row before its TTL, so a key a reply lacks is one no flush wrote, or one whose TTL passed. `Stats_Store` writes one keyspace per partition: each Table's namespace is `evlog:p{N}`, and the substrate's SQLite arm stores a key as `evlog:p{N}:{namespace}:…`, with no install scope and no salt, because the file already belongs to this install. A Table request names the part after `evlog:p{N}:`.
+The stats live in nine SQLite Ledgers every flame-builder partition appends to, and each URL's flame blob in one `flame-stats:url` Table per partition, all declared by `flame-builder.tsl` (decisions 1 and 36). A Ledger is one file, `{base_dir}/ledgers/{name}.sqlite`, whose `rows` table holds `( t, k, x, w, s, c0… )`: `t` the start of the five-minute bucket a request finished in, `k` the scope, `x` its member, `w` the partition that wrote the row, `s` that writer's sequence, and `c0` onward the declared columns in order. A set Ledger, `stats:names` or `stats:search`, holds `( t, k, x )` alone. The url Table is `{base_dir}/tables/flame-stats:url.p{N}.sqlite`, its `kv` table holding `key`, `value` and `expires`, a URL's blob under its bare hash. The builder asks them by message through its `Table_Client`; a `performance` verb mounts the ones it reads, read-only, for the rest of the request.
 
-Eighteen namespaces sit under that prefix. Per-server data has the server in the KEY as `server_key`, an FNV hash of the name, and no value packs several servers' data (decision 30):
+No row is updated. A settle appends one delta row per `( t, k, x )` its span touched, so a key read raw shows several rows for one bucket, one per settle and partition that saw it, and every read sums them. A row goes only when its hour-long segment passes the lifespan, or a flush empties the Ledger.
 
-| Namespace | Holds |
-|---|---|
-| `hourly_h` | Request totals, one key an hour holding its twelve five-minute slots, each `{ count, sum_ms, requests, sum_peak_mb }`: `count` and `sum_ms` the timed requests', `requests` and `sum_peak_mb` every non-worker request's |
-| `lb_h` / `lb_sh` | The leaderboard, ONE sum an hour, never slotted: global, `lb_h:{Y-m-d-H}`, and per server, `lb_sh:{Y-m-d-H}:{server_key}` |
-| `urls` | The URL index, one server's rows sharded by the first hex digit of the url_hash, `urls:{bucket}:{server_key}:{shard}`; each row carries its path at `ROW_PATH` and never its host |
-| `urls_h` | The URL index's coarse hourly tier, `urls_h:{Y-m-d-H}:{server_key}:{shard}` |
-| `urlsrv` / `urlsrv_h` | The server index, `urlsrv:{bucket}` / `urlsrv_h:{Y-m-d-H}` => `{ server_key => [ server_name, shards ] }`: which servers a bucket or hour holds URL rows for, and the bitmask of the shards each wrote (`Stats_Store::SRV_NAME`, `SRV_SHARDS`; bit `i` reader shard `dechex(i)`, bit `16 + i` worker shard `w{dechex(i)}`). Every read starts here, scoped or not, and asks only for the shards an entry names, so a server missing from it is a server no table shows, and a shard its entry omits is one no reader asks for. Past `MAX_SERVER_VALUES` (128) names, new servers' rows file under the `Other` server |
-| `urlmap` | `urlmap:{hash}` => `[ server_name, path ]`, rewritten with the URL's search words, at most once an hour per server, and living `<eln:stats_ttl>`, an hour and a flush from each write (`Stats_Store::filing_ttl()`); an unscoped `dump_url` reads it to find the hash's server |
-| `url` | The per-URL flame and profile blob, keyed `url:{hash}` |
-| `dim_h` / `url_dim_h` | Dimensional series, twelve slots an hour, each value a positional `[ count, sum_ms, sum_peak_mb, timed ]` row: `dim_h:{Y-m-d-H}:{dim}[:{server_key}]`, and one URL's, one row a URL-hour holding every dimension's slots under the dimension's name, `url_dim_h:{Y-m-d-H}:{hash}` |
-| `categories_h` / `url_cat_h` | Category series, twelve slots an hour, global or per server, and per URL |
-| `urlrank_s` / `urlrank_sh` | The writer's ranked top-N of one server's bucket or folded hour, `urlrank_s:{bucket}:{server_key}:{sort}:{order}`, one list per sort key and direction. A bucket's lists are rewritten at most once a minute (`Stats_Store::URL_PAGE_REFRESH_S`, which is also how long a folded page is cached), and each server's hour is marked `urlrank_sh:{Y-m-d-H}:done:{server_key}` in the same batch as its lists, whatever they answer. The site's lists, `urlrank_s:{bucket}:{sort}:{order}`, are the merge of every server's, written beside them, so a site page reads one list a key |
-| `urlhdr` / `urlhdr_h` | The writer's header record of one server's bucket or folded hour, `urlhdr:{bucket}:v5p14:{server_key}`, and the site's, `urlhdr:{bucket}:v5p14`, `v5p14` being `Stats_Store::HDR_SHAPE`, the layout's `HDR_VERSION` and `Url_Sketch::PRECISION`, written beside the lists for each list set, the set's key parts after the shape (`urlhdr:{bucket}:v5p14:w:{server_key}`): the request, timed, milliseconds and peak-memory sums over every row of the set, the overflow row included, a `Url_Sketch` of the URLs stored as the raw deflate of its registers, and the requests that timed out or fataled, positional under `Stats_Store::HDR_*`. `url_header()` sums them instead of folding the index; a record missing where the key's index names the scope, outside the open bucket and the one just closed, whose missing records make the reply `provisional` and uncached instead, sends the header back to the fold until the builder ranks the key, which the `url fold` span on a plain `urls` poll shows |
-| `urltoken` | The search index, `urltoken:{bucket}:{server_key}:{word}`, a set key read with `SMEMBERS`: one member per URL of that server whose path carries that whole word, two characters or more and cut to twelve, filed in the six-hour bucket `{bucket}` (`Y-m-d-H` at 00, 06, 12 or 18 UTC) at most once an hour, as the `url` blob's `filed` stamp records; its value the tick its name was last filed, and its expiry `Stats_Store::filing_ttl()`, the window, an hour and a flush, from that add; a search drops a member valued before the window's start. A search unions every bucket of the window. A word with more than `URL_SEARCH_MAX` (5,000) live members in one bucket answers `SMEMBERS` with an over-limit marker, and a word past it across its buckets narrows no search either, until enough of them expire. Unbucketed `urltoken:{server_key}:{word}` rows are read by nothing and age out |
+| Ledger | `k` | `x` |
+|---|---|---|
+| `stats:totals` | `site` | '' |
+| `stats:dims` | the dimension, or `{dim}:{server_key}` on a hub | the value |
+| `stats:categories` | `site` or `srv:{server_key}` | the category |
+| `stats:leaderboard` | `site` or `srv:{server_key}` | '' for the requests profiled, the category, or category TAB entry |
+| `stats:url-rows` | `r:{server_key}` for reader traffic, `w:{server_key}` for worker traffic | the URL |
+| `stats:url-dims` | `{dim}:{url_key}` | the value |
+| `stats:url-cats` | `url_key` | the category |
+| `stats:names` | `url:{hash}`, `servers:r`, `servers:w` | the URL a hash names; a server that filed rows of that family |
+| `stats:search` | a word of a URL's path | the URL |
 
-Both URL-index tiers shard a second time, by POPULATION: a `w` on the shard token (`urls:{bucket}:{server_key}:w3`, `urls_h:{Y-m-d-H}:{server_key}:w3`) carries worker traffic, which the URL table excludes unless a reader asks for it. A key read that comes back empty is often the wrong half of that split.
-
-Every namespace but `url` and `urlmap` carries a time token right after the namespace, before every scope part, so one bucket's or hour's keys in a namespace sit together in key order (`Stats_Store::key_at()`); those two key on a hash instead. `urltoken`'s time token is the six-hour bucket (`TOKEN_BUCKET_SECONDS`). The URL index's fine tier — `urls`, `urlsrv`, `urlrank_s` and `urlhdr` — keys by the five-minute bucket (`BUCKET_SECONDS` 300, `Y-m-d-H-i`), and every other time-keyed namespace by the hour (`Y-m-d-H`). A chart hour's value holds up to twelve slots keyed 0 to 11, slot `n` holding the bucket at minute `5n` and an unfilled one absent (`Stats_Store::slot_of()`), so one chart key read raw is an hour of that chart. The URL table reads the current hour's buckets and each older whole hour from `urls_h` (`read_plan()`); a chart reads the 25 hour keys ending now and draws the 288 slots ending at the current bucket.
+`server_key` is `Stats_Store::server_key()`, the FNV-1a hash of the server name, which `stats:names` turns back into names; `url_key` is the URL with its whitespace percent-encoded. A URL row filed under `w:` is worker traffic, which the URL table leaves out unless a reader asks for it, so a scoped read that comes back empty is often the wrong family. `stats:names` and `stats:search` file at the start of the hour, so a read of either opens on the hour its window starts in.
 
 ```bash
-# The stats Tables' files: one per Table per partition, beside SQLite's WAL.
-ls -la {base_dir}/tables/
+# The Ledger files, and the url Table's per partition, beside SQLite's WAL.
+ls -la {base_dir}/ledgers/ {base_dir}/tables/
 
-# memcache holds what is not stats: resolve a key without reading it, then
-# read one. `--porcelain` drops the key line, for piping into jq.
-wp nodes memcache get --key 'table:eln-rule-hooks:<rule-id>'
-wp nodes memcache get 'table:eln-rule-hooks:<rule-id>'
+# One URL's rows in one Ledger, a delta per settle; sum them to read the total.
+sqlite3 -readonly '{base_dir}/ledgers/stats:url-rows.sqlite' \
+  "SELECT t, k, w, s, c0 FROM rows WHERE x = 'https://example.test/about' ORDER BY t"
 
-# Slab-level inspection, straight at the daemon.
-echo "stats slabs" | nc <memcache-host> 11211
+# What each Ledger holds, its lifespan, file size and owning worker.
+wp nodes tables list
 
 # Rotate the install salt, orphaning every Newspack plugin's memcached and APCu
-# keys at once. The stats Tables' rows and the command sessions carry no salt
-# and stay. The rotation asks every live worker to restart, because each
-# memoizes the scope at boot; a restart that did not land warns beside the
-# success line, and that worker takes the new scope on its next spawn. This
-# plugin keeps no salt.
+# keys at once. The stats and the command sessions carry no salt and stay. The
+# rotation asks every live worker to restart, because each memoizes the scope
+# at boot; a restart that did not land warns beside the success line, and that
+# worker takes the new scope on its next spawn. This plugin keeps no salt.
 wp nodes memcache flush
 
-# Reset the statistics, and migrate a stats schema change: empty the three
-# Tables. A live owner flushes its own partition.
-wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine
+# Reset the statistics, and migrate a stats schema change. Each live worker
+# flushes a Ledger in place; the url Table's files are replaced.
+wp nodes tables flush stats:totals stats:dims stats:categories stats:leaderboard stats:url-rows stats:url-dims stats:url-cats stats:names stats:search flame-stats:url
 ```
 
-**Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_SERVER_VALUES=128` on the `server` axis wherever it is stored (`Stats_Store::dim_cap()`), `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50` and `MAX_LB_CATEGORIES=200`, the dimension and category caps applying per chart slot. Every value but a slotted chart hour is capped to `Stats_Store::ITEM_BUDGET` (900,000 bytes) by its producer before it is written, from an estimate for the configured serializer (`Stats_Store::overhead()`), so a URL shard has no row cap: it keeps the busiest rows the estimate admits. A `URL index write refused` line is therefore never a shard at its cap: an estimate is wrong, or the Table failed the write. The derived tiers carry two more: `URL_RANK_N=200` entries in a fine ranked list and `URL_RANK_N_HOUR=500` in an hour's. A word whose set holds more than `URL_SEARCH_MAX` (5,000) live URLs narrows no search; `TERM_WORD_MIN=2` and `TERM_WORD_MAX=12` bound the words filed, and a word longer than twelve is filed cut. Overflow folds into a synthetic `Other` bucket rather than dropping, so totals stay exact; the `total` pseudo-category survives capping.
+**Caps to remember**: `MAX_SERVER_VALUES=128` servers named over the last 24 hours, past which a settle files a server's rows under `Other` in every per-server key and on the `server` dimension; `SERVERS_READ_MAX=250`, past which a site `urls` page is refused and a settle files every server of its span under `Other`. A leaderboard category keeps its 50 slowest entries once it holds more than 100 in a bucket. A URL blob is capped to `Stats_Store::ITEM_BUDGET` (900,000 bytes) before it is written: its profile to half through `MAX_LB_CATEGORIES=200` and a byte estimate, each flame-tree copy to a quarter. A word filed for more than `URL_SEARCH_MAX` (5,000) URLs in the window narrows no search; `TERM_WORD_MIN=2` and `TERM_WORD_MAX=12` bound the words filed, and a longer word is filed cut. Nothing else is capped: `ua`, `ja4` and `from` keep every value.
 
-**Retention** is `max( Stats_Store::MIN_RETENTION_SECONDS, min_lifetime )` — 3600 floor, `min_lifetime` defaulting to 43200. Each Table declares one TTL: `flame-stats:aggregate` keeps `<eln:stats_ttl>`, the window floored at 25 hours (90,000); `flame-stats:url`, the per-URL blob, `<eln:stats_url_ttl>`, `max( 3600, window/24 )`; and `flame-stats:url-fine` `<eln:stats_url_fine_ttl>`, `min( window, FINE_TTL_SECONDS )` (7200). The Router's tick purges expired rows from each once a minute. At the default window the `url` blob's TTL is the 3600 floor, so a URL unseen for over an hour has lost its flame data while its other stats remain.
+**Retention** is `max( Stats_Store::MIN_RETENTION_SECONDS, min_lifetime )` — 3600 floor, `min_lifetime` defaulting to 43200. Each Ledger keeps `<eln:ledger_segments>` hour-long segments, the window in hours rounded up and never fewer than 25, and the Router tick drops a segment whole once it passes the lifespan; a row appended already past it drops and counts `past the lifespan` on the `stats writes` line. The url Table keeps `<eln:stats_url_ttl>`, `max( 3600, window/24 )`, so at the default window a URL unseen for over an hour has lost its flame data while its rows remain.
 
 **What memcache still holds.** Heavy log rules — hooks past `Rule_Set::INLINE_HOOK_LIMIT` (100) — tier their hook list out of the autoloaded option into the substrate Table namespace `eln-rule-hooks` (`table:eln-rule-hooks:<rule-id>`, TTL 3600, warmed on a miss from the non-autoloaded `newspack_event_logger_nodes_rule_hooks_<id>` option). It is a warm cache, not the system of record. The `urls` verb's page and header cache (`table:eln-urls-page:…`, 60 s) and the flame builder's auto-tune lock (`evlog:auto_disable_lock`, 5 s, through `Cache_Backend::shared_first()`) sit beside it. Outside this plugin: the SSE slot pool (host-scoped `sse:{slot}`) and each `Remote_Source_Node`'s status snapshot (site-scoped `remote:{node}:{spoke partition}`).
 
@@ -198,7 +190,7 @@ If a dashboard says "Connection lost", check in this order:
 4. The relevant service CI is mounted on `newspack_nodes/request_graph_ready`, not `rest_api_init`. Every dashboard verb is a service CI; this plugin has no `includes/rest/` directory.
 5. Browser station shows the REST URL it tried. Commands ride the unified `POST /wp-json/newspack-nodes/v1/command`; SSE rides `GET /wp-json/newspack-nodes/v1/messages/stream`.
 
-If panels are blank but the page renders, look for `performance: stats Tables did not mount` in the Error Log: a stats Table whose backend cannot open, which the mount raises as `Table_Unavailable` — `pdo_sqlite` missing, or a directory or file SQLite cannot open — answers no stats rather than an error. `php -m | grep pdo_sqlite` settles the first. The stats path is fail-soft — `Stats_Store` returns `[]`, `null` or `false` when a Table does not answer, so dashboards show "no data" instead of erroring.
+If panels are blank but the page renders, the stats path failed soft: `Stats_Store` reads a Ledger or url Table that refuses or does not answer as empty, and the `urls` reply says `provisional`. A url Table whose backend cannot open logs `performance: the url Tables did not mount` and answers no blob. A Ledger that cannot mount fails the verb instead, naming why — `pdo_sqlite` missing, a file another declaration made (`wp nodes tables flush` it), or a process running as root — so the panel shows the refusal. `php -m | grep pdo_sqlite` settles the first.
 
 ## SSE
 
@@ -266,15 +258,12 @@ If a hub is missing entries from a spoke, read that `remote:` snapshot — but r
 
 ## Reading the flame builder's narration
 
-The flame builder tells what it writes to its Tables and the hours it folds and re-ranks on the worker's own record, the `restapi` record of `/wp-json/newspack-nodes/v1/workers/spawn`: a step that takes time as a `stats *` span, and a summary or a decision as a `stats *` point event, a decision sitting inside the span of the step that made it. The architecture guide's firehose-entry section carries the table. They reach a record only where a rule covers that route. Every counter is in the `m` — a span's on its `(complete)` — a head then `<n> <name>` pairs joined by ` · `, zeros left out, because `m` is what a stored record keeps; a span's time is its `duration_ms`. Read them with `wp nodes reqgrep 'stats fold'`, or open a worker record in the Requests dashboard, where each span nests what it ran.
+The flame builder tells what its settles appended to the Ledgers and the url Table on the worker's own record, the `restapi` record of `/wp-json/newspack-nodes/v1/workers/spawn`: a point event once a minute, and a span at a clean stop. The architecture guide's firehose-entry section carries the table. They reach a record only where a rule covers that route. Every counter is in the `m` — a span's on its `(complete)` — a head then `<n> <name>` pairs joined by ` · `, zeros left out, because `m` is what a stored record keeps. Read them with `wp nodes reqgrep 'stats writes'`, or open a worker record in the Requests dashboard.
 
-- **`stats writes`**, a point, about ten a lifetime, one a minute, and one at the stop: `12 flushes · 120 writes · 12 unchanged` then everything else the flushes counted. A climbing `refused <namespace>` is a Table refusing writes; `failed chunks`, `url buckets dropped` or `unread url blobs` is a Table failing reads.
-- **`stats probe`**, a point, `hour derive (unfold)`: the roll-up reading again the hours a late write took off its memo.
-- **`stats fold`** and **`stats re-rank`**, a span per hour healed, its head naming the hour and the `cause`: `missing index` for a fold the roll-up runs, `missing shard` for one the stale ranking runs when an hour's index names a shard it no longer holds — a chart hour key is never a fold's cause, because every flush writes those itself — and `DONE missing` or `late write` for a re-rank. A steady worker heals zero to two; a cold backfill folds every hour of the window, each `missing index`; a catch-up tells up to two folds and two re-ranks a flush. A fold ending `unanswered` read nothing back and is tried again next flush. A re-rank that recurs every flush for one hour means its DONE marker is refused as fast as it is written.
-- **`stats rank close`**, a span per chunk of buckets ranked once one has closed, headed by the one bucket or `{first}..{last}`: its buckets, servers, rows and gap reads.
-- **`stats sweep`**, a span: what a clean stop ranked and left owed, the stop's flush nesting inside it.
+- **`stats writes`**, a point, about ten a lifetime, one a minute, and one at the stop: `12 settles · 4180 rows` then everything else the settles counted. A climbing `refused <ledger>` is a Ledger refusing appends — its rows are that span's loss; `past the lifespan` is rows the Ledger dropped as older than it keeps, which a replay of an old log produces; `unread url blobs` is the url Table failing a read and `refused url blobs` failing a write; `left out of the carry` is URL trees past `CARRY_URL_BYTES` that a non-interval checkpoint could not carry.
+- **`stats sweep`**, a span: a clean stop's auto-tune emit, with the stop's last `stats writes` nesting inside it and `stopped · 2 buckets carried` in its `m`, the buckets the stop's frame carries unsettled for the successor to settle.
 
-A steady worker lifetime tells about thirty lines, a span counted once; a worker catching up tells a few hundred. `GET_STATS`'s `narration` shows the counters the next lines and spans will carry.
+A steady worker lifetime tells about thirty lines across both builders, a span counted once. `GET_STATS`'s `narration` shows the counters the next line will carry.
 
 The request builder narrates on the same record, through the same `Narration` trait:
 

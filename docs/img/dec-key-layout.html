@@ -5,87 +5,55 @@
   .key .seg { display: flex; flex-direction: column; align-items: center; padding: 0 4px; }
   .key .seg .box { border-radius: 6px; padding: 8px 12px; font-size: 13.5px; font-weight: 700; white-space: nowrap; }
   .key .seg .lbl { font-family: Inter, Helvetica, Arial, sans-serif; font-size: 11px; color: #50575E; margin-top: 6px; text-align: center; line-height: 1.35; max-width: 170px; }
-  .key .seg.fixed .box { background: #F0F4FB; border: 1px solid #C3D3EC; color: #003DA5; }
+  .key .seg.time .box { background: #B32D2E; color: #fff; }
   .key .seg.ns .box { background: #003DA5; color: #fff; }
   .key .seg.mid .box { background: #fff; border: 1px solid #C3C4C7; color: #101517; }
-  .key .seg.time .box { background: #B32D2E; color: #fff; }
-  .key .colon { align-self: flex-start; padding-top: 8px; color: #787C82; font-size: 14px; }
+  .key .seg.fixed .box { background: #F0F4FB; border: 1px solid #C3D3EC; color: #003DA5; }
+  .key .sep { align-self: flex-start; padding-top: 8px; color: #787C82; font-size: 14px; }
   .grid { border: 1px solid #C3C4C7; border-radius: 9px; background: #fff; overflow: hidden; margin-top: 14px; }
   .grid table { border-collapse: collapse; width: 100%; }
   .grid th { background: #003DA5; color: #fff; font-size: 11.5px; font-weight: 700; text-align: left; padding: 7px 9px; }
-  .grid td { padding: 5px 9px; font-size: 11.8px; line-height: 1.4; vertical-align: top; border-top: 1px solid #EEF0F2; }
+  .grid td { padding: 6px 9px; font-size: 11.8px; line-height: 1.4; vertical-align: top; border-top: 1px solid #EEF0F2; }
   .grid td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #003DA5; white-space: nowrap; }
-  .grid td .m { color: #101517; }
-  .grid td.t { white-space: nowrap; color: #50575E; }
-  .grid td:nth-child(2) { white-space: nowrap; }
-  .grid tr.h td { background: #F6F7F7; }
-  .grid tr.nb td.k { color: #787C82; }
-  .cols { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+  .grid tr.set td { background: #F6F7F7; }
+  .cols { display: flex; gap: 12px; margin-top: 14px; }
   .cols .card { flex: 1; min-width: 0; }
-  .cols .card p .m { color: #101517; }
-  .caps { display: flex; gap: 6px; margin-top: 6px; }
-  .caps .c { flex: 1; min-width: 0; background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 6px; padding: 6px 8px; text-align: center; }
-  .caps .c .big { font-size: 17px; font-weight: 700; color: #003DA5; line-height: 1.2; }
-  .caps .c .k { font-size: 10.5px; color: #50575E; margin-top: 2px; line-height: 1.3; }
-  .caps .c .k .m { color: #101517; white-space: nowrap; }
 </style>
 <div class="sheet">
-  <h1>Every stat lives under one key shape, and the bucket or hour comes right after the namespace</h1>
-  <p class="sub">Three SQLite Tables per flame-builder partition hold the stats (decision 34). One rule, <span class="m">Stats_Store::key_at()</span>, puts the time right after the namespace, so everything one flush touches in a namespace shares the prefix <span class="m">{namespace}:{time}</span> and sits together in the Table's key order: on staging, 500 keys adjacent in key order read 8× faster than 500 scattered ones. One <span class="m">MGET</span> per Table still serves any mix through <span class="m">Stats_Store::bucket_get_multi()</span>, and retention is the row's own TTL rather than a hand-rolled cutoff pass.</p>
+  <h1>Every stat is a Ledger row: the scope in the key, the member beside it, the columns the Ledger declares</h1>
+  <p class="sub">Nine Ledgers hold the stats, each one SQLite file every flame-builder partition appends to (decisions 1 and 36). <span class="m">flame-builder.tsl</span> declares them and <span class="m">Stats_Store::LEDGER_COLUMNS</span> spells each declaration once in PHP. A read names its window and its keys, and the Ledger aggregates the rows it finds.</p>
 
   <div class="panel">
-    <header>The key, component by component</header>
+    <header>One row, component by component</header>
     <div class="key">
-      <div class="seg fixed"><div class="box">evlog</div><div class="lbl">the prefix</div></div><div class="colon">:</div>
-      <div class="seg fixed"><div class="box">p{N}</div><div class="lbl">the flame-builder partition that wrote it</div></div><div class="colon">:</div>
-      <div class="seg ns"><div class="box">{namespace}</div><div class="lbl">one of nineteen, below</div></div><div class="colon">:</div>
-      <div class="seg time"><div class="box">{Y-m-d-H[-i]}</div><div class="lbl">the five-minute bucket, or the hour, right after the namespace. Lexical order is chronological order</div></div><div class="colon">:</div>
-      <div class="seg mid"><div class="box">{scope…}</div><div class="lbl">a list set, a dimension, a server key, a shard or a url_hash: zero or more components</div></div>
+      <div class="seg time"><div class="box">t</div><div class="lbl">the start of the five-minute bucket the request finished in</div></div><div class="sep">,</div>
+      <div class="seg ns"><div class="box">k</div><div class="lbl">the scope: the site, a server, a dimension, a URL</div></div><div class="sep">,</div>
+      <div class="seg mid"><div class="box">x</div><div class="lbl">the member the scope holds: a value, a category, a URL</div></div><div class="sep">,</div>
+      <div class="seg fixed"><div class="box">w</div><div class="lbl">the partition that wrote the row</div></div><div class="sep">,</div>
+      <div class="seg fixed"><div class="box">s</div><div class="lbl">a sequence of the writer's, one per row</div></div><div class="sep">,</div>
+      <div class="seg mid"><div class="box">c0 … cN</div><div class="lbl">the columns the Ledger declares, in order</div></div>
     </div>
-    <div style="padding:6px 14px 12px;font-size:12px;color:#50575E;line-height:1.45">Each Table's <span class="m">make_node</span> line in <span class="m">flame-builder.tsl</span> names <span class="m">evlog:p&lt;partition&gt;</span> as its namespace, and <span class="m">Stats_Store::table_for()</span> is the one map from a namespace to its Table.</div>
+    <div style="padding:6px 14px 12px;font-size:12px;color:#50575E;line-height:1.45">A settle appends <span class="m">[ t, k, x, columns ]</span>; the Ledger adds <span class="m">w</span> and <span class="m">s</span> and stores the row under <span class="m">PRIMARY KEY ( t, k, x, w, s )</span>. A second row for one <span class="m">( t, k, x )</span> is another settle's delta, and every read sums them.</div>
   </div>
 
   <div class="grid">
     <table>
-      <tr><th>Namespace</th><th>Key after the prefix</th><th>Value</th><th>TTL</th></tr>
-      <tr><td class="k">hourly_h</td><td><span class="m">hourly_h:{Y-m-d-H}</span></td><td>request totals, twelve five-minute slots (decision 35), each <span class="m">count</span> and <span class="m">sum_ms</span> of the timed requests, <span class="m">requests</span> and <span class="m">sum_peak_mb</span> of every one; no server dimension, workers excluded</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">dim_h</td><td><span class="m">dim_h:{Y-m-d-H}:{dimension}[:{server_key}]</span></td><td>dimensional series, twelve slots, a positional <span class="m">DIM_SUMS</span> row per value</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">categories_h</td><td><span class="m">categories_h:{Y-m-d-H}[:{server_key}]</span></td><td>category series, twelve slots; each entry a positional <span class="m">CAT_SUMS</span> triple with <span class="m">CAT_MS</span> rounded to 3 places; a synthetic <span class="m">total</span> category held out of every ranking</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">url_dim_h</td><td><span class="m">url_dim_h:{Y-m-d-H}:{hash}</span></td><td>one row a URL-hour, <span class="m">{ dimension =&gt; twelve slots }</span> for every dimension but <span class="m">server</span>, so a flush writes a URL once an hour</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">url_cat_h</td><td><span class="m">url_cat_h:{Y-m-d-H}:{hash}</span></td><td>one URL's category series, twelve slots</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">url_row_h</td><td><span class="m">url_row_h:{Y-m-d-H}:{server_key}:{hash}</span></td><td>one URL's index row under one server, each family's row in the slot of its bucket, read by key</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">lb_h</td><td><span class="m">lb_h:{Y-m-d-H}</span></td><td>the global leaderboard, ONE sum an hour, never slotted: the heaviest value the dashboard reads. <span class="m">MAX_LB_CATEGORIES</span> 200 by <span class="m">sum_time</span>, fewer where their bytes bind</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">lb_sh</td><td><span class="m">lb_sh:{Y-m-d-H}:{server_key}</span></td><td>the per-server leaderboard, under <span class="m">lb_h</span>'s caps</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">urls</td><td><span class="m">urls:{bucket}:{server_key}:{shard}</span></td><td>the URL index, one server's rows (decision 30) in sixteen shards by the first hex digit of the url_hash, and a <span class="m">w</span>-prefixed shard family (<span class="m">urls:{bucket}:{server_key}:w3</span>) for worker traffic; positional rows (decision 18) carrying the 12-char hash and the path, never the host. Capped by estimated bytes</td><td class="t"><span class="m">&lt;eln:stats_url_fine_ttl&gt;</span></td></tr>
-      <tr class="h"><td class="k">urls_h</td><td><span class="m">urls_h:{Y-m-d-H}:{server_key}:{shard}</span></td><td>its COARSE tier, derived (decision 17)</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">urlsrv</td><td><span class="m">urlsrv:{bucket}</span></td><td><span class="m">{ server_key =&gt; [ server_name, shards ] }</span>: every server holding URL rows in the bucket, beside the bitmask of the shards it wrote, which every walk reads first, because the keyspace cannot list itself, and asks only for the shards an entry names. <span class="m">MAX_SERVER_VALUES</span> 128 names; past it, rows file under the <span class="m">Other</span> server</td><td class="t"><span class="m">&lt;eln:stats_url_fine_ttl&gt;</span></td></tr>
-      <tr class="h"><td class="k">urlsrv_h</td><td><span class="m">urlsrv_h:{Y-m-d-H}</span></td><td>its COARSE tier, the 128 busiest, each naming all 32 shards</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">urlrank_s</td><td><span class="m">urlrank_s:{bucket}:[{set}:]{server_key}:{sort}:{order}</span></td><td>one server's ranked top <span class="m">URL_RANK_N</span> 200 rows of the bucket, one list per <span class="m">URL_SORTS</span> key and <span class="m">URL_ORDERS</span> direction and per list set, the reader rows under no set part and <span class="m">e</span>, <span class="m">w</span> and <span class="m">w:e</span> for the errored, worker and errored worker rows: positional <span class="m">[ hash, row ]</span> entries (decision 18); and the site's, <span class="m">urlrank_s:{bucket}:[{set}:]{sort}:{order}</span>, which the writer ranks in the same batch, so a site page reads one list a key (decision 28)</td><td class="t"><span class="m">&lt;eln:stats_url_fine_ttl&gt;</span></td></tr>
-      <tr class="h"><td class="k">urlrank_sh</td><td><span class="m">urlrank_sh:{Y-m-d-H}:[{set}:][{server_key}:]{sort}:{order}</span></td><td>the same on the coarse tier, <span class="m">URL_RANK_N_HOUR</span> 500 entries, and each server's DONE marker <span class="m">urlrank_sh:{Y-m-d-H}:done:{server_key}</span></td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr><td class="k">urlhdr</td><td><span class="m">urlhdr:{bucket}:v5p14:[{set}:][{server_key}]</span></td><td>the header record beside each set's lists, each server's and the site's: four sums over every row of the set, whether an overflow row was among them, a <span class="m">Url_Sketch</span> of the URLs stored deflated, and the requests that timed out or fataled, positional under <span class="m">HDR_*</span>. <span class="m">v5p14</span> is <span class="m">HDR_SHAPE</span>, so a record of another layout or precision reads as missing</td><td class="t"><span class="m">&lt;eln:stats_url_fine_ttl&gt;</span></td></tr>
-      <tr class="h"><td class="k">urlhdr_h</td><td><span class="m">urlhdr_h:{Y-m-d-H}:v5p14:[{set}:][{server_key}]</span></td><td>its COARSE tier, written beside the hour's lists</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span></td></tr>
-      <tr class="nb"><td class="k">urlmap</td><td><span class="m">urlmap:{hash}</span></td><td><span class="m">[ server_name, path ]</span>, written with the URL's search words, at most once an hour per server; readers resolve only the hashes they display, and an unscoped <span class="m">dump_url</span> reads it to find the hash's server</td><td class="t"><span class="m">&lt;eln:stats_ttl&gt;</span> + 3,605 s, from its write</td></tr>
-      <tr class="nb"><td class="k">url</td><td><span class="m">url:{hash}</span></td><td>the per-URL flame and profile blob: profiles capped at half the budget, each tree copy pruned lightest leaf first</td><td class="t"><span class="m">&lt;eln:stats_url_ttl&gt;</span></td></tr>
-      <tr class="nb"><td class="k">urltoken</td><td><span class="m">urltoken:{bucket}:{server_key}:{word}</span></td><td>a SET key: one member per URL of one server whose path carries a word of 2 characters or more, filed under the whole word cut to 12 in its six-hour bucket, at most once an hour, the member its hash and its value the second its name was last filed. A search reads <span class="m">URL_SEARCH_MAX</span> 5,000 members a set from every bucket of the window, and a set holding more, or buckets holding more together, narrow nothing until enough of the members expire</td><td class="t">each member the window + 3,605 s, from its last add</td></tr>
+      <tr><th>Ledger</th><th>k</th><th>x</th><th>Columns</th></tr>
+      <tr><td class="k">stats:totals</td><td class="m">site</td><td>''</td><td class="m">count, sum_ms, requests, sum_peak_mb</td></tr>
+      <tr><td class="k">stats:dims</td><td>the dimension, or <span class="m">{dim}:{server_key}</span></td><td>the value</td><td class="m">count, sum_ms, sum_peak_mb, timed</td></tr>
+      <tr><td class="k">stats:categories</td><td><span class="m">site</span> or <span class="m">srv:{server_key}</span></td><td>the category</td><td class="m">sum_time, sum_count, samples</td></tr>
+      <tr><td class="k">stats:leaderboard</td><td><span class="m">site</span> or <span class="m">srv:{server_key}</span></td><td>'' for the requests profiled, the category, or category TAB entry</td><td class="m">samples, sum_time, sum_count</td></tr>
+      <tr><td class="k">stats:url-rows</td><td><span class="m">r:{server_key}</span> reader traffic, <span class="m">w:{server_key}</span> worker traffic</td><td>the URL</td><td>nine sums, then <span class="m">min_ms:min</span>, <span class="m">max_ms:max</span>, <span class="m">max_peak_mb:max</span>, <span class="m">last_seen:max</span></td></tr>
+      <tr><td class="k">stats:url-dims</td><td class="m">{dim}:{url_key}</td><td>the value</td><td class="m">count, sum_ms, sum_peak_mb, timed</td></tr>
+      <tr><td class="k">stats:url-cats</td><td class="m">{url_key}</td><td>the category</td><td class="m">sum_time, sum_count, samples</td></tr>
+      <tr class="set"><td class="k">stats:names</td><td><span class="m">url:{hash}</span>, <span class="m">servers:r</span>, <span class="m">servers:w</span></td><td>the URL a hash names; a server that filed rows</td><td>none: a set, filed at the hour's start</td></tr>
+      <tr class="set"><td class="k">stats:search</td><td>a word of a URL's path</td><td>the URL</td><td>none: a set, filed at the hour's start</td></tr>
     </table>
   </div>
 
   <div class="cols">
-    <div class="card">
-      <h3>Three Tables, three TTLs, one window</h3>
-      <p>The window is <span class="m">Config::stats_retention_seconds()</span>: the substrate's <span class="m">min_lifetime</span> (default 43,200) floored at <span class="m">MIN_RETENTION_SECONDS</span> = 3,600. <span class="m">flame-stats:aggregate</span> holds every namespace but two groups for <span class="m">&lt;eln:stats_ttl&gt;</span>, <span class="m">max( 90,000, window )</span>, so every hour key a chart reads is stored; a <span class="m">urltoken</span> member and a <span class="m">urlmap</span> name alone state their own lifetime, as long as their readers read and an hour and a flush more: the window for a member, the Table's TTL for a name. <span class="m">flame-stats:url-fine</span> holds a FINE <span class="m">urls</span>, <span class="m">urlsrv</span>, <span class="m">urlrank_s</span> or <span class="m">urlhdr</span> bucket for <span class="m">&lt;eln:stats_url_fine_ttl&gt;</span>, <span class="m">min( window, FINE_TTL_SECONDS = 7,200 )</span>, because the coarse tier answers for everything behind the current hour: 24 buckets a shard. <span class="m">flame-stats:url</span> holds the per-URL blob for <span class="m">&lt;eln:stats_url_ttl&gt;</span>, <span class="m">max( 3,600, window / 24 )</span>.</p>
-    </div>
-    <div class="card">
-      <h3>Every value but a slotted chart hour is capped to <span class="m">ITEM_BUDGET</span> before it is written, and overflow folds into <span class="m">Other</span></h3>
-      <div class="caps">
-        <div class="c"><div class="big">20</div><div class="k"><span class="m">MAX_DIM_VALUES</span> per dimension slot</div></div>
-        <div class="c"><div class="big">128</div><div class="k"><span class="m">MAX_SERVER_VALUES</span>: the <span class="m">server</span> axis, wherever it is stored (<span class="m">dim_cap()</span>)</div></div>
-        <div class="c"><div class="big">10</div><div class="k"><span class="m">MAX_URL_DIM_VALUES</span> per URL dimension slot</div></div>
-        <div class="c"><div class="big">50</div><div class="k"><span class="m">MAX_CAT_VALUES</span> per slot; the <span class="m">total</span> pseudo-category is preserved before capping</div></div>
-        <div class="c"><div class="big">200</div><div class="k"><span class="m">MAX_LB_CATEGORIES</span> per leaderboard hour or URL profile</div></div>
-        <div class="c"><div class="big">900,000</div><div class="k"><span class="m">ITEM_BUDGET</span> bytes, uncompressed: a URL shard keeps the busiest rows its estimate admits</div></div>
-      </div>
-      <p style="margin-top:8px">A slotted chart hour takes no byte cap: SQLite stores a row of any size, and its count caps apply per slot (decision 35). The server ceiling is 128 rather than 20 because 20 binds on a real fleet: it folds every spoke past the twentieth into <span class="m">Other</span>, and a 24-spoke fleet loses four sites from its own picker. Reading the axis as the fleet and leaving it uncapped is wrong: <span class="m">server_name</span> is <span class="m">SERVER_NAME</span>, under Apache's default <span class="m">UseCanonicalName Off</span> the client's Host header, so a catch-all vhost makes it visitor input. Decision 30 owns the reopen condition. A shard is the one component naming no dimension of the data: physical partitioning, because one blob per server per bucket is the pressure every cap here is sized against.</p>
-    </div>
+    <div class="card"><h3><span class="m">server_key()</span></h3><p>The FNV-1a hash of the server name, so a Host header puts no bytes of its own into a key. <span class="m">stats:names</span> turns it back into a name.</p></div>
+    <div class="card"><h3><span class="m">url_key()</span></h3><p>The URL with its whitespace percent-encoded, since a key holds none, and nothing else changed.</p></div>
+    <div class="card"><h3>The flame blob is not a row</h3><p>The <span class="m">flame-stats:url</span> Table, one per partition, holds each URL's flame and profile under its hash, capped to <span class="m">ITEM_BUDGET</span>, 900,000 bytes, by its producer.</p></div>
   </div>
 </div>

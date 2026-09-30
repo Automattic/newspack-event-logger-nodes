@@ -920,17 +920,22 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * One URL's display row in the given scope, or null when the window
 	 * holds none: the reader traffic first, and the worker traffic only when
 	 * it has none, so a URL served both ways shows the row the default table
-	 * shows, and a job-only URL still opens.
+	 * shows, and a job-only URL still opens. A read a Ledger left unanswered
+	 * is no answer, so it throws rather than call the URL missing.
 	 *
 	 * @param string      $hash   12-char URL hash.
 	 * @param string      $server Reporting server to scope to; '' reads every server.
 	 * @param Stats_Store $store  The reply's store.
 	 * @param int         $now    The reply's clock, read once at its entry.
 	 * @return array<string,mixed>|null
+	 * @throws \RuntimeException When a Ledger the row reads did not answer.
 	 */
 	private static function row( string $hash, string $server, Stats_Store $store, int $now ): ?array {
 		[ $from, $to ] = self::window( $now );
 		$url           = $store->url_of( $hash, $from, $to );
+		if ( null === $url && $store->unanswered() ) {
+			throw self::names_unanswered( $hash );
+		}
 		if ( null === $url ) {
 			return null;
 		}
@@ -943,12 +948,16 @@ class Performance_CI_Node extends Service_CI_Node {
 				return self::project_row( $row ) + [ 'requests_per_second' => self::recent_rate( $rated, $recent ) ];
 			}
 		}
+		if ( $store->unanswered() ) {
+			throw new \RuntimeException( \esc_html( Stats_Store::LEDGER_NAMES . ' or ' . Stats_Store::LEDGER_URL_ROWS . " did not answer for URL {$hash}; ask again" ) );
+		}
 		return null;
 	}
 
 	/**
 	 * The servers a scope reads: the one named, or every server the names
-	 * Ledger holds for the window, worker traffic's too with `$workers`.
+	 * Ledger holds for the window, worker traffic's too with `$workers`;
+	 * none when the Ledger did not answer, which makes the page provisional.
 	 *
 	 * @param Stats_Store $store   The reply's store.
 	 * @param string      $server  Reporting server; '' is the site.
@@ -961,9 +970,11 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( '' !== $server ) {
 			return [ $server ];
 		}
-		return $store->servers( $workers, ...self::window( $now ) ) ?? throw new \RuntimeException(
-			\esc_html( \sprintf( 'more than %d servers filed rows in the window; pick one', Stats_Store::SERVERS_READ_MAX ) )
-		);
+		$servers = $store->servers( $workers, ...self::window( $now ) );
+		if ( false === $servers ) {
+			throw new \RuntimeException( \esc_html( \sprintf( 'more than %d servers filed rows in the window; pick one', Stats_Store::SERVERS_READ_MAX ) ) );
+		}
+		return $servers ?? [];
 	}
 
 	/**
@@ -1318,7 +1329,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * No index walk: the aggregate blob, null when the URL has none, and then
 	 * the URL the names Ledger files the hash under, '' when the window holds
-	 * none. The blob lives a 24th of the window where the row lives all of
+	 * none; a names read left unanswered refuses, as `row()` does. The blob
+	 * lives a 24th of the window where the row lives all of
 	 * it, so a URL with no blob is routine, and each caller decides what
 	 * answers then; the name is read only once there is a blob to answer
 	 * with. The aggregate keeps no per-server split, so no server narrows
@@ -1328,6 +1340,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param Stats_Store  $store   The reply's store, over the names and the url Tables.
 	 * @param int          $now     The reply's clock, read once at its entry.
 	 * @return array{descriptor:string, hash:string, name:string, aggregate:?array<array-key,mixed>}|null
+	 * @throws \RuntimeException When the names Ledger did not answer.
 	 */
 	private static function url_in_context( array $context, Stats_Store $store, int $now ): ?array {
 		$descriptor = self::descriptor_of( $context, 'url' );
@@ -1336,12 +1349,27 @@ class Performance_CI_Node extends Service_CI_Node {
 			return null;
 		}
 		$aggregate = $store->url_stats( $parsed['id'] );
+		$name      = null === $aggregate ? '' : $store->url_of( $parsed['id'], ...self::window( $now ) );
+		if ( null === $name && $store->unanswered() ) {
+			throw self::names_unanswered( $parsed['id'] );
+		}
 		return [
 			'descriptor' => $descriptor,
 			'hash'       => $parsed['id'],
-			'name'       => null === $aggregate ? '' : $store->url_of( $parsed['id'], ...self::window( $now ) ) ?? '',
+			'name'       => $name ?? '',
 			'aggregate'  => $aggregate,
 		];
+	}
+
+	/**
+	 * The refusal a verb answering for one URL gives when the names Ledger
+	 * did not answer which URL a hash names: a URL it cannot resolve is not
+	 * a URL that is missing (decision 3).
+	 *
+	 * @param string $hash 12-char URL hash.
+	 */
+	private static function names_unanswered( string $hash ): \RuntimeException {
+		return new \RuntimeException( \esc_html( Stats_Store::LEDGER_NAMES . " did not answer which URL {$hash} names; ask again" ) );
 	}
 
 	/**
@@ -2088,9 +2116,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Schema-driven dispatch: each verb is declared once in
 	 * `commands[]` carrying its `handler`. The inherited Service_CI_Node ctor
 	 * builds the commands table from this schema. Stats-reading verbs build a
-	 * per-partition Stats_Store over the mounted Tables; when the mount throws
-	 * `Table_Unavailable` they answer with empty or zeroed shapes. Disk-walking
-	 * verbs work regardless.
+	 * Stats_Store over the Ledgers they mount, and every partition's url Table
+	 * where they read a blob. A Ledger that cannot mount fails the verb; a url
+	 * Table whose backend cannot open (`Table_Unavailable`) reads as no blob.
+	 * Disk-walking verbs work regardless.
 	 *
 	 * The substrate binds each verb's tokens against its `args` before the
 	 * handler runs, so a handler reads `$args['<name>']` typed and defaulted,
@@ -2316,9 +2345,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				$store         = $self->stats_store( [ Stats_Store::LEDGER_NAMES, Stats_Store::LEDGER_URL_DIMS ], false );
 				[ $from, $to ] = self::chart_window( $now );
 				$url           = $store->url_of( $hash, ...self::window( $now ) );
+				$series        = self::compact_dim_series( self::by_bucket_key( null === $url ? [] : $store->url_breakdown( $url, $breakdown, $from, $to ) ) );
 				return [
-					'breakdown_time_series' => self::compact_dim_series( self::by_bucket_key( null === $url ? [] : $store->url_breakdown( $url, $breakdown, $from, $to ) ) ),
+					'breakdown_time_series' => $series,
 					'slots'                 => self::chart_slots( $now ),
+					// Short of a read that went unanswered, never "no data".
+					'provisional'           => $store->unanswered(),
 				];
 					},
 				],
