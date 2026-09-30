@@ -326,7 +326,7 @@ class Config {
 		// tokens in a target line, the analyzer's `^(set|add)_\w*target$`,
 		// so a topology naming <eln:is_hub> there would recurse through here
 		// until PHP died. flame-builder.tsl carries `set_is_hub <eln:is_hub>`,
-		// which misses that match, and eight `add_ledger_target` lines, which
+		// which misses that match, and nine `add_ledger_target` lines, which
 		// meet it and are spared only because each names a literal Ledger:
 		// one token away. Claiming "not a hub" while deriving breaks the cycle.
 		if ( self::$deriving_is_hub ) {

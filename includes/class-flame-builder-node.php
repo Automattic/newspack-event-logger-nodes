@@ -1360,10 +1360,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * The span's rows, by Ledger: each bucket's measurements, a row apiece
-	 * at the bucket's start, and the names its URLs and servers file in
-	 * the bucket's hour, each once. A bucket's scopes without a request to
-	 * count — its site totals and leaderboard on worker traffic alone —
-	 * file none.
+	 * at the bucket's start, and the names its URLs and servers and the
+	 * words of its URLs file in the bucket's hour, each once. A bucket's
+	 * scopes without a request to count — its site totals and leaderboard
+	 * on worker traffic alone — file none.
 	 *
 	 * Every server files under the name `admitted()` gave it.
 	 *
@@ -1375,6 +1375,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$as    = static fn ( string $server ): string => $admitted[ $server ] ?? $server;
 		$rows  = [];
 		$names = [];
+		$words = [];
 		foreach ( $pending as $t => $acc ) {
 			$hour   = $t - $t % Stats_Store::HOUR_SECONDS;
 			$hourly = $acc['hourly'];
@@ -1415,8 +1416,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				}
 			}
 			foreach ( \array_keys( $bucket_urls ) as $url ) {
-				$hash_key                       = Stats_Store::hash_key( Log_Manager::url_hash( Core::as_string( $url ) ) );
-				$names[ "{$hour} {$hash_key}" ] = [ $hour, $hash_key, Core::as_string( $url ), [] ];
+				$url                            = Core::as_string( $url );
+				$hash_key                       = Stats_Store::hash_key( Log_Manager::url_hash( $url ) );
+				$names[ "{$hour} {$hash_key}" ] = [ $hour, $hash_key, $url, [] ];
+				foreach ( Stats_Store::url_words( $url ) as $word ) {
+					$words[ "{$hour} {$word} {$url}" ] = [ $hour, $word, $url, [] ];
+				}
 			}
 			foreach ( $acc['url_dim'] as $url => $by_dim ) {
 				foreach ( $by_dim as $dim => $values ) {
@@ -1431,7 +1436,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				}
 			}
 		}
-		$rows[ Stats_Store::LEDGER_NAMES ] = \array_values( $names );
+		$rows[ Stats_Store::LEDGER_NAMES ]  = \array_values( $names );
+		$rows[ Stats_Store::LEDGER_SEARCH ] = \array_values( $words );
 		return $rows;
 	}
 
@@ -1440,7 +1446,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * names Ledger holds it over a reader's window or that window has room,
 	 * and `Stats_Store::OTHER_KEY` once `MAX_SERVER_VALUES` others are held.
 	 * `Other` holds no slot. Two partitions settling at once each admit up
-	 * to the room they read.
+	 * to the room they read. A window holding more servers than
+	 * `Stats_Store::servers()` names has no room, and every server of the
+	 * span files under `Other`.
 	 *
 	 * @param array<int,Bucket_Acc> $pending The span's buckets, by start.
 	 * @param Stats_Store           $store   The store the span appends to.
@@ -1457,8 +1465,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		if ( [] === $servers ) {
 			return [];
 		}
-		$to   = Stats_Store::bucket_start( $now ) + Stats_Store::BUCKET_SECONDS;
-		$held = \array_fill_keys( $store->servers( true, $to - Stats_Store::MAX_READ_BUCKETS * Stats_Store::BUCKET_SECONDS, $to ), true );
+		$to     = Stats_Store::bucket_start( $now ) + Stats_Store::BUCKET_SECONDS;
+		$listed = $store->servers( true, $to - Stats_Store::MAX_READ_BUCKETS * Stats_Store::BUCKET_SECONDS, $to );
+		if ( null === $listed ) {
+			return \array_fill_keys( \array_keys( $servers ), Stats_Store::OTHER_KEY );
+		}
+		$held = \array_fill_keys( $listed, true );
 		unset( $held[ Stats_Store::OTHER_KEY ] );
 		$out = [];
 		foreach ( \array_keys( $servers ) as $server ) {
@@ -1865,21 +1877,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Name one Ledger a settle appends to, refused unless it is one.
-	 *
-	 * @param string $ledger The Ledger, as `flame-builder.tsl` declares it.
-	 * @throws \InvalidArgumentException For a Ledger no settle writes.
-	 */
-	public function add_ledger_target( string $ledger ): void {
-		if ( ! \in_array( $ledger, self::written_ledgers(), true ) ) {
-			throw new \InvalidArgumentException( "add_ledger_target: '{$ledger}' is not a Ledger a settle appends to" );
-		}
-		if ( ! \in_array( $ledger, $this->ledger_targets, true ) ) {
-			$this->ledger_targets[] = $ledger;
-		}
-	}
-
-	/**
 	 * The Table a verb names, refused unless it is the one the readers mount
 	 * for that role: `Performance_CI_Node` mounts `Stats_Store::TABLE_URL`,
 	 * so a write under any other name is one no dashboard reads.
@@ -1959,6 +1956,21 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
+	 * Name one Ledger a settle appends to, refused unless it is one.
+	 *
+	 * @param string $ledger The Ledger, as `flame-builder.tsl` declares it.
+	 * @throws \InvalidArgumentException For a Ledger no settle writes.
+	 */
+	public function add_ledger_target( string $ledger ): void {
+		if ( ! isset( Stats_Store::LEDGER_COLUMNS[ $ledger ] ) ) {
+			throw new \InvalidArgumentException( "add_ledger_target: '{$ledger}' is not a Ledger a settle appends to" );
+		}
+		if ( ! \in_array( $ledger, $this->ledger_targets, true ) ) {
+			$this->ledger_targets[] = $ledger;
+		}
+	}
+
+	/**
 	 * The store `configure_stats` builds: each Ledger `add_ledger_target`
 	 * named, under its own name, which the worker graph's Ledger answers
 	 * to, and the url Table `set_url_target` named.
@@ -1971,21 +1983,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		if ( '' === $this->url_target ) {
 			throw new \LogicException( 'configure_stats: no Table named by set_url_target' );
 		}
-		$unnamed = \array_diff( self::written_ledgers(), $this->ledger_targets );
+		$unnamed = \array_diff( \array_keys( Stats_Store::LEDGER_COLUMNS ), $this->ledger_targets );
 		if ( [] !== $unnamed ) {
 			throw new \LogicException( 'configure_stats: no Ledger named by add_ledger_target: ' . \implode( ', ', $unnamed ) );
 		}
 		return new Stats_Store( $this->client, \array_combine( $this->ledger_targets, $this->ledger_targets ), [ $this->url_target ] );
-	}
-
-	/**
-	 * The Ledgers a settle appends to: every stats Ledger but the word
-	 * index, which nothing writes yet.
-	 *
-	 * @return list<string>
-	 */
-	private static function written_ledgers(): array {
-		return \array_keys( \array_diff_key( Stats_Store::LEDGER_COLUMNS, [ Stats_Store::LEDGER_SEARCH => true ] ) );
 	}
 
 	/**

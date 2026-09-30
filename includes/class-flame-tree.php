@@ -54,8 +54,8 @@ final class Flame_Tree {
 	/** `Performance_CI_Node`'s cache of one scope's URL header, beside its ranked pages. */
 	public const URL_HEADER_CACHE = 'url header cache';
 
-	/** `Performance_CI_Node`'s read of every URL of a scope. */
-	public const URL_SCOPE_READ = 'url scope read';
+	/** `Performance_CI_Node`'s read of a searched page: the words' URLs, then their rows. */
+	public const URL_SEARCH_READ = 'url search read';
 
 	/**
 	 * The flame builder's routine writes, one summary a
@@ -83,8 +83,9 @@ final class Flame_Tree {
 	 * (`--np-chart-*`), and the `Findings` kind of a span no rule edit
 	 * reaches inside — `url_read` for a step of the URL read, `upkeep` for
 	 * a builder's own work — or null for a point event. A page cache span
-	 * holds the header cache's or, under a search, the scope read's, so the
-	 * three URL-read spans take three unlike steps. The two builders' names
+	 * holds the header cache's or, under a search, the `url search read` —
+	 * the index lookup and its rows — so the three URL-read spans take
+	 * three unlike steps. The two builders' names
 	 * share steps by what they say — cobalt for a rollup, light cobalt for a
 	 * checkpoint, emerald for a restore, the warning step for an expiry —
 	 * and the flame builder's sweep, which holds its last rollup, takes
@@ -95,7 +96,7 @@ final class Flame_Tree {
 	private const PLATFORM = [
 		self::URL_PAGE_CACHE      => [ '#003DA5', 'url_read' ],
 		self::URL_HEADER_CACHE    => [ '#BD8600', 'url_read' ],
-		self::URL_SCOPE_READ      => [ '#117644', 'url_read' ],
+		self::URL_SEARCH_READ     => [ '#117644', 'url_read' ],
 		self::STATS_WRITES        => [ '#003DA5', null ],
 		self::STATS_SWEEP         => [ '#003DA5', 'upkeep' ],
 		self::REQUESTS_WRITES     => [ '#003DA5', null ],
