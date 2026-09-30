@@ -21,6 +21,9 @@
  *
  * Requests that never complete are not lost: the cache's timed bucket
  * rotation evicts them, and eviction writes them out with `error_status='T'`.
+ * That rotation runs on the STREAM clock (`stream_clock()`), the newest entry
+ * stamp consumed, so a reprocess of the firehose times a request out, and
+ * measures it, as live traffic did; a quiet builder follows the wall.
  *
  * What it does is told on its worker's own record through `Narration`. The
  * restore is a span, and so is a checkpoint once what it carries has moved.
@@ -129,6 +132,13 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	private const COMPLETION_COLUMNS = [ [ 44, 10 ], [ 54, 8 ] ];
 
 	/**
+	 * The two columns a line's record POSITION is read from: its segment, then
+	 * its byte offset in that segment. One partition's writer appends them in
+	 * order, so they grow down the index whatever time the line carries.
+	 */
+	private const POSITION_COLUMNS = [ [ 65, 6 ], [ 71, 10 ] ];
+
+	/**
 	 * The keywords a request builder's narration is written under. Folded as
 	 * any line is, but no traffic: counted, a builder reading its own record
 	 * back, or two builders each reading the other's, tell for ever.
@@ -158,8 +168,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * rotations: 720 seconds, two minutes past a worker's 595-second lifetime, which
 	 * is what lets its spawn request land complete rather than timed out.
 	 * That floor holds while fewer than `bucket_size` requests are in flight
-	 * at once; a full newest bucket rotates early. The grid is wall clock and
-	 * the lifetime monotonic, so a clock step eats into the margin.
+	 * at once; a full newest bucket rotates early. The grid is the stream
+	 * clock and the lifetime monotonic, so a stamp gap eats into the margin.
 	 */
 	private const BUCKET_ROTATION_S = 360;
 
@@ -269,6 +279,12 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** @var array<string,callable> Keyword → mutator. Set in constructor. */
 	private $state_callbacks;
 
+	/** Newest entry stamp consumed, never past the wall: 0 before the first. */
+	private float $stream_now = 0.0;
+
+	/** `Quiet::mark()` at the last entry consumed: what quiet is measured from. */
+	private int $consumed_at_hr;
+
 	/**
 	 * Tachikoma-parity: no-arg ctor. Positional config arrives via arguments(),
 	 * whose override rebuilds the LRU_Cache with the parsed dimensions.
@@ -280,6 +296,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * @api Used by substrate.
 	 */
 	public function __construct() {
+		$this->consumed_at_hr = Quiet::mark();
 		// Schema-default cache so the no-arg ctor works; arguments() rebuilds.
 		$this->cache = $this->build_cache();
 		$this->state_callbacks = $this->build_state_callbacks();
@@ -402,6 +419,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		}
 		// Decoded firehose entry: string-keyed payload (json_decode assoc map).
 		/** @var array<string,mixed> $entry */
+		$this->consume_stamp( $entry['ts'] ?? null );
+		// A window its stamp closed falls due before the line lands.
+		$this->cache->rotate_if_due();
 
 		$key_raw = $message[ Message::KEY ] ?? '';
 		$rid     = Core::as_string( $key_raw );
@@ -857,6 +877,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 *
 	 * The timed rotation is what makes a stalled request time out; its eviction
 	 * callback is `evict_request()`, which writes the request out as timed out.
+	 * Its windows close on `stream_clock()`.
 	 *
 	 * @return LRU_Cache The constructed cache instance.
 	 */
@@ -864,10 +885,34 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		return ( new LRU_Cache( $this->bucket_size, $this->num_buckets ) )
 			->with_timed_rotation(
 				self::BUCKET_ROTATION_S,
-				function ( string $rid, $request, bool $timed ): void {
-					$this->evict_request( $rid, $request, $timed );
-				}
+				function ( string $rid, $request, ?float $due ): void {
+					$this->evict_request( $rid, $request, $due );
+				},
+				$this->stream_clock( ... )
 			);
+	}
+
+	/**
+	 * Advance the stream clock to an entry's stamp and mark the builder busy.
+	 *
+	 * The clock climbs, and never past the wall: a spoke whose clock runs fast
+	 * must not time out every request in flight, and a line a lagging spoke
+	 * or a racing process wrote does not move it back. The first stamp after
+	 * the builder was quiet starts the stream over, forward or back, because
+	 * that is data arriving on a builder the wall was minding: `wp nodes
+	 * ingest` of last month into an idle worker times out on last month. An
+	 * entry with no numeric stamp moves nothing but still counts as consumed.
+	 *
+	 * @param mixed $ts The entry's `ts`.
+	 */
+	private function consume_stamp( mixed $ts ): void {
+		$resumed              = Quiet::since( $this->consumed_at_hr );
+		$this->consumed_at_hr = Quiet::mark();
+		if ( ! \is_numeric( $ts ) ) {
+			return;
+		}
+		$stamp            = \min( (float) $ts, Core::$now ?: Core::right_now() );
+		$this->stream_now = $resumed ? $stamp : \max( $this->stream_now, $stamp );
 	}
 
 	/**
@@ -940,8 +985,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			if ( ! \is_string( $error_status ) || ! \in_array( $error_status, $allowed, true ) ) {
 				$error_status = '-';
 			}
-			// A hole outranks a nominal finish: the trace is partial, say so.
-			$request->error_status = Core::int( $request->gap_after ?? 0, 0 ) > 0 ? 'I' : $error_status;
+			// A hole outranks a nominal finish, never a stamped one.
+			$request->error_status = '-' === $error_status && Core::int( $request->gap_after ?? 0, 0 ) > 0 ? 'I' : $error_status;
 			self::carry_fatal( $request, $entry );
 			$request->state        = 'complete';
 		};
@@ -1028,8 +1073,15 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * Handle a single evicted request from LRU bucket rotation.
 	 *
 	 * An incomplete request is written out with error_status='T' and a duration
-	 * measured to eviction time — a trace that stops mid-request is a finding,
-	 * not a gap. A request already marked complete, or one that never carried a
+	 * measured to when it timed out — a trace that stops mid-request is a
+	 * finding, not a gap. A timed eviction is measured to the boundary its
+	 * window fell due at, which a gap in the stream repays late: the stamp
+	 * after a quiet night rolls three windows at once, and each request they
+	 * evict still times out where live traffic timed it out. A crowded-out
+	 * one is measured to `stream_clock()`. Never below zero, for a request a
+	 * re-anchored grid evicts at a boundary before it opened.
+	 *
+	 * A request already marked complete, or one that never carried a
 	 * URL, is dropped instead. The `requests writes` rollup counts each by its
 	 * cause — `timed out` by the clock's rotation, `crowded out` by a full
 	 * newest bucket — and the URL-less ones again as `dropped`: crowding
@@ -1039,29 +1091,56 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * so the runtime type isn't guaranteed by the signature; the instanceof gate
 	 * is the real validation.
 	 *
-	 * @param string $rid     Request ID.
-	 * @param mixed  $request Request object (expected \stdClass).
-	 * @param bool   $timed   Whether the clock's rotation evicted it, as
-	 *                        `LRU_Cache` says, rather than a full bucket.
+	 * @param string     $rid     Request ID.
+	 * @param mixed      $request Request object (expected \stdClass).
+	 * @param float|null $due     The boundary the clock's rotation evicted it
+	 *                            at, as `LRU_Cache` says; null for a full bucket.
 	 */
-	private function evict_request( string $rid, $request, bool $timed ): void {
+	private function evict_request( string $rid, $request, ?float $due ): void {
 		$this->carry_moved = true;
 		if ( ! ( $request instanceof \stdClass ) || 'complete' === ( $request->state ?? '' ) ) {
 			return;
 		}
-		$this->tally( Flame_Tree::REQUESTS_WRITES, $timed ? 'timed out' : 'crowded out' );
+		$this->tally( Flame_Tree::REQUESTS_WRITES, null !== $due ? 'timed out' : 'crowded out' );
 		if ( empty( $request->url ) ) {
 			$this->tally( Flame_Tree::REQUESTS_WRITES, 'dropped' );
 			return;
 		}
-		$now                   = (int) Core::$now;
+		$now                   = (int) ( $due ?? $this->stream_clock() );
 		$request->error_status = 'T';
-		$request->duration_ms  = ( $now - Core::num_int( $request->timestamp ?? null, $now ) ) * 1000;
+		$request->duration_ms  = \max( 0, $now - Core::num_int( $request->timestamp ?? null, $now ) ) * 1000;
 		$request->status_code  = $request->status_code ?? 0;
 		$request->state        = 'complete';
 		$url                   = \is_string( $request->url ) ? $request->url : '';
 		$this->print_less_often( 'WARNING: trace timed out on ', $rid, ' (', $url, ') after ', (string) $request->duration_ms, 'ms' );
 		$this->emit_request( $request );
+	}
+
+	/**
+	 * The clock a request times out on and is measured to: STREAM time.
+	 *
+	 * The newest entry stamp consumed, so a reprocess run a day late times a
+	 * request out three windows of ITS stream after it landed, and files it
+	 * there, rather than twenty hours long in the wall's bucket. In live
+	 * traffic it trails the wall by a flush. A builder that has consumed
+	 * nothing for `Quiet::AFTER_SEC` is caught up and quiet, and follows the
+	 * wall, so a request whose worker died still times out on a quiet site.
+	 * 0 until the first stamp, which leaves the cache's grid unarmed.
+	 *
+	 * | Read                              | Clock  | Why                                |
+	 * |-----------------------------------|--------|------------------------------------|
+	 * | this, when a request times out    | STREAM | a replay times out as live did     |
+	 * | a timed eviction's `$due`         | STREAM | the boundary a gap repaid late     |
+	 * | this, a crowded-out request       | STREAM | measured to the stream, filed there |
+	 * | `tracker_ts`                      | WALL   | the in-flight view's age, a reader |
+	 * | `rollup_due()`                    | WALL   | narration cadence                  |
+	 * | `Quiet::since()`                  | MONO   | a duration inside this process     |
+	 */
+	private function stream_clock(): float {
+		if ( Quiet::since( $this->consumed_at_hr ) ) {
+			return \max( $this->stream_now, Core::$now ?: Core::right_now() );
+		}
+		return $this->stream_now;
 	}
 
 	/**
@@ -1802,6 +1881,16 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 */
 	public static function index_completion_columns(): array {
 		return self::COMPLETION_COLUMNS;
+	}
+
+	/**
+	 * Where a line's record position is read from, for a walk that stops at a
+	 * position it was handed: the segment column, then the offset column.
+	 *
+	 * @return array{0:array{0:int,1:int},1:array{0:int,1:int}} Segment, then offset.
+	 */
+	public static function index_position_columns(): array {
+		return self::POSITION_COLUMNS;
 	}
 
 	/**

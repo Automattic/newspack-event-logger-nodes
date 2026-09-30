@@ -38,7 +38,7 @@
   <p class="sub"><span class="m">serialize()</span> writes every key NAME into every entry, so a named row spends <span class="m">s:11:"timed_count";</span>, 19 bytes, to say what <span class="m">i:1;</span> says in 4, once per row per field, on a read that fans out to thousands of keys. The URL index earns the shape on its read; the category and dimensional series earn it on their count, spelled once per bucket per scope across the window. <span class="m">$row[3]</span> is forbidden: the constants buy back the readability the shape spends.</p>
 
   <div class="panel">
-    <header>One row: fourteen slots, each <span class="m">Stats_Store::ROW_&lt;name&gt;</span>, and the eight that ADD come first</header>
+    <header>One row: fifteen slots, each <span class="m">Stats_Store::ROW_&lt;name&gt;</span>, and the nine that ADD come first</header>
     <div class="rowwire">
       <div class="cell sum"><span class="idx">0</span><span class="nm"><b>COUNT</b>count</span></div>
       <div class="cell sum"><span class="idx">1</span><span class="nm"><b>TIMED_COUNT</b>timed_count</span></div>
@@ -48,15 +48,16 @@
       <div class="cell sum"><span class="idx">5</span><span class="nm"><b>COUNT_3XX</b>count_3xx</span></div>
       <div class="cell sum"><span class="idx">6</span><span class="nm"><b>COUNT_4XX</b>count_4xx</span></div>
       <div class="cell sum"><span class="idx">7</span><span class="nm"><b>COUNT_5XX</b>count_5xx</span></div>
-      <div class="cell ext"><span class="idx">8</span><span class="nm"><b>MIN_MS</b>min_ms</span></div>
-      <div class="cell ext"><span class="idx">9</span><span class="nm"><b>MAX_MS</b>max_ms</span></div>
-      <div class="cell ext"><span class="idx">10</span><span class="nm"><b>MAX_PEAK_MB</b>max_peak_mb</span></div>
-      <div class="cell ext"><span class="idx">11</span><span class="nm"><b>LAST_SEEN</b>last_seen</span></div>
-      <div class="cell ext"><span class="idx">12</span><span class="nm"><b>WORKER</b>worker</span></div>
-      <div class="cell srv"><span class="idx">13</span><span class="nm"><b>PATH</b>path</span></div>
+      <div class="cell sum"><span class="idx">8</span><span class="nm"><b>ERRORS</b>errors</span></div>
+      <div class="cell ext"><span class="idx">9</span><span class="nm"><b>MIN_MS</b>min_ms</span></div>
+      <div class="cell ext"><span class="idx">10</span><span class="nm"><b>MAX_MS</b>max_ms</span></div>
+      <div class="cell ext"><span class="idx">11</span><span class="nm"><b>MAX_PEAK_MB</b>max_peak_mb</span></div>
+      <div class="cell ext"><span class="idx">12</span><span class="nm"><b>LAST_SEEN</b>last_seen</span></div>
+      <div class="cell ext"><span class="idx">13</span><span class="nm"><b>WORKER</b>worker</span></div>
+      <div class="cell srv"><span class="idx">14</span><span class="nm"><b>PATH</b>path</span></div>
     </div>
     <div class="brace">
-      <div style="flex:8"><span class="m">ROW_SUMS</span>: the summed half. ONE map describes it, so <span class="m">merge_url_row()</span> and <span class="m">fold_url_rows()</span> sum through it without naming a field.</div>
+      <div style="flex:9"><span class="m">ROW_SUMS</span>: the summed half. ONE map describes it, so <span class="m">merge_url_row()</span> and <span class="m">fold_url_rows()</span> sum through it without naming a field.</div>
       <div class="g" style="flex:5">Extremes, a timestamp and a flag: the extremes take the larger or the smaller on a merge, never a sum.</div>
       <div class="r" style="flex:1">the path: the row's one string</div>
     </div>

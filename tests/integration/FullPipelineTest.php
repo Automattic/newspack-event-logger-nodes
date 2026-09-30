@@ -148,7 +148,7 @@ class FullPipelineTest extends TestCase {
 		// 3. FlameBuilder.flush() writes URL aggregate to memcache.
 		$fb->flush();
 		$url_hash = Log_Manager::url_hash( '/x' );
-		$stats    = $store->get_url_stats( $url_hash );
+		$stats    = $store->url_aggregate( $url_hash );
 		$this->assertNotNull( $stats, 'flush should write per-URL aggregate' );
 		$this->assertSame( 1, $stats['flame_raw']['count'] );
 	}

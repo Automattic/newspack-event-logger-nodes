@@ -30,6 +30,13 @@ class VerbHarness {
 
 	/** The recorder's node name. */
 	private const ASK_RECORDER = 'stats-ask-recorder';
+
+	/**
+	 * The user a REST request carries: `HTTP_In_Node` admits no caller who is
+	 * not logged in, so a verb reached through the request graph always has one
+	 * current, and the substrate's `dispatch()` asks that user's capabilities.
+	 */
+	public const REQUEST_USER = 5129;
 	/**
 	 * Build a request-scope graph and fire a verb against the supplied interpreter.
 	 * Returns the verb's payload from the captured TM_RESPONSE.
@@ -53,6 +60,7 @@ class VerbHarness {
 	 * @return mixed The verb's payload (structure for success verbs; error-message string for TM_ERROR).
 	 */
 	public static function fire( Command_Interpreter_Node $interpreter, string $name, string $verb, array|string $args = [], string $key = '' ): mixed {
+		$GLOBALS['_current_user_id'] ??= self::REQUEST_USER;
 		$arg_tokens = \is_array( $args ) ? \array_values( $args ) : ( '' === $args ? [] : \preg_split( '/\s+/', $args ) );
 		// The request graph mounts this plugin's CIs; the one under test stands in for its namesake.
 		$mounted = Core::node( $name );
@@ -111,6 +119,7 @@ class VerbHarness {
 	 * second ask in one test cannot mount this plugin's CIs twice.
 	 */
 	public static function request_graph(): Command_Interpreter_Node {
+		$GLOBALS['_current_user_id'] ??= self::REQUEST_USER;
 		$interpreter = Core::node( Node_Names::COMMAND_INTERPRETER );
 		return $interpreter instanceof Command_Interpreter_Node ? $interpreter : Bootstrap::mount_request_graph();
 	}

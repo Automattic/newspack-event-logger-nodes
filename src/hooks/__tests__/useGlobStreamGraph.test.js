@@ -18,11 +18,11 @@ import {
 import {
 	Core,
 	Node,
-	FROM,
 	VALUE,
 	forgetSession,
 	__setAuthFetch,
 } from '@newspack-nodes/runtime';
+import { isControl } from '@newspack-nodes/shared/helpers/controlMsg';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import { useGlobStreamGraph } from '../useGlobStreamGraph';
 
@@ -51,7 +51,7 @@ class FakeGlobView extends Node {
 		this.controlFrom = '';
 	}
 	fill( message ) {
-		if ( '' !== this.controlFrom && message[ FROM ] === this.controlFrom ) {
+		if ( isControl( this, message ) ) {
 			this.controls.push( message[ VALUE ] );
 		} else {
 			this.rows.push( message );

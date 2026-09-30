@@ -20,17 +20,20 @@ import { __ } from '@wordpress/i18n';
  * Every non-nominal terminal marker, keyed by the one-character stamped code.
  *
  * `tone` is the shared status modifier a view appends to
- * `newspack-nodes-status`. Only a fatal is an error: a timeout, an abort and a
- * hole in the log all mean the trace is partial, not that the request failed.
+ * `newspack-nodes-status`: only a fatal paints as an error, since a timeout,
+ * an abort and a hole in the log all mean the trace is partial. `errored`
+ * marks what the "Errors Only" filter keeps, a fatal or a timeout, as
+ * `Flame_Builder_Node::error_counts()` counts them.
  *
  * @testonly Exported for the parity test that reads the PHP constant; every
  * production consumer goes through `errorStatus()`.
- * @type {Object<string,{label: string, tone: string}>}
+ * @type {Object<string,{label: string, tone: string, errored: boolean}>}
  */
 export const ERROR_STATUSES = {
 	F: {
 		label: __( 'Fatal error', 'newspack-event-logger-nodes' ),
 		tone: 'is-error',
+		errored: true,
 	},
 	T: {
 		label: __(
@@ -38,6 +41,7 @@ export const ERROR_STATUSES = {
 			'newspack-event-logger-nodes'
 		),
 		tone: 'is-warning',
+		errored: true,
 	},
 	A: {
 		label: __(
@@ -45,6 +49,7 @@ export const ERROR_STATUSES = {
 			'newspack-event-logger-nodes'
 		),
 		tone: 'is-warning',
+		errored: false,
 	},
 	I: {
 		label: __(
@@ -52,6 +57,7 @@ export const ERROR_STATUSES = {
 			'newspack-event-logger-nodes'
 		),
 		tone: 'is-warning',
+		errored: false,
 	},
 };
 
@@ -63,7 +69,7 @@ export const ERROR_STATUSES = {
  * otherwise hand a view a function whose `label` and `tone` are undefined.
  *
  * @param {string|null|undefined} code The record's `error_status`.
- * @return {?{label: string, tone: string}} Its entry, or null for a clean
+ * @return {?{label: string, tone: string, errored: boolean}} Its entry, or null for a clean
  *                                          finish (`-` or empty) and for any
  *                                          code this build does not know.
  */

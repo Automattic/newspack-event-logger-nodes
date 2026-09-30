@@ -102,13 +102,13 @@ class MCP_Controller {
 			'verb'    => 'urls',
 			'role'    => Capabilities::READ,
 			'summary' => 'The URL leaderboard, sortable and paginated, plus totals and the slowest ten for whatever the filters left. Worker traffic is excluded unless asked for.',
-			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Whole words from the search index: a URL matches when every word of the term, two characters or more, is a whole word of its path (`wombat` finds /wombat-7731, `wom` does not). A word too common to index narrows nothing, and a term whose every word is that common finds nothing.','server' => 'Optional server name to scope every row and total to.', 'errors_only' => 'Keeps only the traffic of the five-minute buckets (hours, before the current hour) in which each URL had a timeout or fatal (a 5xx is a response, not one): a row, the totals and the slowest ten count that traffic alone, each row and the totals gain `errors`, and a count sort ranks by it. A timeout carries no duration, so it counts toward `count` and `errors` and ranks at 0 on the timing sorts.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
+			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Whole words from the search index: a URL matches when every word of the term, two characters or more, is a whole word of its path (`wombat` finds /wombat-7731, `wom` does not). A word too common to index narrows nothing, and a term whose every word is that common finds nothing.','server' => 'Optional server name to scope every row and total to.', 'errors_only' => 'Keeps only the traffic of the five-minute buckets (hours, before the current hour) in which each URL had a timeout or fatal (a 5xx is a response, not one): a row, the totals and the slowest ten count that traffic alone, the totals gain the `errors` every row carries, and a count sort ranks by it. A timeout carries no duration, so it counts toward `count` and `errors` and ranks at 0 on the timing sorts; a fatal is timed and counts toward both. An abort or a gap in the log is no error.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
 		],
 		'dump_url'                 => [
 			'node'    => 'performance',
 			'verb'    => 'dump_url',
 			'role'    => Capabilities::READ,
-			'summary' => 'One URL: stats, aggregate flame data and its recent requests. `scan_stopped_early` true means the index walk ran out of budget, so an empty request list is not an idle URL.',
+			'summary' => 'One URL: stats, the aggregate flame and profile summed over every partition, and its newest 500 requests by completion. `scan_stopped_early` true means the list stops short of `requests_window_start`: the index walk ran out of budget, or a partition held more requests than the list carries. An empty list is then not an idle URL.',
 			'args'    => [ 'hash' => 'The 12-char URL hash (required).', 'server' => 'Optional server name; scopes the stats the way performance_urls scopes the row.' ],
 		],
 		'search_requests'          => [

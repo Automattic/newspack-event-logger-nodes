@@ -332,9 +332,8 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'labels an incomplete (I) request and keeps it under "Errors Only"', async () => {
+	it( 'labels an incomplete (I) request', async () => {
 		const { container, unmount } = mount( {
-			errorsOnly: true,
 			sortedRequests: [
 				{
 					rid: 'gap-9714',
@@ -358,9 +357,35 @@ describe( 'UrlDetailView', () => {
 		expect(
 			cell.querySelector( 'span' ).getAttribute( 'title' )
 		).toContain( 'Incomplete' );
+		unmount();
+	} );
 
-		expect( container.textContent ).toContain( 'Recent Requests (1)' );
-		expect( container.textContent ).toContain( 'gap-9714' );
+	it( 'keeps a timeout and a fatal under "Errors Only", and drops an abort and a gap', () => {
+		const request = ( rid, errorStatus ) => ( {
+			rid,
+			timestamp: 1748960777,
+			method: 'GET',
+			duration_ms: 1540,
+			peak_mb: 3,
+			status_code: 500,
+			error_status: errorStatus,
+		} );
+		const { container, unmount } = mount( {
+			errorsOnly: true,
+			sortedRequests: [
+				request( 'fatal-4417', 'F' ),
+				request( 'timeout-2208', 'T' ),
+				request( 'abort-3391', 'A' ),
+				request( 'gap-9714', 'I' ),
+				request( 'clean-5003', '-' ),
+			],
+		} );
+		expect( container.textContent ).toContain( 'Recent Requests (2)' );
+		expect( container.textContent ).toContain( 'fatal-4417' );
+		expect( container.textContent ).toContain( 'timeout-2208' );
+		for ( const rid of [ 'abort-3391', 'gap-9714', 'clean-5003' ] ) {
+			expect( container.textContent ).not.toContain( rid );
+		}
 		unmount();
 	} );
 

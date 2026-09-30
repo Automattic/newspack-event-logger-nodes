@@ -511,6 +511,30 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it( 'says the page failed, not that it is empty, when the verb refused', () => {
+		const { container, unmount } = mount( {
+			urls: [],
+			totalUrls: 0,
+			error: 'unknown option --errors_onli',
+		} );
+		expect( container.textContent ).toContain(
+			'Could not load URLs: unknown option --errors_onli'
+		);
+		expect( container.textContent ).not.toContain( 'No URLs to display' );
+		unmount();
+	} );
+
+	it( 'says it is asking, not that it is empty, while the first page is owed', () => {
+		const { container, unmount } = mount( {
+			urls: [],
+			totalUrls: 0,
+			loading: true,
+		} );
+		expect( container.textContent ).toContain( 'Loading URLs…' );
+		expect( container.textContent ).not.toContain( 'No URLs to display' );
+		unmount();
+	} );
+
 	it( 'shows the unfiltered empty state when there are no URLs', () => {
 		const { container, unmount } = mount( {
 			urls: [],

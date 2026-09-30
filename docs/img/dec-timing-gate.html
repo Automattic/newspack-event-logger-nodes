@@ -31,7 +31,7 @@
     <p>Keeps worker traffic out of every site-wide aggregate, because one long-running job would otherwise dominate the averages. The per-URL row keeps worker timing on rows of its own.</p></div>
   <div class="g"><h3>Gate 2 · <span class="mono">$record_timing</span></h3>
     <div class="cond">duration_ms &gt; 0 &amp;&amp; error_status ∉ { T, A }</div>
-    <p><b>T</b>: <span class="mono">Request_Builder_Node::evict_request()</span> stamps it, with <span class="mono">now − start</span>, on a trace the LRU evicted mid-request. <b>A</b>: <span class="mono">Log_Manager</span> stamps it when a cooperative stop lands inside <span class="mono">finish()</span>, or when <span class="mono">end_job_context()</span> is told the job never finished. Both durations measure time to an interruption, not what the request cost.</p></div>
+    <p><b>T</b>: <span class="mono">Request_Builder_Node::evict_request()</span> stamps it, with <span class="mono">due − start</span>, due the stream boundary its window fell due at, on a trace the LRU evicted mid-request. <b>A</b>: <span class="mono">Log_Manager</span> stamps it when a cooperative stop lands inside <span class="mono">finish()</span>, or when <span class="mono">end_job_context()</span> is told the job never finished. Both durations measure time to an interruption, not what the request cost.</p></div>
 </div>
 
 <div class="grid"><table>

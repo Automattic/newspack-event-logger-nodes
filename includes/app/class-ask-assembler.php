@@ -603,7 +603,7 @@ class Ask_Assembler {
 	 * captions "Average breakdown across N requests" — answered from that
 	 * aggregate rather than the site-wide board, which describes every URL.
 	 *
-	 * @param array<array-key,mixed> $profiles The aggregate profile as `find_url_aggregate()` serves it: `count`, the requests it folds, and `categories`, each `{ time, count, samples }` with the stored sums already divided by that count.
+	 * @param array<array-key,mixed> $profiles The aggregate profile as `Stats_Store::url_stats()` serves it: `count`, the requests it folds, and `categories`, each `{ time, count, samples }` with the stored sums already divided by that count.
 	 * @param string                 $name     The category clicked.
 	 * @param string                 $url      The URL the aggregate is of.
 	 * @return array<string,mixed>|null Null when the aggregate holds no such category.

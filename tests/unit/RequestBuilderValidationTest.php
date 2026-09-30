@@ -171,6 +171,19 @@ class RequestBuilderValidationTest extends TestCase {
 	}
 
 	/**
+	 * A hole outranks a nominal finish, never a fatal: the fatal is what the
+	 * errors filter counts, and the hole is only missing detail.
+	 */
+	public function test_a_gapped_fatal_stays_a_fatal(): void {
+		$rb = $this->builder();
+		$this->fill( $rb, 1, 'seq_fatal', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'seq_fatal', 'request', [ 'm' => 'GET /kakapo-4417' ] );
+		$this->fill( $rb, 6, 'seq_fatal', 'process (complete)', [ 'duration_ms' => 1540.0, 'status_code' => 500, 'error_status' => 'F' ] );
+
+		$this->assertSame( 'F', $this->last_emitted( $rb )['error_status'] );
+	}
+
+	/**
 	 * The marker carries where the last good entry sits on disk.
 	 *
 	 * Consumer stamps Message::ID as segment:offset:length, so naming the last

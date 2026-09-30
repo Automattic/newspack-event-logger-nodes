@@ -25,7 +25,7 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 4127, $this->get_hour_slot( $store, Stats_Store::hourly_parts(), $bucket )['count'] );
 		$this->assertFileExists( \Newspack_Nodes\Bootstrap::base_dir() . '/tables/flame-stats:aggregate.p3.sqlite' );
 		$this->assertTrue( $this->set_url_stats( $store, 'c0ffee7731ab', [ 'flame' => [ 'count' => 9 ] ] ) );
-		$this->assertSame( 9, $store->get_url_stats( 'c0ffee7731ab' )['flame']['count'], 'url: reads its own Table' );
+		$this->assertSame( 9, $store->url_aggregate( 'c0ffee7731ab' )['flame']['count'], 'url: reads its own Table' );
 		$this->assertSame( [ 'url:c0ffee7731ab' ], $this->asked_keys( Stats_Store::NS_URL ) );
 	}
 
@@ -36,7 +36,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->expectException( \LogicException::class );
 		$this->expectExceptionMessage( 'namespace url lives in Table flame-stats:url, which this store was not given (it holds flame-stats:aggregate)' );
-		$store->get_url_stats( 'c0ffee7731ab' );
+		$store->url_aggregate( 'c0ffee7731ab' );
 	}
 
 	public function test_a_broken_table_reads_as_unanswered_never_as_empty(): void {
@@ -50,11 +50,11 @@ class StatsStoreTest extends TestCase {
 	public function test_the_row_index_tables_cover_every_index_contiguously(): void {
 		// `fold_index_row()` reads ROW_FIELD_NAMES[ $index ] unguarded, per
 		// row, on the hot read path, and the two tables are hand-matched.
-		// Decision 18's "the eight that ADD come FIRST" is otherwise only
-		// prose: a ninth summed field appended past the end works and
+		// Decision 18's "the nine that ADD come FIRST" is otherwise only
+		// prose: a tenth summed field appended past the end works and
 		// falsifies it silently. The path is the one string, and it is last.
-		$this->assertSame( \range( 0, 13 ), \array_keys( Stats_Store::ROW_FIELD_NAMES ) );
-		$this->assertSame( \range( 0, 7 ), \array_keys( Stats_Store::ROW_SUMS ) );
+		$this->assertSame( \range( 0, 14 ), \array_keys( Stats_Store::ROW_FIELD_NAMES ) );
+		$this->assertSame( \range( 0, 8 ), \array_keys( Stats_Store::ROW_SUMS ) );
 		$this->assertSame( 'path', Stats_Store::ROW_FIELD_NAMES[ Stats_Store::ROW_PATH ] );
 	}
 
@@ -345,7 +345,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->assertSame( [], $this->get_hour_slot( $store, Stats_Store::hourly_parts(), 'x' ) );
 		$this->assertSame( [], $this->url_rows_by_bucket( $store, [ 'b1', 'b2' ] ) );
-		$this->assertNull( $store->get_url_stats( 'abc' ) );
+		$this->assertNull( $store->url_aggregate( 'abc' ) );
 		$this->assertFalse( $this->set_hour_slot( $store, Stats_Store::hourly_parts(), 'x', [ 'count' => 1 ] ), 'a write no Table took reports false' );
 	}
 
@@ -381,32 +381,37 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 10, Stats_Store::MAX_URL_DIM_VALUES );
 	}
 
-	public function test_get_url_stats_round_trip(): void {
+	public function test_url_aggregate_round_trip(): void {
 		$store = $this->stats_store();
-		$this->assertNull( $store->get_url_stats( 'urlhash-x' ) );
+		$this->assertNull( $store->url_aggregate( 'urlhash-x' ) );
 		$this->set_url_stats( $store, 'urlhash-x', [ 'flame' => [ 1, 2, 3 ] ] );
 		$this->assertSame(
 			[ 'flame' => [ 1, 2, 3 ] ],
-			$store->get_url_stats( 'urlhash-x' )
+			$store->url_aggregate( 'urlhash-x' )
 		);
 	}
 
-	public function test_get_url_stats_hands_out_the_profile_as_per_request_means(): void {
+	public function test_url_stats_hands_out_the_profile_as_per_request_means(): void {
 		$store = $this->stats_store();
 		$this->set_url_stats( $store, 'urlhash-m', [
-			'count'    => 4,
-			'profiles' => [
+			'last_modified' => 1790000417,
+			'profiles'      => [
 				'count'        => 4,
 				'sum_req_time' => 200.0,
 				'categories'   => [ 'wpdb' => [ 'samples' => 4, 'sum_time' => 80.0, 'sum_count' => 12, 'entries' => [] ] ],
 			],
 		] );
-		$stats = $store->get_url_stats( 'urlhash-m' );
-		$this->assertSame( 4, $stats['count'] );
+		$stats = Stats_Store::url_stats( [ $store ], 'urlhash-m' );
+		$this->assertSame( 1790000417, $stats['last_modified'] );
+		$this->assertArrayNotHasKey( 'flame', $stats, 'no blob held a running flame' );
 		$this->assertSame( 4, $stats['profiles']['count'] );
 		$this->assertEqualsWithDelta( 50.0, $stats['profiles']['total_time'], 1e-6 );
 		$this->assertEqualsWithDelta( 20.0, $stats['profiles']['categories']['wpdb']['time'], 1e-6 );
 		$this->assertEqualsWithDelta( 3.0, $stats['profiles']['categories']['wpdb']['count'], 1e-6 );
+	}
+
+	public function test_url_stats_is_null_when_no_partition_holds_the_url(): void {
+		$this->assertNull( Stats_Store::url_stats( [ $this->stats_store( partition: 0 ), $this->stats_store( partition: 1 ) ], 'urlhash-none' ) );
 	}
 
 	public function test_each_partition_keeps_its_own_keyspace(): void {
@@ -423,7 +428,7 @@ class StatsStoreTest extends TestCase {
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$this->break_stats_tables( 0 );
 		$this->assertSame( [], $this->url_bucket_rows( $store, 'any' ) );
-		$this->assertNull( $store->get_url_stats( 'any' ) );
+		$this->assertNull( $store->url_aggregate( 'any' ) );
 		$this->assertSame( [], $this->get_hour_slot( $store, Stats_Store::hourly_parts(), 'any' ) );
 		$this->assertSame( [], $this->get_hour_slot( $store, Stats_Store::dim_parts( 'status', '' ), 'b1' ) );
 	}
@@ -946,14 +951,16 @@ class StatsStoreTest extends TestCase {
 
 	public function test_the_errored_set_ranks_the_rows_that_errored_and_counts_by_errors(): void {
 		// A timeout carries no duration: its row ranks at 0 on the timed
-		// sorts, and counts toward `count` and `errors`, never `avg_ms`.
+		// sorts, and counts toward `count` and `errors`, never `avg_ms`. A
+		// row of clean 5xx responses errs no more than the 2xx one does.
 		$row    = static fn ( array $named ): array => self::positional_url_row( $named );
 		$kea    = [
 			'a1c1ea0a1c1e'         => $row( [ 'count' => 50, 'count_2xx' => 50, 'timed_count' => 50, 'sum_ms' => 500.0, 'path' => '/clean-5050' ] ),
-			'b2308df1ab90'         => $row( [ 'count' => 13, 'count_2xx' => 11, 'timed_count' => 11, 'sum_ms' => 2860.0, 'sum_peak_mb' => 26.0, 'min_ms' => 55.0, 'max_ms' => 480.0, 'path' => '/weka-1308' ] ),
-			'c3913e02bc01'         => $row( [ 'count' => 4, 'sum_peak_mb' => 12.0, 'path' => '/tui-9913' ] ),
-			Stats_Store::OTHER_KEY => $row( [ 'count' => 30, 'count_2xx' => 20 ] ),
-			'd4417f13cd12'         => $row( [ 'count' => 9, 'count_2xx' => 6, 'timed_count' => 9, 'sum_ms' => 810.0, 'worker' => true, 'path' => '/jobs/digest/5?job' ] ),
+			'f5003a1ea503'         => $row( [ 'count' => 3, 'count_5xx' => 3, 'timed_count' => 3, 'sum_ms' => 930.0, 'path' => '/moa-5003' ] ),
+			'b2308df1ab90'         => $row( [ 'count' => 13, 'count_2xx' => 11, 'count_5xx' => 1, 'errors' => 2, 'timed_count' => 12, 'sum_ms' => 2860.0, 'sum_peak_mb' => 26.0, 'min_ms' => 55.0, 'max_ms' => 480.0, 'path' => '/weka-1308' ] ),
+			'c3913e02bc01'         => $row( [ 'count' => 4, 'errors' => 4, 'sum_peak_mb' => 12.0, 'path' => '/tui-9913' ] ),
+			Stats_Store::OTHER_KEY => $row( [ 'count' => 30, 'count_2xx' => 20, 'errors' => 10 ] ),
+			'd4417f13cd12'         => $row( [ 'count' => 9, 'count_2xx' => 6, 'errors' => 3, 'timed_count' => 9, 'sum_ms' => 810.0, 'worker' => true, 'path' => '/jobs/digest/5?job' ] ),
 		];
 		$writes = Stats_Store::ranked_writes( self::by_shard( [ 'kea.test' => $kea ] ), false, '2026-09-29-14-05' );
 		$lists  = self::ranked_lists( $writes );
@@ -974,7 +981,7 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame(
 			[
 				Stats_Store::HDR_COUNT       => 17,
-				Stats_Store::HDR_TIMED_COUNT => 11,
+				Stats_Store::HDR_TIMED_COUNT => 12,
 				Stats_Store::HDR_SUM_MS      => 2860.0,
 				Stats_Store::HDR_SUM_PEAK_MB => 38.0,
 				Stats_Store::HDR_HAS_OTHER   => false,
@@ -1137,12 +1144,12 @@ class StatsStoreTest extends TestCase {
 		// The Other row never ranks, but its requests are real: the header
 		// sums it and says it was there. A worker row is no reader row.
 		$kea    = [
-			'a7a7a7a7a7a7'         => self::positional_url_row( [ 'count' => 41, 'timed_count' => 37, 'sum_ms' => 410.5, 'sum_peak_mb' => 82.25, 'path' => '/kea-41' ] ),
-			'b8b8b8b8b8b8'         => self::positional_url_row( [ 'count' => 13, 'timed_count' => 11, 'sum_ms' => 130.25, 'sum_peak_mb' => 26.5, 'path' => '/kea-13' ] ),
-			Stats_Store::OTHER_KEY => self::positional_url_row( [ 'count' => 9, 'timed_count' => 7, 'sum_ms' => 63.75, 'sum_peak_mb' => 4.5 ] ),
-			'e5e5e5e5e5e5'         => self::positional_url_row( [ 'count' => 1000, 'timed_count' => 1000, 'sum_ms' => 9e6, 'worker' => true, 'path' => '/cron' ] ),
+			'a7a7a7a7a7a7'         => self::positional_url_row( [ 'count' => 41, 'timed_count' => 37, 'errors' => 3, 'sum_ms' => 410.5, 'sum_peak_mb' => 82.25, 'path' => '/kea-41' ] ),
+			'b8b8b8b8b8b8'         => self::positional_url_row( [ 'count' => 13, 'timed_count' => 11, 'errors' => 2, 'sum_ms' => 130.25, 'sum_peak_mb' => 26.5, 'path' => '/kea-13' ] ),
+			Stats_Store::OTHER_KEY => self::positional_url_row( [ 'count' => 9, 'timed_count' => 7, 'errors' => 1, 'sum_ms' => 63.75, 'sum_peak_mb' => 4.5 ] ),
+			'e5e5e5e5e5e5'         => self::positional_url_row( [ 'count' => 1000, 'timed_count' => 1000, 'errors' => 7, 'sum_ms' => 9e6, 'worker' => true, 'path' => '/cron' ] ),
 		];
-		$moa    = [ 'c9c9c9c9c9c9' => self::positional_url_row( [ 'count' => 6, 'timed_count' => 5, 'sum_ms' => 60.125, 'sum_peak_mb' => 3.0, 'path' => '/moa-6' ] ) ];
+		$moa    = [ 'c9c9c9c9c9c9' => self::positional_url_row( [ 'count' => 6, 'timed_count' => 5, 'errors' => 5, 'sum_ms' => 60.125, 'sum_peak_mb' => 3.0, 'path' => '/moa-6' ] ) ];
 		$writes = Stats_Store::ranked_writes( self::by_shard( [ 'kea.test' => $kea, 'moa.test' => $moa ] ), false, '2026-09-22-14-05' );
 
 		$record = static function ( string $server ) use ( $writes ): array {
@@ -1162,7 +1169,7 @@ class StatsStoreTest extends TestCase {
 				Stats_Store::HDR_SUM_PEAK_MB => 113.25,
 				Stats_Store::HDR_HAS_OTHER   => true,
 				Stats_Store::HDR_URLS        => Url_Sketch::of( [ 'a7a7a7a7a7a7', 'b8b8b8b8b8b8' ] ),
-				Stats_Store::HDR_ERRORS      => 63,
+				Stats_Store::HDR_ERRORS      => 6,
 			],
 			$record( 'kea.test' )
 		);
@@ -1175,7 +1182,7 @@ class StatsStoreTest extends TestCase {
 				Stats_Store::HDR_SUM_PEAK_MB => 116.25,
 				Stats_Store::HDR_HAS_OTHER   => true,
 				Stats_Store::HDR_URLS        => Url_Sketch::of( [ 'a7a7a7a7a7a7', 'b8b8b8b8b8b8', 'c9c9c9c9c9c9' ] ),
-				Stats_Store::HDR_ERRORS      => 69,
+				Stats_Store::HDR_ERRORS      => 11,
 			],
 			$record( '' ),
 			'the site record is the union of the servers\''
@@ -1193,7 +1200,7 @@ class StatsStoreTest extends TestCase {
 				Stats_Store::HDR_SUM_PEAK_MB => 0.0,
 				Stats_Store::HDR_HAS_OTHER   => false,
 				Stats_Store::HDR_URLS        => Url_Sketch::of( [ 'e5e5e5e5e5e5' ] ),
-				Stats_Store::HDR_ERRORS      => 1000,
+				Stats_Store::HDR_ERRORS      => 7,
 			],
 			$worker[ \implode( ':', Stats_Store::url_header_parts( 'kea.test', false, [ Stats_Store::WORKER_SHARD_PREFIX ] ) ) ] ?? null,
 			'the worker row is its own family\'s record'
@@ -1607,7 +1614,7 @@ class StatsStoreTest extends TestCase {
 	public function test_a_record_holding_raw_registers_reads_missing(): void {
 		// The v3 layout stored the registers raw. The shape in the key moves
 		// with the layout, and a raw sketch under it is no sketch either.
-		$this->assertSame( 'v4p14', Stats_Store::HDR_SHAPE );
+		$this->assertSame( 'v5p14', Stats_Store::HDR_SHAPE );
 		$store  = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$bucket = '2026-09-29-15-35';
 		$store->bucket_set_multi( [

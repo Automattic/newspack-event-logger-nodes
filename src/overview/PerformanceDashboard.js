@@ -928,6 +928,8 @@ export default function PerformanceDashboard( {
 								ranked={ urlsSlice?.ranked }
 								now={ urlsSlice?.as_of }
 								errorCounts={ !! urlFilters?.errors_only }
+								error={ urlsSlice?.error ?? null }
+								loading={ !! urlsSlice?.loading }
 							/>
 						</CardBody>
 					</Card>

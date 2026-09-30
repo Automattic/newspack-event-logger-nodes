@@ -42,20 +42,20 @@
       <text x="120" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="#003DA5" font-family="Inter, Helvetica, Arial, sans-serif">requests_window_start</text>
       <text x="40" y="88" text-anchor="start" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">the floor: (buckets − 1) × 300 s back from the current bucket boundary</text>
       <line x1="640" y1="30" x2="640" y2="74" stroke="#B32D2E" stroke-width="2" stroke-dasharray="4 3"/>
-      <text x="640" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="#B32D2E" font-family="Inter, Helvetica, Arial, sans-serif">--since (a completion watermark)</text>
-      <text x="640" y="88" text-anchor="middle" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">the walk stops below it, exclusive: a request completing in that second is returned</text>
+      <text x="640" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="#B32D2E" font-family="Inter, Helvetica, Arial, sans-serif">--after (a log position per partition)</text>
+      <text x="640" y="88" text-anchor="middle" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">each partition stops at its own position, exclusive: a late-indexed request still arrives</text>
       <line x1="1012" y1="30" x2="1012" y2="74" stroke="#50575E" stroke-width="2"/>
       <text x="1012" y="22" text-anchor="end" font-size="12" font-weight="700" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">now</text>
       <text x="826" y="56" text-anchor="middle" font-size="11.5" font-weight="700" fill="#003DA5" font-family="Inter, Helvetica, Arial, sans-serif">what a tailing caller gets</text>
-      <text x="380" y="56" text-anchor="middle" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">what a first call gets, newest first</text>
+      <text x="380" y="56" text-anchor="middle" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">what a first call gets: the newest 500 by completion</text>
       <text x="80" y="38" text-anchor="middle" font-size="11.5" fill="#787C82" font-family="Inter, Helvetica, Arial, sans-serif">absent</text>
     </svg>
-    <p>The floor is <span class="mono">Stats_Store::window_start()</span>: <span class="mono">min_lifetime</span>, floored at <span class="mono">MIN_RETENTION_SECONDS</span> (3,600 s), rounded up to a whole five-minute bucket, and capped at the <span class="mono">MAX_READ_BUCKETS</span> (288) a reader enumerates. A request that completed before it is absent by design, not by truncation. <span class="mono">since</span> is compared against COMPLETION (<span class="mono">timestamp + duration_ms</span>), not start, so <span class="mono">requests</span> is the tail while <span class="mono">requests_window_start</span> still names the floor; the dashboard's merge accumulates.</p>
+    <p>The floor is <span class="mono">Stats_Store::window_start()</span>: <span class="mono">min_lifetime</span>, floored at <span class="mono">MIN_RETENTION_SECONDS</span> (3,600 s), rounded up to a whole five-minute bucket, and capped at the <span class="mono">MAX_READ_BUCKETS</span> (288) a reader enumerates. A request that completed before it is absent by design, not by truncation. <span class="mono">after</span> sends back the <span class="mono">positions</span> the last reply reported, where each partition's walk reached whether or not it held the URL, and a partition's index only appends, so <span class="mono">requests</span> is the tail while <span class="mono">requests_window_start</span> still names the floor; the dashboard's merge accumulates.</p>
     <div class="regimes">
       <div class="r"><b>min_lifetime ≤ 3,600 s</b>13 buckets: the floor sits 3,600 s back.</div>
       <div class="r"><b>between</b>⌈min_lifetime ÷ 300⌉ + 1 buckets: the floor tracks the setting.</div>
       <div class="r"><b>min_lifetime &gt; 85,800 s</b>288 buckets: the floor stops 86,100 s back.</div>
-      <div class="r" style="background:#FBEAEA;border-color:#E6A3A3"><b style="color:#B32D2E">scan_stopped_early: true</b>The walk spent <span class="mono">MAX_SCAN_S</span> (10 seconds) first, so an empty list is not an idle URL. It says nothing about <span class="mono">RECENT_REQUEST_LIMIT</span>: the 500th row ends the fan-out with later partitions unread and the flag false.</div>
+      <div class="r" style="background:#FBEAEA;border-color:#E6A3A3"><b style="color:#B32D2E">scan_stopped_early: true</b>The list stops short of the floor: the walk spent <span class="mono">MAX_SCAN_S</span> (10 seconds) first, so an empty list is not an idle URL, or a partition held more than <span class="mono">RECENT_REQUEST_LIMIT</span> (500) matches. Each partition is capped at 500 and the merged list keeps the 500 that finished last, so no partition goes unread.</div>
     </div>
   </div>
 

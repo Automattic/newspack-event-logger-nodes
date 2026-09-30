@@ -190,7 +190,7 @@ export default function UrlDetailView( {
 			return sortedRequests;
 		}
 		return sortedRequests.filter(
-			( r ) => null !== errorStatus( r.error_status )
+			( r ) => errorStatus( r.error_status )?.errored
 		);
 	}, [ sortedRequests, errorsOnly ] );
 
