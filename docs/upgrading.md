@@ -6,6 +6,23 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **Flush the stats Tables after deploying: search and `dump_url` read a
+  new namespace.** Each URL's row is also filed by key, as
+  `url_row_h:{Y-m-d-H}:{server_key}:{hash}`, and `urls --search`,
+  `dump_url` and `ask url:` read it there instead of a shard of the index.
+  An hour written before the upgrade holds no such key, so those three read
+  it as empty while the table beside them still counts it. Run
+  `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine`
+  (decision 5); nothing reads the missing keys any other way.
+
+- **A search too common to narrow is refused.** A term naming more than
+  `URL_SEARCH_MAX` (5,000) URLs across every server searched, or whose
+  every word read is that common, answers an error,
+  `search "<term>" is too common: its URLs run past the 5000 a search reads; add a word`,
+  where it answered zero rows or read the whole index. An MCP client or a
+  dashboard showing `performance_urls` or an `overview:` brief under a
+  search shows that error and asks for another word.
+
 - **`dump_url` tails by `--after`, and `--since` is gone.** A caller sending
   `--since=<epoch>` is refused `unknown option --since`. Send
   `--after`, the reply's new `positions` object sent back unchanged, or no
