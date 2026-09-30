@@ -137,7 +137,7 @@ class RequestBuilderTest extends TestCase {
 		$rb = new Request_Builder_Node();
 		Core::$now = 700.25;
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 
 		$request = $rb->cache->get( 'r1' );
 		$this->assertInstanceOf( \stdClass::class, $request );
@@ -163,9 +163,9 @@ class RequestBuilderTest extends TestCase {
 		// process (start) sets expected_n = 2; each of these overshoots it, so
 		// $expected stays 2 while $seq_n varies — only seq_n differs per call.
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
-		$this->fill( $rb, 5, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 9, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 13, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 5, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
+		$this->fill( $rb, 9, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
+		$this->fill( $rb, 13, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 
 		$this->assertSame( 1, \substr_count( $buf, 'missing message' ), 'flood collapses to one emission under the stable prefix' );
 		$this->assertStringContainsString( 'expected #2, got #5 on r1', $buf, 'the one emission carries the first payload' );
@@ -184,7 +184,7 @@ class RequestBuilderTest extends TestCase {
 		$trace = "apply_filters('the_content'), do_action('edit_form_after_title')";
 
 		$this->fill( $rb, 1, 'r9', 'process (start)', [ 'm' => '99 on host', 'l' => '' ] );
-		$this->fill( $rb, 2, 'r9', 'request', [ 'm' => 'GET /post/9' ] );
+		$this->fill( $rb, 2, 'r9', 'request', [ 'm' => 'GET https://kea-7713.test/post/9' ] );
 		$this->fill( $rb, 3, 'r9', 'the_content hook (start)', [ 'm' => '<p>x</p>', 'caller' => $trace ] );
 		$this->fill( $rb, 4, 'r9', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
 
@@ -212,13 +212,13 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '99 on host', 'l' => '' ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /post/123' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/post/123' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
 
 		$this->assertCount( 1, $capture->captured );
 		$req = $this->captured_request( $capture );
 		$this->assertSame( 'r1', $req['rid'] );
-		$this->assertSame( '/post/123', $req['url'] );
+		$this->assertSame( 'https://kea-7713.test/post/123', $req['url'] );
 		$this->assertSame( 'GET', $req['request_method'] );
 		$this->assertEqualsWithDelta( 50.0, $req['duration_ms'], 1e-9 );
 		$this->assertSame( 200, $req['status_code'] );
@@ -237,7 +237,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /wp-admin/' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/wp-admin/' ] );
 		$this->fill(
 			$rb,
 			3,
@@ -278,7 +278,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /kokako-4438' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/kokako-4438' ] );
 		$this->fill(
 			$rb,
 			3,
@@ -311,7 +311,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /fine' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/fine' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)', [ 'duration_ms' => 12.0, 'status_code' => 200 ] );
 
 		$req = $this->captured_request( $capture );
@@ -334,7 +334,7 @@ class RequestBuilderTest extends TestCase {
 		} );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /post/123' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/post/123' ] );
 
 		try {
 			$this->fill( $rb, 3, 'r1', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
@@ -363,7 +363,7 @@ class RequestBuilderTest extends TestCase {
 			}
 		} );
 		$this->fill( $rb, 1, 'r-quince', 'process (start)' );
-		$this->fill( $rb, 2, 'r-quince', 'request', [ 'm' => 'GET /quince' ] );
+		$this->fill( $rb, 2, 'r-quince', 'request', [ 'm' => 'GET https://kea-7713.test/quince' ] );
 		try {
 			$this->fill( $rb, 3, 'r-quince', 'process (complete)', [ 'duration_ms' => 7.0, 'status_code' => 200 ] );
 		} catch ( \Newspack_Nodes\Worker_Should_Stop_Clean $e ) {
@@ -391,7 +391,7 @@ class RequestBuilderTest extends TestCase {
 			}
 		} );
 		$this->fill( $rb, 1, 'r-sorrel', 'process (start)' );
-		$this->fill( $rb, 2, 'r-sorrel', 'request', [ 'm' => 'GET /sorrel' ] );
+		$this->fill( $rb, 2, 'r-sorrel', 'request', [ 'm' => 'GET https://kea-7713.test/sorrel' ] );
 
 		$thrown = null;
 		try {
@@ -424,7 +424,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on h', 'rule' => 'shop' ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /shop/cart' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/shop/cart' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)', [ 'duration_ms' => 10.0, 'status_code' => 200 ] );
 
 		$req = $this->captured_request( $capture );
@@ -437,7 +437,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on h' ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /shop/cart' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/shop/cart' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)', [ 'duration_ms' => 10.0, 'status_code' => 200 ] );
 
 		$req = $this->captured_request( $capture );
@@ -470,7 +470,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'REMOTE_ADDR' => '1.2.3.4' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)', [ 'duration_ms' => 1.0 ] );
 
@@ -484,7 +484,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'REMOTE_ADDR' => 'not-an-ip' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
@@ -498,7 +498,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		// REMOTE_ADDR absent (empty ⇒ treated as absent) → XFF fallback supplies the real IP.
 		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [
 			'REMOTE_ADDR'          => '',
@@ -516,7 +516,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		// A present-but-invalid REMOTE_ADDR takes precedence and leaves remote_addr
 		// empty; XFF is only consulted when REMOTE_ADDR is entirely absent.
 		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [
@@ -529,15 +529,14 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( '', $req['remote_addr'] );
 	}
 
-	public function test_environment_v3_extracts_server_name_country_user_agent_ja4(): void {
+	public function test_environment_v3_extracts_country_user_agent_ja4(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [
-			'SERVER_NAME'        => 'example.com',
 			'GEOIP_COUNTRY_CODE' => 'US',
 			'HTTP_USER_AGENT'    => 'curl/7.0',
 			'HTTP_X_JA4_HASH'    => 'deadbeef',
@@ -546,11 +545,42 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
-		$this->assertSame( 'example.com', $req['server_name'] );
 		$this->assertSame( 'US', $req['country_code'] );
 		$this->assertSame( 'curl/7.0', $req['user_agent'] );
 		$this->assertSame( 'deadbeef', $req['ja4_hash'] );
 		$this->assertSame( 'from@example', $req['http_from'] );
+	}
+
+	/** A record's server is its URL's host: it copies no SERVER_NAME. */
+	public function test_the_record_names_its_server_only_in_its_url(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://tui-4471.test/x' ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'SERVER_NAME' => 'heron-3301.test' ] ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$record = $this->captured_request( $capture );
+		$this->assertSame( 'https://tui-4471.test/x', $record['url'] ?? null );
+		$this->assertArrayNotHasKey( 'server_name', $record );
+	}
+
+	/** A line naming no host keeps its URL; the fold refuses it. */
+	public function test_a_request_line_with_no_host_names_no_server(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /bare-7731' ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'SERVER_NAME' => 'heron-3301.test' ] ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
+
+		$this->assertCount( 1, $capture->captured, 'the record is written' );
+		$record = $this->captured_request( $capture );
+		$this->assertSame( '/bare-7731', $record['url'] ?? null );
 	}
 
 	public function test_emitting_leaves_the_envelope_alone(): void {
@@ -655,7 +685,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'worker_type', [ 'm' => 'cache-cozy' ] );
-		$this->fill( $rb, 3, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 		$req = $this->captured_request( $capture );
 		$this->assertTrue( $req['is_worker'] );
@@ -729,7 +759,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'worker_type', [ 'm' => 'job-spoke' ] );
 		$this->fill( $rb, 3, 'r1', 'worker_partition', [ 'm' => 3 ] );
-		$this->fill( $rb, 4, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 4, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 5, 'r1', 'process (complete)' );
 		$req = $this->captured_request( $capture );
 		$this->assertSame( 3, $req['worker_partition'] );
@@ -741,7 +771,7 @@ class RequestBuilderTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'worker_type' => 'stream-merger' ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'stream-merger' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 		$req = $this->captured_request( $capture );
@@ -817,7 +847,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'memory', [ 'm' => [ 'peak' => '32MB', 'end' => '24MB' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
@@ -831,11 +861,11 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /post/123?foo=bar&baz=qux' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/post/123?foo=bar&baz=qux' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
-		$this->assertSame( '/post/123', $req['url'] );
+		$this->assertSame( 'https://kea-7713.test/post/123', $req['url'] );
 	}
 
 	public function test_the_record_carries_no_process_id_or_host(): void {
@@ -847,7 +877,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '12345 on test-host.lan', 'l' => '' ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
@@ -863,7 +893,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'wp_head hook (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 4, 'r1', 'wp_head hook (complete)', [ 'duration_ms' => 25.0 ] );
 		$this->fill( $rb, 5, 'r1', 'process (complete)' );
@@ -886,7 +916,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'outer (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 4, 'r1', 'inner (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 5, 'r1', 'inner (complete)', [ 'duration_ms' => 6.25 ] );
@@ -905,7 +935,7 @@ class RequestBuilderTest extends TestCase {
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'the_content hook (start)' );
 		$this->fill( $rb, 4, 'r1', 'the_content @-5 (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 5, 'r1', 'the_content @-5 (complete)', [ 'duration_ms' => 5.0 ] );
@@ -923,7 +953,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'the_content hook (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 4, 'r1', 'the_content @10 (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 5, 'r1', 'the_content @10 (complete)', [ 'duration_ms' => 5.0 ] );
@@ -941,7 +971,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'outer (start)', [ 'l' => '' ] );
 		$this->fill( $rb, 4, 'r1', 'inner (start)', [ 'l' => '' ] );
 		// Skip inner-complete, jump straight to outer-complete: stack mismatch.
@@ -960,7 +990,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		// Push 60 nested starts (> MAX_STACK_DEPTH=50).
 		for ( $i = 0; $i < 60; $i++ ) {
 			$this->fill( $rb, $i + 3, 'r1', "deep_$i (start)", [ 'l' => '' ] );
@@ -982,7 +1012,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		for ( $i = 0; $i < 100; $i++ ) {
 			$this->fill( $rb, $i + 3, 'r1', 'noise', [ 'm' => "msg-$i" ] );
 		}
@@ -1007,7 +1037,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->set_errors_target( 'errors:target' );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'error', [ 'm' => 'something broke' ] );
 		$this->fill( $rb, 4, 'r1', 'warning', [ 'm' => 'deprecation' ] );
 		$this->fill( $rb, 5, 'r1', 'process (complete)' );
@@ -1028,7 +1058,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->set_errors_target( 'errors:target' );
 
 		$this->fill( $rb, 1, 'url-context-rid-731', 'process (start)' );
-		$this->fill( $rb, 2, 'url-context-rid-731', 'request', [ 'm' => 'PATCH /error-context-731?token=private' ] );
+		$this->fill( $rb, 2, 'url-context-rid-731', 'request', [ 'm' => 'PATCH https://kea-7713.test/error-context-731?token=private' ] );
 		$this->fill( $rb, 3, 'url-context-rid-731', 'worker_type', [ 'm' => 'errors-worker-731' ] );
 		$this->fill(
 			$rb,
@@ -1051,7 +1081,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 1, $by_target['main:target'] ?? [] );
 		$error_value   = $by_target['errors:target'][0][ Message::VALUE ];
 		$request_value = $by_target['main:target'][0][ Message::VALUE ];
-		$this->assertSame( '/error-context-731?errors-worker-731', $error_value['url'] );
+		$this->assertSame( 'https://kea-7713.test/error-context-731?errors-worker-731', $error_value['url'] );
 		$this->assertSame( $request_value['url'], $error_value['url'] );
 		$this->assertSame( 'PATCH', $error_value['method'] );
 	}
@@ -1063,7 +1093,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->set_errors_target( 'errors:target' );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'wpdb (error)', [ 'm' => 'mysql gone away' ] );
 		$this->fill( $rb, 4, 'r1', 'something (warning)', [ 'm' => 'deprecated api' ] );
 		$this->fill( $rb, 5, 'r1', 'process (complete)' );
@@ -1082,7 +1112,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->set_errors_target( 'errors:target' );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'alert', [ 'm' => 'fleet degraded 5591' ] );
 		$this->fill( $rb, 4, 'r1', 'stderr', [ 'm' => 'worker diagnostic 5591' ] );
 		$this->fill( $rb, 5, 'r1', 'process (complete)' );
@@ -1169,7 +1199,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/a' ] );
 
 		$this->force_rotation_due( $rb->cache );
 		$rb->fire_cb();
@@ -1198,7 +1228,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/a' ] );
 
 		$this->force_rotation_due( $rb->cache );
 		$rb->fire_cb();
@@ -1232,7 +1262,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/a' ] );
 
 		$this->force_rotation_due( $rb->cache );
 		$router->fire_cb();
@@ -1269,7 +1299,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r-poison', 'process (start)', [ 'ts' => [ 'poison' => true ] ] );
-		$this->fill( $rb, 2, 'r-poison', 'request', [ 'm' => 'GET /poisoned' ] );
+		$this->fill( $rb, 2, 'r-poison', 'request', [ 'm' => 'GET https://kea-7713.test/poisoned' ] );
 
 		// The first quiet tick arms the grid the poisoned opener could not.
 		$this->force_rotation_due( $rb->cache );
@@ -1313,7 +1343,7 @@ class RequestBuilderTest extends TestCase {
 		} );
 
 		$this->fill( $rb, 1, 'r-stopping', 'process (start)' );
-		$this->fill( $rb, 2, 'r-stopping', 'request', [ 'm' => 'GET /stopping' ] );
+		$this->fill( $rb, 2, 'r-stopping', 'request', [ 'm' => 'GET https://kea-7713.test/stopping' ] );
 
 		$this->force_rotation_due( $rb->cache );
 		$rb->fire_cb();
@@ -1329,7 +1359,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r-bad-scalars', 'process (start)' );
-		$this->fill( $rb, 2, 'r-bad-scalars', 'request', [ 'm' => 'GET /b' ] );
+		$this->fill( $rb, 2, 'r-bad-scalars', 'request', [ 'm' => 'GET https://kea-7713.test/b' ] );
 		$this->fill(
 			$rb,
 			3,
@@ -1356,7 +1386,7 @@ class RequestBuilderTest extends TestCase {
 
 		// r1: opens with URL, never completes — destined to be the orphan.
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/a' ] );
 
 		// r2 set forces oldest bucket out (which holds r1).
 		$this->fill( $rb, 1, 'r2', 'process (start)' );
@@ -1383,7 +1413,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'ts' => 1_600_000_000 ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /stream-measured', 'ts' => 1_600_000_011 ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/stream-measured', 'ts' => 1_600_000_011 ] );
 		$this->fill( $rb, 1, 'r2', 'process (start)', [ 'ts' => 1_600_000_047 ] );
 
 		$evicted = $this->captured_request( $capture, 0 );
@@ -1404,7 +1434,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'ts' => 1_599_999_850 ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /skewed', 'ts' => 1_599_999_860 ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/skewed', 'ts' => 1_599_999_860 ] );
 		$this->fill( $rb, 1, 'r2', 'process (start)', [ 'ts' => 1_600_086_400 ] );
 
 		$this->assertSame( 250_000, $this->captured_request( $capture, 0 )['duration_ms'], 'crowded out at the wall, short of the 1_600_000_200 boundary' );
@@ -1424,7 +1454,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r-stall', 'process (start)', [ 'ts' => Core::$now ] );
-		$this->fill( $rb, 2, 'r-stall', 'request', [ 'm' => 'GET /live-stall', 'ts' => Core::$now ] );
+		$this->fill( $rb, 2, 'r-stall', 'request', [ 'm' => 'GET https://kea-7713.test/live-stall', 'ts' => Core::$now ] );
 		for ( $second = 1; $second <= 1200 && [] === $capture->captured; $second++ ) {
 			Core::$now += 1.0;
 			$this->fill( $rb, 1, "r-live-{$second}", 'process (start)', [ 'ts' => Core::$now ] );
@@ -1455,9 +1485,9 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r-overnight', 'process (start)', [ 'ts' => 1_800_000_350 ] );
-		$this->fill( $rb, 2, 'r-overnight', 'request', [ 'm' => 'GET /overnight', 'ts' => 1_800_000_351 ] );
+		$this->fill( $rb, 2, 'r-overnight', 'request', [ 'm' => 'GET https://kea-7713.test/overnight', 'ts' => 1_800_000_351 ] );
 		$this->fill( $rb, 1, 'r-morning', 'process (start)', [ 'ts' => 1_800_021_950 ] );
-		$this->fill( $rb, 2, 'r-morning', 'request', [ 'm' => 'GET /morning', 'ts' => 1_800_021_950 ] );
+		$this->fill( $rb, 2, 'r-morning', 'request', [ 'm' => 'GET https://kea-7713.test/morning', 'ts' => 1_800_021_950 ] );
 		$rb->fire_cb();
 		$this->fill( $rb, 3, 'r-morning', 'process (complete)', [ 'ts' => 1_800_021_951, 'duration_ms' => 640.0 ] );
 
@@ -1490,7 +1520,7 @@ class RequestBuilderTest extends TestCase {
 
 		$old = 1_797_408_050;
 		$this->fill( $rb, 1, 'r-ingested', 'process (start)', [ 'ts' => $old ] );
-		$this->fill( $rb, 2, 'r-ingested', 'request', [ 'm' => 'GET /ingested', 'ts' => $old ] );
+		$this->fill( $rb, 2, 'r-ingested', 'request', [ 'm' => 'GET https://kea-7713.test/ingested', 'ts' => $old ] );
 		for ( $at = $old + 30; $at <= $old + 1200 && [] === $capture->captured; $at += 30 ) {
 			$this->fill( $rb, 1, "r-old-{$at}", 'process (start)', [ 'ts' => $at ] );
 			$this->fill( $rb, 2, "r-old-{$at}", 'process (complete)', [ 'ts' => $at, 'duration_ms' => 4.0 ] );
@@ -1517,7 +1547,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r-dead', 'process (start)', [ 'ts' => Core::$now ] );
-		$this->fill( $rb, 2, 'r-dead', 'request', [ 'm' => 'GET /dead-worker', 'ts' => Core::$now ] );
+		$this->fill( $rb, 2, 'r-dead', 'request', [ 'm' => 'GET https://kea-7713.test/dead-worker', 'ts' => Core::$now ] );
 
 		Core::$now += Request_Builder_Node::IDLE_AFTER_SEC - 1;
 		$rb->fire_cb();
@@ -1560,7 +1590,7 @@ class RequestBuilderTest extends TestCase {
 		$rb1->sink( $capture );
 
 		$this->fill( $rb1, 1, 'r1', 'process (start)' );
-		$this->fill( $rb1, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb1, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$saved = $rb1->save_state();
 
 		$rb2 = new Request_Builder_Node();
@@ -1572,7 +1602,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->assertCount( 1, $capture->captured );
 		$req = $this->captured_request( $capture );
-		$this->assertSame( '/x', $req['url'] );
+		$this->assertSame( 'https://kea-7713.test/x', $req['url'] );
 	}
 
 	// --- index format ----------------------------------------------------
@@ -1813,7 +1843,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/a' ] );
 		$this->fill( $rb, 1, 'r2', 'process (start)' );
 
 		$result = $this->read_private( $rb, 'interpreter' )->dispatch( 'purge' );
@@ -1833,7 +1863,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/a' ] );
 		$before = \count( $capture->captured );
 
 		$this->read_private( $rb, 'interpreter' )->dispatch( 'purge' );
@@ -1910,7 +1940,7 @@ class RequestBuilderTest extends TestCase {
 		// means to the operator.
 		$rb = new Request_Builder_Node();
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'ts' => 1700000000.000 ] );
-		$this->fill( $rb, 2, 'r1', 'request',         [ 'ts' => 1700000001.500, 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request',         [ 'ts' => 1700000001.500, 'm' => 'GET https://kea-7713.test/x' ] );
 
 		$snap = $rb->flight->inflight_snapshot();
 		$this->assertCount( 1, $snap );
@@ -2124,7 +2154,7 @@ class RequestBuilderTest extends TestCase {
 		// Three real lines bump line_counter; the GET_CACHE request goes
 		// through the TM_REQUEST branch and does NOT bump it.
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)' );
 
 		$message = $this->request_msg( 'GET_CACHE' );
@@ -2221,7 +2251,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill(
 			$rb,
 			3,
@@ -2253,7 +2283,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'sql (start)', [ 'm' => 'SELECT 1', 'truncated' => true ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
@@ -2276,7 +2306,7 @@ class RequestBuilderTest extends TestCase {
 
 		$long = \str_repeat( 'A', 1500 );
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'noise', [ 'm' => $long ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
@@ -2300,7 +2330,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		// Bogus multi-char error_status falls back to '-'.
 		$this->fill(
 			$rb,
@@ -2320,7 +2350,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		// Single char but not in [-, F, T] → fall back.
 		$this->fill(
 			$rb,
@@ -2340,7 +2370,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill(
 			$rb,
 			3,
@@ -2372,7 +2402,7 @@ class RequestBuilderTest extends TestCase {
 		$rb1->sink( $capture );
 
 		$this->fill( $rb1, 1, 'r1', 'process (start)' );
-		$this->fill( $rb1, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb1, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$saved = $rb1->save_state();
 
 		// Confirm save_state converted the in-flight request to an array (since
@@ -2388,7 +2418,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb2, 3, 'r1', 'process (complete)' );
 		$this->assertCount( 1, $capture->captured );
 		$req = $this->captured_request( $capture );
-		$this->assertSame( '/x', $req['url'] );
+		$this->assertSame( 'https://kea-7713.test/x', $req['url'] );
 	}
 
 	// --- format_index_entry: size bounds + method codes -------------------
@@ -2507,7 +2537,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
@@ -2577,7 +2607,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'error', [ 'm' => 'boom' ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
@@ -2585,7 +2615,7 @@ class RequestBuilderTest extends TestCase {
 		// to an errors target.
 		$this->assertCount( 1, $capture->captured );
 		$req = $this->captured_request( $capture );
-		$this->assertSame( '/x', $req['url'] );
+		$this->assertSame( 'https://kea-7713.test/x', $req['url'] );
 	}
 
 	public function test_emit_entry_silent_when_sink_is_null(): void {
@@ -2594,7 +2624,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->set_errors_target( 'errors:target' );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		// Must not crash even though sink is null.
 		$this->fill( $rb, 3, 'r1', 'error', [ 'm' => 'boom' ] );
 		// Cache still holds r1 since complete hasn't arrived.
@@ -2623,7 +2653,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r-fit-7733', 'process (start)' );
-		$this->fill( $rb, 2, 'r-fit-7733', 'request', [ 'm' => 'GET /err-7733/' . \str_repeat( 'u', 3000 ) ] );
+		$this->fill( $rb, 2, 'r-fit-7733', 'request', [ 'm' => 'GET https://kea-7713.test/err-7733/' . \str_repeat( 'u', 3000 ) ] );
 		$this->fill( $rb, 3, 'r-fit-7733', 'error', [ 'm' => \str_repeat( '错', 900 ) ] );
 
 		$err = $this->captured_error( $capture );
@@ -2644,7 +2674,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r-drop-7734', 'process (start)' );
-		$this->fill( $rb, 2, 'r-drop-7734', 'request', [ 'm' => 'GET /d-7734' ] );
+		$this->fill( $rb, 2, 'r-drop-7734', 'request', [ 'm' => 'GET https://kea-7713.test/d-7734' ] );
 		$this->fill( $rb, 3, 'r-drop-7734', 'error', [ 'm' => 'x', 'bulk' => \str_repeat( 'Z', 5000 ) ] );
 
 		$this->assertNull(
@@ -2664,7 +2694,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => 'REMOTE_ADDR => "1.2.3.4"' ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 

@@ -49,7 +49,6 @@ use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
-use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Bootstrap;
@@ -672,7 +671,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return Ask_Assembler::for_url(
 			$stats,
 			$recent['requests'],
-			self::rule_for_url( Core::as_string( $stats['url'] ?? '' ) ),
+			Rule_Set::load()->for_url( Core::as_string( $stats['url'] ) ),
 			$server,
 			$recent['truncated'],
 			$recent['window_start']
@@ -1181,7 +1180,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function ask_request( string $rid, int $partition, array $context, string $server ): array {
 		$record = self::load_request( $rid, $partition );
-		return Ask_Assembler::for_request( $record, self::rule_for_record( $record ), self::descriptor_of( $context, 'url' ), $server );
+		return Ask_Assembler::for_request( $record, Rule_Set::load()->rule_by_id( Findings::rule_stamp( $record ) ), self::descriptor_of( $context, 'url' ), $server );
 	}
 
 	/**
@@ -1198,7 +1197,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private function ask_span( string $name, array $context, int $now ): array {
 		$record = self::request_in_context( $context );
 		if ( null !== $record ) {
-			$brief = Ask_Assembler::for_span( $record, $name, self::rule_for_record( $record ), self::descriptor_of( $context, 'request' ) );
+			$brief = Ask_Assembler::for_span( $record, $name, Rule_Set::load()->rule_by_id( Findings::rule_stamp( $record ) ), self::descriptor_of( $context, 'request' ) );
 			if ( null === $brief ) {
 				throw new \RuntimeException( \esc_html( "no span '{$name}' in this request" ) );
 			}
@@ -1215,53 +1214,13 @@ class Performance_CI_Node extends Service_CI_Node {
 			Core::arr( $url['aggregate']['flame'] ?? null ),
 			$name,
 			$url['name'],
-			self::rule_for_url( $url['name'] ),
+			'' === $url['name'] ? null : Rule_Set::load()->for_url( $url['name'] ),
 			$url['descriptor']
 		);
 		if ( null === $brief ) {
 			throw new \RuntimeException( \esc_html( "no span '{$name}' in this URL's aggregate" ) );
 		}
 		return $brief;
-	}
-
-	/**
-	 * The rule governing a URL, for the surfaces that hold no record — the
-	 * `url:` brief works from an index row. Matching takes the PATH: a stored
-	 * url is absolute, and `Rule_Matcher` compares against patterns like `/`.
-	 *
-	 * @param string $url The stored absolute URL.
-	 * @return ?Rule The governing rule, or null when no pattern matches.
-	 */
-	private static function rule_for_url( string $url ): ?Rule {
-		if ( '' === $url ) {
-			return null;
-		}
-		$path = Core::as_string( \wp_parse_url( $url, \PHP_URL_PATH ), '' );
-		if ( '' === $path ) {
-			$path = \str_starts_with( $url, '/' ) ? $url : '/';
-		}
-		$query = Core::as_string( \wp_parse_url( $url, \PHP_URL_QUERY ), '' );
-		return Rule_Set::load()->matcher()->match( '' === $query ? $path : "{$path}?{$query}" );
-	}
-
-	/**
-	 * The rule this request ran under. Findings about a span or an entry are
-	 * actionable only through the rule governing THAT request's URL — the
-	 * finest grain a rule has is a URL pattern, and there is no such thing as a
-	 * rule about a hook.
-	 *
-	 * The RECORD answers this: `Request_Builder_Node` stamps `rule_id` from the
-	 * match the request itself made. Re-deriving it here finds nothing, because
-	 * a stored `url` is absolute and query-stripped (`https://host/path`) while
-	 * rules are path patterns — not even a catch-all `/` matches one, so every
-	 * brief would report "no rule governs this URL" and propose creating a rule
-	 * whose pattern could never match anything.
-	 *
-	 * @param array<array-key,mixed> $record A stored request record.
-	 */
-	private static function rule_for_record( array $record ): ?Rule {
-		$id = Findings::rule_stamp( $record );
-		return '' === $id ? null : Rule_Set::load()->rule_by_id( $id );
 	}
 
 	/**
@@ -2433,7 +2392,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// A hint, as in `ask`: that partition first, then the rest.
 				$result = self::load_request( $rid, $partition );
 				// Findings ride the record; no model is involved in them.
-				$rule               = self::rule_for_record( $result );
+				$rule               = Rule_Set::load()->rule_by_id( Findings::rule_stamp( $result ) );
 				$result['findings'] = Findings::for_request( $result, $rule );
 				$result['caveat']   = Findings::caveat();
 				return $result;

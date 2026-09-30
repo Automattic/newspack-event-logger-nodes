@@ -25,7 +25,7 @@ class FlameBuilderSpanTest extends TestCase {
 	private const PARTITION = 3;
 
 	/** The URL every record is for. */
-	private const URL = '/kea-41';
+	private const URL = 'https://kea-7713.test/kea-41';
 
 	/** Each record's duration, in ms. */
 	private const DURATION_MS = 37.0;
@@ -223,22 +223,58 @@ class FlameBuilderSpanTest extends TestCase {
 		\file_put_contents( "{$dir}/0.log", Message::packed( $frame ) . "\n" );
 	}
 
+	/**
+	 * A record whose URL names no host throws at the fold's intake, so the
+	 * Consumer quarantines it and reads on: the record lands in the dead-letter
+	 * queue, the cursor passes it, and the hosted record after it settles.
+	 */
+	public function test_a_hostless_record_dead_letters_and_the_reader_reads_on(): void {
+		$source = new Partition_Node();
+		$source->arguments( [ "{$this->tmp}/requests.p3", (string) ( 64 * 1024 ), '4', '86400' ] );
+		$this->append_record( $source, '/bare-kea-7731' );
+		$this->append_record( $source );
+		$warned = [];
+		Core::set_stderr_handler( static function ( string $m ) use ( &$warned ): void {
+			$warned[] = $m;
+		} );
+
+		[ $c1, $fb1 ] = $this->worker( "{$this->tmp}/deadletter/flame-builder.p3" );
+		$this->pump_consumer( $c1 );
+		$c1->checkpoint( settle: true );
+
+		$this->assertSame( [ 1, 37.0 ], $this->counted(), 'the hosted record settles, the hostless one does not' );
+		$dead = $c1->list_deadletter( 10 );
+		$this->assertSame( 1, $dead['total'], 'the hostless record is quarantined' );
+		$this->assertSame( 'throw', $dead['rows'][0]['reason'] ?? null );
+		$this->assertSame( '0:0:', \substr( (string) ( $dead['rows'][0]['source'] ?? '' ), 0, 4 ), 'it is the first record' );
+		$this->assertNotEmpty( \array_filter( $warned, static fn ( string $m ): bool => \str_contains( $m, 'DEAD-LETTER [throw]' ) && \str_contains( $m, '/bare-kea-7731' ) ), 'the quarantine warns naming the URL' );
+
+		$c1->checkpoint( true );
+		$c1->remove_node();
+		$fb1->remove_node();
+		[ $c2 ] = $this->worker( "{$this->tmp}/deadletter/flame-builder.p3" );
+		$this->pump_consumer( $c2 );
+		$c2->checkpoint( settle: true );
+		$this->assertSame( [ 1, 37.0 ], $this->counted(), 'the cursor passed both: a successor re-reads neither' );
+		$this->assertSame( 1, $c2->list_deadletter( 10 )['total'], 'nor quarantines the record again' );
+	}
+
 	/** One worker's reader and builder, over `requests.p3`, the builder snapshotted. */
-	private function worker(): array {
+	private function worker( string $deadletter_dir = '' ): array {
 		$fb = $this->builder( 'flame-builder' );
 		$c  = new Consumer_Node();
-		$c->arguments( [ "{$this->tmp}/requests.p3", "{$this->tmp}/offsets/flame-builder.p3" ] );
+		$c->arguments( [ "{$this->tmp}/requests.p3", "{$this->tmp}/offsets/flame-builder.p3", $deadletter_dir ] );
 		$c->name( 'requests:consumer' );
 		$c->sink( $fb );
 		$c->add_snapshot_node( 'flame-builder' );
 		return [ $c, $fb ];
 	}
 
-	/** Append one record to the requests log, visible on disk at once. */
-	private function append_record( Partition_Node $source ): void {
+	/** Append one record for `$url` to the requests log, visible on disk at once. */
+	private function append_record( Partition_Node $source, string $url = self::URL ): void {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_STRUCT;
-		$message[ Message::VALUE ] = self::record();
+		$message[ Message::VALUE ] = [ 'url' => $url ] + self::record();
 		$source->fill( $message );
 		$source->flush();
 	}
@@ -297,7 +333,7 @@ class FlameBuilderSpanTest extends TestCase {
 			$message                   = Message::new_message();
 			$message[ Message::TYPE ]  = Message::TM_STRUCT;
 			$message[ Message::ID ]    = "3:{$n}:41";
-			$message[ Message::VALUE ] = [ 'url' => "/kea-sku-{$n}" ] + $record;
+			$message[ Message::VALUE ] = [ 'url' => "https://kea-7713.test/kea-sku-{$n}" ] + $record;
 			$fb->fill( $message );
 		}
 		$fb->set_stats_store( $store );
@@ -317,8 +353,8 @@ class FlameBuilderSpanTest extends TestCase {
 	 */
 	public function test_the_carry_leaves_out_the_url_blobs_past_its_budget(): void {
 		$fb = $this->builder( 'fb-kea', Small_Carry_Flame_Builder::class );
-		self::fold( $fb, '3:100:41', '/kea-41' );
-		self::fold( $fb, '3:200:43', '/kea-43' );
+		self::fold( $fb, '3:100:41', 'https://kea-7713.test/kea-41' );
+		self::fold( $fb, '3:200:43', 'https://kea-7713.test/kea-43' );
 
 		$span = self::as_stored( $fb->save_state() )['span'];
 		$fb->save_state();

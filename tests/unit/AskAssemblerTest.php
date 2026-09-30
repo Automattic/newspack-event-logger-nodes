@@ -140,17 +140,17 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 'flame-builder', $brief['env']['worker_type'] );
 	}
 
-	public function test_a_request_brief_names_the_server_that_served_it(): void {
-		// The brief's numbers are scoped by server everywhere else; the env
-		// block has to name the same axis or a scoped figure reads as the
-		// site's. `host` used to sit here and no longer exists on the record.
+	/** A request brief names its server in its URL alone; the env block carries no server field. */
+	public function test_a_request_brief_names_its_server_in_its_url(): void {
 		$record                = $this->record();
-		$record['server_name'] = 'spoke-17.example';
+		$record['url']         = 'https://spoke-17.example/aisle-4417';
+		$record['server_name'] = 'heron-3301.test';
 
 		$brief = Ask_Assembler::for_request( $record, $this->rule() );
 
-		$this->assertSame( 'spoke-17.example', $brief['env']['server_name'] );
-		$this->assertArrayNotHasKey( 'host', $brief['env'] );
+		$this->assertStringStartsWith( 'https://spoke-17.example/', $brief['url'] );
+		$this->assertArrayNotHasKey( 'server_name', $brief['env'] );
+		$this->assertStringNotContainsString( 'heron-3301', (string) \wp_json_encode( $brief ) );
 	}
 
 	public function test_entries_ride_only_when_the_record_is_small(): void {

@@ -163,9 +163,6 @@ class Stats_Store {
 	/** The dimension naming the reporting server — the axis the picker is built from. */
 	public const DIM_SERVER = 'server';
 
-	/** The server a request whose producer named none is filed under. */
-	public const UNKNOWN_SERVER = 'Unknown';
-
 	/**
 	 * The name a capped profile folds its tail categories into, and the
 	 * server every server past `MAX_SERVER_VALUES` files under.
@@ -962,16 +959,16 @@ class Stats_Store {
 	 * The PATH of a URL: what a search matches, with no scheme or host.
 	 *
 	 * The server is the picker's question, so a term matching the host would
-	 * make one box ask the dropdown's. A URL carrying no scheme is all path,
-	 * which is what a producer with no `SERVER_NAME` writes. The authority
-	 * ends at whichever delimiter comes first, so an authority with no path
-	 * keeps its query on the path.
+	 * make one box ask the dropdown's. The authority ends at whichever
+	 * delimiter comes first, so an authority with no path keeps its query on
+	 * the path.
 	 *
-	 * @param string $url A URL.
+	 * @param string $url A logged URL, which carries its host.
+	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public static function path_of( string $url ): string {
-		$host = self::authority( $url );
-		return null === $host ? $url : \substr( $url, $host[0] + $host[1] );
+		[ $offset, $length ] = self::authority( $url );
+		return \substr( $url, $offset + $length );
 	}
 
 	/**
@@ -1207,30 +1204,33 @@ class Stats_Store {
 
 	/**
 	 * The server a URL was logged by: its host, which the producer writes
-	 * from the server name it files under, or `UNKNOWN_SERVER` for a URL
-	 * carrying no scheme, which a producer with no `SERVER_NAME` writes.
+	 * from the server name it files under.
 	 *
-	 * @param string $url A URL.
+	 * @param string $url A logged URL, which carries its host.
+	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public static function server_of( string $url ): string {
-		$host = self::authority( $url );
-		return null === $host ? self::UNKNOWN_SERVER : \substr( $url, ...$host );
+		return \substr( $url, ...self::authority( $url ) );
 	}
 
 	/**
 	 * Where a URL's host lies, `[ offset, length ]`: after a `://` that
-	 * comes before any `/`, `?` or `#`, and up to the first of them. Null
-	 * for a URL with no scheme, whose `://` if any sits inside its path.
+	 * comes before any `/`, `?` or `#`, and up to the first of them.
 	 *
-	 * @param string $url A URL.
-	 * @return array{0:int,1:int}|null
+	 * @param string $url A logged URL, which carries its host.
+	 * @return array{0:int,1:int}
+	 * @throws \InvalidArgumentException When the URL has no host: no `://`
+	 *                                   ahead of its path, or an empty host.
 	 */
-	private static function authority( string $url ): ?array {
+	private static function authority( string $url ): array {
 		$at = \strpos( $url, '://' );
-		if ( false === $at || $at > \strcspn( $url, '/?#' ) ) {
-			return null;
+		if ( false !== $at && $at <= \strcspn( $url, '/?#' ) ) {
+			$length = \strcspn( $url, '/?#', $at + 3 );
+			if ( 0 < $length ) {
+				return [ $at + 3, $length ];
+			}
 		}
-		return [ $at + 3, \strcspn( $url, '/?#', $at + 3 ) ];
+		throw new \InvalidArgumentException( "Stats_Store: URL has no host: '{$url}'" );
 	}
 
 	/**

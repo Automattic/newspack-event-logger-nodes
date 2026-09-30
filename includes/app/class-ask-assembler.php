@@ -72,7 +72,7 @@ class Ask_Assembler {
 	 * than filtered, so a new field on the record does not silently start
 	 * leaving the site.
 	 */
-	private const ENV_ALLOWLIST = [ 'method', 'request_method', 'status_code', 'worker_type', 'partition', 'server_name' ];
+	private const ENV_ALLOWLIST = [ 'method', 'request_method', 'status_code', 'worker_type', 'partition' ];
 
 	/**
 	 * One request: what it did, how long it took, what the detector found.

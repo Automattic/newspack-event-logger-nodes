@@ -70,8 +70,9 @@ export const CHART_METRIC_OPTIONS = [
  *
  * Every `value` is a server-side dimension key, so this list must stay in step
  * with `Performance_CI_Node::DIMENSIONS` (which rejects anything else) and with
- * `Flame_Builder_Node::DIM_FIELDS` (which decides what gets accumulated in the
- * first place). A value in only one of the three yields an empty breakdown.
+ * `Flame_Builder_Node::DIM_FIELDS` plus its `server` axis (which decide what
+ * gets accumulated in the first place). A value in only one of the three
+ * yields an empty breakdown.
  *
  * Each caller hands `BreakdownControls` the list it offers. `OverviewSection`
  * offers this one while `canBreakDownByServer` holds and
@@ -99,7 +100,7 @@ export const CHART_BREAKDOWN_OPTIONS = [
 
 /**
  * The dimensions that still split INSIDE one server's scope: the list above
- * minus `server`. `server_name` is the site's host, so a chart already scoped
+ * minus `server`. The server is a URL's host, so a chart already scoped
  * to one server — a server filter, or one URL, whose hash is over the whole
  * URL and therefore its host — would draw one line under that axis. The
  * per-server aggregate skips the axis on the same reasoning.
