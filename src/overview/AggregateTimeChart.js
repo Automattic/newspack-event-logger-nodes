@@ -2,8 +2,9 @@
  * Aggregate time chart — the Performance dashboard's main time series.
  *
  * Plots the 288 five-minute slots the reply names (`buildChartSlots`), the
- * last 24 hours. One translucent area per series, overlaid; the chart's own
- * corner toggle stacks them, and the total row appears with the stack.
+ * last 24 hours. One translucent area per series, overlaid; for the counts and
+ * sums the chart's corner toggle stacks them, and the total row appears with
+ * the stack. A slot with nothing to average is a gap.
  * `AreaTimeChart` owns the frame; this file owns the sampling.
  *
  * A breakdown dimension is ALWAYS selected — there is no "None" — so the
@@ -106,22 +107,29 @@ const Y_FORMATS = {
 	memory: () => formatMemoryMb,
 };
 
+/** The metrics whose series add up: a stack of means is no total. */
+const STACKABLE_METRICS = [ 'volume', 'cumulative' ];
+
+/** A slot no request reached: every sum and count 0. */
+const EMPTY_SLOT = { count: 0, sumMs: 0, sumPeakMb: 0, timed: 0 };
+
 /**
  * Reduce one slot's totals to the plotted value for a metric.
  *
  * @param {string}                metric 'volume' | 'avg' | 'cumulative' | 'memory'.
  * @param {Object<string,number>} row    The slot's `DIM_SUMS`, under `DIM_FIELDS`' names.
- * @return {number} Requests for `volume`, mean milliseconds of the timed
+ * @return {?number} Requests for `volume`, mean milliseconds of the timed
  * requests for `avg`, summed seconds for `cumulative`, mean megabytes for
- * `memory`, each over the slot's five minutes. An empty slot averages to 0
- * rather than dividing by zero.
+ * `memory`, each over the slot's five minutes. A mean over no requests is
+ * null, unmeasured, and the chart draws a gap; a count or a sum of none is
+ * a real 0.
  */
 const slotValue = ( metric, { count, sumMs, sumPeakMb, timed } ) => {
 	if ( 'memory' === metric ) {
-		return count > 0 ? sumPeakMb / count : 0;
+		return count > 0 ? sumPeakMb / count : null;
 	}
 	if ( 'avg' === metric ) {
-		return timed > 0 ? Math.round( sumMs / timed ) : 0;
+		return timed > 0 ? Math.round( sumMs / timed ) : null;
 	}
 	if ( 'cumulative' === metric ) {
 		return sumMs / MS_PER_SECOND;
@@ -192,7 +200,7 @@ export default function AggregateTimeChart( {
 				const row = series.byBucket[ slot.bucketKey ]?.[ index ];
 				return {
 					date: slot.date,
-					value: row ? slotValue( metric, row ) : 0,
+					value: slotValue( metric, row ?? EMPTY_SLOT ),
 				};
 			} ),
 		} ) );
@@ -235,10 +243,11 @@ export default function AggregateTimeChart( {
 
 	const titleSuffix = serverFilter ? ` — ${ serverFilter }` : '';
 
-	// Keyed on the metric: a stack of means is no total, so a pick retires.
+	// Keyed on the metric, so a pick retires with it.
 	return (
 		<AreaTimeChart
 			key={ metric }
+			stackable={ STACKABLE_METRICS.includes( metric ) }
 			className="event-logger-aggregate-time-chart"
 			series={ chartState.lines }
 			colorAt={ colorAt }

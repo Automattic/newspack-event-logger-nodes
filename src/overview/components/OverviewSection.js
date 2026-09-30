@@ -43,7 +43,7 @@ import HeadlineStats from './HeadlineStats';
  * @param {Object|null}             props.overview               Overview slice payload; it supplies `global_leaderboard` and gates the card, so null renders nothing.
  * @param {Object|null}             props.urlTotals              Headline numbers for the URL set the filters selected; null until the first reply.
  * @param {boolean}                 props.urlsProvisional        Whether `urlTotals` may run short because a stats read went unanswered.
- * @param {number}                  props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's.
+ * @param {?number}                 props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's.
  * @param {string}                  props.serverFilter           Selected server name, or '' for all servers; it also captions the Time Breakdown.
  * @param {(value: string) => void} props.setServerFilter        Server filter setter.
  * @param {string[]|null}           props.serverNames            Server names seen in the breakdown data; null until the first reply lands. Fewer than two withholds the Server select, which would offer no choice.

@@ -19,7 +19,10 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `estimated`, which the reply no longer carries, and reads `provisional`
   as a stats read that went unanswered. An untimed URL's `min_ms` and
   `max_ms` are null, where they were 0, in a `urls` or `dump_url` row and in
-  every `ask` brief; a client renders null as unmeasured. Such a URL ranks
+  every `ask` brief; a client renders null as unmeasured. So is its `avg_ms`,
+  and the `avg_ms` of a `urls` header, `overview`'s `global_avg_ms` and its
+  leaderboard's `avg_ms` when no request in their scope was timed;
+  `avg_peak_mb` is null for a scope with no request at all. Such a URL ranks
   last on `avg_ms`, `min_ms` and `max_ms` in either order, searched or not.
   A `flame-builder` topology of your own names each Ledger it writes with
   `add_ledger_target`, as the shipped one does, or `configure_stats`
@@ -181,11 +184,6 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   traffic, so they read lower than before for a URL that errs now and then;
   `errors` is unchanged. A client that took `count` under the filter for
   the URL's whole traffic reads it unfiltered instead.
-
-- **A row with no timed request ranks at 0 on `avg_ms`, `min_ms` and
-  `max_ms`** on a ranked page, as a folded page always ranked it. A client
-  expecting a ranked timing sort to omit timeout-only URLs filters on
-  `timed_count` itself.
 
 - **`Stats_Store`'s ranking API changed.** `ranked_writes()` takes
   `server => shard => rows`, not `server => rows`: pass each server's shard

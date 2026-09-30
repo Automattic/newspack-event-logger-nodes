@@ -519,8 +519,8 @@ class Ask_Assembler {
 			'server'             => $server,
 			'stats'              => [
 				'count'       => Core::num_int( $stats['count'] ?? 0 ),
-				'avg_ms'      => Core::num_float( $stats['avg_ms'] ?? 0 ),
-				'max_ms'      => Stats_Store::extreme( $stats['max_ms'] ?? null ),
+				'avg_ms'      => Stats_Store::measured( $stats['avg_ms'] ?? null ),
+				'max_ms'      => Stats_Store::measured( $stats['max_ms'] ?? null ),
 				'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 			],
 			'worst_requests'     => \array_map(
@@ -669,29 +669,30 @@ class Ask_Assembler {
 			if ( Flame_Tree::is_listener_span( (string) $key ) ) {
 				continue;
 			}
-			$time   = \is_array( $row ) ? Core::num_float( $row['time'] ?? 0 ) : 0.0;
-			$total += $time;
+			$row    = Core::arr( $row );
+			$time   = Stats_Store::measured( $row['time'] ?? null );
+			$total += $time ?? 0.0;
 			if ( (string) $key !== $name ) {
 				$others[] = [
 					'name'        => (string) $key,
 					'avg_time_ms' => $time,
-					'avg_count'   => \is_array( $row ) ? Core::num_float( $row['count'] ?? 0 ) : 0.0,
+					'avg_count'   => Stats_Store::measured( $row['count'] ?? null ),
 				];
 			}
 		}
-		\usort( $others, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
+		\usort( $others, self::by_time( ... ) );
 
 		$mine = Core::arr( $rows[ $name ] );
-		$time = Core::num_float( $mine['time'] ?? 0 );
+		$time = Stats_Store::measured( $mine['time'] ?? null );
 		return \array_merge(
 			[
 				'subject'     => 'category',
 				'scope'       => $scope,
 				'name'        => $name,
 				'avg_time_ms' => $time,
-				'avg_count'   => Core::num_float( $mine['count'] ?? 0 ),
+				'avg_count'   => Stats_Store::measured( $mine['count'] ?? null ),
 				'samples'     => $samples ?? Core::num_int( $mine['samples'] ?? 0 ),
-				'share'       => $total > 0.0 ? $time / $total : 0.0,
+				'share'       => null === $time ? null : ( $total > 0.0 ? $time / $total : 0.0 ),
 				'others'      => \array_slice( $others, 0, self::TOP_SPANS ),
 				'caveat'      => Findings::caveat(),
 			],
@@ -736,8 +737,8 @@ class Ask_Assembler {
 			'stats'      => null === $totals ? null : [
 				'urls'                => Core::num_int( $totals['urls'] ?? 0 ),
 				'requests'            => Core::num_int( $totals['requests'] ?? 0 ),
-				'avg_ms'              => Core::num_float( $totals['avg_ms'] ?? 0 ),
-				'avg_peak_mb'         => Core::num_float( $totals['avg_peak_mb'] ?? 0 ),
+				'avg_ms'              => Stats_Store::measured( $totals['avg_ms'] ?? null ),
+				'avg_peak_mb'         => Stats_Store::measured( $totals['avg_peak_mb'] ?? null ),
 				// This hour's closed buckets, or the last hour until :05.
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
 			] + self::errors_of( $totals ),
@@ -798,12 +799,23 @@ class Ask_Assembler {
 			$row    = Core::arr( $row );
 			$rows[] = [
 				'name'        => (string) $name,
-				'avg_time_ms' => Core::num_float( $row['time'] ?? 0 ),
-				'avg_count'   => Core::num_float( $row['count'] ?? 0 ),
+				'avg_time_ms' => Stats_Store::measured( $row['time'] ?? null ),
+				'avg_count'   => Stats_Store::measured( $row['count'] ?? null ),
 			];
 		}
-		\usort( $rows, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
+		\usort( $rows, self::by_time( ... ) );
 		return \array_slice( $rows, 0, self::TOP_SPANS );
+	}
+
+	/**
+	 * Orders category rows slowest first; an unmeasured mean sorts as 0 here
+	 * and is reported as null.
+	 *
+	 * @param array<string,mixed> $a A category row.
+	 * @param array<string,mixed> $b A category row.
+	 */
+	private static function by_time( array $a, array $b ): int {
+		return ( $b['avg_time_ms'] ?? 0.0 ) <=> ( $a['avg_time_ms'] ?? 0.0 );
 	}
 
 	/**
@@ -819,8 +831,8 @@ class Ask_Assembler {
 			'hash'   => Core::as_string( $row['hash'] ?? '' ),
 			'url'    => Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
 			'count'  => Core::num_int( $row['count'] ?? 0 ),
-			'avg_ms' => Core::num_float( $row['avg_ms'] ?? 0 ),
-			'max_ms' => Stats_Store::extreme( $row['max_ms'] ?? null ),
+			'avg_ms' => Stats_Store::measured( $row['avg_ms'] ?? null ),
+			'max_ms' => Stats_Store::measured( $row['max_ms'] ?? null ),
 		] + self::errors_of( $row );
 	}
 

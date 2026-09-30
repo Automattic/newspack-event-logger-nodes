@@ -266,7 +266,7 @@ const UrlRow = memo(
 	 * @param {boolean}                      props.isSelected  Whether the detail modal is open on this row.
 	 * @param {(url: Object) => void}        props.onSelect    Receives the row on click or Enter/Space.
 	 * @param {(n: number, s?: string) => *} props.formatNum   Number formatter, from the table.
-	 * @param {number}                       props.maxAvg      The page's p95 of the bar metric; 0 draws no bar.
+	 * @param {number}                       props.maxAvg      The page's p95 of the measured bar metric; 0 draws no bar.
 	 * @param {string}                       props.metric      'memory' bars avg_peak_mb, 'volume' bars count, 'avg' and 'cumulative' bar avg_ms.
 	 * @param {number}                       props.now         Unix timestamp the page's ages are measured from.
 	 * @param {boolean}                      props.errorCounts Whether the count cell shows the row's `errors`.
@@ -288,11 +288,15 @@ const UrlRow = memo(
 		} else if ( metric === 'volume' ) {
 			barField = 'count';
 		}
-		const barValue = url[ barField ] || 0;
-		const barPct = maxAvg > 0 ? ( barValue / maxAvg ) * 100 : 0;
-		const barStyle = {
-			background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
-		};
+		// A URL no timed request reached is unmeasured, and draws no bar.
+		const barValue = url[ barField ];
+		let barStyle;
+		if ( Number.isFinite( barValue ) ) {
+			const barPct = maxAvg > 0 ? ( barValue / maxAvg ) * 100 : 0;
+			barStyle = {
+				background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
+			};
+		}
 		const handleKeyDown = ( e ) => {
 			if ( e.key === 'Enter' || e.key === ' ' ) {
 				e.preventDefault();
@@ -462,7 +466,8 @@ export default function UrlTable( {
 			field = 'count';
 		}
 		const values = filteredUrls
-			.map( ( u ) => u[ field ] || 0 )
+			.map( ( u ) => u[ field ] )
+			.filter( Number.isFinite )
 			.sort( ( a, b ) => a - b );
 		if ( values.length === 0 ) {
 			return 0;

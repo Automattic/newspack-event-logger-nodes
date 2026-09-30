@@ -768,6 +768,23 @@ class AskAssemblerTest extends TestCase {
 		);
 	}
 
+	/** A category with no profiled request has no mean, and the brief says so. */
+	public function test_a_category_with_no_mean_reaches_the_brief_as_null(): void {
+		$categories = [
+			'sql'   => [ 'time' => null, 'count' => null, 'samples' => 0 ],
+			'wpdb'  => [ 'time' => 44.5, 'count' => 7.0, 'samples' => 3 ],
+		];
+
+		$unmeasured = Ask_Assembler::for_category( $categories, 'sql' );
+		$measured   = Ask_Assembler::for_category( $categories, 'wpdb' );
+		$overview   = Ask_Assembler::for_overview( [ 'data' => [], 'totals' => null, 'provisional' => false ], [ 'categories' => $categories ], '', [] );
+
+		$this->assertSame( [ null, null, null ], [ $unmeasured['avg_time_ms'], $unmeasured['avg_count'], $unmeasured['share'] ] );
+		$this->assertSame( [ [ 'wpdb', 44.5, 7.0 ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'], $o['avg_count'] ], $unmeasured['others'] ) );
+		$this->assertSame( [ [ 'sql', null, null ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'], $o['avg_count'] ], $measured['others'] ) );
+		$this->assertSame( [ [ 'wpdb', 44.5 ], [ 'sql', null ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'] ], $overview['categories'] ) );
+	}
+
 	/**
 	 * The rows are `Stats_Store::sums_to_display()`'s — `time` and `count`,
 	 * already divided by the window's request count. Reading anything else

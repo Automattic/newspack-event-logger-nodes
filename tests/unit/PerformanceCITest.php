@@ -459,13 +459,35 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 0, $result['total_requests'] );
-		$this->assertEquals( 0.0, $result['global_avg_ms'] );
-		$this->assertEquals( 0.0, $result['global_avg_peak_mb'] );
+		$this->assertNull( $result['global_avg_ms'], 'the mean of no timed request is not measured' );
+		$this->assertNull( $result['global_avg_peak_mb'] );
+		$this->assertNull( $result['global_leaderboard']['avg_ms'] );
 		$this->assertCount( 288, $result['slots'] );
 		// The URL-set facts belong to the `urls` verb now.
 		$this->assertArrayNotHasKey( 'total_urls', $result );
 		$this->assertArrayNotHasKey( 'slowest_urls', $result );
 		$this->assertArrayNotHasKey( 'most_requested', $result );
+	}
+
+	/** A window whose every request timed out has no mean duration, and its peak mean stays. */
+	public function test_an_overview_of_timeouts_alone_has_no_mean_duration(): void {
+		$this->append( [ Stats_Store::LEDGER_TOTALS => [ self::total( Stats_Store::bucket_start( self::tick() ), 0, 0.0, 7, 35.0 ) ] ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
+
+		$this->assertSame( 0, $result['total_requests'] );
+		$this->assertNull( $result['global_avg_ms'] );
+		$this->assertNull( $result['global_leaderboard']['avg_ms'] );
+		$this->assertEqualsWithDelta( 5.0, $result['global_avg_peak_mb'], 1e-9, 'seven requests\' peaks over seven requests' );
+	}
+
+	/** A server none of whose requests timed has a null board mean too. */
+	public function test_a_server_with_no_timed_request_has_a_null_board_mean(): void {
+		$this->append( [ Stats_Store::LEDGER_DIMS => [ self::dim( Stats_Store::bucket_start( self::tick() ), 'server', 'edge-takahe.test', 7, 0.0, 3.5, 0 ) ] ] );
+
+		$board = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', '--server=edge-takahe.test' )['global_leaderboard'];
+
+		$this->assertNull( $board['avg_ms'] );
 	}
 
 	public function test_overview_verb_sums_the_totals(): void {
@@ -1872,11 +1894,19 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( 6, $brief['stats']['count'] );
 		$this->assertNull( $brief['stats']['max_ms'], 'the url brief' );
+		$this->assertNull( $brief['stats']['avg_ms'], 'its mean' );
 		$this->assertSame( 'insufficient_instrumentation', $brief['findings'][0]['kind'] );
 		$this->assertNull( $brief['findings'][0]['metric']['max_ms'], 'its finding' );
+		$this->assertNull( $brief['findings'][0]['metric']['avg_ms'], 'its finding\'s mean' );
 		$this->assertSame( [ $hash ], \array_column( $overview['urls'], 'hash' ) );
 		$this->assertNull( $overview['urls'][0]['max_ms'], 'the overview brief' );
-		$this->assertSame( [ null, null ], [ $dump['stats']['min_ms'], $dump['stats']['max_ms'] ], 'the detail modal' );
+		$this->assertNull( $overview['urls'][0]['avg_ms'], 'its row\'s mean' );
+		$this->assertNull( $overview['stats']['avg_ms'], 'its totals\' mean' );
+		VerbHarness::reset();
+		$unmatched = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --search=nomatchwordkea' );
+		$this->assertSame( 0, $unmatched['stats']['requests'] );
+		$this->assertSame( [ null, null ], [ $unmatched['stats']['avg_ms'], $unmatched['stats']['avg_peak_mb'] ], 'a search that matches nothing has no means'  );
+		$this->assertSame( [ null, null, null ], [ $dump['stats']['avg_ms'], $dump['stats']['min_ms'], $dump['stats']['max_ms'] ], 'the detail modal' );
 	}
 
 	/**
@@ -1886,7 +1916,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_an_untimed_url_ranks_last_on_every_timed_sort(): void {
 		$this->seed_urls( [
-			'https://kea.test/moa-31/ruru'  => [ 'count' => 5, 'timed_count' => 0, 'count_2xx' => 0, 'errors' => 5 ],
+			'https://kea.test/moa-31/ruru'  => [ 'count' => 7, 'timed_count' => 0, 'count_2xx' => 0, 'errors' => 7 ],
 			'https://kea.test/moa-31/tui'   => [ 'count' => 3, 'sum_ms' => 90.0 ],
 			'https://kea.test/moa-31/kokako' => [ 'count' => 2, 'sum_ms' => 710.0 ],
 		] );
@@ -1899,6 +1929,7 @@ class PerformanceCITest extends TestCase {
 					VerbHarness::reset();
 					$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ "--sort={$sort}", "--order={$order}", ...$search ] );
 					$this->assertSame( [ ...$urls, 'https://kea.test/moa-31/ruru' ], \array_column( $page['data'], 'url' ), "{$sort} {$order} " . \implode( '', $search ) );
+					$this->assertSame( [ true, true, false ], \array_map( static fn ( array $row ): bool => null !== $row['avg_ms'], $page['data'] ), "{$sort} {$order} carries the unmeasured mean as null" );
 				}
 			}
 		}
@@ -2125,7 +2156,8 @@ class PerformanceCITest extends TestCase {
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
-		$this->assertSame( 0.0, (float) ( $result['totals']['avg_ms'] ?? -1 ) );
+		$this->assertNull( $result['totals']['avg_ms'] );
+		$this->assertNull( $result['data'][0]['avg_ms'] );
 	}
 
 	public function test_the_mean_divides_by_timed_requests_not_by_every_request(): void {

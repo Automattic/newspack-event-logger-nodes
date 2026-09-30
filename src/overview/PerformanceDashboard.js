@@ -676,7 +676,7 @@ export default function PerformanceDashboard( {
 	 * same slots — a server's under a server filter — and never the filtered
 	 * URL set's.
 	 */
-	const breakdownAvgMs = overview?.global_leaderboard?.avg_ms ?? 0;
+	const breakdownAvgMs = overview?.global_leaderboard?.avg_ms;
 
 	// Inline "Log this URL" state: the open draft, the ruleset, and the error.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
