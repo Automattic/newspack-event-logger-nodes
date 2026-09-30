@@ -61,8 +61,9 @@ final class Url_Sketch {
 		foreach ( $sketches as $sketch ) {
 			/** @var array<int,int> $theirs */
 			$theirs = \unpack( 'P*', self::registers( $sketch ) ) ?: [];
-			foreach ( $ours as $at => $lanes ) {
-				$other       = $theirs[ $at ];
+			// A zero word raises no register; most of a sparse sketch is zeros.
+			foreach ( \array_diff( $theirs, [ 0 ] ) as $at => $other ) {
+				$lanes       = $ours[ $at ];
 				$larger      = ( ( ( $lanes | self::LANE_TOP ) - $other ) & self::LANE_TOP ) >> 6;
 				$mask        = $larger * self::LANE_MASK;
 				$ours[ $at ] = ( $lanes & $mask ) | ( $other & ~$mask );

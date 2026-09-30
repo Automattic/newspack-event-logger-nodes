@@ -505,6 +505,13 @@ class StatsStoreTest extends TestCase {
 		$this->assertNotSame( $h1, $h3 );
 	}
 
+	public function test_server_key_is_the_fnv1a32_every_stored_key_carries(): void {
+		// Stored keys carry it, so a new spelling of the hash orphans them.
+		$this->assertSame( '41a5c9d3', Stats_Store::server_key( 'srv-a.example.com' ) );
+		$this->assertSame( '627292da', Stats_Store::server_key( 'spray042.probe.test' ) );
+		$this->assertSame( '1f323231', Stats_Store::server_key( "\u{e9}\0x" ) );
+	}
+
 	public function test_server_key_empty_string_returns_empty(): void {
 		$this->assertSame( '', Stats_Store::server_key( '' ) );
 	}

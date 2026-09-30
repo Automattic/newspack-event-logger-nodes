@@ -2555,7 +2555,7 @@ class Stats_Store {
 		if ( '' === $server ) {
 			return '';
 		}
-		return \sprintf( '%08x', Log_Manager::fnv1a32( $server ) );
+		return \hash( 'fnv1a32', $server );
 	}
 
 	/**

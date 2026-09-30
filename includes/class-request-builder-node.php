@@ -282,7 +282,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** Newest entry stamp consumed, never past the wall: 0 before the first. */
 	private float $stream_now = 0.0;
 
-	/** `Quiet::mark()` at the last entry consumed: what quiet is measured from. */
+	/** `Flame_Builder_Node::monotonic()` at the last entry consumed: what quiet is measured from. */
 	private int $consumed_at_hr;
 
 	/**
@@ -296,7 +296,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * @api Used by substrate.
 	 */
 	public function __construct() {
-		$this->consumed_at_hr = Quiet::mark();
+		$this->consumed_at_hr = Flame_Builder_Node::monotonic();
 		// Schema-default cache so the no-arg ctor works; arguments() rebuilds.
 		$this->cache = $this->build_cache();
 		$this->state_callbacks = $this->build_state_callbacks();
@@ -906,8 +906,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * @param mixed $ts The entry's `ts`.
 	 */
 	private function consume_stamp( mixed $ts ): void {
-		$resumed              = Quiet::since( $this->consumed_at_hr );
-		$this->consumed_at_hr = Quiet::mark();
+		$resumed              = Flame_Builder_Node::quiet_since( $this->consumed_at_hr );
+		$this->consumed_at_hr = Flame_Builder_Node::monotonic();
 		if ( ! \is_numeric( $ts ) ) {
 			return;
 		}
@@ -1123,8 +1123,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * request out three windows of ITS stream after it landed, and files it
 	 * there, rather than twenty hours long in the wall's bucket. In live
 	 * traffic it trails the wall by a flush. A builder that has consumed
-	 * nothing for `Quiet::AFTER_SEC` is caught up and quiet, and follows the
-	 * wall, so a request whose worker died still times out on a quiet site.
+	 * nothing for `Flame_Builder_Node::IDLE_AFTER_SEC` is caught up and
+	 * quiet, and follows the wall, so a request whose worker died still
+	 * times out on a quiet site.
 	 * 0 until the first stamp, which leaves the cache's grid unarmed.
 	 *
 	 * | Read                              | Clock  | Why                                |
@@ -1134,10 +1135,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * | this, a crowded-out request       | STREAM | measured to the stream, filed there |
 	 * | `tracker_ts`                      | WALL   | the in-flight view's age, a reader |
 	 * | `rollup_due()`                    | WALL   | narration cadence                  |
-	 * | `Quiet::since()`                  | MONO   | a duration inside this process     |
+	 * | `Flame_Builder_Node::quiet_since()` | MONO  | a duration inside this process     |
 	 */
 	private function stream_clock(): float {
-		if ( Quiet::since( $this->consumed_at_hr ) ) {
+		if ( Flame_Builder_Node::quiet_since( $this->consumed_at_hr ) ) {
 			return \max( $this->stream_now, Core::$now ?: Core::right_now() );
 		}
 		return $this->stream_now;
