@@ -10,8 +10,8 @@
  * an agent that ALREADY holds those context providers do the correlation, which
  * is the thing actually wanted.
  *
- * It adds no verbs. One tool per verb; arguments pass through `Command_Args`;
- * replies come back verbatim.
+ * It adds no verbs. One tool per verb; every argument rides by name, which
+ * the verb binds against its declared args; replies come back verbatim.
  *
  * Authorization has two halves and needs both. A scoped session says how much
  * of the surface is reachable, and the session's MINTING USER says whose
@@ -82,13 +82,6 @@ class MCP_Controller {
 		. 'them only on the operator\'s own request.';
 
 	/**
-	 * Tool arguments the verbs read positionally, in the order `tokens()` emits
-	 * them. Only `ask` takes two, and it reads `descriptor` first, which is why
-	 * `context` sits last.
-	 */
-	private const POSITIONAL_ARGS = [ 'descriptor', 'hash', 'rid', 'pattern', 'rule', 'id', 'context' ];
-
-	/**
 	 * Tool name → the CI node and verb behind it, with the role that verb
 	 * declares. The role is repeated here so `tools/list` can offer a session
 	 * only what its scope covers — an agent should not be shown a tool that
@@ -109,7 +102,7 @@ class MCP_Controller {
 			'verb'    => 'urls',
 			'role'    => Capabilities::READ,
 			'summary' => 'The URL leaderboard, sortable and paginated, plus totals and the slowest ten for whatever the filters left. Worker traffic is excluded unless asked for.',
-			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Whole words from the search index: a URL matches when every word of the term, two characters or more, is a whole word of its path (`wombat` finds /wombat-7731, `wom` does not). A word too common to index narrows nothing, and a term whose every word is that common finds nothing.','server' => 'Optional server name to scope every row and total to.', 'errors_only' => 'Keeps only URLs with timeouts or fatals (a 5xx is a response, not one); each row and the totals gain `errors`, and a count sort ranks by it.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
+			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Whole words from the search index: a URL matches when every word of the term, two characters or more, is a whole word of its path (`wombat` finds /wombat-7731, `wom` does not). A word too common to index narrows nothing, and a term whose every word is that common finds nothing.','server' => 'Optional server name to scope every row and total to.', 'errors_only' => 'Keeps only the traffic of the five-minute buckets (hours, before the current hour) in which each URL had a timeout or fatal (a 5xx is a response, not one): a row, the totals and the slowest ten count that traffic alone, each row and the totals gain `errors`, and a count sort ranks by it. A timeout carries no duration, so it counts toward `count` and `errors` and ranks at 0 on the timing sorts.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
 		],
 		'dump_url'                 => [
 			'node'    => 'performance',
@@ -144,7 +137,7 @@ class MCP_Controller {
 			'verb'    => 'ask',
 			'role'    => Capabilities::READ,
 			'summary' => 'The brief for one thing: `overview:site` (the dashboard as scoped), `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<i>` (an entry\'s `i`, its position in the request) or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument; a span or a category given a `url:` descriptor instead answers from that URL\'s aggregate.',
-			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'search' => 'The search an `overview:` brief answers under: whole words from the search index, matched as performance_urls matches them; ignored by every other descriptor.','include_workers' => 'Worker traffic an `overview:` brief counts; excluded by default, as performance_urls excludes it.', 'errors_only' => 'Narrows an `overview:` brief to URLs with timeouts or fatals, and counts their errors.', 'server' => 'Optional server name; scopes an overview: brief, a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate, which is every server\'s.' ],
+			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'search' => 'The search an `overview:` brief answers under: whole words from the search index, matched as performance_urls matches them; ignored by every other descriptor.','include_workers' => 'Worker traffic an `overview:` brief counts; excluded by default, as performance_urls excludes it.', 'errors_only' => 'Narrows an `overview:` brief to the buckets in which each URL had a timeout or fatal, as performance_urls narrows it, and counts their errors.', 'server' => 'Optional server name; scopes an overview: brief, a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate, which is every server\'s.' ],
 		],
 		'dump_rules'               => [
 			'node'    => 'rules',
@@ -324,31 +317,32 @@ class MCP_Controller {
 
 	/**
 	 * MCP hands arguments as a named object; the command protocol takes a flat
-	 * token array. Every key POSITIONAL_ARGS names becomes a bare token, in that
-	 * constant's order, and everything else becomes `--key=value` — which is
-	 * what `Command_Args::parse()` reassembles on the other side.
+	 * token array. Every scalar argument becomes `--key=value`, in the order
+	 * the agent gave it, and a list becomes one `--key=` a member, which is how
+	 * a variadic arg binds by name. The verb binds each against its declared
+	 * args, so no order here has to match the verb's.
 	 *
 	 * @param mixed $arguments The tool's arguments object.
 	 * @return list<string>
+	 * @throws \InvalidArgumentException On a map, a null, or a list holding one.
 	 */
 	private static function tokens( mixed $arguments ): array {
 		if ( ! \is_array( $arguments ) ) {
 			return [];
 		}
-		$positional = [];
-		foreach ( self::POSITIONAL_ARGS as $key ) {
-			if ( isset( $arguments[ $key ] ) && \is_scalar( $arguments[ $key ] ) ) {
-				$positional[] = Core::as_string( $arguments[ $key ] );
-			}
-		}
-		$options = [];
+		$tokens = [];
 		foreach ( $arguments as $key => $value ) {
-			if ( \is_scalar( $value ) && ! \in_array( $key, self::POSITIONAL_ARGS, true ) ) {
-				$options[ Core::as_string( $key ) ] = $value;
+			$name    = Core::as_string( $key );
+			$members = \is_array( $value ) && \array_is_list( $value ) ? $value : [ $value ];
+			foreach ( $members as $member ) {
+				if ( ! \is_scalar( $member ) ) {
+					throw new \InvalidArgumentException( \esc_html( "{$name} is neither a value nor a list of values" ) );
+				}
+				// The substrate owns the encoding, booleans included.
+				\array_push( $tokens, ...Command_Args::format( [], [ $name => $member ] ) );
 			}
 		}
-		// The substrate owns the encoding, booleans included.
-		return Command_Args::format( $positional, $options );
+		return $tokens;
 	}
 
 	/**
@@ -389,8 +383,10 @@ class MCP_Controller {
 				// The caveat rides on EVERY tool, not just the first read.
 				'description' => $tool['summary'] . ' — ' . Findings::caveat(),
 				'inputSchema' => [
-					'type'       => 'object',
-					'properties' => empty( $properties ) ? new \stdClass() : $properties,
+					'type'                 => 'object',
+					'properties'           => empty( $properties ) ? new \stdClass() : $properties,
+					// The verb refuses an argument it does not declare.
+					'additionalProperties' => false,
 				],
 			];
 		}

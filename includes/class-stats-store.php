@@ -26,7 +26,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Stats storage in three SQLite Tables, reached by message.
  *
- * Keys are `{namespace}[:...]` inside one partition's Table files, so every
+ * Keys are `{namespace}[:{time}][:...]`, the bucket or hour right after the
+ * namespace (`key_at()`), inside one partition's Table files, so every
  * flame-builder partition owns a disjoint keyspace and readers fan one store
  * out per partition. A value is a plain array, string-keyed, but three of
  * the entries inside one are POSITIONAL and read through named constants: a
@@ -60,7 +61,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * instead of an error. Keep it that way; the SSE slot pool is deliberately
  * the opposite, and unifying the two breaks its rate limit.
  *
- * @phpstan-type Url_Header array{0: int, 1: int, 2: float, 3: float, 4: bool, 5: string}
+ * @phpstan-type Url_Header array{0: int, 1: int, 2: float, 3: float, 4: bool, 5: string, 6: int}
  * @phpstan-type Rank_Entry array{0: string, 1: array<array-key,mixed>, 2?: string}
  */
 class Stats_Store {
@@ -147,27 +148,27 @@ class Stats_Store {
 	 * rather than keeping twelve slots of it.
 	 */
 	public const NS_LB_HOUR      = 'lb_h';
-	/** The per-server leaderboard, `lb_sh:{server_key}:{Y-m-d-H}`, summed as `lb_h` is. */
+	/** The per-server leaderboard, `lb_sh:{Y-m-d-H}:{server_key}`, summed as `lb_h` is. */
 	public const NS_LB_S_HOUR    = 'lb_sh';
 	/** Request totals, `hourly_h:{Y-m-d-H}`: twelve slots, each `{count, sum_ms, requests, sum_peak_mb}`. */
 	public const NS_HOURLY_HOUR  = 'hourly_h';
-	/** The dimensional series, `dim_h:{dim}[:{server_key}]:{Y-m-d-H}`: twelve slots. */
+	/** The dimensional series, `dim_h:{Y-m-d-H}:{dim}[:{server_key}]`: twelve slots. */
 	public const NS_DIM_HOUR     = 'dim_h';
-	/** The category series, `categories_h[:{server_key}]:{Y-m-d-H}`: twelve slots. */
+	/** The category series, `categories_h:{Y-m-d-H}[:{server_key}]`: twelve slots. */
 	public const NS_CAT_HOUR     = 'categories_h';
-	/** One URL's series in one dimension, `url_dim_h:{hash}:{dim}:{Y-m-d-H}`: twelve slots. */
+	/** One URL's dimensional series, `url_dim_h:{Y-m-d-H}:{hash}`: `{ dim => twelve slots }`. */
 	public const NS_URL_DIM_HOUR = 'url_dim_h';
-	/** One URL's category series, `url_cat_h:{hash}:{Y-m-d-H}`: twelve slots. */
+	/** One URL's category series, `url_cat_h:{Y-m-d-H}:{hash}`: twelve slots. */
 	public const NS_URL_CAT_HOUR = 'url_cat_h';
 
 	/** Per-URL stats blob: flame tree and profiles. */
 	public const NS_URL         = 'url';
 	/**
 	 * URL index bucket, one SERVER's rows sharded by the first hex digit of
-	 * the url_hash: `urls:{server_key}:{shard}:{bucket}`. Per-server data has
+	 * the url_hash: `urls:{bucket}:{server_key}:{shard}`. Per-server data has
 	 * the server in the key, so a busy server's rows never compete with a
-	 * quiet one's for a shard's cap. The bucket stays LAST, which is what lets
-	 * expiry work off the key alone. Decision 1.
+	 * quiet one's for a shard's cap. The bucket comes right after the
+	 * namespace, as in every time-keyed namespace (`key_at()`). Decision 1.
 	 */
 	public const NS_URLS        = 'urls';
 
@@ -243,7 +244,7 @@ class Stats_Store {
 	private const TOKEN_SEP = '[^a-z0-9]';
 
 	/**
-	 * The URL index's COARSE tier: `urls_h:{server_key}:{shard}:{Y-m-d-H}`, one
+	 * The URL index's COARSE tier: `urls_h:{Y-m-d-H}:{server_key}:{shard}`, one
 	 * key per server per shard per hour holding the same row shape as a fine
 	 * bucket.
 	 *
@@ -258,36 +259,42 @@ class Stats_Store {
 	/**
 	 * The writer's ranked top-N of one server's `urls` bucket, one list per
 	 * `URL_SORTS` key and `URL_ORDERS` direction:
-	 * `urlrank_s:{server_key}:{sort}:{order}:{bucket}`, and the site's,
-	 * the merge of every server's, `urlrank_s:{sort}:{order}:{bucket}`: a
-	 * site-wide aggregate is one key (decision 30). Fine tier;
-	 * `TABLE_URL_FINE`.
+	 * `urlrank_s:{bucket}:{server_key}:{sort}:{order}`, and the site's,
+	 * the merge of every server's, `urlrank_s:{bucket}:{sort}:{order}`: a
+	 * site-wide aggregate is one key (decision 30). The worker family's
+	 * lists take one key part more, `WORKER_SHARD_PREFIX`, after the
+	 * bucket: `urlrank_s:{bucket}:w:{server_key}:{sort}:{order}` and
+	 * `urlrank_s:{bucket}:w:{sort}:{order}`. Fine tier; `TABLE_URL_FINE`.
 	 */
 	public const NS_URLRANK_S      = 'urlrank_s';
 	/**
 	 * The coarse tier of `urlrank_s`, folded with `urls_h`:
-	 * `urlrank_sh:{server_key}:{sort}:{order}:{Y-m-d-H}` and the site's
-	 * `urlrank_sh:{sort}:{order}:{Y-m-d-H}`, beside each server's DONE
-	 * marker, `urlrank_sh:done:{server_key}:{Y-m-d-H}`.
+	 * `urlrank_sh:{Y-m-d-H}:{server_key}:{sort}:{order}` and the site's
+	 * `urlrank_sh:{Y-m-d-H}:{sort}:{order}`, beside each server's DONE
+	 * marker, `urlrank_sh:{Y-m-d-H}:done:{server_key}`.
 	 */
 	public const NS_URLRANK_HOUR_S = 'urlrank_sh';
 
 	/**
 	 * The writer's header record of one server's `urls` bucket — the URL
 	 * table's totals, kept as sums, and a `Url_Sketch` of its URLs —
-	 * `urlhdr:{HDR_SHAPE}:{server_key}:{bucket}`, and the site's, the union
-	 * of every server's, `urlhdr:{HDR_SHAPE}:{bucket}`. Fine tier;
-	 * `TABLE_URL_FINE`. Written beside the lists, by `ranked_writes()`.
+	 * `urlhdr:{bucket}:{HDR_SHAPE}:{server_key}`, and the site's, the union
+	 * of every server's, `urlhdr:{bucket}:{HDR_SHAPE}`; the worker family's
+	 * after `WORKER_SHARD_PREFIX`, `urlhdr:{bucket}:{HDR_SHAPE}:w:{server_key}`
+	 * and `urlhdr:{bucket}:{HDR_SHAPE}:w`. Fine tier; `TABLE_URL_FINE`.
+	 * Written beside the lists, by `ranked_writes()`.
 	 */
 	public const NS_URLHDR = 'urlhdr';
 
-	/** The coarse tier of `urlhdr`, written beside `urlrank_sh`: `urlhdr_h:{HDR_SHAPE}:…:{Y-m-d-H}`. */
+	/** The coarse tier of `urlhdr`, written beside `urlrank_sh`: `urlhdr_h:{Y-m-d-H}:{HDR_SHAPE}:…`. */
 	public const NS_URLHDR_HOUR = 'urlhdr_h';
 
 	/**
-	 * A header record is positional (decision 18): four sums over every
-	 * reader row the key holds, whether an overflow row was among them, and
-	 * a `Url_Sketch` of the rest, the hashes the table counts as URLs.
+	 * A header record is positional (decision 18): four sums over every row
+	 * of its set the key holds, whether an overflow row was among them, a
+	 * `Url_Sketch` of the rest, the hashes the table counts as URLs, and the
+	 * requests no status accounted for, which only an errored set's reader
+	 * reads.
 	 */
 	public const HDR_COUNT       = 0;
 	public const HDR_TIMED_COUNT = 1;
@@ -295,12 +302,13 @@ class Stats_Store {
 	public const HDR_SUM_PEAK_MB = 3;
 	public const HDR_HAS_OTHER   = 4;
 	public const HDR_URLS        = 5;
+	public const HDR_ERRORS      = 6;
 
 	/**
 	 * The version of the `HDR_*` layout above. Raise it with any change to
-	 * what a position holds.
+	 * what a position holds: 4 deflates the sketch and carries `HDR_ERRORS`.
 	 */
-	public const HDR_VERSION = 3;
+	public const HDR_VERSION = 4;
 
 	/**
 	 * The shape a header record is written in, its layout and its sketch's
@@ -330,6 +338,26 @@ class Stats_Store {
 	public const URL_SORTS  = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_updated' ];
 	/** The `--order` values `urls` accepts, and the directions each sort is ranked in. */
 	public const URL_ORDERS = [ 'asc', 'desc' ];
+
+	/**
+	 * The key part of the errored subset of a family's rows: the rows of a
+	 * key whose requests include a timeout or a fatal (`errored_rows()`).
+	 */
+	public const ERRORED_PART = 'e';
+
+	/**
+	 * The list sets each ranked key writes, as the key parts each adds after
+	 * the time part: every reader row, the reader rows that errored, every
+	 * worker row, and the worker rows that errored. Each set is fourteen
+	 * lists and a record per server and the site's, and a reader asks for
+	 * the sets its filters name (`rank_sets()`).
+	 */
+	public const RANK_SETS = [
+		[],
+		[ self::ERRORED_PART ],
+		[ self::WORKER_SHARD_PREFIX ],
+		[ self::WORKER_SHARD_PREFIX, self::ERRORED_PART ],
+	];
 
 	/** The list the URL header's `slowest` reads, `[ sort, order ]`. */
 	public const SLOWEST_LIST = [ 'avg_ms', 'desc' ];
@@ -423,7 +451,7 @@ class Stats_Store {
 	public const URL_SHARDS     = 16;
 
 	/**
-	 * What makes a shard token name WORKER traffic: `urls:{server_key}:w3:{bucket}`.
+	 * What makes a shard token name WORKER traffic: `urls:{bucket}:{server_key}:w3`.
 	 *
 	 * Cron, WP-CLI and job requests are a separate population, not a predicate
 	 * over one — the table excludes them by default, so a shared index makes
@@ -667,7 +695,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * The namespace prefix for a dimensional scope.
+	 * The key parts of a dimensional scope.
 	 *
 	 * @param string $dimension Dimension name, e.g. `ua`.
 	 * @param string $server    Reporting server; '' is the global series.
@@ -678,7 +706,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * The namespace prefix for a category scope.
+	 * The key parts of a category scope.
 	 *
 	 * @param string $server Reporting server; '' is the global series.
 	 * @return list<string>
@@ -822,28 +850,33 @@ class Stats_Store {
 	 * One scope's ranked lists across both tiers, as `[key, entries]` pairs,
 	 * in one round trip after the server index's own.
 	 *
-	 * One list a key: a server scope reads that server's where the key's
-	 * index names it, and the site reads the site's, which the writer
+	 * One list a key a set: a server scope reads that server's where the
+	 * key's index names it, and the site reads the site's, which the writer
 	 * merged from every server's (`ranked_writes()`), where the index names
-	 * any server at all.
+	 * any server at all. Every set's lists ride the one round trip, and a
+	 * key answers with them end to end: no hash sits in two of the sets a
+	 * page reads, since a hash is one family's and the errored sets are read
+	 * apart from the others.
 	 *
-	 * An hour answers only when its list stands, since the hour stands for
-	 * twelve buckets and a reader serving it ranked must see all of it; an
-	 * hour whose index does not name the scope answers with an empty list,
-	 * the scope idle in it. An hour the writer still owes (`waiting_hours()`)
-	 * answers nothing and is named in `$waiting`. A fine bucket answers with
-	 * the list it holds, which is what a ranking not yet due leaves.
+	 * An hour answers only when every set's list stands, since the hour
+	 * stands for twelve buckets and a reader serving it ranked must see all
+	 * of it; an hour whose index does not name the scope answers with an
+	 * empty list, the scope idle in it. An hour the writer still owes
+	 * (`waiting_hours()`) answers nothing and is named in `$waiting`. A fine
+	 * bucket answers with the list it holds, which is what a ranking not yet
+	 * due leaves.
 	 *
-	 * @param array<int,string> $hours   Hour keys.
-	 * @param array<int,string> $buckets Bucket keys.
-	 * @param string            $sort    A `URL_SORTS` value.
-	 * @param string            $order   A `URL_ORDERS` value.
-	 * @param string            $server  Reporting server; '' is the site.
-	 * @param-out list<string>  $waiting
-	 * @param list<string>|null $waiting Set to the hours the writer still owes.
+	 * @param array<int,string>  $hours   Hour keys.
+	 * @param array<int,string>  $buckets Bucket keys.
+	 * @param string             $sort    A `URL_SORTS` value.
+	 * @param string             $order   A `URL_ORDERS` value.
+	 * @param string             $server  Reporting server; '' is the site.
+	 * @param list<list<string>> $sets    Of `RANK_SETS`, as `rank_sets()` names them.
+	 * @param-out list<string>   $waiting
+	 * @param list<string>|null  $waiting Set to the hours the writer still owes.
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
-	public function url_rank_window( array $hours, array $buckets, string $sort, string $order, string $server, ?array &$waiting = null ): array {
+	public function url_rank_window( array $hours, array $buckets, string $sort, string $order, string $server, array $sets = [ [] ], ?array &$waiting = null ): array {
 		$tiers = [
 			[ true, $hours ],
 			[ false, $buckets ],
@@ -852,8 +885,8 @@ class Stats_Store {
 		$reads = [];
 		foreach ( $tiers as [ $hour, $keys ] ) {
 			foreach ( $keys as $key ) {
-				if ( [] !== ( $index[ $key ] ?? [] ) ) {
-					$reads[] = [ self::url_rank_parts( $sort, $order, $server, $hour ), $key ];
+				foreach ( [] === ( $index[ $key ] ?? [] ) ? [] : $sets as $set ) {
+					$reads[] = [ self::url_rank_parts( $sort, $order, $server, $hour, $set ), $key ];
 				}
 			}
 		}
@@ -868,7 +901,7 @@ class Stats_Store {
 				$missing[ $key ] = true;
 				continue;
 			}
-			$lists[ $key ] = $values[ $at ];
+			$lists[ $key ] = [ ...$lists[ $key ] ?? [], ...$values[ $at ] ];
 		}
 		$out = [];
 		foreach ( $tiers as [ $hour, $keys ] ) {
@@ -884,8 +917,9 @@ class Stats_Store {
 	}
 
 	/**
-	 * One scope's header records across both tiers, by key, in one round
-	 * trip after the server index's own.
+	 * One scope's header records across both tiers, by key and then by set,
+	 * in one round trip after the server index's own. A page counts each
+	 * set's overflow row apart, so the sets' records are answered apart.
 	 *
 	 * A key whose index names no server in the scope answers with the empty
 	 * record: the scope idle there, or an hour folded idle. One whose index
@@ -896,23 +930,26 @@ class Stats_Store {
 	 *
 	 * @param array<int,string> $hours   Hour keys.
 	 * @param array<int,string> $buckets Bucket keys.
-	 * @param string            $server  Reporting server; '' is the site.
-	 * @param-out list<string>  $waiting
-	 * @param list<string>|null $waiting Set to the hours the writer still owes.
-	 * @return array<string,Url_Header|null>
+	 * @param string             $server  Reporting server; '' is the site.
+	 * @param list<list<string>> $sets    Of `RANK_SETS`, as `rank_sets()` names them.
+	 * @param-out list<string>   $waiting
+	 * @param list<string>|null  $waiting Set to the hours the writer still owes.
+	 * @return array<string,array<int,Url_Header|null>> Key => each set's record, by its place in `$sets`.
 	 */
-	public function url_headers( array $hours, array $buckets, string $server, ?array &$waiting = null ): array {
+	public function url_headers( array $hours, array $buckets, string $server, array $sets = [ [] ], ?array &$waiting = null ): array {
 		$index = $this->scope_index( $hours, $buckets, $server );
 		$out   = [];
 		$reads = [];
+		$owner = [];
 		foreach ( [ [ true, $hours ], [ false, $buckets ] ] as [ $hour, $keys ] ) {
 			foreach ( $keys as $key ) {
 				if ( ! isset( $index[ $key ] ) ) {
 					continue;
 				}
-				$out[ $key ] = self::url_header_of( [] );
-				if ( [] !== $index[ $key ] ) {
-					$reads[] = [ self::url_header_parts( $server, $hour ), $key ];
+				$out[ $key ] = \array_fill( 0, \count( $sets ), self::url_header_of( [] ) );
+				foreach ( [] === $index[ $key ] ? [] : $sets as $at => $set ) {
+					$reads[] = [ self::url_header_parts( $server, $hour, $set ), $key ];
+					$owner[] = $at;
 				}
 			}
 		}
@@ -920,21 +957,21 @@ class Stats_Store {
 		$values  = $this->bucket_get_multi( [ ...$reads, ...$done ], $failed );
 		$waiting = $this->waiting_hours( $hours, $index, $done, \array_slice( $values, \count( $reads ) ), $failed );
 		foreach ( $reads as $at => [ , $key ] ) {
-			$out[ $key ] = self::url_header_record( $values[ $at ] );
+			$out[ $key ][ $owner[ $at ] ] = self::url_header_record( $values[ $at ] );
 		}
 		return \array_diff_key( $out, \array_flip( $waiting ) );
 	}
 
 	/**
 	 * A stored header record, typed, or null where it is missing or holds no
-	 * sketch of the size this reads.
+	 * sketch (`Url_Sketch::is_sketch()`).
 	 *
 	 * @param array<array-key,mixed>|null $raw A decoded record.
 	 * @return Url_Header|null
 	 */
 	private static function url_header_record( ?array $raw ): ?array {
 		$sketch = $raw[ self::HDR_URLS ] ?? null;
-		if ( ! \is_string( $sketch ) || Url_Sketch::BYTES !== \strlen( $sketch ) ) {
+		if ( ! \is_string( $sketch ) || ! Url_Sketch::is_sketch( $sketch ) ) {
 			return null;
 		}
 		return [
@@ -944,6 +981,7 @@ class Stats_Store {
 			self::HDR_SUM_PEAK_MB => Core::num_float( $raw[ self::HDR_SUM_PEAK_MB ] ?? null ),
 			self::HDR_HAS_OTHER   => true === ( $raw[ self::HDR_HAS_OTHER ] ?? null ),
 			self::HDR_URLS        => $sketch,
+			self::HDR_ERRORS      => Core::num_int( $raw[ self::HDR_ERRORS ] ?? null ),
 		];
 	}
 
@@ -1017,16 +1055,20 @@ class Stats_Store {
 	 * (decision 35). A slot the hour never filled, or filled with nothing
 	 * measured, is absent, as a bucket nothing wrote is.
 	 *
-	 * @param array<int,string> $parts A slotted scope's prefix: `hourly_parts()`,
-	 *                                 `dim_parts()`, `url_dim_parts()`,
-	 *                                 `cat_parts()` or `url_cat_parts()`.
-	 * @param array<int,string> $hours `Y-m-d-H` hour keys.
+	 * @param array<int,string> $parts     A slotted scope's key parts: `hourly_parts()`,
+	 *                                     `dim_parts()`, `url_dim_parts()`,
+	 *                                     `cat_parts()` or `url_cat_parts()`.
+	 * @param array<int,string> $hours     `Y-m-d-H` hour keys.
+	 * @param ?string           $dimension The dimension a `url_dim_parts()` row
+	 *                                     holds the slotted hour under; null
+	 *                                     where the value is the slotted hour.
 	 * @return array<string,array<array-key,mixed>> Slot values keyed by bucket.
 	 */
-	public function get_slots( array $parts, array $hours ): array {
+	public function get_slots( array $parts, array $hours, ?string $dimension = null ): array {
 		$out = [];
-		foreach ( $this->lookup_hours( $parts, $hours ) as $hour => $slots ) {
+		foreach ( $this->lookup_hours( $parts, $hours ) as $hour => $stored ) {
 			$buckets = self::buckets_in_hour( $hour );
+			$slots   = null === $dimension ? $stored : Core::arr( $stored )[ $dimension ] ?? null;
 			foreach ( Core::arr( $slots ) as $slot => $value ) {
 				if ( isset( $buckets[ $slot ] ) && \is_array( $value ) && [] !== $value ) {
 					$out[ $buckets[ $slot ] ] = $value;
@@ -1064,7 +1106,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * The namespace prefix for a leaderboard scope — the one place the global
+	 * The key parts of a leaderboard scope — the one place the global
 	 * and per-server keyspaces differ.
 	 *
 	 * @param string $server Reporting server; '' for the global board.
@@ -1080,7 +1122,7 @@ class Stats_Store {
 	 * Decisions 1 and 6, through `bucket_get_multi()`, so it answers a
 	 * failed read, and a missing backend, as every read does.
 	 *
-	 * @param array<int,string> $parts  The scope's prefix.
+	 * @param array<int,string> $parts  The scope's key parts.
 	 * @param array<int,string> $hours  `Y-m-d-H` hour keys.
 	 * @param ?bool             $failed Set true when a Table left some hour unanswered.
 	 * @param-out bool          $failed
@@ -1133,7 +1175,7 @@ class Stats_Store {
 	 * Read one tier of the URL index over many buckets, as `[bucket, rows,
 	 * server]` triples.
 	 *
-	 * Both tiers share one key geometry — `{ns}:{server_key}:{shard}:{bucket}`
+	 * Both tiers share one key geometry — `{ns}:{bucket}:{server_key}:{shard}`
 	 * — across two populations, so they share one reader and the two public
 	 * wrappers name which tier each caller means. A second copy of this is how
 	 * a tier comes to read a shard set the other one does not.
@@ -1180,7 +1222,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * Namespace prefix for one server's shard of the FINE URL index.
+	 * Key parts of one server's shard of the FINE URL index.
 	 *
 	 * @param string $server_key The server's `server_key()`.
 	 * @param string $shard      Shard name from `url_shard()`.
@@ -1191,7 +1233,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * Namespace prefix for one server's shard of the COARSE hourly URL index.
+	 * Key parts of one server's shard of the COARSE hourly URL index.
 	 *
 	 * @param string $server_key The server's `server_key()`.
 	 * @param string $shard      Shard name from `url_shard()`.
@@ -1421,8 +1463,8 @@ class Stats_Store {
 	}
 
 	/**
-	 * Namespace prefix of one server's DONE marker for an hour:
-	 * `urlrank_sh:done:{server_key}:{hour}`.
+	 * Key parts of one server's DONE marker for an hour:
+	 * `urlrank_sh:{hour}:done:{server_key}`.
 	 *
 	 * A server's hour is fourteen lists, so none of them can stand for the
 	 * set. This one tiny key says the server's ranking of the hour ran over
@@ -1488,7 +1530,7 @@ class Stats_Store {
 		$keys  = [];
 		$asked = [];
 		foreach ( $reads as $i => [ $parts, $bucket ] ) {
-			$keys[ $i ]                              = self::key( ...[ ...$parts, $bucket ] );
+			$keys[ $i ]                              = self::key_at( $parts, $bucket );
 			$asked[ $this->table_for( $parts[0] ) ][] = $keys[ $i ];
 		}
 		$found = [];
@@ -1505,7 +1547,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * Namespace prefix of the URL index's server index.
+	 * Key parts of the URL index's server index.
 	 *
 	 * @param bool $hour The coarse tier.
 	 * @return array<int,string>
@@ -1637,7 +1679,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * Namespace prefix of one server's token sets.
+	 * Key parts of one server's token sets.
 	 *
 	 * @param string $server_key The server's `server_key()`.
 	 * @return array<int,string>
@@ -1778,7 +1820,7 @@ class Stats_Store {
 	 * @return array<array-key,mixed>|null The aggregate, or null on a miss.
 	 */
 	public function url_aggregate( string $url_hash, ?bool &$failed = null ): ?array {
-		$key   = self::key( self::NS_URL, $url_hash );
+		$key   = self::key_at( [ self::NS_URL ], $url_hash );
 		$value = $this->client->get_multi( $this->table_for( self::NS_URL ), [ $key ], $failed )[ $key ] ?? null;
 		return \is_array( $value ) ? $value : null;
 	}
@@ -1801,7 +1843,7 @@ class Stats_Store {
 		}
 		$map = [];
 		foreach ( $hashes as $hash ) {
-			$map[ self::key( self::NS_URLMAP, $hash ) ] = $hash;
+			$map[ self::key_at( [ self::NS_URLMAP ], $hash ) ] = $hash;
 		}
 		$out = [];
 		foreach ( $this->client->get_multi( $this->table_for( self::NS_URLMAP ), \array_keys( $map ) ) as $key => $value ) {
@@ -1868,7 +1910,7 @@ class Stats_Store {
 		}
 		$by_table = [];
 		foreach ( $writes as [ $parts, $bucket, $data ] ) {
-			$by_table[ $this->table_for( $parts[0] ) ][ self::key( ...[ ...$parts, $bucket ] ) ] = [ $data ];
+			$by_table[ $this->table_for( $parts[0] ) ][ self::key_at( $parts, $bucket ) ] = [ $data ];
 		}
 		$landed = [];
 		foreach ( $by_table as $table => $items ) {
@@ -1876,7 +1918,7 @@ class Stats_Store {
 		}
 		$out = [];
 		foreach ( $writes as $i => [ $parts, $bucket ] ) {
-			$out[ $i ] = isset( $landed[ self::key( ...[ ...$parts, $bucket ] ) ] );
+			$out[ $i ] = isset( $landed[ self::key_at( $parts, $bucket ) ] );
 		}
 		return $out;
 	}
@@ -1943,11 +1985,25 @@ class Stats_Store {
 	public function bucket_forget_multi( array $forgets ): void {
 		$by_table = [];
 		foreach ( $forgets as [ $parts, $bucket ] ) {
-			$by_table[ $this->table_for( $parts[0] ) ][] = self::key( ...[ ...$parts, $bucket ] );
+			$by_table[ $this->table_for( $parts[0] ) ][] = self::key_at( $parts, $bucket );
 		}
 		foreach ( $by_table as $table => $keys ) {
 			$this->client->remove( $table, $keys );
 		}
+	}
+
+	/**
+	 * The key a `[ parts, bucket ]` pair names: the namespace, the bucket,
+	 * then the rest of the parts (decision 1). Every key one bucket or hour
+	 * touches in a namespace shares one prefix, so a flush's keys sit together
+	 * in the Table's key order. A `url` or `urlmap` pair carries a hash where
+	 * the time goes and no other part, so its key reads `{ns}:{hash}`.
+	 *
+	 * @param array<int,string> $parts  Key parts, the namespace first.
+	 * @param string            $bucket Bucket or hour key.
+	 */
+	public static function key_at( array $parts, string $bucket ): string {
+		return self::key( $parts[0], $bucket, ...\array_slice( $parts, 1 ) );
 	}
 
 	/**
@@ -1985,51 +2041,6 @@ class Stats_Store {
 		return $this->table_names[ $table ] ?? throw new \LogicException(
 			"Stats_Store: namespace {$ns} lives in Table {$table}, which this store was not given (it holds " . \implode( ', ', \array_keys( $this->table_names ) ) . ')'
 		);
-	}
-
-	/**
-	 * One server's shard maps as one map by hash. A hash lives in one shard,
-	 * so a later map's row replaces; the overflow row lives in every shard
-	 * under one key, so its rows are summed through `fold_url_rows()`.
-	 *
-	 * @param array<array-key,mixed> ...$maps Shard maps, hash => stored row.
-	 * @return array<string,array<array-key,mixed>>
-	 */
-	public static function merge_shard_rows( array ...$maps ): array {
-		$merged = [];
-		foreach ( $maps as $map ) {
-			foreach ( $map as $raw_hash => $raw ) {
-				$hash            = (string) $raw_hash;
-				$row             = Core::arr( $raw );
-				$merged[ $hash ] = isset( $merged[ $hash ] ) && self::is_other_key( $hash )
-					? self::fold_url_rows( $merged[ $hash ], $row )
-					: $row;
-			}
-		}
-		return $merged;
-	}
-
-	/**
-	 * Add one URL row into another, for the synthetic overflow row only.
-	 *
-	 * Only the fields that ADD (`ROW_SUMS`) plus `last_seen`: an extreme over
-	 * unrelated URLs describes nothing, and neither does one path, so the
-	 * overflow row's is ''.
-	 *
-	 * @param array<array-key,mixed> $into The row so far, [] on first fold.
-	 * @param array<array-key,mixed> $row  The row being folded in.
-	 * @return array<array-key,mixed>
-	 */
-	public static function fold_url_rows( array $into, array $row ): array {
-		// AFTER the sum: it returns `$into`, which carries its own `last_seen`.
-		$out                        = self::sum_entry( $into, $row, self::ROW_SUMS );
-		$out[ self::ROW_WORKER ]    = ! empty( $into[ self::ROW_WORKER ] ) || ! empty( $row[ self::ROW_WORKER ] );
-		$out[ self::ROW_LAST_SEEN ] = \max(
-			Core::num_int( $into[ self::ROW_LAST_SEEN ] ?? null ),
-			Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null )
-		);
-		$out[ self::ROW_PATH ]      = '';
-		return $out;
 	}
 
 	/**
@@ -2130,13 +2141,13 @@ class Stats_Store {
 	/**
 	 * Every ranked list one tier's merged rows produce, and the header record
 	 * beside them, as the `[parts, key, value]` triples `bucket_set_multi()`
-	 * takes: fourteen lists and a record for each server named, the lists
-	 * empty where it holds nothing rankable, so a reader can tell a server
-	 * ranked idle from one whose lists are missing; then the site's lists,
-	 * each ranked once over the union of the rows the servers' lists of its
-	 * sort hold, and its record, the union of theirs. The TIER sets the
-	 * bound, so a caller names which tier it is writing and never the row
-	 * count twice.
+	 * takes: for each of `RANK_SETS`, fourteen lists and a record for each
+	 * server named, the lists empty where it holds nothing of the set
+	 * rankable, so a reader can tell a server ranked idle from one whose
+	 * lists are missing; then the set's site lists, each ranked once over
+	 * the union of the rows the servers' lists of its sort hold, and its
+	 * record, the union of theirs. The TIER sets the bound, so a caller names
+	 * which tier it is writing and never the row count twice.
 	 *
 	 * A site list is exact while no key names more than `MAX_SERVER_VALUES`
 	 * servers: URLs are then disjoint by server and a tie breaks by hash, so
@@ -2146,42 +2157,86 @@ class Stats_Store {
 	 * name in one bucket and under `Other` in another holds one URL in two
 	 * lists, each cut on its own share, and can rank short.
 	 *
-	 * The record sums EVERY reader row, where a list ranks none of the
+	 * A record sums EVERY row of its set, where a list ranks none of the
 	 * overflow rows, because an overflow row's requests are the site's all
-	 * the same. A worker row is no reader row, and enters neither.
+	 * the same. The rows arrive as each server's SHARD maps, so a family is
+	 * its shards, and a hash filed in both families stays two rows, one a
+	 * family. An errored set holds the family's `errored_rows()`, and ranks
+	 * `count` by the errors, as the errors page sorts it.
 	 *
 	 * The site's lists are the writer's so a site page reads one list a key
 	 * rather than merging every server's on every poll: a site list is
 	 * `URL_RANK_N` entries, the size of a server's, one item (decision 30).
 	 *
-	 * @param array<array-key,array<array-key,mixed>> $servers Server name =>
-	 *                                                         the tier's merged rows by hash.
-	 * @param bool                                    $hour    The coarse tier.
-	 * @param string                                  $key     Bucket or hour key.
+	 * @param array<array-key,array<array-key,array<array-key,mixed>>> $servers Server name =>
+	 *                                                                         shard => the
+	 *                                                                         tier's rows by hash.
+	 * @param bool                                                     $hour    The coarse tier.
+	 * @param string                                                   $key     Bucket or hour key.
 	 * @return list<array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}>
 	 */
 	public static function ranked_writes( array $servers, bool $hour, string $key ): array {
+		$families = [ [], [] ];
+		foreach ( $servers as $server => $shards ) {
+			$maps = [ [], [] ];
+			foreach ( $shards as $shard => $rows ) {
+				$maps[ (int) self::is_worker_shard( (string) $shard ) ][] = Core::arr( $rows );
+			}
+			foreach ( $maps as $worker => $family_maps ) {
+				$families[ $worker ][ (string) $server ] = self::merge_shard_rows( ...$family_maps );
+			}
+		}
+		$writes = [];
+		foreach ( self::RANK_SETS as $set ) {
+			$family  = $families[ (int) \in_array( self::WORKER_SHARD_PREFIX, $set, true ) ];
+			$errored = \in_array( self::ERRORED_PART, $set, true );
+			\array_push( $writes, ...self::set_ranked_writes( $errored ? \array_map( self::errored_rows( ... ), $family ) : $family, $hour, $key, $set ) );
+		}
+		return $writes;
+	}
+
+	/**
+	 * The rows of one key in which each URL errored: those whose requests
+	 * include one no status accounted for, a timeout or a fatal. The one
+	 * definition of an errored row, which the writer ranks and the fold
+	 * filters each key by. An overflow row stands for many URLs, and no
+	 * row test speaks for one.
+	 *
+	 * @param array<array-key,mixed> $rows One key's stored rows by hash.
+	 * @return array<string,array<array-key,mixed>>
+	 */
+	public static function errored_rows( array $rows ): array {
+		$out = [];
+		foreach ( $rows as $hash => $raw ) {
+			$row = Core::arr( $raw );
+			if ( ! self::is_other_key( (string) $hash ) && self::row_errors( $row ) > 0 ) {
+				$out[ (string) $hash ] = $row;
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * One set's lists and records, as `ranked_writes()` states them.
+	 *
+	 * @param array<string,array<string,array<array-key,mixed>>> $servers Server name =>
+	 *                                                                    the set's rows by hash.
+	 * @param bool                                               $hour    The coarse tier.
+	 * @param string                                             $key     Bucket or hour key.
+	 * @param list<string>                                       $set     One of `RANK_SETS`.
+	 * @return list<array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}>
+	 */
+	private static function set_ranked_writes( array $servers, bool $hour, string $key, array $set ): array {
 		$n       = $hour ? self::URL_RANK_N_HOUR : self::URL_RANK_N;
+		$errored = \in_array( self::ERRORED_PART, $set, true );
 		$writes  = [];
 		$records = [];
 		$union   = [];
 		foreach ( $servers as $server => $rows ) {
-			$reader   = [];
-			$rankable = [];
-			foreach ( $rows as $raw_hash => $raw ) {
-				$hash = (string) $raw_hash;
-				$row  = Core::arr( $raw );
-				if ( ! empty( $row[ self::ROW_WORKER ] ) ) {
-					continue;
-				}
-				$reader[ $hash ] = $row;
-				if ( ! self::is_other_key( $hash ) ) {
-					$rankable[ $hash ] = $row;
-				}
-			}
-			foreach ( self::rank_url_rows( $rankable, $n ) as $sort => $orders ) {
+			$rankable = \array_diff_key( $rows, [ self::OTHER_KEY => true, self::OTHER_WORKER_KEY => true ] );
+			foreach ( self::rank_url_rows( $rankable, $n, $errored ) as $sort => $orders ) {
 				foreach ( $orders as $order => $entries ) {
-					$writes[] = [ self::url_rank_parts( $sort, $order, (string) $server, $hour ), $key, $entries ];
+					$writes[] = [ self::url_rank_parts( $sort, $order, $server, $hour, $set ), $key, $entries ];
 					// A hash two servers share merges, as its rows would have.
 					foreach ( $entries as [ self::RANK_HASH => $hash ] ) {
 						$held                               = $union[ $sort ][ $order ][ $hash ] ?? null;
@@ -2189,18 +2244,18 @@ class Stats_Store {
 					}
 				}
 			}
-			$record    = self::url_header_of( $reader );
+			$record    = self::url_header_of( $rows );
 			$records[] = $record;
-			$writes[]  = [ self::url_header_parts( (string) $server, $hour ), $key, $record ];
+			$writes[]  = [ self::url_header_parts( $server, $hour, $set ), $key, $record ];
 		}
 		// Each site list ranks only its own sort's entries of the servers'.
 		foreach ( [] === $servers ? [] : self::URL_SORTS as $sort ) {
 			foreach ( self::URL_ORDERS as $order ) {
-				$writes[] = [ self::url_rank_parts( $sort, $order, '', $hour ), $key, self::rank_list( $union[ $sort ][ $order ] ?? [], $sort, $order, $n ) ];
+				$writes[] = [ self::url_rank_parts( $sort, $order, '', $hour, $set ), $key, self::rank_list( $union[ $sort ][ $order ] ?? [], self::rank_key( $sort, $errored ), $order, $n ) ];
 			}
 		}
 		if ( [] !== $servers ) {
-			$writes[] = [ self::url_header_parts( '', $hour ), $key, self::merge_url_headers( $records ) ];
+			$writes[] = [ self::url_header_parts( '', $hour, $set ), $key, self::merge_url_headers( $records ) ];
 		}
 		return $writes;
 	}
@@ -2220,6 +2275,7 @@ class Stats_Store {
 			self::HDR_SUM_PEAK_MB => 0.0,
 			self::HDR_HAS_OTHER   => false,
 			self::HDR_URLS        => Url_Sketch::union( ...\array_column( $records, self::HDR_URLS ) ),
+			self::HDR_ERRORS      => 0,
 		];
 		foreach ( $records as $record ) {
 			$out[ self::HDR_COUNT ]       += $record[ self::HDR_COUNT ];
@@ -2227,21 +2283,22 @@ class Stats_Store {
 			$out[ self::HDR_SUM_MS ]      += $record[ self::HDR_SUM_MS ];
 			$out[ self::HDR_SUM_PEAK_MB ] += $record[ self::HDR_SUM_PEAK_MB ];
 			$out[ self::HDR_HAS_OTHER ]    = $out[ self::HDR_HAS_OTHER ] || $record[ self::HDR_HAS_OTHER ];
+			$out[ self::HDR_ERRORS ]      += $record[ self::HDR_ERRORS ];
 		}
 		return $out;
 	}
 
 	/**
-	 * Namespace prefix of one server's header record, or of the site's,
-	 * `HDR_SHAPE` beside the namespace.
+	 * Key parts of one server's header record, or of the site's,
+	 * `HDR_SHAPE` first and the set's parts after it.
 	 *
-	 * @param string $server Reporting server; '' is the site.
-	 * @param bool   $hour   The coarse tier.
+	 * @param string       $server Reporting server; '' is the site.
+	 * @param bool         $hour   The coarse tier.
+	 * @param list<string> $set    One of `RANK_SETS`; the reader set adds none.
 	 * @return array<int,string>
 	 */
-	public static function url_header_parts( string $server, bool $hour ): array {
-		$ns = $hour ? self::NS_URLHDR_HOUR : self::NS_URLHDR;
-		return '' === $server ? [ $ns, self::HDR_SHAPE ] : [ $ns, self::HDR_SHAPE, self::server_key( $server ) ];
+	public static function url_header_parts( string $server, bool $hour, array $set = [] ): array {
+		return [ $hour ? self::NS_URLHDR_HOUR : self::NS_URLHDR, self::HDR_SHAPE, ...$set, ...self::server_part( $server ) ];
 	}
 
 	/**
@@ -2258,7 +2315,9 @@ class Stats_Store {
 		$peak   = 0.0;
 		$other  = false;
 		$urls   = [];
+		$errors = 0;
 		foreach ( $rows as $hash => $row ) {
+			$errors += self::row_errors( $row );
 			$count  += Core::num_int( $row[ self::ROW_COUNT ] ?? null );
 			$timed  += Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null );
 			$sum_ms += Core::num_float( $row[ self::ROW_SUM_MS ] ?? null );
@@ -2276,16 +2335,8 @@ class Stats_Store {
 			self::HDR_SUM_PEAK_MB => $peak,
 			self::HDR_HAS_OTHER   => $other,
 			self::HDR_URLS        => Url_Sketch::of( $urls ),
+			self::HDR_ERRORS      => $errors,
 		];
-	}
-
-	/**
-	 * Whether a row key is one of the overflow rows — either of them.
-	 *
-	 * @param string $hash A URL row key.
-	 */
-	public static function is_other_key( string $hash ): bool {
-		return self::OTHER_KEY === $hash || self::OTHER_WORKER_KEY === $hash;
 	}
 
 	/**
@@ -2324,43 +2375,29 @@ class Stats_Store {
 	}
 
 	/**
-	 * Sum `$fields` from one entry into another — what `sum_fields()` does per
-	 * key, reachable directly by a caller holding a single row rather than a map.
+	 * Key parts of one server's ranked list, or of the site's. The
+	 * server rides in the KEY, as it does for every per-server value
+	 * (decision 30), and so does the list set, before it.
 	 *
-	 * The entry it returns is built from `$fields` and nothing else, so a key
-	 * either side carries outside the table is DISCARDED — which is what makes
-	 * `sum_fields()`'s invariant true. A caller wanting a field the table does
-	 * not name puts it back itself, beside the reason it survives.
-	 *
-	 * @param array<array-key,mixed> $into   The entry so far.
-	 * @param array<array-key,mixed> $from   The entry being added.
-	 * @param array<array-key,bool>  $fields Field => whether it is a whole count.
-	 * @return array<array-key,mixed> The `$fields` keys, summed.
+	 * @param string       $sort   A `URL_SORTS` value.
+	 * @param string       $order  A `URL_ORDERS` value.
+	 * @param string       $server Reporting server; '' is the site.
+	 * @param bool         $hour   The coarse tier.
+	 * @param list<string> $set    One of `RANK_SETS`; the reader set adds none.
+	 * @return array<int,string>
 	 */
-	public static function sum_entry( array $into, array $from, array $fields ): array {
-		$out = [];
-		foreach ( $fields as $field => $is_count ) {
-			$out[ $field ] = $is_count
-				? Core::num_int( $into[ $field ] ?? null ) + Core::num_int( $from[ $field ] ?? null )
-				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
-		}
-		return $out;
+	public static function url_rank_parts( string $sort, string $order, string $server, bool $hour, array $set = [] ): array {
+		return [ $hour ? self::NS_URLRANK_HOUR_S : self::NS_URLRANK_S, ...$set, ...self::server_part( $server ), $sort, $order ];
 	}
 
 	/**
-	 * Namespace prefix of one server's ranked list, or of the site's. The
-	 * server rides in the KEY, as it does for every per-server value
-	 * (decision 30).
+	 * A ranked value's server key part: none for the site.
 	 *
-	 * @param string $sort   A `URL_SORTS` value.
-	 * @param string $order  A `URL_ORDERS` value.
 	 * @param string $server Reporting server; '' is the site.
-	 * @param bool   $hour   The coarse tier.
-	 * @return array<int,string>
+	 * @return list<string>
 	 */
-	public static function url_rank_parts( string $sort, string $order, string $server, bool $hour ): array {
-		$ns = $hour ? self::NS_URLRANK_HOUR_S : self::NS_URLRANK_S;
-		return '' === $server ? [ $ns, $sort, $order ] : [ $ns, self::server_key( $server ), $sort, $order ];
+	private static function server_part( string $server ): array {
+		return '' === $server ? [] : [ self::server_key( $server ) ];
 	}
 
 	/**
@@ -2385,40 +2422,49 @@ class Stats_Store {
 	 * The rows arrive filtered — `ranked_writes()` has already dropped what
 	 * never ranks — so nothing here walks them a second time.
 	 *
-	 * @param array<array-key,array<array-key,mixed>> $rows The scope's rows by hash.
-	 * @param int                                     $n    Entries per list.
+	 * @param array<array-key,array<array-key,mixed>> $rows    The scope's rows by hash.
+	 * @param int                                     $n       Entries per list.
+	 * @param bool                                    $errored An errored set, whose `count` ranks by errors.
 	 * @return array<string,array<string,list<Rank_Entry>>>
 	 */
-	private static function rank_url_rows( array $rows, int $n ): array {
+	private static function rank_url_rows( array $rows, int $n, bool $errored ): array {
 		$out = [];
 		foreach ( self::URL_SORTS as $sort ) {
 			foreach ( self::URL_ORDERS as $order ) {
-				$out[ $sort ][ $order ] = self::rank_list( $rows, $sort, $order, $n );
+				$out[ $sort ][ $order ] = self::rank_list( $rows, self::rank_key( $sort, $errored ), $order, $n );
 			}
 		}
 		return $out;
 	}
 
 	/**
+	 * The value a `URL_SORTS` key ranks by: the errors, where an errored
+	 * page sorts by `count`, and the key itself everywhere else.
+	 *
+	 * @param string $sort    A `URL_SORTS` value.
+	 * @param bool   $errored The errored rows alone.
+	 */
+	public static function rank_key( string $sort, bool $errored ): string {
+		return $errored && 'count' === $sort ? 'errors' : $sort;
+	}
+
+	/**
 	 * One list: the `$n` best rows on one sort in one direction, as entries.
-	 * An untimed row ranks on no timed sort, and a row with no path ranks on
-	 * no `url` sort. A tie breaks by hash, ascending either way, so a cut
-	 * never depends on the order rows arrive in and a merge of servers'
-	 * lists cuts where one list over all of them would.
+	 * An untimed row ranks at 0 on the timed sorts, where the fold orders
+	 * it, since a timeout still counts toward `count` and `errors`; a row
+	 * with no path ranks on no `url` sort. A tie breaks by hash, ascending
+	 * either way, so a cut never depends on the order rows arrive in and a
+	 * merge of servers' lists cuts where one list over all of them would.
 	 *
 	 * @param array<array-key,array<array-key,mixed>> $rows  Rows by hash.
-	 * @param string                                  $sort  A `URL_SORTS` value.
+	 * @param string                                  $sort  A `URL_SORTS` value, or `errors` (`rank_key()`).
 	 * @param string                                  $order A `URL_ORDERS` value.
 	 * @param int                                     $n     Entries to keep.
 	 * @return list<Rank_Entry>
 	 */
 	private static function rank_list( array $rows, string $sort, string $order, int $n ): array {
-		$timed  = \in_array( $sort, [ 'avg_ms', 'min_ms', 'max_ms' ], true );
 		$values = [];
 		foreach ( $rows as $hash => $row ) {
-			if ( $timed && Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) <= 0 ) {
-				continue;
-			}
 			if ( 'url' === $sort && '' === Core::str( $row[ self::ROW_PATH ] ?? '' ) ) {
 				continue;
 			}
@@ -2462,11 +2508,12 @@ class Stats_Store {
 	 * slow it is rather than on how often it is hit.
 	 *
 	 * @param array<array-key,mixed> $row  A stored row.
-	 * @param string                 $sort A `URL_SORTS` value.
+	 * @param string                 $sort A `URL_SORTS` value, or `errors`.
 	 */
 	private static function url_rank_value( array $row, string $sort ): float|int|string {
 		return match ( $sort ) {
 			'count'        => Core::num_int( $row[ self::ROW_COUNT ] ?? null ),
+			'errors'       => self::row_errors( $row ),
 			'avg_ms'       => Core::num_float( $row[ self::ROW_SUM_MS ] ?? null ) / \max( 1, Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) ),
 			'min_ms'       => Core::num_float( $row[ self::ROW_MIN_MS ] ?? null ),
 			'max_ms'       => Core::num_float( $row[ self::ROW_MAX_MS ] ?? null ),
@@ -2474,6 +2521,106 @@ class Stats_Store {
 			'last_updated' => Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ),
 			default        => Core::str( $row[ self::ROW_PATH ] ?? '' ),
 		};
+	}
+
+	/**
+	 * The requests of one stored row that no status bucket accounted for.
+	 *
+	 * @param array<array-key,mixed> $row A stored row.
+	 */
+	public static function row_errors( array $row ): int {
+		$errors = Core::num_int( $row[ self::ROW_COUNT ] ?? null );
+		foreach ( self::ROW_STATUS_COUNTS as $index ) {
+			$errors -= Core::num_int( $row[ $index ] ?? null );
+		}
+		return $errors;
+	}
+
+	/**
+	 * One server's shard maps as one map by hash. A hash lives in one shard,
+	 * so a later map's row replaces; the overflow row lives in every shard
+	 * under one key, so its rows are summed through `fold_url_rows()`.
+	 *
+	 * @param array<array-key,mixed> ...$maps Shard maps, hash => stored row.
+	 * @return array<string,array<array-key,mixed>>
+	 */
+	public static function merge_shard_rows( array ...$maps ): array {
+		$merged = [];
+		foreach ( $maps as $map ) {
+			foreach ( $map as $raw_hash => $raw ) {
+				$hash            = (string) $raw_hash;
+				$row             = Core::arr( $raw );
+				$merged[ $hash ] = isset( $merged[ $hash ] ) && self::is_other_key( $hash )
+					? self::fold_url_rows( $merged[ $hash ], $row )
+					: $row;
+			}
+		}
+		return $merged;
+	}
+
+	/**
+	 * Add one URL row into another, for the synthetic overflow row only.
+	 *
+	 * Only the fields that ADD (`ROW_SUMS`) plus `last_seen`: an extreme over
+	 * unrelated URLs describes nothing, and neither does one path, so the
+	 * overflow row's is ''.
+	 *
+	 * @param array<array-key,mixed> $into The row so far, [] on first fold.
+	 * @param array<array-key,mixed> $row  The row being folded in.
+	 * @return array<array-key,mixed>
+	 */
+	public static function fold_url_rows( array $into, array $row ): array {
+		// AFTER the sum: it returns `$into`, which carries its own `last_seen`.
+		$out                        = self::sum_entry( $into, $row, self::ROW_SUMS );
+		$out[ self::ROW_WORKER ]    = ! empty( $into[ self::ROW_WORKER ] ) || ! empty( $row[ self::ROW_WORKER ] );
+		$out[ self::ROW_LAST_SEEN ] = \max(
+			Core::num_int( $into[ self::ROW_LAST_SEEN ] ?? null ),
+			Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null )
+		);
+		$out[ self::ROW_PATH ]      = '';
+		return $out;
+	}
+
+	/**
+	 * Sum `$fields` from one entry into another — what `sum_fields()` does per
+	 * key, reachable directly by a caller holding a single row rather than a map.
+	 *
+	 * The entry it returns is built from `$fields` and nothing else, so a key
+	 * either side carries outside the table is DISCARDED — which is what makes
+	 * `sum_fields()`'s invariant true. A caller wanting a field the table does
+	 * not name puts it back itself, beside the reason it survives.
+	 *
+	 * @param array<array-key,mixed> $into   The entry so far.
+	 * @param array<array-key,mixed> $from   The entry being added.
+	 * @param array<array-key,bool>  $fields Field => whether it is a whole count.
+	 * @return array<array-key,mixed> The `$fields` keys, summed.
+	 */
+	public static function sum_entry( array $into, array $from, array $fields ): array {
+		$out = [];
+		foreach ( $fields as $field => $is_count ) {
+			$out[ $field ] = $is_count
+				? Core::num_int( $into[ $field ] ?? null ) + Core::num_int( $from[ $field ] ?? null )
+				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
+		}
+		return $out;
+	}
+
+	/**
+	 * Whether a row key is one of the overflow rows — either of them.
+	 *
+	 * @param string $hash A URL row key.
+	 */
+	public static function is_other_key( string $hash ): bool {
+		return self::OTHER_KEY === $hash || self::OTHER_WORKER_KEY === $hash;
+	}
+
+	/**
+	 * Whether a shard token names the WORKER family.
+	 *
+	 * @param string $shard Shard token from `url_shard()`.
+	 */
+	public static function is_worker_shard( string $shard ): bool {
+		return \str_starts_with( $shard, self::WORKER_SHARD_PREFIX );
 	}
 
 	/**
@@ -2519,6 +2666,34 @@ class Stats_Store {
 	}
 
 	/**
+	 * The row families a reader asks for, each one list and one record a
+	 * key: the reader family, and the worker family beside it on request.
+	 *
+	 * @param bool $workers Include the worker family.
+	 * @return list<bool> Whether each family is the worker's.
+	 */
+	public static function families( bool $workers ): array {
+		return $workers ? [ false, true ] : [ false ];
+	}
+
+	/**
+	 * The list sets a page reads, of `RANK_SETS`: the reader family's, the
+	 * worker family's beside it on request, each errored rows alone when
+	 * the page filters to them.
+	 *
+	 * @param bool $workers Include the worker family.
+	 * @param bool $errored Only the rows of the keys each URL errored in.
+	 * @return list<list<string>>
+	 */
+	public static function rank_sets( bool $workers, bool $errored ): array {
+		return \array_values( \array_filter(
+			self::RANK_SETS,
+			static fn ( array $set ): bool => $errored === \in_array( self::ERRORED_PART, $set, true )
+				&& ( $workers || ! \in_array( self::WORKER_SHARD_PREFIX, $set, true ) )
+		) );
+	}
+
+	/**
 	 * A term's tokens as the reads that name them: longest first, ties in
 	 * term order, `SEARCH_WORDS_READ` to a read. A reader reads the next
 	 * group only when every token of the last came back over the limit.
@@ -2542,19 +2717,20 @@ class Stats_Store {
 	}
 
 	/**
-	 * Namespace prefix for one URL's series in one dimension: a key per
-	 * dimension, so `url_breakdown` reads the one it draws.
+	 * Key parts of one URL's dimensional series: one row an hour
+	 * holding every dimension, each a slotted hour, so a flush writes a URL
+	 * once an hour whatever it measured. A reader names the dimension it
+	 * draws to `get_slots()`.
 	 *
-	 * @param string $url_hash  12-char URL hash.
-	 * @param string $dimension One of the URL dimensions.
+	 * @param string $url_hash 12-char URL hash.
 	 * @return array<int,string>
 	 */
-	public static function url_dim_parts( string $url_hash, string $dimension ): array {
-		return [ self::NS_URL_DIM_HOUR, $url_hash, $dimension ];
+	public static function url_dim_parts( string $url_hash ): array {
+		return [ self::NS_URL_DIM_HOUR, $url_hash ];
 	}
 
 	/**
-	 * Namespace prefix for one URL's category series.
+	 * Key parts of one URL's category series.
 	 *
 	 * @param string $url_hash 12-char URL hash.
 	 * @return array<int,string>
@@ -2564,7 +2740,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * Namespace prefix for the site-wide request totals.
+	 * Key parts of the site-wide request totals.
 	 *
 	 * @return array<int,string>
 	 */

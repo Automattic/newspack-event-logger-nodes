@@ -43,7 +43,7 @@
     </div>
     <div class="value">
       <div class="card"><h3><span class="mono">arguments</span>: one flat token array</h3>
-        <p>The grammar <span class="mono">Command_Args::parse()</span> and the browser's <span class="mono">parseCommandArgs()</span> both read. Required values ride positionally, in the order the verb declares; optional ones are <span class="mono">--key=value</span>; a boolean is a bare <span class="mono">--key</span> (<span class="mono">--key=false</span> turns one off); a list is comma-separated inside one value.</p>
+        <p>Bound by <span class="mono">Command_Args::bind()</span> against the args the verb declares, before its handler runs. Each arg rides by position, in declared order, or as <span class="mono">--key=value</span>; a boolean is a bare <span class="mono">--key</span> (<span class="mono">--key=false</span> turns one off); a variadic arg takes the positional tail or a repeated <span class="mono">--key=</span>. An option the verb never declared is refused.</p>
         <p class="mono" style="color:#101517">["--limit=25", "--server=example.com"]</p></div>
       <div class="card"><h3><span class="mono">auth</span>: the envelope <span class="mono">Command_Auth::sign()</span> stamps</h3>
         <p>A <span class="mono">nonce</span> and a <span class="mono">sig</span> over <span class="mono">[ts, name, arguments, nonce]</span>, plus a <span class="mono">handle</span> when the key is a session key.</p>

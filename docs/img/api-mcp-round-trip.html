@@ -67,7 +67,7 @@
   <header><span class="n">4</span>The call becomes a command</header>
   <div class="body">
     <div class="chip danger">A name absent from the ten tools, OR a role the session cannot spend: <span class="mono">-32601 Unknown tool: &lt;name&gt;</span>. A typo and a permission refusal get one answer; <span class="mono">tools/list</span> is what tells them apart.</div>
-    <div class="chip">The named arguments become a flat token list: every key in <span class="mono">POSITIONAL_ARGS</span> (<span class="mono">descriptor, hash, rid, pattern, rule, id, context</span>) rides bare, in that order; every other key becomes <span class="mono">--key=value</span> through <span class="mono">Command_Args::format()</span>.</div>
+    <div class="chip">The named arguments become a flat token list: every scalar key becomes <span class="mono">--key=value</span> through <span class="mono">Command_Args::format()</span>, in the order the agent gave it, and the verb binds each by name against the args it declares.</div>
     <div class="chip"><span class="mono">$node-&gt;dispatch( verb, tokens )</span> on the CI the tool names. The verb's own capability gate and handler run exactly as they do for <span class="mono">/command</span>; the MCP layer adds no verb.</div>
   </div>
 </div>

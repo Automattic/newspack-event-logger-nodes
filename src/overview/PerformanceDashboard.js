@@ -579,7 +579,9 @@ export default function PerformanceDashboard( {
 			setSearchResultsTruncated( false );
 			setSearchUnparseableLines( undefined );
 			requestGrep(
-				formatCommandArgs( [ pattern.trim() ], {
+				// Named, so a pattern opening `--` is never read as an option.
+				formatCommandArgs( [], {
+					pattern: pattern.trim(),
 					limit: GREP_RESULT_LIMIT,
 				} )
 			);

@@ -1,6 +1,6 @@
 <?php
 return [
-	'base_directory'   => '/tmp/newspack-event-logger-nodes-test-logging',
+	'base_directory'   => ( \getenv( 'NEWSPACK_TEST_BASE_DIR' ) ?: throw new \LogicException( 'NEWSPACK_TEST_BASE_DIR is unset; tests/bootstrap.php sets it' ) ) . '-logging',
 	'num_partitions'   => 1,
 	'segment_size'     => 4096,
 	'min_segments'     => 2,

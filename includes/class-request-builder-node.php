@@ -1979,27 +1979,27 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			'commands'       => [
 				[
 					'name'        => 'set_errors_target',
-					'description' => 'Forward error/warning keywords to a named partition.',
+					'description' => 'Forward error/warning keywords to a named partition; an empty arg stops forwarding.',
 					'args'        => [
-						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => false ],
 					],
 					// Declarative: the substrate trims, assigns and dumps it.
 					'setter'      => 'errors_target',
 				],
 				[
 					'name'        => 'set_alerts_target',
-					'description' => 'Forward `alert` keywords to a named partition (the fleet-alert journal).',
+					'description' => 'Forward `alert` keywords to a named partition (the fleet-alert journal); an empty arg stops forwarding.',
 					'args'        => [
-						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => false ],
 					],
 					// Declarative: the substrate trims, assigns and dumps it.
 					'setter'      => 'alerts_target',
 				],
 				[
 					'name'        => 'set_completed_target',
-					'description' => 'Emit a compact one-line summary of each completed request to a named partition (in addition to the primary full-doc emit).',
+					'description' => 'Emit a compact one-line summary of each completed request to a named partition (in addition to the primary full-doc emit); an empty arg stops it.',
 					'args'        => [
-						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => false ],
 					],
 					// Declarative: the substrate trims, assigns and dumps it.
 					'setter'      => 'completed_target',
@@ -2008,15 +2008,16 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 					'name'        => 'set_inflight_target',
 					'description' => 'Emit periodic in-flight request snapshots (on the Router tick) to a named partition (typically the gyroscope) via the hidden Flight sibling. Setting a target enables snapshots; an empty arg clears it and stops them.',
 					'args'        => [
-						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
-						// target() arms Router-TIMER hitchhike; empty stops it.
-						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->flight()->target( $arg );
-						return 'ok';
+						if ( ! $patron instanceof self ) {
+							throw new \RuntimeException( \esc_html( 'set_inflight_target: not a ' . self::class ) );
+						}
+						// target() arms Router-TIMER hitchhike; empty stops it.
+						$patron->flight()->target( \trim( Core::as_string( $args['target'] ) ) );
+						return "ok\n";
 					},
 				],
 				[

@@ -35,7 +35,7 @@
       <text x="0" y="14" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">older</text>
       <text x="1052" y="14" text-anchor="end" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">now</text>
       <rect x="0" y="24" width="844" height="26" rx="4" fill="#787C82"/>
-      <text x="422" y="41" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif">one key a server per closed hour: urls_h:{server_key}:{shard}:{Y-m-d-H}, 23 of them</text>
+      <text x="422" y="41" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif">one key a server per closed hour: urls_h:{Y-m-d-H}:{server_key}:{shard}, 23 of them</text>
       <rect x="848" y="24" width="204" height="26" rx="4" fill="url(#fine)"/>
       <rect x="848" y="24" width="204" height="26" rx="4" fill="none" stroke="#003DA5" stroke-width="1.5"/>
       <rect x="870" y="28" width="160" height="18" rx="3" fill="#003DA5"/>
@@ -68,7 +68,7 @@
     </div>
     <div class="card">
       <h3>Not a scope, a resolution</h3>
-      <p>The coarse key does not reopen decision 1: the bucket stays LAST, one <span class="m">MGET</span> serves the tier, and retention is still the key's own TTL. A resolution is a constant this schema chooses, exactly as the shard count is, and not an input it does not control.</p>
+      <p>The coarse key does not reopen decision 1: the hour sits right after the namespace, as every time key does, one <span class="m">MGET</span> serves the tier, and retention is still the key's own TTL. A resolution is a constant this schema chooses, exactly as the shard count is, and not an input it does not control.</p>
       <p>Decision 6 is unharmed by chunking: the batch is still one round trip for many keys, bounded to a chunk. What exhausts the heap is the volume resident at once, not a duplicate copy.</p>
     </div>
   </div>

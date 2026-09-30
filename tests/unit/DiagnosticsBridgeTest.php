@@ -25,8 +25,8 @@ class DiagnosticsBridgeTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$this->orig_server = $_SERVER;
-		$this->rmdir_recursive( self::TEST_DIR );
-		@\mkdir( self::TEST_DIR . '/logs', 0755, true );
+		$this->rmdir_recursive( self::test_dir() );
+		@\mkdir( self::test_dir() . '/logs', 0755, true );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . \dirname( __DIR__ ) . '/configs/logging-enabled.php' );
@@ -41,7 +41,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		Config::reset();
 		$_SERVER = $this->orig_server;
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
-		$this->rmdir_recursive( self::TEST_DIR );
+		$this->rmdir_recursive( self::test_dir() );
 		parent::tearDown();
 	}
 
@@ -64,7 +64,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		Diagnostics_Bridge::on_stderr( 'worker spinner detected 7731' );
 		$lm->finish();
 
-		$stderr = self::entries_of( self::firehose_entries( self::TEST_DIR ), 'stderr' );
+		$stderr = self::entries_of( self::firehose_entries( self::test_dir() ), 'stderr' );
 		$this->assertCount( 1, $stderr, 'stderr line logged to the active request firehose' );
 		$this->assertSame( 'worker spinner detected 7731', $stderr[0]['m'] );
 	}
@@ -73,8 +73,8 @@ class DiagnosticsBridgeTest extends TestCase {
 		Log_Manager::reset();
 		Diagnostics_Bridge::on_stderr( 'orphan diagnostic 7732' );
 		$this->assertNull( Log_Manager::started_instance() );
-		$this->assertDirectoryDoesNotExist( self::TEST_DIR . '/logs/firehose.p0' );
-		$this->assertDirectoryDoesNotExist( self::TEST_DIR . '/logs/errors.p0' );
+		$this->assertDirectoryDoesNotExist( self::test_dir() . '/logs/firehose.p0' );
+		$this->assertDirectoryDoesNotExist( self::test_dir() . '/logs/errors.p0' );
 	}
 
 	// ── verb spans ────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ class DiagnosticsBridgeTest extends TestCase {
 	 * @return array<string,mixed>
 	 */
 	private static function start_line( string $category ): array {
-		$start = self::entries_of( self::firehose_entries( self::TEST_DIR ), "{$category} (start)" );
+		$start = self::entries_of( self::firehose_entries( self::test_dir() ), "{$category} (start)" );
 		self::assertCount( 1, $start );
 		return $start[0];
 	}
@@ -111,7 +111,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$lm->finish();
 
 		$this->assertSame( [ 'rows' => 7731 ], $result, 'the verb\'s result passes through' );
-		$entries = self::firehose_entries( self::TEST_DIR );
+		$entries = self::firehose_entries( self::test_dir() );
 		$start   = self::entries_of( $entries, 'Command_Interpreter probe7731 command (start)' );
 		$done    = self::entries_of( $entries, 'Command_Interpreter probe7731 command (complete)' );
 		$this->assertCount( 1, $start );
@@ -185,7 +185,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertSame( [ 'moa-7713', 'moa-7713' ], [ $nested, $keyed ] );
 		$this->assertSame(
 			[ "/kea-7713> probe7713 ''", '/kea-7713> probe7713 takahe-7713' ],
-			\array_column( self::entries_of( self::firehose_entries( self::TEST_DIR ), 'Command_Interpreter probe7713 command (start)' ), 'm' )
+			\array_column( self::entries_of( self::firehose_entries( self::test_dir() ), 'Command_Interpreter probe7713 command (start)' ), 'm' )
 		);
 	}
 
@@ -232,7 +232,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertTrue( $start['truncated'] ?? false );
 		$this->assertStringStartsWith( '/perf-7713> upsert kkkk', $start['m'] );
 		$this->assertLessThan( 9000, \strlen( $start['m'] ) );
-		$this->assertCount( 1, self::entries_of( self::firehose_entries( self::TEST_DIR ), 'Command_Interpreter upsert command (complete)' ) );
+		$this->assertCount( 1, self::entries_of( self::firehose_entries( self::test_dir() ), 'Command_Interpreter upsert command (complete)' ) );
 	}
 
 	/** The command line is required: the floor is the substrate that passes it. */
@@ -257,7 +257,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		}
 		$lm->finish();
 		$this->assertNotNull( $caught, 'the throwable must propagate' );
-		return [ $caught, self::entries_of( self::firehose_entries( self::TEST_DIR ), 'Command_Interpreter boom7732 command (complete)' ) ];
+		return [ $caught, self::entries_of( self::firehose_entries( self::test_dir() ), 'Command_Interpreter boom7732 command (complete)' ) ];
 	}
 
 	public function test_a_throwing_verb_closes_its_span_with_what_was_thrown_and_rethrows(): void {
@@ -293,7 +293,7 @@ class DiagnosticsBridgeTest extends TestCase {
 
 		$this->assertSame( 'kea-7733', $result );
 		$this->assertNull( Log_Manager::started_instance() );
-		$this->assertDirectoryDoesNotExist( self::TEST_DIR . '/logs/firehose.p0' );
+		$this->assertDirectoryDoesNotExist( self::test_dir() . '/logs/firehose.p0' );
 	}
 
 	/**
@@ -333,7 +333,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$lm->finish();
 
 		$this->assertSame( '/weka-ci> probe7738 --weka=7738 via moa: kea-7738', $result, 'the wrapper before it gets the same command line' );
-		$categories = \array_column( self::firehose_entries( self::TEST_DIR ), 'k' );
+		$categories = \array_column( self::firehose_entries( self::test_dir() ), 'k' );
 		$inner      = \array_search( 'moa-7738', $categories, true );
 		$this->assertIsInt( $inner, 'the previous wrapper ran' );
 		$this->assertGreaterThan( \array_search( 'Command_Interpreter probe7738 command (start)', $categories, true ), $inner );
@@ -360,12 +360,45 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertSame( [ 'uptime' ], $seen, 'the wrapper before it still ran' );
 		$this->assertNotSame( '', $uptime );
 		$lines = self::entries_of(
-			self::firehose_entries( self::TEST_DIR ),
+			self::firehose_entries( self::test_dir() ),
 			'Command_Interpreter uptime command (start)',
 			'Command_Interpreter uptime command (complete)'
 		);
 		$this->assertCount( 2, $lines );
 		$this->assertSame( '/kiwi-7734> uptime', $lines[0]['m'], 'a bare verb has no trailing space' );
+	}
+
+	/**
+	 * The substrate binds a verb's args before any wrapper runs, so a command
+	 * its binding refuses leaves no span: only the fitting call is logged.
+	 */
+	public function test_a_command_its_binding_refuses_leaves_no_span(): void {
+		$lm    = $this->started_log_manager();
+		$saved = Command_Interpreter_Node::$around_dispatch;
+		$rb    = new \Newspack_Event_Logger_Nodes\Request_Builder_Node();
+		$rb->name( 'weka-7735' );
+		$ci = $this->read_private( $rb, 'interpreter' );
+		try {
+			Command_Interpreter_Node::$around_dispatch = null;
+			Diagnostics_Bridge::install();
+			try {
+				$ci->dispatch( 'set_inflight_delta', [ '--kea=7735' ] );
+				$this->fail( 'an undeclared option is refused' );
+			} catch ( \InvalidArgumentException $e ) {
+				$this->assertStringContainsString( 'unknown option --kea', $e->getMessage() );
+			}
+			$ci->dispatch( 'set_inflight_delta', [ 'on' ] );
+		} finally {
+			Command_Interpreter_Node::$around_dispatch = $saved;
+			$rb->remove_node();
+		}
+		$lm->finish();
+
+		$spans = \array_filter(
+			self::firehose_entries( self::test_dir() ),
+			static fn ( array $entry ): bool => \str_contains( (string) ( $entry['k'] ?? '' ), 'set_inflight_delta' )
+		);
+		$this->assertCount( 2, $spans, 'the fitting call alone opens and closes a span' );
 	}
 
 	// ── bootstrap wiring ──────────────────────────────────────────────────────
@@ -414,7 +447,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$lm->finish();
 
 		$this->assertNotSame( '', $uptime );
-		$categories = \array_column( self::firehose_entries( self::TEST_DIR ), 'k' );
+		$categories = \array_column( self::firehose_entries( self::test_dir() ), 'k' );
 		$start      = \array_search( 'Command_Interpreter uptime command (start)', $categories, true );
 		$sentinel   = \array_search( 'moa-7747', $categories, true );
 		$complete   = \array_search( 'Command_Interpreter uptime command (complete)', $categories, true );

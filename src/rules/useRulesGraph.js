@@ -186,7 +186,7 @@ export function useRulesGraph( opts = {} ) {
 		}
 	}, [] );
 
-	// save/upsert: raw JSON is ONE arg token (CI json_decodes $args[0]).
+	// save/upsert: the JSON is ONE token, the verb's `rules` or `rule` arg.
 	const saveAll = useCallback(
 		( rules ) => saveOnce.run( [ JSON.stringify( rules ) ] ),
 		[ saveOnce.run ] // eslint-disable-line react-hooks/exhaustive-deps

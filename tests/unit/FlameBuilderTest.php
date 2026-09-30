@@ -127,10 +127,44 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$bucket = Stats_Store::bucket_key( self::tick() );
-		$hour   = $this->stats_table_value( Stats_Store::TABLE_AGGREGATE, 0, Stats_Store::key( ...[ ...Stats_Store::hourly_parts(), Stats_Store::hour_of( $bucket ) ] ) );
+		$hour   = $this->stats_table_value( Stats_Store::TABLE_AGGREGATE, 0, Stats_Store::key_at( Stats_Store::hourly_parts(), Stats_Store::hour_of( $bucket ) ) );
 		$hourly = Core::arr( Core::arr( $hour )[ Stats_Store::slot_of( $bucket ) ] ?? null );
 		$this->assertSame( 1, $hourly['count'] ?? null );
 		$this->assertEqualsWithDelta( 41.0, $hourly['sum_ms'] ?? null, 1e-6 );
+	}
+
+	/**
+	 * `flame-builder.tsl` resolves `set_is_hub <eln:is_hub>` from the active
+	 * set, and a spoke's `false` must bind as a bool like a hub's `true`: a
+	 * spoke that refused the line would not load its builder at all.
+	 *
+	 * @return array<string,array{0:list<string>,1:bool}>
+	 */
+	public static function hub_and_spoke_sets(): array {
+		return [
+			'spoke' => [ [ 'flame-builder' ], false ],
+			'hub'   => [ [ 'flame-builder', 'aggregator' ], true ],
+		];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'hub_and_spoke_sets' )]
+	public function test_the_shipped_topology_loads_as_a_spoke_and_as_a_hub( array $active, bool $hub ): void {
+		$this->use_scratch_config( $this->make_temp_dir( 'flame-builder-hubness-' ) );
+		$this->activate_shipped( 'flame-builder', 1 );
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = $active;
+		\Newspack_Nodes\Config::reset();
+		\Newspack_Event_Logger_Nodes\Config::reset();
+		$router = new \Newspack_Nodes\Router_Node();
+		$router->name( \Newspack_Nodes\Node_Names::ROUTER );
+		$interpreter = new \Newspack_Nodes\Command_Interpreter_Node();
+		$interpreter->name( \Newspack_Nodes\Node_Names::COMMAND_INTERPRETER );
+		$interpreter->sink( $router );
+
+		\Newspack_Nodes\Topology_Loader::load( 'flame-builder', 0, $interpreter );
+
+		$fb = Core::node( 'flame-builder' );
+		$this->assertInstanceOf( Flame_Builder_Node::class, $fb );
+		$this->assertSame( $hub, $this->read_private( $fb, 'is_hub' ) );
 	}
 
 	public function test_a_reply_from_a_stats_table_is_never_folded_as_a_record(): void {
@@ -752,6 +786,38 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 5, $list[0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] );
 	}
 
+	public function test_a_flush_ranks_worker_rows_in_their_own_family_from_the_whole_stored_bucket(): void {
+		// The second flush lands a reader row alone, so the worker row it
+		// ranks beside comes back from the store's worker shard.
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
+		$fb->set_stats_store( $store );
+		$now       = \gmmktime( 14, 31, 0, 9, 22, 2026 );
+		$cron      = 'https://kea.test/jobs/cron-sweep/7?job';
+		Core::$now = $now;
+		foreach ( [ 1, 2, 3 ] as $i ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'url' => $cron, 'duration_ms' => 610.0, 'is_worker' => true, 'server_name' => 'kea.test', 'timestamp' => $now ] ) );
+		}
+		$fb->flush();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/kiwi-8842', 'duration_ms' => 17.0, 'server_name' => 'kea.test', 'timestamp' => $now ] ) );
+		Core::$now = $now + 61;
+		$fb->flush();
+
+		$bucket = Stats_Store::bucket_key( $now );
+		$list   = static fn ( string $server, array $set ): array => \array_column(
+			$store->bucket_get_multi( [ [ Stats_Store::url_rank_parts( 'count', 'desc', $server, false, $set ), $bucket ] ] )[0] ?? [],
+			Stats_Store::RANK_ROW,
+			Stats_Store::RANK_HASH
+		);
+		$worker = $list( '', [ Stats_Store::WORKER_SHARD_PREFIX ] );
+		$this->assertSame( [ Log_Manager::url_hash( $cron ) ], \array_keys( $worker ), 'the site\'s worker list' );
+		$this->assertSame( 3, $worker[ Log_Manager::url_hash( $cron ) ][ Stats_Store::ROW_COUNT ] );
+		$this->assertSame( \array_keys( $worker ), \array_keys( $list( 'kea.test', [ Stats_Store::WORKER_SHARD_PREFIX ] ) ), 'and the server\'s' );
+		$this->assertSame( [ Log_Manager::url_hash( 'https://kea.test/kiwi-8842' ) ], \array_keys( $list( '', [] ) ), 'the reader list holds no worker row' );
+		$record = $store->bucket_get_multi( [ [ Stats_Store::url_header_parts( '', false, [ Stats_Store::WORKER_SHARD_PREFIX ] ), $bucket ] ] )[0] ?? [];
+		$this->assertSame( 3, $record[ Stats_Store::HDR_COUNT ] ?? null, 'the worker family\'s record' );
+	}
+
 	public function test_a_flush_landing_every_reader_shard_reads_no_extra_shard(): void {
 		// Every reader shard freshly written this flush leaves the ranker's
 		// gap-fill nothing to read back, so its cost must not creep toward a
@@ -798,10 +864,9 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
-	public function test_a_worker_only_flush_ranks_nothing(): void {
-		// No reader-family traffic landed this flush, so the lists are a
-		// pure function of rows this request never touched — nothing ranks,
-		// and the gap-fill never runs to fetch them either.
+	public function test_a_worker_only_flush_ranks_its_worker_family_from_what_it_landed(): void {
+		// The flush landed the one shard the index names, so the ranking
+		// holds the whole bucket and the gap-fill has nothing to read back.
 		$fb    = new Flame_Builder_Node();
 		$store = new class( ...$this->stats_store_args( 0, 86400, $fb ) ) extends Stats_Store {
 			/** @var array<int,array<int,array{0:array<int,string>,1:string,2:array<array-key,mixed>}>> */
@@ -833,15 +898,13 @@ class FlameBuilderTest extends TestCase {
 		$store->watch   = Stats_Store::bucket_key( $now );
 		$fb->flush();
 
-		foreach ( $store->set_log as $writes ) {
-			foreach ( $writes as [ $parts ] ) {
-				$this->assertNotContains(
-					$parts[0],
-					[ Stats_Store::NS_URLRANK_S ],
-					'no rank write from worker-only traffic'
-				);
-			}
+		$written = [];
+		foreach ( \array_merge( ...$store->set_log ) as [ $parts, , $value ] ) {
+			$written[ \implode( ':', $parts ) ] = $value;
 		}
+		$site = static fn ( array $set ): array => \array_column( $written[ \implode( ':', Stats_Store::url_rank_parts( 'count', 'desc', '', false, $set ) ) ] ?? [ [ 'unwritten' ] ], Stats_Store::RANK_HASH );
+		$this->assertSame( [ Log_Manager::url_hash( '/wren-3312?worker_type' ) ], $site( [ Stats_Store::WORKER_SHARD_PREFIX ] ), 'the worker family ranks it' );
+		$this->assertSame( [], $site( [] ), 'the reader family ranks nothing, and says so' );
 		$this->assertCount( 2, $store->get_log, 'the server index and flush_writes() alone; the rank gap-fill never runs' );
 	}
 
@@ -866,7 +929,7 @@ class FlameBuilderTest extends TestCase {
 		];
 
 		( new \ReflectionMethod( $fb, 'write_url_ranks' ) )->invoke(
-			$fb, $store, [ '2026-09-22-13-05' => $servers ], false, false
+			$fb, $store, [ '2026-09-22-13-05' => self::by_shard( $servers ) ], false, false
 		);
 
 		$servers_written = [];
@@ -903,7 +966,7 @@ class FlameBuilderTest extends TestCase {
 		}
 
 		( new \ReflectionMethod( $fb, 'write_url_ranks' ) )->invoke(
-			$fb, $store, [ '2026-09-22-13-05' => $servers ], false, false
+			$fb, $store, [ '2026-09-22-13-05' => self::by_shard( $servers ) ], false, false
 		);
 
 		$this->assertGreaterThan( 1, $store->set_calls, 'a large ranking round trip chunks like flush_writes() does' );
@@ -1204,8 +1267,8 @@ class FlameBuilderTest extends TestCase {
 		}
 		unset( $fb );
 
-		$list   = $this->stats_table_value( Stats_Store::TABLE_URL_FINE, 0, Stats_Store::key( ...[ ...Stats_Store::url_rank_parts( 'count', 'desc', '', false ), $bucket ] ) );
-		$header = $this->stats_table_value( Stats_Store::TABLE_URL_FINE, 0, Stats_Store::key( ...[ ...Stats_Store::url_header_parts( '', false ), $bucket ] ) );
+		$list   = $this->stats_table_value( Stats_Store::TABLE_URL_FINE, 0, Stats_Store::key_at( Stats_Store::url_rank_parts( 'count', 'desc', '', false ), $bucket ) );
+		$header = $this->stats_table_value( Stats_Store::TABLE_URL_FINE, 0, Stats_Store::key_at( Stats_Store::url_header_parts( '', false ), $bucket ) );
 		$this->assertSame( 13, \Newspack_Nodes\Core::arr( \Newspack_Nodes\Core::arr( $list )[0] ?? null )[ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] ?? null, 'the site\'s list, ranked at the close' );
 		$this->assertSame( 13, \Newspack_Nodes\Core::arr( $header )[ Stats_Store::HDR_COUNT ] ?? null, 'and its header record' );
 	}
@@ -1287,7 +1350,7 @@ class FlameBuilderTest extends TestCase {
 			public function bucket_set_multi( array $writes ): array {
 				foreach ( $writes as [ $parts, $bucket ] ) {
 					if ( self::NS_URLS_HOUR === $parts[0] ) {
-						$this->hour_writes[] = self::key( ...[ ...$parts, $bucket ] );
+						$this->hour_writes[] = self::key_at( $parts, $bucket );
 					}
 				}
 				return parent::bucket_set_multi( $writes );
@@ -1313,7 +1376,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 6, $rows[ $one ]['count'] );
 		$this->assertSame( 8, $rows[ $two ]['count'] );
 		$this->assertSame(
-			[ Stats_Store::key( Stats_Store::NS_URLS_HOUR, Stats_Store::server_key( self::SEED_SERVER ), $shard, $hour ) ],
+			[ Stats_Store::key_at( Stats_Store::url_hour_parts( Stats_Store::server_key( self::SEED_SERVER ), $shard ), $hour ) ],
 			$store->hour_writes,
 			'one key, written once'
 		);
@@ -2037,8 +2100,8 @@ class FlameBuilderTest extends TestCase {
 		) );
 
 		$this->assertCount( 1, $written, \implode( ', ', $written ) );
-		$this->assertStringEndsWith(
-			Stats_Store::url_shard( Log_Manager::url_hash( '/one' ) ) . ':' . $bucket,
+		$this->assertSame(
+			Stats_Store::key_at( Stats_Store::url_shard_parts( Stats_Store::server_key( 'example.com' ), Stats_Store::url_shard( Log_Manager::url_hash( '/one' ) ) ), $bucket ),
 			$written[0] ?? ''
 		);
 	}
@@ -3501,7 +3564,7 @@ class FlameBuilderTest extends TestCase {
 			self::hour_count( $store->get_slots( Stats_Store::hourly_parts(), [ $hour ] ), 'count' ),
 			self::hour_count( $store->get_slots( Stats_Store::dim_parts( 'status', '' ), [ $hour ] ), '5xx' ),
 			self::hour_count( $store->get_slots( Stats_Store::dim_parts( 'ua', self::SEED_SERVER ), [ $hour ] ), 'kakapo/2' ),
-			self::hour_count( $store->get_slots( Stats_Store::url_dim_parts( $hash, 'ua' ), [ $hour ] ), 'kakapo/2' ),
+			self::hour_count( $store->get_slots( Stats_Store::url_dim_parts( $hash ), [ $hour ], 'ua' ), 'kakapo/2' ),
 		];
 		foreach ( [ 100, 1300 ] as $at ) {
 			Core::$now = $start + $at;
@@ -3545,17 +3608,22 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( $seeded, $store->bucket_get_multi( $reads ) );
 	}
 
-	/** A server past the index cap files its rows under `Other` and its charts' hour keys under its own name. */
+	/**
+	 * A server past the index cap files its rows under `Other` and its
+	 * charts' hour keys under its own name. The flush writes those keys
+	 * through, so the open bucket is held ranked: ranking it would seed a
+	 * list set for every one of the index's servers, which charts nothing.
+	 */
 	public function test_a_server_past_the_index_cap_gets_its_chart_hour_keys(): void {
 		[ $fb, $store, $start ] = $this->hour_builder();
 		$fb->set_is_hub( true );
-		$hour  = \gmdate( 'Y-m-d-H', $start );
-		$index = self::index_of( \array_map( static fn ( int $i ): string => "spray{$i}.test", \range( 0, Stats_Store::MAX_SERVER_VALUES - 1 ) ) );
-		$store->bucket_set_multi( [ [ Stats_Store::url_srv_parts( false ), Stats_Store::bucket_key( (int) Core::$now ), $index ] ] );
+		$hour   = \gmdate( 'Y-m-d-H', $start );
+		$bucket = Stats_Store::bucket_key( (int) Core::$now );
+		$index  = self::index_of( \array_map( static fn ( int $i ): string => "spray{$i}.test", \range( 0, Stats_Store::MAX_SERVER_VALUES - 1 ) ) );
+		$store->bucket_set_multi( [ [ Stats_Store::url_srv_parts( false ), $bucket, $index ] ] );
+		( new \ReflectionProperty( $fb, 'ranked_at' ) )->setValue( $fb, [ $bucket => (int) Core::$now ] );
 
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://late-4471.test/kokako', 'server_name' => 'late-4471.test', 'timestamp' => (int) Core::$now, 'user_agent' => 'kea/7' ] ) );
-		$fb->fire_cb();
-		Core::$now = $start + 3600 + 30;
 		$fb->fire_cb();
 
 		$this->assertSame( 1, self::hour_count( $store->get_slots( Stats_Store::dim_parts( 'ua', 'late-4471.test' ), [ $hour ] ), 'kea/7' ) );
@@ -3576,7 +3644,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/takahe-7731', 'timestamp' => $start - 3600 + 2900, 'user_agent' => 'weka/3' ] ) );
 		$fb->fire_cb();
 
-		$this->assertSame( 1, self::hour_count( $store->get_slots( Stats_Store::url_dim_parts( $late, 'ua' ), [ $hour ] ), 'weka/3' ) );
+		$this->assertSame( 1, self::hour_count( $store->get_slots( Stats_Store::url_dim_parts( $late ), [ $hour ], 'ua' ), 'weka/3' ) );
 	}
 
 	/** A late record into a folded hour reaches that hour's chart keys as well as its bucket. */
@@ -3631,7 +3699,7 @@ class FlameBuilderTest extends TestCase {
 	 * the hours stay unfolded; with nothing pending it is idle all the same.
 	 */
 	public function test_an_unanswered_roll_up_leaves_an_idle_builder_idle(): void {
-		$store = $this->unanswered_store( 'urlsrv_h:' );
+		$store = $this->unanswered_store( '/^urlsrv_h:/' );
 		$this->fail_reads( $store, true );
 		$this->set_rule();
 		Core::$now = 1790000233;
@@ -4325,7 +4393,7 @@ class FlameBuilderTest extends TestCase {
 		$stored = [ 'flame' => [ 'name' => 'aggregate', 'sum_value' => 4471.0, 'count' => 73, 'children' => [] ], 'profiles' => [ 'count' => 73, 'sum_req_time' => 4471.0, 'categories' => [] ] ];
 		$this->assertTrue( $this->set_url_stats( $store, $hash, $stored ) );
 
-		$this->refuse_stats_reads( ':' . Stats_Store::NS_URL . ':' );
+		$this->refuse_stats_reads( '/^' . Stats_Store::NS_URL . ':/' );
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/kereru/4471', 'duration_ms' => 29.0, 'timestamp' => self::tick() ] ) );
 		$this->refuse_stats_reads( '' );
 		$fb->flush();
@@ -4411,7 +4479,7 @@ class FlameBuilderTest extends TestCase {
 		} );
 		// The index answers, so it is the leaderboard's read-merge that fails.
 		$fb    = new Flame_Builder_Node();
-		$store = $this->unanswered_store( ':lb_h:', $fb );
+		$store = $this->unanswered_store( '/^lb_h:/', $fb );
 		$fb->set_stats_store( $store );
 		Core::$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		$this->set_leaderboard_hour( $store, '2026-08-27-15', self::lb_sums( 4, 40.0 ) );
@@ -4458,8 +4526,8 @@ class FlameBuilderTest extends TestCase {
 			public array $ranked = [];
 			public function bucket_set_multi( array $writes ): array {
 				foreach ( $writes as [ $parts ] ) {
-					// A server's list; the site's names none, the marker `done`.
-					if ( self::NS_URLRANK_HOUR_S === $parts[0] && 4 === \count( $parts ) ) {
+					// A server's reader list; the site's names none, the marker `done`.
+					if ( self::NS_URLRANK_HOUR_S === $parts[0] && 4 === \count( $parts ) && ! \in_array( $parts[1], [ self::WORKER_SHARD_PREFIX, self::ERRORED_PART ], true ) ) {
 						$this->ranked[ $parts[1] ] = $parts[1];
 					}
 				}
@@ -4503,7 +4571,7 @@ class FlameBuilderTest extends TestCase {
 			/** @var list<list<string>> */
 			public array $forgotten = [];
 			public function bucket_forget_multi( array $forgets ): void {
-				$this->forgotten[] = \array_map( static fn ( array $forget ): string => self::key( ...[ ...$forget[0], $forget[1] ] ), $forgets );
+				$this->forgotten[] = \array_map( static fn ( array $forget ): string => self::key_at( $forget[0], $forget[1] ), $forgets );
 				parent::bucket_forget_multi( $forgets );
 			}
 		};
@@ -4527,8 +4595,8 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame(
 			[ [
-				'urlrank_sh:done:' . Stats_Store::server_key( self::SEED_SERVER ) . ':2026-08-27-13',
-				'urlrank_sh:done:' . Stats_Store::server_key( 'kaka-2208.test' ) . ':2026-08-27-13',
+				'urlrank_sh:2026-08-27-13:done:' . Stats_Store::server_key( self::SEED_SERVER ),
+				'urlrank_sh:2026-08-27-13:done:' . Stats_Store::server_key( 'kaka-2208.test' ),
 			] ],
 			$store->forgotten
 		);
@@ -4585,8 +4653,8 @@ class FlameBuilderTest extends TestCase {
 		] );
 
 		$srv = Stats_Store::server_key( self::SEED_SERVER );
-		$this->assertStringContainsString( "urls:{$srv}:{$shard}:2026-08-27-13-40", $err, 'the fine key' );
-		$this->assertStringContainsString( "urls_h:{$srv}:{$shard}:2026-08-27-13", $err, 'and the hour key' );
+		$this->assertStringContainsString( "urls:2026-08-27-13-40:{$srv}:{$shard}", $err, 'the fine key' );
+		$this->assertStringContainsString( "urls_h:2026-08-27-13:{$srv}:{$shard}", $err, 'and the hour key' );
 	}
 
 	public function test_the_rank_memo_prune_floor_is_the_read_plans_fine_tail(): void {
@@ -4672,7 +4740,7 @@ class FlameBuilderTest extends TestCase {
 		self::roll_up( $fb, (int) Core::$now );
 
 		$this->assertStringContainsString( 'hour fold write refused', $err );
-		$this->assertStringContainsString( Stats_Store::NS_URLS_HOUR . ':' . Stats_Store::server_key( self::SEED_SERVER ) . ':' . $shard . ':2026-08-27-13', $err, 'the refusal names the shard' );
+		$this->assertStringContainsString( Stats_Store::key_at( Stats_Store::url_hour_parts( Stats_Store::server_key( self::SEED_SERVER ), $shard ), '2026-08-27-13' ), $err, 'the refusal names the shard' );
 	}
 
 	public function test_a_fold_that_loses_a_write_leaves_its_hour_unmarked(): void {
@@ -4794,39 +4862,39 @@ class FlameBuilderTest extends TestCase {
 
 	/**
 	 * A store counting its batch writes, asking through `$asker` when given,
-	 * whose reads of a key carrying `$needle` go unanswered once
+	 * whose reads of a key `$pattern` matches go unanswered once
 	 * `fail_reads()` says so.
 	 *
-	 * @return Stats_Store&object{writes: int, needle: string}
+	 * @return Stats_Store&object{writes: int, pattern: string}
 	 */
-	private function unanswered_store( string $needle, ?Flame_Builder_Node $asker = null ): Stats_Store {
+	private function unanswered_store( string $pattern, ?Flame_Builder_Node $asker = null ): Stats_Store {
 		$store = new class( ...$this->stats_store_args( 0, 86400, $asker ) ) extends Stats_Store {
 			public int $writes    = 0;
-			public string $needle = '';
+			public string $pattern = '';
 			public function bucket_set_multi( array $writes ): array {
 				$this->writes += \count( $writes );
 				return parent::bucket_set_multi( $writes );
 			}
 		};
-		$store->needle = $needle;
+		$store->pattern = $pattern;
 		return $store;
 	}
 
 	/**
-	 * Refuse, or answer again, every read of a key carrying the store's
-	 * needle, as its Table would when it cannot answer.
+	 * Refuse, or answer again, every read of a key the store's pattern
+	 * matches, as its Table would when it cannot answer.
 	 *
-	 * @param Stats_Store&object{needle: string} $store What `unanswered_store()` built.
+	 * @param Stats_Store&object{pattern: string} $store What `unanswered_store()` built.
 	 */
 	private function fail_reads( Stats_Store $store, bool $failing ): void {
-		$this->refuse_stats_reads( $failing ? $store->needle : '' );
+		$this->refuse_stats_reads( $failing ? $store->pattern : '' );
 	}
 
 	public function test_a_failed_derived_read_folds_nothing_and_memoizes_nothing(): void {
 		// A settled hour read as absent would be folded again from fine
 		// buckets long evicted, overwriting its rows with nothing.
 		$fb    = new Flame_Builder_Node();
-		$store = $this->unanswered_store( 'urlsrv_h:', $fb );
+		$store = $this->unanswered_store( '/^urlsrv_h:/', $fb );
 		$this->set_url_bucket( $store, '2026-08-27-13-05', [ 'c4c4c4c4c4c4' => [ 'url' => '/settled-4411', 'count' => 29 ] ] );
 		$fb->set_stats_store( $store );
 		$store->writes = 0;
@@ -4841,15 +4909,15 @@ class FlameBuilderTest extends TestCase {
 	/** @return array<string,array{0:string}> */
 	public static function fold_reads(): array {
 		return [
-			'the index' => [ ':urlsrv:' ],
-			'the rows'  => [ ':urls:' ],
+			'the index' => [ '/^urlsrv:/' ],
+			'the rows'  => [ '/^urls:/' ],
 		];
 	}
 
 	#[\PHPUnit\Framework\Attributes\DataProvider( 'fold_reads' )]
-	public function test_a_fold_whose_read_went_unanswered_writes_nothing( string $needle ): void {
+	public function test_a_fold_whose_read_went_unanswered_writes_nothing( string $pattern ): void {
 		$fb    = new Flame_Builder_Node();
-		$store = $this->unanswered_store( $needle, $fb );
+		$store = $this->unanswered_store( $pattern, $fb );
 		$this->set_url_bucket( $store, '2026-08-27-13-05', [ 'c4c4c4c4c4c4' => [ 'url' => '/unfolded-4412', 'count' => 31 ] ] );
 		$fb->set_stats_store( $store );
 		$store->writes = 0;
@@ -4863,7 +4931,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_a_fold_whose_read_went_unanswered_says_so_in_its_span(): void {
 		$fb    = new Flame_Builder_Node();
-		$store = $this->unanswered_store( ':urls:', $fb );
+		$store = $this->unanswered_store( '/^urls:/', $fb );
 		$this->set_url_bucket( $store, '2026-08-27-13-05', [ 'c4c4c4c4c4c4' => [ 'url' => '/unfolded-4413', 'count' => 37 ] ] );
 		$fb->set_stats_store( $store );
 		$this->fail_reads( $store, true );
@@ -4884,15 +4952,15 @@ class FlameBuilderTest extends TestCase {
 	/** @return array<string,array{0:string}> */
 	public static function rank_reads(): array {
 		return [
-			'the index' => [ ':urlsrv:' ],
-			'the rows'  => [ ':urls:' ],
+			'the index' => [ '/^urlsrv:/' ],
+			'the rows'  => [ '/^urls:/' ],
 		];
 	}
 
 	#[\PHPUnit\Framework\Attributes\DataProvider( 'rank_reads' )]
-	public function test_a_ranking_whose_read_went_unanswered_leaves_the_bucket_owed( string $needle ): void {
+	public function test_a_ranking_whose_read_went_unanswered_leaves_the_bucket_owed( string $pattern ): void {
 		$fb     = new Flame_Builder_Node();
-		$store  = $this->unanswered_store( $needle, $fb );
+		$store  = $this->unanswered_store( $pattern, $fb );
 		$now    = \gmmktime( 14, 22, 0, 9, 22, 2026 );
 		$bucket = Stats_Store::bucket_key( $now - 3 * Stats_Store::BUCKET_SECONDS );
 		$this->set_url_bucket( $store, $bucket, [ 'd5d5d5d5d5d5' => [ 'url' => '/owed-5513', 'count' => 37 ] ] );
@@ -4910,15 +4978,15 @@ class FlameBuilderTest extends TestCase {
 	/** @return array<string,array{0:string}> */
 	public static function stale_reads(): array {
 		return [
-			'the index' => [ 'urlsrv_h:' ],
-			'the rows'  => [ 'urls_h:' ],
+			'the index' => [ '/^urlsrv_h:/' ],
+			'the rows'  => [ '/^urls_h:/' ],
 		];
 	}
 
 	#[\PHPUnit\Framework\Attributes\DataProvider( 'stale_reads' )]
-	public function test_a_stale_hour_whose_read_went_unanswered_stays_stale( string $needle ): void {
+	public function test_a_stale_hour_whose_read_went_unanswered_stays_stale( string $pattern ): void {
 		$fb    = new Flame_Builder_Node();
-		$store = $this->unanswered_store( $needle, $fb );
+		$store = $this->unanswered_store( $pattern, $fb );
 		$hour  = '2026-08-27-13';
 		$this->seed_url_hour( $store, $hour, Stats_Store::url_shard( 'e6e6e6e6e6e6' ), [ 'e6e6e6e6e6e6' => [ 'url' => '/stale-6614', 'count' => 41 ] ] );
 		$fb->set_stats_store( $store );
@@ -4941,7 +5009,7 @@ class FlameBuilderTest extends TestCase {
 			$err .= $text;
 		} );
 		$fb    = new Flame_Builder_Node();
-		$store = $this->unanswered_store( ':urlsrv:', $fb );
+		$store = $this->unanswered_store( '/^urlsrv:/', $fb );
 		$now   = \gmmktime( 14, 22, 0, 9, 22, 2026 );
 		$hash  = 'f7f7f7f7f7f7';
 		$fb->set_stats_store( $store );
@@ -5129,7 +5197,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( '', $err, 'nothing reaches the Error Log' );
 		$first = $narration[ \array_search( Flame_Tree::STATS_WRITES, \array_column( $narration, 'k' ), true ) ];
 		$this->assertMatchesRegularExpression( '/^1 flushes · \d+ writes · /', $first['m'] );
-		$this->assertStringContainsString( ' · 14 lists · 14 site lists · 1 records · 1 site records', $first['m'], 'the open bucket\'s first ranking' );
+		$this->assertStringContainsString( ' · 56 lists · 56 site lists · 4 records · 4 site records', $first['m'], 'the open bucket\'s first ranking, every list set' );
 		$this->assertSame( 1, $first['keep'] );
 		$sweep = self::closes_of( $narration, Flame_Tree::STATS_SWEEP )[0];
 		$this->assertStringContainsString( '1 ranked', $sweep['m'], 'the bucket the stop still owed' );
@@ -5538,6 +5606,31 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 10, $list[0][1][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] );
 	}
 
+	public function test_a_folded_hour_ranks_its_worker_rows_and_a_late_worker_write_re_ranks_it(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
+		$hash  = Log_Manager::url_hash( '/jobs/reindex/31?job' );
+		$now   = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		$this->seed_url_shard( $store, '2026-08-27-13-05', Stats_Store::url_shard( $hash, true ), [
+			$hash => [ 'url' => '/jobs/reindex/31?job', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 2480.0, 'worker' => true, 'last_seen' => $now - 7200 ],
+		] );
+		$fb->set_stats_store( $store );
+		Core::$now = $now;
+		self::roll_up( $fb, (int) Core::$now );
+		$hour_list = static fn (): array => $store->bucket_get_multi( [ [ Stats_Store::url_rank_parts( 'count', 'desc', '', true, [ Stats_Store::WORKER_SHARD_PREFIX ] ), '2026-08-27-13' ] ] )[0] ?? [];
+		$this->assertSame( [ $hash ], \array_column( $hour_list(), Stats_Store::RANK_HASH ), 'the fold ranks the worker family' );
+		$this->assertSame( 4, $hour_list()[0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] );
+
+		$this->flush_buckets( $fb, [ '2026-08-27-13-40' => [ 'url_stats_worker' => [
+			$hash => self::positional_url_row( [ 'url' => '/jobs/reindex/31?job', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 5580.0, 'worker' => true, 'last_seen' => $now - 5400 ] ),
+		] ] ] );
+		$next = new Flame_Builder_Node();
+		$next->set_stats_store( $store );
+		$next->flush();
+
+		$this->assertSame( 13, $hour_list()[0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] ?? null, 'the late worker write took the hour\'s marker, and the next worker re-ranked it from the store' );
+	}
+
 	public function test_stale_folded_hours_are_re_ranked_in_two_reads(): void {
 		// A replay leaves several folded hours unranked, and the probe finds
 		// each. A read PER HOUR is a round trip per hour; the whole set's
@@ -5686,6 +5779,48 @@ class FlameBuilderTest extends TestCase {
 		$ranked = \array_filter( $hours, static fn ( string $hour ): bool => null !== self::ranked_count( $store, $hour, true ) );
 		$this->assertCount( $budget, $ranked, 'the stop ranks the flush\'s bound' );
 		$this->assertCount( \count( $hours ) - $budget, ( new \ReflectionProperty( $fb, 'stale_hours' ) )->getValue( $fb ), 'and leaves the rest' );
+	}
+
+	/**
+	 * The windows the docs cite, and the flushes each takes to close.
+	 *
+	 * @return array<string,array{0:int,1:int}>
+	 */
+	public static function provisional_windows(): array {
+		return [
+			'the default 12-hour window' => [ 43200, 7 ],
+			'the 24-hour read ceiling'   => [ 86400, 13 ],
+		];
+	}
+
+	/**
+	 * A fresh builder owes every planned hour, so a ranked page reads
+	 * `provisional` until its roll-up has written each hour's index, two a
+	 * flush once its data clock has left them: the first flush sets that
+	 * clock, and `ceil( hours / ROLLUP_HOURS_PER_FLUSH )` more close it.
+	 */
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'provisional_windows' )]
+	public function test_a_fresh_builder_owes_no_hour_after_the_flushes_the_docs_cite( int $window, int $flushes ): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: $window, asker: $fb );
+		$fb->set_stats_store( $store );
+		$budget = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'ROLLUP_HOURS_PER_FLUSH' ) )->getValue();
+		$plan   = Stats_Store::read_plan( Stats_Store::retention_buckets( $store->max_lifespan(), self::tick() ) );
+		$this->assertSame( $flushes, (int) \ceil( \count( $plan['hours'] ) / $budget ) + 1, 'the docs cite this window\'s count' );
+		$owed = static function () use ( $store, $plan ): array {
+			$waiting = [];
+			$store->url_headers( $plan['hours'], $plan['fine'], '', [ [] ], $waiting );
+			return $waiting;
+		};
+
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/kea-owed-4471', 'timestamp' => self::tick() ] ) );
+		for ( $i = 1; $i < $flushes; $i++ ) {
+			$fb->flush();
+		}
+		$this->assertNotSame( [], $owed(), 'one flush short, an hour is still owed' );
+
+		$fb->flush();
+		$this->assertSame( [], $owed() );
 	}
 
 	public function test_due_buckets_rank_in_bounded_reads(): void {
@@ -6200,7 +6335,7 @@ class FlameBuilderTest extends TestCase {
 		);
 		$this->assertSame(
 			[ 2, 83.0, 4.5, 2 ],
-			$this->get_hour_slot( $store, Stats_Store::url_dim_parts( Log_Manager::url_hash( '/quartz' ), 'method' ), $bucket )['PATCH']
+			$this->get_hour_slot( $store, Stats_Store::url_dim_parts( Log_Manager::url_hash( '/quartz' ) ), $bucket, 'method' )['PATCH']
 		);
 	}
 
@@ -6272,7 +6407,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		// The per-URL cap is the tighter of the two, so 15 values cross it.
-		$kept = $this->get_hour_slot( $store, Stats_Store::url_dim_parts( Log_Manager::url_hash( '/shared' ), 'ua' ), Stats_Store::bucket_key( $now ) );
+		$kept = $this->get_hour_slot( $store, Stats_Store::url_dim_parts( Log_Manager::url_hash( '/shared' ) ), Stats_Store::bucket_key( $now ), 'ua' );
 		$this->assertArrayHasKey( 'ShUA-14', $kept, 'the busiest value survives the cap' );
 		$this->assertArrayNotHasKey( 'ShUA-0', $kept, 'the quietest folds into Other' );
 	}
@@ -6296,7 +6431,7 @@ class FlameBuilderTest extends TestCase {
 
 		$url_hash = Log_Manager::url_hash( '/shared' );
 		$bucket   = Stats_Store::bucket_key( $now );
-		$url_dim  = $this->get_hour_slot( $store, Stats_Store::url_dim_parts( $url_hash, 'ua' ), $bucket );
+		$url_dim  = $this->get_hour_slot( $store, Stats_Store::url_dim_parts( $url_hash ), $bucket, 'ua' );
 		$this->assertNotSame( [], $url_dim );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_URL_DIM_VALUES, \count( $url_dim ) );
 	}
@@ -6750,8 +6885,73 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
-	public function test_each_url_dimension_fills_its_own_hour_key(): void {
-		// A key per dimension, so `url_breakdown` reads the one it draws.
+	/**
+	 * Decision 1: everything one flush touches in a time-keyed namespace
+	 * shares the prefix `{ns}:{time}`, so it sits together in key order, and a
+	 * URL's dimensions are one row a URL-hour, not one a dimension.
+	 */
+	public function test_a_flush_touches_its_keys_under_one_time_prefix_and_a_url_hour_once(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 86400, $fb ) );
+		$fb->set_stats_store( $store );
+		$fb->set_is_hub( true );
+		$now       = self::tick();
+		Core::$now = $now;
+		$bucket    = Stats_Store::bucket_key( $now );
+		$hour      = Stats_Store::hour_of( $bucket );
+		$paths     = [ '/kea-3301', '/moa-3302', '/tui-3303', '/weka-3304' ];
+		foreach ( $paths as $i => $path ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'            => "https://kea.test{$path}",
+				'server_name'    => 'kea.test',
+				'timestamp'      => $now,
+				'status_code'    => 503,
+				'request_method' => 'PATCH',
+				'country_code'   => 'NZ',
+				'http_from'      => 'bot@kea.test',
+				'user_agent'     => "kea-ua/{$i}",
+				'ja4_hash'       => 't13d1516h2_8daaf6152771_e5627efa2ab1',
+				'profiles'       => [ 'wpdb' => [ 'time' => 0.3, 'count' => 2, 'entries' => [] ] ],
+			] ) );
+		}
+		$this->forget_stats_asks();
+		$fb->flush();
+
+		$asked   = $this->asked_keys( Stats_Store::NS_URL_DIM_HOUR );
+		$written = \array_values( \array_filter( $store->written, static fn ( string $key ): bool => Stats_Store::NS_URL_DIM_HOUR === Stats_Store::namespace_of( $key ) ) );
+		$this->assertCount( \count( $paths ), $written, 'one url_dim_h write a URL-hour, not one a dimension' );
+		$this->assertCount( \count( $paths ), $asked, 'and one read' );
+		foreach ( [ ...$asked, ...$written ] as $key ) {
+			$this->assertStringStartsWith( "url_dim_h:{$hour}:", $key );
+		}
+		$timeless = [ Stats_Store::NS_URL, Stats_Store::NS_URLMAP ];
+		$spaces   = [];
+		foreach ( $store->written as $key ) {
+			$ns = Stats_Store::namespace_of( $key );
+			if ( ! \in_array( $ns, $timeless, true ) ) {
+				$spaces[ $ns ] = true;
+				$this->assertContains( \explode( ':', $key )[1], [ $hour, $bucket ], "{$key}: the time right after the namespace" );
+			}
+		}
+		$this->assertEqualsCanonicalizing(
+			[ 'urls', 'urlsrv', 'urlrank_s', 'urlhdr', 'hourly_h', 'dim_h', 'url_dim_h', 'categories_h', 'url_cat_h', 'lb_h', 'lb_sh' ],
+			\array_keys( $spaces ),
+			'every time-keyed namespace a hub flush writes'
+		);
+		$reads = \array_values( \array_filter( $this->asked_keys(), static fn ( string $key ): bool => ! \in_array( Stats_Store::namespace_of( $key ), $timeless, true ) ) );
+		$this->assertNotSame( [], $reads );
+		foreach ( $reads as $key ) {
+			$at = \explode( ':', $key )[1] ?? '';
+			if ( isset( $spaces[ Stats_Store::namespace_of( $key ) ] ) ) {
+				$this->assertContains( $at, [ $hour, $bucket ], "{$key}: a read of what the flush writes asks its time right after the namespace" );
+			} else {
+				$this->assertMatchesRegularExpression( '/^\d{4}-\d{2}-\d{2}-\d{2}(-\d{2})?$/D', $at, "{$key}: the time right after the namespace" );
+			}
+		}
+	}
+
+	public function test_each_url_dimension_fills_its_own_member_of_the_url_hour(): void {
+		// One row a URL-hour, each dimension a slotted hour inside it.
 		$fb    = new Flame_Builder_Node();
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
 		$fb->set_stats_store( $store );
@@ -6769,9 +6969,9 @@ class FlameBuilderTest extends TestCase {
 
 		$hash   = Log_Manager::url_hash( '/dims' );
 		$bucket = Stats_Store::bucket_key( $now );
-		$this->assertNotSame( [], $this->get_hour_slot( $store, Stats_Store::url_dim_parts( $hash, 'status' ), $bucket ) );
-		$this->assertNotSame( [], $this->get_hour_slot( $store, Stats_Store::url_dim_parts( $hash, 'method' ), $bucket ), 'each dimension fills its own key' );
-		$this->assertSame( [], $this->get_hour_slot( $store, Stats_Store::url_dim_parts( $hash, 'server' ), $bucket ), 'a URL belongs to one server, so it keeps no server axis' );
+		$this->assertNotSame( [], $this->get_hour_slot( $store, Stats_Store::url_dim_parts( $hash ), $bucket, 'status' ) );
+		$this->assertNotSame( [], $this->get_hour_slot( $store, Stats_Store::url_dim_parts( $hash ), $bucket, 'method' ), 'each dimension fills its own member' );
+		$this->assertSame( [], $this->get_hour_slot( $store, Stats_Store::url_dim_parts( $hash ), $bucket, 'server' ), 'a URL belongs to one server, so it keeps no server axis' );
 	}
 
 	public function test_an_accumulated_other_is_not_clobbered_by_the_next_overflow(): void {
@@ -6864,12 +7064,13 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_configure_stats_refuses_the_partition_it_no_longer_takes(): void {
-		// A topology still passing one fails to load rather than drop it.
+		// A topology still passing one fails to load rather than drop it: the
+		// verb declares no args, so the substrate's binder refuses the token.
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 
 		$this->expectException( \InvalidArgumentException::class );
-		$this->expectExceptionMessage( 'usage: configure_stats' );
+		$this->expectExceptionMessage( 'too many arguments: 1 given, 0 accepted' );
 		$this->read_private( $fb, 'interpreter' )->dispatch( 'configure_stats', [ '3' ] );
 	}
 
@@ -6918,7 +7119,8 @@ class FlameBuilderTest extends TestCase {
 		return [
 			'another role\'s Table' => [ 'set_aggregate_target', Stats_Store::TABLE_URL, "set_aggregate_target: 'flame-stats:url' is not flame-stats:aggregate, the Table the performance readers mount" ],
 			'a stranger'            => [ 'set_url_fine_target', 'wombat-stats:url-fine-4471', "set_url_fine_target: 'wombat-stats:url-fine-4471' is not flame-stats:url-fine, the Table the performance readers mount" ],
-			'none'                  => [ 'set_url_target', '', "set_url_target: '' is not flame-stats:url, the Table the performance readers mount" ],
+			// The binder refuses a blank for the required target first.
+			'none'                  => [ 'set_url_target', '', 'missing required argument: target' ],
 		];
 	}
 
@@ -7670,7 +7872,7 @@ class RecordingStatsStore extends Stats_Store {
 	 */
 	public function bucket_set_multi( array $writes ): array {
 		foreach ( $writes as [ $parts, $bucket ] ) {
-			$this->written[] = Stats_Store::key( ...[ ...$parts, $bucket ] );
+			$this->written[] = Stats_Store::key_at( $parts, $bucket );
 		}
 		return parent::bucket_set_multi( $writes );
 	}

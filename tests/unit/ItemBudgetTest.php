@@ -299,13 +299,14 @@ class ItemBudgetTest extends TestCase {
 			}
 		}
 
-		$writes = Stats_Store::ranked_writes( $servers, true, '2026-09-22-10' );
+		$writes = Stats_Store::ranked_writes( self::by_shard( $servers ), true, '2026-09-22-10' );
 
 		// A count, not the lists: an assertion exports its value, megabytes here.
+		// Every set's lists take the same bound, so these rows size them all.
 		$this->assertSame(
-			3 * ( \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ) + 1 ),
+			\count( Stats_Store::RANK_SETS ) * 3 * ( \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ) + 1 ),
 			\count( $writes ),
-			'each server\'s lists and record, then the site\'s'
+			'each set: each server\'s lists and record, then the site\'s'
 		);
 		foreach ( $writes as [ $parts, , $entries ] ) {
 			self::assert_fits_both( $entries, \implode( ':', $parts ) );
@@ -350,7 +351,7 @@ class ItemBudgetTest extends TestCase {
 			$values[ $name ] = [ self::WIDE_COUNT - $n, self::WIDE_FLOAT, self::WIDE_FLOAT, self::WIDE_COUNT - $n ];
 		}
 
-		$hour = self::merged( 'dimension_intent', Stats_Store::dim_parts( Stats_Store::DIM_SERVER, '' ), '2026-09-22-10-05', Stats_Store::DIM_SERVER, $values, Stats_Store::MAX_DIM_VALUES );
+		$hour = self::merged( 'dimension_intent', Stats_Store::dim_parts( Stats_Store::DIM_SERVER, '' ), '2026-09-22-10-05', Stats_Store::DIM_SERVER, $values, Stats_Store::MAX_DIM_VALUES, null );
 
 		$this->assertSame( [ 1 ], \array_keys( $hour ), 'the 10:05 bucket is slot 1' );
 		$this->assertCount( Stats_Store::MAX_SERVER_VALUES, $hour[1] );
@@ -363,9 +364,10 @@ class ItemBudgetTest extends TestCase {
 				$values[ $name ] = [ self::WIDE_COUNT - $n, self::WIDE_FLOAT, self::WIDE_FLOAT, self::WIDE_COUNT - $n ];
 			}
 
-			$hour = self::merged( 'dimension_intent', Stats_Store::url_dim_parts( 'a1b2c3d4e5f6', $dim ), '2026-09-22-10-05', $dim, $values, Stats_Store::MAX_URL_DIM_VALUES );
+			$row = self::merged( 'dimension_intent', Stats_Store::url_dim_parts( 'a1b2c3d4e5f6' ), '2026-09-22-10-05', $dim, $values, Stats_Store::MAX_URL_DIM_VALUES, $dim );
 
-			$this->assertCount( Stats_Store::MAX_URL_DIM_VALUES, $hour[1], $dim );
+			$this->assertSame( [ $dim ], \array_keys( $row ), 'a URL-hour row keys its slotted hours by dimension' );
+			$this->assertCount( Stats_Store::MAX_URL_DIM_VALUES, $row[ $dim ][1], $dim );
 		}
 	}
 

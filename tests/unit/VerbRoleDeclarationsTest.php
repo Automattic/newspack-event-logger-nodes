@@ -100,7 +100,7 @@ class VerbRoleDeclarationsTest extends TestCase {
 		\Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness::request_graph();
 		$performance = \Newspack_Nodes\Core::node( 'performance' );
 		$this->assertInstanceOf( Performance_CI_Node::class, $performance );
-		$payload = $performance->commands()['overview']( $performance, [], [] );
+		$payload = $performance->dispatch( 'overview' );
 		$this->assertIsArray( $payload );
 		$this->assertArrayHasKey( 'total_requests', $payload );
 
@@ -108,7 +108,7 @@ class VerbRoleDeclarationsTest extends TestCase {
 		$this->assertInstanceOf( Rules_CI_Node::class, $rules );
 		$this->expectException( \RuntimeException::class );
 		$this->expectExceptionMessageMatches( '/permission denied/' );
-		$rules->commands()['reset']( $rules, [], [] );
+		$rules->dispatch( 'reset' );
 	}
 
 	protected function tearDown(): void {

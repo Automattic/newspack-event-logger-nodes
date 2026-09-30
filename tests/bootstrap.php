@@ -11,6 +11,19 @@ if ( \function_exists( 'posix_geteuid' ) && 0 === \posix_geteuid() ) {
 }
 
 \ini_set( 'error_log', '/dev/null' );
+// One base a process, which every test config reads: two suites running at
+// once must never tear down each other's trees.
+$newspack_test_base = \sys_get_temp_dir() . '/newspack-event-logger-nodes-test-' . \getmypid();
+\putenv( "NEWSPACK_TEST_BASE_DIR={$newspack_test_base}" );
+// Registered from a shutdown function, so it runs after every handler the
+// run itself registers, a Log_Manager finishing into `-logging` among them.
+\register_shutdown_function(
+	static fn () => \register_shutdown_function(
+		static function () use ( $newspack_test_base ): void {
+			\exec( 'rm -rf ' . \escapeshellarg( $newspack_test_base ) . ' ' . \escapeshellarg( "{$newspack_test_base}-logging" ) );
+		}
+	)
+);
 \putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . __DIR__ . '/newspack-event-logger-nodes-test-config.php' );
 \define( 'NONCE_SALT', 'newspack-nodes-test-nonce-salt' );
 \define( 'ABSPATH', '/' );
