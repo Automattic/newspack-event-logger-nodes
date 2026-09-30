@@ -16,11 +16,11 @@ This plugin builds no cache of its own. Keyed stores use the substrate's `Table_
 
 WordPress loads plugins alphabetically, and `newspack-event-logger-nodes` sorts BEFORE `newspack-nodes` (`-event-` < `-nodes`), so `\Newspack_Nodes\Node` is NOT available at this plugin's file-load time.
 
-So `newspack-event-logger-nodes.php` defers everything that touches a substrate class — the two WP-CLI commands, the `Config::RESET_ACTION` cache-reset listener, the job-context hooks, the verb-span seam (`Command_Interpreter_Node::$around_dispatch`, which `Diagnostics_Bridge::install()` wraps around any wrapper already there), the `Topology_Registry` mount, the `App\` CommandInterpreter namespace, the `<eln:>` config-token resolver, the two named TSL formatters, the `newspack_nodes/settings_sync/value` resolver, the MCP route, `App\Core`, and in admin the settings page and the current-request overlay — to a closure on `plugins_loaded` priority 11. That bootstrap is version-gated, not merely presence-gated: it checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.80.0', … )`. A substrate below the floor leaves an admin notice naming both versions and the plugin goes dormant; a missing substrate, or one predating `version_at_least()` itself, returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but says nothing about its version, and WordPress does not order plugin updates, so this plugin really can land ahead of the substrate it needs.
+So `newspack-event-logger-nodes.php` defers everything that touches a substrate class — the two WP-CLI commands, the `Config::RESET_ACTION` cache-reset listener, the job-context hooks, the verb-span seam (`Command_Interpreter_Node::$around_dispatch`, which `Diagnostics_Bridge::install()` wraps around any wrapper already there), the `Topology_Registry` mount, the `App\` CommandInterpreter namespace, the `<eln:>` config-token resolver, the two named TSL formatters, the `newspack_nodes/settings_sync/value` resolver, the MCP route, `App\Core`, and in admin the settings page and the current-request overlay — to a closure on `plugins_loaded` priority 11. That bootstrap is version-gated, not merely presence-gated: it checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.81.0', … )`. A substrate below the floor leaves an admin notice naming both versions and the plugin goes dormant; a missing substrate, or one predating `version_at_least()` itself, returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but says nothing about its version, and WordPress does not order plugin updates, so this plugin really can land ahead of the substrate it needs.
 
-2.73.0 is `Table_Client`, `Bootstrap::mount_table()` and the SQLite Table arm the stats live on; below it the builder and the dashboards fatal. It is also the TTL and backend arguments `flame-builder.tsl` gives each Table, which `check-substrate-floor.sh` cannot see, because it reads PHP calls and not topologies. 2.74.0 is `Table_Unavailable`, the typed refusal of a Table whose backend cannot open on this host, and the public `Durable_Arm::serializer()`. 2.75.0 is the read-only mount the `performance` verbs read through, which lives for the rest of the request, opens only a file its worker wrote and refuses a process running as root. 2.76.0 is `SADD` and `SMEMBERS` on a durable Table, with `Table_Client::add_members()` and `members()`, which the search index files and reads its words through. 2.77.0 is `Command_Interpreter_Node::dispatch()` binding each verb's declared args and handing the handler them by name, which every handler here reads; it names no new method, so `check-substrate-floor.sh` cannot see it either. 2.79.1 is the owner clock `LRU_Cache::with_timed_rotation()` takes, which the request builder times requests out on; an older substrate drops the extra argument without a word, so the builder would time a reprocess out on the wall. 2.80.0 is `Ledger_Node`, `Bootstrap::mount_ledger()` and `Table_Client`'s `append()`, `sum()`, `top()` and `ledger_members()`, which every stats write and read goes through. Why each earlier floor was raised is in the CHANGELOG entry that raised it.
+2.73.0 is `Table_Client`, `Bootstrap::mount_table()` and the SQLite Table arm each URL's flame blob lives on; below it the builder and the dashboards fatal. It is also the TTL and backend arguments `flame-builder.tsl` gives each Table, which `check-substrate-floor.sh` cannot see, because it reads PHP calls and not topologies. 2.74.0 is `Table_Unavailable`, the typed refusal of a Table whose backend cannot open on this host, and the public `Durable_Arm::serializer()`. 2.75.0 is the read-only mount the `performance` verbs read through, which lives for the rest of the request, opens only a file its worker wrote and refuses a process running as root. 2.77.0 is `Command_Interpreter_Node::dispatch()` binding each verb's declared args and handing the handler them by name, which every handler here reads; it names no new method, so `check-substrate-floor.sh` cannot see it either. 2.79.1 is the owner clock `LRU_Cache::with_timed_rotation()` takes, which the request builder times requests out on; an older substrate drops the extra argument without a word, so the builder would time a reprocess out on the wall. 2.80.0 is `Ledger_Node`, `Bootstrap::mount_ledger()` and `Table_Client`'s `append()`, `sum()`, `top()` and `ledger_members()`, which every stats write and read goes through. 2.81.0 is the Ledger reads the stats pages send: `TOP` by a ratio or by `x`, `SUM` grouped by key, `positive_each_t` on both, nullable `min` and `max` columns, and `MEMBERS` with a limit, `ledger_members()`' fifth argument; below it each read is refused and the dashboards show no stats, and `check-substrate-floor.sh` sees none of it, because a query array and an added argument name no new method. Why each earlier floor was raised is in the CHANGELOG entry that raised it.
 
-Raise the floor by hand whenever a new hard requirement appears — `bump-version.sh` repins `release.yml`, not this — and two gates cover the two ways it drifts. `scripts/lint-docs.sh` rule 6 holds every `version_at_least` mention in `README.md`, `AGENTS.md`, `docs/` and `.claude/skills/` to the 2.80.0 the loader enforces, line by line. `scripts/check-substrate-floor.sh` resolves each substrate API PHPStan sees this plugin call to its DECLARING class, binary-searches the substrate's tags for the first one carrying it, and takes the maximum — a floor set too LOW is the failure it exists for, because the handshake then passes and the plugin fatals later. Priority 11 is intentional; don't lower it. Tests bypass this and require the runtime explicitly in `tests/bootstrap.php`.
+Raise the floor by hand whenever a new hard requirement appears — `bump-version.sh` repins `release.yml`, not this — and two gates cover the two ways it drifts. `scripts/lint-docs.sh` rule 6 holds every `version_at_least` mention in `README.md`, `AGENTS.md`, `docs/` and `.claude/skills/` to the 2.81.0 the loader enforces, line by line, and `scripts/lint-eln-docs.sh` holds the README's requirements row to it. `scripts/check-substrate-floor.sh` resolves each substrate API PHPStan sees this plugin call to its DECLARING class, binary-searches the substrate's tags for the first one carrying it, and takes the maximum — a floor set too LOW is the failure it exists for, because the handshake then passes and the plugin fatals later. Priority 11 is intentional; don't lower it. Tests bypass this and require the runtime explicitly in `tests/bootstrap.php`.
 
 ## Workflow discipline
 
@@ -71,12 +71,12 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 
 | # | Decision |
 |---|----------|
-| 1 | Namespaced memcache schema |
+| 1 | The stats schema: nine Ledgers, a key per scope |
 | 2 | Sums, not means |
 | 3 | Stats fail soft |
 | 4 | Settings fan-out is a node graph; no consumer means a silent no-op |
 | 5 | A stats schema change is migrated by the tables flush, and by nothing in this code |
-| 6 | `get_multi` batching is essential |
+| 6 | A read is one ask per store it spans |
 | 7 | Job_Intake for >4KB jobs, the firehose for ≤4KB |
 | 8 | A spoke's job is re-keyed `remote_job` when the hub pulls it |
 | 9 | A request's partition is its id, hashed by the substrate |
@@ -87,9 +87,9 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 14 | A server scope the key cannot carry rides inside the value, and is applied as a PROJECTION — superseded by decision 30 |
 | 15 | The `urls` verb owns every URL-set fact; `overview` owns the site |
 | 16 | The breakdown panel is always mounted, and says which kind of nothing it has |
-| 17 | The URL index is stored at TWO resolutions, and the coarse one is DERIVED |
+| 17 | The URL index is stored at TWO resolutions, and the coarse one is DERIVED — superseded by decision 36 |
 | 18 | A stored value may be POSITIONAL, and then its indexes are named constants |
-| 19 | A request is filed in the bucket it FINISHED in, and a write into a folded hour reaches its fine bucket and the hour key |
+| 19 | A request is filed in the bucket it FINISHED in |
 | 20 | Outbound HTTP is timed as a span, and a short-circuited request opens nothing |
 | 21 | The fold keeps the CLOSE of any span the kept head left open |
 | 22 | Query spans are the same pair as decision 20, but PER-RULE |
@@ -98,14 +98,16 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 25 | Read tools and TUNE-scoped write tools share one MCP session, and every tool result is fenced |
 | 26 | A merged transport node keeps the statements it ran |
 | 27 | The platform's requests to itself are worker traffic, named by path |
-| 28 | The writer ranks each bucket and indexes each name, and the page reads those rather than the index |
+| 28 | A URL page ranks in the Ledger, and a search reads the word index |
 | 29 | Every reader dates from the tick, and a reply reads it once |
-| 30 | Every memcache value is one server's, carries nothing its key implies, and fits one item |
+| 30 | Every memcache value is one server's, carries nothing its key implies, and fits one item — superseded by decision 36 |
 | 31 | A snapshot node's replay is idempotent by the last folded crumb |
 | 32 | A builder tells its upkeep on its own worker record, and every narration write is a guarded forward |
 | 33 | No dashboard reads the mirror; the flame builder sweeps it back into memcache — superseded by decision 34 |
-| 34 | Stats live in SQLite Tables, and nothing repairs a loss |
-| 35 | A chart hour is one key holding its twelve five-minute slots |
+| 34 | Stats live in SQLite, and nothing repairs a loss |
+| 35 | A chart hour is one key holding its twelve five-minute slots — superseded by decision 36 |
+| 36 | Stats are write-once rows, one Ledger file each, and every read aggregates them |
+| 37 | The span settles at the interval checkpoint, and every other checkpoint carries it |
 
 ## Layout
 
@@ -125,7 +127,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/class-{diagnostics-bridge,hook-categorizer,reqgrep-core,current-request-overlay}.php`, `trait-narration.php` | Verb spans and the stderr seam, hook categories, the reqgrep engine, the station's Request tab, builder narration |
 | `includes/app/` | `App\Core` (hook, HTTP and query instrumentation), the three service CIs, `Findings`, `Ask_Assembler`, `MCP_Controller` |
 | `includes/admin/`, `includes/cli/` | The settings page, which hosts the rules editor; `wp nodes reqgrep` and `wp nodes ruleset-bench` |
-| `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix and the stats Tables' files; `uninstall.php` requires it and the Composer autoloader by hand because the main file does not run on DELETE |
+| `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix and the stats files, every Ledger's and each partition's url Table's; `uninstall.php` requires it and the Composer autoloader by hand because the main file does not run on DELETE |
 | `topologies/` | Eleven `.tsl` graphs, named by filename: five primitives and six compositions |
 | `mu-plugins/00-newspack-profiler.php` | The standalone profiler drop-in, shipped as its own release asset |
 | `scripts/` | This plugin's `build.mjs`, `pre-push`, `lint-eln-docs.sh`, `render-diagram.sh` (a `docs/img/*.html` sheet to PNG; `CHROME=` overrides the browser path) and `bump-version.sh`; everything else is vendored |
@@ -157,14 +159,14 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 `.claude/skills/` (`.agents` is a symlink to `.claude`):
 
 - `event-logger-nodes-workflow` — handlers, REST, dashboards, topologies
-- `event-logger-nodes-debugging` — dashboards, the stats Tables, hub/spoke routing, SSE
+- `event-logger-nodes-debugging` — dashboards, the stats Ledgers, hub/spoke routing, SSE
 - `event-logger-nodes-review` — application contract checklist
 
 ## References
 
 - `docs/README.md` — the documentation map
 - `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, stats schema
-- `docs/architecture-decisions.md` — the 35 decisions
+- `docs/architecture-decisions.md` — the 37 decisions
 - `docs/security-model.md` — what the logger captures and what crosses to the hub
 - `docs/API.md` — the MCP route, every service-CI verb, the WP-CLI verbs, the PHP API and the hooks
 - `README.md` — requirements, quick start, configuration, dashboards

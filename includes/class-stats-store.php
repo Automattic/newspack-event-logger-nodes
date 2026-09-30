@@ -799,15 +799,32 @@ class Stats_Store {
 	}
 
 	/**
-	 * The URL a hash names, filed in the window, or null when none was, or
-	 * when two URLs share the hash and it names neither.
+	 * A reply's data, or [] where the Ledger refused or never answered,
+	 * which the store remembers.
+	 *
+	 * @param array<array-key,mixed>|null $data A Ledger reply's data.
+	 * @return array<array-key,mixed>
+	 */
+	private function answered( ?array $data ): array {
+		if ( null === $data ) {
+			$this->unanswered = true;
+			return [];
+		}
+		return $data;
+	}
+
+	/**
+	 * The URL a hash names, filed in the window, or null when none was,
+	 * when two URLs share the hash and it names neither, or when the names
+	 * Ledger did not answer, which `unanswered()` then says.
 	 *
 	 * @param string $url_hash `Log_Manager::url_hash()` of the URL.
 	 * @param int    $from     First second read.
 	 * @param int    $to       The second the read stops short of.
 	 */
 	public function url_of( string $url_hash, int $from, int $to ): ?string {
-		return $this->members_of( self::LEDGER_NAMES, self::hash_key( $url_hash ), $from, $to, 1 )[0] ?? null;
+		$urls = $this->members_of( self::LEDGER_NAMES, self::hash_key( $url_hash ), $from, $to, 1 );
+		return \is_array( $urls ) ? $urls[0] ?? null : null;
 	}
 
 	/**
@@ -821,24 +838,25 @@ class Stats_Store {
 
 	/**
 	 * Every server that filed reader rows in the window, and worker rows
-	 * too with `$workers`, in name order, or null past `SERVERS_READ_MAX`.
+	 * too with `$workers`, in name order; false past `SERVERS_READ_MAX`, and
+	 * null when the names Ledger did not answer, which `unanswered()` says.
 	 *
 	 * @param bool $workers Include the servers of worker traffic.
 	 * @param int  $from    First second read.
 	 * @param int  $to      The second the read stops short of.
-	 * @return list<string>|null
+	 * @return list<string>|false|null
 	 */
-	public function servers( bool $workers, int $from, int $to ): ?array {
+	public function servers( bool $workers, int $from, int $to ): array|false|null {
 		$names = [];
 		foreach ( $workers ? [ false, true ] : [ false ] as $worker ) {
 			$family = $this->members_of( self::LEDGER_NAMES, self::servers_key( $worker ), $from, $to, self::SERVERS_READ_MAX );
-			if ( null === $family ) {
-				return null;
+			if ( ! \is_array( $family ) ) {
+				return $family;
 			}
 			$names += \array_fill_keys( $family, true );
 		}
 		if ( \count( $names ) > self::SERVERS_READ_MAX ) {
-			return null;
+			return false;
 		}
 		\ksort( $names, \SORT_STRING );
 		return \array_map( 'strval', \array_keys( $names ) );
@@ -860,8 +878,9 @@ class Stats_Store {
 	 * `SEARCH_WORDS_READ` at a time, longest first, one `MEMBERS` each; a
 	 * word filed for more URLs than a search reads narrows nothing, and the
 	 * next group is read only while no word of the last narrowed. Null when
-	 * no word narrows: the term is too common for the index. A caller
-	 * checks every word of the term on each URL (`url_matches()`).
+	 * no word narrows: the term is too common for the index. A word the
+	 * Ledger did not answer names nothing, which `unanswered()` says. A
+	 * caller checks every word of the term on each URL (`url_matches()`).
 	 *
 	 * @param list<string> $words A term's words, as `term_tokens()` spells them.
 	 * @param int          $from  First second read.
@@ -876,6 +895,9 @@ class Stats_Store {
 			foreach ( $group as $word ) {
 				$filed = $this->members_of( self::LEDGER_SEARCH, $word, $from, $to, self::URL_SEARCH_MAX );
 				if ( null === $filed ) {
+					return [];
+				}
+				if ( false === $filed ) {
 					continue;
 				}
 				$found = \array_intersect_key( $found ?? \array_fill_keys( $filed, true ), \array_fill_keys( $filed, true ) );
@@ -891,8 +913,9 @@ class Stats_Store {
 	}
 
 	/**
-	 * A set Ledger's members of one key over the window, or null when the
-	 * key holds more than `$limit` there. A member is filed at its hour's
+	 * A set Ledger's members of one key over the window: false when the key
+	 * holds more than `$limit` there, and null when the Ledger did not
+	 * answer, which the store remembers. A member is filed at its hour's
 	 * start, so the read opens on the hour `$from` falls in.
 	 *
 	 * @param string $ledger `LEDGER_NAMES` or `LEDGER_SEARCH`.
@@ -900,33 +923,22 @@ class Stats_Store {
 	 * @param int    $from   First second read.
 	 * @param int    $to     The second the read stops short of.
 	 * @param int    $limit  Most members the reader takes.
-	 * @return list<string>|null
+	 * @return list<string>|false|null
 	 */
-	private function members_of( string $ledger, string $k, int $from, int $to, int $limit ): ?array {
+	private function members_of( string $ledger, string $k, int $from, int $to, int $limit ): array|false|null {
 		$node = $this->ledgers[ $ledger ] ?? null;
 		if ( null === $node ) {
 			return [];
 		}
 		$members = $this->client->ledger_members( $node, $from - $from % self::HOUR_SECONDS, $to, $k, $limit );
-		if ( isset( $members['over'] ) ) {
+		if ( null === $members ) {
+			$this->unanswered = true;
 			return null;
 		}
-		return \array_values( \array_map( Core::as_string( ... ), $this->answered( $members ) ) );
-	}
-
-	/**
-	 * A reply's data, or [] where the Ledger refused or never answered,
-	 * which the store remembers.
-	 *
-	 * @param array<array-key,mixed>|null $data A Ledger reply's data.
-	 * @return array<array-key,mixed>
-	 */
-	private function answered( ?array $data ): array {
-		if ( null === $data ) {
-			$this->unanswered = true;
-			return [];
+		if ( isset( $members['over'] ) ) {
+			return false;
 		}
-		return $data;
+		return \array_values( \array_map( Core::as_string( ... ), $members ) );
 	}
 
 	/**
@@ -1305,8 +1317,8 @@ class Stats_Store {
 	}
 
 	/**
-	 * One member of two parts, a dimension and its value or a category and
-	 * its entry. A reader splits at the first separator, so the second part
+	 * One member of two parts: a leaderboard category and one of its
+	 * entries. A reader splits at the first separator, so the second part
 	 * may hold one.
 	 *
 	 * @param string $first  The first part, which holds no separator.

@@ -3234,6 +3234,42 @@ class PerformanceCITest extends TestCase {
 		];
 	}
 
+	/** @return array<string,array{0:string}> */
+	public static function url_briefs(): array {
+		return [
+			'span'     => [ 'span:wp_loaded' ],
+			'category' => [ 'category:render' ],
+		];
+	}
+
+	/**
+	 * A span or category brief under a URL whose name the names Ledger left
+	 * unanswered refuses, naming the Ledger, rather than brief a blank URL.
+	 */
+	#[DataProvider( 'url_briefs' )]
+	public function test_a_url_brief_its_names_read_left_unanswered_refuses( string $descriptor ): void {
+		$url  = 'https://tui.test/kereru-61';
+		$hash = Log_Manager::url_hash( $url );
+		$this->seed_urls( [ $url => [ 'count' => 61, 'server' => 'tui.test' ] ] );
+		$this->set_url_stats( 0, $hash, [
+			'flame_raw' => [
+				'name'      => 'aggregate',
+				'sum_value' => 610.0,
+				'count'     => 2,
+				'children'  => [ [ 'name' => 'wp_loaded', 'sum_value' => 366.0, 'ts' => self::tick(), 'children' => [] ] ],
+			],
+			'profiles'  => $this->stored_profiles(),
+		] );
+		$this->refuse_stats_reads( '/^' . \preg_quote( Stats_Store::LEDGER_NAMES, '/' ) . '$/' );
+		$refused = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ $descriptor, "url:{$hash}" ] );
+		$this->refuse_stats_reads( '' );
+		$answered = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ $descriptor, "url:{$hash}" ] );
+
+		$this->assertIsString( $refused, 'the brief refuses' );
+		$this->assertStringContainsString( Stats_Store::LEDGER_NAMES . " did not answer which URL {$hash} names", $refused );
+		$this->assertIsArray( $answered, \is_string( $answered ) ? $answered : '' );
+	}
+
 	public function test_ask_resolves_a_category_through_its_url_context(): void {
 		$hash = Log_Manager::url_hash( 'https://kea-7713.test/asked-cat' );
 		$this->seed_urls( [ 'https://kea-7713.test/asked-cat' => [ 'count' => 5 ] ] );
@@ -4420,6 +4456,44 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0, $short['totals']['requests'] );
 		$this->assertFalse( $whole['provisional'] );
 		$this->assertSame( 43, $whole['totals']['requests'], 'read again, not served from a cache' );
+	}
+
+	/**
+	 * A names read the Ledger left unanswered is not a missing URL: the
+	 * URL modal and the `url:` brief say which Ledger did not answer.
+	 */
+	public function test_an_unanswered_names_read_is_no_missing_url(): void {
+		$url  = 'https://tui.test/kereru-47';
+		$hash = Log_Manager::url_hash( $url );
+		$this->seed_urls( [ $url => [ 'count' => 47, 'server' => 'tui.test' ] ] );
+		$this->refuse_stats_reads( '/^' . \preg_quote( Stats_Store::LEDGER_NAMES, '/' ) . '$/' );
+
+		$replies = [
+			'dump_url' => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash ),
+			'ask'      => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "url:{$hash}" ),
+		];
+		$this->refuse_stats_reads( '' );
+
+		foreach ( $replies as $verb => $reply ) {
+			$this->assertIsString( $reply, "{$verb} refuses" );
+			$this->assertStringContainsString( Stats_Store::LEDGER_NAMES, $reply, "{$verb} names the Ledger" );
+			$this->assertStringNotContainsString( 'not found', $reply, "{$verb} does not call the URL missing" );
+		}
+		$this->assertSame( 47, VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash )['stats']['count'], 'answered, the URL is there' );
+	}
+
+	/** A breakdown whose names read went unanswered says so, and reads whole once it answers. */
+	public function test_a_url_breakdown_left_unanswered_is_provisional(): void {
+		$url  = 'https://tui.test/kereru-53';
+		$hash = Log_Manager::url_hash( $url );
+		$this->seed_urls( [ $url => [ 'count' => 53, 'server' => 'tui.test' ] ] );
+		$this->refuse_stats_reads( '/^' . \preg_quote( Stats_Store::LEDGER_NAMES, '/' ) . '$/' );
+		$short = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_breakdown', "{$hash} --breakdown=status" );
+		$this->refuse_stats_reads( '' );
+		$whole = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_breakdown', "{$hash} --breakdown=status" );
+
+		$this->assertTrue( $short['provisional'] ?? null );
+		$this->assertFalse( $whole['provisional'] ?? null );
 	}
 
 	public function test_the_leaderboard_sums_each_category_and_its_entries_across_buckets(): void {

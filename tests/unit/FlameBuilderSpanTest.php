@@ -11,6 +11,7 @@ use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Tests\Capture_Sink_Node;
 
 /**
  * The span: what a builder has folded since its last settle. The Consumer's
@@ -289,6 +290,80 @@ class FlameBuilderSpanTest extends TestCase {
 
 		$this->assertSame( [ 0, 0.0 ], $this->counted(), 'only the interval checkpoint settles' );
 		$this->assertSame( Flame_Builder_Node::AUTO_TUNE_INTERVAL_SEC * 1000, $fb->interval_ms );
+	}
+
+	/**
+	 * A settle admits servers from what the names Ledger answers, so a read
+	 * it left unanswered fails the settle: nothing is appended, the span
+	 * stays for the frame to carry, and the next settle writes it once.
+	 */
+	public function test_an_unanswered_names_read_fails_the_settle_and_keeps_the_span(): void {
+		$fb = $this->builder();
+		self::fold( $fb, '3:100:41' );
+		self::fold( $fb, '3:200:42' );
+		$this->forget_stats_asks();
+		$this->refuse_stats_reads( '/^' . \preg_quote( Stats_Store::LEDGER_NAMES, '/' ) . '\./' );
+
+		$refused = null;
+		try {
+			$fb->settle();
+		} catch ( \RuntimeException $e ) {
+			$refused = $e->getMessage();
+		}
+		$this->refuse_stats_reads( '' );
+
+		$this->assertStringContainsString( Stats_Store::LEDGER_NAMES, (string) $refused, 'the settle fails, naming the Ledger' );
+
+		foreach ( \array_keys( Stats_Store::LEDGER_COLUMNS ) as $ledger ) {
+			$this->assertSame( [], \array_filter( $this->ledger_asks( $ledger ), static fn ( array $ask ): bool => 'APPEND' === $ask[0] ), "{$ledger}: nothing appended" );
+		}
+		$this->assertSame( 0, $this->blob_count(), 'no URL blob written' );
+		$this->assertSame( 2, self::as_stored( $fb->save_state() )['span']['pending'][ self::T ]['hourly']['requests'] ?? null, 'the span stays whole' );
+
+		$fb->settle();
+		$this->assertSame( [ 2, 74.0 ], $this->counted(), 'the next settle writes the two once' );
+	}
+
+	/**
+	 * A settle reads the tick once: the URL blob's stamp is the instant the
+	 * settle began, whatever an append in between moves the tick to.
+	 */
+	public function test_a_settle_reads_the_tick_once(): void {
+		$fb = $this->builder();
+		self::fold( $fb, '3:100:41' );
+		$step        = 0;
+		Core::$clock = static function () use ( &$step ): float {
+			return (float) ( self::T + 29 * $step++ );
+		};
+		Core::right_now();
+		$read = (int) Core::$now;
+
+		$fb->settle();
+
+		$blob = $this->stats_store( self::PARTITION )->url_aggregate( Log_Manager::url_hash( self::URL ) );
+		$this->assertSame( $read, $blob['last_modified'] ?? null, 'the blob stamp' );
+		$this->assertSame( (float) $read, $fb->idle_since(), 'the work mark' );
+		self::clock_at( $read + 1777 );
+		$this->assertSame( 1777, $this->settle_age( $fb ), 'the settle mark' );
+	}
+
+	/** `GET_STATS`' `last_settle_age_s`, read through the production verb. */
+	private function settle_age( Flame_Builder_Node $fb ): ?int {
+		$prev    = $fb->sink();
+		$capture = new Capture_Sink_Node();
+		$fb->sink( $capture );
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_REQUEST;
+		$message[ Message::FROM ]  = 'kea-probe';
+		$message[ Message::VALUE ] = 'GET_STATS';
+		$fb->fill( $message );
+		$fb->sink( $prev );
+		foreach ( $capture->captured as $captured ) {
+			if ( ( $captured[ Message::TYPE ] & Message::TM_RESPONSE ) && ( $captured[ Message::TYPE ] & Message::TM_STRUCT ) ) {
+				return $captured[ Message::VALUE ]['data']['last_settle_age_s'];
+			}
+		}
+		$this->fail( 'GET_STATS reply not captured' );
 	}
 
 	/**

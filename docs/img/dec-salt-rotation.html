@@ -22,31 +22,31 @@
 </style>
 <div class="sheet">
 <h1>The tables flush IS the schema migration, and nothing compensates for skipping it</h1>
-<p class="sub">A durable Table's key carries no salt, so rotating the install salt leaves the stats' SQLite rows alone. Emptying the three stats Tables replaces each partition's files, so a schema change leaves no old-shape row to read.</p>
+<p class="sub">No stats key carries a salt, so rotating the install salt leaves the Ledger rows and the url blobs alone. <span class="mono">wp nodes tables flush</span> empties them by name, so a schema change leaves no old-shape row to read.</p>
 
 <div class="grid">
-  <div class="panel"><header>A salt rotation reaches a volatile key, not a stats row</header>
+  <div class="panel"><header>A salt rotation reaches a volatile key, not a stat</header>
     <div class="body">
       <p><b>Before:</b> a volatile Table's key, as the substrate writes it through <span class="mono">Cache_Backend::site_key()</span>.</p>
-      <div class="keyrow"><span class="seg">newspack_nodes:{v}:</span><span class="seg s">a1b2c3d4e5f6</span><span class="seg">:table:evlog:p0:urlsrv:2026-09-11-14-05</span></div>
-      <p class="cap">The scope is the first 12 hex of md5( DB_NAME : table prefix : salt ). A durable Table skips it, and <span class="mono">Stats_Store</span> keeps no salt of its own.</p>
+      <div class="keyrow"><span class="seg">newspack_nodes:{v}:</span><span class="seg s">a1b2c3d4e5f6</span><span class="seg">:table:eln-urls-page:…</span></div>
+      <p class="cap">The scope is the first 12 hex of md5( DB_NAME : table prefix : salt ). A Ledger or a durable Table skips it, and <span class="mono">Stats_Store</span> keeps no salt of its own.</p>
       <div class="act"><span class="cmd">wp nodes memcache flush</span><span class="arr">→</span><span class="chip"><span class="mono">Cache_Backend::rotate_salt()</span> stores a new salt</span></div>
-      <p><b>After:</b> the same logical key under a new scope. The old key sits in memcached until its TTL, and nothing will ask for it.</p>
-      <div class="keyrow"><span class="seg">newspack_nodes:{v}:</span><span class="seg s2">9f8e7d6c5b4a</span><span class="seg">:table:evlog:p0:urlsrv:2026-09-11-14-05</span></div>
+      <p><b>After:</b> the same logical key under a new scope. The old key sits in its store until its TTL, and nothing will ask for it.</p>
+      <div class="keyrow"><span class="seg">newspack_nodes:{v}:</span><span class="seg s2">9f8e7d6c5b4a</span><span class="seg">:table:eln-urls-page:…</span></div>
       <p class="cap">A long-running worker memoizes the scope for its life, so the rotation asks every worker to restart.</p>
     </div></div>
   <div class="panel"><header>SQLite: no salt, so the flush is by name</header>
     <div class="body">
-      <p>The stats Tables store <span class="mono">{namespace}:{key}</span> as a row of <span class="mono">{base}/tables/{table}.p{N}.sqlite</span>, so the rotation leaves the statistics where they are.</p>
-      <div class="keyrow"><span class="seg">kv:</span><span class="seg">key · value · expires</span></div>
-      <p class="cap">One table a file: the key, the serialized value, and when it expires.</p>
-      <div class="act"><span class="cmd" style="background:#003DA5">wp nodes tables flush flame-stats:url …</span><span class="arr">&rarr;</span><span class="chip">replaces each partition's files</span></div>
-      <p class="cap">Nothing survives the flush, so no row carries a version component.</p>
+      <p>A stats Ledger's rows sit in one file every partition shares, <span class="mono">{base}/ledgers/{name}.sqlite</span>, and each URL's blob in one url Table file a partition, <span class="mono">{base}/tables/flame-stats:url.p{N}.sqlite</span>.</p>
+      <div class="keyrow"><span class="seg">rows:</span><span class="seg">t · k · x · w · s · c0 …</span></div>
+      <p class="cap">One table a Ledger file, declared by the topology's <span class="mono">make_node</span> line.</p>
+      <div class="act"><span class="cmd" style="background:#003DA5">wp nodes tables flush stats:… flame-stats:url</span><span class="arr">&rarr;</span><span class="chip">drops and redeclares each Ledger's rows in one transaction; replaces each url Table file</span></div>
+      <p class="cap">The Ledger file is never unlinked, because every partition holds it open. A live worker flushes its own over its command channel.</p>
     </div></div>
 </div>
 
 <div class="three">
-  <div class="callout"><h4>Skip the flush</h4><p>The dashboard reads garbage for one retention window. That is an operator error with a one-command fix, <span class="mono">wp nodes tables flush</span> on the three stats Tables, not a case for the runtime to detect.</p></div>
+  <div class="callout"><h4>Skip the flush</h4><p>A Ledger whose file another declaration made refuses to open, naming the flush. A change to what a key means reads rows of two shapes until the old ones age out: an operator error with a one-command fix, not a case for the runtime to detect.</p></div>
   <div class="card"><h3>No second mechanism beside it</h3><p>No reader or writer carries a shape probe, a version component in a key, or a row-level legacy test. Each would be a second migration mechanism beside this one command, maintained against every future row shape.</p></div>
   <div class="card"><h3>One mechanism, two uses</h3><p>Schema bumps and emergency resets share it: a reset and a migration are the same flush.</p></div>
 </div>

@@ -398,10 +398,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @api Used by substrate.
 	 */
 	public function settle(): void {
-		$this->write_pending();
+		$now = Core::$now;
+		$this->write_pending( $now );
 		$this->uncommitted = false;
 		$this->carry_left  = 0;
-		$this->settled_at  = Core::$now;
+		$this->settled_at  = $now;
 	}
 
 	/**
@@ -1298,11 +1299,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * With no `Stats_Store` wired the drain is a no-op against storage: the
 	 * accumulators still reset, but nothing is written anywhere.
+	 *
+	 * @param float $now The settle's one read of the tick (decision 29).
 	 */
-	private function write_pending(): void {
+	private function write_pending( float $now ): void {
 		$stats_store = $this->stats_store;
 		if ( null !== $stats_store ) {
-			$rows = self::span_rows( $this->pending, self::admitted( $this->pending, $stats_store, (int) Core::$now ) );
+			$rows = self::span_rows( $this->pending, self::admitted( $this->pending, $stats_store, (int) $now ) );
 			foreach ( $stats_store->append_span( $rows ) as $ledger => $appended ) {
 				if ( null === $appended ) {
 					$this->tally( Flame_Tree::STATS_WRITES, "refused {$ledger}" );
@@ -1311,12 +1314,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$this->tally( Flame_Tree::STATS_WRITES, 'rows', Core::num_int( $appended['stored'] ?? null ) );
 				$this->tally( Flame_Tree::STATS_WRITES, 'past the lifespan', Core::num_int( $appended['dropped'] ?? null ) );
 			}
-			$this->drain_url_stats( $stats_store, (int) Core::$now );
+			$this->drain_url_stats( $stats_store, (int) $now );
 		}
 		$this->url_acc = [];
 		// A settle with nothing folded is upkeep; it moves no idle mark.
 		if ( [] !== $this->pending ) {
-			$this->worked_at = Core::$now;
+			$this->worked_at = $now;
 		}
 		$this->pending = [];
 		$this->tally( Flame_Tree::STATS_WRITES, 'settles' );
@@ -1412,12 +1415,15 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * `Other` holds no slot. Two partitions settling at once each admit up
 	 * to the room they read. A window holding more servers than
 	 * `Stats_Store::servers()` names has no room, and every server of the
-	 * span files under `Other`.
+	 * span files under `Other`. A read the Ledger did not answer admits
+	 * nothing: it throws, so the settle appends nothing and the span stays
+	 * for the frame to carry (decision 3).
 	 *
 	 * @param array<int,Bucket_Acc> $pending The span's buckets, by start.
 	 * @param Stats_Store           $store   The store the span appends to.
 	 * @param int                   $now     The settle's tick.
 	 * @return array<string,string> Server => the name it files under.
+	 * @throws \RuntimeException When the names Ledger did not answer.
 	 */
 	private static function admitted( array $pending, Stats_Store $store, int $now ): array {
 		$servers = [];
@@ -1432,6 +1438,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$to     = Stats_Store::bucket_start( $now ) + Stats_Store::BUCKET_SECONDS;
 		$listed = $store->servers( true, $to - Stats_Store::MAX_READ_BUCKETS * Stats_Store::BUCKET_SECONDS, $to );
 		if ( null === $listed ) {
+			throw new \RuntimeException( 'stats: ' . \esc_html( Stats_Store::LEDGER_NAMES ) . ' did not answer which servers it holds; the span stays carried' );
+		}
+		if ( false === $listed ) {
 			return \array_fill_keys( \array_keys( $servers ), Stats_Store::OTHER_KEY );
 		}
 		$held = \array_fill_keys( $listed, true );

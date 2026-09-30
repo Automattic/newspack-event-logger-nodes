@@ -8,7 +8,7 @@ Every dashboard is a React page in wp-admin, and none runs a fetch loop. Each is
 
 | Dashboard | Reads | Through |
 |---|---|---|
-| **Performance** | The statistics [Flame_Builder_Node](../includes/class-flame-builder-node.php) folds into its SQLite Tables and the requests index: site totals, the URL leaderboard, one URL's aggregate flame, one request's trace with its findings | The [`performance`](API.md#performance--the-omnibus-dashboard-ci) verbs, plus the [`rules`](API.md#rules--per-url-logging-ruleset-crud) verbs behind "Log this URL" |
+| **Performance** | The statistics [Flame_Builder_Node](../includes/class-flame-builder-node.php) appends to its SQLite Ledgers, each URL's flame blob and the requests index: site totals, the URL leaderboard, one URL's aggregate flame, one request's trace with its findings | The [`performance`](API.md#performance--the-omnibus-dashboard-ci) verbs, plus the [`rules`](API.md#rules--per-url-logging-ruleset-crud) verbs behind "Log this URL" |
 | **Gyroscope** | The in-flight snapshot [Request_Flight_Node](../includes/class-request-flight-node.php) writes to `gyroscope` on the router's one-second tick | A subscription on `gyroscope.*` |
 | **Request Log** | `completed.p0`, one row per finished request | The substrate's [`raw-logs`](API.md#substrate-verbs-the-dashboards-use) verbs and a subscription on `completed.*` |
 | **Errors** | `errors.p0`: [Request_Builder_Node](../includes/class-request-builder-node.php)'s error and warning lines, and the runtime's own diagnostics the bridge carries in | The substrate's `raw-logs` verbs and a subscription on `errors.*` |

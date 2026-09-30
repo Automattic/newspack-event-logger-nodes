@@ -312,8 +312,34 @@ class StatsStoreTest extends TestCase {
 		$this->assertFalse( $store->unanswered(), 'the Ledger answered; the hash is ambiguous' );
 	}
 
-	/** A family holding more servers than a site page can name answers null, not a partial list. */
-	public function test_more_servers_than_a_page_names_answers_null(): void {
+	/**
+	 * A names or word read the Ledger did not answer is no answer: the
+	 * servers read null, never an empty list, a hash names nothing, a
+	 * search finds nothing, and the store says each went unanswered.
+	 */
+	public function test_an_unanswered_names_or_word_read_is_null_and_says_so(): void {
+		$store = $this->stats_store( 3 );
+		$store->append_span(
+			[
+				Stats_Store::LEDGER_NAMES  => [ [ self::T, Stats_Store::servers_key( false ), 'kea.test', [] ], [ self::T, Stats_Store::hash_key( Log_Manager::url_hash( self::SKU_41 ) ), self::SKU_41, [] ] ],
+				Stats_Store::LEDGER_SEARCH => [ [ self::T, 'sku', self::SKU_41, [] ] ],
+			]
+		);
+		$this->refuse_stats_reads( '/^stats:(names|search)\./' );
+
+		$servers = $this->stats_store( 3 );
+		$this->assertNull( $servers->servers( false, self::FROM, self::TO ) );
+		$this->assertTrue( $servers->unanswered() );
+		$named = $this->stats_store( 3 );
+		$this->assertNull( $named->url_of( Log_Manager::url_hash( self::SKU_41 ), self::FROM, self::TO ) );
+		$this->assertTrue( $named->unanswered() );
+		$searched = $this->stats_store( 3 );
+		$this->assertSame( [], $searched->search_urls( [ 'sku' ], self::FROM, self::TO ) );
+		$this->assertTrue( $searched->unanswered() );
+	}
+
+	/** A family holding more servers than a site page can name answers false, not a partial list. */
+	public function test_more_servers_than_a_page_names_answers_false(): void {
 		$store = $this->stats_store( 3 );
 		$names = [];
 		for ( $i = 1; $i <= Stats_Store::SERVERS_READ_MAX; $i++ ) {
@@ -323,11 +349,11 @@ class StatsStoreTest extends TestCase {
 		$this->assertCount( Stats_Store::SERVERS_READ_MAX, $store->servers( true, self::FROM, self::TO ) );
 
 		$store->append_span( [ Stats_Store::LEDGER_NAMES => [ [ self::T, Stats_Store::servers_key( false ), 'wren.test', [] ] ] ] );
-		$this->assertNull( $store->servers( true, self::FROM, self::TO ), 'the two families together name one too many' );
+		$this->assertFalse( $store->servers( true, self::FROM, self::TO ), 'the two families together name one too many' );
 		$this->assertSame( [ 'wren.test' ], $store->servers( false, self::FROM, self::TO ) );
 
 		$store->append_span( [ Stats_Store::LEDGER_NAMES => [ [ self::T, Stats_Store::servers_key( true ), 'kea.test', [] ] ] ] );
-		$this->assertNull( $store->servers( true, self::FROM, self::TO ), 'the worker family alone names one too many' );
+		$this->assertFalse( $store->servers( true, self::FROM, self::TO ), 'the worker family alone names one too many' );
 	}
 
 	public function test_a_read_a_ledger_refuses_answers_empty_and_says_so(): void {
