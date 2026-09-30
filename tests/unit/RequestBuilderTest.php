@@ -5,8 +5,8 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Request_Flight_Node;
+use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
-use Newspack_Event_Logger_Nodes\Quiet;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -1153,7 +1153,7 @@ class RequestBuilderTest extends TestCase {
 	 */
 	private function force_rotation_due( \Newspack_Nodes\LRU_Cache $cache ): void {
 		$next      = (float) ( new \ReflectionObject( $cache ) )->getProperty( 'next_window' )->getValue( $cache );
-		Core::$now = \max( $next, Core::$now + Quiet::AFTER_SEC );
+		Core::$now = \max( $next, Core::$now + Flame_Builder_Node::IDLE_AFTER_SEC );
 	}
 
 	public function test_builder_timer_times_out_stalled_request_with_no_traffic(): void {
@@ -1485,7 +1485,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 		$this->fill( $rb, 1, 'r-live', 'process (start)', [ 'ts' => Core::$now ] );
 		$this->fill( $rb, 2, 'r-live', 'process (complete)', [ 'ts' => Core::$now, 'duration_ms' => 9.0 ] );
-		Core::$now += Quiet::AFTER_SEC;
+		Core::$now += Flame_Builder_Node::IDLE_AFTER_SEC;
 		$rb->fire_cb();
 
 		$old = 1_797_408_050;
@@ -1519,7 +1519,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 1, 'r-dead', 'process (start)', [ 'ts' => Core::$now ] );
 		$this->fill( $rb, 2, 'r-dead', 'request', [ 'm' => 'GET /dead-worker', 'ts' => Core::$now ] );
 
-		Core::$now += Quiet::AFTER_SEC - 1;
+		Core::$now += Flame_Builder_Node::IDLE_AFTER_SEC - 1;
 		$rb->fire_cb();
 		$this->assertSame( 0, $rb->cache->get_state()['current'], 'a second short of quiet the wall crossed a boundary and rolled nothing' );
 

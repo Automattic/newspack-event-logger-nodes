@@ -7,7 +7,6 @@ use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
-use Newspack_Event_Logger_Nodes\Quiet;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -3333,7 +3332,7 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$mc->add( self::scoped( 'evlog:auto_disable_lock' ), 'other-worker', 300 );
 		$mono                          = 8_100_000_000_000;
-		Quiet::$hrtime_fn              = static function () use ( &$mono ): int {
+		Flame_Builder_Node::$hrtime_fn              = static function () use ( &$mono ): int {
 			return $mono;
 		};
 		$polls                         = 0;
@@ -3976,7 +3975,7 @@ class FlameBuilderTest extends TestCase {
 		}
 
 		// Quiet, the builder takes the wall and folds the last replayed hour.
-		Core::$now += Quiet::AFTER_SEC;
+		Core::$now += Flame_Builder_Node::IDLE_AFTER_SEC;
 		for ( $flush = 0; $flush < 15; $flush++ ) {
 			$fb->flush();
 			$store->flushes[] = [];
@@ -4037,7 +4036,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A builder that has drained nothing for `Quiet::AFTER_SEC` is idle, and
+	 * A builder that has drained nothing for `Flame_Builder_Node::IDLE_AFTER_SEC` is idle, and
 	 * its clock is the wall: an hour the wall closed folds with no record
 	 * past it. A second short of that, it is not idle yet.
 	 */
@@ -4049,7 +4048,7 @@ class FlameBuilderTest extends TestCase {
 			$hash => [ 'url' => '/quiet-5903', 'count' => 41, 'timed_count' => 41, 'sum_ms' => 902.0 ],
 		] );
 		$built = (int) Core::$now;
-		$quiet = Quiet::AFTER_SEC;
+		$quiet = Flame_Builder_Node::IDLE_AFTER_SEC;
 
 		Core::$now = $built + $quiet - 1;
 		$fb->flush();
@@ -4110,7 +4109,7 @@ class FlameBuilderTest extends TestCase {
 	 */
 	public function test_idleness_is_measured_on_the_monotonic_clock_not_the_wall(): void {
 		$mono = 7_300_000_000_000;
-		Quiet::$hrtime_fn = static function () use ( &$mono ): int {
+		Flame_Builder_Node::$hrtime_fn = static function () use ( &$mono ): int {
 			return $mono;
 		};
 		[ $fb, $store ] = $this->replay_builder();
@@ -4121,7 +4120,7 @@ class FlameBuilderTest extends TestCase {
 		$this->seed_url_shard( $store, $closed . '-25', $shard, [
 			$hash => [ 'url' => '/steady-6604', 'count' => 29, 'timed_count' => 29, 'sum_ms' => 377.0 ],
 		] );
-		$quiet = Quiet::AFTER_SEC;
+		$quiet = Flame_Builder_Node::IDLE_AFTER_SEC;
 
 		Core::$now += Stats_Store::HOUR_SECONDS;
 		$mono      += 7 * 1_000_000_000;
@@ -7987,7 +7986,8 @@ class FlameBuilderTest extends TestCase {
 	public function test_a_refused_token_write_is_logged_and_not_written_again(): void {
 		// Nothing retries a refused write: the refusal is logged, the URL's
 		// blob still carries the hour, and a flush later in it files nothing.
-		$err = '';
+		Core::$now = \gmmktime( 10, 17, 30, 9, 14, 2026 );
+		$err       = '';
 		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
 			$err .= $text;
 		} );

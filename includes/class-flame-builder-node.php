@@ -156,6 +156,26 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** Seconds between periodic flush() runs: the cadence of the Router-tick timer. */
 	const FLUSH_INTERVAL_SEC = 5;
 
+	/**
+	 * Seconds a builder consumes nothing before it is quiet: twelve flushes,
+	 * a minute. A replay drains at every flush and every checkpoint, and its
+	 * slowest measured flush, 15.8 s, fits three times over, while a builder
+	 * quiet from an hour's close still folds it inside the next hour's first
+	 * bucket, the lag a reader forgives (`lagging()`). The request builder
+	 * consumes on every tick of a replay, and its window is six minutes, so a
+	 * minute costs a dead worker's request no whole window.
+	 */
+	public const IDLE_AFTER_SEC = 12 * self::FLUSH_INTERVAL_SEC;
+
+	/**
+	 * Monotonic clock seam, replacing `hrtime( true )` where a builder times
+	 * its own quiet or a wait. Tests reassign it to step the monotonic clock
+	 * apart from the wall one. Signature: `function (): int`, nanoseconds.
+	 *
+	 * @var \Closure|null
+	 */
+	public static ?\Closure $hrtime_fn = null;
+
 	/** How long a clean stop waits for a sibling's auto-tune lock: its expiry. */
 	private const AUTO_TUNE_LOCK_WAIT_MS = 5000;
 
@@ -420,7 +440,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public function __construct() {
 		$this->last_flush_time = Core::$now;
 		$this->worked_at       = Core::$now;
-		$this->worked_at_hr    = Quiet::mark();
+		$this->worked_at_hr    = self::monotonic();
 		$this->url_acc         = new LRU_Cache( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
 		$this->client          = new Table_Client( $this, Stats_Store::TABLES );
 
@@ -1496,7 +1516,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// A flush with nothing folded is upkeep, which never keeps a worker up.
 		if ( [] !== $this->pending ) {
 			$this->worked_at    = Core::$now;
-			$this->worked_at_hr = Quiet::mark();
+			$this->worked_at_hr = self::monotonic();
 			$newest             = \max( \array_map( 'strval', \array_keys( $this->pending ) ) );
 			if ( $newest > $this->data_clock ) {
 				if ( Stats_Store::hour_of( $newest ) !== Stats_Store::hour_of( $this->data_clock ) ) {
@@ -1548,7 +1568,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * path. The clock that decides is the one earlier flushes left: this
 	 * flush's rows land after the roll-up, so the fold reads them next time.
 	 *
-	 * A builder that has drained nothing for `Quiet::AFTER_SEC` is idle, and
+	 * A builder that has drained nothing for `IDLE_AFTER_SEC` is idle, and
 	 * its clock is the wall, so a quiet builder still folds the hours that
 	 * pass. An empty `pending` alone is no sign: a checkpoint drains it, and
 	 * a crawl checkpoints every record.
@@ -1563,7 +1583,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @return list<string>
 	 */
 	private function foldable( Stats_Store $stats_store, array $hours, int $now ): array {
-		if ( [] === $this->pending && Quiet::since( $this->worked_at_hr ) ) {
+		if ( [] === $this->pending && self::quiet_since( $this->worked_at_hr ) ) {
 			return $hours;
 		}
 		$clock    = Stats_Store::hour_of( $this->data_clock );
@@ -1573,6 +1593,18 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$hours,
 			static fn ( string $hour ): bool => $hour < $clock || ( $expiring && $hour === $clock )
 		) );
+	}
+
+	/**
+	 * Whether `IDLE_AFTER_SEC` of monotonic time has passed since `$mark`.
+	 *
+	 * Quiet is a duration inside one process, so it is measured on `hrtime()`,
+	 * never the wall: a wall clock stepped forward is no quiet.
+	 *
+	 * @param int $mark A `monotonic()` the builder stamped when it last worked.
+	 */
+	public static function quiet_since( int $mark ): bool {
+		return self::monotonic() - $mark >= self::IDLE_AFTER_SEC * 1_000_000_000;
 	}
 
 	/**
@@ -3038,9 +3070,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		}
 
 		// Held by another worker: retry next flush, or wait out on hrtime.
-		$deadline = Quiet::mark() + $wait_ms * 1_000_000;
+		$deadline = self::monotonic() + $wait_ms * 1_000_000;
 		while ( ! $cache->add( $lock_key, $lock_value, $lock_timeout ) ) {
-			if ( Quiet::mark() >= $deadline ) {
+			if ( self::monotonic() >= $deadline ) {
 				return;
 			}
 			$sleep = self::$usleep_fn ?? static fn ( int $us ) => \usleep( $us );
@@ -3056,6 +3088,15 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$cache->delete( $lock_key );
 			}
 		}
+	}
+
+	/**
+	 * The monotonic clock in ns, through the `$hrtime_fn` seam: the mark a
+	 * builder stamps when it works, and the clock any wait inside one is
+	 * timed on.
+	 */
+	public static function monotonic(): int {
+		return Core::num_int( ( self::$hrtime_fn ?? static fn (): int => (int) \hrtime( true ) )() );
 	}
 
 	/**
