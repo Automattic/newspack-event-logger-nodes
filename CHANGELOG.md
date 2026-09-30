@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.111.0] - 2026-09-29
+
 ### Changed
 
 - **Every verb reads its arguments by name, bound by the substrate against the `args` it declares.** Requires newspack-nodes 2.77.0, which `Command_Interpreter_Node::dispatch()` binds in before the handler runs; the loader's floor rises to it, and the three plugins release together (docs/upgrading.md). The `performance` verbs, `rules save`, `upsert` and `delete`, and `request-builder:config set_inflight_target` read `$args['<name>']` and parse nothing; `Command_Args::parse()`, `Service_CI_Node::require_option_int()` and the private boolean `flag()` read are gone from this plugin. Each arg arrives by position or as `--name=value`. The binder refuses what the handlers used to ignore or coerce: an undeclared option, a surplus token, a missing or blank required arg, a malformed `int` and a `bool` outside `1/true/yes/on/0/false/no/off`, in its own words, where `rid required`, `descriptor required`, `option required`, `id required` and `usage: configure_stats` stood. **A command refused by binding produces no verb span**: the substrate binds before `Command_Interpreter_Node::$around_dispatch`, so `Diagnostics_Bridge` never sees it.
