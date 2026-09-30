@@ -400,23 +400,32 @@ class StatsStoreTest extends TestCase {
 	/** A URL files its path's words, never its host's. */
 	public function test_a_urls_words_are_its_paths(): void {
 		$this->assertSame( [ 'kakapo', 'nest', '9317' ], Stats_Store::url_words( 'https://wren.test/KAKAPO/nest-9317' ) );
-		$this->assertSame( [ 'aisle', '12' ], Stats_Store::url_words( '/aisle-12' ) );
 	}
 
 	public function test_a_urls_path_drops_its_scheme_and_host_alone(): void {
 		$this->assertSame( '/sku-41?q=9', Stats_Store::path_of( 'https://kea.test/sku-41?q=9' ) );
 		$this->assertSame( '?q=3', Stats_Store::path_of( 'https://kea.test?q=3' ) );
-		$this->assertSame( '/bare-7731', Stats_Store::path_of( '/bare-7731' ) );
-		$this->assertSame( '/r?to=https://kea.test/aisle-9', Stats_Store::path_of( '/r?to=https://kea.test/aisle-9' ), 'a scheme after the path is no host' );
 	}
 
-	/** A URL's server is its host, and a URL with none was logged with no server name. */
+	/** Every logged URL carries its host, so a hostless one is refused, never read as a bare path. */
+	public function test_a_hostless_url_is_refused(): void {
+		foreach ( [ '/bare-7731', '/r?to=https://kea.test/aisle-9', 'https:///no-host-7731', '' ] as $url ) {
+			foreach ( [ 'path_of', 'server_of', 'url_words' ] as $reader ) {
+				try {
+					Stats_Store::$reader( $url );
+					$this->fail( "{$reader}( '{$url}' ) answered" );
+				} catch ( \InvalidArgumentException $e ) {
+					$this->assertStringContainsString( $url, $e->getMessage() );
+				}
+			}
+		}
+	}
+
+	/** A URL's server is its host. */
 	public function test_a_urls_server_is_its_host(): void {
 		$this->assertSame( 'kea.test', Stats_Store::server_of( 'https://kea.test/sku-41?q=9' ) );
 		$this->assertSame( 'wren.test', Stats_Store::server_of( 'http://wren.test?q=3' ) );
 		$this->assertSame( 'kea.test', Stats_Store::server_of( 'https://kea.test' ) );
-		$this->assertSame( Stats_Store::UNKNOWN_SERVER, Stats_Store::server_of( '/jobs/aisle-9' ) );
-		$this->assertSame( Stats_Store::UNKNOWN_SERVER, Stats_Store::server_of( '/r?to=https://kea.test/aisle-9' ) );
 	}
 
 	public function test_the_estimate_follows_the_serializer_the_handle_is_configured_with(): void {

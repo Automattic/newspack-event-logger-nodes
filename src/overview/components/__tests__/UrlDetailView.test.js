@@ -156,7 +156,7 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 'offers no server breakdown, since a URL already names its host', () => {
-		// server_name is the site's host, and the hash is over the whole URL,
+		// The server is the URL's host, and the hash is over the whole URL,
 		// so one URL split by server is one line: the axis repeats the scope.
 		const { container, unmount } = mount();
 		const [ , breakdown ] = container.querySelectorAll( 'select' );

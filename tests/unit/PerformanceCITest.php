@@ -1006,7 +1006,7 @@ class PerformanceCITest extends TestCase {
 		// the collect + dedup walk runs (not the empty-result skip).
 		// Timestamps ride the clock: the walk stops at the retention floor, so a
 		// fixed epoch would put the whole fixture behind it.
-		$url  = '/recent-list';
+		$url  = 'https://kea-7713.test/recent-list';
 		$hash = Log_Manager::url_hash( $url );
 		$now  = self::tick();
 		$this->seed_urls( [ $url => [ 'count' => 2, 'sum_ms' => 32.0, 'last_seen' => $now - 623 ] ] );
@@ -1103,12 +1103,12 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_a_four_partition_full_read_lists_the_newest_across_every_partition(): void {
 		$this->activate_shipped( 'performance', 4 );
-		$hash = $this->seed_listed_url( '/spread-over-four', 2400 );
+		$hash = $this->seed_listed_url( 'https://kea-7713.test/spread-over-four', 2400 );
 		$now  = self::tick();
 		for ( $i = 0; $i < 2400; $i++ ) {
 			$this->write_request( [
 				'rid'            => \sprintf( 'rid-spread-%021d', $i ),
-				'url'            => '/spread-over-four',
+				'url'            => 'https://kea-7713.test/spread-over-four',
 				'timestamp'      => $now - 2400 + $i,
 				'duration_ms'    => 37,
 				'status_code'    => 200,
@@ -1148,7 +1148,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_a_refresh_reads_no_index_of_a_partition_holding_nothing_for_the_url(): void {
 		$this->activate_shipped( 'performance', 4 );
-		$url  = '/three-of-four';
+		$url  = 'https://kea-7713.test/three-of-four';
 		$hash = $this->seed_listed_url( $url, 4 );
 		$now  = self::tick();
 		foreach ( [ [ 'rid-p0-older-0000000000000871', 71, 0 ], [ 'rid-p0-newer-0000000000000872', 29, 0 ], [ 'rid-p1-only-00000000000000873', 43, 1 ], [ 'rid-p3-only-00000000000000874', 17, 3 ] ] as [ $rid, $ago, $partition ] ) {
@@ -1182,7 +1182,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_a_tail_returns_a_request_its_partition_indexed_late(): void {
 		$this->activate_shipped( 'performance', 4 );
-		$url  = '/indexed-late';
+		$url  = 'https://kea-7713.test/indexed-late';
 		$hash = $this->seed_listed_url( $url, 5 );
 		$now  = self::tick();
 		$seed = function ( string $rid, int $ago, int $ms, int $partition ) use ( $url, $now ): void {
@@ -1207,7 +1207,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_a_cursor_that_is_not_partition_positions_is_refused(): void {
-		$hash = $this->seed_listed_url( '/bad-cursor', 1 );
+		$hash = $this->seed_listed_url( 'https://kea-7713.test/bad-cursor', 1 );
 
 		foreach ( [ '[1,2]', '{"0":{"segment":3}}', '{"x":{"segment":3,"offset":7}}', '{"0":{"segment":"3","offset":7}}', 'not json' ] as $after ) {
 			$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hash, "--after={$after}" ] );
@@ -1221,7 +1221,7 @@ class PerformanceCITest extends TestCase {
 		// its whole time budget on the newer lines and never reaches the one
 		// matching entry. An empty list then says "no requests", which is a lie
 		// — the truth is that the scan stopped, and the payload has to say so.
-		$url    = '/buried-under-neighbours';
+		$url    = 'https://kea-7713.test/buried-under-neighbours';
 		$hash   = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 1, 'sum_ms' => 37.0, 'last_seen' => self::tick() - 2311 ] ] );
 		// Inside the window, so the BUDGET is the only thing that can stop the walk.
@@ -1247,7 +1247,7 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_url_calls_a_capped_request_list_short_of_its_window(): void {
 		// One past the cap: the list stops short of `requests_window_start`,
 		// and the reply says so rather than claiming the whole window.
-		$url   = '/at-the-request-cap';
+		$url   = 'https://kea-7713.test/at-the-request-cap';
 		$hash  = Log_Manager::url_hash( $url );
 		$limit = (int) ( new \ReflectionClassConstant( Performance_CI_Node::class, 'RECENT_REQUEST_LIMIT' ) )->getValue();
 		$now   = self::tick();
@@ -1303,7 +1303,7 @@ class PerformanceCITest extends TestCase {
 		// record. The number is the walk's own floor, not a rounded hour.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/named-window-6205';
+		$url  = 'https://kea-7713.test/named-window-6205';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 1, 'sum_ms' => 47.0, 'last_seen' => $now - 62 ] ] );
 
@@ -1323,7 +1323,7 @@ class PerformanceCITest extends TestCase {
 		// inside it — the matching entry behind it is still reachable.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-a-long-runner-5182';
+		$url  = 'https://kea-7713.test/behind-a-long-runner-5182';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 1, 'sum_ms' => 58.0, 'last_seen' => $now - 211 ] ] );
 		$this->write_request( [
@@ -1360,7 +1360,7 @@ class PerformanceCITest extends TestCase {
 		// completed earlier still, and the walk ends rather than reading them.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-the-retention-edge-8813';
+		$url  = 'https://kea-7713.test/behind-the-retention-edge-8813';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 1, 'sum_ms' => 71.0, 'last_seen' => $now - 137 ] ] );
 		$this->write_request( [
@@ -1397,7 +1397,7 @@ class PerformanceCITest extends TestCase {
 		// an in-window row behind any of them.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-a-replayed-spoke-4409';
+		$url  = 'https://kea-7713.test/behind-a-replayed-spoke-4409';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 1, 'sum_ms' => 33.0, 'last_seen' => $now - 96 ] ] );
 		$this->write_request( [
@@ -1431,7 +1431,7 @@ class PerformanceCITest extends TestCase {
 		// unreadable line ends a whole partition, silently and totally.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-an-unreadable-line-9047';
+		$url  = 'https://kea-7713.test/behind-an-unreadable-line-9047';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 1, 'sum_ms' => 84.0, 'last_seen' => $now - 319 ] ] );
 		$this->write_request( [
@@ -1462,7 +1462,7 @@ class PerformanceCITest extends TestCase {
 		// must not truncate the walk behind it; only the budget bounds junk.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-a-short-line-9047';
+		$url  = 'https://kea-7713.test/behind-a-short-line-9047';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 1, 'sum_ms' => 84.0, 'last_seen' => $now - 319 ] ] );
 		$this->write_request( [
@@ -1485,7 +1485,7 @@ class PerformanceCITest extends TestCase {
 		// Nothing reaches the edge, so the bound is invisible.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/wholly-inside-the-window-3352';
+		$url  = 'https://kea-7713.test/wholly-inside-the-window-3352';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 3, 'sum_ms' => 96.0, 'last_seen' => $now - 43 ] ] );
 		foreach ( [ 6011, 2903, 43 ] as $i => $ago ) {
@@ -1510,7 +1510,7 @@ class PerformanceCITest extends TestCase {
 		// The walk compares the raw url_hash column before parsing. A line that
 		// carries the column but is too short to be an index entry is not a
 		// request, and the pre-filter must not turn it into one.
-		$url  = '/column-lookalike-4417';
+		$url  = 'https://kea-7713.test/column-lookalike-4417';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 1, 'sum_ms' => 19.0, 'last_seen' => 1700005000 ] ] );
 		$dir = $this->tmp . '/logs/requests.p0';
@@ -1534,7 +1534,7 @@ class PerformanceCITest extends TestCase {
 		// offsets, so a flame belonging to a neighbouring rid stays unmatched.
 		$rid = $this->write_request( [
 			'rid'         => 'rid-flame-column-773311',
-			'url'         => '/flame-column',
+			'url'         => 'https://kea-7713.test/flame-column',
 			'timestamp'   => 1700005100,
 			'duration_ms' => 41,
 		] );
@@ -1638,7 +1638,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_dump_url_walks_any_number_of_lines_inside_the_time_cap(): void {
 		// The cap is time, not lines: a stopped clock reads the whole window.
-		$url  = '/under-a-deep-index';
+		$url  = 'https://kea-7713.test/under-a-deep-index';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_urls( [ $url => [ 'count' => 1, 'sum_ms' => 29.0, 'last_seen' => self::tick() - 1777 ] ] );
 		$this->write_request( [
@@ -1690,8 +1690,8 @@ class PerformanceCITest extends TestCase {
 		// Scoping `count` alone would leave `count_2xx..5xx` describing every
 		// server, so a scoped row could report more classified requests than
 		// it had. A server's key carries all of its row.
-		$this->seed_urls( [ '/mixed' => [ 'count' => 2, 'count_2xx' => 1, 'count_5xx' => 1, 'sum_ms' => 260.0, 'server' => 'alpha.example' ] ] );
-		$this->seed_urls( [ '/mixed' => [ 'count' => 7, 'count_2xx' => 5, 'count_5xx' => 2, 'sum_ms' => 640.0, 'server' => 'beta.example' ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/mixed' => [ 'count' => 2, 'count_2xx' => 1, 'count_5xx' => 1, 'sum_ms' => 260.0, 'server' => 'alpha.example' ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/mixed' => [ 'count' => 7, 'count_2xx' => 5, 'count_5xx' => 2, 'sum_ms' => 640.0, 'server' => 'beta.example' ] ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=alpha.example' );
 
@@ -1817,21 +1817,39 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_url_brief_honours_the_server_scope(): void {
 		// A brief that answered site-wide would hand an agent unscoped numbers
 		// labelled as one server's, and the label makes them quotable.
-		$this->seed_urls( [ '/asked' => [ 'count' => 2, 'sum_ms' => 500.0, 'server' => 'alpha.example' ] ] );
-		$this->seed_urls( [ '/asked' => [ 'count' => 7, 'sum_ms' => 1300.0, 'server' => 'beta.example' ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/asked' => [ 'count' => 2, 'sum_ms' => 500.0, 'server' => 'alpha.example' ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/asked' => [ 'count' => 7, 'sum_ms' => 1300.0, 'server' => 'beta.example' ] ] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . Log_Manager::url_hash( '/asked' ) . ' --server=alpha.example' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . Log_Manager::url_hash( 'https://kea-7713.test/asked' ) . ' --server=alpha.example' );
 
 		$this->assertSame( 2, $result['stats']['count'] );
 		$this->assertEqualsWithDelta( 250.0, $result['stats']['avg_ms'], 1e-6 );
 	}
 
+	/** A URL brief resolves its rule from the stored URL's path and query, as a request would. */
+	public function test_ask_url_brief_matches_its_rule_by_path_and_query(): void {
+		( new Rule_Set( [] ) )->save( [
+			new Rule( Rule_Set::id_for( '/pelican-6184' ), '/pelican-6184', Rule::ACTION_LOG ),
+			new Rule( Rule_Set::id_for( '/pelican-6184?kakapo' ), '/pelican-6184?kakapo', Rule::ACTION_LOG ),
+		] );
+		$this->seed_urls( [
+			'https://kea-7713.test/pelican-6184?kakapo-3' => [ 'count' => 1 ],
+			'https://kea-7713.test/pelican-6184/nest'     => [ 'count' => 1 ],
+		] );
+
+		$with_query = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . Log_Manager::url_hash( 'https://kea-7713.test/pelican-6184?kakapo-3' ) );
+		$path_only  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . Log_Manager::url_hash( 'https://kea-7713.test/pelican-6184/nest' ) );
+
+		$this->assertSame( '/pelican-6184?kakapo', $with_query['rule']['pattern'] ?? null );
+		$this->assertSame( '/pelican-6184', $path_only['rule']['pattern'] ?? null );
+	}
+
 	public function test_ask_url_brief_carries_the_measured_average(): void {
 		// The brief is the number an agent quotes, so it reads a DISPLAY row,
 		// the mean projected from the sums.
-		$this->seed_urls( [ '/asked' => [ 'count' => 4, 'sum_ms' => 1000.0 ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/asked' => [ 'count' => 4, 'sum_ms' => 1000.0 ] ] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . Log_Manager::url_hash( '/asked' ) );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . Log_Manager::url_hash( 'https://kea-7713.test/asked' ) );
 
 		$this->assertEqualsWithDelta( 250.0, $result['stats']['avg_ms'], 1e-6 );
 	}
@@ -1889,10 +1907,10 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_url_scopes_to_the_selected_server(): void {
 		// The row that opens this modal is the selected server's; the modal has
 		// to answer for the same server.
-		$this->seed_urls( [ '/mixed' => [ 'count' => 2, 'sum_ms' => 260.0, 'server' => 'alpha.example' ] ] );
-		$this->seed_urls( [ '/mixed' => [ 'count' => 7, 'sum_ms' => 640.0, 'server' => 'beta.example' ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/mixed' => [ 'count' => 2, 'sum_ms' => 260.0, 'server' => 'alpha.example' ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/mixed' => [ 'count' => 7, 'sum_ms' => 640.0, 'server' => 'beta.example' ] ] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( '/mixed' ) . ' --server=alpha.example' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( 'https://kea-7713.test/mixed' ) . ' --server=alpha.example' );
 
 		$this->assertSame( 2, $result['stats']['count'] );
 		$this->assertEqualsWithDelta( 130.0, $result['stats']['avg_ms'], 1e-6 );
@@ -1956,8 +1974,8 @@ class PerformanceCITest extends TestCase {
 		// requests over seven of them is 1/s. The newest bucket is still
 		// accumulating, so counting it would drag every rate down.
 		$now = self::tick();
-		$this->seed_urls( [ '/rate' => [ 'count' => 2100, 'sum_ms' => 2100.0 ] ], Stats_Store::bucket_start( $now - 600 ) );
-		$this->seed_urls( [ '/rate' => [ 'count' => 99000, 'sum_ms' => 99000.0 ] ], Stats_Store::bucket_start( $now ) );
+		$this->seed_urls( [ 'https://kea-7713.test/rate' => [ 'count' => 2100, 'sum_ms' => 2100.0 ] ], Stats_Store::bucket_start( $now - 600 ) );
+		$this->seed_urls( [ 'https://kea-7713.test/rate' => [ 'count' => 99000, 'sum_ms' => 99000.0 ] ], Stats_Store::bucket_start( $now ) );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
@@ -2003,7 +2021,7 @@ class PerformanceCITest extends TestCase {
 
 	/** A URL no timed request reached has no minimum to show. */
 	public function test_an_untimed_urls_minimum_is_null(): void {
-		$this->seed_urls( [ '/worker-only' => [ 'count' => 7, 'timed_count' => 0 ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/worker-only' => [ 'count' => 7, 'timed_count' => 0 ] ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
@@ -2015,8 +2033,8 @@ class PerformanceCITest extends TestCase {
 	public function test_urls_verb_min_ms_unaffected_by_untimed_sibling_bucket(): void {
 		// An untimed bucket files its minimum as not measured, so the
 		// Ledger's minimum is the timed bucket's, never clamped to 0.
-		$this->seed_urls( [ '/mixed' => [ 'count' => 3, 'timed_count' => 0 ] ], Stats_Store::bucket_start( self::tick() - 600 ) );
-		$this->seed_urls( [ '/mixed' => [ 'count' => 5, 'sum_ms' => 500.0, 'min_ms' => 42.0, 'max_ms' => 120.0 ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/mixed' => [ 'count' => 3, 'timed_count' => 0 ] ], Stats_Store::bucket_start( self::tick() - 600 ) );
+		$this->seed_urls( [ 'https://kea-7713.test/mixed' => [ 'count' => 5, 'sum_ms' => 500.0, 'min_ms' => 42.0, 'max_ms' => 120.0 ] ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--sort=min_ms' );
 
@@ -2103,7 +2121,7 @@ class PerformanceCITest extends TestCase {
 	public function test_a_row_with_no_timed_request_has_no_mean(): void {
 		// Dividing by the whole count would invent a mean from requests that
 		// recorded no duration.
-		$this->seed_urls( [ '/untimed' => [ 'count' => 5, 'timed_count' => 0, 'sum_ms' => 750.0 ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/untimed' => [ 'count' => 5, 'timed_count' => 0, 'sum_ms' => 750.0 ] ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
@@ -2112,7 +2130,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_the_mean_divides_by_timed_requests_not_by_every_request(): void {
 		// 400ms over the 4 requests that recorded a duration is 100, over all 10 it is 40.
-		$this->seed_urls( [ '/mostly-timed-out' => [ 'count' => 10, 'timed_count' => 4, 'sum_ms' => 400.0 ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/mostly-timed-out' => [ 'count' => 10, 'timed_count' => 4, 'sum_ms' => 400.0 ] ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
@@ -2146,8 +2164,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_dump_url_verb_includes_aggregate_flame_when_seeded(): void {
-		$hash = Log_Manager::url_hash( '/x' );
-		$this->seed_urls( [ '/x' => [ 'count' => 1, 'sum_ms' => 10.0 ] ] );
+		$hash = Log_Manager::url_hash( 'https://kea-7713.test/x' );
+		$this->seed_urls( [ 'https://kea-7713.test/x' => [ 'count' => 1, 'sum_ms' => 10.0 ] ] );
 		$this->set_url_stats( 0, $hash, [
 			'flame_raw'     => [ 'name' => 'aggregate', 'sum_value' => 200.0, 'count' => 2, 'children' => [ [ 'name' => 'a', 'sum_value' => 100.0, 'ts' => 1700001000, 'children' => [] ] ] ],
 			'last_modified' => 1700001111,
@@ -2166,7 +2184,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_dump_url_sums_every_partitions_url_blob(): void {
 		$this->activate_shipped( 'performance', 3 );
-		$hash = $this->seed_listed_url( '/summed-blobs', 5 );
+		$hash = $this->seed_listed_url( 'https://kea-7713.test/summed-blobs', 5 );
 		$now  = self::tick();
 		$this->set_url_stats( 0, $hash, [
 			'flame_raw'     => [ 'name' => 'aggregate', 'sum_value' => 300.0, 'count' => 3, 'children' => [
@@ -2212,7 +2230,7 @@ class PerformanceCITest extends TestCase {
 	 * @return array{0:string,1:int} The URL hash and the newer request's start.
 	 */
 	private function seed_a_cold_url_with_two_flames(): array {
-		$url   = '/cold-flame';
+		$url   = 'https://kea-7713.test/cold-flame';
 		$hash  = Log_Manager::url_hash( $url );
 		$now   = self::tick();
 		$this->seed_urls( [ $url => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 100.0, 'last_seen' => $now - 311 ] ] );
@@ -2270,7 +2288,7 @@ class PerformanceCITest extends TestCase {
 	public function test_a_rebuild_reads_only_the_partitions_its_requests_are_in(): void {
 		// Flames partition like the requests they came from; p0 holds none.
 		$this->activate_shipped( 'performance', 2 );
-		$url   = '/cold-in-p1';
+		$url   = 'https://kea-7713.test/cold-in-p1';
 		$hash  = Log_Manager::url_hash( $url );
 		$now   = self::tick();
 		$this->seed_urls( [ $url => [ 'count' => 1, 'timed_count' => 1, 'sum_ms' => 70.0, 'last_seen' => $now - 522 ] ] );
@@ -2343,10 +2361,10 @@ class PerformanceCITest extends TestCase {
 
 	public function test_dump_url_verb_includes_breakdown_time_series_when_arg_set(): void {
 		$bucket = $this->current_url_bucket();
-		$this->seed_urls( [ '/x' => [ 'count' => 1, 'sum_ms' => 10.0 ] ] );
-		$this->seed_url_dim( '/x', 'method', 'GET', 3, 0.3, 0.1 );
+		$this->seed_urls( [ 'https://kea-7713.test/x' => [ 'count' => 1, 'sum_ms' => 10.0 ] ] );
+		$this->seed_url_dim( 'https://kea-7713.test/x', 'method', 'GET', 3, 0.3, 0.1 );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( '/x' ) . ' --breakdown=method' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( 'https://kea-7713.test/x' ) . ' --breakdown=method' );
 
 		$this->assertArrayHasKey( 'breakdown_time_series', $result );
 		$this->assertSame( 3, self::wire_series( $result['breakdown_time_series'] )[ $bucket ]['GET'][ Stats_Store::DIM_COUNT ] );
@@ -2356,9 +2374,9 @@ class PerformanceCITest extends TestCase {
 		// The chart polls this every five minutes and keeps only the series, so
 		// the verb behind it must not drag the index walk `dump_url` runs.
 		$bucket = $this->current_url_bucket();
-		$hash   = Log_Manager::url_hash( '/breakdown-only' );
-		$this->seed_urls( [ '/breakdown-only' => [ 'count' => 6, 'sum_ms' => 84.0 ] ] );
-		$this->seed_url_dim( '/breakdown-only', 'status', '503', 9, 1.7, 0.4 );
+		$hash   = Log_Manager::url_hash( 'https://kea-7713.test/breakdown-only' );
+		$this->seed_urls( [ 'https://kea-7713.test/breakdown-only' => [ 'count' => 6, 'sum_ms' => 84.0 ] ] );
+		$this->seed_url_dim( 'https://kea-7713.test/breakdown-only', 'status', '503', 9, 1.7, 0.4 );
 
 		$detail = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', "{$hash} --breakdown=status" );
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_breakdown', "{$hash} --breakdown=status" );
@@ -2389,9 +2407,9 @@ class PerformanceCITest extends TestCase {
 
 	public function test_dump_url_refuses_the_server_axis(): void {
 		// The same refusal `url_breakdown` gives, not a reply missing a key.
-		$this->seed_urls( [ '/wombat-7731' => [ 'count' => 3 ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/wombat-7731' => [ 'count' => 3 ] ] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( '/wombat-7731' ) . ' --breakdown=server' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( 'https://kea-7713.test/wombat-7731' ) . ' --breakdown=server' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid breakdown dimension: server', $result );
@@ -2399,10 +2417,10 @@ class PerformanceCITest extends TestCase {
 
 	public function test_dump_url_verb_includes_category_time_series_when_arg_set(): void {
 		$bucket = $this->current_url_bucket();
-		$this->seed_urls( [ '/x' => [ 'count' => 1, 'sum_ms' => 10.0 ] ] );
-		$this->append( [ Stats_Store::LEDGER_URL_CATS => [ [ Stats_Store::bucket_start( self::tick() ), Stats_Store::url_key( '/x' ), 'db', [ 0.2, 2, 1 ] ] ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/x' => [ 'count' => 1, 'sum_ms' => 10.0 ] ] );
+		$this->append( [ Stats_Store::LEDGER_URL_CATS => [ [ Stats_Store::bucket_start( self::tick() ), Stats_Store::url_key( 'https://kea-7713.test/x' ), 'db', [ 0.2, 2, 1 ] ] ] ] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( '/x' ) . ' --categories' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( 'https://kea-7713.test/x' ) . ' --categories' );
 
 		$this->assertArrayHasKey( 'category_time_series', $result );
 		// The modal reads the same compact shape the overview card does.
@@ -2418,7 +2436,7 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_url_series_reach_past_the_reader_rows_last_seen(): void {
 		$old     = Stats_Store::bucket_start( self::tick() - 3 * Stats_Store::BUCKET_SECONDS );
 		$current = $this->current_url_bucket();
-		$url     = '/quokka-5a1b';
+		$url     = 'https://kea-7713.test/quokka-5a1b';
 		$this->seed_urls( [ $url => [ 'count' => 4, 'sum_ms' => 52.0, 'last_seen' => $old ] ], $old );
 		$this->append( [ Stats_Store::LEDGER_URL_CATS => [ [ Stats_Store::bucket_start( self::tick() ), Stats_Store::url_key( $url ), 'wpdb', [ 41.5, 6, 3 ] ] ] ] );
 		$this->seed_url_dim( $url, 'status', '418', 7, 2.9, 0.6 );
@@ -2433,9 +2451,9 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_url_verb_refuses_an_unknown_dim(): void {
 		// An unknown dim is refused, as `url_breakdown` refuses it, rather
 		// than answered without the series it asked for.
-		$this->seed_urls( [ '/x' => [ 'count' => 1, 'sum_ms' => 10.0 ] ] );
+		$this->seed_urls( [ 'https://kea-7713.test/x' => [ 'count' => 1, 'sum_ms' => 10.0 ] ] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( '/x' ) . ' --breakdown=nosuchdim' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', Log_Manager::url_hash( 'https://kea-7713.test/x' ) . ' --breakdown=nosuchdim' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'invalid breakdown dimension: nosuchdim', $result );
@@ -2643,9 +2661,9 @@ class PerformanceCITest extends TestCase {
 		// One completed request whose URL matches, plus a non-matching one.
 		$this->write_firehose( 0, [
 			[ 'rid' => 'grepR1', 'k' => 'process (start)', 'm' => '12345 on host', 'ts' => 1700000000.0, 'n' => 1 ],
-			[ 'rid' => 'grepR1', 'k' => 'request', 'm' => 'GET /calendar/today?x=1', 'ts' => 1700000000.0, 'n' => 2 ],
+			[ 'rid' => 'grepR1', 'k' => 'request', 'm' => 'GET https://kea-7713.test/calendar/today?x=1', 'ts' => 1700000000.0, 'n' => 2 ],
 			[ 'rid' => 'grepR1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.4, 'n' => 3, 'duration_ms' => 400 ],
-			[ 'rid' => 'grepNoise', 'k' => 'request', 'm' => 'GET /feed', 'ts' => 1700000001.0, 'n' => 1 ],
+			[ 'rid' => 'grepNoise', 'k' => 'request', 'm' => 'GET https://kea-7713.test/feed', 'ts' => 1700000001.0, 'n' => 1 ],
 			[ 'rid' => 'grepNoise', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000001.2, 'n' => 2 ],
 		] );
 
@@ -2661,7 +2679,7 @@ class PerformanceCITest extends TestCase {
 
 		$summary = $result['results'][0];
 		$this->assertSame( 'grepR1', $summary['rid'] );
-		$this->assertSame( '/calendar/today', $summary['url'] );
+		$this->assertSame( 'https://kea-7713.test/calendar/today', $summary['url'] );
 		$this->assertSame( 'GET', $summary['method'] );
 		$this->assertGreaterThanOrEqual( 1, $summary['match_count'] );
 		$this->assertStringContainsString( '/calendar', $summary['first_match_excerpt'] );
@@ -2673,11 +2691,11 @@ class PerformanceCITest extends TestCase {
 		$entries = [];
 		$lines   = ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride();
 		for ( $i = 0; $i < $lines; $i++ ) {
-			$entries[] = [ 'rid' => "noise{$i}", 'k' => 'request', 'm' => 'GET /feed', 'ts' => 1700000000.0, 'n' => 1 ];
+			$entries[] = [ 'rid' => "noise{$i}", 'k' => 'request', 'm' => 'GET https://kea-7713.test/feed', 'ts' => 1700000000.0, 'n' => 1 ];
 		}
 		$this->write_firehose( 0, $entries );
 		$this->write_firehose( 1, [
-			[ 'rid' => 'lateMatch', 'k' => 'request', 'm' => 'GET /past-the-budget-4471', 'ts' => 1700000900.0, 'n' => 1 ],
+			[ 'rid' => 'lateMatch', 'k' => 'request', 'm' => 'GET https://kea-7713.test/past-the-budget-4471', 'ts' => 1700000900.0, 'n' => 1 ],
 			[ 'rid' => 'lateMatch', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000900.5, 'n' => 2 ],
 		] );
 		$seconds      = 0.0;
@@ -2696,7 +2714,7 @@ class PerformanceCITest extends TestCase {
 		// Three matching completed requests; --limit=2 → 2 results + truncated.
 		$entries = [];
 		foreach ( [ 'gA', 'gB', 'gC' ] as $i => $rid ) {
-			$entries[] = [ 'rid' => $rid, 'k' => 'request', 'm' => "GET /match/{$rid}", 'ts' => 1700000000.0 + $i, 'n' => 1 ];
+			$entries[] = [ 'rid' => $rid, 'k' => 'request', 'm' => "GET https://kea-7713.test/match/{$rid}", 'ts' => 1700000000.0 + $i, 'n' => 1 ];
 			$entries[] = [ 'rid' => $rid, 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.5 + $i, 'n' => 2 ];
 		}
 		$this->write_firehose( 0, $entries );
@@ -2711,7 +2729,7 @@ class PerformanceCITest extends TestCase {
 	/** `max(1, (int) 'abc')` answers one result and calls it the whole match set. */
 	public function test_grep_requests_refuses_a_malformed_limit(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'lim1', 'k' => 'request', 'm' => 'GET /match/a', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'lim1', 'k' => 'request', 'm' => 'GET https://kea-7713.test/match/a', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'lim1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.5, 'n' => 2 ],
 		] );
 
@@ -2723,7 +2741,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_grep_requests_empty_when_no_match(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'z1', 'k' => 'request', 'm' => 'GET /other', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'z1', 'k' => 'request', 'm' => 'GET https://kea-7713.test/other', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'z1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
 		] );
 
@@ -2737,7 +2755,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_grep_requests_skips_and_counts_torn_lines(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'oakum7', 'k' => 'request', 'm' => 'GET /oakum-3391', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'oakum7', 'k' => 'request', 'm' => 'GET https://kea-7713.test/oakum-3391', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'oakum7', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
 		] );
 		$log = $this->tmp . '/logs/firehose.p0/0.log';
@@ -2752,7 +2770,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_grep_requests_reports_no_unparseable_lines_on_a_clean_log(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'clean1', 'k' => 'request', 'm' => 'GET /bilge-812', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'clean1', 'k' => 'request', 'm' => 'GET https://kea-7713.test/bilge-812', 'ts' => 1700000000.0, 'n' => 1 ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', '/bilge-812' );
@@ -2779,7 +2797,7 @@ class PerformanceCITest extends TestCase {
 	public function test_grep_requests_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter                  = new Performance_CI_Node();
-		$result                       = VerbHarness::fire( $interpreter, 'performance', 'grep_requests', '/x' );
+		$result                       = VerbHarness::fire( $interpreter, 'performance', 'grep_requests', 'https://kea-7713.test/x' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -2809,7 +2827,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped( 'performance', 4 );
 		$body = [
 			'rid'            => 'rid-detail-cross-partition-0001',
-			'url'            => '/elsewhere',
+			'url'            => 'https://kea-7713.test/elsewhere',
 			'timestamp'      => 1700000700,
 			'duration_ms'    => 41,
 			'status_code'    => 200,
@@ -2822,7 +2840,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
 		$this->assertIsArray( $result, 'dump_request must resolve a rid search_requests can find' );
-		$this->assertSame( '/elsewhere', $result['url'] );
+		$this->assertSame( 'https://kea-7713.test/elsewhere', $result['url'] );
 	}
 
 	/**
@@ -2868,7 +2886,7 @@ class PerformanceCITest extends TestCase {
 		// field doesn't drop characters and break the lookup.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-detail-12345678901234567890',
-			'url'            => '/detailed',
+			'url'            => 'https://kea-7713.test/detailed',
 			'timestamp'      => 1700000500,
 			'duration_ms'    => 33,
 			'status_code'    => 201,
@@ -2889,7 +2907,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $result );
 		$this->assertSame( $rid, $result['rid'] );
-		$this->assertSame( '/detailed', $result['url'] );
+		$this->assertSame( 'https://kea-7713.test/detailed', $result['url'] );
 		$this->assertSame( 201, $result['status_code'] );
 		$this->assertNotEmpty( $result['url_hash'] );
 		$this->assertArrayHasKey( 'events', $result );
@@ -2899,7 +2917,7 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_request_carries_the_findings_for_that_record(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-findings-1234567890123456789',
-			'url'            => '/slow-thing',
+			'url'            => 'https://kea-7713.test/slow-thing',
 			'timestamp'      => 1700000700,
 			'duration_ms'    => 9000,
 			'status_code'    => 200,
@@ -2941,12 +2959,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'missing required argument: descriptor', $result );
 	}
 
-	/**
-	 * A stored record's url is ABSOLUTE and query-stripped, while rules are
-	 * path patterns — so re-deriving the rule by matching that url found
-	 * nothing, not even a catch-all `/`. The record already carries the answer
-	 * the request itself resolved.
-	 */
+	/** A request brief names the rule the record stamped, the one the request itself resolved. */
 	public function test_dump_request_resolves_the_rule_the_record_recorded(): void {
 		\update_option(
 			Rule_Set::OPTION_RULES,
@@ -2975,14 +2988,45 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}:0" );
 
 		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
-		$this->assertNotNull( $result['rule'], 'the record named its rule; nothing had to be re-derived' );
+		$this->assertNotNull( $result['rule'], 'the record named its rule' );
 		$this->assertSame( '/', $result['rule']['pattern'] );
+	}
+
+	/**
+	 * A record whose stamped rule is gone stays unresolved even when its URL
+	 * matches a live rule: the brief carries the stamp as `resolved: false`
+	 * and one `unresolved_rule` finding, through `ask` and `dump_request`.
+	 */
+	public function test_a_record_whose_stamped_rule_is_gone_stays_unresolved(): void {
+		( new Rule_Set( [] ) )->save( [ new Rule( Rule_Set::id_for( '/moa-4402' ), '/moa-4402', Rule::ACTION_LOG ) ] );
+		$rid = $this->write_request( [
+			'rid'            => 'rid-moa-4402-0123456789012345678',
+			'url'            => 'https://kea-7713.test/moa-4402/egg',
+			'rule_id'        => 'gone-4402',
+			'timestamp'      => 1700001000,
+			'duration_ms'    => 90,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+		] );
+
+		$brief  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}:0" );
+		$dumped = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
+
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : '' );
+		$this->assertSame( [ 'id' => 'gone-4402', 'resolved' => false ], $brief['rule'] );
+		$this->assertIsArray( $dumped, \is_string( $dumped ) ? $dumped : '' );
+		foreach ( [ 'ask' => $brief, 'dump_request' => $dumped ] as $surface => $reply ) {
+			$unresolved = \array_values( \array_filter( $reply['findings'], static fn ( array $f ): bool => 'unresolved_rule' === $f['kind'] ) );
+			$this->assertCount( 1, $unresolved, $surface );
+			$this->assertSame( 'gone-4402', $unresolved[0]['rule_id'], $surface );
+		}
 	}
 
 	public function test_ask_assembles_a_request_brief(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-req-123456789012345678',
-			'url'            => '/asked-about',
+			'url'            => 'https://kea-7713.test/asked-about',
 			'timestamp'      => 1700000800,
 			'duration_ms'    => 120,
 			'status_code'    => 200,
@@ -2994,7 +3038,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'request', $result['subject'] );
-		$this->assertSame( '/asked-about', $result['url'] );
+		$this->assertSame( 'https://kea-7713.test/asked-about', $result['url'] );
 		$this->assertEquals( 120.0, $result['duration_ms'] );
 	}
 
@@ -3044,7 +3088,7 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_resolves_a_span_through_its_request_context(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-span-12345678901234567',
-			'url'            => '/asked-span',
+			'url'            => 'https://kea-7713.test/asked-span',
 			'timestamp'      => 1700000900,
 			'duration_ms'    => 500,
 			'status_code'    => 200,
@@ -3126,6 +3170,26 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( $url, $result['url'] );
 	}
 
+	/** A URL whose name the names Ledger does not hold still answers a span brief, governed by no rule. */
+	public function test_ask_resolves_a_span_under_a_url_the_names_ledger_misses(): void {
+		( new Rule_Set( [] ) )->save( [ new Rule( Rule_Set::id_for( '/' ), '/', Rule::ACTION_LOG ) ] );
+		$hash = Log_Manager::url_hash( 'https://kea-7713.test/unnamed-5582' );
+		$this->set_url_stats( 0, $hash, [
+			'flame_raw' => [
+				'name'      => 'aggregate',
+				'sum_value' => 300.0,
+				'count'     => 2,
+				'children'  => [ [ 'name' => 'wp_loaded', 'sum_value' => 180.0, 'ts' => self::tick(), 'children' => [] ] ],
+			],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', "url:{$hash}" ] );
+
+		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
+		$this->assertEquals( 90.0, $result['ms'] );
+		$this->assertNull( $result['rule'], 'a missed name matches no rule' );
+	}
+
 	/** The stored per-URL profile: sums the reader divides, never means. */
 	private function stored_profiles(): array {
 		return [
@@ -3139,8 +3203,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_ask_resolves_a_category_through_its_url_context(): void {
-		$hash = Log_Manager::url_hash( '/asked-cat' );
-		$this->seed_urls( [ '/asked-cat' => [ 'count' => 5 ] ] );
+		$hash = Log_Manager::url_hash( 'https://kea-7713.test/asked-cat' );
+		$this->seed_urls( [ 'https://kea-7713.test/asked-cat' => [ 'count' => 5 ] ] );
 		$this->set_url_stats( 0, $hash, [ 'profiles' => $this->stored_profiles() ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:render', "url:{$hash}" ] );
@@ -3148,7 +3212,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
 		$this->assertSame( 'category', $result['subject'] );
 		$this->assertSame( 'mean per request over 5 requests, every server', $result['scope'] );
-		$this->assertSame( '/asked-cat', $result['url'] );
+		$this->assertSame( 'https://kea-7713.test/asked-cat', $result['url'] );
 		$this->assertEqualsWithDelta( 60.0, $result['avg_time_ms'], 1e-6 );
 		$this->assertEqualsWithDelta( 2.0, $result['avg_count'], 1e-6 );
 		$this->assertEqualsWithDelta( 0.75, $result['share'], 1e-6 );
@@ -3158,8 +3222,8 @@ class PerformanceCITest extends TestCase {
 		// The per-URL blob lives a 24th of the window; the row lives the whole
 		// window. A row with no blob answers from the board the panel beside
 		// it draws.
-		$hash = Log_Manager::url_hash( '/asked-stale' );
-		$this->seed_urls( [ '/asked-stale' => [ 'count' => 2, 'sum_ms' => 20.0 ] ] );
+		$hash = Log_Manager::url_hash( 'https://kea-7713.test/asked-stale' );
+		$this->seed_urls( [ 'https://kea-7713.test/asked-stale' => [ 'count' => 2, 'sum_ms' => 20.0 ] ] );
 		$this->append( [ Stats_Store::LEDGER_LEADERBOARD => self::board( Stats_Store::bucket_start( self::tick() ), 40, 10.0, [ 'wpdb' => [ 40, 400.0, 80 ] ] ) ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:wpdb', "url:{$hash}" ] );
@@ -3173,8 +3237,8 @@ class PerformanceCITest extends TestCase {
 		// The modal's "Average breakdown across N requests" panel reads
 		// `time` and `count` off each row and drops a row carrying neither, so
 		// the stored sums have to be divided before they leave the verb.
-		$hash = Log_Manager::url_hash( '/asked-panel' );
-		$this->seed_urls( [ '/asked-panel' => [ 'count' => 5, 'sum_ms' => 500.0 ] ] );
+		$hash = Log_Manager::url_hash( 'https://kea-7713.test/asked-panel' );
+		$this->seed_urls( [ 'https://kea-7713.test/asked-panel' => [ 'count' => 5, 'sum_ms' => 500.0 ] ] );
 		$this->set_url_stats( 0, $hash, [ 'profiles' => $this->stored_profiles() ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
@@ -3190,7 +3254,7 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_carries_the_url_a_request_was_picked_under(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-under-url-12345678901234',
-			'url'            => '/asked-under',
+			'url'            => 'https://kea-7713.test/asked-under',
 			'timestamp'      => 1700000800,
 			'duration_ms'    => 120,
 			'status_code'    => 200,
@@ -3206,8 +3270,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_a_span_under_a_url_with_no_aggregate_says_so(): void {
-		$hash = Log_Manager::url_hash( '/asked-half' );
-		$this->seed_urls( [ '/asked-half' => [ 'count' => 1 ] ] );
+		$hash = Log_Manager::url_hash( 'https://kea-7713.test/asked-half' );
+		$this->seed_urls( [ 'https://kea-7713.test/asked-half' => [ 'count' => 1 ] ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', "url:{$hash}" ] );
 
@@ -3249,7 +3313,7 @@ class PerformanceCITest extends TestCase {
 		// Rid must be ≤32 chars (fixed-width .idx field) so the lookup matches.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-flame-123456789012345678901',
-			'url'            => '/with-flame',
+			'url'            => 'https://kea-7713.test/with-flame',
 			'timestamp'      => 1700000600,
 			'duration_ms'    => 12,
 			'status_code'    => 200,
@@ -3258,7 +3322,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		// Flame entry indexed by rid + url_hash; FlameBuilder writes the
 		// flame body at Message::VALUE alongside the index entry.
-		$url_hash = Log_Manager::url_hash( '/with-flame' );
+		$url_hash = Log_Manager::url_hash( 'https://kea-7713.test/with-flame' );
 		$this->write_flame( [
 			'rid'      => $rid,
 			'url_hash' => $url_hash,
@@ -3282,7 +3346,7 @@ class PerformanceCITest extends TestCase {
 		// so deep flames were written but never indexed or returned.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-deep-flame-12345678901234567',
-			'url'            => '/with-deep-flame',
+			'url'            => 'https://kea-7713.test/with-deep-flame',
 			'timestamp'      => 1700000700,
 			'duration_ms'    => 12,
 			'status_code'    => 200,
@@ -3295,7 +3359,7 @@ class PerformanceCITest extends TestCase {
 			$flame = [ 'name' => "level{$i}", 'value' => 1, 'children' => [ $flame ] ];
 		}
 		$flame['rid']      = $rid;
-		$flame['url_hash'] = Log_Manager::url_hash( '/with-deep-flame' );
+		$flame['url_hash'] = Log_Manager::url_hash( 'https://kea-7713.test/with-deep-flame' );
 		$this->write_flame( $flame );
 
 		$interpreter = new Performance_CI_Node();
@@ -3739,7 +3803,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_grep_requests_answers_a_pattern_scan(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'g7', 'k' => 'request', 'm' => 'GET /elsewhere', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'g7', 'k' => 'request', 'm' => 'GET https://kea-7713.test/elsewhere', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'g7', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
 		] );
 
@@ -3967,7 +4031,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped( 'performance', 3 );
 		$rid = $this->write_request( [
 			'rid'            => 'rid-flame-elsewhere-00000000001',
-			'url'            => '/flame-in-p2',
+			'url'            => 'https://kea-7713.test/flame-in-p2',
 			'timestamp'      => 1700003100,
 			'duration_ms'    => 27,
 			'status_code'    => 200,
@@ -3977,7 +4041,7 @@ class PerformanceCITest extends TestCase {
 		$this->write_flame(
 			[
 				'rid'      => $rid,
-				'url_hash' => Log_Manager::url_hash( '/flame-in-p2' ),
+				'url_hash' => Log_Manager::url_hash( 'https://kea-7713.test/flame-in-p2' ),
 				'flame'    => [ 'name' => 'request', 'value' => 27, 'children' => [] ],
 			],
 			2
@@ -3995,7 +4059,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_dump_url_collects_recent_requests_from_every_partition(): void {
 		$this->activate_shipped( 'performance', 3 );
-		$url   = '/spread-across-partitions';
+		$url   = 'https://kea-7713.test/spread-across-partitions';
 		$hash  = Log_Manager::url_hash( $url );
 		$now   = self::tick();
 		$this->seed_urls( [ $url => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 61.0, 'last_seen' => $now - 742 ] ] );

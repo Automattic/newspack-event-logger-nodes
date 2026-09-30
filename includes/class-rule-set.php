@@ -558,18 +558,25 @@ final class Rule_Set {
 	}
 
 	/**
-	 * The rule list in its last-persisted form.
+	 * The rule governing a logged URL. The URL is absolute and rules are site
+	 * paths, so its path and query are what `Rule_Matcher` matches.
 	 *
-	 * @return Rule[]
+	 * @param string $url A logged URL, which carries its host.
+	 * @return Rule|null Null when no pattern matches.
+	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
-	public function rules(): array {
-		return $this->rules;
+	public function for_url( string $url ): ?Rule {
+		return $this->matcher()->match( Stats_Store::path_of( $url ) );
+	}
+
+	/** A matcher over these rules; Rule_Matcher owns the specificity order. */
+	public function matcher(): Rule_Matcher {
+		return new Rule_Matcher( $this->rules );
 	}
 
 	/**
-	 * The rule an id names. Every caller starts from a `rule_id` something else
-	 * already resolved — the record's stamp, an auto-tune decision, the editor's
-	 * read-back after `save()` — so matching a URL stays `Rule_Matcher`'s job.
+	 * The rule an id names: a record's stamp, an auto-tune decision, the
+	 * editor's read-back after `save()`.
 	 *
 	 * @param string $id Rule id.
 	 * @return Rule|null The rule, or null when no rule carries that id.
@@ -583,8 +590,12 @@ final class Rule_Set {
 		return null;
 	}
 
-	/** A matcher over these rules; Rule_Matcher owns the specificity order. */
-	public function matcher(): Rule_Matcher {
-		return new Rule_Matcher( $this->rules );
+	/**
+	 * The rule list in its last-persisted form.
+	 *
+	 * @return Rule[]
+	 */
+	public function rules(): array {
+		return $this->rules;
 	}
 }

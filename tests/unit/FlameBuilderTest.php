@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
@@ -50,14 +51,14 @@ class FlameBuilderTest extends TestCase {
 	private function completed_request( array $overrides = [] ): array {
 		$base = [
 			'rid'            => 'r' . \uniqid(),
-			'url'            => '/post/123',
+			'url'            => 'https://kea-7713.test/post/123',
 			'rule_id'        => 'r',
 			'duration_ms'    => 100.0,
 			'status_code'    => 200,
 			'error_status'   => '-',
 			'peak_mb'        => 32.0,
 			'request_method' => 'GET',
-			'server_name'    => 'example.com',
+			'server_name'    => 'kea-7713.test',
 			'country_code'   => 'US',
 			'http_from'      => '',
 			'user_agent'     => 'curl/7.85',
@@ -262,7 +263,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_a_builder_holding_a_pending_bucket_is_busy(): void {
 		Core::$now = 1790000417.0;
 		$fb        = new Flame_Builder_Node();
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/kakapo-3391', 'timestamp' => 1790000417 ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/kakapo-3391', 'timestamp' => 1790000417 ] ) );
 		$this->assertNull( $fb->idle_since() );
 	}
 
@@ -409,7 +410,7 @@ class FlameBuilderTest extends TestCase {
 				throw new \Newspack_Nodes\Worker_Should_Stop( 'deadline', 0, new \RuntimeException( 'flames flush failed' ) );
 			}
 		} );
-		$record = $this->completed_request( [ 'url' => '/heron', 'duration_ms' => 419.0 ] );
+		$record = $this->completed_request( [ 'url' => 'https://kea-7713.test/heron', 'duration_ms' => 419.0 ] );
 
 		$thrown = null;
 		try {
@@ -431,7 +432,7 @@ class FlameBuilderTest extends TestCase {
 		$successor->sink( $flames );
 		$successor->restore_state( $checkpoint );
 		$this->fill_request_at( $successor, $record, '7:30412:988' );
-		$this->fill_request_at( $successor, $this->completed_request( [ 'url' => '/heron', 'duration_ms' => 23.0 ] ), '7:31400:991' );
+		$this->fill_request_at( $successor, $this->completed_request( [ 'url' => 'https://kea-7713.test/heron', 'duration_ms' => 23.0 ] ), '7:31400:991' );
 		$successor->settle();
 
 		$totals = \array_values( $this->recent_hourly( $store ) );
@@ -565,15 +566,15 @@ class FlameBuilderTest extends TestCase {
 		$store = $this->stats_store( 0, $fb );
 		$fb->set_stats_store( $store );
 
-		$req1 = $this->completed_request( [ 'url' => '/x', 'duration_ms' => 100.0 ] );
-		$req2 = $this->completed_request( [ 'url' => '/x', 'duration_ms' => 200.0 ] );
+		$req1 = $this->completed_request( [ 'url' => 'https://kea-7713.test/x', 'duration_ms' => 100.0 ] );
+		$req2 = $this->completed_request( [ 'url' => 'https://kea-7713.test/x', 'duration_ms' => 200.0 ] );
 		$this->fill_request( $fb, $req1 );
 		$this->fill_request( $fb, $req2 );
 
 		// Force flush.
 		$fb->settle();
 
-		$url_hash = Log_Manager::url_hash( '/x' );
+		$url_hash = Log_Manager::url_hash( 'https://kea-7713.test/x' );
 		$stats    = $store->url_aggregate( $url_hash );
 		$this->assertNotNull( $stats );
 		// flame_raw retains sums; flame is finalized for display.
@@ -594,14 +595,14 @@ class FlameBuilderTest extends TestCase {
 
 		$seed = new Flame_Builder_Node();
 		$seed->set_stats_store( $store );
-		$this->fill_request( $seed, $this->completed_request( [ 'url' => '/cold', 'duration_ms' => 140.0 ] ) );
+		$this->fill_request( $seed, $this->completed_request( [ 'url' => 'https://kea-7713.test/cold', 'duration_ms' => 140.0 ] ) );
 		$seed->settle();
 
 		$fb->set_stats_store( $store );
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/cold', 'duration_ms' => 260.0 ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/cold', 'duration_ms' => 260.0 ] ) );
 		$fb->settle();
 
-		$stats = $store->url_aggregate( Log_Manager::url_hash( '/cold' ) );
+		$stats = $store->url_aggregate( Log_Manager::url_hash( 'https://kea-7713.test/cold' ) );
 		$this->assertNotNull( $stats );
 		$this->assertEqualsWithDelta( 400.0, $stats['flame_raw']['sum_value'], 1e-6 );
 		$this->assertSame( 2, $stats['flame_raw']['count'] );
@@ -624,8 +625,8 @@ class FlameBuilderTest extends TestCase {
 		$entries = $this->logged_in(
 			$this->make_temp_dir(),
 			function () use ( $fb ): void {
-				$this->fill_request( $fb, $this->completed_request( [ 'url' => '/hoiho/3307', 'duration_ms' => 5.0, 'timestamp' => self::tick() ] ) );
-				$this->fill_request( $fb, $this->completed_request( [ 'url' => '/hoiho/3308', 'duration_ms' => 7.0, 'timestamp' => self::tick() ] ) );
+				$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/hoiho/3307', 'duration_ms' => 5.0, 'timestamp' => self::tick() ] ) );
+				$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/hoiho/3308', 'duration_ms' => 7.0, 'timestamp' => self::tick() ] ) );
 				$fb->settle();
 				$fb->fire_cb();
 			}
@@ -636,23 +637,33 @@ class FlameBuilderTest extends TestCase {
 		$this->assertContains( '2 refused url blobs', $told );
 	}
 
-	public function test_a_nameless_producer_is_filed_under_unknown(): void {
+	/**
+	 * A record whose URL names no host throws at the fold's intake, before
+	 * anything of it is folded or forwarded, and the builder folds the next.
+	 */
+	public function test_a_record_naming_no_host_throws_before_anything_is_folded(): void {
+		$store = $this->stats_store( 0 );
 		$fb    = new Flame_Builder_Node();
-		$store = $this->stats_store( 0, $fb );
+		$fb->name( 'fb' );
 		$fb->set_stats_store( $store );
+		$fb->connect_node( 'flames:partition' );
+		$flames = new Capture_Sink_Node();
+		$fb->sink( $flames );
 
-		// `accumulate_dimensions()` maps an empty server to the literal
-		// 'Unknown' on the `server` axis, and the dashboard builds its picker
-		// from THAT axis — so WP-CLI and cron traffic put 'Unknown' in the
-		// dropdown, and choosing it has to find their rows. The two axes have
-		// to agree on the name.
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/cron', 'server_name' => '', 'duration_ms' => 12.0, 'timestamp' => self::tick() ] ) );
+		try {
+			$this->fill_request_at( $fb, $this->completed_request( [ 'url' => '/unknown-7731', 'timestamp' => self::tick() ] ), '7:100:41' );
+			$this->fail( 'a hostless record is refused' );
+		} catch ( \InvalidArgumentException $e ) {
+			$this->assertStringContainsString( '/unknown-7731', $e->getMessage() );
+		}
+		$this->assertSame( [], $flames->captured, 'nothing is forwarded' );
+		$this->assertSame( [], $this->get_stats( $fb )['pending_buckets'], 'nothing is folded' );
+		$this->assertSame( [ 'counted' => '', 'span' => [] ], $fb->save_state(), 'the crumb is not counted' );
+
+		$this->fill_request_at( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/kea-7731', 'duration_ms' => 29.0, 'timestamp' => self::tick() ] ), '7:200:42' );
+		$this->assertSame( [ 'flames:partition' ], \array_values( \array_intersect( \array_column( $flames->captured, Message::TO ), [ 'flames:partition' ] ) ), 'the next record forwards its flame' );
 		$fb->settle();
-
-		[ $from, $to ] = self::window();
-		$this->assertSame( [ 'Unknown' ], $store->servers( false, $from, $to ) );
-		$this->assertSame( 1, $store->url_rows( [ 'Unknown' ], false, [ '/cron' ], false, $from, $to )['/cron']['count'] ?? null );
-		$this->assertArrayHasKey( 'Unknown', $store->dimension( Stats_Store::DIM_SERVER, '', $from, $to, false ) );
+		$this->assertSame( [ 1 ], \array_column( \array_values( $this->recent_hourly( $store ) ), 'count' ), 'and folds' );
 	}
 
 	public function test_the_url_rows_are_filed_by_server_on_a_spoke_too(): void {
@@ -666,12 +677,12 @@ class FlameBuilderTest extends TestCase {
 		// the `server` dimension has values, which is everywhere, so gating
 		// this would empty the URL table on every spoke rather than save it
 		// anything.
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/spoke', 'server_name' => 'lone.example', 'duration_ms' => 12.0, 'timestamp' => self::tick() ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://lone.example/spoke', 'duration_ms' => 12.0, 'timestamp' => self::tick() ] ) );
 		$fb->settle();
 
 		[ $from, $to ] = self::window();
 		$this->assertSame( [ 'lone.example' ], $store->servers( false, $from, $to ) );
-		$this->assertArrayHasKey( '/spoke', $store->url_rows( [ 'lone.example' ], false, null, false, $from, $to ) );
+		$this->assertArrayHasKey( 'https://lone.example/spoke', $store->url_rows( [ 'lone.example' ], false, null, false, $from, $to ) );
 	}
 
 	public function test_flush_persists_hourly_to_memcache(): void {
@@ -772,7 +783,7 @@ class FlameBuilderTest extends TestCase {
 
 		$from = Stats_Store::bucket_start( $request['timestamp'] );
 		$to   = $from + Stats_Store::BUCKET_SECONDS;
-		$urls = $store->url_rows( [ 'example.com' ], false, null, false, $from, $to );
+		$urls = $store->url_rows( [ 'kea-7713.test' ], false, null, false, $from, $to );
 		foreach ( $urls as &$row ) {
 			unset( $row['last_seen'] );
 		}
@@ -943,7 +954,7 @@ class FlameBuilderTest extends TestCase {
 		$fb    = new Flame_Builder_Node();
 		$store = $this->stats_store( 0, $fb );
 		$fb->set_stats_store( $store );
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/kokako-7731', 'duration_ms' => 0.0, 'timestamp' => self::tick() ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/kokako-7731', 'duration_ms' => 0.0, 'timestamp' => self::tick() ] ) );
 		$fb->settle();
 
 		$this->assertSame( 1, $this->hourly_at( $store, self::tick() )['requests'] ?? null );
@@ -1315,8 +1326,8 @@ class FlameBuilderTest extends TestCase {
 				}
 			}
 		} );
-		$stopped = $this->completed_request( [ 'url' => '/kea-42', 'duration_ms' => 37.0 ] );
-		$this->fill_request_at( $first, $this->completed_request( [ 'url' => '/kea-41', 'duration_ms' => 61.0 ] ), '3:100:41' );
+		$stopped = $this->completed_request( [ 'url' => 'https://kea-7713.test/kea-42', 'duration_ms' => 37.0 ] );
+		$this->fill_request_at( $first, $this->completed_request( [ 'url' => 'https://kea-7713.test/kea-41', 'duration_ms' => 61.0 ] ), '3:100:41' );
 		try {
 			$this->fill_request_at( $first, $stopped, '3:200:42' );
 			$this->fail( 'expected the plain stop to propagate' );
@@ -1339,7 +1350,7 @@ class FlameBuilderTest extends TestCase {
 		$successor->sink( $flames );
 		$successor->restore_state( $checkpoint );
 		$this->fill_request_at( $successor, $stopped, '3:200:42' );
-		$this->fill_request_at( $successor, $this->completed_request( [ 'url' => '/kea-43', 'duration_ms' => 777.0 ] ), '3:300:43' );
+		$this->fill_request_at( $successor, $this->completed_request( [ 'url' => 'https://kea-7713.test/kea-43', 'duration_ms' => 777.0 ] ), '3:300:43' );
 		$successor->settle();
 
 		$totals = \array_values( $this->recent_hourly( $store ) );
@@ -1404,7 +1415,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->name( 'fb' );
 		$fb->sink( new Capture_Sink_Node() );
 
-		foreach ( [ '/alpha', '/beta', '/gamma' ] as $url ) {
+		foreach ( [ 'https://kea-7713.test/alpha', 'https://kea-7713.test/beta', 'https://kea-7713.test/gamma' ] as $url ) {
 			$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
 		}
 
@@ -1419,7 +1430,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->sink( new Capture_Sink_Node() );
 
 		// One request is enough to reach a cap of three and freeze the table.
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/warm' ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/warm' ] ) );
 		$stats = $this->get_stats( $fb );
 		$this->assertArrayHasKey( 'intern_count', $stats );
 		$frozen_at = $stats['intern_count'];
@@ -1799,7 +1810,7 @@ class FlameBuilderTest extends TestCase {
 		$store = $this->stats_store( 0, $fb );
 		$fb->set_stats_store( $store );
 		$this->fill_request( $fb, $this->completed_request( [
-			'url'         => '/slow-job-9930',
+			'url'         => 'https://kea-7713.test/slow-job-9930',
 			'timestamp'   => $start,
 			'duration_ms' => 420000.0,
 			'status_code' => 200,
@@ -1807,8 +1818,8 @@ class FlameBuilderTest extends TestCase {
 		$fb->settle();
 
 		$ended = \gmmktime( 14, 5, 0, 8, 27, 2026 );
-		$this->assertSame( 1, $store->url_rows( [ 'example.com' ], false, [ '/slow-job-9930' ], false, $ended, $ended + 300 )['/slow-job-9930']['count'] ?? 0, 'filed in the bucket it finished in' );
-		$this->assertSame( [], $store->url_rows( [ 'example.com' ], false, null, false, $start - $start % 300, $ended ), 'and in none before it' );
+		$this->assertSame( 1, $store->url_rows( [ 'kea-7713.test' ], false, [ 'https://kea-7713.test/slow-job-9930' ], false, $ended, $ended + 300 )['https://kea-7713.test/slow-job-9930']['count'] ?? 0, 'filed in the bucket it finished in' );
+		$this->assertSame( [], $store->url_rows( [ 'kea-7713.test' ], false, null, false, $start - $start % 300, $ended ), 'and in none before it' );
 	}
 
 	public function test_a_settle_costs_round_trips_by_ledger_not_by_url(): void {
@@ -1821,7 +1832,7 @@ class FlameBuilderTest extends TestCase {
 			$fb->set_stats_store( $this->stats_store( $partition ) );
 			for ( $i = 0; $i < $urls; $i++ ) {
 				$this->fill_request( $fb, $this->completed_request( [
-					'url'         => "/batched-{$i}-6612",
+					'url'         => "https://kea-7713.test/batched-{$i}-6612",
 					'duration_ms' => 12.0,
 					'status_code' => 200,
 				] ) );
@@ -1880,11 +1891,11 @@ class FlameBuilderTest extends TestCase {
 		for ( $at = \gmmktime( 9, 0, 0, 9, 29, 2026 ), $i = 1; $at < $end; $at += 37, $i++ ) {
 			if ( ! $stalled && $at >= $stall ) {
 				$line( 1, 'r-stall-5521', 'process (start)', $stall );
-				$line( 2, 'r-stall-5521', 'request', $stall, [ 'm' => 'GET /stalled-5521' ] );
+				$line( 2, 'r-stall-5521', 'request', $stall, [ 'm' => 'GET https://kea-7713.test/stalled-5521' ] );
 				$stalled = true;
 			}
 			$line( 1, "r-replay-{$i}", 'process (start)', $at );
-			$line( 2, "r-replay-{$i}", 'request', $at + 0.01, [ 'm' => 'GET /replayed-7309' ] );
+			$line( 2, "r-replay-{$i}", 'request', $at + 0.01, [ 'm' => 'GET https://kea-7713.test/replayed-7309' ] );
 			$line( 3, "r-replay-{$i}", 'process (complete)', $at + 0.2, [ 'duration_ms' => 200.0, 'status_code' => 200 ] );
 			$rb->fire_cb();
 			if ( 0 === $i % 12 ) {
@@ -1929,7 +1940,7 @@ class FlameBuilderTest extends TestCase {
 		$done = \gmmktime( 10, 41, 5, 9, 29, 2026 );
 
 		$this->fill_request( $fb, $this->completed_request( [
-			'url'         => '/replayed-3391',
+			'url'         => 'https://kea-7713.test/replayed-3391',
 			'duration_ms' => 250.0,
 			'timestamp'   => $done,
 			'flame'       => [ 'name' => 'root', 'value' => 250.0, 'children' => [ [ 'name' => 'gull hook', 'value' => 120.0, 'children' => [] ] ] ],
@@ -1937,7 +1948,7 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->settle();
 
-		$stats = $store->url_aggregate( Log_Manager::url_hash( '/replayed-3391' ) );
+		$stats = $store->url_aggregate( Log_Manager::url_hash( 'https://kea-7713.test/replayed-3391' ) );
 		$this->assertArrayHasKey( 'gull hook', Core::arr( $stats['profiles']['categories'] ?? null ), 'a day-old category survives its own arrival' );
 		$this->assertSame( $done, $stats['flame_raw']['children'][0]['ts'] ?? null, 'the tree is stamped with its completion' );
 	}
@@ -1948,12 +1959,12 @@ class FlameBuilderTest extends TestCase {
 		$fb    = new Flame_Builder_Node();
 		$store = $this->stats_store( 0, $fb );
 		$fb->set_stats_store( $store );
-		$hash   = Log_Manager::url_hash( '/kereru/4471' );
+		$hash   = Log_Manager::url_hash( 'https://kea-7713.test/kereru/4471' );
 		$stored = [ 'flame' => [ 'name' => 'aggregate', 'sum_value' => 4471.0, 'count' => 73, 'children' => [] ], 'profiles' => [ 'count' => 73, 'sum_req_time' => 4471.0, 'categories' => [] ] ];
 		$this->assertSame( [ $hash ], $store->set_url_aggregates( [ $hash => $stored ] ) );
 
 		$this->refuse_stats_reads( '/^' . \preg_quote( Stats_Store::TABLE_URL, '/' ) . '/' );
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/kereru/4471', 'duration_ms' => 29.0, 'timestamp' => self::tick() ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/kereru/4471', 'duration_ms' => 29.0, 'timestamp' => self::tick() ] ) );
 		$this->refuse_stats_reads( '' );
 		$fb->settle();
 
@@ -1973,7 +1984,7 @@ class FlameBuilderTest extends TestCase {
 		for ( $c = 0; $c < Stats_Store::MAX_LB_CATEGORIES + 37; $c++ ) {
 			$profiles[ "event {$c}" ] = [ 'time' => 3.0 + $c, 'count' => 1, 'ts' => $now, 'entries' => [] ];
 		}
-		$request = [ 'url' => '/tail/7', 'duration_ms' => 900.0, 'timestamp' => $now, 'profiles' => $profiles ];
+		$request = [ 'url' => 'https://kea-7713.test/tail/7', 'duration_ms' => 900.0, 'timestamp' => $now, 'profiles' => $profiles ];
 
 		$this->fill_request( $fb, $this->completed_request( $request ) );
 		$fb->settle();
@@ -1981,7 +1992,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'profiles' => [ 'event 0' => $profiles['event 0'] ] ] + $request ) );
 		$fb->settle();
 
-		$hash = Log_Manager::url_hash( '/tail/7' );
+		$hash = Log_Manager::url_hash( 'https://kea-7713.test/tail/7' );
 		$blob = Core::arr( $store->url_aggregate( $hash ) );
 		$prof = Core::arr( $blob['profiles'] ?? null );
 		$cats = Core::arr( $prof['categories'] ?? null );
@@ -2018,7 +2029,7 @@ class FlameBuilderTest extends TestCase {
 			$this->make_temp_dir(),
 			function () use ( $fb, $now ): void {
 				Core::$now = $now;
-				$this->fill_request( $fb, $this->completed_request( [ 'url' => '/narrated-3301', 'timestamp' => $now ] ) );
+				$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/narrated-3301', 'timestamp' => $now ] ) );
 				$fb->settle();
 				$fb->fire_cb();
 			}
@@ -2031,7 +2042,7 @@ class FlameBuilderTest extends TestCase {
 		$n = 0;
 		foreach ( [
 			[ 'k' => 'process (start)', 'm' => '4471 on host', 'l' => '' ],
-			[ 'k' => 'request', 'm' => 'POST /wp-json/newspack-nodes/v1/workers/spawn' ],
+			[ 'k' => 'request', 'm' => 'POST https://kea-7713.test/wp-json/newspack-nodes/v1/workers/spawn' ],
 			[ 'k' => $told['k'], 'm' => $told['m'], 'keep' => 1 ],
 			[ 'k' => 'process (complete)', 'duration_ms' => 595000.0, 'status_code' => 200 ],
 		] as $entry ) {
@@ -2165,7 +2176,7 @@ class FlameBuilderTest extends TestCase {
 			$entries[ "stmt-$i" ] = [ 0.01, 1 ];
 		}
 		$this->fill_request( $fb, $this->completed_request( [
-			'server_name' => 'srv-cap',
+			'url'         => 'https://srv-cap.test/post/123',
 			'duration_ms' => 100.0,
 			'timestamp'   => $now,
 			'profiles'    => [
@@ -2174,7 +2185,7 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->settle();
 
-		$lb_s = $this->board( $store, 'srv-cap' );
+		$lb_s = $this->board( $store, 'srv-cap.test' );
 		$this->assertArrayHasKey( 'wpdb', $lb_s['categories'] );
 		$this->assertLessThanOrEqual(
 			Flame_Builder_Node::ENTRY_LIMIT_GLOBAL_UPPER,
@@ -2190,7 +2201,7 @@ class FlameBuilderTest extends TestCase {
 
 		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [
-			'server_name' => 'srv-cat',
+			'url'         => 'https://srv-cat.test/post/123',
 			'duration_ms' => 50.0,
 			'timestamp'   => $now,
 			'profiles'    => [
@@ -2200,7 +2211,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->settle();
 
 		$bucket    = Stats_Store::bucket_key( $now );
-		$srv_cats  = $this->cat_series( $store, 'srv-cat' );
+		$srv_cats  = $this->cat_series( $store, 'srv-cat.test' );
 		$this->assertArrayHasKey( $bucket, $srv_cats );
 		$this->assertArrayHasKey( 'wpdb', $srv_cats[ $bucket ] );
 		$this->assertArrayHasKey( 'total', $srv_cats[ $bucket ], 'per-server "total" present' );
@@ -2217,7 +2228,7 @@ class FlameBuilderTest extends TestCase {
 
 		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [
-			'server_name'  => 'srv-x',
+			'url'          => 'https://srv-x.test/post/123',
 			'request_method' => 'POST',
 			'duration_ms'  => 25.0,
 			'timestamp'    => $now,
@@ -2225,11 +2236,11 @@ class FlameBuilderTest extends TestCase {
 		$fb->settle();
 
 		// Per-server dim under 'method' should be populated.
-		$dim_method = $this->dim_series( $store, 'method', 'srv-x' );
+		$dim_method = $this->dim_series( $store, 'method', 'srv-x.test' );
 		$this->assertNotEmpty( $dim_method );
 
 		// Per-server dim under 'server' should be EMPTY (skipped).
-		$dim_server = $this->dim_series( $store, 'server', 'srv-x' );
+		$dim_server = $this->dim_series( $store, 'server', 'srv-x.test' );
 		$this->assertEmpty( $dim_server, "per-server 'server' dim is skipped" );
 	}
 
@@ -2239,7 +2250,7 @@ class FlameBuilderTest extends TestCase {
 		// Set store with an entry that has flame_raw set (post-settle format).
 		$fb       = new Flame_Builder_Node();
 		$store    = $this->stats_store( 0, $fb );
-		$url      = '/promoted';
+		$url      = 'https://kea-7713.test/promoted';
 		$url_hash = Log_Manager::url_hash( $url );
 		$store->set_url_aggregates( [
 			$url_hash => [
@@ -2454,26 +2465,6 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	// --- Per-server leaderboard tracks count when hub mode + server set ---
-
-	public function test_per_server_leaderboard_skipped_when_server_name_empty(): void {
-		// Hub mode but empty server_name → no per-server data.
-		$fb    = new Flame_Builder_Node();
-		$store = $this->stats_store( 0, $fb );
-		$fb->set_stats_store( $store );
-		$fb->set_is_hub( true );
-
-		$this->fill_request( $fb, $this->completed_request( [
-			'server_name' => '',
-			'duration_ms' => 50.0,
-			'timestamp'   => self::tick(),
-			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
-		] ) );
-		$fb->settle();
-
-		$this->assertSame( 1, $this->board( $store )['count'], 'it still counts globally' );
-		$keys = \array_unique( \array_column( $this->ledger_asks( Stats_Store::LEDGER_LEADERBOARD )[0][1], 1 ) );
-		$this->assertSame( [ Stats_Store::SITE ], \array_values( $keys ), 'but no per-server scope is filed for a nameless server' );
-	}
 
 	public function test_stats_time_the_request_not_the_flame_that_covers_it(): void {
 		// The flame's value is raised to COVER its children so the treemap does
@@ -2722,7 +2713,7 @@ class FlameBuilderTest extends TestCase {
 
 		$now = self::tick();
 		$req = $this->completed_request( [
-			'url'         => '/?cache-cozy',
+			'url'         => 'https://kea-7713.test/?cache-cozy',
 			'duration_ms' => 40.0,
 			'is_worker'   => true,
 			'peak_mb'     => 12.0,
@@ -2734,8 +2725,8 @@ class FlameBuilderTest extends TestCase {
 
 		// Per-URL timing IS kept, on the worker family's row.
 		[ $from, $to ] = self::window();
-		$this->assertSame( [], $store->url_rows( [ 'example.com' ], false, null, false, $from, $to ), 'no reader row' );
-		$row = $store->url_rows( [ 'example.com' ], true, [ '/?cache-cozy' ], false, $from, $to )['/?cache-cozy'];
+		$this->assertSame( [], $store->url_rows( [ 'kea-7713.test' ], false, null, false, $from, $to ), 'no reader row' );
+		$row = $store->url_rows( [ 'kea-7713.test' ], true, [ 'https://kea-7713.test/?cache-cozy' ], false, $from, $to )['https://kea-7713.test/?cache-cozy'];
 		$this->assertSame( 1, $row['count'] );
 		$this->assertSame( 1, $row['timed_count'] );
 		$this->assertEqualsWithDelta( 40.0, $row['sum_ms'], 1e-6 );
@@ -2753,7 +2744,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 
 		$now = self::tick();
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/x', 'duration_ms' => 40.0, 'peak_mb' => 12.0, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea-7713.test/x', 'duration_ms' => 40.0, 'peak_mb' => 12.0, 'timestamp' => $now ] ) );
 		$fb->settle();
 
 		$hourly = $this->hourly_at( $store, $now );
@@ -2774,7 +2765,7 @@ class FlameBuilderTest extends TestCase {
 		$fb_hub->set_is_hub( true );
 
 		$req = $this->completed_request( [
-			'server_name' => 'srv-a',
+			'url'         => 'https://srv-a.test/post/123',
 			'duration_ms' => 50.0,
 			'timestamp'   => self::tick(),
 			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
@@ -2784,12 +2775,12 @@ class FlameBuilderTest extends TestCase {
 		$fb_spoke->settle();
 
 		// Spoke: no per-server board.
-		$this->assertSame( 0, $this->board( $store, 'srv-a' )['count'] );
+		$this->assertSame( 0, $this->board( $store, 'srv-a.test' )['count'] );
 
 		// Hub: the per-server board counts it.
 		$this->fill_request( $fb_hub, $req );
 		$fb_hub->settle();
-		$this->assertSame( 1, $this->board( $store, 'srv-a' )['count'] );
+		$this->assertSame( 1, $this->board( $store, 'srv-a.test' )['count'] );
 	}
 
 	public function test_disable_uses_the_stamped_rules_threshold(): void {
@@ -2799,12 +2790,35 @@ class FlameBuilderTest extends TestCase {
 		$fb  = new Flame_Builder_Node();
 		$req = $this->completed_request( [
 			'rule_id'  => 'loud',
-			'url'      => '/loud/x',
+			'url'      => 'https://kea-7713.test/loud/x',
 			'profiles' => [ 'noisy_hook hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ] ],
 		] );
 		$this->fill_request( $fb, $req );
 		$state = $fb->get_auto_tune_state();
 		$this->assertSame( [ 'noisy_hook' ], $state['disable_hooks']['loud'] );
+	}
+
+	/** A stamp naming no rule, and none at all. */
+	public static function unresolved_stamps(): array {
+		return [
+			'no stamp'       => [ '' ],
+			'a deleted rule' => [ 'ghost-9271' ],
+		];
+	}
+
+	/** With no stamped rule the URL decides, and rules match the path, not the absolute URL. */
+	#[DataProvider( 'unresolved_stamps' )]
+	public function test_an_unstamped_request_matches_its_rule_by_path( string $stamp ): void {
+		$this->set_rule( [ 'id' => 'zephyr', 'pattern' => '/zephyr-9271/', 'auto_disable_threshold' => 100 ] );
+		$fb  = new Flame_Builder_Node();
+		$req = $this->completed_request( [
+			'rule_id'  => $stamp,
+			'url'      => 'https://kea-7713.test/zephyr-9271/x',
+			'profiles' => [ 'noisy_hook hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ] ],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [ 'noisy_hook' ], $state['disable_hooks']['zephyr'] ?? null );
 	}
 
 	public function test_no_stamped_rule_applies_no_auto_tune(): void {
@@ -2813,7 +2827,7 @@ class FlameBuilderTest extends TestCase {
 		$fb  = new Flame_Builder_Node();
 		$req = $this->completed_request( [
 			'rule_id'  => 'ghost',
-			'url'      => '/unmatched',
+			'url'      => 'https://kea-7713.test/unmatched',
 			'profiles' => [ 'h hook' => [ 'time' => 0.1, 'count' => 999, 'entries' => [] ] ],
 		] );
 		$this->fill_request( $fb, $req );

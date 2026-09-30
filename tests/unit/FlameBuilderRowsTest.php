@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Stats_Store;
@@ -53,12 +54,12 @@ class FlameBuilderRowsTest extends TestCase {
 		}
 	}
 
-	/** Fill one completed request for `$url`, finished at the tick, at 37 ms. */
+	/** Fill one completed request for `$url`, finished at the tick, at 37 ms; a null override drops its field. */
 	private static function fold( Flame_Builder_Node $fb, string $rid, string $url, array $over = [] ): void {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_STRUCT;
 		$message[ Message::ID ]    = "3:{$rid}:41";
-		$message[ Message::VALUE ] = $over + [
+		$message[ Message::VALUE ] = \array_filter( $over + [
 			'rid'            => $rid,
 			'url'            => $url,
 			'duration_ms'    => 37.0,
@@ -72,7 +73,7 @@ class FlameBuilderRowsTest extends TestCase {
 			'timestamp'      => self::T,
 			'entries'        => [],
 			'profiles'       => [],
-		];
+		], static fn ( mixed $field ): bool => null !== $field );
 		$fb->fill( $message );
 	}
 
@@ -318,19 +319,65 @@ class FlameBuilderRowsTest extends TestCase {
 		$this->assertContains( Stats_Store::url_rows_key( Stats_Store::OTHER_KEY, false ), $keys, 'the window holds 129, so a new one is Other' );
 	}
 
-	/**
-	 * A server seen only through records with no URL files its name all the
-	 * same, so it holds its room under the cap and reaches the picker.
-	 */
-	public function test_a_server_seen_only_without_a_url_is_named(): void {
+	/** The server field a record carries, or null where it carries none. */
+	public static function server_fields(): array {
+		return [
+			'no server field'      => [ null ],
+			'a disagreeing server' => [ 'heron-3301.test' ],
+		];
+	}
+
+	/** Every per-server row files under the URL's host, whatever the record's server field says. */
+	#[DataProvider( 'server_fields' )]
+	public function test_a_record_files_under_its_urls_host( ?string $server_name ): void {
 		$this->forget_stats_asks();
-		$fb = $this->hub( 'fb-kea-nameless' );
-		self::fold( $fb, 'rbare', '', [ 'server_name' => 'bare-4471.test' ] );
+		$fb = $this->hub( 'fb-kea-tui' );
+		self::fold( $fb, 'rtui', 'https://tui-4471.test/x', [ 'server_name' => $server_name ] );
 		$fb->settle();
 
-		$names = \array_keys( $this->appended( Stats_Store::LEDGER_NAMES ) );
-		$this->assertContains( self::HOUR . ' ' . Stats_Store::servers_key( false ) . ' bare-4471.test', $names );
-		$this->assertSame( [], $this->appended( Stats_Store::LEDGER_URL_ROWS ), 'and files no URL row' );
+		$url_rows = \array_keys( $this->appended( Stats_Store::LEDGER_URL_ROWS ) );
+		$this->assertSame( [ self::T . ' ' . Stats_Store::url_rows_key( 'tui-4471.test', false ) . ' https://tui-4471.test/x' ], $url_rows );
+		$this->assertContains( self::HOUR . ' ' . Stats_Store::servers_key( false ) . ' tui-4471.test', \array_keys( $this->appended( Stats_Store::LEDGER_NAMES ) ) );
+		$dims = $this->appended( Stats_Store::LEDGER_DIMS );
+		$this->assertArrayHasKey( self::T . ' server tui-4471.test', $dims, 'the server axis' );
+		$this->assertArrayHasKey( self::T . ' ' . Stats_Store::dim_key( 'status', 'tui-4471.test' ) . ' 2xx', $dims, 'the per-server scope' );
+		$this->assertSame( [], \preg_grep( '/heron-3301/', \array_keys( $dims ) ), 'the record\'s own field names nothing' );
+	}
+
+	/** A hub and a spoke. */
+	public static function roles(): array {
+		return [
+			'hub'   => [ true ],
+			'spoke' => [ false ],
+		];
+	}
+
+	/**
+	 * The server axis files one site row for the reader traffic of each URL
+	 * host, on a hub and a spoke alike, and nothing else: no worker's, no
+	 * per-server scope's and no URL's.
+	 */
+	#[DataProvider( 'roles' )]
+	public function test_the_server_axis_files_the_readers_host_for_the_site_alone( bool $is_hub ): void {
+		$this->forget_stats_asks();
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb-kea-axis' );
+		$fb->set_is_hub( $is_hub );
+		$fb->set_stats_store( $this->stats_store( 3, $fb ) );
+		self::fold( $fb, 'rkaka', 'https://kaka-5519.test/nest', [ 'duration_ms' => 29.0, 'peak_mb' => 7.0 ] );
+		self::fold( $fb, 'rkakaw', 'https://kaka-5519.test/wp-cron.php', [ 'is_worker' => true, 'duration_ms' => 53.0 ] );
+		$fb->settle();
+
+		$axis = [];
+		foreach ( $this->appends( Stats_Store::LEDGER_DIMS ) as $rows ) {
+			foreach ( $rows as [ $t, $k, $x, $columns ] ) {
+				if ( \str_contains( $k, Stats_Store::DIM_SERVER ) ) {
+					$axis[ "{$t} {$k} {$x}" ] = $columns;
+				}
+			}
+		}
+		$this->assertEquals( [ self::T . ' server kaka-5519.test' => [ 1, 29.0, 7.0, 1 ] ], $axis );
+		$this->assertSame( [], \preg_grep( '/server/', \array_keys( $this->appended( Stats_Store::LEDGER_URL_DIMS ) ) ), 'no URL files a server axis' );
 	}
 
 	/** A URL-bucket no timed request reached files its minimum and maximum as not measured. */
