@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.111.2] - 2026-09-30
+
 ### Fixed
 
 - **The URL modal's request list shows a new request on the refresh that brings it.** `UrlDetailMergeNode` dropped every `dump_url` reply whose `last_modified` matched the one it held, and that stamp is the flame builder's flush of the URL's blob, a stage apart from the request indexes, so a reply carrying new rows waited until some partition next flushed the URL; on eve, polling every 2 s, 32 of 60 replies were dropped and each drop was followed by a burst of 4 to 7 rows. It drops a reply only when it carries no request the node lacks and its stamp is unchanged.
