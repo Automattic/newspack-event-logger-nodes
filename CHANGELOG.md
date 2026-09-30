@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.111.1] - 2026-09-29
+
 ### Changed
 
 - **The docs no longer say a salt rotation resets the stats.** With newspack-nodes 2.79.0 a durable Table's key carries no salt, so `wp nodes memcache flush` leaves the SQLite stats alone; the reset, and a stats schema change's migration, is `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine`. Decision 5, the architecture guide, the workflow, review and debugging skills, the key-layout diagrams and docs/upgrading.md say so.
