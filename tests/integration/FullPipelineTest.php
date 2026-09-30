@@ -92,7 +92,7 @@ class FullPipelineTest extends TestCase {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
 
-		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
+		$store      = $this->stats_store( 0 );
 		$fb         = new Flame_Builder_Node();
 		$fb->name( 'flame-builder' );
 		$fb->set_stats_store( $store );
@@ -145,11 +145,11 @@ class FullPipelineTest extends TestCase {
 		$this->assertNotEmpty( $process['children'] );
 		$this->assertSame( 'init', $process['children'][0]['name'] );
 
-		// 3. FlameBuilder.flush() writes URL aggregate to memcache.
+		// 3. A settle writes the URL aggregate to the url Table.
 		$fb->settle();
 		$url_hash = Log_Manager::url_hash( '/x' );
 		$stats    = $store->url_aggregate( $url_hash );
-		$this->assertNotNull( $stats, 'flush should write per-URL aggregate' );
+		$this->assertNotNull( $stats, 'a settle writes the per-URL aggregate' );
 		$this->assertSame( 1, $stats['flame_raw']['count'] );
 	}
 }

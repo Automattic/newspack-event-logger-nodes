@@ -7,10 +7,10 @@
  * declares functions, not classes, so the classmap autoloader never maps it and
  * it costs nothing at runtime.
  *
- * Two sweeps: every option row the plugin wrote, and the three stats Tables'
+ * Two sweeps: every option row the plugin wrote, and the stats stores'
  * SQLite files. The rest of the on-disk state — logs, locks, offsets, IPC —
  * lives under the substrate's base directory, and the `newspack-nodes`
- * uninstall removes that tree, which leaves `tables/` behind.
+ * uninstall removes that tree, which leaves `tables/` and `ledgers/` behind.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -57,35 +57,40 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
 }
 
 /**
- * Delete the stats Tables' SQLite files: each partition's file, and the WAL
- * files SQLite keeps beside it, named by the substrate's `Table_Node::file()`
- * across every partition a fleet can run.
+ * Delete the stats stores' SQLite files: each partition's file of every
+ * stats Table, every stats Ledger's one file, and the WAL files SQLite keeps
+ * beside each, named by the substrate's `Table_Node::file()` and
+ * `Ledger_Node::file()`.
  *
  * Only under a base directory this install configured. The schema default
  * is the one every unconfigured install on a host shares, and so are the
  * files under it, as the substrate's own uninstall holds. Nothing to do
  * where the substrate is not loaded, since only it can name the files.
  *
- * @param list<string> $tables The stats Tables, `Stats_Store::TABLES`.
+ * @param list<string> $tables  The stats Tables, `Stats_Store::TABLE_URL`.
+ * @param list<string> $ledgers The stats Ledgers, `Stats_Store::LEDGER_COLUMNS`' keys.
  * @return int Files deleted.
  */
-function delete_stats_tables( array $tables ): int {
-	if ( ! \class_exists( '\Newspack_Nodes\Table_Node' ) ) {
+function delete_stats_files( array $tables, array $ledgers ): int {
+	if ( ! \class_exists( '\Newspack_Nodes\Ledger_Node' ) ) {
 		return 0;
 	}
 	$base = \Newspack_Nodes\Config::configured_base_directory();
 	if ( '' === $base || \Newspack_Nodes\Settings_Schema::get()->defaults()['base_directory'] === $base ) {
 		return 0;
 	}
-	$deleted = 0;
+	$files = \array_map( \Newspack_Nodes\Ledger_Node::file( ... ), $ledgers );
 	foreach ( $tables as $table ) {
 		for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
-			$file = \Newspack_Nodes\Table_Node::file( $table, $partition );
-			foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
-				// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.
-				if ( \is_file( $path ) && \unlink( $path ) ) {
-					++$deleted;
-				}
+			$files[] = \Newspack_Nodes\Table_Node::file( $table, $partition );
+		}
+	}
+	$deleted = 0;
+	foreach ( $files as $file ) {
+		foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
+			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.
+			if ( \is_file( $path ) && \unlink( $path ) ) {
+				++$deleted;
 			}
 		}
 	}

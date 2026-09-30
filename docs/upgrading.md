@@ -6,22 +6,32 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
-- **Flush the stats Tables after deploying: search and `dump_url` read a
-  new namespace.** Each URL's row is also filed by key, as
-  `url_row_h:{Y-m-d-H}:{server_key}:{hash}`, and `urls --search`,
-  `dump_url` and `ask url:` read it there instead of a shard of the index.
-  An hour written before the upgrade holds no such key, so those three read
-  it as empty while the table beside them still counts it. Run
-  `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine`
-  (decision 5); nothing reads the missing keys any other way.
+- **The stats move to Ledgers: flush them after deploying, and read
+  `urls` without `ranked` or `estimated`.** This release needs
+  newspack-nodes 2.80.0 for its Ledgers; below it the plugin stays dormant
+  behind its admin notice. Nothing migrates the memcache-era keys: run
+  `wp nodes tables flush stats:totals stats:dims stats:categories stats:leaderboard stats:url-rows stats:url-dims stats:url-cats stats:names stats:search flame-stats:url`
+  (decision 5). The `flame-stats:aggregate.p{N}` and
+  `flame-stats:url-fine.p{N}` SQLite files, and their `-wal` and `-shm`,
+  under the runtime's `tables/` directory are declared and read by nothing:
+  delete them once the workers have restarted. The dashboards fill again
+  from the first settle. A `urls` client drops `ranked` and
+  `estimated`, which the reply no longer carries, and reads `provisional`
+  as a stats read that went unanswered. An untimed URL's `min_ms` and
+  `max_ms` are null, where they were 0, in a `urls` or `dump_url` row and in
+  every `ask` brief; a client renders null as unmeasured. Such a URL ranks
+  last on `avg_ms`, `min_ms` and `max_ms` in either order, searched or not.
+  A `flame-builder` topology of your own names each Ledger it writes with
+  `add_ledger_target`, as the shipped one does, or `configure_stats`
+  refuses it.
 
-- **A search too common to narrow is refused.** A term naming more than
-  `URL_SEARCH_MAX` (5,000) URLs across every server searched, or whose
-  every word read is that common, answers an error,
-  `search "<term>" is too common: its URLs run past the 5000 a search reads; add a word`,
-  where it answered zero rows or read the whole index. An MCP client or a
-  dashboard showing `performance_urls` or an `overview:` brief under a
-  search shows that error and asks for another word.
+- **`errors_only` counts a URL only in the key and bucket in which it
+  errored.** A key is one server's reader or worker traffic, so with
+  `include_workers` a URL that errs as a reader and runs clean as a worker
+  in the same bucket counts its reader traffic alone, where it counted both.
+  A `urls` page, the `performance_urls` tool and an `overview:` brief under
+  the filter read lower for such a URL; a client wanting its whole traffic
+  in that bucket reads the page unfiltered.
 
 - **`dump_url` tails by `--after`, and `--since` is gone.** A caller sending
   `--since=<epoch>` is refused `unknown option --since`. Send

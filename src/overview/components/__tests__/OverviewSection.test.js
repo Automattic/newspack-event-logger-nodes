@@ -160,7 +160,7 @@ describe( 'OverviewSection', () => {
 
 	it( "divides a server-scoped breakdown by that server's average", () => {
 		// The card's heading is "Time Breakdown (edge-01)" and its categories
-		// come from build_leaderboard( server ), so the denominator has to be
+		// come from the server's leaderboard, so the denominator has to be
 		// that server's average — not the site's, and not the filtered URL
 		// set's, which is a narrower question than the card is asking.
 		const { container } = mount(
@@ -197,9 +197,8 @@ describe( 'OverviewSection', () => {
 		expect( container.textContent ).not.toContain( 'all servers' );
 	} );
 
-	it( 'says the totals are provisional when the writer still owes a fold or a ranking', () => {
-		// The header skipped an hour the writer has yet to fold or rank, or
-		// a read that went unanswered, so the totals run short, and say so.
+	it( 'says the totals are provisional when a stats read went unanswered', () => {
+		// The totals run short of what the unanswered read held, and say so.
 		const { container: provisional, unmount } = mount(
 			{ total_requests: 33049 },
 			{
@@ -212,7 +211,7 @@ describe( 'OverviewSection', () => {
 			provisional.querySelector(
 				'.newspack-nodes-banner.is-info[role="status"]'
 			)?.textContent
-		).toMatch( /not yet folded or ranked, or a read went unanswered/ );
+		).toMatch( /a stats read went unanswered/ );
 		unmount();
 
 		const { container: settled } = mount(

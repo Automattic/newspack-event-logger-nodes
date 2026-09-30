@@ -37,7 +37,7 @@ class FlameBuilderSpanTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
-		Core::$now = (float) self::T;
+		self::clock_at( self::T );
 		$this->tmp = $this->make_temp_dir( 'eln-span-' );
 	}
 
@@ -69,7 +69,7 @@ class FlameBuilderSpanTest extends TestCase {
 	private function builder( string $name = 'fb-kea', string $class = Flame_Builder_Node::class ): Flame_Builder_Node {
 		$fb = new $class();
 		$fb->name( $name );
-		$fb->set_stats_store( $this->stats_store( partition: self::PARTITION, max_lifespan: 86400, asker: $fb ) );
+		$fb->set_stats_store( $this->stats_store( self::PARTITION, $fb ) );
 		return $fb;
 	}
 
@@ -87,15 +87,15 @@ class FlameBuilderSpanTest extends TestCase {
 		return \json_decode( (string) \wp_json_encode( $carry ), true );
 	}
 
-	/** The requests the partition-3 Tables hold for the tick's bucket. */
+	/** The requests the totals Ledger holds for the hour to the tick's bucket. */
 	private function counted(): array {
-		$slot = $this->get_hour_slot( $this->stats_store( partition: self::PARTITION ), Stats_Store::hourly_parts(), Stats_Store::bucket_key( self::T ) );
-		return [ (int) ( $slot['requests'] ?? 0 ), (float) ( $slot['sum_ms'] ?? 0 ) ];
+		$totals = $this->stats_store( self::PARTITION )->totals( self::T - 3600, self::T + 300, false );
+		return [ $totals['requests'], $totals['sum_ms'] ];
 	}
 
 	/** How many requests the stored `/kea-41` flame blob has folded. */
 	private function blob_count(): int {
-		$blob = $this->stats_store( partition: self::PARTITION )->url_aggregate( Log_Manager::url_hash( self::URL ) );
+		$blob = $this->stats_store( self::PARTITION )->url_aggregate( Log_Manager::url_hash( self::URL ) );
 		return (int) ( Core::arr( $blob['flame_raw'] ?? null )['count'] ?? 0 );
 	}
 
@@ -110,7 +110,7 @@ class FlameBuilderSpanTest extends TestCase {
 
 		$this->assertSame( [ 0, 0.0 ], $this->counted(), 'an unsettled checkpoint writes nothing' );
 		$this->assertSame( '3:300:43', $carry['counted'] );
-		$this->assertSame( 3, $carry['span']['pending'][ Stats_Store::bucket_key( self::T ) ]['hourly']['requests'] ?? null, 'the span holds all three' );
+		$this->assertSame( 3, $carry['span']['pending'][ self::T ]['hourly']['requests'] ?? null, 'the span holds all three' );
 
 		$successor = $this->builder();
 		$successor->restore_state( $carry );
@@ -137,7 +137,7 @@ class FlameBuilderSpanTest extends TestCase {
 		$fb->shutdown_sweep();
 
 		$this->assertSame( [ 0, 0.0 ], $this->counted(), 'the sweep leaves the span to the frame' );
-		$this->assertSame( 1, self::as_stored( $fb->save_state() )['span']['pending'][ Stats_Store::bucket_key( self::T ) ]['hourly']['requests'] ?? null );
+		$this->assertSame( 1, self::as_stored( $fb->save_state() )['span']['pending'][ self::T ]['hourly']['requests'] ?? null );
 	}
 
 	public function test_a_restored_span_settles_once(): void {
@@ -248,7 +248,7 @@ class FlameBuilderSpanTest extends TestCase {
 		$fb->arguments( [] );
 		self::fold( $fb, '3:100:41' );
 
-		Core::$now += Flame_Builder_Node::AUTO_TUNE_INTERVAL_SEC;
+		self::clock_at( self::T + Flame_Builder_Node::AUTO_TUNE_INTERVAL_SEC );
 		Core::node( \Newspack_Nodes\Node_Names::ROUTER )->fire_cb();
 
 		$this->assertSame( [ 0, 0.0 ], $this->counted(), 'only the interval checkpoint settles' );
@@ -266,13 +266,13 @@ class FlameBuilderSpanTest extends TestCase {
 		$carry = self::as_stored( $first->save_state() );
 		$first->remove_node();
 
-		Core::$now = (float) self::T + 17;
+		self::clock_at( self::T + 17 );
 		$successor = $this->builder();
 		$successor->restore_state( $carry );
 		$this->assertSame( (float) self::T + 17, $successor->idle_since(), 'a restored span alone is idle' );
 
 		self::fold( $successor, '3:200:42' );
-		Core::$now = (float) self::T + 29;
+		self::clock_at( self::T + 29 );
 		$successor->settle();
 		$this->assertSame( (float) self::T + 29, $successor->idle_since() );
 	}
@@ -288,7 +288,7 @@ class FlameBuilderSpanTest extends TestCase {
 	public function test_a_span_holds_every_url_it_folds_past_five_thousand(): void {
 		$fb    = new Flame_Builder_Node();
 		$fb->name( 'fb-kea' );
-		$store = new Url_Blob_Counting_Store( ...$this->stats_store_args( self::PARTITION, 86400, $fb ) );
+		$store = new Url_Blob_Counting_Store( ...$this->stats_store_args( self::PARTITION, $fb ) );
 		// @longform A worker's untimed record, the cheapest a fold takes: it
 		// reaches its URL's flame and no global total, and no store is wired
 		// until the settle, so no cold read runs per URL.
@@ -324,7 +324,7 @@ class FlameBuilderSpanTest extends TestCase {
 		$fb->save_state();
 
 		$this->assertCount( 1, $span['urls'], 'one blob fits the budget' );
-		$this->assertSame( 2, $span['pending'][ Stats_Store::bucket_key( self::T ) ]['hourly']['requests'] ?? null );
+		$this->assertSame( 2, $span['pending'][ self::T ]['hourly']['requests'] ?? null );
 		$tally = ( new \ReflectionProperty( Flame_Builder_Node::class, 'tally' ) )->getValue( $fb );
 		$this->assertSame( 1, $tally[ \Newspack_Event_Logger_Nodes\Flame_Tree::STATS_WRITES ]['left out of the carry'] ?? null, 'counted once a span, not once a frame' );
 	}
@@ -344,12 +344,11 @@ class Url_Blob_Counting_Store extends Stats_Store {
 	public int $url_blobs = 0;
 
 	/**
-	 * @param array<int,array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes `[ parts, key, data ]`.
-	 * @return array<int,bool>
+	 * @param array<array-key,array<array-key,mixed>> $blobs hash => blob.
+	 * @return list<string>
 	 */
-	public function bucket_set_multi( array $writes ): array {
-		$urls             = \array_filter( $writes, static fn ( array $write ): bool => Stats_Store::NS_URL === $write[0][0] );
-		$this->url_blobs += \count( $urls );
-		return \array_replace( [] === \array_diff_key( $writes, $urls ) ? [] : parent::bucket_set_multi( \array_diff_key( $writes, $urls ) ), \array_fill_keys( \array_keys( $urls ), true ) );
+	public function set_url_aggregates( array $blobs ): array {
+		$this->url_blobs += \count( $blobs );
+		return \array_map( 'strval', \array_keys( $blobs ) );
 	}
 }
