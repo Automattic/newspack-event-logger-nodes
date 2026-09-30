@@ -193,6 +193,10 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function setUp(): void {
 		parent::setUp();
+		// No user is current until a test, or the request graph, logs one in.
+		unset( $GLOBALS['_current_user_id'] );
+		// The monotonic clock tracks the tick, as every test here dates by it.
+		\Newspack_Event_Logger_Nodes\Quiet::$hrtime_fn = static fn (): int => (int) ( \Newspack_Nodes\Core::$now * 1e9 );
 		// The harness registers no RESET_ACTION listener, so drop ELN's memo here.
 		\Newspack_Event_Logger_Nodes\Config::reset_local_cache();
 		// A loaded topology's Tables open their files under the base, as the
@@ -313,6 +317,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 * every later test that pins it and then trips a `print_less_often()`.
 	 */
 	protected function tearDown(): void {
+		\Newspack_Event_Logger_Nodes\Quiet::$hrtime_fn = null;
 		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
 		foreach ( \array_keys( $this->stats_table_dirs ) as $dir ) {
 			$this->rmdir_recursive( $dir );

@@ -1,4 +1,5 @@
-import { Node, VALUE, FROM, payloadOf } from '@newspack-nodes/runtime';
+import { Node, VALUE, payloadOf } from '@newspack-nodes/runtime';
+import { isControl } from '@newspack-nodes/shared/helpers/controlMsg';
 
 /**
  * Retained request rows, matching the server's own per-URL cap
@@ -8,35 +9,50 @@ import { Node, VALUE, FROM, payloadOf } from '@newspack-nodes/runtime';
 const MERGED_REQUEST_LIMIT = 500;
 
 /**
- * `url-detail:transform` — the dump_url incremental merge and `last_modified`
- * dedup, hosted on the receiver-Tee → view graph EDGE rather than inside the
- * view. `usePerformanceGraph` declares it in the optional `transform` slot of
+ * A request's completion in epoch seconds: the list's order, as the server's.
+ *
+ * @param {Object} r A `dump_url` request row.
+ * @return {number} Its start plus its duration.
+ */
+const finishedAt = ( r ) =>
+	( r.timestamp || 0 ) + ( r.duration_ms || 0 ) / 1000;
+
+/**
+ * `url-detail:transform` — the dump_url incremental merge and the tail cursor,
+ * hosted on the receiver-Tee → view graph EDGE rather than inside the view.
+ * `usePerformanceGraph` declares it in the optional `transform` slot of
  * `addSliceFetcher`, which builds the edge `url-detail:in` (Tee) →
- * `url-detail:transform` → `url-detail:view` and stamps `controlFrom` from the same
- * declaration.
+ * `url-detail:transform` → `url-detail:view` and stamps `controlFrom` from the
+ * same declaration.
  *
  * It receives the raw command reply — VALUE is `{ name, payload }`, the payload
  * being the dump_url object the server returned — merges that payload against
  * the one it last forwarded, and forwards a message whose VALUE.payload is the
- * MERGED object. It DROPS the message when `last_modified` is unchanged, so an
- * idle auto-refresh tick never re-renders the modal.
+ * MERGED object.
  *
- * The merge is one rule and two refusals. An empty payload forwards nothing,
- * and neither does a payload whose `last_modified` matches the retained one.
- * Anything else discards the requests whose rid is already retained, sorts the
- * union newest-first by timestamp, caps it at MERGED_REQUEST_LIMIT and forwards
- * it. A first reply is that rule with nothing retained, not a case of its own.
+ * A reply is news when it carries a request this node does not hold, or when
+ * the aggregate it shows moved, which its `last_modified` says: the newest
+ * flush of any partition's blob for the URL. It DROPS a reply where neither
+ * moved, so an idle auto-refresh tick never re-renders the modal. The request
+ * rows and the stamp come from different stages — the request indexes and the
+ * flame builders' flushes — so neither one can stand in for the other.
+ *
+ * The merge is one rule. An empty payload forwards nothing. Anything else
+ * discards the requests whose rid is already retained, sorts the union
+ * newest-first by completion, caps it at MERGED_REQUEST_LIMIT, and forwards it
+ * unless it is not news. A first reply is that rule with nothing retained.
+ *
+ * A null aggregate means "keep yours": a cold URL's flame is rebuilt on a full
+ * read only, so a tail answers none, and the held flame keeps its stamp too.
  *
  * `scan_stopped_early` describes the LIST, not the last walk, so it carries
- * across merged replies: a walk that ran out of budget leaves rows missing from
+ * across merged replies: a walk that stopped short leaves rows missing from
  * the accumulation, and a later complete walk does not put them back. Only a
  * `clear` drops the note, with the list it described.
  *
- * A `clear` control from `controlFrom` resets the retained state so the next
- * reply counts as fresh. `usePerformanceGraph` sends one when the modal opens,
- * when it closes and whenever the server scope changes: `last_modified` is the
- * URL's flame mtime and reads the same under every scope, so an uncleared
- * reopen or rescope would drop the reply it needs as a duplicate.
+ * A `clear` control from `controlFrom` resets the retained state and the
+ * cursor. `usePerformanceGraph` sends one when the modal opens, when it closes
+ * and whenever the server scope changes, so the next reply counts as fresh.
  *
  * Forwarding runs through the base `fill()`, which stamps TO from `target` (the
  * view) and hands the message to the sink `makeNode` wired — the interpreter.
@@ -54,6 +70,8 @@ export class UrlDetailMergeNode extends Node {
 		super();
 		// Last forwarded payload — the view holds it too; do not mutate.
 		this._merged = null;
+		// Partition => the { segment, offset } its walk last reached.
+		this._cursor = {};
 		// FROM the graph stamps controls with; the minter refuses an empty one.
 		this.controlFrom = '';
 	}
@@ -69,8 +87,8 @@ export class UrlDetailMergeNode extends Node {
 	fill( message ) {
 		const value = message[ VALUE ];
 
-		// A control never forwards; `action` picks the verb once inside.
-		if ( '' !== this.controlFrom && message[ FROM ] === this.controlFrom ) {
+		// A control never forwards, VALUE or none; `action` picks the verb.
+		if ( isControl( this, message ) ) {
 			this._control( value?.action );
 			return;
 		}
@@ -78,7 +96,7 @@ export class UrlDetailMergeNode extends Node {
 		const payload = payloadOf( value );
 		const next = this._merge( payload );
 		if ( null === next ) {
-			// No-op (empty or unchanged last_modified) — drop, no republish.
+			// Empty, or nothing new — drop, no republish.
 			return;
 		}
 		// Forward the merged payload; base fill() stamps TO from target.
@@ -87,45 +105,44 @@ export class UrlDetailMergeNode extends Node {
 	}
 
 	/**
-	 * Apply one control verb: `clear` drops the retained payload so the next
-	 * reply counts as fresh. An unrecognised or absent verb is a no-op.
+	 * Apply one control verb: `clear` drops the retained payload and the
+	 * cursor, so the next reply counts as fresh. An unrecognised or absent verb
+	 * is a no-op.
 	 *
 	 * @param {string|undefined} action The verb.
 	 */
 	_control( action ) {
 		if ( 'clear' === action ) {
 			this._merged = null;
+			this._cursor = {};
 		}
 	}
 
 	/**
 	 * Merge one reply's payload into the retained payload, replacing what is
-	 * retained whenever the result is forwardable.
+	 * retained whenever the result is forwardable, and take the position each
+	 * partition's walk reached. A row never moves the cursor, because a walk the budget
+	 * cut returned its newest rows and left older lines unread.
 	 *
 	 * @param {Object|null} data The dump_url payload this reply carried.
 	 * @return {Object|null} The payload to forward, or null to drop the message
-	 *                       (empty payload, or `last_modified` unchanged).
+	 *                       (empty payload, or neither rows nor stamp moved).
 	 */
 	_merge( data ) {
 		if ( ! data ) {
 			return null;
 		}
+		const incoming = data.requests ?? [];
+		// Each walk's reach; a partition the walk cut keeps its held place.
+		Object.assign( this._cursor, data.positions );
 		const prev = this._merged;
-		// Explicit null test: two undefined stamps would drop the first reply.
-		if ( null !== prev && data.last_modified === prev.last_modified ) {
-			return null;
-		}
 		const held = prev?.requests ?? [];
 		const heldRids = new Set( held.map( ( r ) => r.rid ) );
+		const fresh = incoming.filter( ( r ) => ! heldRids.has( r.rid ) );
 		const merged = {
 			...data,
-			requests: [
-				...( data.requests ?? [] ).filter(
-					( r ) => ! heldRids.has( r.rid )
-				),
-				...held,
-			]
-				.sort( ( a, b ) => ( b.timestamp || 0 ) - ( a.timestamp || 0 ) )
+			requests: [ ...fresh, ...held ]
+				.sort( ( a, b ) => finishedAt( b ) - finishedAt( a ) )
 				.slice( 0, MERGED_REQUEST_LIMIT ),
 		};
 		// The note belongs to the list, so it unions the way the list does.
@@ -138,30 +155,37 @@ export class UrlDetailMergeNode extends Node {
 				merged[ field ] = prev[ field ];
 			}
 		}
+		if (
+			null === ( data.aggregate_flame ?? null ) &&
+			prev?.aggregate_flame
+		) {
+			merged.last_modified = prev.last_modified;
+		}
+		if (
+			null !== prev &&
+			0 === fresh.length &&
+			merged.last_modified === prev.last_modified
+		) {
+			return null;
+		}
 		this._merged = merged;
 		return merged;
 	}
 
 	/**
-	 * The browser's watermark: the newest request this node holds. `dump_url
-	 * --since` hands it to the server, whose reverse scan stops below it — so a
-	 * poll reads the entries since the last one rather than the whole window.
+	 * The browser's tail cursor, the position each partition's walk last
+	 * reached, whether or not it held the URL. `dump_url --after` hands it to
+	 * the server, which reads a partition only past its own position, and
+	 * reads a partition it does not name whole.
 	 *
-	 * Exactly the newest, with no slack: the server's stop is exclusive, so the
-	 * same-second sibling is still read and `_merge` discards the overlap by
-	 * rid. A second subtracted here would guess at the index's resolution.
-	 *
-	 * The stamp is the request's START, and the server stops on COMPLETION, so
-	 * a request still running when the watermark was taken is read again rather
-	 * than skipped.
-	 *
-	 * @return {number} Epoch seconds; 0 with nothing retained reads the whole
-	 *                  window, which is what a reopened modal wants.
+	 * @return {Object|null} Partition => `{ segment, offset }`; null with
+	 *                       nothing seen, so a reopened modal reads the
+	 *                       whole window.
 	 */
-	watermark() {
-		// The list is sorted newest-first, by the server and by `_merge`.
-		const newest = this._merged?.requests?.[ 0 ]?.timestamp;
-		return Number.isFinite( newest ) ? Math.floor( newest ) : 0;
+	cursor() {
+		return 0 === Object.keys( this._cursor ).length
+			? null
+			: { ...this._cursor };
 	}
 
 	/**

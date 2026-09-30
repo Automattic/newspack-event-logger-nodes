@@ -6,6 +6,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Request_Flight_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Quiet;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -1141,18 +1142,18 @@ class RequestBuilderTest extends TestCase {
 	// --- Idle timeout via the builder's own Router-hitchhike timer --------
 
 	/**
-	 * Put the clock exactly on the boundary this cache is waiting for, so the
-	 * next rotate_if_due() rolls exactly once — timed (idle) rotation driven
-	 * deterministically without sleeping.
+	 * Let the builder go quiet, then put the wall on the boundary its cache
+	 * waits for, so the next rotate_if_due() rolls at least once — timed
+	 * (idle) rotation on a builder no line reaches, driven without sleeping.
 	 *
-	 * An absolute jump, not a relative bump: `Core::right_now()` ASSIGNS
-	 * `Core::$now`, so any production call between two bumps rewinds a
-	 * fabricated clock and the second rotation silently never comes due.
-	 * Landing on the boundary also keeps it to one roll — the catch-up is
-	 * capped at num_buckets, and these tests count rotations.
+	 * The monotonic clock tracks the tick, so a minute of wall is a minute of
+	 * quiet, and a quiet builder's clock is the wall. An absolute jump, not a
+	 * relative bump: `Core::right_now()` ASSIGNS `Core::$now`, so any
+	 * production call between two bumps rewinds a fabricated clock.
 	 */
 	private function force_rotation_due( \Newspack_Nodes\LRU_Cache $cache ): void {
-		Core::$now = (float) ( new \ReflectionObject( $cache ) )->getProperty( 'next_window' )->getValue( $cache );
+		$next      = (float) ( new \ReflectionObject( $cache ) )->getProperty( 'next_window' )->getValue( $cache );
+		Core::$now = \max( $next, Core::$now + Quiet::AFTER_SEC );
 	}
 
 	public function test_builder_timer_times_out_stalled_request_with_no_traffic(): void {
@@ -1270,6 +1271,9 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 1, 'r-poison', 'process (start)', [ 'ts' => [ 'poison' => true ] ] );
 		$this->fill( $rb, 2, 'r-poison', 'request', [ 'm' => 'GET /poisoned' ] );
 
+		// The first quiet tick arms the grid the poisoned opener could not.
+		$this->force_rotation_due( $rb->cache );
+		$rb->fire_cb();
 		$this->force_rotation_due( $rb->cache );
 		$rb->fire_cb();
 		$this->force_rotation_due( $rb->cache );
@@ -1365,8 +1369,13 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'complete', $evicted['state'] );
 	}
 
-	public function test_a_timed_out_request_is_measured_to_the_tick_not_the_wall_clock(): void {
-		Core::$now = 1_600_000_123.0;
+	/**
+	 * A request is measured on the STREAM: from its own start to the newest
+	 * entry stamp the builder has read, never to the wall, which a reprocess
+	 * runs hours ahead of.
+	 */
+	public function test_an_evicted_request_is_measured_on_the_stream_not_the_wall(): void {
+		Core::$now = 1_600_009_999.0;
 		$rb        = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
 		$rb->arguments( [ '1', '2' ] );
@@ -1374,12 +1383,152 @@ class RequestBuilderTest extends TestCase {
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'ts' => 1_600_000_000 ] );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /tick-measured' ] );
-		$this->fill( $rb, 1, 'r2', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /stream-measured', 'ts' => 1_600_000_011 ] );
+		$this->fill( $rb, 1, 'r2', 'process (start)', [ 'ts' => 1_600_000_047 ] );
 
 		$evicted = $this->captured_request( $capture, 0 );
 		$this->assertSame( 'r1', $evicted['rid'] );
-		$this->assertSame( 123_000, $evicted['duration_ms'] );
+		$this->assertSame( 47_000, $evicted['duration_ms'] );
+	}
+
+	/**
+	 * A stamp past the wall does not carry the stream clock with it: a spoke
+	 * whose clock runs a day fast must not time out every request in flight.
+	 */
+	public function test_a_stamp_ahead_of_the_wall_moves_the_stream_clock_only_to_the_wall(): void {
+		Core::$now = 1_600_000_100.0;
+		$rb        = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( [ '1', '2' ] );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'ts' => 1_599_999_850 ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /skewed', 'ts' => 1_599_999_860 ] );
+		$this->fill( $rb, 1, 'r2', 'process (start)', [ 'ts' => 1_600_086_400 ] );
+
+		$this->assertSame( 250_000, $this->captured_request( $capture, 0 )['duration_ms'], 'crowded out at the wall, short of the 1_600_000_200 boundary' );
+	}
+
+	/**
+	 * Live traffic keeps the stream on the wall, so a stalled request times
+	 * out at the third boundary after it landed, measured to that tick, just
+	 * as the wall clock alone measured it.
+	 */
+	public function test_a_live_stream_times_out_a_stalled_request_as_the_wall_did(): void {
+		Core::$now = 1_800_000_100.0;
+		$rb        = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( [ '100', '3' ] );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r-stall', 'process (start)', [ 'ts' => Core::$now ] );
+		$this->fill( $rb, 2, 'r-stall', 'request', [ 'm' => 'GET /live-stall', 'ts' => Core::$now ] );
+		for ( $second = 1; $second <= 1200 && [] === $capture->captured; $second++ ) {
+			Core::$now += 1.0;
+			$this->fill( $rb, 1, "r-live-{$second}", 'process (start)', [ 'ts' => Core::$now ] );
+			$this->fill( $rb, 2, "r-live-{$second}", 'process (complete)', [ 'ts' => Core::$now, 'duration_ms' => 3.0 ] );
+			$rb->fire_cb();
+		}
+
+		$evicted = $this->captured_request( $capture, 0 );
+		$this->assertSame( 'r-stall', $evicted['rid'] );
+		$this->assertSame( 'T', $evicted['error_status'] );
+		$this->assertSame( 1_800_001_080.0, Core::$now, 'the third boundary after it landed' );
+		$this->assertSame( 980_000, $evicted['duration_ms'] );
+	}
+
+	/**
+	 * A replayed stream that falls silent for six hours after a request
+	 * starts times it out where live traffic did: at the third boundary after
+	 * it landed, measured to that boundary, not to the stamp that ended the
+	 * gap. A request the first stamp past the gap opens lands after the
+	 * repaid windows, not in the bucket they evict.
+	 */
+	public function test_a_gap_in_the_stream_times_out_at_the_boundary_its_window_fell_due(): void {
+		Core::$now = 1_900_000_000.0;
+		$rb        = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( [ '100', '3' ] );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r-overnight', 'process (start)', [ 'ts' => 1_800_000_350 ] );
+		$this->fill( $rb, 2, 'r-overnight', 'request', [ 'm' => 'GET /overnight', 'ts' => 1_800_000_351 ] );
+		$this->fill( $rb, 1, 'r-morning', 'process (start)', [ 'ts' => 1_800_021_950 ] );
+		$this->fill( $rb, 2, 'r-morning', 'request', [ 'm' => 'GET /morning', 'ts' => 1_800_021_950 ] );
+		$rb->fire_cb();
+		$this->fill( $rb, 3, 'r-morning', 'process (complete)', [ 'ts' => 1_800_021_951, 'duration_ms' => 640.0 ] );
+
+		$overnight = $this->captured_request( $capture, 0 );
+		$this->assertSame( 'r-overnight', $overnight['rid'] );
+		$this->assertSame( 'T', $overnight['error_status'] );
+		$this->assertSame( 730_000, $overnight['duration_ms'], 'to 1_800_001_080, the third boundary after it landed' );
+		$morning = $this->captured_request( $capture, 1 );
+		$this->assertSame( 'r-morning', $morning['rid'] );
+		$this->assertSame( '-', $morning['error_status'], 'the stamp past the gap opened it after the repaid windows' );
+	}
+
+	/**
+	 * A builder that saw live traffic and fell quiet, then is fed data a
+	 * month old, as `wp nodes ingest` into an idle worker does, times a
+	 * stalled request out on the old stream's windows, not by the capacity
+	 * it would otherwise wait on.
+	 */
+	public function test_an_idle_builder_fed_old_data_times_out_on_the_old_stream(): void {
+		Core::$now = 1_800_000_000.0;
+		$rb        = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( [ '100', '3' ] );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$this->fill( $rb, 1, 'r-live', 'process (start)', [ 'ts' => Core::$now ] );
+		$this->fill( $rb, 2, 'r-live', 'process (complete)', [ 'ts' => Core::$now, 'duration_ms' => 9.0 ] );
+		Core::$now += Quiet::AFTER_SEC;
+		$rb->fire_cb();
+
+		$old = 1_797_408_050;
+		$this->fill( $rb, 1, 'r-ingested', 'process (start)', [ 'ts' => $old ] );
+		$this->fill( $rb, 2, 'r-ingested', 'request', [ 'm' => 'GET /ingested', 'ts' => $old ] );
+		for ( $at = $old + 30; $at <= $old + 1200 && [] === $capture->captured; $at += 30 ) {
+			$this->fill( $rb, 1, "r-old-{$at}", 'process (start)', [ 'ts' => $at ] );
+			$this->fill( $rb, 2, "r-old-{$at}", 'process (complete)', [ 'ts' => $at, 'duration_ms' => 4.0 ] );
+			$rb->fire_cb();
+		}
+
+		$ingested = $this->captured_request( $capture, 0 );
+		$this->assertSame( 'r-ingested', $ingested['rid'] );
+		$this->assertSame( 'T', $ingested['error_status'] );
+		$this->assertSame( 1_030_000, $ingested['duration_ms'], 'to 1_797_409_080, its third boundary on the old stream' );
+	}
+
+	/**
+	 * A caught-up builder that consumes nothing stands on the last stamp it
+	 * read until it is quiet, then takes the wall: a request whose worker
+	 * died still times out on a site with no traffic, measured to the wall.
+	 */
+	public function test_a_quiet_builder_times_out_a_stalled_request_on_the_wall(): void {
+		Core::$now = 1_800_000_350.0;
+		$rb        = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( [ '100', '3' ] );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r-dead', 'process (start)', [ 'ts' => Core::$now ] );
+		$this->fill( $rb, 2, 'r-dead', 'request', [ 'm' => 'GET /dead-worker', 'ts' => Core::$now ] );
+
+		Core::$now += Quiet::AFTER_SEC - 1;
+		$rb->fire_cb();
+		$this->assertSame( 0, $rb->cache->get_state()['current'], 'a second short of quiet the wall crossed a boundary and rolled nothing' );
+
+		Core::$now = 1_800_001_083.0;
+		$rb->fire_cb();
+		$evicted = $this->captured_request( $capture, 0 );
+		$this->assertSame( 'r-dead', $evicted['rid'] );
+		$this->assertSame( 'T', $evicted['error_status'] );
+		$this->assertSame( 730_000, $evicted['duration_ms'], 'to 1_800_001_080, the boundary its window fell due at' );
 	}
 
 	// --- save / restore state --------------------------------------------

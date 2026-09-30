@@ -118,7 +118,7 @@ export const views = {
 		 *
 		 * Replies land here already merged: the graph runs `url-detail:in` (Tee)
 		 * → `url-detail:transform` → this node, and the merge node owns the
-		 * incremental request-list merge, the `last_modified` dedup and the
+		 * incremental request-list merge, the news-or-drop dedup and the
 		 * 500-request cap.
 		 */
 		UrlDetailView: dataSlice(
@@ -137,7 +137,7 @@ export const views = {
 		/**
 		 * The one node here that is not a slice view: it forwards a merged
 		 * message rather than publishing a slice, and it holds the retained
-		 * payload `usePerformanceGraph` reads the `since` watermark off.
+		 * payload `usePerformanceGraph` reads the `after` cursor off.
 		 */
 		UrlDetailMerge: UrlDetailMergeNode,
 

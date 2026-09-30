@@ -29,6 +29,28 @@
  * Worker context: this node runs inside the `flame-builder` (or `complete`)
  * topology. See `topologies/flame-builder.tsl` for the wiring.
  *
+ * Two clocks, and a reprocess of the firehose tells them apart. STREAM time
+ * is the records' own stamps: what a record is filed under, what its per-URL
+ * tree and categories age by, and what folds. WALL time is the readers' and
+ * the store's: the window a reader reads, the ranking cadence its page cache
+ * sets, every TTL, and idleness. A read on the wrong side files a replay a
+ * day late or expires it on arrival.
+ *
+ * | Read                                        | Clock  | Why                                  |
+ * |---------------------------------------------|--------|--------------------------------------|
+ * | `$timestamp`, the completion, `$pending` key | STREAM | a record is filed where it finished  |
+ * | clamp `min( $now, … )`                      | WALL   | readers walk back from the wall      |
+ * | tree node `ts`, category cutoff (`$done`)   | STREAM | the per-URL aggregate ages as live   |
+ * | `$data_clock`, `foldable()`'s hours         | STREAM | an hour folds once the data left it  |
+ * | `foldable()`'s quiet, `worked_at_hr`        | MONO   | a duration inside this process       |
+ * | `foldable()`'s `$expiring`                  | WALL   | the fine keys' TTL runs on the wall  |
+ * | `plan_at()`, the read plan and fine floor   | WALL   | the window a reader reads            |
+ * | `rank_due()`, `$current`, `ranked_at`       | WALL   | the page cache's refresh, the reader's open bucket |
+ * | `persist_url_names()`, `drain_url_stats()` hour | WALL | the filing refresh against the TTL |
+ * | `persist_url_tokens()`                      | WALL   | a member's lifetime and a search's window |
+ * | `last_modified`, `last_flush_time`, `worked_at` | WALL | a reader's dedup, reports, `idle_since()` |
+ * | `apply_auto_tune()`'s lock deadline         | MONO   | a stop's wait, a duration here       |
+ *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -150,15 +172,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public static ?\Closure $usleep_fn = null;
 
 	/**
-	 * Monotonic clock seam, replacing `hrtime( true )` where the node times
-	 * its own quiet. Tests reassign it to step the monotonic clock apart from
-	 * the wall one. Signature: `function (): int`, nanoseconds.
-	 *
-	 * @var \Closure|null
-	 */
-	public static ?\Closure $hrtime_fn = null;
-
-	/**
 	 * Cap on the per-process string-intern table. Every dimension value, category
 	 * name, and entry name is looked up in that table so repeated names across
 	 * requests share one zval instead of one per json_decode. Past the cap the
@@ -205,15 +218,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * one hour's coarse rows in memory per unit spent.
 	 */
 	private const ROLLUP_HOURS_PER_FLUSH = 2;
-
-	/**
-	 * Seconds a builder drains nothing before its fold clock is the wall:
-	 * twelve flushes, a minute. A replay drains at every flush and every
-	 * checkpoint, and its slowest measured flush, 15.8 s, fits three times
-	 * over, while a builder quiet from an hour's close still folds it inside
-	 * the next hour's first bucket, the lag a reader forgives (`lagging()`).
-	 */
-	private const IDLE_AFTER_SEC = 12 * self::FLUSH_INTERVAL_SEC;
 
 	/**
 	 * Auto-tune decisions accrued since the last emit: the key `Auto_Tuner_Node`
@@ -416,7 +420,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public function __construct() {
 		$this->last_flush_time = Core::$now;
 		$this->worked_at       = Core::$now;
-		$this->worked_at_hr    = self::monotonic();
+		$this->worked_at_hr    = Quiet::mark();
 		$this->url_acc         = new LRU_Cache( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
 		$this->client          = new Table_Client( $this, Stats_Store::TABLES );
 
@@ -682,8 +686,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// @longform The record reaches us at COMPLETION, so that is when it is
 		// filed: a request is a fact about the moment it ended, and a long one
 		// filed under its start lands in a bucket the readers may have closed
-		// and folded. An aborted request carries `now - start` as its duration
-		// (Request_Builder sets it at eviction), so this is its abort moment.
+		// and folded. A timed-out request carries `due - start` as its
+		// duration (Request_Builder measures it to the stream boundary its
+		// window fell due at), so this is when live traffic timed it out.
 		$started       = Core::num_int( $timestamp_raw, $now );
 		// @longform Clamped: a completed request cannot have finished after
 		// it reached us, so a skewed spoke clock or a bogus duration must
@@ -696,7 +701,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// The per-server gate, resolved once: '' accumulates none.
 		$server_key    = $this->is_hub && $count_global ? $server_name : '';
 
-		$aggregate = $this->accumulate_url_aggregate( $url_hash, $flame_data, $duration_ms, $record_timing, $now, $unread );
+		$aggregate = $this->accumulate_url_aggregate( $url_hash, $flame_data, $duration_ms, $record_timing, $timestamp, $unread );
 		// Filed under the bucket it COMPLETED in, not the one it started in.
 		$bucket                     = Stats_Store::bucket_key( $timestamp );
 		$this->pending[ $bucket ] ??= self::empty_bucket();
@@ -715,7 +720,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$server_key,
 				$duration_ms,
 				$count_global,
-				$now
+				$timestamp
 			);
 		}
 
@@ -738,7 +743,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param array<string,mixed>    $flame_data     Per-request flame tree.
 	 * @param float                   $duration_ms    Request duration.
 	 * @param bool                    $record_timing  Whether timing counts.
-	 * @param int                     $now            Clock read for this request.
+	 * @param int                     $done           The request's completion, which its merged nodes are stamped with.
 	 * @param-out bool                $unread
 	 * @param ?bool                   $unread         Set true when the stored aggregate
 	 *                                                could not be read: then the one
@@ -746,7 +751,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *                                                must not replace it (decision 3).
 	 * @return array<array-key,mixed> The updated aggregate.
 	 */
-	private function accumulate_url_aggregate( string $url_hash, array $flame_data, float $duration_ms, bool $record_timing, int $now, ?bool &$unread = null ): array {
+	private function accumulate_url_aggregate( string $url_hash, array $flame_data, float $duration_ms, bool $record_timing, int $done, ?bool &$unread = null ): array {
 		$unread = false;
 		// Un-drained if held, else what was last persisted for a cold key.
 		$cached = $this->url_acc->get( $url_hash );
@@ -771,7 +776,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		}
 
 		$flame              = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
-		$aggregate['flame'] = self::fold_url_flame( $flame, $flame_data, $duration_ms, $record_timing, $now );
+		$aggregate['flame'] = self::fold_url_flame( $flame, $flame_data, $duration_ms, $record_timing, $done );
 		return $aggregate;
 	}
 
@@ -810,17 +815,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param array<array-key,mixed> $flame_data    One request's tree.
 	 * @param float                  $duration_ms   That request's duration.
 	 * @param bool                   $record_timing Per `timing_counts()`.
-	 * @param int                    $now           Stamp for the merged nodes.
+	 * @param int                    $stamp         Stamp for the merged nodes, whose hour back is the expiry cutoff.
 	 * @return array<array-key,mixed>
 	 */
-	public static function fold_url_flame( array $flame, array $flame_data, float $duration_ms, bool $record_timing, int $now ): array {
+	public static function fold_url_flame( array $flame, array $flame_data, float $duration_ms, bool $record_timing, int $stamp ): array {
 		$flame['count'] = ( \is_numeric( $flame['count'] ?? null ) ? $flame['count'] : 0 ) + 1;
 		// Per-URL: workers keep timing on their own row.
 		if ( $record_timing ) {
 			$flame['sum_value'] = ( \is_numeric( $flame['sum_value'] ?? null ) ? $flame['sum_value'] : 0 ) + $duration_ms;
 			$flame_children     = \is_array( $flame['children'] ?? null ) ? $flame['children'] : [];
 			$incoming_children  = \is_array( $flame_data['children'] ?? null ) ? $flame_data['children'] : [];
-			$flame['children']  = Flame_Tree::merge_flame_children_incremental( $flame_children, $incoming_children, $now );
+			$flame['children']  = Flame_Tree::merge_flame_children_incremental( $flame_children, $incoming_children, $stamp );
 		}
 		return $flame;
 	}
@@ -863,7 +868,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		/**
 		 * Positional; see `Stats_Store::ROW_*`.
 		 *
-		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: float|int, 9: float|int, 10: float|int, 11: int, 12: bool, 13: string} $us
+		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: float|int, 10: float|int, 11: float|int, 12: int, 13: bool, 14: string} $us
 		 */
 		$us              = &$acc[ $slot ][ $server ][ $url_hash ];
 		$peak_raw        = $request['peak_mb'] ?? 0;
@@ -875,6 +880,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$us[ Stats_Store::ROW_TIMED_COUNT ] += $record_timing ? 1 : 0;
 		$us[ Stats_Store::ROW_SUM_MS ]      += $record_timing ? $duration_ms : 0;
 		$us[ Stats_Store::ROW_SUM_PEAK_MB ] += $peak_mb;
+		$us[ Stats_Store::ROW_ERRORS ]      += self::error_counts( $request['error_status'] ?? '-' ) ? 1 : 0;
 		if ( null !== $status_category ) {
 			$us[ Stats_Store::ROW_STATUS_COUNTS[ $status_category ] ] += 1;
 		}
@@ -887,6 +893,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		}
 		$us[ Stats_Store::ROW_MAX_PEAK_MB ] = \max( $us[ Stats_Store::ROW_MAX_PEAK_MB ], $peak_mb );
 		unset( $us );
+	}
+
+	/**
+	 * Whether a request is an error: it timed out or fataled, whatever status
+	 * it answered, and whether or not its duration times it. An abort is the
+	 * logger's own worker stopping and a gap is missing detail, so neither is.
+	 *
+	 * @param mixed $error_status The record's error status, `-` when none.
+	 */
+	public static function error_counts( mixed $error_status ): bool {
+		return \in_array( $error_status, [ 'T', 'F' ], true );
 	}
 
 	/**
@@ -1027,7 +1044,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param string                    $server_key   Per-server scope, '' to accumulate none.
 	 * @param float                     $duration_ms  Request duration.
 	 * @param bool                      $count_global Whether this request feeds global stats.
-	 * @param int                       $now          Clock read for this request.
+	 * @param int                       $done         The request's completion, the expiry clock of its categories.
 	 */
 	private function accumulate_profiles(
 		array &$acc,
@@ -1038,7 +1055,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		string $server_key,
 		float $duration_ms,
 		bool $count_global,
-		int $now
+		int $done
 	): void {
 		// Resolve the request's governing rule once; no match = tune inert.
 		$rule             = $this->rule_for_request( $request );
@@ -1206,8 +1223,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			unset( $slb );
 		}
 
-		// Expire old per-URL categories.
-		$cutoff = $now - Flame_Tree::AGGREGATE_EXPIRY_SEC;
+		// Categories carry the producer's stamps: expire them on the record's.
+		$cutoff = $done - Flame_Tree::AGGREGATE_EXPIRY_SEC;
 		foreach ( $prof['categories'] as $cat => $cd ) {
 			if ( ( $cd['ts'] ?? 0 ) < $cutoff ) {
 				unset( $prof['categories'][ $cat ] );
@@ -1479,7 +1496,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// A flush with nothing folded is upkeep, which never keeps a worker up.
 		if ( [] !== $this->pending ) {
 			$this->worked_at    = Core::$now;
-			$this->worked_at_hr = self::monotonic();
+			$this->worked_at_hr = Quiet::mark();
 			$newest             = \max( \array_map( 'strval', \array_keys( $this->pending ) ) );
 			if ( $newest > $this->data_clock ) {
 				if ( Stats_Store::hour_of( $newest ) !== Stats_Store::hour_of( $this->data_clock ) ) {
@@ -1531,7 +1548,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * path. The clock that decides is the one earlier flushes left: this
 	 * flush's rows land after the roll-up, so the fold reads them next time.
 	 *
-	 * A builder that has drained nothing for `IDLE_AFTER_SEC` is idle, and
+	 * A builder that has drained nothing for `Quiet::AFTER_SEC` is idle, and
 	 * its clock is the wall, so a quiet builder still folds the hours that
 	 * pass. An empty `pending` alone is no sign: a checkpoint drains it, and
 	 * a crawl checkpoints every record.
@@ -1546,8 +1563,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @return list<string>
 	 */
 	private function foldable( Stats_Store $stats_store, array $hours, int $now ): array {
-		// Monotonic: a wall clock stepped forward is no quiet.
-		if ( [] === $this->pending && self::monotonic() - $this->worked_at_hr >= self::IDLE_AFTER_SEC * 1_000_000_000 ) {
+		if ( [] === $this->pending && Quiet::since( $this->worked_at_hr ) ) {
 			return $hours;
 		}
 		$clock    = Stats_Store::hour_of( $this->data_clock );
@@ -1557,11 +1573,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$hours,
 			static fn ( string $hour ): bool => $hour < $clock || ( $expiring && $hour === $clock )
 		) );
-	}
-
-	/** The monotonic clock in ns, through the `$hrtime_fn` seam. */
-	private static function monotonic(): int {
-		return Core::num_int( ( self::$hrtime_fn ?? static fn (): int => (int) \hrtime( true ) )() );
 	}
 
 	/**
@@ -3026,10 +3037,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			return;
 		}
 
-		// Lock held by another worker: retry on the next flush, or wait it out.
-		$deadline = \microtime( true ) + $wait_ms / 1000;
+		// Held by another worker: retry next flush, or wait out on hrtime.
+		$deadline = Quiet::mark() + $wait_ms * 1_000_000;
 		while ( ! $cache->add( $lock_key, $lock_value, $lock_timeout ) ) {
-			if ( \microtime( true ) >= $deadline ) {
+			if ( Quiet::mark() >= $deadline ) {
 				return;
 			}
 			$sleep = self::$usleep_fn ?? static fn ( int $us ) => \usleep( $us );
@@ -3356,6 +3367,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			Stats_Store::ROW_COUNT_3XX   => 0,
 			Stats_Store::ROW_COUNT_4XX   => 0,
 			Stats_Store::ROW_COUNT_5XX   => 0,
+			Stats_Store::ROW_ERRORS      => 0,
 			Stats_Store::ROW_MIN_MS      => $min_ms,
 			Stats_Store::ROW_MAX_MS      => 0,
 			Stats_Store::ROW_MAX_PEAK_MB => 0,
@@ -3406,6 +3418,30 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			throw new \InvalidArgumentException( "{$verb}: '{$table}' is not {$mounted}, the Table the performance readers mount" );
 		}
 		return $table;
+	}
+
+	/**
+	 * Fold another partition's running flame for the same URL into this one:
+	 * their requests and durations add, and their trees merge as a request's
+	 * does, each node keeping the newer stamp. The merge stamp is the newest
+	 * either tree holds, so a node an hour behind it expires as it would have
+	 * in one builder that saw both partitions' traffic.
+	 *
+	 * @param array<array-key,mixed> $flame A running flame, un-finalized.
+	 * @param array<array-key,mixed> $other Another partition's, the same shape.
+	 * @return array<array-key,mixed>
+	 */
+	public static function merge_url_flames( array $flame, array $other ): array {
+		$children = \array_values( Core::arr( $flame['children'] ?? null ) );
+		$incoming = \array_values( Core::arr( $other['children'] ?? null ) );
+		$newest   = 0;
+		foreach ( [ ...$children, ...$incoming ] as $child ) {
+			$newest = \max( $newest, Core::num_int( Core::arr( $child )['ts'] ?? null ) );
+		}
+		$flame['count']     = Core::num_int( $flame['count'] ?? null ) + Core::num_int( $other['count'] ?? null );
+		$flame['sum_value'] = Core::num_float( $flame['sum_value'] ?? null ) + Core::num_float( $other['sum_value'] ?? null );
+		$flame['children']  = Flame_Tree::merge_flame_children_incremental( $children, $incoming, $newest );
+		return $flame;
 	}
 
 	/**

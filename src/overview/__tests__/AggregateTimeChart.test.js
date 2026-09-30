@@ -807,4 +807,35 @@ describe( 'AggregateTimeChart', () => {
 		).not.toThrow();
 		unmount();
 	} );
+
+	it( 'draws a slot with no requests at zero in every series', () => {
+		const at = ( index ) => SLOTS[ SLOTS.length - 1 - index ];
+		const series = dimTable( {
+			[ at( 38 ) ]: { '2xx': [ 2, 500, 96, 2 ] },
+			[ at( 40 ) ]: {
+				'5xx': [ 3, 900, 231, 3 ],
+				'2xx': [ 2, 500, 96, 2 ],
+			},
+			[ at( 52 ) ]: { '5xx': [ 1, 300, 77, 1 ] },
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				slots: SLOTS,
+				series,
+				metric: 'memory',
+				breakdown: 'status',
+			} )
+		);
+		const bands = d3Mock.datum.mock.calls.map( ( call ) => call[ 0 ] );
+		expect( bands ).toHaveLength( 2 );
+		const [ ok, err ] = bands;
+		expect( err ).toHaveLength( 288 );
+		expect( err[ 40 ].y1 ).toBe( 77 );
+		expect( err[ 52 ].y1 ).toBe( 77 );
+		for ( let index = 41; index <= 51; index++ ) {
+			expect( err[ index ].y1 ).toBe( ok[ 41 ].y1 );
+			expect( err[ index ].y1 ).toBe( 0 );
+		}
+		unmount();
+	} );
 } );

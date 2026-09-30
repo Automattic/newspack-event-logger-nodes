@@ -801,12 +801,14 @@ final class Flame_Tree {
 	 * children additively (sums-not-means). Each node carries `sum_value`, the
 	 * sum of inclusive durations across every request the node was seen in;
 	 * `finalize_flame_node()` turns that into a display value at flush time.
+	 * An incoming node that carries a `sum_value` of its own is another
+	 * aggregate's, and adds that sum where a request's node adds its `value`.
 	 *
 	 * Node `name` is the merge key, which is why build_flame_data numbers
 	 * duplicate siblings first. `ts` records when a node was last touched —
-	 * `$now_ts`, since per-request trees carry no timestamp of their own —
-	 * and anything older than AGGREGATE_EXPIRY_SEC is dropped. An incoming
-	 * node's `detail` and `t` never reach the aggregate, which has merged many
+	 * `$now_ts`, since per-request trees carry no timestamp of their own, and
+	 * never moves back for an older record — and anything older than
+	 * AGGREGATE_EXPIRY_SEC is dropped. An incoming node's `detail` and `t` never reach the aggregate, which has merged many
 	 * requests and so has no single position: a merged node holds `name`,
 	 * `sum_value`, `ts` and `children`, nothing else. Finalize divides by the
 	 * aggregate's own request count, so no per-node tally is kept.
@@ -838,7 +840,7 @@ final class Flame_Tree {
 			}
 			$name           = \is_string( $child['name'] ?? null ) ? $child['name'] : 'unknown';
 			$child_ts       = \is_numeric( $child['ts'] ?? null ) ? (int) $child['ts'] : $now_ts;
-			$incoming_value = \is_numeric( $child['value'] ?? null ) ? (float) $child['value'] : 0.0;
+			$incoming_value = Core::num_float( $child['sum_value'] ?? $child['value'] ?? null );
 			if ( ! isset( $indexed[ $name ] ) ) {
 				$indexed[ $name ] = [
 					'name'      => $name,
@@ -847,7 +849,8 @@ final class Flame_Tree {
 					'children'  => [],
 				];
 			} else {
-				$indexed[ $name ]['ts']        = $child_ts;
+				$seen_ts                       = $indexed[ $name ]['ts'] ?? null;
+				$indexed[ $name ]['ts']        = \is_numeric( $seen_ts ) ? \max( (int) $seen_ts, $child_ts ) : $child_ts;
 				$indexed[ $name ]['sum_value'] = Core::num_float( $indexed[ $name ]['sum_value'] ?? null ) + $incoming_value;
 			}
 

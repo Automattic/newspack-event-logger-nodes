@@ -1360,108 +1360,185 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * The watermark stop reads COMPLETION, not start. The index is appended
-	 * when a request ENDS, so a reverse walk is completion-descending and start
-	 * is not monotone along it — `Request_Builder_Node::index_completion_columns()`
-	 * says so in the class that writes the line, and the floor branch beside
-	 * this one already obeys it.
+	 * An `--after` value holding each row's own position, the newest per
+	 * partition: a caller that has seen those rows and nothing past them.
 	 *
-	 * Comparing start ends the partition at the first long-running request,
-	 * dropping every row that completed after it. The merge then advances past
-	 * them, so they never come back — on a URL that IS the long-running one, an
-	 * import or a cron endpoint, that is every poll.
+	 * @param array<int,array<string,mixed>> $rows Rows a reply carried.
+	 * @return string The `--after` token's JSON value.
 	 */
-	public function test_dump_url_since_stops_on_completion_not_start(): void {
-		$url   = '/long-running';
-		$hash  = Log_Manager::url_hash( $url );
-		$now   = self::tick();
-		$store = $this->stats_store( 0, 86400 );
-		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 700010.0, 'last_seen' => $now ],
-		] );
-		// Appended in COMPLETION order, as the builder appends them. The long
-		// one finishes LAST, so the reverse walk meets it first.
-		$this->write_request( [
-			'rid'            => \sprintf( '%032x', 0xC01 ),
-			'url'            => $url,
-			'timestamp'      => $now - 300,
-			'duration_ms'    => 10,
-			'status_code'    => 200,
-			'peak_mb'        => 1,
-			'request_method' => 'GET',
-		] );
-		$this->write_request( [
-			'rid'            => \sprintf( '%032x', 0xC00 ),
-			'url'            => $url,
-			// Starts well below the watermark; completes well above it.
-			'timestamp'      => $now - 900,
-			'duration_ms'    => 700000,
-			'status_code'    => 200,
-			'peak_mb'        => 1,
-			'request_method' => 'GET',
-		] );
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'dump_url',
-			[ $hash, '--since=' . ( $now - 450 ) ]
-		);
-		$rids = \array_column( $result['requests'], 'rid' );
-
-		$this->assertContains(
-			\sprintf( '%032x', 0xC00 ),
-			$rids,
-			'a request that COMPLETED above the watermark must be returned'
-		);
-		$this->assertContains(
-			\sprintf( '%032x', 0xC01 ),
-			$rids,
-			'and it must not end the partition on top of everything behind it'
-		);
+	private static function after_rows( array $rows ): string {
+		$after = [];
+		foreach ( $rows as $row ) {
+			$at   = [ 'segment' => $row['segment'], 'offset' => $row['offset'] ];
+			$held = $after[ $row['partition'] ] ?? null;
+			if ( null === $held || [ $at['segment'], $at['offset'] ] > [ $held['segment'], $held['offset'] ] ) {
+				$after[ $row['partition'] ] = $at;
+			}
+		}
+		return (string) \json_encode( (object) $after );
 	}
 
-	public function test_dump_url_since_still_reads_later_partitions(): void {
-		$this->activate_shipped( 'performance', 2 );
-		$url   = '/two-partitions';
-		$hash  = Log_Manager::url_hash( $url );
-		$now   = self::tick();
-		$store = $this->stats_store( 0, 86400 );
-		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 20.0, 'last_seen' => $now ],
-		] );
-		// p0 holds only ground the browser has; p1 holds something newer.
-		$this->write_request( [
-			'rid'            => \sprintf( '%032x', 0xB00 ),
-			'url'            => $url,
-			'timestamp'      => $now - 900,
-			'duration_ms'    => 10,
-			'status_code'    => 200,
-			'peak_mb'        => 1,
-			'request_method' => 'GET',
-		], 0 );
-		$this->write_request( [
-			'rid'            => \sprintf( '%032x', 0xB01 ),
-			'url'            => $url,
-			'timestamp'      => $now - 300,
-			'duration_ms'    => 10,
-			'status_code'    => 200,
-			'peak_mb'        => 1,
-			'request_method' => 'GET',
-		], 1 );
+	/**
+	 * The `--after` value a caller sends back from a reply: its `positions`,
+	 * which reach this harness as a PHP array however the wire spelled them.
+	 *
+	 * @param array<string,mixed> $reply A `dump_url` reply.
+	 */
+	private static function after_reply( array $reply ): string {
+		return (string) \json_encode( (object) (array) $reply['positions'] );
+	}
 
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'dump_url',
-			[ $hash, '--since=' . ( $now - 450 ) ]
+	/**
+	 * The position of a partition's newest request index line: where a walk
+	 * of the whole partition begins.
+	 *
+	 * @return array{segment:int,offset:int}
+	 */
+	private function index_head( int $partition ): array {
+		$lines = \file( $this->tmp . "/logs/requests.p{$partition}/0.idx", FILE_IGNORE_NEW_LINES );
+		$entry = Request_Builder_Node::parse_request_index( (string) \end( $lines ) );
+		return [ 'segment' => $entry['segment'], 'offset' => $entry['offset'] ];
+	}
+
+	/**
+	 * Pin the walk's clock so its first reading inside a walk, at the
+	 * SCAN_CLOCK_STRIDE'th index line, is past the deadline: a walk that reads
+	 * that many lines comes back `scan_stopped_early`.
+	 */
+	private static function spend_the_budget_at_the_first_stride(): void {
+		$seconds      = 1790757000.0;
+		Core::$clock = static function () use ( &$seconds ): float {
+			return $seconds += 23.0;
+		};
+	}
+
+	/** Seed the URL's row, so `dump_url` finds the URL it lists. */
+	private function seed_listed_url( string $url, int $count ): string {
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( $this->stats_store( 0, 86400 ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => $count, 'timed_count' => $count, 'sum_ms' => 37.0 * $count, 'last_seen' => self::tick() - 1 ],
+		] );
+		return $hash;
+	}
+
+	/**
+	 * One URL at one request a second over four partitions, request `i` on
+	 * partition `i % 4`, the newest on p3. Partition 0 alone holds 600, more
+	 * than one reply lists, so a walk capped across the fan-out never opens p1.
+	 */
+	public function test_a_four_partition_full_read_lists_the_newest_across_every_partition(): void {
+		$this->activate_shipped( 'performance', 4 );
+		$hash = $this->seed_listed_url( '/spread-over-four', 2400 );
+		$now  = self::tick();
+		for ( $i = 0; $i < 2400; $i++ ) {
+			$this->write_request( [
+				'rid'            => \sprintf( 'rid-spread-%021d', $i ),
+				'url'            => '/spread-over-four',
+				'timestamp'      => $now - 2400 + $i,
+				'duration_ms'    => 37,
+				'status_code'    => 200,
+				'peak_mb'        => 3,
+				'request_method' => 'GET',
+			], $i % 4 );
+		}
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+
+		$rids = \array_column( $result['requests'], 'rid' );
+		$this->assertSame(
+			\array_map( static fn ( int $i ): string => \sprintf( 'rid-spread-%021d', $i ), \range( 2399, 1900 ) ),
+			$rids,
+			'the newest 500 across the four partitions, newest first'
 		);
+		$by_partition = \array_count_values( \array_column( $result['requests'], 'partition' ) );
+		\ksort( $by_partition );
+		$this->assertSame( [ 0 => 125, 1 => 125, 2 => 125, 3 => 125 ], $by_partition );
+		$this->assertTrue( $result['scan_stopped_early'], 'a capped partition leaves its older requests unlisted' );
+		foreach ( [ 0, 1, 2, 3 ] as $p ) {
+			$this->assertSame( $this->index_head( $p ), ( (array) $result['positions'] )[ $p ], "a capped partition's position is its newest entry, p{$p}" );
+		}
+
+		$tail = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hash, '--after=' . self::after_reply( $result ) ] );
+
+		$this->assertIsArray( $tail, \is_string( $tail ) ? $tail : '' );
+		$this->assertSame( [], $tail['requests'], 'a capped partition\'s older entries are not fetched again' );
+		$this->assertFalse( $tail['scan_stopped_early'] );
+	}
+
+	/**
+	 * A partition holding nothing for the URL still reports the position it
+	 * read to, so the next refresh stops at its first line rather than
+	 * walking it to the window floor. p2 holds 150 lines of another URL, more
+	 * than one clock stride, so a walk through them spends the pinned budget.
+	 */
+	public function test_a_refresh_reads_no_index_of_a_partition_holding_nothing_for_the_url(): void {
+		$this->activate_shipped( 'performance', 4 );
+		$url  = '/three-of-four';
+		$hash = $this->seed_listed_url( $url, 4 );
+		$now  = self::tick();
+		foreach ( [ [ 'rid-p0-older-0000000000000871', 71, 0 ], [ 'rid-p0-newer-0000000000000872', 29, 0 ], [ 'rid-p1-only-00000000000000873', 43, 1 ], [ 'rid-p3-only-00000000000000874', 17, 3 ] ] as [ $rid, $ago, $partition ] ) {
+			$this->write_request( [ 'rid' => $rid, 'url' => $url, 'timestamp' => $now - $ago, 'duration_ms' => 19, 'status_code' => 200, 'peak_mb' => 2, 'request_method' => 'GET' ], $partition );
+		}
+		for ( $i = 0; $i < 150; $i++ ) {
+			$this->write_request( [ 'rid' => \sprintf( 'rid-elsewhere-%018d', $i ), 'url' => '/elsewhere-on-p2', 'timestamp' => $now - 600 + $i, 'duration_ms' => 23, 'status_code' => 200, 'peak_mb' => 2, 'request_method' => 'GET' ], 2 );
+		}
+		$opened    = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+		$positions = (array) $opened['positions'];
+		$this->assertSame( $this->index_head( 2 ), $positions[2], 'a partition with no rows still reports where it read to' );
+
+		self::spend_the_budget_at_the_first_stride();
+		$tail = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hash, '--after=' . self::after_reply( $opened ) ] );
+
+		$this->assertFalse( $tail['scan_stopped_early'], "p2's index was walked" );
+		$this->assertSame( [], $tail['requests'] );
+		$this->assertEquals( $positions, (array) $tail['positions'], 'a partition read to its position stays there' );
+
+		// The control: without p2's position, the same refresh walks p2's lines.
+		unset( $positions[2] );
+		$blind = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hash, '--after=' . \json_encode( (object) $positions ) ] );
+		$this->assertTrue( $blind['scan_stopped_early'] );
+		$this->assertSame( [ 0, 1 ], \array_keys( (array) $blind['positions'] ), 'a partition the budget cut, and one never reached, keep the caller\'s position' );
+	}
+
+	/**
+	 * A partition that indexes late: p1's request finished before the newest
+	 * row the browser held, but reached p1's index only after the first read.
+	 * A time watermark stops p1 on it for good; a position does not.
+	 */
+	public function test_a_tail_returns_a_request_its_partition_indexed_late(): void {
+		$this->activate_shipped( 'performance', 4 );
+		$url  = '/indexed-late';
+		$hash = $this->seed_listed_url( $url, 5 );
+		$now  = self::tick();
+		$seed = function ( string $rid, int $ago, int $ms, int $partition ) use ( $url, $now ): void {
+			$this->write_request( [ 'rid' => $rid, 'url' => $url, 'timestamp' => $now - $ago, 'duration_ms' => $ms, 'status_code' => 200, 'peak_mb' => 2, 'request_method' => 'GET' ], $partition );
+		};
+		$seed( 'rid-late-p1-held-000000001', 31, 14, 1 );
+		$seed( 'rid-late-p0-older-00000001', 23, 11, 0 );
+		$seed( 'rid-late-p0-newer-00000001', 9, 11, 0 );
+		$opened = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+		$this->assertCount( 3, $opened['requests'] );
+
+		$seed( 'rid-late-p1-late-000000001', 13, 300, 1 );
+		$seed( 'rid-late-p2-new-0000000001', 5, 11, 2 );
+		$tail = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hash, '--after=' . self::after_reply( $opened ) ] );
 
 		$this->assertSame(
-			[ \sprintf( '%032x', 0xB01 ) ],
-			\array_column( $result['requests'], 'rid' ),
-			'p0 hitting the watermark must not skip p1'
+			[ 'rid-late-p2-new-0000000001', 'rid-late-p1-late-000000001' ],
+			\array_column( $tail['requests'], 'rid' ),
+			'each partition past its own position, and nothing the browser holds'
 		);
+		$this->assertFalse( $tail['scan_stopped_early'] );
+	}
+
+	public function test_a_cursor_that_is_not_partition_positions_is_refused(): void {
+		$hash = $this->seed_listed_url( '/bad-cursor', 1 );
+
+		foreach ( [ '[1,2]', '{"0":{"segment":3}}', '{"x":{"segment":3,"offset":7}}', '{"0":{"segment":"3","offset":7}}', 'not json' ] as $after ) {
+			$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hash, "--after={$after}" ] );
+			$this->assertIsString( $result, $after );
+			$this->assertStringContainsString( 'after wants partition positions', $result, $after );
+		}
 	}
 
 	public function test_dump_url_reports_a_scan_that_stopped_before_reaching_the_url(): void {
@@ -1496,10 +1573,9 @@ class PerformanceCITest extends TestCase {
 		$this->assertTrue( $result['scan_stopped_early'], 'a stopped scan is not an empty result' );
 	}
 
-	public function test_dump_url_calls_a_full_request_list_complete_not_truncated(): void {
-		// The per-URL cap ends the walk with the answer in hand; only the entry
-		// budget running out is truncation. Seeding one past the cap proves the
-		// early exit is not reported as a stopped scan.
+	public function test_dump_url_calls_a_capped_request_list_short_of_its_window(): void {
+		// One past the cap: the list stops short of `requests_window_start`,
+		// and the reply says so rather than claiming the whole window.
 		$url   = '/at-the-request-cap';
 		$hash  = Log_Manager::url_hash( $url );
 		$limit = (int) ( new \ReflectionClassConstant( Performance_CI_Node::class, 'RECENT_REQUEST_LIMIT' ) )->getValue();
@@ -1523,7 +1599,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertCount( $limit, $result['requests'] );
-		$this->assertFalse( $result['scan_stopped_early'], 'reaching the per-URL cap is a complete answer' );
+		$this->assertTrue( $result['scan_stopped_early'], 'a capped partition leaves its oldest request unlisted' );
 		// And it keeps the NEWEST end. Walking forward from the oldest, the cap
 		// fires on the oldest matches, so the panel would show the start of a
 		// busy URL's history sorted descending to look convincing.
@@ -2306,17 +2382,17 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_urls_verb_filters_errors_only_and_totals_match(): void {
-		// "Errors" = requests no status bucket classified: timeouts and fatals.
+		// "Errors" = timeouts and fatals; a 5xx alone is a response, not one.
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'aaaaaaaaaaaa' => [
 				'url' => '/clean', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0, 'last_seen' => 1700000001,
-				'count_2xx' => 7, 'count_3xx' => 1, 'count_4xx' => 1, 'count_5xx' => 0,
+				'count_2xx' => 6, 'count_3xx' => 1, 'count_4xx' => 1, 'count_5xx' => 1,
 			],
 			'bbbbbbbbbbbb' => [
-				'url' => '/timeouts', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 60.0, 'last_seen' => 1700000002,
-				'count_2xx' => 2, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
+				'url' => '/timeouts', 'count' => 6, 'timed_count' => 5, 'sum_ms' => 60.0, 'last_seen' => 1700000002,
+				'count_2xx' => 2, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 3, 'errors' => 4,
 			],
 			'cccccccccccc' => [
 				'url' => '/also-clean', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0, 'last_seen' => 1700000003,
@@ -2336,7 +2412,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 1, $result['totals']['urls'] );
 		$this->assertCount( 1, $result['data'] );
 		$this->assertSame( 'https://example.com/timeouts', $result['data'][0]['url'] );
-		// Its errors beside its traffic: six requests, two of them classified.
+		// Its errors beside its traffic: six requests, four timed out or fataled.
 		$this->assertSame( 6, $result['data'][0]['count'] );
 		$this->assertSame( 4, $result['data'][0]['errors'] );
 		$this->assertSame( 6, $result['totals']['requests'] );
@@ -2350,11 +2426,11 @@ class PerformanceCITest extends TestCase {
 		$this->set_url_bucket( $store, $bucket, [
 			'dddddddddddd' => [
 				'url' => '/busy', 'count' => 300, 'timed_count' => 299, 'sum_ms' => 900.0, 'last_seen' => 1700000011,
-				'count_2xx' => 299, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
+				'count_2xx' => 299, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0, 'errors' => 1,
 			],
 			'eeeeeeeeeeee' => [
 				'url' => '/quiet', 'count' => 12, 'timed_count' => 7, 'sum_ms' => 70.0, 'last_seen' => 1700000012,
-				'count_2xx' => 7, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
+				'count_2xx' => 7, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0, 'errors' => 5,
 			],
 		] );
 
@@ -2504,6 +2580,23 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
 	}
 
+	/** Every shard keeps an overflow row of its own; the fold sums each field of them by name. */
+	public function test_the_folded_other_row_sums_every_shards_status_counts_and_errors(): void {
+		$store  = $this->stats_store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		foreach ( [ '3' => [ 7, 2, 1 ], 'a' => [ 11, 5, 3 ] ] as $shard => [ $ok, $five, $errors ] ) {
+			$this->seed_url_shard( $store, $bucket, $shard, [
+				Stats_Store::OTHER_KEY => [ 'count' => $ok + $five, 'timed_count' => $ok + $five, 'sum_ms' => 40.0, 'count_2xx' => $ok, 'count_5xx' => $five, 'errors' => $errors, 'last_seen' => 1700000004 ],
+			] );
+		}
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--limit=' . ( Stats_Store::URL_RANK_N + 1 ) );
+
+		$other = \array_column( $result['data'], null, 'hash' )[ Stats_Store::OTHER_KEY ];
+		$this->assertSame( [ 18, 7, 4 ], [ $other['count_2xx'], $other['count_5xx'], $other['errors'] ] );
+		$this->assertSame( [], \array_filter( \array_keys( $other ), 'is_int' ), 'no field rides under its index' );
+	}
+
 	public function test_the_other_row_is_marked_as_an_aggregate(): void {
 		// It stands for many URLs, so it is not one: its key is not a url_hash
 		// and `dump_url` cannot answer for it. The row says so rather than
@@ -2561,8 +2654,8 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'0badc0de1234'         => [ 'url' => '/erroring', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0, 'count_2xx' => 4, 'last_seen' => 1700000003 ],
-			Stats_Store::OTHER_KEY => [ 'count' => 900, 'timed_count' => 900, 'sum_ms' => 9000.0, 'count_2xx' => 899, 'last_seen' => 1700000004 ],
+			'0badc0de1234'         => [ 'url' => '/erroring', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0, 'count_2xx' => 4, 'errors' => 1, 'last_seen' => 1700000003 ],
+			Stats_Store::OTHER_KEY => [ 'count' => 900, 'timed_count' => 900, 'sum_ms' => 9000.0, 'count_2xx' => 899, 'errors' => 1, 'last_seen' => 1700000004 ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--errors_only=1' );
@@ -2758,7 +2851,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		// Per-URL flame stats blob lives at NS_URL keyed by url_hash.
 		$this->set_url_stats( $store, 'cafebabe1234', [
-			'flame'         => [ 'name' => 'aggregate', 'value' => 100, 'children' => [ [ 'name' => 'a', 'value' => 50 ] ] ],
+			'flame_raw'     => [ 'name' => 'aggregate', 'sum_value' => 200.0, 'count' => 2, 'children' => [ [ 'name' => 'a', 'sum_value' => 100.0, 'ts' => 1700001000, 'children' => [] ] ] ],
 			'last_modified' => 1700001111,
 		] );
 
@@ -2772,6 +2865,52 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( 100, $result['aggregate_flame']['value'] );
 		$this->assertSame( 1700001111, $result['last_modified'] );
+	}
+
+	/**
+	 * Each flame-builder partition writes its own share of a URL's traffic to
+	 * its own blob, so the modal's aggregate is every partition's summed, as
+	 * the rows are (decision 2), never partition 0's quarter.
+	 */
+	public function test_dump_url_sums_every_partitions_url_blob(): void {
+		$this->activate_shipped( 'performance', 3 );
+		$hash = $this->seed_listed_url( '/summed-blobs', 5 );
+		$now  = self::tick();
+		$this->set_url_stats( $this->stats_store( 0, 86400 ), $hash, [
+			'flame_raw'     => [ 'name' => 'aggregate', 'sum_value' => 300.0, 'count' => 3, 'children' => [
+				[ 'name' => 'init hook', 'sum_value' => 90.0, 'ts' => $now - 41, 'children' => [] ],
+			] ],
+			'profiles'      => [ 'count' => 3, 'sum_req_time' => 300.0, 'categories' => [
+				'render' => [ 'samples' => 3, 'sum_time' => 60.0, 'sum_count' => 6, 'entries' => [] ],
+			] ],
+			'last_modified' => $now - 7,
+		] );
+		$this->set_url_stats( $this->stats_store( 2, 86400 ), $hash, [
+			'flame_raw'     => [ 'name' => 'aggregate', 'sum_value' => 500.0, 'count' => 2, 'children' => [
+				[ 'name' => 'init hook', 'sum_value' => 110.0, 'ts' => $now - 19, 'children' => [] ],
+				[ 'name' => 'wp_loaded hook', 'sum_value' => 40.0, 'ts' => $now - 19, 'children' => [] ],
+			] ],
+			'profiles'      => [ 'count' => 2, 'sum_req_time' => 500.0, 'categories' => [
+				'render' => [ 'samples' => 2, 'sum_time' => 40.0, 'sum_count' => 4, 'entries' => [] ],
+				'sql'    => [ 'samples' => 2, 'sum_time' => 20.0, 'sum_count' => 10, 'entries' => [] ],
+			] ],
+			'last_modified' => $now - 3,
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+
+		$flame    = $result['aggregate_flame'];
+		$children = \array_column( $flame['children'], 'value', 'name' );
+		$this->assertSame( 5, $flame['count'], 'every partition\'s requests' );
+		$this->assertEqualsWithDelta( 160.0, $flame['value'], 1e-6, '800 ms over 5 requests' );
+		$this->assertEqualsWithDelta( 40.0, $children['init hook'], 1e-6, '200 ms over 5 requests' );
+		$this->assertEqualsWithDelta( 8.0, $children['wp_loaded hook'], 1e-6, 'a span one partition alone saw' );
+		$profiles = $result['aggregate_profiles'];
+		$this->assertSame( 5, $profiles['count'] );
+		$this->assertEqualsWithDelta( 160.0, $profiles['total_time'], 1e-6 );
+		$this->assertEqualsWithDelta( 20.0, $profiles['categories']['render']['time'], 1e-6 );
+		$this->assertEqualsWithDelta( 2.0, $profiles['categories']['sql']['count'], 1e-6 );
+		$this->assertSame( $now - 3, $result['last_modified'], 'the newest partition\'s flush' );
 	}
 
 	/**
@@ -2869,10 +3008,14 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_a_tailing_dump_url_rebuilds_nothing_from_its_partial_list(): void {
-		// A `--since` list is the newest few; the held flame stands instead.
+		// An `--after` list is the newest few; the held flame stands instead.
 		[ $hash, $newest ] = $this->seed_a_cold_url_with_two_flames();
+		$opened = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+		$older  = \array_values( \array_filter( $opened['requests'], static fn ( array $r ): bool => 'rid-cold-a-8841902' === $r['rid'] ) );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', "{$hash} --since=" . ( $newest - 1 ) );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hash, '--after=' . self::after_rows( $older ) ] );
+
+		$this->assertSame( [ 'rid-cold-b-8841902' ], \array_column( $result['requests'], 'rid' ) );
 
 		$this->assertNull( $result['aggregate_flame'] );
 		$this->assertSame( $newest, $result['last_modified'] );
@@ -3759,13 +3902,13 @@ class PerformanceCITest extends TestCase {
 		// one key each; no index row is walked for it.
 		$store = $this->stats_store( 0, 86400 );
 		$store->set_url_names( [ 'example.test' => [ 'cafebabe5678' => 'https://example.test/asked-agg' ] ] );
-		// As the flame builder finalizes it: the count on the root alone.
+		// As the flame builder stores it: sums, the count on the root alone.
 		$this->set_url_stats( $store, 'cafebabe5678', [
-			'flame' => [
-				'name'     => 'aggregate',
-				'value'    => 300,
-				'count'    => 3,
-				'children' => [ [ 'name' => 'wp_loaded', 'value' => 240, 'children' => [] ] ],
+			'flame_raw' => [
+				'name'      => 'aggregate',
+				'sum_value' => 900.0,
+				'count'     => 3,
+				'children'  => [ [ 'name' => 'wp_loaded', 'sum_value' => 720.0, 'ts' => self::tick(), 'children' => [] ] ],
 			],
 		] );
 
@@ -4578,12 +4721,12 @@ class PerformanceCITest extends TestCase {
 
 	public function test_dump_url_verb_declares_required_hash_plus_filters(): void {
 		// dump_url requires hash (regex check throws on empty/bad) + optional
-		// breakdown/server/categories/since. `server` scopes it the way it
-		// scopes the table this modal opens from; `since` tails the request
+		// breakdown/server/categories/after. `server` scopes it the way it
+		// scopes the table this modal opens from; `after` tails the request
 		// list. A read-but-undeclared option is absent from `help`, from the
 		// palette and from the MCP tools/list schema, so the list is pinned.
 		$args = self::args_by_name( 'dump_url' );
-		$this->assertSame( [ 'hash', 'breakdown', 'server', 'categories', 'since' ], \array_keys( $args ) );
+		$this->assertSame( [ 'hash', 'breakdown', 'server', 'categories', 'after' ], \array_keys( $args ) );
 		$this->assertSame( 'string', $args['hash']['type'] );
 		$this->assertTrue( $args['hash']['required'] );
 		$this->assertFalse( $args['breakdown']['required'] );
@@ -4591,8 +4734,8 @@ class PerformanceCITest extends TestCase {
 		$this->assertFalse( $args['server']['required'] );
 		$this->assertSame( 'bool', $args['categories']['type'] );
 		$this->assertFalse( $args['categories']['required'] );
-		$this->assertSame( 'int', $args['since']['type'] );
-		$this->assertFalse( $args['since']['required'] );
+		$this->assertSame( 'json', $args['after']['type'] );
+		$this->assertFalse( $args['after']['required'] );
 	}
 
 	public function test_url_breakdown_verb_declares_both_of_its_arguments_required(): void {
@@ -7054,6 +7197,7 @@ class PerformanceCITest extends TestCase {
 			'url'         => 'https://' . self::SEED_SERVER . $path,
 			'count'       => $count,
 			'count_2xx'   => $ok,
+			'errors'      => $count - $ok,
 			'timed_count' => $timed,
 			'sum_ms'      => $sum_ms,
 			'sum_peak_mb' => $peak,

@@ -588,16 +588,29 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 	} );
 
 	/**
-	 * The refresh tick carries the browser's watermark — the newest request it
-	 * holds — so the server's reverse scan stops at known ground instead of
-	 * re-reading the whole retained window. The OPEN fetch must not: the merge
-	 * is cleared first, so nothing is held and the full window is wanted.
+	 * The refresh tick carries the browser's cursor — the newest log position
+	 * it holds per partition — so each partition's reverse scan stops at known
+	 * ground instead of re-reading the whole retained window. The OPEN fetch
+	 * must not: the merge is cleared first, so nothing is held and the full
+	 * window is wanted.
 	 */
-	test( 'the refresh tick sends --since from the merge, the open fetch does not', async () => {
+	test( 'the refresh tick sends --after from the merge, the open fetch does not', async () => {
 		const wire = installWire( {
 			dump_url: {
 				last_modified: 1,
-				requests: [ { rid: 'a', timestamp: 1787000900 } ],
+				positions: {
+					2: { segment: 5, offset: 8192 },
+					3: { segment: 1, offset: 612 },
+				},
+				requests: [
+					{
+						rid: 'a',
+						timestamp: 1787000900,
+						partition: 2,
+						segment: 5,
+						offset: 4096,
+					},
+				],
 			},
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
@@ -613,7 +626,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 		// The open fetch reads the whole window.
 		const opened = findVerb( wire.batches, 'dump_url' );
-		expect( option( opened[ VALUE ].arguments, 'since' ) ).toBeUndefined();
+		expect( option( opened[ VALUE ].arguments, 'after' ) ).toBeUndefined();
 
 		// The reply is now retained, so the next tick asks only for what is new.
 		wire.batches.length = 0;
@@ -621,9 +634,12 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 			Core.node( ROUTER ).fireCb();
 		} );
 		const refreshed = findVerb( wire.batches, 'dump_url' );
-		expect( option( refreshed[ VALUE ].arguments, 'since' ) ).toBe(
-			'1787000900'
-		);
+		expect(
+			JSON.parse( option( refreshed[ VALUE ].arguments, 'after' ) )
+		).toEqual( {
+			2: { segment: 5, offset: 8192 },
+			3: { segment: 1, offset: 612 },
+		} );
 	} );
 
 	test( 'stops the url-detail:timer when a request detail opens, re-arms when it closes', async () => {

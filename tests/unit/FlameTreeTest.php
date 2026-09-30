@@ -327,6 +327,20 @@ class FlameTreeTest extends TestCase {
 		$this->assertArrayNotHasKey( 'seen_count', $by['db'] );
 	}
 
+	public function test_merge_keeps_the_newest_ts_when_an_older_record_arrives(): void {
+		$live     = self::NOW + 913;
+		$lagging  = $live - 7200;
+		$existing = [ [ 'name' => 'db', 'sum_value' => 10.0, 'ts' => $live, 'children' => [ [ 'name' => 'q', 'sum_value' => 2.0, 'ts' => $live, 'children' => [] ] ] ] ];
+		$incoming = [ [ 'name' => 'db', 'value' => 5, 'children' => [ [ 'name' => 'q', 'value' => 1 ] ] ] ];
+		$merged   = Flame_Tree::merge_flame_children_incremental( $existing, $incoming, $lagging );
+		$this->assertSame( 15.0, $merged[0]['sum_value'] );
+		$this->assertSame( $live, $merged[0]['ts'] );
+		$this->assertSame( $live, $merged[0]['children'][0]['ts'] );
+		// A live record touching neither node keeps both at its cutoff.
+		$kept = Flame_Tree::merge_flame_children_incremental( $merged, [], $live + 60 );
+		$this->assertSame( 'db', $kept[0]['name'] );
+	}
+
 	public function test_merge_recurses_into_children(): void {
 		$incoming = [ [ 'name' => 'a', 'value' => 1, 'ts' => self::NOW, 'children' => [ [ 'name' => 'a1', 'value' => 1, 'ts' => self::NOW ] ] ] ];
 		$merged   = Flame_Tree::merge_flame_children_incremental( [], $incoming, self::NOW );

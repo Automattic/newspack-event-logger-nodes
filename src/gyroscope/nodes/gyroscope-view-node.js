@@ -9,13 +9,13 @@
  */
 
 import {
-	FROM,
 	KEY,
 	Node,
 	ReactBridge,
 	VALUE,
 	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
+import { isControl } from '@newspack-nodes/shared/helpers/controlMsg';
 
 /** Averaging window for the requests/second readout, in seconds. */
 const RPS_WINDOW_SEC = 10;
@@ -109,8 +109,8 @@ export class GyroscopeViewNode extends ReactBridge( Node ) {
 		if ( ! value ) {
 			return;
 		}
-		// A local control: the low-frequency path.
-		if ( '' !== this.controlFrom && message[ FROM ] === this.controlFrom ) {
+		// A local control; one with no VALUE was dropped above.
+		if ( isControl( this, message ) ) {
 			this._control( value );
 			return;
 		}

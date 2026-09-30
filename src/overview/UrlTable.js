@@ -73,7 +73,7 @@ const pct = ( part, total ) => {
  * share, `code` the sortable URL heading over the bar-backed `<code>` cell.
  * `render` overrides the default `formatNum( url[ field ], 'ms' )`, and
  * `width` is the column's grid track. `errorsLabel` heads the column instead
- * of `label` on an errors-only page, whose rows carry their `errors` too.
+ * of `label` on an errors-only page, whose count column shows `errors`.
  *
  * A `status` column's `status` is a representative code, not a count of that
  * one status: the shared `.entry-status[data-status^="2"]` rules colour the
@@ -216,7 +216,7 @@ const cellClass = ( col ) =>
  * @param {Object}   url         One row of the `urls` reply.
  * @param {Function} formatNum   Number formatter, from the table.
  * @param {number}   now         Unix timestamp the page's ages are measured from.
- * @param {boolean}  errorCounts Whether the row carries its `errors` to show.
+ * @param {boolean}  errorCounts Whether the count cell shows the row's `errors`.
  * @return {string|import('react').ReactElement} Cell content.
  */
 const renderCell = ( col, url, formatNum, now, errorCounts ) => {
@@ -226,6 +226,34 @@ const renderCell = ( col, url, formatNum, now, errorCounts ) => {
 	return col.render
 		? col.render( url, formatNum, now, errorCounts )
 		: formatNum( url[ col.field ], 'ms' );
+};
+
+/**
+ * What the table says in place of rows: why it has none it can vouch for.
+ *
+ * @param {?string} error      The last refusal, which outranks every rows state.
+ * @param {boolean} loading    Whether a page is asked for and not yet answered.
+ * @param {string}  searchTerm The live search, '' for none.
+ * @return {string} The message.
+ */
+const emptyText = ( error, loading, searchTerm ) => {
+	if ( error ) {
+		return sprintf(
+			// translators: %s: the error message.
+			__( 'Could not load URLs: %s', 'newspack-event-logger-nodes' ),
+			error
+		);
+	}
+	if ( loading ) {
+		return __( 'Loading URLs…', 'newspack-event-logger-nodes' );
+	}
+	return searchTerm
+		? sprintf(
+				// translators: %s: the URL search term.
+				__( 'No URLs match "%s"', 'newspack-event-logger-nodes' ),
+				searchTerm
+		  )
+		: __( 'No URLs to display', 'newspack-event-logger-nodes' );
 };
 
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
@@ -247,7 +275,7 @@ const UrlRow = memo(
 	 * @param {number}                       props.maxAvg      The page's p95 of the bar metric; 0 draws no bar.
 	 * @param {string}                       props.metric      'memory' bars avg_peak_mb, 'volume' bars count, 'avg' and 'cumulative' bar avg_ms.
 	 * @param {number}                       props.now         Unix timestamp the page's ages are measured from.
-	 * @param {boolean}                      props.errorCounts Whether the row carries its `errors` to show.
+	 * @param {boolean}                      props.errorCounts Whether the count cell shows the row's `errors`.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function UrlRow( {
@@ -329,7 +357,9 @@ const UrlRow = memo(
  * @param {string}                   [props.metric]       Chart metric the row bars scale.
  * @param {boolean}                  [props.ranked]       Whether the server answered from its per-bucket ranked lists rather than the whole index.
  * @param {number}                   [props.now]          Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
- * @param {boolean}                  [props.errorCounts]  Whether the reply was built under "Errors Only", so each row carries its `errors`.
+ * @param {boolean}                  [props.errorCounts]  Whether the reply was built under "Errors Only", so the count column shows each row's `errors`.
+ * @param {?string}                  [props.error]        The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
+ * @param {boolean}                  [props.loading]      Whether a page is asked for and not yet answered.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlTable( {
@@ -342,6 +372,8 @@ export default function UrlTable( {
 	ranked = false,
 	now = 0,
 	errorCounts = false,
+	error = null,
+	loading = false,
 } ) {
 	const [ sortField, setSortField ] = useState( 'count' );
 	const [ sortOrder, setSortOrder ] = useState( 'desc' );
@@ -578,21 +610,13 @@ export default function UrlTable( {
 					className="event-logger-table__list newspack-nodes-table"
 					style={ { paddingTop, paddingBottom } }
 				>
-					{ filteredUrls.length === 0 ? (
-						<div className="event-logger-table__empty newspack-nodes-empty-state">
-							{ searchTerm
-								? sprintf(
-										// translators: %s: the URL search term.
-										__(
-											'No URLs match "%s"',
-											'newspack-event-logger-nodes'
-										),
-										searchTerm
-								  )
-								: __(
-										'No URLs to display',
-										'newspack-event-logger-nodes'
-								  ) }
+					{ error || filteredUrls.length === 0 ? (
+						<div
+							className={ `event-logger-table__empty newspack-nodes-empty-state${
+								error ? ' newspack-nodes-status is-error' : ''
+							}` }
+						>
+							{ emptyText( error, loading, searchTerm ) }
 						</div>
 					) : (
 						visibleUrls.map( ( url ) => (

@@ -314,8 +314,8 @@ class Stats_Store {
 	 * A header record is positional (decision 18): four sums over every row
 	 * of its set the key holds, whether an overflow row was among them, a
 	 * `Url_Sketch` of the rest, the hashes the table counts as URLs, and the
-	 * requests no status accounted for, which only an errored set's reader
-	 * reads.
+	 * requests that timed out or fataled (`ROW_ERRORS`), which only an errored
+	 * set's reader reads.
 	 */
 	public const HDR_COUNT       = 0;
 	public const HDR_TIMED_COUNT = 1;
@@ -327,9 +327,9 @@ class Stats_Store {
 
 	/**
 	 * The version of the `HDR_*` layout above. Raise it with any change to
-	 * what a position holds: 4 deflates the sketch and carries `HDR_ERRORS`.
+	 * what a position holds: 5 sums `ROW_ERRORS` into `HDR_ERRORS`.
 	 */
-	public const HDR_VERSION = 4;
+	public const HDR_VERSION = 5;
 
 	/**
 	 * The shape a header record is written in, its layout and its sketch's
@@ -494,12 +494,14 @@ class Stats_Store {
 	 * readability the shape spends, and a raw `$row[3]` is the worst literal
 	 * there is — unreadable AND silently mis-typeable.
 	 *
-	 * The eight fields that ADD come FIRST, and in `ROW_SUMS` order, so one
+	 * The nine fields that ADD come FIRST, and in `ROW_SUMS` order, so one
 	 * map describes the row's summed half.
 	 *
-	 * `ROW_FIELD_NAMES` below names every index. Three of the fourteen are not
+	 * `ROW_FIELD_NAMES` below names every index. Four of the fifteen are not
 	 * the counts and sums the rest are: `ROW_TIMED_COUNT` counts only the
 	 * requests whose duration was measured, which is what `min_ms` folds from;
+	 * `ROW_ERRORS` counts only the requests that timed out or fataled
+	 * (`Flame_Builder_Node::error_counts()`), whatever status they answered;
 	 * `ROW_WORKER` is a boolean saying the row counts worker traffic; and
 	 * `ROW_PATH` is the URL as `row_path()` shortens it, the row's one string.
 	 *
@@ -515,12 +517,13 @@ class Stats_Store {
 	public const ROW_COUNT_3XX   = 5;
 	public const ROW_COUNT_4XX   = 6;
 	public const ROW_COUNT_5XX   = 7;
-	public const ROW_MIN_MS      = 8;
-	public const ROW_MAX_MS      = 9;
-	public const ROW_MAX_PEAK_MB = 10;
-	public const ROW_LAST_SEEN   = 11;
-	public const ROW_WORKER      = 12;
-	public const ROW_PATH        = 13;
+	public const ROW_ERRORS      = 8;
+	public const ROW_MIN_MS      = 9;
+	public const ROW_MAX_MS      = 10;
+	public const ROW_MAX_PEAK_MB = 11;
+	public const ROW_LAST_SEEN   = 12;
+	public const ROW_WORKER      = 13;
+	public const ROW_PATH        = 14;
 
 	/**
 	 * Longest `ROW_PATH` kept, in bytes, `…` included. The hash is the
@@ -531,7 +534,7 @@ class Stats_Store {
 
 	/**
 	 * A ranked-list entry is POSITIONAL (decision 18): the hash, the row's
-	 * thirteen numbers `ROW_COUNT`..`ROW_WORKER` and never `ROW_PATH`, and on
+	 * fourteen numbers `ROW_COUNT`..`ROW_WORKER` and never `ROW_PATH`, and on
 	 * the `url` lists alone the path it ranked by.
 	 */
 	public const RANK_HASH = 0;
@@ -551,6 +554,7 @@ class Stats_Store {
 		self::ROW_COUNT_3XX   => true,
 		self::ROW_COUNT_4XX   => true,
 		self::ROW_COUNT_5XX   => true,
+		self::ROW_ERRORS      => true,
 	];
 
 	/**
@@ -569,6 +573,7 @@ class Stats_Store {
 		self::ROW_COUNT_3XX   => 'count_3xx',
 		self::ROW_COUNT_4XX   => 'count_4xx',
 		self::ROW_COUNT_5XX   => 'count_5xx',
+		self::ROW_ERRORS      => 'errors',
 		self::ROW_MIN_MS      => 'min_ms',
 		self::ROW_MAX_MS      => 'max_ms',
 		self::ROW_MAX_PEAK_MB => 'max_peak_mb',
@@ -1805,27 +1810,58 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read one URL's stats blob — flame tree, profiles, last_modified. Whole, not
-	 * summable: readers take the first partition that has it rather than merging.
+	 * One URL's aggregate across every partition's blob: each flame-builder
+	 * partition writes the share of the URL's traffic it saw, so the sums add
+	 * (decision 2) — the running flames through `merge_url_flames()`, the
+	 * profiles as a leaderboard bucket merges — and the reader divides them
+	 * once. `last_modified` is the newest partition's flush.
 	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @return array<array-key,mixed>|null Blob, or null on miss.
+	 * A key present only when some blob held it: `flame` from a `flame_raw`,
+	 * `profiles` from a `profiles`.
+	 *
+	 * @param array<int,Stats_Store> $stores   Every partition's store.
+	 * @param string                 $url_hash 12-char URL hash.
+	 * @return array{last_modified:int, flame?:array<array-key,mixed>, profiles?:array<string,mixed>}|null Null when no partition holds one.
 	 */
-	public function get_url_stats( string $url_hash ): ?array {
-		$val = $this->url_aggregate( $url_hash );
-		if ( null === $val ) {
+	public static function url_stats( array $stores, string $url_hash ): ?array {
+		$found         = false;
+		$last_modified = 0;
+		$flame         = null;
+		$profiles      = null;
+		foreach ( $stores as $store ) {
+			$blob = $store->url_aggregate( $url_hash );
+			if ( null === $blob ) {
+				continue;
+			}
+			$found         = true;
+			$last_modified = \max( $last_modified, Core::num_int( $blob['last_modified'] ?? null ) );
+			if ( \is_array( $blob['flame_raw'] ?? null ) ) {
+				$flame = null === $flame ? $blob['flame_raw'] : Flame_Builder_Node::merge_url_flames( $flame, $blob['flame_raw'] );
+			}
+			if ( \is_array( $blob['profiles'] ?? null ) ) {
+				$sums = self::string_keys( $blob['profiles'] );
+				if ( null === $profiles ) {
+					$profiles = $sums;
+				} else {
+					self::merge_leaderboard_bucket( $profiles, $sums );
+				}
+			}
+		}
+		if ( ! $found ) {
 			return null;
 		}
-		// The profile is stored as sums; every reader wants per-request means.
-		$profiles = Core::arr( $val['profiles'] ?? null );
-		if ( [] !== $profiles ) {
-			$val['profiles'] = self::sums_to_display(
-				Core::num_int( $profiles['count'] ?? 0 ),
-				Core::num_float( $profiles['sum_req_time'] ?? 0 ),
+		$stats = [ 'last_modified' => $last_modified ];
+		if ( null !== $flame ) {
+			$stats['flame'] = Flame_Builder_Node::url_flame_for_display( $flame )[1];
+		}
+		if ( null !== $profiles ) {
+			$stats['profiles'] = self::sums_to_display(
+				Core::num_int( $profiles['count'] ?? null ),
+				Core::num_float( $profiles['sum_req_time'] ?? null ),
 				self::string_keys( Core::arr( $profiles['categories'] ?? null ) )
 			);
 		}
-		return $val;
+		return $stats;
 	}
 
 	/**
@@ -1887,8 +1923,40 @@ class Stats_Store {
 	}
 
 	/**
+	 * Merge one leaderboard bucket's sums into another, in place.
+	 *
+	 * `Flame_Builder_Node` combines the current flush's bucket with the already
+	 * persisted bucket of the same key. Three shapes nest here and each has its
+	 * own field table: the bucket (`LB_SUMS`), a category inside it
+	 * (`LB_CAT_SUMS`) and one of that category's entries (`LB_ENTRY_SUMS`).
+	 *
+	 * @param array<string,mixed> $dst The bucket so far; rewritten in place.
+	 * @param array<string,mixed> $src The bucket being merged in.
+	 */
+	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
+		// Read BEFORE the sum: `sum_entry()` keeps only what LB_SUMS names.
+		$cats = Core::arr( $dst['categories'] ?? null );
+		$dst  = self::string_keys( self::sum_entry( $dst, $src, self::LB_SUMS ) );
+		foreach ( Core::arr( $src['categories'] ?? null ) as $cat => $data ) {
+			$data    = Core::arr( $data );
+			$current = Core::arr( $cats[ $cat ] ?? null );
+			$entries = Core::arr( $current['entries'] ?? null );
+			foreach ( Core::arr( $data['entries'] ?? null ) as $name => $entry ) {
+				$entries[ $name ] = self::sum_entry(
+					Core::arr( $entries[ $name ] ?? null ),
+					Core::arr( $entry ),
+					self::LB_ENTRY_SUMS
+				);
+			}
+			$cats[ $cat ]            = self::sum_entry( $current, $data, self::LB_CAT_SUMS );
+			$cats[ $cat ]['entries'] = $entries;
+		}
+		$dst['categories'] = $cats;
+	}
+
+	/**
 	 * One URL's stored aggregate as its writer merges onto it: the sums the
-	 * flush wrote, where `get_url_stats()` answers display means.
+	 * flush wrote, where `url_stats()` answers display means.
 	 *
 	 * @param string    $url_hash 12-char URL hash.
 	 * @param-out bool  $failed
@@ -2169,38 +2237,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Merge one leaderboard bucket's sums into another, in place.
-	 *
-	 * `Flame_Builder_Node` combines the current flush's bucket with the already
-	 * persisted bucket of the same key. Three shapes nest here and each has its
-	 * own field table: the bucket (`LB_SUMS`), a category inside it
-	 * (`LB_CAT_SUMS`) and one of that category's entries (`LB_ENTRY_SUMS`).
-	 *
-	 * @param array<string,mixed> $dst The bucket so far; rewritten in place.
-	 * @param array<string,mixed> $src The bucket being merged in.
-	 */
-	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
-		// Read BEFORE the sum: `sum_entry()` keeps only what LB_SUMS names.
-		$cats = Core::arr( $dst['categories'] ?? null );
-		$dst  = self::string_keys( self::sum_entry( $dst, $src, self::LB_SUMS ) );
-		foreach ( Core::arr( $src['categories'] ?? null ) as $cat => $data ) {
-			$data    = Core::arr( $data );
-			$current = Core::arr( $cats[ $cat ] ?? null );
-			$entries = Core::arr( $current['entries'] ?? null );
-			foreach ( Core::arr( $data['entries'] ?? null ) as $name => $entry ) {
-				$entries[ $name ] = self::sum_entry(
-					Core::arr( $entries[ $name ] ?? null ),
-					Core::arr( $entry ),
-					self::LB_ENTRY_SUMS
-				);
-			}
-			$cats[ $cat ]            = self::sum_entry( $current, $data, self::LB_CAT_SUMS );
-			$cats[ $cat ]['entries'] = $entries;
-		}
-		$dst['categories'] = $cats;
-	}
-
-	/**
 	 * Sum `$fields` from `$incoming` into `$into`, entry by entry. The one merge
 	 * the dimensional (`DIM_SUMS`) and category (`CAT_SUMS`) series share, and
 	 * it reads a field key rather than a name, so a positional table works here
@@ -2304,7 +2340,7 @@ class Stats_Store {
 
 	/**
 	 * The rows of one key in which each URL errored: those whose requests
-	 * include one no status accounted for, a timeout or a fatal. The one
+	 * include a timeout or a fatal (`ROW_ERRORS`). The one
 	 * definition of an errored row, which the writer ranks and the fold
 	 * filters each key by. An overflow row stands for many URLs, and no
 	 * row test speaks for one.
@@ -2631,16 +2667,12 @@ class Stats_Store {
 	}
 
 	/**
-	 * The requests of one stored row that no status bucket accounted for.
+	 * The requests of one stored row that timed out or fataled.
 	 *
 	 * @param array<array-key,mixed> $row A stored row.
 	 */
 	public static function row_errors( array $row ): int {
-		$errors = Core::num_int( $row[ self::ROW_COUNT ] ?? null );
-		foreach ( self::ROW_STATUS_COUNTS as $index ) {
-			$errors -= Core::num_int( $row[ $index ] ?? null );
-		}
-		return $errors;
+		return Core::num_int( $row[ self::ROW_ERRORS ] ?? null );
 	}
 
 	/**

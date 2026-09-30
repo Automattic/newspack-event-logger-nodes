@@ -1,19 +1,16 @@
 /**
- * UrlDetailMergeNode tests — the net-new transform Node that hosts the
- * dump_url incremental-merge + last_modified dedup on the receiver-Tee → view
- * graph EDGE (the addSliceFetcher `transform` slot), out of view state.
+ * UrlDetailMergeNode tests — the transform Node that hosts the dump_url
+ * incremental merge on the receiver-Tee → view graph EDGE (the addSliceFetcher
+ * `transform` slot), out of view state.
  *
  * It receives the raw command reply (VALUE = { name, payload } where payload is
  * the dump_url object), merges the new payload against the payload it last
  * forwarded, and forwards a message whose VALUE.payload is the merged object —
- * EXCEPT when last_modified is unchanged from the prior forward, in which case it
- * drops the message (no republish, matching the old _mergeUrlDetail no-op).
+ * EXCEPT when the reply carries no request it does not hold AND its aggregate's
+ * `last_modified` is unchanged, in which case it drops the message.
  *
- * The merge logic is lifted verbatim from performance-view-node's _mergeUrlDetail:
- *   - first reply (no prior state): forwards as-is, records last_modified;
- *   - unchanged last_modified: DROP (no forward);
- *   - changed last_modified: dedup new requests by rid, prepend newest-first,
- *     cap 500, forward the merged payload.
+ * It also holds the tail cursor: the newest log position each partition's
+ * replies have carried, which the next refresh asks past.
  *
  * A clear control (TM_STRUCT { action:'clear' }) resets the retained state so the
  * next reply is treated as fresh (modal close → reopen).
@@ -104,8 +101,72 @@ describe( 'UrlDetailMergeNode — first reply', () => {
 	} );
 } );
 
-describe( 'UrlDetailMergeNode — unchanged last_modified dedup', () => {
-	test( 'drops a reply whose last_modified is unchanged from the prior forward', () => {
+describe( 'UrlDetailMergeNode — a reply is news when its rows or its aggregate moved', () => {
+	test( 'forwards a reply carrying an unseen request under an unchanged stamp', () => {
+		const { node, sink } = makeMerge();
+		node.fill(
+			reply( {
+				last_modified: 1790754996,
+				requests: [ { rid: 'r-4417', timestamp: 1790754996 } ],
+			} )
+		);
+		node.fill(
+			reply( {
+				last_modified: 1790754996,
+				requests: [ { rid: 'r-4418', timestamp: 1790754998 } ],
+			} )
+		);
+		expect( sink.received ).toHaveLength( 2 );
+		expect(
+			forwardedPayload( sink, 1 ).requests.map( ( r ) => r.rid )
+		).toEqual( [ 'r-4418', 'r-4417' ] );
+	} );
+
+	test( 'a tail with no flame and nothing new is dropped, its stamp included', () => {
+		// A null flame means "keep yours", and the stamp it would carry with it.
+		const { node, sink } = makeMerge();
+		node.fill(
+			reply( {
+				last_modified: 1790755041,
+				aggregate_flame: { name: 'aggregate', value: 61, children: [] },
+				requests: [ { rid: 'r-5501', timestamp: 1790755040 } ],
+			} )
+		);
+		node.fill(
+			reply( {
+				last_modified: 0,
+				aggregate_flame: null,
+				requests: [],
+			} )
+		);
+		expect( sink.received ).toHaveLength( 1 );
+		node.fill(
+			reply( {
+				last_modified: 1790755049,
+				aggregate_flame: null,
+				requests: [ { rid: 'r-5502', timestamp: 1790755049 } ],
+			} )
+		);
+		expect( forwardedPayload( sink, 1 ).last_modified ).toBe( 1790755041 );
+	} );
+
+	test( 'orders the list by completion, not start', () => {
+		const { node, sink } = makeMerge();
+		node.fill(
+			reply( {
+				last_modified: 3,
+				requests: [
+					{ rid: 'short', timestamp: 1790755103, duration_ms: 12 },
+					{ rid: 'long', timestamp: 1790755100, duration_ms: 7300 },
+				],
+			} )
+		);
+		expect(
+			forwardedPayload( sink ).requests.map( ( r ) => r.rid )
+		).toEqual( [ 'long', 'short' ] );
+	} );
+
+	test( 'drops a reply holding nothing new under an unchanged stamp', () => {
 		const { node, sink } = makeMerge();
 		node.fill( reply( { last_modified: 5, requests: [ { rid: 'a' } ] } ) );
 		expect( sink.received ).toHaveLength( 1 );
@@ -315,39 +376,88 @@ describe( 'UrlDetailMergeNode — scan_stopped_early describes the merged list',
 	} );
 } );
 
-describe( 'watermark', () => {
+describe( 'cursor', () => {
 	/**
-	 * The watermark is exactly the newest request this node holds — the client
-	 * says only what it knows. The slack that keeps a same-second sibling is
-	 * the SERVER's: its scan stop is exclusive, so an entry sharing that second
-	 * is still read. Encoding a second here would be guessing at the index's
-	 * timestamp resolution from a browser.
+	 * The position each partition's walk reached, as the server reported it,
+	 * whether or not that partition held a row for the URL. The next refresh
+	 * asks past it, so a partition with nothing new costs one index line.
 	 */
-	it( 'is the newest retained timestamp', () => {
+	it( 'holds each partition at the position its last reply reported', () => {
 		const { node } = makeMerge();
 		node.fill(
 			reply( {
 				last_modified: 1,
+				positions: {
+					0: { segment: 3, offset: 4096 },
+					2: { segment: 11, offset: 77 },
+				},
 				requests: [
-					{ rid: 'b', timestamp: 1787000900 },
-					{ rid: 'a', timestamp: 1787000300 },
+					{
+						rid: 'a',
+						timestamp: 8,
+						partition: 0,
+						segment: 3,
+						offset: 1024,
+					},
+				],
+			} )
+		);
+		node.fill(
+			reply( {
+				last_modified: 1,
+				positions: { 0: { segment: 4, offset: 0 } },
+				requests: [],
+			} )
+		);
+
+		expect( node.cursor() ).toEqual( {
+			0: { segment: 4, offset: 0 },
+			2: { segment: 11, offset: 77 },
+		} );
+	} );
+
+	it( 'never moves on a row, so a partition the budget cut keeps its position', () => {
+		// The rows came from the lines the walk reached before it stopped;
+		// the lines between them and the held position are still unread.
+		const { node } = makeMerge();
+		node.fill(
+			reply( {
+				last_modified: 1,
+				positions: { 1: { segment: 6, offset: 5120 } },
+				requests: [],
+			} )
+		);
+		node.fill(
+			reply( {
+				last_modified: 1,
+				positions: {},
+				scan_stopped_early: true,
+				requests: [
+					{
+						rid: 'cut',
+						timestamp: 1790756000,
+						partition: 1,
+						segment: 9,
+						offset: 88,
+					},
 				],
 			} )
 		);
 
-		expect( node.watermark() ).toBe( 1787000900 );
+		expect( node.cursor() ).toEqual( { 1: { segment: 6, offset: 5120 } } );
 	} );
 
-	it( 'is 0 with nothing retained, so the first ask reads the whole window', () => {
-		expect( new UrlDetailMergeNode().watermark() ).toBe( 0 );
+	it( 'is null with nothing retained, so the first ask reads the whole window', () => {
+		expect( new UrlDetailMergeNode().cursor() ).toBeNull();
 	} );
 
-	it( 'is 0 again after a clear, so a reopened modal reads the whole window', () => {
+	it( 'is null again after a clear, so a reopened modal reads the whole window', () => {
 		const { node } = makeMerge();
 		node.fill(
 			reply( {
 				last_modified: 1,
-				requests: [ { rid: 'a', timestamp: 1787000300 } ],
+				positions: { 3: { segment: 2, offset: 9 } },
+				requests: [ { rid: 'a', timestamp: 1 } ],
 			} )
 		);
 		const control = newMessage();
@@ -356,6 +466,6 @@ describe( 'watermark', () => {
 		control[ VALUE ] = { action: 'clear' };
 		node.fill( control );
 
-		expect( node.watermark() ).toBe( 0 );
+		expect( node.cursor() ).toBeNull();
 	} );
 } );

@@ -6,6 +6,50 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **`dump_url` tails by `--after`, and `--since` is gone.** A caller sending
+  `--since=<epoch>` is refused `unknown option --since`. Send
+  `--after`, the reply's new `positions` object sent back unchanged, or no
+  `--after` for the whole window. A partition absent from `positions` keeps
+  the position the caller sent. Do not build the cursor from the rows: a walk
+  the budget cut returns its newest rows and leaves older lines unread. `requests` is the 500 that finished last
+  across every partition, sorted by completion rather than start, and
+  `scan_stopped_early` is true whenever a partition held more than 500 in the
+  window, so a busy URL carries it from its first read. `aggregate_flame`,
+  `aggregate_profiles` and `last_modified` describe every partition's traffic
+  summed, where they were partition 0's; a client deduplicating on
+  `last_modified` alone drops replies carrying new requests.
+
+- **Flush the stats Tables after deploying: the URL row gained a field.**
+  `Stats_Store::ROW_ERRORS` sits at index 8, so `ROW_MIN_MS` through
+  `ROW_PATH` moved one along, to 9 through 14, and a row written before
+  reads misaligned. Run
+  `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine`
+  (decision 5); the URL table and its ranked lists refill from the next
+  flushes. Header records moved to `HDR_VERSION` 5, `urlhdr:{bucket}:v5p14:…`,
+  so a v4 record reads as missing. A PHP caller reading a stored row
+  indexes it through the `ROW_*` constants, never a literal.
+
+- **`errors` counts timeouts and fatals.** Every `urls` row carries it; the
+  totals carry it under `errors_only`, as before. It was the requests no
+  status class counted, which left out every fatal (a 500) and counted every
+  CLI worker request (status 0); a client comparing `errors` across the
+  upgrade sees fatal-heavy URLs rise and worker URLs fall.
+
+- **This release needs newspack-nodes 2.79.1.** The request builder times
+  requests out on its stream clock through the owner clock
+  `LRU_Cache::with_timed_rotation()` takes there; below it the plugin stays
+  dormant behind its admin notice. Update the substrate first, then this
+  plugin, then restart the workers. A request timed out mid-replay is now
+  measured to the stream: its `duration_ms` is the newest entry stamp the
+  builder had read less its start, where it was the wall less its start, and
+  it files among the replayed stamps rather than in the wall's bucket.
+
+- **With newspack-nodes 2.79.1 a `:config` verb on `Request_Builder` or
+  `Flame_Builder` demands MANAGE.** A script or hub that sends one to a worker
+  under a READ or TUNE session is refused `permission denied: manage capability
+  required`; send it under a manage session or the site's own signature. A
+  service CI verb refused by role no longer appears as a dispatch span.
+
 - **With newspack-nodes 2.79.0 the flame stats start empty once, and a
   salt rotation no longer resets them.** A durable Table's key carries no
   salt any more: it stores `{namespace}:{key}`. The rows written under the
@@ -43,7 +87,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
     `Service_CI_Node::require_option_int()` as a TM_ERROR, and
     `request-builder:config set_inflight_target` reads no argument, so the
     gyroscope's in-flight snapshots stop.
-  - this plugin alone — its `version_at_least( '2.77.0' )` floor fails
+  - this plugin alone — its 2.77.0 substrate floor fails
     against nodes 2.76.0, and it stays dormant behind its admin notice, its
     verbs and workers down.
 

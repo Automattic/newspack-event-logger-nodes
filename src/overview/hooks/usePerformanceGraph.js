@@ -27,9 +27,10 @@
  *   request-detail:in (Tee) → request-detail:view (RequestDetailView)
  *
  * The dump_url reply rides through `UrlDetailMergeNode` on the receiver → view
- * edge: it merges each reply into the last one (dedup by rid, newest first, 500
- * rows) and DROPS a reply whose `last_modified` is unchanged, so an auto-refresh
- * tick never re-renders the modal for nothing. `url-detail:timer` is armed only
+ * edge: it merges each reply into the last one (dedup by rid, newest completion
+ * first, 500 rows) and DROPS a reply carrying no request it lacks under an
+ * unchanged `last_modified`, so an auto-refresh tick never re-renders the modal
+ * for nothing. `url-detail:timer` is armed only
  * while URL detail is the visible modal and the tab is visible. `dump_request`
  * mints from its own receiver Tee like every other slice: minting at the view
  * would make one node both the control origin and the reply address.
@@ -48,14 +49,11 @@ import { useCallback, useEffect, useRef } from '@wordpress/element';
 import {
 	Core,
 	newMessage,
-	TYPE,
-	FROM,
 	TO,
-	VALUE,
-	TM_STRUCT,
 	formatCommandArgs,
 } from '@newspack-nodes/runtime';
 
+import { controlMsg } from '@newspack-nodes/shared/helpers/controlMsg';
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
@@ -131,27 +129,28 @@ const REQUESTDETAIL_RECV = 'request-detail:in';
  * The server rides along for the same reason it rides on `urls`: this modal
  * opens from a row that filter scoped, and the two have to answer alike.
  *
- * `since` is the browser's watermark, and only the refresh tick carries one:
- * the open and rescope fetches clear the merge first, so there is nothing held
- * and the whole window is what they want.
+ * `after` is the browser's cursor, and only the refresh tick carries one: the
+ * open and rescope fetches clear the merge first, so there is nothing held and
+ * the whole window is what they want.
  *
  * Named rather than positional, like its two siblings: only `hash` reaches the
- * positional token array, and a defaulted `since` in the third slot is how a
+ * positional token array, and a defaulted `after` in the third slot is how a
  * caller comes to pass the next argument in the wrong one.
  *
- * @param {Object} arg              Named arguments.
- * @param {string} arg.hash         The URL hash.
- * @param {string} arg.serverFilter Server scope; '' means every server.
- * @param {number} [arg.since]      Watermark (epoch seconds); 0 asks for all.
+ * @param {Object}      arg              Named arguments.
+ * @param {string}      arg.hash         The URL hash.
+ * @param {string}      arg.serverFilter Server scope; '' means every server.
+ * @param {Object|null} [arg.after]      Partition => `{ segment, offset }`;
+ *                                       null asks for the whole window.
  * @return {string[]} The command token array.
  */
-function urlDetailArgs( { hash, serverFilter, since = 0 } ) {
+function urlDetailArgs( { hash, serverFilter, after = null } ) {
 	const options = { categories: true };
 	if ( serverFilter ) {
 		options.server = serverFilter;
 	}
-	if ( since > 0 ) {
-		options.since = since;
+	if ( after ) {
+		options.after = JSON.stringify( after );
 	}
 	return formatCommandArgs( [ hash ], options );
 }
@@ -418,7 +417,7 @@ export function usePerformanceGraph( opts = {} ) {
 					return urlDetailArgs( {
 						hash,
 						serverFilter: serverFilterRef.current,
-						since: Core.node( URLDETAIL_TRANSFORM ).watermark(),
+						after: Core.node( URLDETAIL_TRANSFORM ).cursor(),
 					} );
 				},
 			} );
@@ -487,32 +486,20 @@ export function usePerformanceGraph( opts = {} ) {
 	);
 
 	/**
-	 * Fire a control straight into a view's `fill`, stamped with the origin
-	 * that view was told to trust: a view takes its control branch on FROM,
-	 * never on payload shape.
-	 *
-	 * A view declaring no `controlFrom` is a wiring bug, so this throws. The
-	 * alternative is a FROM matching nothing, and the control then falls
-	 * through to the reply branch and blanks the slice, saying nothing. A name
-	 * no node answers to is a no-op instead, since every caller here names a
-	 * node this hook built: the graph is torn down, and so is the slice.
+	 * Fire a control straight into a view's `fill` through the shared
+	 * minter, which stamps the origin that view trusts and throws for a view
+	 * declaring none. A name no node answers to is a no-op, since every caller
+	 * here names a node this hook built: the graph is torn down, and so is the
+	 * slice.
 	 *
 	 * @param {string} viewName The view or transform node to control.
 	 * @param {Object} value    The control, such as `{ action: 'loading' }`.
 	 */
 	const sendControl = useCallback( ( viewName, value ) => {
 		const view = Core.node( viewName );
-		if ( ! view ) {
-			return;
+		if ( view ) {
+			view.fill( controlMsg( view, value ) );
 		}
-		if ( ! view.controlFrom ) {
-			throw new Error( `${ viewName } declares no controlFrom` );
-		}
-		const m = newMessage();
-		m[ TYPE ] = TM_STRUCT;
-		m[ FROM ] = view.controlFrom;
-		m[ VALUE ] = value;
-		view.fill( m );
 	}, [] );
 
 	/**
@@ -567,10 +554,10 @@ export function usePerformanceGraph( opts = {} ) {
 			return;
 		}
 		sendControl( URLDETAIL_VIEW, { action: 'loading' } );
-		// @longform The merge node drops a reply whose `last_modified` matches
-		// the one it holds, and that stamp is the URL's flame mtime — the same
-		// for every scope. Uncleared, a rescoped reply is discarded and
-		// the modal keeps the previous server's numbers.
+		// @longform The merge node drops a reply holding no request it lacks
+		// under the stamp it holds, and both read the same under every scope.
+		// Uncleared, a rescoped reply is discarded and the modal keeps the
+		// previous server's numbers; its cursor would skip the full read.
 		sendControl( URLDETAIL_TRANSFORM, { action: 'clear' } );
 		sendCommand(
 			'dump_url',

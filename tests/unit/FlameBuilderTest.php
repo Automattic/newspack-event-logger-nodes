@@ -7,6 +7,7 @@ use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Quiet;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -64,15 +65,8 @@ class FlameBuilderTest extends TestCase {
 		return self::live_hour() . '-05';
 	}
 
-	/** The monotonic clock tracks the tick, as every test here dates by it. */
-	protected function setUp(): void {
-		parent::setUp();
-		Flame_Builder_Node::$hrtime_fn = static fn (): int => (int) ( Core::$now * 1e9 );
-	}
-
 	protected function tearDown(): void {
 		Flame_Builder_Node::$usleep_fn = null;
-		Flame_Builder_Node::$hrtime_fn = null;
 		parent::tearDown();
 	}
 
@@ -651,12 +645,35 @@ class FlameBuilderTest extends TestCase {
 		// No periodic flush() — only the checkpoint's save_state().
 		$fb->save_state();
 
-		$stats = $store->get_url_stats( Log_Manager::url_hash( '/x' ) );
+		$stats = $store->url_aggregate( Log_Manager::url_hash( '/x' ) );
 		$this->assertNotNull( $stats, 'save_state drains the current flame stats to the store' );
 		$this->assertSame( 1, $stats['flame_raw']['count'] );
 	}
 
 	// --- Per-URL aggregate (sums-not-means) -------------------------------
+
+	public function test_two_partitions_running_flames_merge_as_one_builder_would_hold_them(): void {
+		$p0 = [ 'name' => 'aggregate', 'sum_value' => 610.0, 'count' => 4, 'children' => [
+			[ 'name' => 'init hook', 'sum_value' => 200.0, 'ts' => 1790004000, 'children' => [] ],
+			[ 'name' => 'cron hook', 'sum_value' => 70.0, 'ts' => 1790000300, 'children' => [] ],
+		] ];
+		$p1 = [ 'name' => 'aggregate', 'sum_value' => 390.0, 'count' => 3, 'children' => [
+			[ 'name' => 'init hook', 'sum_value' => 50.0, 'ts' => 1790003100, 'children' => [
+				[ 'name' => 'wp_head hook', 'sum_value' => 20.0, 'ts' => 1790003100, 'children' => [] ],
+			] ],
+		] ];
+
+		$merged = Flame_Builder_Node::merge_url_flames( $p0, $p1 );
+
+		$this->assertSame( 7, $merged['count'] );
+		$this->assertEqualsWithDelta( 1000.0, $merged['sum_value'], 1e-6 );
+		$init = $merged['children'][0];
+		$this->assertSame( 'init hook', $init['name'] );
+		$this->assertEqualsWithDelta( 250.0, $init['sum_value'], 1e-6 );
+		$this->assertSame( 1790004000, $init['ts'], 'the newer stamp' );
+		$this->assertEqualsWithDelta( 20.0, $init['children'][0]['sum_value'], 1e-6 );
+		$this->assertSame( [ 'init hook' ], \array_column( $merged['children'], 'name' ), 'a node an hour behind the newest stamp expires' );
+	}
 
 	public function test_per_url_aggregate_sums_durations_across_requests(): void {
 		$fb    = new Flame_Builder_Node();
@@ -672,7 +689,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$url_hash = Log_Manager::url_hash( '/x' );
-		$stats    = $store->get_url_stats( $url_hash );
+		$stats    = $store->url_aggregate( $url_hash );
 		$this->assertNotNull( $stats );
 		// flame_raw retains sums; flame is finalized for display.
 		$this->assertEqualsWithDelta( 300.0, $stats['flame_raw']['sum_value'], 1e-6 );
@@ -699,7 +716,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/cold', 'duration_ms' => 260.0 ] ) );
 		$fb->flush();
 
-		$stats = $store->get_url_stats( Log_Manager::url_hash( '/cold' ) );
+		$stats = $store->url_aggregate( Log_Manager::url_hash( '/cold' ) );
 		$this->assertNotNull( $stats );
 		$this->assertEqualsWithDelta( 400.0, $stats['flame_raw']['sum_value'], 1e-6 );
 		$this->assertSame( 2, $stats['flame_raw']['count'] );
@@ -2251,12 +2268,12 @@ class FlameBuilderTest extends TestCase {
 		// `ROW_SUMS`. A field added to one and not the other is dropped or
 		// invented silently, so the two are held to the same set here.
 		$now = self::tick();
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/fields', 'server_name' => 'alpha.example', 'duration_ms' => 30.0, 'peak_mb' => 4.0, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/fields', 'server_name' => 'alpha.example', 'duration_ms' => 30.0, 'peak_mb' => 4.0, 'timestamp' => $now, 'status_code' => 500, 'error_status' => 'F' ] ) );
 		$fb->flush();
 
 		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/fields' ) ];
 
-		// Values, not keys: `sum_entry()` materializes all eight at persist, so a
+		// Values, not keys: `sum_entry()` materializes all nine at persist, so a
 		// field the accumulator forgot arrives as a plausible 0.
 		$this->assertSame(
 			[
@@ -2264,10 +2281,11 @@ class FlameBuilderTest extends TestCase {
 				'timed_count' => 1,
 				'sum_ms'      => 30.0,
 				'sum_peak_mb' => 4.0,
-				'count_2xx'   => 1,
+				'count_2xx'   => 0,
 				'count_3xx'   => 0,
 				'count_4xx'   => 0,
-				'count_5xx'   => 0,
+				'count_5xx'   => 1,
+				'errors'      => 1,
 			],
 			\array_intersect_key( $row, \array_flip( \array_intersect_key( Stats_Store::ROW_FIELD_NAMES, Stats_Store::ROW_SUMS ) ) )
 		);
@@ -3293,6 +3311,44 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotContains( self::scoped( 'evlog:auto_disable_lock' ), $mc->keys() );
 	}
 
+	/**
+	 * The stop's wait is a duration inside one process, so it runs on the
+	 * monotonic clock: a lock never released is given up after the wait's
+	 * 5 s of monotonic time, 50 polls of 100 ms, whatever the wall reads.
+	 */
+	public function test_a_stop_gives_up_a_held_lock_after_its_monotonic_wait(): void {
+		$mc         = new InMemoryMemcached();
+		Core::$memd = $mc;
+		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$capture    = new Capture_Sink_Node();
+		$fb->name( 'fb' );
+		$fb->sink( $capture );
+		$fb->set_stats_store( $store );
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
+		$this->fill_request( $fb, $this->completed_request( [
+			'profiles' => [
+				'spam hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
+			],
+		] ) );
+		$mc->add( self::scoped( 'evlog:auto_disable_lock' ), 'other-worker', 300 );
+		$mono                          = 8_100_000_000_000;
+		Quiet::$hrtime_fn              = static function () use ( &$mono ): int {
+			return $mono;
+		};
+		$polls                         = 0;
+		Flame_Builder_Node::$usleep_fn = static function ( int $us ) use ( &$mono, &$polls ): void {
+			++$polls;
+			$mono += $us * 1000;
+		};
+
+		$fb->shutdown_sweep();
+
+		$this->assertSame( 50, $polls, 'the wait ends on the monotonic deadline' );
+		$fired = \array_filter( $capture->captured, static fn( $m ) => 'disable_hooks' === ( $m[ Message::KEY ] ?? '' ) );
+		$this->assertSame( [], $fired, 'the held lock kept the decisions back' );
+	}
+
 	public function test_apply_auto_tune_with_store_uses_memcache_lock(): void {
 		$mc         = new InMemoryMemcached();
 		Core::$memd = $mc;
@@ -3846,6 +3902,123 @@ class FlameBuilderTest extends TestCase {
 	 * straggler, and takes the late-write path: one hour-key write and one
 	 * re-rank, in its own flush, and none after it.
 	 */
+	/**
+	 * A reprocess of 2026-09-29 09:00-12:00 run the next morning. The one
+	 * request that never completes times out on the STREAM, three windows
+	 * after it landed, measured to the stream and filed in its own 09-29
+	 * bucket; the flame builder then folds and ranks each replayed hour
+	 * once, with no late write re-ranking one. On the wall it timed out
+	 * twenty hours long, filed in the wall's bucket, and that one record
+	 * carried the data clock past every replayed hour.
+	 */
+	public function test_a_reprocess_times_out_on_the_stream_and_folds_each_hour_once(): void {
+		$this->set_rule();
+		( new \Newspack_Nodes\Router_Node() )->name( \Newspack_Nodes\Node_Names::ROUTER );
+		Core::$now = \gmmktime( 5, 19, 0, 9, 30, 2026 );
+		$store     = $this->write_recorder( 86400 );
+		$fb        = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->sink( new Capture_Sink_Node() );
+		$rb = new \Newspack_Event_Logger_Nodes\Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( [ '500', '3' ] );
+		$records = new Capture_Sink_Node();
+		$rb->sink( $records );
+
+		$line = static function ( int $n, string $rid, string $k, float $ts, array $extra = [] ) use ( $rb ): void {
+			$message                   = Message::new_message();
+			$message[ Message::TYPE ]  = Message::TM_STRUCT;
+			$message[ Message::KEY ]   = $rid;
+			$message[ Message::VALUE ] = [ 'n' => $n, 'rid' => $rid, 'k' => $k, 'ts' => $ts ] + $extra;
+			$rb->fill( $message );
+		};
+		$drained = 0;
+		$drain   = function () use ( $records, $fb, $store, &$drained ): void {
+			foreach ( \array_slice( $records->captured, $drained ) as $record ) {
+				$this->fill_request( $fb, (array) $record[ Message::VALUE ] );
+			}
+			$drained = \count( $records->captured );
+			$fb->flush();
+			$store->flushes[] = [];
+		};
+
+		$stall   = \gmmktime( 9, 14, 7, 9, 29, 2026 );
+		$stalled = false;
+		$end     = \gmmktime( 12, 0, 0, 9, 29, 2026 );
+		for ( $at = \gmmktime( 9, 0, 0, 9, 29, 2026 ), $i = 1; $at < $end; $at += 37, $i++ ) {
+			if ( ! $stalled && $at >= $stall ) {
+				$line( 1, 'r-stall-5521', 'process (start)', $stall );
+				$line( 2, 'r-stall-5521', 'request', $stall, [ 'm' => 'GET /stalled-5521' ] );
+				$stalled = true;
+			}
+			$line( 1, "r-replay-{$i}", 'process (start)', $at );
+			$line( 2, "r-replay-{$i}", 'request', $at + 0.01, [ 'm' => 'GET /replayed-7309' ] );
+			$line( 3, "r-replay-{$i}", 'process (complete)', $at + 0.2, [ 'duration_ms' => 200.0, 'status_code' => 200 ] );
+			$rb->fire_cb();
+			if ( 0 === $i % 12 ) {
+				$drain();
+				Core::$now += 50;
+			}
+		}
+		$drain();
+		$replayed = \count( $store->flushes );
+
+		$timed_out = \array_values( \array_filter(
+			\array_map( static fn ( array $record ): array => (array) $record[ Message::VALUE ], $records->captured ),
+			static fn ( array $record ): bool => 'r-stall-5521' === $record['rid']
+		) );
+		$this->assertCount( 1, $timed_out, 'the stalled request times out once' );
+		$this->assertSame( 'T', $timed_out[0]['error_status'] );
+		$this->assertSame( 953_000, $timed_out[0]['duration_ms'], 'to 09:30:00, the third boundary after it landed' );
+		$this->assertSame( '2026-09-29-09-30', Stats_Store::bucket_key( $stall + 953 ), 'where it completes' );
+		foreach ( $store->flushes as $at => $writes ) {
+			$this->assertSame( [], \array_values( \array_filter( $writes, static fn ( string $write ): bool => \str_contains( $write, '2026-09-30' ) ) ), "flush {$at} filed nothing in the wall's day" );
+		}
+
+		// Quiet, the builder takes the wall and folds the last replayed hour.
+		Core::$now += Quiet::AFTER_SEC;
+		for ( $flush = 0; $flush < 15; $flush++ ) {
+			$fb->flush();
+			$store->flushes[] = [];
+		}
+
+		foreach ( [ '2026-09-29-09', '2026-09-29-10' ] as $hour ) {
+			$this->assertCount( 1, self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, $hour ), "{$hour} folds once" );
+			$this->assertCount( 1, self::flushes_writing( $store, Stats_Store::NS_URLRANK_HOUR_S, $hour ), "{$hour} ranks once" );
+			$this->assertLessThan( $replayed, self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, $hour )[0], "{$hour} folds as the stream leaves it" );
+		}
+		$this->assertCount( 1, self::flushes_writing( $store, Stats_Store::NS_URLS_HOUR, '2026-09-29-11' ), 'the last hour folds once, on the quiet' );
+		$this->assertCount( 1, self::flushes_writing( $store, Stats_Store::NS_URLRANK_HOUR_S, '2026-09-29-11' ), 'and ranks once' );
+	}
+
+	/**
+	 * A replayed request's categories and tree age on its own completion
+	 * time, as they did live: stamped by the wall, a record a day old saw
+	 * every category it carried expire on arrival, and a replay kept every
+	 * tree node of every replayed hour, all stamped with the one wall hour.
+	 */
+	public function test_a_replayed_request_ages_its_categories_and_tree_on_its_own_time(): void {
+		$this->set_rule();
+		Core::$now = \gmmktime( 5, 19, 0, 9, 30, 2026 );
+		$fb        = new Flame_Builder_Node();
+		$store     = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
+		$fb->set_stats_store( $store );
+		$done = \gmmktime( 10, 41, 5, 9, 29, 2026 );
+
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => '/replayed-3391',
+			'duration_ms' => 250.0,
+			'timestamp'   => $done,
+			'flame'       => [ 'name' => 'root', 'value' => 250.0, 'children' => [ [ 'name' => 'gull hook', 'value' => 120.0, 'children' => [] ] ] ],
+			'profiles'    => [ 'gull hook' => [ 'time' => 0.12, 'count' => 7, 'ts' => $done, 'entries' => [] ] ],
+		] ) );
+		$fb->flush();
+
+		$stats = $store->url_aggregate( Log_Manager::url_hash( '/replayed-3391' ) );
+		$this->assertArrayHasKey( 'gull hook', Core::arr( $stats['profiles']['categories'] ?? null ), 'a day-old category survives its own arrival' );
+		$this->assertSame( $done, $stats['flame_raw']['children'][0]['ts'] ?? null, 'the tree is stamped with its completion' );
+	}
+
 	public function test_a_straggler_into_an_hour_the_data_clock_passed_takes_the_late_path_once(): void {
 		[ $fb, $store ] = $this->replay_builder();
 		$this->replay_flush( $fb, $store, [ '13:18' ] );
@@ -3864,7 +4037,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A builder that has drained nothing for `IDLE_AFTER_SEC` is idle, and
+	 * A builder that has drained nothing for `Quiet::AFTER_SEC` is idle, and
 	 * its clock is the wall: an hour the wall closed folds with no record
 	 * past it. A second short of that, it is not idle yet.
 	 */
@@ -3876,7 +4049,7 @@ class FlameBuilderTest extends TestCase {
 			$hash => [ 'url' => '/quiet-5903', 'count' => 41, 'timed_count' => 41, 'sum_ms' => 902.0 ],
 		] );
 		$built = (int) Core::$now;
-		$quiet = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'IDLE_AFTER_SEC' ) )->getValue();
+		$quiet = Quiet::AFTER_SEC;
 
 		Core::$now = $built + $quiet - 1;
 		$fb->flush();
@@ -3937,7 +4110,7 @@ class FlameBuilderTest extends TestCase {
 	 */
 	public function test_idleness_is_measured_on_the_monotonic_clock_not_the_wall(): void {
 		$mono = 7_300_000_000_000;
-		Flame_Builder_Node::$hrtime_fn = static function () use ( &$mono ): int {
+		Quiet::$hrtime_fn = static function () use ( &$mono ): int {
 			return $mono;
 		};
 		[ $fb, $store ] = $this->replay_builder();
@@ -3948,7 +4121,7 @@ class FlameBuilderTest extends TestCase {
 		$this->seed_url_shard( $store, $closed . '-25', $shard, [
 			$hash => [ 'url' => '/steady-6604', 'count' => 29, 'timed_count' => 29, 'sum_ms' => 377.0 ],
 		] );
-		$quiet = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'IDLE_AFTER_SEC' ) )->getValue();
+		$quiet = Quiet::AFTER_SEC;
 
 		Core::$now += Stats_Store::HOUR_SECONDS;
 		$mono      += 7 * 1_000_000_000;
@@ -6612,7 +6785,7 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->flush();
 
-		$stats = $store->get_url_stats( $url_hash );
+		$stats = $store->url_aggregate( $url_hash );
 		// sum_value should be 300 + 100 = 400 (proves flame_raw was promoted and added to).
 		$this->assertEqualsWithDelta( 400.0, $stats['flame_raw']['sum_value'], 1e-6 );
 		$this->assertSame( 4, $stats['flame_raw']['count'] );
@@ -7664,6 +7837,50 @@ class FlameBuilderTest extends TestCase {
 			[ 'wombat' => [ Log_Manager::url_hash( 'https://kea.test/wombat-7731' ) ] ],
 			$store->url_token_sets( [ 'wombat', 'wom' ], [ self::SEED_SERVER ], (int) Core::$now )
 		);
+	}
+
+	/**
+	 * A fatal is an error: `errors_only` keeps the URL whose one record
+	 * fataled, though the record carries a 500 and a measured duration. Its
+	 * duration still times it, so the row is errored AND timed.
+	 */
+	public function test_errors_only_keeps_a_url_whose_one_record_fataled(): void {
+		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 43_219 ] );
+		$this->activate_shipped( 'performance', 1 );
+		Core::$memd                   = new InMemoryMemcached();
+		$GLOBALS['_current_user_can'] = true;
+		$clock                        = Core::$clock;
+		Core::$clock                  = static fn (): int => (int) Core::$now;
+		try {
+			Core::$now = \gmmktime( 14, 7, 31, 9, 22, 2026 );
+			$fb        = new Flame_Builder_Node();
+			$fb->set_stats_store( $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb ) );
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'          => 'https://kea.test/kakapo-4417',
+				'timestamp'    => (int) Core::$now,
+				'duration_ms'  => 1540.0,
+				'status_code'  => 500,
+				'error_status' => 'F',
+			] ) );
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => 'https://kea.test/tui-2208',
+				'timestamp'   => (int) Core::$now,
+				'duration_ms' => 870.0,
+				'status_code' => 503,
+			] ) );
+			$fb->flush();
+
+			foreach ( [ 'ranked' => '--limit=100', 'folded' => '--limit=' . ( Stats_Store::URL_RANK_N + 1 ) ] as $path => $limit ) {
+				$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--errors_only=1', $limit ] );
+				$this->assertSame( [ Log_Manager::url_hash( 'https://kea.test/kakapo-4417' ) ], \array_column( $page['data'], 'hash' ), "{$path}: the fatal, and not the clean 503" );
+				$this->assertSame( 1, $page['data'][0]['errors'], $path );
+				$this->assertSame( 1, $page['data'][0]['timed_count'], "{$path}: a fatal's duration is a timing sample" );
+				$this->assertSame( 1, $page['totals']['errors'], $path );
+			}
+		} finally {
+			Core::$clock = $clock;
+			unset( $GLOBALS['_current_user_can'] );
+		}
 	}
 
 	public function test_a_url_seen_late_in_its_last_filed_hour_stays_findable_until_its_rows_leave_the_window(): void {

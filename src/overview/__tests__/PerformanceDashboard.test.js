@@ -390,6 +390,27 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	it( 'forwards the urls slice error and pending state to UrlTable', async () => {
+		mockView = loadedView( {
+			urls: {
+				data: [],
+				loading: true,
+				error: 'include_workers wants a bool: maybe',
+			},
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		expect( globalThis.__urlTableProps.error ).toBe(
+			'include_workers wants a bool: maybe'
+		);
+		expect( globalThis.__urlTableProps.loading ).toBe( true );
+		unmount();
+	} );
+
 	it( 'forwards the urls slice ranked flag and server clock to UrlTable', async () => {
 		mockView = loadedView( {
 			urls: {
