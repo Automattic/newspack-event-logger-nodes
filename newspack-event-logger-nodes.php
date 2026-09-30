@@ -116,11 +116,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// 2.79.1 is LRU_Cache::with_timed_rotation()'s owner clock, which the
 	// request builder times requests out on; below it PHP drops the extra
 	// argument and the builder times a reprocess out on the wall.
+	// 2.80.0 is Ledger_Node, Bootstrap::mount_ledger() and Table_Client's
+	// append(), sum(), top() and ledger_members(), which every stats write
+	// and read goes through; below it the builder and the dashboards fatal.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.79.1', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.80.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

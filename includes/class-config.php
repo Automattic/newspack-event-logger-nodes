@@ -209,11 +209,10 @@ class Config {
 	public static function resolve_eln_token( string $key ) {
 		// Derived, never constants: a widened stats window widens each.
 		return match ( $key ) {
-			'is_hub'             => self::has_hub_topology(),
-			'stats_ttl'          => (string) Stats_Store::aggregate_ttl( self::stats_retention_seconds() ),
-			'stats_url_ttl'      => (string) self::stats_url_ttl(),
-			'stats_url_fine_ttl' => (string) Stats_Store::fine_ttl( self::stats_retention_seconds() ),
-			default              => null,
+			'is_hub'          => self::has_hub_topology(),
+			'ledger_segments' => (string) Stats_Store::ledger_segments( self::stats_retention_seconds() ),
+			'stats_url_ttl'   => (string) self::stats_url_ttl(),
+			default           => null,
 		};
 	}
 
@@ -224,7 +223,8 @@ class Config {
 
 	/**
 	 * THE retention window every stats consumer sizes itself by — the stats
-	 * Tables' TTLs and the dashboards' time axis both come from here.
+	 * Ledgers' segments, the url Table's TTL and the dashboards' time axis
+	 * all come from here.
 	 *
 	 * It is the substrate's `min_lifetime`, floored: a legal `min_lifetime` of 0
 	 * ("keep nothing extra") is neither a usable TTL nor a drawable axis.
@@ -323,11 +323,12 @@ class Config {
 		}
 		// @longform
 		// Re-entrancy, not just caching: graph_for() resolves the config
-		// tokens in a `set_*target` line, so a topology naming <eln:is_hub>
-		// there would recurse through here until PHP died. flame-builder.tsl
-		// already carries `set_is_hub <eln:is_hub>`, spared only because that
-		// verb misses the analyzer's `^set_\w*target$` match — one rename
-		// away. Claiming "not a hub" while deriving breaks the cycle.
+		// tokens in a target line, the analyzer's `^(set|add)_\w*target$`,
+		// so a topology naming <eln:is_hub> there would recurse through here
+		// until PHP died. flame-builder.tsl carries `set_is_hub <eln:is_hub>`,
+		// which misses that match, and eight `add_ledger_target` lines, which
+		// meet it and are spared only because each names a literal Ledger:
+		// one token away. Claiming "not a hub" while deriving breaks the cycle.
 		if ( self::$deriving_is_hub ) {
 			return false;
 		}

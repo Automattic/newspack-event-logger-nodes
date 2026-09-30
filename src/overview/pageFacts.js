@@ -87,7 +87,8 @@ export function pageFacts( {
 			stats: {
 				count: num( stats.count ),
 				avg_ms: num( stats.avg_ms ),
-				max_ms: num( stats.max_ms ),
+				// Null where nothing timed reached the URL: unmeasured, not 0.
+				max_ms: num( stats.max_ms, null ),
 				max_peak_mb: num( stats.max_peak_mb ),
 			},
 		};

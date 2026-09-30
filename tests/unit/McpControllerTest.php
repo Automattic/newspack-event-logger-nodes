@@ -139,6 +139,10 @@ class McpControllerTest extends TestCase {
 			$search = $tools[ $tool ]['inputSchema']['properties']['search']['description'];
 			$this->assertStringContainsString( 'whole word', $search, $tool );
 			$this->assertStringNotContainsString( 'ubstring', $search, $tool );
+			$errors = $tools[ $tool ]['inputSchema']['properties']['errors_only']['description'];
+			$this->assertStringContainsString( 'only in the key and bucket in which it errored', $errors, $tool );
+			$this->assertStringNotContainsString( 'ranks at 0', $errors, $tool );
+			$this->assertStringNotContainsString( 'all of its traffic', $errors, $tool );
 		}
 		$overview = $tools['performance_overview'];
 		$this->assertStringContainsString( '`slots`', $overview['description'] );

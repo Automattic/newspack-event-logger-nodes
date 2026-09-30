@@ -70,8 +70,8 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
-	/** The document canvas lays the stats Tables out below the builder only along these edges. */
-	public function test_the_dashboard_graphs_draw_the_flame_builders_tables(): void {
+	/** The document canvas lays the url Table out below the builder only along this edge. */
+	public function test_the_dashboard_graphs_draw_the_flame_builders_url_table(): void {
 		\Newspack_Nodes\Topology_Registry::reset();
 		\Newspack_Nodes\Topology_Registry::register_plugin(
 			'Newspack_Event_Logger_Nodes\\',
@@ -83,9 +83,7 @@ class TopologyShapeTest extends TestCase {
 
 		foreach ( [ 'complete', 'performance', 'flame-builder' ] as $topology ) {
 			$edges = \Newspack_Nodes\Topology_Analyzer::graph_for( $topology )['edges'];
-			foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::TABLES as $table ) {
-				$this->assertContains( [ 'flame-builder', $table ], $edges, "$topology: flame-builder draws no edge to $table" );
-			}
+			$this->assertContains( [ 'flame-builder', \Newspack_Event_Logger_Nodes\Stats_Store::TABLE_URL ], $edges, "$topology: flame-builder draws no edge to its url Table" );
 		}
 	}
 
@@ -117,19 +115,17 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
-	/** Every Flame_Builder names its three stats Tables before configure_stats builds a store over them. */
-	public function test_flame_builder_topologies_name_every_stats_table_before_configuring_stats(): void {
+	/** Every Flame_Builder names its url Table before configure_stats builds a store over it. */
+	public function test_flame_builder_topologies_name_the_url_table_before_configuring_stats(): void {
 		foreach ( $this->topology_files() as $path ) {
 			$name = \basename( $path );
 			$topo = $this->parse_topology( $path );
 			foreach ( $this->nodes_of_type( $topo['nodes'], 'Flame_Builder' ) as $fb ) {
 				$configure = $this->first_cmd_index( $topo['cmds'], $fb, 'configure_stats' );
 				$this->assertNotNull( $configure, "$name: flame-builder '$fb' never runs configure_stats" );
-				foreach ( [ 'set_aggregate_target', 'set_url_target', 'set_url_fine_target' ] as $verb ) {
-					$named = $this->first_cmd_index( $topo['cmds'], $fb, $verb );
-					$this->assertNotNull( $named, "$name: flame-builder '$fb' missing $verb" );
-					$this->assertLessThan( $configure, $named, "$name: flame-builder '$fb' runs $verb after configure_stats" );
-				}
+				$named = $this->first_cmd_index( $topo['cmds'], $fb, 'set_url_target' );
+				$this->assertNotNull( $named, "$name: flame-builder '$fb' missing set_url_target" );
+				$this->assertLessThan( $configure, $named, "$name: flame-builder '$fb' runs set_url_target after configure_stats" );
 			}
 		}
 	}
@@ -151,7 +147,7 @@ class TopologyShapeTest extends TestCase {
 
 	/** Wiring verbs whose first arg names another node must reference a declared node (token/number args excluded). */
 	public function test_wiring_target_args_reference_declared_nodes(): void {
-		$node_ref_verbs = [ 'set_completed_target', 'set_errors_target', 'set_inflight_target', 'set_aggregate_target', 'set_url_target', 'set_url_fine_target', 'add_snapshot_node' ];
+		$node_ref_verbs = [ 'set_completed_target', 'set_errors_target', 'set_inflight_target', 'set_url_target', 'add_ledger_target', 'add_snapshot_node' ];
 		foreach ( $this->topology_files() as $path ) {
 			$name = \basename( $path );
 			$topo = $this->parse_topology( $path );
@@ -421,18 +417,55 @@ class TopologyShapeTest extends TestCase {
 		return false;
 	}
 
-	/** The three stats Tables resolve per partition from the shipped graph, each on SQLite at its own TTL. */
-	public function test_the_flame_builder_declares_its_stats_tables_on_sqlite(): void {
+	/** The url Table resolves per partition from the shipped graph, on SQLite at its TTL. */
+	public function test_the_flame_builder_declares_its_url_table_on_sqlite(): void {
 		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 5400 ] );
 		$this->activate_shipped( 'performance', 2 );
-		$table = static fn ( int $p, int $ttl ): array => [ 'namespace' => "evlog:p{$p}", 'ttl' => $ttl, 'backend' => 'sqlite' ];
+		$table = static fn ( int $p ): array => [ 'namespace' => "evlog:p{$p}", 'ttl' => 3600, 'backend' => 'sqlite' ];
 		$this->assertSame(
-			[
-				'flame-stats:aggregate' => [ $table( 0, 90000 ), $table( 1, 90000 ) ],
-				'flame-stats:url'       => [ $table( 0, 3600 ), $table( 1, 3600 ) ],
-				'flame-stats:url-fine'  => [ $table( 0, 5400 ), $table( 1, 5400 ) ],
-			],
-			\Newspack_Nodes\Bootstrap::node_tables( 'flame-stats:aggregate', 'flame-stats:url', 'flame-stats:url-fine' )
+			[ \Newspack_Event_Logger_Nodes\Stats_Store::TABLE_URL => [ $table( 0 ), $table( 1 ) ] ],
+			\Newspack_Nodes\Bootstrap::node_tables( \Newspack_Event_Logger_Nodes\Stats_Store::TABLE_URL )
 		);
+	}
+
+	/**
+	 * The shipped graph declares every stats Ledger as `Stats_Store` spells
+	 * it: hour segments, enough of them for the window and a chart's day, and
+	 * the columns each row's positional constants name.
+	 */
+	public function test_the_flame_builder_declares_every_stats_ledger_as_the_store_spells_it(): void {
+		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 259200 ] );
+		$this->activate_shipped( 'performance', 2 );
+		$expected = [];
+		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::LEDGER_COLUMNS as $ledger => $columns ) {
+			$expected[ $ledger ] = [
+				'segment_seconds' => 3600,
+				'num_segments'    => 72,
+				'columns'         => \array_map( \Newspack_Nodes\Ledger_Node::spelled( ... ), $columns ),
+			];
+		}
+		$this->assertSame( $expected, \Newspack_Nodes\Bootstrap::node_ledgers( ...\array_keys( \Newspack_Event_Logger_Nodes\Stats_Store::LEDGER_COLUMNS ) ) );
+	}
+
+	/**
+	 * The flame builder names every Ledger it appends to through one verb,
+	 * `add_ledger_target`, whose `node_name` argument makes each line a
+	 * config edge the topology canvas draws, one per Ledger.
+	 */
+	public function test_the_flame_builder_names_every_ledger_it_writes_as_a_destination(): void {
+		$written = \array_keys( \array_diff_key( \Newspack_Event_Logger_Nodes\Stats_Store::LEDGER_COLUMNS, [ \Newspack_Event_Logger_Nodes\Stats_Store::LEDGER_SEARCH => true ] ) );
+		\sort( $written );
+		$this->activate_shipped( 'flame-builder', 1 );
+		$named = [];
+		foreach ( \Newspack_Nodes\Topology_Analyzer::expand( [ 'flame-builder' ] )['edges'] as $edge ) {
+			if ( 'flame-builder' === $edge['from'] && \in_array( 'add_ledger_target', $edge['config_slots'] ?? [], true ) ) {
+				$named[] = $edge['to'];
+			}
+		}
+		\sort( $named );
+
+		$this->assertSame( $written, $named );
+		$verbs = \array_column( \Newspack_Event_Logger_Nodes\Flame_Builder_Node::node_schema()['commands'], null, 'name' );
+		$this->assertSame( [ 'node_name' ], \array_column( $verbs['add_ledger_target']['args'] ?? [], 'type' ) );
 	}
 }

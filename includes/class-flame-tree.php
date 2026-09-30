@@ -51,35 +51,17 @@ final class Flame_Tree {
 	/** `Performance_CI_Node`'s page cache around one `urls` page. */
 	public const URL_PAGE_CACHE = 'url page cache';
 
-	/** `Performance_CI_Node`'s cache of the fold's header for the ranked pages. */
+	/** `Performance_CI_Node`'s cache of one scope's URL header, beside its ranked pages. */
 	public const URL_HEADER_CACHE = 'url header cache';
 
-	/** `Performance_CI_Node`'s walk of the whole URL index. */
-	public const URL_FOLD = 'url fold';
-
-	/** `Performance_CI_Node`'s point event: whether the ranked lists served. */
-	public const URL_RANK_LISTS = 'url rank lists';
+	/** `Performance_CI_Node`'s read of every URL of a scope. */
+	public const URL_SCOPE_READ = 'url scope read';
 
 	/**
 	 * The flame builder's routine writes, one summary a
 	 * `Narration::ROLLUP_EVERY_S`.
 	 */
 	public const STATS_WRITES = 'stats writes';
-
-	/** The flame builder's span ranking a bucket that has closed. */
-	public const STATS_RANK_CLOSE = 'stats rank close';
-
-	/**
-	 * The flame builder's point event as its roll-up reads again the hours a
-	 * late write unfolded.
-	 */
-	public const STATS_PROBE = 'stats probe';
-
-	/** The flame builder's span folding one hour missing a derived key. */
-	public const STATS_FOLD = 'stats fold';
-
-	/** The flame builder's span re-ranking one stale hour from its rows. */
-	public const STATS_RE_RANK = 'stats re-rank';
 
 	/** The flame builder's span for its clean stop. */
 	public const STATS_SWEEP = 'stats sweep';
@@ -100,28 +82,22 @@ final class Flame_Tree {
 	 * Every name above: its step of the product chart palette
 	 * (`--np-chart-*`), and the `Findings` kind of a span no rule edit
 	 * reaches inside — `url_read` for a step of the URL read, `upkeep` for
-	 * a builder's own work — or null for a point event. The three URL-read
-	 * spans nest, so they take three unlike steps. The two builders' names
+	 * a builder's own work — or null for a point event. A page cache span
+	 * holds the header cache's or, under a search, the scope read's, so the
+	 * three URL-read spans take three unlike steps. The two builders' names
 	 * share steps by what they say — cobalt for a rollup, light cobalt for a
-	 * probe or a checkpoint, emerald for a close or a restore, the warning
-	 * step for a fold or an operator's purge — and the flame
-	 * builder's sweep, which runs a flush and so holds every other flush
-	 * span, takes cobalt, which none of them does. None takes Morganite, the
-	 * command span's.
+	 * checkpoint, emerald for a restore, the warning step for an expiry —
+	 * and the flame builder's sweep, which holds its last rollup, takes
+	 * cobalt beside it. None takes Morganite, the command span's.
 	 *
 	 * @var array<string,array{0: string, 1: 'url_read'|'upkeep'|null}>
 	 */
 	private const PLATFORM = [
 		self::URL_PAGE_CACHE      => [ '#003DA5', 'url_read' ],
 		self::URL_HEADER_CACHE    => [ '#BD8600', 'url_read' ],
-		self::URL_FOLD            => [ '#117644', 'url_read' ],
-		self::URL_RANK_LISTS      => [ '#B32D2E', null ],
+		self::URL_SCOPE_READ      => [ '#117644', 'url_read' ],
 		self::STATS_WRITES        => [ '#003DA5', null ],
-		self::STATS_PROBE         => [ '#2055B0', null ],
-		self::STATS_RANK_CLOSE    => [ '#117644', 'upkeep' ],
 		self::STATS_SWEEP         => [ '#003DA5', 'upkeep' ],
-		self::STATS_FOLD          => [ '#BD8600', 'upkeep' ],
-		self::STATS_RE_RANK       => [ '#BD8600', 'upkeep' ],
 		self::REQUESTS_WRITES     => [ '#003DA5', null ],
 		self::REQUESTS_CHECKPOINT => [ '#2055B0', 'upkeep' ],
 		self::REQUESTS_RESTORE    => [ '#117644', 'upkeep' ],

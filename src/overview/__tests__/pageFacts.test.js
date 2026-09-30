@@ -49,6 +49,18 @@ test( 'a selected URL names itself and what it is', () => {
 	expect( facts.stats.max_ms ).toBe( 2600 );
 } );
 
+test( 'a URL no timed request reached carries its worst as unmeasured', () => {
+	// A timeout has no duration, so a URL that only timed out has no worst;
+	// reading it as 0 would brief a failing URL as the fastest on the site.
+	const facts = pageFacts( {
+		selectedUrl: { hash: 'ccc', url: '/ruru-6603' },
+		urlDetail: { stats: { count: 6, avg_ms: 0, max_ms: null } },
+	} );
+
+	expect( facts.stats.count ).toBe( 6 );
+	expect( facts.stats.max_ms ).toBeNull();
+} );
+
 test( 'a selected request wins over its URL, and carries its findings', () => {
 	const facts = pageFacts( {
 		selectedUrl: { hash: 'aaa', url: '/slow' },

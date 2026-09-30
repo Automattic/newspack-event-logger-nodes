@@ -1150,7 +1150,7 @@ class FindingsTest extends TestCase {
 			[
 				'name'     => 'Performance_CI urls command',
 				'value'    => 372.0,
-				'children' => [ [ 'name' => Flame_Tree::URL_FOLD, 'value' => 41.0, 'children' => [] ] ],
+				'children' => [ [ 'name' => Flame_Tree::URL_SCOPE_READ, 'value' => 41.0, 'children' => [] ] ],
 			],
 		];
 
@@ -1170,7 +1170,7 @@ class FindingsTest extends TestCase {
 
 	/** The URL read's steps are leaves the platform times; no rule edit reaches inside. */
 	public function test_a_dominant_url_read_step_proposes_nothing(): void {
-		foreach ( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD ] as $step ) {
+		foreach ( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_SCOPE_READ ] as $step ) {
 			$record = $this->healthy_record();
 			$record['flame']['children'] = [
 				[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
@@ -1189,7 +1189,7 @@ class FindingsTest extends TestCase {
 
 	/** The builders' own upkeep spans are told whatever the rule; no edit reaches them. */
 	public function test_a_dominant_upkeep_span_proposes_nothing(): void {
-		foreach ( [ Flame_Tree::STATS_FOLD, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT ] as $step ) {
+		foreach ( [ Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE ] as $step ) {
 			$record = $this->healthy_record();
 			$record['flame']['children'] = [
 				[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],

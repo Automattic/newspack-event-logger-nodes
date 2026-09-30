@@ -30,6 +30,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Rule;
+use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Core;
 
 \defined( 'ABSPATH' ) || exit;
@@ -519,7 +520,7 @@ class Ask_Assembler {
 			'stats'              => [
 				'count'       => Core::num_int( $stats['count'] ?? 0 ),
 				'avg_ms'      => Core::num_float( $stats['avg_ms'] ?? 0 ),
-				'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
+				'max_ms'      => Stats_Store::extreme( $stats['max_ms'] ?? null ),
 				'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 			],
 			'worst_requests'     => \array_map(
@@ -711,8 +712,8 @@ class Ask_Assembler {
 	 * A page carrying no `totals` leaves the brief's null rather than zeros,
 	 * which would read as an idle site.
 	 *
-	 * @param array<string,mixed> $page    A `urls` reply: its totals, whether its URL count is estimated and whether they are provisional, and its data.
-	 * @param array<string,mixed> $board   A `build_leaderboard()` reply.
+	 * @param array<string,mixed> $page    A `urls` reply: its totals, whether they are provisional, and its data.
+	 * @param array<string,mixed> $board   A `Stats_Store::leaderboard()` reply.
 	 * @param string              $server  Server the page is scoped to; '' is every server.
 	 * @param array<string,mixed> $filters The url filters in force: search, errors_only, include_workers.
 	 * @return array<string,mixed>
@@ -740,9 +741,7 @@ class Ask_Assembler {
 				// This hour's closed buckets, or the last hour until :05.
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
 			] + self::errors_of( $totals ),
-			// Whether `stats.urls` is a sketch's estimate.
-			'estimated'   => true === $page['estimated'],
-			// Short of what the writer owes, or of an unanswered read.
+			// Short of a read that went unanswered.
 			'provisional' => true === $page['provisional'],
 			'urls'       => \array_map(
 				self::overview_url_shape( ... ),
@@ -811,25 +810,17 @@ class Ask_Assembler {
 	 * One URL row as the overview brief carries it: its hash, so an agent can
 	 * widen to `url:<hash>`, and the three numbers the table sorts on.
 	 *
-	 * The per-shard overflow row carries NO hash. Its key is not a url_hash,
-	 * `dump_url` cannot answer for it, and it sorts high enough by count to
-	 * reach this list — so it is named for what it is, as the table names it,
-	 * rather than offered as a `url:<hash>` that answers `URL not found`.
-	 *
 	 * @param mixed $row A `urls` data row.
 	 * @return array<string,mixed>
 	 */
 	private static function overview_url_shape( mixed $row ): array {
-		$row       = Core::arr( $row );
-		$aggregate = ! empty( $row['aggregate'] );
+		$row = Core::arr( $row );
 		return [
-			...( $aggregate ? [] : [ 'hash' => Core::as_string( $row['hash'] ?? '' ) ] ),
-			'url'    => $aggregate
-				? 'traffic from URLs beyond the per-shard cap'
-				: Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
+			'hash'   => Core::as_string( $row['hash'] ?? '' ),
+			'url'    => Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
 			'count'  => Core::num_int( $row['count'] ?? 0 ),
 			'avg_ms' => Core::num_float( $row['avg_ms'] ?? 0 ),
-			'max_ms' => Core::num_float( $row['max_ms'] ?? 0 ),
+			'max_ms' => Stats_Store::extreme( $row['max_ms'] ?? null ),
 		] + self::errors_of( $row );
 	}
 

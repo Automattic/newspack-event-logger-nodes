@@ -75,7 +75,7 @@ export function headlineStats( totals, keys ) {
  *
  * @param {Object}      props
  * @param {Object|null} props.totals      The `urls` reply's totals; null until it answers.
- * @param {boolean}     props.provisional The reply's `provisional`: the totals are short of an hour or record the writer has yet to fold or rank, or of an index read that went unanswered.
+ * @param {boolean}     props.provisional The reply's `provisional`: a stats read went unanswered, so the totals may run short.
  * @return {import('react').ReactElement} The stats grid.
  */
 export default function HeadlineStats( { totals, provisional } ) {
@@ -109,7 +109,7 @@ export default function HeadlineStats( { totals, provisional } ) {
 			{ provisional && (
 				<p className="newspack-nodes-banner is-info" role="status">
 					{ __(
-						'Provisional: some hours or records are not yet folded or ranked, or a read went unanswered, so these totals may run short.',
+						'Provisional: a stats read went unanswered, so these totals may run short.',
 						'newspack-event-logger-nodes'
 					) }
 				</p>

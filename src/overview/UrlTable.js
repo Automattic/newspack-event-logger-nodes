@@ -98,16 +98,7 @@ const COLUMNS = [
 		width: 'minmax(0, 1fr)',
 		label: __( 'URL', 'newspack-event-logger-nodes' ),
 		kind: 'code',
-		render: ( url ) => (
-			<code>
-				{ url.aggregate
-					? __(
-							'traffic from URLs beyond the per-shard cap',
-							'newspack-event-logger-nodes'
-					  )
-					: url.url }
-			</code>
-		),
+		render: ( url ) => <code>{ url.url }</code>,
 	},
 	{
 		field: 'count_2xx',
@@ -309,23 +300,16 @@ const UrlRow = memo(
 			}
 		};
 
-		// Stands for many URLs; its key is no url_hash, so nothing to open.
-		const selectable = ! url.aggregate;
-
 		return (
 			<div
-				{ ...( selectable
-					? {
-							role: 'button',
-							tabIndex: 0,
-							'data-ask': `url:${ url.hash }`,
-							onClick: () => onSelect( url ),
-							onKeyDown: handleKeyDown,
-					  }
-					: {} ) }
+				role="button"
+				tabIndex={ 0 }
+				data-ask={ `url:${ url.hash }` }
+				onClick={ () => onSelect( url ) }
+				onKeyDown={ handleKeyDown }
 				className={ `event-logger-table__row newspack-nodes-table__row${
 					isSelected ? ' is-selected' : ''
-				}${ selectable ? '' : ' is-aggregate' }` }
+				}` }
 				style={ {
 					height: ROW_HEIGHT,
 					gridTemplateColumns: GRID_TEMPLATE,
@@ -356,9 +340,8 @@ const UrlRow = memo(
  * @param {?Object}                  props.selectedUrl    The row the detail modal is open on, or null.
  * @param {(url: Object) => void}    props.onSelect       Receives a row on click or Enter/Space, and is forwarded to each row.
  * @param {(params: Object) => void} props.onParamsChange Receives `search`, `sort`, `order`, `offset`, `errorsOnly` and `includeWorkers` whenever one of them changes.
- * @param {number}                   props.totalUrls      Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs.
+ * @param {number}                   props.totalUrls      URLs the server's filters left, which the pager counts as rows.
  * @param {string}                   [props.metric]       Chart metric the row bars scale.
- * @param {boolean}                  [props.ranked]       Whether the server answered from its per-bucket ranked lists rather than the whole index.
  * @param {number}                   [props.now]          Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
  * @param {boolean}                  [props.errorCounts]  Whether the reply was built under "Errors Only", so the count column shows each row's `errors`.
  * @param {?string}                  [props.error]        The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
@@ -372,7 +355,6 @@ export default function UrlTable( {
 	onParamsChange,
 	totalUrls,
 	metric = 'volume',
-	ranked = false,
 	now = 0,
 	errorCounts = false,
 	error = null,
@@ -666,17 +648,6 @@ export default function UrlTable( {
 							),
 							formatGroupedCount( total )
 						) }
-					{ ranked && (
-						<>
-							{ total > 0 && ' · ' }
-							<span className="event-logger-table__ranked-note">
-								{ __(
-									'Ranked per bucket; Avg and Mem are means of bucket averages',
-									'newspack-event-logger-nodes'
-								) }
-							</span>
-						</>
-					) }
 				</span>
 				{ total > URLS_PER_PAGE && (
 					<div className="event-logger-table__pagination-controls">
