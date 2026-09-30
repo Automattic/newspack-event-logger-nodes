@@ -76,10 +76,27 @@ class FlameBuilderRowsTest extends TestCase {
 		$fb->fill( $message );
 	}
 
-	public function test_a_settle_appends_once_to_every_ledger_but_the_word_index(): void {
+	public function test_a_settle_appends_once_to_every_ledger(): void {
 		foreach ( \array_keys( Stats_Store::LEDGER_COLUMNS ) as $ledger ) {
-			$this->assertCount( Stats_Store::LEDGER_SEARCH === $ledger ? 0 : 1, $this->appends( $ledger ), $ledger );
+			$this->assertCount( 1, $this->appends( $ledger ), $ledger );
 		}
+	}
+
+	/** Each word of each URL's path files once in the hour, a worker's URL too. */
+	public function test_the_word_index_files_each_urls_path_words_in_the_hour(): void {
+		$words = \array_keys( $this->rows[ Stats_Store::LEDGER_SEARCH ] );
+		\sort( $words );
+		$this->assertSame(
+			[
+				self::HOUR . ' 41 ' . self::SKU_41,
+				self::HOUR . ' cron ' . self::CRON,
+				self::HOUR . ' php ' . self::CRON,
+				self::HOUR . ' sku ' . self::SKU_41,
+				self::HOUR . ' wp ' . self::CRON,
+			],
+			$words
+		);
+		$this->assertCount( 5, $this->appends( Stats_Store::LEDGER_SEARCH )[0], 'one row a word of a URL' );
 	}
 
 	/** Before it appends, a settle reads the servers the names Ledger holds, once a family. */
@@ -256,6 +273,25 @@ class FlameBuilderRowsTest extends TestCase {
 		$this->assertArrayHasKey( self::T . ' ' . Stats_Store::url_rows_key( 'srv-005.test', false ) . ' https://srv-005.test/q', $rows );
 		$this->assertArrayHasKey( self::T . ' ' . Stats_Store::url_rows_key( Stats_Store::OTHER_KEY, false ) . ' https://srv-777.test/q', $rows );
 		$this->assertCount( 2, $rows );
+	}
+
+	/**
+	 * A window holding more servers than a reader can name leaves no room:
+	 * every server of the span files under `Other`.
+	 */
+	public function test_a_window_past_the_servers_a_reader_names_files_every_server_under_other(): void {
+		$names = [];
+		for ( $i = 0; $i <= Stats_Store::SERVERS_READ_MAX; $i++ ) {
+			$names[] = [ self::HOUR, Stats_Store::servers_key( true ), \sprintf( 'srv-%03d.test', $i ), [] ];
+		}
+		$this->stats_store( 3 )->append_span( [ Stats_Store::LEDGER_NAMES => $names ] );
+		$this->forget_stats_asks();
+
+		$fb = $this->hub( 'fb-kea-full-window' );
+		self::fold( $fb, 'rheld', 'https://srv-005.test/q', [ 'server_name' => 'srv-005.test' ] );
+		$fb->settle();
+
+		$this->assertSame( [ self::T . ' ' . Stats_Store::url_rows_key( Stats_Store::OTHER_KEY, false ) . ' https://srv-005.test/q' ], \array_keys( $this->appended( Stats_Store::LEDGER_URL_ROWS ) ) );
 	}
 
 	/**

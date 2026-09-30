@@ -225,8 +225,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * What the url-rows Ledger ranks each `urls` sort by: a column, `x` for
-	 * the URL, or a mean as `[ sum, count ]`. A search is the one page read
-	 * whole and ranked here, since the Ledger holds no word of a path.
+	 * the URL, or a mean as `[ sum, count ]`. A searched page reads its
+	 * candidates' rows and ranks them here, as the Ledger ranks a `TOP`.
 	 */
 	private const ORDER_BY = [
 		'count'        => 'count',
@@ -239,10 +239,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	];
 
 	/**
-	 * The switch for the name scan, OFF: a term of no word, which no word
-	 * lookup can answer, falls back to it — the whole term as a substring of
-	 * every path of the scope. Off, such a term keeps nothing. It is the only
-	 * name scan; the name scan's tests turn it on.
+	 * The switch for the name scan, OFF: a term the word index cannot
+	 * answer — one of no word, or one whose every word is too common —
+	 * falls back to it, the scope's rows read whole and kept by
+	 * `Stats_Store::url_matches()`. Off, a term of no word keeps nothing and
+	 * a term too common is refused. It is the only name scan; the name
+	 * scan's tests turn it on.
 	 *
 	 * @var bool
 	 */
@@ -682,8 +684,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * With no search a page is a `TOP` over the scope, ranked in the Ledger
 	 * by the sort's `ORDER_BY`, and its header comes from `url_header()`,
-	 * once a refresh. A search reads the scope's rows whole and pages them
-	 * here (`searched_page()`).
+	 * once a refresh. A search reads the rows of the URLs the word index
+	 * names and pages them here (`searched_page()`).
 	 *
 	 * It is read THROUGH the cache for `Stats_Store::URL_PAGE_REFRESH_S`
 	 * under every filter, the window bucket and the retention: every tab
@@ -708,10 +710,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		// raw value in `filters`, which is the only place it still matters.
 		$search = \strtolower( \trim( $search ) );
 		$build  = function () use ( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $now ): array {
-			$store   = $this->stats_store( [ Stats_Store::LEDGER_NAMES, Stats_Store::LEDGER_URL_ROWS ], false );
+			$store   = $this->stats_store( [ Stats_Store::LEDGER_NAMES, Stats_Store::LEDGER_URL_ROWS, ...( '' === $search ? [] : [ Stats_Store::LEDGER_SEARCH ] ) ], false );
 			$servers = self::scope_servers( $store, $server, $workers, $now );
 			if ( '' !== $search ) {
-				$page = self::searched_page( $store, $servers, $search, $errors, $workers, $sort, $order, $offset, $limit, $now );
+				$page = self::searched_page( $store, $server, $servers, $search, $errors, $workers, $sort, $order, $offset, $limit, $now );
 			} else {
 				[ $from, $to ] = self::window( $now );
 				$header        = $this->url_header( $store, $server, $servers, $errors, $workers, $now );
@@ -774,14 +776,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One page of a searched URL set, inside the `url scope read` span: the
-	 * scope's rows read whole over the window — errors-only keeping only
-	 * the key and bucket in which each URL errored — kept by
-	 * `search_keeps()`, ranked by `by_rank()` as the Ledger ranks a `TOP`
-	 * and cut here, with the header those rows sum to. `rows` and `totals`
-	 * count the whole set (decision 15).
+	 * One page of a searched URL set, inside the `url search read` span: the
+	 * rows of the URLs `search_candidates()` names over the window —
+	 * errors-only keeping only the key and bucket in which each URL
+	 * errored — ranked by `by_rank()` as the Ledger ranks a `TOP` and cut
+	 * here, with the header those rows sum to. `rows` and `totals` count the
+	 * whole set (decision 15).
 	 *
 	 * @param Stats_Store  $store   The reply's store.
+	 * @param string       $server  Reporting server; '' is the site.
 	 * @param list<string> $servers The servers the scope reads.
 	 * @param string       $search  The normalized term.
 	 * @param bool         $errors  Only the URLs that errored.
@@ -792,18 +795,21 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int          $limit   Page size.
 	 * @param int          $now     The reply's clock, read once at its entry.
 	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,provisional:bool}
+	 * @throws \RuntimeException On a term naming more URLs than a search reads.
 	 */
-	private static function searched_page( Stats_Store $store, array $servers, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, int $now ): array {
-		$read = static function () use ( $store, $servers, $search, $errors, $workers, $sort, $order, $offset, $limit, $now ): array {
+	private static function searched_page( Stats_Store $store, string $server, array $servers, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, int $now ): array {
+		$read = static function () use ( $store, $server, $servers, $search, $errors, $workers, $sort, $order, $offset, $limit, $now ): array {
 			[ $from, $to ] = self::window( $now );
-			$keeps         = self::search_keeps( $search );
+			$words         = Stats_Store::term_tokens( $search );
+			$urls          = self::search_candidates( $store, $server, $search, $words, $from, $to );
 			$rows          = [];
 			$sums          = [];
-			foreach ( $store->url_rows( $servers, $workers, null, $errors, $from, $to ) as $url => $row ) {
-				if ( $keeps( Stats_Store::path_of( Core::as_string( $url ) ) ) ) {
-					$rows[ Core::as_string( $url ) ] = $row;
-					$sums                            = self::add_sums( $sums, $row );
+			foreach ( [] === $urls ? [] : $store->url_rows( $servers, $workers, $urls, $errors, $from, $to ) as $url => $row ) {
+				if ( null === $urls && ! Stats_Store::url_matches( Core::as_string( $url ), $search, $words ) ) {
+					continue;
 				}
+				$rows[ Core::as_string( $url ) ] = $row;
+				$sums                            = self::add_sums( $sums, $row );
 			}
 			$recent = self::recent_window( $now );
 			$rated  = 0;
@@ -823,7 +829,43 @@ class Performance_CI_Node extends Service_CI_Node {
 			];
 		};
 		$lm = Log_Manager::started_instance();
-		return null === $lm ? $read() : $lm->timed( Flame_Tree::URL_SCOPE_READ, $read, static fn ( array $page ): int => $page['rows'] );
+		return null === $lm ? $read() : $lm->timed( Flame_Tree::URL_SEARCH_READ, $read, static fn ( array $page ): int => $page['rows'] );
+	}
+
+	/**
+	 * The URLs a term names in the scope, which a searched page reads the
+	 * rows of: the word index's (`Stats_Store::search_urls()`), at most
+	 * `Stats_Store::URL_SEARCH_MAX`, each carrying every word of the term,
+	 * and of those the ones a server scope's host logged. A term the index
+	 * cannot answer — of no word, or too common — is null, the name scan,
+	 * while `$match_names` is on; off, a term of no word names none and a
+	 * term too common is refused.
+	 *
+	 * `Other` is the one server named by no host — the servers filed past
+	 * the cap under it log their own — so its scope keeps every URL.
+	 *
+	 * @param Stats_Store  $store  The reply's store.
+	 * @param string       $server Reporting server; '' is the site.
+	 * @param string       $search The normalized term.
+	 * @param list<string> $words  The term's words.
+	 * @param int          $from   First second read.
+	 * @param int          $to     The second the read stops short of.
+	 * @return list<string>|null
+	 * @throws \RuntimeException On a term too common, the name scan off.
+	 */
+	private static function search_candidates( Stats_Store $store, string $server, string $search, array $words, int $from, int $to ): ?array {
+		$urls = [] === $words ? null : $store->search_urls( $words, $from, $to );
+		if ( null === $urls ) {
+			if ( self::$match_names ) {
+				return null;
+			}
+			if ( [] === $words ) {
+				return [];
+			}
+			throw new \RuntimeException( \esc_html( \sprintf( 'search "%s" is too common: its URLs run past the %d a search reads; add a word', $search, Stats_Store::URL_SEARCH_MAX ) ) );
+		}
+		$host = '' === $server || Stats_Store::OTHER_KEY === $server ? null : $server;
+		return \array_values( \array_filter( $urls, static fn ( string $url ): bool => Stats_Store::url_matches( $url, $search, $words ) && ( null === $host || Stats_Store::server_of( $url ) === $host ) ) );
 	}
 
 	/**
@@ -876,27 +918,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Which paths a search keeps. A term with words keeps each path carrying
-	 * every one: the word lookup, which reads the scope's own rows whole —
-	 * the stand-in for the word → URL `stats:search` Ledger, which nothing
-	 * writes yet. A term of no word is one no word lookup answers; it falls
-	 * to the name scan while `$match_names` is on, and keeps nothing off.
-	 *
-	 * @param string $search The normalized term; '' keeps every path.
-	 * @return \Closure(string): bool
-	 */
-	private static function search_keeps( string $search ): \Closure {
-		$words = Stats_Store::term_tokens( $search );
-		if ( '' === $search ) {
-			return static fn (): bool => true;
-		}
-		if ( [] !== $words ) {
-			return static fn ( string $path ): bool => Stats_Store::term_matches( $path, $search, $words );
-		}
-		return static fn ( string $path ): bool => self::$match_names && Stats_Store::term_matches( $path, $search, [] );
-	}
-
-	/**
 	 * One URL's display row in the given scope, or null when the window
 	 * holds none: the reader traffic first, and the worker traffic only when
 	 * it has none, so a URL served both ways shows the row the default table
@@ -935,9 +956,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param bool        $workers Keep worker traffic.
 	 * @param int         $now     The reply's clock, read once at its entry.
 	 * @return list<string>
+	 * @throws \RuntimeException When more servers filed rows than a page names.
 	 */
 	private static function scope_servers( Stats_Store $store, string $server, bool $workers, int $now ): array {
-		return '' === $server ? $store->servers( $workers, ...self::window( $now ) ) : [ $server ];
+		if ( '' !== $server ) {
+			return [ $server ];
+		}
+		return $store->servers( $workers, ...self::window( $now ) ) ?? throw new \RuntimeException(
+			\esc_html( \sprintf( 'more than %d servers filed rows in the window; pick one', Stats_Store::SERVERS_READ_MAX ) )
+		);
 	}
 
 	/**

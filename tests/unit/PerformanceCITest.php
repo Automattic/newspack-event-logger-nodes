@@ -205,9 +205,10 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * Append URL rows in the bucket starting at `$t`, as a settle files
-	 * them: each under its server's family key, beside its name and its
-	 * server's. A field a row leaves out takes what `count` alike requests
-	 * give — every one timed and 2xx at `sum_ms / count`, seen at `$t`.
+	 * them: each under its server's family key, beside its name, its
+	 * server's and its path's words. A field a row leaves out takes what
+	 * `count` alike requests give — every one timed and 2xx at
+	 * `sum_ms / count`, seen at `$t`.
 	 *
 	 * @param array<string,array<string,mixed>> $urls URL => `Stats_Store::ROW_FIELD_NAMES` fields, plus `server` and `worker`.
 	 */
@@ -221,6 +222,9 @@ class PerformanceCITest extends TestCase {
 			$rows[ Stats_Store::LEDGER_URL_ROWS ][] = [ $t, Stats_Store::url_rows_key( $server, $worker ), $url, self::url_columns( $fields, $t ) ];
 			$rows[ Stats_Store::LEDGER_NAMES ][]    = [ $hour, Stats_Store::hash_key( Log_Manager::url_hash( $url ) ), $url, [] ];
 			$rows[ Stats_Store::LEDGER_NAMES ][]    = [ $hour, Stats_Store::servers_key( $worker ), $server, [] ];
+			foreach ( Stats_Store::url_words( $url ) as $word ) {
+				$rows[ Stats_Store::LEDGER_SEARCH ][] = [ $hour, $word, $url, [] ];
+			}
 		}
 		$this->append( $rows, $partition );
 	}
@@ -1700,13 +1704,13 @@ class PerformanceCITest extends TestCase {
 		// The Overview header renders these numbers, so they must describe the
 		// set the table lists — under the server AND search filters both.
 		$this->seed_urls( [
-			'/reviews/941' => [ 'count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 9.0, 'server' => 'alpha.example' ],
-			'/reviews/88'  => [ 'count' => 3, 'sum_ms' => 90.0, 'sum_peak_mb' => 7.5, 'server' => 'alpha.example' ],
-			'/events/7'    => [ 'count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 20.0, 'server' => 'alpha.example' ],
+			'https://alpha.example/reviews/941' => [ 'count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 9.0, 'server' => 'alpha.example' ],
+			'https://alpha.example/reviews/88'  => [ 'count' => 3, 'sum_ms' => 90.0, 'sum_peak_mb' => 7.5, 'server' => 'alpha.example' ],
+			'https://alpha.example/events/7'    => [ 'count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 20.0, 'server' => 'alpha.example' ],
 		] );
 		$this->seed_urls( [
-			'/reviews/941' => [ 'count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 27.0, 'server' => 'beta.example' ],
-			'/reviews/88'  => [ 'count' => 1, 'sum_ms' => 32.0, 'sum_peak_mb' => 4.5, 'server' => 'beta.example' ],
+			'https://beta.example/reviews/941' => [ 'count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 27.0, 'server' => 'beta.example' ],
+			'https://beta.example/reviews/88'  => [ 'count' => 1, 'sum_ms' => 32.0, 'sum_peak_mb' => 4.5, 'server' => 'beta.example' ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=alpha.example --search=/reviews/' );
@@ -4392,6 +4396,34 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 1, $page['rows'] );
 	}
 
+	/** `Other` files servers past the cap, each URL under its own host, so its scope filters no host. */
+	public function test_a_search_scoped_to_other_keeps_the_hosts_filed_under_it(): void {
+		$this->seed_urls( [
+			'https://kea.test/aisle-9'  => [ 'count' => 4, 'server' => Stats_Store::OTHER_KEY ],
+			'https://wren.test/aisle-12' => [ 'count' => 6, 'server' => 'wren.test' ],
+		] );
+
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--server=' . Stats_Store::OTHER_KEY, '--search=aisle' ] );
+
+		$this->assertSame( [ 'https://kea.test/aisle-9' ], \array_column( $page['data'], 'url' ) );
+	}
+
+	/** A site whose servers outnumber what one page names is refused, asking for a server. */
+	public function test_a_site_page_past_the_servers_it_names_is_refused(): void {
+		$names = [];
+		for ( $i = 0; $i <= Stats_Store::SERVERS_READ_MAX; $i++ ) {
+			$names[] = [ Stats_Store::bucket_start( self::tick() ), Stats_Store::servers_key( false ), \sprintf( 'srv-%03d.test', $i ), [] ];
+		}
+		$this->append( [ Stats_Store::LEDGER_NAMES => $names ] );
+
+		$refused = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--sort=count' ] );
+
+		$this->assertIsString( $refused );
+		$this->assertStringContainsString( 'more than ' . Stats_Store::SERVERS_READ_MAX . ' servers filed rows in the window; pick one', $refused );
+		$scoped = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--server=srv-007.test' ] );
+		$this->assertIsArray( $scoped, 'one server is read' );
+	}
+
 	/** A term of no word names nothing while the name scan is off, as it ships. */
 	public function test_with_names_off_a_term_of_no_word_names_nothing(): void {
 		$this->seed_urls( [ 'https://kea.test/wombat-7731' => [ 'count' => 5 ] ] );
@@ -4509,10 +4541,10 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * An unsearched page logs its caches built then hit and reads no scope
-	 * whole; a search logs its scope read and the rows it kept.
+	 * An unsearched page logs its caches built then hit; a search logs its
+	 * `url search read`, the index lookup and its rows, with the rows it kept.
 	 */
-	public function test_a_url_page_logs_its_caches_and_a_search_its_scope_rows(): void {
+	public function test_a_url_page_logs_its_caches_and_a_search_its_search_read(): void {
 		$this->seed_urls( [
 			'https://kea.test/wombat-7731' => [ 'count' => 5 ],
 			'https://kea.test/kiwi-8842'   => [ 'count' => 3 ],
@@ -4527,7 +4559,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( [ 'built', 'hit', 'built' ], self::completed( $entries, Flame_Tree::URL_PAGE_CACHE ) );
 		$this->assertSame( [ 'built' ], self::completed( $entries, Flame_Tree::URL_HEADER_CACHE ), 'the hit reads no header, and a search builds its own' );
-		$this->assertSame( [ 1 ], self::completed( $entries, Flame_Tree::URL_SCOPE_READ ), 'the search alone reads the scope, and says the rows it kept' );
+		$this->assertSame( [ 1 ], self::completed( $entries, Flame_Tree::URL_SEARCH_READ ), 'the search alone looks its words up, and says the rows it kept' );
 	}
 
 	public function test_a_page_with_no_cache_backend_logs_built_not_stored(): void {

@@ -31,6 +31,7 @@ command_node flame-builder:config add_ledger_target stats:url-rows
 command_node flame-builder:config add_ledger_target stats:url-dims
 command_node flame-builder:config add_ledger_target stats:url-cats
 command_node flame-builder:config add_ledger_target stats:names
+command_node flame-builder:config add_ledger_target stats:search
 command_node flame-builder:config configure_stats
 command_node flame-builder:config set_is_hub <eln:is_hub>
 command_node flames:partition:config void_warranty

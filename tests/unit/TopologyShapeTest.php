@@ -453,7 +453,7 @@ class TopologyShapeTest extends TestCase {
 	 * config edge the topology canvas draws, one per Ledger.
 	 */
 	public function test_the_flame_builder_names_every_ledger_it_writes_as_a_destination(): void {
-		$written = \array_keys( \array_diff_key( \Newspack_Event_Logger_Nodes\Stats_Store::LEDGER_COLUMNS, [ \Newspack_Event_Logger_Nodes\Stats_Store::LEDGER_SEARCH => true ] ) );
+		$written = \array_keys( \Newspack_Event_Logger_Nodes\Stats_Store::LEDGER_COLUMNS );
 		\sort( $written );
 		$this->activate_shipped( 'flame-builder', 1 );
 		$named = [];

@@ -16,6 +16,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Durable_Arm;
+use Newspack_Nodes\Sqlite_Arm;
 use Newspack_Nodes\Table_Client;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -77,7 +78,10 @@ class Stats_Store {
 	 */
 	public const LEDGER_NAMES = 'stats:names';
 
-	/** The word index, a set: k a word, x a URL. */
+	/**
+	 * The word index, a set: k a word of a URL's path, x the URL, filed at
+	 * the start of each hour a settle saw the URL in (`url_words()`).
+	 */
 	public const LEDGER_SEARCH = 'stats:search';
 
 	/**
@@ -176,8 +180,29 @@ class Stats_Store {
 	 */
 	public const MAX_SERVER_VALUES = 128;
 
+	/**
+	 * Most servers `servers()` names: a site page's `TOP` names a reader and
+	 * a worker key a server, and a `TOP` names at most `IN_CHUNK` keys.
+	 */
+	public const SERVERS_READ_MAX = Sqlite_Arm::IN_CHUNK / 2;
+
 	/** Longest word the search matches; a longer one is cut to it on both sides. */
 	public const TERM_WORD_MAX = 12;
+
+	/**
+	 * Words of one term a search looks up at a time, longest first, since a
+	 * longer word is the rarer; each costs one `MEMBERS`, whose answer is
+	 * held until the lookup returns. The next group is read only while every
+	 * word of the last filed more than `URL_SEARCH_MAX`.
+	 */
+	public const SEARCH_WORDS_READ = 3;
+
+	/**
+	 * Most URLs one word's lookup reads: a word filed for more narrows no
+	 * search, since its candidates' rows are read by key and that many is a
+	 * slow read, and the Ledger stops reading it there.
+	 */
+	public const URL_SEARCH_MAX = 5000;
 
 	/** Shortest run of characters that counts as a WORD. */
 	public const TERM_WORD_MIN = 2;
@@ -188,7 +213,7 @@ class Stats_Store {
 	/**
 	 * How long a URL page, and a scope's header, is cached: every tab
 	 * polling the same page reads the Ledger once a refresh, and a searched
-	 * page, which reads the scope's rows whole, pays that once a refresh.
+	 * page pays its word lookup and its candidates' rows once a refresh.
 	 */
 	public const URL_PAGE_REFRESH_S = 60;
 
@@ -777,15 +802,15 @@ class Stats_Store {
 	}
 
 	/**
-	 * The URL a hash names, filed in the window, or null when none was.
+	 * The URL a hash names, filed in the window, or null when none was, or
+	 * when two URLs share the hash and it names neither.
 	 *
 	 * @param string $url_hash `Log_Manager::url_hash()` of the URL.
 	 * @param int    $from     First second read.
 	 * @param int    $to       The second the read stops short of.
 	 */
 	public function url_of( string $url_hash, int $from, int $to ): ?string {
-		$urls = $this->members_of( self::hash_key( $url_hash ), $from, $to );
-		return [] === $urls ? null : Core::as_string( \reset( $urls ) );
+		return $this->members_of( self::LEDGER_NAMES, self::hash_key( $url_hash ), $from, $to, 1 )[0] ?? null;
 	}
 
 	/**
@@ -799,19 +824,24 @@ class Stats_Store {
 
 	/**
 	 * Every server that filed reader rows in the window, and worker rows
-	 * too with `$workers`, in name order.
+	 * too with `$workers`, in name order, or null past `SERVERS_READ_MAX`.
 	 *
 	 * @param bool $workers Include the servers of worker traffic.
 	 * @param int  $from    First second read.
 	 * @param int  $to      The second the read stops short of.
-	 * @return list<string>
+	 * @return list<string>|null
 	 */
-	public function servers( bool $workers, int $from, int $to ): array {
+	public function servers( bool $workers, int $from, int $to ): ?array {
 		$names = [];
 		foreach ( $workers ? [ false, true ] : [ false ] as $worker ) {
-			foreach ( $this->members_of( self::servers_key( $worker ), $from, $to ) as $name ) {
-				$names[ Core::as_string( $name ) ] = true;
+			$family = $this->members_of( self::LEDGER_NAMES, self::servers_key( $worker ), $from, $to, self::SERVERS_READ_MAX );
+			if ( null === $family ) {
+				return null;
 			}
+			$names += \array_fill_keys( $family, true );
+		}
+		if ( \count( $names ) > self::SERVERS_READ_MAX ) {
+			return null;
 		}
 		\ksort( $names, \SORT_STRING );
 		return \array_map( 'strval', \array_keys( $names ) );
@@ -827,17 +857,64 @@ class Stats_Store {
 	}
 
 	/**
-	 * The names Ledger's members of one key over the window. A name is filed
-	 * at its hour's start, so the read opens on the hour `$from` falls in.
+	 * The URLs the word index files under the term's words in the window,
+	 * in URL order: at most `URL_SEARCH_MAX`, each carrying every word that
+	 * narrowed, and none past a word naming no URL. The words are read
+	 * `SEARCH_WORDS_READ` at a time, longest first, one `MEMBERS` each; a
+	 * word filed for more URLs than a search reads narrows nothing, and the
+	 * next group is read only while no word of the last narrowed. Null when
+	 * no word narrows: the term is too common for the index. A caller
+	 * checks every word of the term on each URL (`url_matches()`).
 	 *
-	 * @param string $k    The key.
-	 * @param int    $from First second read.
-	 * @param int    $to   The second the read stops short of.
-	 * @return array<array-key,mixed>
+	 * @param list<string> $words A term's words, as `term_tokens()` spells them.
+	 * @param int          $from  First second read.
+	 * @param int          $to    The second the read stops short of.
+	 * @return list<string>|null
 	 */
-	private function members_of( string $k, int $from, int $to ): array {
-		$node = $this->ledgers[ self::LEDGER_NAMES ] ?? null;
-		return null === $node ? [] : $this->answered( $this->client->ledger_members( $node, $from - $from % self::HOUR_SECONDS, $to, $k ) );
+	public function search_urls( array $words, int $from, int $to ): ?array {
+		$longest = $words;
+		\usort( $longest, static fn ( string $a, string $b ): int => \strlen( $b ) <=> \strlen( $a ) );
+		$found = null;
+		foreach ( \array_chunk( $longest, self::SEARCH_WORDS_READ ) as $group ) {
+			foreach ( $group as $word ) {
+				$filed = $this->members_of( self::LEDGER_SEARCH, $word, $from, $to, self::URL_SEARCH_MAX );
+				if ( null === $filed ) {
+					continue;
+				}
+				$found = \array_intersect_key( $found ?? \array_fill_keys( $filed, true ), \array_fill_keys( $filed, true ) );
+				if ( [] === $found ) {
+					return [];
+				}
+			}
+			if ( null !== $found ) {
+				return \array_map( 'strval', \array_keys( $found ) );
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * A set Ledger's members of one key over the window, or null when the
+	 * key holds more than `$limit` there. A member is filed at its hour's
+	 * start, so the read opens on the hour `$from` falls in.
+	 *
+	 * @param string $ledger `LEDGER_NAMES` or `LEDGER_SEARCH`.
+	 * @param string $k      The key.
+	 * @param int    $from   First second read.
+	 * @param int    $to     The second the read stops short of.
+	 * @param int    $limit  Most members the reader takes.
+	 * @return list<string>|null
+	 */
+	private function members_of( string $ledger, string $k, int $from, int $to, int $limit ): ?array {
+		$node = $this->ledgers[ $ledger ] ?? null;
+		if ( null === $node ) {
+			return [];
+		}
+		$members = $this->client->ledger_members( $node, $from - $from % self::HOUR_SECONDS, $to, $k, $limit );
+		if ( isset( $members['over'] ) ) {
+			return null;
+		}
+		return \array_values( \array_map( Core::as_string( ... ), $this->answered( $members ) ) );
 	}
 
 	/**
@@ -853,6 +930,67 @@ class Stats_Store {
 			return [];
 		}
 		return $data;
+	}
+
+	/**
+	 * Whether a URL answers a term: its path carries every word of the term,
+	 * or, for a term of no word, the term itself.
+	 *
+	 * @param string       $url   A URL.
+	 * @param string       $term  The lowercased term.
+	 * @param list<string> $words The term's words, as `term_tokens()` spells them.
+	 */
+	public static function url_matches( string $url, string $term, array $words ): bool {
+		if ( [] === $words ) {
+			return \str_contains( \strtolower( self::path_of( $url ) ), $term );
+		}
+		return [] === \array_diff( $words, self::url_words( $url ) );
+	}
+
+	/**
+	 * The words a URL files in the word index and a search finds it by: its
+	 * path's, never its host's.
+	 *
+	 * @param string $url A URL.
+	 * @return list<string>
+	 */
+	public static function url_words( string $url ): array {
+		return self::term_tokens( self::path_of( $url ) );
+	}
+
+	/**
+	 * The PATH of a URL: what a search matches, with no scheme or host.
+	 *
+	 * The server is the picker's question, so a term matching the host would
+	 * make one box ask the dropdown's. A URL carrying no scheme is all path,
+	 * which is what a producer with no `SERVER_NAME` writes. The authority
+	 * ends at whichever delimiter comes first, so an authority with no path
+	 * keeps its query on the path.
+	 *
+	 * @param string $url A URL.
+	 */
+	public static function path_of( string $url ): string {
+		$host = self::authority( $url );
+		return null === $host ? $url : \substr( $url, $host[0] + $host[1] );
+	}
+
+	/**
+	 * A search term's words, or a path's: distinct lowercase alphanumeric
+	 * runs of `TERM_WORD_MIN` characters or more, cut to `TERM_WORD_MAX`,
+	 * in source order.
+	 *
+	 * @param string $text Search term or path.
+	 * @return list<string>
+	 */
+	public static function term_tokens( string $text ): array {
+		$out = [];
+		foreach ( \preg_split( '/' . self::TOKEN_SEP . '+/', \strtolower( $text ) ) ?: [] as $token ) {
+			if ( \strlen( $token ) >= self::TERM_WORD_MIN ) {
+				$out[ \substr( $token, 0, self::TERM_WORD_MAX ) ] = true;
+			}
+		}
+		// An all-digit token is an INT key; every reader promises a string.
+		return \array_map( 'strval', \array_keys( $out ) );
 	}
 
 	/**
@@ -1013,41 +1151,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Whether a path answers a term: every word of the term is a word of it,
-	 * or the whole term appears when the term has no word at all.
-	 *
-	 * @param string       $name   The URL's path.
-	 * @param string       $term   The lowercased search term.
-	 * @param list<string> $tokens The term's words, as `term_tokens()` spells them.
-	 */
-	public static function term_matches( string $name, string $term, array $tokens ): bool {
-		$name = \strtolower( $name );
-		if ( [] === $tokens ) {
-			return \str_contains( $name, $term );
-		}
-		return [] === \array_diff( $tokens, self::term_tokens( $name ) );
-	}
-
-	/**
-	 * A search term's words, or a path's: distinct lowercase alphanumeric
-	 * runs of `TERM_WORD_MIN` characters or more, cut to `TERM_WORD_MAX`,
-	 * in source order.
-	 *
-	 * @param string $text Search term or path.
-	 * @return list<string>
-	 */
-	public static function term_tokens( string $text ): array {
-		$out = [];
-		foreach ( \preg_split( '/' . self::TOKEN_SEP . '+/', \strtolower( $text ) ) ?: [] as $token ) {
-			if ( \strlen( $token ) >= self::TERM_WORD_MIN ) {
-				$out[ \substr( $token, 0, self::TERM_WORD_MAX ) ] = true;
-			}
-		}
-		// An all-digit token is an INT key; every reader promises a string.
-		return \array_map( 'strval', \array_keys( $out ) );
-	}
-
-	/**
 	 * Sum `$fields` from `$incoming` into `$into`, entry by entry, reading a
 	 * field key rather than a name, so a positional table works as a named
 	 * one does. Only `$fields` survive.
@@ -1100,6 +1203,34 @@ class Stats_Store {
 			$out[ (string) $key ] = $value;
 		}
 		return $out;
+	}
+
+	/**
+	 * The server a URL was logged by: its host, which the producer writes
+	 * from the server name it files under, or `UNKNOWN_SERVER` for a URL
+	 * carrying no scheme, which a producer with no `SERVER_NAME` writes.
+	 *
+	 * @param string $url A URL.
+	 */
+	public static function server_of( string $url ): string {
+		$host = self::authority( $url );
+		return null === $host ? self::UNKNOWN_SERVER : \substr( $url, ...$host );
+	}
+
+	/**
+	 * Where a URL's host lies, `[ offset, length ]`: after a `://` that
+	 * comes before any `/`, `?` or `#`, and up to the first of them. Null
+	 * for a URL with no scheme, whose `://` if any sits inside its path.
+	 *
+	 * @param string $url A URL.
+	 * @return array{0:int,1:int}|null
+	 */
+	private static function authority( string $url ): ?array {
+		$at = \strpos( $url, '://' );
+		if ( false === $at || $at > \strcspn( $url, '/?#' ) ) {
+			return null;
+		}
+		return [ $at + 3, \strcspn( $url, '/?#', $at + 3 ) ];
 	}
 
 	/**
@@ -1171,26 +1302,6 @@ class Stats_Store {
 	 */
 	public static function member( string $first, string $second ): string {
 		return $first . self::MEMBER_SEPARATOR . $second;
-	}
-
-	/**
-	 * The PATH of a URL: what a search matches, with no scheme or host.
-	 *
-	 * The server is the picker's question, so a term matching the host would
-	 * make one box ask the dropdown's. A URL carrying no scheme is all path,
-	 * which is what a producer with no `SERVER_NAME` writes. The authority
-	 * ends at whichever delimiter comes first, so an authority with no path
-	 * keeps its query on the path.
-	 *
-	 * @param string $url A URL.
-	 */
-	public static function path_of( string $url ): string {
-		$at = \strpos( $url, '://' );
-		if ( false === $at ) {
-			return $url;
-		}
-		$host = $at + 3;
-		return \substr( $url, $host + \strcspn( $url, '/?#', $host ) );
 	}
 
 	/**

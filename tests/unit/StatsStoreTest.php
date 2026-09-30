@@ -288,6 +288,34 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [ 'kea.test', 'wren.test' ], $store->servers( true, self::FROM, self::TO ) );
 	}
 
+	/** A hash names one URL; a hash two URLs share names neither. */
+	public function test_a_hash_two_urls_share_names_no_url(): void {
+		$store = $this->stats_store( 3 );
+		$hash  = Log_Manager::url_hash( self::SKU_41 );
+		$store->append_span( [ Stats_Store::LEDGER_NAMES => [ [ self::T, Stats_Store::hash_key( $hash ), self::SKU_41, [] ], [ self::T, Stats_Store::hash_key( $hash ), self::SKU_43, [] ] ] ] );
+
+		$this->assertNull( $store->url_of( $hash, self::FROM, self::TO ) );
+		$this->assertFalse( $store->unanswered(), 'the Ledger answered; the hash is ambiguous' );
+	}
+
+	/** A family holding more servers than a site page can name answers null, not a partial list. */
+	public function test_more_servers_than_a_page_names_answers_null(): void {
+		$store = $this->stats_store( 3 );
+		$names = [];
+		for ( $i = 1; $i <= Stats_Store::SERVERS_READ_MAX; $i++ ) {
+			$names[] = [ self::T, Stats_Store::servers_key( true ), \sprintf( 'srv-%03d.test', $i ), [] ];
+		}
+		$store->append_span( [ Stats_Store::LEDGER_NAMES => $names ] );
+		$this->assertCount( Stats_Store::SERVERS_READ_MAX, $store->servers( true, self::FROM, self::TO ) );
+
+		$store->append_span( [ Stats_Store::LEDGER_NAMES => [ [ self::T, Stats_Store::servers_key( false ), 'wren.test', [] ] ] ] );
+		$this->assertNull( $store->servers( true, self::FROM, self::TO ), 'the two families together name one too many' );
+		$this->assertSame( [ 'wren.test' ], $store->servers( false, self::FROM, self::TO ) );
+
+		$store->append_span( [ Stats_Store::LEDGER_NAMES => [ [ self::T, Stats_Store::servers_key( true ), 'kea.test', [] ] ] ] );
+		$this->assertNull( $store->servers( true, self::FROM, self::TO ), 'the worker family alone names one too many' );
+	}
+
 	public function test_a_read_a_ledger_refuses_answers_empty_and_says_so(): void {
 		$store = $this->stats_store( 3 );
 		$store->append_span( [ Stats_Store::LEDGER_TOTALS => [ [ self::T, Stats_Store::SITE, '', [ 3, 111.0, 4, 48.0 ] ] ] ] );
@@ -369,19 +397,26 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [], Stats_Store::term_tokens( '-/-' ) );
 	}
 
-	public function test_term_matches_reads_a_term_as_whole_words(): void {
-		$path = '/kakapo/nest-9317';
-		$this->assertTrue( Stats_Store::term_matches( '/KAKAPO/nest-9317', 'kakapo', [ 'kakapo' ] ) );
-		$this->assertTrue( Stats_Store::term_matches( $path, 'kakapo nest', [ 'kakapo', 'nest' ] ) );
-		$this->assertFalse( Stats_Store::term_matches( $path, 'kakapo weka', [ 'kakapo', 'weka' ] ) );
-		$this->assertFalse( Stats_Store::term_matches( $path, 'kaka', [ 'kaka' ] ), 'a word prefix never matches' );
-		$this->assertTrue( Stats_Store::term_matches( $path, 'o/n', [] ), 'a term with no word is a substring' );
+	/** A URL files its path's words, never its host's. */
+	public function test_a_urls_words_are_its_paths(): void {
+		$this->assertSame( [ 'kakapo', 'nest', '9317' ], Stats_Store::url_words( 'https://wren.test/KAKAPO/nest-9317' ) );
+		$this->assertSame( [ 'aisle', '12' ], Stats_Store::url_words( '/aisle-12' ) );
 	}
 
 	public function test_a_urls_path_drops_its_scheme_and_host_alone(): void {
 		$this->assertSame( '/sku-41?q=9', Stats_Store::path_of( 'https://kea.test/sku-41?q=9' ) );
 		$this->assertSame( '?q=3', Stats_Store::path_of( 'https://kea.test?q=3' ) );
 		$this->assertSame( '/bare-7731', Stats_Store::path_of( '/bare-7731' ) );
+		$this->assertSame( '/r?to=https://kea.test/aisle-9', Stats_Store::path_of( '/r?to=https://kea.test/aisle-9' ), 'a scheme after the path is no host' );
+	}
+
+	/** A URL's server is its host, and a URL with none was logged with no server name. */
+	public function test_a_urls_server_is_its_host(): void {
+		$this->assertSame( 'kea.test', Stats_Store::server_of( 'https://kea.test/sku-41?q=9' ) );
+		$this->assertSame( 'wren.test', Stats_Store::server_of( 'http://wren.test?q=3' ) );
+		$this->assertSame( 'kea.test', Stats_Store::server_of( 'https://kea.test' ) );
+		$this->assertSame( Stats_Store::UNKNOWN_SERVER, Stats_Store::server_of( '/jobs/aisle-9' ) );
+		$this->assertSame( Stats_Store::UNKNOWN_SERVER, Stats_Store::server_of( '/r?to=https://kea.test/aisle-9' ) );
 	}
 
 	public function test_the_estimate_follows_the_serializer_the_handle_is_configured_with(): void {

@@ -2580,9 +2580,9 @@ class FlameBuilderTest extends TestCase {
 		$this->read_private( $fb, 'interpreter' )->dispatch( 'configure_stats', [ '3' ] );
 	}
 
-	/** The Ledgers a settle appends to: every stats Ledger but the word index. */
+	/** The Ledgers a settle appends to: every stats Ledger. */
 	private static function written_ledgers(): array {
-		return \array_keys( \array_diff_key( Stats_Store::LEDGER_COLUMNS, [ Stats_Store::LEDGER_SEARCH => true ] ) );
+		return \array_keys( Stats_Store::LEDGER_COLUMNS );
 	}
 
 	/** Name the url Table and every Ledger a settle writes, as `flame-builder.tsl` does. */
@@ -2630,20 +2630,13 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNull( $this->read_private( $fb, 'stats_store' ) );
 	}
 
-	/**
-	 * A Ledger the builder does not append to is refused: the word index,
-	 * which nothing writes, and a name the store does not know.
-	 *
-	 * @param string $ledger The Ledger named.
-	 */
-	#[\PHPUnit\Framework\Attributes\TestWith( [ 'stats:search' ] )]
-	#[\PHPUnit\Framework\Attributes\TestWith( [ 'stats:wombat-4471' ] )]
-	public function test_add_ledger_target_refuses_a_ledger_the_builder_does_not_write( string $ledger ): void {
+	/** A name the store does not know is no Ledger the builder appends to. */
+	public function test_add_ledger_target_refuses_a_ledger_the_builder_does_not_write(): void {
 		$fb = new Flame_Builder_Node();
 
 		$this->expectException( \InvalidArgumentException::class );
-		$this->expectExceptionMessage( "add_ledger_target: '{$ledger}' is not a Ledger a settle appends to" );
-		$fb->add_ledger_target( $ledger );
+		$this->expectExceptionMessage( "add_ledger_target: 'stats:wombat-4471' is not a Ledger a settle appends to" );
+		$fb->add_ledger_target( 'stats:wombat-4471' );
 	}
 
 	/** An unnamed Table would take the store's writes to no node at all. */
