@@ -195,6 +195,44 @@ test( 'an overview brief with unscopable totals says so rather than zero', () =>
 	expect( md ).not.toContain( '0 requests' );
 } );
 
+test( 'an overview brief shows an unmeasured mean as a dash with no unit', () => {
+	const md = briefToMarkdown( {
+		subject: 'overview',
+		server: 'kea-7713.test',
+		scope: 'kea-7713.test',
+		filters: {},
+		stats: {
+			urls: 3,
+			requests: 29,
+			avg_ms: null,
+			requests_per_second: 0.41,
+		},
+		urls: [
+			{
+				hash: '0a1b2c3d4e5f',
+				url: '/moa-31',
+				count: 29,
+				avg_ms: null,
+				max_ms: null,
+			},
+			{
+				hash: '1a2b3c4d5e6f',
+				url: '/tui-9913',
+				count: 11,
+				avg_ms: 61.5,
+				max_ms: 140,
+			},
+		],
+		categories: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '29 requests, 3 urls, — avg, 0.410/s recent' );
+	expect( md ).toContain( '29× — avg, — worst' );
+	expect( md ).toContain( '11× 61.5ms avg, 140ms worst' );
+	expect( md ).not.toContain( '—ms' );
+} );
+
 test( 'an overview brief with no server says it is the whole fleet', () => {
 	const md = briefToMarkdown( {
 		subject: 'overview',
@@ -544,6 +582,20 @@ test( 'a category brief shows its share and what it competes with', () => {
 
 	expect( md ).toContain( '**share:** 73%' );
 	expect( md ).toContain( 'hooks 122.5ms, template 41ms' );
+} );
+
+test( 'a category brief with an unmeasured share shows a dash, not 0%', () => {
+	const md = briefToMarkdown( {
+		subject: 'category',
+		name: 'queries',
+		avg_time_ms: null,
+		avg_count: 29,
+		share: null,
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**share:** —' );
+	expect( md ).not.toContain( '0%' );
 } );
 
 // A subject this renderer has never heard of still gets its heading and caveat,

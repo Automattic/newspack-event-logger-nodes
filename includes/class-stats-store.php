@@ -1085,8 +1085,8 @@ class Stats_Store {
 			}
 
 			$display_cats[ $cat ] = [
-				'time'    => $total_count > 0 ? $sum_time / $total_count : 0.0,
-				'count'   => $total_count > 0 ? $sum_count / $total_count : 0.0,
+				'time'    => self::mean( $sum_time, $total_count ),
+				'count'   => self::mean( $sum_count, $total_count ),
 				'samples' => $samples,
 				'entries' => $entries_out,
 			];
@@ -1094,9 +1094,21 @@ class Stats_Store {
 
 		return [
 			'count'      => $total_count,
-			'total_time' => $total_count > 0 ? $sum_req_time / $total_count : 0.0,
+			'total_time' => self::mean( $sum_req_time, $total_count ),
 			'categories' => $display_cats,
 		];
+	}
+
+	/**
+	 * A mean over the things that HAVE a value. Dividing by every request
+	 * instead would understate it by the unmeasured fraction, and the mean
+	 * of none is null: not measured, never 0.
+	 *
+	 * @param float $sum Summed values.
+	 * @param int   $n   How many contributed one.
+	 */
+	public static function mean( float $sum, int $n ): ?float {
+		return $n > 0 ? $sum / $n : null;
 	}
 
 	/**
@@ -1234,13 +1246,13 @@ class Stats_Store {
 	}
 
 	/**
-	 * A row's `min_ms` or `max_ms` as every surface carries it: the measured
-	 * milliseconds, or null where no timed request reached the row, which a
-	 * reader shows as unmeasured and never as 0.
+	 * A row's or a brief's measured value as every surface carries it, such as
+	 * `avg_ms`, `min_ms`, `max_ms` or `avg_peak_mb`: the number, or null where
+	 * nothing was measured, which a reader shows as unmeasured and never as 0.
 	 *
-	 * @param mixed $value The extreme a row or a brief holds.
+	 * @param mixed $value The value a row or a brief holds.
 	 */
-	public static function extreme( mixed $value ): ?float {
+	public static function measured( mixed $value ): ?float {
 		return null === $value ? null : Core::num_float( $value );
 	}
 

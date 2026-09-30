@@ -116,6 +116,20 @@ class StatsStoreTest extends TestCase {
 		$this->assertEquals( [ 'wpdb' => [ 9.25, 2, 1 ] ], $store->categories( 'kea.test', self::FROM, self::TO, false ) );
 	}
 
+	public function test_a_mean_over_no_requests_is_null(): void {
+		$this->assertNull( Stats_Store::mean( 12.5, 0 ) );
+		$this->assertEqualsWithDelta( 2.5, Stats_Store::mean( 12.5, 5 ), 1e-9 );
+	}
+
+	public function test_a_leaderboard_of_no_profiled_request_has_no_means(): void {
+		$display = Stats_Store::sums_to_display( 0, 0.0, [ 'wpdb' => [ 'sum_time' => 9.0, 'sum_count' => 4.0, 'samples' => 3 ] ] );
+
+		$this->assertNull( $display['total_time'] );
+		$this->assertNull( $display['categories']['wpdb']['time'] );
+		$this->assertNull( $display['categories']['wpdb']['count'] );
+		$this->assertEqualsWithDelta( 9.0, Stats_Store::sums_to_display( 3, 27.0, [] )['total_time'], 1e-9 );
+	}
+
 	public function test_the_leaderboard_divides_its_sums_for_display(): void {
 		$store = $this->stats_store( 3 );
 		$store->append_span(

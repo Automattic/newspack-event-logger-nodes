@@ -631,6 +631,25 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
+	it( 'divides the averaged breakdown by no wall clock when no timed request reached the URL', () => {
+		const { container, unmount } = mount( {
+			urlDetail: {
+				stats: { avg_ms: null },
+				requests: [],
+				aggregate_profiles: {
+					categories: { hooks: { time: 10, count: 4 } },
+					count: 7,
+					total_time: 10,
+				},
+			},
+		} );
+		const footer = container.querySelector( 'tfoot tr' );
+
+		expect( footer.querySelectorAll( 'td' )[ 2 ].textContent ).toBe( '—' );
+		expect( container.textContent ).not.toContain( '0.0%' );
+		unmount();
+	} );
+
 	it( 'hands the category series to CategoryTimeChart', () => {
 		const { container, unmount } = mount( {
 			urlDetail: {

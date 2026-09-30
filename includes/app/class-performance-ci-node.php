@@ -896,8 +896,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		return [
 			'urls'                => $urls,
 			'requests'            => $requests,
-			'avg_ms'              => self::mean_of( Core::num_float( $sums['sum_ms'] ?? null ), Core::num_int( $sums['timed_count'] ?? null ) ),
-			'avg_peak_mb'         => self::mean_of( Core::num_float( $sums['sum_peak_mb'] ?? null ), $requests ),
+			'avg_ms'              => Stats_Store::mean( Core::num_float( $sums['sum_ms'] ?? null ), Core::num_int( $sums['timed_count'] ?? null ) ),
+			'avg_peak_mb'         => Stats_Store::mean( Core::num_float( $sums['sum_peak_mb'] ?? null ), $requests ),
 			'requests_per_second' => self::recent_rate( $rated, $recent ),
 		] + ( $errors ? [ 'errors' => Core::num_int( $sums['errors'] ?? null ) ] : [] );
 	}
@@ -980,8 +980,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		$last_seen    = $row['last_seen'] ?? 0;
 		unset( $row['last_seen'] );
 		// Two populations: a timeout has peak memory but no duration.
-		$row['avg_ms']       = self::mean_of( Core::num_float( $row['sum_ms'] ?? null ), Core::num_int( $row['timed_count'] ?? null ) );
-		$row['avg_peak_mb']  = self::mean_of( Core::num_float( $row['sum_peak_mb'] ?? null ), Core::num_int( $row['count'] ?? null ) );
+		$row['avg_ms']       = Stats_Store::mean( Core::num_float( $row['sum_ms'] ?? null ), Core::num_int( $row['timed_count'] ?? null ) );
+		$row['avg_peak_mb']  = Stats_Store::mean( Core::num_float( $row['sum_peak_mb'] ?? null ), Core::num_int( $row['count'] ?? null ) );
 		$row['last_updated'] = $last_seen;
 		return $row;
 	}
@@ -999,26 +999,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		$bucket = Stats_Store::bucket_start( $now );
 		$hour   = $now - $now % Stats_Store::HOUR_SECONDS;
 		return $bucket > $hour ? [ $hour, $bucket ] : [ $hour - Stats_Store::HOUR_SECONDS, $hour ];
-	}
-
-	/**
-	 * The mean duration of the timed requests over the chart window, the
-	 * wall clock the Time Breakdown divides the board's categories by: the
-	 * site's from the totals `overview` already read, and a server's from
-	 * its row of the `server` dimension, the one read this costs.
-	 *
-	 * @param string              $server Server the board is scoped to; '' is the site.
-	 * @param array<array-key,mixed> $totals The site's totals over the window.
-	 * @param Stats_Store         $store  The reply's store.
-	 * @param int                 $from   First second read.
-	 * @param int                 $to     The second the read stops short of.
-	 */
-	private static function board_avg_ms( string $server, array $totals, Stats_Store $store, int $from, int $to ): float {
-		if ( '' === $server ) {
-			return self::mean_of( Core::num_float( $totals['sum_ms'] ?? null ), Core::num_int( $totals['count'] ?? null ) );
-		}
-		$row = Core::arr( $store->dimension( Stats_Store::DIM_SERVER, '', $from, $to, false )[ $server ] ?? null );
-		return self::mean_of( Core::num_float( $row[ Stats_Store::DIM_SUM_MS ] ?? null ), Core::num_int( $row[ Stats_Store::DIM_TIMED ] ?? null ) );
 	}
 
 	/**
@@ -1878,7 +1858,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function by_rank( string|array $rank, string $order ): \Closure {
 		$value = static fn ( array $row ): mixed => match ( true ) {
-			\is_array( $rank ) => Core::num_float( $row[ $rank[1] ] ?? null ) > 0.0 ? Core::num_float( $row[ $rank[0] ] ?? null ) / Core::num_float( $row[ $rank[1] ] ?? null ) : null,
+			\is_array( $rank ) => Stats_Store::mean( Core::num_float( $row[ $rank[0] ] ?? null ), Core::num_int( $row[ $rank[1] ] ?? null ) ),
 			'x' === $rank      => $row['url'] ?? null,
 			default            => $row[ $rank ] ?? null,
 		};
@@ -1901,18 +1881,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function recent_rate( int $requests, array $recent ): float {
 		return $requests / \max( 1, $recent[1] - $recent[0] );
-	}
-
-	/**
-	 * A mean over the things that HAVE one — the requests a duration was
-	 * measured for. Dividing by every request instead would understate it
-	 * by the unmeasured fraction.
-	 *
-	 * @param float $sum Summed values.
-	 * @param int   $n   How many contributed one.
-	 */
-	private static function mean_of( float $sum, int $n ): float {
-		return $n > 0 ? $sum / $n : 0.0;
 	}
 
 	/**
@@ -1990,6 +1958,27 @@ class Performance_CI_Node extends Service_CI_Node {
 			$buckets[ (string) $bucket ] = $rows;
 		}
 		return [ 'names' => \array_map( 'strval', \array_keys( $names ) ), 'buckets' => $buckets ];
+	}
+
+	/**
+	 * The mean duration of the timed requests over the chart window, the
+	 * wall clock the Time Breakdown divides the board's categories by: the
+	 * site's from the totals `overview` already read, and a server's from
+	 * its row of the `server` dimension, the one read this costs. Null where
+	 * no timed request reached the window.
+	 *
+	 * @param string              $server Server the board is scoped to; '' is the site.
+	 * @param array<array-key,mixed> $totals The site's totals over the window.
+	 * @param Stats_Store         $store  The reply's store.
+	 * @param int                 $from   First second read.
+	 * @param int                 $to     The second the read stops short of.
+	 */
+	private static function board_avg_ms( string $server, array $totals, Stats_Store $store, int $from, int $to ): ?float {
+		if ( '' === $server ) {
+			return Stats_Store::mean( Core::num_float( $totals['sum_ms'] ?? null ), Core::num_int( $totals['count'] ?? null ) );
+		}
+		$row = Core::arr( $store->dimension( Stats_Store::DIM_SERVER, '', $from, $to, false )[ $server ] ?? null );
+		return Stats_Store::mean( Core::num_float( $row[ Stats_Store::DIM_SUM_MS ] ?? null ), Core::num_int( $row[ Stats_Store::DIM_TIMED ] ?? null ) );
 	}
 
 	/**
@@ -2146,8 +2135,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				$totals  = $store->totals( $from, $to, false );
 				$payload = [
 					'total_requests'     => Core::num_int( $totals['count'] ?? null ),
-					'global_avg_ms'      => self::mean_of( Core::num_float( $totals['sum_ms'] ?? null ), Core::num_int( $totals['count'] ?? null ) ),
-					'global_avg_peak_mb' => self::mean_of( Core::num_float( $totals['sum_peak_mb'] ?? null ), Core::num_int( $totals['requests'] ?? null ) ),
+					'global_avg_ms'      => Stats_Store::mean( Core::num_float( $totals['sum_ms'] ?? null ), Core::num_int( $totals['count'] ?? null ) ),
+					'global_avg_peak_mb' => Stats_Store::mean( Core::num_float( $totals['sum_peak_mb'] ?? null ), Core::num_int( $totals['requests'] ?? null ) ),
 					'slots'              => self::chart_slots( $now ),
 				];
 				$payload['global_leaderboard'] = [

@@ -144,9 +144,11 @@ class McpControllerTest extends TestCase {
 			$this->assertStringNotContainsString( 'ranks at 0', $errors, $tool );
 			$this->assertStringNotContainsString( 'all of its traffic', $errors, $tool );
 		}
+		$this->assertStringContainsString( 'null `avg_ms`, `min_ms` and `max_ms`', $tools['performance_urls']['inputSchema']['properties']['errors_only']['description'] );
 		$overview = $tools['performance_overview'];
 		$this->assertStringContainsString( '`slots`', $overview['description'] );
 		$this->assertStringContainsString( '`avg_ms`', $overview['description'] );
+		$this->assertStringContainsString( '`global_avg_ms` and the leaderboard\'s `avg_ms` are null', $overview['description'] );
 		$this->assertStringNotContainsString( 'span', $overview['description'] );
 		$this->assertStringNotContainsString( 'aggregate time series', $overview['description'] );
 		$breakdown = $overview['inputSchema']['properties']['breakdown']['description'];

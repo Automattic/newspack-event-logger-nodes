@@ -909,6 +909,33 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	it( 'hands the Time Breakdown no divisor when no request on the board was timed', async () => {
+		mockView = loadedView( {
+			overview: {
+				data: {
+					total_requests: 2000,
+					global_avg_ms: null,
+					global_leaderboard: {
+						count: 780,
+						avg_ms: null,
+						categories: {},
+					},
+					breakdowns: { server: NO_SERIES, status: NO_SERIES },
+				},
+				loading: false,
+				error: null,
+			},
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		expect( globalThis.__overviewProps.breakdownAvgMs ).toBeNull();
+		unmount();
+	} );
+
 	it( 'reads a malformed server breakdown as naming no server', async () => {
 		// A row one field short: a reply the decoder refuses whole.
 		const malformed = {
