@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
@@ -1103,9 +1104,14 @@ class FlameBuilderTest extends TestCase {
 		$fb    = new Flame_Builder_Node();
 		$store = new class( ...$this->stats_store_args( 0, 86400, $fb ) ) extends Stats_Store {
 			public int $later = 0;
+			public ?int $token_tick = null;
 			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				Core::$now = $this->later;
 				return parent::bucket_get_multi( $reads, $failed );
+			}
+			public function add_url_tokens( array $sets, int $now ): array {
+				$this->token_tick = $now;
+				return parent::add_url_tokens( $sets, $now );
 			}
 		};
 		$first        = 1_600_000_123;
@@ -1122,11 +1128,7 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame( $store->later, (int) Core::$now, 'the store read did tick the clock' );
 		$this->assertSame( $first, ( new \ReflectionProperty( $fb, 'ranked_at' ) )->getValue( $fb )[ $bucket ] ?? null, 'the ranking stamp dates from the first instant' );
-		$this->assertSame(
-			$first,
-			( new \ReflectionProperty( $fb, 'named_urls' ) )->getValue( $fb )->get( Stats_Store::server_key( self::SEED_SERVER ) . ':' . $hash ),
-			'the name memo dates from the first instant'
-		);
+		$this->assertSame( $first, $store->token_tick, 'the words date from the first instant' );
 	}
 
 	public function test_the_shutdown_sweep_ranks_a_bucket_the_cadence_deferred(): void {
@@ -1767,8 +1769,8 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( Stats_Store::OTHER_KEY, $stored[ Stats_Store::server_key( Stats_Store::OTHER_KEY ) ] );
 		$this->assertArrayNotHasKey( Stats_Store::server_key( 'late-4471.test' ), $stored );
 		$this->assertSame( 1, self::named_url_rows( $this->get_url_shard( $store, $bucket, $shard, Stats_Store::OTHER_KEY ) )[ $late ]['count'] );
-		$this->assertSame( [ 'kokako' => [ $late ] ], $store->url_token_sets( [ 'kokako' ], [ Stats_Store::OTHER_KEY ] ), 'its tokens are filed where its rows are' );
-		$this->assertSame( [], $store->url_token_sets( [ 'kokako' ], [ 'late-4471.test' ] ) );
+		$this->assertSame( [ 'kokako' => [ $late ] ], $store->url_token_sets( [ 'kokako' ], [ Stats_Store::OTHER_KEY ], self::tick() ), 'its tokens are filed where its rows are' );
+		$this->assertSame( [], $store->url_token_sets( [ 'kokako' ], [ 'late-4471.test' ], self::tick() ) );
 		$spray = Log_Manager::url_hash( 'https://spray7.test/y' );
 		$this->assertArrayHasKey( $spray, $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $spray ), 'spray7.test' ), 'a named server keeps its key' );
 	}
@@ -1825,9 +1827,12 @@ class FlameBuilderTest extends TestCase {
 			public function bucket_set_multi( array $writes ): array {
 				$landed = parent::bucket_set_multi( $writes );
 				foreach ( $writes as $i => [ $parts ] ) {
-					$landed[ $i ] = $landed[ $i ] && ! \in_array( $parts[0], [ self::NS_URL, self::NS_URLMAP ], true );
+					$landed[ $i ] = $landed[ $i ] && self::NS_URL !== $parts[0];
 				}
 				return $landed;
+			}
+			public function set_url_names( array $servers ): array {
+				return \array_map( static fn (): bool => false, parent::set_url_names( $servers ) );
 			}
 		};
 		$fb->set_stats_store( $refused );
@@ -7582,10 +7587,10 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame(
 			[ 'wombat' => [ Log_Manager::url_hash( 'https://moa.test/wombat-5510' ) ] ],
-			$store->url_token_sets( [ 'wombat' ], [ 'moa.test' ] ),
+			$store->url_token_sets( [ 'wombat' ], [ 'moa.test' ], self::tick() ),
 			'each server files its own'
 		);
-		$sets = $store->url_token_sets( [ 'wombat', '7731', '8842' ], [ self::SEED_SERVER ] ) + $store->url_token_sets( [ 'womb', '884' ], [ self::SEED_SERVER ] );
+		$sets = $store->url_token_sets( [ 'wombat', '7731', '8842' ], [ self::SEED_SERVER ], self::tick() ) + $store->url_token_sets( [ 'womb', '884' ], [ self::SEED_SERVER ], self::tick() );
 		$a    = Log_Manager::url_hash( 'https://kea.test/wombat-7731' );
 		$b    = Log_Manager::url_hash( 'https://kea.test/wombat-8842' );
 		$this->assertSame( [ $a, $b ], $sets['wombat'], 'the second flush unions' );
@@ -7593,6 +7598,130 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ $b ], $sets['8842'] );
 		$this->assertArrayNotHasKey( 'womb', $sets, 'no prefix is filed' );
 		$this->assertArrayNotHasKey( '884', $sets, 'no prefix is filed' );
+	}
+
+	public function test_a_url_files_its_words_once_an_hour_and_again_the_next(): void {
+		// Two flushes in one hour name the same URL: one SADD and one name
+		// row. The next hour's first flush refreshes both, once more.
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fb ) );
+		$fb->set_stats_store( $store );
+		$url   = 'https://kea.test/wombat-7731';
+		$named = static fn (): int => \count( \array_filter( $store->written, static fn ( string $key ): bool => \str_starts_with( $key, Stats_Store::NS_URLMAP . ':' ) ) );
+		$at    = \gmmktime( 14, 7, 31, 9, 22, 2026 );
+
+		foreach ( [ $at, $at + 1_517 ] as $now ) {
+			Core::$now = $now;
+			$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'timestamp' => $now ] ) );
+			$fb->flush();
+		}
+		$this->assertSame( 1, $store->token_adds, 'two flushes in one hour add once' );
+		$this->assertSame( 1, $named(), 'and write the name once' );
+
+		Core::$now = \gmmktime( 15, 0, 4, 9, 22, 2026 );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'timestamp' => (int) Core::$now ] ) );
+		$fb->flush();
+		$this->assertSame( 2, $store->token_adds, 'the next hour adds again' );
+		$this->assertSame( 2, $named(), 'and refreshes the name' );
+	}
+
+	public function test_a_recycled_builder_does_not_refile_inside_the_hour(): void {
+		// The stamp rides the URL blob, so a fresh builder with no memory of
+		// the last one reads it and adds nothing until the hour turns.
+		$first = new Flame_Builder_Node();
+		$first->set_stats_store( $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $first ) );
+		$url       = 'https://kea.test/wombat-7731';
+		$at        = \gmmktime( 14, 7, 31, 9, 22, 2026 );
+		Core::$now = $at;
+		$this->fill_request( $first, $this->completed_request( [ 'url' => $url, 'timestamp' => $at ] ) );
+		$first->flush();
+
+		$fresh = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fresh ) );
+		$fresh->set_stats_store( $store );
+		Core::$now = $at + 1_811;
+		$this->fill_request( $fresh, $this->completed_request( [ 'url' => $url, 'timestamp' => (int) Core::$now ] ) );
+		$fresh->flush();
+
+		$this->assertSame( 0, $store->token_adds, 'filed this hour by the builder before it' );
+		$this->assertSame( [], \array_values( \array_filter( $store->written, static fn ( string $key ): bool => \str_starts_with( $key, Stats_Store::NS_URLMAP . ':' ) ) ), 'nor is the name written' );
+		$this->assertSame(
+			[ Stats_Store::server_key( self::SEED_SERVER ) => '2026-09-22-14' ],
+			$store->url_aggregate( Log_Manager::url_hash( $url ) )['filed'] ?? null,
+			'the blob carries the hour, by the server its words are filed under'
+		);
+	}
+
+	public function test_a_flushed_url_is_found_by_its_whole_word_and_not_its_start(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 14, 7, 31, 9, 22, 2026 );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-7731', 'timestamp' => (int) Core::$now ] ) );
+		$fb->flush();
+
+		$this->assertSame(
+			[ 'wombat' => [ Log_Manager::url_hash( 'https://kea.test/wombat-7731' ) ] ],
+			$store->url_token_sets( [ 'wombat', 'wom' ], [ self::SEED_SERVER ], (int) Core::$now )
+		);
+	}
+
+	public function test_a_url_seen_late_in_its_last_filed_hour_stays_findable_until_its_rows_leave_the_window(): void {
+		// Filed at 14:02:07 and last seen at 14:58:41, so its words are never
+		// re-added. Its hour-14 rows are read until 02:09:59 the next day, a
+		// window of 43,219 s; the words must live that long too, and no later.
+		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 43_219 ] );
+		$this->activate_shipped( 'performance', 1 );
+		Core::$memd                   = new InMemoryMemcached();
+		$GLOBALS['_current_user_can'] = true;
+		$clock                        = Core::$clock;
+		Core::$clock                  = static fn (): int => (int) Core::$now;
+		try {
+			$fb = new Flame_Builder_Node();
+			$fb->set_stats_store( $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb ) );
+			$flush_at = function ( int $at, string $url ) use ( $fb ): void {
+				Core::$now = $at;
+				$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'timestamp' => $at ] ) );
+				$fb->flush();
+			};
+			$flush_at( \gmmktime( 14, 2, 7, 9, 22, 2026 ), 'https://kea.test/wombat-7731' );
+			$flush_at( \gmmktime( 14, 58, 41, 9, 22, 2026 ), 'https://kea.test/wombat-7731' );
+			// Hour 15's traffic moves the data clock on, so hour 14 folds.
+			$flush_at( \gmmktime( 15, 3, 17, 9, 22, 2026 ), 'https://kea.test/kiwi-8842' );
+			$flush_at( \gmmktime( 15, 3, 22, 9, 22, 2026 ), 'https://kea.test/kiwi-8842' );
+			$wombat = Log_Manager::url_hash( 'https://kea.test/wombat-7731' );
+			$found  = static function ( int $at ): array {
+				Core::$now = $at;
+				return \array_column( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--search=wombat' ] )['data'], 'hash' );
+			};
+
+			$last = \gmmktime( 2, 9, 59, 9, 23, 2026 );
+			$this->assertSame( \gmmktime( 14, 0, 0, 9, 22, 2026 ), Stats_Store::window_start( 43_219, $last ), 'hour 14 is still read' );
+			$this->assertSame( [ $wombat ], $found( $last ), 'findable while its last row is read' );
+			$this->assertSame( \gmmktime( 15, 0, 0, 9, 22, 2026 ), Stats_Store::window_start( 43_219, $last + 5 ), 'hour 14 has left the window' );
+			$this->assertSame( [], $found( $last + 5 ), 'gone once it has' );
+		} finally {
+			Core::$clock = $clock;
+			unset( $GLOBALS['_current_user_can'] );
+		}
+	}
+
+	public function test_a_flushs_members_share_one_six_hour_bucket(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 16, 47, 13, 9, 22, 2026 );
+		foreach ( [ 'https://kea.test/wombat-7731', 'https://kea.test/kiwi-8842/nest', 'https://moa.test/takahe-5510' ] as $url ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'timestamp' => (int) Core::$now ] ) );
+		}
+		$this->forget_stats_asks();
+		$fb->flush();
+
+		$keys = \array_merge( ...$this->asked_verbs( Stats_Store::NS_URLTOKEN )['SADD'] ?? [ [] ] );
+		$this->assertCount( 7, $keys, 'wombat, 7731, kiwi, 8842, nest, takahe, 5510' );
+		foreach ( $keys as $key ) {
+			$this->assertStringStartsWith( Stats_Store::NS_URLTOKEN . ':2026-09-22-12:', $key );
+		}
 	}
 
 	public function test_an_all_digit_token_and_hash_round_trip_as_strings(): void {
@@ -7607,7 +7736,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
 		$fb->flush();
 
-		$this->assertSame( [ '481169627974' ], $store->url_token_sets( [ '20260922' ], [ self::SEED_SERVER ] )['20260922'] ?? null );
+		$this->assertSame( [ '481169627974' ], $store->url_token_sets( [ '20260922' ], [ self::SEED_SERVER ], self::tick() )['20260922'] ?? null );
 	}
 
 	public function test_a_second_flush_adds_members_only_for_its_new_pairs_and_reads_nothing_first(): void {
@@ -7625,22 +7754,22 @@ class FlameBuilderTest extends TestCase {
 		$this->forget_stats_asks();
 		$fb->flush();
 
-		$set = static fn ( string $word ): string => Stats_Store::key( ...[ ...Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), $word ] );
+		$set = static fn ( string $word ): string => Stats_Store::key_at( [ ...Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), $word ], Stats_Store::token_bucket( self::tick() ) );
 		$this->assertSame( [ 'SADD' => [ [ $set( 'wombat' ), $set( '4486' ) ] ] ], $this->asked_verbs( Stats_Store::NS_URLTOKEN ), 'one add, and no read' );
 		$this->assertSame(
 			[
-				$set( 'wombat' ) => [ [ $new => self::tick() ], 86_417 ],
-				$set( '4486' )   => [ [ $new => self::tick() ], 86_417 ],
+				$set( 'wombat' ) => [ [ $new => self::tick() ], 86_417 + 3_605 ],
+				$set( '4486' )   => [ [ $new => self::tick() ], 86_417 + 3_605 ],
 			],
 			self::token_adds()[0],
-			'the new URL alone, living the retention window'
+			'the new URL alone, living the window, an hour and a flush'
 		);
-		$this->assertEqualsCanonicalizing( [ $old, $new ], Core::arr( $store->url_token_sets( [ 'wombat' ], [ self::SEED_SERVER ] )['wombat'] ?? null ) );
+		$this->assertEqualsCanonicalizing( [ $old, $new ], Core::arr( $store->url_token_sets( [ 'wombat' ], [ self::SEED_SERVER ], self::tick() )['wombat'] ?? null ) );
 	}
 
 	public function test_a_refused_token_write_is_logged_and_not_written_again(): void {
-		// Nothing retries a refused write: the refusal is logged, the URL
-		// stays named, and the next flush files no token for it.
+		// Nothing retries a refused write: the refusal is logged, the URL's
+		// blob still carries the hour, and a flush later in it files nothing.
 		$err = '';
 		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
 			$err .= $text;
@@ -7649,17 +7778,20 @@ class FlameBuilderTest extends TestCase {
 		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 86400, $fb ) );
 		$fb->set_stats_store( $store );
 		$url = 'https://kea.test/takahe-4410';
+		// Tells the minute's narration, so the tally below stays readable.
+		$fb->flush();
 
 		$store->refuse_tokens = true;
-		$hash                 = Log_Manager::url_hash( $url );
-		$this->flush_buckets( $fb, [ self::live_bucket() => [ 'url_stats' => [ $hash => self::positional_url_row( [ 'count' => 3 ] ) ], 'url_names' => [ $hash => $url ] ] ] );
-		$this->assertSame( [], $store->url_token_sets( [ 'takahe' ], [ self::SEED_SERVER ] ), 'the write was refused' );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
+		$fb->flush();
+		$this->assertSame( [], $store->url_token_sets( [ 'takahe' ], [ self::SEED_SERVER ], self::tick() ), 'the write was refused' );
 		$this->assertStringContainsString( 'token index write refused; 2 word sets left unfiled', $err );
 		$this->assertSame( 2, $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ][ 'refused ' . Stats_Store::NS_URLTOKEN ] ?? null );
 
 		$store->refuse_tokens = false;
 		$store->writes        = [];
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
+		Core::$now           += 41;
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'timestamp' => self::tick() ] ) );
 		$fb->flush();
 
 		$this->assertNotContains( 'takahe', $store->writes, 'the refused token is not written again' );
@@ -7668,7 +7800,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_a_flush_files_one_set_per_distinct_word_in_batched_adds(): void {
 		// 600 URLs sharing `kea` and `kiwi`, each with a word of its own, is
 		// 602 sets: added in ceil( 602 / 500 ) SADDs, never one per word, and
-		// read by none. A flush filing no new name adds nothing.
+		// read by none.
 		$fb    = new Flame_Builder_Node();
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
 		$fb->set_stats_store( $store );
@@ -7688,13 +7820,9 @@ class FlameBuilderTest extends TestCase {
 		$own = [ '00', ...\array_map( 'strval', \range( 10, 5990, 10 ) ) ];
 		$read = [];
 		foreach ( \array_chunk( [ 'kea', 'kiwi', ...$own ], Stats_Store::SEARCH_WORDS_READ ) as $words ) {
-			$read += \array_filter( $store->url_token_sets( $words, [ self::SEED_SERVER ] ) );
+			$read += \array_filter( $store->url_token_sets( $words, [ self::SEED_SERVER ], self::tick() ) );
 		}
 		$this->assertSame( [ 'kea', 'kiwi', ...$own ], \array_map( 'strval', \array_keys( $read ) ), 'each word its set' );
-
-		$this->forget_stats_asks();
-		$this->flush_buckets( $fb, [ self::live_bucket() => [ 'url_stats' => $stats, 'url_names' => $names ] ] );
-		$this->assertSame( [], self::token_adds(), 'names already filed add no member' );
 	}
 
 	/**
@@ -7866,6 +7994,9 @@ class RecordingStatsStore extends Stats_Store {
 	/** @var bool Whether a word filing is refused. */
 	public bool $refuse_tokens = false;
 
+	/** @var int `add_url_tokens()` calls since a test last zeroed it: one SADD each. */
+	public int $token_adds = 0;
+
 	/**
 	 * @param array<int,array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes `[ parts, bucket, data ]`.
 	 * @return array<int,bool>
@@ -7878,10 +8009,24 @@ class RecordingStatsStore extends Stats_Store {
 	}
 
 	/**
+	 * @param array<array-key,array<array-key,string>> $servers Filed server => hash => URL.
+	 * @return array<int,bool>
+	 */
+	public function set_url_names( array $servers ): array {
+		foreach ( $servers as $urls ) {
+			foreach ( \array_keys( $urls ) as $hash ) {
+				$this->written[] = Stats_Store::key_at( [ Stats_Store::NS_URLMAP ], (string) $hash );
+			}
+		}
+		return parent::set_url_names( $servers );
+	}
+
+	/**
 	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets `[ server_key, word, hashes ]`.
 	 * @return array<int,bool>
 	 */
 	public function add_url_tokens( array $sets, int $now ): array {
+		++$this->token_adds;
 		foreach ( $sets as [ , $word ] ) {
 			$this->writes[] = $word;
 		}

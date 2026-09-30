@@ -6,6 +6,31 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **With newspack-nodes 2.79.0 the flame stats start empty once, and a
+  salt rotation no longer resets them.** A durable Table's key carries no
+  salt any more: it stores `{namespace}:{key}`. The rows written under the
+  old salted key are orphaned, read by nothing, and the Router's purge
+  reclaims them once their TTL passes, so the dashboards fill again from
+  the first flush after the upgrade. From then on `wp nodes memcache flush`
+  reaches memcached and APCu alone. A stats reset, and the migration of a
+  stats schema change, is
+  `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine`, which
+  replaces each partition's SQLite files however many rows they hold.
+  `wp nodes tables list` names every declared Table. Command sessions moved
+  to a wpdb Table in the same substrate release, so a salt rotation no
+  longer revokes them either; flushing `nodes-sessions` by name does.
+
+- **The search index moves to six-hour buckets; nothing migrates.**
+  `urltoken:{server_key}:{word}` became
+  `urltoken:{bucket}:{server_key}:{word}`. The unbucketed member rows are
+  read by nothing and age out on their own lifetime, the retention window
+  from their last add, and the Table's purge reclaims them. A URL is
+  searchable again once a flush has filed it under the new keys: the first
+  flush that sees it after the upgrade, since a blob written before carries
+  no `filed` stamp and reads as never filed. A client reading the sets
+  directly with `SMEMBERS` names the bucket, `Y-m-d-H` at 00, 06, 12 or 18
+  UTC, after the namespace.
+
 - **Release newspack-nodes 2.77.0, this plugin's 0.111.0 and
   newspack-intelligence 0.12.0 together, and deploy them together.** The
   substrate now binds every verb's arguments against the `args` its schema
@@ -165,7 +190,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   arrives. Nothing reads the old memcache stats keys, and memcache reclaims
   them by TTL or eviction. `wp nodes memcache flush` deletes nothing: it
   rotates the salt, which orphans every memcache key, and restarts every
-  worker.
+  worker. It no longer touches the stats at all; `wp nodes tables flush`
+  empties them.
 
 - **The stats mirror is gone.** A user-dir or console-saved topology that
   still names `set_stats_target` or `set_flame_topn` fails to load on the

@@ -259,11 +259,17 @@ class ItemBudgetTest extends TestCase {
 			]
 		);
 
-		( new \ReflectionMethod( $fb, 'drain_url_stats' ) )->invoke( $fb, $now );
+		// Filed this hour under every server the index admits, and Other.
+		$filed = [];
+		for ( $i = 0; $i <= Stats_Store::MAX_SERVER_VALUES; $i++ ) {
+			$filed[ "spray{$i}.test" ][ $hash ] = "https://spray{$i}.test/";
+		}
+		( new \ReflectionMethod( $fb, 'drain_url_stats' ) )->invoke( $fb, $store, $now, $filed );
 		$blob = $store->bucket_get_multi( [ [ [ Stats_Store::NS_URL ], $hash ] ] )[0] ?? null;
 
 		$this->assertIsArray( $blob, 'the blob was written, not refused' );
-		self::assert_fits( $blob, 'a url blob of 8,000 wide leaves and 400 wide categories' );
+		$this->assertCount( Stats_Store::MAX_SERVER_VALUES + 1, $blob['filed'] ?? [] );
+		self::assert_fits( $blob, 'a url blob of 8,000 wide leaves, 400 wide categories and 129 filing stamps' );
 		$heaviest = $blob['flame_raw']['children'][ \count( $blob['flame_raw']['children'] ) - 1 ]['children'] ?? [];
 		$this->assertContains( self::wide( 'leaf39.199.', 300 ), \array_column( $heaviest, 'name' ), 'the heaviest leaf survives the prune' );
 	}

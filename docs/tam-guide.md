@@ -105,6 +105,13 @@ A session is a credential Claude uses in the name of whoever issued it, limited 
 4. **Lifetime (seconds):** at most 86,400, one day. The session then stops working, and you issue another.
 5. Press **Issue Session** and copy the key it shows, two long codes joined by a dot. It is shown once and cannot be recovered.
 
+With WP-CLI on the server, one command issues the session and registers it. `wp nodes session issue <label> [<role>] [<ttl>]` prints only the key, so the shell can hand it straight to `claude mcp add`:
+
+```sh
+claude mcp add --transport http hub https://<site>/wp-json/newspack-event-logger-nodes/v1/mcp \
+  --header "Authorization: Bearer $(wp nodes session issue <label> tune 86400 --user=<login>)"
+```
+
 Issuing a session needs the **manage** capability. Without it, ask the site's operator to issue one for you and to send the key privately; Claude then acts in the operator's name, within the scope they chose. The key is a password: never paste it into a ticket, a chat or a brief.
 
 ### 2. Connect Claude Code

@@ -32,14 +32,15 @@ $newspack_test_base = \sys_get_temp_dir() . '/newspack-event-logger-nodes-test-'
 // proves nothing about isolation and would collide with any other install in
 // the same state the moment a real server is configured.
 \define( 'DB_NAME', 'newspack_event_logger_nodes_test' );
-// esc_like / get_col / $options are here because Rule_Set's orphan reconcile
-// uses all three: without them a run fails with "undefined method", which reads
-// as a Rule_Set bug rather than a harness gap. get_col answers from the stubbed
-// options store so the reconcile actually reconciles.
-$GLOBALS['wpdb'] = new class() {
-	public string $prefix      = 'wp_';
-	public string $base_prefix = 'wp_';
-	public string $options     = 'wp_options';
+// The substrate's in-memory SQL `$wpdb`, so a command session or a `wpdb`
+// Table has a database to run on. esc_like and get_col are here because
+// Rule_Set's orphan reconcile uses both, with `$options`: without them a run
+// fails with "undefined method", which reads as a Rule_Set bug rather than a
+// harness gap. get_col answers from the stubbed options store so the
+// reconcile actually reconciles.
+require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/WpdbStub.php';
+require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/SqliteWpdb.php';
+$GLOBALS['wpdb'] = new class() extends \Newspack_Nodes\Tests\Helpers\Sqlite_Wpdb {
 	public function esc_like( string $text ): string {
 		return \addcslashes( $text, '_%\\' );
 	}

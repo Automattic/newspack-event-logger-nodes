@@ -2291,7 +2291,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$unread     = false;
 		$candidates = '' === $search
 			? null
-			: self::search_candidates( $tokens, $server, $stores, $plan, $unread ) ?? ( self::$match_names ? null : [] );
+			: self::search_candidates( $tokens, $server, $stores, $plan, $now, $unread ) ?? ( self::$match_names ? null : [] );
 
 		// Worker traffic is its own shard family
 		$families = Stats_Store::families( $workers );
@@ -2432,11 +2432,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string                                         $server Reporting server; '' is the site.
 	 * @param array<int,Stats_Store>                         $stores Stores the caller resolved once.
 	 * @param array{fine: list<string>, hours: list<string>} $plan   The reply's read plan.
+	 * @param int                                            $now    The reply's tick, which dates the token buckets.
 	 * @param-out bool                                       $unread
 	 * @param ?bool                                          $unread Set true when a store left a set unanswered.
 	 * @return array<string,true>|null
 	 */
-	private static function search_candidates( array $tokens, string $server, array $stores, array $plan, ?bool &$unread = null ): ?array {
+	private static function search_candidates( array $tokens, string $server, array $stores, array $plan, int $now, ?bool &$unread = null ): ?array {
 		$unread = false;
 		if ( [] === $tokens ) {
 			return null;
@@ -2451,7 +2452,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$read = [];
 		foreach ( Stats_Store::search_groups( $tokens ) as $group ) {
 			foreach ( $stores as $at => $store ) {
-				foreach ( $store->url_token_sets( $group, $servers_of[ $at ], $failed ) as $token => $hashes ) {
+				foreach ( $store->url_token_sets( $group, $servers_of[ $at ], $now, $failed ) as $token => $hashes ) {
 					// One partition's set unanswerable is the token's answer.
 					if ( false === $hashes || false === ( $sets[ $token ] ?? null ) ) {
 						$sets[ $token ] = false;

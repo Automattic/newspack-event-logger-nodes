@@ -92,8 +92,8 @@
       <p>The Tables are SQLite files on the flame builder's host. A row lives until its time to live passes, and the Router's purge deletes it then.</p>
     </div>
     <div class="callout">
-      <h4><span class="mono">wp nodes memcache flush</span></h4>
-      <p>Rotates the install's salt and orphans every key at once, the statistics' rows included. They fill again as traffic arrives.</p>
+      <h4><span class="mono">wp nodes tables flush</span></h4>
+      <p>Empties the Tables by name and replaces each partition's files. <span class="mono">wp nodes memcache flush</span> leaves the statistics alone. They fill again as traffic arrives.</p>
     </div>
   </div>
 </div>
