@@ -3,8 +3,6 @@
 .key { display:flex; gap:4px; margin:6px 0 4px; }
 .key .s { flex:1; border-radius:6px; padding:8px 6px; text-align:center; font-size:11.5px; line-height:1.3; border:1px solid #C3D3EC; background:#F0F4FB; }
 .key .s b { display:block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; color:#003DA5; }
-.key .s.scope { background:#F6F7F7; border-color:#C3C4C7; }
-.key .s.scope b { color:#50575E; }
 .key .s.bk { background:#003DA5; border-color:#003DA5; color:#fff; }
 .key .s.bk b { color:#fff; }
 .cap { font-size:12px; color:#50575E; margin:0 0 12px; line-height:1.5; }
@@ -29,10 +27,9 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
 </style>
 <div class="sheet">
 <h1>Every stats key takes its bucket or hour right after the namespace, and the URL index is stored at two resolutions</h1>
-<p class="sub">Stats_Store asks three SQLite Tables through the substrate's Table, which prefixes the install scope; below that, one partition's keyspace is <span class="mono">evlog:p{N}</span>, then the namespace, then the bucket or hour, then the scope parts (<span class="mono">Stats_Store::key_at()</span>), so everything one flush touches in a namespace sits together in key order, one <span class="mono">MGET</span> per Table serves any mix, and retention is the row's own TTL.</p>
+<p class="sub">Stats_Store asks three SQLite Tables through the substrate's Table, which stores no install scope; below that, one partition's keyspace is <span class="mono">evlog:p{N}</span>, then the namespace, then the bucket or hour, then the scope parts (<span class="mono">Stats_Store::key_at()</span>), so everything one flush touches in a namespace sits together in key order, one <span class="mono">MGET</span> per Table serves any mix, and retention is the row's own TTL.</p>
 
 <div class="key">
-  <div class="s scope"><b>&lt;install scope&gt;</b>the substrate's salt lives here; rotating it orphans every key</div>
   <div class="s"><b>evlog</b>the stats keyspace</div>
   <div class="s"><b>p{N}</b>the flame-builder partition</div>
   <div class="s"><b>{namespace}</b>one of eighteen</div>
@@ -54,14 +51,14 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
   <tr class="tier coarse"><td class="k">urls_h:{Y-m-d-H}:{server_key}:{shard}</td><td>one server's hour of merged rows in the same shape. DERIVED; a missing one reads as empty until the roll-up folds it</td><td class="t">max( 90000, min_lifetime )</td></tr>
   <tr class="tier"><td class="k">urlsrv:{bucket}</td><td>{ server_key → [ server_name, shards ] }, every server holding URL rows in the bucket beside the bitmask of the shards it wrote: what every walk reads first, asking only for the shards an entry names. MAX_SERVER_VALUES 128 names; past it, new servers' rows file under the <span class="mono">Other</span> server</td><td class="t">min( min_lifetime, 7200 )</td></tr>
   <tr class="tier coarse"><td class="k">urlsrv_h:{Y-m-d-H}</td><td>its coarse tier, the hour's 128 busiest servers, each naming all 32 shards, folded in the same pass and the same <span class="mono">bucket_set_multi()</span> as <span class="mono">urls_h</span></td><td class="t">max( 90000, min_lifetime )</td></tr>
-  <tr><td class="k">urlmap:{hash}</td><td>[ server_name, path ], written once per URL per server and rewritten only after half the retention window; answers about ONE hash, and locates its server for an unscoped <span class="mono">dump_url</span></td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">urlmap:{hash}</td><td>[ server_name, path ], written with the URL's search words, at most once an hour per server; answers about ONE hash, and locates its server for an unscoped <span class="mono">dump_url</span></td><td class="t">max( 90000, min_lifetime ) + 3,605, from its write</td></tr>
   <tr><td class="k">url:{hash}</td><td>the per-URL flame and profile blob, through a rotating accumulator of 5 buckets × 1,000; profiles capped at half the budget, each tree copy pruned lightest leaf first to a quarter</td><td class="t">max( 3600, min_lifetime / 24 )</td></tr>
   <tr class="tier"><td class="k">urlrank_s:{bucket}:[{set}:]{server_key}:{sort}:{order}</td><td>one server's ranked top URL_RANK_N 200 rows of the bucket &mdash; one list per URL_SORTS key and URL_ORDERS direction, fourteen a server &mdash; as positional [ hash, row ] entries, for each list set: the reader rows under no set part, and <span class="mono">e</span>, <span class="mono">w</span> and <span class="mono">w:e</span> for the errored, worker and errored worker rows. DERIVED from <span class="mono">urls</span> after the flush's merge landed</td><td class="t">min( min_lifetime, 7200 )</td></tr>
   <tr class="tier"><td class="k">urlrank_s:{bucket}:[{set}:]{sort}:{order}</td><td>the site's list of each sort, ranked by the writer in the same batch over the rows the servers' lists of that sort hold, so a site page reads one list a key rather than merging every server's</td><td class="t">min( min_lifetime, 7200 )</td></tr>
   <tr class="tier coarse"><td class="k">urlrank_sh:{Y-m-d-H}:[{set}:][{server_key}:]{sort}:{order}</td><td>its coarse tier, the servers' and the site's, URL_RANK_N_HOUR 500 entries, written by the same <span class="mono">roll_up_hours()</span> pass from the rows it folded; each server's <span class="mono">urlrank_sh:{Y-m-d-H}:done:{server_key}</span> marker rides its lists' batch and is what the roll-up reads</td><td class="t">max( 90000, min_lifetime )</td></tr>
   <tr class="tier"><td class="k">urlhdr:{bucket}:v4p14:[{set}:][{server_key}]</td><td>the header record beside each set's lists, each server's and the site's: request, timed, milliseconds and peak-memory sums over every row of the set, whether an overflow row was among them, a <span class="mono">Url_Sketch</span> of the URLs stored deflated, and the unaccounted requests. <span class="mono">v4p14</span> is HDR_SHAPE, the layout's version and the sketch's precision. DERIVED</td><td class="t">min( min_lifetime, 7200 )</td></tr>
   <tr class="tier coarse"><td class="k">urlhdr_h:{Y-m-d-H}:v4p14:[{set}:][{server_key}]</td><td>its coarse tier, written beside the hour's lists</td><td class="t">max( 90000, min_lifetime )</td></tr>
-  <tr><td class="k">urltoken:{server_key}:{word}</td><td>a SET key, read by <span class="mono">SMEMBERS</span>: one member per URL whose path carries the whole word, 2 characters or more and cut to 12, one set per server, the member the URL's hash and its value the second its name was last filed. A flush adds members blind and reads nothing; a set past URL_SEARCH_MAX 5,000 members answers over-limit, and that word narrows nothing until enough of its members expire</td><td class="t">min_lifetime, each member from its last add</td></tr>
+  <tr><td class="k">urltoken:{bucket}:{server_key}:{word}</td><td>a SET key, read by <span class="mono">SMEMBERS</span>: one member per URL whose path carries the whole word, 2 characters or more and cut to 12, one set per six-hour bucket per server, the member the URL's hash and its value the second its name was last filed. A flush adds members blind, at most once an hour per URL, and reads nothing; a search unions the window's buckets, and a set past URL_SEARCH_MAX 5,000 members, or buckets past it together, narrow nothing until enough of the members expire</td><td class="t">min_lifetime + 3,605, each member from its last add</td></tr>
 </table>
 
 <h3 style="font-size:14px;margin:18px 0 4px">What one read of the URL index asks for</h3>

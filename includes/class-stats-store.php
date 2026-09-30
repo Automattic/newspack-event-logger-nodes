@@ -200,14 +200,34 @@ class Stats_Store {
 	public const SRV_SHARDS = 1;
 
 	/**
-	 * The search index, one set per server per whole word, the word spelled
-	 * as `term_tokens()` spells it: `urltoken:{server_key}:{word}`, a set KEY
-	 * whose members are the hashes of that server's URLs whose paths carry
-	 * the word, each valued by the unix second its name was last filed. A
-	 * member lives the retention window from its last add, so a URL no flush
-	 * names again leaves the set on its own.
+	 * The search index, one set per six-hour bucket per server per whole
+	 * word, the word spelled as `term_tokens()` spells it:
+	 * `urltoken:{bucket}:{server_key}:{word}`, a set KEY whose members are the
+	 * hashes of that server's URLs whose paths carry the word, filed in that
+	 * bucket, each valued by the unix second its name was last filed. A
+	 * member lives the window and one refresh from its last add
+	 * (`filing_ttl()`), so a URL no flush names again leaves the set on its own.
 	 */
 	public const NS_URLTOKEN = 'urltoken';
+
+	/**
+	 * Width of one `urltoken` time bucket: six hours.
+	 *
+	 * The bucket is the set key's time part, so it trades three costs. A
+	 * (word, URL) pair holds one member row in every bucket it was filed in
+	 * while the member lives, at most `ceil( window / width ) + 1` of them,
+	 * and a search reads that many sets per word per server. Every add of one
+	 * flush lands in the current bucket's key range, which is the whole of
+	 * what that flush dirties, and a narrower bucket makes that range
+	 * denser. An hour costs 13 rows and 13 reads at the 12-hour default
+	 * window, and makes every hourly refresh a new row rather than a
+	 * rewrite; twelve hours costs 2 of each and spreads a flush across half
+	 * a day of members. Six costs 3 rows and 3 reads at the default window,
+	 * rewrites a URL's row in place for five hourly refreshes of every six,
+	 * keeps a flush inside a quarter of a day, and divides a day, so every
+	 * bucket starts at 00, 06, 12 or 18 UTC.
+	 */
+	public const TOKEN_BUCKET_SECONDS = 6 * self::HOUR_SECONDS;
 
 	/**
 	 * Members a search takes from one word's set. A set holding more answers
@@ -218,10 +238,11 @@ class Stats_Store {
 	/**
 	 * Words of one search term one read names, longest first, since a
 	 * longer word is the rarer (`search_groups()`). Each word read costs up
-	 * to `URL_SEARCH_MAX` members for every server searched, all held until
-	 * the read returns, so a caller's term must not set the multiplier:
-	 * three words at 5,000 members across a 9-server hub is 135,000 members,
-	 * where a term of ten read at once would be 450,000. The next three are
+	 * to `URL_SEARCH_MAX` members for every bucket of every server searched,
+	 * all held until the read returns, so a caller's term must not set the
+	 * multiplier: three words at 5,000 members in 3 buckets across a
+	 * 9-server hub is 405,000 members, where a term of ten read at once
+	 * would be 1,350,000. The next three are
 	 * read only when every word of the last came back over the limit, which
 	 * costs one message a set and no member, so the bound holds for any
 	 * term. Three is enough to narrow, because the intersection is at most
@@ -713,114 +734,6 @@ class Stats_Store {
 	 */
 	public static function cat_parts( string $server ): array {
 		return '' === $server ? [ self::NS_CAT_HOUR ] : [ self::NS_CAT_HOUR, self::server_key( $server ) ];
-	}
-
-	/**
-	 * When the window a reader reads begins: the start of the oldest hour
-	 * `read_plan()` reads, or of the current hour where it reads none.
-	 *
-	 * The floor of the window as a TIMESTAMP, for readers that compare against
-	 * one rather than against keys — and it is read off the same plan, so
-	 * MAX_READ_BUCKETS caps both alike and no reader can bound itself by a
-	 * window wider than the one it reads.
-	 *
-	 * @param int $retention_seconds How far back the window reaches.
-	 * @param int $now               Clock, so a test window matches its writer's keys.
-	 * @return int Unix timestamp of the oldest read hour's start.
-	 */
-	public static function window_start( int $retention_seconds, int $now ): int {
-		// The plan's hours run back whole and unbroken from the current one.
-		$hours = \count( self::read_plan( self::retention_buckets( $retention_seconds, $now ) )['hours'] );
-		return $now - $now % self::HOUR_SECONDS - $hours * self::HOUR_SECONDS;
-	}
-
-	/**
-	 * Every bucket key inside a retention window, newest first — what a reader
-	 * enumerates to walk a bucketed namespace. Static because the window turns
-	 * on retention alone: asking an instance means building the whole store
-	 * fan-out to read one integer.
-	 *
-	 * @param int $retention_seconds How far back to enumerate.
-	 * @param int $now               Clock, so a test window matches its writer's keys.
-	 * @return list<string>
-	 */
-	public static function retention_buckets( int $retention_seconds, int $now ): array {
-		$count = self::window_bucket_count( $retention_seconds );
-		$out   = [];
-		for ( $i = 0; $i < $count; $i++ ) {
-			$out[] = self::bucket_key( $now - ( $i * self::BUCKET_SECONDS ) );
-		}
-		return $out;
-	}
-
-	/**
-	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
-	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
-	 * order, which is what lets expiry compare keys with `<` against a cutoff.
-	 *
-	 * @param int $timestamp Unix timestamp.
-	 */
-	public static function bucket_key( int $timestamp ): string {
-		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
-	}
-
-	/**
-	 * Buckets one window spans: a bucket per width, plus the partial one `now`
-	 * sits in, capped at MAX_READ_BUCKETS.
-	 *
-	 * @param int $retention_seconds How far back the window reaches.
-	 * @return int Buckets to enumerate, at most MAX_READ_BUCKETS.
-	 */
-	private static function window_bucket_count( int $retention_seconds ): int {
-		return \min( (int) \ceil( $retention_seconds / self::BUCKET_SECONDS ) + 1, self::MAX_READ_BUCKETS );
-	}
-
-	/**
-	 * What a read of the whole window covers, by TIER: the current hour's
-	 * buckets, then every hour before it. Both newest first.
-	 *
-	 * The fine tier answers the current hour alone, which no hour key covers
-	 * yet, and every closed hour is its hour key or nothing: an hour key a
-	 * reader misses is the flame builder's to derive again, never the reader's
-	 * to rebuild from twelve buckets. So nothing is counted twice. The window
-	 * starts on the hour: the oldest hour it holds only part of is not read,
-	 * so every hour read is whole, and the URL index's totals and rates sum
-	 * whole hour keys exactly — the current hour so far and the whole hours
-	 * before it, never an hour key standing in for part of an hour. The
-	 * charts and the leaderboard read `CHART_HOURS` keys instead (decision
-	 * 35).
-	 *
-	 * @param list<string> $window The window to split, newest first —
-	 *                             `retention_buckets()` at the reply's one clock read.
-	 *                             Taken rather than re-enumerated: reading the clock
-	 *                             again here is how one reply would straddle a
-	 *                             bucket boundary.
-	 * @return array{fine: list<string>, hours: list<string>}
-	 */
-	public static function read_plan( array $window ): array {
-		$current = self::hour_of( $window[0] ?? '' );
-		$fine    = [];
-		$hours   = [];
-		foreach ( $window as $bucket ) {
-			$hour = self::hour_of( $bucket );
-			if ( $hour === $current ) {
-				$fine[] = $bucket;
-				continue;
-			}
-			// Keyed: distinctness is structural, order stays newest-first.
-			$hours[ $hour ] = ( $hours[ $hour ] ?? 0 ) + 1;
-		}
-		$whole = \array_filter( $hours, static fn ( int $held ): bool => self::SLOTS_PER_HOUR === $held );
-		return [ 'fine' => $fine, 'hours' => \array_map( 'strval', \array_keys( $whole ) ) ];
-	}
-
-	/**
-	 * The hour a bucket key falls in — its own leading `Y-m-d-H`.
-	 *
-	 * @param string $bucket A `Y-m-d-H-i` bucket key.
-	 */
-	public static function hour_of( string $bucket ): string {
-		return \substr( $bucket, 0, 13 );
 	}
 
 	/**
@@ -1607,85 +1520,249 @@ class Stats_Store {
 	}
 
 	/**
-	 * The token sets this partition holds for `$servers`, unioned per token,
-	 * in one `SMEMBERS` exchange asking each set for `URL_SEARCH_MAX`
-	 * members.
+	 * The token sets this partition holds for `$servers`, unioned per token
+	 * across every bucket of the window (`token_buckets()`), in one
+	 * `SMEMBERS` exchange asking each set for `URL_SEARCH_MAX` members.
 	 *
 	 * WHICH tokens can be answered at all is the schema's to say: `false` is
-	 * a token whose set holds more than `URL_SEARCH_MAX` members for any
-	 * server asked, or every token when the read went unanswered, and a
+	 * a token too common to narrow for any server asked — one of its
+	 * buckets' sets holds more than `URL_SEARCH_MAX` members, or its buckets
+	 * together do — or every token when the read went unanswered, and a
 	 * token none of them holds is ABSENT, which is a real answer narrowing
 	 * to nothing.
+	 *
+	 * A member filed before `window_start()` is dropped before anything is
+	 * counted: every URL the window reads rows of was filed inside it, so
+	 * such a member names no row and would only count toward the limit. A
+	 * set the Table answers over-limit counts every live member, those too.
 	 *
 	 * @param list<string> $tokens  At most `SEARCH_WORDS_READ` tokens, one of
 	 *                              `search_groups()`, as `term_tokens()` spells them.
 	 * @param list<string> $servers Server names whose sets to read.
+	 * @param int          $now     The reply's tick, which dates the window.
 	 * @param-out bool     $failed
 	 * @param ?bool        $failed  Set true when the Table left the read unanswered.
 	 * @return array<string,list<string>|false> token => hashes, or false when
 	 *                                          no read can answer it; absent when unheld.
 	 * @throws \LogicException On more tokens than one read names.
 	 */
-	public function url_token_sets( array $tokens, array $servers, ?bool &$failed = null ): array {
+	public function url_token_sets( array $tokens, array $servers, int $now, ?bool &$failed = null ): array {
 		if ( \count( $tokens ) > self::SEARCH_WORDS_READ ) {
 			throw new \LogicException( 'Stats_Store::url_token_sets() reads at most ' . self::SEARCH_WORDS_READ . ' words; read a term through search_groups()' );
 		}
-		$tokens_of = [];
+		$asked = [];
 		foreach ( $tokens as $token ) {
 			foreach ( $servers as $server ) {
-				$tokens_of[ self::key( ...[ ...self::url_token_parts( self::server_key( $server ) ), $token ] ) ] = $token;
+				foreach ( $this->token_buckets( $now ) as $bucket ) {
+					$asked[ self::key_at( [ ...self::url_token_parts( self::server_key( $server ) ), $token ], $bucket ) ] = [ $token, $server ];
+				}
 			}
 		}
-		$found = $this->client->members( $this->table_for( self::NS_URLTOKEN ), \array_keys( $tokens_of ), self::URL_SEARCH_MAX, $failed );
+		$found = $this->client->members( $this->table_for( self::NS_URLTOKEN ), \array_keys( $asked ), self::URL_SEARCH_MAX, $failed );
 		if ( $failed ) {
 			return \array_fill_keys( $tokens, false );
 		}
-		$sets = [];
+		// A member filed before the window indexes no row the window reads.
+		$floor = self::window_start( $this->max_lifespan, $now );
+		$sets  = [];
 		foreach ( $found as $key => $members ) {
-			$token = $tokens_of[ (string) $key ];
-			if ( false !== ( $sets[ $token ] ?? null ) ) {
-				$sets[ $token ] = null === $members ? false : ( $sets[ $token ] ?? [] ) + $members;
-			}
+			[ $token, $server ] = $asked[ (string) $key ];
+			$held               = $sets[ $token ][ $server ] ?? [];
+			$sets[ $token ][ $server ] = null === $members || false === $held
+				? false
+				: $held + \array_filter( $members, static fn ( mixed $at ): bool => Core::num_int( $at ) >= $floor );
 		}
 		$out = [];
 		foreach ( $tokens as $token ) {
-			if ( isset( $sets[ $token ] ) ) {
-				// The hashes are the members; the stamps are the writer's.
-				$out[ $token ] = false === $sets[ $token ] ? false : \array_map( 'strval', \array_keys( $sets[ $token ] ) );
+			if ( ! isset( $sets[ $token ] ) ) {
+				continue;
+			}
+			$union = [];
+			foreach ( $sets[ $token ] as $held ) {
+				if ( false === $held || \count( $held ) > self::URL_SEARCH_MAX ) {
+					$union = false;
+					break;
+				}
+				$union += $held;
+			}
+			if ( [] !== $union ) {
+				$out[ $token ] = false === $union ? false : \array_map( 'strval', \array_keys( $union ) );
 			}
 		}
 		return $out;
 	}
 
 	/**
+	 * Every `urltoken` bucket from the start of the window a reader reads
+	 * (`window_start()`) to `$now`, oldest first: at most
+	 * `ceil( window / TOKEN_BUCKET_SECONDS ) + 1`. A URL whose rows a reader
+	 * reads was filed no earlier than the hour those rows fall in, so its
+	 * members sit in one of these.
+	 *
+	 * @param int $now The reply's tick.
+	 * @return list<string>
+	 */
+	public function token_buckets( int $now ): array {
+		$buckets = [];
+		$last    = self::token_bucket( $now );
+		$at      = self::window_start( $this->max_lifespan, $now );
+		do {
+			$buckets[] = self::token_bucket( $at );
+			$at       += self::TOKEN_BUCKET_SECONDS;
+		} while ( \end( $buckets ) < $last );
+		return $buckets;
+	}
+
+	/**
+	 * When the window a reader reads begins: the start of the oldest hour
+	 * `read_plan()` reads, or of the current hour where it reads none.
+	 *
+	 * The floor of the window as a TIMESTAMP, for readers that compare against
+	 * one rather than against keys — and it is read off the same plan, so
+	 * MAX_READ_BUCKETS caps both alike and no reader can bound itself by a
+	 * window wider than the one it reads.
+	 *
+	 * @param int $retention_seconds How far back the window reaches.
+	 * @param int $now               Clock, so a test window matches its writer's keys.
+	 * @return int Unix timestamp of the oldest read hour's start.
+	 */
+	public static function window_start( int $retention_seconds, int $now ): int {
+		// The plan's hours run back whole and unbroken from the current one.
+		$hours = \count( self::read_plan( self::retention_buckets( $retention_seconds, $now ) )['hours'] );
+		return $now - $now % self::HOUR_SECONDS - $hours * self::HOUR_SECONDS;
+	}
+
+	/**
+	 * Every bucket key inside a retention window, newest first — what a reader
+	 * enumerates to walk a bucketed namespace. Static because the window turns
+	 * on retention alone: asking an instance means building the whole store
+	 * fan-out to read one integer.
+	 *
+	 * @param int $retention_seconds How far back to enumerate.
+	 * @param int $now               Clock, so a test window matches its writer's keys.
+	 * @return list<string>
+	 */
+	public static function retention_buckets( int $retention_seconds, int $now ): array {
+		$count = self::window_bucket_count( $retention_seconds );
+		$out   = [];
+		for ( $i = 0; $i < $count; $i++ ) {
+			$out[] = self::bucket_key( $now - ( $i * self::BUCKET_SECONDS ) );
+		}
+		return $out;
+	}
+
+	/**
+	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
+	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
+	 * order, which is what lets expiry compare keys with `<` against a cutoff.
+	 *
+	 * @param int $timestamp Unix timestamp.
+	 */
+	public static function bucket_key( int $timestamp ): string {
+		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
+	}
+
+	/**
+	 * Buckets one window spans: a bucket per width, plus the partial one `now`
+	 * sits in, capped at MAX_READ_BUCKETS.
+	 *
+	 * @param int $retention_seconds How far back the window reaches.
+	 * @return int Buckets to enumerate, at most MAX_READ_BUCKETS.
+	 */
+	private static function window_bucket_count( int $retention_seconds ): int {
+		return \min( (int) \ceil( $retention_seconds / self::BUCKET_SECONDS ) + 1, self::MAX_READ_BUCKETS );
+	}
+
+	/**
+	 * What a read of the whole window covers, by TIER: the current hour's
+	 * buckets, then every hour before it. Both newest first.
+	 *
+	 * The fine tier answers the current hour alone, which no hour key covers
+	 * yet, and every closed hour is its hour key or nothing: an hour key a
+	 * reader misses is the flame builder's to derive again, never the reader's
+	 * to rebuild from twelve buckets. So nothing is counted twice. The window
+	 * starts on the hour: the oldest hour it holds only part of is not read,
+	 * so every hour read is whole, and the URL index's totals and rates sum
+	 * whole hour keys exactly — the current hour so far and the whole hours
+	 * before it, never an hour key standing in for part of an hour. The
+	 * charts and the leaderboard read `CHART_HOURS` keys instead (decision
+	 * 35).
+	 *
+	 * @param list<string> $window The window to split, newest first —
+	 *                             `retention_buckets()` at the reply's one clock read.
+	 *                             Taken rather than re-enumerated: reading the clock
+	 *                             again here is how one reply would straddle a
+	 *                             bucket boundary.
+	 * @return array{fine: list<string>, hours: list<string>}
+	 */
+	public static function read_plan( array $window ): array {
+		$current = self::hour_of( $window[0] ?? '' );
+		$fine    = [];
+		$hours   = [];
+		foreach ( $window as $bucket ) {
+			$hour = self::hour_of( $bucket );
+			if ( $hour === $current ) {
+				$fine[] = $bucket;
+				continue;
+			}
+			// Keyed: distinctness is structural, order stays newest-first.
+			$hours[ $hour ] = ( $hours[ $hour ] ?? 0 ) + 1;
+		}
+		$whole = \array_filter( $hours, static fn ( int $held ): bool => self::SLOTS_PER_HOUR === $held );
+		return [ 'fine' => $fine, 'hours' => \array_map( 'strval', \array_keys( $whole ) ) ];
+	}
+
+	/**
+	 * The hour a bucket key falls in — its own leading `Y-m-d-H`.
+	 *
+	 * @param string $bucket A `Y-m-d-H-i` bucket key.
+	 */
+	public static function hour_of( string $bucket ): string {
+		return \substr( $bucket, 0, 13 );
+	}
+
+	/**
 	 * File URL hashes under their words in one `SADD`: each hash a member of
-	 * its server's set for the word, valued by `$now`, living the retention
-	 * window from this add. Nothing is read first, and a hash filed again
-	 * refreshes its value and its expiry.
+	 * its server's set for the word in `$now`'s bucket, valued by `$now`. Nothing is read first, and
+	 * a hash filed again in the same bucket rewrites its row, refreshing its
+	 * value and its expiry. A search reads members over the window, so each
+	 * lives the window and one refresh (`filing_ttl()`).
 	 *
 	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets `[ server_key, word, hashes ]`.
 	 * @param int                                                $now  When the names were written.
 	 * @return array<int,bool> Whether each set landed, in order.
 	 */
 	public function add_url_tokens( array $sets, int $now ): array {
+		$bucket  = self::token_bucket( $now );
 		$keys    = [];
 		$members = [];
 		foreach ( $sets as $i => [ $server_key, $word, $hashes ] ) {
-			$keys[ $i ]              = self::key( ...[ ...self::url_token_parts( $server_key ), $word ] );
+			$keys[ $i ]              = self::key_at( [ ...self::url_token_parts( $server_key ), $word ], $bucket );
 			$members[ $keys[ $i ] ] = \array_fill_keys( $hashes, $now );
 		}
-		$landed = \array_fill_keys( $this->client->add_members( $this->table_for( self::NS_URLTOKEN ), $members, $this->max_lifespan ), true );
+		$landed = \array_fill_keys( $this->client->add_members( $this->table_for( self::NS_URLTOKEN ), $members, self::filing_ttl( $this->max_lifespan ) ), true );
 		return \array_map( static fn ( string $key ): bool => isset( $landed[ $key ] ), $keys );
 	}
 
 	/**
-	 * Key parts of one server's token sets.
+	 * Key parts of one server's token sets, ahead of which `key_at()`
+	 * places the bucket.
 	 *
 	 * @param string $server_key The server's `server_key()`.
 	 * @return array<int,string>
 	 */
 	public static function url_token_parts( string $server_key ): array {
 		return [ self::NS_URLTOKEN, $server_key ];
+	}
+
+	/**
+	 * The `urltoken` bucket a moment falls in: the start of its
+	 * `TOKEN_BUCKET_SECONDS` window, spelled as an hour key is.
+	 *
+	 * @param int $timestamp Unix seconds.
+	 */
+	public static function token_bucket( int $timestamp ): string {
+		return \gmdate( 'Y-m-d-H', $timestamp - $timestamp % self::TOKEN_BUCKET_SECONDS );
 	}
 
 	/**
@@ -1873,26 +1950,56 @@ class Stats_Store {
 	}
 
 	/**
-	 * Record the names of URLs this flush touched.
+	 * Record the names of URLs this flush touched. A name serves every
+	 * reader turning a hash into a URL, over rows the aggregate Table keeps
+	 * its whole TTL, so each lives that TTL and one refresh (`filing_ttl()`).
 	 *
 	 * One round trip for the whole flush, like every other write here: a name
 	 * per key would make the cost per URL, which is what the batch exists to
-	 * avoid. Wrapped in a list because the table carries arrays; the writer
-	 * decides WHICH names are worth re-writing, since
-	 * a name never changes and re-storing it every flush would spend the saving.
+	 * avoid. The writer decides WHICH names are worth re-writing, since a
+	 * name never changes and re-storing it every flush would spend the saving.
 	 *
 	 * @param array<array-key,array<array-key,string>> $servers Filed server => hash => URL.
 	 *                                                          An all-digit key is an INT.
-	 * @return array<int,bool> Whether each name landed, as `bucket_set_multi()` answers.
+	 * @return array<int,bool> Whether each name landed, one per key written.
 	 */
 	public function set_url_names( array $servers ): array {
-		$writes = [];
+		$items = [];
 		foreach ( $servers as $server => $urls ) {
 			foreach ( $urls as $hash => $url ) {
-				$writes[] = [ [ self::NS_URLMAP ], (string) $hash, [ (string) $server, self::row_path( $url, (string) $server ) ] ];
+				$items[ self::key_at( [ self::NS_URLMAP ], (string) $hash ) ] = [ [ (string) $server, self::row_path( $url, (string) $server ) ], self::filing_ttl( self::aggregate_ttl( $this->max_lifespan ) ) ];
 			}
 		}
-		return $this->bucket_set_multi( $writes );
+		$landed = \array_fill_keys( $this->client->set_multi( $this->table_for( self::NS_URLMAP ), $items ), true );
+		return \array_map( static fn ( string $key ): bool => isset( $landed[ $key ] ), \array_keys( $items ) );
+	}
+
+	/**
+	 * The aggregate Table's lifetime for a window: the window, never under
+	 * the CHART_HOURS a chart reads, so every hour key it draws is still
+	 * stored (decision 35); what `<eln:stats_ttl>` gives its Table.
+	 * `min_lifetime` sets substrate log retention too, so the charts floor
+	 * this instead of raising it.
+	 *
+	 * @param int $retention_seconds The retention window.
+	 */
+	public static function aggregate_ttl( int $retention_seconds ): int {
+		return \max( self::CHART_HOURS * self::HOUR_SECONDS, $retention_seconds );
+	}
+
+	/**
+	 * How long a filing lives from its write: as long as the rows it indexes
+	 * are read, and one refresh more.
+	 *
+	 * A URL is filed at most once an hour (`Flame_Builder_Node`'s
+	 * `persist_url_names()`), so its last filing can come up to an hour and
+	 * a flush before its last row. Living only as long as that row is read
+	 * would retire the filing while the row still is.
+	 *
+	 * @param int $rows_read_for How long a reader reads the rows it indexes.
+	 */
+	private static function filing_ttl( int $rows_read_for ): int {
+		return $rows_read_for + self::HOUR_SECONDS + Flame_Builder_Node::FLUSH_INTERVAL_SEC;
 	}
 
 	/**
@@ -2822,7 +2929,7 @@ class Stats_Store {
 		);
 	}
 
-	/** The retention window a reader reads and a token member lives, in seconds. */
+	/** The retention window a reader reads, in seconds. */
 	public function max_lifespan(): int {
 		return $this->max_lifespan;
 	}

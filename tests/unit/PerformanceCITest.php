@@ -5487,7 +5487,7 @@ class PerformanceCITest extends TestCase {
 		$tokens = \array_merge( ...$this->asked_verbs( Stats_Store::NS_URLTOKEN )['SMEMBERS'] ?? [ [] ] );
 		$this->assertNotEmpty( $tokens );
 		foreach ( $tokens as $key ) {
-			$this->assertStringStartsWith( Stats_Store::NS_URLTOKEN . ':' . Stats_Store::server_key( 'moa.test' ) . ':', $key );
+			$this->assertMatchesRegularExpression( '/^' . Stats_Store::NS_URLTOKEN . ':\d{4}-\d\d-\d\d-\d\d:' . Stats_Store::server_key( 'moa.test' ) . ':/', $key );
 		}
 	}
 
@@ -5515,7 +5515,10 @@ class PerformanceCITest extends TestCase {
 		$this->assertEqualsCanonicalizing( [ 'a1ce0fa11b77', 'b2df1ab90c88', 'c3ea2bc01d99' ], \array_column( $page['data'], 'hash' ) );
 		$verbs = $this->asked_verbs( Stats_Store::NS_URLTOKEN );
 		$this->assertSame( [ 'SMEMBERS' ], \array_keys( $verbs ) );
-		$key     = static fn ( string $server, string $word ): string => Stats_Store::key( Stats_Store::NS_URLTOKEN, Stats_Store::server_key( $server ), $word );
+		$key     = static fn ( string $server, string $word ): array => \array_map(
+			static fn ( string $bucket ): string => Stats_Store::key( Stats_Store::NS_URLTOKEN, $bucket, Stats_Store::server_key( $server ), $word ),
+			$store->token_buckets( self::tick() )
+		);
 		$batches = \array_map(
 			static function ( array $keys ): array {
 				\sort( $keys );
@@ -5525,8 +5528,8 @@ class PerformanceCITest extends TestCase {
 		);
 		\usort( $batches, static fn ( array $a, array $b ): int => \count( $a ) <=> \count( $b ) );
 		$expected = [
-			[ $key( 'tui.test', 'wombat' ), $key( 'tui.test', '7731' ) ],
-			[ $key( 'kea.test', 'wombat' ), $key( 'kea.test', '7731' ), $key( 'moa.test', 'wombat' ), $key( 'moa.test', '7731' ) ],
+			[ ...$key( 'tui.test', 'wombat' ), ...$key( 'tui.test', '7731' ) ],
+			[ ...$key( 'kea.test', 'wombat' ), ...$key( 'kea.test', '7731' ), ...$key( 'moa.test', 'wombat' ), ...$key( 'moa.test', '7731' ) ],
 		];
 		foreach ( $expected as &$keys ) {
 			\sort( $keys );
@@ -5552,7 +5555,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( [ 'd1ce0fa11b41' ], \array_column( $page['data'], 'hash' ) );
 		$asked = \array_map( static fn ( string $key ): string => \substr( $key, \strrpos( $key, ':' ) + 1 ), $this->asked_verbs( Stats_Store::NS_URLTOKEN )['SMEMBERS'][0] ?? [] );
-		$this->assertSame( [ 'takahe', 'kakapo', 'kiwi' ], $asked, 'the three longest words, ties in term order, and never `ox`' );
+		$this->assertSame( [ 'takahe', 'kakapo', 'kiwi' ], \array_values( \array_unique( $asked ) ), 'the three longest words, ties in term order, and never `ox`' );
 	}
 
 	/** A term whose three longest words are all too common narrows on its next word. */

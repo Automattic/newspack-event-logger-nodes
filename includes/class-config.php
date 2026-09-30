@@ -210,7 +210,7 @@ class Config {
 		// Derived, never constants: a widened stats window widens each.
 		return match ( $key ) {
 			'is_hub'             => self::has_hub_topology(),
-			'stats_ttl'          => (string) self::stats_ttl(),
+			'stats_ttl'          => (string) Stats_Store::aggregate_ttl( self::stats_retention_seconds() ),
 			'stats_url_ttl'      => (string) self::stats_url_ttl(),
 			'stats_url_fine_ttl' => (string) Stats_Store::fine_ttl( self::stats_retention_seconds() ),
 			default              => null,
@@ -220,16 +220,6 @@ class Config {
 	/** The per-URL blob's lifetime: a twenty-fourth of the window, floored at an hour. */
 	private static function stats_url_ttl(): int {
 		return \max( Stats_Store::HOUR_SECONDS, \intdiv( self::stats_retention_seconds(), 24 ) );
-	}
-
-	/**
-	 * The aggregate Table's lifetime: the retention window, never under the
-	 * CHART_HOURS a chart reads, so every hour key it draws is still stored
-	 * (decision 35). `min_lifetime` sets substrate log retention too, so the
-	 * charts floor this instead of raising it.
-	 */
-	private static function stats_ttl(): int {
-		return \max( Stats_Store::CHART_HOURS * Stats_Store::HOUR_SECONDS, self::stats_retention_seconds() );
 	}
 
 	/**

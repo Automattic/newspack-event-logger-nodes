@@ -297,6 +297,16 @@ Ten tools, one per verb:
 claude mcp add --transport http <ID> https://<DOMAIN>/wp-json/newspack-event-logger-nodes/v1/mcp --header "Authorization: Bearer <HANDLE>.<KEY>"
 ```
 
+From a shell with WP-CLI, one line issues the session and registers it. `wp nodes session issue
+<label> [<role>] [<ttl>]` prints `<handle>.<secret>` and nothing else on stdout, acts as the
+`--user` login, and lists the session under its label in the Sessions tab, where it can be
+revoked:
+
+```
+claude mcp add --transport http hub https://<DOMAIN>/wp-json/newspack-event-logger-nodes/v1/mcp \
+  --header "Authorization: Bearer $(wp nodes session issue <label> tune 86400 --user=<login>)"
+```
+
 Every tool description carries the measurement caveat, because a model handed
 `175.6ms profiled / 420000ms duration` with nothing saying what is unmeasured will invent a
 cause for the difference — and the invented cause reads exactly like a finding. That caveat

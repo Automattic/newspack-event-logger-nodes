@@ -307,23 +307,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private array $unranked_hours = [];
 
 	/**
-	 * Entries per generation of the named-URL held set: each URL, under the
-	 * server its rows are filed as, whose name and tokens are already stored,
-	 * against the time they were written.
-	 *
-	 * A name never changes, so re-storing it every flush would spend the saving
-	 * the table exists for; the held set is what makes the write once-per-URL
-	 * instead. Eviction only costs a re-write.
-	 */
-	private const NAMED_URL_BUCKET_SIZE = 2000;
-
-	/** Generations the named-URL held set keeps. See NAMED_URL_BUCKET_SIZE. */
-	private const NAMED_URL_BUCKETS     = 4;
-
-	/** @var LRU_Cache `{server_key}:{hash}` => Unix time its name was last stored. */
-	private LRU_Cache $named_urls;
-
-	/**
 	 * Hours a late write took off the fold memo (`persist_aggregate_stats()`'s
 	 * `$unfold`), until the roll-up reads them again and says so as a
 	 * `stats probe` line: an `unfold`.
@@ -422,8 +405,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private Table_Client $client;
 
 	/**
-	 * Seed the flush clock, build the named-URL held set, and publish the owned
-	 * auto-tuner sibling.
+	 * Seed the flush clock, build the per-URL accumulator, and publish the
+	 * owned auto-tuner sibling.
 	 *
 	 * The node is inert until `configure_stats` supplies a `Stats_Store`: it still
 	 * accumulates and still forwards flames, but nothing reaches a stats Table.
@@ -434,7 +417,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$this->last_flush_time = Core::$now;
 		$this->worked_at       = Core::$now;
 		$this->worked_at_hr    = self::monotonic();
-		$this->named_urls      = new LRU_Cache( self::NAMED_URL_BUCKET_SIZE, self::NAMED_URL_BUCKETS );
 		$this->url_acc         = new LRU_Cache( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
 		$this->client          = new Table_Client( $this, Stats_Store::TABLES );
 
@@ -1479,8 +1461,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * agree on which hour closed.
 	 */
 	private function write_pending(): void {
-		$now = (int) Core::$now;
-		$this->drain_url_stats( $now );
+		$now         = (int) Core::$now;
 		$stats_store = $this->stats_store;
 		if ( null !== $stats_store ) {
 			$plan = $this->plan_at( $stats_store, $now );
@@ -1491,7 +1472,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			// one from leaving rows in fine buckets a folded hour replaced.
 			$this->roll_up_hours( $stats_store, $plan, $this->foldable( $stats_store, $plan['hours'], $now ) );
 			// Lexical order IS chronological, which is what bucket_key() buys.
-			$this->persist_aggregate_stats( $stats_store, $now, (string) \end( $plan['fine'] ) );
+			$filed = $this->persist_aggregate_stats( $stats_store, $now, (string) \end( $plan['fine'] ) );
+			$this->drain_url_stats( $stats_store, $now, $filed );
 		}
 		$this->url_acc->flush();
 		// A flush with nothing folded is upkeep, which never keeps a worker up.
@@ -1612,8 +1594,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param int         $now         The flush's one read of the tick.
 	 * @param string      $floor       The oldest bucket of the read plan's
 	 *                                 fine tail: nothing older ranks.
+	 * @return array<array-key,array<array-key,string>> The names it filed,
+	 *                                                  as `persist_url_names()` returns them.
 	 */
-	private function persist_aggregate_stats( Stats_Store $stats_store, int $now, string $floor ): void {
+	private function persist_aggregate_stats( Stats_Store $stats_store, int $now, string $floor ): array {
 		$unfold   = [];
 		$indexes  = $stats_store->server_index( [], \array_map( 'strval', \array_keys( $this->pending ) ), $failed );
 		$dropped  = $failed ? \array_diff_key( $this->pending, $indexes ) : [];
@@ -1630,7 +1614,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				\array_map( 'strval', \array_keys( $acc['url_stats'] + $acc['url_stats_worker'] ) )
 			);
 		}
-		$this->persist_url_tokens( $stats_store, $this->persist_url_names( $stats_store, $now, $admitted ), $now );
+		$filed = $this->persist_url_names( $stats_store, $now, $admitted );
+		$this->persist_url_tokens( $stats_store, $filed, $now );
 		$intents = [];
 		foreach ( $this->pending as $bucket => $acc ) {
 			// Only a bucket its index answered files URL rows.
@@ -1721,6 +1706,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		}
 		$this->unranked_hours = [];
 		$this->rank_owed( $stats_store, $now, $floor );
+		return $filed;
 	}
 
 	/**
@@ -2025,22 +2011,28 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Store the names of URLs this flush saw, once each per server they are
-	 * filed under.
+	 * Store the names of URLs this flush saw, and file their words, at most
+	 * once an hour per server they are filed under.
 	 *
 	 * The name table is what a reader displays a row's whole URL through,
-	 * and what a hash-only read finds the row's server by. Held pairs are
-	 * skipped until half the retention window has passed, which re-writes a
-	 * name that is still in use well before its own TTL retires it. A hash
-	 * filed under two servers in one flush keeps the last one written.
+	 * and what a hash-only read finds the row's server by. Each name also
+	 * files the search index of the server its rows are filed under — its
+	 * own, or `Other` past the index cap. A path costs one member per
+	 * distinct word: two for `/wombat-7731`, five for
+	 * `/blog/2026/my-post-title`.
 	 *
-	 * Each name also files the search index of the server its rows are filed
-	 * under — its own, or `Other` past the index cap — which is why the memo
-	 * holds the pair. A path costs one member per distinct word: two for
-	 * `/wombat-7731`, five for `/blog/2026/my-post-title`. That is paid about
-	 * once per URL per worker life, not once per flush: the memo is an
-	 * 8,000-entry LRU no checkpoint carries, and a worker recycles every 595
-	 * seconds. Re-adding a live member replaces its row and creates none.
+	 * A name never changes and a member lives the retention window from its
+	 * last add, so re-filing them every flush would only refresh their
+	 * expiry. Each URL's blob carries `filed`: server key => the hour the
+	 * URL was last filed under it. A pair stamped with the current hour is
+	 * skipped, and `drain_url_stats()` stamps the ones this returns into the
+	 * blob it writes anyway, so the rule outlives the worker and costs no
+	 * read and no write of its own. A blob without the stamp, or a URL whose
+	 * blob is not held, reads as never filed. So a URL's last filing can come
+	 * up to an hour and a flush before its last row, which is why its words
+	 * and name live one refresh past what their readers read
+	 * (`Stats_Store::filing_ttl()`). A hash filed under two
+	 * servers in one flush keeps the last name written.
 	 *
 	 * @param Stats_Store                        $stats_store The wired store.
 	 * @param int                                $now         The flush's one read of the tick.
@@ -2049,23 +2041,25 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @return array<array-key,array<array-key,string>> server => hash => URL, for the names written.
 	 */
 	private function persist_url_names( Stats_Store $stats_store, int $now, array $admitted ): array {
-		$refresh = \max( 1, (int) ( $stats_store->max_lifespan() / 2 ) );
-		$filed   = [];
+		$hour    = Stats_Store::hour_of( Stats_Store::bucket_key( $now ) );
+		$stamped = [];
+		// Iterated, not got: a get promotes, and a rotation evicts undrained.
+		foreach ( $this->url_acc->iterate() as $hash => $blob ) {
+			$stamped[ (string) $hash ] = Core::arr( Core::arr( $blob )['filed'] ?? null );
+		}
+		$filed = [];
 		foreach ( \array_intersect_key( $this->pending, $admitted ) as $bucket => $acc ) {
 			foreach ( [ $acc['url_stats'], $acc['url_stats_worker'] ] as $servers ) {
 				foreach ( $servers as $server => $rows ) {
-					$as = $admitted[ $bucket ][ (string) $server ];
+					$as  = $admitted[ $bucket ][ (string) $server ];
+					$key = Stats_Store::server_key( $as );
 					foreach ( \array_keys( $rows ) as $hash ) {
 						if ( ! isset( $acc['url_names'][ $hash ] ) ) {
 							continue;
 						}
-						$held    = Stats_Store::server_key( $as ) . ':' . $hash;
-						$written = $this->named_urls->get( $held );
-						if ( null !== $written && $now - Core::num_int( $written ) < $refresh ) {
-							continue;
+						if ( $hour !== ( $stamped[ (string) $hash ][ $key ] ?? null ) ) {
+							$filed[ $as ][ (string) $hash ] = $acc['url_names'][ $hash ];
 						}
-						$filed[ $as ][ (string) $hash ] = $acc['url_names'][ $hash ];
-						$this->named_urls->set( $held, $now );
 					}
 				}
 			}
@@ -3107,12 +3101,21 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * Drain the per-URL flame and profile aggregates into the store. The
 	 * batched `NS_URL` write overwrites with the whole aggregate.
 	 *
-	 * @param int $now The caller's one read of the tick, the `last_modified` stamp.
+	 * The blob of each URL this flush filed is stamped with the hour, under
+	 * each server it was filed under (`persist_url_names()`); a stamp from an
+	 * earlier hour skips nothing, so it is dropped.
+	 *
+	 * @param Stats_Store                              $stats_store The wired store.
+	 * @param int                                      $now         The caller's one read of the tick, the `last_modified` stamp.
+	 * @param array<array-key,array<array-key,string>> $filed       server => hash => URL, the names this flush filed.
 	 */
-	private function drain_url_stats( int $now ): void {
-		$stats_store = $this->stats_store;
-		if ( null === $stats_store ) {
-			return;
+	private function drain_url_stats( Stats_Store $stats_store, int $now, array $filed ): void {
+		$hour   = Stats_Store::hour_of( Stats_Store::bucket_key( $now ) );
+		$stamps = [];
+		foreach ( $filed as $server => $urls ) {
+			foreach ( \array_keys( $urls ) as $hash ) {
+				$stamps[ (string) $hash ][ Stats_Store::server_key( (string) $server ) ] = $hour;
+			}
 		}
 		$writes = [];
 		foreach ( $this->url_acc->iterate() as $url_hash => $aggregate ) {
@@ -3125,6 +3128,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			// Finalized flame for display; keep flame_raw for merging.
 			[ $aggregate['flame_raw'], $aggregate['flame'] ] = self::url_flame_for_display( Core::arr( $aggregate['flame'] ?? null ) );
 			$aggregate['last_modified'] = $now;
+			if ( isset( $stamps[ (string) $url_hash ] ) ) {
+				$aggregate['filed'] = $stamps[ (string) $url_hash ] + \array_filter( Core::arr( $aggregate['filed'] ?? null ), static fn ( mixed $at ): bool => $hour === $at );
+			}
 			// @longform One write per URL is one ROUND TRIP per URL, which is
 			// the cost this whole flush path is batched to avoid. Chunked on
 			// `flush_writes()`'s budget, which bounds what one `store_multi`
