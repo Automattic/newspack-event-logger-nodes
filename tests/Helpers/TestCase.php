@@ -1045,7 +1045,43 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function set_url_hour( Stats_Store $store, string $hour, string $shard, array $rows, string $server = self::SEED_SERVER ): bool {
 		$ok = $store->bucket_set_multi( [ [ Stats_Store::url_hour_parts( Stats_Store::server_key( $server ), $shard ), $hour, $rows ] ] )[0];
+		$ok = self::set_url_row_values( $store, $hour, $shard, $rows, $server ) && $ok;
 		return self::index_server( $store, $hour, $server, true, [ $shard ] ) && $ok;
+	}
+
+	/**
+	 * File each row's `url_row_h` value beside its shard, as the flush does:
+	 * a bucket's row in its slot of the hour, the path kept once. An hour's
+	 * row replaces its family's slots as their one sum, which is what an
+	 * hour seeded coarse stands for. The overflow rows name no URL.
+	 *
+	 * @param string                 $key    Bucket or hour key.
+	 * @param string                 $shard  The shard the rows are filed in, which names their family.
+	 * @param array<array-key,mixed> $rows   Stored rows by hash.
+	 * @param string                 $server The rows' server.
+	 */
+	private static function set_url_row_values( Stats_Store $store, string $key, string $shard, array $rows, string $server ): bool {
+		$hour  = Stats_Store::hour_of( $key );
+		$reads = [];
+		foreach ( \array_keys( $rows ) as $hash ) {
+			if ( ! Stats_Store::is_other_key( (string) $hash ) ) {
+				$reads[ (string) $hash ] = [ Stats_Store::url_row_parts( Stats_Store::server_key( $server ), (string) $hash ), $hour ];
+			}
+		}
+		$held   = [] === $reads ? [] : $store->bucket_get_multi( $reads );
+		$family = Stats_Store::url_row_family( Stats_Store::is_worker_shard( $shard ) );
+		$writes = [];
+		foreach ( $reads as $hash => [ $parts ] ) {
+			$row   = \Newspack_Nodes\Core::arr( $rows[ $hash ] ?? null );
+			$value = $held[ $hash ] ?? [];
+			$value[ Stats_Store::URL_ROW_PATH ] = \Newspack_Nodes\Core::str( $row[ Stats_Store::ROW_PATH ] ?? '' );
+			unset( $row[ Stats_Store::ROW_PATH ] );
+			$value[ $family ] = $key === $hour
+				? [ 0 => $row ]
+				: [ Stats_Store::slot_of( $key ) => $row ] + \Newspack_Nodes\Core::arr( $value[ $family ] ?? null );
+			$writes[] = [ $parts, $hour, $value ];
+		}
+		return ! \in_array( false, $store->bucket_set_multi( $writes ), true );
 	}
 
 	/**
@@ -1172,6 +1208,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function set_url_shard( Stats_Store $store, string $bucket, string $shard, array $rows, string $server = self::SEED_SERVER ): bool {
 		$ok = $store->bucket_set_multi( [ [ Stats_Store::url_shard_parts( Stats_Store::server_key( $server ), $shard ), $bucket, $rows ] ] )[0];
+		$ok = self::set_url_row_values( $store, $bucket, $shard, $rows, $server ) && $ok;
 		return self::index_server( $store, $bucket, $server, false, [] === $rows ? [] : [ $shard ] ) && $ok;
 	}
 }

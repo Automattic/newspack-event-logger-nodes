@@ -241,14 +241,13 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * URL-index read seam. Lazily-defaulted to the real merge-across-partitions
-	 * loader (load_index_default). Tests reassign it to COUNT index reads without
+	 * loader (load_index_default). Tests reassign it to COUNT shard reads without
 	 * short-circuiting the production fan-out — the merge logic still runs as
-	 * real code (mirrors `Insights_CI_Demo_Node::$read_items`).
+	 * real code (mirrors `Insights_CI_Demo_Node::$read_items`). A search and
+	 * `load_row()` read by key and never reach it, which is what a count of
+	 * zero proves.
 	 *
-	 * It takes the SHARD, so a point read goes through it too. A seam that
-	 * cannot express one forces `load_row()` to branch on the seam's presence,
-	 * and the narrowing this exists to measure never runs under it. It takes
-	 * the SERVER for the same reason: a scoped read is that server's keys.
+	 * It takes the SHARD and the SERVER: a scoped read is that server's keys.
 	 *
 	 * Resolved on every read through `read_index()`; reassign in a test
 	 * bootstrap, restore in a finally.
@@ -269,10 +268,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The switch for the name scan, OFF: the fold a term the token index
 	 * cannot answer falls back to — no token, every token's set past
 	 * `URL_SEARCH_MAX`, or more candidates than that — walking every name
-	 * for it. Off, `urls --search` reads the token index alone: a term none
-	 * of whose tokens it can answer names nothing, and no reply walks names
-	 * beyond the candidates. Either way each candidate is checked against the whole
-	 * term on its row's own path. The name scan's tests turn it on.
+	 * for it. Off, `urls --search` reads the token index alone: a term with
+	 * no token names nothing, a term too common to narrow is refused, and no
+	 * reply walks names beyond the candidates. Either way each candidate is
+	 * checked against the whole term on its row's own path. The name scan's
+	 * tests turn it on.
 	 *
 	 * @var bool
 	 */
@@ -2120,50 +2120,23 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One URL's merged row, read from the ONE shard its hash names.
-	 *
-	 * `Stats_Store::url_shard()` is the first hex digit of the hash, so a single
-	 * URL lives in a single shard and the other fifteen answer nothing. Reaching
-	 * this row through the whole index makes the detail modal pay the URL
-	 * TABLE's fan-out — 18,432 keys and 54 MB on the staging hub, for one row.
+	 * One URL's merged row, read BY KEY (`candidate_rows()`): its
+	 * `url_row_h` value in each planned hour its server's index names,
+	 * never the shard holding every URL of its digit beside it.
 	 *
 	 * The reader population answers first and the worker one only when it has
 	 * nothing: a URL served both ways shows the row the default table showed,
 	 * and a job-only URL still opens.
 	 *
 	 * @param string                 $hash   12-char URL hash.
-	 * @param string                 $server Reporting server; '' reads every server.
+	 * @param string                 $server Reporting server; '' reads every server the index names.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @param int                    $now    The reply's clock, read once at its entry.
 	 * @return array<array-key,mixed>|null The merged row, or null when absent.
 	 */
 	public static function load_row( string $hash, string $server, array $stores, int $now ): ?array {
-		foreach ( Stats_Store::families( true ) as $worker ) {
-			$found = self::row_in_shard( $hash, Stats_Store::url_shard( $hash, $worker ), $server, $stores, $now );
-			if ( null !== $found ) {
-				return $found;
-			}
-		}
-		return null;
-	}
-
-	/**
-	 * One URL's merged row from one shard, or null when that shard has none.
-	 *
-	 * @param string                 $hash   12-char URL hash.
-	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
-	 * @param string                 $server Reporting server; '' reads every server.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @param int                    $now    The reply's clock, read once at its entry.
-	 * @return array<array-key,mixed>|null
-	 */
-	private static function row_in_shard( string $hash, string $shard, string $server, array $stores, int $now ): ?array {
-		foreach ( self::read_index( $shard, $server, $stores, $now, false ) as $row ) {
-			if ( Core::as_string( $row['hash'] ?? '' ) === $hash ) {
-				return $row;
-			}
-		}
-		return null;
+		$rows = self::candidate_rows( [ $hash => '' === $server ? null : [ Stats_Store::server_key( $server ) ] ], true, false, $stores, $now );
+		return $rows[0][ $hash ] ?? $rows[1][ $hash ] ?? null;
 	}
 
 	/**
@@ -2241,7 +2214,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * One page of the URL set, walked from the raw index: its totals, its
 	 * slowest, and one page of it.
 	 *
-	 * Folded ONE SHARD AT A TIME. A url_hash's shard is its first hex digit, so
+	 * A search walks its candidates' rows, read by key (`candidate_rows()`),
+	 * as one group, and reads no shard. The rest is the name scan and the
+	 * pages the lists cannot answer, which walk the whole index,
+	 * ONE SHARD AT A TIME. A url_hash's shard is its first hex digit, so
 	 * shards are disjoint and a shard's fold is complete for every URL it
 	 * holds — there is no cross-shard merge to miss. The whole merged index is
 	 * otherwise the count of distinct URLs across the retention window, which
@@ -2291,30 +2267,17 @@ class Performance_CI_Node extends Service_CI_Node {
 		$unread     = false;
 		$candidates = '' === $search
 			? null
-			: self::search_candidates( $tokens, $server, $stores, $plan, $now, $unread ) ?? ( self::$match_names ? null : [] );
+			: self::search_candidates( $search, $tokens, $server, $stores, $plan, $now, $unread ) ?? ( self::$match_names ? null : [] );
 
-		// Worker traffic is its own shard family
-		$families = Stats_Store::families( $workers );
-		$shards   = [];
-		foreach ( $families as $worker ) {
-			$shards = \array_merge( $shards, Stats_Store::url_shards( $worker ) );
-		}
-
-		// The walk drops to the shards the term's candidates fall in.
-		if ( null !== $candidates ) {
-			$in_play = [];
-			foreach ( \array_keys( $candidates ) as $hash ) {
-				foreach ( $families as $worker ) {
-					$in_play[ Stats_Store::url_shard( $hash, $worker ) ] = true;
-				}
-			}
-			$shards = \array_values( \array_intersect( $shards, \array_keys( $in_play ) ) );
-		}
+		// A term's candidates are read by key; the name scan walks the shards.
+		$groups = null === $candidates
+			? self::shard_groups( $server, $workers, $errors, $stores, $now )
+			: [ \array_merge( ...\array_map( 'array_values', self::candidate_rows( $candidates, $workers, $errors, $stores, $now ) ) ) ];
 
 		$overflow = [];
-		foreach ( $shards as $shard ) {
+		foreach ( $groups as $group ) {
 			$kept = [];
-			foreach ( self::read_index( $shard, $server, $stores, $now, $errors ) as $raw ) {
+			foreach ( $group as $raw ) {
 				$raw_row = Core::arr( $raw );
 				// @longform Every shard's overflow row shares ONE key, so a
 				// per-shard fold must collapse all sixteen deliberately —
@@ -2328,18 +2291,13 @@ class Performance_CI_Node extends Service_CI_Node {
 						: $raw_row;
 					continue;
 				}
-				// @longform Filtered on the PATH before the row is projected:
-				// the term speaks about the path, and projecting a row it
-				// rejects is the index's whole work for nothing. An overflow
-				// row is held out above; no term speaks for one.
-				if ( null !== $candidates && ! isset( $candidates[ $hash ] ) ) {
-					continue;
-				}
 				// Each candidate carries every word, or its cut path hides it.
-				$path = Stats_Store::row_search_path( Core::as_string( $raw_row['url'] ?? '' ) );
-				$cut  = null !== $candidates && \str_ends_with( $path, '…' );
-				if ( '' !== $search && ! $cut && ! Stats_Store::term_matches( $path, $search, $tokens ) ) {
-					continue;
+				if ( '' !== $search ) {
+					$path = Stats_Store::row_search_path( Core::as_string( $raw_row['url'] ?? '' ) );
+					$cut  = null !== $candidates && \str_ends_with( $path, '…' );
+					if ( ! $cut && ! Stats_Store::term_matches( $path, $search, $tokens ) ) {
+						continue;
+					}
 				}
 				$row       = self::project_row( $raw_row );
 				$aggregate = ! empty( $row['aggregate'] );
@@ -2407,25 +2365,146 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The hashes the token index names for a term, or null when it cannot
-	 * answer: a term with no token, EVERY token unanswerable, or — while
-	 * `$match_names` is on — more candidates than `URL_SEARCH_MAX`. The
-	 * caller reads null as the name fold, or as no rows while the switch is
-	 * off; with it off, every candidate is walked and checked, since the check
-	 * reads only the row the walk reads anyway. Which tokens can be answered is the
-	 * store's to say — `false` is one no read can answer, and one token
-	 * unanswerable among several narrows nothing while the rest still do,
-	 * because the walk checks the whole term against each candidate's path
-	 * anyway. A token no partition holds is a real answer — an empty set —
-	 * and folds nothing. The term is read in `Stats_Store::search_groups()`,
-	 * each group from every store, and the next group only while every token
-	 * of the last is unanswerable somewhere: whether a group narrows is the
-	 * site's answer, so a word one store holds over the limit reads the next
-	 * group in every store.
+	 * Named URLs' merged rows, read BY KEY: each hash's `url_row_h` value
+	 * under each of its servers, for every key of the read plan whose
+	 * server index names that server with the hash's shard, in one exchange
+	 * per store. Each is folded through `fold_index_row()` in the order the
+	 * shard walk folds — the plan's folded hours, each the sum of its slots
+	 * as the hour fold sums its buckets, then the current hour's buckets
+	 * slot by slot — so a row read here is the row the walk shows, the
+	 * errored filter and the recent rate included. An hour a store holds no
+	 * index for is unfolded, and neither reader reads it.
+	 *
+	 * Exact while the shards' byte cap keeps the URL: a row that cap folds
+	 * into `Other` there is whole here.
+	 *
+	 * @param array<array-key,list<string>|null> $candidates hash => the server keys holding
+	 *                                                       it; null reads every one the index names.
+	 * @param bool                               $workers    Read the worker family beside the reader's.
+	 * @param bool                               $errored    Fold each key's errored rows alone.
+	 * @param array<int,Stats_Store>             $stores     Stores the caller resolved once.
+	 * @param int                                $now        The reply's clock, read once at its entry.
+	 * @return array<int,array<string,array<string,mixed>>> Family, 0 the reader's and 1 the
+	 *                                                      worker's => hash => merged row.
+	 */
+	private static function candidate_rows( array $candidates, bool $workers, bool $errored, array $stores, int $now ): array {
+		$plan     = self::read_plan( $now );
+		$recent   = self::recent_keys( $plan );
+		$families = Stats_Store::families( $workers );
+		$rows     = [];
+		foreach ( $stores as $store ) {
+			$index = $store->server_index( $plan['hours'], $plan['fine'] );
+			$held  = [];
+			$reads = [];
+			foreach ( $candidates as $hash => $keys ) {
+				$hash = (string) $hash;
+				$bits = Stats_Store::shard_mask( \array_map( static fn ( bool $worker ): string => Stats_Store::url_shard( $hash, $worker ), $families ) );
+				foreach ( $index as $at => $entries ) {
+					$hour = Stats_Store::hour_of( $at );
+					foreach ( null === $keys ? $entries : \array_intersect_key( $entries, \array_flip( $keys ) ) as $key => [ Stats_Store::SRV_SHARDS => $mask ] ) {
+						if ( 0 !== ( $mask & $bits ) ) {
+							$held[ $hash ][ $at ][]            = [ $key, $mask ];
+							$reads[ "{$hour} {$key} {$hash}" ] = [ Stats_Store::url_row_parts( $key, $hash ), $hour ];
+						}
+					}
+				}
+			}
+			$values = $store->bucket_get_multi( $reads );
+			foreach ( $held as $hash => $by_key ) {
+				foreach ( $families as $worker ) {
+					$bit    = Stats_Store::shard_mask( [ Stats_Store::url_shard( $hash, $worker ) ] );
+					$family = Stats_Store::url_row_family( $worker );
+					foreach ( $by_key as $at => $servers ) {
+						$hour = Stats_Store::hour_of( $at );
+						foreach ( $servers as [ $key, $mask ] ) {
+							$value = Core::arr( 0 === ( $mask & $bit ) ? null : $values[ "{$hour} {$key} {$hash}" ] ?? null );
+							$slots = Core::arr( $value[ $family ] ?? null );
+							$row   = $at === $hour ? self::hour_row( $slots ) : Core::arr( $slots[ Stats_Store::slot_of( $at ) ] ?? null );
+							if ( [] === $row || ( $errored && Stats_Store::row_errors( $row ) <= 0 ) ) {
+								continue;
+							}
+							$row[ Stats_Store::ROW_PATH ] = Core::str( $value[ Stats_Store::URL_ROW_PATH ] ?? '' );
+							$rows[ (int) $worker ][ $hash ] = self::fold_index_row( $rows[ (int) $worker ][ $hash ] ?? self::empty_index_row( $hash ), $row, isset( $recent[ $at ] ) );
+						}
+					}
+				}
+			}
+		}
+		foreach ( $rows as &$family_rows ) {
+			foreach ( $family_rows as &$entry ) {
+				// Null when nothing timed folded a min.
+				$entry['min_ms'] = Core::as_float( $entry['min_ms'] );
+			}
+			unset( $entry );
+		}
+		unset( $family_rows );
+		return $rows;
+	}
+
+	/**
+	 * A folded hour's row out of its slots: summed in slot order by
+	 * `Stats_Store::merge_url_row()`, as the hour fold sums its buckets. A
+	 * lone slot is the hour's row as it stands.
+	 *
+	 * @param array<array-key,mixed> $slots One family's slots.
+	 * @return array<array-key,mixed> The row; empty where no slot holds one.
+	 */
+	private static function hour_row( array $slots ): array {
+		if ( 1 === \count( $slots ) ) {
+			return Core::arr( \reset( $slots ) );
+		}
+		\ksort( $slots );
+		$row = [];
+		foreach ( $slots as $slot ) {
+			if ( \is_array( $slot ) ) {
+				$row = Stats_Store::merge_url_row( $row, $slot );
+			}
+		}
+		return $row;
+	}
+
+	/**
+	 * The whole index, one shard at a time, both families' where the page
+	 * asks for workers: what the fold walks when it names no candidates.
+	 *
+	 * @param string                 $server  Reporting server; '' reads every server.
+	 * @param bool                   $workers Read the worker family's shards too.
+	 * @param bool                   $errored Fold each key's errored rows alone.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @param int                    $now     The reply's clock, read once at its entry.
+	 * @return \Generator<int,array<int,array<array-key,mixed>>>
+	 */
+	private static function shard_groups( string $server, bool $workers, bool $errored, array $stores, int $now ): \Generator {
+		foreach ( Stats_Store::families( $workers ) as $worker ) {
+			foreach ( Stats_Store::url_shards( $worker ) as $shard ) {
+				yield self::read_index( $shard, $server, $stores, $now, $errored );
+			}
+		}
+	}
+
+	/**
+	 * The hashes the token index names for a term, each with the keys of the
+	 * servers whose sets named it, or null when it cannot answer: a term
+	 * with no token, or a read left unanswered. A term too common to narrow
+	 * — every word read over `URL_SEARCH_MAX`, or more candidates than that
+	 * across every server — is REFUSED, because its candidates' rows are
+	 * read by key and that many is a slow read (decision 28); while
+	 * `$match_names` is on it is null instead, the name fold. The caller
+	 * reads null as that fold, or as no rows while the switch is off.
+	 * Which tokens can be answered is the store's to say — `false` is one
+	 * no read can answer, and one token unanswerable among several narrows
+	 * nothing while the rest still do, because every candidate's row is
+	 * checked against the whole term anyway. A token no partition holds is
+	 * a real answer — an empty set — and reads nothing. The term is read in
+	 * `Stats_Store::search_groups()`, each group from every store, and the
+	 * next group only while every token of the last is unanswerable
+	 * somewhere: whether a group narrows is the site's answer, so a word one
+	 * store holds over the limit reads the next group in every store.
 	 *
 	 * Each server files its own sets, so a scope reads its server's and the
-	 * site reads those of every server an index the fold may read names.
+	 * site reads those of every server its index across the plan names.
 	 *
+	 * @param string                                         $search The normalized term.
 	 * @param list<string>                                   $tokens The term's tokens.
 	 * @param string                                         $server Reporting server; '' is the site.
 	 * @param array<int,Stats_Store>                         $stores Stores the caller resolved once.
@@ -2433,30 +2512,33 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                                            $now    The reply's tick, which dates the token buckets.
 	 * @param-out bool                                       $unread
 	 * @param ?bool                                          $unread Set true when a store left a set unanswered.
-	 * @return array<string,true>|null
+	 * @return array<string,list<string>>|null hash => server keys.
+	 * @throws \RuntimeException On a term too common to read by key.
 	 */
-	private static function search_candidates( array $tokens, string $server, array $stores, array $plan, int $now, ?bool &$unread = null ): ?array {
+	private static function search_candidates( string $search, array $tokens, string $server, array $stores, array $plan, int $now, ?bool &$unread = null ): ?array {
 		$unread = false;
 		if ( [] === $tokens ) {
 			return null;
 		}
 		$servers_of = [];
 		foreach ( $stores as $at => $store ) {
-			$servers_of[ $at ] = '' === $server
-				? \array_values( Stats_Store::index_names( \array_replace( [], ...\array_values( $store->server_index( $plan['hours'], $plan['fine'] ) ) ) ) )
-				: [ $server ];
+			$servers_of[ $at ] = '' === $server ? self::indexed_servers( $store, $plan ) : [ $server ];
 		}
-		$sets = [];
-		$read = [];
+		$sets  = [];
+		$read  = [];
+		$named = [];
 		foreach ( Stats_Store::search_groups( $tokens ) as $group ) {
 			foreach ( $stores as $at => $store ) {
-				foreach ( $store->url_token_sets( $group, $servers_of[ $at ], $now, $failed ) as $token => $hashes ) {
+				foreach ( $store->url_token_sets( $group, $servers_of[ $at ], $now, $failed, $named_by ) as $token => $hashes ) {
 					// One partition's set unanswerable is the token's answer.
 					if ( false === $hashes || false === ( $sets[ $token ] ?? null ) ) {
 						$sets[ $token ] = false;
 						continue;
 					}
 					$sets[ $token ] = ( $sets[ $token ] ?? [] ) + \array_fill_keys( $hashes, true );
+				}
+				foreach ( $named_by as $hash => $by ) {
+					$named[ $hash ] = ( $named[ $hash ] ?? [] ) + $by;
 				}
 				$unread = $unread || $failed;
 			}
@@ -2472,7 +2554,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$usable[ $token ] = Core::arr( $sets[ $token ] ?? [] );
 			}
 		}
-		if ( [] === $usable ) {
+		if ( $unread ) {
 			return null;
 		}
 		// Smallest first: every intersection after it walks the smallest side.
@@ -2481,11 +2563,29 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( $usable as $set ) {
 			$result = null === $result ? $set : \array_intersect_key( $result, $set );
 		}
-		if ( self::$match_names && \count( $result ) > Stats_Store::URL_SEARCH_MAX ) {
-			return null;
+		$candidates = [];
+		$pairs      = 0;
+		foreach ( \array_keys( $result ?? [] ) as $hash ) {
+			$candidates[ (string) $hash ] = \array_map( Stats_Store::server_key( ... ), \array_map( 'strval', \array_keys( $named[ (string) $hash ] ?? [] ) ) );
+			$pairs                       += \count( $candidates[ (string) $hash ] );
 		}
-		/** @var array<string,true> */
-		return $result;
+		if ( null === $result || $pairs > Stats_Store::URL_SEARCH_MAX ) {
+			return self::$match_names ? null : throw new \RuntimeException(
+				\esc_html( \sprintf( 'search "%s" is too common: its URLs run past the %d a search reads; add a word', $search, Stats_Store::URL_SEARCH_MAX ) )
+			);
+		}
+		return $candidates;
+	}
+
+	/**
+	 * Every server a store's index names across the read plan.
+	 *
+	 * @param Stats_Store                                    $store A store of the reply.
+	 * @param array{fine: list<string>, hours: list<string>} $plan  The reply's read plan.
+	 * @return list<string>
+	 */
+	private static function indexed_servers( Stats_Store $store, array $plan ): array {
+		return \array_values( Stats_Store::index_names( \array_replace( [], ...\array_values( $store->server_index( $plan['hours'], $plan['fine'] ) ) ) ) );
 	}
 
 	/**

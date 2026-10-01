@@ -27,7 +27,10 @@ import { TextControl } from '@wordpress/components';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { PAGE_CONTENT_CLASS } from '../components/DashboardShell';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
-import { formatAge } from '@newspack-nodes/shared/utils/formatters';
+import {
+	formatAge,
+	formatGroupedCount,
+} from '@newspack-nodes/shared/utils/formatters';
 
 /**
  * Row height in pixels.
@@ -502,7 +505,7 @@ export default function UrlTable( {
 		if ( num === null || num === undefined ) {
 			return '-';
 		}
-		return Math.round( num ).toLocaleString() + suffix;
+		return formatGroupedCount( Math.round( num ) ) + suffix;
 	}, [] );
 
 	/**
@@ -650,12 +653,11 @@ export default function UrlTable( {
 								'%1$s–%2$s of %3$s rows',
 								'newspack-event-logger-nodes'
 							),
-							( offset + 1 ).toLocaleString(),
-							Math.min(
-								offset + URLS_PER_PAGE,
-								total
-							).toLocaleString(),
-							total.toLocaleString()
+							formatGroupedCount( offset + 1 ),
+							formatGroupedCount(
+								Math.min( offset + URLS_PER_PAGE, total )
+							),
+							formatGroupedCount( total )
 						) }
 					{ total > 0 &&
 						total <= URLS_PER_PAGE &&
@@ -667,7 +669,7 @@ export default function UrlTable( {
 								total,
 								'newspack-event-logger-nodes'
 							),
-							total.toLocaleString()
+							formatGroupedCount( total )
 						) }
 					{ ranked && (
 						<>

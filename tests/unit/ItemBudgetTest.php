@@ -296,6 +296,23 @@ class ItemBudgetTest extends TestCase {
 		}
 	}
 
+	// ----- url_row_h: counted, twelve slots a family -----
+
+	public function test_a_url_row_hour_of_every_slot_and_the_longest_path_fits_the_item_budget(): void {
+		$path  = self::wide( '/kea/', Stats_Store::MAX_PATH_BYTES );
+		$value = [];
+		foreach ( [ false, true ] as $worker ) {
+			foreach ( Stats_Store::buckets_in_hour( '2026-09-22-10' ) as $bucket ) {
+				$intent = self::builder( 'url_row_intent', $bucket, self::SEED_SERVER, 'a1b2c3d4e5f6', self::wide_row( $path, $worker ), $worker );
+				$value  = $intent['merge']( $value );
+			}
+		}
+
+		$this->assertCount( Stats_Store::SLOTS_PER_HOUR, $value[ Stats_Store::url_row_family( true ) ] );
+		$this->assertSame( $path, $value[ Stats_Store::URL_ROW_PATH ], 'the path once, beside the slots' );
+		self::assert_fits_both( $value, 'a url row hour' );
+	}
+
 	// ----- urlmap, and the one path cap every stored path takes -----
 
 	public function test_a_url_name_of_a_path_past_the_cap_fits_and_is_cut_to_it(): void {

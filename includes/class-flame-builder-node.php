@@ -1769,6 +1769,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				foreach ( $shards as $shard => $shard_rows ) {
 					\array_push( $out, ...$this->url_shard_intent( $bucket, $name, \strval( $shard ), $shard_rows, $ranks ) );
 				}
+				foreach ( $rows as $hash => $row ) {
+					$out[] = self::url_row_intent( $bucket, $name, (string) $hash, Core::arr( $row ), 1 === $worker );
+				}
 				$entries = Stats_Store::merge_index( $entries, [
 					Stats_Store::server_key( $name ) => [
 						Stats_Store::SRV_NAME   => $name,
@@ -2593,6 +2596,39 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$this->flushed_rows[ $bucket ][ $server ][ $shard ] = $merged;
 			} : null,
 			$key
+		);
+	}
+
+	/**
+	 * How one URL's row of one bucket folds into its `url_row_h` value: into
+	 * its family's slot as `merge_url_rows()` folds it into the fine shard,
+	 * so the slot holds that shard's row, its path kept once beside the
+	 * slots. The row is uncapped, as the shard's overflow folds it into
+	 * `Other` alone.
+	 *
+	 * @param string                 $bucket Bucket key.
+	 * @param string                 $server The server the row is filed under.
+	 * @param string                 $hash   12-char URL hash.
+	 * @param array<array-key,mixed> $row    The bucket's accumulated row.
+	 * @param bool                   $worker The worker family.
+	 * @return Pending_Write
+	 */
+	private static function url_row_intent( string $bucket, string $server, string $hash, array $row, bool $worker ): array {
+		$slot   = Stats_Store::slot_of( $bucket );
+		$family = Stats_Store::url_row_family( $worker );
+		return self::intent(
+			Stats_Store::url_row_parts( Stats_Store::server_key( $server ), $hash ),
+			Stats_Store::hour_of( $bucket ),
+			static function ( array $value ) use ( $slot, $family, $row ): array {
+				$slots  = Core::arr( $value[ $family ] ?? null );
+				$merged = Stats_Store::merge_url_row( Core::arr( $slots[ $slot ] ?? null ) ?: self::empty_url_row(), $row );
+				$path   = Core::str( $value[ Stats_Store::URL_ROW_PATH ] ?? '' );
+				unset( $merged[ Stats_Store::ROW_PATH ] );
+				$slots[ $slot ]                        = $merged;
+				$value[ Stats_Store::URL_ROW_PATH ]    = '' === $path ? Core::str( $row[ Stats_Store::ROW_PATH ] ?? '' ) : $path;
+				$value[ $family ]                      = $slots;
+				return $value;
+			}
 		);
 	}
 
