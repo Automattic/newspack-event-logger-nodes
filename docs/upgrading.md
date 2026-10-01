@@ -6,6 +6,30 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **The 0.112.x Ledger stats are withdrawn; rebuild the stats Tables.**
+  The stats are 0.111.2's Tables again. Run, for each active topology that
+  includes `flame-builder`:
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes tables flush --yes && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`.
+  Then delete `{base}/ledgers/` by hand; nothing reads it.
+
+- **Every logged URL carries its host.** A request with no `SERVER_NAME`
+  never starts: `Log_Manager`'s constructor throws. A request record carries
+  no `server_name`; read the server off its URL's host. A record already in
+  `requests.pN` whose URL has no host is dead-lettered by the flame builder.
+  A request brief's `env` no longer carries `server_name`.
+
+- **Every server is filed under its own name.** The `server` axis and the
+  server index name no `Other` server, and a client withholding `Other`
+  from a server list can stop. `Stats_Store::MAX_SERVER_VALUES`,
+  `admit_servers()`, `refile_path()` and `dim_cap()` are gone.
+
+- **A mean nobody measured is null.** `avg_ms` is null for a URL no timed
+  request reached, in a `urls` header's totals, in `overview`'s
+  `global_avg_ms` and its leaderboard's `avg_ms`, and in every `ask` brief,
+  where each read 0; `avg_peak_mb` is null for a scope with no request. A
+  client renders null as unmeasured. Such a URL ranks last on `avg_ms`,
+  `min_ms` and `max_ms` in either order, searched or not.
+
 - **`dump_url` tails by `--after`, and `--since` is gone.** A caller sending
   `--since=<epoch>` is refused `unknown option --since`. Send
   `--after`, the reply's new `positions` object sent back unchanged, or no
@@ -154,11 +178,6 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   traffic, so they read lower than before for a URL that errs now and then;
   `errors` is unchanged. A client that took `count` under the filter for
   the URL's whole traffic reads it unfiltered instead.
-
-- **A row with no timed request ranks at 0 on `avg_ms`, `min_ms` and
-  `max_ms`** on a ranked page, as a folded page always ranked it. A client
-  expecting a ranked timing sort to omit timeout-only URLs filters on
-  `timed_count` itself.
 
 - **`Stats_Store`'s ranking API changed.** `ranked_writes()` takes
   `server => shard => rows`, not `server => rows`: pass each server's shard

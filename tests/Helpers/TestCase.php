@@ -938,7 +938,10 @@ abstract class TestCase extends RuntimeTestCase {
 	protected function set_url_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, array $data, string $server = self::SEED_SERVER ): bool {
 		$urls = [];
 		foreach ( $data as $hash => $row ) {
-			$urls[ $hash ] = \Newspack_Nodes\Core::str( \Newspack_Nodes\Core::arr( $row )['url'] ?? '' );
+			// A row seeded with no URL files no words, as no name names it.
+			if ( isset( \Newspack_Nodes\Core::arr( $row )['url'] ) ) {
+				$urls[ $hash ] = \Newspack_Nodes\Core::str( \Newspack_Nodes\Core::arr( $row )['url'] );
+			}
 		}
 		$ok   = $this->set_url_tokens( $store, \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( $urls ), $server );
 		$data = self::store_url_names( $store, $data, $server );
@@ -990,7 +993,7 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( $by_server as $server => $rows ) {
 			foreach ( $rows as $hash => $row ) {
 				$row         = \Newspack_Nodes\Core::arr( $row );
-				$row['path'] = \Newspack_Event_Logger_Nodes\Stats_Store::path_of( \Newspack_Nodes\Core::str( $row['url'] ?? '' ) );
+				$row['path'] = isset( $row['url'] ) ? \Newspack_Event_Logger_Nodes\Stats_Store::path_of( \Newspack_Nodes\Core::str( $row['url'] ) ) : '';
 				unset( $row['url'] );
 				$servers[ $server ][ $hash ] = self::positional_url_row( $row );
 			}

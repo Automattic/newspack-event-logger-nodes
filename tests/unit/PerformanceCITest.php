@@ -346,13 +346,35 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 0, $result['total_requests'] );
-		$this->assertEquals( 0.0, $result['global_avg_ms'] );
-		$this->assertEquals( 0.0, $result['global_avg_peak_mb'] );
+		$this->assertNull( $result['global_avg_ms'], 'the mean of no timed request is not measured' );
+		$this->assertNull( $result['global_avg_peak_mb'] );
+		$this->assertNull( $result['global_leaderboard']['avg_ms'] );
 		$this->assertCount( 288, $result['slots'] );
 		// The URL-set facts belong to the `urls` verb now.
 		$this->assertArrayNotHasKey( 'total_urls', $result );
 		$this->assertArrayNotHasKey( 'slowest_urls', $result );
 		$this->assertArrayNotHasKey( 'most_requested', $result );
+	}
+
+	/** A window whose every request timed out has no mean duration, and its peak mean stays. */
+	public function test_an_overview_of_timeouts_alone_has_no_mean_duration(): void {
+		$this->set_hour_slot( $this->stats_store( 0, 86400 ), Stats_Store::hourly_parts(), Stats_Store::bucket_key( self::tick() ), [ 'count' => 0, 'sum_ms' => 0.0, 'requests' => 7, 'sum_peak_mb' => 35.0 ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
+
+		$this->assertSame( 0, $result['total_requests'] );
+		$this->assertNull( $result['global_avg_ms'] );
+		$this->assertNull( $result['global_leaderboard']['avg_ms'] );
+		$this->assertEqualsWithDelta( 5.0, $result['global_avg_peak_mb'], 1e-9, 'seven requests\' peaks over seven requests' );
+	}
+
+	/** A server none of whose requests timed has a null board mean too. */
+	public function test_a_server_with_no_timed_request_has_a_null_board_mean(): void {
+		$this->set_hour_slot( $this->stats_store( 0, 86400 ), Stats_Store::dim_parts( 'server', '' ), Stats_Store::bucket_key( self::tick() ), [ 'edge-takahe.test' => self::dim_entry( 7, 0.0, 3.5, 0 ) ] );
+
+		$board = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', '--server=edge-takahe.test' )['global_leaderboard'];
+
+		$this->assertNull( $board['avg_ms'] );
 	}
 
 	public function test_overview_verb_aggregates_hourly_totals(): void {
@@ -416,7 +438,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped( 'performance', 1 );
 		Core::$now = (float) \gmmktime( 14, 37, 11, 9, 29, 2026 );
 		$store     = $this->stats_store( 0, 86400 );
-		$this->set_url_bucket( $store, '2026-09-29-14-35', [ 'e71b04ac9d33' => [ 'url' => '/plan-4471', 'count' => 6, 'last_seen' => (int) Core::$now ] ] );
+		$this->set_url_bucket( $store, '2026-09-29-14-35', [ 'e71b04ac9d33' => [ 'url' => 'https://example.com/plan-4471', 'count' => 6, 'last_seen' => (int) Core::$now ] ] );
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, $args );
 
@@ -925,9 +947,9 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000001 ],
-			'bbbbbbbbbbbb' => [ 'url' => '/b', 'count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000002 ],
-			'cccccccccccc' => [ 'url' => '/c', 'count' => 3, 'sum_ms' => 300.0, 'last_seen' => 1700000003 ],
+			'aaaaaaaaaaaa' => [ 'url' => 'https://example.com/a', 'count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000001 ],
+			'bbbbbbbbbbbb' => [ 'url' => 'https://example.com/b', 'count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000002 ],
+			'cccccccccccc' => [ 'url' => 'https://example.com/c', 'count' => 3, 'sum_ms' => 300.0, 'last_seen' => 1700000003 ],
 		] );
 
 		$interpreter     = new Performance_CI_Node();
@@ -1010,8 +1032,8 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'aaaaaaaaaaaa' => [ 'url' => '/articles/123', 'count' => 1, 'sum_ms' => 50.0, 'last_seen' => 1700000001 ],
-			'bbbbbbbbbbbb' => [ 'url' => '/home', 'count' => 2, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
+			'aaaaaaaaaaaa' => [ 'url' => 'https://example.com/articles/123', 'count' => 1, 'sum_ms' => 50.0, 'last_seen' => 1700000001 ],
+			'bbbbbbbbbbbb' => [ 'url' => 'https://example.com/home', 'count' => 2, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
 		] );
 
 		$interpreter     = new Performance_CI_Node();
@@ -1115,8 +1137,8 @@ class PerformanceCITest extends TestCase {
 		// Two rows, deliberately in DIFFERENT shards: the first hex digit is
 		// the shard, so `a…` and `b…` cannot share one.
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			'a4471ab0c0de' => [ 'url' => '/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
-			'b8823bc1d2ef' => [ 'url' => '/quokka-8823', 'count' => 17, 'sum_ms' => 411.0, 'timed_count' => 17 ],
+			'a4471ab0c0de' => [ 'url' => 'https://example.com/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
+			'b8823bc1d2ef' => [ 'url' => 'https://example.com/quokka-8823', 'count' => 17, 'sum_ms' => 411.0, 'timed_count' => 17 ],
 		] );
 		$this->forget_stats_asks();
 		$result         = VerbHarness::fire(
@@ -1194,7 +1216,7 @@ class PerformanceCITest extends TestCase {
 	public function test_an_old_shape_url_name_reads_as_no_name(): void {
 		$store      = $this->stats_store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			'a4471ab0c0de' => [ 'url' => '/a', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
+			'a4471ab0c0de' => [ 'url' => 'https://example.com/a', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
 		] );
 		$store->bucket_forget_multi( [ [ [ Stats_Store::NS_URLMAP ], 'a4471ab0c0de' ] ] );
 		$absent = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'a4471ab0c0de' );
@@ -1221,9 +1243,9 @@ class PerformanceCITest extends TestCase {
 		$store = $this->stats_store( 0, 86400 );
 		// Three shards: the table reads each, the modal one.
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			'a4471ab0c0de' => [ 'url' => '/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
-			'b8823bc1d2ef' => [ 'url' => '/quokka-8823', 'count' => 17, 'sum_ms' => 411.0, 'timed_count' => 17 ],
-			'c3309cd4e5f6' => [ 'url' => '/numbat-3309', 'count' => 9, 'sum_ms' => 90.0, 'timed_count' => 9 ],
+			'a4471ab0c0de' => [ 'url' => 'https://example.com/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
+			'b8823bc1d2ef' => [ 'url' => 'https://example.com/quokka-8823', 'count' => 17, 'sum_ms' => 411.0, 'timed_count' => 17 ],
+			'c3309cd4e5f6' => [ 'url' => 'https://example.com/numbat-3309', 'count' => 9, 'sum_ms' => 90.0, 'timed_count' => 9 ],
 		] );
 		$node = new Performance_CI_Node();
 
@@ -1250,11 +1272,11 @@ class PerformanceCITest extends TestCase {
 		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) );
 		// The hour before the last is folded; the last never was.
 		$this->seed_url_hour( $store, $plan['hours'][1], $shard, [
-			$hash => [ 'url' => '/wombat-4471', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 70.0 ],
+			$hash => [ 'url' => 'https://example.com/wombat-4471', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 70.0 ],
 		] );
 		$unfolded = Stats_Store::buckets_in_hour( $plan['hours'][0] );
 		$this->seed_url_shard( $store, (string) \end( $unfolded ), $shard, [
-			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
+			$hash => [ 'url' => 'https://example.com/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
 		$row = Performance_CI_Node::load_row( $hash, '', $this->live_stores(), (int) Core::$now );
@@ -1273,10 +1295,10 @@ class PerformanceCITest extends TestCase {
 		$shard = Stats_Store::url_shard( $hash );
 		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) )['hours'][0];
 		$this->seed_url_shard( $store, Stats_Store::buckets_in_hour( $hour )[2], $shard, [
-			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
+			$hash => [ 'url' => 'https://example.com/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 		$this->seed_url_hour( $store, $hour, $shard, [
-			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
+			$hash => [ 'url' => 'https://example.com/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
 		$row = Performance_CI_Node::load_row( $hash, '', $this->live_stores(), (int) Core::$now );
@@ -1324,7 +1346,7 @@ class PerformanceCITest extends TestCase {
 		// requests so the collect + dedup walk runs (not the empty-result skip).
 		// Timestamps ride the clock: the walk stops at the retention floor, so a
 		// fixed epoch would put the whole fixture behind it.
-		$url    = '/recent-list';
+		$url    = 'https://example.com/recent-list';
 		$hash   = Log_Manager::url_hash( $url );
 		$now    = self::tick();
 		$store  = $this->stats_store( 0, 86400 );
@@ -1428,12 +1450,12 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_a_four_partition_full_read_lists_the_newest_across_every_partition(): void {
 		$this->activate_shipped( 'performance', 4 );
-		$hash = $this->seed_listed_url( '/spread-over-four', 2400 );
+		$hash = $this->seed_listed_url( 'https://example.com/spread-over-four', 2400 );
 		$now  = self::tick();
 		for ( $i = 0; $i < 2400; $i++ ) {
 			$this->write_request( [
 				'rid'            => \sprintf( 'rid-spread-%021d', $i ),
-				'url'            => '/spread-over-four',
+				'url'            => 'https://example.com/spread-over-four',
 				'timestamp'      => $now - 2400 + $i,
 				'duration_ms'    => 37,
 				'status_code'    => 200,
@@ -1473,14 +1495,14 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_a_refresh_reads_no_index_of_a_partition_holding_nothing_for_the_url(): void {
 		$this->activate_shipped( 'performance', 4 );
-		$url  = '/three-of-four';
+		$url  = 'https://example.com/three-of-four';
 		$hash = $this->seed_listed_url( $url, 4 );
 		$now  = self::tick();
 		foreach ( [ [ 'rid-p0-older-0000000000000871', 71, 0 ], [ 'rid-p0-newer-0000000000000872', 29, 0 ], [ 'rid-p1-only-00000000000000873', 43, 1 ], [ 'rid-p3-only-00000000000000874', 17, 3 ] ] as [ $rid, $ago, $partition ] ) {
 			$this->write_request( [ 'rid' => $rid, 'url' => $url, 'timestamp' => $now - $ago, 'duration_ms' => 19, 'status_code' => 200, 'peak_mb' => 2, 'request_method' => 'GET' ], $partition );
 		}
 		for ( $i = 0; $i < 150; $i++ ) {
-			$this->write_request( [ 'rid' => \sprintf( 'rid-elsewhere-%018d', $i ), 'url' => '/elsewhere-on-p2', 'timestamp' => $now - 600 + $i, 'duration_ms' => 23, 'status_code' => 200, 'peak_mb' => 2, 'request_method' => 'GET' ], 2 );
+			$this->write_request( [ 'rid' => \sprintf( 'rid-elsewhere-%018d', $i ), 'url' => 'https://example.com/elsewhere-on-p2', 'timestamp' => $now - 600 + $i, 'duration_ms' => 23, 'status_code' => 200, 'peak_mb' => 2, 'request_method' => 'GET' ], 2 );
 		}
 		$opened    = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 		$positions = (array) $opened['positions'];
@@ -1507,7 +1529,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_a_tail_returns_a_request_its_partition_indexed_late(): void {
 		$this->activate_shipped( 'performance', 4 );
-		$url  = '/indexed-late';
+		$url  = 'https://example.com/indexed-late';
 		$hash = $this->seed_listed_url( $url, 5 );
 		$now  = self::tick();
 		$seed = function ( string $rid, int $ago, int $ms, int $partition ) use ( $url, $now ): void {
@@ -1532,7 +1554,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_a_cursor_that_is_not_partition_positions_is_refused(): void {
-		$hash = $this->seed_listed_url( '/bad-cursor', 1 );
+		$hash = $this->seed_listed_url( 'https://example.com/bad-cursor', 1 );
 
 		foreach ( [ '[1,2]', '{"0":{"segment":3}}', '{"x":{"segment":3,"offset":7}}', '{"0":{"segment":"3","offset":7}}', 'not json' ] as $after ) {
 			$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hash, "--after={$after}" ] );
@@ -1546,7 +1568,7 @@ class PerformanceCITest extends TestCase {
 		// its whole time budget on the newer lines and never reaches the one
 		// matching entry. An empty list then says "no requests", which is a lie
 		// — the truth is that the scan stopped, and the payload has to say so.
-		$url    = '/buried-under-neighbours';
+		$url    = 'https://example.com/buried-under-neighbours';
 		$hash   = Log_Manager::url_hash( $url );
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
@@ -1576,7 +1598,7 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_url_calls_a_capped_request_list_short_of_its_window(): void {
 		// One past the cap: the list stops short of `requests_window_start`,
 		// and the reply says so rather than claiming the whole window.
-		$url   = '/at-the-request-cap';
+		$url   = 'https://example.com/at-the-request-cap';
 		$hash  = Log_Manager::url_hash( $url );
 		$limit = (int) ( new \ReflectionClassConstant( Performance_CI_Node::class, 'RECENT_REQUEST_LIMIT' ) )->getValue();
 		$now   = self::tick();
@@ -1635,7 +1657,7 @@ class PerformanceCITest extends TestCase {
 		// record. The number is the walk's own floor, not a rounded hour.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/named-window-6205';
+		$url  = 'https://example.com/named-window-6205';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( $this->stats_store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 47.0, 'last_seen' => $now - 62 ],
@@ -1657,7 +1679,7 @@ class PerformanceCITest extends TestCase {
 		// inside it — the matching entry behind it is still reachable.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-a-long-runner-5182';
+		$url  = 'https://example.com/behind-a-long-runner-5182';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( $this->stats_store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 58.0, 'last_seen' => $now - 211 ],
@@ -1675,7 +1697,7 @@ class PerformanceCITest extends TestCase {
 		// longer than any bucket rotation would have held it in flight.
 		$this->write_request( [
 			'rid'            => 'rid-the-long-runner-883100000000',
-			'url'            => '/a-long-running-job-6624',
+			'url'            => 'https://example.com/a-long-running-job-6624',
 			'timestamp'      => $now - 10800,
 			'duration_ms'    => 10000000,
 			'status_code'    => 201,
@@ -1696,7 +1718,7 @@ class PerformanceCITest extends TestCase {
 		// completed earlier still, and the walk ends rather than reading them.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-the-retention-edge-8813';
+		$url  = 'https://example.com/behind-the-retention-edge-8813';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( $this->stats_store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 71.0, 'last_seen' => $now - 137 ],
@@ -1713,7 +1735,7 @@ class PerformanceCITest extends TestCase {
 		// Appended after it, and finished well before the window opened.
 		$this->write_request( [
 			'rid'            => 'rid-the-edge-marker-661900000000',
-			'url'            => '/an-unrelated-neighbour-2277',
+			'url'            => 'https://example.com/an-unrelated-neighbour-2277',
 			'timestamp'      => $now - 9413,
 			'duration_ms'    => 12,
 			'status_code'    => 204,
@@ -1735,7 +1757,7 @@ class PerformanceCITest extends TestCase {
 		// an in-window row behind any of them.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-a-replayed-spoke-4409';
+		$url  = 'https://example.com/behind-a-replayed-spoke-4409';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( $this->stats_store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 33.0, 'last_seen' => $now - 96 ],
@@ -1751,7 +1773,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		$this->write_request( [
 			'rid'            => 'rid-the-replayed-line-2960000000',
-			'url'            => '/a-lagging-spoke-3318',
+			'url'            => 'https://example.com/a-lagging-spoke-3318',
 			'timestamp'      => $now - 21600,
 			'duration_ms'    => 17,
 			'status_code'    => 204,
@@ -1771,7 +1793,7 @@ class PerformanceCITest extends TestCase {
 		// unreadable line ends a whole partition, silently and totally.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-an-unreadable-line-9047';
+		$url  = 'https://example.com/behind-an-unreadable-line-9047';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( $this->stats_store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 84.0, 'last_seen' => $now - 319 ],
@@ -1804,7 +1826,7 @@ class PerformanceCITest extends TestCase {
 		// must not truncate the walk behind it; only the budget bounds junk.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/behind-a-short-line-9047';
+		$url  = 'https://example.com/behind-a-short-line-9047';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( $this->stats_store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 84.0, 'last_seen' => $now - 319 ],
@@ -1829,7 +1851,7 @@ class PerformanceCITest extends TestCase {
 		// Nothing reaches the edge, so the bound is invisible.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
 		$now  = self::tick();
-		$url  = '/wholly-inside-the-window-3352';
+		$url  = 'https://example.com/wholly-inside-the-window-3352';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( $this->stats_store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 3, 'sum_ms' => 96.0, 'last_seen' => $now - 43 ],
@@ -1856,7 +1878,7 @@ class PerformanceCITest extends TestCase {
 		// The walk compares the raw url_hash column before parsing. A line that
 		// carries the column but is too short to be an index entry is not a
 		// request, and the pre-filter must not turn it into one.
-		$url  = '/column-lookalike-4417';
+		$url  = 'https://example.com/column-lookalike-4417';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( $this->stats_store( 0, 86400 ), $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 19.0, 'last_seen' => 1700005000 ],
@@ -1882,7 +1904,7 @@ class PerformanceCITest extends TestCase {
 		// offsets, so a flame belonging to a neighbouring rid stays unmatched.
 		$rid = $this->write_request( [
 			'rid'         => 'rid-flame-column-773311',
-			'url'         => '/flame-column',
+			'url'         => 'https://example.com/flame-column',
 			'timestamp'   => 1700005100,
 			'duration_ms' => 41,
 		] );
@@ -1927,7 +1949,7 @@ class PerformanceCITest extends TestCase {
 		// One real record first: a segment with no `.log` is no segment.
 		$this->write_request( [
 			'rid'         => 'rid-buried-under-the-budget',
-			'url'         => '/buried-under-the-budget',
+			'url'         => 'https://example.com/buried-under-the-budget',
 			'timestamp'   => 1700005200,
 			'duration_ms' => 15,
 		] );
@@ -1961,7 +1983,7 @@ class PerformanceCITest extends TestCase {
 		// it must share the request walk's deadline, not start a second one.
 		$this->write_request( [
 			'rid'         => 'rid-unprofiled-73920184665021',
-			'url'         => '/no-flame-here',
+			'url'         => 'https://example.com/no-flame-here',
 			'timestamp'   => 1700006300,
 			'duration_ms' => 23,
 		] );
@@ -1986,7 +2008,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_dump_url_walks_any_number_of_lines_inside_the_time_cap(): void {
 		// The cap is time, not lines: a stopped clock reads the whole window.
-		$url  = '/under-a-deep-index';
+		$url  = 'https://example.com/under-a-deep-index';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( $this->stats_store( 0, 86400 ), $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 29.0, 'last_seen' => self::tick() - 1777 ],
@@ -2025,11 +2047,11 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 8.0, 'last_seen' => 1700000003 ],
+			'cccccccccccc' => [ 'url' => 'https://alpha.example/reviews/941', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 8.0, 'last_seen' => 1700000003 ],
 		], 'alpha.example' );
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 21.0, 'last_seen' => 1700000003 ],
-			'dddddddddddd' => [ 'url' => '/events/88', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 122.0, 'sum_peak_mb' => 12.0, 'last_seen' => 1700000004 ],
+			'cccccccccccc' => [ 'url' => 'https://beta.example/reviews/941', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 21.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => 'https://beta.example/events/88', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 122.0, 'sum_peak_mb' => 12.0, 'last_seen' => 1700000004 ],
 		], 'beta.example' );
 
 		$interpreter = new Performance_CI_Node();
@@ -2055,10 +2077,10 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/mixed', 'count' => 2, 'timed_count' => 2, 'count_2xx' => 1, 'count_5xx' => 1, 'sum_ms' => 260.0, 'last_seen' => 1700000003 ],
+			'cccccccccccc' => [ 'url' => 'https://alpha.example/mixed', 'count' => 2, 'timed_count' => 2, 'count_2xx' => 1, 'count_5xx' => 1, 'sum_ms' => 260.0, 'last_seen' => 1700000003 ],
 		], 'alpha.example' );
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/mixed', 'count' => 7, 'count_2xx' => 5, 'count_5xx' => 2, 'sum_ms' => 640.0, 'last_seen' => 1700000003 ],
+			'cccccccccccc' => [ 'url' => 'https://beta.example/mixed', 'count' => 7, 'count_2xx' => 5, 'count_5xx' => 2, 'sum_ms' => 640.0, 'last_seen' => 1700000003 ],
 		], 'beta.example' );
 
 		$interpreter = new Performance_CI_Node();
@@ -2082,13 +2104,13 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 9.0, 'last_seen' => 1700000003 ],
-			'dddddddddddd' => [ 'url' => '/reviews/88', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 90.0, 'sum_peak_mb' => 7.5, 'last_seen' => 1700000004 ],
-			'eeeeeeeeeeee' => [ 'url' => '/events/7', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 20.0, 'last_seen' => 1700000005 ],
+			'cccccccccccc' => [ 'url' => 'https://alpha.example/reviews/941', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 9.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => 'https://alpha.example/reviews/88', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 90.0, 'sum_peak_mb' => 7.5, 'last_seen' => 1700000004 ],
+			'eeeeeeeeeeee' => [ 'url' => 'https://alpha.example/events/7', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 20.0, 'last_seen' => 1700000005 ],
 		], 'alpha.example' );
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 27.0, 'last_seen' => 1700000003 ],
-			'dddddddddddd' => [ 'url' => '/reviews/88', 'count' => 1, 'timed_count' => 1, 'sum_ms' => 32.0, 'sum_peak_mb' => 4.5, 'last_seen' => 1700000004 ],
+			'cccccccccccc' => [ 'url' => 'https://beta.example/reviews/941', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 27.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => 'https://beta.example/reviews/88', 'count' => 1, 'timed_count' => 1, 'sum_ms' => 32.0, 'sum_peak_mb' => 4.5, 'last_seen' => 1700000004 ],
 		], 'beta.example' );
 
 		$interpreter = new Performance_CI_Node();
@@ -2235,10 +2257,10 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/asked', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 500.0, 'last_seen' => 1700000003 ],
+			'cccccccccccc' => [ 'url' => 'https://alpha.example/asked', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 500.0, 'last_seen' => 1700000003 ],
 		], 'alpha.example' );
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/asked', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 1300.0, 'last_seen' => 1700000003 ],
+			'cccccccccccc' => [ 'url' => 'https://beta.example/asked', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 1300.0, 'last_seen' => 1700000003 ],
 		], 'beta.example' );
 
 		$result = VerbHarness::fire(
@@ -2259,7 +2281,7 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/asked', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 1000.0, 'last_seen' => 1700000003 ],
+			'cccccccccccc' => [ 'url' => 'https://example.com/asked', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 1000.0, 'last_seen' => 1700000003 ],
 		] );
 
 		$result = VerbHarness::fire(
@@ -2280,10 +2302,10 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/mixed', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'last_seen' => 1700000003 ],
+			'cccccccccccc' => [ 'url' => 'https://alpha.example/mixed', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'last_seen' => 1700000003 ],
 		], 'alpha.example' );
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/mixed', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'last_seen' => 1700000003 ],
+			'cccccccccccc' => [ 'url' => 'https://beta.example/mixed', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'last_seen' => 1700000003 ],
 		], 'beta.example' );
 
 		$result = VerbHarness::fire(
@@ -2328,8 +2350,8 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/reader', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 48.0, 'last_seen' => 1700000003 ],
-			'dddddddddddd' => [ 'url' => '/w?reconcile', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 180000.0, 'worker' => true, 'last_seen' => 1700000004 ],
+			'cccccccccccc' => [ 'url' => 'https://example.com/reader', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 48.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => 'https://example.com/w?reconcile', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 180000.0, 'worker' => true, 'last_seen' => 1700000004 ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
@@ -2344,8 +2366,8 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [ 'url' => '/reader', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 48.0, 'last_seen' => 1700000003 ],
-			'dddddddddddd' => [ 'url' => '/w?reconcile', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 180000.0, 'worker' => true, 'last_seen' => 1700000004 ],
+			'cccccccccccc' => [ 'url' => 'https://example.com/reader', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 48.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => 'https://example.com/w?reconcile', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 180000.0, 'worker' => true, 'last_seen' => 1700000004 ],
 		] );
 
 		$result = VerbHarness::fire(
@@ -2369,10 +2391,10 @@ class PerformanceCITest extends TestCase {
 		$store = $this->stats_store( 0, 86400 );
 		$now   = self::tick();
 		$this->set_url_bucket( $store, Stats_Store::bucket_key( $now - 600 ), [
-			'cccccccccccc' => [ 'url' => '/rate', 'count' => 2100, 'timed_count' => 2100, 'sum_ms' => 2100.0, 'last_seen' => $now - 600 ],
+			'cccccccccccc' => [ 'url' => 'https://example.com/rate', 'count' => 2100, 'timed_count' => 2100, 'sum_ms' => 2100.0, 'last_seen' => $now - 600 ],
 		] );
 		$this->set_url_bucket( $store, Stats_Store::bucket_key( $now ), [
-			'cccccccccccc' => [ 'url' => '/rate', 'count' => 99000, 'timed_count' => 99000, 'sum_ms' => 99000.0, 'last_seen' => $now ],
+			'cccccccccccc' => [ 'url' => 'https://example.com/rate', 'count' => 99000, 'timed_count' => 99000, 'sum_ms' => 99000.0, 'last_seen' => $now ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
@@ -2387,15 +2409,15 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'aaaaaaaaaaaa' => [
-				'url' => '/clean', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0, 'last_seen' => 1700000001,
+				'url' => 'https://example.com/clean', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0, 'last_seen' => 1700000001,
 				'count_2xx' => 6, 'count_3xx' => 1, 'count_4xx' => 1, 'count_5xx' => 1,
 			],
 			'bbbbbbbbbbbb' => [
-				'url' => '/timeouts', 'count' => 6, 'timed_count' => 5, 'sum_ms' => 60.0, 'last_seen' => 1700000002,
+				'url' => 'https://example.com/timeouts', 'count' => 6, 'timed_count' => 5, 'sum_ms' => 60.0, 'last_seen' => 1700000002,
 				'count_2xx' => 2, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 3, 'errors' => 4,
 			],
 			'cccccccccccc' => [
-				'url' => '/also-clean', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0, 'last_seen' => 1700000003,
+				'url' => 'https://example.com/also-clean', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0, 'last_seen' => 1700000003,
 				'count_2xx' => 4, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
 			],
 		] );
@@ -2425,11 +2447,11 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'dddddddddddd' => [
-				'url' => '/busy', 'count' => 300, 'timed_count' => 299, 'sum_ms' => 900.0, 'last_seen' => 1700000011,
+				'url' => 'https://example.com/busy', 'count' => 300, 'timed_count' => 299, 'sum_ms' => 900.0, 'last_seen' => 1700000011,
 				'count_2xx' => 299, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0, 'errors' => 1,
 			],
 			'eeeeeeeeeeee' => [
-				'url' => '/quiet', 'count' => 12, 'timed_count' => 7, 'sum_ms' => 70.0, 'last_seen' => 1700000012,
+				'url' => 'https://example.com/quiet', 'count' => 12, 'timed_count' => 7, 'sum_ms' => 70.0, 'last_seen' => 1700000012,
 				'count_2xx' => 7, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0, 'errors' => 5,
 			],
 		] );
@@ -2447,15 +2469,15 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'aaaaaaaaaaaa' => [
-				'url' => '/reviews/spring', 'count' => 11, 'timed_count' => 11, 'sum_ms' => 220.0,
+				'url' => 'https://example.com/reviews/spring', 'count' => 11, 'timed_count' => 11, 'sum_ms' => 220.0,
 				'last_seen' => 1700000401, 'count_2xx' => 11,
 			],
 			'bbbbbbbbbbbb' => [
-				'url' => '/archive/2019', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 75.0,
+				'url' => 'https://example.com/archive/2019', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 75.0,
 				'last_seen' => 1700000402, 'count_2xx' => 5,
 			],
 			Stats_Store::OTHER_KEY => [
-				'url' => '/reviews/folded', 'count' => 613, 'timed_count' => 613, 'sum_ms' => 9195.0,
+				'url' => 'https://example.com/reviews/folded', 'count' => 613, 'timed_count' => 613, 'sum_ms' => 9195.0,
 				'last_seen' => 1700000403, 'count_2xx' => 613,
 			],
 		] );
@@ -2478,7 +2500,7 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'aaaaaaaaaaaa' => [
-				'url'         => '/worker-only',
+				'url'         => 'https://example.com/worker-only',
 				'count'       => 7,
 				'timed_count' => 0,
 				'sum_ms'      => 0.0,
@@ -2509,7 +2531,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->set_url_bucket( $store, $bucket_a, [
 			'bbbbbbbbbbbb' => [
-				'url'         => '/mixed',
+				'url'         => 'https://example.com/mixed',
 				'count'       => 3,
 				'timed_count' => 0,
 				'sum_ms'      => 0.0,
@@ -2520,7 +2542,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		$this->set_url_bucket( $store, $bucket_b, [
 			'bbbbbbbbbbbb' => [
-				'url'         => '/mixed',
+				'url'         => 'https://example.com/mixed',
 				'count'       => 5,
 				'timed_count' => 5,
 				'sum_ms'      => 500.0,
@@ -2604,7 +2626,7 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc'         => [ 'url' => '/real', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 300.0, 'last_seen' => 1700000003 ],
+			'cccccccccccc'         => [ 'url' => 'https://example.com/real', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 300.0, 'last_seen' => 1700000003 ],
 			Stats_Store::OTHER_KEY => [ 'count' => 40, 'timed_count' => 40, 'sum_ms' => 4000.0, 'last_seen' => 1700000004 ],
 		] );
 
@@ -2631,7 +2653,7 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'dddddddddddd'                => [ 'url' => '/real', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 700.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd'                => [ 'url' => 'https://example.com/real', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 700.0, 'last_seen' => 1700000003 ],
 			Stats_Store::OTHER_WORKER_KEY => [ 'count' => 91, 'timed_count' => 91, 'sum_ms' => 9100.0, 'worker' => true, 'last_seen' => 1700000004 ],
 		] );
 
@@ -2654,7 +2676,7 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'0badc0de1234'         => [ 'url' => '/erroring', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0, 'count_2xx' => 4, 'errors' => 1, 'last_seen' => 1700000003 ],
+			'0badc0de1234'         => [ 'url' => 'https://example.com/erroring', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0, 'count_2xx' => 4, 'errors' => 1, 'last_seen' => 1700000003 ],
 			Stats_Store::OTHER_KEY => [ 'count' => 900, 'timed_count' => 900, 'sum_ms' => 9000.0, 'count_2xx' => 899, 'errors' => 1, 'last_seen' => 1700000004 ],
 		] );
 
@@ -2679,14 +2701,15 @@ class PerformanceCITest extends TestCase {
 		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( '5ec0d5fa11ba' ), [
 			'5ec0d5fa11ba' => self::positional_url_row(
 				[ 'count' => 4, 'last_seen' => 1700000003 ]
-			) + [ 99 => 8.0, 'url' => '/seconds-era' ],
+			) + [ 99 => 8.0, 'url' => 'https://example.com/seconds-era' ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
 		$row = $result['data'][0] ?? [];
 		$this->assertSame( 'https://example.com/seconds-era', $row['url'] ?? '' );
-		$this->assertSame( 0.0, (float) ( $row['avg_ms'] ?? -1 ), 'no milliseconds are invented from it' );
+		$this->assertArrayHasKey( 'avg_ms', $row );
+		$this->assertNull( $row['avg_ms'], 'no milliseconds are invented from it' );
 	}
 
 	/** Seed one URL two servers served, each under its own key. */
@@ -2694,10 +2717,10 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( '5p117c0de991' ), [
-			'5p117c0de991' => [ 'url' => '/split-3907', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 390.0, 'last_seen' => 1700000007 ],
+			'5p117c0de991' => [ 'url' => 'https://edge-3907.example/split-3907', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 390.0, 'last_seen' => 1700000007 ],
 		], 'edge-3907.example' );
 		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( '5p117c0de991' ), [
-			'5p117c0de991' => [ 'url' => '/split-3907', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'last_seen' => 1700000007 ],
+			'5p117c0de991' => [ 'url' => 'https://edge-8823.example/split-3907', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'last_seen' => 1700000007 ],
 		], 'edge-8823.example' );
 	}
 
@@ -2755,7 +2778,7 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( 'b001a7c0un7' ), [
 			'b001a7c0un7' => self::positional_url_row(
-				[ 'url' => '/bool-at-a-count', 'count' => 2, 'last_seen' => 1700000005 ]
+				[ 'url' => 'https://example.com/bool-at-a-count', 'count' => 2, 'last_seen' => 1700000005 ]
 			) + [ Stats_Store::ROW_COUNT_4XX => true ],
 		] );
 
@@ -2774,12 +2797,63 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'facade0ffee1' => [ 'url' => '/untimed', 'count' => 5, 'sum_ms' => 750.0, 'last_seen' => 1700000004 ],
+			'facade0ffee1' => [ 'url' => 'https://example.com/untimed', 'count' => 5, 'sum_ms' => 750.0, 'last_seen' => 1700000004 ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
-		$this->assertSame( 0.0, (float) ( $result['totals']['avg_ms'] ?? -1 ) );
+		$this->assertNull( $result['totals']['avg_ms'] );
+		$this->assertNull( $result['data'][0]['avg_ms'] );
+	}
+
+	/** A URL no timed request reached briefs its mean as null, in its brief, its finding and the overview's. */
+	public function test_an_untimed_url_briefs_its_mean_as_null(): void {
+		$store  = $this->stats_store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'a7a7a7a7a7a7' => [ 'url' => 'https://example.com/kea-timeouts', 'count' => 6, 'timed_count' => 0, 'errors' => 6, 'last_seen' => 1700000006 ],
+		] );
+
+		$brief    = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:a7a7a7a7a7a7' );
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site' );
+		VerbHarness::reset();
+		$unmatched = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --search=nomatchwordkea' );
+
+		$this->assertSame( 6, $brief['stats']['count'] );
+		$this->assertNull( $brief['stats']['avg_ms'], 'the url brief' );
+		$this->assertSame( 'insufficient_instrumentation', $brief['findings'][0]['kind'] );
+		$this->assertNull( $brief['findings'][0]['metric']['avg_ms'], 'its finding' );
+		$this->assertSame( [ 'a7a7a7a7a7a7' ], \array_column( $overview['urls'], 'hash' ) );
+		$this->assertNull( $overview['urls'][0]['avg_ms'], 'the overview brief\'s row' );
+		$this->assertNull( $overview['stats']['avg_ms'], 'its totals\' mean' );
+		$this->assertSame( 0, $unmatched['stats']['requests'] );
+		$this->assertSame( [ null, null ], [ $unmatched['stats']['avg_ms'], $unmatched['stats']['avg_peak_mb'] ], 'a search that matches nothing has no means' );
+	}
+
+	/** A URL no timed request reached has no mean, and ranks last on every timed sort in both orders. */
+	public function test_an_untimed_url_ranks_last_on_every_timed_sort(): void {
+		$store  = $this->stats_store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'a1a1a1a1a1a1' => [ 'url' => 'https://example.com/moa-31/ruru', 'count' => 7, 'timed_count' => 0, 'errors' => 7, 'last_seen' => 1700000001 ],
+			'b2b2b2b2b2b2' => [ 'url' => 'https://example.com/moa-31/tui', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 90.0, 'min_ms' => 20.0, 'max_ms' => 40.0, 'last_seen' => 1700000002 ],
+			'c3c3c3c3c3c3' => [ 'url' => 'https://example.com/moa-31/kokako', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 710.0, 'min_ms' => 300.0, 'max_ms' => 410.0, 'last_seen' => 1700000003 ],
+		] );
+		$this->set_url_rank_lists( $store, $bucket, [
+			'a1a1a1a1a1a1' => [ 'url' => 'https://example.com/moa-31/ruru', 'count' => 7, 'timed_count' => 0, 'errors' => 7, 'last_seen' => 1700000001 ],
+			'b2b2b2b2b2b2' => [ 'url' => 'https://example.com/moa-31/tui', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 90.0, 'min_ms' => 20.0, 'max_ms' => 40.0, 'last_seen' => 1700000002 ],
+			'c3c3c3c3c3c3' => [ 'url' => 'https://example.com/moa-31/kokako', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 710.0, 'min_ms' => 300.0, 'max_ms' => 410.0, 'last_seen' => 1700000003 ],
+		] );
+		foreach ( [ 'avg_ms', 'min_ms', 'max_ms' ] as $sort ) {
+			foreach ( [ 'asc' => [ 'b2b2b2b2b2b2', 'c3c3c3c3c3c3' ], 'desc' => [ 'c3c3c3c3c3c3', 'b2b2b2b2b2b2' ] ] as $order => $measured ) {
+				foreach ( [ [], [ '--search=moa' ] ] as $search ) {
+					VerbHarness::reset();
+					$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ "--sort={$sort}", "--order={$order}", ...$search ] );
+					$this->assertSame( [ ...$measured, 'a1a1a1a1a1a1' ], \array_column( $page['data'], 'hash' ), "{$sort} {$order} " . \implode( '', $search ) );
+					$this->assertSame( [ false, false, true ], \array_map( static fn ( array $row ): bool => null === $row['avg_ms'], $page['data'] ), "{$sort} {$order} carries the unmeasured mean as null" );
+				}
+			}
+		}
 	}
 
 	public function test_the_mean_divides_by_timed_requests_not_by_every_request(): void {
@@ -2790,7 +2864,7 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'd1ff3d3n0m1n' => [
-				'url'         => '/mostly-timed-out',
+				'url'         => 'https://example.com/mostly-timed-out',
 				'count'       => 10,
 				'timed_count' => 4,
 				'sum_ms'      => 400.0,
@@ -2810,7 +2884,7 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'abc123def456' => [
-				'url'       => '/articles/777',
+				'url'       => 'https://example.com/articles/777',
 				'count'     => 9,
 				'timed_count' => 9, 'sum_ms'    => 450.0,
 				'last_seen' => 1700000999,
@@ -2843,7 +2917,7 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'cafebabe1234' => [
-				'url'       => '/x',
+				'url'       => 'https://example.com/x',
 				'count'     => 1,
 				'timed_count' => 1, 'sum_ms'    => 10.0,
 				'last_seen' => 1700001000,
@@ -2874,7 +2948,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_dump_url_sums_every_partitions_url_blob(): void {
 		$this->activate_shipped( 'performance', 3 );
-		$hash = $this->seed_listed_url( '/summed-blobs', 5 );
+		$hash = $this->seed_listed_url( 'https://example.com/summed-blobs', 5 );
 		$now  = self::tick();
 		$this->set_url_stats( $this->stats_store( 0, 86400 ), $hash, [
 			'flame_raw'     => [ 'name' => 'aggregate', 'sum_value' => 300.0, 'count' => 3, 'children' => [
@@ -2920,7 +2994,7 @@ class PerformanceCITest extends TestCase {
 	 * @return array{0:string,1:int} The URL hash and the newer request's start.
 	 */
 	private function seed_a_cold_url_with_two_flames(): array {
-		$url   = '/cold-flame';
+		$url   = 'https://example.com/cold-flame';
 		$hash  = Log_Manager::url_hash( $url );
 		$now   = self::tick();
 		$store = $this->stats_store( 0, 86400 );
@@ -2981,7 +3055,7 @@ class PerformanceCITest extends TestCase {
 	public function test_a_rebuild_reads_only_the_partitions_its_requests_are_in(): void {
 		// Flames partition like the requests they came from; p0 holds none.
 		$this->activate_shipped( 'performance', 2 );
-		$url   = '/cold-in-p1';
+		$url   = 'https://example.com/cold-in-p1';
 		$hash  = Log_Manager::url_hash( $url );
 		$now   = self::tick();
 		$this->set_url_bucket( $this->stats_store( 0, 86400 ), $this->current_url_bucket(), [
@@ -3043,7 +3117,7 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'a5c9e30b1f42' => [
-				'url'         => '/reviews/first',
+				'url'         => 'https://example.com/reviews/first',
 				'count'       => 7,
 				'timed_count' => 7,
 				'sum_ms'      => 917.0,
@@ -3071,7 +3145,7 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'abc123def456' => [
-				'url'       => '/x',
+				'url'       => 'https://example.com/x',
 				'count'     => 1,
 				'timed_count' => 1, 'sum_ms'    => 10.0,
 				'last_seen' => 1700001000,
@@ -3098,7 +3172,7 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'e71b04ac9d33' => [ 'url' => '/breakdown-only', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 84.0, 'last_seen' => 1700006000 ],
+			'e71b04ac9d33' => [ 'url' => 'https://example.com/breakdown-only', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 84.0, 'last_seen' => 1700006000 ],
 		] );
 		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'e71b04ac9d33' ), $bucket, [ '503' => self::dim_entry( 9, 1.7, 0.4 ) ], 'status' );
 		$detail = VerbHarness::fire(
@@ -3154,7 +3228,7 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'b7731ce0fa11' => [ 'url' => '/wombat-7731', 'count' => 3, 'last_seen' => self::tick() ],
+			'b7731ce0fa11' => [ 'url' => 'https://example.com/wombat-7731', 'count' => 3, 'last_seen' => self::tick() ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'b7731ce0fa11 --breakdown=server' );
@@ -3171,7 +3245,7 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
 			'abc123def456' => [
-				'url'       => '/x',
+				'url'       => 'https://example.com/x',
 				'count'     => 1,
 				'timed_count' => 1, 'sum_ms'    => 10.0,
 				'last_seen' => 1700001000,
@@ -3204,7 +3278,7 @@ class PerformanceCITest extends TestCase {
 		$old     = self::tick() - 3 * Stats_Store::BUCKET_SECONDS;
 		$current = $this->current_url_bucket();
 		$this->set_url_bucket( $store, Stats_Store::bucket_key( $old ), [
-			'd06e5a1b7c43' => [ 'url' => '/quokka-5a1b', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 52.0, 'last_seen' => $old ],
+			'd06e5a1b7c43' => [ 'url' => 'https://example.com/quokka-5a1b', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 52.0, 'last_seen' => $old ],
 		] );
 		$this->set_hour_slot( $store, Stats_Store::url_cat_parts( 'd06e5a1b7c43' ), $current, [ 'wpdb' => self::cat_entry( 41.5, 6, 3 ) ] );
 		$this->set_hour_slot( $store, Stats_Store::url_dim_parts( 'd06e5a1b7c43' ), $current, [ '418' => self::dim_entry( 7, 2.9, 0.6 ) ], 'status' );
@@ -3222,7 +3296,7 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'abc123def456' => [ 'url' => '/x', 'count' => 1, 'timed_count' => 1, 'sum_ms' => 10.0, 'last_seen' => 1700001000 ],
+			'abc123def456' => [ 'url' => 'https://example.com/x', 'count' => 1, 'timed_count' => 1, 'sum_ms' => 10.0, 'last_seen' => 1700001000 ],
 		] );
 
 		$interpreter     = new Performance_CI_Node();
@@ -3279,7 +3353,7 @@ class PerformanceCITest extends TestCase {
 		$rid = $this->write_request(
 			[
 				'rid'            => 'rid-high-partition-000000000001',
-				'url'            => '/deep',
+				'url'            => 'https://example.com/deep',
 				'timestamp'      => 1700000400,
 				'duration_ms'    => 20,
 				'status_code'    => 200,
@@ -3301,7 +3375,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped( 'performance', 4 );
 		$body = [
 			'rid'            => 'rid-hash-order-0000000000000001',
-			'url'            => '/hashed',
+			'url'            => 'https://example.com/hashed',
 			'timestamp'      => 1700000400,
 			'duration_ms'    => 20,
 			'status_code'    => 200,
@@ -3366,7 +3440,7 @@ class PerformanceCITest extends TestCase {
 		// fixed-width .idx field and the round-trip lookup fails.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-search-12345678901234567890',
-			'url'            => '/searchable',
+			'url'            => 'https://example.com/searchable',
 			'timestamp'      => 1700000400,
 			'duration_ms'    => 20,
 			'status_code'    => 200,
@@ -3396,7 +3470,7 @@ class PerformanceCITest extends TestCase {
 	public function test_search_requests_takes_its_rid_by_name(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-named-kea-4417',
-			'url'            => '/named-kea-4417',
+			'url'            => 'https://example.com/named-kea-4417',
 			'timestamp'      => 1700000400,
 			'duration_ms'    => 20,
 			'status_code'    => 200,
@@ -3606,7 +3680,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped( 'performance', 4 );
 		$body = [
 			'rid'            => 'rid-detail-cross-partition-0001',
-			'url'            => '/elsewhere',
+			'url'            => 'https://example.com/elsewhere',
 			'timestamp'      => 1700000700,
 			'duration_ms'    => 41,
 			'status_code'    => 200,
@@ -3619,7 +3693,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
 		$this->assertIsArray( $result, 'dump_request must resolve a rid search_requests can find' );
-		$this->assertSame( '/elsewhere', $result['url'] );
+		$this->assertSame( 'https://example.com/elsewhere', $result['url'] );
 	}
 
 	/**
@@ -3629,7 +3703,7 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_request_verb_refuses_a_malformed_partition(): void {
 		$rid = $this->write_request( [
 			'rid'         => 'rid-malformed-partition-flag',
-			'url'         => '/p0-only',
+			'url'         => 'https://example.com/p0-only',
 			'timestamp'   => 1700000600,
 			'duration_ms' => 12,
 			'events'      => [ [ 'k' => 'process (start)', 'm' => '/p0-only', 'ts' => 1700000600.0 ] ],
@@ -3665,7 +3739,7 @@ class PerformanceCITest extends TestCase {
 		// field doesn't drop characters and break the lookup.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-detail-12345678901234567890',
-			'url'            => '/detailed',
+			'url'            => 'https://example.com/detailed',
 			'timestamp'      => 1700000500,
 			'duration_ms'    => 33,
 			'status_code'    => 201,
@@ -3686,7 +3760,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $result );
 		$this->assertSame( $rid, $result['rid'] );
-		$this->assertSame( '/detailed', $result['url'] );
+		$this->assertSame( 'https://example.com/detailed', $result['url'] );
 		$this->assertSame( 201, $result['status_code'] );
 		$this->assertNotEmpty( $result['url_hash'] );
 		$this->assertArrayHasKey( 'events', $result );
@@ -3696,7 +3770,7 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_request_carries_the_findings_for_that_record(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-findings-1234567890123456789',
-			'url'            => '/slow-thing',
+			'url'            => 'https://example.com/slow-thing',
 			'timestamp'      => 1700000700,
 			'duration_ms'    => 9000,
 			'status_code'    => 200,
@@ -3779,7 +3853,7 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_assembles_a_request_brief(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-req-123456789012345678',
-			'url'            => '/asked-about',
+			'url'            => 'https://example.com/asked-about',
 			'timestamp'      => 1700000800,
 			'duration_ms'    => 120,
 			'status_code'    => 200,
@@ -3791,7 +3865,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'request', $result['subject'] );
-		$this->assertSame( '/asked-about', $result['url'] );
+		$this->assertSame( 'https://example.com/asked-about', $result['url'] );
 		$this->assertEquals( 120.0, $result['duration_ms'] );
 	}
 
@@ -3818,7 +3892,7 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_refuses_a_request_descriptor_whose_partition_is_not_canonical( string $partition, bool $as_context ): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-part-1234567890123456',
-			'url'            => '/asked-partition',
+			'url'            => 'https://example.com/asked-partition',
 			'timestamp'      => 1700000900,
 			'duration_ms'    => 500,
 			'status_code'    => 200,
@@ -3841,7 +3915,7 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_resolves_a_span_through_its_request_context(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-span-12345678901234567',
-			'url'            => '/asked-span',
+			'url'            => 'https://example.com/asked-span',
 			'timestamp'      => 1700000900,
 			'duration_ms'    => 500,
 			'status_code'    => 200,
@@ -3870,7 +3944,7 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_resolves_an_entry_by_position_and_refuses_one_that_names_none(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-entry-1234567890123456',
-			'url'            => '/asked-entry',
+			'url'            => 'https://example.com/asked-entry',
 			'timestamp'      => 1700000900,
 			'duration_ms'    => 500,
 			'status_code'    => 200,
@@ -3936,7 +4010,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_ask_resolves_a_category_through_its_url_context(): void {
 		$store = $this->stats_store( 0, 86400 );
-		$store->set_url_names( [ Stats_Store::UNKNOWN_SERVER => [ 'cafebabe9012' => '/asked-cat' ] ] );
+		$store->set_url_names( [ self::SEED_SERVER => [ 'cafebabe9012' => 'https://example.com/asked-cat' ] ] );
 		$this->set_url_stats( $store, 'cafebabe9012', [ 'profiles' => $this->stored_profiles() ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:render', 'url:cafebabe9012' ] );
@@ -3944,7 +4018,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
 		$this->assertSame( 'category', $result['subject'] );
 		$this->assertSame( 'mean per request over 5 requests, every server', $result['scope'] );
-		$this->assertSame( '/asked-cat', $result['url'] );
+		$this->assertSame( 'https://example.com/asked-cat', $result['url'] );
 		$this->assertEqualsWithDelta( 60.0, $result['avg_time_ms'], 1e-6 );
 		$this->assertEqualsWithDelta( 2.0, $result['avg_count'], 1e-6 );
 		$this->assertEqualsWithDelta( 0.75, $result['share'], 1e-6 );
@@ -3957,7 +4031,7 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cafebabe7890' => [ 'url' => '/asked-stale', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 20.0, 'last_seen' => 1700001000 ],
+			'cafebabe7890' => [ 'url' => 'https://example.com/asked-stale', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 20.0, 'last_seen' => 1700001000 ],
 		] );
 		$this->set_leaderboard_hour( $store, Stats_Store::hour_of( $bucket ), [
 			'count'        => 40,
@@ -3978,7 +4052,7 @@ class PerformanceCITest extends TestCase {
 		// the stored sums have to be divided before they leave the verb.
 		$store = $this->stats_store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			'cafebabe2468' => [ 'url' => '/asked-panel', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700001000 ],
+			'cafebabe2468' => [ 'url' => 'https://example.com/asked-panel', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700001000 ],
 		] );
 		$this->set_url_stats( $store, 'cafebabe2468', [ 'profiles' => $this->stored_profiles() ] );
 
@@ -3995,7 +4069,7 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_carries_the_url_a_request_was_picked_under(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-under-url-12345678901234',
-			'url'            => '/asked-under',
+			'url'            => 'https://example.com/asked-under',
 			'timestamp'      => 1700000800,
 			'duration_ms'    => 120,
 			'status_code'    => 200,
@@ -4012,7 +4086,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_a_span_under_a_url_with_no_aggregate_says_so(): void {
 		$store = $this->stats_store( 0, 86400 );
-		$store->set_url_names( [ Stats_Store::UNKNOWN_SERVER => [ 'cafebabe1357' => '/asked-half' ] ] );
+		$store->set_url_names( [ self::SEED_SERVER => [ 'cafebabe1357' => 'https://example.com/asked-half' ] ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', 'url:cafebabe1357' ] );
 
@@ -4040,11 +4114,11 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_ask_assembles_a_url_brief(): void {
-		$hash  = Log_Manager::url_hash( '/asked-url' );
+		$hash  = Log_Manager::url_hash( 'https://example.com/asked-url' );
 		$store = $this->stats_store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
 			$hash => [
-				'url'       => '/asked-url',
+				'url'       => 'https://example.com/asked-url',
 				'count'     => 7,
 				'timed_count' => 7, 'sum_ms'    => 6300.0,
 				'last_seen' => 1700000000,
@@ -4062,7 +4136,7 @@ class PerformanceCITest extends TestCase {
 		// Rid must be ≤32 chars (fixed-width .idx field) so the lookup matches.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-flame-123456789012345678901',
-			'url'            => '/with-flame',
+			'url'            => 'https://example.com/with-flame',
 			'timestamp'      => 1700000600,
 			'duration_ms'    => 12,
 			'status_code'    => 200,
@@ -4071,7 +4145,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		// Flame entry indexed by rid + url_hash; FlameBuilder writes the
 		// flame body at Message::VALUE alongside the index entry.
-		$url_hash = Log_Manager::url_hash( '/with-flame' );
+		$url_hash = Log_Manager::url_hash( 'https://example.com/with-flame' );
 		$this->write_flame( [
 			'rid'      => $rid,
 			'url_hash' => $url_hash,
@@ -4095,7 +4169,7 @@ class PerformanceCITest extends TestCase {
 		// so deep flames were written but never indexed or returned.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-deep-flame-12345678901234567',
-			'url'            => '/with-deep-flame',
+			'url'            => 'https://example.com/with-deep-flame',
 			'timestamp'      => 1700000700,
 			'duration_ms'    => 12,
 			'status_code'    => 200,
@@ -4108,7 +4182,7 @@ class PerformanceCITest extends TestCase {
 			$flame = [ 'name' => "level{$i}", 'value' => 1, 'children' => [ $flame ] ];
 		}
 		$flame['rid']      = $rid;
-		$flame['url_hash'] = Log_Manager::url_hash( '/with-deep-flame' );
+		$flame['url_hash'] = Log_Manager::url_hash( 'https://example.com/with-deep-flame' );
 		$this->write_flame( $flame );
 
 		$interpreter = new Performance_CI_Node();
@@ -4495,7 +4569,7 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'aaaaaaaaaaaa' => [ 'url' => '/only-host', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 30.0, 'last_seen' => 1700000001 ],
+			'aaaaaaaaaaaa' => [ 'url' => 'https://example.com/only-host', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 30.0, 'last_seen' => 1700000001 ],
 		] );
 
 		$interpreter = new Performance_CI_Node();
@@ -4514,8 +4588,8 @@ class PerformanceCITest extends TestCase {
 		$store  = $this->stats_store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000001 ],
-			'bbbbbbbbbbbb' => [ 'url' => '/b', 'count' => 1, 'timed_count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
+			'aaaaaaaaaaaa' => [ 'url' => 'https://example.com/a', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000001 ],
+			'bbbbbbbbbbbb' => [ 'url' => 'https://example.com/b', 'count' => 1, 'timed_count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
 		] );
 
 		$interpreter = new Performance_CI_Node();
@@ -4815,7 +4889,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped( 'performance', 3 );
 		$rid = $this->write_request( [
 			'rid'            => 'rid-flame-elsewhere-00000000001',
-			'url'            => '/flame-in-p2',
+			'url'            => 'https://example.com/flame-in-p2',
 			'timestamp'      => 1700003100,
 			'duration_ms'    => 27,
 			'status_code'    => 200,
@@ -4825,7 +4899,7 @@ class PerformanceCITest extends TestCase {
 		$this->write_flame(
 			[
 				'rid'      => $rid,
-				'url_hash' => Log_Manager::url_hash( '/flame-in-p2' ),
+				'url_hash' => Log_Manager::url_hash( 'https://example.com/flame-in-p2' ),
 				'flame'    => [ 'name' => 'request', 'value' => 27, 'children' => [] ],
 			],
 			2
@@ -4843,7 +4917,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_dump_url_collects_recent_requests_from_every_partition(): void {
 		$this->activate_shipped( 'performance', 3 );
-		$url   = '/spread-across-partitions';
+		$url   = 'https://example.com/spread-across-partitions';
 		$hash  = Log_Manager::url_hash( $url );
 		$now   = self::tick();
 		$store = $this->stats_store( 0, 86400 );
@@ -4893,7 +4967,7 @@ class PerformanceCITest extends TestCase {
 		$store         = $this->stats_store( 0, 86400 );
 		$this->set_url_bucket( $store, $recent_bucket, [
 			'c0ffee123456' => [
-				'url'         => '/named-fields',
+				'url'         => 'https://example.com/named-fields',
 				'count'       => 9,
 				'timed_count' => 9,
 				'sum_ms'      => 333.0,
@@ -6071,7 +6145,7 @@ class PerformanceCITest extends TestCase {
 		$rows    = [];
 		for ( $i = 0; $i < 40; $i++ ) {
 			$rows[ \sprintf( '%012x', $i ) ] = [
-				'url'         => "/streamed/{$i}",
+				'url'         => "https://example.com/streamed/{$i}",
 				'count'       => 3,
 				'timed_count' => 3,
 				'sum_ms'      => 90.0,
@@ -6180,7 +6254,7 @@ class PerformanceCITest extends TestCase {
 		$result = [];
 		$data   = [
 			'ab12cd34ef56' => [
-				'url'         => '/in-place',
+				'url'         => 'https://example.com/in-place',
 				'count'       => 7,
 				'timed_count' => 7,
 				'sum_ms'      => 210.0,
@@ -6203,7 +6277,7 @@ class PerformanceCITest extends TestCase {
 		$store = $this->stats_store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
 			'facade000777' => [
-				'url'         => '/never-timed',
+				'url'         => 'https://example.com/never-timed',
 				'count'       => 6,
 				'timed_count' => 0,
 				'min_ms'      => 91,

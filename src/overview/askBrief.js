@@ -110,6 +110,20 @@ function num( value ) {
 }
 
 /**
+ * A measurement and its unit, or the bare dash where nothing was measured:
+ * a unit beside a dash reads as a measurement of zero.
+ *
+ * @param {*}      value A number, or null or undefined where unmeasured.
+ * @param {string} unit  What the number counts, such as `ms` or `MB`.
+ * @return {string} `num( value )` and the unit, or `—`.
+ */
+function withUnit( value, unit ) {
+	return null === value || undefined === value
+		? '—'
+		: `${ num( value ) }${ unit }`;
+}
+
+/**
  * One metric as `key=value` pairs. A nested one, such as a dominant span's
  * `repeat`, opens into `key.field` pairs of its own rather than stringifying
  * to `[object Object]`.
@@ -258,7 +272,7 @@ function bodyLines( brief ) {
 							.slice( 0, 6 )
 							.map(
 								( s ) =>
-									`${ s.name } ${ num( s.ms ) }ms×${
+									`${ s.name } ${ withUnit( s.ms, 'ms' ) }×${
 										s.count
 									}`
 							)
@@ -310,7 +324,10 @@ function bodyLines( brief ) {
 									`${ (
 										brief.stats.urls ?? 0
 									).toLocaleString( 'en-US' ) } urls`,
-									`${ num( brief.stats.avg_ms ) }ms avg`,
+									`${ withUnit(
+										brief.stats.avg_ms,
+										'ms'
+									) } avg`,
 									`${ num(
 										brief.stats.requests_per_second
 									) }/s recent`,
@@ -320,7 +337,10 @@ function bodyLines( brief ) {
 					[
 						'peak memory',
 						brief.stats?.avg_peak_mb
-							? `${ num( brief.stats.avg_peak_mb ) }MB avg`
+							? `${ withUnit(
+									brief.stats.avg_peak_mb,
+									'MB'
+							  ) } avg`
 							: '',
 					],
 				] ),
@@ -335,9 +355,13 @@ function bodyLines( brief ) {
 										undefined === u.errors
 											? ''
 											: `${ u.errors } errors in `
-									}${ u.count }× ${ num(
-										u.avg_ms
-									) }ms avg, ${ num( u.max_ms ) }ms worst`
+									}${ u.count }× ${ withUnit(
+										u.avg_ms,
+										'ms'
+									) } avg, ${ withUnit(
+										u.max_ms,
+										'ms'
+									) } worst`
 							),
 					  ]
 					: [] ),
@@ -349,9 +373,10 @@ function bodyLines( brief ) {
 							// A board count is a per-request MEAN: a rate.
 							...( brief.categories ?? [] ).map(
 								( c ) =>
-									`- ${ c.name } ${ num(
-										c.avg_time_ms
-									) }ms avg${
+									`- ${ c.name } ${ withUnit(
+										c.avg_time_ms,
+										'ms'
+									) } avg${
 										Number.isFinite( c.avg_count )
 											? `, ${ num(
 													c.avg_count
@@ -374,9 +399,10 @@ function bodyLines( brief ) {
 						( brief.worst_requests ?? [] )
 							.map(
 								( r ) =>
-									`${ r.rid } ${ num( r.duration_ms ) }ms ${
-										r.status_code
-									}`
+									`${ r.rid } ${ withUnit(
+										r.duration_ms,
+										'ms'
+									) } ${ r.status_code }`
 							)
 							.join( ', ' ),
 					],
@@ -409,15 +435,19 @@ function bodyLines( brief ) {
 					[ 'calls', brief.count ],
 					[
 						'parent',
-						`${ brief.parent ?? '' } ${ num( brief.parent_ms ) }ms`,
+						`${ brief.parent ?? '' } ${ withUnit(
+							brief.parent_ms,
+							'ms'
+						) }`,
 					],
 					// The parent above holds the most time, not all of it.
 					[
 						'elsewhere',
 						brief.elsewhere
-							? `${ num( brief.elsewhere.ms ) }ms${ times(
-									brief.elsewhere.count
-							  ) } under ${ (
+							? `${ withUnit(
+									brief.elsewhere.ms,
+									'ms'
+							  ) }${ times( brief.elsewhere.count ) } under ${ (
 									brief.elsewhere.parents ?? []
 							  ).join( ', ' ) }`
 							: '',
@@ -425,7 +455,10 @@ function bodyLines( brief ) {
 					[
 						'siblings',
 						( brief.siblings ?? [] )
-							.map( ( s ) => `${ s.name } ${ num( s.ms ) }ms` )
+							.map(
+								( s ) =>
+									`${ s.name } ${ withUnit( s.ms, 'ms' ) }`
+							)
 							.join( ', ' ),
 					],
 					[
@@ -433,9 +466,10 @@ function bodyLines( brief ) {
 						( brief.subtree ?? [] )
 							.map(
 								( s ) =>
-									`${ s.name } ${ num( s.ms ) }ms${ times(
-										s.count
-									) }`
+									`${ s.name } ${ withUnit(
+										s.ms,
+										'ms'
+									) }${ times( s.count ) }`
 							)
 							.join( ', ' ),
 					],
@@ -454,13 +488,13 @@ function bodyLines( brief ) {
 					'gap before',
 					null === brief.gap_before_ms
 						? 'start of request'
-						: `${ num( brief.gap_before_ms ) }ms`,
+						: withUnit( brief.gap_before_ms, 'ms' ),
 				],
 				[
 					'gap after',
 					null === brief.gap_after_ms
 						? 'end of request'
-						: `${ num( brief.gap_after_ms ) }ms`,
+						: withUnit( brief.gap_after_ms, 'ms' ),
 				],
 				[
 					'around it',
@@ -477,13 +511,25 @@ function bodyLines( brief ) {
 				[ 'url', brief.url, 'site' ],
 				[ 'avg_time_ms', num( brief.avg_time_ms ) ],
 				[ 'avg_count', num( brief.avg_count ) ],
-				[ 'share', `${ Math.round( ( brief.share ?? 0 ) * 100 ) }%` ],
+				[
+					'share',
+					withUnit(
+						'number' === typeof brief.share
+							? Math.round( brief.share * 100 )
+							: null,
+						'%'
+					),
+				],
 				[
 					'competing with',
 					( brief.others ?? [] )
 						.slice( 0, 6 )
 						.map(
-							( o ) => `${ o.name } ${ num( o.avg_time_ms ) }ms`
+							( o ) =>
+								`${ o.name } ${ withUnit(
+									o.avg_time_ms,
+									'ms'
+								) }`
 						)
 						.join( ', ' ),
 				],

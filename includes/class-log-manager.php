@@ -87,8 +87,9 @@ class Log_Manager {
 	/**
 	 * Curated $_SERVER keys logged as the single environment_v3 map. The
 	 * consumer (Request_Builder_Node) reads REMOTE_ADDR / HTTP_X_FORWARDED_FOR /
-	 * HTTP_USER_AGENT / SERVER_NAME / GEOIP_COUNTRY_CODE / HTTP_FROM /
-	 * HTTP_X_JA4_HASH; the rest are diagnostics. Keys already carried by the
+	 * HTTP_USER_AGENT / GEOIP_COUNTRY_CODE / HTTP_FROM / HTTP_X_JA4_HASH; the
+	 * rest are diagnostics, SERVER_NAME among them, which the `request` line's
+	 * URL already carries as its host. Keys already carried by the
 	 * `request` log line (REQUEST_METHOD / REQUEST_URI / QUERY_STRING) are
 	 * intentionally omitted. Perl mirrors this list in Gyrobase::Log — keep the
 	 * two IDENTICAL.
@@ -296,10 +297,12 @@ class Log_Manager {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( Core::as_string( $_SERVER['REQUEST_URI'] ) ) ) : '/unknown';
 		if ( $this->matches_url_filter( $this->request_url ) ) {
+			// Resolved first: a request with no host never starts.
+			$origin        = self::origin();
 			$this->started = true;
 			\register_shutdown_function( [ $this, 'finish' ] );
 			$this->init_firehose();
-			$this->log_process();
+			$this->log_process( $origin );
 		}
 	}
 
@@ -886,8 +889,8 @@ class Log_Manager {
 	 * can route on it. Spliced into the URI whole, it nests a second scheme and
 	 * host inside the path and reads as though the executing host served it —
 	 * `https://www.spoke.com/jobs/evtemplate/https://hub/Tools/UpdateSite.html`.
-	 * log_process() supplies the real host from SERVER_NAME, so only the
-	 * path belongs here. A URL carrying no path names no template — the handler
+	 * log_process() supplies the real host from origin(), which reads
+	 * SERVER_NAME, so only the path belongs here. A URL carrying no path names no template — the handler
 	 * returns early on exactly that input — so it yields '' and the caller drops
 	 * the segment, giving the bare `/jobs/{handler}` an id-less job already has.
 	 *
@@ -1189,12 +1192,30 @@ class Log_Manager {
 	}
 
 	/**
+	 * The `scheme://host` this request was served under: SERVER_NAME, with
+	 * the scheme HTTPS names. Every logged URL carries a host, so a request
+	 * with none is refused rather than logged as a path.
+	 *
+	 * @throws \RuntimeException When SERVER_NAME is unset or empty.
+	 */
+	private static function origin(): string {
+		$server_name = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
+		if ( '' === $server_name ) {
+			throw new \RuntimeException( 'Log_Manager: SERVER_NAME is unset, so the request has no host to log its URL under' );
+		}
+		$scheme = ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ? 'https' : 'http';
+		return "{$scheme}://{$server_name}";
+	}
+
+	/**
 	 * Open the request: `process (start)`, `request`, environment, resources.
 	 *
 	 * The `process` frame this pushes is the root of the timer stack — finish()
 	 * closes it last, and every orphaned frame above it drains first.
+	 *
+	 * @param string $origin The request's `scheme://host`, from `origin()`.
 	 */
-	private function log_process(): void {
+	private function log_process( string $origin ): void {
 		$process_hr   = $this->request_time ?? \hrtime( true );
 		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname() . ', WordPress ' . \get_bloginfo( 'version' ), 'l' => '' ];
 
@@ -1208,11 +1229,8 @@ class Log_Manager {
 		$this->log_worker();
 
 		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
-		$server_name  = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
-		$scheme       = ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ? 'https' : 'http';
 		$redacted_url = self::redact_url( $this->request_url );
-		$full_url     = $server_name ? "{$scheme}://{$server_name}{$redacted_url}" : $redacted_url;
-		$this->message( 'request', [ 'm' => "{$method} {$full_url}" ] );
+		$this->message( 'request', [ 'm' => "{$method} {$origin}{$redacted_url}" ] );
 
 		// The record that caused this request; ID seeks onto the log.
 		if ( [] !== self::$job_message ) {

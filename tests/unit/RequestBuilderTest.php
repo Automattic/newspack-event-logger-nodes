@@ -529,15 +529,14 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( '', $req['remote_addr'] );
 	}
 
-	public function test_environment_v3_extracts_server_name_country_user_agent_ja4(): void {
+	public function test_environment_v3_extracts_country_user_agent_ja4(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea-7713.test/x' ] );
 		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [
-			'SERVER_NAME'        => 'example.com',
 			'GEOIP_COUNTRY_CODE' => 'US',
 			'HTTP_USER_AGENT'    => 'curl/7.0',
 			'HTTP_X_JA4_HASH'    => 'deadbeef',
@@ -546,11 +545,26 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
-		$this->assertSame( 'example.com', $req['server_name'] );
 		$this->assertSame( 'US', $req['country_code'] );
 		$this->assertSame( 'curl/7.0', $req['user_agent'] );
 		$this->assertSame( 'deadbeef', $req['ja4_hash'] );
 		$this->assertSame( 'from@example', $req['http_from'] );
+	}
+
+	/** A record's server is its URL's host: it copies no SERVER_NAME. */
+	public function test_the_record_names_its_server_only_in_its_url(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://tui-4471.test/x' ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'SERVER_NAME' => 'heron-3301.test' ] ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$record = $this->captured_request( $capture );
+		$this->assertSame( 'https://tui-4471.test/x', $record['url'] ?? null );
+		$this->assertArrayNotHasKey( 'server_name', $record );
 	}
 
 	public function test_emitting_leaves_the_envelope_alone(): void {

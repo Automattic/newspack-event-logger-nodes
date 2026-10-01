@@ -450,8 +450,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		$requests = Core::num_int( $totals['requests'] ?? null );
 		return [
 			'total_requests'     => $count,
-			'global_avg_ms'      => $count > 0 ? Core::num_float( $totals['sum_ms'] ?? null ) / $count : 0.0,
-			'global_avg_peak_mb' => $requests > 0 ? Core::num_float( $totals['sum_peak_mb'] ?? null ) / $requests : 0.0,
+			'global_avg_ms'      => Stats_Store::mean( Core::num_float( $totals['sum_ms'] ?? null ), $count ),
+			'global_avg_peak_mb' => Stats_Store::mean( Core::num_float( $totals['sum_peak_mb'] ?? null ), $requests ),
 			'slots'              => $slots,
 		];
 	}
@@ -821,7 +821,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return Ask_Assembler::for_url(
 			$stats,
 			$recent['requests'],
-			self::rule_for_url( Core::as_string( $stats['url'] ?? '' ) ),
+			Rule_Set::load()->for_url( Core::as_string( $stats['url'] ?? '' ) ),
 			$server,
 			$recent['truncated'],
 			$recent['window_start']
@@ -970,8 +970,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( $merged as $hash => $entry ) {
 			$row = self::project_row( $entry );
 			[ $ms_sum, $ms_n, $peak_sum, $peak_n ] = $means[ $hash ];
-			$row['avg_ms']      = self::mean_of( $ms_sum, $ms_n );
-			$row['avg_peak_mb'] = self::mean_of( $peak_sum, $peak_n );
+			$row['avg_ms']      = Stats_Store::mean( $ms_sum, $ms_n );
+			$row['avg_peak_mb'] = Stats_Store::mean( $peak_sum, $peak_n );
 			$rows[]             = $row;
 		}
 		\usort( $rows, self::by_sort( Stats_Store::rank_key( $sort, $errors ), $order ) );
@@ -1103,8 +1103,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			'totals'    => [
 				'urls'                => $urls,
 				'requests'            => $total[ Stats_Store::HDR_COUNT ],
-				'avg_ms'              => self::mean_of( $total[ Stats_Store::HDR_SUM_MS ], $total[ Stats_Store::HDR_TIMED_COUNT ] ),
-				'avg_peak_mb'         => self::mean_of( $total[ Stats_Store::HDR_SUM_PEAK_MB ], $total[ Stats_Store::HDR_COUNT ] ),
+				'avg_ms'              => Stats_Store::mean( $total[ Stats_Store::HDR_SUM_MS ], $total[ Stats_Store::HDR_TIMED_COUNT ] ),
+				'avg_peak_mb'         => Stats_Store::mean( $total[ Stats_Store::HDR_SUM_PEAK_MB ], $total[ Stats_Store::HDR_COUNT ] ),
 				'requests_per_second' => self::recent_rate( $rated, $recent ),
 			] + ( $errors ? [ 'errors' => $total[ Stats_Store::HDR_ERRORS ] ] : [] ),
 			'slowest'     => self::resolve_urls( \array_slice( $top, 0, self::SLOWEST_ROWS ), $stores ),
@@ -1405,33 +1405,13 @@ class Performance_CI_Node extends Service_CI_Node {
 			Core::arr( $url['aggregate']['flame'] ?? null ),
 			$name,
 			$url['name'],
-			self::rule_for_url( $url['name'] ),
+			'' === $url['name'] ? null : Rule_Set::load()->for_url( $url['name'] ),
 			$url['descriptor']
 		);
 		if ( null === $brief ) {
 			throw new \RuntimeException( \esc_html( "no span '{$name}' in this URL's aggregate" ) );
 		}
 		return $brief;
-	}
-
-	/**
-	 * The rule governing a URL, for the surfaces that hold no record — the
-	 * `url:` brief works from an index row. Matching takes the PATH: a stored
-	 * url is absolute, and `Rule_Matcher` compares against patterns like `/`.
-	 *
-	 * @param string $url The stored absolute URL.
-	 * @return ?Rule The governing rule, or null when no pattern matches.
-	 */
-	private static function rule_for_url( string $url ): ?Rule {
-		if ( '' === $url ) {
-			return null;
-		}
-		$path = Core::as_string( \wp_parse_url( $url, \PHP_URL_PATH ), '' );
-		if ( '' === $path ) {
-			$path = \str_starts_with( $url, '/' ) ? $url : '/';
-		}
-		$query = Core::as_string( \wp_parse_url( $url, \PHP_URL_QUERY ), '' );
-		return Rule_Set::load()->matcher()->match( '' === $query ? $path : "{$path}?{$query}" );
 	}
 
 	/**
@@ -1677,14 +1657,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * every slot of them, the wall clock the Time Breakdown divides the
 	 * board's categories by: the site's from the `hourly_h` slots `overview`
 	 * already read, and a server's from its row of the `server` dimension,
-	 * the one read this costs.
+	 * the one read this costs. Null where no timed request reached the board.
 	 *
 	 * @param string                               $server Server the board is scoped to; '' is the site.
 	 * @param array<string,array<array-key,mixed>> $hourly `hourly_slots()`, the site's.
 	 * @param array<int,Stats_Store>               $stores Stores the caller resolved once.
 	 * @param int                                  $now    The reply's clock, read once at its entry.
 	 */
-	private static function board_avg_ms( string $server, array $hourly, array $stores, int $now ): float {
+	private static function board_avg_ms( string $server, array $hourly, array $stores, int $now ): ?float {
 		$timed  = 0;
 		$sum_ms = 0.0;
 		if ( '' === $server ) {
@@ -1692,7 +1672,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$timed  += Core::num_int( $slot['count'] ?? null );
 				$sum_ms += Core::num_float( $slot['sum_ms'] ?? null );
 			}
-			return $timed > 0 ? $sum_ms / $timed : 0.0;
+			return Stats_Store::mean( $sum_ms, $timed );
 		}
 		$hours = self::chart_keys( $now );
 		foreach ( $stores as $store ) {
@@ -1702,7 +1682,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$sum_ms += Core::num_float( $row[ Stats_Store::DIM_SUM_MS ] ?? null );
 			}
 		}
-		return $timed > 0 ? $sum_ms / $timed : 0.0;
+		return Stats_Store::mean( $sum_ms, $timed );
 	}
 
 	/**
@@ -2356,7 +2336,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					continue;
 				}
 				// Each candidate carries every word, or its cut path hides it.
-				$path = Stats_Store::path_of( Core::as_string( $raw_row['url'] ?? '' ) );
+				$path = Stats_Store::row_search_path( Core::as_string( $raw_row['url'] ?? '' ) );
 				$cut  = null !== $candidates && \str_ends_with( $path, '…' );
 				if ( '' !== $search && ! $cut && ! Stats_Store::term_matches( $path, $search, $tokens ) ) {
 					continue;
@@ -2414,8 +2394,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			'totals'  => [
 				'urls'                => $urls,
 				'requests'            => $requests,
-				'avg_ms'              => self::mean_of( $sum_ms, $timed ),
-				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
+				'avg_ms'              => Stats_Store::mean( $sum_ms, $timed ),
+				'avg_peak_mb'         => Stats_Store::mean( $sum_peak, $requests ),
 				'requests_per_second' => self::recent_rate( $recent, self::recent_keys( $plan ) ),
 			] + ( $errors ? [ 'errors' => $errored ] : [] ),
 			'slowest'     => \array_slice( $named, \count( $page ) ),
@@ -2510,18 +2490,25 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `urls` sort comparator for one `URL_SORTS` field and direction —
-	 * shared by the fold and the ranked reader. A tie breaks by hash,
-	 * ascending either way, as the writer's lists break it, so the two paths
-	 * agree on ties.
+	 * shared by the fold and the ranked reader. A row no timed request
+	 * reached ranks last on the `Stats_Store::TIMED_SORTS` in both orders,
+	 * as the writer's lists rank it. A tie breaks by hash, ascending either
+	 * way, as the writer's lists break it, so the two paths agree on ties.
 	 *
 	 * @param string $sort  A URL_SORTS field.
 	 * @param string $order 'asc' or 'desc'.
 	 */
 	private static function by_sort( string $sort, string $order ): \Closure {
-		return static fn ( array $a, array $b ): int => ( 'asc' === $order
+		$by_value = static fn ( array $a, array $b ): int => ( 'asc' === $order
 			? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
 			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 ) )
 			?: \strcmp( Core::as_string( $a['hash'] ?? '' ), Core::as_string( $b['hash'] ?? '' ) );
+		if ( ! \in_array( $sort, Stats_Store::TIMED_SORTS, true ) ) {
+			return $by_value;
+		}
+		// A display row's `timed_count` is an int: no coercion per compare.
+		return static fn ( array $a, array $b ): int => ( ( $b['timed_count'] ?? 0 ) > 0 ) <=> ( ( $a['timed_count'] ?? 0 ) > 0 )
+			?: $by_value( $a, $b );
 	}
 
 	/**
@@ -2642,25 +2629,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function project_row( array $row ): array {
 		// Two populations: a timeout has peak memory but no duration.
-		$all                = \max( 1, Core::num_int( $row['count'] ?? null ) );
-		$row['avg_ms']      = self::mean_of(
-			Core::num_float( $row['sum_ms'] ?? null ),
-			Core::num_int( $row['timed_count'] ?? null )
-		);
-		$row['avg_peak_mb'] = Core::num_float( $row['sum_peak_mb'] ?? null ) / $all;
+		$row['avg_ms']      = Stats_Store::mean( Core::num_float( $row['sum_ms'] ?? null ), Core::num_int( $row['timed_count'] ?? null ) );
+		$row['avg_peak_mb'] = Stats_Store::mean( Core::num_float( $row['sum_peak_mb'] ?? null ), Core::num_int( $row['count'] ?? null ) );
 		return $row;
-	}
-
-	/**
-	 * A mean over the things that HAVE one — the requests a duration was
-	 * measured for, or the buckets an average was ranked in. Dividing by
-	 * every request instead would understate it by the unmeasured fraction.
-	 *
-	 * @param float $sum Summed values.
-	 * @param int   $n   How many contributed one.
-	 */
-	private static function mean_of( float $sum, int $n ): float {
-		return $n > 0 ? $sum / $n : 0.0;
 	}
 
 	/**

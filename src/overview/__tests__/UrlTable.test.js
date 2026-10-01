@@ -647,6 +647,54 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it.each( [ 'avg', 'cumulative' ] )(
+		'draws no %s bar for a URL no timed request reached, and scales the rest without it',
+		( metric ) => {
+			const untimed = Array.from( { length: 20 }, ( _, i ) => ( {
+				hash: `u${ i }`,
+				url: `/moa-${ i }`,
+				count: 7,
+				count_2xx: 0,
+				avg_ms: null,
+				min_ms: null,
+				max_ms: null,
+				avg_peak_mb: 3,
+			} ) );
+			const { container, unmount } = mount( {
+				urls: [ ...untimed, { ...URLS[ 0 ], url: '/tui-9913' } ],
+				totalUrls: 21,
+				metric,
+			} );
+			const bars = Array.from(
+				container.querySelectorAll(
+					'.event-logger-table__list [data-field="url"]'
+				)
+			).map( ( cell ) => cell.getAttribute( 'style' ) ?? '' );
+
+			expect( bars.slice( 0, 20 ) ).toEqual( Array( 20 ).fill( '' ) );
+			expect( bars[ 20 ] ).toContain( '100%' );
+			unmount();
+		}
+	);
+
+	it( 'renders a dash for the Avg cell of a URL no timed request reached', () => {
+		const { container, unmount } = mount( {
+			urls: [
+				{ ...URLS[ 0 ], avg_ms: null, min_ms: null, max_ms: null },
+			],
+			totalUrls: 1,
+		} );
+		const cells = [ 'avg_ms', 'min_ms', 'max_ms' ].map(
+			( field ) =>
+				container.querySelector(
+					`.event-logger-table__list [data-field="${ field }"]`
+				).textContent
+		);
+
+		expect( cells ).toEqual( [ '-', '-', '-' ] );
+		unmount();
+	} );
+
 	it( 'switches the bar to peak_mb when metric=memory', () => {
 		// metric=memory drives UrlRow's peak_mb bar branch.
 		const { container, unmount } = mount( { metric: 'memory' } );

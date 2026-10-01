@@ -465,6 +465,32 @@ final class RuleSetTest extends TestCase {
 		$this->assertNotSame( Rule_Set::id_for( '/a/' ), Rule_Set::id_for( '/b/' ) );
 	}
 
+	// ── for_url: the rule a logged URL matches ─────────────────────────────
+
+	/** Two rules whose patterns no default carries: a path prefix and its query-bearing child. */
+	private static function tui_rules(): Rule_Set {
+		return new Rule_Set( [
+			new Rule( Rule_Set::id_for( '/tui-6620?moa' ), '/tui-6620?moa', Rule::ACTION_LOG ),
+			new Rule( Rule_Set::id_for( '/tui-6620' ), '/tui-6620', Rule::ACTION_LOG ),
+		] );
+	}
+
+	/** A logged URL is absolute; its rule is the one its path and query match. */
+	public function test_for_url_matches_a_logged_urls_path_and_query(): void {
+		$set = self::tui_rules();
+		$this->assertSame( '/tui-6620?moa', $set->for_url( 'https://kea-7713.test/tui-6620?moa-2' )?->pattern );
+		$this->assertSame( '/tui-6620', $set->for_url( 'https://kea-7713.test/tui-6620/nest' )?->pattern );
+		$this->assertNull( $set->for_url( 'https://kea-7713.test/weka-6620' ), 'no pattern matches' );
+		foreach ( [ '', '/tui-6620' ] as $hostless ) {
+			try {
+				$set->for_url( $hostless );
+				$this->fail( "for_url( '{$hostless}' ) answered" );
+			} catch ( \InvalidArgumentException $e ) {
+				$this->assertStringContainsString( 'no host', $e->getMessage() );
+			}
+		}
+	}
+
 	// ── apply_synced: the pattern is the identity, off the wire too ─────────
 
 	/**

@@ -558,6 +558,23 @@ final class Rule_Set {
 	}
 
 	/**
+	 * The rule governing a logged URL. The URL is absolute and rules are site
+	 * paths, so its path and query are what `Rule_Matcher` matches.
+	 *
+	 * @param string $url A logged URL, which carries its host.
+	 * @return Rule|null Null when no pattern matches.
+	 * @throws \InvalidArgumentException When the URL has no host.
+	 */
+	public function for_url( string $url ): ?Rule {
+		return $this->matcher()->match( Stats_Store::path_of( $url ) );
+	}
+
+	/** A matcher over these rules; Rule_Matcher owns the specificity order. */
+	public function matcher(): Rule_Matcher {
+		return new Rule_Matcher( $this->rules );
+	}
+
+	/**
 	 * The rule list in its last-persisted form.
 	 *
 	 * @return Rule[]
@@ -581,10 +598,5 @@ final class Rule_Set {
 			}
 		}
 		return null;
-	}
-
-	/** A matcher over these rules; Rule_Matcher owns the specificity order. */
-	public function matcher(): Rule_Matcher {
-		return new Rule_Matcher( $this->rules );
 	}
 }

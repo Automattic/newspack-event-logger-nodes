@@ -97,7 +97,7 @@
     <span class="rate">the seconds recent_keys() spans</span>
     <p>The current hour's closed buckets, or the hour before until one closes. It drops the bucket still filling, and never divides by the buckets that happened to carry traffic: a URL seen in two of twelve would read six times its rate beside a header that does not.</p></div>
   <div class="card"><h3>The totals are exact</h3>
-    <p>The byte cap folds each shard's tail into a synthetic <span class="mono">Other</span> row (<span class="mono">Stats_Store::OTHER_KEY</span>) carrying only the fields that ADD: exact site-wide, and per server for every server the index admits by name, since past <span class="mono">MAX_SERVER_VALUES</span> a server's rows file under an <span class="mono">Other</span> server no real fleet reaches. The row is marked <span class="mono">aggregate</span> and un-clickable.</p></div>
+    <p>The byte cap folds each shard's tail into a synthetic <span class="mono">Other</span> row (<span class="mono">Stats_Store::OTHER_KEY</span>) carrying only the fields that ADD: exact site-wide, and per server for every server, each filed under its own name. The row is marked <span class="mono">aggregate</span> and un-clickable.</p></div>
   <div class="card"><h3>Workers are excluded by default</h3>
     <p>The row RECORDS worker traffic, never guessing from <span class="mono">?worker_type</span>; <span class="mono">include_workers</span> opts IN, and the tail folds into TWO overflow rows (<span class="mono">Stats_Store::other_key()</span>). A header summed from rows keeping worker timing reads "Avg Response" as 227 ms of cron against 3 ms of reader traffic on a staging hub.</p></div>
 </div>

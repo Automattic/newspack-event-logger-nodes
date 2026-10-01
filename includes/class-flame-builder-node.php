@@ -115,19 +115,19 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private const TOTAL_KEY = 'total';
 
 	/**
-	 * The seven dimensional axes, each as `axis name => request-record field`.
+	 * The six record axes, each as `axis name => request-record field`.
 	 *
 	 * One table drives all three accumulations of a request — global, per
 	 * reporting server, and per URL — so an axis added here appears in all
 	 * three. `status_category` is the one field no producer writes;
-	 * `accumulate_dimensions()` derives it from the status code first.
+	 * `accumulate_dimensions()` derives it from the status code first. The
+	 * seventh axis, `server`, is the URL's host and files globally alone.
 	 *
 	 * @var array<string,string>
 	 */
 	const DIM_FIELDS = [
 		'status'  => 'status_category',
 		'method'  => 'request_method',
-		'server'  => 'server_name',
 		'country' => 'country_code',
 		'from'    => 'http_from',
 		'ua'      => 'user_agent',
@@ -202,14 +202,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	protected const INTERN_TABLE_LIMIT = 50000;
 
-	/**
-	 * The value every dimension uses for a producer that reported none.
-	 *
-	 * The dashboard builds its server picker from the `server` dimension, so
-	 * this is a name an operator can select — which means the URL index files
-	 * such rows under it too, or picking it empties the table.
-	 */
-	private const UNKNOWN_VALUE = Stats_Store::UNKNOWN_SERVER;
+	/** The value a dimension files a request under when its record names none. */
+	private const UNKNOWN_VALUE = 'Unknown';
 
 	/**
 	 * Where each RAW-COMPARABLE field sits on an index line, `[offset, length]`.
@@ -478,7 +472,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * answer to an ask the flush made, not a record.
 	 *
 	 * A completed request becomes a flame tree, is forwarded to the flames
-	 * partition, and is folded into every accumulator. Anything else is dropped.
+	 * partition, and is folded into every accumulator. A record whose URL names
+	 * no host throws `InvalidArgumentException` before any of that, so the
+	 * Consumer dead-letters it and reads on. Any other message is dropped.
 	 * Nothing here flushes: the flush is the node's own periodic work, run from
 	 * `fire()`, so a failed store write raises from the tick rather than being
 	 * charged to whichever record happened to arrive.
@@ -556,10 +552,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			return;
 		}
 
+		$url = Core::str( $request['url'] ?? '' );
+		// A hostless URL throws before any fold; the reader dead-letters it.
+		$server_name = Stats_Store::server_of( $url );
+
 		$rid_raw  = $request['rid'] ?? '';
 		$rid      = Core::str( $rid_raw );
-		$url_raw  = $request['url'] ?? '';
-		$url_hash = Log_Manager::url_hash( Core::str( $url_raw ) );
+		$url_hash = Log_Manager::url_hash( $url );
 		$entries  = $request['entries'] ?? [];
 		if ( ! \is_array( $entries ) ) {
 			$entries = [];
@@ -591,10 +590,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// A replay of a counted record re-forwards only its flame.
 		$crumb = Core::str( $message[ Message::ID ] );
 		if ( '' === $crumb || $crumb !== $this->counted ) {
-			$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
+			$this->accumulate_all_stats( $url, $server_name, $url_hash, $flame_data, $profiles, $request );
 			$this->counted = $crumb;
 		}
-
 	}
 
 	/**
@@ -688,12 +686,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * Sums are stored, never means (see docs/architecture-decisions.md, decision 2); the
 	 * display layer divides at read time so cross-bucket merges stay exact.
 	 *
-	 * @param string                  $url_hash   URL hash of the request.
-	 * @param array<string,mixed>    $flame_data Per-request flame tree; its `value` is a render width, not a measurement.
-	 * @param array<array-key,mixed> $profiles   `profiles{}` from the request record.
-	 * @param array<array-key,mixed> $request    Full request record.
+	 * @param string                  $url         The request's URL.
+	 * @param string                  $server_name The URL's host, the server every per-server write files under.
+	 * @param string                  $url_hash    URL hash of the request.
+	 * @param array<string,mixed>    $flame_data  Per-request flame tree; its `value` is a render width, not a measurement.
+	 * @param array<array-key,mixed> $profiles    `profiles{}` from the request record.
+	 * @param array<array-key,mixed> $request     Full request record.
 	 */
-	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
+	private function accumulate_all_stats( string $url, string $server_name, string $url_hash, array $flame_data, array $profiles, array $request ): void {
 		// The RECORD's duration; the flame's is raised to cover children.
 		$duration_ms  = Core::num_float( $request['duration_ms'] ?? 0 );
 		$is_worker    = ! empty( $request['is_worker'] );
@@ -715,9 +715,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// not file into a future bucket — readers walk backwards from now
 		// and never would, the written-then-unreadable bug of decision 19.
 		$timestamp     = \min( $now, $started + (int) \round( $duration_ms / 1000 ) );
-		$server_raw    = $request['server_name'] ?? '';
-		// `as_string`, the way the `server` DIMENSION reads it: same axis.
-		$server_name   = Core::as_string( $server_raw );
 		// The per-server gate, resolved once: '' accumulates none.
 		$server_key    = $this->is_hub && $count_global ? $server_name : '';
 
@@ -726,13 +723,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$bucket                     = Stats_Store::bucket_key( $timestamp );
 		$this->pending[ $bucket ] ??= self::empty_bucket();
 		$acc                        = &$this->pending[ $bucket ];
-		$this->accumulate_url_stats( $acc, $url_hash, $request, $duration_ms, $record_timing, $timestamp, $server_name, $count_global );
+		$this->accumulate_url_stats( $acc, $url, $url_hash, $request, $duration_ms, $record_timing, $timestamp, $server_name, $count_global );
 		$this->accumulate_hourly( $acc, $request, $duration_ms, $record_timing, $count_global );
-		$this->accumulate_dimensions( $acc, $url_hash, $request, $server_key, $duration_ms, $record_timing, $count_global );
+		$this->accumulate_dimensions( $acc, $url_hash, $server_name, $request, $server_key, $duration_ms, $record_timing, $count_global );
 
 		if ( ! empty( $profiles ) && $record_timing ) {
 			$this->accumulate_profiles(
 				$acc,
+				$url,
 				$url_hash,
 				$profiles,
 				$request,
@@ -855,33 +853,26 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * extremes, status buckets and peak memory, under the server that served it.
 	 *
 	 * @param Bucket_Acc              $acc           The request's bucket accumulator.
+	 * @param string                  $url           The request's URL.
 	 * @param string                  $url_hash      URL hash of the request.
 	 * @param array<array-key,mixed> $request       Full request record.
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
 	 * @param int                     $timestamp     Completion time, clamped to now.
-	 * @param string                  $server_name   Reporting server, '' when unknown.
+	 * @param string                  $server_name   Reporting server, the URL's host.
 	 * @param bool                    $count_global  False for a worker, whose timing this row keeps and every site-wide aggregate drops.
 	 */
-	private function accumulate_url_stats( array &$acc, string $url_hash, array $request, float $duration_ms, bool $record_timing, int $timestamp, string $server_name, bool $count_global ): void {
-		$url_val = $request['url'] ?? '';
-		$url     = Core::str( $url_val );
-		if ( '' === $url ) {
-			return;
-		}
+	private function accumulate_url_stats( array &$acc, string $url, string $url_hash, array $request, float $duration_ms, bool $record_timing, int $timestamp, string $server_name, bool $count_global ): void {
 		// @longform NOT hub-gated, unlike the three per-server aggregates: the
 		// filter is offered wherever the `server` dimension has values, and
-		// gating this would empty the URL table on every spoke. A nameless
-		// producer is filed as that dimension names it, or the picker offers a
-		// name this cannot answer to.
-		$server = '' === $server_name ? self::UNKNOWN_VALUE : $server_name;
-		// Worker traffic indexes apart, or a URL's reader rows leave with it.
+		// gating this would empty the URL table on every spoke. Worker traffic
+		// indexes apart, or a URL's reader rows leave with it.
 		$slot = $count_global ? 'url_stats' : 'url_stats_worker';
 		// @longform array_replace, NOT array_merge: the row is positional,
 		// and merge RENUMBERS integer keys rather than overwriting them.
-		$acc[ $slot ][ $server ][ $url_hash ] ??= \array_replace(
+		$acc[ $slot ][ $server_name ][ $url_hash ] ??= \array_replace(
 			self::empty_url_row( PHP_INT_MAX ),
-			[ Stats_Store::ROW_PATH => Stats_Store::row_path( $url, $server ) ]
+			[ Stats_Store::ROW_PATH => Stats_Store::row_path( $url, $server_name ) ]
 		);
 		// The whole URL goes to the URL name table, once, not into every row.
 		$acc['url_names'][ $url_hash ] = $url;
@@ -890,7 +881,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		 *
 		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: float|int, 10: float|int, 11: float|int, 12: int, 13: bool, 14: string} $us
 		 */
-		$us              = &$acc[ $slot ][ $server ][ $url_hash ];
+		$us              = &$acc[ $slot ][ $server_name ][ $url_hash ];
 		$peak_raw        = $request['peak_mb'] ?? 0;
 		$peak_mb         = \max( 0.0, Core::num_float( $peak_raw ) );
 		$status_category = self::status_category( $request );
@@ -962,18 +953,20 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Fold the request into each of the seven dimensional axes, three ways:
-	 * globally, per reporting server (hub only), and per URL.
+	 * Fold the request into each of the seven dimensional axes: the six
+	 * record axes globally, per reporting server (hub only) and per URL, and
+	 * the `server` axis, the URL's host, globally alone.
 	 *
 	 * @param Bucket_Acc              $acc           The request's bucket accumulator.
 	 * @param string                  $url_hash      URL hash of the request.
+	 * @param string                  $server_name   The URL's host, the `server` axis's value.
 	 * @param array<array-key,mixed> $request       Full request record.
 	 * @param string                  $server_key    Per-server scope, '' to accumulate none.
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
 	 * @param bool                    $count_global  Whether this feeds global stats.
 	 */
-	private function accumulate_dimensions( array &$acc, string $url_hash, array $request, string $server_key, float $duration_ms, bool $record_timing, bool $count_global ): void {
+	private function accumulate_dimensions( array &$acc, string $url_hash, string $server_name, array $request, string $server_key, float $duration_ms, bool $record_timing, bool $count_global ): void {
 		$status_category = self::status_category( $request );
 		if ( null !== $status_category ) {
 			// The 'status' axis reads this field; nothing else does.
@@ -983,6 +976,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$dim_peak_mb  = Core::num_float( $dim_peak_raw );
 		$dim_duration = $record_timing ? $duration_ms : 0;
 
+		// Global only: workers contribute nothing, and a scope is one server.
+		if ( $count_global ) {
+			$server = self::intern( $server_name );
+			$acc['dim'][ Stats_Store::DIM_SERVER ][ $server ] = self::add_dim( $acc['dim'][ Stats_Store::DIM_SERVER ][ $server ] ?? null, $dim_duration, $dim_peak_mb, $record_timing );
+		}
 		foreach ( self::DIM_FIELDS as $dim => $field ) {
 			$field_raw = $request[ $field ] ?? '';
 			$val       = Core::as_string( $field_raw );
@@ -994,15 +992,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			if ( $count_global ) {
 				$acc['dim'][ $dim ][ $val ] = self::add_dim( $acc['dim'][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb, $record_timing );
 			}
-
-			// Per-server, skipping the dim that would only repeat the scope.
-			if ( '' !== $server_key && Stats_Store::DIM_SERVER !== $dim ) {
+			if ( '' !== $server_key ) {
 				$acc['dim_by_server'][ $server_key ][ $dim ][ $val ] = self::add_dim( $acc['dim_by_server'][ $server_key ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb, $record_timing );
-			}
-
-			// Per-URL, skipping the server: a URL belongs to one.
-			if ( Stats_Store::DIM_SERVER === $dim ) {
-				continue;
 			}
 			$acc['url_dim'][ $url_hash ][ $dim ][ $val ] = self::add_dim( $acc['url_dim'][ $url_hash ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb, $record_timing );
 		}
@@ -1057,6 +1048,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * independently at each accumulate site is the classic bug in this class.
 	 *
 	 * @param Bucket_Acc                $acc          The request's bucket accumulator.
+	 * @param string                    $url          The request's URL, which a rule matches by path.
 	 * @param string                    $url_hash     URL hash of the request.
 	 * @param array<array-key,mixed>   $profiles     `profiles{}` from the request record.
 	 * @param array<array-key,mixed>   $request      Full request record.
@@ -1068,6 +1060,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private function accumulate_profiles(
 		array &$acc,
+		string $url,
 		string $url_hash,
 		array $profiles,
 		array $request,
@@ -1077,8 +1070,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		bool $count_global,
 		int $done
 	): void {
-		// Resolve the request's governing rule once; no match = tune inert.
-		$rule             = $this->rule_for_request( $request );
+		// Stamped rule, else the URL's; none leaves auto-tune inert.
+		$rules            = $this->rule_set();
+		$rule             = $rules->rule_by_id( Core::as_string( $request['rule_id'] ?? '' ) ) ?? $rules->for_url( $url );
 		$count_threshold  = null !== $rule ? $rule->auto_disable_threshold : 0;
 		$time_threshold   = null !== $rule ? $rule->auto_protect_time_threshold : 0.0;
 		$rule_id          = null !== $rule ? $rule->id : '';
@@ -1337,28 +1331,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			self::$intern_full = true;
 		}
 		return $shared;
-	}
-
-	/**
-	 * Resolve the rule that governed a request: by stamped id, else url-rematch,
-	 * else null.
-	 *
-	 * A stamped `rule_id` can name a rule the operator has since deleted, so the
-	 * URL rematch is a fallback, not an alternative path.
-	 *
-	 * @param array<array-key,mixed> $request Full request record.
-	 * @return Rule|null Null when nothing matches, which leaves auto-tune inert.
-	 */
-	private function rule_for_request( array $request ): ?Rule {
-		$id = \is_string( $request['rule_id'] ?? null ) ? $request['rule_id'] : '';
-		if ( '' !== $id ) {
-			$rule = $this->rule_set()->rule_by_id( $id );
-			if ( null !== $rule ) {
-				return $rule;
-			}
-		}
-		$url = \is_string( $request['url'] ?? null ) ? $request['url'] : '';
-		return '' !== $url ? $this->rule_set()->matcher()->match( $url ) : null;
 	}
 
 	/**
@@ -1626,12 +1598,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * The URL index files each server's rows under the server's own key, so
 	 * the flush first reads the server index of every bucket it holds — one
-	 * round trip — to decide which servers each bucket admits. A bucket whose
-	 * index no Table answered drops its URL rows, index and names, as
-	 * a failed write chunk's deltas are dropped (decision 3): admitted against
-	 * no index its servers would pass the cap, and held for the Table the
-	 * accumulator would grow without bound through an outage. Its other
-	 * deltas read no index, so they land, or fail on their own chunk's read.
+	 * round trip — to learn which servers each bucket names already. A bucket
+	 * whose index no Table answered drops its URL rows, index and names, as
+	 * a failed write chunk's deltas are dropped (decision 3): filed against
+	 * no index a server new to a folded hour would never re-rank it, and held
+	 * for the Table the accumulator would grow without bound through an
+	 * outage. Its other deltas read no index, so they land, or fail on their
+	 * own chunk's read.
 	 *
 	 * @param Stats_Store $stats_store Destination.
 	 * @param int         $now         The flush's one read of the tick.
@@ -1648,30 +1621,23 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$this->tally( Flame_Tree::STATS_WRITES, 'url buckets dropped', \count( $dropped ) );
 			$this->print_less_often( 'stats flush dropped URL rows whose index no Table answered', ' — ' . \count( $dropped ) );
 		}
-		$admitted = [];
-		foreach ( \array_diff_key( $this->pending, $dropped ) as $bucket => $acc ) {
-			// @longform An all-digit server name is an INT key wherever PHP
-			// stores it, so every name read off a key is cast back to string.
-			$admitted[ $bucket ] = Stats_Store::admit_servers(
-				$indexes[ $bucket ] ?? [],
-				\array_map( 'strval', \array_keys( $acc['url_stats'] + $acc['url_stats_worker'] ) )
-			);
-		}
-		$filed = $this->persist_url_names( $stats_store, $now, $admitted );
+		$filing = \array_diff_key( $this->pending, $dropped );
+		$filed  = $this->persist_url_names( $stats_store, $now, $filing );
 		$this->persist_url_tokens( $stats_store, $filed, $now );
 		$intents = [];
 		foreach ( $this->pending as $bucket => $acc ) {
 			// Only a bucket its index answered files URL rows.
 			$ranks = $bucket >= $floor;
-			foreach ( isset( $admitted[ $bucket ] ) ? $this->url_intents( $bucket, $acc, $indexes[ $bucket ] ?? [], $admitted[ $bucket ], $ranks ) : [] as $intent ) {
+			foreach ( isset( $filing[ $bucket ] ) ? $this->url_intents( $bucket, $acc, $indexes[ $bucket ] ?? [], $ranks ) : [] as $intent ) {
 				self::add_intent( $intents, $intent );
 			}
 			// @longform A server new to the bucket may be new to its folded
 			// hour, whose index the late write then names beside no hour
 			// lists. Every intent is placed first, so the hour leaves the memo
-			// only for the next flush's roll-up, which ranks it then.
-			foreach ( $admitted[ $bucket ] ?? [] as $as ) {
-				if ( ! isset( $indexes[ $bucket ][ Stats_Store::server_key( $as ) ] ) ) {
+			// only for the next flush's roll-up, which ranks it then. An
+			// all-digit server name is an INT key, so it is cast back.
+			foreach ( isset( $filing[ $bucket ] ) ? \array_keys( $acc['url_stats'] + $acc['url_stats_worker'] ) : [] as $server ) {
+				if ( ! isset( $indexes[ $bucket ][ Stats_Store::server_key( (string) $server ) ] ) ) {
 					$unfold[ Stats_Store::hour_of( $bucket ) ] = true;
 				}
 			}
@@ -1679,16 +1645,18 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				self::add_intent( $intents, self::hourly_intent( $bucket, $acc['hourly'] ) );
 			}
 			foreach ( $acc['dim'] as $dim => $values ) {
-				self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, '' ), $bucket, $dim, $values, Stats_Store::MAX_DIM_VALUES, null ) );
+				// The server axis is never capped: each value is one host.
+				$cap = Stats_Store::DIM_SERVER === $dim ? \PHP_INT_MAX : Stats_Store::MAX_DIM_VALUES;
+				self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, '' ), $bucket, $values, $cap, null ) );
 			}
 			foreach ( $acc['dim_by_server'] as $server => $dims ) {
 				foreach ( $dims as $dim => $values ) {
-					self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, $server ), $bucket, $dim, $values, Stats_Store::MAX_DIM_VALUES, null ) );
+					self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, $server ), $bucket, $values, Stats_Store::MAX_DIM_VALUES, null ) );
 				}
 			}
 			foreach ( $acc['url_dim'] as $url_hash => $dims ) {
 				foreach ( $dims as $dim => $values ) {
-					self::add_intent( $intents, self::dimension_intent( Stats_Store::url_dim_parts( (string) $url_hash ), $bucket, $dim, $values, Stats_Store::MAX_URL_DIM_VALUES, $dim ) );
+					self::add_intent( $intents, self::dimension_intent( Stats_Store::url_dim_parts( (string) $url_hash ), $bucket, $values, Stats_Store::MAX_URL_DIM_VALUES, $dim ) );
 				}
 			}
 			if ( ! empty( $acc['cat'] ) ) {
@@ -1781,30 +1749,22 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * One bucket's URL index intents: each family's rows filed under the
-	 * server `Stats_Store::admit_servers()` admits them as, one intent per
-	 * server per shard, and the index naming each server with the shards it
-	 * filed, both families in one mask.
+	 * One bucket's URL index intents: each family's rows filed under its own
+	 * server, one intent per server per shard, and the index naming each
+	 * server with the shards it filed, both families in one mask.
 	 *
-	 * @param string                              $bucket   Bucket key.
-	 * @param Bucket_Acc                          $acc      The bucket's accumulator.
-	 * @param array<string,array{0:string,1:int}> $index    The bucket's stored server index.
-	 * @param array<string,string>                $admitted Server => the name its rows are filed under.
-	 * @param bool                                $ranks    The bucket sits in the fine tail, so it ranks.
+	 * @param string                              $bucket Bucket key.
+	 * @param Bucket_Acc                          $acc    The bucket's accumulator.
+	 * @param array<string,array{0:string,1:int}> $index  The bucket's stored server index.
+	 * @param bool                                $ranks  The bucket sits in the fine tail, so it ranks.
 	 * @return list<Pending_Write>
 	 */
-	private function url_intents( string $bucket, array $acc, array $index, array $admitted, bool $ranks ): array {
+	private function url_intents( string $bucket, array $acc, array $index, bool $ranks ): array {
 		$entries = [];
 		$out     = [];
 		foreach ( [ 0 => $acc['url_stats'], 1 => $acc['url_stats_worker'] ] as $worker => $servers ) {
-			$filed = [];
 			foreach ( $servers as $server => $rows ) {
-				$as           = $admitted[ (string) $server ];
-				$rows         = self::refile_rows( $rows, (string) $server, $as );
-				$filed[ $as ] = isset( $filed[ $as ] ) ? self::merge_url_rows( $filed[ $as ], $rows ) : $rows;
-			}
-			foreach ( $filed as $as => $rows ) {
-				$name   = \strval( $as );
+				$name   = \strval( $server );
 				$shards = Stats_Store::rows_by_shard( $rows, 1 === $worker );
 				foreach ( $shards as $shard => $shard_rows ) {
 					\array_push( $out, ...$this->url_shard_intent( $bucket, $name, \strval( $shard ), $shard_rows, $ranks ) );
@@ -2059,8 +2019,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * The name table is what a reader displays a row's whole URL through,
 	 * and what a hash-only read finds the row's server by. Each name also
-	 * files the search index of the server its rows are filed under — its
-	 * own, or `Other` past the index cap. A path costs one member per
+	 * files the search index of the server its rows are filed under, its
+	 * own. A path costs one member per
 	 * distinct word: two for `/wombat-7731`, five for
 	 * `/blog/2026/my-post-title`.
 	 *
@@ -2077,13 +2037,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * (`Stats_Store::filing_ttl()`). A hash filed under two
 	 * servers in one flush keeps the last name written.
 	 *
-	 * @param Stats_Store                        $stats_store The wired store.
-	 * @param int                                $now         The flush's one read of the tick.
-	 * @param array<string,array<string,string>> $admitted    Bucket => server => the
-	 *                                                        name its rows are filed under.
+	 * @param Stats_Store               $stats_store The wired store.
+	 * @param int                       $now         The flush's one read of the tick.
+	 * @param array<string,Bucket_Acc>  $filing      The pending buckets whose URL rows file.
 	 * @return array<array-key,array<array-key,string>> server => hash => URL, for the names written.
 	 */
-	private function persist_url_names( Stats_Store $stats_store, int $now, array $admitted ): array {
+	private function persist_url_names( Stats_Store $stats_store, int $now, array $filing ): array {
 		$hour    = Stats_Store::hour_of( Stats_Store::bucket_key( $now ) );
 		$stamped = [];
 		// Iterated, not got: a get promotes, and a rotation evicts undrained.
@@ -2091,10 +2050,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$stamped[ (string) $hash ] = Core::arr( Core::arr( $blob )['filed'] ?? null );
 		}
 		$filed = [];
-		foreach ( \array_intersect_key( $this->pending, $admitted ) as $bucket => $acc ) {
+		foreach ( $filing as $acc ) {
 			foreach ( [ $acc['url_stats'], $acc['url_stats_worker'] ] as $servers ) {
 				foreach ( $servers as $server => $rows ) {
-					$as  = $admitted[ $bucket ][ (string) $server ];
+					$as  = (string) $server;
 					$key = Stats_Store::server_key( $as );
 					foreach ( \array_keys( $rows ) as $hash ) {
 						if ( ! isset( $acc['url_names'][ $hash ] ) ) {
@@ -2489,16 +2448,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$ranked = [];
 		$named  = [];
 		$every  = Stats_Store::shard_mask( $shards );
-		foreach ( self::cap_hour_servers( $rows ) as $server => $server_rows ) {
-			$key           = Stats_Store::server_key( (string) $server );
-			$named[ $key ] = [ Stats_Store::SRV_NAME => (string) $server, Stats_Store::SRV_SHARDS => $every ];
+		foreach ( $names as $server ) {
+			$key           = Stats_Store::server_key( $server );
+			$server_rows   = $rows[ $server ];
+			$named[ $key ] = [ Stats_Store::SRV_NAME => $server, Stats_Store::SRV_SHARDS => $every ];
 			// @longform Per SHARD, and not regroupable: each shard carries its
 			// own `Other` overflow row, which a merge by hash would collapse.
 			foreach ( $shards as $shard ) {
 				// Capped ONCE, after twelve buckets rather than after each.
 				$shard_rows = self::cap_url_rows( $server_rows[ $shard ] ?? [] );
 				$writes[]   = [ Stats_Store::url_hour_parts( $key, $shard ), $hour, $shard_rows ];
-				$ranked[ (string) $server ][ $shard ] = $shard_rows;
+				$ranked[ $server ][ $shard ] = $shard_rows;
 			}
 		}
 		$writes[] = [ Stats_Store::url_srv_parts( true ), $hour, $named ];
@@ -2525,63 +2485,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			'writes'  => \count( $writes ) + $ranks['writes'],
 			'refused' => $refused + $ranks['refused'],
 		];
-	}
-
-	/**
-	 * One hour's servers, bounded as a bucket's index is: past
-	 * `MAX_SERVER_VALUES` the quietest fold, shard by shard, into the `Other`
-	 * server, whose rows keep every request.
-	 *
-	 * @param array<array-key,array<string,array<array-key,mixed>>> $rows Server => shard => merged rows.
-	 * @return array<array-key,array<string,array<array-key,mixed>>>
-	 */
-	private static function cap_hour_servers( array $rows ): array {
-		$traffic = [];
-		foreach ( $rows as $server => $shards ) {
-			if ( Stats_Store::OTHER_KEY === (string) $server ) {
-				continue;
-			}
-			$traffic[ $server ] = 0;
-			foreach ( $shards as $shard_rows ) {
-				$traffic[ $server ] += \array_sum( \array_map(
-					static fn ( $row ): int => Core::num_int( Core::arr( $row )[ Stats_Store::ROW_COUNT ] ?? null ),
-					$shard_rows
-				) );
-			}
-		}
-		if ( \count( $traffic ) <= Stats_Store::MAX_SERVER_VALUES ) {
-			return $rows;
-		}
-		\arsort( $traffic );
-		foreach ( \array_slice( \array_keys( $traffic ), Stats_Store::MAX_SERVER_VALUES ) as $server ) {
-			foreach ( $rows[ $server ] as $shard => $shard_rows ) {
-				$shard_rows                               = self::refile_rows( $shard_rows, (string) $server, Stats_Store::OTHER_KEY );
-				$rows[ Stats_Store::OTHER_KEY ][ $shard ] = self::merge_url_rows( $rows[ Stats_Store::OTHER_KEY ][ $shard ] ?? [], $shard_rows );
-			}
-			unset( $rows[ $server ] );
-		}
-		return $rows;
-	}
-
-	/**
-	 * Rows moving from one server's key to another's, each path re-cut for
-	 * the server it now sits under.
-	 *
-	 * @param array<array-key,mixed> $rows Rows by url_hash.
-	 * @param string                 $from The server they were filed under.
-	 * @param string                 $to   The server they are filed under now.
-	 * @return array<array-key,mixed>
-	 */
-	private static function refile_rows( array $rows, string $from, string $to ): array {
-		if ( $from === $to ) {
-			return $rows;
-		}
-		foreach ( $rows as $hash => $row ) {
-			$row                          = Core::arr( $row );
-			$row[ Stats_Store::ROW_PATH ] = Stats_Store::refile_path( Core::str( $row[ Stats_Store::ROW_PATH ] ?? '' ), $from, $to );
-			$rows[ $hash ]                = $row;
-		}
-		return $rows;
 	}
 
 	/**
@@ -2783,22 +2686,21 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * @param array<int,string>      $parts  `dim_parts()` or `url_dim_parts()`.
 	 * @param string                 $bucket Bucket key.
-	 * @param string                 $dim    Dimension name.
 	 * @param array<array-key,mixed> $values Accumulated values.
-	 * @param int                    $cap    Values a slot keeps on every axis but `server`.
+	 * @param int                    $cap    Values a slot keeps.
 	 * @param ?string                $member The member of a URL-hour row holding
 	 *                                       the slotted hour, `$dim` for
 	 *                                       `url_dim_parts()`; null where the
 	 *                                       value is the slotted hour.
 	 * @return Pending_Write
 	 */
-	private static function dimension_intent( array $parts, string $bucket, string $dim, array $values, int $cap, ?string $member ): array {
+	private static function dimension_intent( array $parts, string $bucket, array $values, int $cap, ?string $member ): array {
 		return self::slot_intent(
 			$parts,
 			$bucket,
 			static fn ( array $existing ): array => self::cap_dim(
 				Stats_Store::sum_fields( $existing, $values, Stats_Store::DIM_SUMS ),
-				Stats_Store::dim_cap( $dim, $cap )
+				$cap
 			),
 			$member
 		);

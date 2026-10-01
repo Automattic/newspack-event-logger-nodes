@@ -1041,10 +1041,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			if ( '' !== $user_agent ) {
 				$request->user_agent = $user_agent;
 			}
-			$server_name = self::env_str( $env, 'SERVER_NAME' );
-			if ( '' !== $server_name ) {
-				$request->server_name = $server_name;
-			}
 			$country_code = self::env_str( $env, 'GEOIP_COUNTRY_CODE' );
 			if ( '' !== $country_code ) {
 				$request->country_code = $country_code;

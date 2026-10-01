@@ -49,6 +49,29 @@ test( 'a selected URL names itself and what it is', () => {
 	expect( facts.stats.max_ms ).toBe( 2600 );
 } );
 
+test( 'a URL no timed request reached carries its mean as unmeasured', () => {
+	const facts = pageFacts( {
+		selectedUrl: { hash: 'ccc', url: '/ruru-6603' },
+		urlDetail: { stats: { count: 6, avg_ms: null, max_ms: 0 } },
+	} );
+
+	expect( facts.stats.count ).toBe( 6 );
+	expect( facts.stats.avg_ms ).toBeNull();
+} );
+
+test( 'a slowest row no timed request reached carries its mean as unmeasured', () => {
+	const facts = pageFacts( {
+		urlTotals: { urls: 2, requests: 40, avg_ms: null },
+		urlSlowest: [
+			{ hash: 'ddd', url: '/moa-31', count: 7, avg_ms: null },
+			{ hash: 'eee', url: '/tui-9913', count: 33, avg_ms: 88.5 },
+		],
+	} );
+
+	expect( facts.totals.avg_ms ).toBeNull();
+	expect( facts.slowest.map( ( u ) => u.avg_ms ) ).toEqual( [ null, 88.5 ] );
+} );
+
 test( 'a selected request wins over its URL, and carries its findings', () => {
 	const facts = pageFacts( {
 		selectedUrl: { hash: 'aaa', url: '/slow' },
