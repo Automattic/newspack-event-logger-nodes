@@ -681,6 +681,31 @@ describe( 'UrlTable', () => {
 		}
 	);
 
+	it( 'scales the volume bar by errors on an errors-only page', () => {
+		// Busiest by requests and busiest by errors are different rows here.
+		const { container, unmount } = mount( {
+			urls: [
+				{ ...URLS[ 0 ], hash: 'busy', count: 1000, errors: 2 },
+				{ ...URLS[ 1 ], hash: 'failing', count: 10, errors: 40 },
+			],
+			totalUrls: 2,
+			metric: 'volume',
+			errorCounts: true,
+		} );
+		const widths = Array.from(
+			container.querySelectorAll(
+				'.event-logger-table__list [data-field="url"]'
+			)
+		).map( ( cell ) =>
+			Number(
+				/(\d+(?:\.\d+)?)%/.exec( cell.getAttribute( 'style' ) )[ 1 ]
+			)
+		);
+
+		expect( widths ).toEqual( [ 5, 100 ] );
+		unmount();
+	} );
+
 	it( 'renders a dash for the Avg cell of a URL no timed request reached', () => {
 		const { container, unmount } = mount( {
 			urls: [

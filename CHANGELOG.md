@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **On an errors-only page the URL table's volume bar scales errors.** The count column showed each row's `errors` under "Errors Only" while the bar behind the URL kept scaling its total requests, so the longest bar could sit beside the smallest error count. The bar and the p95 it is drawn against now read one field, chosen once for the metric and the page, so they cannot disagree again; the time and memory metrics are unchanged.
+
 ## [0.115.0] - 2026-10-01
 
 ### Added
