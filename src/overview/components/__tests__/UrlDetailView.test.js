@@ -156,7 +156,7 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 'offers no server breakdown, since a URL already names its host', () => {
-		// The server is the URL's host, and the hash is over the whole URL,
+		// server_name is the site's host, and the hash is over the whole URL,
 		// so one URL split by server is one line: the axis repeats the scope.
 		const { container, unmount } = mount();
 		const [ , breakdown ] = container.querySelectorAll( 'select' );
@@ -628,25 +628,6 @@ describe( 'UrlDetailView', () => {
 		expect( container.textContent ).toContain(
 			'Average breakdown across 100 requests'
 		);
-		unmount();
-	} );
-
-	it( 'divides the averaged breakdown by no wall clock when no timed request reached the URL', () => {
-		const { container, unmount } = mount( {
-			urlDetail: {
-				stats: { avg_ms: null },
-				requests: [],
-				aggregate_profiles: {
-					categories: { hooks: { time: 10, count: 4 } },
-					count: 7,
-					total_time: 10,
-				},
-			},
-		} );
-		const footer = container.querySelector( 'tfoot tr' );
-
-		expect( footer.querySelectorAll( 'td' )[ 2 ].textContent ).toBe( '—' );
-		expect( container.textContent ).not.toContain( '0.0%' );
 		unmount();
 	} );
 

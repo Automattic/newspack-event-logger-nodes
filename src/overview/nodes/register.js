@@ -62,18 +62,23 @@ export const views = {
 		 * `urls:view` — the always-on URL leaderboard.
 		 *
 		 * The `urls` verb answers an envelope, `{ data, rows, totals, slowest,
-		 * filters, provisional, as_of, limit, offset }`, so the payload is not
-		 * the slice. `rows` counts every URL the filters left and is what
-		 * `<UrlTable>` paginates on, and the header takes `totals`. `slowest`
-		 * is the same set ranked by `avg_ms` for the facts block, and `limit`
-		 * / `offset` are dropped because the fetcher's own args produced them.
-		 * `filters` says what the totals are OF, echoed by the verb rather
-		 * than read back off the client, so it describes the data in hand and
-		 * not what was typed since. `provisional` and `as_of` ride straight
-		 * off the reply, never derived: `provisional` says a stats read went
-		 * unanswered, so the totals may run short, and `as_of` is the server
-		 * clock the page's rows were current at, which `<UrlTable>` ages every
-		 * row against.
+		 * filters, ranked, as_of, limit, offset }`, so the payload is not the
+		 * slice. `rows` counts every row the filters left and is what
+		 * `<UrlTable>` paginates on, while `totals.urls` counts only the
+		 * distinct URLs among them: the two synthetic overflow rows are
+		 * sliceable but each stands for many URLs, so the pager takes `rows`
+		 * and the header takes `totals`. `slowest` is the same set ranked by
+		 * `avg_ms` for the facts block, and `limit` / `offset` are dropped
+		 * because the fetcher's own args produced them. `filters` says what
+		 * the totals are OF, echoed by the verb rather than read back off the
+		 * client, so it describes the data in hand and not what was typed
+		 * since. `ranked`, `provisional` and `as_of` ride straight off the
+		 * reply, never derived: `ranked` says whether the server answered
+		 * from its per-bucket ranked lists, `provisional` whether those
+		 * totals are short of an hour or record the writer has yet to fold
+		 * or rank, or of an index read that went unanswered, and `as_of` is
+		 * the server clock the page's rows were current at, which
+		 * `<UrlTable>` ages every row against.
 		 *
 		 * A malformed envelope publishes an empty table rather than throwing,
 		 * and no totals rather than zeroes: a zero here reads as a measurement.
@@ -86,6 +91,7 @@ export const views = {
 				rows: 0,
 				slowest: [],
 				filters: null,
+				ranked: false,
 				provisional: false,
 				as_of: 0,
 				loading: false,
@@ -100,6 +106,7 @@ export const views = {
 							rows: ( payload && payload.rows ) || 0,
 							slowest: ( payload && payload.slowest ) || [],
 							filters: ( payload && payload.filters ) || null,
+							ranked: ( payload && payload.ranked ) || false,
 							provisional:
 								( payload && payload.provisional ) || false,
 							as_of: ( payload && payload.as_of ) || 0,

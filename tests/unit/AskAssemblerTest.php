@@ -140,17 +140,17 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 'flame-builder', $brief['env']['worker_type'] );
 	}
 
-	/** A request brief names its server in its URL alone; the env block carries no server field. */
-	public function test_a_request_brief_names_its_server_in_its_url(): void {
+	public function test_a_request_brief_names_the_server_that_served_it(): void {
+		// The brief's numbers are scoped by server everywhere else; the env
+		// block has to name the same axis or a scoped figure reads as the
+		// site's. `host` used to sit here and no longer exists on the record.
 		$record                = $this->record();
-		$record['url']         = 'https://spoke-17.example/aisle-4417';
-		$record['server_name'] = 'heron-3301.test';
+		$record['server_name'] = 'spoke-17.example';
 
 		$brief = Ask_Assembler::for_request( $record, $this->rule() );
 
-		$this->assertStringStartsWith( 'https://spoke-17.example/', $brief['url'] );
-		$this->assertArrayNotHasKey( 'server_name', $brief['env'] );
-		$this->assertStringNotContainsString( 'heron-3301', (string) \wp_json_encode( $brief ) );
+		$this->assertSame( 'spoke-17.example', $brief['env']['server_name'] );
+		$this->assertArrayNotHasKey( 'host', $brief['env'] );
 	}
 
 	public function test_entries_ride_only_when_the_record_is_small(): void {
@@ -768,23 +768,6 @@ class AskAssemblerTest extends TestCase {
 		);
 	}
 
-	/** A category with no profiled request has no mean, and the brief says so. */
-	public function test_a_category_with_no_mean_reaches_the_brief_as_null(): void {
-		$categories = [
-			'sql'   => [ 'time' => null, 'count' => null, 'samples' => 0 ],
-			'wpdb'  => [ 'time' => 44.5, 'count' => 7.0, 'samples' => 3 ],
-		];
-
-		$unmeasured = Ask_Assembler::for_category( $categories, 'sql' );
-		$measured   = Ask_Assembler::for_category( $categories, 'wpdb' );
-		$overview   = Ask_Assembler::for_overview( [ 'data' => [], 'totals' => null, 'provisional' => false ], [ 'categories' => $categories ], '', [] );
-
-		$this->assertSame( [ null, null, null ], [ $unmeasured['avg_time_ms'], $unmeasured['avg_count'], $unmeasured['share'] ] );
-		$this->assertSame( [ [ 'wpdb', 44.5, 7.0 ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'], $o['avg_count'] ], $unmeasured['others'] ) );
-		$this->assertSame( [ [ 'sql', null, null ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'], $o['avg_count'] ], $measured['others'] ) );
-		$this->assertSame( [ [ 'wpdb', 44.5 ], [ 'sql', null ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'] ], $overview['categories'] ) );
-	}
-
 	/**
 	 * The rows are `Stats_Store::sums_to_display()`'s — `time` and `count`,
 	 * already divided by the window's request count. Reading anything else
@@ -854,6 +837,7 @@ class AskAssemblerTest extends TestCase {
 					'avg_peak_mb'         => 44.25,
 					'requests_per_second' => 0.83,
 				],
+				'estimated' => false,
 				'provisional' => false,
 				'data'      => [
 					[ 'hash' => '5efdf8a72d74', 'url' => 'https://example.com/slow', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4 ],
@@ -895,6 +879,36 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	/**
+	 * The per-shard overflow row sorts high by count, so it reaches this list.
+	 * Its key is not a url_hash — `dump_url` answers `URL not found` for it —
+	 * so the brief must not offer one, and must name the row as the table does.
+	 */
+	public function test_an_overview_brief_offers_no_hash_for_the_overflow_row(): void {
+		$brief = Ask_Assembler::for_overview(
+			[
+				'totals'    => [ 'requests' => 4210 ],
+				'estimated' => false,
+				'provisional' => false,
+				'data'      => [
+					[ 'hash' => 'other', 'url' => '', 'aggregate' => true, 'count' => 9100, 'avg_ms' => 61.5, 'max_ms' => 940.0 ],
+					[ 'hash' => '5efdf8a72d74', 'url' => 'https://example.com/slow', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4 ],
+				],
+			],
+			[ 'categories' => [] ],
+			'',
+			[]
+		);
+
+		$this->assertArrayNotHasKey( 'hash', $brief['urls'][0] );
+		$this->assertSame(
+			'traffic from URLs beyond the per-shard cap',
+			$brief['urls'][0]['url']
+		);
+		$this->assertSame( 9100, $brief['urls'][0]['count'] );
+		$this->assertSame( '5efdf8a72d74', $brief['urls'][1]['hash'] );
+	}
+
+	/**
 	 * Every filter in force rides the pointer. One left behind widens the
 	 * fetch to a set the brief never described.
 	 */
@@ -902,6 +916,7 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_overview(
 			[
 				'totals'    => [ 'urls' => 2, 'requests' => 6150, 'errors' => 7 ],
+				'estimated' => false,
 				'provisional' => false,
 				'data'      => [ [ 'hash' => '0e11a5c3b2d9', 'url' => 'https://example.com/erring', 'count' => 6100, 'errors' => 6 ] ],
 			],
@@ -918,7 +933,7 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_an_overview_pointer_carries_every_filter_in_force(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'requests' => 4210 ], 'provisional' => false, 'data' => [] ],
+			[ 'totals' => [ 'requests' => 4210 ], 'estimated' => false, 'provisional' => false, 'data' => [] ],
 			[ 'categories' => [] ],
 			'spoke-07',
 			[ 'search' => 'checkout', 'errors_only' => true, 'include_workers' => true ]
@@ -948,7 +963,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_an_overview_brief_says_when_the_totals_cannot_be_scoped(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => null, 'provisional' => false, 'data' => [] ],
+			[ 'totals' => null, 'estimated' => false, 'provisional' => false, 'data' => [] ],
 			[ 'categories' => [] ],
 			'spoke-01',
 			[]
@@ -958,23 +973,24 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 'spoke-01', $brief['server'] );
 	}
 
-	/** A page short of rows the Ledgers have yet to answer says so in its brief. */
-	public function test_an_overview_brief_carries_whether_its_page_is_provisional(): void {
+	/** The writer's URL count is a sketch's; a brief stating it bare reads as exact. */
+	public function test_an_overview_brief_carries_whether_its_url_count_is_estimated(): void {
 		$page = [ 'totals' => [ 'urls' => 4217, 'requests' => 9001 ], 'data' => [] ];
 
-		$provisional = Ask_Assembler::for_overview( $page + [ 'provisional' => true ], [ 'categories' => [] ], '', [] );
-		$settled     = Ask_Assembler::for_overview( $page + [ 'provisional' => false ], [ 'categories' => [] ], '', [] );
+		$estimated = Ask_Assembler::for_overview( $page + [ 'estimated' => true, 'provisional' => true ], [ 'categories' => [] ], '', [] );
+		$counted   = Ask_Assembler::for_overview( $page + [ 'estimated' => false, 'provisional' => false ], [ 'categories' => [] ], '', [] );
 
-		$this->assertTrue( $provisional['provisional'] );
-		$this->assertSame( 4217, $provisional['stats']['urls'] );
-		$this->assertFalse( $settled['provisional'] );
-		$this->assertArrayNotHasKey( 'estimated', $settled, 'the Ledgers count every URL' );
+		$this->assertTrue( $estimated['estimated'] );
+		$this->assertTrue( $estimated['provisional'], 'short of records the writer has yet to rank' );
+		$this->assertSame( 4217, $estimated['stats']['urls'] );
+		$this->assertFalse( $counted['estimated'] );
+		$this->assertFalse( $counted['provisional'] );
 	}
 
 	/** No server filter is the fleet, and the brief says so rather than ''. */
 	public function test_an_overview_brief_with_no_server_answers_for_the_fleet(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'requests' => 7 ], 'provisional' => false, 'data' => [] ],
+			[ 'totals' => [ 'requests' => 7 ], 'estimated' => false, 'provisional' => false, 'data' => [] ],
 			[ 'categories' => [] ],
 			'',
 			[]

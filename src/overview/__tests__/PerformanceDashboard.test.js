@@ -411,7 +411,7 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'forwards the urls slice server clock to UrlTable, and no ranked flag', async () => {
+	it( 'forwards the urls slice ranked flag and server clock to UrlTable', async () => {
 		mockView = loadedView( {
 			urls: {
 				data: [],
@@ -428,7 +428,7 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
-		expect( globalThis.__urlTableProps ).not.toHaveProperty( 'ranked' );
+		expect( globalThis.__urlTableProps.ranked ).toBe( true );
 		expect( globalThis.__urlTableProps.now ).toBe( 1758500000 );
 		unmount();
 	} );
@@ -560,6 +560,21 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'falls back to Status Codes when one server reports', async () => {
 			mockView = serverView( single );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'status'
+			);
+			unmount();
+		} );
+
+		it( 'falls back when the only key is the overflow key', async () => {
+			// `Other` is deleted as a non-server, so this reply HAS landed and
+			// carries zero servers — an answer, not a wait.
+			mockView = serverView(
+				nameTable( { [ NOW ]: { Other: [ 9, 90, 3, 9 ] } } )
+			);
 			const { unmount } = mountDash();
 			await flushEffects();
 
@@ -833,9 +848,10 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'offers every server the axis names, sorted', () => {
-		// `Other` is where servers past the cap file, and a scope to it reads
-		// their rows, so the picker offers it beside the rest.
+	it( 'never offers the overflow key as a server', () => {
+		// `Other` is the schema's synthetic overflow key. The axis is no longer
+		// capped, but buckets written before that change carry it for a whole
+		// retention window, and selecting it scopes the table to nothing.
 		const serverBuckets = {
 			[ NOW ]: { 'edge-01': [ 5, 50, 3, 5 ], Other: [ 9, 90, 3, 9 ] },
 		};
@@ -857,7 +873,6 @@ describe( 'PerformanceDashboard', () => {
 		);
 
 		expect( globalThis.__overviewProps.serverNames ).toEqual( [
-			'Other',
 			'edge-01',
 		] );
 		unmount();
@@ -906,33 +921,6 @@ describe( 'PerformanceDashboard', () => {
 		} );
 		await flushEffects();
 		expect( globalThis.__overviewProps.breakdownAvgMs ).toBe( 73.5 );
-		unmount();
-	} );
-
-	it( 'hands the Time Breakdown no divisor when no request on the board was timed', async () => {
-		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 2000,
-					global_avg_ms: null,
-					global_leaderboard: {
-						count: 780,
-						avg_ms: null,
-						categories: {},
-					},
-					breakdowns: { server: NO_SERIES, status: NO_SERIES },
-				},
-				loading: false,
-				error: null,
-			},
-		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
-		await flushEffects();
-		expect( globalThis.__overviewProps.breakdownAvgMs ).toBeNull();
 		unmount();
 	} );
 

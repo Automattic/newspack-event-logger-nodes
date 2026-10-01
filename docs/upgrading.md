@@ -4,97 +4,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 **Maintenance rule:** a release that changes any consumer-facing contract adds its entry here in the same commit as its CHANGELOG entry. No entry means nothing to do.
 
-## 0.112.1
-
-- **Install newspack-nodes 2.82.0 first, then remove the shared Ledger
-  files.** Each partition writes its own file of each stats Ledger,
-  `{base}/ledgers/<ledger>.p<N>.sqlite`, where 2.81.0 shared one file
-  that every partition queued on, and staging threw `database is locked`.
-  Below 2.82.0 this plugin stays dormant behind its admin notice. Rebuild
-  the stats under the deploy hold with the sequence below, then delete
-  each `{base}/ledgers/<ledger>.sqlite` with its `-wal` and `-shm`, which
-  nothing reads.
-
-## 0.112.0
-
-- **The stats move to Ledgers: flush them after deploying, and read
-  `urls` without `ranked` or `estimated`.** This release needs
-  newspack-nodes 2.81.0 for its Ledgers and the reads the stats pages
-  send; below it the plugin stays dormant behind its admin notice. Nothing
-  migrates the memcache-era keys or the 0.111.x Tables. Rebuild the stats
-  from the retained firehose under the deploy hold, where `<topology>` is
-  `performance` or `complete`, whichever `wp nodes status` shows active:
-
-  ```bash
-  wp nodes stop && \
-  wp nodes deactivate <topology> && \
-  wp nodes gc --force && \
-  wp nodes tables flush --yes && \
-  wp nodes memcache flush && \
-  wp nodes activate <topology> && \
-  wp nodes start
-  ```
-
-  `stop` holds the fleet and blocks until every worker's lock dir is gone
-  (`--timeout`, 90 s by default), so no worker writes a checkpoint after
-  `gc`. A `stop` that times out exits non-zero and leaves the fleet held,
-  so the chain stops there; `wp nodes start` lifts the hold once the
-  straggler is gone. `deactivate` takes the topology out of the active set. `gc --force`
-  then deletes every dir under the substrate's `logs` and `offsets` that
-  no active topology declares, however recently written: `requests.pN` and
-  the request builder's other outputs, the flame builder's `flames.pN`,
-  and the two Consumers' offsetlogs, `<topology>.firehose.pN` and
-  `<topology>.requests.pN`, with the state their checkpoints carry — the
-  request builder's in-flight requests and the flame builder's crumb and
-  unsettled span. `firehose.pN` and `alerts.p0` stay, because this plugin
-  and the substrate register them as producers. `tables flush --yes`
-  empties every declared Table and Ledger, the inactive topology's
-  included, from the CLI (decision 5). `memcache flush` rotates the install
-  salt, which drops the `urls` page and header cache that would serve pages
-  built before the flush. `activate` puts the topology back, and spawns
-  nothing while the hold stands. `start` lifts the hold and spawns the
-  fleet: a Consumer with no offsetlog starts at segment 0, offset 0, and
-  its first read moves to the oldest segment still retained, so the
-  request builder re-reads the whole retained firehose and the flame
-  builder the `requests.pN` it rewrites.
-  The 0.111.x flame builder wrote two more Tables no
-  topology declares now, one file per partition under the substrate's
-  `base_directory`: `{base_directory}/tables/flame-stats:aggregate.p{N}.sqlite`
-  and `{base_directory}/tables/flame-stats:url-fine.p{N}.sqlite`, each with
-  the `-wal` and `-shm` SQLite keeps beside it. Nothing reads or deletes
-  them: remove them by hand once the workers have restarted.
-  `flame-stats:url.p{N}.sqlite` stays; the url Table still holds each
-  URL's flame blob. A `urls` client drops `ranked` and `estimated`, which
-  the reply no longer carries, and reads `provisional` as a stats read that
-  went unanswered. An untimed URL's `min_ms` and `max_ms` are null, where
-  they were 0, in a `urls` or `dump_url` row and in every `ask` brief; a
-  client renders null as unmeasured. So is its `avg_ms`, and the `avg_ms`
-  of a `urls` header, `overview`'s `global_avg_ms` and its leaderboard's
-  `avg_ms` when no request in their scope was timed; `avg_peak_mb` is null
-  for a scope with no request at all. Such a URL ranks last on `avg_ms`,
-  `min_ms` and `max_ms` in either order, searched or not. A
-  `flame-builder` topology of your own names each Ledger it writes with
-  `add_ledger_target`, as the shipped one does, or `configure_stats`
-  refuses it.
-
-- **Every logged URL carries its host, and a record from before the
-  release that lacks one dead-letters.** A producer writes the `request`
-  line as `scheme://host/path` and refuses to log without `SERVER_NAME`. A
-  `requests.pN` record written before the release whose URL has no host
-  throws at the flame builder's intake, so its Consumer quarantines it
-  under `{deadletter_dir}/<topology>.requests.p{N}` and reads on; the stats
-  leave it out. `wp nodes ingest` replays a quarantined record, and one
-  whose URL still names no host dead-letters again. A sibling plugin
-  starting `Log_Manager` in a process with no `SERVER_NAME` is refused: the
-  constructor throws `RuntimeException` before it logs anything.
-
-- **`errors_only` counts a URL only in the key and bucket in which it
-  errored.** A key is one server's reader or worker traffic, so with
-  `include_workers` a URL that errs as a reader and runs clean as a worker
-  in the same bucket counts its reader traffic alone, where it counted both.
-  A `urls` page, the `performance_urls` tool and an `overview:` brief under
-  the filter read lower for such a URL; a client wanting its whole traffic
-  in that bucket reads the page unfiltered.
+## Unreleased
 
 - **`dump_url` tails by `--after`, and `--since` is gone.** A caller sending
   `--since=<epoch>` is refused `unknown option --since`. Send
@@ -244,6 +154,11 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   traffic, so they read lower than before for a URL that errs now and then;
   `errors` is unchanged. A client that took `count` under the filter for
   the URL's whole traffic reads it unfiltered instead.
+
+- **A row with no timed request ranks at 0 on `avg_ms`, `min_ms` and
+  `max_ms`** on a ranked page, as a folded page always ranked it. A client
+  expecting a ranked timing sort to omit timeout-only URLs filters on
+  `timed_count` itself.
 
 - **`Stats_Store`'s ranking API changed.** `ranked_writes()` takes
   `server => shard => rows`, not `server => rows`: pass each server's shard

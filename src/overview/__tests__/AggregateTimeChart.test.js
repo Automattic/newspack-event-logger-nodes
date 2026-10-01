@@ -12,8 +12,7 @@
 
 // Mock d3 — every call returns a shared chainable.
 jest.mock( 'd3', () => {
-	// Callable, so a scale the chart invokes answers a pixel.
-	const chain = () => 0;
+	const chain = {};
 	const fnNames = [
 		'select',
 		'selectAll',
@@ -39,7 +38,6 @@ jest.mock( 'd3', () => {
 		'y',
 		'y0',
 		'y1',
-		'defined',
 		'curve',
 		'keys',
 	];
@@ -761,35 +759,13 @@ describe( 'AggregateTimeChart', () => {
 			} )
 		);
 		expect(
-			container.querySelector( '.newspack-nodes-chart__stack' )
-		).toBeNull();
+			container
+				.querySelector( '.newspack-nodes-chart__stack' )
+				.getAttribute( 'aria-pressed' )
+		).toBe( 'false' );
 		expect(
 			getFormatEntry()( lastSlotIndex() ).map( ( e ) => e.label )
 		).not.toContain( 'Total' );
-		unmount();
-	} );
-
-	it.each( [
-		[ 'volume', true ],
-		[ 'cumulative', true ],
-		[ 'avg', false ],
-		[ 'memory', false ],
-	] )( 'offers the stack toggle under %s: %s', ( metric, offered ) => {
-		// A stack of counts or sums is a total; a stack of means is not.
-		const series = dimTable( {
-			[ bucketKeyNow() ]: { '2xx': [ 47, 470, 3, 47 ] },
-		} );
-		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
-				series,
-				metric,
-				breakdown: 'status',
-			} )
-		);
-		expect(
-			null !== container.querySelector( '.newspack-nodes-chart__stack' )
-		).toBe( offered );
 		unmount();
 	} );
 
@@ -832,43 +808,7 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
-	it.each( [
-		// Metric, then whether slot 41 (all timed out) and slot 43 (no
-		// requests) are measured: a mean over none is a gap, a count is a 0.
-		[ 'avg', false, false ],
-		[ 'memory', true, false ],
-		[ 'volume', true, true ],
-		[ 'cumulative', true, true ],
-	] )(
-		'plots %s with slot 41 measured: %s, slot 43 measured: %s',
-		( metric, timedOutMeasured, emptyMeasured ) => {
-			const at = ( index ) => SLOTS[ SLOTS.length - 1 - index ];
-			const series = dimTable( {
-				[ at( 40 ) ]: { 'edge-kea': [ 6, 900, 24, 3 ] },
-				[ at( 41 ) ]: { 'edge-kea': [ 7, 0, 0, 0 ] },
-				[ at( 42 ) ]: { 'edge-kea': [ 2, 500, 10, 2 ] },
-			} );
-			const { unmount } = renderComponent(
-				React.createElement( AggregateTimeChart, {
-					slots: SLOTS,
-					series,
-					metric,
-					breakdown: 'server',
-				} )
-			);
-			const [ band ] = d3Mock.datum.mock.calls.map(
-				( call ) => call[ 0 ]
-			);
-
-			expect( band[ 40 ].defined ).toBe( true );
-			expect( band[ 42 ].defined ).toBe( true );
-			expect( band[ 41 ].defined ).toBe( timedOutMeasured );
-			expect( band[ 43 ].defined ).toBe( emptyMeasured );
-			unmount();
-		}
-	);
-
-	it( 'draws a memory slot with no requests as a gap, never as 0 MB', () => {
+	it( 'draws a slot with no requests at zero in every series', () => {
 		const at = ( index ) => SLOTS[ SLOTS.length - 1 - index ];
 		const series = dimTable( {
 			[ at( 38 ) ]: { '2xx': [ 2, 500, 96, 2 ] },
@@ -892,13 +832,9 @@ describe( 'AggregateTimeChart', () => {
 		expect( err ).toHaveLength( 288 );
 		expect( err[ 40 ].y1 ).toBe( 77 );
 		expect( err[ 52 ].y1 ).toBe( 77 );
-		expect( [ err[ 40 ].defined, err[ 52 ].defined ] ).toEqual( [
-			true,
-			true,
-		] );
 		for ( let index = 41; index <= 51; index++ ) {
-			expect( err[ index ].defined ).toBe( false );
-			expect( ok[ index ].defined ).toBe( false );
+			expect( err[ index ].y1 ).toBe( ok[ 41 ].y1 );
+			expect( err[ index ].y1 ).toBe( 0 );
 		}
 		unmount();
 	} );

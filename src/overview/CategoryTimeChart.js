@@ -118,8 +118,7 @@ const formatYValue = ( val, mode ) => {
  * The `total` pseudo-category is dropped: it carries the request's own wall
  * time rather than any category's, so as a band it would swamp every other one.
  *
- * Every series gets a point in every slot, zero where the bucket holds nothing
- * (null for the average, which is then a gap),
+ * Every series gets a point in every slot, zero where the bucket holds nothing,
  * because `AreaTimeChart` takes its x-domain from the first series alone and
  * reads the rest by that index. A slot is five minutes of the 288 the reply
  * drew (`buildChartSlots()`), and both rates divide by the seconds it spans.
@@ -127,7 +126,7 @@ const formatYValue = ( val, mode ) => {
  * @param {{names: string[], byBucket: Object}}                decoded The category series, through `decodeNameTable()`.
  * @param {string}                                             mode    One of 'time', 'count', or 'average'.
  * @param {Array<{date:Date,bucketKey:string,seconds:number}>} axis    The axis, from the reply's slots.
- * @return {Array<{label:string,values:Array<{date:Date,value:?number}>}>} Series in rank order.
+ * @return {Array<{label:string,values:Array<{date:Date,value:number}>}>} Series in rank order.
  */
 const buildSeries = ( { names, byBucket }, mode, axis ) => {
 	const totals = {};
@@ -148,16 +147,12 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
 		values: axis.map( ( slot ) => {
 			const stats = byBucket[ slot.bucketKey ]?.[ index ];
 			if ( ! stats ) {
-				// A mean over no calls is unmeasured; a rate of none is 0.
-				return {
-					date: slot.date,
-					value: mode === 'average' ? null : 0,
-				};
+				return { date: slot.date, value: 0 };
 			}
 			const { t, c } = stats;
 			let value;
 			if ( mode === 'average' ) {
-				value = c > 0 ? t / c : null;
+				value = c > 0 ? t / c : 0;
 			} else if ( mode === 'time' ) {
 				value = t / 1000 / slot.seconds;
 			} else {

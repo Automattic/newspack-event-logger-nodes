@@ -38,6 +38,6 @@
     <p><span class="mono">Flame_Tree::cover_children()</span>, <span class="mono">Flame_Fold::flatten()</span> and <span class="mono">Flame_Builder_Node::fill()</span>.</p>
     <p>Raising is right for drawing. The browser prunes on a single cutoff and takes a whole subtree with anything it drops, and <span class="mono">treemapDice</span> scales children by <span class="mono">parentWidth / parent.value</span>.</p></div>
   <div class="ok"><h4>The rule</h4>
-    <p>Every stat reads <span class="mono">$request['duration_ms']</span>, and nothing measured reads a flame <span class="mono">value</span>. That covers every Ledger of decision 1 plus the per-URL aggregate's <span class="mono">sum_value</span>. Raising is wrong for counting.</p></div>
+    <p>Every stat reads <span class="mono">$request['duration_ms']</span>, and nothing measured reads a flame <span class="mono">value</span>. That covers every namespace of decision 1 plus the per-URL aggregate's <span class="mono">sum_value</span>. Raising is wrong for counting.</p></div>
 </div>
 </div>

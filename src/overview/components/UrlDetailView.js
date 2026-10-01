@@ -359,7 +359,7 @@ export default function UrlDetailView( {
 			{ urlDetail.aggregate_profiles?.categories && (
 				<ProfileWithCaption
 					profiles={ urlDetail.aggregate_profiles.categories }
-					totalMs={ urlDetail.stats?.avg_ms }
+					totalMs={ urlDetail.stats?.avg_ms || 0 }
 					totalProfiledTime={
 						urlDetail.aggregate_profiles?.total_time
 					}

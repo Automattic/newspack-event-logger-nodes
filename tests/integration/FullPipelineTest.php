@@ -62,7 +62,7 @@ class FullPipelineTest extends TestCase {
 		$job_timestamp = Core::$now - 14.75;
 		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "1" ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'ts' => 1 ] );
-		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET https://kea-7713.test/x', 'ts' => 1 ] );
+		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'init (start)', 'l' => '', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 4, 'rid' => 'r1', 'k' => 'init (complete)', 'duration_ms' => 5.0, 'ts' => 1 ] );
 		// Job entry from the firehose path: LogManager wraps the job body under
@@ -92,7 +92,7 @@ class FullPipelineTest extends TestCase {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
 
-		$store      = $this->stats_store( 0 );
+		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->name( 'flame-builder' );
 		$fb->set_stats_store( $store );
@@ -145,11 +145,11 @@ class FullPipelineTest extends TestCase {
 		$this->assertNotEmpty( $process['children'] );
 		$this->assertSame( 'init', $process['children'][0]['name'] );
 
-		// 3. A settle writes the URL aggregate to the url Table.
-		$fb->settle();
-		$url_hash = Log_Manager::url_hash( 'https://kea-7713.test/x' );
+		// 3. FlameBuilder.flush() writes URL aggregate to memcache.
+		$fb->flush();
+		$url_hash = Log_Manager::url_hash( '/x' );
 		$stats    = $store->url_aggregate( $url_hash );
-		$this->assertNotNull( $stats, 'a settle writes the per-URL aggregate' );
+		$this->assertNotNull( $stats, 'flush should write per-URL aggregate' );
 		$this->assertSame( 1, $stats['flame_raw']['count'] );
 	}
 }

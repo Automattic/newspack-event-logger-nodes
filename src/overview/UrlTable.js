@@ -27,10 +27,7 @@ import { TextControl } from '@wordpress/components';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { PAGE_CONTENT_CLASS } from '../components/DashboardShell';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
-import {
-	formatAge,
-	formatGroupedCount,
-} from '@newspack-nodes/shared/utils/formatters';
+import { formatAge } from '@newspack-nodes/shared/utils/formatters';
 
 /**
  * Row height in pixels.
@@ -98,7 +95,16 @@ const COLUMNS = [
 		width: 'minmax(0, 1fr)',
 		label: __( 'URL', 'newspack-event-logger-nodes' ),
 		kind: 'code',
-		render: ( url ) => <code>{ url.url }</code>,
+		render: ( url ) => (
+			<code>
+				{ url.aggregate
+					? __(
+							'traffic from URLs beyond the per-shard cap',
+							'newspack-event-logger-nodes'
+					  )
+					: url.url }
+			</code>
+		),
 	},
 	{
 		field: 'count_2xx',
@@ -266,7 +272,7 @@ const UrlRow = memo(
 	 * @param {boolean}                      props.isSelected  Whether the detail modal is open on this row.
 	 * @param {(url: Object) => void}        props.onSelect    Receives the row on click or Enter/Space.
 	 * @param {(n: number, s?: string) => *} props.formatNum   Number formatter, from the table.
-	 * @param {number}                       props.maxAvg      The page's p95 of the measured bar metric; 0 draws no bar.
+	 * @param {number}                       props.maxAvg      The page's p95 of the bar metric; 0 draws no bar.
 	 * @param {string}                       props.metric      'memory' bars avg_peak_mb, 'volume' bars count, 'avg' and 'cumulative' bar avg_ms.
 	 * @param {number}                       props.now         Unix timestamp the page's ages are measured from.
 	 * @param {boolean}                      props.errorCounts Whether the count cell shows the row's `errors`.
@@ -288,15 +294,11 @@ const UrlRow = memo(
 		} else if ( metric === 'volume' ) {
 			barField = 'count';
 		}
-		// A URL no timed request reached is unmeasured, and draws no bar.
-		const barValue = url[ barField ];
-		let barStyle;
-		if ( Number.isFinite( barValue ) ) {
-			const barPct = maxAvg > 0 ? ( barValue / maxAvg ) * 100 : 0;
-			barStyle = {
-				background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
-			};
-		}
+		const barValue = url[ barField ] || 0;
+		const barPct = maxAvg > 0 ? ( barValue / maxAvg ) * 100 : 0;
+		const barStyle = {
+			background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
+		};
 		const handleKeyDown = ( e ) => {
 			if ( e.key === 'Enter' || e.key === ' ' ) {
 				e.preventDefault();
@@ -304,16 +306,23 @@ const UrlRow = memo(
 			}
 		};
 
+		// Stands for many URLs; its key is no url_hash, so nothing to open.
+		const selectable = ! url.aggregate;
+
 		return (
 			<div
-				role="button"
-				tabIndex={ 0 }
-				data-ask={ `url:${ url.hash }` }
-				onClick={ () => onSelect( url ) }
-				onKeyDown={ handleKeyDown }
+				{ ...( selectable
+					? {
+							role: 'button',
+							tabIndex: 0,
+							'data-ask': `url:${ url.hash }`,
+							onClick: () => onSelect( url ),
+							onKeyDown: handleKeyDown,
+					  }
+					: {} ) }
 				className={ `event-logger-table__row newspack-nodes-table__row${
 					isSelected ? ' is-selected' : ''
-				}` }
+				}${ selectable ? '' : ' is-aggregate' }` }
 				style={ {
 					height: ROW_HEIGHT,
 					gridTemplateColumns: GRID_TEMPLATE,
@@ -344,8 +353,9 @@ const UrlRow = memo(
  * @param {?Object}                  props.selectedUrl    The row the detail modal is open on, or null.
  * @param {(url: Object) => void}    props.onSelect       Receives a row on click or Enter/Space, and is forwarded to each row.
  * @param {(params: Object) => void} props.onParamsChange Receives `search`, `sort`, `order`, `offset`, `errorsOnly` and `includeWorkers` whenever one of them changes.
- * @param {number}                   props.totalUrls      URLs the server's filters left, which the pager counts as rows.
+ * @param {number}                   props.totalUrls      Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs.
  * @param {string}                   [props.metric]       Chart metric the row bars scale.
+ * @param {boolean}                  [props.ranked]       Whether the server answered from its per-bucket ranked lists rather than the whole index.
  * @param {number}                   [props.now]          Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
  * @param {boolean}                  [props.errorCounts]  Whether the reply was built under "Errors Only", so the count column shows each row's `errors`.
  * @param {?string}                  [props.error]        The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
@@ -359,6 +369,7 @@ export default function UrlTable( {
 	onParamsChange,
 	totalUrls,
 	metric = 'volume',
+	ranked = false,
 	now = 0,
 	errorCounts = false,
 	error = null,
@@ -466,8 +477,7 @@ export default function UrlTable( {
 			field = 'count';
 		}
 		const values = filteredUrls
-			.map( ( u ) => u[ field ] )
-			.filter( Number.isFinite )
+			.map( ( u ) => u[ field ] || 0 )
 			.sort( ( a, b ) => a - b );
 		if ( values.length === 0 ) {
 			return 0;
@@ -487,7 +497,7 @@ export default function UrlTable( {
 		if ( num === null || num === undefined ) {
 			return '-';
 		}
-		return formatGroupedCount( Math.round( num ) ) + suffix;
+		return Math.round( num ).toLocaleString() + suffix;
 	}, [] );
 
 	/**
@@ -635,11 +645,12 @@ export default function UrlTable( {
 								'%1$s–%2$s of %3$s rows',
 								'newspack-event-logger-nodes'
 							),
-							formatGroupedCount( offset + 1 ),
-							formatGroupedCount(
-								Math.min( offset + URLS_PER_PAGE, total )
-							),
-							formatGroupedCount( total )
+							( offset + 1 ).toLocaleString(),
+							Math.min(
+								offset + URLS_PER_PAGE,
+								total
+							).toLocaleString(),
+							total.toLocaleString()
 						) }
 					{ total > 0 &&
 						total <= URLS_PER_PAGE &&
@@ -651,8 +662,19 @@ export default function UrlTable( {
 								total,
 								'newspack-event-logger-nodes'
 							),
-							formatGroupedCount( total )
+							total.toLocaleString()
 						) }
+					{ ranked && (
+						<>
+							{ total > 0 && ' · ' }
+							<span className="event-logger-table__ranked-note">
+								{ __(
+									'Ranked per bucket; Avg and Mem are means of bucket averages',
+									'newspack-event-logger-nodes'
+								) }
+							</span>
+						</>
+					) }
 				</span>
 				{ total > URLS_PER_PAGE && (
 					<div className="event-logger-table__pagination-controls">

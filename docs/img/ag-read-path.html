@@ -20,7 +20,7 @@
 </style>
 <div class="sheet">
 <h1>The <span class="mono">complete</span> worker, one partition of it</h1>
-<p class="sub">Four Consumers, two of them tailing what another branch wrote. Solid boxes are Nodes the topology declares; dashed boxes are partition logs on disk; green is the flame builder's SQLite stats stores. One firehose Consumer feeds two branches through a Tee, and a job crosses two logs, an ingress log and <span class="mono">jobs.pN</span>, before a handler runs it.</p>
+<p class="sub">Four Consumers, two of them tailing what another branch wrote. Solid boxes are Nodes the topology declares; dashed boxes are partition logs on disk; green is the flame builder's SQLite stats Tables. One firehose Consumer feeds two branches through a Tee, and a job crosses two logs, an ingress log and <span class="mono">jobs.pN</span>, before a handler runs it.</p>
 
 <div class="g" id="g">
 <svg class="wire" id="wire" width="1052" height="830"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
@@ -50,9 +50,9 @@
 <div class="lane" style="top:540px">flames and stats</div>
 <div class="b log" id="req2" style="left:0;top:558px;width:150px"><div class="t">requests.pN</div><div class="s">what request-builder wrote</div></div>
 <div class="b node" id="rc" style="left:196px;top:558px;width:176px"><div class="t">requests:consumer</div><div class="s">snapshots flame-builder: the crumb of the last record counted</div></div>
-<div class="b node" id="fb" style="left:418px;top:558px;width:372px"><div class="t">flame-builder</div><div class="s">Flame_Builder_Node: builds each request's flame tree, files the request in the 5-minute bucket it FINISHED in, settles its span into the Ledgers at the requests Consumer's 30 s checkpoint, judges the governing rule's auto-tune thresholds. <span class="mono">add_ledger_target</span> names each stats Ledger, <span class="mono">set_url_target</span> the url Table, and <span class="mono">configure_stats</span> builds a Stats_Store over them; <span class="mono">set_is_hub</span> turns on the per-server aggregates.</div></div>
+<div class="b node" id="fb" style="left:418px;top:558px;width:372px"><div class="t">flame-builder</div><div class="s">Flame_Builder_Node: builds each request's flame tree, files the request in the 5-minute bucket it FINISHED in, flushes every 5 s from its Router-tick timer when anything folded, rolls closed hours up, judges the governing rule's auto-tune thresholds. <span class="mono">set_*_target</span> names each stats Table and <span class="mono">configure_stats</span> builds a Stats_Store over them; <span class="mono">set_is_hub</span> turns on the per-server aggregates.</div></div>
 <div class="b out" id="fl" style="left:836px;top:558px;width:216px"><div class="t">flames.pN</div><div class="s">per-request flame data; flame-index</div></div>
-<div class="b mc" id="mc" style="left:836px;top:640px;width:216px"><div class="t">SQLite Ledgers and url Table</div><div class="s">nine stats:* Ledgers every partition appends to, one APPEND each a settle; flame-stats:url a partition, through Stats_Store</div></div>
+<div class="b mc" id="mc" style="left:836px;top:640px;width:216px"><div class="t">SQLite Tables evlog:pN</div><div class="s">flame-stats:aggregate, :url and :url-fine, through Stats_Store, sums added, 500 keys a flush batch</div></div>
 <div class="b node" id="at" style="left:836px;top:766px;width:216px"><div class="t">flame-builder:auto-tuner</div><div class="s">hidden sibling; mutates one rule, Rule_Set::save()</div></div>
 </div>
 

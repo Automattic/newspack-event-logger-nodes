@@ -27,7 +27,6 @@ use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
-use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Core;
 // Both plugins have a `Core`; the hook instrumentation is THIS plugin's.
 use Newspack_Event_Logger_Nodes\App\Core as Hooks;
@@ -164,11 +163,11 @@ class Findings {
 		],
 		'url_read'         => [
 			'detail' => 'The event logger times this step of the URL read itself, whatever the rule says, so no rule edit reaches inside it.',
-			'why'    => '%s is a step of `Performance_CI_Node`\'s URL read, whose `(complete)` line says whether its cache hit or how many rows it read. Look there — nothing a rule can switch on runs inside it.',
+			'why'    => '%s is a step of `Performance_CI_Node`\'s URL read, whose `(complete)` line says whether its cache hit or how many rows it folded. Look there — nothing a rule can switch on runs inside it.',
 		],
 		'upkeep'           => [
 			'detail' => 'This is a builder\'s own work, told whatever the rule says, so no rule edit reaches inside it.',
-			'why'    => '%s is a step of a builder\'s upkeep on its worker, whose `(complete)` line counts what it wrote or carried. Look there — nothing a rule can switch on runs inside it.',
+			'why'    => '%s is a step of a builder\'s upkeep on its worker, whose `(complete)` line counts what it wrote, folded or healed. Look there — nothing a rule can switch on runs inside it.',
 		],
 		'listener'         => [
 			'detail' => 'This is one listener on a significant hook — the time is inside this callback.',
@@ -1224,8 +1223,8 @@ class Findings {
 		}
 		$metric = [
 			'count'       => Core::num_int( $stats['count'] ?? 0 ),
-			'avg_ms'      => Stats_Store::measured( $stats['avg_ms'] ?? null ),
-			'max_ms'      => Stats_Store::measured( $stats['max_ms'] ?? null ),
+			'avg_ms'      => Core::num_float( $stats['avg_ms'] ?? 0 ),
+			'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
 			'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 		];
 		return [ self::insufficient( $url, $rule, $metric, 'url stats' ) ];

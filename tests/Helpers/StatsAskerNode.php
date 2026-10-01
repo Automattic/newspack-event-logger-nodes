@@ -44,20 +44,17 @@ final class Stats_Asker_Node extends Node {
  */
 final class Stats_Ask_Recorder_Node extends Node {
 
-	/** The reads `$refuse` refuses: a Table's and a Ledger's. */
-	private const READS = [ 'MGET', 'SMEMBERS', 'SUM', 'TOP', 'MEMBERS' ];
-
 	/** @var list<array{to: string, value: string|array<array-key,mixed>}> Every request that passed, in order: whom it asked, and what. */
 	public array $asked = [];
 
 	/**
-	 * While set, a pattern: a read TO a node it matches is answered here
-	 * with the TM_ERROR its store sends when the read fails, and never
-	 * reaches the store.
+	 * While set, a pattern: an `MGET` or `SMEMBERS` asking a key it matches is
+	 * answered here with the TM_ERROR its Table sends when the read fails, and
+	 * never reaches the Table: a batch that went unanswered.
 	 */
 	public string $refuse = '';
 
-	/** @var list<string> Every node a refused read was TO, in order. */
+	/** @var list<string> Every key the pattern matched in a refused request, in order. */
 	public array $refused = [];
 
 	/**
@@ -66,17 +63,15 @@ final class Stats_Ask_Recorder_Node extends Node {
 	public function fill( array $message ): void {
 		if ( 0 !== ( Core::num_int( $message[ Message::TYPE ] ) & Message::TM_REQUEST ) ) {
 			$value         = $message[ Message::VALUE ];
-			$to            = Core::as_string( $message[ Message::TO ], '' );
 			$this->asked[] = [
-				'to'    => $to,
+				'to'    => Core::as_string( $message[ Message::TO ], '' ),
 				'value' => \is_array( $value ) || \is_string( $value ) ? $value : '',
 			];
-			$verb = \is_array( $value ) ? (string) \array_key_first( $value ) : (string) \strtok( Core::as_string( $value, '' ), " \n" );
-			if ( '' !== $this->refuse && \in_array( $verb, self::READS, true ) && 1 === \preg_match( $this->refuse, $to ) ) {
-				$this->refused[]         = $to;
+			$verb = $this->refuses( $value );
+			if ( null !== $verb ) {
 				$error                   = Message::new_message();
 				$error[ Message::TYPE ]  = Message::TM_ERROR;
-				$error[ Message::FROM ]  = $to;
+				$error[ Message::FROM ]  = $message[ Message::TO ];
 				$error[ Message::TO ]    = $message[ Message::FROM ];
 				$error[ Message::ID ]    = $message[ Message::ID ];
 				$error[ Message::VALUE ] = "{$verb}: backend read failed\n";
@@ -85,5 +80,28 @@ final class Stats_Ask_Recorder_Node extends Node {
 			}
 		}
 		parent::fill( $message );
+	}
+
+	/**
+	 * The read verb of a request asking a key `$refuse` matches, or null;
+	 * each key it matches joins `$refused`.
+	 *
+	 * @param mixed $value The request's VALUE.
+	 */
+	private function refuses( mixed $value ): ?string {
+		$words = '' !== $this->refuse && \is_string( $value ) ? ( \preg_split( '/\s+/', \trim( $value ), -1, \PREG_SPLIT_NO_EMPTY ) ?: [] ) : [];
+		$verb  = \array_shift( $words );
+		if ( 'SMEMBERS' === $verb ) {
+			// Its limit comes before the keys.
+			\array_shift( $words );
+		} elseif ( 'MGET' !== $verb ) {
+			return null;
+		}
+		$matched = \preg_grep( $this->refuse, $words ) ?: [];
+		if ( [] === $matched ) {
+			return null;
+		}
+		\array_push( $this->refused, ...\array_values( $matched ) );
+		return $verb;
 	}
 }

@@ -9,21 +9,17 @@
  * every aggregate the dashboards read.
  *
  * Per-request counters land in `$pending`, one accumulator per 5-minute bucket,
- * keyed by the start of the bucket the request COMPLETED in. The record
- * reaches this node some way behind that moment, so around a boundary it
- * routinely lands in a bucket older than the newest one seen — which is why
- * `$pending` is a map rather than one rotating slot.
- * What the node has folded since it last settled is the SPAN: `$pending` and
- * the per-URL flame trees in `$url_acc`, each folded onto its URL's stored
- * aggregate. The Consumer's interval checkpoint, once a
- * `Consumer_Node::CHECKPOINT_INTERVAL_S`, calls `settle()`, which appends
- * the span's deltas to the stats Ledgers through `Stats_Store` (the stats
- * schema), one row a measurement at its bucket, drains the trees through
- * `drain_url_stats()`, and starts a new span. Nothing is read first and
- * nothing is merged: a reader sums every span's rows. Every other checkpoint
- * — a clean stop, a crawl's per record one — carries the span in the
- * offsetlog through `save_state()`, and the successor's `restore_state()`
- * takes it back, so what one span folded is appended once.
+ * keyed by the bucket the request COMPLETED in. The record reaches this node
+ * some way behind that moment, so around a boundary it routinely lands in a
+ * bucket older than the newest one seen — which is why `$pending` is a map
+ * rather than one rotating slot.
+ * `flush()` merges each bucket into the stats Tables through `Stats_Store`
+ * (the stats schema) at most once per FLUSH_INTERVAL_SEC, capping as it writes,
+ * then drops them. It also folds each hour of the URL index its data clock
+ * has left into the coarse `urls_h` tier, which is what keeps a reader off
+ * 288 fine buckets per shard. Per-URL flame trees take a different route:
+ * they are held in `$url_acc`, folded onto each URL's stored aggregate, and
+ * drain through `drain_url_stats()`.
  *
  * One side channel hangs off that pipeline: the request's governing `Rule`
  * drives auto-tune. Hooks that fire too often, custom events to disable, and
@@ -35,17 +31,24 @@
  *
  * Two clocks, and a reprocess of the firehose tells them apart. STREAM time
  * is the records' own stamps: what a record is filed under, what its per-URL
- * tree and categories age by. WALL time is the readers' and the store's: the
- * window a reader reads, a Ledger's lifespan, the url Table's TTL, and
- * idleness. A read on the wrong side files a replay a day late or drops it
- * past the lifespan on arrival.
+ * tree and categories age by, and what folds. WALL time is the readers' and
+ * the store's: the window a reader reads, the ranking cadence its page cache
+ * sets, every TTL, and idleness. A read on the wrong side files a replay a
+ * day late or expires it on arrival.
  *
  * | Read                                        | Clock  | Why                                  |
  * |---------------------------------------------|--------|--------------------------------------|
  * | `$timestamp`, the completion, `$pending` key | STREAM | a record is filed where it finished  |
  * | clamp `min( $now, … )`                      | WALL   | readers walk back from the wall      |
  * | tree node `ts`, category cutoff (`$done`)   | STREAM | the per-URL aggregate ages as live   |
- * | `last_modified`, `settled_at`, `worked_at`  | WALL   | a reader's dedup, reports, `idle_since()` |
+ * | `$data_clock`, `foldable()`'s hours         | STREAM | an hour folds once the data left it  |
+ * | `foldable()`'s quiet, `worked_at_hr`        | MONO   | a duration inside this process       |
+ * | `foldable()`'s `$expiring`                  | WALL   | the fine keys' TTL runs on the wall  |
+ * | `plan_at()`, the read plan and fine floor   | WALL   | the window a reader reads            |
+ * | `rank_due()`, `$current`, `ranked_at`       | WALL   | the page cache's refresh, the reader's open bucket |
+ * | `persist_url_names()`, `drain_url_stats()` hour | WALL | the filing refresh against the TTL |
+ * | `persist_url_tokens()`                      | WALL   | a member's lifetime and a search's window |
+ * | `last_modified`, `last_flush_time`, `worked_at` | WALL | a reader's dedup, reports, `idle_since()` |
  * | `apply_auto_tune()`'s lock deadline         | MONO   | a stop's wait, a duration here       |
  *
  * @package Newspack_Event_Logger_Nodes
@@ -57,6 +60,7 @@ use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Idle_Reporter;
+use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 use Newspack_Nodes\Shutdown_Sweeper;
@@ -70,21 +74,23 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Builds flame trees and the stats schema from completed requests.
  *
- * @phpstan-type Leaderboard_Acc array{count?: int, sum_req_time?: float|int, categories: array<array-key,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<array-key,array<int,float|int>>}>}
- * @phpstan-type Dim_Values array<array-key,array{0: int,1: float|int,2: float|int,3: int}>
- * @phpstan-type Cat_Values array<array-key,array{0: float|int,1: float|int,2: int}>
+ * @phpstan-type Pending_Write array{parts: array<int,string>, bucket: string, merge: \Closure(array<array-key,mixed>): array<array-key,mixed>, refused: \Closure|null, landed: \Closure|null, group: string|null}
+ * @phpstan-type Leaderboard_Acc array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}
+ * @phpstan-type Dim_Values array<string,array{0: int,1: float|int,2: float|int,3: int}>
+ * @phpstan-type Cat_Values array<string,array{0: float|int,1: float|int,2: int}>
  * @phpstan-type Bucket_Acc array{
  *   hourly: array<string,mixed>,
- *   dim: array<array-key,Dim_Values>,
- *   dim_by_server: array<array-key,array<array-key,Dim_Values>>,
- *   url_dim: array<array-key,array<array-key,Dim_Values>>,
- *   url_stats: array<array-key,array<array-key,array<int,int|float|null>>>,
- *   url_stats_worker: array<array-key,array<array-key,array<int,int|float|null>>>,
+ *   dim: array<string,Dim_Values>,
+ *   dim_by_server: array<string,array<string,Dim_Values>>,
+ *   url_dim: array<array-key,array<string,Dim_Values>>,
+ *   url_stats: array<array-key,array<array-key,mixed>>,
+ *   url_stats_worker: array<array-key,array<array-key,mixed>>,
+ *   url_names: array<array-key,string>,
  *   cat: Cat_Values,
- *   cat_by_server: array<array-key,Cat_Values>,
+ *   cat_by_server: array<string,Cat_Values>,
  *   cat_by_url: array<array-key,Cat_Values>,
  *   leaderboard: Leaderboard_Acc,
- *   leaderboard_by_server: array<array-key,Leaderboard_Acc>
+ *   leaderboard_by_server: array<string,Leaderboard_Acc>
  * }
  */
 class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Reporter {
@@ -109,19 +115,19 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private const TOTAL_KEY = 'total';
 
 	/**
-	 * The six record axes, each as `axis name => request-record field`.
+	 * The seven dimensional axes, each as `axis name => request-record field`.
 	 *
 	 * One table drives all three accumulations of a request — global, per
 	 * reporting server, and per URL — so an axis added here appears in all
 	 * three. `status_category` is the one field no producer writes;
-	 * `accumulate_dimensions()` derives it from the status code first. The
-	 * seventh axis, `server`, is the URL's host and files globally alone.
+	 * `accumulate_dimensions()` derives it from the status code first.
 	 *
 	 * @var array<string,string>
 	 */
 	const DIM_FIELDS = [
 		'status'  => 'status_category',
 		'method'  => 'request_method',
+		'server'  => 'server_name',
 		'country' => 'country_code',
 		'from'    => 'http_from',
 		'ua'      => 'user_agent',
@@ -147,30 +153,24 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** Per-URL profile entry trim trigger. See ENTRY_LIMIT_GLOBAL_LOWER. */
 	const ENTRY_LIMIT_URL_UPPER    = 40;
 
-	/** Seconds between the Router-tick timer's firings: the auto-tune emit's cadence. */
-	const AUTO_TUNE_INTERVAL_SEC = 5;
+	/** Seconds between periodic flush() runs: the cadence of the Router-tick timer. */
+	const FLUSH_INTERVAL_SEC = 5;
 
 	/**
-	 * Bytes of per-URL flame trees a carried span holds, past which a tree is
-	 * left out and its URL keeps the aggregate it last settled.
-	 *
-	 * Sized from the OUTER limit, not from an observed size: the checkpoint
-	 * record is the reader's cursor and every snapshot's state, and
-	 * `add_snapshot_node` lifts its PIPE_BUF cap to
-	 * `Partition_Node::MAX_LARGE_LINE_SIZE` (32 MiB). This caps the trees
-	 * alone, so the crumb and `$pending`, which one span bounds, ride it
-	 * uncounted, and half the cliff leaves the other half for them. A staging
-	 * hub held 2.1–3.5 MB of trees a checkpoint.
-	 *
-	 * Protected so a test double can reach the cap without 16 MiB of trees.
+	 * Seconds a builder consumes nothing before it is quiet: twelve flushes,
+	 * a minute. A replay drains at every flush and every checkpoint, and its
+	 * slowest measured flush, 15.8 s, fits three times over, while a builder
+	 * quiet from an hour's close still folds it inside the next hour's first
+	 * bucket, the lag a reader forgives (`lagging()`). The request builder
+	 * consumes on every tick of a replay, and its window is six minutes, so a
+	 * minute costs a dead worker's request no whole window.
 	 */
-	protected const CARRY_URL_BYTES = 16777216;
+	public const IDLE_AFTER_SEC = 12 * self::FLUSH_INTERVAL_SEC;
 
 	/**
-	 * Monotonic clock seam, replacing `hrtime( true )` where a clean stop
-	 * times its wait on a sibling's auto-tune lock. Tests reassign it to step
-	 * the monotonic clock apart from the wall one.
-	 * Signature: `function (): int`, nanoseconds.
+	 * Monotonic clock seam, replacing `hrtime( true )` where a builder times
+	 * its own quiet or a wait. Tests reassign it to step the monotonic clock
+	 * apart from the wall one. Signature: `function (): int`, nanoseconds.
 	 *
 	 * @var \Closure|null
 	 */
@@ -202,8 +202,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	protected const INTERN_TABLE_LIMIT = 50000;
 
-	/** The value a dimension files a request under when its record names none. */
-	private const UNKNOWN_VALUE = 'Unknown';
+	/**
+	 * The value every dimension uses for a producer that reported none.
+	 *
+	 * The dashboard builds its server picker from the `server` dimension, so
+	 * this is a name an operator can select — which means the URL index files
+	 * such rows under it too, or picking it empties the table.
+	 */
+	private const UNKNOWN_VALUE = Stats_Store::UNKNOWN_SERVER;
 
 	/**
 	 * Where each RAW-COMPARABLE field sits on an index line, `[offset, length]`.
@@ -218,10 +224,20 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	];
 
 	/**
-	 * URL blobs one `MSET` of a settle carries: the batch bounds what one
-	 * request serializes while the blobs themselves are held either way.
+	 * Keys per read/write batch in a flush. Bounds the held set: one chunk is
+	 * at most one shard's worth of rows, which is the largest value the schema
+	 * writes. Raise only against a measured peak.
 	 */
 	private const WRITE_BATCH_KEYS = 500;
+
+	/**
+	 * Closed hours one flush folds into the coarse tier, and stale hours it
+	 * ranks. A bound, not a cadence: steady state has at most one hour to
+	 * fold, and this is what keeps a cold start's backfill, or a replay's
+	 * re-ranking, off a single flush. One number for both, because each holds
+	 * one hour's coarse rows in memory per unit spent.
+	 */
+	private const ROLLUP_HOURS_PER_FLUSH = 2;
 
 	/**
 	 * Auto-tune decisions accrued since the last emit: the key `Auto_Tuner_Node`
@@ -232,35 +248,145 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private array $auto_tune = [ 'disable_hooks' => [], 'disable_custom_events' => [], 'add_significant_events' => [] ];
 
+	/**
+	 * Hours this worker has folded into the coarse tier, pruned to the window.
+	 *
+	 * Decision 17 puts the fold on the flush path precisely BECAUSE one
+	 * partition has one writer — so the process that folded an hour is the
+	 * authority on whether it is folded, and steady state probes nothing. A
+	 * restart empties it and pays one probe, which re-adopts a predecessor's
+	 * work.
+	 *
+	 * @var array<string,bool>
+	 */
+	private array $folded_hours = [];
+
+	/**
+	 * The read plan last built, with the bucket it was built in. The plan is a
+	 * function of that bucket and the store's TTL alone, so every tick and
+	 * flush inside one bucket shares it; `set_stats_store()` drops it.
+	 *
+	 * @var array{bucket: string, plan: array{fine: list<string>, hours: list<string>}}|null
+	 */
+	private ?array $plan_memo = null;
+
+	/**
+	 * The merged rows the fine-tier intents landed this flush, by bucket then
+	 * server then READER shard then hash — never worker-family, which never
+	 * ranks. The covered-shard set falls out of the keys, so ranking reads
+	 * back only the shards missing here, and a bucket with none landed is not
+	 * ranked at all: the lists are a pure function of the stored reader rows.
+	 * Emptied after ranking.
+	 *
+	 * @var array<string,array<string,array<string,array<array-key,mixed>>>>
+	 */
+	private array $flushed_rows = [];
+
+	/**
+	 * Each bucket this flush wrote rows into, and the index it holds once
+	 * this flush's entries were merged in: what ranking gap-fills from, so a
+	 * bucket the flush just wrote costs no second index read. Emptied with
+	 * `$flushed_rows`.
+	 *
+	 * @var array<string,array<string,array{0:string,1:int}>>
+	 */
+	private array $flushed_index = [];
+
+	/**
+	 * When each bucket was last ranked, pruned to the fine window.
+	 *
+	 * @var array<string,int>
+	 */
+	private array $ranked_at = [];
+
+	/**
+	 * Buckets a flush wrote rows into that have not been ranked since,
+	 * pruned the same way.
+	 *
+	 * The closed-bucket clause fires on a WRITE, and a bucket whose last
+	 * writes landed inside the cadence gets none after it closes — so
+	 * without this its final rows would never reach its lists.
+	 *
+	 * @var array<string,bool>
+	 */
+	private array $rank_pending = [];
+
+	/**
+	 * Folded hours the roll-up found with a server unranked, each until its
+	 * servers are ranked from the stored rows, and pruned to the read plan's
+	 * hours, each beside the cause that made it stale, which its `stats re-rank`
+	 * span names. The store holds the debt, not this: the next worker's
+	 * roll-up finds it again, so a stop that leaves one loses nothing.
+	 *
+	 * @var array<string,string>
+	 */
+	private array $stale_hours = [];
+
+	/**
+	 * Folded hours a late write landed in this flush, with the servers whose
+	 * DONE markers the flush forgets, once each, so the hour ranks again.
+	 *
+	 * @var array<string,array<array-key,true>> An all-digit server key is an INT key.
+	 */
+	private array $unranked_hours = [];
+
+	/**
+	 * Hours a late write took off the fold memo (`persist_aggregate_stats()`'s
+	 * `$unfold`), until the roll-up reads them again and says so as a
+	 * `stats probe` line: an `unfold`.
+	 *
+	 * @var array<string,true>
+	 */
+	private array $unfolded = [];
+
 	/** @var array<string,bool> Custom-event-name set ({name => true}). */
 	private array $custom_event_names = [];
 
 	/** Hub mode: also accumulate the per-server namespaces. Derived from `<eln:is_hub>`. */
 	private bool $is_hub = false;
 
-	/** Unix time of the last settle(), which GET_STATS reports as an age. */
-	private float $settled_at = 0.0;
+	/** Unix time of the last periodic flush(), which GET_STATS reports as an age. */
+	private float $last_flush_time = 0.0;
 
-	/** Unix time of the last settle that drained a folded record: `idle_since()`. */
+	/** Unix time of the last flush that drained a folded record: `idle_since()`. */
 	private float $worked_at = 0.0;
 
-	/** Whether this process folded a record no settle wrote and no frame carries. */
-	private bool $uncommitted = false;
-
-	/** URL trees the carry has left out of this span so far, told once each. */
-	private int $carry_left = 0;
-
-	/** @var array<int,Bucket_Acc> Accumulators by bucket start, drained at settle(). */
-	private array $pending = [];
+	/** The same moment on the monotonic clock, in ns: what quiet is measured from. */
+	private int $worked_at_hr = 0;
 
 	/**
-	 * Each URL's aggregate — flame tree and profile sums — as this span has
-	 * folded it onto the stored one, by url_hash: every URL the span touched,
-	 * held until settle() writes it, since a dropped entry is a lost fold.
-	 *
-	 * @var array<array-key,array<array-key,mixed>>
+	 * The data clock: the newest bucket a flush that drained records wrote,
+	 * '' before the first. `foldable()` folds an hour once it has left it.
 	 */
-	private array $url_acc = [];
+	private string $data_clock = '';
+
+	/** Unix time the data clock entered its hour: when that hour was first written. */
+	private float $data_clock_hour_since = 0.0;
+
+	/**
+	 * Hours the roll-up read holding no index and has not folded, each
+	 * waiting on the data clock or the fold budget. One partition has one
+	 * writer, so such an hour gains an index only when this process folds
+	 * it: the roll-up reads it once, not once a flush.
+	 *
+	 * @var array<string,true>
+	 */
+	private array $absent_hours = [];
+
+	/** @var array<string,Bucket_Acc> Accumulators by bucket key, drained at flush(). */
+	private array $pending = [];
+
+	/** Per-URL aggregates one accumulator bucket holds before it rotates. */
+	private const URL_ACCUMULATOR_SIZE = 1000;
+
+	/** Accumulator buckets retained; capacity is roughly the product. */
+	private const URL_ACCUMULATOR_BUCKETS = 5;
+
+	/**
+	 * Each URL's aggregate — flame tree and profile sums — as this flush has
+	 * folded it onto the stored one, by url_hash; drained at flush().
+	 */
+	private LRU_Cache $url_acc;
 
 	/**
 	 * The crumb (`Message::ID`) of the last record folded into the
@@ -290,28 +416,33 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** @var Stats_Store|null The stats store; null until `configure_stats` runs. */
 	private $stats_store = null;
 
+	/** Node NAME of the Table every other namespace is written to ('' = unnamed). */
+	private string $aggregate_target = '';
+
 	/** Node NAME of the Table the per-URL blob is written to ('' = unnamed). */
 	private string $url_target = '';
 
-	/** @var list<string> The Ledgers `add_ledger_target` named, in order. */
-	private array $ledger_targets = [];
+	/** Node NAME of the Table the fine URL tier is written to ('' = unnamed). */
+	private string $url_fine_target = '';
 
-	/** The builder's asker for its stats Ledgers and its url Table. */
+	/** The builder's asker for its three stats Tables. */
 	private Table_Client $client;
 
 	/**
-	 * Seed the settle clock, build the per-URL accumulator, and publish the
+	 * Seed the flush clock, build the per-URL accumulator, and publish the
 	 * owned auto-tuner sibling.
 	 *
 	 * The node is inert until `configure_stats` supplies a `Stats_Store`: it still
-	 * accumulates and still forwards flames, but nothing reaches a stats store.
+	 * accumulates and still forwards flames, but nothing reaches a stats Table.
 	 *
 	 * @api Used by substrate
 	 */
 	public function __construct() {
-		$this->settled_at = Core::$now;
-		$this->worked_at  = Core::$now;
-		$this->client     = new Table_Client( $this, [ Stats_Store::TABLE_URL, ...\array_keys( Stats_Store::LEDGER_COLUMNS ) ] );
+		$this->last_flush_time = Core::$now;
+		$this->worked_at       = Core::$now;
+		$this->worked_at_hr    = self::monotonic();
+		$this->url_acc         = new LRU_Cache( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
+		$this->client          = new Table_Client( $this, Stats_Store::TABLES );
 
 		// Owned auto-tuner sibling (patron-linked; hidden from the canvas).
 		$auto_tuner = new Auto_Tuner_Node();
@@ -324,9 +455,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Store the tokens and arm the auto-tune emit on the Router tick, every
-	 * AUTO_TUNE_INTERVAL_SEC. A node constructed but never given arguments
-	 * never fires; `shutdown_sweep()` still emits on a clean stop.
+	 * Store the tokens and arm the periodic flush on the Router tick, every
+	 * FLUSH_INTERVAL_SEC. A node constructed but never given arguments never
+	 * fires; `shutdown_sweep()` still flushes it on a clean stop.
 	 *
 	 * @api Used by substrate.
 	 * @param list<string>|null $args Positional tokens, or null to read them back.
@@ -334,25 +465,23 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	public function arguments( ?array $args = null ): array {
 		if ( null !== $args ) {
-			$this->set_timer( self::AUTO_TUNE_INTERVAL_SEC * 1000 );
+			$this->set_timer( self::FLUSH_INTERVAL_SEC * 1000 );
 		}
 		return parent::arguments( $args );
 	}
 
 	/**
-	 * Handle one message: a stats store's reply, a TM_REQUEST introspection
+	 * Handle one message: a stats Table's reply, a TM_REQUEST introspection
 	 * verb, or a TM_STRUCT completed-request record tailed off `requests.p{N}`.
 	 *
-	 * A store's reply goes to the client first, never to the fold: it is the
-	 * answer to an ask a settle made, not a record.
+	 * A Table's reply goes to the client first, never to the fold: it is the
+	 * answer to an ask the flush made, not a record.
 	 *
 	 * A completed request becomes a flame tree, is forwarded to the flames
-	 * partition, and is folded into the span. A record whose URL names no host
-	 * throws `InvalidArgumentException` before any of that, so the Consumer
-	 * dead-letters it and reads on. Any other message is dropped.
-	 * Nothing here writes a stat: the span settles at the Consumer's interval
-	 * checkpoint, so a failed store write fails that checkpoint rather than
-	 * being charged to whichever record happened to arrive.
+	 * partition, and is folded into every accumulator. Anything else is dropped.
+	 * Nothing here flushes: the flush is the node's own periodic work, run from
+	 * `fire()`, so a failed store write raises from the tick rather than being
+	 * charged to whichever record happened to arrive.
 	 *
 	 * The message runs inside `deferring()`, which holds a cooperative stop a
 	 * downstream forward raises until this message's own bookkeeping is
@@ -369,40 +498,43 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Router-TIMER tick: emit the auto-tune decisions the folds accrued, and
-	 * once a minute tell what the settles since wrote. It writes no stat: the
-	 * span is the Consumer's to settle. A stop raised inside the emit waits
-	 * for it to finish, as it does in `shutdown_sweep()`.
+	 * Router-TIMER tick: flush whatever the last flush left owed. A failure
+	 * raises here, out of the drain, and the worker exits loudly; its successor
+	 * replays from the last checkpoint's cursor. With nothing owed the tick
+	 * flushes nothing: it formats one bucket key and diffs the read plan's
+	 * hours against those rolled up, the plan built once per bucket. A stop
+	 * raised inside the flush waits for it to finish, as it does in
+	 * `shutdown_sweep()`.
 	 *
 	 * @api Used by substrate.
 	 */
 	protected function fire(): void {
-		$this->deferring(
-			function (): void {
-				$this->apply_auto_tune();
-				if ( $this->rollup_due( (int) Core::$now ) ) {
-					$this->tell_writes();
-				}
-			}
-		);
+		if ( $this->flush_owed( (int) Core::$now ) ) {
+			$this->deferring( fn () => $this->flush() );
+			$this->last_flush_time = Core::$now;
+		}
 	}
 
 	/**
-	 * Append the span through `Stats_Store` and start a new one: the
-	 * Consumer's interval checkpoint calls this, inside its uninterruptible
-	 * save and before `save_state()`, so the frame it commits carries an
-	 * empty span. An append a Ledger refuses is dropped as decision 3 drops a
-	 * failed write, and a failure that raises fails the checkpoint, so its
-	 * cursor never commits past records whose deltas were lost.
+	 * Whether `flush()` has work at `$now`, read from memory alone. Folded
+	 * records are one kind; the rest outlive them: auto-tune decisions a
+	 * sibling's lock held back, buckets waiting to rank, stale hours owed
+	 * their lists, and an hour of the read plan the data clock has left that
+	 * this process has not rolled up.
 	 *
-	 * @api Used by substrate.
+	 * @param int $now The tick.
 	 */
-	public function settle(): void {
-		$now = Core::$now;
-		$this->write_pending( $now );
-		$this->uncommitted = false;
-		$this->carry_left  = 0;
-		$this->settled_at  = $now;
+	private function flush_owed( int $now ): bool {
+		if ( [] !== $this->pending || [] !== \array_filter( $this->auto_tune )
+			|| [] !== $this->rank_pending || [] !== $this->stale_hours ) {
+			return true;
+		}
+		$stats_store = $this->stats_store;
+		if ( null === $stats_store ) {
+			return false;
+		}
+		$hours = $this->foldable( $stats_store, $this->plan_at( $stats_store, $now )['hours'], $now );
+		return [] !== \array_diff( $hours, \array_keys( $this->folded_hours ) );
 	}
 
 	/**
@@ -423,13 +555,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		if ( ! \is_array( $request ) ) {
 			return;
 		}
-		$url = Core::str( $request['url'] ?? '' );
-		// A hostless URL throws before any fold; the reader dead-letters it.
-		$server_name = Stats_Store::server_of( $url );
 
 		$rid_raw  = $request['rid'] ?? '';
 		$rid      = Core::str( $rid_raw );
-		$url_hash = Log_Manager::url_hash( $url );
+		$url_raw  = $request['url'] ?? '';
+		$url_hash = Log_Manager::url_hash( Core::str( $url_raw ) );
 		$entries  = $request['entries'] ?? [];
 		if ( ! \is_array( $entries ) ) {
 			$entries = [];
@@ -461,10 +591,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// A replay of a counted record re-forwards only its flame.
 		$crumb = Core::str( $message[ Message::ID ] );
 		if ( '' === $crumb || $crumb !== $this->counted ) {
-			$this->accumulate_all_stats( $url, $server_name, $url_hash, $flame_data, $profiles, $request );
-			$this->counted     = $crumb;
-			$this->uncommitted = true;
+			$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
+			$this->counted = $crumb;
 		}
+
 	}
 
 	/**
@@ -474,14 +604,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @return array<string,mixed>
 	 */
 	private function stats_report(): array {
-		$stats_count = \count( $this->url_acc );
+		$stats_count = \iterator_count( $this->url_acc->iterate() );
 		$now = Core::$now;
 		return [
 			'stats_count'              => $stats_count,
 			'pending_url_count'        => \array_sum( \array_map( static fn ( array $acc ): int => \array_sum( \array_map( 'count', $acc['url_stats'] ) ), $this->pending ) ),
 			'intern_count'             => \count( self::$intern ),
 			'pending_buckets'          => \array_keys( $this->pending ),
-			'last_settle_age_s'        => $this->settled_at > 0 ? (int) ( $now - $this->settled_at ) : null,
+			'last_flush_age_s'         => $this->last_flush_time > 0 ? (int) ( $now - $this->last_flush_time ) : null,
 			'auto_tune_pending_count'  => \array_sum( \array_map( self::map_total( ... ), $this->auto_tune ) ),
 			'is_hub'                   => $this->is_hub,
 			'significant_events_count' => self::map_total( $this->significant_events ),
@@ -540,7 +670,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Fold one completed request into every accumulator.
 	 *
-	 * The order below is fixed: per-URL flame aggregate, bucket selection,
+	 * The order below is fixed: per-URL flame aggregate (LRU), bucket selection,
 	 * per-URL row, hourly totals, the seven dimensional axes, and finally the
 	 * profile loop that feeds the leaderboards, the category time series, and
 	 * auto-tune.
@@ -558,14 +688,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * Sums are stored, never means (see docs/architecture-decisions.md, decision 2); the
 	 * display layer divides at read time so cross-bucket merges stay exact.
 	 *
-	 * @param string                  $url         The request's URL.
-	 * @param string                  $server_name The URL's host, the server every per-server write files under.
-	 * @param string                  $url_hash    URL hash of the request.
-	 * @param array<string,mixed>    $flame_data  Per-request flame tree; its `value` is a render width, not a measurement.
-	 * @param array<array-key,mixed> $profiles    `profiles{}` from the request record.
-	 * @param array<array-key,mixed> $request     Full request record.
+	 * @param string                  $url_hash   URL hash of the request.
+	 * @param array<string,mixed>    $flame_data Per-request flame tree; its `value` is a render width, not a measurement.
+	 * @param array<array-key,mixed> $profiles   `profiles{}` from the request record.
+	 * @param array<array-key,mixed> $request    Full request record.
 	 */
-	private function accumulate_all_stats( string $url, string $server_name, string $url_hash, array $flame_data, array $profiles, array $request ): void {
+	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
 		// The RECORD's duration; the flame's is raised to cover children.
 		$duration_ms  = Core::num_float( $request['duration_ms'] ?? 0 );
 		$is_worker    = ! empty( $request['is_worker'] );
@@ -577,33 +705,35 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$timestamp_raw = $request['timestamp'] ?? $now;
 		// @longform The record reaches us at COMPLETION, so that is when it is
 		// filed: a request is a fact about the moment it ended, and a long one
-		// filed under its start lands where a reader's window may have left
-		// it. A timed-out request carries `due - start` as its duration
-		// (Request_Builder measures it to the stream boundary its window fell
-		// due at), so this is when live traffic timed it out.
+		// filed under its start lands in a bucket the readers may have closed
+		// and folded. A timed-out request carries `due - start` as its
+		// duration (Request_Builder measures it to the stream boundary its
+		// window fell due at), so this is when live traffic timed it out.
 		$started       = Core::num_int( $timestamp_raw, $now );
 		// @longform Clamped: a completed request cannot have finished after
 		// it reached us, so a skewed spoke clock or a bogus duration must
-		// not file into a future bucket — readers read back from now and
-		// never would, the written-then-unreadable bug of decision 19.
+		// not file into a future bucket — readers walk backwards from now
+		// and never would, the written-then-unreadable bug of decision 19.
 		$timestamp     = \min( $now, $started + (int) \round( $duration_ms / 1000 ) );
+		$server_raw    = $request['server_name'] ?? '';
+		// `as_string`, the way the `server` DIMENSION reads it: same axis.
+		$server_name   = Core::as_string( $server_raw );
 		// The per-server gate, resolved once: '' accumulates none.
-		$server_key      = $this->is_hub && $count_global ? $server_name : '';
-		$status_category = self::status_category( $request );
+		$server_key    = $this->is_hub && $count_global ? $server_name : '';
 
 		$aggregate = $this->accumulate_url_aggregate( $url_hash, $flame_data, $duration_ms, $record_timing, $timestamp, $unread );
 		// Filed under the bucket it COMPLETED in, not the one it started in.
-		$bucket                     = Stats_Store::bucket_start( $timestamp );
+		$bucket                     = Stats_Store::bucket_key( $timestamp );
 		$this->pending[ $bucket ] ??= self::empty_bucket();
 		$acc                        = &$this->pending[ $bucket ];
-		$this->accumulate_url_stats( $acc, $url, $request, $status_category, $duration_ms, $record_timing, $timestamp, $server_name, $count_global );
+		$this->accumulate_url_stats( $acc, $url_hash, $request, $duration_ms, $record_timing, $timestamp, $server_name, $count_global );
 		$this->accumulate_hourly( $acc, $request, $duration_ms, $record_timing, $count_global );
-		$this->accumulate_dimensions( $acc, $url, $server_name, $request, $status_category, $server_key, $duration_ms, $record_timing, $count_global );
+		$this->accumulate_dimensions( $acc, $url_hash, $request, $server_key, $duration_ms, $record_timing, $count_global );
 
 		if ( ! empty( $profiles ) && $record_timing ) {
 			$this->accumulate_profiles(
 				$acc,
-				$url,
+				$url_hash,
 				$profiles,
 				$request,
 				$aggregate,
@@ -621,7 +751,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$this->print_less_often( 'stats: a URL blob read failed; its update is skipped' );
 			return;
 		}
-		$this->url_acc[ $url_hash ] = $aggregate;
+		$this->url_acc->set( $url_hash, $aggregate );
 		$this->tally( Flame_Tree::STATS_WRITES, 'url blobs' );
 	}
 
@@ -644,7 +774,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private function accumulate_url_aggregate( string $url_hash, array $flame_data, float $duration_ms, bool $record_timing, int $done, ?bool &$unread = null ): array {
 		$unread = false;
 		// Un-drained if held, else what was last persisted for a cold key.
-		$cached = $this->url_acc[ $url_hash ] ?? null;
+		$cached = $this->url_acc->get( $url_hash );
 		if ( null === $cached && null !== $this->stats_store ) {
 			$cached = $this->stats_store->url_aggregate( $url_hash, $unread );
 		}
@@ -725,30 +855,45 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * extremes, status buckets and peak memory, under the server that served it.
 	 *
 	 * @param Bucket_Acc              $acc           The request's bucket accumulator.
-	 * @param string                  $url           The request's URL.
-	 * @param array<array-key,mixed> $request         Full request record.
-	 * @param int<2,5>|null           $status_category The `status_category()` bucket, null outside 200-599.
-	 * @param float                   $duration_ms     Request duration.
-	 * @param bool                    $record_timing   Whether timing counts.
-	 * @param int                     $timestamp       Completion time, clamped to now.
-	 * @param string                  $server_name     Reporting server, the URL's host.
-	 * @param bool                    $count_global    False for a worker, whose timing this row keeps and every site-wide aggregate drops.
+	 * @param string                  $url_hash      URL hash of the request.
+	 * @param array<array-key,mixed> $request       Full request record.
+	 * @param float                   $duration_ms   Request duration.
+	 * @param bool                    $record_timing Whether timing counts.
+	 * @param int                     $timestamp     Completion time, clamped to now.
+	 * @param string                  $server_name   Reporting server, '' when unknown.
+	 * @param bool                    $count_global  False for a worker, whose timing this row keeps and every site-wide aggregate drops.
 	 */
-	private function accumulate_url_stats( array &$acc, string $url, array $request, ?int $status_category, float $duration_ms, bool $record_timing, int $timestamp, string $server_name, bool $count_global ): void {
+	private function accumulate_url_stats( array &$acc, string $url_hash, array $request, float $duration_ms, bool $record_timing, int $timestamp, string $server_name, bool $count_global ): void {
+		$url_val = $request['url'] ?? '';
+		$url     = Core::str( $url_val );
+		if ( '' === $url ) {
+			return;
+		}
 		// @longform NOT hub-gated, unlike the three per-server aggregates: the
 		// filter is offered wherever the `server` dimension has values, and
-		// gating this would empty the URL table on every spoke. Worker traffic
-		// files apart, or a URL's reader rows leave with it.
-		$slot                                  = $count_global ? 'url_stats' : 'url_stats_worker';
-		$acc[ $slot ][ $server_name ][ $url ] ??= self::empty_url_row();
+		// gating this would empty the URL table on every spoke. A nameless
+		// producer is filed as that dimension names it, or the picker offers a
+		// name this cannot answer to.
+		$server = '' === $server_name ? self::UNKNOWN_VALUE : $server_name;
+		// Worker traffic indexes apart, or a URL's reader rows leave with it.
+		$slot = $count_global ? 'url_stats' : 'url_stats_worker';
+		// @longform array_replace, NOT array_merge: the row is positional,
+		// and merge RENUMBERS integer keys rather than overwriting them.
+		$acc[ $slot ][ $server ][ $url_hash ] ??= \array_replace(
+			self::empty_url_row( PHP_INT_MAX ),
+			[ Stats_Store::ROW_PATH => Stats_Store::row_path( $url, $server ) ]
+		);
+		// The whole URL goes to the URL name table, once, not into every row.
+		$acc['url_names'][ $url_hash ] = $url;
 		/**
 		 * Positional; see `Stats_Store::ROW_*`.
 		 *
-		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: float|int|null, 10: float|int|null, 11: float|int, 12: int} $us
+		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: float|int, 10: float|int, 11: float|int, 12: int, 13: bool, 14: string} $us
 		 */
-		$us              = &$acc[ $slot ][ $server_name ][ $url ];
+		$us              = &$acc[ $slot ][ $server ][ $url_hash ];
 		$peak_raw        = $request['peak_mb'] ?? 0;
 		$peak_mb         = \max( 0.0, Core::num_float( $peak_raw ) );
+		$status_category = self::status_category( $request );
 
 		// Per-URL: workers keep timing on their own row.
 		$us[ Stats_Store::ROW_COUNT ]       += 1;
@@ -760,9 +905,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$us[ Stats_Store::ROW_STATUS_COUNTS[ $status_category ] ] += 1;
 		}
 		$us[ Stats_Store::ROW_LAST_SEEN ] = \max( $us[ Stats_Store::ROW_LAST_SEEN ], $timestamp );
+		// Recorded, not read out of the URL text — that guess empties a table.
+		$us[ Stats_Store::ROW_WORKER ]    = $us[ Stats_Store::ROW_WORKER ] || ! $count_global;
 		if ( $record_timing ) {
-			$us[ Stats_Store::ROW_MAX_MS ] = \max( $us[ Stats_Store::ROW_MAX_MS ] ?? $duration_ms, $duration_ms );
-			$us[ Stats_Store::ROW_MIN_MS ] = \min( $us[ Stats_Store::ROW_MIN_MS ] ?? $duration_ms, $duration_ms );
+			$us[ Stats_Store::ROW_MAX_MS ] = \max( $us[ Stats_Store::ROW_MAX_MS ], $duration_ms );
+			$us[ Stats_Store::ROW_MIN_MS ] = \min( $us[ Stats_Store::ROW_MIN_MS ], $duration_ms );
 		}
 		$us[ Stats_Store::ROW_MAX_PEAK_MB ] = \max( $us[ Stats_Store::ROW_MAX_PEAK_MB ], $peak_mb );
 		unset( $us );
@@ -815,21 +962,19 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Fold the request into each of the seven dimensional axes: the six
-	 * record axes globally, per reporting server (hub only) and per URL, and
-	 * the `server` axis, the URL's host, globally alone.
+	 * Fold the request into each of the seven dimensional axes, three ways:
+	 * globally, per reporting server (hub only), and per URL.
 	 *
-	 * @param Bucket_Acc              $acc             The request's bucket accumulator.
-	 * @param string                  $url             The request's URL.
-	 * @param string                  $server_name     The URL's host, the `server` axis's value.
-	 * @param array<array-key,mixed> $request         Full request record.
-	 * @param int<2,5>|null           $status_category The `status_category()` bucket, null outside 200-599.
-	 * @param string                  $server_key      Per-server scope, '' to accumulate none.
-	 * @param float                   $duration_ms     Request duration.
-	 * @param bool                    $record_timing   Whether timing counts.
-	 * @param bool                    $count_global    Whether this feeds global stats.
+	 * @param Bucket_Acc              $acc           The request's bucket accumulator.
+	 * @param string                  $url_hash      URL hash of the request.
+	 * @param array<array-key,mixed> $request       Full request record.
+	 * @param string                  $server_key    Per-server scope, '' to accumulate none.
+	 * @param float                   $duration_ms   Request duration.
+	 * @param bool                    $record_timing Whether timing counts.
+	 * @param bool                    $count_global  Whether this feeds global stats.
 	 */
-	private function accumulate_dimensions( array &$acc, string $url, string $server_name, array $request, ?int $status_category, string $server_key, float $duration_ms, bool $record_timing, bool $count_global ): void {
+	private function accumulate_dimensions( array &$acc, string $url_hash, array $request, string $server_key, float $duration_ms, bool $record_timing, bool $count_global ): void {
+		$status_category = self::status_category( $request );
 		if ( null !== $status_category ) {
 			// The 'status' axis reads this field; nothing else does.
 			$request['status_category'] = "{$status_category}xx";
@@ -838,11 +983,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$dim_peak_mb  = Core::num_float( $dim_peak_raw );
 		$dim_duration = $record_timing ? $duration_ms : 0;
 
-		// Global only: workers contribute nothing, and a scope is one server.
-		if ( $count_global ) {
-			$server = self::intern( $server_name );
-			$acc['dim'][ Stats_Store::DIM_SERVER ][ $server ] = self::add_dim( $acc['dim'][ Stats_Store::DIM_SERVER ][ $server ] ?? null, $dim_duration, $dim_peak_mb, $record_timing );
-		}
 		foreach ( self::DIM_FIELDS as $dim => $field ) {
 			$field_raw = $request[ $field ] ?? '';
 			$val       = Core::as_string( $field_raw );
@@ -854,10 +994,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			if ( $count_global ) {
 				$acc['dim'][ $dim ][ $val ] = self::add_dim( $acc['dim'][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb, $record_timing );
 			}
-			if ( '' !== $server_key ) {
+
+			// Per-server, skipping the dim that would only repeat the scope.
+			if ( '' !== $server_key && Stats_Store::DIM_SERVER !== $dim ) {
 				$acc['dim_by_server'][ $server_key ][ $dim ][ $val ] = self::add_dim( $acc['dim_by_server'][ $server_key ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb, $record_timing );
 			}
-			$acc['url_dim'][ $url ][ $dim ][ $val ] = self::add_dim( $acc['url_dim'][ $url ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb, $record_timing );
+
+			// Per-URL, skipping the server: a URL belongs to one.
+			if ( Stats_Store::DIM_SERVER === $dim ) {
+				continue;
+			}
+			$acc['url_dim'][ $url_hash ][ $dim ][ $val ] = self::add_dim( $acc['url_dim'][ $url_hash ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb, $record_timing );
 		}
 	}
 
@@ -910,7 +1057,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * independently at each accumulate site is the classic bug in this class.
 	 *
 	 * @param Bucket_Acc                $acc          The request's bucket accumulator.
-	 * @param string                    $url          The request's URL.
+	 * @param string                    $url_hash     URL hash of the request.
 	 * @param array<array-key,mixed>   $profiles     `profiles{}` from the request record.
 	 * @param array<array-key,mixed>   $request      Full request record.
 	 * @param array<array-key,mixed>   $aggregate    Per-URL aggregate, by reference.
@@ -921,7 +1068,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private function accumulate_profiles(
 		array &$acc,
-		string $url,
+		string $url_hash,
 		array $profiles,
 		array $request,
 		array &$aggregate,
@@ -930,9 +1077,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		bool $count_global,
 		int $done
 	): void {
-		// Stamped rule, else the URL's; none leaves auto-tune inert.
-		$rules            = $this->rule_set();
-		$rule             = $rules->rule_by_id( Core::as_string( $request['rule_id'] ?? '' ) ) ?? $rules->for_url( $url );
+		// Resolve the request's governing rule once; no match = tune inert.
+		$rule             = $this->rule_for_request( $request );
 		$count_threshold  = null !== $rule ? $rule->auto_disable_threshold : 0;
 		$time_threshold   = null !== $rule ? $rule->auto_protect_time_threshold : 0.0;
 		$rule_id          = null !== $rule ? $rule->id : '';
@@ -984,7 +1130,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 			// Per-URL category.
 			$prof['categories'][ $category ] = self::add_category( $prof['categories'][ $category ] ?? null, $cat_time, $cat_count );
-			/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<array-key,array<int,float|int>>} $pcat */
+			/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>} $pcat */
 			$pcat       = &$prof['categories'][ $category ];
 			$pcat['ts'] = \max( $pcat['ts'] ?? 0, $cat_ts );
 
@@ -992,14 +1138,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$lcat = null;
 			if ( $count_global ) {
 				$lb['categories'][ $category ] = self::add_category( $lb['categories'][ $category ] ?? null, $cat_time, $cat_count );
-				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<array-key,array<int,float|int>>} $lcat */
+				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>} $lcat */
 				$lcat = &$lb['categories'][ $category ];
 			}
 
 			// Per-server leaderboard.
 			if ( null !== $slb ) {
 				$slb['categories'][ $category ] = self::add_category( $slb['categories'][ $category ] ?? null, $cat_time, $cat_count );
-				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<array-key,array<int,float|int>>} $scat */
+				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>} $scat */
 				$scat = &$slb['categories'][ $category ];
 
 				$s_entries = $data['entries'] ?? null;
@@ -1027,7 +1173,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$acc['cat_by_server'][ $server_key ][ $category ] = self::add_cat( $acc['cat_by_server'][ $server_key ][ $category ] ?? null, $cat_time, $cat_count );
 			}
 
-			$acc['cat_by_url'][ $url ][ $category ] = self::add_cat( $acc['cat_by_url'][ $url ][ $category ] ?? null, $cat_time, $cat_count );
+			$acc['cat_by_url'][ $url_hash ][ $category ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ $category ] ?? null, $cat_time, $cat_count );
 
 			// Significant-event: avg/call > threshold; workers excluded.
 			if ( $auto_tune_active && null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
@@ -1081,7 +1227,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		if ( '' !== $server_key ) {
 			$acc['cat_by_server'][ $server_key ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_server'][ $server_key ][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
 		}
-		$acc['cat_by_url'][ $url ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_url'][ $url ][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
+		$acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
 
 		// Top-level sums: per-URL kept; global leaderboard drops workers.
 		$prof['count']        = ( $prof['count']        ?? 0 ) + 1;
@@ -1143,10 +1289,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * Fold a category sample into a leaderboard bucket (sums, never means —
 	 * docs/architecture-decisions.md, decision 2). The per-URL caller stamps `ts` afterwards.
 	 *
-	 * @param array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<array-key,array<int,float|int>>}|null $slot Bucket, null on first use.
+	 * @param array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>}|null $slot Bucket, null on first use.
 	 * @param float $time  Time to add.
 	 * @param float $count Call count to add.
-	 * @return array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<array-key,array<int,float|int>>} The updated bucket.
+	 * @return array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>} The updated bucket.
 	 */
 	private static function add_category( ?array $slot, float $time, float $count ): array {
 		$slot ??= [ 'samples' => 0, 'sum_time' => 0.0, 'sum_count' => 0.0, 'entries' => [] ];
@@ -1194,6 +1340,28 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
+	 * Resolve the rule that governed a request: by stamped id, else url-rematch,
+	 * else null.
+	 *
+	 * A stamped `rule_id` can name a rule the operator has since deleted, so the
+	 * URL rematch is a fallback, not an alternative path.
+	 *
+	 * @param array<array-key,mixed> $request Full request record.
+	 * @return Rule|null Null when nothing matches, which leaves auto-tune inert.
+	 */
+	private function rule_for_request( array $request ): ?Rule {
+		$id = \is_string( $request['rule_id'] ?? null ) ? $request['rule_id'] : '';
+		if ( '' !== $id ) {
+			$rule = $this->rule_set()->rule_by_id( $id );
+			if ( null !== $rule ) {
+				return $rule;
+			}
+		}
+		$url = \is_string( $request['url'] ?? null ) ? $request['url'] : '';
+		return '' !== $url ? $this->rule_set()->matcher()->match( $url ) : null;
+	}
+
+	/**
 	 * Lazily-loaded ruleset, cached for this worker's lifetime.
 	 *
 	 * A worker therefore keeps serving the ruleset it booted with; a rule edit
@@ -1204,75 +1372,74 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Hand the Consumer the crumb and the span to co-commit with its cursor.
+	 * Write the pending buckets, then hand the Consumer the crumb and the
+	 * data clock to co-commit with its cursor.
 	 *
-	 * After the interval checkpoint's `settle()` the span is `[]`, so the
-	 * regular frame carries no stats. Every other frame — a clean stop's, a
-	 * crawl's per-record one, a boot recommit — carries what the span holds:
-	 * `pending`, the buckets as folded, and `urls`, each URL's flame tree as
-	 * folded onto its stored aggregate, under `CARRY_URL_BYTES`. The crumb
-	 * says which record under the cursor is already counted (decision 31).
-	 * Nothing here writes, so a stop costs the span no write and the frame
-	 * that carries it is the only copy: a successor restores it and settles
-	 * it once. What the frame carries keeps no worker up (`idle_since()`).
+	 * Every pending bucket, the open one too, is written to the Tables or
+	 * dropped as decision 3 drops a failed chunk or a refused write, the same
+	 * fail-soft loss a periodic flush takes; the carry comes back either way,
+	 * and the checkpoint carries no stats. The crumb says which record under
+	 * the cursor is already counted (decision 31). The data clock and the
+	 * moment it entered its hour describe data this write already drained,
+	 * so a successor restoring them folds nothing early, and still folds the
+	 * clock's hour at the fine deadline its predecessor started. Only the durable half of a
+	 * flush runs here: an auto-tune emit that throws would keep the cursor
+	 * from committing, so its decisions wait for the tick. In crawl mode the
+	 * Consumer checkpoints every message, so this runs per message until
+	 * `CHECKPOINT_INTERVAL_S` of crash-free progress ends the crawl. The
+	 * writes run inside the reader's uninterruptible save, so a stop due at
+	 * one raises once the cursor commits.
 	 *
 	 * @api Used by substrate.
-	 * @return array{counted: string, span: array<string,array<array-key,mixed>>}
+	 * @return array{counted: string, data_clock: string, data_clock_hour_since: float}
 	 */
 	public function save_state(): array {
-		$state             = [
-			'counted' => $this->counted,
-			'span'    => \array_filter( [ 'pending' => $this->pending, 'urls' => $this->carried_urls() ] ),
+		$this->write_pending();
+		return [
+			'counted'               => $this->counted,
+			'data_clock'            => $this->data_clock,
+			'data_clock_hour_since' => $this->data_clock_hour_since,
 		];
-		$this->uncommitted = false;
-		return $state;
 	}
 
 	/**
-	 * Each URL's flame tree the span holds, by url_hash, as many as fit
-	 * `CARRY_URL_BYTES` of JSON. A tree left out keeps its URL at the
-	 * aggregate it last settled, and is counted and logged once a span, not
-	 * once a frame: a crawl carries the same span at every record. A span
-	 * under the budget, the usual one, is measured in one encode.
+	 * One bucket's empty accumulator. Seeded whole so every accumulate site can
+	 * index straight in, and so the leaderboard has its shape rather than [].
 	 *
-	 * @return array<array-key,mixed>
+	 * @return Bucket_Acc
 	 */
-	private function carried_urls(): array {
-		if ( \strlen( (string) \wp_json_encode( $this->url_acc ) ) <= static::CARRY_URL_BYTES ) {
-			return $this->url_acc;
-		}
-		$used = 0;
-		$urls = [];
-		$left = 0;
-		foreach ( $this->url_acc as $url_hash => $aggregate ) {
-			$bytes = \strlen( (string) \wp_json_encode( $aggregate ) );
-			if ( $used + $bytes > static::CARRY_URL_BYTES ) {
-				++$left;
-				continue;
-			}
-			$used             += $bytes;
-			$urls[ $url_hash ] = $aggregate;
-		}
-		if ( $left > $this->carry_left ) {
-			$this->tally( Flame_Tree::STATS_WRITES, 'left out of the carry', $left - $this->carry_left );
-			$this->print_less_often( 'stats: URL flame trees past the carry budget are left out of the checkpoint', " — {$left}" );
-			$this->carry_left = $left;
-		}
-		return $urls;
+	private static function empty_bucket(): array {
+		return [
+			'hourly'                => [],
+			'dim'                   => [],
+			'dim_by_server'         => [],
+			'url_dim'               => [],
+			'url_stats'             => [],
+			'url_stats_worker'      => [],
+			'url_names'             => [],
+			'cat'                   => [],
+			'cat_by_server'         => [],
+			'cat_by_url'            => [],
+			'leaderboard'           => self::empty_leaderboard(),
+			'leaderboard_by_server' => [],
+		];
 	}
 
 	/**
-	 * On a clean stop, emit the auto-tune decisions, waiting out their lock.
-	 * The substrate runs the sweep before the cursor handoff, while the graph
-	 * is intact. It writes no stat: the graceful frame carries the span
-	 * unsettled, and the successor that restores it settles it.
+	 * Flush on a clean stop, ranking everything still owed and waiting out the
+	 * auto-tune lock. The substrate runs the sweep before the cursor handoff,
+	 * while the graph is intact.
 	 *
-	 * A sibling partition may hold the auto-tune lock at that moment. A tick
-	 * leaves the decisions for the next tick; a stop has none, so it waits the
-	 * lock out — the lock expires in seconds on its own.
+	 * A sibling partition may hold the auto-tune lock at that moment. A
+	 * periodic flush leaves the decisions for the next flush; a stop has none,
+	 * so it waits the lock out — the lock expires in seconds on its own. The
+	 * rankings the cadence still owes are in memory alone, so this flush
+	 * ranks every one of them whatever its stamp. A stale hour gets no more
+	 * than a flush's bound: its missing marker is in the store, and the next
+	 * worker's roll-up finds it again.
 	 *
 	 * The sweep runs inside `deferring()`, as a message does, so a stop raised
-	 * inside it waits for the sweep to finish.
+	 * inside it waits for the flush to finish.
 	 *
 	 * @api Used by substrate.
 	 */
@@ -1281,214 +1448,1589 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			fn () => $this->spanned(
 				Flame_Tree::STATS_SWEEP,
 				function (): void {
+					$this->ranked_at = [];
+					$this->flush();
 					$this->apply_auto_tune( self::AUTO_TUNE_LOCK_WAIT_MS );
 					// The last minute's writes would otherwise go untold.
 					$this->tell_writes();
 				},
-				fn (): array => [ 'stopped', [ 'buckets carried' => \count( $this->pending ) ] ]
+				fn (): array => [
+					'stopped',
+					[
+						'ranked'      => \count( $this->ranked_at ),
+						'owed'        => \count( $this->rank_pending ),
+						'stale hours' => \count( $this->stale_hours ),
+					],
+				]
 			)
 		);
 	}
 
 	/**
-	 * Append every pending bucket's rows and write the per-URL aggregates,
-	 * and empty both. What a fatal between these writes and the frame that
-	 * settles them costs is a double-count — the successor restores the span
-	 * the previous frame carried and settles it again on top (see the
-	 * CHANGELOG's Known section).
+	 * Drain every accumulator and start clean, then emit the auto-tune
+	 * decisions.
+	 *
+	 * `fire()` calls this once per FLUSH_INTERVAL_SEC and every clean stop
+	 * through `shutdown_sweep()`; a checkpoint runs `write_pending()` alone.
+	 * The accumulators empty BEFORE the auto-tune emit: its sums are written
+	 * by then, and a throw there must not hand them to the next flush again.
+	 */
+	public function flush(): void {
+		$this->write_pending();
+		$this->apply_auto_tune();
+	}
+
+	/**
+	 * The durable half of a flush: write every pending bucket and the per-URL
+	 * aggregates, and start clean. Every checkpoint runs it before its cursor
+	 * commits, so nothing the cursor has passed is left unwritten. What a
+	 * fatal costs is a double-count — the deltas between the last checkpoint
+	 * and the crash are already in the Tables and get replayed on top (see
+	 * the CHANGELOG's Known section).
 	 *
 	 * With no `Stats_Store` wired the drain is a no-op against storage: the
 	 * accumulators still reset, but nothing is written anywhere.
 	 *
-	 * @param float $now The settle's one read of the tick (decision 29).
+	 * It reads the tick ONCE and takes that tick's read plan through
+	 * `plan_at()`, memoized per bucket. `flush_owed()` asks for it on a tick,
+	 * and this method asks on every path; whichever asked first inside the
+	 * bucket built it, so the hour plan, the ranking floor and the cadence
+	 * agree on which hour closed.
 	 */
-	private function write_pending( float $now ): void {
+	private function write_pending(): void {
+		$now         = (int) Core::$now;
 		$stats_store = $this->stats_store;
 		if ( null !== $stats_store ) {
-			$rows = self::span_rows( $this->pending, self::admitted( $this->pending, $stats_store, (int) $now ) );
-			foreach ( $stats_store->append_span( $rows ) as $ledger => $appended ) {
-				if ( null === $appended ) {
-					$this->tally( Flame_Tree::STATS_WRITES, "refused {$ledger}" );
-					continue;
-				}
-				$this->tally( Flame_Tree::STATS_WRITES, 'rows', Core::num_int( $appended['stored'] ?? null ) );
-				$this->tally( Flame_Tree::STATS_WRITES, 'past the lifespan', Core::num_int( $appended['dropped'] ?? null ) );
-			}
-			$this->drain_url_stats( $stats_store, (int) $now );
+			$plan = $this->plan_at( $stats_store, $now );
+			// @longform Roll up FIRST: it is what reads the coarse tier, and
+			// `folded_hours` is per-process while one partition has one
+			// worker, so a respawn is the only way the memo goes stale.
+			// Reading before the writes are placed keeps the first flush after
+			// one from leaving rows in fine buckets a folded hour replaced.
+			$this->roll_up_hours( $stats_store, $plan, $this->foldable( $stats_store, $plan['hours'], $now ) );
+			// Lexical order IS chronological, which is what bucket_key() buys.
+			$filed = $this->persist_aggregate_stats( $stats_store, $now, (string) \end( $plan['fine'] ) );
+			$this->drain_url_stats( $stats_store, $now, $filed );
 		}
-		$this->url_acc = [];
-		// A settle with nothing folded is upkeep; it moves no idle mark.
+		$this->url_acc->flush();
+		// A flush with nothing folded is upkeep, which never keeps a worker up.
 		if ( [] !== $this->pending ) {
-			$this->worked_at = $now;
+			$this->worked_at    = Core::$now;
+			$this->worked_at_hr = self::monotonic();
+			$newest             = \max( \array_map( 'strval', \array_keys( $this->pending ) ) );
+			if ( $newest > $this->data_clock ) {
+				if ( Stats_Store::hour_of( $newest ) !== Stats_Store::hour_of( $this->data_clock ) ) {
+					$this->data_clock_hour_since = Core::$now;
+				}
+				$this->data_clock = $newest;
+			}
 		}
 		$this->pending = [];
-		$this->tally( Flame_Tree::STATS_WRITES, 'settles' );
+		$this->tally( Flame_Tree::STATS_WRITES, 'flushes' );
+		// Once a minute rather than once a flush: a handful a lifetime.
+		if ( $this->rollup_due( $now ) ) {
+			$this->tell_writes();
+		}
 	}
 
 	/**
-	 * The span's rows, by Ledger: each bucket's measurements, a row apiece
-	 * at the bucket's start, and the names its URLs and servers and the
-	 * words of its URLs file in the bucket's hour, each once. A bucket's
-	 * scopes without a request to count — its site totals and leaderboard
-	 * on worker traffic alone — file none.
-	 *
-	 * Every server files under the name `admitted()` gave it.
-	 *
-	 * @param array<int,Bucket_Acc> $pending  The span's buckets, by start.
-	 * @param array<string,string>  $admitted Server => the name it files under.
-	 * @return array<string,list<array{0:int,1:string,2:string,3:list<int|float|null>}>>
+	 * Tell `stats writes`: what the flushes since the last line wrote, the
+	 * flushes, writes and unchanged merges first.
 	 */
-	private static function span_rows( array $pending, array $admitted ): array {
-		$as    = static fn ( string $server ): string => $admitted[ $server ] ?? $server;
-		$rows  = [];
-		$names = [];
-		$words = [];
-		foreach ( $pending as $t => $acc ) {
-			$hour   = $t - $t % Stats_Store::HOUR_SECONDS;
-			$hourly = $acc['hourly'];
-			if ( Core::num_int( $hourly['requests'] ?? null ) > 0 ) {
-				$rows[ Stats_Store::LEDGER_TOTALS ][] = [ $t, Stats_Store::SITE, '', [ Core::num_int( $hourly['count'] ?? null ), Core::num_float( $hourly['sum_ms'] ?? null ), Core::num_int( $hourly['requests'] ), Core::num_float( $hourly['sum_peak_mb'] ?? null ) ] ];
+	private function tell_writes(): void {
+		$this->rollup( Flame_Tree::STATS_WRITES, [ 'flushes', 'writes', 'unchanged' ] );
+	}
+
+	/**
+	 * The read plan for `$now`'s bucket, built on the first ask inside it.
+	 *
+	 * @param Stats_Store $stats_store Whose TTL bounds the window.
+	 * @param int         $now         The tick.
+	 * @return array{fine: list<string>, hours: list<string>}
+	 */
+	private function plan_at( Stats_Store $stats_store, int $now ): array {
+		$bucket = Stats_Store::bucket_key( $now );
+		if ( null === $this->plan_memo || $bucket !== $this->plan_memo['bucket'] ) {
+			$this->plan_memo = [
+				'bucket' => $bucket,
+				'plan'   => Stats_Store::read_plan( Stats_Store::retention_buckets( $stats_store->max_lifespan(), $now ) ),
+			];
+		}
+		return $this->plan_memo['plan'];
+	}
+
+	/**
+	 * The hours of `$hours` a roll-up may fold: those the data clock has left.
+	 *
+	 * The data clock is the newest bucket a draining flush wrote, so a replay
+	 * folds each hour once, after its records arrive, where the wall clock
+	 * would fold it at once and send every later record down the late-write
+	 * path. The clock that decides is the one earlier flushes left: this
+	 * flush's rows land after the roll-up, so the fold reads them next time.
+	 *
+	 * A builder that has drained nothing for `IDLE_AFTER_SEC` is idle, and
+	 * its clock is the wall, so a quiet builder still folds the hours that
+	 * pass. An empty `pending` alone is no sign: a checkpoint drains it, and
+	 * a crawl checkpoints every record.
+	 *
+	 * The clock's own hour also folds once it has held it for all but a
+	 * bucket of the fine lifetime, whose first buckets would otherwise expire
+	 * unread under a replay slower than that.
+	 *
+	 * @param Stats_Store  $stats_store Whose window bounds the fine lifetime.
+	 * @param list<string> $hours       The read plan's hours, newest first.
+	 * @param int          $now         The flush's one read of the tick.
+	 * @return list<string>
+	 */
+	private function foldable( Stats_Store $stats_store, array $hours, int $now ): array {
+		if ( [] === $this->pending && self::quiet_since( $this->worked_at_hr ) ) {
+			return $hours;
+		}
+		$clock    = Stats_Store::hour_of( $this->data_clock );
+		$lifetime = Stats_Store::fine_ttl( $stats_store->max_lifespan() ) - Stats_Store::BUCKET_SECONDS;
+		$expiring = $now - $this->data_clock_hour_since >= $lifetime;
+		return \array_values( \array_filter(
+			$hours,
+			static fn ( string $hour ): bool => $hour < $clock || ( $expiring && $hour === $clock )
+		) );
+	}
+
+	/**
+	 * Whether `IDLE_AFTER_SEC` of monotonic time has passed since `$mark`.
+	 *
+	 * Quiet is a duration inside one process, so it is measured on `hrtime()`,
+	 * never the wall: a wall clock stepped forward is no quiet.
+	 *
+	 * @param int $mark A `monotonic()` the builder stamped when it last worked.
+	 */
+	public static function quiet_since( int $mark ): bool {
+		return self::monotonic() - $mark >= self::IDLE_AFTER_SEC * 1_000_000_000;
+	}
+
+	/**
+	 * Merge every pending bucket into the stats Tables through `Stats_Store`.
+	 *
+	 * Each namespace follows the same read-merge-cap-write shape: pull the
+	 * existing value, add this worker's sums to it, cap, and set. Merging by
+	 * addition is what lets several PARTITIONS write the same bucket without
+	 * coordination — hence sums, never means. Not several writers on one
+	 * partition: read-then-write is not atomic, and one partition has one worker.
+	 * Retention is the key's own TTL, so nothing expires buckets by hand.
+	 *
+	 * No store means no call: the accumulators are dropped by the caller.
+	 *
+	 * A late write that landed in an hour key leaves that hour's DONE marker
+	 * forgotten and the hour stale before the flush ranks what it owes, so
+	 * this flush re-ranks it, the site's lists with its servers'; the marker
+	 * is what a stop before that ranking leaves the next worker's roll-up.
+	 *
+	 * The URL index files each server's rows under the server's own key, so
+	 * the flush first reads the server index of every bucket it holds — one
+	 * round trip — to decide which servers each bucket admits. A bucket whose
+	 * index no Table answered drops its URL rows, index and names, as
+	 * a failed write chunk's deltas are dropped (decision 3): admitted against
+	 * no index its servers would pass the cap, and held for the Table the
+	 * accumulator would grow without bound through an outage. Its other
+	 * deltas read no index, so they land, or fail on their own chunk's read.
+	 *
+	 * @param Stats_Store $stats_store Destination.
+	 * @param int         $now         The flush's one read of the tick.
+	 * @param string      $floor       The oldest bucket of the read plan's
+	 *                                 fine tail: nothing older ranks.
+	 * @return array<array-key,array<array-key,string>> The names it filed,
+	 *                                                  as `persist_url_names()` returns them.
+	 */
+	private function persist_aggregate_stats( Stats_Store $stats_store, int $now, string $floor ): array {
+		$unfold   = [];
+		$indexes  = $stats_store->server_index( [], \array_map( 'strval', \array_keys( $this->pending ) ), $failed );
+		$dropped  = $failed ? \array_diff_key( $this->pending, $indexes ) : [];
+		if ( [] !== $dropped ) {
+			$this->tally( Flame_Tree::STATS_WRITES, 'url buckets dropped', \count( $dropped ) );
+			$this->print_less_often( 'stats flush dropped URL rows whose index no Table answered', ' — ' . \count( $dropped ) );
+		}
+		$admitted = [];
+		foreach ( \array_diff_key( $this->pending, $dropped ) as $bucket => $acc ) {
+			// @longform An all-digit server name is an INT key wherever PHP
+			// stores it, so every name read off a key is cast back to string.
+			$admitted[ $bucket ] = Stats_Store::admit_servers(
+				$indexes[ $bucket ] ?? [],
+				\array_map( 'strval', \array_keys( $acc['url_stats'] + $acc['url_stats_worker'] ) )
+			);
+		}
+		$filed = $this->persist_url_names( $stats_store, $now, $admitted );
+		$this->persist_url_tokens( $stats_store, $filed, $now );
+		$intents = [];
+		foreach ( $this->pending as $bucket => $acc ) {
+			// Only a bucket its index answered files URL rows.
+			$ranks = $bucket >= $floor;
+			foreach ( isset( $admitted[ $bucket ] ) ? $this->url_intents( $bucket, $acc, $indexes[ $bucket ] ?? [], $admitted[ $bucket ], $ranks ) : [] as $intent ) {
+				self::add_intent( $intents, $intent );
 			}
-			$dims = [ '' => $acc['dim'] ] + $acc['dim_by_server'];
-			foreach ( $dims as $server => $by_dim ) {
-				foreach ( $by_dim as $dim => $values ) {
-					foreach ( $values as $value => $columns ) {
-						$named                              = '' === $server && Stats_Store::DIM_SERVER === $dim ? $as( (string) $value ) : (string) $value;
-						$rows[ Stats_Store::LEDGER_DIMS ][] = [ $t, Stats_Store::dim_key( (string) $dim, $as( (string) $server ) ), $named, $columns ];
-					}
+			// @longform A server new to the bucket may be new to its folded
+			// hour, whose index the late write then names beside no hour
+			// lists. Every intent is placed first, so the hour leaves the memo
+			// only for the next flush's roll-up, which ranks it then.
+			foreach ( $admitted[ $bucket ] ?? [] as $as ) {
+				if ( ! isset( $indexes[ $bucket ][ Stats_Store::server_key( $as ) ] ) ) {
+					$unfold[ Stats_Store::hour_of( $bucket ) ] = true;
 				}
 			}
-			$cats = [ '' => $acc['cat'] ] + $acc['cat_by_server'];
-			foreach ( $cats as $server => $by_category ) {
-				foreach ( $by_category as $category => $columns ) {
-					$rows[ Stats_Store::LEDGER_CATEGORIES ][] = [ $t, Stats_Store::server_scope( $as( (string) $server ) ), (string) $category, $columns ];
+			if ( ! empty( $acc['hourly'] ) ) {
+				self::add_intent( $intents, self::hourly_intent( $bucket, $acc['hourly'] ) );
+			}
+			foreach ( $acc['dim'] as $dim => $values ) {
+				self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, '' ), $bucket, $dim, $values, Stats_Store::MAX_DIM_VALUES, null ) );
+			}
+			foreach ( $acc['dim_by_server'] as $server => $dims ) {
+				foreach ( $dims as $dim => $values ) {
+					self::add_intent( $intents, self::dimension_intent( Stats_Store::dim_parts( $dim, $server ), $bucket, $dim, $values, Stats_Store::MAX_DIM_VALUES, null ) );
 				}
+			}
+			foreach ( $acc['url_dim'] as $url_hash => $dims ) {
+				foreach ( $dims as $dim => $values ) {
+					self::add_intent( $intents, self::dimension_intent( Stats_Store::url_dim_parts( (string) $url_hash ), $bucket, $dim, $values, Stats_Store::MAX_URL_DIM_VALUES, $dim ) );
+				}
+			}
+			if ( ! empty( $acc['cat'] ) ) {
+				self::add_intent( $intents, self::categories_intent( Stats_Store::cat_parts( '' ), $bucket, $acc['cat'] ) );
+			}
+			foreach ( $acc['cat_by_server'] as $server => $cats ) {
+				self::add_intent( $intents, self::categories_intent( Stats_Store::cat_parts( $server ), $bucket, $cats ) );
+			}
+			foreach ( $acc['cat_by_url'] as $url_hash => $cats ) {
+				self::add_intent( $intents, self::categories_intent( Stats_Store::url_cat_parts( (string) $url_hash ), $bucket, $cats ) );
 			}
 			$boards = [ '' => $acc['leaderboard'] ] + $acc['leaderboard_by_server'];
-			foreach ( $boards as $server => $board ) {
-				foreach ( self::board_rows( $t, Stats_Store::server_scope( $as( (string) $server ) ), $board ) as $row ) {
-					$rows[ Stats_Store::LEDGER_LEADERBOARD ][] = $row;
-				}
-			}
-			$bucket_urls = [];
-			foreach ( [ [ $acc['url_stats'], false ], [ $acc['url_stats_worker'], true ] ] as [ $by_server, $worker ] ) {
-				foreach ( $by_server as $server => $urls ) {
-					$server  = $as( (string) $server );
-					$servers = Stats_Store::servers_key( $worker );
-					$names[ "{$hour} {$servers} {$server}" ] = [ $hour, $servers, $server, [] ];
-					foreach ( $urls as $url => $columns ) {
-						$rows[ Stats_Store::LEDGER_URL_ROWS ][] = [ $t, Stats_Store::url_rows_key( $server, $worker ), (string) $url, \array_values( $columns ) ];
-						$bucket_urls[ (string) $url ]           = true;
-					}
-				}
-			}
-			foreach ( \array_keys( $bucket_urls ) as $url ) {
-				$url                            = Core::as_string( $url );
-				$hash_key                       = Stats_Store::hash_key( Log_Manager::url_hash( $url ) );
-				$names[ "{$hour} {$hash_key}" ] = [ $hour, $hash_key, $url, [] ];
-				foreach ( Stats_Store::url_words( $url ) as $word ) {
-					$words[ "{$hour} {$word} {$url}" ] = [ $hour, $word, $url, [] ];
-				}
-			}
-			foreach ( $acc['url_dim'] as $url => $by_dim ) {
-				foreach ( $by_dim as $dim => $values ) {
-					foreach ( $values as $value => $columns ) {
-						$rows[ Stats_Store::LEDGER_URL_DIMS ][] = [ $t, Stats_Store::url_dim_key( (string) $dim, (string) $url ), (string) $value, $columns ];
-					}
-				}
-			}
-			foreach ( $acc['cat_by_url'] as $url => $by_category ) {
-				foreach ( $by_category as $category => $columns ) {
-					$rows[ Stats_Store::LEDGER_URL_CATS ][] = [ $t, Stats_Store::url_key( (string) $url ), (string) $category, $columns ];
+			foreach ( $boards as $server => $sums ) {
+				if ( ( $sums['count'] ?? 0 ) > 0 ) {
+					self::add_intent( $intents, self::leaderboard_intent( $bucket, $sums, $server ) );
 				}
 			}
 		}
-		$rows[ Stats_Store::LEDGER_NAMES ]  = \array_values( $names );
-		$rows[ Stats_Store::LEDGER_SEARCH ] = \array_values( $words );
+		// Only an hour a late write took OFF the memo is read again for it.
+		$this->unfolded    += \array_intersect_key( $unfold, $this->folded_hours );
+		$this->folded_hours = \array_diff_key( $this->folded_hours, $unfold );
+		// @longform Ranked per CHUNK, not after the flush: the collectors hold
+		// every merged shard of every bucket still waiting to rank, and
+		// a replay spanning the window would hold the whole window at once —
+		// which is the memory the chunking exists to bound. A bucket ranks once
+		// every one of its server groups has landed.
+		$owner = [];
+		foreach ( $intents as $intent ) {
+			if ( null !== $intent['group'] ) {
+				$owner[ $intent['group'] ] = $intent['bucket'];
+			}
+		}
+		$left = \array_count_values( $owner );
+		$this->flush_writes( $stats_store, $intents, function ( array $groups ) use ( $stats_store, $now, $floor, $owner, &$left ): void {
+			$done = [];
+			foreach ( $groups as $group ) {
+				$bucket = $owner[ $group ];
+				if ( 0 === --$left[ $bucket ] ) {
+					$done[] = $bucket;
+				}
+			}
+			$this->rank_flushed_buckets( $stats_store, $done, $now, $floor );
+		} );
+		// A bucket a failed chunk left short ranks from what the store holds.
+		$this->rank_flushed_buckets( $stats_store, \array_map( 'strval', \array_keys( $this->flushed_rows ) ), $now, $floor );
+		$this->flushed_index = [];
+		$forgets             = [];
+		foreach ( $this->unranked_hours as $hour => $keys ) {
+			foreach ( \array_keys( $keys ) as $key ) {
+				$forgets[] = [ Stats_Store::url_rank_done_parts( (string) $key ), $hour ];
+			}
+			// Its lists, the site's too, no longer count its rows: rank it now.
+			$this->stale_hours[ $hour ] = 'late write';
+			$this->tally( Flame_Tree::STATS_WRITES, 'done forgets', \count( $keys ) );
+		}
+		if ( [] !== $forgets ) {
+			$stats_store->bucket_forget_multi( $forgets );
+		}
+		$this->unranked_hours = [];
+		$this->rank_owed( $stats_store, $now, $floor );
+		return $filed;
+	}
+
+	/**
+	 * File each server's written names in the search index: one member per
+	 * distinct word of each name's path (`Stats_Store::path_of()`), valued by
+	 * the tick the name was written at. Blind adds, one `SADD` per
+	 * `WRITE_BATCH_KEYS` sets, because a member needs no read to union.
+	 *
+	 * @param Stats_Store                              $stats_store Destination.
+	 * @param array<array-key,array<array-key,string>> $names       server => hash => URL.
+	 * @param int                                      $now         The flush's one read of the tick.
+	 */
+	private function persist_url_tokens( Stats_Store $stats_store, array $names, int $now ): void {
+		$sets = [];
+		foreach ( $names as $server => $urls ) {
+			$key = Stats_Store::server_key( (string) $server );
+			foreach ( Stats_Store::token_sets_of( Stats_Store::paths_of( $urls ) ) as $token => $hashes ) {
+				$sets[] = [ $key, (string) $token, $hashes ];
+			}
+		}
+		$this->tally( Flame_Tree::STATS_WRITES, 'tokens', \count( $sets ) );
+		foreach ( \array_chunk( $sets, self::WRITE_BATCH_KEYS ) as $chunk ) {
+			$refused = \count( \array_keys( $stats_store->add_url_tokens( $chunk, $now ), false, true ) );
+			if ( $refused > 0 ) {
+				$this->tally( Flame_Tree::STATS_WRITES, 'refused ' . Stats_Store::NS_URLTOKEN, $refused );
+				$this->print_less_often( 'token index write refused; ' . $refused . ' word sets left unfiled' );
+			}
+		}
+	}
+
+	/**
+	 * One bucket's URL index intents: each family's rows filed under the
+	 * server `Stats_Store::admit_servers()` admits them as, one intent per
+	 * server per shard, and the index naming each server with the shards it
+	 * filed, both families in one mask.
+	 *
+	 * @param string                              $bucket   Bucket key.
+	 * @param Bucket_Acc                          $acc      The bucket's accumulator.
+	 * @param array<string,array{0:string,1:int}> $index    The bucket's stored server index.
+	 * @param array<string,string>                $admitted Server => the name its rows are filed under.
+	 * @param bool                                $ranks    The bucket sits in the fine tail, so it ranks.
+	 * @return list<Pending_Write>
+	 */
+	private function url_intents( string $bucket, array $acc, array $index, array $admitted, bool $ranks ): array {
+		$entries = [];
+		$out     = [];
+		foreach ( [ 0 => $acc['url_stats'], 1 => $acc['url_stats_worker'] ] as $worker => $servers ) {
+			$filed = [];
+			foreach ( $servers as $server => $rows ) {
+				$as           = $admitted[ (string) $server ];
+				$rows         = self::refile_rows( $rows, (string) $server, $as );
+				$filed[ $as ] = isset( $filed[ $as ] ) ? self::merge_url_rows( $filed[ $as ], $rows ) : $rows;
+			}
+			foreach ( $filed as $as => $rows ) {
+				$name   = \strval( $as );
+				$shards = Stats_Store::rows_by_shard( $rows, 1 === $worker );
+				foreach ( $shards as $shard => $shard_rows ) {
+					\array_push( $out, ...$this->url_shard_intent( $bucket, $name, \strval( $shard ), $shard_rows, $ranks ) );
+				}
+				$entries = Stats_Store::merge_index( $entries, [
+					Stats_Store::server_key( $name ) => [
+						Stats_Store::SRV_NAME   => $name,
+						Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( \array_map( 'strval', \array_keys( $shards ) ) ),
+					],
+				] );
+			}
+		}
+		if ( [] === $entries ) {
+			return [];
+		}
+		$this->flushed_index[ $bucket ] = Stats_Store::merge_index( $index, $entries );
+		return [ ...$out, ...$this->url_srv_intents( $bucket, $entries ) ];
+	}
+
+	/**
+	 * How one bucket's newly filed servers join its stored index: a union of
+	 * names and shards, through the same tier choice the rows make.
+	 *
+	 * @param string                              $bucket  Bucket key.
+	 * @param array<string,array{0:string,1:int}> $entries server_key => entry.
+	 * @return list<Pending_Write>
+	 */
+	private function url_srv_intents( string $bucket, array $entries ): array {
+		return $this->hour_tier_intents(
+			$bucket,
+			Stats_Store::url_srv_parts( false ),
+			Stats_Store::url_srv_parts( true ),
+			static fn ( array $existing ): array => Stats_Store::merge_index( Stats_Store::index_entries( $existing ), $entries ),
+			function ( string $key ): void {
+				$this->print_less_often( 'URL server index write refused; no reader or hour fold finds the rows it names', " — {$key}" );
+			},
+			null
+		);
+	}
+
+	/**
+	 * Offer every bucket this chunk finished writing to the ranker, and drop
+	 * all of them from the collectors.
+	 *
+	 * A bucket that is not due keeps nothing: its rows are in the store, the
+	 * ranker remembers it as pending, and the ranking that does happen
+	 * gap-fills them back with everything else that landed meanwhile. A
+	 * bucket of worker rows alone collected nothing and is not offered, and
+	 * neither is one below the fine floor, which no reader plans.
+	 *
+	 * @param Stats_Store  $stats_store Source and destination.
+	 * @param list<string> $buckets     Buckets whose row writes have all landed.
+	 * @param int          $now         The flush's one read of the tick.
+	 * @param string       $floor       The read plan's oldest fine bucket.
+	 */
+	private function rank_flushed_buckets( Stats_Store $stats_store, array $buckets, int $now, string $floor ): void {
+		$this->rank_buckets(
+			$stats_store,
+			\array_values( \array_filter(
+				$buckets,
+				fn ( string $bucket ): bool => $bucket >= $floor && isset( $this->flushed_rows[ $bucket ] )
+			) ),
+			$now
+		);
+		$drop                = \array_flip( $buckets );
+		$this->flushed_rows  = \array_diff_key( $this->flushed_rows, $drop );
+		$this->flushed_index = \array_diff_key( $this->flushed_index, $drop );
+	}
+
+	/**
+	 * Prune both bucket memos below the fine floor — the oldest bucket the
+	 * read plan's fine tail reads — then offer every deferred bucket left and
+	 * the stale hours to the ranker.
+	 *
+	 * Runs at the end of every flush, because a deferred bucket comes due by
+	 * the CLOCK: once it closes nothing writes into it again, so no chunk
+	 * ever completes for it and `rank_flushed_buckets()` is never reached.
+	 * A flush that places no write at all still runs this. Pruning first
+	 * keeps a bucket no reader plans from being ranked. A stale hour has
+	 * no cadence: at most `ROLLUP_HOURS_PER_FLUSH` of them rank per flush,
+	 * a stop's included, and the rest wait for the next flush or the next
+	 * worker's roll-up, which finds each missing marker again.
+	 *
+	 * @param Stats_Store $stats_store Source and destination.
+	 * @param int         $now         The flush's one read of the tick.
+	 * @param string      $floor       The read plan's oldest fine bucket.
+	 */
+	private function rank_owed( Stats_Store $stats_store, int $now, string $floor ): void {
+		foreach ( \array_keys( $this->ranked_at + $this->rank_pending ) as $key ) {
+			if ( $key < $floor ) {
+				unset( $this->ranked_at[ $key ], $this->rank_pending[ $key ] );
+			}
+		}
+		$this->rank_buckets( $stats_store, \array_keys( $this->rank_pending ), $now );
+		$this->rank_hours_from_store(
+			$stats_store,
+			\array_slice( \array_keys( $this->stale_hours ), 0, self::ROLLUP_HOURS_PER_FLUSH )
+		);
+	}
+
+	/**
+	 * Rank each bucket that is DUE, a write chunk's worth of ranking groups
+	 * at a time, so the rows held at once stay what one flush chunk holds.
+	 *
+	 * Every offered bucket is pending until it is ranked, and a ranking is
+	 * stamped and ends it whether its lists landed or were refused; a refusal
+	 * is logged and never retried. `rank_due()` decides which rank now. A
+	 * bucket's index entries come from what this flush filed, else from its
+	 * stored index, read for every such bucket in one round trip. A bucket
+	 * whose index a Table left unanswered stays pending and unstamped.
+	 *
+	 * @param Stats_Store  $stats_store Source and destination.
+	 * @param list<string> $buckets     Buckets offered for ranking.
+	 * @param int          $now         The caller's one read of the tick, for
+	 *                                  the due test and the stamp.
+	 */
+	private function rank_buckets( Stats_Store $stats_store, array $buckets, int $now ): void {
+		$due     = [];
+		$current = Stats_Store::bucket_key( $now );
+		foreach ( $buckets as $bucket ) {
+			$this->rank_pending[ $bucket ] = true;
+			if ( $this->rank_due( $bucket, $now, $current ) ) {
+				$due[] = $bucket;
+			}
+		}
+		$unknown = \array_values( \array_diff( $due, \array_map( 'strval', \array_keys( $this->flushed_index ) ) ) );
+		$failed  = false;
+		$read    = [] === $unknown ? [] : $stats_store->server_index( [], $unknown, $failed );
+		// A bucket whose index went unanswered is no bucket to rank empty.
+		$due     = $failed ? \array_values( \array_diff( $due, \array_diff( $unknown, \array_keys( $read ) ) ) ) : $due;
+		$indexes = $this->flushed_index + $read;
+		// A group is a (server, bucket) pair: one read a shard, either family.
+		$budget = \intdiv( self::WRITE_BATCH_KEYS, \count( Stats_Store::every_shard() ) );
+		$chunk  = [];
+		$size   = 0;
+		foreach ( $due as $bucket ) {
+			$entries = $indexes[ $bucket ] ?? [];
+			if ( [] !== $chunk && $size + \count( $entries ) > $budget ) {
+				$this->rank_bucket_chunk( $stats_store, $chunk, $now );
+				$chunk = [];
+				$size  = 0;
+			}
+			$chunk[ $bucket ] = $entries;
+			$size            += \max( 1, \count( $entries ) );
+		}
+		if ( [] !== $chunk ) {
+			$this->rank_bucket_chunk( $stats_store, $chunk, $now );
+		}
+	}
+
+	/**
+	 * Rank each bucket over its whole STORED content: the rows of both
+	 * families this flush landed, plus every other shard each index entry
+	 * names, read back for the whole chunk in ONE round trip — a read per
+	 * bucket would be a round trip per bucket on a replay — and the chunk's
+	 * lists written in its write batches, told as one `stats rank close`
+	 * span. A deferred bucket landed none, so it gap-fills every shard its
+	 * entries name. A bucket with a shard a Table left
+	 * unanswered ranks nothing and stays pending, since its rows are short
+	 * (decision 3).
+	 *
+	 * @param Stats_Store                                        $stats_store Source and destination.
+	 * @param array<string,array<string,array{0:string,1:int}>> $chunk       Due bucket => its index
+	 *                                                                        entries, at most one write
+	 *                                                                        chunk's worth of ranking groups.
+	 * @param int                                                $now         The caller's one read of the tick.
+	 */
+	private function rank_bucket_chunk( Stats_Store $stats_store, array $chunk, int $now ): void {
+		$reads = [];
+		$owner = [];
+		foreach ( $chunk as $bucket => $entries ) {
+			foreach ( $entries as $key => [ Stats_Store::SRV_NAME => $server, Stats_Store::SRV_SHARDS => $mask ] ) {
+				$landed = $this->flushed_rows[ $bucket ][ $server ] ?? [];
+				foreach ( \array_diff( Stats_Store::shards_in( $mask, true ), \array_keys( $landed ) ) as $shard ) {
+					$reads[] = [ Stats_Store::url_shard_parts( $key, $shard ), $bucket ];
+					$owner[] = [ $bucket, $server, $shard ];
+				}
+			}
+		}
+		$read_maps = [];
+		$short     = [];
+		$failed    = false;
+		foreach ( [] === $reads ? [] : $stats_store->bucket_get_multi( $reads, $failed ) as $at => $value ) {
+			[ $bucket, $server, $shard ] = $owner[ $at ];
+			if ( null !== $value ) {
+				$read_maps[ $bucket ][ $server ][ $shard ] = $value;
+			} elseif ( $failed ) {
+				$short[ $bucket ] = true;
+			}
+		}
+		$ranked = [];
+		foreach ( \array_diff_key( $chunk, $short ) as $bucket => $entries ) {
+			foreach ( Stats_Store::index_names( $entries ) as $server ) {
+				// Disjoint: the gap-fill read the shards that did not land.
+				$ranked[ $bucket ][ $server ] = ( $this->flushed_rows[ $bucket ][ $server ] ?? [] ) + ( $read_maps[ $bucket ][ $server ] ?? [] );
+			}
+			$ranked[ $bucket ] ??= [];
+		}
+		if ( [] === $ranked ) {
+			return;
+		}
+		$keys = \array_map( 'strval', \array_keys( $ranked ) );
+		$this->spanned(
+			Flame_Tree::STATS_RANK_CLOSE,
+			fn (): array => $this->write_url_ranks( $stats_store, $ranked, false, false ),
+			static fn ( array $ranks ): array => [
+				1 === \count( $keys ) ? $keys[0] : \min( $keys ) . '..' . \max( $keys ),
+				[
+					'buckets'   => \count( $keys ),
+					'servers'   => \array_sum( \array_map( 'count', $ranked ) ),
+					'rows'      => \array_sum( \array_map( self::rows_in( ... ), $ranked ) ),
+					'gap reads' => \count( $reads ),
+				] + $ranks,
+			],
+			// The open bucket's rankings are the summary's to count.
+			\min( $keys ) < Stats_Store::bucket_key( $now )
+		);
+		foreach ( $keys as $ranked_bucket ) {
+			$this->tally( Flame_Tree::STATS_WRITES, 'buckets ranked' );
+			$this->ranked_at[ $ranked_bucket ] = $now;
+			unset( $this->rank_pending[ $ranked_bucket ] );
+		}
+	}
+
+	/**
+	 * Whether a bucket is due for ranking.
+	 *
+	 * Due when it was never ranked, when its stamp is
+	 * `Stats_Store::URL_PAGE_REFRESH_S` old — the page cache holds a ranked
+	 * page that long, so ranking every five-second flush spends twelve
+	 * rankings on one read — or when the bucket has closed since it was
+	 * last ranked; `shutdown_sweep()` empties the stamps, so everything is
+	 * due before a stop. A closed bucket is what the reader reads for the
+	 * rest of the window, so its last writes must reach its lists rather
+	 * than wait out the cadence.
+	 *
+	 * @param string $key     Bucket key.
+	 * @param int    $now     The caller's one read of the tick.
+	 * @param string $current The bucket `$now` falls in, which the caller
+	 *                        computes once for every key it tests.
+	 */
+	private function rank_due( string $key, int $now, string $current ): bool {
+		$stamp = $this->ranked_at[ $key ] ?? null;
+		return null === $stamp
+			|| $now - $stamp >= Stats_Store::URL_PAGE_REFRESH_S
+			|| ( $key < $current && Stats_Store::bucket_key( $stamp ) <= $key );
+	}
+
+	/**
+	 * Store the names of URLs this flush saw, and file their words, at most
+	 * once an hour per server they are filed under.
+	 *
+	 * The name table is what a reader displays a row's whole URL through,
+	 * and what a hash-only read finds the row's server by. Each name also
+	 * files the search index of the server its rows are filed under — its
+	 * own, or `Other` past the index cap. A path costs one member per
+	 * distinct word: two for `/wombat-7731`, five for
+	 * `/blog/2026/my-post-title`.
+	 *
+	 * A name never changes and a member lives the retention window from its
+	 * last add, so re-filing them every flush would only refresh their
+	 * expiry. Each URL's blob carries `filed`: server key => the hour the
+	 * URL was last filed under it. A pair stamped with the current hour is
+	 * skipped, and `drain_url_stats()` stamps the ones this returns into the
+	 * blob it writes anyway, so the rule outlives the worker and costs no
+	 * read and no write of its own. A blob without the stamp, or a URL whose
+	 * blob is not held, reads as never filed. So a URL's last filing can come
+	 * up to an hour and a flush before its last row, which is why its words
+	 * and name live one refresh past what their readers read
+	 * (`Stats_Store::filing_ttl()`). A hash filed under two
+	 * servers in one flush keeps the last name written.
+	 *
+	 * @param Stats_Store                        $stats_store The wired store.
+	 * @param int                                $now         The flush's one read of the tick.
+	 * @param array<string,array<string,string>> $admitted    Bucket => server => the
+	 *                                                        name its rows are filed under.
+	 * @return array<array-key,array<array-key,string>> server => hash => URL, for the names written.
+	 */
+	private function persist_url_names( Stats_Store $stats_store, int $now, array $admitted ): array {
+		$hour    = Stats_Store::hour_of( Stats_Store::bucket_key( $now ) );
+		$stamped = [];
+		// Iterated, not got: a get promotes, and a rotation evicts undrained.
+		foreach ( $this->url_acc->iterate() as $hash => $blob ) {
+			$stamped[ (string) $hash ] = Core::arr( Core::arr( $blob )['filed'] ?? null );
+		}
+		$filed = [];
+		foreach ( \array_intersect_key( $this->pending, $admitted ) as $bucket => $acc ) {
+			foreach ( [ $acc['url_stats'], $acc['url_stats_worker'] ] as $servers ) {
+				foreach ( $servers as $server => $rows ) {
+					$as  = $admitted[ $bucket ][ (string) $server ];
+					$key = Stats_Store::server_key( $as );
+					foreach ( \array_keys( $rows ) as $hash ) {
+						if ( ! isset( $acc['url_names'][ $hash ] ) ) {
+							continue;
+						}
+						if ( $hour !== ( $stamped[ (string) $hash ][ $key ] ?? null ) ) {
+							$filed[ $as ][ (string) $hash ] = $acc['url_names'][ $hash ];
+						}
+					}
+				}
+			}
+		}
+		$landed = $stats_store->set_url_names( $filed );
+		$this->tally( Flame_Tree::STATS_WRITES, 'names', \array_sum( \array_map( 'count', $filed ) ) );
+		$this->tally( Flame_Tree::STATS_WRITES, 'refused ' . Stats_Store::NS_URLMAP, \count( \array_keys( $landed, false, true ) ) );
+		return $filed;
+	}
+
+	/**
+	 * Read, merge and write every pending key in batches.
+	 *
+	 * The flush's cost is its KEY COUNT, not its bytes: two of the loops above
+	 * are per URL, so the fuller the retention window, the more round trips a
+	 * replay costs. The reader batches through `lookup_bucket_sets()`; this is
+	 * the write half. Chunked because batching trades round trips for held
+	 * memory, and a full-window read peaks near 160MB — the prize is thousands
+	 * of round trips becoming a handful, not becoming one. Still one read and
+	 * one write per chunk: intents sharing an ITEM are folded into a single
+	 * write, and every one of them hears the result.
+	 *
+	 * A chunk whose batch read FAILED writes nothing at all (decision 3):
+	 * merged onto a read that never happened, every write would replace a
+	 * stored bucket with this flush's delta alone. Its deltas are dropped.
+	 *
+	 * @param Stats_Store                 $stats_store Destination.
+	 * @param array<string,Pending_Write> $intents     Pending writes, by cache key.
+	 * @param ?\Closure(list<string>): void $after_chunk Called with the ranking
+	 *                                                 groups the chunk completed.
+	 */
+	private function flush_writes( Stats_Store $stats_store, array $intents, ?\Closure $after_chunk = null ): void {
+		$this->tally( Flame_Tree::STATS_WRITES, 'intents', \count( $intents ) );
+		foreach ( self::chunk_intents( $intents ) as $chunk ) {
+			$reads = [];
+			foreach ( $chunk as $key => $intent ) {
+				$reads[ $key ] = [ $intent['parts'], $intent['bucket'] ];
+			}
+			$existing = $stats_store->bucket_get_multi( $reads, $failed );
+			$this->tally( Flame_Tree::STATS_WRITES, 'reads' );
+			if ( $failed ) {
+				$this->tally( Flame_Tree::STATS_WRITES, 'failed chunks' );
+				$this->tally( Flame_Tree::STATS_WRITES, 'dropped keys', \count( $chunk ) );
+				$this->print_less_often( 'stats flush read failed; a chunk\'s deltas are dropped', ' — ' . \count( $chunk ) . ' keys' );
+				continue;
+			}
+			$writes   = [];
+			$groups   = [];
+			foreach ( $chunk as $key => $intent ) {
+				if ( null !== $intent['group'] ) {
+					$groups[ $intent['group'] ] = true;
+				}
+				$read  = $existing[ $key ] ?? [];
+				$value = ( $intent['merge'] )( $read );
+				// @longform A merge that changed nothing is not a write: it
+				// would cost a round trip and refresh a TTL the value has not
+				// earned, so a key nothing adds to ages out on the one it has.
+				if ( $value === $read ) {
+					$this->tally( Flame_Tree::STATS_WRITES, 'unchanged' );
+					( $intent['landed'] ?? null )?->__invoke( $value );
+					continue;
+				}
+				$writes[ $key ] = [ $intent['parts'], $intent['bucket'], $value ];
+			}
+			$keys = \array_keys( $writes );
+			$this->tally( Flame_Tree::STATS_WRITES, 'writes', \count( $writes ) );
+			foreach ( $stats_store->bucket_set_multi( \array_values( $writes ) ) as $at => $landed ) {
+				$key    = $keys[ $at ];
+				$intent = $chunk[ $key ];
+				if ( $landed ) {
+					( $intent['landed'] ?? null )?->__invoke( $writes[ $key ][2] );
+					continue;
+				}
+				$this->tally( Flame_Tree::STATS_WRITES, "refused {$intent['parts'][0]}" );
+				( $intent['refused'] ?? null )?->__invoke( $key );
+			}
+			if ( null !== $after_chunk ) {
+				$after_chunk( \array_keys( $groups ) );
+			}
+		}
+	}
+
+	/**
+	 * Cut the intents into write batches without splitting a ranking GROUP.
+	 *
+	 * A group is one server's row writes in one bucket, both families —
+	 * thirty-two keys — and it ranks when its last one is answered, so a group
+	 * split across chunks would rank the bucket twice and read back every
+	 * shard the second chunk still held.
+	 *
+	 * @param array<string,Pending_Write> $intents Pending writes, by cache key.
+	 * @return list<array<string,Pending_Write>>
+	 */
+	private static function chunk_intents( array $intents ): array {
+		$units = [];
+		foreach ( $intents as $key => $intent ) {
+			$unit                   = null === $intent['group'] ? "key\0{$key}" : "group\0{$intent['group']}";
+			$units[ $unit ][ $key ] = $intent;
+		}
+		$chunks = [];
+		$chunk  = [];
+		foreach ( $units as $unit ) {
+			if ( [] !== $chunk && \count( $chunk ) + \count( $unit ) > self::WRITE_BATCH_KEYS ) {
+				$chunks[] = $chunk;
+				$chunk    = [];
+			}
+			$chunk += $unit;
+		}
+		if ( [] !== $chunk ) {
+			$chunks[] = $chunk;
+		}
+		return $chunks;
+	}
+
+	/**
+	 * Fold every hour the data clock has left that has not been folded yet
+	 * into its coarse key.
+	 *
+	 * The readers distinguish two resolutions — the whole window, and the last
+	 * complete hour — so five-minute buckets behind the recent tail are read at
+	 * a granularity nothing asks for. Folding them to hours takes a read from
+	 * 288 keys per shard to 36. It runs on flush, bounded to
+	 * `ROLLUP_HOURS_PER_FLUSH` so a cold start backfills over several flushes
+	 * instead of stalling one, and it fills the whole window rather than only
+	 * the hour that just closed — which is what makes a fresh deploy reach the
+	 * cheap read without a 24-hour ramp.
+	 *
+	 * A fold is idempotent because it OVERWRITES from the fine buckets. Adding
+	 * into an hour incrementally would double-count every re-flush. It writes
+	 * the hour's ranked lists in the same pass, from the shard rows it just
+	 * folded, and each server's DONE marker once every write landed. An hour
+	 * holding an index with some server unmarked, as `url_hours_derived()`
+	 * reports it, is not folded here but joins `stale_hours`: the ranking
+	 * that settles it reads every shard the index names, and folds the hour
+	 * again where one is missing. One with every server marked is settled.
+	 * Only a fold spends the fold budget; a stale hour spends none, and a
+	 * spent budget stops the folds but never the reading, so every hour found
+	 * folded is memoized in the same flush.
+	 *
+	 * Only an hour of `$foldable` folds. The rest of the plan is still read,
+	 * so a respawn adopts what its predecessor folded before it writes, but
+	 * an unfolded hour the data clock has not left waits: its records may
+	 * still arrive, and folding it now would send every one of them down
+	 * the late-write path. An hour read holding no index is not read again
+	 * until it folds (`$absent_hours`).
+	 *
+	 * @param Stats_Store                                    $stats_store Source and destination.
+	 * @param array{fine: list<string>, hours: list<string>} $plan        The flush's read plan.
+	 * @param list<string>                                   $foldable    The plan hours `foldable()` names.
+	 */
+	public function roll_up_hours( Stats_Store $stats_store, array $plan, array $foldable ): void {
+		// Drop what left the window, so the memo cannot outgrow it.
+		$planned            = \array_flip( $plan['hours'] );
+		$this->folded_hours = \array_intersect_key( $this->folded_hours, $planned );
+		// No reader plans an hour the window passed; its lists are owed no one.
+		$this->stale_hours = \array_intersect_key( $this->stale_hours, $planned );
+		$this->unfolded     = \array_intersect_key( $this->unfolded, $planned );
+		$this->absent_hours = \array_intersect_key( $this->absent_hours, $planned );
+		$owed               = \array_diff( $plan['hours'], \array_keys( $this->folded_hours ) );
+		$unknown            = \array_values( \array_diff( $owed, \array_keys( $this->absent_hours ) ) );
+		// Only for hours this process did not fold: an index and its markers.
+		$failed = false;
+		$found  = [] === $unknown ? [] : $stats_store->url_hours_derived( $unknown, $failed );
+		$budget = self::ROLLUP_HOURS_PER_FLUSH;
+		$ripe   = \array_flip( $foldable );
+		// A settled hour it could not see would read unfolded: ask next flush.
+		if ( $failed ) {
+			return;
+		}
+		$this->tell_unfold( $unknown, $found );
+		foreach ( $owed as $hour ) {
+			// @longform Folded with a server unmarked: one whose fold lost a
+			// write, or one a late write landed in. Its fine buckets may be
+			// gone, so folding again here could overwrite it with less; its
+			// lists come from the coarse rows, which is what they are derived
+			// from anyway, and that ranking checks the rows are whole.
+			if ( \array_key_exists( $hour, $found ) ) {
+				if ( [] !== $found[ $hour ] ) {
+					// A late write that forgot the marker is the truer cause.
+					$this->stale_hours[ $hour ] ??= 'DONE missing';
+				}
+				$this->folded_hours[ $hour ] = true;
+				continue;
+			}
+			$this->absent_hours[ $hour ] = true;
+			// Past the budget, or ahead of the data clock, a fold waits.
+			if ( $budget <= 0 || ! isset( $ripe[ $hour ] ) ) {
+				continue;
+			}
+			--$budget;
+			// A crash between shards leaves no index, so the hour folds again.
+			$fold = $this->spanned(
+				Flame_Tree::STATS_FOLD,
+				fn (): ?array => $this->fold_hour_into_store( $stats_store, $hour, false ),
+				static fn ( ?array $fold ): array => [ "{$hour}: missing index", $fold ?? [ 'unanswered' => true ] ]
+			);
+			if ( null === $fold ) {
+				continue;
+			}
+			$this->folded_hours[ $hour ] = true;
+			unset( $this->absent_hours[ $hour ] );
+		}
+	}
+
+	/**
+	 * Say that the roll-up read again hours a late write took off the fold
+	 * memo, as a `stats probe` line with the `unfold` trigger: how many, and
+	 * what the read found of them.
+	 *
+	 * @param list<string>               $unknown The hours it read.
+	 * @param array<string,list<string>> $found   What it found: hour => servers unmarked.
+	 */
+	private function tell_unfold( array $unknown, array $found ): void {
+		$again = \array_intersect_key( $this->unfolded, \array_flip( $unknown ) );
+		if ( [] === $again ) {
+			return;
+		}
+		$this->unfolded = \array_diff_key( $this->unfolded, $again );
+		$this->narrate(
+			Flame_Tree::STATS_PROBE,
+			static function () use ( $again, $found ): array {
+				// Unfound is unfolded; it folds once the clock has left it.
+				$unfolded = 0;
+				$stale    = 0;
+				foreach ( \array_keys( $again ) as $hour ) {
+					if ( ! \array_key_exists( $hour, $found ) ) {
+						++$unfolded;
+					} elseif ( [] !== $found[ $hour ] ) {
+						++$stale;
+					}
+				}
+				return [
+					'hour derive (unfold)',
+					[
+						'hours'    => \count( $again ),
+						'unfolded' => $unfolded,
+						'stale'    => $stale,
+					],
+				];
+			}
+		);
+	}
+
+	/**
+	 * Rank each stale hour of `$hours` from the coarse rows it already holds,
+	 * every server its index names, `ROLLUP_HOURS_PER_FLUSH` hours at a time.
+	 *
+	 * Each chunk reads every shard the index names, both families, in ONE
+	 * round trip after the index's own: a read per hour is a round trip per
+	 * hour on a replay. The index seeds every server it names, one of worker
+	 * rows alone included, whose ranking is empty lists and the DONE marker
+	 * that settles its hour. An hour missing a shard its index names holds
+	 * short rows, so it folds again from the fine tier rather than settling
+	 * short. Each ranked or folded hour leaves the stale set; a chunk whose
+	 * read a Table left unanswered does nothing and stays stale (decision 3).
+	 *
+	 * @param Stats_Store  $stats_store Source and destination.
+	 * @param list<string> $hours       Hour keys.
+	 */
+	private function rank_hours_from_store( Stats_Store $stats_store, array $hours ): void {
+		foreach ( \array_chunk( $hours, self::ROLLUP_HOURS_PER_FLUSH ) as $chunk ) {
+			$index = $stats_store->server_index( $chunk, [], $index_failed );
+			$rows  = [];
+			$reads = [];
+			$owner = [];
+			foreach ( $index as $hour => $entries ) {
+				foreach ( $entries as $key => [ Stats_Store::SRV_NAME => $server, Stats_Store::SRV_SHARDS => $mask ] ) {
+					$rows[ $hour ][ $server ] = [];
+					foreach ( Stats_Store::shards_in( $mask, true ) as $shard ) {
+						$reads[] = [ Stats_Store::url_hour_parts( $key, $shard ), $hour ];
+						$owner[] = [ $hour, $server, $shard ];
+					}
+				}
+			}
+			$values = $stats_store->bucket_get_multi( $reads, $rows_failed );
+			// Ranked from rows it could not read, the hour would settle short.
+			if ( $index_failed || Stats_Store::unanswered( $values, $rows_failed ) ) {
+				continue;
+			}
+			$short = [];
+			foreach ( $values as $at => $value ) {
+				[ $hour, $server, $shard ] = $owner[ $at ];
+				if ( null === $value ) {
+					$short[ $hour ] = true;
+				} else {
+					$rows[ $hour ][ $server ][ $shard ] = $value;
+				}
+			}
+			foreach ( $chunk as $hour ) {
+				if ( isset( $short[ $hour ] ) ) {
+					$fold = $this->spanned(
+						Flame_Tree::STATS_FOLD,
+						fn (): ?array => $this->fold_hour_into_store( $stats_store, $hour, true ),
+						static fn ( ?array $fold ): array => [ "{$hour}: missing shard", $fold ?? [ 'unanswered' => true ] ]
+					);
+					if ( null !== $fold ) {
+						unset( $this->stale_hours[ $hour ] );
+					}
+					continue;
+				}
+				$servers = $rows[ $hour ] ?? [];
+				$cause   = $this->stale_hours[ $hour ] ?? 'stale';
+				$this->spanned(
+					Flame_Tree::STATS_RE_RANK,
+					fn (): array => $this->write_url_ranks( $stats_store, [ $hour => $servers ], true, true ),
+					static fn ( array $ranks ): array => [
+						"{$hour}: {$cause}",
+						[
+							'servers' => \count( $servers ),
+							'rows'    => self::rows_in( $servers ),
+							'writes'  => $ranks['writes'],
+							'refused' => $ranks['refused'],
+						],
+					]
+				);
+				unset( $this->stale_hours[ $hour ] );
+			}
+		}
+	}
+
+	/**
+	 * Fold one hour's fine buckets into its coarse rows, server index and
+	 * lists.
+	 *
+	 * Every server the hour's buckets name is folded apart from the shards
+	 * each bucket's index names for it, and every shard of both families is
+	 * written for it, empty or not, so the hour's index names all of them
+	 * and the roll-up can tell a folded hour from a missing key. The rows
+	 * arrive in one round trip per write chunk however many servers the
+	 * hour holds.
+	 *
+	 * A refused write is logged and not retried by the flush. The caller
+	 * memoizes the hour folded, and the fold writes no DONE marker, so the
+	 * next worker's roll-up finds the hour owed and the ranking that settles
+	 * it, missing a shard, folds it again. A read a Table leaves
+	 * unanswered — the index or a row shard — folds nothing (decision 3):
+	 * folded short, the hour would read settled with its rows lost, so it
+	 * stays unfolded for the next flush. An hour that holds an index and
+	 * whose buckets now name no server writes nothing: its fine tier has
+	 * expired, and overwriting from it would empty the index, the rows and
+	 * the lists the hour still holds.
+	 *
+	 * @param Stats_Store $stats_store Source and destination.
+	 * @param string      $hour        Hour key.
+	 * @param bool        $held        The hour holds an index, so it was folded before.
+	 * @return array{servers: int, rows: int, writes: int, refused: int}|null What
+	 *         the fold wrote, for its `stats fold` span; null where it folded nothing.
+	 */
+	private function fold_hour_into_store( Stats_Store $stats_store, string $hour, bool $held ): ?array {
+		$shards  = Stats_Store::every_shard();
+		$names   = [];
+		$reads   = [];
+		$owner   = [];
+		$indexes = $stats_store->server_index( [], Stats_Store::buckets_in_hour( $hour ), $failed );
+		if ( $failed ) {
+			return null;
+		}
+		foreach ( $indexes as $bucket => $entries ) {
+			foreach ( $entries as $key => [ Stats_Store::SRV_NAME => $server, Stats_Store::SRV_SHARDS => $mask ] ) {
+				$names[ $key ] ??= $server;
+				foreach ( Stats_Store::shards_in( $mask, true ) as $shard ) {
+					$reads[] = [ Stats_Store::url_shard_parts( $key, $shard ), $bucket ];
+					$owner[] = [ $names[ $key ], $shard ];
+				}
+			}
+		}
+		if ( $held && [] === $names ) {
+			return [ 'servers' => 0, 'rows' => 0, 'writes' => 0, 'refused' => 0 ];
+		}
+		$rows = \array_fill_keys( \array_values( $names ), [] );
+		foreach ( \array_chunk( $reads, self::WRITE_BATCH_KEYS, true ) as $chunk ) {
+			$values = $stats_store->bucket_get_multi( $chunk, $chunk_failed );
+			if ( Stats_Store::unanswered( $values, $chunk_failed ) ) {
+				return null;
+			}
+			foreach ( $values as $at => $value ) {
+				if ( null !== $value ) {
+					[ $server, $shard ]        = $owner[ $at ];
+					$rows[ $server ][ $shard ] = self::merge_url_rows( $rows[ $server ][ $shard ] ?? [], $value );
+				}
+			}
+		}
+		$writes = [];
+		$ranked = [];
+		$named  = [];
+		$every  = Stats_Store::shard_mask( $shards );
+		foreach ( self::cap_hour_servers( $rows ) as $server => $server_rows ) {
+			$key           = Stats_Store::server_key( (string) $server );
+			$named[ $key ] = [ Stats_Store::SRV_NAME => (string) $server, Stats_Store::SRV_SHARDS => $every ];
+			// @longform Per SHARD, and not regroupable: each shard carries its
+			// own `Other` overflow row, which a merge by hash would collapse.
+			foreach ( $shards as $shard ) {
+				// Capped ONCE, after twelve buckets rather than after each.
+				$shard_rows = self::cap_url_rows( $server_rows[ $shard ] ?? [] );
+				$writes[]   = [ Stats_Store::url_hour_parts( $key, $shard ), $hour, $shard_rows ];
+				$ranked[ (string) $server ][ $shard ] = $shard_rows;
+			}
+		}
+		$writes[] = [ Stats_Store::url_srv_parts( true ), $hour, $named ];
+		$refused  = 0;
+		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
+			// @longform The batch answers per write, so a refusal names the
+			// KEY that was lost rather than the hour holding its candidates.
+			foreach ( $stats_store->bucket_set_multi( $chunk ) as $at => $ok ) {
+				if ( $ok ) {
+					continue;
+				}
+				++$refused;
+				$this->print_less_often(
+					'hour fold write refused; a shard is lost',
+					' — ' . Stats_Store::key_at( $chunk[ $at ][0], $chunk[ $at ][1] )
+				);
+			}
+		}
+		// A marker stands for every shard, so a fold that lost one writes none.
+		$ranks = $this->write_url_ranks( $stats_store, [ $hour => $ranked ], true, 0 === $refused );
+		return [
+			'servers' => \count( $named ),
+			'rows'    => self::rows_in( $ranked ),
+			'writes'  => \count( $writes ) + $ranks['writes'],
+			'refused' => $refused + $ranks['refused'],
+		];
+	}
+
+	/**
+	 * One hour's servers, bounded as a bucket's index is: past
+	 * `MAX_SERVER_VALUES` the quietest fold, shard by shard, into the `Other`
+	 * server, whose rows keep every request.
+	 *
+	 * @param array<array-key,array<string,array<array-key,mixed>>> $rows Server => shard => merged rows.
+	 * @return array<array-key,array<string,array<array-key,mixed>>>
+	 */
+	private static function cap_hour_servers( array $rows ): array {
+		$traffic = [];
+		foreach ( $rows as $server => $shards ) {
+			if ( Stats_Store::OTHER_KEY === (string) $server ) {
+				continue;
+			}
+			$traffic[ $server ] = 0;
+			foreach ( $shards as $shard_rows ) {
+				$traffic[ $server ] += \array_sum( \array_map(
+					static fn ( $row ): int => Core::num_int( Core::arr( $row )[ Stats_Store::ROW_COUNT ] ?? null ),
+					$shard_rows
+				) );
+			}
+		}
+		if ( \count( $traffic ) <= Stats_Store::MAX_SERVER_VALUES ) {
+			return $rows;
+		}
+		\arsort( $traffic );
+		foreach ( \array_slice( \array_keys( $traffic ), Stats_Store::MAX_SERVER_VALUES ) as $server ) {
+			foreach ( $rows[ $server ] as $shard => $shard_rows ) {
+				$shard_rows                               = self::refile_rows( $shard_rows, (string) $server, Stats_Store::OTHER_KEY );
+				$rows[ Stats_Store::OTHER_KEY ][ $shard ] = self::merge_url_rows( $rows[ Stats_Store::OTHER_KEY ][ $shard ] ?? [], $shard_rows );
+			}
+			unset( $rows[ $server ] );
+		}
 		return $rows;
 	}
 
 	/**
-	 * The name each of the span's servers files under: its own while the
-	 * names Ledger holds it over a reader's window or that window has room,
-	 * and `Stats_Store::OTHER_KEY` once `MAX_SERVER_VALUES` others are held.
-	 * `Other` holds no slot. Two partitions settling at once each admit up
-	 * to the room they read. A window holding more servers than
-	 * `Stats_Store::servers()` names has no room, and every server of the
-	 * span files under `Other`. A read the Ledger did not answer admits
-	 * nothing: it throws, so the settle appends nothing and the span stays
-	 * for the frame to carry (decision 3).
+	 * Rows moving from one server's key to another's, each path re-cut for
+	 * the server it now sits under.
 	 *
-	 * @param array<int,Bucket_Acc> $pending The span's buckets, by start.
-	 * @param Stats_Store           $store   The store the span appends to.
-	 * @param int                   $now     The settle's tick.
-	 * @return array<string,string> Server => the name it files under.
-	 * @throws \RuntimeException When the names Ledger did not answer.
+	 * @param array<array-key,mixed> $rows Rows by url_hash.
+	 * @param string                 $from The server they were filed under.
+	 * @param string                 $to   The server they are filed under now.
+	 * @return array<array-key,mixed>
 	 */
-	private static function admitted( array $pending, Stats_Store $store, int $now ): array {
-		$servers = [];
-		foreach ( $pending as $acc ) {
-			foreach ( \array_keys( $acc['url_stats'] + $acc['url_stats_worker'] + ( $acc['dim'][ Stats_Store::DIM_SERVER ] ?? [] ) ) as $server ) {
-				$servers[ (string) $server ] = true;
+	private static function refile_rows( array $rows, string $from, string $to ): array {
+		if ( $from === $to ) {
+			return $rows;
+		}
+		foreach ( $rows as $hash => $row ) {
+			$row                          = Core::arr( $row );
+			$row[ Stats_Store::ROW_PATH ] = Stats_Store::refile_path( Core::str( $row[ Stats_Store::ROW_PATH ] ?? '' ), $from, $to );
+			$rows[ $hash ]                = $row;
+		}
+		return $rows;
+	}
+
+	/**
+	 * Overwrite every ranked list of each key — a bucket or an hour — from
+	 * its shard maps, for each row family fourteen and a header record for
+	 * each server named and for the site, the `Stats_Store::ranked_writes()`
+	 * batch of every key written a chunk at a time. An overwrite, not a
+	 * merge — the lists are derived from the stored rows, which one
+	 * partition's one worker just wrote.
+	 *
+	 * The tier picks its own list depth, the way `cap_dim()` picks its field
+	 * table: a pairing that can only go one way is not a parameter.
+	 *
+	 * A refused list is logged and not retried here: the lists are top-N
+	 * bounded to fit, so a refusal is a wrong N, and a transient failure
+	 * heals at the ranking the next write into the key brings. A marked hour
+	 * carries each server's DONE marker in the same batch whatever the lists
+	 * answer, and `url_hours_derived()` decides whether the hour ranks again.
+	 *
+	 * @param Stats_Store                                              $stats_store Destination.
+	 * @param array<array-key,array<array-key,array<array-key,array<array-key,mixed>>>> $keys Bucket or
+	 *                                                                                        hour key =>
+	 *                                                                                        server =>
+	 *                                                                                        shard => rows.
+	 * @param bool                                                     $hour        The coarse tier.
+	 * @param bool                                                     $mark        Write each server's DONE
+	 *                                                                              marker: the caller vouches
+	 *                                                                              every shard is whole.
+	 * @return array{writes: int, lists: int, records: int, refused: int} What the batch
+	 *         carried, and how much of it was refused.
+	 */
+	private function write_url_ranks( Stats_Store $stats_store, array $keys, bool $hour, bool $mark ): array {
+		$writes = [];
+		$named  = 0;
+		$site   = 0;
+		foreach ( $keys as $key => $servers ) {
+			\array_push( $writes, ...Stats_Store::ranked_writes( $servers, $hour, (string) $key ) );
+			foreach ( $mark ? \array_keys( $servers ) : [] as $server ) {
+				$writes[] = [ Stats_Store::url_rank_done_parts( Stats_Store::server_key( (string) $server ) ), (string) $key, [] ];
+			}
+			// `ranked_writes()`' fixed shape, counted rather than classified.
+			$named += \count( $servers );
+			$site  += [] === $servers ? 0 : 1;
+		}
+		// Every set ranks every server named.
+		$records = \count( Stats_Store::RANK_SETS ) * $named;
+		$sites   = \count( Stats_Store::RANK_SETS ) * $site;
+		$each    = \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS );
+		$this->tally( Flame_Tree::STATS_WRITES, 'lists', $each * $records );
+		$this->tally( Flame_Tree::STATS_WRITES, 'site lists', $each * $sites );
+		$this->tally( Flame_Tree::STATS_WRITES, 'records', $records );
+		$this->tally( Flame_Tree::STATS_WRITES, 'site records', $sites );
+		$this->tally( Flame_Tree::STATS_WRITES, 'markers', $mark ? $named : 0 );
+		$out = [ 'writes' => \count( $writes ), 'lists' => $each * ( $records + $sites ), 'records' => $records + $sites, 'refused' => 0 ];
+		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
+			foreach ( $stats_store->bucket_set_multi( $chunk ) as $at => $ok ) {
+				if ( ! $ok ) {
+					++$out['refused'];
+					$this->tally( Flame_Tree::STATS_WRITES, "refused {$chunk[ $at ][0][0]}" );
+				}
 			}
 		}
-		if ( [] === $servers ) {
-			return [];
-		}
-		$to     = Stats_Store::bucket_start( $now ) + Stats_Store::BUCKET_SECONDS;
-		$listed = $store->servers( true, $to - Stats_Store::MAX_READ_BUCKETS * Stats_Store::BUCKET_SECONDS, $to );
-		if ( null === $listed ) {
-			throw new \RuntimeException( 'stats: ' . \esc_html( Stats_Store::LEDGER_NAMES ) . ' did not answer which servers it holds; the span stays carried' );
-		}
-		if ( false === $listed ) {
-			return \array_fill_keys( \array_keys( $servers ), Stats_Store::OTHER_KEY );
-		}
-		$held = \array_fill_keys( $listed, true );
-		unset( $held[ Stats_Store::OTHER_KEY ] );
-		$out = [];
-		foreach ( \array_keys( $servers ) as $server ) {
-			$server = Core::as_string( $server );
-			if ( ! isset( $held[ $server ] ) && \count( $held ) >= Stats_Store::MAX_SERVER_VALUES ) {
-				$out[ $server ] = Stats_Store::OTHER_KEY;
-				continue;
-			}
-			$held[ $server ] = true;
-			$out[ $server ]  = $server;
+		if ( $out['refused'] > 0 ) {
+			$this->print_less_often( 'URL rank write refused', ' — ' . \implode( ' ', \array_keys( $keys ) ) );
 		}
 		return $out;
 	}
 
 	/**
-	 * One leaderboard scope's rows: the requests it profiled under the
-	 * empty member, each category under its name, each entry under
-	 * `member( category, entry )`; none where it profiled nothing.
+	 * The rows a ranking holds, over one key's servers' shard maps.
 	 *
-	 * @param int             $t     The bucket's start.
-	 * @param string          $scope `Stats_Store::server_scope()`.
-	 * @param Leaderboard_Acc $board The scope's sums.
-	 * @return list<array{0:int,1:string,2:string,3:list<int|float>}>
+	 * @param array<array-key,array<array-key,array<array-key,mixed>>> $servers Server => shard => rows.
 	 */
-	private static function board_rows( int $t, string $scope, array $board ): array {
-		$count = Core::num_int( $board['count'] ?? null );
-		if ( 0 === $count ) {
-			return [];
+	private static function rows_in( array $servers ): int {
+		return \array_sum( \array_map( static fn ( array $shards ): int => \array_sum( \array_map( 'count', $shards ) ), $servers ) );
+	}
+
+	/**
+	 * How one server's shard of accumulated rows folds into its stored bucket.
+	 *
+	 * @param string                 $bucket Bucket key.
+	 * @param string                 $server The server the rows are filed under.
+	 * @param string                 $shard  Shard name from `Stats_Store::url_shard()`.
+	 * @param array<array-key,mixed> $rows   That shard's accumulated rows.
+	 * @param bool                   $ranks  The bucket sits in the fine tail, so the shard collects.
+	 * @return list<Pending_Write>
+	 */
+	private function url_shard_intent( string $bucket, string $server, string $shard, array $rows, bool $ranks ): array {
+		$key = Stats_Store::server_key( $server );
+		return $this->hour_tier_intents(
+			$bucket,
+			Stats_Store::url_shard_parts( $key, $shard ),
+			Stats_Store::url_hour_parts( $key, $shard ),
+			static fn ( array $existing ): array => self::cap_url_rows(
+				self::merge_url_rows( $existing, $rows )
+			),
+			// A discarded refusal loses this server's shard of the bucket.
+			function ( string $key ) use ( $rows ): void {
+				// Rows, not bytes: sizing re-serialises a megabyte a flush.
+				$this->print_less_often(
+					'URL index write refused in ' . Stats_Store::namespace_of( $key ) . '; its rows are lost',
+					\sprintf( ' — %s, %d rows', $key, \count( $rows ) )
+				);
+			},
+			$ranks ? function ( array $merged ) use ( $bucket, $server, $shard ): void {
+				$this->flushed_rows[ $bucket ][ $server ][ $shard ] = $merged;
+			} : null,
+			$key
+		);
+	}
+
+	/**
+	 * Add one bucket's rows into a row map, seeding a row the map lacks.
+	 *
+	 * Both writers of the URL index need this: the flush merges a shard's
+	 * accumulated rows into the stored ones, and the fold merges an hour's
+	 * twelve buckets into each other. Capping stays at the call site, because
+	 * the fold caps ONCE after all twelve rather than after each.
+	 *
+	 * @param array<array-key,mixed> $into Row map merged into.
+	 * @param array<array-key,mixed> $rows Rows to add, by url_hash.
+	 * @return array<array-key,mixed>
+	 */
+	private static function merge_url_rows( array $into, array $rows ): array {
+		foreach ( $rows as $key => $stats_raw ) {
+			// An all-digit hash arrives as an int array key; cast back.
+			$hash          = (string) $key;
+			$row           = Core::arr( $into[ $hash ] ?? null ) ?: self::empty_url_row();
+			$into[ $hash ] = Stats_Store::merge_url_row( $row, Core::arr( $stats_raw ) );
 		}
-		$rows = [ [ $t, $scope, '', [ $count, Core::num_float( $board['sum_req_time'] ?? null ), 0 ] ] ];
-		foreach ( $board['categories'] as $category => $sums ) {
-			$rows[] = [ $t, $scope, (string) $category, [ $sums['samples'], $sums['sum_time'], $sums['sum_count'] ] ];
-			foreach ( $sums['entries'] as $entry => $triple ) {
-				$rows[] = [ $t, $scope, Stats_Store::member( (string) $category, (string) $entry ), [ Core::num_int( $triple[2] ?? null ), Core::num_float( $triple[0] ?? null ), Core::num_float( $triple[1] ?? null ) ] ];
+		return $into;
+	}
+
+	/**
+	 * Cap one server's shard of rows by estimated bytes, busiest first.
+	 *
+	 * Both tiers store the same shape, so both take the same ceiling — and the
+	 * HOUR needs it more than the bucket does, because it folds twelve buckets'
+	 * URL sets into one key.
+	 *
+	 * @param array<array-key,mixed> $rows One shard's rows, by url_hash.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_url_rows( array $rows ): array {
+		// @longform The tail FOLDS rather than dropping: every total on the
+		// dashboard is summed from this index, so anything discarded here comes
+		// off those numbers silently. Two synthetic KEYS, one per population,
+		// so the two shard families never fold their tails into each other.
+		$other = [
+			Stats_Store::OTHER_KEY        => Core::arr( $rows[ Stats_Store::OTHER_KEY ] ?? null ),
+			Stats_Store::OTHER_WORKER_KEY => Core::arr( $rows[ Stats_Store::OTHER_WORKER_KEY ] ?? null ),
+		];
+		unset( $rows[ Stats_Store::OTHER_KEY ], $rows[ Stats_Store::OTHER_WORKER_KEY ] );
+		// The overflow rows go back in below either way: the cap counts them.
+		$per_row = Stats_Store::overhead( 'url_row' );
+		$room    = Stats_Store::ITEM_BUDGET - \count( $other ) * $per_row;
+		$bytes   = static fn ( mixed $stored ): int => $per_row
+			+ \strlen( Core::str( Core::arr( $stored )[ Stats_Store::ROW_PATH ] ?? '' ) );
+		if ( self::fitting( $rows, \PHP_INT_MAX, $room, $bytes ) < \count( $rows ) ) {
+			\uasort(
+				$rows,
+				static fn ( $a, $b ) => Core::num_int( Core::arr( $b )[ Stats_Store::ROW_COUNT ] ?? null )
+					<=> Core::num_int( Core::arr( $a )[ Stats_Store::ROW_COUNT ] ?? null )
+			);
+			$keep = self::fitting( $rows, \PHP_INT_MAX, $room, $bytes );
+			foreach ( \array_slice( $rows, $keep, null, true ) as $row ) {
+				$row           = Core::arr( $row );
+				$key           = Stats_Store::other_key( ! empty( $row[ Stats_Store::ROW_WORKER ] ) );
+				$other[ $key ] = Stats_Store::fold_url_rows( $other[ $key ], $row );
+			}
+			$rows = \array_slice( $rows, 0, $keep, true );
+		}
+		foreach ( $other as $key => $row ) {
+			if ( [] !== $row ) {
+				$rows[ $key ] = $row;
 			}
 		}
 		return $rows;
 	}
 
 	/**
-	 * Tell `stats writes`: what the settles since the last line appended,
-	 * the settles and rows first.
+	 * How the site's request totals for one bucket fold into its slot.
+	 *
+	 * @param string                 $bucket Bucket key.
+	 * @param array<array-key,mixed> $totals Accumulated totals.
+	 * @return Pending_Write
 	 */
-	private function tell_writes(): void {
-		$this->rollup( Flame_Tree::STATS_WRITES, [ 'settles', 'rows' ] );
+	private static function hourly_intent( string $bucket, array $totals ): array {
+		return self::slot_intent(
+			Stats_Store::hourly_parts(),
+			$bucket,
+			static fn ( array $existing ): array => Stats_Store::add_totals( Stats_Store::string_keys( $existing ), $totals )
+		);
+	}
+
+	/**
+	 * How one dimension's bucket folds into its slot, capped per slot: a
+	 * site's, a server's or a URL's, by `$parts`.
+	 *
+	 * @param array<int,string>      $parts  `dim_parts()` or `url_dim_parts()`.
+	 * @param string                 $bucket Bucket key.
+	 * @param string                 $dim    Dimension name.
+	 * @param array<array-key,mixed> $values Accumulated values.
+	 * @param int                    $cap    Values a slot keeps on every axis but `server`.
+	 * @param ?string                $member The member of a URL-hour row holding
+	 *                                       the slotted hour, `$dim` for
+	 *                                       `url_dim_parts()`; null where the
+	 *                                       value is the slotted hour.
+	 * @return Pending_Write
+	 */
+	private static function dimension_intent( array $parts, string $bucket, string $dim, array $values, int $cap, ?string $member ): array {
+		return self::slot_intent(
+			$parts,
+			$bucket,
+			static fn ( array $existing ): array => self::cap_dim(
+				Stats_Store::sum_fields( $existing, $values, Stats_Store::DIM_SUMS ),
+				Stats_Store::dim_cap( $dim, $cap )
+			),
+			$member
+		);
+	}
+
+	/**
+	 * How one scope's category bucket folds into its slot, capped per slot:
+	 * a site's, a server's or a URL's, by `$parts`.
+	 *
+	 * @param array<int,string>      $parts  `cat_parts()` or `url_cat_parts()`.
+	 * @param string                 $bucket Bucket key.
+	 * @param array<array-key,mixed> $cats   Accumulated categories.
+	 * @return Pending_Write
+	 */
+	private static function categories_intent( array $parts, string $bucket, array $cats ): array {
+		return self::slot_intent( $parts, $bucket, static fn ( array $existing ): array => self::fold_categories( $existing, $cats ) );
+	}
+
+	/**
+	 * One write into a slotted hour value: `$merge` folds the bucket's own
+	 * slot, so slot `Stats_Store::slot_of( $bucket )` holds exactly what a
+	 * five-minute bucket would, under the same caps (decision 35). Two
+	 * buckets of one hour compose onto one key through `add_intent()`.
+	 *
+	 * @param array<int,string>                                        $parts  A slotted namespace's key parts.
+	 * @param string                                                   $bucket Bucket key.
+	 * @param \Closure(array<array-key,mixed>): array<array-key,mixed> $merge  The bucket's own fold.
+	 * @param ?string                                                  $member The member of a URL-hour row
+	 *                                                                         holding the slotted hour; null
+	 *                                                                         where the value is the hour.
+	 * @return Pending_Write
+	 */
+	private static function slot_intent( array $parts, string $bucket, \Closure $merge, ?string $member = null ): array {
+		$slot = Stats_Store::slot_of( $bucket );
+		$fold = static function ( array $hour ) use ( $slot, $merge ): array {
+			$hour[ $slot ] = $merge( Core::arr( $hour[ $slot ] ?? null ) );
+			return $hour;
+		};
+		return self::intent(
+			$parts,
+			Stats_Store::hour_of( $bucket ),
+			null === $member ? $fold : static function ( array $row ) use ( $member, $fold ): array {
+				$row[ $member ] = $fold( Core::arr( $row[ $member ] ?? null ) );
+				return $row;
+			}
+		);
+	}
+
+	/**
+	 * How one scope's leaderboard folds into its hour: one sum, never
+	 * slotted, because nothing charts it (decision 35).
+	 *
+	 * @param string              $bucket Bucket key.
+	 * @param array<string,mixed> $sums   Accumulated sums.
+	 * @param string              $server Reporting server; '' is the global board.
+	 * @return Pending_Write
+	 */
+	private static function leaderboard_intent( string $bucket, array $sums, string $server ): array {
+		return self::intent(
+			Stats_Store::lb_parts( $server ),
+			Stats_Store::hour_of( $bucket ),
+			static function ( array $existing ) use ( $sums ): array {
+				$existing = Stats_Store::string_keys( $existing );
+				if ( empty( $existing ) ) {
+					$existing = self::empty_leaderboard();
+				}
+				Stats_Store::merge_leaderboard_bucket( $existing, $sums );
+				return self::cap_leaderboard( $existing, Stats_Store::ITEM_BUDGET );
+			}
+		);
+	}
+
+	/**
+	 * One write into an hour-derived namespace: into its fine bucket, and
+	 * once its hour has folded, into the hour key too, missing or not.
+	 *
+	 * A late write — a replay, an ingest, a spoke feeding backlog past its
+	 * caught-up peers — goes to the fine bucket a re-fold reads and to the
+	 * hour key the reader takes. The Tables are durable, so an hour key the
+	 * write finds missing is one the fold never wrote, and the late rows are
+	 * that key's rows.
+	 *
+	 * Only one server's row write ranks, of either family. Into an unfolded
+	 * hour it collects for the ranker, and names its ranking GROUP, the
+	 * (bucket, server) pair, only where its bucket sits in the fine tail.
+	 * Into a folded hour its bucket sits behind that tail, and its hour-key
+	 * write, once it lands, forgets that server's DONE marker so the flush
+	 * re-ranks its hour from its rows.
+	 *
+	 * @param string                                                   $bucket  Bucket key.
+	 * @param array<int,string>                                        $fine    Key parts in the fine tier.
+	 * @param array<int,string>                                        $coarse  Key parts in the hour tier.
+	 * @param \Closure(array<array-key,mixed>): array<array-key,mixed> $merge   Fold.
+	 * @param ?\Closure(string): void                                  $refused Called with the key a refused set lost.
+	 * @param ?\Closure(array<array-key,mixed>): void                  $collect What a write in the fine tail
+	 *                                                                          collects; null where its bucket
+	 *                                                                          ranks nothing.
+	 * @param ?string                                                  $server_key The server a row write's
+	 *                                                                             rows are filed under; null
+	 *                                                                             where nothing ranks.
+	 * @return list<Pending_Write>
+	 */
+	private function hour_tier_intents( string $bucket, array $fine, array $coarse, \Closure $merge, ?\Closure $refused, ?\Closure $collect, ?string $server_key = null ): array {
+		$hour = Stats_Store::hour_of( $bucket );
+		if ( ! isset( $this->folded_hours[ $hour ] ) ) {
+			return [ self::intent( $fine, $bucket, $merge, $refused, $collect, null === $collect ? null : "{$bucket} {$server_key}" ) ];
+		}
+		$unrank = null === $server_key ? null : function () use ( $hour, $server_key ): void {
+			$this->unranked_hours[ $hour ][ $server_key ] = true;
+		};
+		return [
+			self::intent( $fine, $bucket, $merge, $refused ),
+			self::intent( $coarse, $hour, $merge, $refused, $unrank ),
+		];
+	}
+
+	/**
+	 * File one intent under its cache KEY, composing onto whatever is already
+	 * there — the merges in sequence, the hooks chained.
+	 *
+	 * Two fine buckets of a folded hour land on one `urls_h` key, and composed
+	 * here one pre-read serves one write: a second merge built on the same
+	 * pre-read value would discard the first's rows outright.
+	 *
+	 * @param array<string,Pending_Write> $intents The flush's intents, by key.
+	 * @param Pending_Write               $intent  The intent to file.
+	 */
+	private static function add_intent( array &$intents, array $intent ): void {
+		$key  = Stats_Store::key_at( $intent['parts'], $intent['bucket'] );
+		$held = $intents[ $key ] ?? null;
+		if ( null === $held ) {
+			$intents[ $key ] = $intent;
+			return;
+		}
+		$intents[ $key ] = self::intent(
+			$intent['parts'],
+			$intent['bucket'],
+			static fn ( array $value ): array => ( $intent['merge'] )( ( $held['merge'] )( $value ) ),
+			self::both( $held['refused'], $intent['refused'] ),
+			self::both( $held['landed'], $intent['landed'] ),
+			$held['group'] ?? $intent['group']
+		);
+	}
+
+	/**
+	 * One pending write: where it goes, and how to fold this flush's numbers
+	 * onto whatever is already there.
+	 *
+	 * @param array<int,string>                        $parts   Key parts, the namespace first.
+	 * @param string                                   $bucket  Bucket (or hour) key.
+	 * @param \Closure(array<array-key,mixed>): array<array-key,mixed> $merge Fold.
+	 * @param ?\Closure(string): void                  $refused Called with the key a rejected set lost.
+	 * @param ?\Closure(array<array-key,mixed>): void  $landed  Called with the merged value once the set landed.
+	 * @param ?string                                  $group   The ranking group this write belongs to,
+	 *                                                          which is the bucket for a fine-tier URL
+	 *                                                          row or name write and null for everything else.
+	 * @return Pending_Write
+	 */
+	private static function intent( array $parts, string $bucket, \Closure $merge, ?\Closure $refused = null, ?\Closure $landed = null, ?string $group = null ): array {
+		return [
+			'parts'   => $parts,
+			'bucket'  => $bucket,
+			'merge'   => $merge,
+			'refused' => $refused,
+			'landed'  => $landed,
+			'group'   => $group,
+		];
+	}
+
+	/**
+	 * Both hooks as one, forwarding whatever the caller passes; null where
+	 * there is nothing to chain.
+	 *
+	 * @param ?\Closure $first  The hook already held.
+	 * @param ?\Closure $second The hook composing onto it.
+	 */
+	private static function both( ?\Closure $first, ?\Closure $second ): ?\Closure {
+		if ( null === $first || null === $second ) {
+			return $first ?? $second;
+		}
+		return static function ( mixed ...$args ) use ( $first, $second ): void {
+			$first( ...$args );
+			$second( ...$args );
+		};
+	}
+
+	/**
+	 * Cap a dimensional bucket: ranked by request count, no reserved row. Named
+	 * so the sort field and the field table cannot be paired wrongly at a call
+	 * site. Only measured entries are ranked; `fold_categories()` holds its
+	 * own to the same rule on `CAT_REQUESTS`.
+	 *
+	 * @param array<array-key,mixed> $values     One bucket's values.
+	 * @param int                    $max_values Ceiling on distinct values.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_dim( array $values, int $max_values ): array {
+		return self::cap_bucket( Stats_Store::measured( $values, Stats_Store::DIM_COUNT ), $max_values, Stats_Store::DIM_COUNT, Stats_Store::DIM_SUMS );
+	}
+
+	/**
+	 * A category bucket's STORED shape: this flush's numbers summed onto what is
+	 * already there, capped by time with `total` lifted clear of the ranking,
+	 * and each entry's `CAT_MS` rounded to display precision.
+	 *
+	 * Rounding comes LAST because the cap re-sums its tail into `Other`, and a
+	 * sum of rounded doubles is not itself rounded.
+	 *
+	 * @param array<array-key,mixed> $existing What the bucket already holds.
+	 * @param array<array-key,mixed> $cats     This flush's accumulated categories.
+	 * @return array<array-key,mixed>
+	 */
+	private static function fold_categories( array $existing, array $cats ): array {
+		$measured = Stats_Store::measured( Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ), Stats_Store::CAT_REQUESTS );
+		$capped = self::cap_bucket(
+			$measured,
+			Stats_Store::MAX_CAT_VALUES,
+			Stats_Store::CAT_MS,
+			Stats_Store::CAT_SUMS,
+			self::TOTAL_KEY
+		);
+		foreach ( $capped as $name => $entry ) {
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			$entry[ Stats_Store::CAT_MS ] = \round(
+				Core::num_float( $entry[ Stats_Store::CAT_MS ] ?? null ),
+				Stats_Store::CAT_MS_DECIMALS
+			);
+			$capped[ $name ] = $entry;
+		}
+		return $capped;
 	}
 
 	/**
@@ -1498,7 +3040,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * The decisions become a ruleset rewrite, and every flame-builder partition
 	 * accumulates its own. A shared-tier `add()` with a 5-second expiry serves as a
 	 * distributed lock so only one worker rewrites at a time; losing the race is
-	 * not an error, the decisions simply survive to the next tick.
+	 * not an error, the decisions simply survive to the next flush.
 	 *
 	 * Two escapes skip the lock and fire directly: no `Stats_Store` (the test
 	 * configuration) and no shared cache tier (single-process, nothing to
@@ -1527,7 +3069,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			return;
 		}
 
-		// Held by another worker: retry next tick, or wait out on hrtime.
+		// Held by another worker: retry next flush, or wait out on hrtime.
 		$deadline = self::monotonic() + $wait_ms * 1_000_000;
 		while ( ! $cache->add( $lock_key, $lock_value, $lock_timeout ) ) {
 			if ( self::monotonic() >= $deadline ) {
@@ -1549,10 +3091,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * The monotonic clock in ns, through the `$hrtime_fn` seam: what the
-	 * auto-tune lock wait is timed on.
+	 * The monotonic clock in ns, through the `$hrtime_fn` seam: the mark a
+	 * builder stamps when it works, and the clock any wait inside one is
+	 * timed on.
 	 */
-	private static function monotonic(): int {
+	public static function monotonic(): int {
 		return Core::num_int( ( self::$hrtime_fn ?? static fn (): int => (int) \hrtime( true ) )() );
 	}
 
@@ -1607,26 +3150,49 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Drain the per-URL flame and profile aggregates into the store: each
-	 * URL's whole blob overwrites the one its partition stored, in `MSET`s
-	 * of `WRITE_BATCH_KEYS`.
+	 * Drain the per-URL flame and profile aggregates into the store. The
+	 * batched `NS_URL` write overwrites with the whole aggregate.
 	 *
-	 * @param Stats_Store $stats_store The wired store.
-	 * @param int         $now         The caller's one read of the tick, the `last_modified` stamp.
+	 * The blob of each URL this flush filed is stamped with the hour, under
+	 * each server it was filed under (`persist_url_names()`); a stamp from an
+	 * earlier hour skips nothing, so it is dropped.
+	 *
+	 * @param Stats_Store                              $stats_store The wired store.
+	 * @param int                                      $now         The caller's one read of the tick, the `last_modified` stamp.
+	 * @param array<array-key,array<array-key,string>> $filed       server => hash => URL, the names this flush filed.
 	 */
-	private function drain_url_stats( Stats_Store $stats_store, int $now ): void {
-		$blobs = [];
-		foreach ( $this->url_acc as $url_hash => $aggregate ) {
+	private function drain_url_stats( Stats_Store $stats_store, int $now, array $filed ): void {
+		$hour   = Stats_Store::hour_of( Stats_Store::bucket_key( $now ) );
+		$stamps = [];
+		foreach ( $filed as $server => $urls ) {
+			foreach ( \array_keys( $urls ) as $hash ) {
+				$stamps[ (string) $hash ][ Stats_Store::server_key( (string) $server ) ] = $hour;
+			}
+		}
+		$writes = [];
+		foreach ( $this->url_acc->iterate() as $url_hash => $aggregate ) {
+			if ( ! \is_array( $aggregate ) ) {
+				continue;
+			}
+			/** @var array<string,mixed> $aggregate */
 			// Half the item for profiles, a quarter for each copy of the tree.
 			$aggregate['profiles'] = self::cap_leaderboard( Core::arr( $aggregate['profiles'] ?? null ), \intdiv( Stats_Store::ITEM_BUDGET, 2 ) );
 			// Finalized flame for display; keep flame_raw for merging.
 			[ $aggregate['flame_raw'], $aggregate['flame'] ] = self::url_flame_for_display( Core::arr( $aggregate['flame'] ?? null ) );
 			$aggregate['last_modified'] = $now;
-			$blobs[ (string) $url_hash ] = $aggregate;
+			if ( isset( $stamps[ (string) $url_hash ] ) ) {
+				$aggregate['filed'] = $stamps[ (string) $url_hash ] + \array_filter( Core::arr( $aggregate['filed'] ?? null ), static fn ( mixed $at ): bool => $hour === $at );
+			}
+			// @longform One write per URL is one ROUND TRIP per URL, which is
+			// the cost this whole flush path is batched to avoid. Chunked on
+			// `flush_writes()`'s budget, which bounds what one `store_multi`
+			// serializes; the aggregates themselves are alive either way,
+			// because the accumulator this drains is already holding them.
+			$writes[] = [ [ Stats_Store::NS_URL ], (string) $url_hash, $aggregate ];
 		}
-		foreach ( \array_chunk( $blobs, self::WRITE_BATCH_KEYS, true ) as $chunk ) {
-			$landed = $stats_store->set_url_aggregates( $chunk );
-			$this->tally( Flame_Tree::STATS_WRITES, 'refused url blobs', \count( $chunk ) - \count( $landed ) );
+		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
+			$landed = $stats_store->bucket_set_multi( $chunk );
+			$this->tally( Flame_Tree::STATS_WRITES, 'refused ' . Stats_Store::NS_URL, \count( \array_keys( $landed, false, true ) ) );
 		}
 	}
 
@@ -1821,12 +3387,18 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * A URL row with nothing folded in: every sum 0, and the duration
-	 * extremes null, not measured, until a timed request reaches the row.
+	 * A zero-valued URL index row.
 	 *
-	 * @return array<int,int|float|null>
+	 * Both sides of the write path seed one, differing only in the `min_ms`
+	 * sentinel: the accumulator folds with `min()` and needs a ceiling, the
+	 * persisted row starts at 0 and is guarded by `timed_count`. Two literals
+	 * would make every new field a four-place edit, and one omission a silent
+	 * undefined index on a per-request path.
+	 *
+	 * @param float|int $min_ms Starting minimum; `PHP_INT_MAX` where `min()` folds it.
+	 * @return array<int,mixed>
 	 */
-	private static function empty_url_row(): array {
+	private static function empty_url_row( float|int $min_ms = 0 ): array {
 		return [
 			Stats_Store::ROW_COUNT       => 0,
 			Stats_Store::ROW_TIMED_COUNT => 0,
@@ -1837,84 +3409,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			Stats_Store::ROW_COUNT_4XX   => 0,
 			Stats_Store::ROW_COUNT_5XX   => 0,
 			Stats_Store::ROW_ERRORS      => 0,
-			Stats_Store::ROW_MIN_MS      => null,
-			Stats_Store::ROW_MAX_MS      => null,
+			Stats_Store::ROW_MIN_MS      => $min_ms,
+			Stats_Store::ROW_MAX_MS      => 0,
 			Stats_Store::ROW_MAX_PEAK_MB => 0,
 			Stats_Store::ROW_LAST_SEEN   => 0,
-		];
-	}
-
-	/** @param string $table The Table the per-URL blob is written to. */
-	public function set_url_target( string $table ): void {
-		$this->url_target = self::mounted_table( 'set_url_target', Stats_Store::TABLE_URL, $table );
-	}
-
-	/**
-	 * The Table a verb names, refused unless it is the one the readers mount
-	 * for that role: `Performance_CI_Node` mounts `Stats_Store::TABLE_URL`,
-	 * so a write under any other name is one no dashboard reads.
-	 *
-	 * @param string $verb    The verb naming it, for the refusal.
-	 * @param string $mounted The Table the readers mount for the role.
-	 * @param string $table   The Table named.
-	 * @return string The Table named.
-	 * @throws \InvalidArgumentException When it is not the mounted one.
-	 */
-	private static function mounted_table( string $verb, string $mounted, string $table ): string {
-		if ( $mounted !== $table ) {
-			throw new \InvalidArgumentException( "{$verb}: '{$table}' is not {$mounted}, the Table the performance readers mount" );
-		}
-		return $table;
-	}
-
-	/**
-	 * Take back the crumb, so the record a plain stop left the cursor on is
-	 * replayed without being counted again, and the span a frame carried, so
-	 * the next settle writes it. Each bucket is merged over an empty
-	 * accumulator, so a carry lacking a key keeps that key's default. A key
-	 * the carry lacks reads as the start state a fresh process has. A restored span
-	 * alone keeps no worker busy: a stop carries it again.
-	 *
-	 * @api Used by substrate.
-	 * @param array<string,mixed> $saved A prior `save_state()`.
-	 */
-	public function restore_state( array $saved ): void {
-		$this->counted = Core::str( $saved['counted'] ?? null );
-		$span          = Core::arr( $saved['span'] ?? null );
-		foreach ( Core::arr( $span['pending'] ?? null ) as $bucket => $acc ) {
-			// A bucket's start decodes back to the int key it was saved under.
-			if ( \is_int( $bucket ) && \is_array( $acc ) ) {
-				/** @var Bucket_Acc $merged */
-				$merged                   = \array_merge( self::empty_bucket(), $acc );
-				$this->pending[ $bucket ] = $merged;
-			}
-		}
-		foreach ( Core::arr( $span['urls'] ?? null ) as $url_hash => $aggregate ) {
-			if ( \is_array( $aggregate ) ) {
-				$this->url_acc[ $url_hash ] = $aggregate;
-			}
-		}
-	}
-
-	/**
-	 * One bucket's empty accumulator. Seeded whole so every accumulate site can
-	 * index straight in, and so the leaderboard has its shape rather than [].
-	 *
-	 * @return Bucket_Acc
-	 */
-	private static function empty_bucket(): array {
-		return [
-			'hourly'                => [],
-			'dim'                   => [],
-			'dim_by_server'         => [],
-			'url_dim'               => [],
-			'url_stats'             => [],
-			'url_stats_worker'      => [],
-			'cat'                   => [],
-			'cat_by_server'         => [],
-			'cat_by_url'            => [],
-			'leaderboard'           => self::empty_leaderboard(),
-			'leaderboard_by_server' => [],
+			Stats_Store::ROW_WORKER      => false,
+			Stats_Store::ROW_PATH        => '',
 		];
 	}
 
@@ -1928,39 +3428,37 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
 	}
 
-	/**
-	 * Name one Ledger a settle appends to, refused unless it is one.
-	 *
-	 * @param string $ledger The Ledger, as `flame-builder.tsl` declares it.
-	 * @throws \InvalidArgumentException For a Ledger no settle writes.
-	 */
-	public function add_ledger_target( string $ledger ): void {
-		if ( ! isset( Stats_Store::LEDGER_COLUMNS[ $ledger ] ) ) {
-			throw new \InvalidArgumentException( "add_ledger_target: '{$ledger}' is not a Ledger a settle appends to" );
-		}
-		if ( ! \in_array( $ledger, $this->ledger_targets, true ) ) {
-			$this->ledger_targets[] = $ledger;
-		}
+	/** @param string $table The Table every other namespace is written to. */
+	public function set_aggregate_target( string $table ): void {
+		$this->aggregate_target = self::mounted_table( 'set_aggregate_target', Stats_Store::TABLE_AGGREGATE, $table );
+	}
+
+	/** @param string $table The Table the per-URL blob is written to. */
+	public function set_url_target( string $table ): void {
+		$this->url_target = self::mounted_table( 'set_url_target', Stats_Store::TABLE_URL, $table );
+	}
+
+	/** @param string $table The Table the fine URL tier is written to. */
+	public function set_url_fine_target( string $table ): void {
+		$this->url_fine_target = self::mounted_table( 'set_url_fine_target', Stats_Store::TABLE_URL_FINE, $table );
 	}
 
 	/**
-	 * The store `configure_stats` builds: each Ledger `add_ledger_target`
-	 * named, under its own name, which the worker graph's Ledger answers
-	 * to, and the url Table `set_url_target` named.
+	 * The Table a verb names, refused unless it is the one the readers mount
+	 * for that role: `Performance_CI_Node` mounts `Stats_Store::TABLES` by
+	 * role, so a write under any other name is one no dashboard reads.
 	 *
-	 * @throws \LogicException Before `set_url_target`, or before every Ledger
-	 *                         a settle writes is named, which would take
-	 *                         their rows to no node at all.
+	 * @param string $verb    The verb naming it, for the refusal.
+	 * @param string $mounted The Table the readers mount for the role.
+	 * @param string $table   The Table named.
+	 * @return string The Table named.
+	 * @throws \InvalidArgumentException When it is not the mounted one.
 	 */
-	private function configured_store(): Stats_Store {
-		if ( '' === $this->url_target ) {
-			throw new \LogicException( 'configure_stats: no Table named by set_url_target' );
+	private static function mounted_table( string $verb, string $mounted, string $table ): string {
+		if ( $mounted !== $table ) {
+			throw new \InvalidArgumentException( "{$verb}: '{$table}' is not {$mounted}, the Table the performance readers mount" );
 		}
-		$unnamed = \array_diff( \array_keys( Stats_Store::LEDGER_COLUMNS ), $this->ledger_targets );
-		if ( [] !== $unnamed ) {
-			throw new \LogicException( 'configure_stats: no Ledger named by add_ledger_target: ' . \implode( ', ', $unnamed ) );
-		}
-		return new Stats_Store( $this->client, \array_combine( $this->ledger_targets, $this->ledger_targets ), [ $this->url_target ] );
+		return $table;
 	}
 
 	/**
@@ -1988,41 +3486,82 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Inject the Stats_Store the settle writes through.
+	 * Inject the Stats_Store the flush writes through.
 	 *
-	 * @param Stats_Store $store Store over this worker's stats Ledgers and url Table.
+	 * Only the read plan is dropped, for the retention window it was built
+	 * over. A second `configure_stats` builds over the same three Tables,
+	 * since each target verb refuses any other, so every other memo still
+	 * describes the store, and the rankings the pending memo owes live in
+	 * memory alone.
+	 *
+	 * @param Stats_Store $store Store over this worker's stats Tables.
 	 */
 	public function set_stats_store( Stats_Store $store ): void {
 		$this->stats_store = $store;
+		$this->plan_memo   = null;
 	}
 
 	/**
-	 * The stats stores a configured settle writes past its primary target —
-	 * the url Table and the Ledgers the verbs named — so the console draws
-	 * an edge to each.
+	 * Take back the crumb, so the record a plain stop left the cursor on is
+	 * replayed without being counted again, and the data clock, so the fine
+	 * deadline outlives the recycle. A key the carry lacks reads as the
+	 * start state a fresh process has.
+	 *
+	 * @api Used by substrate.
+	 * @param array<string,mixed> $saved A prior `save_state()`.
+	 */
+	public function restore_state( array $saved ): void {
+		$this->counted               = Core::str( $saved['counted'] ?? null );
+		$this->data_clock            = Core::str( $saved['data_clock'] ?? null );
+		$this->data_clock_hour_since = Core::num_float( $saved['data_clock_hour_since'] ?? null );
+	}
+
+	/**
+	 * The stats Tables the verbs named, which the flush writes past its
+	 * primary target, so the console draws an edge to each.
 	 *
 	 * @api Unioned into display_targets() by the substrate's Node.
 	 * @return list<string>
 	 */
 	protected function extra_targets(): array {
-		if ( null === $this->stats_store ) {
-			return [];
-		}
-		return [ $this->url_target, ...$this->ledger_targets ];
+		return [ $this->aggregate_target, $this->url_target, $this->url_fine_target ];
 	}
 
 	/**
-	 * When this node went idle: the last settle that drained a folded record,
-	 * or null while a record this process folded is in neither a settle nor
-	 * a committed frame, which the Consumer's next checkpoint brings. A span
-	 * a frame carries keeps nothing up — a restored one, or one a crawl
-	 * checkpointed record by record: a stop carries it again, and an idle
-	 * log moves no cursor, so no interval checkpoint would ever settle it.
+	 * When this node went idle: the last flush that drained a folded record
+	 * while nothing is pending, or null while one waits for the next flush.
+	 * An upkeep flush — a roll-up read a Table left unanswered repeats one
+	 * every tick — leaves it where it was.
 	 *
 	 * @api Used by substrate: `Cooperative_Stop`'s idle scan.
 	 */
 	public function idle_since(): ?float {
-		return $this->uncommitted ? null : $this->worked_at;
+		return [] === $this->pending ? $this->worked_at : null;
+	}
+
+	/**
+	 * Each declared stats Table => the node its verb named: the map the
+	 * store asks through.
+	 *
+	 * @return array<string,string>
+	 * @throws \LogicException When a verb never named its Table, which would
+	 *                         take that Table's writes to no node at all.
+	 */
+	private function stats_tables(): array {
+		$named   = [
+			'set_aggregate_target' => $this->aggregate_target,
+			'set_url_target'       => $this->url_target,
+			'set_url_fine_target'  => $this->url_fine_target,
+		];
+		$unnamed = \array_keys( $named, '', true );
+		if ( [] !== $unnamed ) {
+			throw new \LogicException( 'configure_stats: no Table named by ' . \implode( ', ', $unnamed ) );
+		}
+		return [
+			Stats_Store::TABLE_AGGREGATE => $this->aggregate_target,
+			Stats_Store::TABLE_URL       => $this->url_target,
+			Stats_Store::TABLE_URL_FINE  => $this->url_fine_target,
+		];
 	}
 
 	/**
@@ -2071,17 +3610,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * A verb missing here silently drops its setting on a console serialize →
 	 * replay round trip, so a new persistent verb needs a line added. The
-	 * Table setter dumps ahead of `configure_stats`, which refuses to run
-	 * before it has.
+	 * Table setters dump ahead of `configure_stats`, which refuses to run
+	 * before they have.
 	 *
 	 * @api Used by substrate.
 	 * @return string TSL lines, newline-terminated.
 	 */
 	public function dump_config(): string {
 		$out = parent::dump_config() . $this->dump_setters() . $this->dump_toggles();
-		foreach ( $this->ledger_targets as $ledger ) {
-			$out .= $this->config_line( 'add_ledger_target', $ledger );
-		}
 		if ( null !== $this->stats_store ) {
 			$out .= $this->config_line( 'configure_stats' );
 		}
@@ -2176,7 +3712,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Transform',
-			'description' => 'Appends each span of per-request stats to the stats Ledgers; emits flame JSONL.',
+			'description' => 'Aggregates per-event count + sum_time into the stats Tables; emits flame JSONL.',
 			'arguments'        => [],
 			'commands'       => [
 				[
@@ -2189,6 +3725,15 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					'toggle'      => 'is_hub',
 				],
 				[
+					'name'        => 'set_aggregate_target',
+					'description' => 'Name the stats Table every namespace but the per-URL ones is written to: flame-stats:aggregate, the one the performance readers mount.',
+					'args'        => [
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+					],
+					// Declarative: the substrate trims, assigns and dumps it.
+					'setter'      => 'aggregate_target',
+				],
+				[
 					'name'        => 'set_url_target',
 					'description' => 'Name the stats Table the per-URL blob is written to: flame-stats:url, the one the performance readers mount.',
 					'args'        => [
@@ -2198,26 +3743,28 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					'setter'      => 'url_target',
 				],
 				[
-					'name'        => 'add_ledger_target',
-					'description' => 'Name one stats Ledger a settle appends to; name each, as flame-builder.tsl does.',
+					'name'        => 'set_url_fine_target',
+					'description' => 'Name the stats Table the fine URL tier is written to: flame-stats:url-fine, the one the performance readers mount.',
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						/** @var self $patron */
-						$patron = $interpreter->patron();
-						$patron->add_ledger_target( Core::as_string( $args['target'] ?? '' ) );
-						return 'ok';
-					},
+					// Declarative: the substrate trims, assigns and dumps it.
+					'setter'      => 'url_fine_target',
 				],
 				[
 					'name'        => 'configure_stats',
-					'description' => 'Build the Stats_Store over the Ledgers add_ledger_target named and the url Table set_url_target named. Refused until each is named.',
+					'description' => 'Build the Stats_Store over the three Tables the set_*_target verbs named, with the retention window. Refused until all three are named.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
 						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->set_stats_store( $patron->configured_store() );
+						$patron->set_stats_store(
+							new Stats_Store(
+								Config::stats_retention_seconds(),
+								$patron->client,
+								$patron->stats_tables()
+							)
+						);
 						return 'ok';
 					},
 				],
@@ -2226,7 +3773,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				[
 					'name'        => 'GET_STATS',
 					'description' => 'Stats cache + pending buckets + auto-tune queue depth.',
-					'reply_shape' => '{ stats_count, pending_url_count, intern_count, pending_buckets, last_settle_age_s, auto_tune_pending_count, is_hub, significant_events_count, narration }',
+					'reply_shape' => '{ stats_count, pending_url_count, intern_count, pending_buckets, last_flush_age_s, auto_tune_pending_count, is_hub, significant_events_count, narration }',
 					'handler'     => static fn ( self $node ): array => $node->stats_report(),
 				],
 			],

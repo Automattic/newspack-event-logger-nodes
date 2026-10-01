@@ -104,27 +104,6 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
-	/**
-	 * The analyzer resolves the tokens of a `set_*target` or `add_*target`
-	 * line while it derives the hub, so `<eln:is_hub>` in one reads the hub
-	 * while deriving it: the derivation answers "not a hub" inside itself
-	 * rather than recursing until PHP dies.
-	 */
-	public function test_is_hub_in_a_target_line_does_not_recurse(): void {
-		$dir = $this->make_temp_dir( 'eln-hub-recursion-' );
-		\file_put_contents(
-			"{$dir}/kea-4471.tsl",
-			"make_node Flame_Builder fb-kea\ncommand_node fb-kea:config add_ledger_target <eln:is_hub>\n"
-		);
-		Topology_Registry::register_user_dir( $dir );
-
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'kea-4471' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub' ) );
-	}
-
 	public function test_an_unreadable_active_topology_fails_the_hub_derivation_loud(): void {
 		// Unread, the broken one might be the hub: answering "spoke" would turn
 		// its per-server stats off in silence.
@@ -219,13 +198,12 @@ class ElnConfigTokenTest extends TestCase {
 		}
 	}
 
-	// --- the stats stores' lifetimes -------------------------------------
+	// --- the stats Tables' TTLs ---------------------------------------------
 
-	public function test_the_stats_lifetimes_derive_from_the_retention_window(): void {
+	public function test_the_stats_table_ttls_derive_from_the_retention_window(): void {
 		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 259200 ] );
-		$this->assertSame( [ '72', '10800' ], [ Config::resolve_eln_token( 'ledger_segments' ), Config::resolve_eln_token( 'stats_url_ttl' ) ] );
+		$this->assertSame( [ '259200', '10800', '7200' ], [ Config::resolve_eln_token( 'stats_ttl' ), Config::resolve_eln_token( 'stats_url_ttl' ), Config::resolve_eln_token( 'stats_url_fine_ttl' ) ] );
 		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 5400 ] );
-		$this->assertSame( [ '25', '3600' ], [ Config::resolve_eln_token( 'ledger_segments' ), Config::resolve_eln_token( 'stats_url_ttl' ) ], 'a Ledger keeps the 25 hours a chart reads' );
-		$this->assertNull( Config::resolve_eln_token( 'stats_ttl' ), 'no Table outlives its window' );
+		$this->assertSame( [ '90000', '3600', '5400' ], [ Config::resolve_eln_token( 'stats_ttl' ), Config::resolve_eln_token( 'stats_url_ttl' ), Config::resolve_eln_token( 'stats_url_fine_ttl' ) ], 'the aggregate Table outlives the 25 hours a chart reads' );
 	}
 }

@@ -25,8 +25,6 @@ $newspack_test_base = \sys_get_temp_dir() . '/newspack-event-logger-nodes-test-'
 	)
 );
 \putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . __DIR__ . '/newspack-event-logger-nodes-test-config.php' );
-// Log_Manager refuses to start a request with no SERVER_NAME; CLI sets none.
-$_SERVER['SERVER_NAME'] = 'kea-7713.test';
 \define( 'NONCE_SALT', 'newspack-nodes-test-nonce-salt' );
 \define( 'ABSPATH', '/' );
 // Cache_Backend::site() scopes every memcache key by database + base prefix.
