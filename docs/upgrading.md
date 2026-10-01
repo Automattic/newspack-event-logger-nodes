@@ -6,6 +6,14 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **Flush the stats Tables after deploying: a URL sort orders the whole
+  URL.** A site `url` list (`urlrank_s`, `urlrank_sh`) stores each entry's
+  whole URL where it stored the path, and a page reading a list written
+  before the upgrade answers an error, `Stats_Store: no server to join
+  '<path>' to`, rather than show a URL with no host. Run
+  `wp nodes tables flush flame-stats:aggregate flame-stats:url-fine`
+  (decision 5), or the three-Table flush below, which covers it.
+
 - **Flush the stats Tables after deploying: search and `dump_url` read a
   new namespace.** Each URL's row is also filed by key, as
   `url_row_h:{Y-m-d-H}:{server_key}:{hash}`, and `urls --search`,

@@ -937,7 +937,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$covered = [];
 			foreach ( $store->url_rank_window( $plan['hours'], $plan['fine'], $sort, $order, $server, $sets, $waiting ) as [ $key, $entries ] ) {
 				$covered[ $key ] = true;
-				self::note_bucket_means( $means, self::fold_rank_entries( $merged, $entries, isset( $recent[ $key ] ) ) );
+				self::note_bucket_means( $means, self::fold_rank_entries( $merged, $entries, isset( $recent[ $key ] ), $server ) );
 				++$found;
 			}
 			// Left out of the lists: a hole, but for lag or a fold owed.
@@ -1088,7 +1088,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 			}
 			foreach ( $store->url_rank_window( \array_values( \array_intersect( $plan['hours'], \array_keys( $records ) ) ), $plan['fine'], $sort, $order, $server, $sets ) as [ , $entries ] ) {
-				self::fold_rank_entries( $slowest, $entries, false );
+				self::fold_rank_entries( $slowest, $entries, false, $server );
 			}
 		}
 		// Each set keeps an overflow row of its own, as the fold counts them.
@@ -1119,9 +1119,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<string,array<string,mixed>> $merged    Merged display rows by hash, mutated.
 	 * @param array<array-key,mixed>            $entries   One list.
 	 * @param bool                              $is_recent Among the keys the recent rate sums.
+	 * @param string                            $server    The lists' server; '' for the site's.
 	 * @return array<array-key,array<array-key,mixed>> The stored rows folded, by hash.
 	 */
-	private static function fold_rank_entries( array &$merged, array $entries, bool $is_recent ): array {
+	private static function fold_rank_entries( array &$merged, array $entries, bool $is_recent, string $server ): array {
 		$folded = [];
 		foreach ( $entries as $raw ) {
 			$entry = Core::arr( $raw );
@@ -1130,10 +1131,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( '' === $hash || [] === $row ) {
 				continue;
 			}
-			$merged[ $hash ] = self::fold_index_row( $merged[ $hash ] ?? self::empty_index_row( $hash ), $row, $is_recent );
-			if ( isset( $entry[ Stats_Store::RANK_PATH ] ) ) {
-				$merged[ $hash ]['url'] = Core::str( $entry[ Stats_Store::RANK_PATH ] );
-			}
+			$path            = [ Stats_Store::ROW_PATH => Core::str( $entry[ Stats_Store::RANK_PATH ] ?? '' ) ];
+			$merged[ $hash ] = self::fold_index_row( $merged[ $hash ] ?? self::empty_index_row( $hash ), $row + $path, $is_recent, $server );
 			$folded[ $hash ] = $row;
 		}
 		return $folded;
@@ -2401,9 +2400,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				$bits = Stats_Store::shard_mask( \array_map( static fn ( bool $worker ): string => Stats_Store::url_shard( $hash, $worker ), $families ) );
 				foreach ( $index as $at => $entries ) {
 					$hour = Stats_Store::hour_of( $at );
-					foreach ( null === $keys ? $entries : \array_intersect_key( $entries, \array_flip( $keys ) ) as $key => [ Stats_Store::SRV_SHARDS => $mask ] ) {
+					foreach ( null === $keys ? $entries : \array_intersect_key( $entries, \array_flip( $keys ) ) as $key => [ Stats_Store::SRV_NAME => $name, Stats_Store::SRV_SHARDS => $mask ] ) {
 						if ( 0 !== ( $mask & $bits ) ) {
-							$held[ $hash ][ $at ][]            = [ $key, $mask ];
+							$held[ $hash ][ $at ][]            = [ $key, $mask, $name ];
 							$reads[ "{$hour} {$key} {$hash}" ] = [ Stats_Store::url_row_parts( $key, $hash ), $hour ];
 						}
 					}
@@ -2416,7 +2415,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					$family = Stats_Store::url_row_family( $worker );
 					foreach ( $by_key as $at => $servers ) {
 						$hour = Stats_Store::hour_of( $at );
-						foreach ( $servers as [ $key, $mask ] ) {
+						foreach ( $servers as [ $key, $mask, $name ] ) {
 							$value = Core::arr( 0 === ( $mask & $bit ) ? null : $values[ "{$hour} {$key} {$hash}" ] ?? null );
 							$slots = Core::arr( $value[ $family ] ?? null );
 							$row   = $at === $hour ? self::hour_row( $slots ) : Core::arr( $slots[ Stats_Store::slot_of( $at ) ] ?? null );
@@ -2424,7 +2423,7 @@ class Performance_CI_Node extends Service_CI_Node {
 								continue;
 							}
 							$row[ Stats_Store::ROW_PATH ] = Core::str( $value[ Stats_Store::URL_ROW_PATH ] ?? '' );
-							$rows[ (int) $worker ][ $hash ] = self::fold_index_row( $rows[ (int) $worker ][ $hash ] ?? self::empty_index_row( $hash ), $row, isset( $recent[ $at ] ) );
+							$rows[ (int) $worker ][ $hash ] = self::fold_index_row( $rows[ (int) $worker ][ $hash ] ?? self::empty_index_row( $hash ), $row, isset( $recent[ $at ] ), $name );
 						}
 					}
 				}
@@ -2664,7 +2663,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * A stored row carries the path its server's key does not imply, so the
 	 * whole URL is read for the rows a response actually SHOWS — one
 	 * `MGET` per partition. Every displayed row is named here,
-	 * including one carrying the PATH it was folded or ranked by; only the
+	 * including one carrying the path or URL it was sorted by; only the
 	 * synthetic overflow rows are skipped, and they name no URL to look up.
 	 *
 	 * Naming runs on a budget of its own — see `url_names()` — and the `urls`
@@ -2691,7 +2690,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$hash = Core::as_string( $row['hash'] ?? '' );
 			if ( isset( $names[ $hash ] ) ) {
 				// @longform Overwrites rather than filling a gap: a row carries
-				// the PATH it was folded or ranked by, and the name table is
+				// the path or URL it was sorted by, and the name table is
 				// the one authority for what a row DISPLAYS.
 				$rows[ $i ]['url'] = $names[ $hash ]['url'];
 			}
@@ -2789,8 +2788,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				$plan,
 				static fn ( array $hours ): array => $store->url_hour_sources( $hours, $shard, false, $server ),
 				static fn ( array $buckets ): array => $store->url_row_sources( $buckets, $shard, false, $server ),
-				static function ( string $bucket, array $data ) use ( &$result, $recent, $errored ): void {
-					self::fold_bucket( $result, $errored ? Stats_Store::errored_rows( $data ) : $data, isset( $recent[ $bucket ] ) );
+				static function ( string $bucket, array $data, string $filed_under ) use ( &$result, $recent, $errored ): void {
+					self::fold_bucket( $result, $errored ? Stats_Store::errored_rows( $data ) : $data, isset( $recent[ $bucket ] ), $filed_under );
 				}
 			);
 		}
@@ -2814,8 +2813,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The two-tier shard walk both index readers make, over one store and one
 	 * shard: every chunk of the plan's coarse hours through `$coarse`, then
-	 * the current hour's buckets through `$fine`, each `[ bucket, data ]`
-	 * pair handed to `$fold`.
+	 * the current hour's buckets through `$fine`, each `[ bucket, data,
+	 * server ]` triple handed to `$fold`.
 	 *
 	 * An hour with no coarse key — not folded yet — leaves the fold short
 	 * there, a lag `unfolded()` reports; its buckets are never read, since
@@ -2830,13 +2829,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array{fine: list<string>, hours: list<string>} $plan   `Stats_Store::read_plan()`.
 	 * @param \Closure(list<string>): list<array{0:string,1:array<array-key,mixed>,2:string}> $coarse Coarse-tier reader.
 	 * @param \Closure(list<string>): list<array{0:string,1:array<array-key,mixed>,2:string}> $fine   Fine-tier reader.
-	 * @param \Closure(string, array<array-key,mixed>): void $fold One pair's sink.
+	 * @param \Closure(string, array<array-key,mixed>, string): void $fold One triple's sink.
 	 */
 	private static function walk_shard_tiers( array $plan, \Closure $coarse, \Closure $fine, \Closure $fold ): void {
 		foreach ( [ [ $coarse, $plan['hours'] ], [ $fine, $plan['fine'] ] ] as [ $read, $keys ] ) {
 			foreach ( \array_chunk( $keys, self::INDEX_READ_CHUNK ) as $chunk ) {
-				foreach ( $read( $chunk ) as [ $key, $data ] ) {
-					$fold( $key, $data );
+				foreach ( $read( $chunk ) as [ $key, $data, $server ] ) {
+					$fold( $key, $data, $server );
 				}
 			}
 		}
@@ -2854,15 +2853,17 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<array-key,mixed>            $data      One stored bucket.
 	 * @param bool                              $is_recent Whether it is among
 	 *                                                     the keys the recent rate sums.
+	 * @param string                            $server    The server it is filed under.
 	 */
-	private static function fold_bucket( array &$result, array $data, bool $is_recent ): void {
+	private static function fold_bucket( array &$result, array $data, bool $is_recent, string $server ): void {
 		foreach ( $data as $key => $stats ) {
 			// An all-digit hash arrives as an int array key; cast back.
 			$hash            = (string) $key;
 			$result[ $hash ] = self::fold_index_row(
 				$result[ $hash ] ?? self::empty_index_row( $hash ),
 				Core::arr( $stats ),
-				$is_recent
+				$is_recent,
+				$server
 			);
 		}
 	}
@@ -2908,9 +2909,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<array-key,mixed> $stat_arr  One bucket's stored row.
 	 * @param bool                   $is_recent Whether that key is among the
 	 *                                          keys the recent rate sums.
+	 * @param string                 $server    The server the row is filed under, which
+	 *                                          joins its path to the whole URL.
 	 * @return array<string,mixed>
 	 */
-	private static function fold_index_row( array $entry, array $stat_arr, bool $is_recent ): array {
+	private static function fold_index_row( array $entry, array $stat_arr, bool $is_recent, string $server ): array {
 		// @longform The storage/display boundary for the ROW: stored rows are
 		// POSITIONAL (`Stats_Store::ROW_*`) and this one crosses the wire as
 		// JSON, so it keeps its names.
@@ -2935,9 +2938,9 @@ class Performance_CI_Node extends Service_CI_Node {
 			Core::num_int( $entry['last_updated'] ),
 			Core::num_int( $stat_arr[ Stats_Store::ROW_LAST_SEEN ] ?? 0 )
 		);
-		// The path until `resolve_urls()` names the row in full.
+		// What a `url` sort orders, until `resolve_urls()` names the row.
 		if ( '' === $entry['url'] ) {
-			$entry['url'] = Core::str( $stat_arr[ Stats_Store::ROW_PATH ] ?? '' );
+			$entry['url'] = Stats_Store::join_url( $server, Core::str( $stat_arr[ Stats_Store::ROW_PATH ] ?? '' ) );
 		}
 		return $entry;
 	}

@@ -993,7 +993,7 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( $by_server as $server => $rows ) {
 			foreach ( $rows as $hash => $row ) {
 				$row         = \Newspack_Nodes\Core::arr( $row );
-				$row['path'] = isset( $row['url'] ) ? \Newspack_Event_Logger_Nodes\Stats_Store::path_of( \Newspack_Nodes\Core::str( $row['url'] ) ) : '';
+				$row['path'] = isset( $row['url'] ) ? \Newspack_Event_Logger_Nodes\Stats_Store::row_path( \Newspack_Nodes\Core::str( $row['url'] ), (string) $server ) : '';
 				unset( $row['url'] );
 				$servers[ $server ][ $hash ] = self::positional_url_row( $row );
 			}

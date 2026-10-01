@@ -542,7 +542,9 @@ class Stats_Store {
 	/**
 	 * A ranked-list entry is POSITIONAL (decision 18): the hash, the row's
 	 * fourteen numbers `ROW_COUNT`..`ROW_WORKER` and never `ROW_PATH`, and on
-	 * the `url` lists alone the path it ranked by.
+	 * the `url` lists alone the URL it ranked by: its `ROW_PATH` on a
+	 * server's list, which the server's name joins to the whole URL
+	 * (`join_url()`), and the whole URL itself on the site's.
 	 */
 	public const RANK_HASH = 0;
 	public const RANK_ROW  = 1;
@@ -2044,18 +2046,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * The URL a `row_path()` was cut from, given the server it was cut
-	 * against: the inverse `row_path()` answers to, and the one place a
-	 * reader spells the join.
-	 *
-	 * @param string $server The server the path was cut against.
-	 * @param string $path   The stored path.
-	 */
-	private static function join_url( string $server, string $path ): string {
-		return \str_starts_with( $path, '/' ) ? "https://{$server}{$path}" : $path;
-	}
-
-	/**
 	 * Whether a stored `urlmap` value is `[ server_name, path ]`. A server
 	 * name never holds `/`, `?` or `#`, so an entry whose first element does
 	 * is the old `[ path, origin ]` shape, and reads as no name at all.
@@ -2313,7 +2303,9 @@ class Stats_Store {
 	 * A site list is exact: URLs are disjoint by server and a tie breaks by
 	 * hash, so every entry of a sort's site top-N heads its own server's list
 	 * for that sort, and a hash two servers share merges as its rows would
-	 * have.
+	 * have. Every `url` list ranks the whole URL; a server's stores the path
+	 * and the site's the URL, joined as each server's entries enter the
+	 * union.
 	 *
 	 * A record sums EVERY row of its set, where a list ranks none of the
 	 * overflow rows, because an overflow row's requests are the site's all
@@ -2392,13 +2384,16 @@ class Stats_Store {
 		$union   = [];
 		foreach ( $servers as $server => $rows ) {
 			$rankable = \array_diff_key( $rows, [ self::OTHER_KEY => true, self::OTHER_WORKER_KEY => true ] );
-			foreach ( self::rank_url_rows( $rankable, $n, $errored ) as $sort => $orders ) {
+			// Each row named by its whole URL, once, for every list it enters.
+			$named = [];
+			foreach ( self::rank_url_rows( $rankable, $n, $errored, $server ) as $sort => $orders ) {
 				foreach ( $orders as $order => $entries ) {
 					$writes[] = [ self::url_rank_parts( $sort, $order, $server, $hour, $set ), $key, $entries ];
 					// A hash two servers share merges, as its rows would have.
 					foreach ( $entries as [ self::RANK_HASH => $hash ] ) {
+						$named[ $hash ]                   ??= self::row_with_url( $rankable[ $hash ], $server );
 						$held                               = $union[ $sort ][ $order ][ $hash ] ?? null;
-						$union[ $sort ][ $order ][ $hash ] = null === $held ? $rankable[ $hash ] : self::merge_url_row( $held, $rankable[ $hash ] );
+						$union[ $sort ][ $order ][ $hash ] = null === $held ? $named[ $hash ] : self::merge_url_row( $held, $named[ $hash ] );
 					}
 				}
 			}
@@ -2409,7 +2404,10 @@ class Stats_Store {
 		// Each site list ranks only its own sort's entries of the servers'.
 		foreach ( [] === $servers ? [] : self::URL_SORTS as $sort ) {
 			foreach ( self::URL_ORDERS as $order ) {
-				$writes[] = [ self::url_rank_parts( $sort, $order, '', $hour, $set ), $key, self::rank_list( $union[ $sort ][ $order ] ?? [], self::rank_key( $sort, $errored ), $order, $n ) ];
+				$site_rows = $union[ $sort ][ $order ] ?? [];
+				// The union's paths are whole URLs, which `join_url()` keeps.
+				$ranked    = self::rank_values( $site_rows, self::rank_key( $sort, $errored ), '' );
+				$writes[]  = [ self::url_rank_parts( $sort, $order, '', $hour, $set ), $key, self::rank_entries( self::rank_cut( $ranked, $order, $n ), $sort, $site_rows ) ];
 			}
 		}
 		if ( [] !== $servers ) {
@@ -2533,6 +2531,19 @@ class Stats_Store {
 	}
 
 	/**
+	 * A row whose `ROW_PATH` is its whole URL, as the site's lists rank and
+	 * store it; a row with no path keeps none.
+	 *
+	 * @param array<array-key,mixed> $row    A stored row.
+	 * @param string                 $server The server it is filed under.
+	 * @return array<array-key,mixed>
+	 */
+	private static function row_with_url( array $row, string $server ): array {
+		$row[ self::ROW_PATH ] = self::join_url( $server, Core::str( $row[ self::ROW_PATH ] ?? '' ) );
+		return $row;
+	}
+
+	/**
 	 * Key parts of one server's ranked list, or of the site's. The
 	 * server rides in the KEY, as it does for every per-server value
 	 * (decision 30), and so does the list set, before it.
@@ -2574,23 +2585,68 @@ class Stats_Store {
 	}
 
 	/**
-	 * Every ranked list of one scope's rows, a server's or the site's union
-	 * of theirs: `sort => order => entries`, each cut to `$n`.
+	 * Every ranked list of one server's rows: `sort => order => entries`,
+	 * each cut to `$n`. A sort's values are taken once and cut both ways.
 	 *
 	 * The rows arrive filtered — `ranked_writes()` has already dropped what
 	 * never ranks — so nothing here walks them a second time.
 	 *
-	 * @param array<array-key,array<array-key,mixed>> $rows    The scope's rows by hash.
+	 * @param array<array-key,array<array-key,mixed>> $rows    The server's rows by hash.
 	 * @param int                                     $n       Entries per list.
 	 * @param bool                                    $errored An errored set, whose `count` ranks by errors.
+	 * @param string                                  $server  The server the rows are filed under.
 	 * @return array<string,array<string,list<Rank_Entry>>>
 	 */
-	private static function rank_url_rows( array $rows, int $n, bool $errored ): array {
+	private static function rank_url_rows( array $rows, int $n, bool $errored, string $server ): array {
 		$out = [];
 		foreach ( self::URL_SORTS as $sort ) {
+			$ranked = self::rank_values( $rows, self::rank_key( $sort, $errored ), $server );
 			foreach ( self::URL_ORDERS as $order ) {
-				$out[ $sort ][ $order ] = self::rank_list( $rows, self::rank_key( $sort, $errored ), $order, $n );
+				$out[ $sort ][ $order ] = self::rank_entries( self::rank_cut( $ranked, $order, $n ), $sort, $rows );
 			}
+		}
+		return $out;
+	}
+
+	/**
+	 * The `$n` best hashes of a `rank_values()` in one direction. A tie
+	 * breaks by hash, ascending either way, so a cut never depends on the
+	 * order rows arrive in and a merge of servers' lists cuts where one list
+	 * over all of them would.
+	 *
+	 * @param array{0: list<string>, 1: list<float|int|string>, 2: list<int>} $ranked `rank_values()`.
+	 * @param string                                                           $order  A `URL_ORDERS` value.
+	 * @param int                                                              $n      Entries to keep.
+	 * @return list<string>
+	 */
+	private static function rank_cut( array $ranked, string $order, int $n ): array {
+		[ $hashes, $values, $measured ] = $ranked;
+		// The sort in C, not a closure a comparison: the ranking's whole cost.
+		\array_multisort( $measured, \SORT_DESC, \SORT_NUMERIC, $values, 'asc' === $order ? \SORT_ASC : \SORT_DESC, \SORT_REGULAR, $hashes, \SORT_ASC, \SORT_STRING );
+		return \array_slice( $hashes, 0, $n );
+	}
+
+	/**
+	 * One ranked list's entries: each hash beside the row it ranked, and on a
+	 * `url` list its `ROW_PATH`, the only sort that displays one: the path on
+	 * a server's list, the whole URL on the site's.
+	 *
+	 * @param list<string>           $hashes The list's hashes, in rank order.
+	 * @param string                 $sort   A `URL_SORTS` value.
+	 * @param array<array-key,mixed> $rows   The rankable rows by hash.
+	 * @return list<Rank_Entry>
+	 */
+	private static function rank_entries( array $hashes, string $sort, array $rows ): array {
+		$out = [];
+		foreach ( $hashes as $hash ) {
+			$row  = Core::arr( $rows[ $hash ] );
+			$path = Core::str( $row[ self::ROW_PATH ] ?? '' );
+			unset( $row[ self::ROW_PATH ] );
+			$entry = [ self::RANK_HASH => $hash, self::RANK_ROW => $row ];
+			if ( 'url' === $sort ) {
+				$entry[ self::RANK_PATH ] = $path;
+			}
+			$out[] = $entry;
 		}
 		return $out;
 	}
@@ -2607,20 +2663,22 @@ class Stats_Store {
 	}
 
 	/**
-	 * One list: the `$n` best rows on one sort in one direction, as entries.
-	 * An untimed row measured no duration, so it ranks last on the
-	 * `TIMED_SORTS` in both orders, where the fold orders it; a row with no
-	 * path ranks on no `url` sort. A tie breaks by hash, ascending either
-	 * way, so a cut never depends on the order rows arrive in and a merge of
-	 * servers' lists cuts where one list over all of them would.
+	 * What one sort ranks rows by: their hashes, values and whether each was
+	 * measured, in step, for `rank_cut()` to order either way. An untimed row
+	 * measured no duration, so it ranks last on the `TIMED_SORTS` in both
+	 * orders, where the fold orders it. `url` ranks the whole URL
+	 * (`join_url()`) on every list, so a server's cut is its top-N by URL and
+	 * the site's union of them is exact; a row with no path ranks on no `url`
+	 * sort.
 	 *
-	 * @param array<array-key,array<array-key,mixed>> $rows  Rows by hash.
-	 * @param string                                  $sort  A `URL_SORTS` value, or `errors` (`rank_key()`).
-	 * @param string                                  $order A `URL_ORDERS` value.
-	 * @param int                                     $n     Entries to keep.
-	 * @return list<Rank_Entry>
+	 * @param array<array-key,array<array-key,mixed>> $rows   Rows by hash.
+	 * @param string                                  $sort   A `URL_SORTS` value, or `errors` (`rank_key()`).
+	 * @param string                                  $server The server the rows' paths join to; '' where
+	 *                                                        each is a whole URL already, as in the
+	 *                                                        site's union.
+	 * @return array{0: list<string>, 1: list<float|int|string>, 2: list<int>}
 	 */
-	private static function rank_list( array $rows, string $sort, string $order, int $n ): array {
+	private static function rank_values( array $rows, string $sort, string $server ): array {
 		$values   = [];
 		$measured = [];
 		$timed    = \in_array( $sort, self::TIMED_SORTS, true );
@@ -2628,51 +2686,24 @@ class Stats_Store {
 			if ( 'url' === $sort && '' === Core::str( $row[ self::ROW_PATH ] ?? '' ) ) {
 				continue;
 			}
-			$values[ $hash ]   = self::url_rank_value( $row, $sort );
+			$values[ $hash ]   = self::url_rank_value( $row, $sort, $server );
 			$measured[ $hash ] = ! $timed || Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) > 0 ? 1 : 0;
 		}
 		// An all-digit hash arrives as an INT key.
-		$hashes   = \array_map( 'strval', \array_keys( $values ) );
-		$values   = \array_values( $values );
-		$measured = \array_values( $measured );
-		// The sort in C, not a closure a comparison: the ranking's whole cost.
-		\array_multisort( $measured, \SORT_DESC, \SORT_NUMERIC, $values, 'asc' === $order ? \SORT_ASC : \SORT_DESC, \SORT_REGULAR, $hashes, \SORT_ASC, \SORT_STRING );
-		return self::rank_entries( \array_slice( $hashes, 0, $n ), $sort, $rows );
-	}
-
-	/**
-	 * One ranked list's entries: each hash beside the row it ranked, and the
-	 * path too on a `url` list, which is the only sort that displays one.
-	 *
-	 * @param list<string>           $hashes The list's hashes, in rank order.
-	 * @param string                 $sort   A `URL_SORTS` value.
-	 * @param array<array-key,mixed> $rows   The rankable rows by hash.
-	 * @return list<Rank_Entry>
-	 */
-	private static function rank_entries( array $hashes, string $sort, array $rows ): array {
-		$out = [];
-		foreach ( $hashes as $hash ) {
-			$row = Core::arr( $rows[ $hash ] );
-			$path = Core::str( $row[ self::ROW_PATH ] ?? '' );
-			unset( $row[ self::ROW_PATH ] );
-			$entry = [ self::RANK_HASH => $hash, self::RANK_ROW => $row ];
-			if ( 'url' === $sort ) {
-				$entry[ self::RANK_PATH ] = $path;
-			}
-			$out[] = $entry;
-		}
-		return $out;
+		return [ \array_map( 'strval', \array_keys( $values ) ), \array_values( $values ), \array_values( $measured ) ];
 	}
 
 	/**
 	 * The value one bucket's row ranks by for one sort: the bucket's OWN
 	 * average for the two means, so a page hit rarely but slowly ranks on how
-	 * slow it is rather than on how often it is hit.
+	 * slow it is rather than on how often it is hit, and its whole URL on
+	 * `url`.
 	 *
-	 * @param array<array-key,mixed> $row  A stored row.
-	 * @param string                 $sort A `URL_SORTS` value, or `errors`.
+	 * @param array<array-key,mixed> $row    A stored row.
+	 * @param string                 $sort   A `URL_SORTS` value, or `errors`.
+	 * @param string                 $server The server its path joins to on `url`.
 	 */
-	private static function url_rank_value( array $row, string $sort ): float|int|string {
+	private static function url_rank_value( array $row, string $sort, string $server ): float|int|string {
 		return match ( $sort ) {
 			'count'        => Core::num_int( $row[ self::ROW_COUNT ] ?? null ),
 			'errors'       => self::row_errors( $row ),
@@ -2681,8 +2712,30 @@ class Stats_Store {
 			'max_ms'       => Core::num_float( $row[ self::ROW_MAX_MS ] ?? null ),
 			'avg_peak_mb'  => Core::num_float( $row[ self::ROW_SUM_PEAK_MB ] ?? null ) / \max( 1, Core::num_int( $row[ self::ROW_COUNT ] ?? null ) ),
 			'last_updated' => Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ),
-			default        => Core::str( $row[ self::ROW_PATH ] ?? '' ),
+			default        => self::join_url( $server, Core::str( $row[ self::ROW_PATH ] ?? '' ) ),
 		};
+	}
+
+	/**
+	 * The URL a `row_path()` was cut from, given the server it was cut
+	 * against: the inverse `row_path()` answers to, and the one place the
+	 * join is spelled. A whole URL, or no path, comes back as it is, with
+	 * or without a server; a server-relative path with none is refused
+	 * rather than joined into `https:///…`.
+	 *
+	 * @param string $server The server the path was cut against; '' where the
+	 *                       path is already a whole URL, as on a site list.
+	 * @param string $path   The stored path.
+	 * @throws \InvalidArgumentException When a server-relative path has no server.
+	 */
+	public static function join_url( string $server, string $path ): string {
+		if ( ! \str_starts_with( $path, '/' ) ) {
+			return $path;
+		}
+		if ( '' === $server ) {
+			throw new \InvalidArgumentException( "Stats_Store: no server to join '{$path}' to" );
+		}
+		return "https://{$server}{$path}";
 	}
 
 	/**
