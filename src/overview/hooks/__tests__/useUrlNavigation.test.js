@@ -109,7 +109,6 @@ describe( 'useUrlNavigation', () => {
 		expect( result.current.selectedRequest ).toBeNull();
 		expect( typeof result.current.selectUrl ).toBe( 'function' );
 		expect( typeof result.current.selectRequest ).toBe( 'function' );
-		expect( typeof result.current.updateBrowserUrl ).toBe( 'function' );
 		unmount();
 	} );
 
@@ -394,24 +393,6 @@ describe( 'useUrlNavigation', () => {
 
 		expect( result.current.selectedUrl ).toBeNull();
 		expect( result.current.deepLink.urlHash ).toBe( 'sigma88' );
-		unmount();
-	} );
-
-	it( 'updateBrowserUrl pushes only when href actually changes', () => {
-		const { result, unmount } = renderHook( () =>
-			useUrlNavigation( URLS )
-		);
-		pushSpy.mockClear();
-		// Same as current (nothing changes) → no push.
-		act( () => {
-			result.current.updateBrowserUrl( {} );
-		} );
-		expect( pushSpy ).not.toHaveBeenCalled();
-		// Setting url= produces a new href → push.
-		act( () => {
-			result.current.updateBrowserUrl( { url: 'aaa' } );
-		} );
-		expect( pushSpy ).toHaveBeenCalled();
 		unmount();
 	} );
 } );

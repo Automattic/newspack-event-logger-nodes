@@ -1,4 +1,4 @@
-/* global globalThis */
+/* global globalThis, PopStateEvent */
 /**
  * Tests for PerformanceDashboard — the orchestrator (JS-node-graph version).
  *
@@ -122,6 +122,8 @@ const RULES_DELETE = 'rules:delete';
 const mockGraph = { handleUrlParamsChange: jest.fn() };
 // Records what the dashboard hands the graph — the partition rides here.
 let mockGraphOpts = null;
+// Every render's ask, oldest first, so a test can read the FIRST fetch.
+const mockGraphCalls = [];
 jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	__esModule: true,
 	// The CI mounts are real: the scopes below are built from them.
@@ -130,6 +132,7 @@ jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	GREP_RESULT_LIMIT: 20,
 	usePerformanceGraph: ( opts ) => {
 		mockGraphOpts = opts;
+		mockGraphCalls.push( opts );
 		return mockGraph;
 	},
 } ) );
@@ -148,7 +151,6 @@ const mockNavState = {
 	} ),
 	initialSearchQuery: '',
 	setInitialSearchQuery: jest.fn(),
-	updateBrowserUrl: jest.fn(),
 	deepLink: { requestId: null, urlHash: null },
 	clearDeepLink: jest.fn(),
 };
@@ -334,14 +336,56 @@ function loadedView( overrides = {} ) {
 	};
 }
 
+/**
+ * A loaded view whose overview reply carries `bucket` as its server axis.
+ *
+ * @param {Object} bucket The `server` dimension's wire table.
+ * @return {Object} The view model.
+ */
+const serverView = ( bucket ) =>
+	loadedView( {
+		overview: {
+			data: {
+				total_requests: 100,
+				breakdowns: { server: bucket, status: NO_SERIES },
+			},
+			loading: false,
+			error: null,
+		},
+	} );
+
+// A hub's two servers, and a site reporting one.
+const hub = nameTable( {
+	[ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ], 'edge-02': [ 4, 40, 3, 4 ] },
+} );
+const single = nameTable( { [ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ] } } );
+
+const dashboard = () =>
+	React.createElement( PerformanceDashboard, { onError: jest.fn() } );
+// Every dashboard a test mounts, so a failing one cannot outlive its test.
+const mounted = [];
+const mountDash = () => {
+	const mount = renderComponent( dashboard() );
+	mounted.push( mount );
+	return mount;
+};
+
 describe( 'PerformanceDashboard', () => {
 	beforeEach( () => {
 		mockView = null;
 		window.localStorage.clear();
+		// The page writes its filters into the bar; no test inherits them.
+		window.history.replaceState(
+			null,
+			'',
+			'/wp-admin/admin.php?page=perf'
+		);
 	} );
 
 	afterEach( () => {
+		mounted.splice( 0 ).forEach( ( mount ) => mount.unmount() );
 		mockGraph.handleUrlParamsChange.mockClear();
+		mockGraphCalls.length = 0;
 		Object.keys( mockCommands ).forEach(
 			( k ) => delete mockCommands[ k ]
 		);
@@ -352,17 +396,12 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.initialSearchQuery = '';
 		mockNavState.selectUrl.mockClear();
 		mockNavState.selectRequest.mockClear();
-		mockNavState.updateBrowserUrl.mockClear();
 		jest.clearAllMocks();
 	} );
 
 	it( 'shows the loading spinner while the view model is null', () => {
 		mockView = null;
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { container, unmount } = mountDash();
 		expect( container.textContent ).toContain( 'Loading performance' );
 		expect(
 			container.querySelector( '[data-testid="spinner"]' )
@@ -372,11 +411,7 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'orchestrates the full dashboard once the overview resolves', async () => {
 		mockView = loadedView();
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { container, unmount } = mountDash();
 		await flushEffects();
 		expect(
 			container.querySelector( '[data-testid="overview"]' )
@@ -398,11 +433,7 @@ describe( 'PerformanceDashboard', () => {
 				error: 'include_workers wants a bool: maybe',
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		expect( globalThis.__urlTableProps.error ).toBe(
 			'include_workers wants a bool: maybe'
@@ -422,11 +453,7 @@ describe( 'PerformanceDashboard', () => {
 				as_of: 1758500000,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		expect( globalThis.__urlTableProps.ranked ).toBe( true );
 		expect( globalThis.__urlTableProps.now ).toBe( 1758500000 );
@@ -436,11 +463,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'reads refresh interval from localStorage on mount', () => {
 		window.localStorage.setItem( 'event-logger-refresh-interval', '5000' );
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		// localStorage value is preserved (not overwritten).
 		expect(
 			window.localStorage.getItem( 'event-logger-refresh-interval' )
@@ -452,11 +475,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'falls back to default when localStorage is empty', () => {
 		window.localStorage.removeItem( 'event-logger-refresh-interval' );
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		const stored = window.localStorage.getItem(
 			'event-logger-refresh-interval'
 		);
@@ -470,11 +489,7 @@ describe( 'PerformanceDashboard', () => {
 			'not-a-valid-interval'
 		);
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		window.localStorage.removeItem( 'event-logger-refresh-interval' );
 		unmount();
 		// No throw == success; invalid value was filtered.
@@ -484,11 +499,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'persists refresh interval changes to localStorage via effect', () => {
 		window.localStorage.clear();
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		expect(
 			window.localStorage.getItem( 'event-logger-refresh-interval' )
 		).toBe( '15000' );
@@ -497,38 +508,11 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'unmounts cleanly without throwing', () => {
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		expect( () => unmount() ).not.toThrow();
 	} );
 
 	describe( 'the server breakdown axis', () => {
-		const serverView = ( bucket ) =>
-			loadedView( {
-				overview: {
-					data: {
-						total_requests: 100,
-						breakdowns: { server: bucket, status: NO_SERIES },
-					},
-					loading: false,
-					error: null,
-				},
-			} );
-		const hub = nameTable( {
-			[ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ], 'edge-02': [ 4, 40, 3, 4 ] },
-		} );
-		const single = nameTable( { [ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ] } } );
-
-		const mountDash = () =>
-			renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
-
 		it( 'stays on Server while the first reply is still in flight', async () => {
 			// Empty is "nothing has ARRIVED", not "one server". Resolving it as
 			// the latter demoted every page load before the names could land.
@@ -570,8 +554,6 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( 'falls back under a server filter and restores when it clears', async () => {
-			// Clearing the filter must not re-derive names from the reply that
-			// was fetched UNDER it, or the hub loses its own Server selector.
 			mockView = serverView( hub );
 			const { unmount } = mountDash();
 			await flushEffects();
@@ -587,11 +569,8 @@ describe( 'PerformanceDashboard', () => {
 				'status'
 			);
 
-			// The scoped reply lands while the filter is on, and is still what
-			// is in hand when it clears — no new payload arrives at that moment.
-			mockView = serverView(
-				nameTable( { [ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ] } } )
-			);
+			// The scoped reply still names every server: the axis is site-wide.
+			mockView = serverView( hub );
 			await act( async () => {
 				globalThis.__overviewProps.setRefreshInterval( '5000' );
 			} );
@@ -637,16 +616,226 @@ describe( 'PerformanceDashboard', () => {
 			);
 
 			mockView = serverView( hub );
-			rerender(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			rerender( dashboard() );
 			await flushEffects();
 
 			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
 				'server'
 			);
+			unmount();
+		} );
+	} );
+
+	describe( 'the address bar', () => {
+		const param = ( name ) =>
+			new URLSearchParams( window.location.search ).get( name );
+		const linkTo = ( query ) =>
+			window.history.replaceState(
+				null,
+				'',
+				`/wp-admin/admin.php?page=perf&${ query }`
+			);
+		let pushSpy;
+
+		beforeEach( () => {
+			pushSpy = jest.spyOn( window.history, 'pushState' );
+		} );
+
+		afterEach( () => {
+			pushSpy.mockRestore();
+		} );
+
+		it( 'opens on the metric and breakdown a link names', async () => {
+			linkTo( 'metric=memory&breakdown=country' );
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.chartMetric ).toBe( 'memory' );
+			expect( globalThis.__urlTableProps.metric ).toBe( 'memory' );
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'country'
+			);
+			expect( mockGraphOpts.chartBreakdown ).toBe( 'country' );
+			unmount();
+		} );
+
+		it( 'ignores a metric or breakdown the dropdowns do not offer', async () => {
+			linkTo( 'metric=p99&breakdown=referrer' );
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.chartMetric ).toBe( 'volume' );
+			expect( mockGraphOpts.chartBreakdown ).toBe(
+				DEFAULT_CHART_BREAKDOWN
+			);
+			expect( param( 'metric' ) ).toBeNull();
+			expect( param( 'breakdown' ) ).toBeNull();
+			unmount();
+		} );
+
+		it( 'writes a metric or breakdown change and drops a default', async () => {
+			linkTo( 'url=h1&request=r1' );
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			act( () => globalThis.__overviewProps.setChartMetric( 'avg' ) );
+			act( () => globalThis.__overviewProps.setChartBreakdown( 'ua' ) );
+			expect( param( 'metric' ) ).toBe( 'avg' );
+			expect( param( 'breakdown' ) ).toBe( 'ua' );
+
+			act( () => globalThis.__overviewProps.setChartMetric( 'volume' ) );
+			act( () =>
+				globalThis.__overviewProps.setChartBreakdown(
+					DEFAULT_CHART_BREAKDOWN
+				)
+			);
+			expect( window.location.search ).toBe(
+				'?page=perf&url=h1&request=r1'
+			);
+			expect( pushSpy ).not.toHaveBeenCalled();
+			unmount();
+		} );
+
+		it( 'scopes the first fetch to a linked server', async () => {
+			linkTo( 'server=edge-02' );
+			mockView = loadedView( {
+				overview: { data: null, loading: true, error: null },
+			} );
+			const { rerender, unmount } = mountDash();
+			await flushEffects();
+			expect( mockGraphCalls[ 0 ].serverFilter ).toBe( 'edge-02' );
+
+			mockView = serverView( hub );
+			rerender( dashboard() );
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-02' );
+			expect( mockGraphOpts.serverFilter ).toBe( 'edge-02' );
+			unmount();
+		} );
+
+		it( 'resets a linked server the list does not name, and drops it', async () => {
+			linkTo( 'server=edge-09&url=h1' );
+			mockView = loadedView( {
+				overview: { data: null, loading: true, error: null },
+			} );
+			const { rerender, unmount } = mountDash();
+			await flushEffects();
+			// Trusted until the list can judge it; the server scopes it empty.
+			expect( mockGraphCalls[ 0 ].serverFilter ).toBe( 'edge-09' );
+			expect( param( 'server' ) ).toBe( 'edge-09' );
+
+			mockView = serverView( hub );
+			rerender( dashboard() );
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.serverFilter ).toBe( '' );
+			expect( mockGraphOpts.serverFilter ).toBe( '' );
+			expect( window.location.search ).toBe( '?page=perf&url=h1' );
+			unmount();
+		} );
+
+		it.each( [
+			[ 'a reply the decoder refuses', 'not a name table' ],
+			[ 'a window with no traffic', NO_SERIES ],
+		] )( 'keeps a chosen server through %s', async ( _label, server ) => {
+			mockView = serverView( hub );
+			const { rerender, unmount } = mountDash();
+			await flushEffects();
+			act( () =>
+				globalThis.__overviewProps.setServerFilter( 'edge-01' )
+			);
+
+			mockView = serverView( server );
+			rerender( dashboard() );
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-01' );
+			expect( mockGraphOpts.serverFilter ).toBe( 'edge-01' );
+			expect( param( 'server' ) ).toBe( 'edge-01' );
+			unmount();
+		} );
+
+		it( 'puts the live server back over an entry Back restored', async () => {
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+			act( () =>
+				globalThis.__overviewProps.setServerFilter( 'edge-02' )
+			);
+
+			// The restored entry was pushed under another server.
+			linkTo( 'server=edge-01&url=h1' );
+			act( () => {
+				window.dispatchEvent( new PopStateEvent( 'popstate' ) );
+			} );
+
+			expect( mockGraphOpts.serverFilter ).toBe( 'edge-02' );
+			expect( param( 'server' ) ).toBe( 'edge-02' );
+			expect( param( 'url' ) ).toBe( 'h1' );
+			unmount();
+		} );
+
+		it( 'writes a server pick, and All Servers drops it', async () => {
+			linkTo( 'url=h1' );
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			act( () =>
+				globalThis.__overviewProps.setServerFilter( 'edge-01' )
+			);
+			expect( param( 'server' ) ).toBe( 'edge-01' );
+
+			act( () => globalThis.__overviewProps.setServerFilter( '' ) );
+			expect( window.location.search ).toBe( '?page=perf&url=h1' );
+			expect( pushSpy ).not.toHaveBeenCalled();
+			unmount();
+		} );
+
+		it( 'pushes the request a search found, and forgets the search', async () => {
+			linkTo( 'search=r1&metric=avg' );
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			await act( async () => {
+				await globalThis.__overviewProps.onSearch( 'r1' );
+			} );
+			answerCommand( SEARCH, {
+				result: { url_hash: 'h1', partition: 0 },
+				args: [ 'r1' ],
+			} );
+
+			expect( pushSpy ).toHaveBeenCalledTimes( 1 );
+			expect( window.location.search ).toBe(
+				'?page=perf&metric=avg&url=h1&request=r1'
+			);
+			unmount();
+		} );
+
+		it( 'drops the server when a found request leaves the filter', async () => {
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+			act( () =>
+				globalThis.__overviewProps.setServerFilter( 'edge-01' )
+			);
+
+			await act( async () => {
+				await globalThis.__overviewProps.onSearch( 'r1' );
+			} );
+			answerCommand( SEARCH, {
+				result: { url_hash: 'h1', partition: 0 },
+				args: [ 'r1' ],
+			} );
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.serverFilter ).toBe( '' );
+			expect( param( 'server' ) ).toBeNull();
 			unmount();
 		} );
 	} );
@@ -669,11 +858,7 @@ describe( 'PerformanceDashboard', () => {
 			},
 		} );
 		const decode = jest.spyOn( chartSlots, 'decodeNameTable' );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		expect( globalThis.__overviewProps.chartBreakdown ).toBe( 'server' );
 		expect(
@@ -708,11 +893,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		// categoryData truthy.
 		expect( globalThis.__overviewProps.categoryData ).toBeTruthy();
@@ -728,64 +909,33 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'keeps serverNames sticky when a scoped (filtered) overview arrives', async () => {
-		// Two servers visible initially.
-		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 100,
-					breakdowns: {
-						server: nameTable( {
-							[ NOW ]: {
-								'edge-01': [ 10, 100, 3, 10 ],
-								'edge-02': [ 5, 50, 3, 5 ],
-							},
-						} ),
-						status: NO_SERIES,
-					},
-				},
-				loading: false,
-				error: null,
-			},
-		} );
-		const { rerender, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+	it( 'takes the server names from a reply fetched under a filter', async () => {
+		// The server axis is read site-wide under any scope, so a scoped reply
+		// names every server, a newly reporting one included.
+		mockView = serverView( hub );
+		const { rerender, unmount } = mountDash();
 		await flushEffects();
-		expect( globalThis.__overviewProps.serverNames ).toEqual(
-			expect.arrayContaining( [ 'edge-01', 'edge-02' ] )
-		);
-		// Activate a filter, then the scoped response collapses to one server.
 		act( () => {
 			globalThis.__overviewProps.setServerFilter( 'edge-01' );
 		} );
-		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 50,
-					breakdowns: {
-						server: nameTable( {
-							[ NOW ]: { 'edge-01': [ 10, 100, 3, 10 ] },
-						} ),
-						status: NO_SERIES,
-					},
+		mockView = serverView(
+			nameTable( {
+				[ NOW ]: {
+					'edge-01': [ 10, 100, 3, 10 ],
+					'edge-02': [ 5, 50, 3, 5 ],
+					'edge-03': [ 2, 20, 3, 2 ],
 				},
-				loading: false,
-				error: null,
-			},
-		} );
-		rerender(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
 			} )
 		);
+		rerender( dashboard() );
 		await flushEffects();
-		// serverNames must NOT collapse to a single entry.
-		expect( globalThis.__overviewProps.serverNames ).toEqual(
-			expect.arrayContaining( [ 'edge-01', 'edge-02' ] )
-		);
+
+		expect( globalThis.__overviewProps.serverNames ).toEqual( [
+			'edge-01',
+			'edge-02',
+			'edge-03',
+		] );
+		expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-01' );
 		unmount();
 	} );
 
@@ -816,11 +966,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 
 		expect( globalThis.__overviewProps.urlTotals ).toEqual( {
@@ -851,9 +997,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { unmount } = mountDash();
 
 		expect( globalThis.__overviewProps.serverNames ).toEqual( [
 			'Other',
@@ -892,11 +1036,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		expect( globalThis.__overviewProps.breakdownAvgMs ).toBe( 73.5 );
 
@@ -925,11 +1065,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		expect( globalThis.__overviewProps.breakdownAvgMs ).toBeNull();
 		unmount();
@@ -952,11 +1088,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		expect( globalThis.__overviewProps.serverNames ).toEqual( [] );
 		unmount();
@@ -980,11 +1112,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { container, unmount } = mountDash();
 		await flushEffects();
 
 		expect( container.textContent ).toContain( '3.75' );
@@ -1009,11 +1137,7 @@ describe( 'PerformanceDashboard', () => {
 					? { urlDetail: slice }
 					: { urlDetail: null, requestDetail: slice }
 			);
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 
 			expect( container.textContent ).toContain( expected );
@@ -1038,11 +1162,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { container, unmount } = mountDash();
 		await flushEffects();
 		expect( container.textContent ).toContain( '/foo' );
 		expect( container.textContent ).toContain( 'UrlDetailView' );
@@ -1121,11 +1241,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { container, unmount } = mountDash();
 		await flushEffects();
 
 		const stat = Array.from(
@@ -1161,9 +1277,7 @@ describe( 'PerformanceDashboard', () => {
 			},
 		} );
 
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { unmount } = mountDash();
 		await act( async () => {} );
 		// Opened the way a click opens it, through the table.
 		await act( async () => {
@@ -1203,9 +1317,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { rerender, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { rerender, unmount } = mountDash();
 		await act( async () => {} );
 		await act( async () => {
 			globalThis.__urlTableProps.onSelect( {
@@ -1219,11 +1331,7 @@ describe( 'PerformanceDashboard', () => {
 
 		mockNavState.selectedUrl = { hash: 'h4', url: '/linked' };
 		await act( async () => {
-			rerender(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			rerender( dashboard() );
 		} );
 
 		expect( globalThis.__urlDetailProps.errorsOnly ).toBe( false );
@@ -1244,9 +1352,7 @@ describe( 'PerformanceDashboard', () => {
 			},
 		} );
 
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { unmount } = mountDash();
 		await act( async () => {} );
 
 		await act( async () => {
@@ -1265,9 +1371,7 @@ describe( 'PerformanceDashboard', () => {
 	// for the same reason; being asked about is the same reason.
 	it( 'holds the poll while the picker is armed', async () => {
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 
 		expect( mockGraphOpts.askActive ).toBe( false );
@@ -1299,9 +1403,7 @@ describe( 'PerformanceDashboard', () => {
 			requestDetail: { data: null, loading: false, error: null },
 		} );
 
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { container, unmount } = mountDash();
 		await act( async () => {} );
 
 		expect( container.textContent ).toMatch( /Loading request/ );
@@ -1324,9 +1426,7 @@ describe( 'PerformanceDashboard', () => {
 			},
 		} );
 
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { container, unmount } = mountDash();
 		await act( async () => {} );
 
 		expect( container.textContent ).toMatch( /partition for this request/ );
@@ -1359,11 +1459,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { container, unmount } = mountDash();
 		await flushEffects();
 		expect(
 			container.querySelector( '[data-testid="request-detail"]' )
@@ -1373,11 +1469,7 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'forwards UrlTable param changes to the graph handleUrlParamsChange', async () => {
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		const params = {
 			search: 'foo',
@@ -1396,11 +1488,7 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'searchRequest asks search_requests and selects what it answers', async () => {
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( 'r1' );
@@ -1423,12 +1511,8 @@ describe( 'PerformanceDashboard', () => {
 		// that dump_url honours that scope, a search landing on a URL outside
 		// it would ask for a row the scope excludes and answer "URL not found"
 		// for a URL plainly on screen. The navigation wins, visibly.
-		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		mockView = serverView( hub );
+		const { unmount } = mountDash();
 		await flushEffects();
 		act( () => {
 			globalThis.__overviewProps.setServerFilter( 'edge-01' );
@@ -1453,9 +1537,7 @@ describe( 'PerformanceDashboard', () => {
 		// 'checkout' is rid-shaped so it routes to exact lookup; the miss must
 		// teach the text-searcher the escape hatch instead of dead-ending.
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( 'checkout' );
@@ -1479,11 +1561,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		expect( sentTo( DEEP_REQUEST ) ).toContainEqual( [ 'rid-deep' ] );
 
@@ -1512,11 +1590,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		answerCommand( DEEP_REQUEST, {
 			result: { url_hash: 'h-offpage', partition: 3 },
@@ -1541,11 +1615,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'keeps the Unknown URL sentinel when the hash will not resolve', async () => {
 		mockNavState.deepLink = { requestId: 'rid-offpage', urlHash: null };
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		answerCommand( DEEP_REQUEST, {
 			result: { url_hash: 'h-offpage', partition: 3 },
@@ -1570,11 +1640,7 @@ describe( 'PerformanceDashboard', () => {
 	it( 'a ?url= deep link applies the sentinel, never a hash title', async () => {
 		mockNavState.deepLink = { requestId: null, urlHash: 'h-empty' };
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		expect( sentTo( DEEP_URL ) ).toContainEqual( [ 'h-empty' ] );
 
@@ -1602,17 +1668,13 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { rerender, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { rerender, unmount } = mountDash();
 		await flushEffects();
 		expect( sentTo( DEEP_REQUEST ) ).toContainEqual( [ 'tqz9ldm3wp' ] );
 
 		// Back to the dashboard: the hook drops the intent and the selection.
 		mockNavState.deepLink = { requestId: null, urlHash: null };
-		rerender(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		rerender( dashboard() );
 		await flushEffects();
 
 		answerCommand( DEEP_REQUEST, {
@@ -1629,16 +1691,12 @@ describe( 'PerformanceDashboard', () => {
 	it( 'a ?url= reply that no longer matches the standing intent is dropped', async () => {
 		mockNavState.deepLink = { requestId: null, urlHash: 'h-sigma88' };
 		mockView = loadedView();
-		const { rerender, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		const { rerender, unmount } = mountDash();
 		await flushEffects();
 		expect( sentTo( DEEP_URL ) ).toContainEqual( [ 'h-sigma88' ] );
 
 		mockNavState.deepLink = { requestId: null, urlHash: null };
-		rerender(
-			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
-		);
+		rerender( dashboard() );
 		await flushEffects();
 
 		answerCommand( DEEP_URL, {
@@ -1651,11 +1709,7 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'searchRequest selects nothing when the request is not found', async () => {
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		await act( async () => {
 			// Empty + whitespace early-returns, then an unresolved rid.
@@ -1670,11 +1724,7 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'a /url-pattern search runs grep_requests and renders the result list', async () => {
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( '/calendar' );
@@ -1712,11 +1762,7 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'hands the section the lines a grep skipped as unparseable, matches or none', async () => {
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( '/torn' );
@@ -1739,11 +1785,7 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'an empty grep result surfaces the no-matches message', async () => {
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( '/nope' );
@@ -1761,11 +1803,7 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'selecting a grep result deep-links via the exact-rid path', async () => {
 		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( '/x' );
@@ -1813,11 +1851,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		expect( globalThis.__urlDetailProps ).toBeTruthy();
 		act( () => {
@@ -1854,11 +1888,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		act( () => {
 			globalThis.__modalOnRequestClose();
@@ -1887,11 +1917,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { container, unmount } = mountDash();
 		await flushEffects();
 		const backButton = container.querySelector(
 			'.event-logger-modal-back-button'
@@ -1933,11 +1959,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { unmount } = mountDash();
 		await flushEffects();
 		answerCommand( 'performance:ask', {
 			result: { subject: 'request', url: '/foo', findings: [] },
@@ -1973,11 +1995,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { container, unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
+		const { container, unmount } = mountDash();
 		await flushEffects();
 		const trigger = container.querySelector( '[data-ask-trigger]' );
 		expect( trigger ).toBeTruthy();
@@ -2012,11 +2030,7 @@ describe( 'PerformanceDashboard', () => {
 		// configured rule's hooks and thresholds with nothing.
 		it( 'enables "Log this URL" only once the ruleset is known', async () => {
 			mockView = urlModalView( '/foo' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			const btn = container.querySelector(
 				'.event-logger-rule-control button'
@@ -2032,11 +2046,7 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'renders the Ask trigger immediately before the rule control', async () => {
 			mockView = urlModalView( '/foo' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			const trigger = container.querySelector( '[data-ask-trigger]' );
 			const control = container.querySelector(
@@ -2049,11 +2059,7 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'disables the button when the URL is unknown', async () => {
 			mockView = urlModalView( 'Unknown URL' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			const btn = container.querySelector(
 				'.event-logger-rule-control button'
@@ -2082,11 +2088,7 @@ describe( 'PerformanceDashboard', () => {
 					error: null,
 				},
 			} );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			expect(
 				container.querySelector( '.event-logger-rule-control button' )
@@ -2102,11 +2104,7 @@ describe( 'PerformanceDashboard', () => {
 				hooks: [ 'template_redirect' ],
 			};
 			mockView = urlModalView( '/foo' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			answerCommand( RULES_DUMP, { result: { rules: [ existing ] } } );
 			expect( sentTo( RULES_DUMP ) ).not.toEqual( [] );
@@ -2126,11 +2124,7 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'opens a blank exact-pattern rule when none exists', async () => {
 			mockView = urlModalView( '/foo' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			const btn = container.querySelector(
@@ -2151,11 +2145,7 @@ describe( 'PerformanceDashboard', () => {
 		it( 'editing an existing rule exposes onDelete: it removes and closes the editor', async () => {
 			const existing = { id: 'r-77', pattern: '/foo?', action: 'log' };
 			mockView = urlModalView( '/foo' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			answerCommand( RULES_DUMP, { result: { rules: [ existing ] } } );
 			await act( async () => {
@@ -2180,11 +2170,7 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'a blank add draft gets no onDelete', async () => {
 			mockView = urlModalView( '/foo' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			await act( async () => {
@@ -2198,11 +2184,7 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'does not append a second ? on a nodes/ELN URL that already has one', async () => {
 			mockView = urlModalView( '/jobs/x?reconcile' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			const btn = container.querySelector(
@@ -2220,11 +2202,7 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'saving upserts the exact rule and flips the button label without closing the URL modal', async () => {
 			mockView = urlModalView( '/foo' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			await act( async () => {
@@ -2266,11 +2244,7 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'shows an inline error and keeps the URL modal open when the upsert fails', async () => {
 			mockView = urlModalView( '/foo' );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			await act( async () => {
@@ -2325,11 +2299,7 @@ describe( 'PerformanceDashboard', () => {
 					error: null,
 				},
 			} );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			expect(
 				container.querySelector( '[data-testid="request-detail"]' )
@@ -2355,11 +2325,7 @@ describe( 'PerformanceDashboard', () => {
 					error: 'no stats for this url',
 				},
 			} );
-			const { container, unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { container, unmount } = mountDash();
 			await flushEffects();
 			expect(
 				container.querySelector( '[data-testid="modal"]' )
@@ -2373,11 +2339,7 @@ describe( 'PerformanceDashboard', () => {
 		it( 'drops the open request when another URL is selected', async () => {
 			mockNavState.selectedRequest = 'bki3lhqsa3bkfvp63qw1ws1k2qx9sxp0';
 			mockView = loadedView();
-			const { unmount } = renderComponent(
-				React.createElement( PerformanceDashboard, {
-					onError: jest.fn(),
-				} )
-			);
+			const { unmount } = mountDash();
 			await flushEffects();
 			act( () =>
 				globalThis.__urlTableProps.onSelect( {

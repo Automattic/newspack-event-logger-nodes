@@ -58,6 +58,11 @@ const URLS = [
 	},
 ];
 
+// The table writes its filters into the bar; no test may inherit another's.
+beforeEach( () => {
+	window.history.replaceState( null, '', '/wp-admin/admin.php?page=perf' );
+} );
+
 function mount( overrides = {} ) {
 	const props = {
 		urls: URLS,
@@ -72,6 +77,37 @@ function mount( overrides = {} ) {
 		...renderComponent( React.createElement( UrlTable, props ) ),
 	};
 }
+
+/**
+ * The first button whose text passes `test`.
+ *
+ * @param {Element}                   container The mounted table.
+ * @param {(text: string) => boolean} test      Matches the button's text.
+ * @return {?HTMLButtonElement} The button, or undefined.
+ */
+const button = ( container, test ) =>
+	Array.from( container.querySelectorAll( 'button' ) ).find( ( b ) =>
+		test( b.textContent )
+	);
+
+/**
+ * Type `text` into the search box as React hears it: a native value set, then
+ * an input event.
+ *
+ * @param {Element} container The mounted table.
+ * @param {string}  text      What the box should hold.
+ */
+const type = ( container, text ) => {
+	const input = container.querySelector( 'input[type="text"]' );
+	const setter = Object.getOwnPropertyDescriptor(
+		window.HTMLInputElement.prototype,
+		'value'
+	).set;
+	act( () => {
+		setter.call( input, text );
+		input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+	} );
+};
 
 describe( 'UrlTable', () => {
 	it( 'measures its window against the element the dashboard scrolls', () => {
@@ -113,9 +149,7 @@ describe( 'UrlTable', () => {
 		const { container, rerender, unmount } = renderComponent(
 			React.createElement( UrlTable, props )
 		);
-		const next = Array.from( container.querySelectorAll( 'button' ) ).find(
-			( b ) => b.textContent.includes( 'Next' )
-		);
+		const next = button( container, ( t ) => t.includes( 'Next' ) );
 		act( () => {
 			next.click();
 		} );
@@ -137,9 +171,7 @@ describe( 'UrlTable', () => {
 		// mirror of Errors, which opts in to narrow.
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( { onParamsChange } );
-		const toggle = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent.includes( 'Workers' ) );
+		const toggle = button( container, ( t ) => t.includes( 'Workers' ) );
 		expect( toggle ).toBeTruthy();
 		expect(
 			onParamsChange.mock.calls.every( ( c ) => ! c[ 0 ].includeWorkers )
@@ -306,9 +338,7 @@ describe( 'UrlTable', () => {
 	it( 'asks the server for asc when the active sort header is clicked', () => {
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( { onParamsChange } );
-		const reqsHeader = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent.includes( 'Reqs' ) );
+		const reqsHeader = button( container, ( t ) => t.includes( 'Reqs' ) );
 		act( () => {
 			reqsHeader.click();
 		} );
@@ -321,9 +351,7 @@ describe( 'UrlTable', () => {
 	it( 'asks the server to sort by URL when the URL header is clicked', () => {
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( { onParamsChange } );
-		const urlHeader = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => /^URL/.test( b.textContent ) );
+		const urlHeader = button( container, ( t ) => /^URL/.test( t ) );
 		act( () => {
 			urlHeader.click();
 		} );
@@ -338,15 +366,7 @@ describe( 'UrlTable', () => {
 		// keystroke and reply, showing "No URLs match" for data that does.
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( { onParamsChange } );
-		const input = container.querySelector( 'input[type="text"]' );
-		const setter = Object.getOwnPropertyDescriptor(
-			window.HTMLInputElement.prototype,
-			'value'
-		).set;
-		act( () => {
-			setter.call( input, 'baz' );
-			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
-		} );
+		type( container, 'baz' );
 		expect( onParamsChange ).toHaveBeenLastCalledWith(
 			expect.objectContaining( { search: 'baz' } )
 		);
@@ -359,15 +379,7 @@ describe( 'UrlTable', () => {
 
 	it( 'shows the search empty state when the server returns no rows', () => {
 		const { container, unmount } = mount( { urls: [], totalUrls: 0 } );
-		const input = container.querySelector( 'input[type="text"]' );
-		const setter = Object.getOwnPropertyDescriptor(
-			window.HTMLInputElement.prototype,
-			'value'
-		).set;
-		act( () => {
-			setter.call( input, 'nope' );
-			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
-		} );
+		type( container, 'nope' );
 		expect( container.textContent ).toContain( 'No URLs match' );
 		unmount();
 	} );
@@ -377,9 +389,7 @@ describe( 'UrlTable', () => {
 		// count — "1-100 of 5,000" printed above three visible rows.
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( { onParamsChange } );
-		const btn = Array.from( container.querySelectorAll( 'button' ) ).find(
-			( b ) => b.textContent === 'Errors Only'
-		);
+		const btn = button( container, ( t ) => 'Errors Only' === t );
 		act( () => {
 			btn.click();
 		} );
@@ -575,9 +585,7 @@ describe( 'UrlTable', () => {
 			totalUrls: 250,
 			onParamsChange,
 		} );
-		const next = Array.from( container.querySelectorAll( 'button' ) ).find(
-			( b ) => b.textContent.includes( 'Next' )
-		);
+		const next = button( container, ( t ) => t.includes( 'Next' ) );
 		act( () => {
 			next.click();
 		} );
@@ -595,15 +603,11 @@ describe( 'UrlTable', () => {
 			totalUrls: 250,
 			onParamsChange,
 		} );
-		const next = Array.from( container.querySelectorAll( 'button' ) ).find(
-			( b ) => b.textContent.includes( 'Next' )
-		);
+		const next = button( container, ( t ) => t.includes( 'Next' ) );
 		act( () => {
 			next.click();
 		} );
-		const prev = Array.from( container.querySelectorAll( 'button' ) ).find(
-			( b ) => b.textContent.includes( 'Prev' )
-		);
+		const prev = button( container, ( t ) => t.includes( 'Prev' ) );
 		act( () => {
 			prev.click();
 		} );
@@ -704,9 +708,7 @@ describe( 'UrlTable', () => {
 
 	it( 'flips active sort to asc when the active header is clicked then back to desc on second click', () => {
 		const { container, unmount } = mount();
-		const reqsHeader = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent.includes( 'Reqs' ) );
+		const reqsHeader = button( container, ( t ) => t.includes( 'Reqs' ) );
 		act( () => {
 			reqsHeader.click();
 		} );
@@ -789,6 +791,117 @@ describe( 'UrlTable', () => {
 		expect(
 			container.querySelector( 'input' ).getAttribute( 'placeholder' )
 		).toBe( 'Search by whole URL word\u2026' );
+		unmount();
+	} );
+} );
+
+describe( 'the address bar', () => {
+	const param = ( name ) =>
+		new URLSearchParams( window.location.search ).get( name );
+	const linkTo = ( query ) =>
+		window.history.replaceState(
+			null,
+			'',
+			`/wp-admin/admin.php?page=perf&${ query }`
+		);
+
+	it( 'opens on the sort, search and toggles a link names', () => {
+		linkTo( 'sort=avg_ms&order=asc&q=wp-cron&errors=1&workers=1' );
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( { onParamsChange } );
+
+		expect( onParamsChange ).toHaveBeenCalledWith( {
+			search: 'wp-cron',
+			sort: 'avg_ms',
+			order: 'asc',
+			offset: 0,
+			errorsOnly: true,
+			includeWorkers: true,
+		} );
+		expect( container.querySelector( 'input' ).value ).toBe( 'wp-cron' );
+		expect( button( container, ( t ) => t.startsWith( 'Avg' ) ) ).toBe(
+			button( container, ( t ) => t.endsWith( '▲' ) )
+		);
+		expect(
+			button( container, ( t ) => 'Showing Errors' === t )
+		).toBeTruthy();
+		expect(
+			button( container, ( t ) => 'Showing Workers' === t )
+		).toBeTruthy();
+		unmount();
+	} );
+
+	it( 'ignores a sort the table cannot ask for and an unknown order', () => {
+		// count_2xx is a real field, but a status share, not a sort key.
+		linkTo( 'sort=count_2xx&order=sideways&errors=yes' );
+		const onParamsChange = jest.fn();
+		const { unmount } = mount( { onParamsChange } );
+
+		expect( onParamsChange ).toHaveBeenCalledWith(
+			expect.objectContaining( {
+				sort: 'count',
+				order: 'desc',
+				errorsOnly: false,
+			} )
+		);
+		expect( param( 'sort' ) ).toBeNull();
+		expect( param( 'order' ) ).toBeNull();
+		expect( param( 'errors' ) ).toBeNull();
+		unmount();
+	} );
+
+	it( 'writes each change into the bar without a history entry', () => {
+		const pushSpy = jest.spyOn( window.history, 'pushState' );
+		linkTo( 'url=abc&request=r1' );
+		const { container, unmount } = mount();
+
+		act( () => button( container, ( t ) => /^Max/.test( t ) ).click() );
+		expect( param( 'sort' ) ).toBe( 'max_ms' );
+		expect( param( 'order' ) ).toBeNull();
+
+		act( () => button( container, ( t ) => /^Max/.test( t ) ).click() );
+		expect( param( 'order' ) ).toBe( 'asc' );
+
+		type( container, 'feed' );
+		expect( param( 'q' ) ).toBe( 'feed' );
+
+		act( () => button( container, ( t ) => 'Errors Only' === t ).click() );
+		expect( param( 'errors' ) ).toBe( '1' );
+
+		act( () =>
+			button( container, ( t ) => 'Include Workers' === t ).click()
+		);
+		expect( param( 'workers' ) ).toBe( '1' );
+
+		expect( param( 'url' ) ).toBe( 'abc' );
+		expect( param( 'request' ) ).toBe( 'r1' );
+		expect( pushSpy ).not.toHaveBeenCalled();
+		pushSpy.mockRestore();
+		unmount();
+	} );
+
+	it( 'drops each param as it returns to the default', () => {
+		linkTo( 'sort=min_ms&order=asc&q=feed&errors=1&workers=1' );
+		const { container, unmount } = mount();
+
+		act( () => button( container, ( t ) => /^Reqs/.test( t ) ).click() );
+		type( container, '' );
+		act( () =>
+			button( container, ( t ) => 'Showing Errors' === t ).click()
+		);
+		act( () =>
+			button( container, ( t ) => 'Showing Workers' === t ).click()
+		);
+
+		expect( window.location.search ).toBe( '?page=perf' );
+		unmount();
+	} );
+
+	it( 'leaves the page out of the bar', () => {
+		const { container, unmount } = mount( { totalUrls: 800 } );
+		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
+
+		expect( window.location.search ).toBe( '?page=perf' );
 		unmount();
 	} );
 } );

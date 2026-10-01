@@ -46,7 +46,7 @@ import HeadlineStats from './HeadlineStats';
  * @param {?number}                 props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's; null where none was timed.
  * @param {string}                  props.serverFilter           Selected server name, or '' for all servers; it also captions the Time Breakdown.
  * @param {(value: string) => void} props.setServerFilter        Server filter setter.
- * @param {string[]|null}           props.serverNames            Server names seen in the breakdown data; null until the first reply lands. Fewer than two withholds the Server select, which would offer no choice.
+ * @param {string[]|null}           props.serverNames            Server names seen in the breakdown data; null until the first reply lands. Fewer than two withholds the Server select, which would offer no choice, unless a filter is applied: the select then lists it, so it can be cleared.
  * @param {string}                  props.searchQuery            Search box value.
  * @param {(value: string) => void} props.setSearchQuery         Search box setter.
  * @param {boolean}                 props.searchLoading          True while a search is in flight.
@@ -98,24 +98,24 @@ export default function OverviewSection( {
 	ask,
 	headerControlsSlot,
 } ) {
-	// One server offers no choice, so the Server select needs two.
-	const isMultiServer = ( serverNames?.length ?? 0 ) >= 2;
-
+	// One server offers no choice, but an applied filter needs a way out.
 	const serverOptions = useMemo( () => {
-		if ( ! isMultiServer ) {
-			return [];
+		const names = serverNames ?? [];
+		if ( names.length < 2 && '' === serverFilter ) {
+			return null;
 		}
+		const offered =
+			'' === serverFilter || names.includes( serverFilter )
+				? names
+				: [ ...names, serverFilter ];
 		return [
 			{
 				label: __( 'All Servers', 'newspack-event-logger-nodes' ),
 				value: '',
 			},
-			...serverNames.map( ( name ) => ( {
-				label: name,
-				value: name,
-			} ) ),
+			...offered.map( ( name ) => ( { label: name, value: name } ) ),
 		];
-	}, [ isMultiServer, serverNames ] );
+	}, [ serverNames, serverFilter ] );
 
 	// Dropping 'server' cannot strand the selection: the caller resolved it.
 	const breakdownOptions = canBreakDownByServer
@@ -288,8 +288,7 @@ export default function OverviewSection( {
 						breakdown={ chartBreakdown }
 						setBreakdown={ setChartBreakdown }
 						breakdownOptions={ breakdownOptions }
-						// An empty array is truthy: null hides the selector.
-						serverOptions={ isMultiServer ? serverOptions : null }
+						serverOptions={ serverOptions }
 						serverFilter={ serverFilter }
 						setServerFilter={ setServerFilter }
 					/>

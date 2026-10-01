@@ -25,13 +25,10 @@ import {
 	useMemo,
 	useRef,
 } from '@wordpress/element';
-
-/**
- * Get URL parameters from the current page URL.
- *
- * @return {URLSearchParams} URL search params.
- */
-const getUrlParams = () => new URLSearchParams( window.location.search );
+import {
+	getQueryParam,
+	setQueryParams,
+} from '@newspack-nodes/shared/utils/queryParams';
 
 /**
  * Validate request ID format (alphanumeric, underscore, hyphen).
@@ -57,43 +54,13 @@ const findUrl = ( urls, hash ) =>
 	( hash && urls.find( ( u ) => u.hash === hash ) ) || null;
 
 /**
- * Write query params into the browser URL and push a history entry.
- *
- * A falsy value deletes its key instead of writing an empty one, which is how
- * a selection is cleared. An href that already matches pushes nothing, so a
- * caller writing the same params twice never stacks duplicate history entries.
- * Keys the caller omits are left alone.
- *
- * The pushed history state is never read back: `popstate` re-reads the query
- * string, so a restored view and a fresh load take one path.
- *
- * @param {Object} params Query params to set; a falsy value deletes the key.
- */
-const updateBrowserUrl = ( params ) => {
-	const url = new URL( window.location.href );
-	Object.entries( params ).forEach( ( [ key, value ] ) => {
-		if ( value ) {
-			url.searchParams.set( key, value );
-		} else {
-			url.searchParams.delete( key );
-		}
-	} );
-	const newUrl = url.toString();
-	if ( newUrl !== window.location.href ) {
-		window.history.pushState( { ...params }, '', newUrl );
-	}
-};
-
-/**
  * Hold the selection the dashboard renders, and the address bar that names it.
  *
  * The returned object carries the selection — `selectedUrl`, a `{hash, url}`
  * object, and `selectedRequest`, a request id — with a setter for each. It also
  * carries `initialSearchQuery`, the `?search=` value read once on mount: the
  * owner runs that search and then clears the value through
- * `setInitialSearchQuery`, or it runs on every render. `updateBrowserUrl` is the
- * module helper, handed out for callers that must write a param this hook does
- * not own, `search` being the only one.
+ * `setInitialSearchQuery`, or it runs on every render.
  *
  * A `?url=` / `?request=` deep link is an INTENT this hook holds and reports:
  * it resolves one it can answer from the loaded page itself, and otherwise
@@ -116,14 +83,14 @@ export default function useUrlNavigation( urls ) {
 	// the link nothing has answered yet: popstate re-seeds the hash and the
 	// rid, while the search query is read once and the owner clears it.
 	const [ initialUrlHash, setInitialUrlHash ] = useState( () =>
-		getUrlParams().get( 'url' )
+		getQueryParam( 'url' )
 	);
 	const [ initialRequestId, setInitialRequestId ] = useState( () => {
-		const rid = getUrlParams().get( 'request' );
+		const rid = getQueryParam( 'request' );
 		return rid && isValidRequestId( rid ) ? rid : null;
 	} );
 	const [ initialSearchQuery, setInitialSearchQuery ] = useState( () =>
-		getUrlParams().get( 'search' )
+		getQueryParam( 'search' )
 	);
 
 	// Each makes the write-back effect below skip a flush, and it clears them.
@@ -238,10 +205,14 @@ export default function useUrlNavigation( urls ) {
 			return;
 		}
 
-		updateBrowserUrl( {
-			url: selectedUrl?.hash || null,
-			request: selectedRequest || null,
-		} );
+		// The pushed state is never read back: popstate re-reads the bar.
+		setQueryParams(
+			{
+				url: selectedUrl?.hash || null,
+				request: selectedRequest || null,
+			},
+			{ push: true }
+		);
 	}, [ selectedUrl, selectedRequest ] );
 
 	// @longform Browser back/forward re-enters through the deep-link path a
@@ -252,9 +223,8 @@ export default function useUrlNavigation( urls ) {
 	// this request" on a request a reload of the same URL opens fine.
 	useEffect( () => {
 		const handlePopState = () => {
-			const params = getUrlParams();
-			const urlHash = params.get( 'url' );
-			const rawRequestId = params.get( 'request' );
+			const urlHash = getQueryParam( 'url' );
+			const rawRequestId = getQueryParam( 'request' );
 			const requestId =
 				rawRequestId && isValidRequestId( rawRequestId )
 					? rawRequestId
@@ -297,7 +267,6 @@ export default function useUrlNavigation( urls ) {
 		selectRequest,
 		initialSearchQuery,
 		setInitialSearchQuery,
-		updateBrowserUrl,
 		deepLink,
 		clearDeepLink,
 	};

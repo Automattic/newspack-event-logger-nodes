@@ -307,6 +307,40 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
+	it.each( [
+		[ 'has not loaded', null ],
+		[ 'came back empty', [] ],
+		[ 'names one other server', [ 'edge-01' ] ],
+	] )(
+		'offers a Server select to clear a filter while the list %s',
+		( _label, serverNames ) => {
+			// A linked filter the list cannot judge still scopes the page.
+			const setServerFilter = jest.fn();
+			const { container, unmount } = mount(
+				{},
+				{ serverFilter: 'edge-02', serverNames, setServerFilter }
+			);
+			const select = Array.from(
+				container.querySelectorAll( 'select' )
+			).find( ( sel ) =>
+				Array.from( sel.options ).some(
+					( o ) => 'All Servers' === o.textContent
+				)
+			);
+
+			expect( select ).toBeTruthy();
+			expect( select.value ).toBe( 'edge-02' );
+			act( () => {
+				select.value = '';
+				select.dispatchEvent(
+					new Event( 'change', { bubbles: true } )
+				);
+			} );
+			expect( setServerFilter.mock.calls.at( -1 )[ 0 ] ).toBe( '' );
+			unmount();
+		}
+	);
+
 	it( 'hands the chart no totals series to legend "Total"', () => {
 		// A breakdown is ALWAYS selected here, so the totals are never the
 		// requested view — and the chart drew them as "Total" regardless.

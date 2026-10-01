@@ -13,13 +13,16 @@
  * What it does own is the UI state the graph's fetchers read at fire time: the
  * server filter, the chart metric and breakdown dimension, the refresh cadence,
  * the partition a located request was found in, the search box and its results,
- * the request-table sort, and the inline "Log this URL" rule editor. It also
- * runs every command whose reply sets that state: the `?url=` and `?request=`
- * deep-link resolvers, the title lookup for a hash the loaded catalog page does
- * not carry, the search box's exact-rid lookup and its pattern search, and the
- * ruleset reads and writes behind "Log this URL". It renders the URL / request
- * detail modal and the Ask panel over it, and preserves the modal's scroll
- * position across the URL-detail ↔ request-detail switch.
+ * the request-table sort, and the inline "Log this URL" rule editor. The server
+ * filter, metric and breakdown also live in the address bar, as `?server=`,
+ * `?metric=` and `?breakdown=`, so a shared link opens the same view. The
+ * component also runs every command whose reply sets that state: the `?url=`
+ * and `?request=` deep-link resolvers, the title lookup for a hash the loaded
+ * catalog page does not carry, the search box's exact-rid lookup and its
+ * pattern search, and the ruleset reads and writes behind "Log this URL". It
+ * renders the URL / request detail modal and the Ask panel over it, and
+ * preserves the modal's scroll position across the URL-detail ↔ request-detail
+ * switch.
  */
 
 import {
@@ -46,6 +49,8 @@ import {
 } from './utils/logEntryUtils';
 import {
 	DASHBOARD_REFRESH_OPTIONS,
+	CHART_METRIC_OPTIONS,
+	CHART_BREAKDOWN_OPTIONS,
 	DEFAULT_CHART_BREAKDOWN,
 } from './constants';
 import {
@@ -55,6 +60,8 @@ import {
 	GREP_RESULT_LIMIT,
 } from './hooks/usePerformanceGraph';
 import useUrlNavigation from './hooks/useUrlNavigation';
+import { useQueryParamChoice } from '@newspack-nodes/shared/hooks/useQueryParamState';
+import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import OverviewSection from './components/OverviewSection';
 import UrlDetailView from './components/UrlDetailView';
@@ -81,6 +88,12 @@ const UNKNOWN_URL = () => __( 'Unknown URL', 'newspack-event-logger-nodes' );
 import './styles/modal.scss';
 import './styles/tables.scss';
 import './styles/charts.scss';
+
+// The `?metric=` and `?breakdown=` whitelists: what the dropdowns offer.
+const CHART_METRICS = CHART_METRIC_OPTIONS.map( ( option ) => option.value );
+const CHART_BREAKDOWNS = CHART_BREAKDOWN_OPTIONS.map(
+	( option ) => option.value
+);
 
 /**
  * The dashboard's one component: the overview card, the URL table, and the
@@ -109,13 +122,25 @@ export default function PerformanceDashboard( {
 	} );
 	// Held here, not in the URL modal, which unmounts for every request.
 	const [ detailErrorsOnly, setDetailErrorsOnly ] = useState( false );
-	const [ chartMetric, setChartMetric ] = useState( 'volume' );
+	const [ chartMetric, setChartMetric ] = useQueryParamChoice(
+		'metric',
+		CHART_METRICS,
+		'volume'
+	);
 
+	// Every reply names every server; null until the first one lands.
+	const [ serverNames, setServerNames ] = useState( null );
 	// The server filter is page-wide scope, not the overview card's own.
-	const [ serverFilter, setServerFilter ] = useState( '' );
+	const [ serverFilter, setServerFilter ] = useQueryParamChoice(
+		'server',
+		serverNames,
+		''
+	);
 
 	// The breakdown dimension rides the `overview` fetch, so it lives here.
-	const [ chartBreakdown, setChartBreakdown ] = useState(
+	const [ chartBreakdown, setChartBreakdown ] = useQueryParamChoice(
+		'breakdown',
+		CHART_BREAKDOWNS,
 		DEFAULT_CHART_BREAKDOWN
 	);
 
@@ -178,15 +203,8 @@ export default function PerformanceDashboard( {
 		() => breakdownState( serverBreakdownData ),
 		[ serverBreakdownData ]
 	);
-	// Sticky across a scoped reply, and null until the first one lands.
-	const [ serverNames, setServerNames ] = useState( null );
-	// @longform Read, never depended on: keying the effect on the filter
-	// re-derives names from the reply fetched UNDER it, collapsing a hub to
-	// the one server it was scoped to the moment that filter clears.
-	const serverFilterRef = useRef( serverFilter );
-	serverFilterRef.current = serverFilter;
 	useEffect( () => {
-		if ( 'pending' === serverRead.state || serverFilterRef.current ) {
+		if ( 'pending' === serverRead.state ) {
 			return;
 		}
 		// A reply the decoder refuses landed, and names no server.
@@ -237,7 +255,6 @@ export default function PerformanceDashboard( {
 		selectRequest: baseSelectRequest,
 		initialSearchQuery,
 		setInitialSearchQuery,
-		updateBrowserUrl,
 		deepLink,
 		clearDeepLink,
 	} = useUrlNavigation( urls );
@@ -503,11 +520,10 @@ export default function PerformanceDashboard( {
 			}
 			applyFoundRequest( args[ 0 ], result );
 			setSearchQuery( '' );
-			updateBrowserUrl( {
-				search: null,
-				url: result.url_hash,
-				request: args[ 0 ],
-			} );
+			setQueryParams(
+				{ search: null, url: result.url_hash, request: args[ 0 ] },
+				{ push: true }
+			);
 		},
 	} );
 
