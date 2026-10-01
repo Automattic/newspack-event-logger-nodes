@@ -8,6 +8,7 @@
 # top-level file only, so the included file's `var` is skipped.
 
 var num_partitions = 1
+var on_demand_idle = 0
 
 include settings-sync
 

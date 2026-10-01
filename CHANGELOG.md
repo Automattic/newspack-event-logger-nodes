@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Every topology declares its idle window.** `complete`, `performance`, `request-builder`, `flame-builder`, `job-hub`, `job-spoke`, `job-router` and `job-feed` declare `var on_demand_idle = 30`, so their workers exit after 30 idle seconds and are revived on demand; `aggregator` and `hub-control` declare `0`, as `hub` does, so a hub worker never idles out.
+
 ## [0.114.0] - 2026-10-01
 
 ### Changed

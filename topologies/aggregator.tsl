@@ -43,6 +43,8 @@
 # A Vault id colliding with a declared node name (e.g. `topic`) fails the
 # load, naming the id; on reload it escapes after every other spoke is built.
 
+var on_demand_idle = 0
+
 include topic-probe
 
 make_node Remote_Job_Rewrite remote-job-rewrite

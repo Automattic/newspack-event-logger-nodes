@@ -1,6 +1,10 @@
 #
 # Request_Builder + Flame_Builder topology.
 #
+
+var on_demand_idle = 30
+
 include request-builder
 include flame-builder
+
 secure
