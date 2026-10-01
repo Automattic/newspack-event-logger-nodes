@@ -766,8 +766,10 @@ class FlameBuilderTest extends TestCase {
 		$slowest = $store->url_rank_window( [], [ $bucket ], 'avg_ms', 'desc', '' );
 		$this->assertSame( [ $kiwi, $wombat ], \array_column( $slowest[0][1], Stats_Store::RANK_HASH ) );
 
+		// The site sorts every server's URLs whole; a server's list, its paths.
 		$by_url = $store->url_rank_window( [], [ $bucket ], 'url', 'asc', '' );
-		$this->assertSame( '/kiwi-8842', $by_url[0][1][0][ Stats_Store::RANK_PATH ] );
+		$this->assertSame( [ 'https://kea.test/wombat-7731', 'https://moa.test/kiwi-8842' ], \array_column( $by_url[0][1], Stats_Store::RANK_PATH ) );
+		$this->assertSame( [ '/kiwi-8842' ], \array_column( $store->url_rank_window( [], [ $bucket ], 'url', 'asc', 'moa.test' )[0][1], Stats_Store::RANK_PATH ) );
 
 		// A URL belongs to one site, so a server's list holds its own rows only.
 		$moa = $store->url_rank_window( [], [ $bucket ], 'count', 'desc', 'moa.test' );
@@ -5644,7 +5646,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2' ], \array_column( $count[0][1], Stats_Store::RANK_HASH ) );
 		$this->assertSame( 9, $count[0][1][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ], 'ranked over the FOLDED row' );
 		$this->assertSame(
-			'/kiwi-8842',
+			'https://kea.test/kiwi-8842',
 			$store->url_rank_window( [ '2026-08-27-13' ], [], 'url', 'asc', '' )[0][1][0][ Stats_Store::RANK_PATH ]
 		);
 	}
@@ -5674,7 +5676,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 'moa.test', $rows[0][2], 'under the server the hour\'s index names' );
 		$list = $store->url_rank_window( [ '2026-08-27-13' ], [], 'count', 'desc', '' );
 		$this->assertSame( [ $hash ], \array_column( $list[0][1], Stats_Store::RANK_HASH ) );
-		$this->assertSame( '/tui-9913', $store->url_rank_window( [ '2026-08-27-13' ], [], 'url', 'asc', '' )[0][1][0][ Stats_Store::RANK_PATH ] );
+		$this->assertSame( 'https://moa.test/tui-9913', $store->url_rank_window( [ '2026-08-27-13' ], [], 'url', 'asc', '' )[0][1][0][ Stats_Store::RANK_PATH ] );
 	}
 
 	public function test_a_late_write_into_a_folded_hour_is_re_ranked_by_the_next_worker(): void {

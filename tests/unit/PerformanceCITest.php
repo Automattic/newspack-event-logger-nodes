@@ -1198,7 +1198,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( 31, $located['stats']['count'] ?? null, 'the named server holds no row' );
 		$this->assertSame( 31, $expired['stats']['count'] ?? null, 'no name at all' );
-		$this->assertSame( '/wombat-4471', $expired['stats']['url'], 'the row\'s own path until a name returns' );
+		$this->assertSame( 'https://kea.example/wombat-4471', $expired['stats']['url'], 'the row\'s own URL until a name returns' );
 	}
 
 	/**
@@ -1216,7 +1216,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( [], $store->get_url_names( [ 'a4471ab0c0de' ] ) );
 		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
-		$this->assertSame( [ '/a' ], \array_column( $page['data'], 'url' ), 'never the bare origin' );
+		$this->assertSame( [ 'https://example.com/a' ], \array_column( $page['data'], 'url' ), 'never the bare origin' );
 		$detail = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'a4471ab0c0de' );
 		$this->assertSame( $absent['stats'], $detail['stats'], 'resolved as with no name at all' );
 	}
@@ -5570,6 +5570,97 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
+	/**
+	 * A `url` sort orders the whole URL, scheme and host included, on the
+	 * fold, a search and the ranked page alike, site-wide and in a scope.
+	 */
+	public function test_a_url_sort_orders_the_whole_url_site_wide_and_in_a_scope(): void {
+		$this->activate_shipped( 'performance', 3 );
+		$store     = $this->stats_store( 1, 86400 );
+		$bucket    = $this->current_url_bucket();
+		$by_server = [
+			'zeta.example'  => [
+				'a3117c0ffee1' => [ 'url' => 'https://zeta.example/a-3117/kea', 'count' => 3, 'last_seen' => self::tick() ],
+				'c6643c0ffee4' => [ 'url' => 'https://zeta.example/q-6643/kea', 'count' => 6, 'last_seen' => self::tick() ],
+				'b5531c0ffee3' => [ 'url' => 'http://zeta.example/m-5531/kea', 'count' => 5, 'last_seen' => self::tick() ],
+			],
+			'alpha.example' => [ 'f4229c0ffee2' => [ 'url' => 'https://alpha.example/z-4229/kea', 'count' => 4, 'last_seen' => self::tick() ] ],
+		];
+		foreach ( $by_server as $server => $rows ) {
+			$this->set_url_bucket( $store, $bucket, $rows, $server );
+		}
+		// Path order is the reverse of URL order across the servers, and the
+		// http row, kept whole, sorts after its server's paths but before its
+		// https URLs, so a page sorted on the path fails in either scope.
+		$site  = [
+			'asc'  => [ 'b5531c0ffee3', 'f4229c0ffee2', 'a3117c0ffee1', 'c6643c0ffee4' ],
+			'desc' => [ 'c6643c0ffee4', 'a3117c0ffee1', 'f4229c0ffee2', 'b5531c0ffee3' ],
+		];
+		$scope = [
+			'asc'  => [ 'b5531c0ffee3', 'a3117c0ffee1', 'c6643c0ffee4' ],
+			'desc' => [ 'c6643c0ffee4', 'a3117c0ffee1', 'b5531c0ffee3' ],
+		];
+		$pages = [
+			'the whole index' => [ $site, [] ],
+			'a search'        => [ $site, [ '--search=kea' ] ],
+			'a server'        => [ $scope, [ '--server=zeta.example' ] ],
+			'a server search' => [ $scope, [ '--server=zeta.example', '--search=kea' ] ],
+		];
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			foreach ( $pages as $page => [ $orders, $args ] ) {
+				foreach ( $orders as $order => $hashes ) {
+					$folded = $fire( '--sort=url', "--order={$order}", ...$args );
+					$this->assertFalse( $folded['ranked'] );
+					$this->assertSame( $hashes, \array_column( $folded['data'], 'hash' ), "{$page}, {$order}" );
+				}
+			}
+			$this->set_url_rank_lists_of( $store, $bucket, $by_server );
+			$this->seed_hour_lists();
+			$this->seed_hour_lists( [], 'zeta.example' );
+			foreach ( [ 'the site' => [ $site, [] ], 'a server' => [ $scope, [ '--server=zeta.example' ] ] ] as $page => [ $orders, $args ] ) {
+				$this->warm_url_header( $fire, ...$args );
+				foreach ( $orders as $order => $hashes ) {
+					// A limit apart from the folds above, so no cached fold answers it.
+					$ranked = $fire( '--sort=url', "--order={$order}", '--limit=40', ...$args );
+					$this->assertTrue( $ranked['ranked'], "{$page}, {$order}" );
+					$this->assertSame( $hashes, \array_column( $ranked['data'], 'hash' ), "{$page}'s ranked lists, {$order}" );
+				}
+			}
+		} finally {
+			$restore();
+		}
+	}
+
+	/**
+	 * A site `url` list holding a server-relative path, which no server
+	 * joins to a URL, refuses the page rather than show a malformed URL.
+	 */
+	public function test_a_site_url_list_holding_a_path_refuses_the_page(): void {
+		$this->activate_shipped( 'performance', 3 );
+		$store     = $this->stats_store( 1, 86400 );
+		$bucket    = $this->current_url_bucket();
+		$by_server = [ 'zeta.example' => [ 'a3117c0ffee1' => [ 'url' => 'https://zeta.example/a-3117/kea', 'count' => 3, 'last_seen' => self::tick() ] ] ];
+		$this->set_url_bucket( $store, $bucket, $by_server['zeta.example'], 'zeta.example' );
+		$this->set_url_rank_lists_of( $store, $bucket, $by_server );
+		$this->seed_hour_lists();
+		$store->bucket_set_multi( [ [
+			Stats_Store::url_rank_parts( 'url', 'asc', '', false ),
+			$bucket,
+			[ [ Stats_Store::RANK_HASH => 'a3117c0ffee1', Stats_Store::RANK_ROW => self::positional_url_row( [ 'count' => 3 ] ), Stats_Store::RANK_PATH => '/a-3117/kea' ] ],
+		] ] );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$this->warm_url_header( $fire );
+			$refused = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--sort=url', '--order=asc', '--limit=40' ] );
+		} finally {
+			$restore();
+		}
+
+		$this->assertIsString( $refused );
+		$this->assertStringContainsString( "no server to join '/a-3117/kea' to", $refused );
+	}
+
 	public function test_a_scoped_ranked_page_reads_the_servers_lists(): void {
 		$this->activate_shipped( 'performance', 3 );
 		$store  = $this->stats_store( 1, 86400 );
@@ -6042,7 +6133,7 @@ class PerformanceCITest extends TestCase {
 				$fine[] = \count( $buckets );
 				return [];
 			},
-			static function ( string $bucket, array $data ) use ( &$folded ): void {
+			static function ( string $bucket, array $data, string $server ) use ( &$folded ): void {
 				++$folded;
 			}
 		);
@@ -6068,21 +6159,22 @@ class PerformanceCITest extends TestCase {
 			$plan,
 			static function ( array $hours ) use ( &$trace ): array {
 				$trace[] = 'read';
-				$pairs   = [];
+				$triples = [];
 				foreach ( $hours as $hour ) {
-					$pairs[] = [ $hour, [ 'seen' => $hour ] ];
+					$triples[] = [ $hour, [ 'seen' => $hour ], 'kea.test' ];
 				}
-				return $pairs;
+				return $triples;
 			},
 			static fn ( array $buckets ): array => [],
-			static function ( string $bucket, array $data ) use ( &$trace ): void {
-				$trace[] = "fold:{$bucket}";
+			static function ( string $bucket, array $data, string $server ) use ( &$trace ): void {
+				$trace[] = "fold:{$bucket}:{$server}";
 			}
 		);
 
 		$this->assertCount( 25, $trace, 'two reads and twenty-three folds' );
 		$this->assertSame( 'read', $trace[0] );
 		$this->assertSame( 'read', $trace[13], 'the first chunk folded before the second was read' );
+		$this->assertStringEndsWith( ':kea.test', $trace[1], 'each fold names the server its rows are filed under' );
 	}
 
 	/**
@@ -6255,7 +6347,7 @@ class PerformanceCITest extends TestCase {
 			],
 		];
 
-		$fold->invokeArgs( null, [ &$result, $data, false ] );
+		$fold->invokeArgs( null, [ &$result, $data, false, '' ] );
 
 		$this->assertArrayHasKey(
 			'ab12cd34ef56',

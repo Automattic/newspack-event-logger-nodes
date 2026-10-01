@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Every topology declares its idle window.** `complete`, `performance`, `request-builder`, `flame-builder`, `job-hub`, `job-spoke`, `job-router` and `job-feed` declare `var on_demand_idle = 30`, so their workers exit after 30 idle seconds and are revived on demand; `aggregator` and `hub-control` declare `0`, as `hub` does, so a hub worker never idles out.
 
+### Fixed
+
+- **A URL sort orders the whole URL, host and scheme included.** "URLs by Request Count" sorted by URL compared the path the row stores and ignored its server, so `https://sacurrent.example/jobs/…` and `https://austinchronicle.example/jobs/…` interleaved by path. Every writer `url` list ranks the whole URL, joined through the now public `Stats_Store::join_url()`: a server's list still stores the path at `Stats_Store::RANK_PATH`, so its item size is unchanged and its cut is its top-N by URL, and the site's list stores the whole URL, joined as each server's entries enter the union, so the site's ranking stays exact. The ranked reader joins a server list's path with that server's name, and the fold, a search and `dump_url` name a row by its whole URL until `resolve_urls()` names it, where they named the path. Within one server this moves only an http row stored whole, which sorts before the server's https URLs rather than after its paths. `Stats_Store::join_url()` throws `InvalidArgumentException` for a server-relative path with no server to join it to, so a site `url` list written before this release, which holds paths, refuses its page rather than show `https:///…`. Flush the stats Tables after deploying (`docs/upgrading.md`). An unnamed row on a page or in `dump_url` shows its whole URL rather than its path.
+
 ## [0.114.0] - 2026-10-01
 
 ### Changed

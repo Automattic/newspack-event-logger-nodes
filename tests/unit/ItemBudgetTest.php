@@ -274,9 +274,12 @@ class ItemBudgetTest extends TestCase {
 	// ----- urlrank_s / urlrank_sh, and urlhdr / urlhdr_h beside them -----
 
 	public function test_a_ranked_hour_list_of_the_longest_paths_fits_the_item_budget(): void {
-		// Two servers, so the site's lists merge a full list from each.
+		// Two servers, so the site's lists merge a full list from each. The
+		// second is the longest name DNS allows, 253 bytes, because the site's
+		// `url` lists join each path to its server's name.
+		$longest = \implode( '.', [ \str_repeat( 'k', 63 ), \str_repeat( 'e', 63 ), \str_repeat( 'a', 63 ), \str_repeat( 't', 61 ) ] );
 		$servers = [];
-		foreach ( [ self::SEED_SERVER, 'kea.test' ] as $at => $server ) {
+		foreach ( [ self::SEED_SERVER, $longest ] as $at => $server ) {
 			for ( $i = 0; $i < 2 * Stats_Store::URL_RANK_N_HOUR; $i++ ) {
 				$servers[ $server ][ \sprintf( '%012x', $at << 20 | $i ) ] = self::wide_row( self::wide( "/{$i}/", Stats_Store::MAX_PATH_BYTES ) );
 			}

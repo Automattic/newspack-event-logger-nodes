@@ -1167,6 +1167,71 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( '/kea-13', $lists[ Stats_Store::server_key( 'kea.test' ) ]['url:asc'][0][ Stats_Store::RANK_PATH ] );
 	}
 
+	public function test_a_url_list_ranks_the_whole_url_and_a_servers_stores_its_path(): void {
+		// Path order is the reverse of URL order across the servers, and an
+		// http URL kept whole sorts after its server's paths but before its
+		// https URLs, so a list ranked on the stored path fails both. A
+		// server's list ranks the whole URL and stores the path, so its cut is
+		// its top-N by URL and the site's union of them is exact.
+		$rows  = [
+			'zeta.example'  => [
+				'a3117c0ffee1' => self::positional_url_row( [ 'count' => 3, 'path' => '/a-3117' ] ),
+				'b5531c0ffee3' => self::positional_url_row( [ 'count' => 5, 'path' => 'http://zeta.example/m-5531' ] ),
+			],
+			'alpha.example' => [
+				'f4229c0ffee2' => self::positional_url_row( [ 'count' => 4, 'path' => '/z-4229' ] ),
+			],
+		];
+		$lists = self::ranked_lists( Stats_Store::ranked_writes( self::by_shard( $rows ), false, '2026-09-22-14-05' ) );
+		$named = static fn ( array $entries ): array => \array_column( $entries, Stats_Store::RANK_PATH, Stats_Store::RANK_HASH );
+		$site  = [
+			'b5531c0ffee3' => 'http://zeta.example/m-5531',
+			'f4229c0ffee2' => 'https://alpha.example/z-4229',
+			'a3117c0ffee1' => 'https://zeta.example/a-3117',
+		];
+		$zeta  = [
+			'b5531c0ffee3' => 'http://zeta.example/m-5531',
+			'a3117c0ffee1' => '/a-3117',
+		];
+
+		$this->assertSame( $site, $named( $lists['']['url:asc'] ), 'the site list, ascending' );
+		$this->assertSame( \array_reverse( $site ), $named( $lists['']['url:desc'] ), 'the site list, descending' );
+		$this->assertSame( $zeta, $named( $lists[ Stats_Store::server_key( 'zeta.example' ) ]['url:asc'] ), 'a server\'s list, ascending' );
+		$this->assertSame( \array_reverse( $zeta ), $named( $lists[ Stats_Store::server_key( 'zeta.example' ) ]['url:desc'] ), 'a server\'s list, descending' );
+	}
+
+	public function test_a_hash_two_servers_share_takes_the_url_of_the_one_naming_it(): void {
+		// The first server's row names no path, so it ranks on its count list
+		// alone; the site's `url` list keeps the hash under the second's URL.
+		$rows  = [
+			'kea.example' => [ 'd7741c0ffee5' => self::positional_url_row( [ 'count' => 7, 'path' => '' ] ) ],
+			'moa.example' => [ 'd7741c0ffee5' => self::positional_url_row( [ 'count' => 2, 'path' => '/ruru-7741' ] ) ],
+		];
+		$lists = self::ranked_lists( Stats_Store::ranked_writes( self::by_shard( $rows ), false, '2026-09-22-14-05' ) );
+
+		$this->assertSame(
+			[ 'd7741c0ffee5' => 'https://moa.example/ruru-7741' ],
+			\array_column( $lists['']['url:asc'], Stats_Store::RANK_PATH, Stats_Store::RANK_HASH )
+		);
+	}
+
+	public function test_a_servers_url_list_cuts_at_its_top_n_by_url(): void {
+		// One http row among https paths: by path it ranks last and the cut
+		// drops it, by URL first. The site list can only hold what the
+		// server's list kept, so a cut on the path would lose it there too.
+		$rows = [
+			'zeta.example' => [
+				'b5531c0ffee3' => self::positional_url_row( [ 'count' => 5, 'path' => 'http://zeta.example/m-5531' ] ),
+				'a3117c0ffee1' => self::positional_url_row( [ 'count' => 3, 'path' => '/a-3117' ] ),
+				'c6643c0ffee4' => self::positional_url_row( [ 'count' => 6, 'path' => '/q-6643' ] ),
+			],
+		];
+		$lists = self::rank_url_rows( $rows['zeta.example'], 2, 'zeta.example' );
+
+		$this->assertSame( [ 'b5531c0ffee3', 'a3117c0ffee1' ], \array_column( $lists['url']['asc'], Stats_Store::RANK_HASH ) );
+		$this->assertSame( [ 'http://zeta.example/m-5531', '/a-3117' ], \array_column( $lists['url']['asc'], Stats_Store::RANK_PATH ), 'stored as the path' );
+	}
+
 	public function test_ranked_writes_keep_a_header_record_of_every_reader_row(): void {
 		// The Other row never ranks, but its requests are real: the header
 		// sums it and says it was there. A worker row is no reader row.
@@ -1282,7 +1347,9 @@ class StatsStoreTest extends TestCase {
 				// Every seventh count repeats, so ties cross the two servers.
 				$row                         = self::positional_url_row( [ 'count' => 3 + ( $i % 7 ) * 11, 'timed_count' => 1, 'sum_ms' => 7.0 + $i, 'path' => "/{$server}-{$i}" ] );
 				$servers[ $server ][ $hash ] = $row;
-				$union[ $hash ]              = $row;
+				// The site's `url` list ranks each row's whole URL.
+				$union[ $hash ]                             = $row;
+				$union[ $hash ][ Stats_Store::ROW_PATH ] = "https://{$server}/{$server}-{$i}";
 			}
 		}
 		$store->bucket_set_multi( Stats_Store::ranked_writes( self::by_shard( $servers ), false, $bucket ) );
@@ -2095,13 +2162,14 @@ class StatsStoreTest extends TestCase {
 	/**
 	 * The private one-scope ranker, cut to `$n` rather than a tier's bound.
 	 *
-	 * @param array<string,array<array-key,mixed>> $rows One scope's rows by hash.
-	 * @param int                                  $n    Entries per list.
+	 * @param array<string,array<array-key,mixed>> $rows   One scope's rows by hash.
+	 * @param int                                  $n      Entries per list.
+	 * @param string                               $server The server the rows are filed under.
 	 * @return array<string,array<string,list<array<int,mixed>>>>
 	 */
-	private static function rank_url_rows( array $rows, int $n ): array {
+	private static function rank_url_rows( array $rows, int $n, string $server = 'kea.test' ): array {
 		/** @var array<string,array<string,list<array<int,mixed>>>> */
-		return ( new \ReflectionMethod( Stats_Store::class, 'rank_url_rows' ) )->invoke( null, $rows, $n, false );
+		return ( new \ReflectionMethod( Stats_Store::class, 'rank_url_rows' ) )->invoke( null, $rows, $n, false, $server );
 	}
 
 	/**
