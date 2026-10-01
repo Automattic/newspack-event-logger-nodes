@@ -259,39 +259,16 @@ class ItemBudgetTest extends TestCase {
 			]
 		);
 
-		// Filed this hour under every server the index admits, and Other.
-		$filed = [];
-		for ( $i = 0; $i <= Stats_Store::MAX_SERVER_VALUES; $i++ ) {
-			$filed[ "spray{$i}.test" ][ $hash ] = "https://spray{$i}.test/";
-		}
+		// Filed this hour under the one server its URL names.
+		$filed = [ 'spray.test' => [ $hash => 'https://spray.test/' ] ];
 		( new \ReflectionMethod( $fb, 'drain_url_stats' ) )->invoke( $fb, $store, $now, $filed );
 		$blob = $store->bucket_get_multi( [ [ [ Stats_Store::NS_URL ], $hash ] ] )[0] ?? null;
 
 		$this->assertIsArray( $blob, 'the blob was written, not refused' );
-		$this->assertCount( Stats_Store::MAX_SERVER_VALUES + 1, $blob['filed'] ?? [] );
-		self::assert_fits( $blob, 'a url blob of 8,000 wide leaves, 400 wide categories and 129 filing stamps' );
+		$this->assertCount( 1, $blob['filed'] ?? [] );
+		self::assert_fits( $blob, 'a url blob of 8,000 wide leaves, 400 wide categories and its filing stamp' );
 		$heaviest = $blob['flame_raw']['children'][ \count( $blob['flame_raw']['children'] ) - 1 ]['children'] ?? [];
 		$this->assertContains( self::wide( 'leaf39.199.', 300 ), \array_column( $heaviest, 'name' ), 'the heaviest leaf survives the prune' );
-	}
-
-	// ----- urlsrv / urlsrv_h -----
-
-	public function test_a_server_index_of_the_longest_names_fits_the_item_budget(): void {
-		// A server name is SERVER_NAME as the logger allowlists it: 256 bytes
-		// and an ellipsis at most.
-		$names = [];
-		for ( $i = 0; $i < 3 * Stats_Store::MAX_SERVER_VALUES; $i++ ) {
-			$names[] = self::wide( "srv{$i}.", 259 );
-		}
-		$every = Stats_Store::shard_mask( [ ...Stats_Store::url_shards(), ...Stats_Store::url_shards( true ) ] );
-		$index = [];
-		foreach ( Stats_Store::admit_servers( [], $names ) as $filed ) {
-			$index[ Stats_Store::server_key( $filed ) ] = [ Stats_Store::SRV_NAME => $filed, Stats_Store::SRV_SHARDS => $every ];
-		}
-
-		$this->assertCount( Stats_Store::MAX_SERVER_VALUES + 1, $index );
-		$this->assertSame( 0xFFFFFFFF, $every, 'each entry names all 32 shards, as a folded hour\'s does' );
-		self::assert_fits_both( $index, 'a server index of the longest names, every shard named' );
 	}
 
 	// ----- urlrank_s / urlrank_sh, and urlhdr / urlhdr_h beside them -----
@@ -351,18 +328,6 @@ class ItemBudgetTest extends TestCase {
 		return ( $write['merge'] )( [] );
 	}
 
-	public function test_a_server_dimension_slot_keeps_its_count_cap(): void {
-		$values = [];
-		foreach ( self::firehose_names( 3 * Stats_Store::MAX_SERVER_VALUES, 'v' ) as $n => $name ) {
-			$values[ $name ] = [ self::WIDE_COUNT - $n, self::WIDE_FLOAT, self::WIDE_FLOAT, self::WIDE_COUNT - $n ];
-		}
-
-		$hour = self::merged( 'dimension_intent', Stats_Store::dim_parts( Stats_Store::DIM_SERVER, '' ), '2026-09-22-10-05', Stats_Store::DIM_SERVER, $values, Stats_Store::MAX_DIM_VALUES, null );
-
-		$this->assertSame( [ 1 ], \array_keys( $hour ), 'the 10:05 bucket is slot 1' );
-		$this->assertCount( Stats_Store::MAX_SERVER_VALUES, $hour[1] );
-	}
-
 	public function test_a_url_dimension_slot_keeps_its_count_cap(): void {
 		foreach ( [ 'status', 'method', 'country', 'from', 'ua', 'ja4' ] as $dim ) {
 			$values = [];
@@ -370,7 +335,7 @@ class ItemBudgetTest extends TestCase {
 				$values[ $name ] = [ self::WIDE_COUNT - $n, self::WIDE_FLOAT, self::WIDE_FLOAT, self::WIDE_COUNT - $n ];
 			}
 
-			$row = self::merged( 'dimension_intent', Stats_Store::url_dim_parts( 'a1b2c3d4e5f6' ), '2026-09-22-10-05', $dim, $values, Stats_Store::MAX_URL_DIM_VALUES, $dim );
+			$row = self::merged( 'dimension_intent', Stats_Store::url_dim_parts( 'a1b2c3d4e5f6' ), '2026-09-22-10-05', $values, Stats_Store::MAX_URL_DIM_VALUES, $dim );
 
 			$this->assertSame( [ $dim ], \array_keys( $row ), 'a URL-hour row keys its slotted hours by dimension' );
 			$this->assertCount( Stats_Store::MAX_URL_DIM_VALUES, $row[ $dim ][1], $dim );

@@ -140,17 +140,17 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 'flame-builder', $brief['env']['worker_type'] );
 	}
 
-	public function test_a_request_brief_names_the_server_that_served_it(): void {
-		// The brief's numbers are scoped by server everywhere else; the env
-		// block has to name the same axis or a scoped figure reads as the
-		// site's. `host` used to sit here and no longer exists on the record.
+	/** A request brief names its server in its URL alone; the env block carries no server field. */
+	public function test_a_request_brief_names_its_server_in_its_url(): void {
 		$record                = $this->record();
-		$record['server_name'] = 'spoke-17.example';
+		$record['url']         = 'https://spoke-17.example/aisle-4417';
+		$record['server_name'] = 'heron-3301.test';
 
 		$brief = Ask_Assembler::for_request( $record, $this->rule() );
 
-		$this->assertSame( 'spoke-17.example', $brief['env']['server_name'] );
-		$this->assertArrayNotHasKey( 'host', $brief['env'] );
+		$this->assertStringStartsWith( 'https://spoke-17.example/', $brief['url'] );
+		$this->assertArrayNotHasKey( 'server_name', $brief['env'] );
+		$this->assertStringNotContainsString( 'heron-3301', (string) \wp_json_encode( $brief ) );
 	}
 
 	public function test_entries_ride_only_when_the_record_is_small(): void {
@@ -766,6 +766,23 @@ class AskAssemblerTest extends TestCase {
 			[ 'insufficient_instrumentation' ],
 			\array_column( $brief['findings'], 'kind' )
 		);
+	}
+
+	/** A category with no profiled request has no mean, and the brief says so. */
+	public function test_a_category_with_no_mean_reaches_the_brief_as_null(): void {
+		$categories = [
+			'sql'  => [ 'time' => null, 'count' => null, 'samples' => 0 ],
+			'wpdb' => [ 'time' => 44.5, 'count' => 7.0, 'samples' => 3 ],
+		];
+
+		$unmeasured = Ask_Assembler::for_category( $categories, 'sql' );
+		$measured   = Ask_Assembler::for_category( $categories, 'wpdb' );
+		$overview   = Ask_Assembler::for_overview( [ 'data' => [], 'totals' => null, 'estimated' => false, 'provisional' => false ], [ 'categories' => $categories ], '', [] );
+
+		$this->assertSame( [ null, null, null ], [ $unmeasured['avg_time_ms'], $unmeasured['avg_count'], $unmeasured['share'] ] );
+		$this->assertSame( [ [ 'wpdb', 44.5, 7.0 ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'], $o['avg_count'] ], $unmeasured['others'] ) );
+		$this->assertSame( [ [ 'sql', null, null ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'], $o['avg_count'] ], $measured['others'] ) );
+		$this->assertSame( [ [ 'wpdb', 44.5 ], [ 'sql', null ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'] ], $overview['categories'] ) );
 	}
 
 	/**

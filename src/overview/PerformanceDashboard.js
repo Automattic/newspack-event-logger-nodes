@@ -194,12 +194,7 @@ export default function PerformanceDashboard( {
 			setServerNames( [] );
 			return;
 		}
-		// The overflow fold, not a server: a read scoped to it matches nothing.
-		setServerNames(
-			serverRead.series.names
-				.filter( ( name ) => 'Other' !== name )
-				.sort()
-		);
+		setServerNames( [ ...serverRead.series.names ].sort() );
 	}, [ serverRead ] );
 
 	// @longform One server draws a single bar, and a server filter draws that
@@ -680,7 +675,7 @@ export default function PerformanceDashboard( {
 	 * 25 hour keys, so the average is that board's, over those same keys — a
 	 * server's under a server filter — and never the charts' 288 slots.
 	 */
-	const breakdownAvgMs = overview?.global_leaderboard?.avg_ms ?? 0;
+	const breakdownAvgMs = overview?.global_leaderboard?.avg_ms;
 
 	// Inline "Log this URL" state: the open draft, the ruleset, and the error.
 	const [ ruleDraft, setRuleDraft ] = useState( null );

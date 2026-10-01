@@ -74,20 +74,11 @@ class Stats_Store {
 	 * estimate caps it lower when the categories run wide.
 	 */
 	public const MAX_LB_CATEGORIES        = 200;
-	/** Distinct values kept per global dimension bucket; see `dim_cap()`. */
+	/** Distinct values kept per global dimension bucket but `server`'s, which keeps every host. */
 	public const MAX_DIM_VALUES           = 20;
 
 	/** Distinct values kept per per-URL dimension bucket. */
 	public const MAX_URL_DIM_VALUES       = 10;
-	/**
-	 * Distinct reporting servers kept wherever the `server` axis is stored — the
-	 * global dimension bucket, a URL's dimension bucket, and the URL index's
-	 * server index alike. Set far above any fleet — five times the largest hub
-	 * in evidence — so no real server folds; what it guards is `SERVER_NAME`
-	 * under Apache's default `UseCanonicalName Off`, where the value is the
-	 * client's Host header, and in the URL index every name is a set of keys.
-	 */
-	public const MAX_SERVER_VALUES        = 128;
 	/**
 	 * Bytes any one stored value may take, and what every byte cap derives
 	 * from. A SQLite Table sets no item limit, so for a stats value this
@@ -180,10 +171,7 @@ class Stats_Store {
 	 * The keyspace cannot list itself, so this is what every read of the URL
 	 * index, the fold and the ranker enumerate, and they ask for the shards
 	 * it names and no other: a key nobody wrote is a miss read for nothing.
-	 * Capped at
-	 * `MAX_SERVER_VALUES` names: past that a new server's rows go to the
-	 * `Other` server key (`admit_servers()`), so a bucket's keys stay bounded
-	 * whatever Host headers arrive.
+	 * Every server is filed under its own name, uncapped.
 	 */
 	public const NS_URLSRV      = 'urlsrv';
 
@@ -357,6 +345,9 @@ class Stats_Store {
 
 	/** The `--sort` values `urls` accepts, and the names of the ranked lists. */
 	public const URL_SORTS  = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_updated' ];
+
+	/** The sorts on a measured duration, which rank a URL no timed request reached last. */
+	public const TIMED_SORTS = [ 'avg_ms', 'min_ms', 'max_ms' ];
 	/** The `--order` values `urls` accepts, and the directions each sort is ranked in. */
 	public const URL_ORDERS = [ 'asc', 'desc' ];
 
@@ -461,9 +452,6 @@ class Stats_Store {
 	 * Decision 1. Safe as a URL row key: a url_hash is 12 hex characters.
 	 */
 	public const OTHER_KEY = 'Other';
-
-	/** The server a request whose producer named none is filed under. */
-	public const UNKNOWN_SERVER = 'Unknown';
 
 	/** The overflow row's worker half — see `other_key()`. */
 	public const OTHER_WORKER_KEY = 'Other:worker';
@@ -1293,32 +1281,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Which name each server's rows are filed under in a bucket whose index
-	 * is `$index`: its own while the index names it or has room, `OTHER_KEY`
-	 * once the index holds `MAX_SERVER_VALUES` others. The `Other` entry
-	 * holds no slot, so a bucket writes at most one server key past the cap.
-	 *
-	 * @param array<string,array{0:string,1:int}> $index The bucket's stored index.
-	 * @param list<string>                        $names Servers with rows to file.
-	 * @return array<string,string> name => the name its rows are filed under.
-	 */
-	public static function admit_servers( array $index, array $names ): array {
-		$held = \array_fill_keys( \array_keys( $index ), true );
-		unset( $held[ self::server_key( self::OTHER_KEY ) ] );
-		$out = [];
-		foreach ( $names as $name ) {
-			$key = self::server_key( $name );
-			if ( ! isset( $held[ $key ] ) && \count( $held ) >= self::MAX_SERVER_VALUES ) {
-				$out[ $name ] = self::OTHER_KEY;
-				continue;
-			}
-			$held[ $key ] = true;
-			$out[ $name ] = $name;
-		}
-		return $out;
-	}
-
-	/**
 	 * Which servers each of `$hours` holds unranked: two batched reads, the
 	 * hour's server index, then the DONE marker of every server it names.
 	 *
@@ -1771,42 +1733,77 @@ class Stats_Store {
 	}
 
 	/**
-	 * The PATH of each URL, by hash — what the search index files. A hash
-	 * whose URL is '' is absent from the map rather than named '': nothing
-	 * named it, so nothing can find it.
+	 * The PATH of each URL, by hash — what the search index files.
 	 *
 	 * @param array<array-key,string> $urls hash => URL. An all-digit hash is
 	 *                                       an INT key, as PHP makes it.
 	 * @return array<string,string> hash => path.
+	 * @throws \InvalidArgumentException When a URL has no host.
 	 */
 	public static function paths_of( array $urls ): array {
 		$out = [];
 		foreach ( $urls as $hash => $url ) {
-			if ( '' !== $url ) {
-				$out[ (string) $hash ] = self::path_of( $url );
-			}
+			$out[ (string) $hash ] = self::path_of( $url );
 		}
 		return $out;
+	}
+
+	/**
+	 * The path a search matches on a stored row: a `ROW_PATH` cut to its
+	 * path is one already, and one `row_path()` kept whole is a URL.
+	 *
+	 * @param string $row_path A row's `ROW_PATH`.
+	 * @throws \InvalidArgumentException When a whole URL has no host.
+	 */
+	public static function row_search_path( string $row_path ): string {
+		return \str_starts_with( $row_path, '/' ) ? $row_path : self::path_of( $row_path );
 	}
 
 	/**
 	 * The PATH of a URL: what a search matches, with no scheme or host.
 	 *
 	 * The server is the picker's question, so a term matching the host would
-	 * make one box ask the dropdown's. A URL carrying no scheme is all path,
-	 * which is what a producer with no `SERVER_NAME` writes. The authority
-	 * ends at whichever delimiter comes first, so an authority with no path
-	 * keeps its query on the path.
+	 * make one box ask the dropdown's. The authority ends at whichever
+	 * delimiter comes first, so an authority with no path keeps its query on
+	 * the path.
 	 *
-	 * @param string $url A URL, or a row's path.
+	 * @param string $url A logged URL, which carries its host.
+	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public static function path_of( string $url ): string {
+		[ $offset, $length ] = self::authority( $url );
+		return \substr( $url, $offset + $length );
+	}
+
+	/**
+	 * The server a URL was logged by: its host, which the producer writes
+	 * from the server name it serves under.
+	 *
+	 * @param string $url A logged URL, which carries its host.
+	 * @throws \InvalidArgumentException When the URL has no host.
+	 */
+	public static function server_of( string $url ): string {
+		return \substr( $url, ...self::authority( $url ) );
+	}
+
+	/**
+	 * Where a URL's host lies, `[ offset, length ]`: after a `://` that
+	 * comes before any `/`, `?` or `#`, and up to the first of them.
+	 *
+	 * @param string $url A logged URL, which carries its host.
+	 * @return array{0:int,1:int}
+	 * @throws \InvalidArgumentException When the URL has no host: no `://`
+	 *                                   ahead of its path, or an empty host.
+	 */
+	private static function authority( string $url ): array {
 		$at = \strpos( $url, '://' );
-		if ( false === $at ) {
-			return $url;
+		if ( false !== $at && $at <= \strcspn( $url, '/?#' ) ) {
+			$length = \strcspn( $url, '/?#', $at + 3 );
+			if ( 0 < $length ) {
+				return [ $at + 3, $length ];
+			}
 		}
-		$host = $at + 3;
-		return \substr( $url, $host + \strcspn( $url, '/?#', $host ) );
+		throw new \InvalidArgumentException( "Stats_Store: URL has no host: '{$url}'" );
 	}
 
 	/**
@@ -1871,6 +1868,8 @@ class Stats_Store {
 	 *  - 'count'   = sum_count / total_count — avg invocation count per request.
 	 *  - entries   are per-appearance averages (sum / samples).
 	 *
+	 * Over no profiled request each mean is null, as `mean()` answers.
+	 *
 	 * An entry whose sample count is zero is dropped rather than divided. Past a
 	 * hundred entries a category keeps only its fifty slowest, ranked by average
 	 * exclusive time, so one pathological category cannot flood a payload.
@@ -1908,8 +1907,8 @@ class Stats_Store {
 			}
 
 			$display_cats[ $cat ] = [
-				'time'    => $total_count > 0 ? $sum_time / $total_count : 0.0,
-				'count'   => $total_count > 0 ? $sum_count / $total_count : 0.0,
+				'time'    => self::mean( $sum_time, $total_count ),
+				'count'   => self::mean( $sum_count, $total_count ),
 				'samples' => $samples,
 				'entries' => $entries_out,
 			];
@@ -1917,9 +1916,21 @@ class Stats_Store {
 
 		return [
 			'count'      => $total_count,
-			'total_time' => $total_count > 0 ? $sum_req_time / $total_count : 0.0,
+			'total_time' => self::mean( $sum_req_time, $total_count ),
 			'categories' => $display_cats,
 		];
+	}
+
+	/**
+	 * A mean over the things that HAVE a value. Dividing by every request
+	 * instead would understate it by the unmeasured fraction, and the mean
+	 * of none is null: not measured, never 0.
+	 *
+	 * @param float $sum Summed values.
+	 * @param int   $n   How many contributed one.
+	 */
+	public static function mean( float $sum, int $n ): ?float {
+		return $n > 0 ? $sum / $n : null;
 	}
 
 	/**
@@ -2003,6 +2014,18 @@ class Stats_Store {
 	}
 
 	/**
+	 * The URL a `row_path()` was cut from, given the server it was cut
+	 * against: the inverse `row_path()` answers to, and the one place a
+	 * reader spells the join.
+	 *
+	 * @param string $server The server the path was cut against.
+	 * @param string $path   The stored path.
+	 */
+	private static function join_url( string $server, string $path ): string {
+		return \str_starts_with( $path, '/' ) ? "https://{$server}{$path}" : $path;
+	}
+
+	/**
 	 * Whether a stored `urlmap` value is `[ server_name, path ]`. A server
 	 * name never holds `/`, `?` or `#`, so an entry whose first element does
 	 * is the old `[ path, origin ]` shape, and reads as no name at all.
@@ -2071,6 +2094,25 @@ class Stats_Store {
 	}
 
 	/**
+	 * The `ROW_PATH` of a URL served by `$server`: what the key does not
+	 * already say. An https URL whose authority is the server keeps only its
+	 * path, which `join_url()` joins back as `https://{server}{path}`; any
+	 * other URL, an http one, is kept whole, so no reader shows a scheme it
+	 * was not. Cut to `MAX_PATH_BYTES`, the last of them an ellipsis.
+	 *
+	 * @param string $url    The stored URL.
+	 * @param string $server The server whose key the row is filed under.
+	 */
+	public static function row_path( string $url, string $server ): string {
+		$origin = 'https://' . $server;
+		$path   = \str_starts_with( $url, $origin . '/' ) ? \substr( $url, \strlen( $origin ) ) : $url;
+		if ( \strlen( $path ) <= self::MAX_PATH_BYTES ) {
+			return $path;
+		}
+		return \mb_strcut( $path, 0, self::MAX_PATH_BYTES - \strlen( '…' ), 'UTF-8' ) . '…';
+	}
+
+	/**
 	 * Write many buckets across DIFFERENT namespaces: one `MSET` per Table,
 	 * each under the Table's declared TTL. The reply names every key that
 	 * landed, so a caller that logs a specific refusal (a URL shard) still
@@ -2096,60 +2138,6 @@ class Stats_Store {
 			$out[ $i ] = isset( $landed[ self::key_at( $parts, $bucket ) ] );
 		}
 		return $out;
-	}
-
-	/**
-	 * A row's path as it reads once the row moves from one server's key to
-	 * another's: joined back to its URL under the old, cut under the new.
-	 *
-	 * @param string $path The row's `ROW_PATH` under `$from`.
-	 * @param string $from The server it was filed under.
-	 * @param string $to   The server it is filed under now.
-	 */
-	public static function refile_path( string $path, string $from, string $to ): string {
-		return self::row_path( self::join_url( $from, $path ), $to );
-	}
-
-	/**
-	 * The URL a `row_path()` was cut from, given the server it was cut
-	 * against: the inverse `row_path()` answers to, and the one place a
-	 * reader spells the join.
-	 *
-	 * @param string $server The server the path was cut against.
-	 * @param string $path   The stored path.
-	 */
-	private static function join_url( string $server, string $path ): string {
-		return self::names_host( $server ) && \str_starts_with( $path, '/' ) ? "https://{$server}{$path}" : $path;
-	}
-
-	/**
-	 * The `ROW_PATH` of a URL served by `$server`: what the key does not
-	 * already say. An https URL whose authority is the server, when the
-	 * server names a host, keeps only its path, which `join_url()` joins back
-	 * as `https://{server}{path}`; any other
-	 * URL is kept whole, so no reader shows a scheme or host it was not. Cut
-	 * to `MAX_PATH_BYTES`, the last of them an ellipsis.
-	 *
-	 * @param string $url    The stored URL.
-	 * @param string $server The server whose key the row is filed under.
-	 */
-	public static function row_path( string $url, string $server ): string {
-		$origin = 'https://' . $server;
-		$path   = self::names_host( $server ) && \str_starts_with( $url, $origin . '/' ) ? \substr( $url, \strlen( $origin ) ) : $url;
-		if ( \strlen( $path ) <= self::MAX_PATH_BYTES ) {
-			return $path;
-		}
-		return \mb_strcut( $path, 0, self::MAX_PATH_BYTES - \strlen( '…' ), 'UTF-8' ) . '…';
-	}
-
-	/**
-	 * Whether a server name is a host a path joins back onto: the overflow
-	 * and nameless servers stand for many hosts or none.
-	 *
-	 * @param string $server A server name rows are filed under.
-	 */
-	private static function names_host( string $server ): bool {
-		return '' !== $server && self::OTHER_KEY !== $server && self::UNKNOWN_SERVER !== $server;
 	}
 
 	/**
@@ -2292,13 +2280,10 @@ class Stats_Store {
 	 * record, the union of theirs. The TIER sets the bound, so a caller names
 	 * which tier it is writing and never the row count twice.
 	 *
-	 * A site list is exact while no key names more than `MAX_SERVER_VALUES`
-	 * servers: URLs are then disjoint by server and a tie breaks by hash, so
-	 * every entry of a sort's site top-N heads its own server's list for that
-	 * sort, and a hash two servers share merges as its rows would have. Past
-	 * the cap, admission to `Other` varies by bucket, so a server admitted by
-	 * name in one bucket and under `Other` in another holds one URL in two
-	 * lists, each cut on its own share, and can rank short.
+	 * A site list is exact: URLs are disjoint by server and a tie breaks by
+	 * hash, so every entry of a sort's site top-N heads its own server's list
+	 * for that sort, and a hash two servers share merges as its rows would
+	 * have.
 	 *
 	 * A record sums EVERY row of its set, where a list ranks none of the
 	 * overflow rows, because an overflow row's requests are the site's all
@@ -2593,11 +2578,11 @@ class Stats_Store {
 
 	/**
 	 * One list: the `$n` best rows on one sort in one direction, as entries.
-	 * An untimed row ranks at 0 on the timed sorts, where the fold orders
-	 * it, since a timeout still counts toward `count` and `errors`; a row
-	 * with no path ranks on no `url` sort. A tie breaks by hash, ascending
-	 * either way, so a cut never depends on the order rows arrive in and a
-	 * merge of servers' lists cuts where one list over all of them would.
+	 * An untimed row measured no duration, so it ranks last on the
+	 * `TIMED_SORTS` in both orders, where the fold orders it; a row with no
+	 * path ranks on no `url` sort. A tie breaks by hash, ascending either
+	 * way, so a cut never depends on the order rows arrive in and a merge of
+	 * servers' lists cuts where one list over all of them would.
 	 *
 	 * @param array<array-key,array<array-key,mixed>> $rows  Rows by hash.
 	 * @param string                                  $sort  A `URL_SORTS` value, or `errors` (`rank_key()`).
@@ -2606,18 +2591,22 @@ class Stats_Store {
 	 * @return list<Rank_Entry>
 	 */
 	private static function rank_list( array $rows, string $sort, string $order, int $n ): array {
-		$values = [];
+		$values   = [];
+		$measured = [];
+		$timed    = \in_array( $sort, self::TIMED_SORTS, true );
 		foreach ( $rows as $hash => $row ) {
 			if ( 'url' === $sort && '' === Core::str( $row[ self::ROW_PATH ] ?? '' ) ) {
 				continue;
 			}
-			$values[ $hash ] = self::url_rank_value( $row, $sort );
+			$values[ $hash ]   = self::url_rank_value( $row, $sort );
+			$measured[ $hash ] = ! $timed || Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) > 0 ? 1 : 0;
 		}
 		// An all-digit hash arrives as an INT key.
-		$hashes = \array_map( 'strval', \array_keys( $values ) );
-		$values = \array_values( $values );
+		$hashes   = \array_map( 'strval', \array_keys( $values ) );
+		$values   = \array_values( $values );
+		$measured = \array_values( $measured );
 		// The sort in C, not a closure a comparison: the ranking's whole cost.
-		\array_multisort( $values, 'asc' === $order ? \SORT_ASC : \SORT_DESC, \SORT_REGULAR, $hashes, \SORT_ASC, \SORT_STRING );
+		\array_multisort( $measured, \SORT_DESC, \SORT_NUMERIC, $values, 'asc' === $order ? \SORT_ASC : \SORT_DESC, \SORT_REGULAR, $hashes, \SORT_ASC, \SORT_STRING );
 		return self::rank_entries( \array_slice( $hashes, 0, $n ), $sort, $rows );
 	}
 
@@ -2805,6 +2794,16 @@ class Stats_Store {
 	}
 
 	/**
+	 * A mean as a reply or a brief carries it: the number, or null where
+	 * nothing was measured, which a reader shows as unmeasured, never as 0.
+	 *
+	 * @param mixed $value The mean a row or a brief holds.
+	 */
+	public static function measured_mean( mixed $value ): ?float {
+		return null === $value ? null : Core::num_float( $value );
+	}
+
+	/**
 	 * The row families a reader asks for, each one list and one record a
 	 * key: the reader family, and the worker family beside it on request.
 	 *
@@ -2973,22 +2972,6 @@ class Stats_Store {
 	 */
 	public static function other_key( bool $worker ): string {
 		return $worker ? self::OTHER_WORKER_KEY : self::OTHER_KEY;
-	}
-
-	/**
-	 * Values kept in one dimension's bucket.
-	 *
-	 * The server axis gets `MAX_SERVER_VALUES` rather than the caller's generic
-	 * cap: it is the picker's contents, so a fleet-sized axis must survive whole.
-	 * It is capped all the same — `SERVER_NAME` is the client's Host header under
-	 * Apache's default `UseCanonicalName Off`, so it is visitor input like any
-	 * other axis, just one no real fleet reaches the ceiling of.
-	 *
-	 * @param string $dimension The dimension being capped.
-	 * @param int    $cap       Ceiling for every other axis.
-	 */
-	public static function dim_cap( string $dimension, int $cap ): int {
-		return self::DIM_SERVER === $dimension ? self::MAX_SERVER_VALUES : $cap;
 	}
 
 }

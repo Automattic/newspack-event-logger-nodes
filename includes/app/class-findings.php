@@ -27,6 +27,7 @@ use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
+use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Core;
 // Both plugins have a `Core`; the hook instrumentation is THIS plugin's.
 use Newspack_Event_Logger_Nodes\App\Core as Hooks;
@@ -1223,7 +1224,7 @@ class Findings {
 		}
 		$metric = [
 			'count'       => Core::num_int( $stats['count'] ?? 0 ),
-			'avg_ms'      => Core::num_float( $stats['avg_ms'] ?? 0 ),
+			'avg_ms'      => Stats_Store::measured_mean( $stats['avg_ms'] ?? null ),
 			'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
 			'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 		];

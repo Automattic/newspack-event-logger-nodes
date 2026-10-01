@@ -75,17 +75,16 @@ Per-namespace caps bound every stored value: `ITEM_BUDGET` derives from memcache
 | Constant | Value | Scope |
 |---|---|---|
 | `Stats_Store::MAX_CAT_VALUES` | 50 | Distinct categories per chart slot |
-| `Stats_Store::MAX_DIM_VALUES` | 20 | Distinct values per dimension slot, site or server |
+| `Stats_Store::MAX_DIM_VALUES` | 20 | Distinct values per dimension slot, site or server, on every axis but `server` |
 | `Stats_Store::MAX_URL_DIM_VALUES` | 10 | Distinct values per URL dimension slot |
-| `Stats_Store::MAX_SERVER_VALUES` | 128 | The `server` axis everywhere it is stored |
 | `Stats_Store::MAX_LB_CATEGORIES` | 200 | Categories per leaderboard hour or URL profile |
 | `Stats_Store::ITEM_BUDGET` | 900000 | Bytes any stored value but a slotted chart hour may take, by its producer's estimate |
 
 **Every value is capped BEFORE it is written (decision 30).** A slotted chart hour takes its count caps per slot and no byte cap. Every other producer estimates its value from `Stats_Store::overhead()` — a fixed cost per stored part for the configured serializer — plus the `strlen()` of its strings, and caps it to `ITEM_BUDGET`: a URL shard by bytes alone (`cap_url_rows()`), a leaderboard by `MAX_LB_CATEGORIES` and bytes, the `url` blob by a leaderboard cap on its profiles and a lightest-leaf prune of its tree, and a rule's hook list by refusal at `Rule_Set::save()`. A diff that finds a size from a refused write, relies on compression, or serializes a value on the flush path to measure it is the regression to look for; a new namespace needs its cap and a case in `tests/unit/ItemBudgetTest.php`.
 
-**Per-server data has the server in the KEY, and a value carries nothing its key implies** (decision 30). The URL index, its ranked lists and its token index all key by `server_key`; the row holds its path and not its host. A diff that packs several servers into one value, or stores a site-wide list beside the per-server ones, reopens decision 14. The servers present come from the `urlsrv` index, capped at 128 by `Stats_Store::admit_servers()`; a walk that enumerates servers any other way misses worker-only servers and those filed under `Other`.
+**Per-server data has the server in the KEY, and a value carries nothing its key implies** (decision 30). The URL index, its ranked lists and its token index all key by `server_key`; the row holds its path and not its host. A diff that packs several servers into one value, or stores a site-wide list beside the per-server ones, reopens decision 14. The servers present come from the `urlsrv` index; a walk that enumerates servers any other way misses worker-only servers.
 
-The `server` axis takes 128 rather than 20 because `server_name` is `$_SERVER['SERVER_NAME']`, which under Apache's default `UseCanonicalName Off` is the CLIENT's Host header — visitor input with no ceiling. It sits far above any fleet in evidence because a cap that binds on a real fleet drops a spoke out of the picker AND out of every scoped read. `Stats_Store::dim_cap()` substitutes it.
+The `server` axis takes no cap, and neither does `urlsrv`: every server is filed under its own name, the URL's host, because a cap that binds drops a spoke out of the picker AND out of every scoped read. A diff that caps it, or folds a server into `Other`, reintroduces an overflow server the picker cannot scope to.
 
 Every cap FOLDS its tail rather than dropping it, ranked by traffic, so totals stay exact. The four bucket caps run through `cap_bucket()` into one synthetic `Stats_Store::OTHER_KEY` (`'Other'`); only the category cap passes a reserved row, holding the `total` pseudo-category clear of the ranking and restoring it after. The URL-index byte cap runs through `cap_url_rows()` into TWO overflow rows, `Stats_Store::other_key( $worker )` minting `OTHER_KEY` or `OTHER_WORKER_KEY`, because one row cannot answer a filter about a mixed set.
 

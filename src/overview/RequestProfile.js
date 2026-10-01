@@ -124,12 +124,12 @@ function ProfileEntries( { entries } ) {
  * are what that sum and that bar leave out, their time being already inside
  * the hook that dispatched them. They keep their table rows, which is where a
  * hook's slowest callback is found, so the percentage column does not add up
- * to the footer's.
+ * to the footer's. With no wall clock measured every share reads `—`.
  *
  * @param {Object}                props                     Component props.
  * @param {Object<string,Object>} props.profiles            Per-category `{ count, time, entries }`, keyed by category name.
- * @param {number}                props.totalMs             Wall-clock duration in ms — the denominator for every percentage.
- * @param {number}                [props.totalProfiledTime] Profiled total the averaged views compute server-side; summed from the non-listener categories when omitted.
+ * @param {?number}               props.totalMs             Wall-clock duration in ms — the denominator for every percentage; null or 0 where unmeasured.
+ * @param {?number}               [props.totalProfiledTime] Profiled total the averaged views compute server-side, null where unmeasured; summed from the non-listener categories when omitted.
  * @param {string|null}           [props.title]             Heading text, or null for no heading; defaults to "Time Breakdown".
  * @return {import('react').ReactElement|null} The panel, or null when every category carries zero time and zero count.
  */
@@ -183,6 +183,12 @@ export default function RequestProfile( {
 		return null;
 	}
 
+	// A share of the wall clock, or null where none was measured.
+	const shareOf = ( time ) =>
+		totalMs > 0 && null !== time ? ( time / totalMs ) * 100 : null;
+	const shareText = ( share ) =>
+		null === share ? '—' : `${ share.toFixed( 1 ) }%`;
+
 	const toggleExpand = ( state ) => {
 		setExpandedState( expandedState === state ? null : state );
 	};
@@ -196,7 +202,7 @@ export default function RequestProfile( {
 					if ( isCallbackCategory( state ) ) {
 						return null;
 					}
-					const pct = totalMs > 0 ? ( time / totalMs ) * 100 : 0;
+					const share = shareOf( time );
 					return (
 						<div
 							key={ state }
@@ -204,9 +210,9 @@ export default function RequestProfile( {
 							tabIndex={ 0 }
 							title={ `${ state }: ${ formatDuration(
 								time
-							) } (${ pct.toFixed( 1 ) }%)` }
+							) } (${ shareText( share ) })` }
 							style={ {
-								width: `${ pct }%`,
+								width: `${ share ?? 0 }%`,
 								background: getStateColor( state ),
 								cursor: 'pointer',
 							} }
@@ -243,8 +249,7 @@ export default function RequestProfile( {
 				<tbody>
 					{ visibleProfiles.map(
 						( { state, count, time, entries } ) => {
-							const pct =
-								totalMs > 0 ? ( time / totalMs ) * 100 : 0;
+							const share = shareOf( time );
 							const hasEntries =
 								Object.keys( entries ).length > 0;
 							const isExpanded = expandedState === state;
@@ -290,7 +295,7 @@ export default function RequestProfile( {
 											{ formatDuration( time ) }
 										</td>
 										<td className="newspack-nodes-table__terminal-data">
-											{ pct.toFixed( 1 ) }%
+											{ shareText( share ) }
 										</td>
 										<td className="newspack-nodes-table__terminal-data">
 											{ Math.round( count ) }
@@ -346,15 +351,12 @@ export default function RequestProfile( {
 							) }
 						</td>
 						<td className="newspack-nodes-table__terminal-data">
-							{ formatDuration( profiledTime ) }
+							{ null === profiledTime
+								? '—'
+								: formatDuration( profiledTime ) }
 						</td>
 						<td className="newspack-nodes-table__terminal-data">
-							{ totalMs > 0
-								? ( ( profiledTime / totalMs ) * 100 ).toFixed(
-										1
-								  )
-								: '0.0' }
-							%
+							{ shareText( shareOf( profiledTime ) ) }
 						</td>
 						<td />
 					</tr>
@@ -375,8 +377,8 @@ export default function RequestProfile( {
  *
  * @param {Object}                props                     Component props.
  * @param {Object<string,Object>} props.profiles            Per-category `{ count, time, entries }`, already averaged over `count` requests.
- * @param {number}                props.totalMs             Average wall-clock duration in ms — the denominator for every percentage.
- * @param {number}                [props.totalProfiledTime] Profiled total computed server-side; summed from `profiles` when omitted.
+ * @param {?number}               props.totalMs             Average wall-clock duration in ms — the denominator for every percentage; null or 0 where unmeasured.
+ * @param {?number}               [props.totalProfiledTime] Profiled total computed server-side, null where unmeasured; summed from `profiles` when omitted.
  * @param {number}                [props.count]             Requests the average covers.
  * @param {string|null}           [props.heading]           Already-translated heading; omitted leaves the profile's own title.
  * @param {string}                [props.serverName]        Server the breakdown is scoped to; '' captions it site-wide.

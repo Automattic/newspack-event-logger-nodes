@@ -67,8 +67,6 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 'http://kea.test/kakapo-4417', Stats_Store::row_path( 'http://kea.test/kakapo-4417', 'kea.test' ) );
 		$this->assertSame( 'https://moa.test/weka-1308', Stats_Store::row_path( 'https://moa.test/weka-1308', 'kea.test' ) );
 		$this->assertSame( 'https://kea.test?q=3', Stats_Store::row_path( 'https://kea.test?q=3', 'kea.test' ), 'no path to stand alone' );
-		$this->assertSame( 'https://kea.test/a', Stats_Store::row_path( 'https://kea.test/a', '' ), 'an unnamed server implies nothing' );
-		$this->assertSame( '/bare-7731', Stats_Store::row_path( '/bare-7731', 'kea.test' ) );
 	}
 
 	public function test_a_row_path_is_capped_with_an_ellipsis(): void {
@@ -122,8 +120,8 @@ class StatsStoreTest extends TestCase {
 		$other = '0f0f0f0f0f0f';
 
 		$this->set_url_bucket( $store, '2026-08-14-12-05', [
-			$hash  => [ 'url' => '/a', 'count' => 3 ],
-			$other => [ 'url' => '/b', 'count' => 5 ],
+			$hash  => [ 'url' => 'https://example.com/a', 'count' => 3 ],
+			$other => [ 'url' => 'https://example.com/b', 'count' => 5 ],
 		] );
 
 		$srv = Stats_Store::server_key( self::SEED_SERVER );
@@ -177,24 +175,6 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 2, $this->stats_reads(), 'the index, then the shards it names' );
 	}
 
-	public function test_a_server_past_the_cap_is_admitted_as_other(): void {
-		// The cap bounds the KEYS a bucket writes whatever Host headers
-		// arrive: a named server keeps its key, a new one takes a free slot,
-		// and past MAX_SERVER_VALUES the rest share the `Other` key.
-		$index = [];
-		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES - 1; $i++ ) {
-			$name                                    = \sprintf( 'spoke%03d.test', $i );
-			$index[ Stats_Store::server_key( $name ) ] = $name;
-		}
-		$index[ Stats_Store::server_key( Stats_Store::OTHER_KEY ) ] = Stats_Store::OTHER_KEY;
-
-		$this->assertSame(
-			[ 'spoke007.test' => 'spoke007.test', 'late-1.test' => 'late-1.test', 'late-2.test' => Stats_Store::OTHER_KEY ],
-			Stats_Store::admit_servers( $index, [ 'spoke007.test', 'late-1.test', 'late-2.test' ] ),
-			'the Other key holds no slot of the 128'
-		);
-	}
-
 	public function test_the_whole_window_is_still_one_round_trip(): void {
 		// Decision 1: "one `lookup_multi` serves them all"; decision 6: per-key
 		// gets are the latency cliff a dashboard read exists to avoid. Sharding
@@ -202,8 +182,8 @@ class StatsStoreTest extends TestCase {
 		// ROUND TRIPS, which is what a loop of multi-gets per shard would do.
 		$store = $this->stats_store();
 		$this->set_url_bucket( $store, '2026-08-14-12-05', [
-			'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ],
-			'0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ],
+			'a1b2c3d4e5f6' => [ 'url' => 'https://example.com/a', 'count' => 3 ],
+			'0f0f0f0f0f0f' => [ 'url' => 'https://example.com/b', 'count' => 5 ],
 		] );
 
 		$this->forget_stats_asks();
@@ -220,9 +200,9 @@ class StatsStoreTest extends TestCase {
 		// first one's rows live in a shard it never mentioned, and a test reads
 		// both as if they arrived together.
 		$store = $this->stats_store();
-		$this->set_url_bucket( $store, '2026-08-14-12-05', [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ] ] );
+		$this->set_url_bucket( $store, '2026-08-14-12-05', [ 'a1b2c3d4e5f6' => [ 'url' => 'https://example.com/a', 'count' => 3 ] ] );
 
-		$this->set_url_bucket( $store, '2026-08-14-12-05', [ '0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ] ] );
+		$this->set_url_bucket( $store, '2026-08-14-12-05', [ '0f0f0f0f0f0f' => [ 'url' => 'https://example.com/b', 'count' => 5 ] ] );
 
 		$this->assertSame( [], $this->get_url_shard( $store, '2026-08-14-12-05', 'a' ) );
 		$this->assertSame(
@@ -299,20 +279,20 @@ class StatsStoreTest extends TestCase {
 
 	public function test_hour_sources_read_the_coarse_tier_in_one_round_trip(): void {
 		$store = $this->stats_store();
-		$this->set_url_hour( $store, '2026-08-27-13', 'a', [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 9 ] ] );
+		$this->set_url_hour( $store, '2026-08-27-13', 'a', [ 'a1b2c3d4e5f6' => [ 'url' => 'https://example.com/a', 'count' => 9 ] ] );
 
 		$this->forget_stats_asks();
 		$sources         = $store->url_hour_sources( [ '2026-08-27-13', '2026-08-27-12' ], 'a' );
 
 		$this->assertSame( 2, $this->stats_reads(), 'the hour index, then the rows' );
-		$this->assertSame( [ [ '2026-08-27-13', [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 9 ] ], self::SEED_SERVER ] ], $sources );
+		$this->assertSame( [ [ '2026-08-27-13', [ 'a1b2c3d4e5f6' => [ 'url' => 'https://example.com/a', 'count' => 9 ] ], self::SEED_SERVER ] ], $sources );
 	}
 
 	public function test_reading_the_whole_index_merges_every_shard(): void {
 		$store = $this->stats_store();
 		$this->set_url_bucket( $store, '2026-08-14-12-05', [
-			'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ],
-			'0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ],
+			'a1b2c3d4e5f6' => [ 'url' => 'https://example.com/a', 'count' => 3 ],
+			'0f0f0f0f0f0f' => [ 'url' => 'https://example.com/b', 'count' => 5 ],
 		] );
 
 		$rows = $this->url_rows_by_bucket( $store, [ '2026-08-14-12-05' ] )['2026-08-14-12-05'];
@@ -445,8 +425,8 @@ class StatsStoreTest extends TestCase {
 		$store = $this->stats_store();
 		$bucket = '2026-01-01-00-00';
 		$this->set_url_bucket( $store, $bucket, [
-			'/x' => [ 'url' => '/x' ],
-			'/y' => [ 'url' => '/y' ],
+			'/x' => [ 'url' => 'https://example.com/x' ],
+			'/y' => [ 'url' => 'https://example.com/y' ],
 		] );
 
 		// get_url_buckets should accept a list and return a map.
@@ -490,7 +470,7 @@ class StatsStoreTest extends TestCase {
 
 	public function test_set_and_get_url_bucket_round_trip(): void {
 		$store = $this->stats_store();
-		$this->set_url_bucket( $store, '2026-01-01-00-00', [ 'hash1' => [ 'url' => '/x', 'count' => 1 ] ] );
+		$this->set_url_bucket( $store, '2026-01-01-00-00', [ 'hash1' => [ 'url' => 'https://example.com/x', 'count' => 1 ] ] );
 		$urls = $this->url_bucket_rows( $store, '2026-01-01-00-00' );
 		$this->assertArrayHasKey( 'hash1', $urls );
 	}
@@ -685,7 +665,6 @@ class StatsStoreTest extends TestCase {
 				'b2b2b2b2b2b2' => 'http://kea.example/plain-3319',
 			],
 			Stats_Store::OTHER_KEY => [ 'c3c3c3c3c3c3' => 'https://moa.example/weka-5521' ],
-			'Unknown'              => [ 'd4d4d4d4d4d4' => '/tui-8812' ],
 		] );
 
 		$this->assertSame(
@@ -698,9 +677,8 @@ class StatsStoreTest extends TestCase {
 				'a1a1a1a1a1a1' => [ 'server' => 'kea.example', 'url' => 'https://kea.example/kakapo-7731?x=7' ],
 				'b2b2b2b2b2b2' => [ 'server' => 'kea.example', 'url' => 'http://kea.example/plain-3319' ],
 				'c3c3c3c3c3c3' => [ 'server' => Stats_Store::OTHER_KEY, 'url' => 'https://moa.example/weka-5521' ],
-				'd4d4d4d4d4d4' => [ 'server' => 'Unknown', 'url' => '/tui-8812' ],
 			],
-			$store->get_url_names( [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2', 'c3c3c3c3c3c3', 'd4d4d4d4d4d4' ] )
+			$store->get_url_names( [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2', 'c3c3c3c3c3c3' ] )
 		);
 	}
 
@@ -708,12 +686,54 @@ class StatsStoreTest extends TestCase {
 		// An authority with no path is the case that bites: everything after
 		// the host is the path, or the host swallows a query.
 		$this->assertSame(
-			[ '/reports', '/?cache-cozy', '?q=1', '', '/a-bare-path', '' ],
+			[ '/reports', '/?cache-cozy', '?q=1', '' ],
 			\array_map(
 				[ Stats_Store::class, 'path_of' ],
-				[ 'https://alpha.test/reports', 'https://alpha.test/?cache-cozy', 'https://alpha.test?q=1', 'https://alpha.test', '/a-bare-path', '' ]
+				[ 'https://alpha.test/reports', 'https://alpha.test/?cache-cozy', 'https://alpha.test?q=1', 'https://alpha.test' ]
 			)
 		);
+	}
+
+	/** Every logged URL carries its host, so a hostless one is refused, never read as a bare path. */
+	public function test_a_hostless_url_is_refused(): void {
+		foreach ( [ '/bare-7731', '/r?to=https://kea.test/aisle-9', 'https:///no-host-7731', '' ] as $url ) {
+			foreach ( [ 'path_of', 'server_of' ] as $reader ) {
+				try {
+					Stats_Store::$reader( $url );
+					$this->fail( "{$reader}( '{$url}' ) answered" );
+				} catch ( \InvalidArgumentException $e ) {
+					$this->assertStringContainsString( "no host: '{$url}'", $e->getMessage() );
+				}
+			}
+		}
+	}
+
+	/** A URL's server is its host. */
+	public function test_a_urls_server_is_its_host(): void {
+		$this->assertSame( 'kea.test', Stats_Store::server_of( 'https://kea.test/sku-41?q=9' ) );
+		$this->assertSame( 'wren.test', Stats_Store::server_of( 'http://wren.test?q=3' ) );
+		$this->assertSame( 'kea.test', Stats_Store::server_of( 'https://kea.test' ) );
+	}
+
+	/** A row cut to its path is searched as it is; one kept whole is a URL, searched by its path. */
+	public function test_a_rows_search_path_is_its_url_path(): void {
+		$this->assertSame( '/kakapo-4417?q=9', Stats_Store::row_search_path( '/kakapo-4417?q=9' ) );
+		$this->assertSame( '/kakapo-4417', Stats_Store::row_search_path( 'http://kea.test/kakapo-4417' ) );
+		$this->assertSame( '?q=3', Stats_Store::row_search_path( 'https://kea.test?q=3' ) );
+	}
+
+	public function test_a_mean_over_no_requests_is_null(): void {
+		$this->assertNull( Stats_Store::mean( 12.5, 0 ) );
+		$this->assertEqualsWithDelta( 2.5, Stats_Store::mean( 12.5, 5 ), 1e-9 );
+	}
+
+	public function test_a_leaderboard_of_no_profiled_request_has_no_means(): void {
+		$display = Stats_Store::sums_to_display( 0, 0.0, [ 'wpdb' => [ 'sum_time' => 9.0, 'sum_count' => 4.0, 'samples' => 3 ] ] );
+
+		$this->assertNull( $display['total_time'] );
+		$this->assertNull( $display['categories']['wpdb']['time'] );
+		$this->assertNull( $display['categories']['wpdb']['count'] );
+		$this->assertEqualsWithDelta( 9.0, Stats_Store::sums_to_display( 3, 27.0, [] )['total_time'], 1e-9 );
 	}
 
 	public function test_sums_to_display_converts_running_sums_to_avg(): void {
@@ -957,7 +977,7 @@ class StatsStoreTest extends TestCase {
 	}
 
 	public function test_the_errored_set_ranks_the_rows_that_errored_and_counts_by_errors(): void {
-		// A timeout carries no duration: its row ranks at 0 on the timed
+		// A timeout carries no duration: its row ranks last on the timed
 		// sorts, and counts toward `count` and `errors`, never `avg_ms`. A
 		// row of clean 5xx responses errs no more than the 2xx one does.
 		$row    = static fn ( array $named ): array => self::positional_url_row( $named );
@@ -975,11 +995,11 @@ class StatsStoreTest extends TestCase {
 		$scope  = 'e:' . Stats_Store::server_key( 'kea.test' );
 
 		$this->assertSame( [ 'c3913e02bc01', 'b2308df1ab90' ], $hashes( $lists[ $scope ]['count:desc'] ), 'ranked by errors, 4 over 2, not by count' );
-		$this->assertSame( [ 'b2308df1ab90', 'c3913e02bc01' ], $hashes( $lists[ $scope ]['avg_ms:desc'] ), 'the timeout ranks at 0' );
-		$this->assertSame( [ 'c3913e02bc01', 'b2308df1ab90' ], $hashes( $lists[ $scope ]['min_ms:asc'] ) );
-		$this->assertSame( [ 'c3913e02bc01', 'b2308df1ab90' ], $hashes( $lists['e']['max_ms:asc'] ), 'the site\'s errored list' );
+		$this->assertSame( [ 'b2308df1ab90', 'c3913e02bc01' ], $hashes( $lists[ $scope ]['avg_ms:desc'] ), 'the timeout ranks last' );
+		$this->assertSame( [ 'b2308df1ab90', 'c3913e02bc01' ], $hashes( $lists[ $scope ]['min_ms:asc'] ) );
+		$this->assertSame( [ 'b2308df1ab90', 'c3913e02bc01' ], $hashes( $lists['e']['max_ms:asc'] ), 'the site\'s errored list' );
 		$this->assertSame( [ 'd4417f13cd12' ], $hashes( $lists[ 'w:e:' . Stats_Store::server_key( 'kea.test' ) ]['count:desc'] ) );
-		$this->assertSame( 'c3913e02bc01', $hashes( $lists[ Stats_Store::server_key( 'kea.test' ) ]['avg_ms:asc'] )[0], 'every set ranks an untimed row at 0 on a timed sort' );
+		$this->assertSame( 'c3913e02bc01', \array_slice( $hashes( $lists[ Stats_Store::server_key( 'kea.test' ) ]['avg_ms:asc'] ), -1 )[0], 'every set ranks an untimed row last on a timed sort' );
 
 		$records = [];
 		foreach ( $writes as [ $parts, , $value ] ) {
@@ -1349,24 +1369,23 @@ class StatsStoreTest extends TestCase {
 		}
 	}
 
-	public function test_paths_of_names_each_url_by_its_path_and_drops_the_unnamed(): void {
+	public function test_paths_of_names_each_url_by_its_path(): void {
 		// An all-digit hash arrives as an INT key, and a name blob is
 		// `hash => path` with string keys both ways.
 		$this->assertSame(
 			[ '112233445566' => '/kakapo-4417', 'c9c9c9c9c9c9' => '/weka-1308?q=7' ],
 			Stats_Store::paths_of( [
 				112233445566   => 'https://kea.test/kakapo-4417',
-				'c9c9c9c9c9c9' => '/weka-1308?q=7',
-				'd1d1d1d1d1d1' => '',
+				'c9c9c9c9c9c9' => 'http://moa.test/weka-1308?q=7',
 			] )
 		);
 	}
 
-	public function test_ranking_ranks_untimed_rows_at_zero_and_skips_unnamed_rows_on_url(): void {
-		// An untimed row still counts, so it ranks at 0 on the timed sorts,
-		// as the fold orders it; a row with no path has no url to rank by.
-		// The overflow rows that never rank are asserted through
-		// `ranked_writes()`, which is where they are filtered.
+	public function test_ranking_ranks_untimed_rows_last_and_skips_unnamed_rows_on_url(): void {
+		// An untimed row still counts, but it measured no duration, so it
+		// ranks last on every timed sort in both orders, as the fold orders
+		// it; a row with no path has no url to rank by. The overflow rows
+		// that never rank are asserted through `ranked_writes()`.
 		$rows = [
 			'e5e5e5e5e5e5' => self::positional_url_row( [ 'count' => 40, 'timed_count' => 0, 'sum_ms' => 0.0, 'min_ms' => 0.0 ] ),
 			'f6f6f6f6f6f6' => self::positional_url_row( [ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 30.0, 'min_ms' => 10.0, 'max_ms' => 10.0, 'path' => '' ] ),
@@ -1374,8 +1393,11 @@ class StatsStoreTest extends TestCase {
 		$lists = self::rank_url_rows( $rows, 10 );
 		$hashes = static fn ( array $entries ): array => \array_column( $entries, Stats_Store::RANK_HASH );
 		$this->assertSame( [ 'e5e5e5e5e5e5', 'f6f6f6f6f6f6' ], $hashes( $lists['count']['desc'] ) );
-		$this->assertSame( [ 'e5e5e5e5e5e5', 'f6f6f6f6f6f6' ], $hashes( $lists['min_ms']['asc'] ), 'the untimed row first, at 0' );
-		$this->assertSame( [ 'f6f6f6f6f6f6', 'e5e5e5e5e5e5' ], $hashes( $lists['avg_ms']['desc'] ), 'and last going down' );
+		foreach ( [ 'avg_ms', 'min_ms', 'max_ms' ] as $sort ) {
+			foreach ( [ 'asc', 'desc' ] as $order ) {
+				$this->assertSame( [ 'f6f6f6f6f6f6', 'e5e5e5e5e5e5' ], $hashes( $lists[ $sort ][ $order ] ), "the untimed row last on {$sort} {$order}" );
+			}
+		}
 		$this->assertSame( [], $lists['url']['asc'], 'no path, no url rank' );
 	}
 

@@ -409,6 +409,45 @@ describe( 'RequestProfile', () => {
 	} );
 } );
 
+describe( 'RequestProfile with no measured wall clock', () => {
+	it( 'shows every share as a dash, never as 0.0%', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: baseProfiles,
+				totalMs: null,
+			} )
+		);
+		const shares = Array.from(
+			container.querySelectorAll( 'tbody tr, tfoot tr' )
+		).map( ( r ) => r.querySelectorAll( 'td' )[ 2 ]?.textContent );
+
+		expect( shares ).toEqual( [ '—', '—', '—', '—' ] );
+		expect( container.textContent ).not.toContain( '0.0%' );
+		unmount();
+	} );
+} );
+
+describe( 'RequestProfile with no measured profiled total', () => {
+	it( 'shows the footer time and share as dashes beside measured rows', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: baseProfiles,
+				totalMs: 120,
+				totalProfiledTime: null,
+			} )
+		);
+		const footer = container.querySelectorAll( 'tfoot td' );
+
+		expect( [ footer[ 1 ].textContent, footer[ 2 ].textContent ] ).toEqual(
+			[ '—', '—' ]
+		);
+		expect( container.querySelector( 'tbody' ).textContent ).toContain(
+			'66.7%'
+		);
+		unmount();
+	} );
+} );
+
 describe( 'ProfileWithCaption', () => {
 	const averaged = {
 		profiles: { db: { time: 95.1, count: 3 } },

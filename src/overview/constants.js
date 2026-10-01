@@ -99,7 +99,7 @@ export const CHART_BREAKDOWN_OPTIONS = [
 
 /**
  * The dimensions that still split INSIDE one server's scope: the list above
- * minus `server`. `server_name` is the site's host, so a chart already scoped
+ * minus `server`. The server is a URL's host, so a chart already scoped
  * to one server — a server filter, or one URL, whose hash is over the whole
  * URL and therefore its host — would draw one line under that axis. The
  * per-server aggregate skips the axis on the same reasoning.
