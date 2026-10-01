@@ -58,8 +58,8 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
 
 /**
  * Delete the stats stores' SQLite files: each partition's file of every
- * stats Table, every stats Ledger's one file, and the WAL files SQLite keeps
- * beside each, named by the substrate's `Table_Node::file()` and
+ * stats Table and every stats Ledger, and the WAL files SQLite keeps beside
+ * each, named by the substrate's `Table_Node::file()` and
  * `Ledger_Node::file()`.
  *
  * Only under a base directory this install configured. The schema default
@@ -79,10 +79,13 @@ function delete_stats_files( array $tables, array $ledgers ): int {
 	if ( '' === $base || \Newspack_Nodes\Settings_Schema::get()->defaults()['base_directory'] === $base ) {
 		return 0;
 	}
-	$files = \array_map( \Newspack_Nodes\Ledger_Node::file( ... ), $ledgers );
-	foreach ( $tables as $table ) {
-		for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
+	$files = [];
+	for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
+		foreach ( $tables as $table ) {
 			$files[] = \Newspack_Nodes\Table_Node::file( $table, $partition );
+		}
+		foreach ( $ledgers as $ledger ) {
+			$files[] = \Newspack_Nodes\Ledger_Node::file( $ledger, $partition );
 		}
 	}
 	$deleted = 0;

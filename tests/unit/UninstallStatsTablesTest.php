@@ -24,10 +24,10 @@ final class UninstallStatsTablesTest extends TestCase {
 			Table_Node::file( Stats_Store::TABLE_URL, 0 ),
 			Table_Node::file( Stats_Store::TABLE_URL, 0 ) . '-wal',
 			Table_Node::file( Stats_Store::TABLE_URL, 15 ) . '-shm',
-			Ledger_Node::file( Stats_Store::LEDGER_URL_ROWS ),
-			Ledger_Node::file( Stats_Store::LEDGER_SEARCH ) . '-wal',
+			Ledger_Node::file( Stats_Store::LEDGER_URL_ROWS, 0 ),
+			Ledger_Node::file( Stats_Store::LEDGER_SEARCH, 15 ) . '-wal',
 		];
-		$kept = [ Table_Node::file( 'eln-rule-hooks', 0 ), Ledger_Node::file( 'lab-7:kea' ) ];
+		$kept = [ Table_Node::file( 'eln-rule-hooks', 0 ), Ledger_Node::file( 'lab-7:kea', 0 ) ];
 		foreach ( [ ...$doomed, ...$kept ] as $file ) {
 			\is_dir( \dirname( $file ) ) || \mkdir( \dirname( $file ), 0700, true );
 			\file_put_contents( $file, 'kea-7713' );
@@ -50,7 +50,7 @@ final class UninstallStatsTablesTest extends TestCase {
 		$this->use_base_dir( $this->make_temp_dir( 'uninstall-stats-default-' ) );
 		\file_put_contents( \getenv( 'LOCAL_NEWSPACK_NODES_CONF' ), "<?php\nreturn [ 'base_directory' => '{$default}' ];\n" );
 		\Newspack_Nodes\Config::reset();
-		$file = Ledger_Node::file( Stats_Store::LEDGER_TOTALS );
+		$file = Ledger_Node::file( Stats_Store::LEDGER_TOTALS, 0 );
 		$made = ! \is_file( $file );
 		\is_dir( \dirname( $file ) ) || \mkdir( \dirname( $file ), 0700, true );
 		\file_put_contents( $file, 'moa-3307', \FILE_APPEND );

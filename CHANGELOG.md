@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Requires newspack-nodes 2.82.0,** whose Ledgers write one file per partition: on 2.81.0 every partition shared one file, and an `APPEND` waiting out another partition's threw `database is locked`. The decisions, the guide, the README and the debugging skill describe the per-partition files.
+- **Uninstall deletes each partition's file of every stats Ledger,** `{base}/ledgers/<ledger>.p<N>.sqlite` with its `-wal` and `-shm`, through the substrate's `Ledger_Node::file( $ledger, $partition )`, as it deletes each stats Table partition's file. The shared `{base}/ledgers/<ledger>.sqlite` an earlier substrate wrote is not deleted; the substrate's upgrading notes say to remove it by hand.
+
 ## [0.112.0] - 2026-09-30
 
 ### Changed

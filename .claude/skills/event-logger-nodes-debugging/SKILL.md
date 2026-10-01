@@ -111,7 +111,7 @@ Scripted pivot sessions (`echo cmd | wp nodes cli performance.p0`) drain cleanly
 
 ## Stats schema
 
-The stats live in nine SQLite Ledgers every flame-builder partition appends to, and each URL's flame blob in one `flame-stats:url` Table per partition, all declared by `flame-builder.tsl` (decisions 1 and 36). A Ledger is one file, `{base_dir}/ledgers/{name}.sqlite`, whose `rows` table holds `( t, k, x, w, s, c0… )`: `t` the start of the five-minute bucket a request finished in, `k` the scope, `x` its member, `w` the partition that wrote the row, `s` that writer's sequence, and `c0` onward the declared columns in order. A set Ledger, `stats:names` or `stats:search`, holds `( t, k, x )` alone. The url Table is `{base_dir}/tables/flame-stats:url.p{N}.sqlite`, its `kv` table holding `key`, `value` and `expires`, a URL's blob under its bare hash. The builder asks them by message through its `Table_Client`; a `performance` verb mounts the ones it reads, read-only, for the rest of the request.
+The stats live in nine SQLite Ledgers every flame-builder partition appends to, and each URL's flame blob in one `flame-stats:url` Table per partition, all declared by `flame-builder.tsl` (decisions 1 and 36). A Ledger is one file a partition, `{base_dir}/ledgers/{name}.p{N}.sqlite`, whose `rows` table holds `( t, k, x, s, c0… )`: `t` the start of the five-minute bucket a request finished in, `k` the scope, `x` its member, `s` that file's writer's sequence, and `c0` onward the declared columns in order. A set Ledger, `stats:names` or `stats:search`, holds `( t, k, x )` alone. The url Table is `{base_dir}/tables/flame-stats:url.p{N}.sqlite`, its `kv` table holding `key`, `value` and `expires`, a URL's blob under its bare hash. The builder asks them by message through its `Table_Client`; a `performance` verb mounts the ones it reads, read-only, for the rest of the request.
 
 No row is updated. A settle appends one delta row per `( t, k, x )` its span touched, so a key read raw shows several rows for one bucket, one per settle and partition that saw it, and every read sums them. A row goes only when its hour-long segment passes the lifespan, or a flush empties the Ledger.
 
@@ -134,7 +134,7 @@ No row is updated. A settle appends one delta row per `( t, k, x )` its span tou
 ls -la {base_dir}/ledgers/ {base_dir}/tables/
 
 # One URL's rows in one Ledger, a delta per settle; sum them to read the total.
-sqlite3 -readonly '{base_dir}/ledgers/stats:url-rows.sqlite' \
+sqlite3 -readonly '{base_dir}/ledgers/stats:url-rows.p0.sqlite' \
   "SELECT t, k, w, s, c0 FROM rows WHERE x = 'https://example.test/about' ORDER BY t"
 
 # What each Ledger holds, its lifespan, file size and owning worker.

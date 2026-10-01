@@ -18,11 +18,11 @@ The vocabulary here is the substrate's. Its [documentation map](https://github.c
 |-------------|---------|
 | WordPress | 6.5 |
 | PHP | 8.2 |
-| `newspack-nodes` | 2.81.0, installed and active |
+| `newspack-nodes` | 2.82.0, installed and active |
 | A cache backend | Memcached, or APCu |
 | `pdo_sqlite` | On every host running the flame builder |
 
-The substrate's [`Cache_Backend`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-cache-backend.php) prefers the shared `Memcached` handle `Bootstrap` builds from `memcache_servers` and falls back to APCu. Either one alone brings the runtime up. With neither, the substrate cannot claim a command's single-use nonce, so verification fails closed and no dashboard verb answers. The statistics need neither: they live in SQLite under the substrate's base directory, nine Ledgers every partition shares, `{base}/ledgers/{name}.sqlite`, and one `url` Table per partition, `{base}/tables/flame-stats:url.p{N}.sqlite`, all of which [`flame-builder.tsl`](topologies/flame-builder.tsl) declares. Without `pdo_sqlite` the `flame-builder`, `performance` and `complete` topologies refuse to load, naming the store that cannot open, and the dashboards answer no statistics.
+The substrate's [`Cache_Backend`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-cache-backend.php) prefers the shared `Memcached` handle `Bootstrap` builds from `memcache_servers` and falls back to APCu. Either one alone brings the runtime up. With neither, the substrate cannot claim a command's single-use nonce, so verification fails closed and no dashboard verb answers. The statistics need neither: they live in SQLite under the substrate's base directory, nine Ledgers, one file each a partition, `{base}/ledgers/{name}.p{N}.sqlite`, and one `url` Table per partition, `{base}/tables/flame-stats:url.p{N}.sqlite`, all of which [`flame-builder.tsl`](topologies/flame-builder.tsl) declares. Without `pdo_sqlite` the `flame-builder`, `performance` and `complete` topologies refuse to load, naming the store that cannot open, and the dashboards answer no statistics.
 
 ## Quick Start
 

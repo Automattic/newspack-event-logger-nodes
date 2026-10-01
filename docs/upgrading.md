@@ -4,7 +4,18 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 **Maintenance rule:** a release that changes any consumer-facing contract adds its entry here in the same commit as its CHANGELOG entry. No entry means nothing to do.
 
-## Unreleased
+## 0.112.1
+
+- **Install newspack-nodes 2.82.0 first, then remove the shared Ledger
+  files.** Each partition writes its own file of each stats Ledger,
+  `{base}/ledgers/<ledger>.p<N>.sqlite`, where 2.81.0 shared one file
+  that every partition queued on, and staging threw `database is locked`.
+  Below 2.82.0 this plugin stays dormant behind its admin notice. Rebuild
+  the stats under the deploy hold with the sequence below, then delete
+  each `{base}/ledgers/<ledger>.sqlite` with its `-wal` and `-shm`, which
+  nothing reads.
+
+## 0.112.0
 
 - **The stats move to Ledgers: flush them after deploying, and read
   `urls` without `ranked` or `estimated`.** This release needs
