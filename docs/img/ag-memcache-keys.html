@@ -32,7 +32,7 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
 <div class="key">
   <div class="s"><b>evlog</b>the stats keyspace</div>
   <div class="s"><b>p{N}</b>the flame-builder partition</div>
-  <div class="s"><b>{namespace}</b>one of eighteen</div>
+  <div class="s"><b>{namespace}</b>one of nineteen</div>
   <div class="s bk"><b>{bucket}</b><span class="mono">Y-m-d-H-i</span> floored to 5 minutes for the URL index's fine tier, or <span class="mono">Y-m-d-H</span> for an hour key</div>
   <div class="s"><b>{scope parts}</b>a list set, a server's fnv1a32, a shard, a url_hash, a dimension</div>
 </div>
@@ -45,6 +45,7 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
   <tr><td class="k">categories_h:{Y-m-d-H}[:{server_key}]</td><td>twelve slots, each { category → [ ms, calls, requests ] }, positional CAT_SUMS, capped at MAX_CAT_VALUES 50 a slot, plus a synthetic <span class="mono">total</span> every ranking holds out</td><td class="t">max( 90000, min_lifetime )</td></tr>
   <tr><td class="k">url_dim_h:{Y-m-d-H}:{hash}</td><td>one row a URL-hour, { dimension → twelve slots } for every dimension but server, MAX_URL_DIM_VALUES 10 a slot: a flush writes a URL once an hour</td><td class="t">max( 90000, min_lifetime )</td></tr>
   <tr><td class="k">url_cat_h:{Y-m-d-H}:{hash}</td><td>one URL's category series, twelve slots</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">url_row_h:{Y-m-d-H}:{server_key}:{hash}</td><td>one URL's index row under one server: the path once, and each family's row in the slot of the bucket it fell in, which a search and a URL's detail read by key</td><td class="t">max( 90000, min_lifetime )</td></tr>
   <tr><td class="k">lb_h:{Y-m-d-H}</td><td>the global leaderboard, ONE sum an hour, never slotted: per category, samples, sum_time, sum_count and an entry map, each category's entries trimmed from 100 back to 50; MAX_LB_CATEGORIES 200 by sum_time, fewer where their bytes bind. The heaviest read the dashboard makes</td><td class="t">max( 90000, min_lifetime )</td></tr>
   <tr><td class="k">lb_sh:{Y-m-d-H}:{server_key}</td><td>a per-server leaderboard under the same caps</td><td class="t">max( 90000, min_lifetime )</td></tr>
   <tr class="tier"><td class="k">urls:{bucket}:{server_key}:{shard}</td><td>{ url_hash → positional row } for ONE server, sharded 16 ways by the hash's first hex digit; a <span class="mono">w</span> prefix on the shard names worker traffic. As many rows as fit ITEM_BUDGET 900,000 bytes by estimate, busiest first, the tail folded into <span class="mono">Other</span> / <span class="mono">Other:worker</span></td><td class="t">min( min_lifetime, 7200 )</td></tr>

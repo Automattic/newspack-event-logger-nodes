@@ -6958,6 +6958,8 @@ class FlameBuilderTest extends TestCase {
 		$written = \array_values( \array_filter( $store->written, static fn ( string $key ): bool => Stats_Store::NS_URL_DIM_HOUR === Stats_Store::namespace_of( $key ) ) );
 		$this->assertCount( \count( $paths ), $written, 'one url_dim_h write a URL-hour, not one a dimension' );
 		$this->assertCount( \count( $paths ), $asked, 'and one read' );
+		$rows = \array_values( \array_filter( $store->written, static fn ( string $key ): bool => Stats_Store::NS_URL_ROW_HOUR === Stats_Store::namespace_of( $key ) ) );
+		$this->assertCount( \count( $paths ), $rows, 'one url_row_h write a URL-hour' );
 		foreach ( [ ...$asked, ...$written ] as $key ) {
 			$this->assertStringStartsWith( "url_dim_h:{$hour}:", $key );
 		}
@@ -6971,7 +6973,7 @@ class FlameBuilderTest extends TestCase {
 			}
 		}
 		$this->assertEqualsCanonicalizing(
-			[ 'urls', 'urlsrv', 'urlrank_s', 'urlhdr', 'hourly_h', 'dim_h', 'url_dim_h', 'categories_h', 'url_cat_h', 'lb_h', 'lb_sh' ],
+			[ 'urls', 'urlsrv', 'urlrank_s', 'urlhdr', 'hourly_h', 'dim_h', 'url_dim_h', 'url_row_h', 'categories_h', 'url_cat_h', 'lb_h', 'lb_sh' ],
 			\array_keys( $spaces ),
 			'every time-keyed namespace a hub flush writes'
 		);
@@ -7995,6 +7997,36 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 41, $hour[7]['kea-ua/7'][ Stats_Store::DIM_COUNT ] ?? null );
 		$this->assertSame( 43, $hour[9]['kea-ua/7'][ Stats_Store::DIM_COUNT ] ?? null );
 		$this->assertNull( $store->bucket_get_multi( [ [ [ 'dim', 'ua' ], '2026-09-29-14-35' ] ] )[0], 'no fine chart bucket is written' );
+	}
+
+	/**
+	 * Each URL's row is filed once more, by key: one `url_row_h` value a
+	 * URL-hour per server, holding the path once and each family's rows in
+	 * the slot of the bucket they fell in, each the fine shard's row without
+	 * its path, so a reader asking about one URL reads it by key.
+	 */
+	public function test_a_flush_files_each_urls_row_in_its_slot_of_the_url_hour(): void {
+		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
+		$fb    = $this->slot_builder( $store );
+		$url   = 'https://kea.example/kea/kokako-41';
+
+		$this->flush_at_minutes( $fb, [ [ 37, 2 ], [ 47, 1 ] ], static fn ( int $i ): array => [ 'url' => $url, 'duration_ms' => 413.0 + $i, 'peak_mb' => 17.5 ] );
+		$this->flush_at_minutes( $fb, [ [ 48, 1 ] ], static fn ( int $i ): array => [ 'url' => $url, 'duration_ms' => 1873.0, 'is_worker' => true ] );
+
+		$hash  = Log_Manager::url_hash( $url );
+		$value = $store->bucket_get_multi( [ [ Stats_Store::url_row_parts( Stats_Store::server_key( 'kea.example' ), $hash ), '2026-09-29-14' ] ] )[0] ?? [];
+		$this->assertSame( '/kea/kokako-41', $value[ Stats_Store::URL_ROW_PATH ] ?? null, 'the path under its host, once' );
+		$families = [ false => [ 7 => '2026-09-29-14-35', 9 => '2026-09-29-14-45' ], true => [ 9 => '2026-09-29-14-45' ] ];
+		foreach ( $families as $worker => $slots ) {
+			$held = Core::arr( $value[ Stats_Store::url_row_family( (bool) $worker ) ] ?? null );
+			$this->assertSame( \array_keys( $slots ), \array_keys( $held ), $worker ? 'worker' : 'reader' );
+			foreach ( $slots as $slot => $bucket ) {
+				$row = Core::arr( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash, (bool) $worker ), 'kea.example' )[ $hash ] ?? null );
+				unset( $row[ Stats_Store::ROW_PATH ] );
+				$this->assertNotSame( [], $row );
+				$this->assertSame( $row, $held[ $slot ], "{$bucket}, the shard's row without its path" );
+			}
+		}
 	}
 
 	public function test_a_dimension_row_counts_its_timed_requests_apart(): void {

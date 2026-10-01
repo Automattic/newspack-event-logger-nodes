@@ -152,6 +152,25 @@ class Stats_Store {
 	/** One URL's category series, `url_cat_h:{Y-m-d-H}:{hash}`: twelve slots. */
 	public const NS_URL_CAT_HOUR = 'url_cat_h';
 
+	/**
+	 * One URL's index row, `url_row_h:{Y-m-d-H}:{server_key}:{hash}`: the
+	 * row each family filed in the hour's `urls` shards, in the slot of the
+	 * bucket it fell in, so a reader asking about named URLs reads them by
+	 * key where the shard holds every URL of their digit. Positional
+	 * (decision 18): `URL_ROW_PATH`, then each family's slots under
+	 * `url_row_family()`, each slot a row's `ROW_COUNT`..`ROW_WORKER`.
+	 */
+	public const NS_URL_ROW_HOUR = 'url_row_h';
+
+	/** A `url_row_h` value's path: the `ROW_PATH` its slots' rows omit. */
+	public const URL_ROW_PATH = 0;
+
+	/** A `url_row_h` value's reader-family slots. */
+	public const URL_ROW_READER = 1;
+
+	/** A `url_row_h` value's worker-family slots. */
+	public const URL_ROW_WORKER = 2;
+
 	/** Per-URL stats blob: flame tree and profiles. */
 	public const NS_URL         = 'url';
 	/**
@@ -1503,17 +1522,23 @@ class Stats_Store {
 	 * such a member names no row and would only count toward the limit. A
 	 * set the Table answers over-limit counts every live member, those too.
 	 *
-	 * @param list<string> $tokens  At most `SEARCH_WORDS_READ` tokens, one of
-	 *                              `search_groups()`, as `term_tokens()` spells them.
-	 * @param list<string> $servers Server names whose sets to read.
-	 * @param int          $now     The reply's tick, which dates the window.
+	 * `$named_by` says which servers' sets named each hash, over every token
+	 * answered, which is where a reader finds the hash's rows.
+	 *
+	 * @param list<string> $tokens   At most `SEARCH_WORDS_READ` tokens, one of
+	 *                               `search_groups()`, as `term_tokens()` spells them.
+	 * @param list<string> $servers  Server names whose sets to read.
+	 * @param int          $now      The reply's tick, which dates the window.
 	 * @param-out bool     $failed
-	 * @param ?bool        $failed  Set true when the Table left the read unanswered.
+	 * @param ?bool        $failed   Set true when the Table left the read unanswered.
+	 * @param-out array<string,array<string,true>> $named_by
+	 * @param array<string,array<string,true>>|null $named_by Set to hash => the servers naming it.
 	 * @return array<string,list<string>|false> token => hashes, or false when
 	 *                                          no read can answer it; absent when unheld.
 	 * @throws \LogicException On more tokens than one read names.
 	 */
-	public function url_token_sets( array $tokens, array $servers, int $now, ?bool &$failed = null ): array {
+	public function url_token_sets( array $tokens, array $servers, int $now, ?bool &$failed = null, ?array &$named_by = null ): array {
+		$named_by = [];
 		if ( \count( $tokens ) > self::SEARCH_WORDS_READ ) {
 			throw new \LogicException( 'Stats_Store::url_token_sets() reads at most ' . self::SEARCH_WORDS_READ . ' words; read a term through search_groups()' );
 		}
@@ -1554,6 +1579,11 @@ class Stats_Store {
 			}
 			if ( [] !== $union ) {
 				$out[ $token ] = false === $union ? false : \array_map( 'strval', \array_keys( $union ) );
+			}
+			foreach ( false === $union ? [] : $sets[ $token ] as $server => $held ) {
+				foreach ( \array_keys( Core::arr( $held ) ) as $hash ) {
+					$named_by[ (string) $hash ][ $server ] = true;
+				}
 			}
 		}
 		return $out;
@@ -2865,6 +2895,27 @@ class Stats_Store {
 	 */
 	public static function url_dim_parts( string $url_hash ): array {
 		return [ self::NS_URL_DIM_HOUR, $url_hash ];
+	}
+
+	/**
+	 * Key parts of one URL's index row under the server its rows are filed
+	 * under, ahead of which `key_at()` places the hour.
+	 *
+	 * @param string $server_key The server's `server_key()`.
+	 * @param string $url_hash   12-char URL hash.
+	 * @return array<int,string>
+	 */
+	public static function url_row_parts( string $server_key, string $url_hash ): array {
+		return [ self::NS_URL_ROW_HOUR, $server_key, $url_hash ];
+	}
+
+	/**
+	 * The index of a `url_row_h` value holding one family's slots.
+	 *
+	 * @param bool $worker The worker family.
+	 */
+	public static function url_row_family( bool $worker ): int {
+		return $worker ? self::URL_ROW_WORKER : self::URL_ROW_READER;
 	}
 
 	/**

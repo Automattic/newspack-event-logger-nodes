@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A URL search reads its candidates' rows by key, and folds nothing.** `walk_url_index()` mapped a term's candidates to the hash-digit shards they fell in and read each of those shards whole across every server and hour, folding every row before keeping the candidates; a few dozen candidates cover all sixteen digits, so a search read the whole index: on staging `urls --search=v1/` named 3,068 candidates and spent 13.5 s in `url fold`. The flame builder now files each URL's row once more, as `url_row_h:{Y-m-d-H}:{server_key}:{hash}`, the path once and each family's row in the slot of the bucket it fell in, and `candidate_rows()` reads each candidate's key under the servers whose token sets named it, for each planned hour its server's index names, in one exchange per store, folding through the same `fold_index_row()` in the walk's order, so a searched row is the row the table shows. `load_row()`, behind `dump_url`, `row()` and `ask url:`, reads the same keys where it read a whole shard per family. Flush the stats Tables after deploying (`docs/upgrading.md`).
+- **A search too common to narrow is refused.** A term with more than `URL_SEARCH_MAX` candidates across every server, or whose every word read is that common, answers an error naming the limit and asking for another word, where it read wider or answered nothing. The name scan behind `Performance_CI_Node::$match_names` stays off and keeps the shard walk.
+
 ## [0.113.0] - 2026-10-01
 
 ### Changed

@@ -1,4 +1,5 @@
 import { __ } from '@wordpress/i18n';
+import { formatGroupedCount } from '@newspack-nodes/shared/utils/formatters';
 
 /**
  * Every headline number, in its display format and under its labels: the
@@ -9,15 +10,15 @@ import { __ } from '@wordpress/i18n';
 const STATS = {
 	urls: {
 		label: __( 'Unique URLs', 'newspack-event-logger-nodes' ),
-		format: ( n ) => n.toLocaleString(),
+		format: formatGroupedCount,
 	},
 	requests: {
 		label: __( 'Total Requests', 'newspack-event-logger-nodes' ),
-		format: ( n ) => n.toLocaleString(),
+		format: formatGroupedCount,
 	},
 	errors: {
 		label: __( 'Total Errors', 'newspack-event-logger-nodes' ),
-		format: ( n ) => n.toLocaleString(),
+		format: formatGroupedCount,
 		// Only an errors-only reply counts them.
 		onlyWhenPositive: true,
 	},
