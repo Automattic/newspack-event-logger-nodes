@@ -10,6 +10,10 @@
  * a page the server already cut with PHP's byte-order `<=>`, so rows skip and
  * repeat across pages.
  *
+ * All of it but the pager also lives in the address bar — `?sort=`, `?order=`,
+ * `?q=`, `?errors=` and `?workers=` — so a shared link opens on the same rows.
+ * The page stays out: the rows under an offset move as traffic arrives.
+ *
  * Rows virtualize against window scroll, and each row's URL cell carries a
  * background bar scaling the active chart metric against the page's p95.
  */
@@ -31,6 +35,11 @@ import {
 	formatAge,
 	formatGroupedCount,
 } from '@newspack-nodes/shared/utils/formatters';
+import {
+	useQueryParamState,
+	useQueryParamChoice,
+	useQueryParamFlag,
+} from '@newspack-nodes/shared/hooks/useQueryParamState';
 
 /**
  * Row height in pixels.
@@ -178,6 +187,17 @@ const GRID_TEMPLATE = gridTemplate(
 	Object.fromEntries( COLUMNS.map( ( col ) => [ col.field, col ] ) ),
 	COLUMNS.map( ( col ) => col.field )
 );
+
+/**
+ * The fields a header click can sort on, and so the `?sort=` whitelist.
+ *
+ * Every column but the `status` shares, which are no sort key.
+ */
+const SORT_FIELDS = COLUMNS.filter( ( col ) => 'status' !== col.kind ).map(
+	( col ) => col.field
+);
+
+const SORT_ORDERS = [ 'asc', 'desc' ];
 
 /** Per-kind cell modifiers; `code` adds none. */
 const CELL_CLASS = {
@@ -382,12 +402,26 @@ export default function UrlTable( {
 	error = null,
 	loading = false,
 } ) {
-	const [ sortField, setSortField ] = useState( 'count' );
-	const [ sortOrder, setSortOrder ] = useState( 'desc' );
-	const [ searchTerm, setSearchTerm ] = useState( '' );
-	const [ errorsOnly, setErrorsOnly ] = useState( false );
+	const [ sortField, setSortField ] = useQueryParamChoice(
+		'sort',
+		SORT_FIELDS,
+		'count'
+	);
+	const [ sortOrder, setSortOrder ] = useQueryParamChoice(
+		'order',
+		SORT_ORDERS,
+		'desc'
+	);
+	// `?search=` is the request search's, so the table's is `?q=`.
+	const [ searchTerm, setSearchTerm ] = useQueryParamState(
+		'q',
+		( raw ) => raw ?? '',
+		String
+	);
+	const [ errorsOnly, setErrorsOnly ] = useQueryParamFlag( 'errors' );
 	// Opts IN, where Errors opts in to narrow; workers are out by default.
-	const [ includeWorkers, setIncludeWorkers ] = useState( false );
+	const [ includeWorkers, setIncludeWorkers ] =
+		useQueryParamFlag( 'workers' );
 	const [ currentPage, setCurrentPage ] = useState( 1 );
 	const listRef = useRef( null );
 	const searchContainerRef = useRef( null );

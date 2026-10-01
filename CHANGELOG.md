@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The Performance dashboard's view lives in the address bar.** The server filter, chart metric, chart breakdown, URL-table sort and search, and the URL table's "Errors Only" and "Include Workers" toggles are written as `?server=`, `?metric=`, `?breakdown=`, `?sort=`, `?order=`, `?q=`, `?errors=1` and `?workers=1`, so a copied link opens the same view. The table's search is `?q=` because `?search=` is the request search's. A change rewrites the bar with `replaceState` and pushes no history entry, and a value equal to its default is left out, so a bare link opens the defaults. A link's value is checked against what the control offers — the dropdowns' options and the table's sortable columns — and anything else opens on the default and never reaches the server. A linked server scopes the first fetch at once, and once the overview reply names the servers, a name it lacks is dropped from the filter and the bar; until then the server answers an unknown name with an empty scope. The server list is read from every overview reply, a scoped one included, because the server answers the `server` breakdown site-wide under any scope. The pager's page stays out of the bar. When Back or Forward restores an entry the `?url=` / `?request=` navigation pushed, every filter writes its live value back over it.
+
 ### Changed
 
 - **Every topology declares its idle window.** `complete`, `performance`, `request-builder`, `flame-builder`, `job-hub`, `job-spoke`, `job-router` and `job-feed` declare `var on_demand_idle = 30`, so their workers exit after 30 idle seconds and are revived on demand; `aggregator` and `hub-control` declare `0`, as `hub` does, so a hub worker never idles out.
