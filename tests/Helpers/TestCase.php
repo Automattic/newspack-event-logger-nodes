@@ -448,7 +448,7 @@ abstract class TestCase extends RuntimeTestCase {
 		} );
 		$writer->name( $name );
 		$writer->sink( VerbHarness::request_graph() );
-		$this->stats_table_dirs[ \dirname( \Newspack_Nodes\Ledger_Node::file( $ledger ) ) ] = true;
+		$this->stats_table_dirs[ \dirname( \Newspack_Nodes\Ledger_Node::file( $ledger, $partition ) ) ] = true;
 		return $name;
 	}
 

@@ -448,7 +448,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertInstanceOf( \Newspack_Nodes\Ledger_Node::class, Core::node( Stats_Store::LEDGER_URL_DIMS ) );
 		$this->assertNull( Core::node( Stats_Store::LEDGER_URL_ROWS ), 'the URL rows are not mounted' );
 		$this->assertNull( Core::node( Stats_Store::TABLE_URL . '.p0' ), 'nor the url Table' );
-		$this->assertFileDoesNotExist( \Newspack_Nodes\Ledger_Node::file( Stats_Store::LEDGER_URL_DIMS ), 'a mount creates no file its writer has not' );
+		$this->assertSame( [], \Newspack_Nodes\Ledger_Node::partition_files( Stats_Store::LEDGER_URL_DIMS ), 'a mount creates no file its writer has not' );
 	}
 
 	public function test_overview_verb_returns_empty_shape_when_no_data(): void {
