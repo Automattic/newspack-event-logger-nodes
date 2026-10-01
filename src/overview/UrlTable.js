@@ -279,6 +279,26 @@ const emptyText = ( error, loading, searchTerm ) => {
 		: __( 'No URLs to display', 'newspack-event-logger-nodes' );
 };
 
+/**
+ * The row field a URL cell's bar measures, the one the table scales by too.
+ *
+ * `volume` bars what the count column shows — `errors` on an errors-only
+ * page — `memory` the peak, and the two time metrics `avg_ms`.
+ *
+ * @param {string}  metric      The chart metric the bars follow.
+ * @param {boolean} errorCounts Whether the count column shows `errors`.
+ * @return {string} The row field.
+ */
+const barFieldFor = ( metric, errorCounts ) => {
+	if ( 'memory' === metric ) {
+		return 'avg_peak_mb';
+	}
+	if ( 'volume' === metric ) {
+		return errorCounts ? 'errors' : 'count';
+	}
+	return 'avg_ms';
+};
+
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const UrlRow = memo(
 	/**
@@ -296,7 +316,7 @@ const UrlRow = memo(
 	 * @param {(url: Object) => void}        props.onSelect    Receives the row on click or Enter/Space.
 	 * @param {(n: number, s?: string) => *} props.formatNum   Number formatter, from the table.
 	 * @param {number}                       props.maxAvg      The page's p95 of the measured bar metric; 0 draws no bar.
-	 * @param {string}                       props.metric      'memory' bars avg_peak_mb, 'volume' bars count, 'avg' and 'cumulative' bar avg_ms.
+	 * @param {string}                       props.barField    The row field the bar measures, from `barFieldFor()`.
 	 * @param {number}                       props.now         Unix timestamp the page's ages are measured from.
 	 * @param {boolean}                      props.errorCounts Whether the count cell shows the row's `errors`.
 	 * @return {import('react').ReactElement} Rendered row.
@@ -307,16 +327,10 @@ const UrlRow = memo(
 		onSelect,
 		formatNum,
 		maxAvg,
-		metric,
+		barField,
 		now,
 		errorCounts,
 	} ) {
-		let barField = 'avg_ms';
-		if ( metric === 'memory' ) {
-			barField = 'avg_peak_mb';
-		} else if ( metric === 'volume' ) {
-			barField = 'count';
-		}
 		// A URL no timed request reached is unmeasured, and draws no bar.
 		const barValue = url[ barField ];
 		let barStyle;
@@ -509,16 +523,11 @@ export default function UrlTable( {
 
 	const filteredUrls = urls;
 
+	const barField = barFieldFor( metric, errorCounts );
 	// Bar-background max uses p95 so outliers don't blow out the scale.
 	const maxAvg = useMemo( () => {
-		let field = 'avg_ms';
-		if ( metric === 'memory' ) {
-			field = 'avg_peak_mb';
-		} else if ( metric === 'volume' ) {
-			field = 'count';
-		}
 		const values = filteredUrls
-			.map( ( u ) => u[ field ] )
+			.map( ( u ) => u[ barField ] )
 			.filter( Number.isFinite )
 			.sort( ( a, b ) => a - b );
 		if ( values.length === 0 ) {
@@ -526,7 +535,7 @@ export default function UrlTable( {
 		}
 		const p95Index = Math.floor( values.length * 0.95 );
 		return values[ Math.min( p95Index, values.length - 1 ) ];
-	}, [ filteredUrls, metric ] );
+	}, [ filteredUrls, barField ] );
 
 	/**
 	 * Format a count or a measurement for one cell.
@@ -669,7 +678,7 @@ export default function UrlTable( {
 								onSelect={ onSelect }
 								formatNum={ formatNum }
 								maxAvg={ maxAvg }
-								metric={ metric }
+								barField={ barField }
 								now={ now }
 								errorCounts={ errorCounts }
 							/>
