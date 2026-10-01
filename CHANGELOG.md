@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.112.1] - 2026-09-30
+
 ### Changed
 
 - **Requires newspack-nodes 2.82.0,** whose Ledgers write one file per partition: on 2.81.0 every partition shared one file, and an `APPEND` waiting out another partition's threw `database is locked`. The decisions, the guide, the README and the debugging skill describe the per-partition files.
