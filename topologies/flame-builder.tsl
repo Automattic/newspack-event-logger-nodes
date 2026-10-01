@@ -7,6 +7,8 @@
 #                                            └→ Table (flame-stats:url, SQLite, <eln:stats_url_ttl>)
 #                                            └→ Table (flame-stats:url-fine, SQLite, <eln:stats_url_fine_ttl>)
 
+var on_demand_idle = 30
+
 include topic-probe
 
 make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/<topology>.requests.p<partition> <config:deadletter_dir>/<topology>.requests.p<partition>

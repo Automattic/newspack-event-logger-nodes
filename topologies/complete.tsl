@@ -2,7 +2,9 @@
 # job-router, and job-worker together.
 
 # Restated: an included var is ignored, and job-hub's worker needs 600s.
+
 var stale_timeout = 600
+var on_demand_idle = 30
 
 include performance
 include job-hub

@@ -15,8 +15,10 @@
 # hub's SSE pulls and its outbound settings/discovery commands stay open
 # rather than cold-starting on the next reconcile pass.
 
-var on_demand_idle = 0
 var num_partitions = 1
+var on_demand_idle = 0
+
 include aggregator
 include hub-control
+
 secure

@@ -1,4 +1,7 @@
 var stale_timeout = 600
+var on_demand_idle = 30
+
 include job-feed
 include job-worker
+
 secure
