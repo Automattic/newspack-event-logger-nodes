@@ -83,7 +83,11 @@ describe( 'UrlTable', () => {
 	} );
 
 	it( 'names the pager count as rows, not URLs', () => {
-		// The pager counts the rows the filters left, and says so.
+		// A capped bucket carries synthetic overflow rows: sliceable, so the
+		// pager pages over them, but not URLs, so the header excludes them.
+		// The two counts legitimately differ, which is exactly why the pager
+		// has to say which one it is showing — "502 URLs" beside a header
+		// reading 500 is the same number twice, wrong once.
 		const { container, unmount } = mount( { totalUrls: 502 } );
 
 		const info = container.querySelector(
@@ -153,26 +157,36 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'offers every row as a URL to open', () => {
-		// Every row the verb pages is one URL, keyed by its url_hash.
+	it( 'does not offer the aggregate row as a URL', () => {
+		// The `Other` row stands for every URL past the per-bucket cap, so its
+		// key is not a url_hash and `dump_url` cannot answer for it. Making
+		// it clickable would open a modal that errors on a row whose whole job
+		// is to keep the totals honest.
 		const onSelect = jest.fn();
-		const { container, unmount } = mount( { urls: URLS, onSelect } );
+		const { container, unmount } = mount( {
+			urls: [
+				{ ...URLS[ 0 ] },
+				{ hash: 'Other', aggregate: true, count: 900, avg_ms: 12 },
+			],
+			onSelect,
+		} );
 
 		const rows = container.querySelectorAll( '.event-logger-table__row' );
-		for ( const row of rows ) {
-			expect( row.getAttribute( 'role' ) ).toBe( 'button' );
-			expect( row.getAttribute( 'data-ask' ) ).toMatch( /^url:/ );
-		}
-		expect( container.querySelector( '.is-aggregate' ) ).toBe( null );
-		unmount();
-	} );
-
-	it( 'claims no ranking of its own beside the rows', () => {
-		const { container, unmount } = mount( { ranked: true } );
-
-		expect(
-			container.querySelector( '.event-logger-table__ranked-note' )
-		).toBe( null );
+		const other = rows[ rows.length - 1 ];
+		expect( other.getAttribute( 'role' ) ).not.toBe( 'button' );
+		expect( other.hasAttribute( 'data-ask' ) ).toBe( false );
+		// It carries no `url` — the writer stores none, because a label
+		// authored there is untranslated and searchable. The client names it,
+		// and names it for the REQUESTS the row counts: the Reqs column holds
+		// their traffic, not how many URLs folded, which nothing stores.
+		expect( other.textContent ).toContain(
+			'traffic from URLs beyond the per-shard cap'
+		);
+		expect( other.textContent ).not.toContain( 'other URLs beyond' );
+		other.dispatchEvent(
+			new window.MouseEvent( 'click', { bubbles: true } )
+		);
+		expect( onSelect ).not.toHaveBeenCalled();
 		unmount();
 	} );
 
@@ -633,54 +647,6 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it.each( [ 'avg', 'cumulative' ] )(
-		'draws no %s bar for a URL no timed request reached, and scales the rest without it',
-		( metric ) => {
-			const untimed = Array.from( { length: 20 }, ( _, i ) => ( {
-				hash: `u${ i }`,
-				url: `/moa-${ i }`,
-				count: 7,
-				count_2xx: 0,
-				avg_ms: null,
-				min_ms: null,
-				max_ms: null,
-				avg_peak_mb: 3,
-			} ) );
-			const { container, unmount } = mount( {
-				urls: [ ...untimed, { ...URLS[ 0 ], url: '/tui-9913' } ],
-				totalUrls: 21,
-				metric,
-			} );
-			const bars = Array.from(
-				container.querySelectorAll(
-					'.event-logger-table__list [data-field="url"]'
-				)
-			).map( ( cell ) => cell.getAttribute( 'style' ) ?? '' );
-
-			expect( bars.slice( 0, 20 ) ).toEqual( Array( 20 ).fill( '' ) );
-			expect( bars[ 20 ] ).toContain( '100%' );
-			unmount();
-		}
-	);
-
-	it( 'renders a dash for the Avg cell of a URL no timed request reached', () => {
-		const { container, unmount } = mount( {
-			urls: [
-				{ ...URLS[ 0 ], avg_ms: null, min_ms: null, max_ms: null },
-			],
-			totalUrls: 1,
-		} );
-		const cells = [ 'avg_ms', 'min_ms', 'max_ms' ].map(
-			( field ) =>
-				container.querySelector(
-					`.event-logger-table__list [data-field="${ field }"]`
-				).textContent
-		);
-
-		expect( cells ).toEqual( [ '-', '-', '-' ] );
-		unmount();
-	} );
-
 	it( 'switches the bar to peak_mb when metric=memory', () => {
 		// metric=memory drives UrlRow's peak_mb bar branch.
 		const { container, unmount } = mount( { metric: 'memory' } );
@@ -751,10 +717,26 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it( 'says when the page is ranked per bucket', () => {
+		const { container, unmount } = mount( { ranked: true } );
+		const note = container.querySelector(
+			'.event-logger-table__pagination-info .event-logger-table__ranked-note'
+		);
+		expect( note.textContent ).toBe(
+			'Ranked per bucket; Avg and Mem are means of bucket averages'
+		);
+		unmount();
+		const plain = mount();
+		expect(
+			plain.container.querySelector( '.event-logger-table__ranked-note' )
+		).toBeNull();
+		plain.unmount();
+	} );
+
 	it( 'names the search as a whole-word match', () => {
-		// The term is split on every non-alphanumeric run and each word must
-		// be a whole word of the path. A box saying "Search URLs" invites a
-		// substring nothing answers.
+		// The server reads a token index: the term is split on every
+		// non-alphanumeric run and each token must be a whole word of the
+		// path. A box saying "Search URLs" invites a substring nothing answers.
 		const { container, unmount } = mount();
 		expect(
 			container.querySelector( 'input' ).getAttribute( 'placeholder' )

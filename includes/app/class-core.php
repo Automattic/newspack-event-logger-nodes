@@ -86,8 +86,8 @@ class Core {
 	 * Every other span in the schema is a bounded state plus a separate `l`,
 	 * and `Flame_Tree` composes `state: label` for the graph. Spelling the
 	 * table or the host into the state instead mints a profile category per
-	 * table and per host, a stats row apiece every span, and leaves `l`,
-	 * whose job this is, empty.
+	 * table and per host — the axis `Stats_Store::MAX_CAT_VALUES` bounds — and
+	 * leaves `l`, whose job this is, empty.
 	 */
 	private const SQL_STATE  = Flame_Tree::SQL_STATE;
 

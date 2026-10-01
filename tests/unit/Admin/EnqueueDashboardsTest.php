@@ -210,8 +210,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$colors = $this->window_json( 'newspack-nodes-overview', 'eventLoggerCustomColors' );
 			$this->assertSame( '#7A1F3D', $colors['url fold'] ?? null, 'a configured colour wins' );
 			$this->assertSame(
-				[ '#003DA5', '#BD8600', '#117644', '#2055B0' ],
-				[ $colors['url page cache'] ?? null, $colors['url header cache'] ?? null, $colors['url search read'] ?? null, $colors['requests checkpoint'] ?? null ]
+				[ '#003DA5', '#BD8600', '#B32D2E', '#2055B0' ],
+				[ $colors['url page cache'] ?? null, $colors['url header cache'] ?? null, $colors['url rank lists'] ?? null, $colors['stats probe'] ?? null ]
 			);
 			$picker = $this->window_json( 'newspack-nodes-overview', 'newspackNodesCustomColors' );
 			$this->assertArrayNotHasKey( 'url page cache', $picker, 'the picker offers only the operator\'s events' );

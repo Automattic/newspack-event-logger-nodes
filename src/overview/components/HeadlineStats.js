@@ -1,5 +1,4 @@
 import { __ } from '@wordpress/i18n';
-import { formatGroupedCount } from '@newspack-nodes/shared/utils/formatters';
 
 /**
  * Every headline number, in its display format and under its labels: the
@@ -10,15 +9,15 @@ import { formatGroupedCount } from '@newspack-nodes/shared/utils/formatters';
 const STATS = {
 	urls: {
 		label: __( 'Unique URLs', 'newspack-event-logger-nodes' ),
-		format: formatGroupedCount,
+		format: ( n ) => n.toLocaleString(),
 	},
 	requests: {
 		label: __( 'Total Requests', 'newspack-event-logger-nodes' ),
-		format: formatGroupedCount,
+		format: ( n ) => n.toLocaleString(),
 	},
 	errors: {
 		label: __( 'Total Errors', 'newspack-event-logger-nodes' ),
-		format: formatGroupedCount,
+		format: ( n ) => n.toLocaleString(),
 		// Only an errors-only reply counts them.
 		onlyWhenPositive: true,
 	},
@@ -75,7 +74,7 @@ export function headlineStats( totals, keys ) {
  *
  * @param {Object}      props
  * @param {Object|null} props.totals      The `urls` reply's totals; null until it answers.
- * @param {boolean}     props.provisional The reply's `provisional`: a stats read went unanswered, so the totals may run short.
+ * @param {boolean}     props.provisional The reply's `provisional`: the totals are short of an hour or record the writer has yet to fold or rank, or of an index read that went unanswered.
  * @return {import('react').ReactElement} The stats grid.
  */
 export default function HeadlineStats( { totals, provisional } ) {
@@ -109,7 +108,7 @@ export default function HeadlineStats( { totals, provisional } ) {
 			{ provisional && (
 				<p className="newspack-nodes-banner is-info" role="status">
 					{ __(
-						'Provisional: a stats read went unanswered, so these totals may run short.',
+						'Provisional: some hours or records are not yet folded or ranked, or a read went unanswered, so these totals may run short.',
 						'newspack-event-logger-nodes'
 					) }
 				</p>

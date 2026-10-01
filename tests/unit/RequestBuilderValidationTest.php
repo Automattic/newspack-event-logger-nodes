@@ -70,7 +70,7 @@ class RequestBuilderValidationTest extends TestCase {
 	public function test_in_order_sequence_emits_no_validation_log(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_ok', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
-		$this->fill( $rb, 2, 'seq_ok', 'request', [ 'm' => 'GET https://kea-7713.test/a' ] );
+		$this->fill( $rb, 2, 'seq_ok', 'request', [ 'm' => 'GET /a' ] );
 		$this->fill( $rb, 3, 'seq_ok', 'process (complete)', [ 'duration_ms' => 5.0, 'status_code' => 200 ] );
 
 		$this->assertStringNotContainsString( 'missing message', $this->log );
@@ -94,8 +94,8 @@ class RequestBuilderValidationTest extends TestCase {
 	public function test_duplicate_warnings_name_the_message_they_came_from(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_named_dup', 'process (start)', [ 'm' => '1 on h', 'l' => '' ], '7:2000:180', 'jobs:consumer/jobfeed:consumer' );
-		$this->fill( $rb, 2, 'seq_named_dup', 'request', [ 'm' => 'GET https://kea-7713.test/a' ], '7:2180:190', 'jobs:consumer/jobfeed:consumer' );
-		$this->fill( $rb, 1, 'seq_named_dup', 'request', [ 'm' => 'GET https://kea-7713.test/a' ], '7:2370:190', 'jobs:consumer/jobfeed:consumer' );
+		$this->fill( $rb, 2, 'seq_named_dup', 'request', [ 'm' => 'GET /a' ], '7:2180:190', 'jobs:consumer/jobfeed:consumer' );
+		$this->fill( $rb, 1, 'seq_named_dup', 'request', [ 'm' => 'GET /a' ], '7:2370:190', 'jobs:consumer/jobfeed:consumer' );
 
 		$this->assertStringContainsString( '7:2370:190', $this->log, 'the dup names the position to seek to' );
 		$this->assertStringContainsString( 'jobs:consumer/jobfeed:consumer', $this->log, 'and the stream it came from' );
@@ -109,7 +109,7 @@ class RequestBuilderValidationTest extends TestCase {
 		$this->assertStringContainsString( 'WARNING: missing message: expected #2, got #3 on seq_gap', $this->log );
 
 		// The skipped line did not advance expected: the real #2 still lands.
-		$this->fill( $rb, 2, 'seq_gap', 'request', [ 'm' => 'GET https://kea-7713.test/b' ] );
+		$this->fill( $rb, 2, 'seq_gap', 'request', [ 'm' => 'GET /b' ] );
 		$this->assertStringNotContainsString( 'expected #3, got #2', $this->log, '#2 arriving after the gap is in-order, not a dup' );
 	}
 
@@ -123,7 +123,7 @@ class RequestBuilderValidationTest extends TestCase {
 	public function test_a_gapped_request_still_completes(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_end', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
-		$this->fill( $rb, 2, 'seq_end', 'request', [ 'm' => 'GET https://kea-7713.test/c' ] );
+		$this->fill( $rb, 2, 'seq_end', 'request', [ 'm' => 'GET /c' ] );
 		// #3 never arrives; everything after it is out of sequence for good.
 		$this->fill( $rb, 4, 'seq_end', 'info', [ 'm' => 'past the gap' ] );
 		$this->fill( $rb, 5, 'seq_end', 'process (complete)', [ 'duration_ms' => 9.0, 'status_code' => 200 ] );
@@ -144,7 +144,7 @@ class RequestBuilderValidationTest extends TestCase {
 	public function test_a_gapped_request_carries_a_marker_where_the_entries_went_missing(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_flag', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
-		$this->fill( $rb, 2, 'seq_flag', 'request', [ 'm' => 'GET https://kea-7713.test/d' ] );
+		$this->fill( $rb, 2, 'seq_flag', 'request', [ 'm' => 'GET /d' ] );
 		$this->fill( $rb, 7, 'seq_flag', 'info', [ 'm' => 'past the gap' ] );
 		$this->fill( $rb, 8, 'seq_flag', 'process (complete)', [ 'duration_ms' => 9.0, 'status_code' => 200 ] );
 
@@ -177,7 +177,7 @@ class RequestBuilderValidationTest extends TestCase {
 	public function test_a_gapped_fatal_stays_a_fatal(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_fatal', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
-		$this->fill( $rb, 2, 'seq_fatal', 'request', [ 'm' => 'GET https://kea-7713.test/kakapo-4417' ] );
+		$this->fill( $rb, 2, 'seq_fatal', 'request', [ 'm' => 'GET /kakapo-4417' ] );
 		$this->fill( $rb, 6, 'seq_fatal', 'process (complete)', [ 'duration_ms' => 1540.0, 'status_code' => 500, 'error_status' => 'F' ] );
 
 		$this->assertSame( 'F', $this->last_emitted( $rb )['error_status'] );
@@ -193,7 +193,7 @@ class RequestBuilderValidationTest extends TestCase {
 	public function test_the_marker_names_the_position_of_the_last_good_entry(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_at', 'process (start)', [ 'm' => '1 on h', 'l' => '' ], '0:58746100:120' );
-		$this->fill( $rb, 2, 'seq_at', 'request', [ 'm' => 'GET https://kea-7713.test/f' ], '0:58746220:127' );
+		$this->fill( $rb, 2, 'seq_at', 'request', [ 'm' => 'GET /f' ], '0:58746220:127' );
 		$this->fill( $rb, 9, 'seq_at', 'info', [ 'm' => 'past the gap' ], '0:58746600:110' );
 		$this->fill( $rb, 10, 'seq_at', 'process (complete)', [ 'duration_ms' => 3.0, 'status_code' => 200 ], '0:58746710:99' );
 
@@ -209,7 +209,7 @@ class RequestBuilderValidationTest extends TestCase {
 	public function test_an_intact_request_is_not_marked(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_clean', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
-		$this->fill( $rb, 2, 'seq_clean', 'request', [ 'm' => 'GET https://kea-7713.test/e' ] );
+		$this->fill( $rb, 2, 'seq_clean', 'request', [ 'm' => 'GET /e' ] );
 		$this->fill( $rb, 3, 'seq_clean', 'process (complete)', [ 'duration_ms' => 4.0, 'status_code' => 200 ] );
 
 		$emitted = $this->last_emitted( $rb );
@@ -220,9 +220,9 @@ class RequestBuilderValidationTest extends TestCase {
 	public function test_regressed_n_emits_duplicate_info(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_dup', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
-		$this->fill( $rb, 2, 'seq_dup', 'request', [ 'm' => 'GET https://kea-7713.test/c' ] );
+		$this->fill( $rb, 2, 'seq_dup', 'request', [ 'm' => 'GET /c' ] );
 		// Re-delivered #2 (expected #3 now) → duplicate, INFO not WARNING.
-		$this->fill( $rb, 2, 'seq_dup', 'request', [ 'm' => 'GET https://kea-7713.test/c' ] );
+		$this->fill( $rb, 2, 'seq_dup', 'request', [ 'm' => 'GET /c' ] );
 
 		$this->assertStringContainsString( 'INFO: duplicate message: expected #3, got #2 on seq_dup', $this->log );
 	}
@@ -230,7 +230,7 @@ class RequestBuilderValidationTest extends TestCase {
 	public function test_second_process_start_on_live_rid_warns_multiple_requests(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_reuse', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
-		$this->fill( $rb, 2, 'seq_reuse', 'request', [ 'm' => 'GET https://kea-7713.test/d' ] );
+		$this->fill( $rb, 2, 'seq_reuse', 'request', [ 'm' => 'GET /d' ] );
 		// A fresh process (start) for an id still in flight = rid reuse.
 		$this->fill( $rb, 1, 'seq_reuse', 'process (start)', [ 'm' => '2 on h', 'l' => '' ] );
 
@@ -247,7 +247,7 @@ class RequestBuilderValidationTest extends TestCase {
 		$capture = $rb->sink();
 
 		$this->fill( $rb, 1, 'nuke', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
-		$this->fill( $rb, 2, 'nuke', 'request', [ 'm' => 'GET https://kea-7713.test/film' ] );
+		$this->fill( $rb, 2, 'nuke', 'request', [ 'm' => 'GET /film' ] );
 		$this->fill( $rb, 3, 'nuke', 'newspack_nuclear_gyrobase_init (start)', [ 'l' => '' ] );
 
 		// Nested subprocess sequence — restarts at 1 under the same rid. Deliberately
@@ -277,7 +277,7 @@ class RequestBuilderValidationTest extends TestCase {
 		// bucket_size=1, num_buckets=2 → r_to's bucket is evicted when the next rid sets.
 		$rb = $this->builder( [ '1', '2' ] );
 		$this->fill( $rb, 1, 'r_to', 'process (start)' );
-		$this->fill( $rb, 2, 'r_to', 'request', [ 'm' => 'GET https://kea-7713.test/timeout' ] );
+		$this->fill( $rb, 2, 'r_to', 'request', [ 'm' => 'GET /timeout' ] );
 
 		$this->fill( $rb, 1, 'r_next', 'process (start)' ); // forces r_to out.
 
@@ -299,7 +299,7 @@ class RequestBuilderValidationTest extends TestCase {
 		$rb->sink( $sink );
 
 		$this->fill( $rb, 1, 'killed', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
-		$this->fill( $rb, 2, 'killed', 'request', [ 'm' => 'GET https://kea-7713.test/slow' ] );
+		$this->fill( $rb, 2, 'killed', 'request', [ 'm' => 'GET /slow' ] );
 		$this->fill( $rb, 3, 'killed', 'process (aborted)', [ 'duration_ms' => 900.0, 'status_code' => 0 ] );
 
 		$docs = [];
@@ -312,6 +312,6 @@ class RequestBuilderValidationTest extends TestCase {
 
 		$this->assertNotEmpty( $docs, 'an aborted request is emitted, not left for the LRU' );
 		$this->assertSame( 'A', $docs[0]['error_status'] );
-		$this->assertSame( 'https://kea-7713.test/slow', $docs[0]['url'] );
+		$this->assertSame( '/slow', $docs[0]['url'] );
 	}
 }

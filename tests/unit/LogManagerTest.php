@@ -2326,8 +2326,7 @@ class LogManagerTest extends TestCase {
 		$this->assertStringNotContainsString( 'https://plain.test', (string) ( $request['m'] ?? '' ) );
 	}
 
-	/** A request with no SERVER_NAME never starts, whatever the site's home URL. */
-	public function test_log_process_without_server_name_throws_naming_it(): void {
+	public function test_log_process_without_server_name_uses_path_only(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
@@ -2336,20 +2335,24 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		unset( $_SERVER['SERVER_NAME'], $_SERVER['HTTPS'] );
-		$_SERVER['REQUEST_URI']    = '/cli/path-7731';
+		$_SERVER['REQUEST_URI']    = '/cli/path';
 		$_SERVER['REQUEST_METHOD'] = 'GET';
-		$GLOBALS['_wp_test_home_url'] = 'https://wren-5521.test';
 
-		$thrown = null;
-		try {
-			Log_Manager::instance();
-		} catch ( \RuntimeException $e ) {
-			$thrown = $e;
-		} finally {
-			unset( $GLOBALS['_wp_test_home_url'] );
+		$lm = Log_Manager::instance();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$entries = $this->written_entries();
+		$request = null;
+		foreach ( $entries as $entry ) {
+			if ( 'request' === ( $entry['k'] ?? '' ) ) {
+				$request = $entry;
+			}
 		}
-		$this->assertStringContainsString( 'SERVER_NAME', $thrown?->getMessage() ?? '' );
-		$this->assertNull( Log_Manager::started_instance(), 'a request with no host never starts' );
+		$this->assertNotNull( $request );
+		// No server_name = bare path (no scheme/host prefix).
+		$this->assertStringContainsString( 'GET /cli/path', (string) ( $request['m'] ?? '' ) );
+		$this->assertStringNotContainsString( '://', (string) ( $request['m'] ?? '' ) );
 	}
 
 	// -- finish() orphan handling --------------------------------------------

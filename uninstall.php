@@ -10,7 +10,7 @@
  * run here, so this requires it and the cleanup routines by hand. They
  * delete every option row named for the `newspack_event_logger_nodes_`
  * prefix on every site — the ruleset's non-autoloaded `rule_hooks_*` rows
- * among them — and the stats stores' SQLite files. The substrate's uninstall
+ * among them — and the stats Tables' SQLite files. The substrate's uninstall
  * owns the rest of the on-disk runtime tree.
  *
  * @package Newspack_Event_Logger_Nodes
@@ -24,4 +24,4 @@ require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/includes/uninstall-cleanup.php';
 
 \Newspack_Event_Logger_Nodes\uninstall_cleanup( 'newspack_event_logger_nodes_' );
-\Newspack_Event_Logger_Nodes\delete_stats_files( [ \Newspack_Event_Logger_Nodes\Stats_Store::TABLE_URL ], \array_keys( \Newspack_Event_Logger_Nodes\Stats_Store::LEDGER_COLUMNS ) );
+\Newspack_Event_Logger_Nodes\delete_stats_tables( \Newspack_Event_Logger_Nodes\Stats_Store::TABLES );

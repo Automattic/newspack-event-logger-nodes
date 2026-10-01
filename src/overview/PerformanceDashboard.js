@@ -194,7 +194,12 @@ export default function PerformanceDashboard( {
 			setServerNames( [] );
 			return;
 		}
-		setServerNames( [ ...serverRead.series.names ].sort() );
+		// The overflow fold, not a server: a read scoped to it matches nothing.
+		setServerNames(
+			serverRead.series.names
+				.filter( ( name ) => 'Other' !== name )
+				.sort()
+		);
 	}, [ serverRead ] );
 
 	// @longform One server draws a single bar, and a server filter draws that
@@ -671,12 +676,11 @@ export default function PerformanceDashboard( {
 	/**
 	 * The wall clock the Time Breakdown divides by: the board's own `avg_ms`.
 	 *
-	 * Its categories come from `Stats_Store::leaderboard( server )` over the
-	 * 288 slots the charts draw, so the average is that board's, over those
-	 * same slots — a server's under a server filter — and never the filtered
-	 * URL set's.
+	 * Its categories come from `build_leaderboard( server )`, over the board's
+	 * 25 hour keys, so the average is that board's, over those same keys — a
+	 * server's under a server filter — and never the charts' 288 slots.
 	 */
-	const breakdownAvgMs = overview?.global_leaderboard?.avg_ms;
+	const breakdownAvgMs = overview?.global_leaderboard?.avg_ms ?? 0;
 
 	// Inline "Log this URL" state: the open draft, the ruleset, and the error.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
@@ -921,6 +925,7 @@ export default function PerformanceDashboard( {
 								onParamsChange={ handleUrlParamsChange }
 								totalUrls={ urlsSlice?.rows ?? 0 }
 								metric={ chartMetric }
+								ranked={ urlsSlice?.ranked }
 								now={ urlsSlice?.as_of }
 								errorCounts={ !! urlFilters?.errors_only }
 								error={ urlsSlice?.error ?? null }

@@ -50,7 +50,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$topic = new Topic_Node();
 		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "1" ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'l' => '', 'ts' => 1 ] );
-		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET https://kea-7713.test/x', 'ts' => 1 ] );
+		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
 
 		$capture = new Capture_Sink_Node();
@@ -65,7 +65,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$this->assertCount( 1, $capture->captured );
 		$assembled = $capture->captured[0][ Message::VALUE ];
 		$this->assertSame( 'r1', $assembled['rid'] );
-		$this->assertSame( 'https://kea-7713.test/x', $assembled['url'] );
+		$this->assertSame( '/x', $assembled['url'] );
 		$this->assertSame( 'GET', $assembled['request_method'] );
 		$this->assertEqualsWithDelta( 50.0, $assembled['duration_ms'], 1e-9 );
 		$this->assertSame( 200, $assembled['status_code'] );
@@ -81,7 +81,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$topic = new Topic_Node();
 		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "1" ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'l' => '', 'ts' => 1 ] );
-		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET https://kea-7713.test/x', 'ts' => 1 ] );
+		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 
 		// Worker 1: the firehose Consumer snapshots the builder's in-flight cache.
 		$rb1 = new Request_Builder_Node();
@@ -117,7 +117,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$this->assertCount( 1, $capture2->captured, 'the request that spanned the respawn must still complete' );
 		$assembled = $capture2->captured[0][ Message::VALUE ];
 		$this->assertSame( 'r1', $assembled['rid'] );
-		$this->assertSame( 'https://kea-7713.test/x', $assembled['url'] );
+		$this->assertSame( '/x', $assembled['url'] );
 		$this->assertSame( 200, $assembled['status_code'] );
 	}
 }

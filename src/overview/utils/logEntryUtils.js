@@ -37,7 +37,6 @@ import {
 	formatDuration,
 	spanBaseName,
 } from '@newspack-nodes/shared/utils/formatUtils';
-import { formatGroupedCount } from '@newspack-nodes/shared/utils/formatters';
 
 /**
  * Matches a `<name> (start)` keyword, capturing the pair's name.
@@ -894,7 +893,7 @@ const mergedBody = ( node, merged ) => {
 	if ( merged < 1 ) {
 		return '';
 	}
-	const head = `${ formatGroupedCount( merged ) } merged`;
+	const head = `${ merged.toLocaleString() } merged`;
 	const rows = Object.entries( node.shapes || {} ).sort(
 		( a, b ) => b[ 1 ][ 1 ] - a[ 1 ][ 1 ]
 	);
@@ -904,12 +903,12 @@ const mergedBody = ( node, merged ) => {
 	const calls = Number( node.count ) || 0;
 	// The table counts every instance; the header counts the shown-less ones.
 	const lead =
-		calls === merged ? '' : `, of ${ formatGroupedCount( calls ) } in all`;
+		calls === merged ? '' : `, of ${ calls.toLocaleString() } in all`;
 	return [
 		`${ head }${ lead }`,
 		...rows.map(
 			( [ shape, [ count, ms ] ] ) =>
-				`${ formatGroupedCount( count ) }× ${ formatDuration(
+				`${ count.toLocaleString() }× ${ formatDuration(
 					ms
 				) }  ${ shape }`
 		),

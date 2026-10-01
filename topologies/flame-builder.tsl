@@ -1,37 +1,24 @@
 # Flame_Builder topology.
 #
 #   Consumer (requests.log) ─→ FlameBuilder ─→ Partition (flames:partition)
-#                                            └→ Stats_Store (asks the Ledgers and the url Table, by message; hidden via configure_stats)
+#                                            └→ Stats_Store (asks the Tables set_*_target names, by message; hidden via configure_stats)
 #                                            └→ flame-builder:auto-tuner (owned sibling, hidden)
-#                                            └→ Ledger (stats:*, one SQLite file each, every partition's rows)
+#                                            └→ Table (flame-stats:aggregate, SQLite, <eln:stats_ttl>)
 #                                            └→ Table (flame-stats:url, SQLite, <eln:stats_url_ttl>)
+#                                            └→ Table (flame-stats:url-fine, SQLite, <eln:stats_url_fine_ttl>)
 
 include topic-probe
 
 make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/<topology>.requests.p<partition> <config:deadletter_dir>/<topology>.requests.p<partition>
 make_node Flame_Builder flame-builder
 make_node Partition flames:partition <config:logs_dir>/flames.p<partition>
-make_node Ledger stats:totals      3600 <eln:ledger_segments> count sum_ms requests sum_peak_mb
-make_node Ledger stats:dims        3600 <eln:ledger_segments> count sum_ms sum_peak_mb timed
-make_node Ledger stats:categories  3600 <eln:ledger_segments> sum_time sum_count samples
-make_node Ledger stats:leaderboard 3600 <eln:ledger_segments> samples sum_time sum_count
-make_node Ledger stats:url-rows    3600 <eln:ledger_segments> count timed_count sum_ms sum_peak_mb count_2xx count_3xx count_4xx count_5xx errors min_ms:min max_ms:max max_peak_mb:max last_seen:max
-make_node Ledger stats:url-dims    3600 <eln:ledger_segments> count sum_ms sum_peak_mb timed
-make_node Ledger stats:url-cats    3600 <eln:ledger_segments> sum_time sum_count samples
-make_node Ledger stats:names       3600 <eln:ledger_segments>
-make_node Ledger stats:search      3600 <eln:ledger_segments>
+make_node Table flame-stats:aggregate evlog:p<partition> <eln:stats_ttl> sqlite
 make_node Table flame-stats:url evlog:p<partition> <eln:stats_url_ttl> sqlite
+make_node Table flame-stats:url-fine evlog:p<partition> <eln:stats_url_fine_ttl> sqlite
 command_node requests:consumer:config add_snapshot_node flame-builder
+command_node flame-builder:config set_aggregate_target flame-stats:aggregate
 command_node flame-builder:config set_url_target flame-stats:url
-command_node flame-builder:config add_ledger_target stats:totals
-command_node flame-builder:config add_ledger_target stats:dims
-command_node flame-builder:config add_ledger_target stats:categories
-command_node flame-builder:config add_ledger_target stats:leaderboard
-command_node flame-builder:config add_ledger_target stats:url-rows
-command_node flame-builder:config add_ledger_target stats:url-dims
-command_node flame-builder:config add_ledger_target stats:url-cats
-command_node flame-builder:config add_ledger_target stats:names
-command_node flame-builder:config add_ledger_target stats:search
+command_node flame-builder:config set_url_fine_target flame-stats:url-fine
 command_node flame-builder:config configure_stats
 command_node flame-builder:config set_is_hub <eln:is_hub>
 command_node flames:partition:config void_warranty

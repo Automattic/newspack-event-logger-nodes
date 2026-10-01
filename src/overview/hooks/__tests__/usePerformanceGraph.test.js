@@ -263,6 +263,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 			rows: 0,
 			slowest: [],
 			filters: null,
+			ranked: false,
 			provisional: false,
 			as_of: 0,
 			loading: false,

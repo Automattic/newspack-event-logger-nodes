@@ -1,0 +1,87 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.key { display:flex; gap:4px; margin:6px 0 4px; }
+.key .s { flex:1; border-radius:6px; padding:8px 6px; text-align:center; font-size:11.5px; line-height:1.3; border:1px solid #C3D3EC; background:#F0F4FB; }
+.key .s b { display:block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; color:#003DA5; }
+.key .s.bk { background:#003DA5; border-color:#003DA5; color:#fff; }
+.key .s.bk b { color:#fff; }
+.cap { font-size:12px; color:#50575E; margin:0 0 12px; line-height:1.5; }
+table.ns { border-collapse:collapse; width:100%; font-size:11.5px; }
+table.ns th { text-align:left; font-size:11px; color:#787C82; font-weight:600; padding:4px 8px; border-bottom:1px solid #C3C4C7; }
+table.ns td { padding:4px 8px; border-top:1px solid #EEF0F2; vertical-align:top; line-height:1.4; }
+table.ns td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:#003DA5; white-space:nowrap; font-size:11.5px; }
+table.ns td.t { white-space:nowrap; color:#50575E; }
+table.ns tr.tier td { background:#F6F7F7; }
+table.ns tr.coarse td.k { color:#1E5B1E; }
+.two { display:flex; gap:14px; margin-top:16px; align-items:flex-start; }
+.two > div { flex:1; }
+.row14 { display:flex; gap:2px; margin:8px 0 4px; }
+.row14 .c { flex:1; border-radius:4px; border:1px solid #C3D3EC; background:#F0F4FB; font-size:10px; text-align:center; padding:5px 2px; line-height:1.25; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.row14 .c b { display:block; font-size:10.5px; color:#003DA5; }
+.row14 .c.x { background:#F6F7F7; border-color:#C3C4C7; }
+.row14 .c.x b { color:#50575E; }
+.row14 .c.srv { background:#EDF7ED; border-color:#9EC89E; }
+.row14 .c.srv b { color:#1E5B1E; }
+.small { font-size:11.5px; color:#50575E; line-height:1.45; margin:4px 0 0; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>Every stats key takes its bucket or hour right after the namespace, and the URL index is stored at two resolutions</h1>
+<p class="sub">Stats_Store asks three SQLite Tables through the substrate's Table, which stores no install scope; below that, one partition's keyspace is <span class="mono">evlog:p{N}</span>, then the namespace, then the bucket or hour, then the scope parts (<span class="mono">Stats_Store::key_at()</span>), so everything one flush touches in a namespace sits together in key order, one <span class="mono">MGET</span> per Table serves any mix, and retention is the row's own TTL.</p>
+
+<div class="key">
+  <div class="s"><b>evlog</b>the stats keyspace</div>
+  <div class="s"><b>p{N}</b>the flame-builder partition</div>
+  <div class="s"><b>{namespace}</b>one of eighteen</div>
+  <div class="s bk"><b>{bucket}</b><span class="mono">Y-m-d-H-i</span> floored to 5 minutes for the URL index's fine tier, or <span class="mono">Y-m-d-H</span> for an hour key</div>
+  <div class="s"><b>{scope parts}</b>a list set, a server's fnv1a32, a shard, a url_hash, a dimension</div>
+</div>
+<p class="cap">Within a namespace, lexical order is chronological order, so one flush's current-hour keys are one run of the Table's index. A chart hour key holds its twelve five-minute slots, and a leaderboard hour one sum (decision 35). Three namespaces carry no time: <span class="mono">url</span> and <span class="mono">urlmap</span> key on a hash, <span class="mono">urltoken</span> on a server and a word.</p>
+
+<table class="ns">
+  <tr><th>key, under evlog:p{N}:</th><th>value</th><th>TTL</th></tr>
+  <tr><td class="k">hourly_h:{Y-m-d-H}</td><td>site totals, twelve five-minute slots, each { count, sum_ms, requests, sum_peak_mb }: count and sum_ms the timed requests', requests and sum_peak_mb every non-worker request's</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">dim_h:{Y-m-d-H}:{dimension}[:{server_key}]</td><td>twelve slots, each { value → [ count, sumMs, sumPeakMb, timed ] } for status, method, server, country, from, ua, ja4; MAX_DIM_VALUES 20 a slot, the server axis 128</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">categories_h:{Y-m-d-H}[:{server_key}]</td><td>twelve slots, each { category → [ ms, calls, requests ] }, positional CAT_SUMS, capped at MAX_CAT_VALUES 50 a slot, plus a synthetic <span class="mono">total</span> every ranking holds out</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">url_dim_h:{Y-m-d-H}:{hash}</td><td>one row a URL-hour, { dimension → twelve slots } for every dimension but server, MAX_URL_DIM_VALUES 10 a slot: a flush writes a URL once an hour</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">url_cat_h:{Y-m-d-H}:{hash}</td><td>one URL's category series, twelve slots</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">lb_h:{Y-m-d-H}</td><td>the global leaderboard, ONE sum an hour, never slotted: per category, samples, sum_time, sum_count and an entry map, each category's entries trimmed from 100 back to 50; MAX_LB_CATEGORIES 200 by sum_time, fewer where their bytes bind. The heaviest read the dashboard makes</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">lb_sh:{Y-m-d-H}:{server_key}</td><td>a per-server leaderboard under the same caps</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr class="tier"><td class="k">urls:{bucket}:{server_key}:{shard}</td><td>{ url_hash → positional row } for ONE server, sharded 16 ways by the hash's first hex digit; a <span class="mono">w</span> prefix on the shard names worker traffic. As many rows as fit ITEM_BUDGET 900,000 bytes by estimate, busiest first, the tail folded into <span class="mono">Other</span> / <span class="mono">Other:worker</span></td><td class="t">min( min_lifetime, 7200 )</td></tr>
+  <tr class="tier coarse"><td class="k">urls_h:{Y-m-d-H}:{server_key}:{shard}</td><td>one server's hour of merged rows in the same shape. DERIVED; a missing one reads as empty until the roll-up folds it</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr class="tier"><td class="k">urlsrv:{bucket}</td><td>{ server_key → [ server_name, shards ] }, every server holding URL rows in the bucket beside the bitmask of the shards it wrote: what every walk reads first, asking only for the shards an entry names. MAX_SERVER_VALUES 128 names; past it, new servers' rows file under the <span class="mono">Other</span> server</td><td class="t">min( min_lifetime, 7200 )</td></tr>
+  <tr class="tier coarse"><td class="k">urlsrv_h:{Y-m-d-H}</td><td>its coarse tier, the hour's 128 busiest servers, each naming all 32 shards, folded in the same pass and the same <span class="mono">bucket_set_multi()</span> as <span class="mono">urls_h</span></td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">urlmap:{hash}</td><td>[ server_name, path ], written with the URL's search words, at most once an hour per server; answers about ONE hash, and locates its server for an unscoped <span class="mono">dump_url</span></td><td class="t">max( 90000, min_lifetime ) + 3,605, from its write</td></tr>
+  <tr><td class="k">url:{hash}</td><td>the per-URL flame and profile blob, through a rotating accumulator of 5 buckets × 1,000; profiles capped at half the budget, each tree copy pruned lightest leaf first to a quarter</td><td class="t">max( 3600, min_lifetime / 24 )</td></tr>
+  <tr class="tier"><td class="k">urlrank_s:{bucket}:[{set}:]{server_key}:{sort}:{order}</td><td>one server's ranked top URL_RANK_N 200 rows of the bucket &mdash; one list per URL_SORTS key and URL_ORDERS direction, fourteen a server &mdash; as positional [ hash, row ] entries, for each list set: the reader rows under no set part, and <span class="mono">e</span>, <span class="mono">w</span> and <span class="mono">w:e</span> for the errored, worker and errored worker rows. DERIVED from <span class="mono">urls</span> after the flush's merge landed</td><td class="t">min( min_lifetime, 7200 )</td></tr>
+  <tr class="tier"><td class="k">urlrank_s:{bucket}:[{set}:]{sort}:{order}</td><td>the site's list of each sort, ranked by the writer in the same batch over the rows the servers' lists of that sort hold, so a site page reads one list a key rather than merging every server's</td><td class="t">min( min_lifetime, 7200 )</td></tr>
+  <tr class="tier coarse"><td class="k">urlrank_sh:{Y-m-d-H}:[{set}:][{server_key}:]{sort}:{order}</td><td>its coarse tier, the servers' and the site's, URL_RANK_N_HOUR 500 entries, written by the same <span class="mono">roll_up_hours()</span> pass from the rows it folded; each server's <span class="mono">urlrank_sh:{Y-m-d-H}:done:{server_key}</span> marker rides its lists' batch and is what the roll-up reads</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr class="tier"><td class="k">urlhdr:{bucket}:v5p14:[{set}:][{server_key}]</td><td>the header record beside each set's lists, each server's and the site's: request, timed, milliseconds and peak-memory sums over every row of the set, whether an overflow row was among them, a <span class="mono">Url_Sketch</span> of the URLs stored deflated, and the requests that timed out or fataled. <span class="mono">v5p14</span> is HDR_SHAPE, the layout's version and the sketch's precision. DERIVED</td><td class="t">min( min_lifetime, 7200 )</td></tr>
+  <tr class="tier coarse"><td class="k">urlhdr_h:{Y-m-d-H}:v5p14:[{set}:][{server_key}]</td><td>its coarse tier, written beside the hour's lists</td><td class="t">max( 90000, min_lifetime )</td></tr>
+  <tr><td class="k">urltoken:{bucket}:{server_key}:{word}</td><td>a SET key, read by <span class="mono">SMEMBERS</span>: one member per URL whose path carries the whole word, 2 characters or more and cut to 12, one set per six-hour bucket per server, the member the URL's hash and its value the second its name was last filed. A flush adds members blind, at most once an hour per URL, and reads nothing; a search unions the window's buckets, and a set past URL_SEARCH_MAX 5,000 members, or buckets past it together, narrow nothing until enough of the members expire</td><td class="t">min_lifetime + 3,605, each member from its last add</td></tr>
+</table>
+
+<h3 style="font-size:14px;margin:18px 0 4px">What one read of the URL index asks for</h3>
+<svg width="1052" height="86" viewBox="0 0 1052 86" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11">
+  <text x="0" y="12" fill="#50575E">the window's first whole hour, at the default 43,200 s retention</text><text x="1052" y="12" text-anchor="end" fill="#50575E">now, in hour H</text>
+  <rect x="0" y="20" width="846" height="32" rx="5" fill="#EDF7ED" stroke="#9EC89E"/>
+  <text x="423" y="33" text-anchor="middle" fill="#1E5B1E" font-size="10.5">urls_h:{Y-m-d-H}:{server_key}:{shard}: the whole hours before H, H−11 to H−1, DERIVED by roll_up_hours()</text>
+  <text x="423" y="46" text-anchor="middle" fill="#1E5B1E" font-size="10.5">a missing one reads as empty until the roll-up folds it</text>
+  <rect x="852" y="20" width="200" height="32" rx="5" fill="#003DA5"/>
+  <text x="952" y="33" text-anchor="middle" fill="#fff" font-size="10">hour H, up to 12 buckets</text><text x="952" y="46" text-anchor="middle" fill="#fff" font-size="10">urls:{Y-m-d-H-i}:{server_key}:{shard}</text>
+  <path d="M852 58 V64 H1052 V58" fill="none" stroke="#50575E"/><text x="1052" y="77" text-anchor="end" fill="#50575E">fine: the newest still fills; the closed ones make the rate</text>
+  <path d="M0 58 V64 H846 V58" fill="none" stroke="#50575E"/><text x="423" y="77" text-anchor="middle" fill="#50575E">no reader reads a closed hour's fine buckets; the window starts on the hour, so an hour it holds only part of is not read</text>
+</svg>
+<p class="small" style="margin-top:0">The fine tier lives 7,200 s: the current hour, and the hour just closed, which folds at its first flush and takes late writes for a while after. At that width it costs 24 buckets a shard, against the 25 hours the coarse tier stores at the default window. <span class="mono">Performance_CI_Node::load_index_default()</span> folds INDEX_READ_CHUNK 12 buckets at a time and drops each chunk before reading the next.</p>
+
+<h3 style="font-size:14px;margin:14px 0 4px">A URL row is positional: fifteen indexes, named once in <span class="mono">ROW_FIELD_NAMES</span></h3>
+<div class="row14">
+  <div class="c"><b>0</b>count</div><div class="c"><b>1</b>timed_count</div><div class="c"><b>2</b>sum_ms</div><div class="c"><b>3</b>sum_peak_mb</div><div class="c"><b>4</b>count_2xx</div><div class="c"><b>5</b>count_3xx</div><div class="c"><b>6</b>count_4xx</div><div class="c"><b>7</b>count_5xx</div><div class="c"><b>8</b>errors</div><div class="c x"><b>9</b>min_ms</div><div class="c x"><b>10</b>max_ms</div><div class="c x"><b>11</b>max_peak_mb</div><div class="c x"><b>12</b>last_seen</div><div class="c x"><b>13</b>worker</div><div class="c srv"><b>14</b>path</div>
+</div>
+<div class="two" style="margin-top:6px">
+  <div><p class="small">Indexes 0 to 8 ADD, in <span class="mono">ROW_SUMS</span> order, 8 the requests that timed out or fataled; extremes at 9 and 10 stay the URL's own. Index 14 is the row's one string, its path: no scheme or host for an https URL under the key's own server, the whole URL otherwise, cut to MAX_PATH_BYTES 1,024. The host lives in the key, so a scope is the server's own keys and every read walks the shards <span class="mono">urlsrv</span> names. Measured on live rows: 672 bytes named, 398 positional.</p></div>
+  <div><p class="small">Caps fold into a synthetic <span class="mono">Other</span> rather than dropping, so a total summed from a capped namespace stays exact. Every value but a slotted chart hour is capped BEFORE it is written to ITEM_BUDGET, 900,000 bytes uncompressed, by an estimate for the configured serializer: fixed bytes a part plus the strings it carries. The one cap that does not fold is a payload bound: <span class="mono">sums_to_display()</span> keeps a category's fifty slowest entries by average exclusive time past a hundred.</p></div>
+</div>
+</div>
+</div>
+</div>

@@ -148,6 +148,7 @@ describe( 'UrlsView — the envelope slice', () => {
 			rows: 0,
 			slowest: [],
 			filters: null,
+			ranked: false,
 			provisional: false,
 			as_of: 0,
 			loading: false,
@@ -158,7 +159,9 @@ describe( 'UrlsView — the envelope slice', () => {
 			reply( 'urls', {
 				data: [ { url: '/a' } ],
 				totals: { urls: 7331, requests: 90210 },
-				rows: 7331,
+				// One more row than URLs: the folded row is sliceable but is
+				// not a unique URL, and the pager slices.
+				rows: 7332,
 				slowest: [ { url: '/slow', avg_ms: 2600 } ],
 				filters: { server: 'edge-01', search: '', errors_only: false },
 				limit: 20,
@@ -169,9 +172,10 @@ describe( 'UrlsView — the envelope slice', () => {
 		expect( v.view ).toEqual( {
 			data: [ { url: '/a' } ],
 			totals: { urls: 7331, requests: 90210 },
-			rows: 7331,
+			rows: 7332,
 			slowest: [ { url: '/slow', avg_ms: 2600 } ],
 			filters: { server: 'edge-01', search: '', errors_only: false },
+			ranked: false,
 			provisional: false,
 			as_of: 0,
 			loading: false,
@@ -179,7 +183,7 @@ describe( 'UrlsView — the envelope slice', () => {
 		} );
 	} );
 
-	test( 'carries provisional and as_of off the reply, and no ranked or estimate flag', () => {
+	test( 'carries ranked, provisional and as_of off the reply, and no estimate flag', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
 		v.fill(
 			reply( 'urls', {
@@ -195,13 +199,13 @@ describe( 'UrlsView — the envelope slice', () => {
 			} )
 		);
 
-		expect( v.view ).not.toHaveProperty( 'ranked' );
+		expect( v.view.ranked ).toBe( true );
 		expect( v.view ).not.toHaveProperty( 'estimated' );
 		expect( v.view.provisional ).toBe( true );
 		expect( v.view.as_of ).toBe( 1758500000 );
 	} );
 
-	test( 'defaults provisional and as_of when the reply carries neither', () => {
+	test( 'defaults ranked and as_of when the reply carries neither', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
 		v.fill(
 			reply( 'urls', {
@@ -213,7 +217,7 @@ describe( 'UrlsView — the envelope slice', () => {
 			} )
 		);
 
-		expect( v.view.provisional ).toBe( false );
+		expect( v.view.ranked ).toBe( false );
 		expect( v.view.as_of ).toBe( 0 );
 	} );
 

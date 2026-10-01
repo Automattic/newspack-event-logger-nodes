@@ -18,8 +18,7 @@
 
 // Mock d3: every call returns the shared chainable (jest.fn for asserts).
 jest.mock( 'd3', () => {
-	// Callable, so a scale the chart invokes answers a pixel.
-	const chain = () => 0;
+	const chain = {};
 	const fnNames = [
 		'select',
 		'selectAll',
@@ -41,7 +40,6 @@ jest.mock( 'd3', () => {
 		'y',
 		'y0',
 		'y1',
-		'defined',
 		'curve',
 		'keys',
 	];
@@ -270,34 +268,6 @@ describe( 'CategoryTimeChart', () => {
 			tooltips[ 0 ].classList.contains( 'newspack-nodes-card--elevated' )
 		).toBe( true );
 		expect( tooltips[ 0 ].getAttribute( 'style' ) ).toBeNull();
-		unmount();
-	} );
-
-	it( 'plots a mean over no calls as a gap, where a rate over them is a real 0', () => {
-		const data = {
-			names: [ 'db' ],
-			buckets: {
-				[ SLOTS[ 0 ] ]: [ [ 0, 900, 0, 0 ] ],
-				[ SLOTS[ 1 ] ]: [ [ 0, 3000, 12, 12 ] ],
-			},
-		};
-		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
-		);
-		const [ time, count, average ] = d3Mock.datum.mock.calls
-			.slice( -VIEW_COUNT )
-			.map( ( call ) => call[ 0 ] );
-		const last = SLOTS.length - 1;
-		const defined = ( band ) => [
-			band[ last - 1 ].defined,
-			band[ last ].defined,
-			band[ 0 ].defined,
-		];
-
-		expect( defined( time ) ).toEqual( [ true, true, true ] );
-		expect( defined( count ) ).toEqual( [ true, true, true ] );
-		// Measured, then c 0, then a slot with no row.
-		expect( defined( average ) ).toEqual( [ true, false, false ] );
 		unmount();
 	} );
 

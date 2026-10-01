@@ -69,7 +69,7 @@ final class Rule_Matcher {
 	 * `/jobs/x?job-worker&n=1` and not the same two parameters reversed.
 	 *
 	 * Patterns are written as site paths, so a caller holding an absolute URL
-	 * passes its path, as `Rule_Set::for_url()` does. A scheme
+	 * passes its path, as `Performance_CI_Node::rule_for_url()` does. A scheme
 	 * and host ahead of the path match no path-leading pattern.
 	 *
 	 * The rule list is already sorted most-specific-first, so the first pattern

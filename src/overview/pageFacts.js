@@ -86,9 +86,8 @@ export function pageFacts( {
 			url: { hash: selectedUrl.hash, url: selectedUrl.url },
 			stats: {
 				count: num( stats.count ),
-				// Null where nothing timed reached the URL: unmeasured, not 0.
-				avg_ms: num( stats.avg_ms, null ),
-				max_ms: num( stats.max_ms, null ),
+				avg_ms: num( stats.avg_ms ),
+				max_ms: num( stats.max_ms ),
 				max_peak_mb: num( stats.max_peak_mb ),
 			},
 		};
@@ -111,7 +110,7 @@ export function pageFacts( {
 		slowest: ( urlSlowest ?? [] ).slice( 0, 10 ).map( ( u ) => ( {
 			hash: u.hash,
 			url: u.url,
-			avg_ms: num( u.avg_ms, null ),
+			avg_ms: num( u.avg_ms ),
 			count: num( u.count ),
 		} ) ),
 	};

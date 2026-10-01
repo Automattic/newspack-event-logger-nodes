@@ -20,31 +20,43 @@
   .card.tight p:last-child { margin-bottom: 0; }
 </style>
 <div class="sheet">
-<h1>The life of a stats row</h1>
-<p class="sub">Every stats Ledger is one SQLite file every flame-builder partition appends to. Rows sit in <span class="mono">t</span> order: each 30-second settle appends its span's deltas at the right edge, and the Router tick drops whole hour-long segments off the left edge once they pass the lifespan. A read names a window of <span class="mono">t</span> and aggregates what it finds.</p>
+<h1>The life of a five-minute bucket</h1>
+<p class="sub">Stats_Store writes the URL index one key per server, per shard, per five-minute bucket into the partition's SQLite Tables, and a flush folds each closed hour into a coarse tier: two tiers, two lifetimes. A chart series keeps one key an hour, holding its twelve five-minute slots.</p>
 
 <div class="chart">
   <svg width="1052" height="334" viewBox="0 0 1052 334">
-    <path d="M412 54 L412 44 L1018 44 L1018 54" fill="none" stroke="#003DA5" stroke-width="1.6"/>
-    <g id="segs"></g>
-    <g id="rows"></g>
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs>
+
+    <!-- read-window brackets -->
+    <path d="M210 54 L210 44 L816 44 L816 54" fill="none" stroke="#787C82" stroke-width="1.4"/>
+    <path d="M820 54 L820 44 L1018 44 L1018 54" fill="none" stroke="#003DA5" stroke-width="1.6"/>
+
+    <!-- fine tier: the 24 five-minute buckets its two-hour TTL keeps -->
+    <g id="fine"></g>
+    <!-- hourly tier -->
+    <g id="hourly"></g>
+
+    <!-- axis -->
     <line x1="170" y1="254" x2="1024" y2="254" stroke="#C3C4C7" stroke-width="1.4"/>
     <line x1="210" y1="250" x2="210" y2="258" stroke="#787C82" stroke-width="1.4"/>
     <line x1="412" y1="250" x2="412" y2="258" stroke="#787C82" stroke-width="1.4"/>
     <line x1="614" y1="250" x2="614" y2="258" stroke="#787C82" stroke-width="1.4"/>
     <line x1="816" y1="250" x2="816" y2="258" stroke="#787C82" stroke-width="1.4"/>
     <line x1="1018" y1="246" x2="1018" y2="262" stroke="#003DA5" stroke-width="2"/>
+
+    <!-- expiry arrow off the left of the fine tier -->
+    
   </svg>
 
   <div class="lbl" style="left:0;top:78px">
-    <b>one Ledger file</b>
-    <span class="mono">{base}/ledgers/<br>{name}.sqlite</span>
-    <span>every partition's rows</span>
+    <b>SQLite, fine</b>
+    <span class="mono">urls:{Y-m-d-H-i}:<br>{server_key}:{shard}</span>
+    <span>five minutes a key</span>
   </div>
   <div class="lbl" style="left:0;top:160px">
-    <b>its rows</b>
-    <span class="mono">( t, k, x, w, s, c0 … )</span>
-    <span>t first, so rows sit in time order</span>
+    <b>SQLite, hourly</b>
+    <span class="mono">urls_h:{Y-m-d-H}:{server_key}:{shard}</span>
+    <span>one key an hour, in a fine bucket's row shape</span>
   </div>
 
   <div class="tick" style="left:182px;top:264px">4 hours ago</div>
@@ -53,33 +65,35 @@
   <div class="tick" style="left:790px;top:264px">1 hour ago</div>
   <div class="tick blue" style="left:994px;top:264px;font-weight:700">now</div>
 
-  <div class="ann blue" style="left:412px;top:20px;width:606px;text-align:center;font-weight:700">a read: SUM, TOP or MEMBERS over [ from, to )</div>
-  <div class="ann" style="left:210px;top:292px;width:808px;text-align:center">A read seeks each distinct <span class="mono">t</span> in its window through the primary key and adds every row it finds there: <b>one ask per Ledger</b>, whatever the partition count.</div>
-  <div class="ann" style="left:212px;top:120px;width:196px;text-align:center">a segment past the lifespan: dropped whole by the Router tick</div>
-  <div class="ann" style="left:760px;top:200px;width:258px;text-align:right">each settle appends its span's deltas here</div>
-  <div class="ann" style="left:600px;top:134px;width:320px;text-align:left;color:#B32D2E">a late record: one more delta at its own <span class="mono">t</span></div>
+  <div class="ann" style="left:210px;top:20px;width:606px;text-align:center">read in hours</div>
+  <div class="ann blue" style="left:820px;top:20px;width:198px;text-align:center;font-weight:700">read in buckets</div>
+  <div class="ann" style="left:210px;top:292px;width:808px;text-align:center">The dashboard reads the last hour in buckets and the rest of the window in hours: <b>24 to 35 keys per shard</b> over a day's window instead of 288.</div>
+
+  <div class="ann" style="left:660px;top:200px;width:358px;text-align:right">The open hour is not folded yet. A flush folds the URL index's closed hour, at most once every five seconds.</div>
+  <div class="ann" style="left:220px;top:86px;width:384px;text-align:center">a fine bucket lives two hours: older ones have expired</div>
+  <div class="ann" style="left:210px;top:120px;width:500px">Each key expires on its own, at its Table's time to live: two hours for a fine bucket, and the window floored at 25 hours for an hour key.</div>
 </div>
 
 <div class="row" style="gap:14px;margin-top:6px;align-items:stretch">
   <div class="card tight" style="flex:1.25">
-    <h3>What a row holds</h3>
-    <p>Sums and counts, never means, so settles and partitions merge by addition and the dashboard divides at read time. A second row for one <span class="mono">( t, k, x )</span> is another settle's delta: a read sums them.</p>
-    <p>Nothing is capped but the servers: past <b>128</b> in a day, a server's rows file under <span class="mono">Other</span>, so the totals stay exact.</p>
+    <h3>What a key holds</h3>
+    <p>Sums and counts, never means, so buckets and partitions merge by addition and the dashboard divides at read time.</p>
+    <p>Each producer caps its value before writing it: <b>50</b> categories and <b>20</b> dimension values a slot, <b>200</b> leaderboard categories, and as many URL rows per shard as fit by estimated bytes, each server's URLs under keys of their own. The overflow folds into an <span class="mono">Other</span> row, so totals stay exact.</p>
     <div class="keybar">
-      <div><div class="seg mono">t</div><div class="who">the five-minute bucket the request finished in</div></div>
-      <div><div class="seg mono">k</div><div class="who">the scope</div></div>
-      <div><div class="seg mono">x</div><div class="who">the member</div></div>
-      <div><div class="seg mono">w · s</div><div class="who">the writing partition and its sequence</div></div>
+      <div><div class="seg mono">evlog</div><div class="who">the store</div></div>
+      <div><div class="seg mono">pN</div><div class="who">the partition</div></div>
+      <div><div class="seg mono">{ns}</div><div class="who">the namespace</div></div>
+      <div><div class="seg mono">{Y-m-d-H-i}</div><div class="who">the five-minute bucket the request closed in, or <span class="mono">{Y-m-d-H}</span>, its hour</div></div>
     </div>
   </div>
   <div class="stack" style="flex:1">
     <div class="ok" style="margin-top:0">
-      <h4>Nothing updates a row</h4>
-      <p>A row goes only when its segment passes the lifespan, or a flush empties the Ledger. A Ledger keeps the retention window's hours, never fewer than 25.</p>
+      <h4>Nothing evicts a row</h4>
+      <p>The Tables are SQLite files on the flame builder's host. A row lives until its time to live passes, and the Router's purge deletes it then.</p>
     </div>
     <div class="callout">
       <h4><span class="mono">wp nodes tables flush</span></h4>
-      <p>Empties a Ledger by name in one transaction, without unlinking the file. <span class="mono">wp nodes memcache flush</span> leaves the statistics alone. They fill again as traffic arrives.</p>
+      <p>Empties the Tables by name and replaces each partition's files. <span class="mono">wp nodes memcache flush</span> leaves the statistics alone. They fill again as traffic arrives.</p>
     </div>
   </div>
 </div>
@@ -95,16 +109,17 @@ function rect(g, x, y, w, h, fill, stroke, dash) {
   if (dash) r.setAttribute('stroke-dasharray', '4 3');
   g.appendChild(r);
 }
-const gs = document.getElementById('segs');
-rect(gs, x0 + 2, 78, hour - 4, 34, '#FBFBFC', '#C3C4C7', true);
-for (let i = 1; i < 4; i++) rect(gs, x0 + i * hour + 2, 78, hour - 4, 34, '#C3D3EC');
-const gr = document.getElementById('rows');
-for (let i = 12; i < 48; i++) {
+const gf = document.getElementById('fine');
+rect(gf, x0 + 2, 78, 2 * hour - 4, 34, '#FBFBFC', '#C3C4C7', true);
+for (let i = 24; i < 48; i++) {
+  const recent = i >= 36;
   const open = i === 47;
-  const late = i === 30;
-  rect(gr, x0 + i * fine + 1.5, 160, fine - 3, 34,
-    open ? '#fff' : (late ? '#B32D2E' : '#003DA5'),
+  rect(gf, x0 + i * fine + 1.5, 78, fine - 3, 34,
+    open ? '#fff' : (recent ? '#003DA5' : '#C3D3EC'),
     open ? '#003DA5' : null, open);
 }
+const gh = document.getElementById('hourly');
+for (let i = 0; i < 3; i++) rect(gh, x0 + i * hour + 2, 160, hour - 4, 34, '#5B84C4');
+rect(gh, x0 + 3 * hour + 2, 160, hour - 4, 34, '#FBFBFC', '#C3C4C7', true);
 </script>
 </div>

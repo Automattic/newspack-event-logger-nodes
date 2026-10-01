@@ -41,6 +41,14 @@
 	align-items: center;
 	box-sizing: border-box;
 	cursor: pointer;
+
+	// The aggregate row stands for many URLs; there is nothing to open. Only
+	// the italic: this file may declare `cursor` on the bare row selector and
+	// nowhere else, and weakening that contract to restyle one row is a worse
+	// trade than the row keeping a pointer it does not act on.
+	&.is-aggregate {
+		font-style: italic;
+	}
 }
 
 .event-logger-table__cell {

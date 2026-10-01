@@ -30,7 +30,6 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Rule;
-use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Core;
 
 \defined( 'ABSPATH' ) || exit;
@@ -72,7 +71,7 @@ class Ask_Assembler {
 	 * than filtered, so a new field on the record does not silently start
 	 * leaving the site.
 	 */
-	private const ENV_ALLOWLIST = [ 'method', 'request_method', 'status_code', 'worker_type', 'partition' ];
+	private const ENV_ALLOWLIST = [ 'method', 'request_method', 'status_code', 'worker_type', 'partition', 'server_name' ];
 
 	/**
 	 * One request: what it did, how long it took, what the detector found.
@@ -519,8 +518,8 @@ class Ask_Assembler {
 			'server'             => $server,
 			'stats'              => [
 				'count'       => Core::num_int( $stats['count'] ?? 0 ),
-				'avg_ms'      => Stats_Store::measured( $stats['avg_ms'] ?? null ),
-				'max_ms'      => Stats_Store::measured( $stats['max_ms'] ?? null ),
+				'avg_ms'      => Core::num_float( $stats['avg_ms'] ?? 0 ),
+				'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
 				'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 			],
 			'worst_requests'     => \array_map(
@@ -669,30 +668,29 @@ class Ask_Assembler {
 			if ( Flame_Tree::is_listener_span( (string) $key ) ) {
 				continue;
 			}
-			$row    = Core::arr( $row );
-			$time   = Stats_Store::measured( $row['time'] ?? null );
-			$total += $time ?? 0.0;
+			$time   = \is_array( $row ) ? Core::num_float( $row['time'] ?? 0 ) : 0.0;
+			$total += $time;
 			if ( (string) $key !== $name ) {
 				$others[] = [
 					'name'        => (string) $key,
 					'avg_time_ms' => $time,
-					'avg_count'   => Stats_Store::measured( $row['count'] ?? null ),
+					'avg_count'   => \is_array( $row ) ? Core::num_float( $row['count'] ?? 0 ) : 0.0,
 				];
 			}
 		}
-		\usort( $others, self::by_time( ... ) );
+		\usort( $others, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
 
 		$mine = Core::arr( $rows[ $name ] );
-		$time = Stats_Store::measured( $mine['time'] ?? null );
+		$time = Core::num_float( $mine['time'] ?? 0 );
 		return \array_merge(
 			[
 				'subject'     => 'category',
 				'scope'       => $scope,
 				'name'        => $name,
 				'avg_time_ms' => $time,
-				'avg_count'   => Stats_Store::measured( $mine['count'] ?? null ),
+				'avg_count'   => Core::num_float( $mine['count'] ?? 0 ),
 				'samples'     => $samples ?? Core::num_int( $mine['samples'] ?? 0 ),
-				'share'       => null === $time ? null : ( $total > 0.0 ? $time / $total : 0.0 ),
+				'share'       => $total > 0.0 ? $time / $total : 0.0,
 				'others'      => \array_slice( $others, 0, self::TOP_SPANS ),
 				'caveat'      => Findings::caveat(),
 			],
@@ -713,8 +711,8 @@ class Ask_Assembler {
 	 * A page carrying no `totals` leaves the brief's null rather than zeros,
 	 * which would read as an idle site.
 	 *
-	 * @param array<string,mixed> $page    A `urls` reply: its totals, whether they are provisional, and its data.
-	 * @param array<string,mixed> $board   A `Stats_Store::leaderboard()` reply.
+	 * @param array<string,mixed> $page    A `urls` reply: its totals, whether its URL count is estimated and whether they are provisional, and its data.
+	 * @param array<string,mixed> $board   A `build_leaderboard()` reply.
 	 * @param string              $server  Server the page is scoped to; '' is every server.
 	 * @param array<string,mixed> $filters The url filters in force: search, errors_only, include_workers.
 	 * @return array<string,mixed>
@@ -737,12 +735,14 @@ class Ask_Assembler {
 			'stats'      => null === $totals ? null : [
 				'urls'                => Core::num_int( $totals['urls'] ?? 0 ),
 				'requests'            => Core::num_int( $totals['requests'] ?? 0 ),
-				'avg_ms'              => Stats_Store::measured( $totals['avg_ms'] ?? null ),
-				'avg_peak_mb'         => Stats_Store::measured( $totals['avg_peak_mb'] ?? null ),
+				'avg_ms'              => Core::num_float( $totals['avg_ms'] ?? 0 ),
+				'avg_peak_mb'         => Core::num_float( $totals['avg_peak_mb'] ?? 0 ),
 				// This hour's closed buckets, or the last hour until :05.
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
 			] + self::errors_of( $totals ),
-			// Short of a read that went unanswered.
+			// Whether `stats.urls` is a sketch's estimate.
+			'estimated'   => true === $page['estimated'],
+			// Short of what the writer owes, or of an unanswered read.
 			'provisional' => true === $page['provisional'],
 			'urls'       => \array_map(
 				self::overview_url_shape( ... ),
@@ -799,40 +799,37 @@ class Ask_Assembler {
 			$row    = Core::arr( $row );
 			$rows[] = [
 				'name'        => (string) $name,
-				'avg_time_ms' => Stats_Store::measured( $row['time'] ?? null ),
-				'avg_count'   => Stats_Store::measured( $row['count'] ?? null ),
+				'avg_time_ms' => Core::num_float( $row['time'] ?? 0 ),
+				'avg_count'   => Core::num_float( $row['count'] ?? 0 ),
 			];
 		}
-		\usort( $rows, self::by_time( ... ) );
+		\usort( $rows, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
 		return \array_slice( $rows, 0, self::TOP_SPANS );
-	}
-
-	/**
-	 * Orders category rows slowest first; an unmeasured mean sorts as 0 here
-	 * and is reported as null.
-	 *
-	 * @param array<string,mixed> $a A category row.
-	 * @param array<string,mixed> $b A category row.
-	 */
-	private static function by_time( array $a, array $b ): int {
-		return ( $b['avg_time_ms'] ?? 0.0 ) <=> ( $a['avg_time_ms'] ?? 0.0 );
 	}
 
 	/**
 	 * One URL row as the overview brief carries it: its hash, so an agent can
 	 * widen to `url:<hash>`, and the three numbers the table sorts on.
 	 *
+	 * The per-shard overflow row carries NO hash. Its key is not a url_hash,
+	 * `dump_url` cannot answer for it, and it sorts high enough by count to
+	 * reach this list — so it is named for what it is, as the table names it,
+	 * rather than offered as a `url:<hash>` that answers `URL not found`.
+	 *
 	 * @param mixed $row A `urls` data row.
 	 * @return array<string,mixed>
 	 */
 	private static function overview_url_shape( mixed $row ): array {
-		$row = Core::arr( $row );
+		$row       = Core::arr( $row );
+		$aggregate = ! empty( $row['aggregate'] );
 		return [
-			'hash'   => Core::as_string( $row['hash'] ?? '' ),
-			'url'    => Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
+			...( $aggregate ? [] : [ 'hash' => Core::as_string( $row['hash'] ?? '' ) ] ),
+			'url'    => $aggregate
+				? 'traffic from URLs beyond the per-shard cap'
+				: Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
 			'count'  => Core::num_int( $row['count'] ?? 0 ),
-			'avg_ms' => Stats_Store::measured( $row['avg_ms'] ?? null ),
-			'max_ms' => Stats_Store::measured( $row['max_ms'] ?? null ),
+			'avg_ms' => Core::num_float( $row['avg_ms'] ?? 0 ),
+			'max_ms' => Core::num_float( $row['max_ms'] ?? 0 ),
 		] + self::errors_of( $row );
 	}
 
