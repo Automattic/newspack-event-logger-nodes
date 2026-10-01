@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.113.0] - 2026-10-01
+
 ### Changed
 
 - **The 0.112.x Ledger stats are withdrawn, and the stats are 0.111.2's Tables again.** Whole-window reads over write-once Ledger rows took 75 s, so `Stats_Store` and `Flame_Builder_Node` read and write the three `flame-stats:*` Tables `flame-builder.tsl` declares, as 0.111.2 did, on newspack-nodes 2.83.0. Rebuild the stats with `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes tables flush --yes && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`, and delete `{base}/ledgers/` by hand (`docs/upgrading.md`).
