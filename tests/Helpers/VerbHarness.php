@@ -94,23 +94,7 @@ class VerbHarness {
 		// so the substrate's client-tier authorize gate (Message::LOCAL) passes.
 		$message[ Message::LOCAL ] = true;
 
-		\ob_start();
-		$interpreter->fill( $message );
-		$body = \ob_get_clean();
-
-		if ( '' === $body ) {
-			throw new \RuntimeException( "verb '{$verb}' on interpreter '{$name}' produced no response" );
-		}
-		// HTTP_In packs the whole response Message; unpacked() restores VALUE
-		// as the live `['name'=>,'payload'=>]` array. The verb's payload is
-		// returned directly — a structure for success verbs, or the
-		// error-message string for a TM_COMMAND|TM_ERROR response.
-		$reply   = Message::unpacked( $body );
-		$command = $reply[ Message::VALUE ];
-		if ( ! \is_array( $command ) || ! \array_key_exists( 'payload', $command ) ) {
-			throw new \RuntimeException( 'response missing payload field' );
-		}
-		return $command['payload'];
+		return \Newspack_Nodes\Tests\Helpers\VerbHarness::payload( $interpreter, $message );
 	}
 
 	/**

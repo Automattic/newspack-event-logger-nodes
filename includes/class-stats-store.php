@@ -694,6 +694,9 @@ class Stats_Store {
 	/** @var array<string,string> Declared Table => the node answering for it. */
 	private array $table_names;
 
+	/** @var array<string,int>|null Shard token => its bit, built on the first `shard_mask()`. */
+	private static ?array $shard_bits = null;
+
 	/**
 	 * The hourly slot's summed fields; anything else rides through. `count`
 	 * and `sum_ms` are the timed requests' (decision 24), and `requests` and
@@ -1269,7 +1272,8 @@ class Stats_Store {
 	 * @throws \LogicException On a token no shard answers to.
 	 */
 	public static function shard_mask( array $shards ): int {
-		$bits = \array_flip( self::every_shard() );
+		// Built once: a search calls this per candidate, thousands per reply.
+		$bits = self::$shard_bits ??= \array_flip( self::every_shard() );
 		$mask = 0;
 		foreach ( $shards as $shard ) {
 			$mask |= 1 << ( $bits[ $shard ] ?? throw new \LogicException( "no such shard: {$shard}" ) );
@@ -2621,9 +2625,27 @@ class Stats_Store {
 	 */
 	private static function rank_cut( array $ranked, string $order, int $n ): array {
 		[ $hashes, $values, $measured ] = $ranked;
-		// The sort in C, not a closure a comparison: the ranking's whole cost.
-		\array_multisort( $measured, \SORT_DESC, \SORT_NUMERIC, $values, 'asc' === $order ? \SORT_ASC : \SORT_DESC, \SORT_REGULAR, $hashes, \SORT_ASC, \SORT_STRING );
-		return \array_slice( $hashes, 0, $n );
+		return \array_map( static fn ( int $i ): string => $hashes[ $i ], \array_slice( self::rank_order( $measured, $values, $hashes, $order ), 0, $n ) );
+	}
+
+	/**
+	 * The positions of rows ranked in one direction, best first: a row that
+	 * measured what it ranks by ahead of one that did not, in both orders,
+	 * then by value, a tie by hash ascending either way, and a row tying on
+	 * all three where it arrived. The writer's lists and the reader's fold
+	 * both rank through this, so the two agree on every tie.
+	 *
+	 * @param list<int>              $measured 1 where the row measured what it ranks by, else 0.
+	 * @param list<float|int|string> $values   Each row's value, in step.
+	 * @param list<string>           $hashes   Each row's hash, in step.
+	 * @param string                 $order    A `URL_ORDERS` value.
+	 * @return list<int> Positions into the three lists.
+	 */
+	public static function rank_order( array $measured, array $values, array $hashes, string $order ): array {
+		$positions = \array_keys( $hashes );
+		// array_multisort sorts in C; usort calls PHP once per comparison.
+		\array_multisort( $measured, \SORT_DESC, \SORT_NUMERIC, $values, 'asc' === $order ? \SORT_ASC : \SORT_DESC, \SORT_REGULAR, $hashes, \SORT_ASC, \SORT_STRING, $positions, \SORT_ASC, \SORT_NUMERIC );
+		return $positions;
 	}
 
 	/**

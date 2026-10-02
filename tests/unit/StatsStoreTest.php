@@ -1508,6 +1508,21 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [ '3', 'c', 'w5' ], Stats_Store::shards_in( $mask, true ) );
 	}
 
+	/**
+	 * A ranking orders the measured rows first in either direction, then by
+	 * value, a tie by hash ascending either way, and a row that ties on all
+	 * three keeps its arrival position. Hashes compare as bytes: by number,
+	 * `9e0000000001` is 90 and would rank ahead of `100000000000`.
+	 */
+	public function test_rank_order_ranks_measured_first_then_value_then_hash_then_arrival(): void {
+		$measured = [ 0, 1, 1, 1, 1, 1, 1, 1 ];
+		$values   = [ 900.5, 41.25, 73, 41.25, 73, 73, 58.5, 58.5 ];
+		$hashes   = [ 'a0f1', 'e7c2', 'b3d4', 'c9a8', 'b3d4', '05e6', '9e0000000001', '100000000000' ];
+
+		$this->assertSame( [ 5, 2, 4, 7, 6, 3, 1, 0 ], Stats_Store::rank_order( $measured, $values, $hashes, 'desc' ) );
+		$this->assertSame( [ 3, 1, 7, 6, 5, 2, 4, 0 ], Stats_Store::rank_order( $measured, $values, $hashes, 'asc' ) );
+	}
+
 	public function test_merge_index_takes_the_new_name_and_ors_the_masks(): void {
 		$kea = Stats_Store::server_key( 'kea.test' );
 		$moa = Stats_Store::server_key( 'moa.test' );
