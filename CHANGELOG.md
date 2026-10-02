@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The URL table's page lives in the address bar as `?paged=`, beside its sort,
+  search and toggles, so a shared link opens on the same page. A linked page
+  holds until the first reply counts the rows, then clamps to the last page
+  that exists.
+
+### Fixed
+
+- The URL table's pager stops at page 101, the page at the `urls` verb's
+  10,000-row offset ceiling. Past it the verb clamped the offset, so every
+  later page showed page 101's rows under its own number.
+
 ## [0.118.1] - 2026-10-02
 
 ### Changed

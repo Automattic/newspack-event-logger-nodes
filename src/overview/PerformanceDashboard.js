@@ -934,7 +934,7 @@ export default function PerformanceDashboard( {
 								selectedUrl={ selectedUrl }
 								onSelect={ openUrl }
 								onParamsChange={ handleUrlParamsChange }
-								totalUrls={ urlsSlice?.rows ?? 0 }
+								totalUrls={ urlsSlice?.rows }
 								metric={ chartMetric }
 								ranked={ urlsSlice?.ranked }
 								now={ urlsSlice?.as_of }

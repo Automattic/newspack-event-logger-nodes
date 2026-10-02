@@ -922,11 +922,102 @@ describe( 'the address bar', () => {
 		unmount();
 	} );
 
-	it( 'leaves the page out of the bar', () => {
+	it( 'writes the page as ?paged=, since ?page= is the admin screen', () => {
 		const { container, unmount } = mount( { totalUrls: 800 } );
 		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
+		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
 
-		expect( window.location.search ).toBe( '?page=perf' );
+		expect( param( 'paged' ) ).toBe( '3' );
+		expect( param( 'page' ) ).toBe( 'perf' );
+
+		act( () => button( container, ( t ) => /^Reqs/.test( t ) ).click() );
+		expect( window.location.search ).toBe( '?page=perf&order=asc' );
+		unmount();
+	} );
+
+	it( 'opens on the page a link names', () => {
+		linkTo( 'paged=4' );
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( {
+			onParamsChange,
+			totalUrls: 800,
+		} );
+
+		expect( onParamsChange ).toHaveBeenCalledWith(
+			expect.objectContaining( { offset: 300 } )
+		);
+		expect( container.textContent ).toContain( 'Page 4 of 8' );
+		unmount();
+	} );
+
+	it( 'holds a linked page until the first reply counts the rows', () => {
+		// Before any reply the total is unmeasured, not zero: clamping to it
+		// would throw the linked page away before the server could answer it.
+		linkTo( 'paged=4' );
+		const onParamsChange = jest.fn();
+		const props = {
+			urls: [],
+			selectedUrl: null,
+			onSelect: jest.fn(),
+			onParamsChange,
+			totalUrls: null,
+		};
+		const { container, rerender, unmount } = renderComponent(
+			React.createElement( UrlTable, props )
+		);
+		expect( param( 'paged' ) ).toBe( '4' );
+		expect(
+			onParamsChange.mock.calls.every( ( c ) => 300 === c[ 0 ].offset )
+		).toBe( true );
+
+		rerender(
+			React.createElement( UrlTable, {
+				...props,
+				urls: URLS,
+				totalUrls: 800,
+			} )
+		);
+		expect( container.textContent ).toContain( 'Page 4 of 8' );
+		unmount();
+	} );
+
+	it.each( [ '-2', '1e21' ] )(
+		'ignores a page that is not a safe positive whole number (%s)',
+		( raw ) => {
+			linkTo( `paged=${ raw }` );
+			const onParamsChange = jest.fn();
+			const { unmount } = mount( { onParamsChange, totalUrls: 800 } );
+
+			expect( onParamsChange ).toHaveBeenCalledWith(
+				expect.objectContaining( { offset: 0 } )
+			);
+			expect( param( 'paged' ) ).toBeNull();
+			unmount();
+		}
+	);
+
+	it( 'stops the pager at the last offset the urls verb serves', () => {
+		// The verb clamps --offset to 10000, so a later page repeats page 101.
+		linkTo( 'paged=300' );
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( {
+			onParamsChange,
+			totalUrls: 63900,
+		} );
+
+		expect( container.textContent ).toContain( 'Page 101 of 101' );
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { offset: 10000 } )
+		);
+		expect( param( 'paged' ) ).toBe( '101' );
+		unmount();
+	} );
+
+	it( 'moves the bar down with a page the set no longer reaches', () => {
+		linkTo( 'paged=7' );
+		const { unmount } = mount( { totalUrls: 250 } );
+
+		expect( param( 'paged' ) ).toBe( '3' );
 		unmount();
 	} );
 } );
