@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ranked lists serve it (no search, at most `URL_RANK_N` rows), instead of
   from the page cache, which held it for `URL_PAGE_REFRESH_S` (60 s). A
   searched last-seen page is a fold and still caches.
+- A refresh of an open URL's details shows its latest header stats, chart
+  slots and breakdown series. The dashboard dropped a refresh reply unless it
+  carried a new request or a newer flame flush, so the count, average, last
+  seen and rate froze until the next request arrived.
 
 ### Fixed
 
