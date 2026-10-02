@@ -649,7 +649,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( Log_Manager::REQUEST_START === $key ) {
 				$ts = Core::num_float( $entry['ts'] ?? $ts );
 			}
-			if ( 'request' === $key && '' === $method ) {
+			if ( Log_Manager::REQUEST_LINE === $key && '' === $method ) {
 				[ $method, $url ] = self::parse_request_line( Core::as_string( $entry['m'] ?? '' ) );
 			}
 

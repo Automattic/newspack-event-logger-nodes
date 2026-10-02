@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A timed-out or aborted record says where it stopped logging.** `Findings` gains a high `stopped` finding for an `error_status` of `T` or `A`, which had none: hub 86cnt4d8763r2jvw7rmxpsy77y2sm7o6, 856 s long with its last entry 467 ms in, answered `findings: []`. Its metric is `last_entry` at `last_entry_ms`, the spans still open there as one ` › `-joined `open` path, `last_line_ms` from `last_log_ts`, and `evicted_after_ms` (`T`) or `aborted_after_ms` (`A`). Each time belongs to its own row: a runaway's builder keeps advancing `last_log_ts` over lines it no longer stores. The stop is read ahead of the drain a producer writes on its way out — `(orphaned)` completes, `memory`, the closing `resources` sample and the terminal — so an aborted record names the work it was in rather than `process (aborted)`, and never earlier than the `request` line, so the profiler's plugin rows, written after it but stamped before, place no stop. It names no cause, because a killed or hung process and a lost log tail leave the same record, and where nothing past the opening rows was logged it says the stop point is unknown and gives the times alone. A `T` or `A` record without `last_log_ts` is refused, and the Ask brief's `env` carries `error_status`.
+- **An entry gap says how much of it the process spent on CPU.** Where the record's first and last `resources` samples bracket the window, `Log_Manager::cpu_between_samples()` differences their `utime + stime`, and the gap reports `on_cpu_min_ms` = max(0, cpu − (bracket − gap)) and `on_cpu_max_ms` = min(cpu, gap), with a sentence saying how long this process was and was not on CPU. getrusage() counts no child, so a child's CPU reads as waiting, and the sentence says so; a gap inside the nested engine's own span, whose CPU is the child's, gets no bounds. The parser reads any well-formed number, `4e-05` included, and refuses a sample whose `m` carries no `utime` and `stime`.
+- **The brief carries what a reader needs to check a finding.** The rule shape adds `log_queries`, `log_http`, `log_plugin_loads`, `trace_hooks` and `trace_callers`, which the markdown brief renders as `logs:` and `traces:`, so "no SQL ran" and "no SQL was logged" read apart. An entry gap's metric adds `from_i` and `to_i`, the positions of the rows either side in the full `entries` with the environment row counted, and `at_ms`, where it opens. A dominant span's metric replaces `depth` with its ` › `-joined `path` and, where the flame tree records it, `i`, the position of the entry that first opened it.
+
+### Changed
+
+- **Every share divides by the request's duration.** `dominant_span`, `plugin_load` and `repeat_of()` divided by the flame's root value, a layout width decision 12 says measures nothing; titles now read "of the request". A record carrying no flame tree is folded from its entries through the same pass that names an unfolded record's statements, so it still gets its share findings.
+- **No share is reported on a timed-out or aborted record, or under 50 ms.** Dominant span, plugin load and repetition run only where `Flame_Builder_Node::timing_counts()` counts the duration (decision 24) and it reaches `MIN_DURATION_MS`, which now quiets a repeat in a request too short to share as well, whose `T` and `A` list is now `Flame_Builder_Node::UNTIMED_STATUSES`. Entry gaps, the cold start and truncation still run, and the cold start's metric leaves the duration to `stopped`.
+- **An entry gap proposes the edit that lights it, once.** It never again proposes `add_hooks` with an empty hook list. Inside an open span it proposes what would show that span's interior, unless the dominant span already proposes for the same span or the cold start's lifecycle bracket covers the rule. At the request's own level it proposes nothing.
+- **The nested engine's start-up and exit are named, not pinned on a hook.** A gap ending at `gyrobase (start)` or opening at `gyrobase (complete)` says it holds the engine's start-up or exit and the PHP around the spawn, and proposes no edit. A dominant span holding the engine whose own time beyond its own engine runs' windows falls short of `GAP_MS` no longer proposes `mark_significant`, which only re-timed the listener that spawned the engine. The producer's name is `Request_Builder_Node::NESTED_PRODUCER`, read by the builder and `Findings` alike.
+- **The lifecycle bracket opens on `setup_theme`.** The logger binds its rule inside `plugins_loaded`, so a rule listing that hook timed nothing; it leaves `LIFECYCLE_BRACKET` and `recommended_log_events`. A `create_rule` proposal is patterned on the URL's path, since an absolute URL matched nothing.
+- **Repetition qualifies on time.** `REPETITION_COUNT` calls must hold `REPETITION_SHARE` (5%) of the request, or more than one call `HEAVY_REPEAT_SHARE` (25%), and a name the dominant span already names is left to it.
+- **A same-name group is a repeat only when no one member dominates.** A grouped node carries its slowest call as `max`, and a group whose `max` alone holds `DOMINANT_SHARE` is one slow call beside quick ones: hub 2yoz read "8 times at 992.7ms each" for one 7784 ms call.
+
+### Removed
+
+- **The `unattributed` finding, `profiled_ms()`, and every `profiled_ms` field.** Subtracting the flame's root from the duration reported a layout width as unmeasured time; the cold start's metric and the brief's `flame` summary drop `profiled_ms`.
+
+- **The caveat calls unlogged time unmeasured, not idle.** It said "unattributed", the word of the removed finding.
+
+### Fixed
+
+- **A dominant span whose body is all of it no longer claims a remainder inside it.** The check reads the body's share of the span, not of the request.
+- **A request's `last_log_ts` is the latest stamp the builder has seen.** It was the stamp of the last line to arrive, so the profiler's plugin rows, written after the opening rows and stamped before them, rewound it; the in-flight view's age and delta watermark read it, and `stopped` reports it as `last_line_ms`. A new `process (start)` on the same rid still starts it over.
+- **An entry gap is measured from the latest stamp seen**, so a back-dated plugin row neither stretches a window nor invents one, and an engine edge never spans the fold marker.
+- **The `resources` sample is written with a locale-independent decimal point.** `%f` follows the C library's numeric locale, so a comma-decimal locale wrote `0,128355`; it is `%F` now.
+
 ## [0.115.1] - 2026-10-01
 
 ### Fixed

@@ -72,7 +72,7 @@ class Ask_Assembler {
 	 * than filtered, so a new field on the record does not silently start
 	 * leaving the site.
 	 */
-	private const ENV_ALLOWLIST = [ 'method', 'request_method', 'status_code', 'worker_type', 'partition' ];
+	private const ENV_ALLOWLIST = [ 'method', 'request_method', 'status_code', 'error_status', 'worker_type', 'partition' ];
 
 	/**
 	 * One request: what it did, how long it took, what the detector found.
@@ -84,6 +84,8 @@ class Ask_Assembler {
 	 * @return array<string,mixed>
 	 */
 	public static function for_request( array $record, ?Rule $rule, string $url_context = '', string $server = '' ): array {
+		// Resolved once: a flameless record is folded from its entries.
+		$record    = [ 'flame_data' => Findings::flame_of( $record ) ] + $record;
 		// Keys survive the filter: each is the position an `entry:` ask names.
 		$entries   = \array_filter(
 			\array_values( Core::arr( $record['entries'] ?? null ) ),
@@ -117,18 +119,15 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * The top of the flame tree: what the profiler accounted for, and the
-	 * heaviest top-level spans. The whole tree is what `span:` briefs are for.
+	 * The top of the flame tree: the heaviest top-level spans. The root's own
+	 * value is a rendering artifact (decision 12), so the brief carries none.
+	 * The whole tree is what `span:` briefs are for.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
 	 * @return array<string,mixed>
 	 */
 	private static function flame_summary( array $record ): array {
-		$flame = Findings::flame_of( $record );
-		return [
-			'profiled_ms' => Core::num_float( $flame['value'] ?? 0 ),
-			'top_level'   => self::top_spans( $flame['children'] ?? null ),
-		];
+		return [ 'top_level' => self::top_spans( Findings::flame_of( $record )['children'] ?? null ) ];
 	}
 
 	/**
@@ -568,6 +567,12 @@ class Ask_Assembler {
 			'hook_count'         => null === $rule->hooks ? null : \count( $rule->hooks ),
 			'custom_event_count' => \count( $rule->custom_events ),
 			'significant_events' => $rule->significant_events,
+			// Whether an absent query, call or load was unlogged or never ran.
+			'log_queries'        => $rule->log_queries,
+			'log_http'           => $rule->log_http,
+			'log_plugin_loads'   => $rule->log_plugin_loads,
+			'trace_hooks'        => $rule->trace_hooks,
+			'trace_callers'      => $rule->trace_callers,
 		];
 	}
 

@@ -87,6 +87,64 @@ class LogManagerTest extends TestCase {
 		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = $rules;
 	}
 
+	/**
+	 * The CPU a record's process spent between its first and last `resources`
+	 * samples, from either producer's spelling: this class's `%F` and the
+	 * Perl engine's plain number.
+	 */
+	public function test_cpu_between_samples_differences_the_first_and_last(): void {
+		$cpu = Log_Manager::cpu_between_samples(
+			[
+				[ 'k' => 'process (start)', 'ts' => 10.0 ],
+				[ 'k' => 'resources', 'ts' => 10.25, 'm' => 'utime => 0.040000, stime => 0.010000, maxrss => 1' ],
+				[ 'k' => 'resources', 'ts' => 11.0, 'm' => 'utime => 0.5, stime => 0.02' ],
+				[ 'k' => 'resources', 'ts' => 12.5, 'm' => 'utime => 1.25, stime => 0.11, maxrss => 9' ],
+			]
+		);
+
+		$this->assertSame( 10.25, $cpu['from'] );
+		$this->assertSame( 12.5, $cpu['to'] );
+		$this->assertEqualsWithDelta( 1310.0, $cpu['cpu_ms'], 1e-6 );
+	}
+
+	/** A number is a number however it is spelled: getrusage() can print 4e-05. */
+	public function test_cpu_between_samples_reads_exponent_notation(): void {
+		$cpu = Log_Manager::cpu_between_samples(
+			[
+				[ 'k' => 'resources', 'ts' => 1.0, 'm' => 'utime => 4e-05, stime => 0' ],
+				[ 'k' => 'resources', 'ts' => 2.0, 'm' => 'utime => 0.25, stime => 1.5E-2' ],
+			]
+		);
+
+		$this->assertEqualsWithDelta( 264.96, $cpu['cpu_ms'], 1e-6 );
+	}
+
+	/** A comma decimal is a locale leaking into the sample, and is refused. */
+	public function test_cpu_between_samples_refuses_a_comma_decimal(): void {
+		$this->expectException( \UnexpectedValueException::class );
+		Log_Manager::cpu_between_samples(
+			[
+				[ 'k' => 'resources', 'ts' => 1.0, 'm' => 'utime => 0,128355, stime => 0,000000' ],
+				[ 'k' => 'resources', 'ts' => 2.0, 'm' => 'utime => 0.5, stime => 0.0' ],
+			]
+		);
+	}
+
+	public function test_cpu_between_samples_needs_two(): void {
+		$this->assertNull( Log_Manager::cpu_between_samples( [ [ 'k' => 'resources', 'ts' => 1.0, 'm' => 'utime => 1.0, stime => 0.0' ] ] ) );
+	}
+
+	/** A sample is the whole evidence, so one that does not parse is refused. */
+	public function test_cpu_between_samples_refuses_a_sample_it_cannot_read(): void {
+		$this->expectException( \UnexpectedValueException::class );
+		Log_Manager::cpu_between_samples(
+			[
+				[ 'k' => 'resources', 'ts' => 1.0, 'm' => 'utime => 1.0, stime => 0.0' ],
+				[ 'k' => 'resources', 'ts' => 2.0, 'm' => 'maxrss => 9' ],
+			]
+		);
+	}
+
 	public function test_url_hash_is_a_stable_12_char_fnv1a_hash(): void {
 		$this->assertSame( '13ead606a028', Log_Manager::url_hash( '/wp-cron.php' ) );
 		$this->assertSame( '2a0c975ed95c', Log_Manager::url_hash( '/' ) );
@@ -1967,6 +2025,8 @@ class LogManagerTest extends TestCase {
 
 		// log_resources emits k=resources.
 		$this->assertContains( 'resources', $kinds, 'log_resources must emit a resources entry' );
+		// Its open and close samples read back through the one parser.
+		$this->assertGreaterThanOrEqual( 0.0, Log_Manager::cpu_between_samples( $entries )['cpu_ms'] ?? -1.0 );
 
 		// finish() emits k=memory and k=process (complete).
 		$this->assertContains( 'memory', $kinds, 'finish must emit a memory entry' );

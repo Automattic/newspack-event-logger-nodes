@@ -145,6 +145,20 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
+	 * `last_log_ts` is the latest stamp seen, not the last to arrive: the
+	 * profiler's plugin rows reach the builder after the opening rows,
+	 * stamped before them.
+	 */
+	public function test_a_back_dated_line_does_not_rewind_last_log_ts(): void {
+		$rb = new Request_Builder_Node();
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '', 'ts' => 6000.0 ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x', 'ts' => 6000.125 ] );
+		$this->fill( $rb, 3, 'r1', 'jetpack plugin (start)', [ 'l' => '', 'ts' => 5999.95 ] );
+
+		$this->assertSame( 6000.125, $rb->cache->get( 'r1' )->last_log_ts );
+	}
+
+	/**
 	 * A flood of missing-message warnings with DIFFERENT sequence numbers must
 	 * throttle on the stable category prefix — not mint a fresh key per seq_n.
 	 * The pre-split call baked $seq_n into the throttled string, so every call

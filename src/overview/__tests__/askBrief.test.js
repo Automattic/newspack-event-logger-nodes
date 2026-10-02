@@ -13,18 +13,17 @@ const REQUEST_BRIEF = {
 	status_code: 200,
 	env: { worker_type: 'flame-builder' },
 	flame: {
-		profiled_ms: 175.6,
 		top_level: [ { name: 'init', ms: 175.6, count: 1 } ],
 	},
 	rule: { id: 'a1b2c3', pattern: '/calendar', action: 'log', hook_count: 2 },
 	findings: [
 		{
-			kind: 'unattributed',
+			kind: 'insufficient_instrumentation',
 			severity: 'high',
-			title: '419.8s of 420.0s went unmeasured',
+			title: 'The governing rule registers no hooks, so nothing inside the request is measured',
 			detail: 'because reasons',
-			measured: 'subtraction',
-			metric: { missing_ms: 419824.4 },
+			measured: 'rule + record',
+			metric: { duration_ms: 420000 },
 			proposal: {
 				action: 'add_hooks',
 				direction: 'more',
@@ -72,8 +71,8 @@ test( 'a request brief leads with what it is and what it took', () => {
 test( 'findings carry their number, where it was measured, and the proposal', () => {
 	const md = briefToMarkdown( REQUEST_BRIEF );
 
-	expect( md ).toContain( '419.8s of 420.0s went unmeasured' );
-	expect( md ).toContain( '**measured:** subtraction' );
+	expect( md ).toContain( 'nothing inside the request is measured' );
+	expect( md ).toContain( '**measured:** rule + record' );
 	expect( md ).toContain( 'add_hooks' );
 	expect( md ).toContain( 'init, wp_loaded' );
 	expect( md ).toContain( 'remove them after' );
@@ -268,7 +267,7 @@ test( 'a stamped rule this ruleset lacks is named, not called ungoverned', () =>
 		duration_ms: 812,
 		status_code: 200,
 		env: {},
-		flame: { profiled_ms: 812, top: [] },
+		flame: { top_level: [] },
 		entries: [],
 		entries_truncated: false,
 		rule: { id: 'cbcdd45b2cba', resolved: false },
@@ -578,7 +577,7 @@ test( 'a finding fences the statement it names instead of running it into the nu
 			{
 				kind: 'dominant_span',
 				severity: 'high',
-				title: 'sql holds 72% of the profiled time',
+				title: 'sql holds 72% of the request',
 				measured: 'flame',
 				metric: {
 					name: 'sql: WP_Query->get_posts',
@@ -758,6 +757,51 @@ test( 'a rule rides as counts, not rosters', () => {
 
 	expect( md ).toContain( '**hooks:** 64' );
 	expect( md ).toContain( '**custom events:** 68' );
+} );
+
+test( 'a rule says what it logs beyond hooks, so an absence reads right', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/calendar',
+		rule: {
+			id: 'a1b2c3',
+			pattern: '/calendar',
+			action: 'log',
+			hook_count: 2,
+			log_queries: true,
+			log_http: false,
+			log_plugin_loads: true,
+			trace_hooks: false,
+			trace_callers: 3,
+		},
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**logs:** queries, plugin loads' );
+	expect( md ).toContain( '**traces:** callers ×3' );
+	expect( md ).not.toContain( 'HTTP' );
+} );
+
+test( 'a rule logging nothing beyond hooks says so', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/calendar',
+		rule: {
+			id: 'a1b2c3',
+			pattern: '/calendar',
+			action: 'log',
+			hook_count: 2,
+			log_queries: false,
+			log_http: false,
+			log_plugin_loads: false,
+			trace_hooks: false,
+			trace_callers: 0,
+		},
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**logs:** hooks only' );
+	expect( md ).not.toContain( '**traces:**' );
 } );
 
 test( 'nothing to say is an empty string, not "undefined"', () => {

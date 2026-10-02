@@ -168,6 +168,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public const IDLE_AFTER_SEC = 12 * self::FLUSH_INTERVAL_SEC;
 
 	/**
+	 * Error statuses whose duration ends at an interruption rather than the
+	 * request's end: a timeout and an abort (decision 24).
+	 *
+	 * @var list<string>
+	 */
+	public const UNTIMED_STATUSES = [ 'T', 'A' ];
+
+	/**
 	 * Monotonic clock seam, replacing `hrtime( true )` where a builder times
 	 * its own quiet or a wait. Tests reassign it to step the monotonic clock
 	 * apart from the wall one. Signature: `function (): int`, nanoseconds.
@@ -820,7 +828,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param mixed $error_status The record's error status, `-` when none.
 	 */
 	public static function timing_counts( float $duration_ms, mixed $error_status ): bool {
-		return $duration_ms > 0 && ! \in_array( $error_status, [ 'T', 'A' ], true );
+		return $duration_ms > 0 && ! \in_array( $error_status, self::UNTIMED_STATUSES, true );
 	}
 
 	/**

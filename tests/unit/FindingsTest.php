@@ -26,7 +26,7 @@ class FindingsTest extends TestCase {
 	/** A record whose profiled time accounts for its duration and holds no findings. */
 	private function healthy_record(): array {
 		return [
-			'url'         => '/calendar/today',
+			'url'         => 'https://example.test/calendar/today',
 			'duration_ms' => 400.0,
 			'status_code' => 200,
 			'entries'     => [
@@ -99,13 +99,207 @@ class FindingsTest extends TestCase {
 
 		$kinds = $this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) );
 
-		$this->assertContains( 'dominant_span', $kinds );
-		$this->assertNotContains(
-			'unattributed',
-			$kinds,
-			'reading the wrong key made every ordinary request look wholly unmeasured'
-		);
+		$this->assertContains( 'dominant_span', $kinds, 'reading the wrong key made every ordinary request look wholly unmeasured' );
 		$this->assertNotContains( 'insufficient_instrumentation', $kinds );
+	}
+
+	/**
+	 * The live hub timeout (86cnt4d8763r2jvw7rmxpsy77y2sm7o6), shaped as
+	 * stored: the trace ran 467ms into a nested render and then nothing more
+	 * arrived until the builder timed it out 856 seconds after it opened.
+	 */
+	private function timed_out_record(): array {
+		$record                 = $this->loaded_record();
+		$record['error_status'] = 'T';
+		$record['timestamp']    = 6000.0;
+		$record['duration_ms']  = 856000.0;
+		$record['entries']      = [
+			[ 'n' => 1, 'ts' => 6000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 6000.001, 'k' => 'request', 'm' => 'GET /calendar/today' ],
+			[ 'n' => 3, 'ts' => 6000.002, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 4, 'ts' => 6000.104, 'k' => 'template_redirect hook (start)', 'm' => '' ],
+			[ 'n' => 1, 'ts' => 6000.410, 'k' => 'gyrobase (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 6000.467, 'k' => 'include (start)', 'l' => '/Macros/Global.html', 'm' => '' ],
+		];
+		$record['last_log_ts']  = 6000.467;
+		return $record;
+	}
+
+	/**
+	 * A timed-out record says where its trace stopped: the last entry, the
+	 * spans still open there, and when the builder gave up on it. It names
+	 * no cause, because a killed or hung process and a lost log tail leave
+	 * the same record.
+	 */
+	public function test_a_timed_out_record_says_where_its_logging_stopped(): void {
+		$findings = Findings::for_request( $this->timed_out_record(), $this->instrumented_rule() );
+		$found    = $this->of_kind( $findings, 'stopped' );
+
+		$this->assertSame( 'stopped', $findings[0]['kind'], 'nothing else on a timed-out record outranks where it stopped' );
+		$this->assertSame( 'high', $found['severity'] );
+		$this->assertEqualsWithDelta( 467.0, $found['metric']['last_entry_ms'], 1e-6 );
+		$this->assertSame( 'include (start)', $found['metric']['last_entry'] );
+		$this->assertSame( 'template_redirect hook › gyrobase › include: /Macros/Global.html', $found['metric']['open'] );
+		$this->assertSame( 856000.0, $found['metric']['evicted_after_ms'] );
+		$this->assertStringContainsString( 'stopped logging 467.0ms in', $found['title'] );
+		$this->assertStringNotContainsString( 'killed', $found['title'] );
+		$this->assertStringContainsString( 'lost log tail', $found['detail'] );
+		$this->assertArrayNotHasKey( 'proposal', $found );
+	}
+
+	/** Nothing past the request's opening rows places no stop: only the time is known. */
+	public function test_a_record_silent_after_its_opening_rows_has_no_known_stop_point(): void {
+		$record                = $this->timed_out_record();
+		$record['entries']     = \array_slice( $record['entries'], 0, 3 );
+		$record['last_log_ts'] = 6000.268;
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'stopped' );
+
+		$this->assertSame( [ 'last_entry_ms', 'last_line_ms', 'evicted_after_ms' ], \array_keys( $found['metric'] ) );
+		$this->assertEqualsWithDelta( 2.0, $found['metric']['last_entry_ms'], 1e-6, 'the opening sample\'s own time' );
+		$this->assertEqualsWithDelta( 268.0, $found['metric']['last_line_ms'], 1e-6 );
+		$this->assertStringContainsString( 'unknown', $found['title'] );
+		$this->assertStringNotContainsString( 'resources', $found['title'] );
+	}
+
+	/** Rows past the opening ones place the stop, whatever the rule binds. */
+	public function test_a_hookless_rules_record_still_places_its_stop(): void {
+		$found = $this->of_kind(
+			Findings::for_request( $this->timed_out_record(), new Rule( 'ffff11112222', '/calendar/today', Rule::ACTION_LOG ) ),
+			'stopped'
+		);
+
+		$this->assertSame( 'include (start)', $found['metric']['last_entry'] ?? null );
+	}
+
+	/**
+	 * The profiler's plugin rows are written after the opening rows but stamped
+	 * with when each plugin loaded, before the `request` line: a stop is never
+	 * placed earlier than that line.
+	 */
+	public function test_back_dated_plugin_rows_place_no_stop(): void {
+		$record                = $this->timed_out_record();
+		$record['entries']     = [
+			...\array_slice( $record['entries'], 0, 3 ),
+			[ 'n' => 4, 'ts' => 5999.950, 'k' => 'jetpack plugin (start)', 'm' => '' ],
+			[ 'n' => 5, 'ts' => 5999.990, 'k' => 'jetpack plugin (complete)', 'm' => '', 'duration_ms' => 40.0 ],
+		];
+		// The builder keeps the latest stamp it has seen.
+		$record['last_log_ts'] = 6000.002;
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'stopped' );
+
+		$this->assertArrayNotHasKey( 'last_entry', $found['metric'] );
+		$this->assertStringContainsString( 'unknown', $found['title'] );
+		$this->assertEqualsWithDelta( 2.0, $found['metric']['last_entry_ms'], 1e-6 );
+		$this->assertGreaterThanOrEqual( $found['metric']['last_entry_ms'], $found['metric']['last_line_ms'] );
+	}
+
+	/**
+	 * A runaway's builder keeps stamping `last_log_ts` after it stops storing
+	 * entries, so the stored stop and the last line seen are two facts, each
+	 * with its own time.
+	 */
+	public function test_a_runaway_reports_its_stored_stop_and_its_last_line_apart(): void {
+		$record                = $this->timed_out_record();
+		$record['last_log_ts'] = 6005.250;
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'stopped' );
+
+		$this->assertSame( 'include (start)', $found['metric']['last_entry'] );
+		$this->assertEqualsWithDelta( 467.0, $found['metric']['last_entry_ms'], 1e-6 );
+		$this->assertEqualsWithDelta( 5250.0, $found['metric']['last_line_ms'], 1e-6 );
+		$this->assertStringContainsString( 'stopped logging 467.0ms in', $found['title'] );
+	}
+
+	/**
+	 * An aborted record's producer drained its open spans as `(orphaned)`
+	 * completes before the terminal, so the stop point sits ahead of that
+	 * drain and the spans it closed are the ones that were open.
+	 */
+	public function test_an_aborted_record_reads_its_stop_ahead_of_the_drain(): void {
+		$record                 = $this->loaded_record();
+		$record['error_status'] = 'A';
+		$record['timestamp']    = 6000.0;
+		$record['duration_ms']  = 912.0;
+		$record['entries']      = [
+			[ 'n' => 1, 'ts' => 6000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 6000.002, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 3, 'ts' => 6000.100, 'k' => 'job (start)', 'l' => 'cache_cozy', 'm' => '' ],
+			[ 'n' => 4, 'ts' => 6000.310, 'k' => 'http (start)', 'l' => 'Cache_Cozy::warm', 'm' => 'https://example.test/' ],
+			[ 'n' => 5, 'ts' => 6000.911, 'k' => 'http (complete)', 'm' => '(orphaned)', 'duration_ms' => 601.0 ],
+			[ 'n' => 6, 'ts' => 6000.911, 'k' => 'job (complete)', 'm' => '(orphaned)', 'duration_ms' => 811.0 ],
+			[ 'n' => 7, 'ts' => 6000.911, 'k' => 'memory', 'm' => [ 'peak' => '40MB' ] ],
+			[ 'n' => 8, 'ts' => 6000.912, 'k' => 'resources', 'm' => 'utime => 0.090000, stime => 0.020000' ],
+			[ 'n' => 9, 'ts' => 6000.912, 'k' => 'process (aborted)', 'm' => '' ],
+		];
+		$record['last_log_ts']  = 6000.912;
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'stopped' );
+
+		$this->assertSame( 'http (start)', $found['metric']['last_entry'] );
+		$this->assertEqualsWithDelta( 310.0, $found['metric']['last_entry_ms'], 1e-6 );
+		$this->assertSame( 'job: cache_cozy › http: Cache_Cozy::warm', $found['metric']['open'] );
+		$this->assertSame( 912.0, $found['metric']['aborted_after_ms'] );
+		$this->assertArrayNotHasKey( 'evicted_after_ms', $found['metric'] );
+	}
+
+	public function test_a_record_that_finished_has_no_stopped_finding(): void {
+		$record                = $this->timed_out_record();
+		$record['error_status'] = '-';
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'stopped' ) );
+	}
+
+	/** Where a trace stopped is the whole finding, so a record that cannot say fails loud. */
+	public function test_a_timed_out_record_without_its_last_stamp_is_refused(): void {
+		$record = $this->timed_out_record();
+		unset( $record['last_log_ts'] );
+
+		$this->expectException( \UnexpectedValueException::class );
+		$this->expectExceptionMessage( 'last_log_ts' );
+		Findings::for_request( $record, $this->instrumented_rule() );
+	}
+
+	/**
+	 * A timed-out duration ends where the builder gave up (decision 24), so no
+	 * share of it is a finding; what reads timestamps and rule facts still runs.
+	 */
+	public function test_a_timed_out_record_reports_no_share_of_its_duration(): void {
+		$record               = $this->timed_out_record();
+		$record['flame_data'] = [
+			'name'     => 'request',
+			'value'    => 856000.0,
+			'children' => [
+				[
+					'name'     => 'process',
+					'value'    => 856000.0,
+					'children' => [
+						[ 'name' => 'template_redirect hook', 'value' => 700000.0, 'children' => [] ],
+						[ 'name' => 'giant-7734 plugin', 'value' => 250000.0, 'children' => [] ],
+					],
+				],
+			],
+		];
+		$record['profiles']   = [ 'the_content hook' => [ 'count' => 340, 'time' => 90000.0, 'entries' => [] ] ];
+
+		$kinds = $this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) );
+
+		$this->assertNotContains( 'dominant_span', $kinds );
+		$this->assertNotContains( 'plugin_load', $kinds );
+		$this->assertNotContains( 'repetition', $kinds );
+		$this->assertContains( 'entry_gap', $kinds, 'a gap is a timestamp difference, which a timeout does not falsify' );
+	}
+
+	/** The cold start on a timed-out record leaves the eviction boundary to `stopped`. */
+	public function test_a_timed_out_cold_start_carries_no_duration(): void {
+		$found = $this->of_kind(
+			Findings::for_request( $this->timed_out_record(), new Rule( 'ffff11112222', '/calendar/today', Rule::ACTION_LOG ) ),
+			'insufficient_instrumentation'
+		);
+
+		$this->assertNotNull( $found );
+		$this->assertArrayNotHasKey( 'duration_ms', $found['metric'] );
 	}
 
 	/** @param list<array<string,mixed>> $findings */
@@ -144,6 +338,8 @@ class FindingsTest extends TestCase {
 
 		$this->assertNotNull( $found );
 		$this->assertSame( 'render_block hook', $found['metric']['name'] );
+		$this->assertSame( 'wp_loaded hook › render_block hook', $found['metric']['path'] );
+		$this->assertArrayNotHasKey( 'i', $found['metric'], 'no entry opens this span, so none is named' );
 		$this->assertEqualsWithDelta( 0.915, $found['metric']['share'], 0.001 );
 		$this->assertSame( 'flame', $found['measured'] );
 		$this->assertSame( 'a1b2c3d4e5f6', $found['rule_id'] );
@@ -515,6 +711,82 @@ class FindingsTest extends TestCase {
 		);
 	}
 
+	/** A count past the threshold holding a sliver of the request is no finding (eln 7ea9's `sql ×136`). */
+	public function test_a_repeat_holding_a_sliver_of_the_request_is_quiet(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 10540.0;
+		$record['profiles']    = [ 'sql' => [ 'count' => 136, 'time' => 6.3, 'entries' => [] ] ];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/** Eln 296vb's `sql ×1125` holds 7.2% of the request, past `REPETITION_SHARE`. */
+	public function test_a_repeat_holding_a_share_of_the_request_reports(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 10540.0;
+		$record['profiles']    = [ 'sql' => [ 'count' => 1125, 'time' => 757.9, 'entries' => [] ] ];
+
+		$this->assertSame( 1125, $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' )['metric']['count'] ?? null );
+	}
+
+	/**
+	 * Few calls holding a quarter of the request repeat whatever their count:
+	 * hub 2yoz's `Event_$_Time` ran 40 times for 3633ms of 8968ms.
+	 */
+	public function test_few_calls_holding_a_quarter_of_the_request_repeat(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 8968.4;
+		$record['profiles']    = [
+			'fieldvalues' => [ 'count' => 40, 'time' => 3633.0, 'entries' => [ 'Event_$_Time' => [ 3633.0, 40 ] ] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertSame( 'fieldvalues: Event_$_Time', $found['metric']['name'] ?? null );
+	}
+
+	public function test_few_calls_holding_less_than_a_quarter_are_quiet(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 8968.4;
+		$record['profiles']    = [
+			'fieldvalues' => [ 'count' => 40, 'time' => 1800.0, 'entries' => [ 'Event_$_Time' => [ 1800.0, 40 ] ] ],
+		];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/** One span is one finding: the dominant span already names the repeat. */
+	public function test_a_repeat_the_dominant_span_names_is_not_reported_twice(): void {
+		$record                      = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'the_content hook', 'value' => 372.0, 'children' => [] ],
+		];
+		$record['profiles']          = [ 'the_content hook' => [ 'count' => 340, 'time' => 372.0, 'entries' => [] ] ];
+
+		$findings = Findings::for_request( $record, $this->instrumented_rule() );
+
+		$this->assertNotNull( $this->of_kind( $findings, 'dominant_span' ) );
+		$this->assertNull( $this->of_kind( $findings, 'repetition' ) );
+	}
+
+	/** A body that rounds to all of the request claims no remainder inside it. */
+	public function test_a_dominant_span_spending_all_of_it_claims_no_remainder(): void {
+		$record                      = $this->healthy_record();
+		$record['flame']['children'] = [
+			[
+				'name'     => 'pyrobase',
+				'value'    => 399.0,
+				'children' => [ [ 'name' => 'restapi', 'value' => 0.5, 'children' => [] ] ],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'pyrobase', $found['metric']['name'] );
+		$this->assertStringNotContainsString( 'the rest is inside', $found['detail'] );
+	}
+
 	public function test_a_span_below_the_repetition_threshold_is_quiet(): void {
 		$record             = $this->healthy_record();
 		$record['profiles'] = [
@@ -531,22 +803,69 @@ class FindingsTest extends TestCase {
 		);
 	}
 
-	/** The live case: 175.6ms profiled against a 420-second request. */
-	public function test_unattributed_time_is_subtraction(): void {
+	/**
+	 * A flame value is a rendering artifact (decision 12), so a share divides
+	 * by the request's measured duration: a span holding 93% of a root that
+	 * fell short of the duration holds 37% of the request, and no subtraction
+	 * between the two is reported as unmeasured time.
+	 */
+	public function test_a_share_divides_by_the_requests_duration(): void {
 		$record                = $this->healthy_record();
-		$record['duration_ms'] = 420000.0;
+		$record['duration_ms'] = 1000.0;
 		$record['flame']       = [
 			'name'     => 'request',
-			'value'    => 175.6,
-			'children' => [ [ 'name' => 'init', 'value' => 175.6, 'children' => [] ] ],
+			'value'    => 400.0,
+			'children' => [
+				[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+				[ 'name' => 'wp_loaded hook', 'value' => 372.0, 'children' => [] ],
+			],
 		];
 
-		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'unattributed' );
+		$this->assertSame( [], Findings::for_request( $record, $this->instrumented_rule() ) );
+	}
 
-		$this->assertNotNull( $found );
-		$this->assertEqualsWithDelta( 419824.4, $found['metric']['missing_ms'], 0.1 );
-		$this->assertEqualsWithDelta( 175.6, $found['metric']['profiled_ms'], 0.1 );
-		$this->assertSame( 'subtraction', $found['measured'] );
+	public function test_a_dominant_title_names_its_share_of_the_request(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wp_loaded hook', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'wp_loaded hook holds 93% of the request', $found['title'] );
+	}
+
+	/**
+	 * A record carrying no tree is rebuilt from its entries through the same
+	 * fold that names an unfolded record's statements, so it still gets its
+	 * share findings.
+	 */
+	public function test_a_flameless_record_is_read_from_its_entries(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 900.0;
+		$record['entries']     = [
+			[ 'n' => 1, 'ts' => 7000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 7000.020, 'k' => 'wp_loaded hook (start)', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 7000.830, 'k' => 'wp_loaded hook (complete)', 'm' => '', 'duration_ms' => 810.0 ],
+			[ 'n' => 4, 'ts' => 7000.900, 'k' => 'process (complete)', 'm' => '', 'duration_ms' => 900.0 ],
+		];
+		unset( $record['flame'] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'wp_loaded hook', $found['metric']['name'] ?? null );
+		$this->assertEqualsWithDelta( 0.9, $found['metric']['share'] ?? 0.0, 1e-9 );
+	}
+
+	/** The cold start reports what the rule and the record hold, and no flame total. */
+	public function test_the_cold_start_metric_carries_no_flame_total(): void {
+		$found = $this->of_kind(
+			Findings::for_request( $this->healthy_record(), new Rule( 'ffff11112222', '/calendar/today', Rule::ACTION_LOG ) ),
+			'insufficient_instrumentation'
+		);
+
+		$this->assertSame( [ 'duration_ms', 'spans', 'hooks' ], \array_keys( $found['metric'] ) );
 	}
 
 	public function test_an_entry_gap_reports_where_it_opened(): void {
@@ -563,6 +882,60 @@ class FindingsTest extends TestCase {
 		$this->assertEqualsWithDelta( 3650.0, $found['metric']['gap_ms'], 0.1 );
 		$this->assertSame( 'init hook', $found['metric']['after'] );
 		$this->assertSame( 'wp_loaded hook', $found['metric']['before'] );
+	}
+
+	/**
+	 * The two `resources` samples bracket the window, so its CPU time bounds
+	 * how much of the gap the process spent working, assuming nothing about
+	 * where inside the bracket that CPU fell.
+	 */
+	public function test_a_gap_inside_the_resource_samples_is_split_by_cpu(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.002, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000, maxrss => 81234' ],
+			[ 'n' => 3, 'ts' => 2000.050, 'k' => 'init hook', 'm' => '' ],
+			[ 'n' => 4, 'ts' => 2003.700, 'k' => 'wp_loaded hook', 'm' => '' ],
+			[ 'n' => 5, 'ts' => 2003.750, 'k' => 'resources', 'm' => 'utime => 3.540000, stime => 0.010000, maxrss => 91234' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertEqualsWithDelta( 3402.0, $found['metric']['on_cpu_min_ms'], 1e-6 );
+		$this->assertEqualsWithDelta( 3500.0, $found['metric']['on_cpu_max_ms'], 1e-6 );
+		$this->assertStringContainsString( 'this process was on CPU for at least 3.4s of it', $found['detail'] );
+		$this->assertStringContainsString( 'was not on CPU for at least 150.0ms of it', $found['detail'] );
+		$this->assertStringContainsString( 'child process', $found['detail'] );
+	}
+
+	/** A window the two samples do not bracket has no CPU figure at all. */
+	public function test_a_gap_outside_the_resource_samples_has_no_cpu_split(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.700, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 3, 'ts' => 2000.750, 'k' => 'init hook', 'm' => '' ],
+			[ 'n' => 4, 'ts' => 2000.760, 'k' => 'resources', 'm' => 'utime => 0.050000, stime => 0.010000' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertEqualsWithDelta( 700.0, $found['metric']['gap_ms'], 1e-6 );
+		$this->assertArrayNotHasKey( 'on_cpu_min_ms', $found['metric'] );
+		$this->assertStringNotContainsString( 'CPU', $found['detail'] );
+	}
+
+	public function test_a_gap_with_one_resource_sample_has_no_cpu_split(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.002, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 3, 'ts' => 2000.700, 'k' => 'init hook', 'm' => '' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertArrayNotHasKey( 'on_cpu_max_ms', $found['metric'] );
 	}
 
 	public function test_a_round_trip_is_not_a_gap(): void {
@@ -603,19 +976,90 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A gap inside a span sits where no hook the rule can add is known to
-	 * reach, so it proposes no edit — and the hub record then carries no
-	 * `add_hooks` beside the dominant span's `none`.
+	 * The window ending where the nested engine opens its own log holds its
+	 * start-up and the PHP that spawned it: nothing a rule edit reaches, and
+	 * not all of it the engine's.
 	 */
-	public function test_the_hub_record_proposes_no_hooks_for_a_gap_inside_a_span(): void {
+	public function test_the_hub_record_proposes_no_hooks_for_the_engine_start_up(): void {
 		$findings = Findings::for_request( $this->hub_record(), $this->instrumented_rule() );
 
 		$gap = $this->of_kind( $findings, 'entry_gap' );
 		$this->assertSame( 'none', $gap['proposal']['action'] );
-		$this->assertStringContainsString( 'template_redirect hook', $gap['proposal']['why'] );
+		$this->assertStringContainsString( 'start-up', $gap['detail'] );
+		$this->assertStringContainsString( 'before', $gap['detail'], 'the window also holds the PHP that spawned the engine' );
+		$this->assertStringContainsString( 'start-up', $gap['proposal']['why'] );
 		$this->assertSame( 'none', $this->of_kind( $findings, 'dominant_span' )['proposal']['action'] );
 		$this->assertNull( $this->of_kind( $findings, 'repetition' ) );
 		$this->assertNotContains( 'add_hooks', \array_column( \array_column( $findings, 'proposal' ), 'action' ) );
+	}
+
+	/** The window after the nested engine closes its log holds its exit. */
+	public function test_a_gap_after_the_nested_engine_closes_is_its_exit(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 5000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 5000.010, 'k' => 'template_redirect hook (start)', 'l' => 'require_once', 'm' => '' ],
+			[ 'n' => 1, 'ts' => 5000.020, 'k' => 'gyrobase (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 5000.040, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 20.0 ],
+			[ 'n' => 3, 'ts' => 5000.420, 'k' => 'template_redirect hook (complete)', 'm' => '', 'duration_ms' => 410.0 ],
+			[ 'n' => 4, 'ts' => 5000.430, 'k' => 'process (complete)', 'm' => '' ],
+		];
+
+		$gap = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'gyrobase (complete)', $gap['metric']['after'] );
+		$this->assertStringContainsString( 'exit', $gap['detail'] );
+		$this->assertSame( 'none', $gap['proposal']['action'] );
+	}
+
+	/**
+	 * A hook whose own time is the nested engine's start-up and exit gains
+	 * nothing from being marked significant: its one listener spawned the
+	 * engine, and timing that listener re-measures the same window.
+	 */
+	public function test_a_dominant_span_whose_own_time_is_the_engine_window_proposes_nothing(): void {
+		$found = $this->of_kind( Findings::for_request( $this->engine_hook_record( 700.0 ), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'template_redirect hook: require_once', $found['metric']['name'] );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'start-up', $found['proposal']['why'] );
+	}
+
+	/** Own time well past the engine's window still asks to see inside the hook. */
+	public function test_a_dominant_span_with_own_time_beyond_the_engine_window_proposes_visibility(): void {
+		$found = $this->of_kind( Findings::for_request( $this->engine_hook_record( 1200.0 ), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+	}
+
+	/**
+	 * A hook holding a nested render whose engine took 306ms to open its log
+	 * and 20ms to close it, with `$hook_ms` of the request inside the hook.
+	 *
+	 * @param float $hook_ms The hook's value; the engine holds 300 of it.
+	 */
+	private function engine_hook_record( float $hook_ms ): array {
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = $hook_ms / 0.7;
+		$record['entries']     = [
+			[ 'n' => 1, 'ts' => 5000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 5000.104, 'k' => 'template_redirect hook (start)', 'l' => 'require_once', 'm' => '' ],
+			[ 'n' => 1, 'ts' => 5000.410, 'k' => 'gyrobase (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 5000.710, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 300.0 ],
+			[ 'n' => 3, 'ts' => 5000.730, 'k' => 'template_redirect hook (complete)', 'm' => '', 'duration_ms' => $hook_ms ],
+		];
+		$record['flame_data']  = [
+			'name'     => 'request',
+			'value'    => $record['duration_ms'],
+			'children' => [
+				[
+					'name'     => 'template_redirect hook: require_once',
+					'value'    => $hook_ms,
+					'children' => [ [ 'name' => 'gyrobase', 'value' => 300.0, 'children' => [] ] ],
+				],
+			],
+		];
+		return $record;
 	}
 
 	/**
@@ -703,7 +1147,232 @@ class FindingsTest extends TestCase {
 
 		$this->assertEqualsWithDelta( 640.0, $found['metric']['gap_ms'], 0.1 );
 		$this->assertArrayNotHasKey( 'inside', $found['metric'], 'both spans closed, so the window is the request\'s own' );
-		$this->assertSame( 'add_hooks', $found['proposal']['action'] );
+		$this->assertSame( 'none', $found['proposal']['action'], 'no hook is known to run at the request\'s own level' );
+		$this->assertArrayNotHasKey( 'hooks', $found['proposal'] );
+	}
+
+	/** A body holding nearly all of its own span claims no remainder inside it. */
+	public function test_a_body_holding_its_whole_span_claims_no_remainder(): void {
+		$record                      = $this->healthy_record();
+		$record['duration_ms']       = 1000.0;
+		$record['flame']             = [
+			'name'     => 'request',
+			'value'    => 1000.0,
+			'children' => [
+				[
+					'name'     => 'wp_loaded hook',
+					'value'    => 700.0,
+					'children' => [ [ 'name' => 'render_block hook', 'value' => 2.0, 'children' => [] ] ],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'wp_loaded hook', $found['metric']['name'] );
+		$this->assertStringNotContainsString( 'the rest is inside', $found['detail'] );
+	}
+
+	/** The nested engine's CPU is its own process's, which the PHP samples never count. */
+	public function test_a_gap_inside_the_nested_engine_has_no_cpu_split(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.002, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 1, 'ts' => 2000.010, 'k' => 'gyrobase (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.020, 'k' => 'include (start)', 'l' => '/a.html', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 2000.030, 'k' => 'include (complete)', 'm' => '', 'duration_ms' => 10.0 ],
+			[ 'n' => 4, 'ts' => 2000.630, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 620.0 ],
+			[ 'n' => 3, 'ts' => 2000.640, 'k' => 'resources', 'm' => 'utime => 0.090000, stime => 0.010000' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'gyrobase', $found['metric']['inside'] );
+		$this->assertArrayNotHasKey( 'on_cpu_min_ms', $found['metric'] );
+		$this->assertStringNotContainsString( 'CPU', $found['detail'] );
+	}
+
+	/** Only the engine runs inside the dominant span lend it their edges. */
+	public function test_another_spans_engine_run_lends_the_dominant_span_no_edges(): void {
+		$record                = $this->engine_hook_record( 1200.0 );
+		$record['entries'][]   = [ 'n' => 4, 'ts' => 5000.740, 'k' => 'wp_footer hook (start)', 'm' => '' ];
+		$record['entries'][]   = [ 'n' => 1, 'ts' => 5001.440, 'k' => 'gyrobase (start)', 'm' => '' ];
+		$record['entries'][]   = [ 'n' => 2, 'ts' => 5001.450, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 10.0 ];
+		$record['entries'][]   = [ 'n' => 5, 'ts' => 5001.460, 'k' => 'wp_footer hook (complete)', 'm' => '', 'duration_ms' => 720.0 ];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'template_redirect hook: require_once', $found['metric']['name'] );
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+	}
+
+	/** Under `MIN_DURATION_MS` no share is a finding, a repeat's included. */
+	public function test_a_repeat_in_a_request_too_short_to_share_is_quiet(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 40.0;
+		$record['profiles']    = [ 'the_content hook' => [ 'count' => 340, 'time' => 30.0, 'entries' => [] ] ];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/**
+	 * Past the fold marker the record is spliced, so a nested render the tail
+	 * opens seconds later lends the span around it no start-up edge.
+	 */
+	public function test_an_engine_edge_across_the_fold_marker_lends_no_edge(): void {
+		$record                = $this->engine_hook_record( 1200.0 );
+		$record['folded']      = true;
+		$record['entries']     = [
+			[ 'n' => 1, 'ts' => 5000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 5000.104, 'k' => 'template_redirect hook (start)', 'l' => 'require_once', 'm' => '' ],
+			[ 'n' => 1, 'ts' => 5000.410, 'k' => 'gyrobase (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 5000.710, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 300.0 ],
+			[ 'n' => 3, 'ts' => 5000.720, 'k' => 'entries (aggregated)', 'm' => '40 entries merged under memory pressure' ],
+			[ 'n' => 1, 'ts' => 5004.720, 'k' => 'gyrobase (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 5004.730, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 10.0 ],
+			[ 'n' => 9, 'ts' => 5004.740, 'k' => 'template_redirect hook (complete)', 'm' => '', 'duration_ms' => 1200.0 ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+	}
+
+	/** A record with no gap never reads its CPU samples, so a malformed one costs nothing. */
+	public function test_a_gapless_record_never_parses_its_cpu_samples(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.002, 'k' => 'resources', 'm' => 'utime => 0,128355, stime => 0,000000' ],
+			[ 'n' => 3, 'ts' => 2000.100, 'k' => 'init hook', 'm' => '' ],
+			[ 'n' => 4, 'ts' => 2000.120, 'k' => 'resources', 'm' => 'utime => 0,138355, stime => 0,000000' ],
+		];
+
+		$this->assertSame( [], Findings::for_request( $record, $this->instrumented_rule() ) );
+	}
+
+	/**
+	 * The profiler's plugin rows are written after the opening rows and
+	 * stamped before them, so a window is measured from the latest stamp seen:
+	 * a back-dated row neither stretches nor invents one.
+	 */
+	public function test_back_dated_rows_stretch_no_gap(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.030, 'k' => 'request', 'm' => 'GET https://example.test/calendar/today' ],
+			[ 'n' => 3, 'ts' => 2000.031, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 4, 'ts' => 2000.010, 'k' => 'jetpack plugin (start)', 'm' => '' ],
+			[ 'n' => 5, 'ts' => 2000.020, 'k' => 'jetpack plugin (complete)', 'm' => '', 'duration_ms' => 10.0 ],
+			[ 'n' => 6, 'ts' => 2000.330, 'k' => 'init hook', 'm' => '' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'resources', $found['metric']['after'] );
+		$this->assertEqualsWithDelta( 299.0, $found['metric']['gap_ms'], 1e-6 );
+		$this->assertSame( 2, $found['metric']['from_i'] );
+	}
+
+	/** A record resolved to no tree is not folded again from its entries. */
+	public function test_a_resolved_empty_tree_is_not_refolded(): void {
+		$record = [
+			'flame_data' => [],
+			'entries'    => [
+				[ 'n' => 1, 'ts' => 1.0, 'k' => 'init hook (start)', 'm' => '' ],
+				[ 'n' => 2, 'ts' => 1.1, 'k' => 'init hook (complete)', 'm' => '', 'duration_ms' => 100.0 ],
+			],
+		];
+
+		$this->assertSame( [], Findings::flame_of( $record ) );
+	}
+
+	/** A record whose widest gap sits inside `the_content`, after its one child closed. */
+	private function content_gap_record(): array {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.010, 'k' => 'the_content hook (start)', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 2000.020, 'k' => 'render_block hook (start)', 'm' => '' ],
+			[ 'n' => 4, 'ts' => 2000.030, 'k' => 'render_block hook (complete)', 'm' => '', 'duration_ms' => 10.0 ],
+			[ 'n' => 5, 'ts' => 2000.430, 'k' => 'the_content hook (complete)', 'm' => '', 'duration_ms' => 420.0 ],
+			[ 'n' => 6, 'ts' => 2000.440, 'k' => 'process (complete)', 'm' => '' ],
+		];
+		return $record;
+	}
+
+	/** A gap inside a span asks to see inside that span, as a dominant span would. */
+	public function test_a_gap_inside_a_span_proposes_seeing_inside_it(): void {
+		$found = $this->of_kind( Findings::for_request( $this->content_gap_record(), $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'the_content hook', $found['metric']['inside'] );
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+		$this->assertSame( 'the_content', $found['proposal']['value'] );
+	}
+
+	/** A dominant span names the entry that first opened it, so a reader can ask about it. */
+	public function test_a_dominant_span_names_the_entry_that_opened_it(): void {
+		$record                = $this->content_gap_record();
+		$record['duration_ms'] = 500.0;
+		$record['entries']     = [ [ 'n' => 0, 'ts' => 1999.999, 'k' => 'environment_v3', 'm' => [] ], ...$record['entries'] ];
+		unset( $record['flame'] );
+		$record['flame_data'] = Flame_Tree::build_flame_data( $record['entries'] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 2, $found['metric']['i'], 'the index counts the environment row' );
+		$this->assertSame( 'the_content hook', $found['metric']['path'] );
+	}
+
+	/** A gap names its rows by their position in the record and when it opened. */
+	public function test_a_gap_names_its_rows_and_when_it_opened(): void {
+		$found = $this->of_kind( Findings::for_request( $this->content_gap_record(), $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 3, $found['metric']['from_i'] );
+		$this->assertSame( 4, $found['metric']['to_i'] );
+		$this->assertEqualsWithDelta( 30.0, $found['metric']['at_ms'], 1e-6 );
+	}
+
+	/** One edit, proposed once: the dominant span already asks to see inside it. */
+	public function test_a_gap_inside_the_dominant_span_leaves_the_proposal_to_it(): void {
+		$record                      = $this->content_gap_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'the_content hook', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$findings = Findings::for_request( $record, $this->instrumented_rule() );
+
+		$this->assertSame( 'mark_significant', $this->of_kind( $findings, 'dominant_span' )['proposal']['action'] );
+		$gap = $this->of_kind( $findings, 'entry_gap' );
+		$this->assertSame( 'none', $gap['proposal']['action'] );
+		$this->assertStringContainsString( 'dominant', $gap['proposal']['why'] );
+	}
+
+	/** The lifecycle bracket the cold start proposes splits the request first. */
+	public function test_a_gap_under_a_hookless_rule_leaves_the_proposal_to_the_bracket(): void {
+		$findings = Findings::for_request( $this->content_gap_record(), new Rule( 'ffff11112222', '/calendar/today', Rule::ACTION_LOG ) );
+
+		$this->assertSame( Findings::LIFECYCLE_BRACKET, $this->of_kind( $findings, 'insufficient_instrumentation' )['proposal']['hooks'] );
+		$this->assertSame( 'none', $this->of_kind( $findings, 'entry_gap' )['proposal']['action'] );
+	}
+
+	/**
+	 * The profiler writes its plugin rows after the `request` line, stamped
+	 * earlier, so logging plugin loads lights nothing in the window before it.
+	 */
+	public function test_a_gap_before_the_request_line_proposes_nothing(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.380, 'k' => 'request', 'm' => 'GET https://example.test/calendar/today' ],
+			[ 'n' => 3, 'ts' => 2000.390, 'k' => 'init hook', 'm' => '' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
 	}
 
 	/** A span holding only point entries is a leaf: its duration measures it whole. */
@@ -889,7 +1558,6 @@ class FindingsTest extends TestCase {
 	public function test_every_finding_on_a_stamped_miss_record_carries_the_stamp_and_no_proposal(): void {
 		$record                      = $this->healthy_record();
 		$record['rule_id']           = 'cbcdd45b2cba';
-		$record['duration_ms']       = 420000.0;
 		$record['flame']['children'] = [
 			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
 			[
@@ -898,10 +1566,10 @@ class FindingsTest extends TestCase {
 				'children' => [ [ 'name' => 'render_block hook', 'value' => 366.0, 'children' => [] ] ],
 			],
 		];
-
+		$record['folded']            = true;
 		$findings = Findings::for_request( $record, null );
 
-		$this->assertNotEmpty( $this->of_kind( $findings, 'unattributed' ) );
+		$this->assertNotEmpty( $this->of_kind( $findings, 'truncation' ) );
 		$dominant = $this->of_kind( $findings, 'dominant_span' );
 		$this->assertNotNull( $dominant );
 		// What the unknown rule logged inside the span is not known here.
@@ -1013,6 +1681,27 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
+	 * The logger binds its rule inside `plugins_loaded`, so a bracket naming
+	 * that hook times nothing; `setup_theme` is the first phase it can see.
+	 */
+	public function test_the_bracket_opens_on_the_first_hook_the_logger_can_time(): void {
+		$this->assertSame(
+			[ 'setup_theme', 'init', 'wp_loaded', 'template_redirect', 'wp_head', 'shutdown' ],
+			Findings::LIFECYCLE_BRACKET
+		);
+	}
+
+	/** A rule's pattern is a path, so an absolute URL as one would match nothing. */
+	public function test_a_rule_to_create_is_patterned_on_the_path(): void {
+		$record        = $this->healthy_record();
+		$record['url'] = 'https://example.test/calendar/today';
+
+		$found = $this->of_kind( Findings::for_request( $record, null ), 'insufficient_instrumentation' );
+
+		$this->assertSame( '/calendar/today', $found['proposal']['pattern'] );
+	}
+
+	/**
 	 * The bisect subdivides only the phase that held the time — proposing forty
 	 * hooks is what this exists to avoid.
 	 */
@@ -1052,7 +1741,7 @@ class FindingsTest extends TestCase {
 	public function test_a_url_with_no_rule_reports_what_is_known(): void {
 		$found = $this->of_kind(
 			Findings::for_url(
-				[ 'url' => '/calendar/today', 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 2600.0, 'max_peak_mb' => 96.0 ],
+				[ 'url' => 'https://example.test/calendar/today', 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 2600.0, 'max_peak_mb' => 96.0 ],
 				null
 			),
 			'insufficient_instrumentation'
@@ -1369,6 +2058,11 @@ class FindingsTest extends TestCase {
 	}
 
 	/** A model handed a profiled/duration ratio with no caveat will invent a cause. */
+	public function test_the_caveat_calls_unlogged_time_unmeasured(): void {
+		$this->assertStringContainsString( 'Unlogged time is unmeasured, not idle.', Findings::caveat() );
+		$this->assertStringNotContainsString( 'Unattributed', Findings::caveat() );
+	}
+
 	public function test_the_caveat_names_what_is_not_measured(): void {
 		$caveat = Findings::caveat();
 
@@ -1404,6 +2098,7 @@ class FindingsTest extends TestCase {
 					'name'     => 'render_block hook',
 					'value'    => 900.0,
 					'count'    => 5,
+					'max'      => 190.0,
 					'children' => [
 						[ 'name' => 'render_block hook', 'value' => 700.0, 'count' => 1, 'children' => [] ],
 					],
@@ -1414,7 +2109,8 @@ class FindingsTest extends TestCase {
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
 
 		$this->assertNotNull( $found );
-		$this->assertSame( 2, $found['metric']['depth'] );
+		$this->assertSame( 'render_block hook › render_block hook', $found['metric']['path'] );
+		$this->assertArrayNotHasKey( 'depth', $found['metric'] );
 		$this->assertStringContainsString( 'inside render_block hook ×5', $found['title'] );
 		$this->assertStringNotContainsString( 'across 5 calls', $found['title'] );
 	}
@@ -1447,21 +2143,20 @@ class FindingsTest extends TestCase {
 	}
 
 	public function test_findings_come_back_worst_first(): void {
-		$record                = $this->healthy_record();
-		$record['duration_ms'] = 420000.0;
-		$record['folded']      = true;
-		$record['flame']       = [
+		$record             = $this->healthy_record();
+		$record['folded']   = true;
+		$record['flame']    = [
 			'name'     => 'request',
-			'value'    => 175.6,
-			'children' => [ [ 'name' => 'init hook', 'value' => 175.6, 'count' => 900, 'children' => [] ] ],
+			'value'    => 400.0,
+			'children' => [ [ 'name' => 'init hook', 'value' => 375.6, 'count' => 900, 'children' => [] ] ],
 		];
-		$record['profiles']    = [
-			'init hook' => [ 'count' => 900, 'time' => 175.6, 'entries' => [] ],
+		$record['profiles'] = [
+			'the_content hook' => [ 'count' => 900, 'time' => 50.0, 'entries' => [] ],
 		];
 
 		$kinds = $this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) );
 
-		$this->assertSame( 'unattributed', $kinds[0], 'the biggest unexplained number leads' );
+		$this->assertSame( 'dominant_span', $kinds[0], 'the high finding leads' );
 		$this->assertContains( 'truncation', $kinds );
 		$this->assertContains( 'repetition', $kinds );
 	}
@@ -1688,14 +2383,14 @@ class FindingsTest extends TestCase {
 	public function test_the_rest_of_the_loads_are_reported_beside_a_dominant_one(): void {
 		$record                = $this->loaded_record();
 		$record['duration_ms'] = 1200.0;
-		$plugins               = [ [ 'name' => 'giant-7734 plugin', 'value' => 560.0, 'children' => [] ] ];
+		$plugins               = [ [ 'name' => 'giant-7734 plugin', 'value' => 760.0, 'children' => [] ] ];
 		for ( $i = 0; $i < 14; $i++ ) {
 			$plugins[] = [ 'name' => "rest-{$i} plugin", 'value' => 25.0, 'children' => [] ];
 		}
 		$record['flame_data'] = [
 			'name'     => 'request',
-			'value'    => 910.0,
-			'children' => [ [ 'name' => 'process', 'value' => 910.0, 'children' => $plugins ] ],
+			'value'    => 1200.0,
+			'children' => [ [ 'name' => 'process', 'value' => 1200.0, 'children' => $plugins ] ],
 		];
 
 		$findings = Findings::for_request( $record, $this->instrumented_rule() );
@@ -1755,11 +2450,13 @@ class FindingsTest extends TestCase {
 							'name'     => $revisions,
 							'value'    => 59384.1,
 							'count'    => 10,
+							'max'      => 6120.4,
 							'children' => [
 								[
 									'name'     => 'do_blocks @9',
 									'value'    => 56104.6,
 									'count'    => 10,
+									'max'      => 5833.0,
 									'children' => [
 										[ 'name' => 'sql: WP_Query->get_posts', 'value' => 52105.4, 'count' => 299, 'children' => [] ],
 									],
@@ -1780,6 +2477,31 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 10, $found['metric']['repeat']['count'] );
 		$this->assertStringContainsString( $revisions, $found['title'] );
 		$this->assertStringContainsString( '×10', $found['title'] );
+	}
+
+	/**
+	 * A same-name group is a repeat only when no one member holds the
+	 * request: hub 2yoz's eight siblings, one holding 7784 of 7942ms, are one
+	 * slow call beside seven quick ones, not eight calls at 992.7ms each.
+	 */
+	public function test_a_group_one_member_dominates_is_no_repeat(): void {
+		$members = [ [ 'name' => 'fieldvalues', 'value' => 7784.0, 'children' => [] ] ];
+		for ( $i = 0; $i < 7; $i++ ) {
+			$members[] = [ 'name' => 'fieldvalues', 'value' => 22.6, 'children' => [] ];
+		}
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = 8968.4;
+		$record['flame_data']  = [
+			'name'     => 'request',
+			'value'    => 8968.4,
+			'children' => [ [ 'name' => 'process', 'value' => 8968.4, 'children' => $members ] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'fieldvalues', $found['metric']['name'] );
+		$this->assertArrayNotHasKey( 'repeat', $found['metric'] );
+		$this->assertStringNotContainsString( 'across 8 calls', $found['title'] );
 	}
 
 	/**

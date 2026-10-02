@@ -118,6 +118,8 @@ class ConfigSchemaTest extends TestCase {
 		$this->assertSame( -10000, Config::value( 'hook_start_priority' ) );
 		$this->assertSame( [], Config::value( 'custom_colors' ) );
 		$this->assertContains( 'template_redirect', Config::value( 'recommended_log_events' ) );
+		// The logger binds inside plugins_loaded, so it can never time it.
+		$this->assertNotContains( 'plugins_loaded', Config::value( 'recommended_log_events' ) );
 		$rules = Config::value( 'rules' );
 		$this->assertSame( [ 'pattern' => '/', 'action' => 'log' ], \end( $rules ) );
 	}

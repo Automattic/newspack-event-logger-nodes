@@ -58,11 +58,11 @@ Open a slow request by clicking its row. Under its summary, **Findings** lists w
 | Finding | What it tells you |
 |---|---|
 | "The request died in the … plugin" | A fatal error, with the plugin, the file and the line. That is the cause. |
-| "… holds N% of the profiled time" | One hook, query, HTTP call or event took most of the measured time. Name it. |
+| "The request stopped logging …" | The log ends before the request did: it timed out, or its worker stopped it. The finding names the last entry and what was still open there. |
+| "… holds N% of the request" | One hook, query, HTTP call or event took most of the request's time. Name it. |
 | "… fired N times in one request" | One thing ran 50 or more times. Often one database query per item on the page. |
 | "Loading N plugins took …" | Starting the plugins took a quarter of the request or more. No logging change will fix it. |
-| "… passed between … and … with nothing logged" | A silent gap of a quarter second or more. Something ran that nothing is timing. |
-| "… of … went unmeasured" | Most of the request ran outside anything timed. The cause is not visible yet: see step 5. |
+| "… passed between … and … with nothing logged" | A silent gap of a quarter second or more. Something ran that nothing is timing; where the record allows, the finding says how much of it the process spent on CPU and how much waiting. |
 | "No rule governs this URL…" and other "nothing is measured" findings | The logger records only that the request happened. See step 5. |
 | "Rule … governed this request, and this ruleset does not hold it" | The rule that logged it has since changed or come from another site. Ask the operator. |
 | "This record was folded under memory pressure" | Parts of the log were merged, so a missing entry proves nothing. |
@@ -71,10 +71,10 @@ Open a slow request by clicking its row. Under its summary, **Findings** lists w
 
 ### 5. When nothing is measured
 
-A logger sees only what the URL's **rule** tells it to time. If the findings say nothing is measured, or most time is unmeasured, the URL needs a rule that times more. In the URL's window press **Log this URL**, or **Edit logging rule** if one exists:
+A logger sees only what the URL's **rule** tells it to time. If the findings say nothing is measured, the URL needs a rule that times more. In the URL's window press **Log this URL**, or **Edit logging rule** if one exists:
 
 - Leave **URL pattern** as filled in: the trailing `?` makes the rule cover this one URL only.
-- Under **Hooks**, pick the hooks the finding's proposal names, after `add_hooks` or, for a URL no rule governs yet, `create_rule`. For a request nothing times, it proposes six that split it into phases: `plugins_loaded`, `init`, `wp_loaded`, `template_redirect`, `wp_head` and `shutdown`.
+- Under **Hooks**, pick the hooks the finding's proposal names, after `add_hooks` or, for a URL no rule governs yet, `create_rule`. For a request nothing times, it proposes six that split it into phases: `setup_theme`, `init`, `wp_loaded`, `template_redirect`, `wp_head` and `shutdown`.
 - Tick **Log HTTP requests** when you suspect a slow outside service, and **Log database queries** when you suspect the database. Query logging makes a query-heavy request much slower, so turn it off once you have your answer.
 - Press **Save rule**. It applies at once, but only to requests that arrive after it, so wait for new ones before you look again.
 

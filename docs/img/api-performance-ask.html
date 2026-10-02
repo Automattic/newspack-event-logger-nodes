@@ -75,12 +75,12 @@
     <div class="rec">
       <h3>One <span class="mono">findings</span> record; the list comes back worst first</h3>
       <div class="kv"><span class="k">severity</span><span class="v"><span class="m">high</span> · <span class="m">medium</span> · <span class="m">info</span>, and that is the sort.</span></div>
-      <div class="kv"><span class="k">kind</span><span class="v"><span class="m">fatal</span> · <span class="m">insufficient_instrumentation</span> · <span class="m">unattributed</span> · <span class="m">dominant_span</span> · <span class="m">repetition</span> · <span class="m">entry_gap</span> · <span class="m">truncation</span></span></div>
+      <div class="kv"><span class="k">kind</span><span class="v"><span class="m">fatal</span> · <span class="m">stopped</span> · <span class="m">unresolved_rule</span> · <span class="m">insufficient_instrumentation</span> · <span class="m">dominant_span</span> · <span class="m">plugin_load</span> · <span class="m">repetition</span> · <span class="m">entry_gap</span> · <span class="m">truncation</span></span></div>
       <div class="kv"><span class="k">title, detail</span><span class="v">The prose.</span></div>
       <div class="kv"><span class="k">metric</span><span class="v">A numbers object whose keys follow the kind.</span></div>
       <div class="kv"><span class="k">rule_id</span><span class="v">The rule admitting the request, or null when none does.</span></div>
-      <div class="kv"><span class="k">measured</span><span class="v">Where the number came from: <span class="m">flame</span> · <span class="m">profiles</span> · <span class="m">subtraction</span> · <span class="m">entry timestamps</span> · <span class="m">record markers</span> · <span class="m">php fatal</span> · <span class="m">rule + record</span> · <span class="m">url stats</span>. A share read off the flame tree and one obtained by subtraction warrant different confidence.</span></div>
-      <div class="kv"><span class="k">proposal</span><span class="v">The rule edit that would act on the finding. Every kind but <span class="m">fatal</span> carries one: no rule edit fixes a crash.</span></div>
+      <div class="kv"><span class="k">measured</span><span class="v">Where the number came from: <span class="m">flame</span> · <span class="m">profiles</span> · <span class="m">entry timestamps</span> · <span class="m">record markers</span> · <span class="m">record</span> · <span class="m">php fatal</span> · <span class="m">rule + record</span> · <span class="m">url stats</span>. Every share divides by the request's measured duration, never by a flame value.</span></div>
+      <div class="kv"><span class="k">proposal</span><span class="v">The rule edit that would act on the finding. Every kind but <span class="m">fatal</span>, <span class="m">stopped</span> and <span class="m">unresolved_rule</span> carries one: no rule edit fixes a crash, restarts a process or reaches a rule this ruleset does not hold.</span></div>
       <div class="kv inner"><span class="k">action</span><span class="v"><span class="m">add_hooks</span> · <span class="m">trim_hooks</span> · <span class="m">mark_significant</span> · <span class="m">log_transport</span> · <span class="m">create_rule</span> · <span class="m">none</span></span></div>
       <div class="kv inner"><span class="k">direction</span><span class="v"><span class="m">more</span> · <span class="m">less</span> · <span class="m">none</span>. As often <span class="m">more</span> as <span class="m">less</span>: a proposal that only ever turned monitoring off would make the system blinder each time it was taken.</span></div>
       <div class="kv inner"><span class="k">why, undo</span><span class="v">The reason, and how to take it back.</span></div>
@@ -88,7 +88,7 @@
     </div>
     <div style="flex:0 0 300px" class="stack">
       <div class="ok"><h4>Where the list appears</h4><p><span class="mono">dump_request</span> computes it, and the <span class="mono">request:</span> and <span class="mono">url:</span> briefs carry it, so the picker and an agent read identical evidence.</p></div>
-      <div class="callout"><h4>Every brief carries the caveat</h4><p>The logger times only what a rule names. Unattributed time is unmeasured, not idle, and a brief without that sentence invites an invented cause.</p></div>
+      <div class="callout"><h4>Every brief carries the caveat</h4><p>The logger times only what a rule names. Unlogged time is unmeasured, not idle, and a brief without that sentence invites an invented cause.</p></div>
     </div>
   </div>
 </div>

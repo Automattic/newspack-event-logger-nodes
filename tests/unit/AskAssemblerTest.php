@@ -20,7 +20,7 @@ class AskAssemblerTest extends TestCase {
 
 	private function record(): array {
 		return [
-			'url'         => '/calendar/today?token=hunter2seekrit',
+			'url'         => 'https://example.test/calendar/today?token=hunter2seekrit',
 			'duration_ms' => 812.0,
 			'status_code' => 200,
 			'remote_addr' => '203.0.113.7',
@@ -141,6 +141,14 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	/** A request brief names its server in its URL alone; the env block carries no server field. */
+	/** A brief has to say a duration is a timeout's, or a model reads it as a cost. */
+	public function test_a_request_brief_carries_the_error_status(): void {
+		$record                 = $this->record();
+		$record['error_status'] = 'F';
+
+		$this->assertSame( 'F', Ask_Assembler::for_request( $record, $this->rule() )['env']['error_status'] );
+	}
+
 	public function test_a_request_brief_names_its_server_in_its_url(): void {
 		$record                = $this->record();
 		$record['url']         = 'https://spoke-17.example/aisle-4417';
@@ -197,7 +205,7 @@ class AskAssemblerTest extends TestCase {
 	public function test_a_request_brief_summarises_a_loaded_records_flame(): void {
 		$brief = Ask_Assembler::for_request( $this->loaded_record(), $this->rule() );
 
-		$this->assertSame( 812.0, $brief['flame']['profiled_ms'] );
+		$this->assertArrayNotHasKey( 'profiled_ms', $brief['flame'], 'a flame value is no measurement (decision 12)' );
 		$this->assertSame(
 			[ 'wp_loaded', 'init' ],
 			\array_column( $brief['flame']['top_level'], 'name' )
@@ -564,6 +572,29 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( [ 'init' ], $brief['rule']['significant_events'] );
 	}
 
+	/**
+	 * Whether a record holds no SQL because none ran or because none was
+	 * logged is the rule's transport and trace flags, so the brief carries them.
+	 */
+	public function test_a_rule_carries_what_it_logs_beyond_hooks(): void {
+		$rule  = $this->rule()->with(
+			[
+				'log_queries'      => true,
+				'log_http'         => false,
+				'log_plugin_loads' => true,
+				'trace_hooks'      => true,
+				'trace_callers'    => 3,
+			]
+		);
+		$shape = Ask_Assembler::for_request( $this->record(), $rule )['rule'];
+
+		$this->assertTrue( $shape['log_queries'] );
+		$this->assertFalse( $shape['log_http'] );
+		$this->assertTrue( $shape['log_plugin_loads'] );
+		$this->assertTrue( $shape['trace_hooks'] );
+		$this->assertSame( 3, $shape['trace_callers'] );
+	}
+
 	/** The entry list is capped, so the record's own address rides along. */
 	public function test_a_request_brief_says_how_an_agent_fetches_it_again(): void {
 		$brief = Ask_Assembler::for_request(
@@ -753,7 +784,7 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_a_url_with_no_rule_says_so_and_gets_the_cold_start_finding(): void {
 		$brief = Ask_Assembler::for_url(
-			[ 'hash' => 'ff00', 'url' => '/uncovered', 'count' => 12, 'avg_ms' => 4000.0 ],
+			[ 'hash' => 'ff00', 'url' => 'https://example.test/uncovered', 'count' => 12, 'avg_ms' => 4000.0 ],
 			[],
 			null,
 			'',
@@ -1036,7 +1067,7 @@ class AskAssemblerTest extends TestCase {
 		// brief's `env` field already carries the allowlisted facts, so the
 		// entry itself ships its category and nothing else.
 		$record = [
-			'url'            => '/newsroom/desk',
+			'url'            => 'https://example.test/newsroom/desk',
 			'request_method' => 'POST',
 			'server_name'    => 'example.test',
 			'entries'        => [
