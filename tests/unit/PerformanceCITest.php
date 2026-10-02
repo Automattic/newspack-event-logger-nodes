@@ -6264,9 +6264,16 @@ class PerformanceCITest extends TestCase {
 	 * that builds a display row for every URL leaves two full indexes resident.
 	 * On a production hub that exhausted 512MB. The verb needs whole rows only
 	 * for the page it returns and the ten slowest; everything else it reads per
-	 * row is summed, compared and discarded.
+	 * row is summed, compared and discarded. The stats Tables mount first, on
+	 * a verb that leaves the page cache cold: what a process builds once is
+	 * not the verb's allocation.
 	 */
 	public function test_the_urls_verb_does_not_hold_a_second_full_index(): void {
+		$this->assertSame(
+			"URL not found: f00dfeed1234\n",
+			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'f00dfeed1234' ),
+			'the Tables are mounted and hold nothing'
+		);
 		$base = \memory_get_usage();
 		$rows = [];
 		for ( $i = 0; $i < 10000; $i++ ) {
@@ -6304,12 +6311,14 @@ class PerformanceCITest extends TestCase {
 		try {
 			$before = \memory_get_usage();
 			\memory_reset_peak_usage();
-			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+			$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 			$peak = \memory_get_peak_usage() - $before;
 		} finally {
 			Performance_CI_Node::$load_index = $original;
 			VerbHarness::reset();
 		}
+
+		$this->assertSame( 10000, $page['rows'], 'the verb walked every row' );
 
 		$this->assertLessThan(
 			(int) ( $index_bytes * 0.5 ),

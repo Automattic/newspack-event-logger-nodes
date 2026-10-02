@@ -974,7 +974,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$row['avg_peak_mb'] = Stats_Store::mean( $peak_sum, $peak_n );
 			$rows[]             = $row;
 		}
-		\usort( $rows, self::by_sort( Stats_Store::rank_key( $sort, $errors ), $order ) );
+		$rows = self::sort_rows( $rows, Stats_Store::rank_key( $sort, $errors ), $order );
 		// The header answers `HEADER_FIELDS`; these three are the page's own.
 		return [
 			'data'        => self::resolve_urls( \array_slice( $rows, $offset, $limit ), $stores ),
@@ -1096,8 +1096,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		$others     = \count( \array_filter( \array_column( $set_totals, Stats_Store::HDR_HAS_OTHER ) ) );
 		$total      = Stats_Store::merge_url_headers( \array_values( $set_totals ) );
 		$top        = \array_map( self::project_row( ... ), \array_values( $slowest ) );
-		\usort( $top, self::by_sort( $sort, $order ) );
-		$urls = Url_Sketch::estimate( $total[ Stats_Store::HDR_URLS ] );
+		$top        = self::sort_rows( $top, $sort, $order );
+		$urls       = Url_Sketch::estimate( $total[ Stats_Store::HDR_URLS ] );
 		return [
 			'rows'      => $urls + $others,
 			'totals'    => [
@@ -2258,8 +2258,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$sum_peak  = 0.0;
 
 		// Under the filter a count ranks the errors, not the traffic.
-		$by_sort = self::by_sort( Stats_Store::rank_key( $sort, $errors ), $order );
-		$by_mean = self::by_sort( ...Stats_Store::SLOWEST_LIST );
+		$rank_key = Stats_Store::rank_key( $sort, $errors );
 
 		$plan       = self::read_plan( $now );
 		$tokens     = '' === $search ? [] : Stats_Store::term_tokens( $search );
@@ -2314,9 +2313,9 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 
 			// This shard's contenders only; the rest of it is dropped here.
-			\usort( $kept, $by_mean );
+			$kept    = self::sort_rows( $kept, ...Stats_Store::SLOWEST_LIST );
 			$slowest = \array_merge( $slowest, \array_slice( $kept, 0, self::SLOWEST_ROWS ) );
-			\usort( $kept, $by_sort );
+			$kept    = self::sort_rows( $kept, $rank_key, $order );
 			$ranked  = \array_merge( $ranked, \array_slice( $kept, 0, $page_keep ) );
 		}
 
@@ -2337,8 +2336,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			$slowest[] = $row;
 		}
 
-		\usort( $slowest, $by_mean );
-		\usort( $ranked, $by_sort );
+		$slowest = self::sort_rows( $slowest, ...Stats_Store::SLOWEST_LIST );
+		$ranked  = self::sort_rows( $ranked, $rank_key, $order );
 
 		// The page and its slowest rows are named together, once.
 		$page  = \array_slice( $ranked, $offset, $limit );
@@ -2588,26 +2587,29 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `urls` sort comparator for one `URL_SORTS` field and direction —
-	 * shared by the fold and the ranked reader. A row no timed request
-	 * reached ranks last on the `Stats_Store::TIMED_SORTS` in both orders,
-	 * as the writer's lists rank it. A tie breaks by hash, ascending either
-	 * way, as the writer's lists break it, so the two paths agree on ties.
+	 * Display rows in `urls` order for one `URL_SORTS` field and direction —
+	 * shared by the fold and the ranked reader, and ranked through
+	 * `Stats_Store::rank_order()` as the writer's lists are, so the paths
+	 * agree on ties. A row no timed request reached ranks last on the
+	 * `Stats_Store::TIMED_SORTS` in both orders.
 	 *
-	 * @param string $sort  A URL_SORTS field.
-	 * @param string $order 'asc' or 'desc'.
+	 * @param list<array<array-key,mixed>> $rows  Display rows.
+	 * @param string                       $sort  A URL_SORTS field.
+	 * @param string                       $order 'asc' or 'desc'.
+	 * @return list<array<array-key,mixed>>
 	 */
-	private static function by_sort( string $sort, string $order ): \Closure {
-		$by_value = static fn ( array $a, array $b ): int => ( 'asc' === $order
-			? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
-			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 ) )
-			?: \strcmp( Core::as_string( $a['hash'] ?? '' ), Core::as_string( $b['hash'] ?? '' ) );
-		if ( ! \in_array( $sort, Stats_Store::TIMED_SORTS, true ) ) {
-			return $by_value;
+	private static function sort_rows( array $rows, string $sort, string $order ): array {
+		$timed    = \in_array( $sort, Stats_Store::TIMED_SORTS, true );
+		$measured = [];
+		$values   = [];
+		$hashes   = [];
+		foreach ( $rows as $row ) {
+			$measured[] = ! $timed || ( $row['timed_count'] ?? 0 ) > 0 ? 1 : 0;
+			$value      = $row[ $sort ] ?? 0;
+			$values[]   = \is_int( $value ) || \is_float( $value ) || \is_string( $value ) ? $value : 0;
+			$hashes[]   = Core::as_string( $row['hash'] ?? '' );
 		}
-		// A display row's `timed_count` is an int: no coercion per compare.
-		return static fn ( array $a, array $b ): int => ( ( $b['timed_count'] ?? 0 ) > 0 ) <=> ( ( $a['timed_count'] ?? 0 ) > 0 )
-			?: $by_value( $a, $b );
+		return \array_map( static fn ( int $i ): array => $rows[ $i ], Stats_Store::rank_order( $measured, $values, $hashes, $order ) );
 	}
 
 	/**

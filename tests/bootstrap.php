@@ -540,6 +540,7 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TestCase.ph
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/NodeLogPrefixTestCase.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/CaptureSink.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/BoundedTicks.php';
+require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/VerbHarness.php';
 // The substrate's in-memory `\Memcached` subclass — shared so ELN tests can
 // seed `Core::$memd` deterministically without a real memcache server.
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/InMemoryMemcached.php';
