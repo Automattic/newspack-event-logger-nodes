@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.118.0] - 2026-10-02
+
 ### Changed
 
 - **A dominant span follows its time down to what holds it.** From the dominant span the finding steps into the child one call of which holds `HOLDING_SHARE` (0.5) of its parent, for as long as one does, stating each step's share of the request. Where it stops, when its children hold `EXPLAINED_SHARE` of it, the finding names the heaviest names needed to reach that share, at most `EXPLAINED_NAMED` (3), each with its whole count and time inside the frame and its slowest call, and its proposal states the share those names hold. The metric's `child` gives way to `chain` (`{ name, ms, share }`) and `explained` (`{ name, ms, count, share, max }`), each present only when non-empty; the statement fields describe the frame the descent stopped on and ride on the chain's last step, which the markdown brief renders as `statement in <frame>`. On a 10.67 s post save the finding said `do_blocks @9` held 55% and stopped; it now adds that `sql: WP_Query->get_posts` ×35, 5.3 s (slowest 2.0 s), holds 90% of it. Where nothing inside the last frame explains it, the proposal is what would show inside that frame rather than the dominant one.
