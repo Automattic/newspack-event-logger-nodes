@@ -6680,7 +6680,7 @@ class FlameBuilderTest extends TestCase {
 
 	// --- Stack depth safety + edge cases of build_flame_data --------------
 
-	public function test_label_and_detail_attached_to_flame_nodes(): void {
+	public function test_label_and_message_attached_to_flame_nodes(): void {
 		$fb      = new Flame_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
@@ -6704,11 +6704,11 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotEmpty( $flame['children'] );
 		$child = $flame['children'][0];
 		$this->assertSame( 'wpdb query: SELECT_USERS', $child['name'] );
-		$this->assertSame( 'wpdb query: SELECT * FROM wp_users WHERE id = 1', $child['detail'] );
+		$this->assertSame( 'SELECT * FROM wp_users WHERE id = 1', $child['message'] );
 	}
 
-	public function test_label_equal_to_detail_skips_detail_field(): void {
-		// If label and detail are identical, detail shouldn't be added.
+	public function test_label_equal_to_message_skips_message_field(): void {
+		// If label and message are identical, message shouldn't be added.
 		$fb      = new Flame_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
@@ -6725,7 +6725,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 
 		$child = $capture->captured[0][ Message::VALUE ]['children'][0];
-		$this->assertArrayNotHasKey( 'detail', $child, 'detail omitted when equal to label' );
+		$this->assertArrayNotHasKey( 'message', $child, 'message omitted when equal to label' );
 	}
 
 	public function test_store_flame_returns_true_without_target(): void {

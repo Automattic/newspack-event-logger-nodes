@@ -181,9 +181,9 @@ final class Flame_Tree {
 	 * line was written, and a complete additionally carries `duration_ms`.
 	 *
 	 * A node's `name` carries the stable label — `<base>: <label>` — because
-	 * that is the key aggregation merges on; `detail` carries the message the
-	 * same way and is what the graph displays, written only when the message
-	 * differs from the label.
+	 * that is the key aggregation merges on. `message` carries the start's raw
+	 * message, or the complete's when the start had none, and is written only
+	 * when it differs from the label; the graph shows it under the name.
 	 *
 	 * A start pushes a node, stamped with `t` — the span's offset in
 	 * milliseconds from the request's own start, which is what positions it on
@@ -208,7 +208,7 @@ final class Flame_Tree {
 	 * measured duration.
 	 *
 	 * @param array<array-key,mixed> $entries Log entries.
-	 * @return array<string,mixed> Root node: `name`, `value`, `children`, plus `t` when the request was timestamped; each span node adds `i`, the zero-based position in `$entries` of the entry that opened it, whatever key it arrived under.
+	 * @return array<string,mixed> Root node: `name`, `value`, `children`, plus `t` when the request was timestamped; each span node adds `i`, the zero-based position in `$entries` of the entry that opened it, whatever key it arrived under, and `message` where the span carried one.
 	 */
 	public static function build_flame_data( array $entries ): array {
 		$origin = self::request_origin( $entries );
@@ -221,12 +221,13 @@ final class Flame_Tree {
 			$root['t'] = 0.0;
 		}
 
-		// Stack of open nodes. Each entry: [ 'node' => &node, 'name' => base ].
-		/** @var array<int,array{node: array{name?: string,value?: mixed,children?: array<int,mixed>,t?: float,detail?: string},name: string}> $stack */
+		// Open nodes: each frame's node by reference, its base and its label.
+		/** @var array<int,array{node: array{name?: string,value?: mixed,children?: array<int,mixed>,t?: float,message?: string},name: string,label: string}> $stack */
 		$stack   = [];
 		$stack[] = [
-			'node' => &$root,
-			'name' => 'request',
+			'node'  => &$root,
+			'name'  => 'request',
+			'label' => '',
 		];
 
 		foreach ( \array_values( $entries ) as $position => $entry ) {
@@ -239,15 +240,15 @@ final class Flame_Tree {
 			if ( \preg_match( self::PATTERN_START, $keyword, $m ) ) {
 				$base_name = $m[1];
 				// 'l' = stable label (aggregation); 'm' = volatile message.
-				$label  = Core::str( $entry['l'] ?? '' );
-				$detail = Core::str( $entry['m'] ?? '' );
+				$label    = Core::str( $entry['l'] ?? '' );
+				$message  = self::message_of( $entry, $label );
 				$new_node = [
 					'name'     => self::node_name( $base_name, $label ),
 					'value'    => 0,
 					'children' => [],
 				];
-				if ( '' !== $detail && $detail !== $label ) {
-					$new_node['detail'] = "{$base_name}: {$detail}";
+				if ( null !== $message ) {
+					$new_node['message'] = $message;
 				}
 				// The row the frame IS; a nested render repeats n.
 				$new_node['i'] = $position;
@@ -263,8 +264,9 @@ final class Flame_Tree {
 				// Push onto stack (with depth limit to prevent DoS).
 				if ( \count( $stack ) < self::MAX_STACK_DEPTH ) {
 					$stack[] = [
-						'node' => &$new_node,
-						'name' => $base_name,
+						'node'  => &$new_node,
+						'name'  => $base_name,
+						'label' => $label,
 					];
 				}
 				unset( $new_node ); // Break reference for next iteration.
@@ -284,6 +286,13 @@ final class Flame_Tree {
 
 				if ( $found_idx >= 1 ) {
 					$stack[ $found_idx ]['node']['value'] = $duration_ms;
+
+					// The start's message outranks the complete's.
+					$opened  = $stack[ $found_idx ];
+					$message = $opened['node']['message'] ?? self::message_of( $entry, $opened['label'] ?? '' );
+					if ( null !== $message ) {
+						$stack[ $found_idx ]['node']['message'] = $message;
+					}
 
 					// Pop found_idx..top; orphans outlive parent (value=0).
 					\array_splice( $stack, $found_idx );
@@ -397,6 +406,19 @@ final class Flame_Tree {
 	 */
 	public static function node_name( string $base, string $label ): string {
 		return '' !== $label ? "{$base}: {$label}" : $base;
+	}
+
+	/**
+	 * A span row's message, raw: none when it is empty or only repeats the
+	 * label the node's name already carries.
+	 *
+	 * @param array<array-key,mixed> $entry The `(start)` or `(complete)` row.
+	 * @param string                 $label The span's label.
+	 * @return string|null
+	 */
+	private static function message_of( array $entry, string $label ): ?string {
+		$message = Core::str( $entry['m'] ?? '' );
+		return '' === $message || $message === $label ? null : $message;
 	}
 
 	/**
@@ -808,7 +830,7 @@ final class Flame_Tree {
 	 * duplicate siblings first. `ts` records when a node was last touched —
 	 * `$now_ts`, since per-request trees carry no timestamp of their own, and
 	 * never moves back for an older record — and anything older than
-	 * AGGREGATE_EXPIRY_SEC is dropped. An incoming node's `detail` and `t` never reach the aggregate, which has merged many
+	 * AGGREGATE_EXPIRY_SEC is dropped. An incoming node's `message` and `t` never reach the aggregate, which has merged many
 	 * requests and so has no single position: a merged node holds `name`,
 	 * `sum_value`, `ts` and `children`, nothing else. Finalize divides by the
 	 * aggregate's own request count, so no per-node tally is kept.

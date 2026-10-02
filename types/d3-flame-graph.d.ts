@@ -7,8 +7,10 @@
  * them here restores type-checking across a builder chain that would otherwise
  * go `any` at the first undeclared call.
  *
- * - `getName( fn )` overrides the frame label accessor, which is how the
- *   dashboards render `detail` ("name: message") instead of the bare name.
+ * - `getName( fn )` overrides the frame label accessor. The library's own is
+ *   `d.data.n || d.data.name`, and a folded frame carries a numeric `n` (the
+ *   entry that opened it), so without the override it would be labelled
+ *   with a number rather than its name.
  * - `tooltip` is declared upstream as taking a boolean, but the implementation
  *   assigns only when handed a FUNCTION and ignores everything else — a
  *   boolean is silently a no-op. The tooltip object `createTooltip()` builds

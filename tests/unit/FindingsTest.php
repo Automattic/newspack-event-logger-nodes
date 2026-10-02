@@ -976,21 +976,39 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * The window ending where the nested engine opens its own log holds its
-	 * start-up and the PHP that spawned it: nothing a rule edit reaches, and
-	 * not all of it the engine's.
+	 * The engine's start-up is the measured `gyrobase init` span, so a window
+	 * ending where the engine opens its own log is an ordinary gap: a record
+	 * whose producer wrote no init span left it unmeasured.
 	 */
-	public function test_the_hub_record_proposes_no_hooks_for_the_engine_start_up(): void {
+	public function test_a_window_ending_at_the_engine_start_is_an_ordinary_gap(): void {
 		$findings = Findings::for_request( $this->hub_record(), $this->instrumented_rule() );
 
 		$gap = $this->of_kind( $findings, 'entry_gap' );
-		$this->assertSame( 'none', $gap['proposal']['action'] );
-		$this->assertStringContainsString( 'start-up', $gap['detail'] );
-		$this->assertStringContainsString( 'before', $gap['detail'], 'the window also holds the PHP that spawned the engine' );
-		$this->assertStringContainsString( 'start-up', $gap['proposal']['why'] );
+		$this->assertStringNotContainsString( 'start-up', $gap['detail'] );
+		$this->assertStringStartsWith( 'Nothing instrumented ran in that window.', $gap['detail'] );
+		$this->assertStringNotContainsString( 'nested engine', $gap['proposal']['why'] );
 		$this->assertSame( 'none', $this->of_kind( $findings, 'dominant_span' )['proposal']['action'] );
 		$this->assertNull( $this->of_kind( $findings, 'repetition' ) );
 		$this->assertNotContains( 'add_hooks', \array_column( \array_column( $findings, 'proposal' ), 'action' ) );
+	}
+
+	/** A measured `gyrobase init` span leaves the engine's start-up no gap. */
+	public function test_a_measured_engine_init_leaves_no_start_up_gap(): void {
+		$record            = $this->hub_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 5000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 5000.104, 'k' => 'template_redirect hook (start)', 'l' => 'require_once', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 5000.109, 'k' => 'gyrobase init (start)', 'm' => '' ],
+			[ 'n' => 1, 'ts' => 5000.408, 'k' => 'gyrobase init (complete)', 'm' => '', 'duration_ms' => 299.0 ],
+			[ 'n' => 2, 'ts' => 5000.410, 'k' => 'gyrobase (start)', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 5000.530, 'k' => 'include (start)', 'l' => '/Macros/Global.html', 'm' => '' ],
+			[ 'n' => 4, 'ts' => 5000.650, 'k' => 'include (complete)', 'm' => '', 'duration_ms' => 120.0 ],
+			[ 'n' => 5, 'ts' => 5000.700, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 290.0 ],
+			[ 'n' => 4, 'ts' => 5000.720, 'k' => 'template_redirect hook (complete)', 'm' => '', 'duration_ms' => 616.0 ],
+			[ 'n' => 5, 'ts' => 5000.740, 'k' => 'process (complete)', 'm' => '' ],
+		];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' ) );
 	}
 
 	/** The window after the nested engine closes its log holds its exit. */
@@ -1013,16 +1031,27 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A hook whose own time is the nested engine's start-up and exit gains
-	 * nothing from being marked significant: its one listener spawned the
-	 * engine, and timing that listener re-measures the same window.
+	 * A hook whose own time is the nested engine's exit gains nothing from
+	 * being marked significant: its one listener spawned the engine, and
+	 * timing that listener re-measures the same window.
 	 */
-	public function test_a_dominant_span_whose_own_time_is_the_engine_window_proposes_nothing(): void {
-		$found = $this->of_kind( Findings::for_request( $this->engine_hook_record( 700.0 ), $this->instrumented_rule() ), 'dominant_span' );
+	public function test_a_dominant_span_whose_own_time_is_the_engine_exit_proposes_nothing(): void {
+		$found = $this->of_kind( Findings::for_request( $this->engine_hook_record( 500.0 ), $this->instrumented_rule() ), 'dominant_span' );
 
 		$this->assertSame( 'template_redirect hook: require_once', $found['metric']['name'] );
 		$this->assertSame( 'none', $found['proposal']['action'] );
-		$this->assertStringContainsString( 'start-up', $found['proposal']['why'] );
+		$this->assertStringContainsString( 'exit', $found['proposal']['why'] );
+		$this->assertStringNotContainsString( 'start-up', $found['proposal']['why'] );
+	}
+
+	/**
+	 * A window before the engine opens its log is no edge: own time that only
+	 * an unmeasured start-up fills still asks to see inside the hook.
+	 */
+	public function test_an_unmeasured_engine_start_up_lends_no_edge(): void {
+		$found = $this->of_kind( Findings::for_request( $this->engine_hook_record( 500.0, false ), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
 	}
 
 	/** Own time well past the engine's window still asks to see inside the hook. */
@@ -1033,20 +1062,26 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A hook holding a nested render whose engine took 306ms to open its log
-	 * and 20ms to close it, with `$hook_ms` of the request inside the hook.
+	 * A hook holding a nested render whose engine took 120ms to start, as its
+	 * `gyrobase init` span measures, rendered for 120ms and took 20ms to close
+	 * its log, with `$hook_ms` of the request inside the hook.
 	 *
-	 * @param float $hook_ms The hook's value; the engine holds 300 of it.
+	 * @param float $hook_ms The hook's value.
+	 * @param bool  $init    Whether the producer wrote the `gyrobase init` span.
 	 */
-	private function engine_hook_record( float $hook_ms ): array {
+	private function engine_hook_record( float $hook_ms, bool $init = true ): array {
 		$record                = $this->loaded_record();
 		$record['duration_ms'] = $hook_ms / 0.7;
 		$record['entries']     = [
 			[ 'n' => 1, 'ts' => 5000.000, 'k' => 'process (start)', 'm' => '' ],
 			[ 'n' => 2, 'ts' => 5000.104, 'k' => 'template_redirect hook (start)', 'l' => 'require_once', 'm' => '' ],
-			[ 'n' => 1, 'ts' => 5000.410, 'k' => 'gyrobase (start)', 'm' => '' ],
-			[ 'n' => 2, 'ts' => 5000.710, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 300.0 ],
-			[ 'n' => 3, 'ts' => 5000.730, 'k' => 'template_redirect hook (complete)', 'm' => '', 'duration_ms' => $hook_ms ],
+			...( $init ? [
+				[ 'n' => 3, 'ts' => 5000.110, 'k' => 'gyrobase init (start)', 'm' => '' ],
+				[ 'n' => 1, 'ts' => 5000.230, 'k' => 'gyrobase init (complete)', 'm' => '', 'duration_ms' => 120.0 ],
+			] : [] ),
+			[ 'n' => $init ? 2 : 1, 'ts' => 5000.232, 'k' => 'gyrobase (start)', 'm' => '' ],
+			[ 'n' => $init ? 3 : 2, 'ts' => 5000.352, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 120.0 ],
+			[ 'n' => $init ? 4 : 3, 'ts' => 5000.372, 'k' => 'template_redirect hook (complete)', 'm' => '', 'duration_ms' => $hook_ms ],
 		];
 		$record['flame_data']  = [
 			'name'     => 'request',
@@ -1055,7 +1090,10 @@ class FindingsTest extends TestCase {
 				[
 					'name'     => 'template_redirect hook: require_once',
 					'value'    => $hook_ms,
-					'children' => [ [ 'name' => 'gyrobase', 'value' => 300.0, 'children' => [] ] ],
+					'children' => [
+						...( $init ? [ [ 'name' => 'gyrobase init', 'value' => 120.0, 'children' => [] ] ] : [] ),
+						[ 'name' => 'gyrobase', 'value' => 120.0, 'children' => [] ],
+					],
 				],
 			],
 		];
@@ -1217,8 +1255,9 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * Past the fold marker the record is spliced, so a nested render the tail
-	 * opens seconds later lends the span around it no start-up edge.
+	 * Past the fold marker the record is spliced, so the rows either side of
+	 * a nested render's close were not neighbours, and the hours between them
+	 * lend the span around it no exit edge.
 	 */
 	public function test_an_engine_edge_across_the_fold_marker_lends_no_edge(): void {
 		$record                = $this->engine_hook_record( 1200.0 );
@@ -1226,11 +1265,9 @@ class FindingsTest extends TestCase {
 		$record['entries']     = [
 			[ 'n' => 1, 'ts' => 5000.000, 'k' => 'process (start)', 'm' => '' ],
 			[ 'n' => 2, 'ts' => 5000.104, 'k' => 'template_redirect hook (start)', 'l' => 'require_once', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 5000.110, 'k' => 'entries (aggregated)', 'm' => '40 entries merged under memory pressure' ],
 			[ 'n' => 1, 'ts' => 5000.410, 'k' => 'gyrobase (start)', 'm' => '' ],
 			[ 'n' => 2, 'ts' => 5000.710, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 300.0 ],
-			[ 'n' => 3, 'ts' => 5000.720, 'k' => 'entries (aggregated)', 'm' => '40 entries merged under memory pressure' ],
-			[ 'n' => 1, 'ts' => 5004.720, 'k' => 'gyrobase (start)', 'm' => '' ],
-			[ 'n' => 2, 'ts' => 5004.730, 'k' => 'gyrobase (complete)', 'm' => '', 'duration_ms' => 10.0 ],
 			[ 'n' => 9, 'ts' => 5004.740, 'k' => 'template_redirect hook (complete)', 'm' => '', 'duration_ms' => 1200.0 ],
 		];
 

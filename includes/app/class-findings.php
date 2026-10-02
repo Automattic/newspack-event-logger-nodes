@@ -405,7 +405,7 @@ class Findings {
 			return null;
 		}
 		$inside = $worst['inside'] ?? null;
-		$edge   = self::engine_edge( $worst['after'], $worst['before'] );
+		$exit   = self::is_engine_exit( $worst['after'] );
 		return [
 			'kind'     => 'entry_gap',
 			'severity' => 'medium',
@@ -416,12 +416,12 @@ class Findings {
 				$worst['before'],
 				null === $inside ? '' : " inside {$inside}"
 			),
-			'detail'   => self::gap_detail( $worst, $edge ),
+			'detail'   => self::gap_detail( $worst, $exit ),
 			'measured' => 'entry timestamps',
 			'metric'   => $worst,
 			'rule_id'  => $rule_id,
 			'proposal' => match ( true ) {
-				null !== $edge                       => self::proposal( 'none', $rule_id, "The window is the nested engine's {$edge}, which no rule edit reaches." ),
+				$exit                                => self::proposal( 'none', $rule_id, "The window is the nested engine's exit, which no rule edit reaches." ),
 				self::proposes( $cold )              => self::proposal( 'none', $rule_id, 'The lifecycle bracket proposed for this rule splits the request first.' ),
 				null === $inside                     => self::proposal( 'none', $rule_id, 'Only the request\'s own frame is open there, so no hook the rule could add is known to run in the window.' ),
 				self::proposes( $dominant, $inside ) => self::proposal( 'none', $rule_id, "The dominant span is {$inside}, and its finding proposes the edit that shows inside it." ),
@@ -446,21 +446,19 @@ class Findings {
 	/**
 	 * What a gap's numbers say, about this process alone: getrusage() counts
 	 * no child, so a child's CPU reads as waiting. A window at the nested
-	 * engine's edge says which edge, and that the PHP around the spawn shares
-	 * it, so none of it is pinned on the engine alone.
+	 * engine's exit says so, and that the PHP after the spawn shares it, so
+	 * none of it is pinned on the engine alone.
 	 *
-	 * @param Gap_Window             $window The gap, CPU bounds included where known.
-	 * @param 'start-up'|'exit'|null $edge   The nested engine's edge the gap sits at.
+	 * @param Gap_Window $window The gap, CPU bounds included where known.
+	 * @param bool       $exit   Whether the gap opens at the nested engine's exit.
 	 * @return string
 	 */
-	private static function gap_detail( array $window, ?string $edge ): string {
-		$said = match ( $edge ) {
-			'start-up' => 'The window ends where the nested engine opened its own log, so it holds the engine\'s start-up and whatever this process ran before spawning it.',
-			'exit'     => 'The window opens where the nested engine closed its own log, so it holds the engine\'s exit and whatever this process ran after it returned.',
-			default    => 'Nothing instrumented ran in that window.',
-		};
+	private static function gap_detail( array $window, bool $exit ): string {
+		$said = $exit
+			? 'The window opens where the nested engine closed its own log, so it holds the engine\'s exit and whatever this process ran after it returned.'
+			: 'Nothing instrumented ran in that window.';
 		if ( ! isset( $window['on_cpu_min_ms'], $window['on_cpu_max_ms'] ) ) {
-			return null === $edge ? "{$said} An outbound call, a subprocess or a slow query fits it." : $said;
+			return $exit ? $said : "{$said} An outbound call, a subprocess or a slow query fits it.";
 		}
 		$least_off = $window['gap_ms'] - $window['on_cpu_max_ms'];
 		$bounds    = \array_filter(
@@ -753,7 +751,7 @@ class Findings {
 	 * @param Rule|null         $rule       The governing rule, or null when none does.
 	 * @param float             $duration   Request duration in milliseconds.
 	 * @param bool              $rule_known Whether `$rule` is the record's resolution; false when the record's stamp did not resolve, and what the rule logged inside the span is not known here.
-	 * @param list<mixed>       $entries    The record's entries, which time the nested engine's edges.
+	 * @param list<mixed>       $entries    The record's entries, which time the nested engine's exits.
 	 * @return array<string,mixed>|null The finding, or null when no span holds `DOMINANT_SHARE`.
 	 */
 	private static function dominant_span( array $nodes, ?Rule $rule, float $duration, bool $rule_known, array $entries ): ?array {
@@ -828,7 +826,7 @@ class Findings {
 			'rule_id'  => $rule?->id,
 			'proposal' => match ( true ) {
 				null !== $child => self::proposal( 'none', $rule?->id, "Its interior is already in this record, and {$child['name']} holds the most of it; read that before changing the rule." ),
-				self::own_time_is_engine( $best['self_ms'], $metric['path'], $entries ) => self::proposal( 'none', $rule?->id, 'Its own time is the nested engine\'s start-up and exit, which no rule edit reaches; marking it significant re-times the one listener that spawned the engine.' ),
+				self::own_time_is_engine( $best['self_ms'], $metric['path'], $entries ) => self::proposal( 'none', $rule?->id, 'Its own time is the nested engine\'s exit, which no rule edit reaches; marking it significant re-times the one listener that spawned the engine.' ),
 				default         => self::visibility_proposal(
 					$best['name'],
 					$rule,
@@ -923,9 +921,10 @@ class Findings {
 	}
 
 	/**
-	 * Whether a span's own time is the nested engine's start-up and exit: an
-	 * engine ran directly inside it, and what its body spends beyond those
-	 * edges is short of `GAP_MS`, too little to be a finding of its own.
+	 * Whether a span's own time is the nested engine's exit: an engine ran
+	 * directly inside it, and what its body spends beyond those windows is
+	 * short of `GAP_MS`, too little to be a finding of its own. The engine's
+	 * start-up is its own `gyrobase init` span, a child rather than own time.
 	 *
 	 * @param float       $self_ms Its own body's time.
 	 * @param string      $path    Its path, per `node_path()`.
@@ -933,21 +932,21 @@ class Findings {
 	 * @return bool
 	 */
 	private static function own_time_is_engine( float $self_ms, string $path, array $entries ): bool {
-		$edges_ms = null;
+		$exits_ms = null;
 		$open     = [];
 		$prev     = null;
 		$spliced  = false;
 		foreach ( $entries as $entry ) {
 			$next = Core::arr( $entry );
-			if ( null !== $prev && null !== self::engine_edge( Core::as_string( $prev['k'] ?? '' ), Core::as_string( $next['k'] ?? '' ) )
+			if ( null !== $prev && self::is_engine_exit( Core::as_string( $prev['k'] ?? '' ) )
 					&& self::adjacent( $prev, $next, $spliced ) && self::span_path( $open ) === $path ) {
-				$edges_ms = ( $edges_ms ?? 0.0 ) + ( Core::num_float( $next['ts'] ?? 0 ) - Core::num_float( $prev['ts'] ?? 0 ) ) * 1000.0;
+				$exits_ms = ( $exits_ms ?? 0.0 ) + ( Core::num_float( $next['ts'] ?? 0 ) - Core::num_float( $prev['ts'] ?? 0 ) ) * 1000.0;
 			}
 			self::track( $open, $next );
 			$spliced = $spliced || Request_Builder_Node::FOLD_MARKER_KEY === ( $next['k'] ?? null );
 			$prev    = $next;
 		}
-		return null !== $edges_ms && $self_ms - $edges_ms < self::GAP_MS;
+		return null !== $exits_ms && $self_ms - $exits_ms < self::GAP_MS;
 	}
 
 	/**
@@ -970,18 +969,13 @@ class Findings {
 	}
 
 	/**
-	 * Which edge of the nested engine's render a window between two rows is.
+	 * Whether a window opening after this row is the nested engine's exit.
 	 *
-	 * @param string $after  The keyword of the row the window opens after.
-	 * @param string $before The keyword of the row it closes before.
-	 * @return 'start-up'|'exit'|null
+	 * @param string $after The keyword of the row the window opens after.
+	 * @return bool
 	 */
-	private static function engine_edge( string $after, string $before ): ?string {
-		return match ( true ) {
-			Request_Builder_Node::NESTED_START === $before   => 'start-up',
-			Request_Builder_Node::NESTED_COMPLETE === $after => 'exit',
-			default                                          => null,
-		};
+	private static function is_engine_exit( string $after ): bool {
+		return Request_Builder_Node::NESTED_COMPLETE === $after;
 	}
 
 	/**

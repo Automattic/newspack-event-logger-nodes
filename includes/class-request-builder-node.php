@@ -94,6 +94,16 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** Opens a nested engine's render. */
 	public const NESTED_START = self::NESTED_PRODUCER . ' (start)';
 
+	/**
+	 * The rows that may open a nested engine's sequence, as its first row
+	 * (`n` = 1): the close of the `gyrobase init` span its parent opened, or,
+	 * from an engine that writes none, the start of its render.
+	 */
+	public const NESTED_OPENERS = [
+		self::NESTED_PRODUCER . ' init (complete)' => true,
+		self::NESTED_START                         => true,
+	];
+
 	/** Closes a nested engine's render. */
 	public const NESTED_COMPLETE = self::NESTED_PRODUCER . ' (complete)';
 
@@ -376,7 +386,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * side: it lands anyway, or the request strands in the cache until eviction.
 	 * A nested render (gyrobase via `proc_open`) restarts numbering at 1 under
 	 * the same rid, which `seq_stack` accommodates by saving the parent's
-	 * expected value across the subprocess.
+	 * expected value across the subprocess. Its first row opens that sequence,
+	 * whichever of `NESTED_OPENERS` it is, and `gyrobase (complete)` closes it;
+	 * a render that dies first is resumed past by `resume_parent()`.
 	 *
 	 * A request completes when a terminal callback — `process (complete)` or
 	 * `process (aborted)` — sets `state`; this method then emits the envelope
@@ -479,7 +491,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$seq_n = Core::as_int( $n );
 
 		// Nested render (proc_open) restarts n=1 same rid; stack saves parent.
-		if ( self::NESTED_START === $keyword ) {
+		if ( 1 === $seq_n && isset( self::NESTED_OPENERS[ $keyword ] ) ) {
 			$stack               = \is_array( $request->seq_stack ?? null ) ? $request->seq_stack : [];
 			$stack[]             = \is_int( $request->expected_n ?? null ) ? $request->expected_n : 1;
 			$request->seq_stack  = $stack;
@@ -496,6 +508,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		// segment:offset:length — the seek back onto the log — and FROM names
 		// whose stream to seek in.
 		$whence = ' on ' . $rid . ' from ' . Core::as_string( $message[ Message::FROM ] ?? '' ) . ' at ' . Core::as_string( $message[ Message::ID ] ?? '' );
+		if ( $seq_n !== $expected && $this->resume_parent( $request, $seq_n, $whence ) ) {
+			$expected = $seq_n;
+		}
 		if ( $seq_n < $expected ) {
 			$this->print_less_often( 'INFO: duplicate message: expected #', (string) $expected, ', got #', (string) $seq_n, $whence );
 			$this->tally( Flame_Tree::REQUESTS_WRITES, 'duplicate lines' );
@@ -630,6 +645,32 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			}
 			$this->cache->delete( $rid );
 		}
+	}
+
+	/**
+	 * Resume a parent whose nested render died without its close.
+	 *
+	 * A row missing the expected number while a nested sequence is open is
+	 * the parent's when its `n` is the next number some level of `seq_stack`
+	 * saved: the child (and any child of its) wrote no `gyrobase (complete)`.
+	 * The nested levels above that one are dropped, as their close would have
+	 * dropped them, and the dead render's open span frames stay open.
+	 *
+	 * @param \stdClass $request The request whose sequence broke.
+	 * @param int       $seq_n   The row's `n`.
+	 * @param string    $whence  Where the row came from, for the warning.
+	 * @return bool Whether the row resumed a parent's sequence.
+	 */
+	private function resume_parent( \stdClass $request, int $seq_n, string $whence ): bool {
+		$stack = \is_array( $request->seq_stack ?? null ) ? $request->seq_stack : [];
+		for ( $level = \count( $stack ) - 1; $level >= 0; $level-- ) {
+			if ( $seq_n === $stack[ $level ] ) {
+				$request->seq_stack = \array_slice( $stack, 0, $level );
+				$this->print_less_often( 'WARNING: nested sequence ended without its close: resumed #', (string) $seq_n, $whence );
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

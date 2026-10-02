@@ -420,6 +420,19 @@ holds the three copies of `sql-shape.json`, the case list this plugin's `without
 pyrobase's `sql_shape()` and `Gyrobase::Log::sql_shape` each read, byte-identical. This
 plugin's `pre-push` runs that check whenever dndocker is the checkout in hand.
 
+The engine's start-up is one span written by two processes. Nuclear Gyrobase writes
+`gyrobase init (start)` through `message()`, in its own sequence, and passes that row's `ts`
+to the child as `NEWSPACK_INIT_TS`. When the variable is set, `Gyrobase::Log` writes
+`gyrobase init (complete)` as the first row of its OWN sequence, `n` = 1, with
+`duration_ms` measured from that stamp, and `gyrobase (start)` follows at `n` = 2.
+`Request_Builder_Node` opens the nested sequence on whichever of the two arrives as `n` = 1
+(`NESTED_OPENERS`) and closes it at `gyrobase (complete)`. Nothing is reserved in the
+parent's sequence, so a child that dies before logging leaves `gyrobase init` open and costs
+the parent no rows, and a child that dies mid-render is resumed past: the parent's next row
+carries the number `seq_stack` saved for it. **The gyrobase engine deploys before nuclear.**
+An engine that ignores `NEWSPACK_INIT_TS` never closes `gyrobase init`, so behind a newer
+nuclear it stays open around the whole render.
+
 **The profiler drop-in.** [`mu-plugins/00-newspack-profiler.php`](../mu-plugins/00-newspack-profiler.php) publishes a `$newspack_profiler`
 global carrying `request_time` (monotonic nanoseconds), `request_ts` (the matching wall
 clock) and one `plugins` row per timed plugin. `Log_Manager`'s constructor adopts and unsets

@@ -35,15 +35,15 @@ class FlameTreeTest extends TestCase {
 
 	// ----- build_flame_data: request-relative start times -----
 
-	public function test_a_message_of_zero_is_a_detail(): void {
-		// Any message but '' is a detail, as any label but '' is a label.
+	public function test_a_message_of_zero_is_a_message(): void {
+		// Any message but '' is a message, as any label but '' is a label.
 		$tree = Flame_Tree::build_flame_data(
 			[
 				[ 'k' => 'hook (start)', 'm' => '0', 'ts' => 1_700_000_000.0 ],
 				[ 'k' => 'hook (complete)', 'duration_ms' => 1, 'ts' => 1_700_000_000.001 ],
 			]
 		);
-		$this->assertSame( 'hook: 0', $tree['children'][0]['detail'] ?? null );
+		$this->assertSame( '0', $tree['children'][0]['message'] ?? null );
 	}
 
 	public function test_build_stamps_each_span_with_its_offset_from_the_request_start(): void {
@@ -226,12 +226,45 @@ class FlameTreeTest extends TestCase {
 		$this->assertSame( 42, $tree['children'][0]['value'] );
 	}
 
-	public function test_build_uses_label_and_detail(): void {
+	public function test_build_keeps_the_raw_start_message_beside_the_name(): void {
 		$tree = Flame_Tree::build_flame_data(
 			[ $this->entry( 'hook (start)', [ 'l' => 'init', 'm' => 'the_content' ] ) ]
 		);
 		$this->assertSame( 'hook: init', $tree['children'][0]['name'] );
-		$this->assertSame( 'hook: the_content', $tree['children'][0]['detail'] );
+		$this->assertSame( 'the_content', $tree['children'][0]['message'] );
+	}
+
+	/** A start that carried no message takes the one its complete carries. */
+	public function test_a_start_without_a_message_takes_the_completes(): void {
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->entry( 'sql (start)', [ 'l' => 'WP_Query->get_posts' ] ),
+				$this->entry( 'sql (complete)', [ 'duration_ms' => 7, 'm' => 'returned 4417 rows' ] ),
+			]
+		);
+		$this->assertSame( 'returned 4417 rows', $tree['children'][0]['message'] );
+	}
+
+	/** The start's own message outranks the complete's. */
+	public function test_the_start_message_outranks_the_completes(): void {
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->entry( 'sql (start)', [ 'l' => 'WP_Query->get_posts', 'm' => 'SELECT ID FROM wp_posts' ] ),
+				$this->entry( 'sql (complete)', [ 'duration_ms' => 7, 'm' => 'returned 4417 rows' ] ),
+			]
+		);
+		$this->assertSame( 'SELECT ID FROM wp_posts', $tree['children'][0]['message'] );
+	}
+
+	/** A message that only repeats the label, at either end, is no message. */
+	public function test_a_message_repeating_the_label_is_dropped(): void {
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->entry( 'sql (start)', [ 'l' => 'kaka-5521', 'm' => 'kaka-5521' ] ),
+				$this->entry( 'sql (complete)', [ 'duration_ms' => 7, 'm' => 'kaka-5521' ] ),
+			]
+		);
+		$this->assertArrayNotHasKey( 'message', $tree['children'][0] );
 	}
 
 	public function test_build_skips_non_array_entries(): void {

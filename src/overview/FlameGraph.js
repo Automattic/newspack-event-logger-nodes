@@ -12,7 +12,7 @@
  * D3 owns the SVG; React owns only the container element and two auxiliary
  * pointer handlers.
  *
- * Frames arrive from `Flame_Tree` as `{ name, value, children[], detail?, t?,
+ * Frames arrive from `Flame_Tree` as `{ name, value, children[], message?, t?,
  * n?, count?, merged? }`, where `value` is milliseconds and a child's value never
  * exceeds its parent's. `t` is the frame's start, in milliseconds from the
  * request's, so a frame occupies `[ t, t + value ]` — but only while it stands
@@ -40,12 +40,17 @@ import { getStateColor } from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
  * The label d3-flame-graph shows for a frame, and the key it sorts on when no
- * start time is available. Spacers carry an empty name and no detail.
+ * start time is available: the stable name, never the message. Spacers carry
+ * an empty name.
+ *
+ * The library's own accessor is `d.data.n || d.data.name`, and a folded frame
+ * carries a numeric `n` (the entry that opened it), so the default would label
+ * it with that number; this replaces it.
  *
  * @param {Object} d D3 hierarchy node.
  * @return {string} Displayed name.
  */
-const frameName = ( d ) => d.data?.detail || d.data?.name || '';
+const frameName = ( d ) => d.data?.name || '';
 
 /**
  * Order two sibling frames: by when they started, or — for an aggregate, whose
@@ -80,21 +85,21 @@ const compareFrames = ( a, b ) => {
 };
 
 /**
- * Lines of detail a tooltip shows before it is taller than any viewport.
+ * Lines of message a tooltip shows before it is taller than any viewport.
  *
  * @type {number}
  */
 const TOOLTIP_MAX_LINES = 30;
 
 /**
- * One frame's label, bounded.
+ * One frame's message, bounded.
  *
- * `detail` is the raw message: a query frame carries the whole SQL, and a
+ * `message` is the raw message: a query frame carries the whole SQL, and a
  * `the_content` frame the rendered HTML. Untrimmed those run to hundreds of
  * lines, and the tooltip is then taller than the window whichever side of the
  * cursor it lands on — so the top of it cannot be read at all.
  *
- * @param {string} text The raw label.
+ * @param {string} text The raw message.
  * @return {string} At most TOOLTIP_MAX_LINES lines, marked when trimmed.
  */
 const capLines = ( text ) => {
@@ -106,7 +111,7 @@ const capLines = ( text ) => {
 		lines.slice( 0, TOOLTIP_MAX_LINES ).join( '\n' ) +
 		'\n' +
 		sprintf(
-			// translators: %d: how many further lines the frame's detail holds.
+			// translators: %d: how many further lines the frame's message holds.
 			__( '… %d more lines', 'newspack-event-logger-nodes' ),
 			lines.length - TOOLTIP_MAX_LINES
 		)
@@ -114,7 +119,9 @@ const capLines = ( text ) => {
 };
 
 /**
- * Build the tooltip text for a frame: name, shares of parent and total, duration.
+ * Build the tooltip text for a frame: name, shares of parent and total and
+ * duration on the first line, and the frame's message below it. A folded or
+ * aggregate frame stands for many spans and carries no message.
  *
  * A frame whose share of its parent matches its share of the total (within
  * 0.1 point) shows one percentage rather than repeating itself.
@@ -123,8 +130,19 @@ const capLines = ( text ) => {
  * @return {string} Tooltip text.
  */
 const getTooltipText = ( d ) => {
-	// 'detail' carries the message; 'name' is the stable label.
-	const name = capLines( d.data?.detail || d.data?.name || 'unknown' );
+	const message = d.data?.message;
+	const summary = getTooltipSummary( d );
+	return message ? `${ summary }\n${ capLines( message ) }` : summary;
+};
+
+/**
+ * A frame's first tooltip line: its name, shares and duration.
+ *
+ * @param {Object} d D3 hierarchy node.
+ * @return {string} The line.
+ */
+const getTooltipSummary = ( d ) => {
+	const name = d.data?.name || 'unknown';
 	const value = d.data?.value || 0;
 
 	let root = d;
