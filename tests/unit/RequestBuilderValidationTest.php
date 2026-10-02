@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -271,6 +272,209 @@ class RequestBuilderValidationTest extends TestCase {
 		// The request finalized cleanly (process (complete) reached).
 		$this->assertNotEmpty( $capture->captured, 'request assembled and emitted' );
 		$this->assertSame( 'nuke', $capture->captured[0][ Message::VALUE ]['rid'] );
+	}
+
+	/**
+	 * The child closes `gyrobase init` as the FIRST row of its own sequence,
+	 * so that row opens the nested sequence and `gyrobase (start)` follows at
+	 * n=2. The init span closes with the child's measured duration, and the
+	 * parent resumes on its own next number.
+	 */
+	public function test_the_childs_init_row_opens_the_nested_sequence(): void {
+		$rb = $this->builder();
+
+		$this->fill( $rb, 1, 'init_7731', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'init_7731', 'request', [ 'm' => 'GET /films/tuatara' ] );
+		$this->fill( $rb, 3, 'init_7731', 'gyrobase init (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 1, 'init_7731', 'gyrobase init (complete)', [ 'duration_ms' => 287.5 ] );
+		$this->fill( $rb, 2, 'init_7731', 'gyrobase (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 3, 'init_7731', 'publication', [ 'm' => 'bend' ] );
+		$this->fill( $rb, 4, 'init_7731', 'access', [ 'm' => 'allowed' ] );
+		$this->fill( $rb, 5, 'init_7731', 'info', [ 'm' => 'nested tail' ] );
+		$this->fill( $rb, 6, 'init_7731', 'gyrobase (complete)', [ 'duration_ms' => 912.0 ] );
+		$this->fill( $rb, 4, 'init_7731', 'process (complete)', [ 'duration_ms' => 1310.0, 'status_code' => 200 ] );
+
+		$this->assertStringNotContainsString( 'missing message', $this->log );
+		$this->assertStringNotContainsString( 'duplicate message', $this->log );
+
+		$emitted = $this->last_emitted( $rb );
+		$this->assertNotNull( $emitted, 'the request assembled' );
+		$this->assertNotContains( 'entries (lost)', \array_column( $emitted['entries'], 'k' ) );
+		$this->assertSame( '-', $emitted['error_status'] );
+		$this->assertSame( 1, $emitted['profiles']['gyrobase init']['count'], 'the init span closed once' );
+		$this->assertEqualsWithDelta( 287.5, $emitted['profiles']['gyrobase init']['time'], 1e-9 );
+	}
+
+	/**
+	 * A child that dies before logging writes nothing, and the parent resumes
+	 * on its own next number: nothing reads as lost, and `gyrobase init` is
+	 * left open where the record shows it.
+	 */
+	public function test_a_child_that_logs_nothing_leaves_the_init_span_open(): void {
+		$rb = $this->builder();
+
+		$this->fill( $rb, 1, 'init_7732', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'init_7732', 'request', [ 'm' => 'GET /films/weta' ] );
+		$this->fill( $rb, 3, 'init_7732', 'gyrobase init (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 4, 'init_7732', 'error', [ 'm' => 'exit code 127' ] );
+		$this->fill( $rb, 5, 'init_7732', 'process (complete)', [ 'duration_ms' => 980.0, 'status_code' => 500 ] );
+
+		$this->assertStringNotContainsString( 'missing message', $this->log );
+		$emitted = $this->last_emitted( $rb );
+		$this->assertNotContains( 'entries (lost)', \array_column( $emitted['entries'], 'k' ) );
+		$this->assertContains( 'exit code 127', \array_column( $emitted['entries'], 'm' ), 'the parent row after the spawn landed' );
+		$this->assertSame( 0, $emitted['profiles']['gyrobase init']['count'], 'the init span never closed' );
+	}
+
+	/** An engine that writes no init row opens its sequence on `gyrobase (start)`. */
+	public function test_an_engine_without_the_init_row_still_assembles(): void {
+		$rb = $this->builder();
+
+		$this->fill( $rb, 1, 'init_7733', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'init_7733', 'request', [ 'm' => 'GET /films/kea' ] );
+		$this->fill( $rb, 1, 'init_7733', 'gyrobase (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 2, 'init_7733', 'publication', [ 'm' => 'bend' ] );
+		$this->fill( $rb, 3, 'init_7733', 'gyrobase (complete)', [ 'duration_ms' => 455.0 ] );
+		$this->fill( $rb, 3, 'init_7733', 'process (complete)', [ 'duration_ms' => 620.0, 'status_code' => 200 ] );
+
+		$this->assertStringNotContainsString( 'missing message', $this->log );
+		$this->assertStringNotContainsString( 'duplicate message', $this->log );
+		$emitted = $this->last_emitted( $rb );
+		$this->assertNotContains( 'entries (lost)', \array_column( $emitted['entries'], 'k' ) );
+		$this->assertSame( 1, $emitted['profiles']['gyrobase']['count'] );
+	}
+
+	/**
+	 * A nuclear that writes `gyrobase init (start)` ahead of an engine that
+	 * ignores `NEWSPACK_INIT_TS` leaves the init span open around the whole
+	 * render, which nests inside it. That is why the engine deploys first.
+	 */
+	public function test_an_init_start_the_engine_never_closes_wraps_the_render(): void {
+		$rb = $this->builder();
+
+		$this->fill( $rb, 1, 'init_7734', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'init_7734', 'request', [ 'm' => 'GET /films/takahe' ] );
+		$this->fill( $rb, 3, 'init_7734', 'gyrobase init (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 1, 'init_7734', 'gyrobase (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 2, 'init_7734', 'gyrobase (complete)', [ 'duration_ms' => 733.0 ] );
+		$this->fill( $rb, 4, 'init_7734', 'process (complete)', [ 'duration_ms' => 1044.0, 'status_code' => 200 ] );
+
+		$this->assertStringNotContainsString( 'missing message', $this->log );
+		$emitted = $this->last_emitted( $rb );
+		$this->assertSame( 0, $emitted['profiles']['gyrobase init']['count'], 'the init span never closed' );
+		$this->assertSame( 1, $emitted['profiles']['gyrobase']['count'] );
+
+		$init = Flame_Tree::build_flame_data( $emitted['entries'] )['children'][0]['children'][0];
+		$this->assertSame( 'gyrobase init', $init['name'] );
+		$this->assertSame( 'gyrobase', $init['children'][0]['name'], 'the render nests inside the open init span' );
+	}
+
+	/**
+	 * A child that dies mid-render after writing more rows than the parent's
+	 * next number: the parent's row reads below the child's expected number,
+	 * and resumes the parent's sequence rather than dropping as a duplicate.
+	 */
+	public function test_a_child_dying_past_the_parents_next_number_resumes_the_parent(): void {
+		$rb = $this->builder();
+
+		$this->fill( $rb, 1, 'die_7741', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'die_7741', 'request', [ 'm' => 'GET /films/kakapo' ] );
+		$this->fill( $rb, 3, 'die_7741', 'gyrobase init (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 1, 'die_7741', 'gyrobase init (complete)', [ 'duration_ms' => 211.0 ] );
+		$this->fill( $rb, 2, 'die_7741', 'gyrobase (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 3, 'die_7741', 'publication', [ 'm' => 'bend' ] );
+		$this->fill( $rb, 4, 'die_7741', 'include (start)', [ 'l' => '/Macros/Global.html' ] );
+		$this->fill( $rb, 5, 'die_7741', 'info', [ 'm' => 'last child row' ] );
+		$this->fill( $rb, 4, 'die_7741', 'error', [ 'm' => 'exit code 255' ] );
+		$this->fill( $rb, 5, 'die_7741', 'process (complete)', [ 'duration_ms' => 1730.0, 'status_code' => 500 ] );
+
+		$this->assertStringNotContainsString( 'duplicate message', $this->log );
+		$this->assertStringContainsString( 'WARNING: nested sequence ended without its close: resumed #4', $this->log );
+		$emitted = $this->last_emitted( $rb );
+		$this->assertContains( 'exit code 255', \array_column( $emitted['entries'], 'm' ) );
+		$this->assertNotContains( 'entries (lost)', \array_column( $emitted['entries'], 'k' ) );
+		$this->assertSame( 0, $emitted['profiles']['gyrobase']['count'], 'the dead child\'s frame stays open' );
+		$this->assertSame( 0, $emitted['profiles']['include']['count'] );
+	}
+
+	/**
+	 * A child that dies before reaching the parent's next number: the
+	 * parent's row reads above the child's expected number, and resumes the
+	 * parent's sequence rather than reading as a gap.
+	 */
+	public function test_a_child_dying_short_of_the_parents_next_number_resumes_the_parent(): void {
+		$rb = $this->builder();
+
+		$this->fill( $rb, 1, 'die_7742', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'die_7742', 'request', [ 'm' => 'GET /films/hoiho' ] );
+		$this->fill( $rb, 3, 'die_7742', 'info', [ 'm' => 'before the spawn' ] );
+		$this->fill( $rb, 4, 'die_7742', 'info', [ 'm' => 'still before' ] );
+		$this->fill( $rb, 5, 'die_7742', 'gyrobase init (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 1, 'die_7742', 'gyrobase init (complete)', [ 'duration_ms' => 198.0 ] );
+		$this->fill( $rb, 2, 'die_7742', 'gyrobase (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 6, 'die_7742', 'error', [ 'm' => 'exit code 137' ] );
+		$this->fill( $rb, 7, 'die_7742', 'process (complete)', [ 'duration_ms' => 2210.0, 'status_code' => 500 ] );
+
+		$this->assertStringNotContainsString( 'missing message', $this->log );
+		$emitted = $this->last_emitted( $rb );
+		$this->assertContains( 'exit code 137', \array_column( $emitted['entries'], 'm' ) );
+		$this->assertNotContains( 'entries (lost)', \array_column( $emitted['entries'], 'k' ) );
+		$this->assertSame( '-', $emitted['error_status'] );
+		$this->assertSame( 0, $emitted['profiles']['gyrobase']['count'], 'the dead child\'s frame stays open' );
+	}
+
+	/**
+	 * A grandchild that dies resumes its parent's sequence, one level up: the
+	 * child carries on and its own close returns to the top-level process.
+	 */
+	public function test_a_dead_grandchild_resumes_the_child_one_level_up(): void {
+		$rb = $this->nested_twice( 'die_7743' );
+		$this->fill( $rb, 6, 'die_7743', 'info', [ 'm' => 'child carries on' ] );
+		$this->fill( $rb, 7, 'die_7743', 'gyrobase (complete)', [ 'duration_ms' => 905.0 ] );
+		$this->fill( $rb, 4, 'die_7743', 'process (complete)', [ 'duration_ms' => 1480.0, 'status_code' => 200 ] );
+
+		$this->assertStringNotContainsString( 'missing message', $this->log );
+		$this->assertStringNotContainsString( 'duplicate message', $this->log );
+		$entries = $this->last_emitted( $rb )['entries'];
+		$this->assertContains( 'child carries on', \array_column( $entries, 'm' ) );
+		$this->assertContains( 'process (complete)', \array_column( $entries, 'k' ) );
+	}
+
+	/**
+	 * When the child and the grandchild both die, the top-level process's
+	 * next row resumes ITS sequence, two levels up, past the child's.
+	 */
+	public function test_a_dead_child_and_grandchild_resume_the_top_level(): void {
+		$rb = $this->nested_twice( 'die_7744' );
+		$this->fill( $rb, 4, 'die_7744', 'error', [ 'm' => 'exit code 139' ] );
+		$this->fill( $rb, 5, 'die_7744', 'process (complete)', [ 'duration_ms' => 1620.0, 'status_code' => 500 ] );
+
+		$this->assertStringNotContainsString( 'missing message', $this->log );
+		$this->assertStringNotContainsString( 'duplicate message', $this->log );
+		$entries = $this->last_emitted( $rb )['entries'];
+		$this->assertContains( 'exit code 139', \array_column( $entries, 'm' ) );
+		$this->assertNotContains( 'entries (lost)', \array_column( $entries, 'k' ) );
+	}
+
+	/**
+	 * A top-level process (next #4) spawning a child that spawns a grandchild
+	 * (child's next #6), which writes four rows and dies (its next #5).
+	 */
+	private function nested_twice( string $rid ): Request_Builder_Node {
+		$rb = $this->builder();
+		$this->fill( $rb, 1, $rid, 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, $rid, 'request', [ 'm' => 'GET /films/' . $rid ] );
+		$this->fill( $rb, 3, $rid, 'gyrobase init (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 1, $rid, 'gyrobase init (complete)', [ 'duration_ms' => 120.0 ] );
+		$this->fill( $rb, 2, $rid, 'gyrobase (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 3, $rid, 'publication', [ 'm' => 'bend' ] );
+		$this->fill( $rb, 4, $rid, 'access', [ 'm' => 'allowed' ] );
+		$this->fill( $rb, 5, $rid, 'gyrobase init (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 1, $rid, 'gyrobase init (complete)', [ 'duration_ms' => 95.0 ] );
+		$this->fill( $rb, 2, $rid, 'gyrobase (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 3, $rid, 'info', [ 'm' => 'grandchild row' ] );
+		$this->fill( $rb, 4, $rid, 'info', [ 'm' => 'grandchild last row' ] );
+		return $rb;
 	}
 
 	public function test_evicted_incomplete_request_logs_trace_timed_out(): void {

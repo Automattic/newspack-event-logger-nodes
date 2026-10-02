@@ -245,9 +245,9 @@ describe( 'FlameGraph', () => {
 			new MouseEvent( 'mousedown', { metaKey: true } )
 		);
 		flamegraphState.onClick( {
-			data: { name: 'db', detail: 'db: SELECT 1', value: 4 },
+			data: { name: 'db', message: 'SELECT 1', value: 4 },
 			parent: {
-				data: { name: 'process', detail: 'process: /foo' },
+				data: { name: 'process', message: '/foo' },
 				parent: null,
 			},
 		} );
@@ -325,8 +325,8 @@ describe( 'FlameGraph', () => {
 		unmount();
 	} );
 
-	it( 'caps a huge detail blob so the tooltip cannot outgrow the viewport', () => {
-		// A query frame carries the whole SQL as its detail; El Sol's run to
+	it( 'caps a huge message blob so the tooltip cannot outgrow the viewport', () => {
+		// A query frame carries the whole SQL as its message; El Sol's run to
 		// dozens of lines of JSON, taller than the window on either side of
 		// the cursor, so the top of it cannot be read at all.
 		const chain = require( 'd3' ).__chain;
@@ -337,12 +337,12 @@ describe( 'FlameGraph', () => {
 			} )
 		);
 		chain.text.mockClear();
-		const detail = Array.from(
+		const message = Array.from(
 			{ length: 80 },
 			( _, i ) => `line ${ i }`
 		).join( '\n' );
 		flamegraphState.tooltip.show( {
-			data: { name: 'query', detail, value: 5 },
+			data: { name: 'query', message, value: 5 },
 			parent: { data: { name: 'process', value: 100 }, parent: null },
 		} );
 
@@ -351,6 +351,58 @@ describe( 'FlameGraph', () => {
 		expect( rendered ).toContain( 'line 0' );
 		expect( rendered ).not.toContain( 'line 79' );
 		expect( rendered ).toContain( '50 more lines' );
+		unmount();
+	} );
+
+	it( 'shows the name on the first line and the message on the second', () => {
+		const chain = require( 'd3' ).__chain;
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		chain.text.mockClear();
+		flamegraphState.tooltip.show( {
+			data: {
+				name: 'sql: WP_Query->get_posts',
+				message: 'SELECT ID FROM wp_posts WHERE post_name = ?',
+				value: 5,
+			},
+			parent: { data: { name: 'process', value: 100 }, parent: null },
+		} );
+
+		const [ first, second ] = chain.text.mock.calls
+			.at( -1 )[ 0 ]
+			.split( '\n' );
+		expect( first ).toMatch( /^sql: WP_Query->get_posts - / );
+		expect( second ).toBe( 'SELECT ID FROM wp_posts WHERE post_name = ?' );
+		unmount();
+	} );
+
+	it( 'shows a folded node by its name alone', () => {
+		const chain = require( 'd3' ).__chain;
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		chain.text.mockClear();
+		flamegraphState.tooltip.show( {
+			data: {
+				name: 'sql: WP_Query->get_posts',
+				l: 'WP_Query->get_posts',
+				count: 667,
+				merged: true,
+				value: 5,
+			},
+			parent: { data: { name: 'process', value: 100 }, parent: null },
+		} );
+
+		const rendered = chain.text.mock.calls.at( -1 )[ 0 ];
+		expect( rendered ).toMatch( /^sql: WP_Query->get_posts - / );
+		expect( rendered ).not.toContain( '\n' );
 		unmount();
 	} );
 
@@ -478,7 +530,7 @@ describe( 'FlameGraph', () => {
 			} )
 		);
 		const root = {
-			data: { name: 'process', value: 1000, detail: 'process|root' },
+			data: { name: 'process', value: 1000, message: 'process|root' },
 			parent: null,
 		};
 		expect( () => flamegraphState.tooltip.show( root ) ).not.toThrow();
@@ -494,12 +546,19 @@ describe( 'FlameGraph', () => {
 		);
 		expect(
 			flamegraphState.options.getName( {
-				data: { detail: 'db: SELECT', name: 'db' },
+				data: { message: 'SELECT', name: 'db' },
 			} )
-		).toBe( 'db: SELECT' );
+		).toBe( 'db' );
 		expect(
 			flamegraphState.options.getName( { data: { name: 'render' } } )
 		).toBe( 'render' );
+		// A folded frame's numeric `n` must not replace its name, as the
+		// library's own accessor would.
+		expect(
+			flamegraphState.options.getName( {
+				data: { name: 'sql: WP_Query->get_posts', n: 233 },
+			} )
+		).toBe( 'sql: WP_Query->get_posts' );
 		expect(
 			flamegraphState.options.setColorMapper( {
 				data: { name: 'process' },
@@ -1096,12 +1155,12 @@ describe( 'frame ordering', () => {
 		expect(
 			sort( { data: { name: 'zzz' } }, { data: { name: 'aaa' } } )
 		).toBeGreaterThan( 0 );
-		// A frame with a message sorts on the message, as getName reads it.
+		// A frame sorts on its name, whatever message it carries.
 		expect(
 			sort(
-				{ data: { name: 'zzz', detail: 'aaa' } },
-				{ data: { name: 'aaa', detail: 'zzz' } }
+				{ data: { name: 'zzz', message: 'aaa' } },
+				{ data: { name: 'aaa', message: 'zzz' } }
 			)
-		).toBeLessThan( 0 );
+		).toBeGreaterThan( 0 );
 	} );
 } );

@@ -916,8 +916,8 @@ class Core {
 	 */
 	private static function without_literals( string $sql ): string {
 		$out = (string) \preg_replace_callback(
-			'/(\'(?:[^\'\\\\]|\\\\.?|\'\')*\'?)'
-				. '|("(?:[^"\\\\]|\\\\.?|"")*"?)'
+			'/(\'(?:[^\'\\\\]++|\\\\.?|\'\')*+\'?)'
+				. '|("(?:[^"\\\\]++|\\\\.?|"")*+"?)'
 				. '|([ \t]*\/\*.*?(?:\*\/|\z))'
 				. '|([ \t]*(?:--|\#)[^\n]*)/s',
 			// $m[2] is absent when group 1 matched; the || never reads it.

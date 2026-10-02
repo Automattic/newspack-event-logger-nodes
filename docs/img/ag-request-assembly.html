@@ -50,7 +50,7 @@
       <div class="d ok"><b>n = expected</b>stored; <span class="mono">expected_n</span> = n + 1</div>
       <div class="d gap"><b>n &gt; expected</b>a GAP: the first hole is recorded as <span class="mono">gap_after</span>; a non-terminal line drops; a terminal still lands, the hole becomes an <span class="mono">entries (lost)</span> marker, and <span class="mono">process (complete)</span> stamps <span class="mono">I</span></div>
     </div>
-    <p>A <span class="mono">gyrobase (start)</span> pushes the counter and restarts at 1, so a nested <span class="mono">proc_open</span> render under the same rid is no break; its <span class="mono">(complete)</span> pops it back. Past <span class="mono">MAX_STACK_DEPTH</span> 50 open spans the record is <span class="mono">is_runaway</span>: still visible, for Perl gyroscope parity, no longer accumulating, and evicted by the same rotation as any other.</p>
+    <p>A nested <span class="mono">proc_open</span> render's first row (<span class="mono">n</span> = 1) pushes the counter and restarts at 1, so a render under the same rid is no break: <span class="mono">gyrobase init (complete)</span>, or <span class="mono">gyrobase (start)</span> from an engine that writes no init row. Its <span class="mono">gyrobase (complete)</span> pops it back. Past <span class="mono">MAX_STACK_DEPTH</span> 50 open spans the record is <span class="mono">is_runaway</span>: still visible, for Perl gyroscope parity, no longer accumulating, and evicted by the same rotation as any other.</p>
   </div>
   <div class="card">
     <h3>The LRU: 3 buckets × 100, rotating every 360 s or when the newest fills</h3>

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A nested engine's sequence opens on its first row, `gyrobase init (complete)` or `gyrobase (start)`.** Nuclear Gyrobase writes `gyrobase init (start)` in the parent's sequence, and the Perl child closes it as its own `n` = 1, ahead of `gyrobase (start)` at `n` = 2, so the engine's start-up is a measured span. `Request_Builder_Node` opens the nested sequence on whichever row of `NESTED_OPENERS` arrives as `n` = 1 and closes it at `gyrobase (complete)`, as before. An engine that writes no init row still opens on `gyrobase (start)`, and a child that dies before logging leaves `gyrobase init` open without costing the parent a row. **Deploy the gyrobase engine before nuclear:** a nuclear that writes `gyrobase init (start)` ahead of an engine that ignores `NEWSPACK_INIT_TS` leaves `gyrobase init` open around the whole render.
+
+### Fixed
+
+- **A nested render that dies mid-render no longer costs the parent its remaining rows.** Its open `seq_stack` level made every later parent row read as a duplicate or a gap, so they dropped. A row whose `n` is the next number some level saved now resumes that level, dropping the dead levels above it, with a rate-limited `nested sequence ended without its close` warning; the dead render's span frames stay open for the findings.
+
+- **A flame frame shows its name and its message.** `Flame_Tree::build_flame_data()` keeps the `(start)` row's raw message on the node as `message`, falling back to the `(complete)` row's when the start carried none, in place of the `detail` field that replaced the name with `base: message`. The flame graph labels and sorts each frame by `name`, and its tooltip puts the name with its shares and duration on the first line and the message below. Folded and aggregate frames carry no message, so they show the name alone; folding, repetition, profiles and aggregates key on `name` as before.
+
+### Removed
+
+- **The nested engine's start-up is no longer a special case in `Findings`.** A gap ending at `gyrobase (start)` is an ordinary gap, because the `gyrobase init` span measures that window; a dominant span's own time is set against the engine's exit windows alone. The exit-side case stays.
+
 ## [0.116.0] - 2026-10-02
 
 ### Added
