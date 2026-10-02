@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.118.1] - 2026-10-02
+
 ### Changed
 
 - The `urls` page sorted by last seen is read fresh on every poll when the
