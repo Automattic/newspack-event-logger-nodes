@@ -6,8 +6,9 @@
  * It receives the raw command reply (VALUE = { name, payload } where payload is
  * the dump_url object), merges the new payload against the payload it last
  * forwarded, and forwards a message whose VALUE.payload is the merged object —
- * EXCEPT when the reply carries no request it does not hold AND its aggregate's
- * `last_modified` is unchanged, in which case it drops the message.
+ * EXCEPT when the reply carries no request it does not hold, its aggregate's
+ * `last_modified` is unchanged AND its stats, slots, breakdown series and
+ * window start are unchanged, in which case it drops the message.
  *
  * It also holds the tail cursor: the newest log position each partition's
  * replies have carried, which the next refresh asks past.
@@ -174,6 +175,23 @@ describe( 'UrlDetailMergeNode — a reply is news when its rows or its aggregate
 		node.fill( reply( { last_modified: 5, requests: [ { rid: 'a' } ] } ) );
 		expect( sink.received ).toHaveLength( 1 );
 	} );
+
+	test.each( [
+		[ 'stats', { count: 4417 }, { count: 4418 } ],
+		[ 'slots', [ 'b-0905' ], [ 'b-0905', 'b-0910' ] ],
+		[ 'breakdown_time_series', { s: [ 1 ] }, { s: [ 1, 2 ] } ],
+		[ 'requests_window_start', 6631, 6632 ],
+	] )(
+		'forwards a reply whose %s moved with no new row or stamp',
+		( field, before, after ) => {
+			const { node, sink } = makeMerge();
+			const base = { last_modified: 5, requests: [ { rid: 'a' } ] };
+			node.fill( reply( { ...base, [ field ]: before } ) );
+			node.fill( reply( { ...base, [ field ]: after } ) );
+			expect( sink.received ).toHaveLength( 2 );
+			expect( forwardedPayload( sink, 1 )[ field ] ).toEqual( after );
+		}
+	);
 } );
 
 describe( 'UrlDetailMergeNode — incremental merge on change', () => {

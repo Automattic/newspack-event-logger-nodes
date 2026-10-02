@@ -18,6 +18,27 @@ const finishedAt = ( r ) =>
 	( r.timestamp || 0 ) + ( r.duration_ms || 0 ) / 1000;
 
 /**
+ * The reply fields the stats writer moves on its own clock, apart from the
+ * request rows and the flame stamp: a refresh carrying a change in any of
+ * them is news even with no new row.
+ */
+const LIVE_FIELDS = [
+	'stats',
+	'slots',
+	'breakdown_time_series',
+	'requests_window_start',
+];
+
+/**
+ * The live fields of a payload in one comparable string.
+ *
+ * @param {Object|null} payload A dump_url payload.
+ * @return {string} Its LIVE_FIELDS, serialized.
+ */
+const liveOf = ( payload ) =>
+	JSON.stringify( LIVE_FIELDS.map( ( field ) => payload?.[ field ] ) );
+
+/**
  * `url-detail:transform` — the dump_url incremental merge and the tail cursor,
  * hosted on the receiver-Tee → view graph EDGE rather than inside the view.
  * `usePerformanceGraph` declares it in the optional `transform` slot of
@@ -30,12 +51,15 @@ const finishedAt = ( r ) =>
  * the one it last forwarded, and forwards a message whose VALUE.payload is the
  * MERGED object.
  *
- * A reply is news when it carries a request this node does not hold, or when
- * the aggregate it shows moved, which its `last_modified` says: the newest
- * flush of any partition's blob for the URL. It DROPS a reply where neither
- * moved, so an idle auto-refresh tick never re-renders the modal. The request
- * rows and the stamp come from different stages — the request indexes and the
- * flame builders' flushes — so neither one can stand in for the other.
+ * A reply is news when it carries a request this node does not hold, when
+ * the aggregate it shows moved, which its `last_modified` says (the newest
+ * flush of any partition's blob for the URL), or when a LIVE_FIELDS value
+ * moved: the header stats, the chart slots, the breakdown series and the
+ * window start, which the stats writer moves on its own clock. It DROPS a
+ * reply where none moved, so an idle auto-refresh tick never re-renders the
+ * modal. The three come from different stages — the request indexes, the
+ * flame builders' flushes and the stats writer — so none stands in for
+ * another.
  *
  * The merge is one rule. An empty payload forwards nothing. Anything else
  * discards the requests whose rid is already retained, sorts the union
@@ -126,7 +150,8 @@ export class UrlDetailMergeNode extends Node {
 	 *
 	 * @param {Object|null} data The dump_url payload this reply carried.
 	 * @return {Object|null} The payload to forward, or null to drop the message
-	 *                       (empty payload, or neither rows nor stamp moved).
+	 *                       (empty payload, or no row, stamp or live field
+	 *                       moved).
 	 */
 	_merge( data ) {
 		if ( ! data ) {
@@ -164,7 +189,8 @@ export class UrlDetailMergeNode extends Node {
 		if (
 			null !== prev &&
 			0 === fresh.length &&
-			merged.last_modified === prev.last_modified
+			merged.last_modified === prev.last_modified &&
+			liveOf( merged ) === liveOf( prev )
 		) {
 			return null;
 		}
