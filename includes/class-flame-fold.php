@@ -44,7 +44,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * One in-flight request's entries, merged by path as they arrive.
  *
- * @phpstan-type Fold_Frame array{name: string, path: list<string>, shape?: string|null}
+ * @phpstan-type Fold_Frame array{name: string, path: list<string>, shape?: string|null, head?: true}
  * @phpstan-type Fold_State array{root: array<array-key,mixed>, stack: list<Fold_Frame>, count: int, shape_bytes?: int, shape_budget?: int, origin: float|null}
  */
 final class Flame_Fold {
@@ -138,8 +138,9 @@ final class Flame_Fold {
 	 *
 	 * @param Fold_State          $state Fold state, by reference.
 	 * @param array<array-key,mixed> $entry One stored entry, as the record or a restored checkpoint holds it.
+	 * @return bool Whether it closed a frame `mark_open_frames()` marked.
 	 */
-	public static function add( array &$state, array $entry ): void {
+	public static function add( array &$state, array $entry ): bool {
 		++$state['count'];
 		$ts = $entry['ts'] ?? null;
 		// @longform Seeded once and then FROZEN. Lowering it later would leave
@@ -159,19 +160,20 @@ final class Flame_Fold {
 				self::shape_of( $m[1], $entry['m'] ?? null ),
 				self::number_of( $entry )
 			);
-			return;
+			return false;
 		}
-		if ( \preg_match( Flame_Tree::PATTERN_COMPLETE, $keyword, $m ) ) {
-			$duration = $entry['duration_ms'] ?? 0;
-			$end      = [ 't_end' => Flame_Tree::offset_ms( $state['origin'], $ts ), 'n_end' => self::number_of( $entry ) ];
-			self::close(
-				$state,
-				$m[1],
-				\is_numeric( $duration ) ? (float) $duration : 0.0,
-				self::shape_of( $m[1], $entry['m'] ?? null ),
-				\array_filter( $end, static fn ( $v ) => null !== $v )
-			);
+		if ( ! \preg_match( Flame_Tree::PATTERN_COMPLETE, $keyword, $m ) ) {
+			return false;
 		}
+		$duration = $entry['duration_ms'] ?? 0;
+		$end      = [ 't_end' => Flame_Tree::offset_ms( $state['origin'], $ts ), 'n_end' => self::number_of( $entry ) ];
+		return self::close(
+			$state,
+			$m[1],
+			\is_numeric( $duration ) ? (float) $duration : 0.0,
+			self::shape_of( $m[1], $entry['m'] ?? null ),
+			\array_filter( $end, static fn ( $v ) => null !== $v )
+		);
 	}
 
 	/**
@@ -184,8 +186,9 @@ final class Flame_Fold {
 	 * @param float       $duration Milliseconds the span took.
 	 * @param string|null $shape    The statement or URL this instance ran, or null.
 	 * @param array{t_end?: float, n_end?: int} $end Where this instance ended, and its entry number.
+	 * @return bool Whether the frame it matched was marked.
 	 */
-	private static function close( array &$state, string $base, float $duration, ?string $shape, array $end ): void {
+	private static function close( array &$state, string $base, float $duration, ?string $shape, array $end ): bool {
 		for ( $i = \count( $state['stack'] ) - 1; $i >= 0; $i-- ) {
 			if ( $state['stack'][ $i ]['name'] !== $base ) {
 				continue;
@@ -208,8 +211,9 @@ final class Flame_Fold {
 				$meta
 			);
 			\array_splice( $state['stack'], $i );
-			return;
+			return isset( $frame['head'] );
 		}
+		return false;
 	}
 
 	/**
@@ -605,5 +609,21 @@ final class Flame_Fold {
 			Core::num_int( $node['starts'] ?? null ),
 			Core::num_int( $node['count'] ?? null )
 		);
+	}
+
+	/**
+	 * Mark every frame open now, the request's own excepted, so `add()`
+	 * reports each one's close when it arrives. A frame opened later, a
+	 * same-name re-entry included, is unmarked, and a close that pops marked
+	 * frames above the one it matches reports nothing for them.
+	 *
+	 * @param Fold_State $state Fold state, by reference.
+	 */
+	public static function mark_open_frames( array &$state ): void {
+		foreach ( $state['stack'] as $i => $frame ) {
+			if ( Log_Manager::REQUEST_LABEL !== $frame['name'] ) {
+				$state['stack'][ $i ]['head'] = true;
+			}
+		}
 	}
 }

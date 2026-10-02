@@ -124,17 +124,23 @@ function withUnit( value, unit ) {
 }
 
 /**
- * One metric as `key=value` pairs. A nested one, such as a dominant span's
- * `repeat`, opens into `key.field` pairs of its own rather than stringifying
- * to `[object Object]`.
+ * One metric as `key=value` pairs. A nested one, an object such as a dominant
+ * span's `repeat` or a list such as a plugin load's `heaviest`, opens into
+ * `key.field` or `key.index` pairs of its own rather than stringifying to
+ * `[object Object]`. An empty one reads as `key=[]` or `key={}`, so a list
+ * that held nothing is told apart from a metric that is absent.
  *
  * @param {string} key   The metric's name.
  * @param {*}      value Its value.
  * @return {string[]} The pairs it reads as.
  */
 function metricPairs( key, value ) {
-	if ( value && 'object' === typeof value && ! Array.isArray( value ) ) {
-		return Object.keys( value ).flatMap( ( field ) =>
+	if ( value && 'object' === typeof value ) {
+		const members = Object.keys( value );
+		if ( 0 === members.length ) {
+			return [ `${ key }=${ Array.isArray( value ) ? '[]' : '{}' }` ];
+		}
+		return members.flatMap( ( field ) =>
 			metricPairs( `${ key }.${ field }`, value[ field ] )
 		);
 	}

@@ -12,7 +12,9 @@ declare( strict_types=1 );
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use Newspack_Event_Logger_Nodes\App\Findings;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
@@ -33,20 +35,15 @@ class RequestBuilderPressureFoldTest extends TestCase {
 		( new Router_Node() )->name( Node_Names::ROUTER );
 	}
 
-	/** A builder wired to a capture sink, with the budget pinned. */
-	private function builder( Capture_Sink_Node $sink ): Request_Builder_Node {
+	/** A builder wired to a capture sink, with the budget pinned; a successor takes its own name. */
+	private function builder( Capture_Sink_Node $sink, string $name = 'request-builder' ): Request_Builder_Node {
 		$rb = new Request_Builder_Node();
-		$rb->name( 'request-builder' );
+		$rb->name( $name );
 		$rb->sink( $sink );
 		$rb->arguments( [ '100', '2', (string) self::BUDGET, (string) self::MAX_PER_REQUEST ] );
 		return $rb;
 	}
 
-	/**
-	 * Feed one firehose line.
-	 *
-	 * @param array<string,mixed> $extra Additional entry fields.
-	 */
 	/** The fold's kept-head bound, read from the node rather than restated. */
 	private function fold_head(): int {
 		return (int) ( new \ReflectionClassConstant( Request_Builder_Node::class, 'FOLD_KEEP_HEAD' ) )->getValue();
@@ -192,9 +189,8 @@ class RequestBuilderPressureFoldTest extends TestCase {
 	}
 
 	public function test_a_folded_request_still_reports_entries_it_lost_to_a_gap(): void {
-		// The fold empties `entries`; the gap marker is what lands there
-		// afterwards, and it announces a break in the very trace least worth
-		// trusting. Wiping the list on the way to the wire would delete it.
+		// A gap in a folded request is a row of its tail like any other, and
+		// the record carries it.
 		$sink = new Capture_Sink_Node();
 		$rb   = $this->builder( $sink );
 		$n    = $this->run_request( $rb, 'long', 40 );
@@ -205,9 +201,8 @@ class RequestBuilderPressureFoldTest extends TestCase {
 		$this->assertTrue( $record['folded'] );
 		$keys = \array_column( $record['entries'], 'k' );
 		$this->assertContains( 'entries (lost)', $keys );
-		// AFTER the aggregated marker, not before it: the request stopped at
-		// its tail, and `entries` is the kept HEAD, so appending there filed
-		// the loss chronologically ahead of the middle it announces.
+		// The loss lands after the aggregated marker, where the request lost
+		// it, never ahead of the middle it follows.
 		$this->assertGreaterThan(
 			\array_search( 'entries (aggregated)', $keys, true ),
 			\array_search( 'entries (lost)', $keys, true )
@@ -266,13 +261,10 @@ class RequestBuilderPressureFoldTest extends TestCase {
 	}
 
 	/**
-	 * A span opened in the KEPT HEAD frames every row after it, so losing its
-	 * `(complete)` to the fold costs the record its shape, not one line. On a
-	 * `community.thecoast.ca` job the gyrobase subprocess closed after 535.8s
-	 * of a 536.2s request, and the PHP parent's ten post-subprocess rows filled
-	 * the rolling tail and evicted it — the flame still counted the span, but
-	 * the entry list left it open and the whole 535.8s interior read as its
-	 * SIBLING. The fold keeps those closes the way it keeps a marked line.
+	 * A span opened in the KEPT HEAD frames every row after it, so its
+	 * `(complete)` survives the fold however many rows follow it: the rolling
+	 * tail never evicts it, and the entry list closes every span the head
+	 * opened, as the flame does.
 	 */
 	public function test_the_close_of_a_span_opened_in_the_head_survives_the_fold(): void {
 		$sink = new Capture_Sink_Node();
@@ -334,9 +326,8 @@ class RequestBuilderPressureFoldTest extends TestCase {
 	}
 
 	public function test_one_runaway_request_folds_on_its_own_cap(): void {
-		// The per-request cap used to just STOP recording — everything past it
-		// was dropped for a `truncated` flag nothing surfaced. Folding keeps
-		// the counts and totals for the whole request instead.
+		// The per-request cap folds the request, so its counts and totals
+		// cover every line, not only those before the cap.
 		//
 		// A budget high enough that the pool never trips: this must be the
 		// per-request cap doing the work, not pressure.
@@ -355,6 +346,326 @@ class RequestBuilderPressureFoldTest extends TestCase {
 		// All 30 saves counted, including the ones past the cap.
 		$save = $record['flame']['children'][0]['children'][0];
 		$this->assertSame( 30, $save['count'] );
+	}
+
+	/**
+	 * A head span's close is kept, but it is a row like any other: it lands
+	 * where it arrived. A pyrobase render inside `template_redirect` logs its
+	 * tail rows BEFORE the hook closes, and a close moved ahead of them puts
+	 * them outside the span that holds them.
+	 */
+	public function test_a_kept_close_lands_where_it_arrived(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$ts   = 3000.0;
+		$n    = 1;
+		$this->fill( $rb, $n++, 'late', 'process (start)', [ 'm' => '1 on host GET /late', 'ts' => $ts ] );
+		$this->fill( $rb, $n++, 'late', 'request', [ 'm' => 'GET http://x/late', 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n++, 'late', 'template_redirect hook (start)', [ 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n++, 'late', 'pyrobase (start)', [ 'ts' => $ts += 0.001 ] );
+		for ( $i = 0; $i < 30; $i++ ) {
+			$this->fill( $rb, $n++, 'late', 'save (start)', [ 'ts' => $ts += 0.001 ] );
+			$this->fill( $rb, $n++, 'late', 'save (complete)', [ 'duration_ms' => 1, 'ts' => $ts += 0.001 ] );
+		}
+		$this->fill( $rb, $n++, 'late', 'pyrobase (complete)', [ 'duration_ms' => 64, 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n++, 'late', 'widget (start)', [ 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n++, 'late', 'widget (complete)', [ 'duration_ms' => 1, 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n++, 'late', 'footer (start)', [ 'ts' => $ts += 0.8 ] );
+		$this->fill( $rb, $n++, 'late', 'footer (complete)', [ 'duration_ms' => 1, 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n++, 'late', 'template_redirect hook (complete)', [ 'duration_ms' => 870, 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n, 'late', 'process (complete)', [ 'duration_ms' => 872, 'status_code' => 200, 'ts' => $ts += 0.001 ] );
+
+		$record = $this->record_for( $sink, 'late' );
+		$this->assertTrue( $record['folded'] ?? false, 'the request must have folded' );
+		$keys = \array_column( $record['entries'], 'k' );
+		$this->assertGreaterThan(
+			\array_search( 'footer (complete)', $keys, true ),
+			\array_search( 'template_redirect hook (complete)', $keys, true ),
+			'the hook closed after the rows it held'
+		);
+		$this->assertSame( 'process (complete)', \end( $keys ) );
+
+		$gap = null;
+		foreach ( Findings::for_request( $record, new Rule( 'f00dfacecafe', '/late', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'template_redirect' ] ) ) as $finding ) {
+			$gap = 'entry_gap' === $finding['kind'] ? $finding : $gap;
+		}
+		$this->assertNotNull( $gap );
+		$this->assertSame( 'template_redirect hook', $gap['metric']['inside'] ?? null );
+		$this->assertSame( 'none', $gap['proposal']['action'] );
+	}
+
+	/**
+	 * A head span can close after the kept head but before the fold fires.
+	 * That close is a row past the head like any other, so it is pinned in
+	 * the tail, and a later span of the same name keeps its own close.
+	 */
+	public function test_a_head_span_closed_before_the_fold_keeps_its_close(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$ts   = 4000.0;
+		$n    = 1;
+		$this->fill( $rb, $n++, 'early', 'process (start)', [ 'm' => '1 on host GET /early', 'ts' => $ts ] );
+		$this->fill( $rb, $n++, 'early', 'request', [ 'm' => 'GET http://x/early', 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n++, 'early', 'cron_tick hook (start)', [ 'ts' => $ts += 0.001 ] );
+		for ( $i = 0; $i < 4; $i++ ) {
+			$this->fill( $rb, $n++, 'early', 'stamp (start)', [ 'ts' => $ts += 0.001 ] );
+			$this->fill( $rb, $n++, 'early', 'stamp (complete)', [ 'duration_ms' => 1, 'ts' => $ts += 0.001 ] );
+		}
+		$this->fill( $rb, $n++, 'early', 'cron_tick hook (complete)', [ 'duration_ms' => 9, 'ts' => $ts += 0.001 ] );
+		for ( $i = 0; $i < 20; $i++ ) {
+			$this->fill( $rb, $n++, 'early', 'save (start)', [ 'ts' => $ts += 0.001 ] );
+			$this->fill( $rb, $n++, 'early', 'save (complete)', [ 'duration_ms' => 1, 'ts' => $ts += 0.001 ] );
+		}
+		$this->fill( $rb, $n++, 'early', 'cron_tick hook (start)', [ 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n++, 'early', 'cron_tick hook (complete)', [ 'duration_ms' => 1, 'ts' => $ts += 0.001 ] );
+		$this->fill( $rb, $n++, 'early', 'shutdown hook', [ 'ts' => $ts += 0.613 ] );
+		$this->fill( $rb, $n, 'early', 'process (complete)', [ 'duration_ms' => 680, 'status_code' => 200, 'ts' => $ts += 0.001 ] );
+
+		$record = $this->record_for( $sink, 'early' );
+		$this->assertTrue( $record['folded'] ?? false, 'the request must have folded' );
+		$keys = \array_column( $record['entries'], 'k' );
+		$this->assertSame( 2, \count( \array_keys( $keys, 'cron_tick hook (complete)', true ) ), 'each cron_tick span keeps its own close' );
+
+		$gap = null;
+		foreach ( Findings::for_request( $record, new Rule( 'beadfeed0123', '/early', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'cron_tick' ] ) ) as $finding ) {
+			$gap = 'entry_gap' === $finding['kind'] ? $finding : $gap;
+		}
+		$this->assertNotNull( $gap );
+		$this->assertEqualsWithDelta( 613.0, $gap['metric']['gap_ms'], 0.5 );
+		$this->assertArrayNotHasKey( 'inside', $gap['metric'], 'cron_tick closed, so no span holds the window' );
+	}
+
+	/**
+	 * Log `$pairs` `save` spans, unkept rows the rolling tail evicts first.
+	 *
+	 * @return int The next unused line number.
+	 */
+	private function saves( Request_Builder_Node $rb, string $rid, int $n, int $pairs ): int {
+		for ( $i = 0; $i < $pairs; $i++ ) {
+			$this->fill( $rb, $n++, $rid, 'save (start)' );
+			$this->fill( $rb, $n++, $rid, 'save (complete)', [ 'duration_ms' => 1 ] );
+		}
+		return $n;
+	}
+
+	/** The `(complete)` rows a record carries for one base name. */
+	private function closes_of( array $record, string $base ): array {
+		return \array_values(
+			\array_filter( $record['entries'], static fn ( array $e ): bool => "{$base} (complete)" === ( $e['k'] ?? '' ) )
+		);
+	}
+
+	/**
+	 * A head span re-entered past the head — `the_content` inside an excerpt
+	 * it renders — keeps its OWN close: the inner pair is a stranger's.
+	 */
+	public function test_a_reentered_head_span_keeps_its_own_close(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$n    = 1;
+		$this->fill( $rb, $n++, 'reenter', 'process (start)', [ 'm' => '1 on host GET /reenter' ] );
+		$this->fill( $rb, $n++, 'reenter', 'request', [ 'm' => 'GET http://x/reenter' ] );
+		$this->fill( $rb, $n++, 'reenter', 'the_content hook (start)' );
+		$n = $this->saves( $rb, 'reenter', $n, 3 );
+		$this->fill( $rb, $n++, 'reenter', 'note', [ 'm' => 'head ends' ] );
+		$this->fill( $rb, $n++, 'reenter', 'the_content hook (start)' );
+		$this->fill( $rb, $n++, 'reenter', 'the_content hook (complete)', [ 'duration_ms' => 77 ] );
+		$n = $this->saves( $rb, 'reenter', $n, 12 );
+		$this->fill( $rb, $n++, 'reenter', 'the_content hook (complete)', [ 'duration_ms' => 1234 ] );
+		$n = $this->saves( $rb, 'reenter', $n, 6 );
+		$this->fill( $rb, $n, 'reenter', 'process (complete)', [ 'duration_ms' => 1300, 'status_code' => 200 ] );
+
+		$record = $this->record_for( $sink, 'reenter' );
+		$this->assertTrue( $record['folded'] ?? false, 'the request must have folded' );
+		$this->assertSame( [ 1234 ], \array_column( $this->closes_of( $record, 'the_content hook' ), 'duration_ms' ) );
+	}
+
+	/** A name the head opened twice, nested, is two frames to close. */
+	public function test_a_name_opened_twice_in_the_head_keeps_both_closes(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$n    = 1;
+		$this->fill( $rb, $n++, 'twice', 'process (start)', [ 'm' => '1 on host GET /twice' ] );
+		$this->fill( $rb, $n++, 'twice', 'request', [ 'm' => 'GET http://x/twice' ] );
+		$this->fill( $rb, $n++, 'twice', 'render_block hook (start)' );
+		$this->fill( $rb, $n++, 'twice', 'render_block hook (start)' );
+		$n = $this->saves( $rb, 'twice', $n, 3 );
+		$n = $this->saves( $rb, 'twice', $n, 8 );
+		$this->fill( $rb, $n++, 'twice', 'render_block hook (complete)', [ 'duration_ms' => 55 ] );
+		$n = $this->saves( $rb, 'twice', $n, 6 );
+		$this->fill( $rb, $n++, 'twice', 'render_block hook (complete)', [ 'duration_ms' => 912 ] );
+		$n = $this->saves( $rb, 'twice', $n, 6 );
+		$this->fill( $rb, $n, 'twice', 'process (complete)', [ 'duration_ms' => 980, 'status_code' => 200 ] );
+
+		$record = $this->record_for( $sink, 'twice' );
+		$this->assertTrue( $record['folded'] ?? false, 'the request must have folded' );
+		$this->assertSame( [ 55, 912 ], \array_column( $this->closes_of( $record, 'render_block hook' ), 'duration_ms' ) );
+	}
+
+	/**
+	 * A producer closing a parent first drains every frame still open inside
+	 * it as an `(orphaned)` complete, innermost first. A head frame's orphaned
+	 * close is still that frame's close, so both survive the fold, and a later
+	 * span of the inner name is an ordinary row.
+	 */
+	public function test_an_orphaned_close_of_a_head_frame_survives_the_fold(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$n    = 1;
+		$this->fill( $rb, $n++, 'orphan', 'process (start)', [ 'm' => '1 on host GET /orphan' ] );
+		$this->fill( $rb, $n++, 'orphan', 'request', [ 'm' => 'GET http://x/orphan' ] );
+		$this->fill( $rb, $n++, 'orphan', 'wp_loaded hook (start)' );
+		$this->fill( $rb, $n++, 'orphan', 'widget_init hook (start)' );
+		$n = $this->saves( $rb, 'orphan', $n, 11 );
+		$this->fill( $rb, $n++, 'orphan', 'widget_init hook (complete)', [ 'm' => '(orphaned)', 'duration_ms' => 318 ] );
+		$this->fill( $rb, $n++, 'orphan', 'wp_loaded hook (complete)', [ 'duration_ms' => 340 ] );
+		$this->fill( $rb, $n++, 'orphan', 'widget_init hook (start)' );
+		$this->fill( $rb, $n++, 'orphan', 'widget_init hook (complete)', [ 'duration_ms' => 6 ] );
+		$n = $this->saves( $rb, 'orphan', $n, 6 );
+		$this->fill( $rb, $n, 'orphan', 'process (complete)', [ 'duration_ms' => 420, 'status_code' => 200 ] );
+
+		$record = $this->record_for( $sink, 'orphan' );
+		$this->assertTrue( $record['folded'] ?? false, 'the request must have folded' );
+		$this->assertSame( [ 340 ], \array_column( $this->closes_of( $record, 'wp_loaded hook' ), 'duration_ms' ) );
+		$this->assertSame( [ 318 ], \array_column( $this->closes_of( $record, 'widget_init hook' ), 'duration_ms' ), 'the head frame\'s orphaned close, and no stranger\'s' );
+	}
+
+	/**
+	 * A span re-opened past the head and drained as `(orphaned)` when its
+	 * parent closes is the re-open's close, not the head frame's.
+	 */
+	public function test_an_orphaned_reopen_past_the_head_is_not_the_head_frames_close(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$n    = 1;
+		$this->fill( $rb, $n++, 'drain', 'process (start)', [ 'm' => '1 on host GET /drain' ] );
+		$this->fill( $rb, $n++, 'drain', 'request', [ 'm' => 'GET http://x/drain' ] );
+		$this->fill( $rb, $n++, 'drain', 'template_redirect hook (start)' );
+		$this->fill( $rb, $n++, 'drain', 'the_content hook (start)' );
+		$n = $this->saves( $rb, 'drain', $n, 11 );
+		$this->fill( $rb, $n++, 'drain', 'the_content hook (start)' );
+		$n = $this->saves( $rb, 'drain', $n, 2 );
+		$this->fill( $rb, $n++, 'drain', 'the_content hook (complete)', [ 'm' => '(orphaned)', 'duration_ms' => 41 ] );
+		$this->fill( $rb, $n++, 'drain', 'the_content hook (complete)', [ 'm' => '(orphaned)', 'duration_ms' => 707 ] );
+		$this->fill( $rb, $n++, 'drain', 'template_redirect hook (complete)', [ 'duration_ms' => 733 ] );
+		$n = $this->saves( $rb, 'drain', $n, 6 );
+		$this->fill( $rb, $n, 'drain', 'process (complete)', [ 'duration_ms' => 760, 'status_code' => 200 ] );
+
+		$record = $this->record_for( $sink, 'drain' );
+		$this->assertTrue( $record['folded'] ?? false, 'the request must have folded' );
+		$this->assertSame( [ 707 ], \array_column( $this->closes_of( $record, 'the_content hook' ), 'duration_ms' ) );
+		$this->assertSame( [ 733 ], \array_column( $this->closes_of( $record, 'template_redirect hook' ), 'duration_ms' ) );
+	}
+
+	/**
+	 * A checkpoint taken after the fold carries which frames the head left
+	 * open, so a close arriving after the restore is still kept.
+	 */
+	public function test_a_head_frames_close_after_a_restore_survives_the_fold(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$n    = 1;
+		$this->fill( $rb, $n++, 'resume', 'process (start)', [ 'm' => '1 on host GET /resume' ] );
+		$this->fill( $rb, $n++, 'resume', 'request', [ 'm' => 'GET http://x/resume' ] );
+		$this->fill( $rb, $n++, 'resume', 'shutdown hook (start)' );
+		$n = $this->saves( $rb, 'resume', $n, 12 );
+
+		$successor = $this->builder( $sink, 'request-builder-respawned' );
+		$successor->restore_state( $rb->save_state() );
+		$this->fill( $successor, $n++, 'resume', 'shutdown hook (complete)', [ 'duration_ms' => 2718 ] );
+		$n = $this->saves( $successor, 'resume', $n, 6 );
+		$this->fill( $successor, $n, 'resume', 'process (complete)', [ 'duration_ms' => 2800, 'status_code' => 200 ] );
+
+		$record = $this->record_for( $sink, 'resume' );
+		$this->assertTrue( $record['folded'] ?? false, 'the request must have folded' );
+		$this->assertSame( [ 2718 ], \array_column( $this->closes_of( $record, 'shutdown hook' ), 'duration_ms' ) );
+	}
+
+	/**
+	 * An envelope checkpointed before the fold kept its head frames on the
+	 * stack carries `await` and `keep` properties nothing reads. The restore
+	 * drops both, so neither reaches the record.
+	 */
+	public function test_a_restore_drops_the_retired_await_and_keep(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$n    = $this->run_request( $rb, 'retired', 12 );
+		$saved = self::with_retired_fields( $rb->save_state(), 'retired' );
+
+		$successor = $this->builder( $sink, 'request-builder-respawned' );
+		$successor->restore_state( $saved );
+		$this->fill( $successor, $n, 'retired', 'process (complete)', [ 'duration_ms' => 3141, 'status_code' => 200 ] );
+
+		$record = $this->record_for( $sink, 'retired' );
+		$this->assertArrayNotHasKey( 'await', $record );
+		$this->assertArrayNotHasKey( 'keep', $record );
+	}
+
+	/**
+	 * A checkpoint with the two properties a folded envelope carried before
+	 * its head frames rode the fold's own stack, added to one envelope.
+	 *
+	 * @param array<string,mixed> $saved The checkpoint.
+	 * @param string              $rid   The envelope to add them to.
+	 * @return array<string,mixed>
+	 */
+	private static function with_retired_fields( array $saved, string $rid ): array {
+		$walk = static function ( array $node ) use ( &$walk, $rid ): array {
+			foreach ( $node as $key => $value ) {
+				if ( ! \is_array( $value ) ) {
+					continue;
+				}
+				if ( $rid === ( $value['rid'] ?? null ) ) {
+					$value['await'] = [ 'shutdown hook' => true ];
+					$value['keep']  = [ [ 'n' => 99, 'k' => 'shutdown hook (complete)' ] ];
+				}
+				$node[ $key ] = $walk( $value );
+			}
+			return $node;
+		};
+		return $walk( $saved );
+	}
+
+	/**
+	 * A folded envelope is bounded already, so pressure never folds it again:
+	 * a second fold would discard its path map and the marker with it.
+	 */
+	public function test_pressure_never_refolds_a_folded_envelope(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->sink( $sink );
+		$rb->arguments( [ '100', '2', '15', '24' ] );
+
+		$n = $this->run_request( $rb, 'big', 7 );
+		$this->fill( $rb, $n++, 'big', 'save (start)' );
+		$this->fill( $rb, $n++, 'big', 'save (complete)', [ 'duration_ms' => 3 ] );
+		$this->run_request( $rb, 'small', 2 );
+		$this->fill( $rb, $n, 'big', 'process (complete)', [ 'duration_ms' => 640, 'status_code' => 200 ] );
+
+		$record = $this->record_for( $sink, 'big' );
+		$this->assertTrue( $record['folded'] ?? false, 'the large request folded once' );
+		$this->assertContains( 'entries (aggregated)', \array_column( $record['entries'], 'k' ), 'and kept the marker its fold wrote' );
+	}
+
+	/**
+	 * A fold keeps `FOLD_KEEP_HEAD` rows, so an envelope holding no more
+	 * reclaims nothing: pressure that only small envelopes hold folds none.
+	 */
+	public function test_pressure_folds_nothing_it_cannot_reclaim(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->sink( $sink );
+		$rb->arguments( [ '100', '2', '12', '50' ] );
+
+		$a = $this->run_request( $rb, 'brief-a', 3 );
+		$b = $this->run_request( $rb, 'brief-b', 2 );
+		$this->fill( $rb, $a, 'brief-a', 'process (complete)', [ 'duration_ms' => 19, 'status_code' => 200 ] );
+		$this->fill( $rb, $b, 'brief-b', 'process (complete)', [ 'duration_ms' => 23, 'status_code' => 200 ] );
+
+		$this->assertArrayNotHasKey( 'folded', $this->record_for( $sink, 'brief-a' ) );
+		$this->assertArrayNotHasKey( 'folded', $this->record_for( $sink, 'brief-b' ) );
 	}
 
 	public function test_an_unpressured_pool_ships_the_shape_it_always_did(): void {

@@ -25,7 +25,7 @@
 </style>
 <div class="sheet">
 <h1>The fold keeps the close of any span the kept head left open</h1>
-<p class="sub">One job record from <span class="mono">community.thecoast.ca</span>, folded twice. The gyrobase subprocess opened in the kept head and closed after 535.8 s of a 536.2 s request; ten PHP rows followed it. Left: the close competes for the rolling tail and loses. Right: the fold routes it into the keep bucket, because the fold chose the head and knows which frames it left open.</p>
+<p class="sub">One job record from <span class="mono">community.thecoast.ca</span>, folded twice. The gyrobase subprocess opened in the kept head and closed after 535.8 s of a 536.2 s request; ten PHP rows followed it. Left: the close competes for the rolling tail and loses. Right: the fold pins it in the tail where it arrived, because the fold chose the head and knows which frames it left open.</p>
 
 <div class="pair">
   <div class="col bad">
@@ -35,7 +35,6 @@
       <span class="row">…</span>
       <span class="row open">gyrobase (start) <span class="c">opened here, frames every row after it</span></span></div>
     <div class="marker">entries (aggregated)<span>the middle, merged into a Flame_Fold tree</span></div>
-    <div class="seg keep empty"><div class="t"><b>keep</b> · unbounded</div><span class="row" style="background:none;color:#787C82">only lines a producer marked</span></div>
     <div class="seg"><div class="t"><b>tail</b> · rolling FOLD_KEEP_TAIL = 10</div>
       <span class="row lost">gyrobase (complete) <span class="c">evicted by the ten rows below</span></span>
       <span class="row">nuclear_gyrobase</span>
@@ -51,17 +50,16 @@
     <div class="seg"><div class="t"><b>head</b> · FOLD_KEEP_HEAD = 10</div>
       <span class="row">process (start)</span>
       <span class="row">…</span>
-      <span class="row open">gyrobase (start) <span class="c">open_in_head() records it at the fold</span></span></div>
+      <span class="row open">gyrobase (start) <span class="c">the fold marks it, still open on its stack</span></span></div>
     <div class="marker">entries (aggregated)<span>the middle, merged into a Flame_Fold tree</span></div>
-    <div class="seg keep"><div class="t"><b>keep</b> · spliced between the marker and the tail</div>
-      <span class="row close">gyrobase (complete) <span class="c">closes_head_span() routes it here</span></span></div>
-    <div class="seg"><div class="t"><b>tail</b> · rolling FOLD_KEEP_TAIL = 10</div>
+    <div class="seg keep"><div class="t"><b>tail</b> · arrival order, FOLD_KEEP_TAIL = 10 unkept rows</div>
+      <span class="row close">gyrobase (complete) <span class="c">its match on a marked frame keeps it where it arrived</span></span>
       <span class="row">nuclear_gyrobase</span>
       <span class="row">query hook × 2 pairs</span>
       <span class="row">updated_option hook</span>
       <span class="row">memory · resources</span>
-      <span class="row term">process (complete) <span class="c">exempt: the terminal must END the record</span></span></div>
-    <div class="out ok"><b style="color:#1E5B1E">The record states its own framing.</b> At most FOLD_KEEP_HEAD closes can land in keep, since that is how many frames a head can leave open. The request's own frame is exempt, as it is for the display's severed-span prune: keep lands BEFORE the tail, and <span class="mono">process (complete)</span> must be last.</div>
+      <span class="row term">process (complete) <span class="c">exempt: the terminal arrives last</span></span></div>
+    <div class="out ok"><b style="color:#1E5B1E">The record states its own framing.</b> At most FOLD_KEEP_HEAD closes are pinned, since that is how many frames a head can leave open. The request's own frame is exempt, as it is for the display's severed-span prune: <span class="mono">process (complete)</span> arrives last, so the tail always holds it.</div>
   </div>
 </div>
 

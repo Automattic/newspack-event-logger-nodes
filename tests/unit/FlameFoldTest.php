@@ -35,6 +35,26 @@ class FlameFoldTest extends TestCase {
 		return $state;
 	}
 
+	/**
+	 * A frame open when the fold marks its stack reports its own close, the
+	 * request's frame excepted; a frame opened later does not, and a close
+	 * that pops a marked frame above its match reports nothing for it.
+	 */
+	public function test_a_marked_frame_reports_its_own_close(): void {
+		$state = $this->fold( [
+			$this->at( 'process (start)', 0 ),
+			$this->at( 'template_redirect hook (start)', 4 ),
+			$this->at( 'the_content hook (start)', 9 ),
+		] );
+		Flame_Fold::mark_open_frames( $state );
+
+		$this->assertFalse( Flame_Fold::add( $state, $this->at( 'the_content hook (start)', 17 ) ) );
+		$this->assertFalse( Flame_Fold::add( $state, $this->at( 'the_content hook (complete)', 23, [ 'duration_ms' => 6 ] ) ), 'a re-open past the mark is unmarked' );
+		$this->assertTrue( Flame_Fold::add( $state, $this->at( 'the_content hook (complete)', 31, [ 'duration_ms' => 22 ] ) ) );
+		$this->assertTrue( Flame_Fold::add( $state, $this->at( 'template_redirect hook (complete)', 38, [ 'duration_ms' => 34 ] ) ) );
+		$this->assertFalse( Flame_Fold::add( $state, $this->at( 'process (complete)', 41, [ 'duration_ms' => 41 ] ) ), 'the request frame is never marked' );
+	}
+
 	public function test_repeated_siblings_collapse_into_one_counted_node(): void {
 		// 900 `save:` spans under one parent is the shape that blows the
 		// envelope up; folded they cost one node, not 900.
