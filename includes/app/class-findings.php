@@ -39,7 +39,7 @@ use Newspack_Event_Logger_Nodes\App\Core as Hooks;
  * Computes what is wrong with one request record, or with one URL nothing
  * measures, as a list of findings ordered worst first.
  *
- * @phpstan-type Flame_Entry array{name:string,value:float,self_ms:float,max:float,depth:int,count:int,parent:?int,i?:int,shapes?:array<array-key,mixed>}
+ * @phpstan-type Flame_Entry array{name:string,value:float,self_ms:float,max:float,depth:int,count:int,nested_ms:float,max_own:float,parent:?int,i?:int,shapes?:array<array-key,mixed>}
  * @phpstan-type Gap_Window array{gap_ms:float,after:string,before:string,from_i:int,to_i:int,at_ms:float,on_cpu_min_ms?:float,on_cpu_max_ms?:float,inside?:string}
  * @phpstan-type Open_Span array{0:string,1:string,2:bool,3:?Gap_Window}
  */
@@ -63,6 +63,23 @@ class Findings {
 
 	/** Share of a span its children must hold to explain it. */
 	public const EXPLAINED_SHARE = 0.5;
+
+	/** How many of the names explaining a frame the finding names, heaviest first. */
+	private const EXPLAINED_NAMED = 3;
+
+	/** Share of a name's calls in the request the dominant span explains for repetition to defer. */
+	private const DEFERRED_SHARE = 0.5;
+
+	/** Share of its parent one call of a child holds for the descent to step in. */
+	private const HOLDING_SHARE = 0.5;
+
+	/**
+	 * Times their mean a name's slowest call may take for its calls to be
+	 * alike, which is what "repeated per item" claims. A slowest call is at
+	 * most `count` times the mean, so this rejects nothing among five calls
+	 * or fewer, and one call holding 98% of eight still reads as unlike.
+	 */
+	private const SIMILAR_CALL_FACTOR = 5.0;
 
 	/** Plugin loads together past this share of the request are a finding. */
 	public const PLUGIN_LOAD_SHARE = 0.25;
@@ -198,26 +215,15 @@ class Findings {
 	];
 
 	/**
-	 * What a span's `l` label names, by `span_kind()`, which decides what a
-	 * repeat is. A custom event's label is the WORK — the function, include
-	 * or macro the application names — so each label repeats on its own. A
-	 * hook's is the caller `App\Core::origin_frame()` finds under
-	 * `trace_hooks`, and a transport's the code that ran the query or the
-	 * call, so the span repeats whoever called it. A listener's is empty,
-	 * and the command, URL-read, upkeep and plugin spans write none.
+	 * The `span_kind()`s whose `l` label names what a repeat is judged by:
+	 * a custom event's names the work — the function, include or macro — a
+	 * hook's the caller `App\Core::origin_frame()` finds under `trace_hooks`,
+	 * and a transport's the code that ran the query or the call. A listener's
+	 * is empty, and the command, URL-read, upkeep and plugin spans write none.
 	 *
-	 * @var array<string,'work'|'caller'|'none'>
+	 * @var list<string>
 	 */
-	private const LABEL_NAMES = [
-		'custom'    => 'work',
-		'hook'      => 'caller',
-		'transport' => 'caller',
-		'listener'  => 'none',
-		'command'   => 'none',
-		'url_read'  => 'none',
-		'upkeep'    => 'none',
-		'plugin'    => 'none',
-	];
+	private const LABELLED_KINDS = [ 'custom', 'hook', 'transport' ];
 
 	/**
 	 * Findings for one completed request record, worst first.
@@ -253,8 +259,8 @@ class Findings {
 					$cold,
 					$dominant,
 					$shares ? self::plugin_load( $nodes, $rule_id, $duration ) : null,
-					$shares ? self::repetition( $record, $rule, $duration, $dominant ) : null,
-					self::entry_gap( $entries, $rule, $cold, $dominant ),
+					$shares ? self::repetition( $record, $rule, $duration, $dominant, $nodes ) : null,
+					self::entry_gap( $entries, $rule, $cold, $dominant, ! empty( $record['is_worker'] ) ),
 					self::truncation( $record, $entries, $rule_id ),
 				],
 				static fn ( ?array $finding ): bool => null !== $finding
@@ -327,8 +333,10 @@ class Findings {
 	}
 
 	/**
-	 * The widest unexplained interval between consecutive entries — where a
-	 * `proc_open` hides, and an outbound call on a rule without HTTP logging.
+	 * The widest unexplained interval between entries neighbouring in time —
+	 * where a `proc_open` hides, and an outbound call on a rule without HTTP
+	 * logging. Neighbours are by timestamp, per `stamped_before()`, and a
+	 * window is judged with the spans open where its later row was logged.
 	 *
 	 * With only the request's own span open, any wide window counts. Inside
 	 * any other span a window counts when that span logged child spans and is
@@ -343,38 +351,43 @@ class Findings {
 	 * The metric names the window by `from_i` and `to_i`, the positions of the
 	 * rows either side of it in the full `entries`, environment row included —
 	 * the positions an `entry:` ask names — and by `at_ms`, where it opens,
-	 * measured from the record's first entry. The proposal is the one edit
-	 * known to light the window, made once.
+	 * measured from the record's first entry. The proposal is the edit that
+	 * would light the window, made once. At the request's own level of a web
+	 * request, a window ending at a `LIFECYCLE_BRACKET` hook proposes the
+	 * bracket hooks before it the rule omits, per `lifecycle_window()`, which
+	 * light it only where they fire inside it; where it omits none and the
+	 * window ends at the first span the logger bound, the window is the rest
+	 * of `plugins_loaded`, which the logger boots inside, so no edit lights
+	 * it. A worker's record holds no such boot.
 	 *
 	 * @param list<mixed>              $entries  The record's entries.
 	 * @param Rule|null                $rule     The governing rule, or null when none does.
 	 * @param array<string,mixed>|null $cold     The cold-start finding, when there is one.
 	 * @param array<string,mixed>|null $dominant The dominant-span finding, when there is one.
+	 * @param bool                     $worker   Whether the record is a worker's.
 	 * @return array<string,mixed>|null The finding, or null when no gap reaches `GAP_MS`.
 	 */
-	private static function entry_gap( array $entries, ?Rule $rule, ?array $cold, ?array $dominant ): ?array {
+	private static function entry_gap( array $entries, ?Rule $rule, ?array $cold, ?array $dominant, bool $worker ): ?array {
 		$rule_id = $rule?->id;
 		$cpu     = false;
 		$origin  = Core::num_float( Core::arr( $entries[0] ?? null )['ts'] ?? 0 );
+		$before  = self::stamped_before( $entries );
 		$worst   = null;
 		$open    = [];
-		$prev    = null;
-		$latest  = null;
 		$spliced = false;
 		foreach ( $entries as $at => $entry ) {
 			$next = Core::arr( $entry );
 			$to   = Core::num_float( $next['ts'] ?? 0 );
-			if ( null !== $prev ) {
-				// From the latest stamp: a back-dated row stretches nothing.
-				[ $latest_at, $latest_row ] = $latest;
-				$from = Core::num_float( $latest_row['ts'] ?? 0 );
+			if ( isset( $before[ $at ] ) ) {
+				$prev = Core::arr( $entries[ $before[ $at ] ] );
+				$from = Core::num_float( $prev['ts'] ?? 0 );
 				$gap  = ( $to - $from ) * 1000.0;
 				if ( $gap >= self::GAP_MS && ( null === $worst || $gap > $worst['gap_ms'] ) && self::adjacent( $prev, $next, $spliced ) ) {
 					$window = [
 						'gap_ms' => $gap,
-						'after'  => Core::as_string( $latest_row['k'] ?? '' ),
+						'after'  => Core::as_string( $prev['k'] ?? '' ),
 						'before' => Core::as_string( $next['k'] ?? '' ),
-						'from_i' => $latest_at,
+						'from_i' => $before[ $at ],
 						'to_i'   => $at,
 						'at_ms'  => ( $from - $origin ) * 1000.0,
 					];
@@ -395,8 +408,6 @@ class Findings {
 				$worst = self::widest( $worst, $closed );
 			}
 			$spliced = $spliced || Request_Builder_Node::FOLD_MARKER_KEY === ( $next['k'] ?? null );
-			$latest  = null === $latest || $to >= Core::num_float( $latest[1]['ts'] ?? 0 ) ? [ $at, $next ] : $latest;
-			$prev    = $next;
 		}
 		foreach ( \array_reverse( $open ) as $closed ) {
 			$worst = self::widest( $worst, $closed );
@@ -404,8 +415,10 @@ class Findings {
 		if ( null === $worst ) {
 			return null;
 		}
-		$inside = $worst['inside'] ?? null;
-		$exit   = self::is_engine_exit( $worst['after'] );
+		$inside    = $worst['inside'] ?? null;
+		$exit      = self::is_engine_exit( $worst['after'] );
+		$lifecycle = null === $inside && ! $worker && null !== $rule ? self::lifecycle_window( $entries, $worst['to_i'], $rule ) : null;
+		$edit      = null === $inside ? null : self::visibility_proposal( $inside, $rule, 'Unmark it once the gap is explained; per-callback profiling is the expensive kind.' );
 		return [
 			'kind'     => 'entry_gap',
 			'severity' => 'medium',
@@ -423,24 +436,38 @@ class Findings {
 			'proposal' => match ( true ) {
 				$exit                                => self::proposal( 'none', $rule_id, "The window is the nested engine's exit, which no rule edit reaches." ),
 				self::proposes( $cold )              => self::proposal( 'none', $rule_id, 'The lifecycle bracket proposed for this rule splits the request first.' ),
-				null === $inside                     => self::proposal( 'none', $rule_id, 'Only the request\'s own frame is open there, so no hook the rule could add is known to run in the window.' ),
-				self::proposes( $dominant, $inside ) => self::proposal( 'none', $rule_id, "The dominant span is {$inside}, and its finding proposes the edit that shows inside it." ),
-				default                              => self::visibility_proposal( $inside, $rule, 'Unmark it once the gap is explained; per-callback profiling is the expensive kind.' ),
+				[] !== ( $lifecycle['omitted'] ?? [] ) => self::proposal(
+					'add_hooks',
+					$rule_id,
+					\sprintf(
+						'%s the rule omits the lifecycle hooks %s; whichever of them fire inside this window will split it.',
+						null === $lifecycle['after'] ? "Before {$lifecycle['ends']}" : "Between {$lifecycle['after']} and {$lifecycle['ends']}",
+						\implode( ', ', $lifecycle['omitted'] )
+					),
+					'Trim them back once the window is explained; every enabled hook costs overhead on every request this rule matches.',
+					[ 'pattern' => $rule?->pattern, 'hooks' => $lifecycle['omitted'] ]
+				),
+				$lifecycle['boot'] ?? false          => self::proposal( 'none', $rule_id, 'The window is the rest of plugins_loaded: the event logger boots there at priority 11 and binds this rule\'s hooks, too late to time plugins_loaded itself, so no rule edit times it — listing plugins_loaded included.' ),
+				null === $edit                       => self::proposal( 'none', $rule_id, 'Only the request\'s own frame is open there, so no hook the rule could add is known to run in the window.' ),
+				isset( $edit['value'] ) && self::proposes( $dominant, Core::as_string( $edit['value'] ) ) => self::proposal( 'none', $rule_id, "The dominant span's finding already proposes the edit that shows inside {$inside}." ),
+				default                              => $edit,
 			},
 		];
 	}
 
 	/**
-	 * Whether a finding proposes a rule edit, for this span when one is named.
+	 * Whether a finding proposes a rule edit, this one when its `value` is
+	 * named.
 	 *
 	 * @param array<string,mixed>|null $finding The finding, when there is one.
-	 * @param string|null              $base    The span's base name, or null for any.
+	 * @param string|null              $value   The edit's `value`, or null for any.
 	 * @return bool
 	 */
-	private static function proposes( ?array $finding, ?string $base = null ): bool {
+	private static function proposes( ?array $finding, ?string $value = null ): bool {
+		$proposal = Core::arr( $finding['proposal'] ?? null );
 		return null !== $finding
-			&& 'none' !== ( Core::arr( $finding['proposal'] ?? null )['action'] ?? 'none' )
-			&& ( null === $base || Flame_Tree::base_name( Core::as_string( Core::arr( $finding['metric'] ?? null )['name'] ?? '' ) ) === $base );
+			&& 'none' !== ( $proposal['action'] ?? 'none' )
+			&& ( null === $value || ( $proposal['value'] ?? null ) === $value );
 	}
 
 	/**
@@ -474,6 +501,70 @@ class Findings {
 		return $least_off > 0.0
 			? "{$said} A query, a call or a child process fits the waiting, and a child's own CPU counts as waiting here."
 			: $said;
+	}
+
+	/**
+	 * What the lifecycle says about a request-level window ending at row
+	 * `$to`: null unless that row opens a `LIFECYCLE_BRACKET` hook, else the
+	 * hook as `ends`, the last one logged ahead of it as `after`, the bracket
+	 * hooks between the two that the rule omits as `omitted`, and as `boot`
+	 * whether no span the logger bound opened ahead of it. Whether an omitted
+	 * hook fires at all, or before the window opens rather than inside it, is
+	 * not known: binding one that never fires costs nothing, and once bound it
+	 * logs, so the next record omits fewer. A rule whose hooks are stored out
+	 * of line is not known to omit any, so it gets null too.
+	 *
+	 * @param list<mixed> $entries The record's entries.
+	 * @param int         $to      The position of the row the window ends at.
+	 * @param Rule        $rule    The governing rule.
+	 * @return array{ends:string,after:?string,omitted:list<string>,boot:bool}|null
+	 */
+	private static function lifecycle_window( array $entries, int $to, Rule $rule ): ?array {
+		$ends = self::bracket_index( Core::arr( $entries[ $to ] ?? null ) );
+		if ( null === $ends || null === $rule->hooks ) {
+			return null;
+		}
+		$after = -1;
+		$boot  = true;
+		for ( $at = 0; $at < $to; $at++ ) {
+			$entry = Core::arr( $entries[ $at ] );
+			$after = \max( $after, self::bracket_index( $entry ) ?? -1 );
+			$boot  = $boot && ! self::is_bound_span( $entry );
+		}
+		$between = \array_slice( self::LIFECYCLE_BRACKET, $after + 1, \max( 0, $ends - $after - 1 ) );
+		return [
+			'ends'    => self::LIFECYCLE_BRACKET[ $ends ],
+			'after'   => self::LIFECYCLE_BRACKET[ $after ] ?? null,
+			'omitted' => \array_values( \array_diff( $between, $rule->hooks ) ),
+			'boot'    => $boot,
+		];
+	}
+
+	/**
+	 * Whether a row opens a span the logger's own binding wrote: neither the
+	 * request's frame nor a plugin load, which the profiler times first.
+	 *
+	 * @param array<array-key,mixed> $entry One entry.
+	 * @return bool
+	 */
+	private static function is_bound_span( array $entry ): bool {
+		return 1 === \preg_match( Flame_Tree::PATTERN_START, Core::as_string( $entry['k'] ?? '' ), $m )
+			&& Log_Manager::REQUEST_LABEL !== $m[1] && ! Flame_Tree::is_plugin_load_span( $m[1] );
+	}
+
+	/**
+	 * Where in `LIFECYCLE_BRACKET` the hook a row opens sits, or null for any
+	 * other row.
+	 *
+	 * @param array<array-key,mixed> $entry One entry.
+	 * @return int|null
+	 */
+	private static function bracket_index( array $entry ): ?int {
+		if ( 1 !== \preg_match( Flame_Tree::PATTERN_START, Core::as_string( $entry['k'] ?? '' ), $m ) || ! Flame_Tree::is_hook_span( $m[1] ) ) {
+			return null;
+		}
+		$at = \array_search( Flame_Tree::hook_name( Flame_Tree::base_name( $m[1] ) ), self::LIFECYCLE_BRACKET, true );
+		return false === $at ? null : $at;
 	}
 
 	/**
@@ -514,6 +605,29 @@ class Findings {
 	}
 
 	/**
+	 * Each row's neighbour in time: the row stamped just before it, by
+	 * timestamp and then position. The profiler logs its plugin rows after
+	 * the opening rows and stamps them earlier, so position order measures
+	 * windows across rows stamped inside them.
+	 *
+	 * @param list<mixed> $entries The record's entries.
+	 * @return array<int,int> Position to the position stamped just before it; the earliest row has none.
+	 */
+	private static function stamped_before( array $entries ): array {
+		$stamps = \array_map( static fn ( mixed $entry ): float => Core::num_float( Core::arr( $entry )['ts'] ?? 0 ), $entries );
+		\asort( $stamps );
+		$before = [];
+		$prev   = null;
+		foreach ( \array_keys( $stamps ) as $at ) {
+			if ( null !== $prev ) {
+				$before[ $at ] = $prev;
+			}
+			$prev = $at;
+		}
+		return $before;
+	}
+
+	/**
 	 * A span fired hundreds of times in one request — the N+1 shape, and the
 	 * same family as Query Monitor's duplicate queries and hooks-by-count.
 	 *
@@ -527,19 +641,36 @@ class Findings {
 	 * What repeated is ranked per name, as `repeats_in()` reads a profile. A
 	 * name repeats when `REPETITION_COUNT` calls hold `REPETITION_SHARE` of
 	 * the request, or when more than one call holds `HEAVY_REPEAT_SHARE` of
-	 * it; a name the dominant span already names is that finding's to tell.
+	 * it, and the calls are `alike()` — "repeated per item" claims no less.
+	 * That reads the flame: the name's slowest frame against the mean of its
+	 * frames, by frame value, children included, so a hook's frame holds its
+	 * listeners and whatever else ran inside it. Calls unlike each other are
+	 * a slow call beside quick ones, for the dominant span to name, and no
+	 * repetition; a name the flame holds no frame of is judged by its count.
+	 * A name the dominant span already names, down its chain, is that
+	 * finding's to tell; one it explains, per `defers()`, repeats here too,
+	 * counted request-wide, and points at that finding in its detail with no
+	 * proposal of its own. It takes the one slot only when no repeat the
+	 * reader can act on qualifies.
 	 *
 	 * @param array<array-key,mixed>   $record   The request record.
 	 * @param Rule|null                $rule     The governing rule, or null when none does.
 	 * @param float                    $duration Request duration in milliseconds.
 	 * @param array<string,mixed>|null $dominant The dominant-span finding, when there is one.
+	 * @param list<Flame_Entry>        $nodes    Flattened flame nodes.
 	 * @return array<string,mixed>|null The finding, or null when no span repeats enough.
 	 */
-	private static function repetition( array $record, ?Rule $rule, float $duration, ?array $dominant ): ?array {
+	private static function repetition( array $record, ?Rule $rule, float $duration, ?array $dominant, array $nodes ): ?array {
 		$profiles = \is_array( $record['profiles'] ?? null ) ? $record['profiles'] : [];
 		$metric   = Core::arr( $dominant['metric'] ?? null );
-		$named    = [ $metric['name'] ?? null, Core::arr( $metric['repeat'] ?? null )['name'] ?? null ];
+		$named    = [
+			$metric['name'] ?? null,
+			Core::arr( $metric['repeat'] ?? null )['name'] ?? null,
+			...\array_column( Core::arr( $metric['chain'] ?? null ), 'name' ),
+		];
 		$worst    = null;
+		$deferred = null;
+		$calls    = null;
 		foreach ( $profiles as $state => $profile ) {
 			if ( ! \is_array( $profile ) ) {
 				continue;
@@ -548,16 +679,33 @@ class Findings {
 				$share   = $self / $duration;
 				$repeats = ( $count >= self::REPETITION_COUNT && $share >= self::REPETITION_SHARE )
 					|| ( $count > 1 && $share >= self::HEAVY_REPEAT_SHARE );
-				if ( ! $repeats || \in_array( $name, $named, true ) || ( null !== $worst && $self <= $worst['self_ms'] ) ) {
+				if ( ! $repeats || \in_array( $name, $named, true ) ) {
 					continue;
 				}
-				$worst = [
+				$defers = self::defers( $dominant, $name, $count );
+				$held   = $defers ? $deferred : $worst;
+				if ( null !== $held && $self <= $held['self_ms'] ) {
+					continue;
+				}
+				$calls ??= self::calls_by_name( $nodes );
+				if ( isset( $calls[ $name ] ) && ! self::alike( ...$calls[ $name ] ) ) {
+					continue;
+				}
+				$found = [
 					'name'    => $name,
 					'count'   => $count,
 					'self_ms' => $self,
 				];
+				if ( $defers ) {
+					$deferred = $found;
+				} else {
+					$worst = $found;
+				}
 			}
 		}
+		// A repeat the reader can act on takes the one slot first.
+		$defers = null === $worst;
+		$worst ??= $deferred;
 		if ( null === $worst ) {
 			return null;
 		}
@@ -570,28 +718,82 @@ class Findings {
 				$worst['count'],
 				self::ms( $worst['self_ms'] )
 			),
-			'detail'   => 'A count this high usually means the work inside is being repeated per item rather than done once.',
+			'detail'   => 'A count this high usually means the work inside is being repeated per item rather than done once.'
+				. ( $defers ? ' The dominant span names it inside ' . self::stop_name( $metric ) . '; read that finding before changing the rule.' : '' ),
 			'measured' => 'profiles',
 			'metric'   => [ ...$worst, 'each_ms' => $worst['self_ms'] / $worst['count'] ],
 			'rule_id'  => $rule?->id,
-			'proposal' => self::visibility_proposal(
-				$worst['name'],
-				$rule,
-				'Unmark it once the caller is identified.'
-			),
+			'proposal' => $defers
+				? self::proposal( 'none', $rule?->id, 'The dominant span\'s finding already covers this name.' )
+				: self::visibility_proposal( $worst['name'], $rule, 'Unmark it once the caller is identified.' ),
 		];
+	}
+
+	/**
+	 * The frame a dominant span's descent stopped on: its chain's last step,
+	 * else the span itself.
+	 *
+	 * @param array<array-key,mixed> $metric The dominant-span finding's metric.
+	 * @return string
+	 */
+	private static function stop_name( array $metric ): string {
+		$chain = Core::arr( $metric['chain'] ?? null );
+		return Core::as_string( [] === $chain ? $metric['name'] ?? '' : Core::arr( \end( $chain ) )['name'] ?? '' );
+	}
+
+	/**
+	 * Each name's calls across the flame, as `[ slowest, total, count ]`, every
+	 * frame of the name counted less its `nested_ms`, and its slowest call
+	 * as its `max_own`: a block's time is not also the group block's around it.
+	 *
+	 * @param list<Flame_Entry> $nodes Flattened flame nodes.
+	 * @return array<string,array{0:float,1:float,2:int}>
+	 */
+	private static function calls_by_name( array $nodes ): array {
+		$calls = [];
+		foreach ( $nodes as $node ) {
+			$own                         = $node['value'] - $node['nested_ms'];
+			[ $slowest, $total, $count ] = $calls[ $node['name'] ] ?? [ 0.0, 0.0, 0 ];
+			$calls[ $node['name'] ]      = [
+				\max( $slowest, $node['max_own'] ),
+				$total + $own,
+				$count + $node['count'],
+			];
+		}
+		return $calls;
+	}
+
+	/**
+	 * Whether a repeat is the dominant-span finding's to explain: it names
+	 * the name among its `explained`, and holds `DEFERRED_SHARE` of the
+	 * name's calls in the request inside the frame it explains.
+	 *
+	 * @param array<string,mixed>|null $dominant The dominant-span finding, when there is one.
+	 * @param string                   $name     The name.
+	 * @param int                      $count    The name's calls in the request.
+	 * @return bool
+	 */
+	private static function defers( ?array $dominant, string $name, int $count ): bool {
+		foreach ( Core::arr( Core::arr( $dominant['metric'] ?? null )['explained'] ?? null ) as $explained ) {
+			$explained = Core::arr( $explained );
+			if ( $name === ( $explained['name'] ?? null ) ) {
+				return Core::num_int( $explained['count'] ?? 0 ) >= $count * self::DEFERRED_SHARE;
+			}
+		}
+		return false;
 	}
 
 	/**
 	 * Each thing one profile counts, as `[ name, exclusive ms, calls ]` under
 	 * the name the flame gives it.
 	 *
-	 * A profile is keyed by state and tallies each `l` label in `entries`;
-	 * `LABEL_NAMES` says whether a label is the work that repeats. Where it
-	 * is, each label is its own `<state>: <label>`, and the calls no label
-	 * holds — unlabelled, or past the builder's label cap — stay under the
-	 * bare state at the profile's totals less the labels', so none drop out.
-	 * Where it is not, the state is what repeated.
+	 * A profile is keyed by state and tallies each `l` label in `entries`.
+	 * For a kind `LABELLED_KINDS` names, each label is its own
+	 * `<state>: <label>`, judged apart from the rest: 452 queries from 22
+	 * callers are 22 questions, not one. The calls no label holds —
+	 * unlabelled, or past the builder's label cap — stay under the bare state
+	 * at the profile's totals less the labels', so none drop out. For any
+	 * other kind the state is what repeated.
 	 *
 	 * @param string                 $state   The profile's key.
 	 * @param array<array-key,mixed> $profile `{ entries, count, time }`, per `Request_Builder_Node::push_stack()`.
@@ -600,7 +802,7 @@ class Findings {
 	private static function repeats_in( string $state, array $profile ): array {
 		$time  = Core::num_float( $profile['time'] ?? 0 );
 		$count = Core::num_int( $profile['count'] ?? 0 );
-		if ( 'work' !== self::LABEL_NAMES[ self::span_kind( $state ) ] ) {
+		if ( ! \in_array( self::span_kind( $state ), self::LABELLED_KINDS, true ) ) {
 			return [ [ $state, $time, $count ] ];
 		}
 		$out = [];
@@ -747,6 +949,13 @@ class Findings {
 	 * 80% of a request because the content around it rendered ten times is ten
 	 * renders to explain, not one slow query, and the leaf alone never says so.
 	 *
+	 * From there it follows the time down: into the child whose slowest call
+	 * holds `HOLDING_SHARE` of its parent, for as long as one does, each step
+	 * a member of `chain`. Where that stops, `explaining()` names what holds
+	 * it, and its interior is already in the record; where its children hold
+	 * less, its own body holds the time, and the proposal is what would show
+	 * inside THAT frame. The statement fields describe that frame too.
+	 *
 	 * @param list<Flame_Entry> $nodes      Flattened flame nodes.
 	 * @param Rule|null         $rule       The governing rule, or null when none does.
 	 * @param float             $duration   Request duration in milliseconds.
@@ -770,10 +979,10 @@ class Findings {
 		if ( null === $best_index ) {
 			return null;
 		}
-		$best       = $nodes[ $best_index ];
-		$share      = $best['value'] / $duration;
-		$repeat     = self::repeat_of( $nodes, $best_index, $duration );
-		$metric     = [
+		$best   = $nodes[ $best_index ];
+		$share  = $best['value'] / $duration;
+		$repeat = self::repeat_of( $nodes, $best_index, $duration );
+		$metric = [
 			'name'       => $best['name'],
 			'ms'         => $best['value'],
 			'share'      => $share,
@@ -787,17 +996,28 @@ class Findings {
 		if ( null !== $repeat ) {
 			$metric['repeat'] = $repeat;
 		}
-		$contained   = $best['value'] - $best['self_ms'];
-		$child       = self::explaining_child( $nodes, $best_index, $contained );
-		$child_share = null === $child ? 0.0 : $child['value'] / $duration;
-		if ( null !== $child ) {
-			$metric['child'] = [
-				'name'  => $child['name'],
-				'ms'    => $child['value'],
-				'share' => $child_share,
+		$stop  = $best_index;
+		$chain = [];
+		for ( $next = self::holding_child( $nodes, $stop ); null !== $next; $next = self::holding_child( $nodes, $stop ) ) {
+			$stop    = $next;
+			$chain[] = [
+				'name'  => $nodes[ $stop ]['name'],
+				'ms'    => $nodes[ $stop ]['value'],
+				'share' => $nodes[ $stop ]['value'] / $duration,
 			];
 		}
-		$metric += self::worst_shape( $best );
+		$chain_said = self::chain_detail( $chain );
+		// The statement belongs to the frame that ran it, so it rides there.
+		if ( [] === $chain ) {
+			$metric += self::worst_shape( $best );
+		} else {
+			$chain[ \array_key_last( $chain ) ] += self::worst_shape( $nodes[ $stop ] );
+		}
+		$explained = self::explaining( $nodes, $stop, $duration );
+		$metric   += \array_filter( [ 'chain' => $chain, 'explained' => $explained ] );
+		$frame     = $nodes[ $stop ];
+		// Explained names hold half the frame, so its value is above zero.
+		$held      = [] === $explained ? 0 : (int) \round( 100 * \array_sum( \array_column( $explained, 'ms' ) ) / $frame['value'] );
 		return [
 			'kind'     => 'dominant_span',
 			'severity' => 'high',
@@ -808,14 +1028,11 @@ class Findings {
 					[
 						self::repeat_detail( $repeat ),
 						self::spent_detail( $best, $duration ),
+						$chain_said,
 						match ( true ) {
-							null !== $child => \sprintf(
-								'%s holds %d%% of the request, the most of anything inside it.',
-								$child['name'],
-								(int) \round( 100 * $child_share )
-							),
-							$rule_known     => self::span_advice( Flame_Tree::base_name( $best['name'] ), $rule )['detail'],
-							default         => '',
+							[] !== $explained => self::explained_detail( $explained, $held ),
+							$rule_known       => self::span_advice( Flame_Tree::base_name( $frame['name'] ), $rule )['detail'],
+							default           => '',
 						},
 					],
 					static fn ( string $sentence ): bool => '' !== $sentence
@@ -825,10 +1042,10 @@ class Findings {
 			'metric'   => $metric,
 			'rule_id'  => $rule?->id,
 			'proposal' => match ( true ) {
-				null !== $child => self::proposal( 'none', $rule?->id, "Its interior is already in this record, and {$child['name']} holds the most of it; read that before changing the rule." ),
-				self::own_time_is_engine( $best['self_ms'], $metric['path'], $entries ) => self::proposal( 'none', $rule?->id, 'Its own time is the nested engine\'s exit, which no rule edit reaches; marking it significant re-times the one listener that spawned the engine.' ),
-				default         => self::visibility_proposal(
-					$best['name'],
+				[] !== $explained => self::proposal( 'none', $rule?->id, "Its interior is already in this record, and the calls named above hold {$held}% of {$frame['name']}; read those before changing the rule." ),
+				self::own_time_is_engine( $frame['self_ms'], self::node_path( $nodes, $stop ), $entries ) => self::proposal( 'none', $rule?->id, 'Its own time is the nested engine\'s exit, which no rule edit reaches; marking it significant re-times the one listener that spawned the engine.' ),
+				default           => self::visibility_proposal(
+					$frame['name'],
 					$rule,
 					'Unmark it once the responsible listener is known; per-callback profiling is the expensive kind.'
 				),
@@ -979,6 +1196,24 @@ class Findings {
 	}
 
 	/**
+	 * What explains the frame the descent stopped on, with its time and, for
+	 * a name called more than once, its slowest call.
+	 *
+	 * @param non-empty-list<array{name:string,ms:float,count:int,share:float,max:float}> $explained Per `explaining()`.
+	 * @param int                                                                         $held      The percent of the frame they hold.
+	 * @return string
+	 */
+	private static function explained_detail( array $explained, int $held ): string {
+		$named = \array_map(
+			static fn ( array $call ): string => 1 === $call['count']
+				? "{$call['name']} " . self::ms( $call['ms'] )
+				: "{$call['name']} ×{$call['count']} " . self::ms( $call['ms'] ) . ' (slowest ' . self::ms( $call['max'] ) . ')',
+			$explained
+		);
+		return \sprintf( '%s %s %d%% of it.', \implode( ', ', $named ), 1 === \count( $explained ) ? 'holds' : 'hold', $held );
+	}
+
+	/**
 	 * How much of the request a span actually SPENDS, said only where it has
 	 * children to hide behind and its body is not all of it. A wrapper reads
 	 * as 100% and sends a reader inside the one span guaranteed to contain
@@ -1045,6 +1280,42 @@ class Findings {
 	}
 
 	/**
+	 * The children that explain a frame, heaviest first, each name with its
+	 * whole count and time inside it and its slowest call: none where they
+	 * hold under `EXPLAINED_SHARE` of it, and past that only the names needed
+	 * to reach it, at most `EXPLAINED_NAMED`, which may stop short of it.
+	 *
+	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
+	 * @param int               $index    The frame's index.
+	 * @param float             $duration Request duration in milliseconds.
+	 * @return list<array{name:string,ms:float,count:int,share:float,max:float}>
+	 */
+	private static function explaining( array $nodes, int $index, float $duration ): array {
+		$children = \array_values( \array_filter( $nodes, static fn ( array $node ): bool => $index === $node['parent'] ) );
+		$target   = $nodes[ $index ]['value'] * self::EXPLAINED_SHARE;
+		if ( $target <= 0.0 || \array_sum( \array_column( $children, 'value' ) ) < $target ) {
+			return [];
+		}
+		\usort( $children, static fn ( array $a, array $b ): int => $b['value'] <=> $a['value'] );
+		$named = [];
+		$held  = 0.0;
+		foreach ( \array_slice( $children, 0, self::EXPLAINED_NAMED ) as $child ) {
+			if ( $held >= $target ) {
+				break;
+			}
+			$held   += $child['value'];
+			$named[] = [
+				'name'  => $child['name'],
+				'ms'    => $child['value'],
+				'count' => $child['count'],
+				'share' => $child['value'] / $duration,
+				'max'   => $child['max'],
+			];
+		}
+		return $named;
+	}
+
+	/**
 	 * The statement or URL a transport span spent most of its time on, as the
 	 * metric's own fields, or nothing where the span carries no table — a hook,
 	 * an unfolded record, or a query the fold never merged.
@@ -1075,26 +1346,42 @@ class Findings {
 	}
 
 	/**
-	 * The heaviest child of a node whose children explain it — they hold at
-	 * least `EXPLAINED_SHARE` of its time — or null when its own body holds
-	 * more, and what it does there is what the reader cannot yet see.
+	 * Each step the descent took below the dominant span, with its share of
+	 * the request, or '' where it took none.
 	 *
-	 * @param list<Flame_Entry> $nodes     Flattened flame nodes.
-	 * @param int               $index     The node's index.
-	 * @param float             $contained What its children hold, in milliseconds.
-	 * @return Flame_Entry|null
+	 * @param list<array{name:string,ms:float,share:float}> $chain The frames the descent stepped into.
+	 * @return string
 	 */
-	private static function explaining_child( array $nodes, int $index, float $contained ): ?array {
-		if ( $contained < $nodes[ $index ]['value'] * self::EXPLAINED_SHARE ) {
-			return null;
+	private static function chain_detail( array $chain ): string {
+		$steps = [];
+		foreach ( $chain as $at => $step ) {
+			$steps[] = \sprintf(
+				0 === $at ? 'Inside it, %s holds %d%% of the request' : 'inside that, %s holds %d%%',
+				$step['name'],
+				(int) \round( 100 * $step['share'] )
+			);
 		}
-		$heaviest = null;
-		foreach ( $nodes as $child ) {
-			if ( $index === $child['parent'] && ( null === $heaviest || $child['value'] > $heaviest['value'] ) ) {
-				$heaviest = $child;
+		return [] === $steps ? '' : \implode( '; ', $steps ) . '.';
+	}
+
+	/**
+	 * The child of a node one call of which holds `HOLDING_SHARE` of it —
+	 * the slowest such call's, where two qualify — or null where none does.
+	 *
+	 * @param list<Flame_Entry> $nodes Flattened flame nodes.
+	 * @param int               $index The node's index.
+	 * @return int|null The child's index.
+	 */
+	private static function holding_child( array $nodes, int $index ): ?int {
+		$held = null;
+		foreach ( $nodes as $at => $child ) {
+			if ( $index === $child['parent'] && $child['max'] > 0.0
+					&& $child['max'] >= $nodes[ $index ]['value'] * self::HOLDING_SHARE
+					&& ( null === $held || $child['max'] > $nodes[ $held ]['max'] ) ) {
+				$held = $at;
 			}
 		}
-		return $heaviest;
+		return $held;
 	}
 
 	/**
@@ -1129,10 +1416,10 @@ class Findings {
 	/**
 	 * The outermost span on the way up from `$index` — itself included — that
 	 * dominates the request and ran more than once, or null when every
-	 * dominating span ran once. A run whose slowest call alone holds
-	 * `DOMINANT_SHARE` is one slow call beside quick ones, not a repeat.
-	 * `own` says whether that span IS the dominant one, decided by index: a
-	 * span nested in a same-name ancestor is not it.
+	 * dominating span ran once. Its calls must be `alike()`, so one slow call
+	 * beside quick ones is not a repeat. `own` says whether that span IS the
+	 * dominant one, decided by index: a span nested in a same-name ancestor
+	 * is not it.
 	 *
 	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
 	 * @param int               $index    The dominant node's index.
@@ -1143,7 +1430,7 @@ class Findings {
 		$repeat = null;
 		for ( $at = $index; null !== $at; $at = $nodes[ $at ]['parent'] ) {
 			$node = $nodes[ $at ];
-			if ( $node['count'] > 1 && $node['value'] / $duration >= self::DOMINANT_SHARE && $node['max'] / $duration < self::DOMINANT_SHARE ) {
+			if ( $node['count'] > 1 && $node['value'] / $duration >= self::DOMINANT_SHARE && self::alike( $node['max'], $node['value'], $node['count'] ) ) {
 				$repeat = [
 					'name'    => $node['name'],
 					'count'   => $node['count'],
@@ -1154,6 +1441,19 @@ class Findings {
 			}
 		}
 		return $repeat;
+	}
+
+	/**
+	 * Whether calls are alike: the slowest takes no more than
+	 * `SIMILAR_CALL_FACTOR` times their mean.
+	 *
+	 * @param float $slowest The slowest call.
+	 * @param float $total   What they hold between them.
+	 * @param int   $count   How many there are.
+	 * @return bool
+	 */
+	private static function alike( float $slowest, float $total, int $count ): bool {
+		return $slowest <= self::SIMILAR_CALL_FACTOR * $total / \max( 1, $count );
 	}
 
 	/**
@@ -1386,7 +1686,7 @@ class Findings {
 
 	/**
 	 * Flatten a flame tree into a list of `{name, value, self_ms, max, depth,
-	 * count, parent}`, root excluded — the root IS the request, so it can never be the
+	 * count, nested_ms, max_own, parent}`, root excluded — the root IS the request, so it can never be the
 	 * span holding most of the request. `parent` is the index of the entry this
 	 * one sits inside, null at the top level.
 	 *
@@ -1397,9 +1697,11 @@ class Findings {
 	 * already says with its `count`. A folded node's `count` is carried; an
 	 * unfolded node counts once. `i` is the earliest position a member names
 	 * of the entry that opened it, where the tree carries one. `max` is the
-	 * group's slowest call: a folded
-	 * node's own `max`, an unfolded node's value, and an older folded node
-	 * carrying no `max` its value, which can only withhold a repeat.
+	 * group's slowest call: a folded node's own `max`, an unfolded node's
+	 * value. Every folded node carries one, so a node of several calls without
+	 * it is a broken record and is refused. `nested_ms` is what the nearest
+	 * frames of its own name inside it hold — blocks inside a block — and
+	 * `max_own` its slowest call less those, per `slowest_own()`.
 	 *
 	 * `self_ms` is what the span spent in its OWN body: its value less what its
 	 * children hold. That is the number that separates a span doing work from
@@ -1419,7 +1721,7 @@ class Findings {
 	 */
 	private static function flatten( array $flame, array $by_path = [] ): array {
 		$out = [];
-		self::flatten_children( $out, [ $flame ], 0, null, $by_path, [] );
+		self::flatten_children( $out, [ $flame ], 0, null, $by_path, [], [] );
 		return $out;
 	}
 
@@ -1427,14 +1729,15 @@ class Findings {
 	 * Append the children of every node in `$parents`, grouped by name, then
 	 * each group's own children beneath it.
 	 *
-	 * @param list<Flame_Entry> $out     The flattened list, extended in place.
-	 * @param list<array<array-key,mixed>>                                                         $parents Nodes whose children form this level.
-	 * @param int                                                                                  $depth   The depth of `$parents`.
-	 * @param int|null                                                                             $parent  The index of the entry `$parents` flattened to.
-	 * @param array<string,array<array-key,mixed>>                                                 $by_path Tables an unfolded record's entries hold, by name path.
-	 * @param list<string>                                                                         $prefix  The name path of `$parents`.
+	 * @param list<Flame_Entry>                    $out     The flattened list, extended in place.
+	 * @param list<array<array-key,mixed>>         $parents Nodes whose children form this level.
+	 * @param int                                  $depth   The depth of `$parents`.
+	 * @param int|null                             $parent  The index of the entry `$parents` flattened to.
+	 * @param array<string,array<array-key,mixed>> $by_path Tables an unfolded record's entries hold, by name path.
+	 * @param list<string>                         $prefix  The name path of `$parents`.
+	 * @param array<string,int>                    $owners  Each name on that path to the index of its innermost entry.
 	 */
-	private static function flatten_children( array &$out, array $parents, int $depth, ?int $parent, array $by_path, array $prefix ): void {
+	private static function flatten_children( array &$out, array $parents, int $depth, ?int $parent, array $by_path, array $prefix, array $owners ): void {
 		$groups = [];
 		foreach ( $parents as $node ) {
 			foreach ( \is_array( $node['children'] ?? null ) ? $node['children'] : [] as $child ) {
@@ -1458,10 +1761,11 @@ class Findings {
 					$first = \min( $first ?? $member['i'], $member['i'] );
 				}
 				$member_value = Core::num_float( $member['value'] ?? 0 );
+				$member_count = \max( 1, Core::num_int( $member['count'] ?? 0 ) );
 				$value       += $member_value;
 				$self        += $member_value - \array_sum( \array_map( static fn ( mixed $child ): float => Core::num_float( Core::arr( $child )['value'] ?? 0 ), Core::arr( $member['children'] ?? null ) ) );
-				$max          = \max( $max, Core::num_float( $member['max'] ?? $member_value ) );
-				$count       += \max( 1, Core::num_int( $member['count'] ?? 0 ) );
+				$max          = \max( $max, self::slowest_of( $member, $member_value, $member_count, $group['name'] ) );
+				$count       += $member_count;
 				$shapes       = self::merge_shapes( $shapes, $member );
 			}
 			$path = [ ...$prefix, $group['name'] ];
@@ -1469,13 +1773,15 @@ class Findings {
 				$shapes = $by_path[ \implode( "\x1f", $path ) ] ?? [];
 			}
 			$entry = [
-				'name'    => $group['name'],
-				'value'   => $value,
-				'self_ms' => $self,
-				'max'     => $max,
-				'depth'   => $depth + 1,
-				'count'   => $count,
-				'parent'  => $parent,
+				'name'      => $group['name'],
+				'value'     => $value,
+				'self_ms'   => $self,
+				'max'       => $max,
+				'depth'     => $depth + 1,
+				'count'     => $count,
+				'nested_ms' => 0.0,
+				'max_own'   => $max,
+				'parent'    => $parent,
 			];
 			if ( null !== $first ) {
 				$entry['i'] = $first;
@@ -1483,9 +1789,69 @@ class Findings {
 			if ( [] !== $shapes ) {
 				$entry['shapes'] = $shapes;
 			}
+			$owner = $owners[ $group['name'] ] ?? -1;
+			if ( isset( $out[ $owner ] ) ) {
+				$out[ $owner ]['nested_ms'] += $value;
+			}
 			$out[] = $entry;
-			self::flatten_children( $out, $group['members'], $depth + 1, \array_key_last( $out ), $by_path, $path );
+			$at    = \array_key_last( $out );
+			self::flatten_children( $out, $group['members'], $depth + 1, $at, $by_path, $path, [ $group['name'] => $at ] + $owners );
+			if ( $out[ $at ]['nested_ms'] > 0.0 ) {
+				$out[ $at ]['max_own'] = \max( \array_map( static fn ( array $member ): float => self::slowest_own( $member, $group['name'] ), $group['members'] ) );
+			}
 		}
+	}
+
+	/**
+	 * A frame's slowest call less what the nearest frames of its own name
+	 * inside it hold: exact for one call, while a folded frame keeps its
+	 * `max`, the only call it times apart.
+	 *
+	 * @param array<array-key,mixed> $member A flame node.
+	 * @param string                 $name   Its name.
+	 * @return float
+	 */
+	private static function slowest_own( array $member, string $name ): float {
+		$value = Core::num_float( $member['value'] ?? 0 );
+		$count = \max( 1, Core::num_int( $member['count'] ?? 0 ) );
+		return 1 === $count ? $value - self::held_by_name( $member, $name ) : self::slowest_of( $member, $value, $count, $name );
+	}
+
+	/**
+	 * A flame node's slowest call: an unfolded node is one call, its value; a
+	 * folded node carries its `max`.
+	 *
+	 * @param array<array-key,mixed> $member A flame node.
+	 * @param float                  $value  Its value.
+	 * @param int                    $count  Its calls.
+	 * @param string                 $name   Its name, for the refusal.
+	 * @return float
+	 * @throws \UnexpectedValueException For a folded node with no `max`.
+	 */
+	private static function slowest_of( array $member, float $value, int $count, string $name ): float {
+		if ( 1 === $count ) {
+			return $value;
+		}
+		if ( ! \is_numeric( $member['max'] ?? null ) ) {
+			throw new \UnexpectedValueException( "Findings: folded frame {$name} of {$count} calls carries no max" );
+		}
+		return (float) $member['max'];
+	}
+
+	/**
+	 * What the nearest frames of one name below a node hold.
+	 *
+	 * @param array<array-key,mixed> $node A flame node.
+	 * @param string                 $name The name.
+	 * @return float
+	 */
+	private static function held_by_name( array $node, string $name ): float {
+		$held = 0.0;
+		foreach ( Core::arr( $node['children'] ?? null ) as $child ) {
+			$child = Core::arr( $child );
+			$held += $name === ( $child['name'] ?? null ) ? Core::num_float( $child['value'] ?? 0 ) : self::held_by_name( $child, $name );
+		}
+		return $held;
 	}
 
 	/**
