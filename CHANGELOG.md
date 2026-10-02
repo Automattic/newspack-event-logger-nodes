@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.116.0] - 2026-10-02
+
 ### Added
 
 - **A timed-out or aborted record says where it stopped logging.** `Findings` gains a high `stopped` finding for an `error_status` of `T` or `A`, which had none: hub 86cnt4d8763r2jvw7rmxpsy77y2sm7o6, 856 s long with its last entry 467 ms in, answered `findings: []`. Its metric is `last_entry` at `last_entry_ms`, the spans still open there as one ` › `-joined `open` path, `last_line_ms` from `last_log_ts`, and `evicted_after_ms` (`T`) or `aborted_after_ms` (`A`). Each time belongs to its own row: a runaway's builder keeps advancing `last_log_ts` over lines it no longer stores. The stop is read ahead of the drain a producer writes on its way out — `(orphaned)` completes, `memory`, the closing `resources` sample and the terminal — so an aborted record names the work it was in rather than `process (aborted)`, and never earlier than the `request` line, so the profiler's plugin rows, written after it but stamped before, place no stop. It names no cause, because a killed or hung process and a lost log tail leave the same record, and where nothing past the opening rows was logged it says the stop point is unknown and gives the times alone. A `T` or `A` record without `last_log_ts` is refused, and the Ask brief's `env` carries `error_status`.
