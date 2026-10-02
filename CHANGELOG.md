@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The `urls` page sorted by last seen is read fresh on every poll when the
+  ranked lists serve it (no search, at most `URL_RANK_N` rows), instead of
+  from the page cache, which held it for `URL_PAGE_REFRESH_S` (60 s). A
+  searched last-seen page is a fold and still caches.
+
 ### Fixed
 
 - A hook argument's list of plain values shapes to one `["?"]`, as a SQL

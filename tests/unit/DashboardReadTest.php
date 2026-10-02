@@ -255,6 +255,26 @@ class DashboardReadTest extends TestCase {
 		$this->assertNotSame( [], $this->cached_pages(), 'the page is cached' );
 	}
 
+	/**
+	 * A last-seen page from the ranked lists is read fresh every time: the
+	 * sort is about recency, and the lists are a cheap read. The same page by
+	 * count caches, and so does a last-seen fold, which is not cheap. The
+	 * header every sort shares caches either way.
+	 */
+	public function test_a_ranked_last_seen_page_is_never_cached(): void {
+		$this->seed_site();
+
+		self::fire( 'urls', '--sort=last_updated' );
+		$header = $this->cached_pages();
+		self::fire( 'urls', '--sort=count' );
+		$by_count = $this->cached_pages();
+		self::fire( 'urls', '--sort=last_updated ' . self::FOLD );
+
+		$this->assertCount( 1, $header, 'only the shared header is cached' );
+		$this->assertCount( 2, $by_count, 'the page by count is cached' );
+		$this->assertCount( 3, $this->cached_pages(), 'the last-seen fold is cached' );
+	}
+
 	/** Decision 3: a fold missing a shard of an older hour's index is short, not provisional. */
 	public function test_a_fold_missing_a_shard_of_an_older_hour_fails_soft(): void {
 		$this->seed_site();

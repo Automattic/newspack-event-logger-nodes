@@ -843,7 +843,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the window bucket, the retention and the store count: a fold over a
 	 * hub's whole URL index runs tens of seconds, and every tab polling the
 	 * same page would otherwise pay it again. A page wider than
-	 * `URLS_PAGE_CACHE_MAX_ROWS` is built and never stored.
+	 * `URLS_PAGE_CACHE_MAX_ROWS` is built and never stored, and so is a
+	 * last-seen page the ranked lists serve: that sort is about recency, and
+	 * the lists are a cheap read. A last-seen fold still caches.
 	 *
 	 * @param string                 $server  Reporting server to scope to; '' reads every server.
 	 * @param string                 $search  Case-insensitive whole URL words; '' matches all.
@@ -869,7 +871,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				: null;
 			return $result ?? $this->fold_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores, $now );
 		};
-		if ( $limit > self::URLS_PAGE_CACHE_MAX_ROWS ) {
+		$fresh = 'last_updated' === $sort && self::ranked_serves( $search, \max( 0, $offset ) + \max( 0, $limit ) );
+		if ( $fresh || $limit > self::URLS_PAGE_CACHE_MAX_ROWS ) {
 			return $build();
 		}
 		/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,estimated:bool,provisional:bool,ranked:bool,as_of:int} */
