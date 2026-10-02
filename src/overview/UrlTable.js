@@ -10,16 +10,16 @@
  * a page the server already cut with PHP's byte-order `<=>`, so rows skip and
  * repeat across pages.
  *
- * All of it but the pager also lives in the address bar — `?sort=`, `?order=`,
- * `?q=`, `?errors=` and `?workers=` — so a shared link opens on the same rows.
- * The page stays out: the rows under an offset move as traffic arrives.
+ * All of it also lives in the address bar — `?sort=`, `?order=`, `?q=`,
+ * `?errors=`, `?workers=` and `?paged=` — so a shared link opens on the same
+ * view. The page is `?paged=`, WordPress's own name, because `?page=` names
+ * the admin screen.
  *
  * Rows virtualize against window scroll, and each row's URL cell carries a
  * background bar scaling the active chart metric against the page's p95.
  */
 
 import {
-	useState,
 	useMemo,
 	useRef,
 	useCallback,
@@ -51,6 +51,18 @@ import {
 const ROW_HEIGHT = 40;
 
 /**
+ * The page a `?paged=` value names: a positive whole number, else the first.
+ *
+ * @param {?string} raw The param's value; null when absent.
+ * @return {number} The 1-based page.
+ */
+const restorePage = ( raw ) => {
+	const n = Number( raw );
+	// Safe, or `1e21` reaches the wire as an exponent the verb refuses.
+	return Number.isSafeInteger( n ) && n > 0 ? n : 1;
+};
+
+/**
  * Page size, in rows.
  *
  * `usePerformanceGraph` fixes the `urls` verb's `limit` at 100 to match, since
@@ -58,6 +70,13 @@ const ROW_HEIGHT = 40;
  * page size split across two files.
  */
 const URLS_PER_PAGE = 100;
+
+/**
+ * The last offset the `urls` verb serves
+ * (`Performance_CI_Node::URLS_MAX_OFFSET`); it clamps a later one to this, so
+ * the pager stops at the page that starts here.
+ */
+const URLS_MAX_OFFSET = 10000;
 
 /**
  * One status class's share of a row's requests, as a whole percentage.
@@ -394,7 +413,7 @@ const UrlRow = memo(
  * @param {?Object}                  props.selectedUrl    The row the detail modal is open on, or null.
  * @param {(url: Object) => void}    props.onSelect       Receives a row on click or Enter/Space, and is forwarded to each row.
  * @param {(params: Object) => void} props.onParamsChange Receives `search`, `sort`, `order`, `offset`, `errorsOnly` and `includeWorkers` whenever one of them changes.
- * @param {number}                   props.totalUrls      Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs.
+ * @param {?number}                  [props.totalUrls]    Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs. Null until a reply has counted them.
  * @param {string}                   [props.metric]       Chart metric the row bars scale.
  * @param {boolean}                  [props.ranked]       Whether the server answered from its per-bucket ranked lists rather than the whole index.
  * @param {number}                   [props.now]          Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
@@ -408,7 +427,7 @@ export default function UrlTable( {
 	selectedUrl,
 	onSelect,
 	onParamsChange,
-	totalUrls,
+	totalUrls = null,
 	metric = 'volume',
 	ranked = false,
 	now = 0,
@@ -436,7 +455,11 @@ export default function UrlTable( {
 	// Opts IN, where Errors opts in to narrow; workers are out by default.
 	const [ includeWorkers, setIncludeWorkers ] =
 		useQueryParamFlag( 'workers' );
-	const [ currentPage, setCurrentPage ] = useState( 1 );
+	const [ currentPage, setCurrentPage ] = useQueryParamState(
+		'paged',
+		restorePage,
+		( n ) => ( 1 === n ? null : String( n ) )
+	);
 	const listRef = useRef( null );
 	const searchContainerRef = useRef( null );
 
@@ -490,16 +513,24 @@ export default function UrlTable( {
 	};
 
 	// Clamped on READ: a shrinking set strands the page, pager and all.
-	const total = totalUrls || 0;
-	const totalPages = Math.max( 1, Math.ceil( total / URLS_PER_PAGE ) );
-	const page = Math.min( currentPage, totalPages );
+	const total = totalUrls ?? 0;
+	const totalPages = Math.max(
+		1,
+		Math.min(
+			Math.ceil( total / URLS_PER_PAGE ),
+			URLS_MAX_OFFSET / URLS_PER_PAGE + 1
+		)
+	);
+	// An unmeasured set clamps nothing, so a linked page survives to its reply.
+	const page =
+		null === totalUrls ? currentPage : Math.min( currentPage, totalPages );
 	const offset = ( page - 1 ) * URLS_PER_PAGE;
 	// Move the state too, or a growing set springs the page back.
 	useEffect( () => {
 		if ( currentPage !== page ) {
 			setCurrentPage( page );
 		}
-	}, [ currentPage, page ] );
+	}, [ currentPage, page, setCurrentPage ] );
 
 	useEffect( () => {
 		onParamsChange?.( {

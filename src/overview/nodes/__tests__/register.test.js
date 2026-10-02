@@ -145,7 +145,7 @@ describe( 'UrlsView — the envelope slice', () => {
 		expect( v.view ).toEqual( {
 			data: [],
 			totals: null,
-			rows: 0,
+			rows: null,
 			slowest: [],
 			filters: null,
 			ranked: false,

@@ -252,6 +252,13 @@ class PerformanceCITest extends TestCase {
 		);
 	}
 
+	public function test_the_urls_verb_serves_no_offset_past_its_ceiling(): void {
+		// UrlTable's pager mirrors URLS_MAX_OFFSET, so its last page is 101.
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--offset=73100' );
+
+		$this->assertSame( 10000, $reply['offset'] );
+	}
+
 	public function test_stats_fail_soft_when_the_tables_dir_cannot_be_made(): void {
 		// A file where the directory belongs: every Table's file fails to open.
 		\file_put_contents( $this->tmp . '/tables', 'not a directory' );

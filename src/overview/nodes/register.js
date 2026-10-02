@@ -82,13 +82,15 @@ export const views = {
 		 *
 		 * A malformed envelope publishes an empty table rather than throwing,
 		 * and no totals rather than zeroes: a zero here reads as a measurement.
+		 * `rows` starts null for the same reason, so the pager clamps a linked
+		 * page only once a reply has counted the set.
 		 */
 		UrlsView: {
 			description: 'Owns the URL leaderboard slice for its React widget.',
 			empty: {
 				data: [],
 				totals: null,
-				rows: 0,
+				rows: null,
 				slowest: [],
 				filters: null,
 				ranked: false,

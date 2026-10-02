@@ -151,6 +151,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** `dump_url` per-URL request-list cap, applied to the index walk. */
 	private const RECENT_REQUEST_LIMIT = 500;
 
+	/** The `urls` verb's offset ceiling; a later offset is clamped to it. */
+	private const URLS_MAX_OFFSET = 10000;
+
 	/** `grep_requests` default / max matched-request results (bounds the reply). */
 	private const GREP_RESULT_LIMIT_DEFAULT = 20;
 	private const GREP_RESULT_LIMIT_MAX     = 50;
@@ -3337,7 +3340,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$sort    = Core::as_string( $args['sort'] );
 				$order   = Core::as_string( $args['order'] );
 				$limit   = \min( 1000, \max( 1, Core::as_int( $args['limit'] ) ) );
-				$offset  = \min( 10000, Core::as_int( $args['offset'] ) );
+				$offset  = \min( self::URLS_MAX_OFFSET, Core::as_int( $args['offset'] ) );
 				$search  = Core::as_string( $args['search'] );
 				$server  = Core::as_string( $args['server'] );
 				$errors  = true === $args['errors_only'];
