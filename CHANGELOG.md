@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.117.0] - 2026-10-02
+
 ### Changed
 
 - **A nested engine's sequence opens on its first row, `gyrobase init (complete)` or `gyrobase (start)`.** Nuclear Gyrobase writes `gyrobase init (start)` in the parent's sequence, and the Perl child closes it as its own `n` = 1, ahead of `gyrobase (start)` at `n` = 2, so the engine's start-up is a measured span. `Request_Builder_Node` opens the nested sequence on whichever row of `NESTED_OPENERS` arrives as `n` = 1 and closes it at `gyrobase (complete)`, as before. An engine that writes no init row still opens on `gyrobase (start)`, and a child that dies before logging leaves `gyrobase init` open without costing the parent a row. **Deploy the gyrobase engine before nuclear:** a nuclear that writes `gyrobase init (start)` ahead of an engine that ignores `NEWSPACK_INIT_TS` leaves `gyrobase init` open around the whole render.
