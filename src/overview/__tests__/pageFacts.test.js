@@ -80,9 +80,7 @@ test( 'a selected request wins over its URL, and carries its findings', () => {
 		requestDetail: {
 			duration_ms: 812,
 			status_code: 200,
-			findings: [
-				{ kind: 'unattributed', title: 'x', severity: 'high' },
-			],
+			findings: [ { kind: 'stopped', title: 'x', severity: 'high' } ],
 			caveat: 'not everything is measured',
 		},
 	} );
@@ -91,7 +89,7 @@ test( 'a selected request wins over its URL, and carries its findings', () => {
 	expect( facts.request ).toEqual( { rid: 'rid-1', partition: 2 } );
 	expect( facts.duration_ms ).toBe( 812 );
 	expect( facts.findings ).toEqual( [
-		{ kind: 'unattributed', title: 'x', severity: 'high' },
+		{ kind: 'stopped', title: 'x', severity: 'high' },
 	] );
 	expect( facts.caveat ).toBe( 'not everything is measured' );
 } );

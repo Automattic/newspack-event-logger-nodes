@@ -77,10 +77,10 @@ describe( 'RequestDetailView', () => {
 					...baseRequest,
 					findings: [
 						{
-							kind: 'unattributed',
+							kind: 'insufficient_instrumentation',
 							severity: 'high',
-							title: '1.9s of 2.0s went unmeasured',
-							measured: 'subtraction',
+							title: 'The governing rule registers no hooks, so nothing inside the request is measured',
+							measured: 'rule + record',
 							proposal: {
 								action: 'add_hooks',
 								direction: 'more',
@@ -119,7 +119,7 @@ describe( 'RequestDetailView', () => {
 		expect( text ).toContain( 'less noise' );
 		// A fatal proposes nothing: no rule edit fixes a crash.
 		expect( text ).not.toContain( 'none' );
-		expect( text ).toContain( '1.9s of 2.0s went unmeasured' );
+		expect( text ).toContain( 'nothing inside the request is measured' );
 		expect( text ).toContain( 'init, template_redirect' );
 		unmount();
 	} );
@@ -133,7 +133,7 @@ describe( 'RequestDetailView', () => {
 						{
 							kind: 'dominant_span',
 							severity: 'high',
-							title: 'the_content hook holds 81% of the profiled time',
+							title: 'the_content hook holds 81% of the request',
 							measured: 'profiles',
 							proposal: {
 								action: 'mark_significant',

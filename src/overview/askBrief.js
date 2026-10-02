@@ -180,7 +180,8 @@ function fields( pairs ) {
 
 /**
  * The rule an edit would land on — or the fact that there is none, or that
- * the record's stamp names one this ruleset does not hold.
+ * the record's stamp names one this ruleset does not hold. What it logs
+ * beyond hooks says whether an absent query, call or load was unlogged.
  *
  * @param {?Object} rule The governing rule, `{ id, resolved: false }` for a stamp that did not resolve, or null.
  * @return {string[]} Markdown list items.
@@ -206,6 +207,26 @@ function ruleLines( rule ) {
 		[
 			'significant events',
 			( rule.significant_events ?? [] ).join( ', ' ),
+		],
+		[
+			'logs',
+			[
+				rule.log_queries && 'queries',
+				rule.log_http && 'HTTP',
+				rule.log_plugin_loads && 'plugin loads',
+			]
+				.filter( Boolean )
+				.join( ', ' ) || 'hooks only',
+		],
+		[
+			'traces',
+			[
+				rule.trace_hooks && 'hooks',
+				rule.trace_callers > 0 &&
+					`callers \u00d7${ rule.trace_callers }`,
+			]
+				.filter( Boolean )
+				.join( ', ' ),
 		],
 	] );
 }
@@ -271,7 +292,6 @@ function bodyLines( brief ) {
 					[ 'url', brief.url, 'site' ],
 					[ 'duration_ms', num( brief.duration_ms ) ],
 					[ 'status', brief.status_code ],
-					[ 'profiled_ms', num( brief.flame?.profiled_ms ) ],
 					[
 						'top spans',
 						( brief.flame?.top_level ?? [] )

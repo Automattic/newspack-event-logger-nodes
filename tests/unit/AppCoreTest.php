@@ -664,6 +664,28 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( 'http', $this->open_span_label() );
 	}
 
+	/**
+	 * The logger binds its rule inside `plugins_loaded`, from the deferred
+	 * bootstrap at priority 11, and its start filter at `hook_start_priority`,
+	 * a priority that dispatch has already passed. Only the close runs, and a
+	 * close no start opened writes nothing: a rule listing `plugins_loaded`
+	 * yields no span.
+	 */
+	public function test_a_rule_listing_plugins_loaded_yields_no_span(): void {
+		$this->set_governing_rule( new Rule( 'aaaa22223333', '/checkout/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'plugins_loaded' ] ) );
+		$core = new Core();
+
+		$start = $GLOBALS['_wp_test_filters']['plugins_loaded'] ?? [];
+		$at    = \array_keys( \array_filter( $start, static fn ( array $cbs ): bool => \in_array( [ $core, 'hook_start' ], $cbs, true ) ) );
+		$this->assertCount( 1, $at );
+		$this->assertLessThan( 11, $at[0], 'the deferred bootstrap binds at plugins_loaded:11' );
+
+		$GLOBALS['_wp_test_current_filter'] = 'plugins_loaded';
+		$core->hook_complete();
+
+		$this->assertNull( $this->last_entry( 'plugins_loaded hook (complete)' ) );
+	}
+
 	/** The label of the span Log_Manager currently has open, innermost first. */
 	private function open_span_label(): string {
 		$prop = new \ReflectionProperty( Log_Manager::class, 'times' );

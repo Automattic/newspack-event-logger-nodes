@@ -86,6 +86,18 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	public const SEQUENCE_BREAK_KEYS = [ self::LOST_MARKER_KEY, self::FOLD_MARKER_KEY ];
 
 	/**
+	 * The span a nested engine's own producer opens around its render under
+	 * the parent's rid, restarting `n` at 1 inside it.
+	 */
+	public const NESTED_PRODUCER = 'gyrobase';
+
+	/** Opens a nested engine's render. */
+	public const NESTED_START = self::NESTED_PRODUCER . ' (start)';
+
+	/** Closes a nested engine's render. */
+	public const NESTED_COMPLETE = self::NESTED_PRODUCER . ' (complete)';
+
+	/**
 	 * Every non-nominal terminal marker: fatal, timed out, aborted, incomplete.
 	 * The index writer, its reader and the `process (complete)` validator all
 	 * read this one list, because three parallel copies is how a status becomes
@@ -467,7 +479,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$seq_n = Core::as_int( $n );
 
 		// Nested render (proc_open) restarts n=1 same rid; stack saves parent.
-		if ( 'gyrobase (start)' === $keyword ) {
+		if ( self::NESTED_START === $keyword ) {
 			$stack               = \is_array( $request->seq_stack ?? null ) ? $request->seq_stack : [];
 			$stack[]             = \is_int( $request->expected_n ?? null ) ? $request->expected_n : 1;
 			$request->seq_stack  = $stack;
@@ -507,7 +519,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$request->last_position = Core::as_string( $message[ Message::ID ] ?? '' );
 
 		// End of nested subprocess sequence: pop back to parent's expected n.
-		if ( 'gyrobase (complete)' === $keyword && \is_array( $request->seq_stack ?? null ) && [] !== $request->seq_stack ) {
+		if ( self::NESTED_COMPLETE === $keyword && \is_array( $request->seq_stack ?? null ) && [] !== $request->seq_stack ) {
 			$stack               = $request->seq_stack;
 			$popped              = \array_pop( $stack );
 			$request->expected_n = Core::int( $popped, 1 );
@@ -543,7 +555,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 		// Per-line activity timestamps for the inflight snapshot's *_ms derive.
 		$ts_log_v             = $entry['ts'] ?? 0;
-		$request->last_log_ts = Core::as_float( $ts_log_v );
+		// The latest stamp seen: the profiler's plugin rows arrive back-dated.
+		$request->last_log_ts = \max( Core::num_float( $request->last_log_ts ?? null ), Core::as_float( $ts_log_v ) );
 		$request->tracker_ts  = Core::$now;
 
 		// Runaways stay visible (Perl gyroscope parity); still evicted+bounded.
@@ -957,7 +970,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$request->state       = 'process';
 			$request->gap_after   = 0;
 			// Handle operator time-travel gracefully.
-			unset( $request->fold, $request->folded, $request->tail );
+			unset( $request->fold, $request->folded, $request->tail, $request->last_log_ts );
 			$request->rule_id     = \is_string( $entry['rule'] ?? null ) ? $entry['rule'] : '';
 		};
 
@@ -998,7 +1011,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$request->state        = 'complete';
 		};
 
-		$s['request'] = function ( \stdClass $request, array $entry ): void {
+		$s[ Log_Manager::REQUEST_LINE ] = function ( \stdClass $request, array $entry ): void {
 			$message = $entry['m'] ?? '';
 			if ( ! \is_string( $message ) ) {
 				return;
@@ -1053,7 +1066,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			}
 		};
 
-		$s['memory'] = function ( \stdClass $request, array $entry ): void {
+		$s[ Log_Manager::MEMORY ] = function ( \stdClass $request, array $entry ): void {
 			$m = $entry['m'] ?? [];
 			if ( \is_array( $m ) && isset( $m['peak'] ) && \is_scalar( $m['peak'] ) ) {
 				$request->peak_mb = (float) $m['peak'];

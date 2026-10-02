@@ -95,7 +95,6 @@ class Settings_Schema {
 		'after_setup_theme',
 		'init',
 		'parse_request',
-		'plugins_loaded',
 		'pre_get_posts',
 		'send_headers',
 		'setup_theme',

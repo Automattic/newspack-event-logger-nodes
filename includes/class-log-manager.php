@@ -81,6 +81,18 @@ class Log_Manager {
 	/** Category of the entry naming the worker's partition; its `m` is the integer. */
 	public const WORKER_PARTITION = 'worker_partition';
 
+	/** Category of the line naming the request's method and URL. */
+	public const REQUEST_LINE = 'request';
+
+	/** Category of the getrusage() sample written at the open and at the close. */
+	public const RESOURCES = 'resources';
+
+	/** Category of the memory high-water entry the close writes. */
+	public const MEMORY = 'memory';
+
+	/** The `m` of a `(complete)` closing a span its caller never closed. */
+	public const ORPHANED = '(orphaned)';
+
 	/** @var int Bytes-to-megabytes divisor. */
 	private const BYTES_PER_MB = 1024 * 1024;
 
@@ -400,7 +412,7 @@ class Log_Manager {
 		while ( \count( $this->times ) > 1 ) {
 			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
 		}
-		$this->message( 'memory', [
+		$this->message( self::MEMORY, [
 			'm' => [
 				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
 				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
@@ -526,7 +538,7 @@ class Log_Manager {
 	 */
 	private function emit_orphaned_complete( array $entry, $now ): void {
 		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
-		$data        = [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ];
+		$data        = [ 'm' => self::ORPHANED, 'duration_ms' => $duration_ms ];
 		$this->message( "{$entry['label']} (complete)", $data + \array_intersect_key( $entry, [ 'keep' => true ] ) );
 	}
 
@@ -957,6 +969,48 @@ class Log_Manager {
 	}
 
 	/**
+	 * The CPU time, user plus system, a record's process spent between its
+	 * first and last `resources` samples, read back from what
+	 * `log_resources()` writes and from the Perl engine's plain-number
+	 * spelling of the same pair. getrusage() counts this process alone, so
+	 * a child it waited on adds nothing.
+	 *
+	 * @param array<array-key,mixed> $entries A record's entries.
+	 * @return array{from:float,to:float,cpu_ms:float}|null The samples' stamps and the CPU between them; null with fewer than two.
+	 * @throws \UnexpectedValueException When a sample's `m` carries no utime and stime.
+	 */
+	public static function cpu_between_samples( array $entries ): ?array {
+		$samples = \array_values(
+			\array_filter( $entries, static fn ( mixed $entry ): bool => \is_array( $entry ) && self::RESOURCES === ( $entry['k'] ?? null ) )
+		);
+		if ( \count( $samples ) < 2 ) {
+			return null;
+		}
+		$first = $samples[0];
+		$last  = $samples[ \count( $samples ) - 1 ];
+		return [
+			'from'   => Core::num_float( $first['ts'] ?? 0 ),
+			'to'     => Core::num_float( $last['ts'] ?? 0 ),
+			'cpu_ms' => ( self::cpu_seconds( $last ) - self::cpu_seconds( $first ) ) * 1000.0,
+		];
+	}
+
+	/**
+	 * User plus system seconds one `resources` sample carries.
+	 *
+	 * @param array<array-key,mixed> $sample One `resources` entry.
+	 * @throws \UnexpectedValueException When its `m` carries no utime and stime.
+	 */
+	private static function cpu_seconds( array $sample ): float {
+		$m = $sample['m'] ?? null;
+		$number = '(\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)';
+		if ( ! \is_string( $m ) || 1 !== \preg_match( "/\\butime => {$number}, stime => {$number}(?=, \\w+ => |$)/", $m, $cpu ) ) {
+			throw new \UnexpectedValueException( 'Log_Manager: a resources sample carries no utime and stime: ' . \substr( \is_string( $m ) ? $m : \gettype( $m ), 0, 120 ) );
+		}
+		return (float) $cpu[1] + (float) $cpu[2];
+	}
+
+	/**
 	 * Resolve the rule governing a URL and keep it as this request's.
 	 *
 	 * No match means skip: there is no log-all baseline, so a deployment that
@@ -1230,7 +1284,7 @@ class Log_Manager {
 
 		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
 		$redacted_url = self::redact_url( $this->request_url );
-		$this->message( 'request', [ 'm' => "{$method} {$origin}{$redacted_url}" ] );
+		$this->message( self::REQUEST_LINE, [ 'm' => "{$method} {$origin}{$redacted_url}" ] );
 
 		// The record that caused this request; ID seeks onto the log.
 		if ( [] !== self::$job_message ) {
@@ -1261,15 +1315,15 @@ class Log_Manager {
 			return;
 		}
 		$info = [
-			\sprintf( 'utime => %f',  ( $r['ru_utime.tv_sec'] ?? 0 ) + ( $r['ru_utime.tv_usec'] ?? 0 ) / 1000000 ),
-			\sprintf( 'stime => %f',  ( $r['ru_stime.tv_sec'] ?? 0 ) + ( $r['ru_stime.tv_usec'] ?? 0 ) / 1000000 ),
+			\sprintf( 'utime => %F',  ( $r['ru_utime.tv_sec'] ?? 0 ) + ( $r['ru_utime.tv_usec'] ?? 0 ) / 1000000 ),
+			\sprintf( 'stime => %F',  ( $r['ru_stime.tv_sec'] ?? 0 ) + ( $r['ru_stime.tv_usec'] ?? 0 ) / 1000000 ),
 			\sprintf( 'maxrss => %d',   $r['ru_maxrss']   ?? 0 ),
 			\sprintf( 'minflt => %d',   $r['ru_minflt']   ?? 0 ), \sprintf( 'majflt => %d',  $r['ru_majflt']  ?? 0 ),
 			\sprintf( 'inblock => %d',  $r['ru_inblock']  ?? 0 ), \sprintf( 'oublock => %d', $r['ru_oublock'] ?? 0 ),
 			\sprintf( 'nsignals => %d', $r['ru_nsignals'] ?? 0 ),
 			\sprintf( 'nvcsw => %d',    $r['ru_nvcsw']    ?? 0 ), \sprintf( 'nivcsw => %d',  $r['ru_nivcsw']  ?? 0 ),
 		];
-		$this->message( 'resources', [ 'm' => \implode( ', ', $info ) ] );
+		$this->message( self::RESOURCES, [ 'm' => \implode( ', ', $info ) ] );
 	}
 
 	/**

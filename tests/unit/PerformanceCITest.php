@@ -3771,19 +3771,15 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'GET',
 			'flame'          => [
 				'name'     => 'request',
-				'value'    => 40.0,
-				'children' => [ [ 'name' => 'init', 'value' => 40.0, 'children' => [] ] ],
+				'value'    => 9000.0,
+				'children' => [ [ 'name' => 'init', 'value' => 8100.0, 'children' => [] ] ],
 			],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
 		$this->assertIsArray( $result );
-		$this->assertContains(
-			'unattributed',
-			\array_column( $result['findings'], 'kind' ),
-			'40ms profiled of a 9-second request is subtraction, not inference'
-		);
+		$this->assertContains( 'dominant_span', \array_column( $result['findings'], 'kind' ) );
 		$this->assertStringContainsString( 'SQL', $result['caveat'] );
 	}
 
