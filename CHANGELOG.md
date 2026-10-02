@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.118.2] - 2026-10-02
+
 ### Added
 
 - The URL table's page lives in the address bar as `?paged=`, beside its sort,
@@ -19,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The URL table's pager stops at page 101, the page at the `urls` verb's
   10,000-row offset ceiling. Past it the verb clamped the offset, so every
   later page showed page 101's rows under its own number.
+- Built against newspack-nodes 2.84.2: the debug overlay's REPL footer reads
+  `CONNECTED`, as the station's does.
 
 ## [0.118.1] - 2026-10-02
 
