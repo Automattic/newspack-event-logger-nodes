@@ -296,7 +296,8 @@ class Core {
 	 * is the diagnostic — and a leaf is kept only when `HOOK_ARG_KEEP` names its
 	 * key. This is where a credential in a hook frame actually sits: the
 	 * `Authorization` header of `http_request_args`, an option array carrying an
-	 * integration key.
+	 * integration key. A list of leaves shapes to one `?`, as SQL's `IN (?)`
+	 * does, because its length is data too.
 	 *
 	 * @param mixed $value The filter argument, or a branch of it.
 	 * @return mixed The branch with its unlisted leaves replaced.
@@ -315,6 +316,9 @@ class Core {
 			$out[ $key ] = \is_array( $item ) || \is_object( $item )
 				? self::shaped_argument( $item )
 				: ( isset( $keep[ \strtolower( (string) $key ) ] ) ? $item : '?' );
+		}
+		if ( [] !== $out && \array_is_list( $out ) && [ '?' ] === \array_unique( $out, \SORT_REGULAR ) ) {
+			return [ '?' ];
 		}
 		return $out;
 	}

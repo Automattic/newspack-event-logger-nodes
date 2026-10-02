@@ -839,6 +839,29 @@ class AppCoreTest extends TestCase {
 		$this->assertStringContainsString( '"body":"?"', $logged );
 	}
 
+	/**
+	 * A list of scalar leaves shapes to one `?`, as SQL shapes `IN (1, 2, 3)`
+	 * to `IN (?)`: its length is data, and a long one fills the line.
+	 */
+	public function test_hook_start_collapses_a_list_of_leaves(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core = new Core();
+
+		$core->hook_start(
+			[
+				'category__in'  => [ 4417, 5520, 6631, 7742, 8853 ],
+				'post__not_in'  => [ 9964, 1075 ],
+				'tax_query'     => [ [ 'taxonomy' => 'category', 'terms' => [ 3186, 4297 ] ] ],
+				'post__in'      => [],
+			]
+		);
+
+		$this->assertSame(
+			'{"category__in":["?"],"post__not_in":["?"],"tax_query":[{"taxonomy":"category","terms":["?"]}],"post__in":[]}',
+			$this->open_span_message()
+		);
+	}
+
 	/** An allowlisted key keeps its value; that is what the list is for. */
 	public function test_hook_start_keeps_an_allowlisted_key(): void {
 		$this->set_governing_rule( $this->query_rule( false ) );

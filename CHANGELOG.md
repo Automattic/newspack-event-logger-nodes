@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A hook argument's list of plain values shapes to one `["?"]`, as a SQL
+  `IN (1, 2, 3)` shapes to `IN (?)`. A `pre_get_posts` query carrying
+  hundreds of `category__in` ids logged one `"?"` per id, filling the line
+  and splitting calls that differed only in list length.
+
 ## [0.118.0] - 2026-10-02
 
 ### Changed
