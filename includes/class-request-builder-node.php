@@ -182,7 +182,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** Default entries one REQUEST holds before it folds itself. */
 	public const DEFAULT_MAX_ENTRIES_PER_REQUEST = 20000;
 
-	/** Default entries held across ALL in-flight requests; ~18MB each at 50,000. */
+	/** Default raw entries held across every unfolded in-flight request; ~18MB at 50,000. */
 	public const DEFAULT_ENTRY_BUDGET = 50000;
 
 	/**
@@ -231,7 +231,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	protected int $max_entries_per_request = self::DEFAULT_MAX_ENTRIES_PER_REQUEST;
 
 	/**
-	 * @var int Entries held across every in-flight request. An estimate, and
+	 * @var int Raw entries held across every unfolded in-flight request; a
+	 *          folded one is bounded and counts no further. An estimate, and
 	 *          deliberately one that only over-counts — a request that
 	 *          completes takes its entries with it and nothing decrements
 	 *          here. The check replaces it with the truth, so drift costs a
@@ -246,9 +247,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	private const FOLD_KEEP_HEAD = 10;
 
 	/**
-	 * Raw entries a folded request keeps from its tail — how it ends: stats
-	 * flush, memory, process complete. Both ends are bounded, and it is the
-	 * repetitive middle that costs memory.
+	 * Unkept raw entries a folded request keeps from its tail — how it ends:
+	 * memory, resources, process complete. Kept entries ride beside them in
+	 * arrival order. Both ends are bounded, and it is the repetitive middle
+	 * that costs memory.
 	 */
 	private const FOLD_KEEP_TAIL = 10;
 
@@ -588,15 +590,11 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$fold = $request->fold ?? null;
 			if ( \is_array( $fold ) ) {
 				/** @var Fold_State $fold */
-				Flame_Fold::add( $fold, $stored );
-				$request->fold = $fold;
-				// Consume the await first: a marked close is still a close.
-				$closes = self::closes_head_span( $request, $stored );
-				if ( $closes || self::is_kept( $stored ) ) {
-					$request->keep = self::bucket( $request->keep ?? null, $stored, null );
-				} else {
-					$request->tail = self::bucket( $request->tail ?? null, $stored, self::FOLD_KEEP_TAIL );
+				if ( Flame_Fold::add( $fold, $stored ) ) {
+					$stored['keep'] = 1;
 				}
+				$request->fold = $fold;
+				$request->tail = self::bucket( $request->tail ?? null, $stored );
 			} else {
 				$entries[]        = $stored;
 				$request->entries = $entries;
@@ -959,7 +957,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$request->state       = 'process';
 			$request->gap_after   = 0;
 			// Handle operator time-travel gracefully.
-			unset( $request->fold, $request->folded, $request->tail, $request->keep, $request->await );
+			unset( $request->fold, $request->folded, $request->tail );
 			$request->rule_id     = \is_string( $entry['rule'] ?? null ) ? $entry['rule'] : '';
 		};
 
@@ -1141,8 +1139,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Fold in-flight envelopes until the entries held across all of them are
-	 * back under budget.
+	 * Fold in-flight envelopes until the raw entries held across the unfolded
+	 * ones are back under budget. A folded envelope is bounded already — its
+	 * head and tail — so it neither counts nor folds again, and an envelope no
+	 * larger than `FOLD_KEEP_HEAD` would reclaim nothing, so relief stops there.
 	 *
 	 * Runs off an estimate that only ever over-counts, so this is where the
 	 * truth gets recomputed: one pass over the LRU sums what is actually held,
@@ -1162,7 +1162,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		/** @var array<string,int> $sizes */
 		$sizes = [];
 		foreach ( $this->cache->iterate() as $rid => $request ) {
-			if ( ! $request instanceof \stdClass || ! \is_array( $request->entries ?? null ) ) {
+			// A folded envelope is bounded; refolding would drop its tree.
+			if ( ! $request instanceof \stdClass || isset( $request->fold ) || ! \is_array( $request->entries ?? null ) ) {
 				continue;
 			}
 			$live[ $rid ]  = $request;
@@ -1174,7 +1175,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		// through get() and set() would PROMOTE each envelope into the newest
 		// bucket and can rotate the cache, evicting an unrelated request and
 		// stamping it timed out — from inside an append, of all places.
-		while ( $total > $this->entry_budget && [] !== $sizes ) {
+		while ( $total > $this->entry_budget && [] !== $sizes && \max( $sizes ) > self::FOLD_KEEP_HEAD ) {
 			$rid = (string) \array_search( \max( $sizes ), $sizes, true );
 			unset( $sizes[ $rid ] );
 			$total -= $this->fold_request( $live[ $rid ], 'entry_budget' );
@@ -1207,18 +1208,21 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
 		$started = $request->timestamp ?? null;
 		$fold    = Flame_Fold::start( \is_numeric( $started ) ? (float) $started : null );
-		foreach ( $entries as $stored ) {
-			Flame_Fold::add( $fold, $stored );
+		$kept    = [];
+		foreach ( $entries as $at => $stored ) {
+			// A close of a frame the head left open is structure; keep it.
+			if ( Flame_Fold::add( $fold, $stored ) ) {
+				$stored['keep'] = 1;
+			}
+			if ( self::FOLD_KEEP_HEAD - 1 === $at ) {
+				Flame_Fold::mark_open_frames( $fold );
+			} elseif ( $at >= self::FOLD_KEEP_HEAD && self::is_kept( $stored ) ) {
+				$kept[] = $stored;
+			}
 		}
 		$request->fold    = $fold;
 		$request->entries = \array_slice( $entries, 0, self::FOLD_KEEP_HEAD );
-		$request->await   = self::open_in_head( $request->entries );
-		$kept             = \array_values( \array_filter(
-			\array_slice( $entries, self::FOLD_KEEP_HEAD ),
-			static fn ( array $e ): bool => self::is_kept( $e )
-		) );
-		$request->keep    = $kept;
-		$request->tail    = [];
+		$request->tail    = $kept;
 		$request->folded  = true;
 		$reclaimed        = \count( $entries ) - \count( $request->entries ) - \count( $kept );
 		$this->tally( Flame_Tree::REQUESTS_WRITES, "folded {$trigger}" );
@@ -1227,69 +1231,28 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * The spans the kept head leaves OPEN, as a base-name set.
+	 * Append an entry to a folded request's tail, in arrival order, dropping
+	 * the oldest unkept entry once more than `FOLD_KEEP_TAIL` are held.
 	 *
-	 * A span opened in the head frames every row the reader sees after it, so
-	 * its `(complete)` is structure, not detail — losing it to the rolling tail
-	 * costs the record its shape. This is not the guess `is_kept()` refuses to
-	 * make: the fold just chose the head, so it knows exactly which frames it
-	 * left open, and there are at most `FOLD_KEEP_HEAD` of them.
+	 * A kept entry — one its producer marked, or the close of a span the head
+	 * left open — never drops, and stays where it arrived: a close moved ahead
+	 * of the rows logged inside its span would put them outside it. A producer
+	 * that marks everything has made its own envelope large, and capping the
+	 * kept rows would reintroduce the silent loss the mark exists to prevent.
 	 *
-	 * The request's own frame is exempt, as it is for the display's severed-span
-	 * prune: `process (complete)` is the terminal and has to END the record,
-	 * and `keep` is spliced in BEFORE the tail.
-	 *
-	 * @param list<array<string,mixed>> $head The kept head.
-	 * @return array<string,true> Base names still open, as a set.
+	 * @param mixed               $existing Existing tail, if any.
+	 * @param array<string,mixed> $entry    Entry to append.
+	 * @return list<array<string,mixed>>
 	 */
-	private static function open_in_head( array $head ): array {
-		$open = [];
-		foreach ( $head as $entry ) {
-			$keyword = Core::as_string( $entry['k'] ?? '' );
-			if ( \str_ends_with( $keyword, ' (start)' ) ) {
-				$open[] = \substr( $keyword, 0, -8 );
-				continue;
-			}
-			if ( ! \str_ends_with( $keyword, ' (complete)' ) ) {
-				continue;
-			}
-			$base = \substr( $keyword, 0, -11 );
-			for ( $i = \count( $open ) - 1; $i >= 0; $i-- ) {
-				if ( $open[ $i ] === $base ) {
-					// Pop everything above it, as the merged tree does.
-					\array_splice( $open, $i );
-					break;
-				}
-			}
+	private static function bucket( mixed $existing, array $entry ): array {
+		/** @var list<array<string,mixed>> $bucket */
+		$bucket   = \is_array( $existing ) ? $existing : [];
+		$bucket[] = $entry;
+		$unkept   = \array_keys( \array_filter( $bucket, static fn ( array $e ): bool => ! self::is_kept( $e ) ) );
+		if ( \count( $unkept ) > self::FOLD_KEEP_TAIL ) {
+			\array_splice( $bucket, $unkept[0], 1 );
 		}
-		unset( $open[ \array_search( Log_Manager::REQUEST_LABEL, $open, true ) ] );
-		return \array_fill_keys( $open, true );
-	}
-
-	/**
-	 * Whether this entry closes a span the kept head left open, consuming the
-	 * await so a later same-named span takes the rolling tail like any other.
-	 *
-	 * @param \stdClass           $request In-flight envelope, mutated.
-	 * @param array<string,mixed> $entry   Stored entry.
-	 * @return bool True when it closed one, which routes it into `keep`.
-	 */
-	private static function closes_head_span( \stdClass $request, array $entry ): bool {
-		$await = \is_array( $request->await ?? null ) ? $request->await : [];
-		if ( [] === $await ) {
-			return false;
-		}
-		$keyword = Core::as_string( $entry['k'] ?? '' );
-		if ( ! \str_ends_with( $keyword, ' (complete)' ) ) {
-			return false;
-		}
-		$base = \substr( $keyword, 0, -11 );
-		if ( ! isset( $await[ $base ] ) ) {
-			return false;
-		}
-		unset( $await[ $base ] );
-		$request->await = $await;
-		return true;
+		return $bucket;
 	}
 
 	/**
@@ -1308,28 +1271,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 */
 	private static function is_kept( array $entry ): bool {
 		return ! empty( $entry['keep'] );
-	}
-
-	/**
-	 * Append an entry to a folded request's bucket, dropping the oldest past
-	 * $cap. A null cap leaves the bucket unbounded, which the keep bucket is on
-	 * purpose: a producer marks summaries, and a producer that marks everything
-	 * has made its own envelope large. Capping it there would reintroduce the
-	 * silent loss the mark exists to prevent.
-	 *
-	 * @param mixed               $existing Existing bucket, if any.
-	 * @param array<string,mixed> $entry    Entry to append.
-	 * @param int|null            $cap      Entries kept, or null for unbounded.
-	 * @return list<array<string,mixed>>
-	 */
-	private static function bucket( mixed $existing, array $entry, ?int $cap ): array {
-		/** @var list<array<string,mixed>> $bucket */
-		$bucket   = \is_array( $existing ) ? $existing : [];
-		$bucket[] = $entry;
-		if ( null !== $cap && \count( $bucket ) > $cap ) {
-			\array_shift( $bucket );
-		}
-		return $bucket;
 	}
 
 	/**
@@ -1392,11 +1333,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		/** @var Fold_State $fold */
 		$record['flame']   = Flame_Fold::tree( $fold );
 		$record['entries'] = self::head_marker_tail( $record );
-		unset( $record['fold'], $record['tail'], $record['await'] );
-		// @longform `entries` is NOT cleared here: the fold already emptied it,
-		// and what lands in it afterwards is the `entries (lost)` marker, which
-		// announces a gap in the very requests whose trace is least worth
-		// trusting. Wiping the list would delete exactly that warning.
+		unset( $record['fold'], $record['tail'] );
 		return $record;
 	}
 
@@ -1420,16 +1357,14 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$folded_tail = \count(
 			\array_filter( $tail, static fn ( array $e ): bool => self::LOST_MARKER_KEY !== ( $e['k'] ?? '' ) )
 		);
-		/** @var list<array<string,mixed>> $kept */
-		$kept    = \is_array( $record['keep'] ?? null ) ? $record['keep'] : [];
-		$dropped = $fold['count'] - \count( $head ) - $folded_tail - \count( $kept );
+		$dropped = $fold['count'] - \count( $head ) - $folded_tail;
 		if ( $dropped < 1 ) {
-			return \array_merge( $head, $kept, $tail );
+			return \array_merge( $head, $tail );
 		}
 		$last   = $head[ \count( $head ) - 1 ] ?? null;
 		$merged = "{$dropped} entries merged under memory pressure";
 		$marker = [ 'n' => Core::int( $last['n'] ?? 0, 0 ) + 1, 'ts' => $last['ts'] ?? 0, 'k' => self::FOLD_MARKER_KEY, 'm' => $merged ];
-		return \array_merge( $head, [ $marker ], $kept, $tail );
+		return \array_merge( $head, [ $marker ], $tail );
 	}
 
 	/**
@@ -1631,9 +1566,14 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				// Persisted cache snapshot: string-keyed (LRU_Cache state).
 				/** @var array<string,mixed> $cache_state */
 				// Nothing upstream coerced a checkpoint's numerics.
-				$fn = static function ( $val ) use ( &$held ) {
+				$fn = function ( $val ) use ( &$held ) {
 					if ( ! \is_array( $val ) ) {
 						return $val;
+					}
+					// Retired: a fold keeps its head frames on its own stack.
+					if ( isset( $val['await'] ) || isset( $val['keep'] ) ) {
+						$this->print_less_often( 'WARNING: dropped a retired fold await/keep from checkpointed request ', Core::as_string( $val['rid'] ?? '' ) );
+						unset( $val['await'], $val['keep'] );
 					}
 					$val['timestamp']   = Core::num_float( $val['timestamp'] ?? null );
 					$val['duration_ms'] = Core::num_float( $val['duration_ms'] ?? null );
@@ -1673,8 +1613,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 	/**
 	 * Count one envelope into what a checkpoint or a restore carries: the
-	 * envelope, its raw entries — its list, or a folded one's head, kept
-	 * entries and tail — and whether it folded.
+	 * envelope, its raw entries — its list, or a folded one's head and tail —
+	 * and whether it folded.
 	 *
 	 * @param array{envelopes: int, entries: int, folded: int} $held    The counts so far.
 	 * @param \stdClass                                        $request In-flight envelope.
@@ -1682,7 +1622,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	private static function count_held( array &$held, \stdClass $request ): void {
 		++$held['envelopes'];
 		$held['entries'] += \count( Core::arr( $request->entries ?? null ) )
-			+ \count( Core::arr( $request->keep ?? null ) )
 			+ \count( Core::arr( $request->tail ?? null ) );
 		$held['folded']  += isset( $request->fold ) ? 1 : 0;
 	}

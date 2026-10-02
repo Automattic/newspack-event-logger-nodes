@@ -85,13 +85,12 @@
   <div class="strip two">
     <div class="seg head"><b>head, 10</b></div>
     <div class="seg mark"><b>entries (aggregated)</b>"N entries merged under memory pressure"</div>
-    <div class="seg keep" style="flex:12"><b>keep</b>closes of spans the head left open; rows marked <span class="mono">keep</span></div>
-    <div class="seg tail"><b>tail, 10</b></div>
+    <div class="seg keep" style="flex:14"><b>tail, in arrival order</b>10 unkept rows, and every kept row where it arrived: closes of spans the head left open, rows marked <span class="mono">keep</span></div>
     <div class="seg tree"><b>flame, from Flame_Fold::tree()</b>same-name siblings as one node with count, summed value, max and <span class="mono">merged</span></div>
   </div>
   <div class="bounds">
     <div class="card"><h3><span class="mono">max_entries_per_request</span>, default 20,000</h3><p>Constrains ONE envelope and folds that one: the faster trigger for a single runaway. Checked on every append.</p></div>
-    <div class="card"><h3><span class="mono">entry_budget</span>, default 50,000</h3><p>Constrains the SUM across everything in flight. <span class="mono">relieve_pressure()</span> recounts the truth over the LRU and folds the LARGEST envelope, repeatedly, until under budget; the check re-arms at the budget, or 1,000 entries on when folding could not reach it.</p></div>
+    <div class="card"><h3><span class="mono">entry_budget</span>, default 50,000</h3><p>Constrains the SUM across everything in flight. <span class="mono">relieve_pressure()</span> recounts the truth over the unfolded envelopes in the LRU and folds the LARGEST, repeatedly, until under budget, never refolding one; the check re-arms at the budget, or 1,000 entries on when folding could not reach it.</p></div>
     <div class="card"><h3>Never a cap</h3><p>A bound that stopped appending behind a flag nothing surfaces would lose every entry past it. No consumer may reason across the marker: the interval it covers is missing detail, not idle time, and <span class="mono">entries (lost)</span>, the marker a sequence gap leaves, is read the same way.</p></div>
   </div>
 </div>

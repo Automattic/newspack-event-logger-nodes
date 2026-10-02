@@ -566,6 +566,64 @@ describe( 'a folded span row', () => {
 	} );
 } );
 
+describe( 'a kept close in the tail', () => {
+	it( 'frames the tail rows that arrived before it', () => {
+		// The builder emits a head span's close where it arrived, after the
+		// rows logged inside the span, so those rows nest inside it.
+		const flame = {
+			name: 'request',
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					l: '',
+					count: 1,
+					value: 872,
+					t: 0,
+					children: [
+						{
+							name: 'template_redirect hook',
+							k: 'template_redirect hook',
+							l: '',
+							count: 1,
+							value: 870,
+							t: 2,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 3000 },
+			{ n: 2, k: 'template_redirect hook (start)', ts: 3000.002 },
+			{ n: 3, k: 'entries (aggregated)', ts: 3000.002, m: '61 merged' },
+			{ n: 64, k: 'footer (start)', ts: 3000.806 },
+			{ n: 65, k: 'footer (complete)', ts: 3000.807, duration_ms: 1 },
+			{
+				n: 66,
+				k: 'template_redirect hook (complete)',
+				ts: 3000.808,
+				duration_ms: 870,
+				keep: 1,
+			},
+			{ n: 67, k: 'process (complete)', ts: 3000.809 },
+		];
+
+		const { entries } = computeIndentedEntries(
+			spliceFoldedSpans( stored, flame )
+		);
+		const row = ( k ) => entries.find( ( e ) => k === e.k );
+
+		expect( row( 'footer (start)' ).indent ).toBeGreaterThan(
+			row( 'template_redirect hook (start)' ).indent
+		);
+		expect( row( 'template_redirect hook (complete)' ).pairId ).toBe(
+			row( 'template_redirect hook (start)' ).pairId
+		);
+	} );
+} );
+
 describe( 'formatDots', () => {
 	it( 'returns empty string for zero or negative counts', () => {
 		expect( formatDots( 0 ) ).toBe( '' );

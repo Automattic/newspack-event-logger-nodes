@@ -509,6 +509,65 @@ test( 'a nested metric reads as its own numbers, never as an object', () => {
 	expect( md ).toContain( 'repeat.count=9 repeat.each_ms=3415.2' );
 } );
 
+test( 'a list metric opens into its members, as a nested object does', () => {
+	const md = briefToMarkdown( {
+		subject: 'request',
+		url: '/news/',
+		duration_ms: 1374.6,
+		entries: [],
+		findings: [
+			{
+				kind: 'plugin_load',
+				severity: 'medium',
+				title: 't',
+				measured: 'flame',
+				metric: {
+					ms: 418.7,
+					heaviest: [
+						{ plugin: 'gravityforms-7734', ms: 212.4 },
+						{ plugin: 'wpseo-premium', ms: 131.9 },
+					],
+				},
+			},
+			{
+				kind: 'truncation',
+				severity: 'info',
+				title: 'u',
+				measured: 'record markers',
+				metric: { folded: true, markers: [ 'entries (lost)' ] },
+			},
+		],
+		caveat: 'c',
+	} );
+
+	expect( md ).not.toContain( '[object Object]' );
+	expect( md ).toContain(
+		'heaviest.0.plugin=gravityforms-7734 heaviest.0.ms=212.4 heaviest.1.plugin=wpseo-premium heaviest.1.ms=131.9'
+	);
+	expect( md ).toContain( 'markers.0=entries (lost)' );
+} );
+
+test( 'an empty list or object reads as empty, never as absent', () => {
+	const md = briefToMarkdown( {
+		subject: 'request',
+		url: '/news/',
+		duration_ms: 812.4,
+		entries: [],
+		findings: [
+			{
+				kind: 'truncation',
+				severity: 'info',
+				title: 'u',
+				measured: 'record markers',
+				metric: { folded: true, markers: [], repeat: {} },
+			},
+		],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( 'folded=true markers=[] repeat={}' );
+} );
+
 test( 'a finding fences the statement it names instead of running it into the numbers', () => {
 	const md = briefToMarkdown( {
 		subject: 'request',

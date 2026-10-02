@@ -52,8 +52,8 @@ class Findings {
 	/** Calls of one span within a single request before repetition is a finding. */
 	public const REPETITION_COUNT = 50;
 
-	/** Profiled/duration ratio below which the record explains too little of itself. */
-	public const UNATTRIBUTED_SHARE = 0.5;
+	/** Share of a whole its measured parts must hold to explain it. */
+	public const EXPLAINED_SHARE = 0.5;
 
 	/** Plugin loads together past this share of the request are a finding. */
 	public const PLUGIN_LOAD_SHARE = 0.25;
@@ -140,12 +140,8 @@ class Findings {
 			'field'     => 'significant_events',
 		],
 		'custom'           => [
-			'detail'    => 'The application logs this span itself; what happens inside it appears only where the application logs it.',
-			'why'       => '%s is a custom event the application logs itself, not a WordPress hook — significant events reach hooks only, so marking it does nothing. Its interior shows only where the application logs further custom events, enabled on this rule.',
-			'action'    => 'add_custom_events',
-			'direction' => 'more',
-			'field'     => 'custom_events',
-			'undo'      => 'Disable those custom events again once the interior is understood.',
+			'detail' => 'The application logs this span itself, so no rule edit reaches inside it.',
+			'why'    => '%s is a custom event the application logs itself, not a WordPress hook, so no rule edit reaches inside it.',
 		],
 		'transport'        => [
 			'detail'    => 'The logger times this round trip itself: its label names the calling frame, and its entries carry the statement or the URL. The listeners on the filter it runs through are not logged.',
@@ -174,6 +170,28 @@ class Findings {
 			'detail' => 'This is one listener on a significant hook — the time is inside this callback.',
 			'why'    => '%s is a listener, logged because its hook is already a significant event — this is the finest grain the logger has, and the answer is inside that callback.',
 		],
+	];
+
+	/**
+	 * What a span's `l` label names, by `span_kind()`, which decides what a
+	 * repeat is. A custom event's label is the WORK — the function, include
+	 * or macro the application names — so each label repeats on its own. A
+	 * hook's is the caller `App\Core::origin_frame()` finds under
+	 * `trace_hooks`, and a transport's the code that ran the query or the
+	 * call, so the span repeats whoever called it. A listener's is empty,
+	 * and the command, URL-read, upkeep and plugin spans write none.
+	 *
+	 * @var array<string,'work'|'caller'|'none'>
+	 */
+	private const LABEL_NAMES = [
+		'custom'    => 'work',
+		'hook'      => 'caller',
+		'transport' => 'caller',
+		'listener'  => 'none',
+		'command'   => 'none',
+		'url_read'  => 'none',
+		'upkeep'    => 'none',
+		'plugin'    => 'none',
 	];
 
 	/**
@@ -297,85 +315,145 @@ class Findings {
 	 * The widest unexplained interval between consecutive entries — where a
 	 * `proc_open` hides, and an outbound call on a rule without HTTP logging.
 	 *
+	 * With only the request's own span open, any wide window counts. Inside
+	 * any other span a window counts when that span logged child spans and is
+	 * no transport — before its first child, between children or after its
+	 * last — judged when the span closes, or when the record ends for a span
+	 * a timed-out record never closed. A span holding only point entries is a
+	 * leaf its duration measures whole, and a transport's self time IS its
+	 * round trip, so neither holds a gap. Past the fold marker the record is
+	 * spliced from a longer run, so only rows whose `n` steps by one are
+	 * neighbours there.
+	 *
 	 * @param array<array-key,mixed> $record  The request record.
 	 * @param string|null            $rule_id The governing rule's id, or null when none governs.
 	 * @return array<string,mixed>|null The finding, or null when no gap reaches `GAP_MS`.
 	 */
 	private static function entry_gap( array $record, ?string $rule_id ): ?array {
-		$entries = \is_array( $record['entries'] ?? null ) ? \array_values( $record['entries'] ) : [];
 		$worst   = null;
 		$open    = [];
-		for ( $i = 1; $i < \count( $entries ); $i++ ) {
-			$prev = \is_array( $entries[ $i - 1 ] ) ? $entries[ $i - 1 ] : [];
-			$next = \is_array( $entries[ $i ] ) ? $entries[ $i ] : [];
-			$from = Core::as_string( $prev['k'] ?? '' );
+		$prev    = null;
+		$spliced = false;
+		foreach ( Core::arr( $record['entries'] ?? null ) as $entry ) {
+			$next = Core::arr( $entry );
 			$to   = Core::as_string( $next['k'] ?? '' );
-			$open = self::spans_after( $open, $from );
-			// Inside any span but the request's own, the time is measured.
-			if ( \count( $open ) > 1 ) {
-				continue;
+			if ( null !== $prev ) {
+				$gap = ( Core::num_float( $next['ts'] ?? 0 ) - Core::num_float( $prev['ts'] ?? 0 ) ) * 1000.0;
+				if ( $gap >= self::GAP_MS && ( null === $worst || $gap > $worst['gap_ms'] ) && self::adjacent( $prev, $next, $spliced ) ) {
+					$window = [
+						'gap_ms' => $gap,
+						'after'  => Core::as_string( $prev['k'] ?? '' ),
+						'before' => $to,
+					];
+					$top    = \array_key_last( $open );
+					if ( null === $top || Log_Manager::REQUEST_LABEL === $open[ $top ][0] ) {
+						$worst = $window;
+					} elseif ( $gap > ( $open[ $top ][2]['gap_ms'] ?? 0.0 ) ) {
+						$open[ $top ][2] = $window + [ 'inside' => $open[ $top ][0] ];
+					}
+				}
 			}
-			// The merged entries ARE this window; truncation() reports it.
-			if ( \in_array( $from, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) || \in_array( $to, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) ) {
-				continue;
-			}
-			$gap = ( Core::num_float( $next['ts'] ?? 0 ) - Core::num_float( $prev['ts'] ?? 0 ) ) * 1000.0;
-			if ( $gap >= self::GAP_MS && ( null === $worst || $gap > $worst['gap_ms'] ) ) {
-				$worst = [
-					'gap_ms' => $gap,
-					'after'  => $from,
-					'before' => $to,
-				];
-			}
+			self::nest( $open, $worst, $to );
+			$spliced = $spliced || Request_Builder_Node::FOLD_MARKER_KEY === $to;
+			$prev    = $next;
+		}
+		while ( [] !== $open ) {
+			self::settle( \array_pop( $open ), $worst );
 		}
 		if ( null === $worst ) {
 			return null;
 		}
+		$inside = $worst['inside'] ?? null;
 		return [
 			'kind'     => 'entry_gap',
 			'severity' => 'medium',
 			'title'    => \sprintf(
-				'%s passed between "%s" and "%s" with nothing logged',
+				'%s passed between "%s" and "%s"%s with nothing logged',
 				self::ms( $worst['gap_ms'] ),
 				$worst['after'],
-				$worst['before']
+				$worst['before'],
+				null === $inside ? '' : " inside {$inside}"
 			),
 			'detail'   => 'Nothing instrumented ran in that window. An outbound call, a subprocess or a slow query fits it.',
 			'measured' => 'entry timestamps',
 			'metric'   => $worst,
 			'rule_id'  => $rule_id,
-			'proposal' => [
-				'action'    => 'add_hooks',
-				'direction' => 'more',
-				'rule_id'   => $rule_id,
-				'hooks'     => [],
-				'why'       => \sprintf( 'A hook between %s and %s would bracket the gap.', $worst['after'], $worst['before'] ),
-				'undo'      => 'Remove it once the gap is explained.',
-			],
+			'proposal' => null === $inside
+				? [
+					'action'    => 'add_hooks',
+					'direction' => 'more',
+					'rule_id'   => $rule_id,
+					'hooks'     => [],
+					'why'       => \sprintf( 'A hook between %s and %s would bracket the gap.', $worst['after'], $worst['before'] ),
+					'undo'      => 'Remove it once the gap is explained.',
+				]
+				: self::no_edit( $rule_id, "The gap is unlogged time inside {$inside}, so no hook the rule could add is known to run there." ),
 		];
 	}
 
 	/**
-	 * The spans still open once an entry is read, outermost first — LIFO, as
-	 * `Log_Manager::complete()` itself matches, so a complete closes the
-	 * nearest open span of its name and everything opened inside it.
+	 * Apply one entry to the open spans, LIFO as `Log_Manager::complete()`
+	 * matches: a start opens a span and marks its parent as holding one, and
+	 * a complete closes the nearest span of its name and all inside it.
 	 *
-	 * @param list<string> $open    Base names open before this entry.
-	 * @param string       $keyword The entry's keyword.
-	 * @return list<string> Base names open after it.
+	 * @param list<array{0:string,1:bool,2:?array{gap_ms:float,after:string,before:string,inside:string}}> $open    Base name, whether it holds a span, its widest window.
+	 * @param array{gap_ms:float,after:string,before:string,inside?:string}|null                           $worst   The widest gap so far.
+	 * @param string                                                                                        $keyword The entry's keyword.
 	 */
-	private static function spans_after( array $open, string $keyword ): array {
+	private static function nest( array &$open, ?array &$worst, string $keyword ): void {
 		if ( 1 === \preg_match( Flame_Tree::PATTERN_START, $keyword, $m ) ) {
-			$open[] = $m[1];
-			return $open;
+			$top = \array_key_last( $open );
+			if ( null !== $top ) {
+				$open[ $top ][1] = true;
+			}
+			$open[] = [ $m[1], false, null ];
+			return;
 		}
-		if ( 1 === \preg_match( Flame_Tree::PATTERN_COMPLETE, $keyword, $m ) ) {
-			$at = \array_search( $m[1], \array_reverse( $open, true ), true );
-			if ( false !== $at ) {
-				return \array_slice( $open, 0, $at );
+		if ( 1 !== \preg_match( Flame_Tree::PATTERN_COMPLETE, $keyword, $m ) ) {
+			return;
+		}
+		for ( $at = \count( $open ) - 1; $at >= 0; $at-- ) {
+			if ( $open[ $at ][0] === $m[1] ) {
+				while ( \count( $open ) > $at ) {
+					self::settle( \array_pop( $open ), $worst );
+				}
+				return;
 			}
 		}
-		return $open;
+	}
+
+	/**
+	 * Count a closed span's widest window as a gap when it held child spans
+	 * and is no transport.
+	 *
+	 * @param array{0:string,1:bool,2:?array{gap_ms:float,after:string,before:string,inside:string}} $frame The span that closed.
+	 * @param array{gap_ms:float,after:string,before:string,inside?:string}|null                     $worst The widest gap so far.
+	 */
+	private static function settle( array $frame, ?array &$worst ): void {
+		[ $base, $holds_spans, $window ] = $frame;
+		if ( null !== $window && $holds_spans && ! Flame_Tree::is_transport_span( $base )
+				&& ( null === $worst || $window['gap_ms'] > $worst['gap_ms'] ) ) {
+			$worst = $window;
+		}
+	}
+
+	/**
+	 * Whether two consecutive rows were consecutive when logged. A marker
+	 * stands in for the window beside it, which `truncation()` reports, and
+	 * past the fold marker only rows whose `n` steps by one were neighbours.
+	 *
+	 * @param array<array-key,mixed> $prev    The earlier row.
+	 * @param array<array-key,mixed> $next    The later row.
+	 * @param bool                   $spliced Whether the fold marker came before them.
+	 * @return bool
+	 */
+	private static function adjacent( array $prev, array $next, bool $spliced ): bool {
+		foreach ( [ $prev, $next ] as $row ) {
+			if ( \in_array( Core::as_string( $row['k'] ?? '' ), Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) ) {
+				return false;
+			}
+		}
+		return ! $spliced || Core::num_int( $next['n'] ?? 0 ) === Core::num_int( $prev['n'] ?? 0 ) + 1;
 	}
 
 	/**
@@ -389,6 +467,8 @@ class Findings {
 	 * a significant hook's number carries its listeners' — the right charge for
 	 * a repeat, since dispatching them is what the repetition costs.
 	 *
+	 * What repeated is ranked per name, as `repeats_in()` reads a profile.
+	 *
 	 * @param array<array-key,mixed> $record The request record.
 	 * @param Rule|null              $rule   The governing rule, or null when none does.
 	 * @return array<string,mixed>|null The finding, or null when no span repeats enough.
@@ -396,24 +476,21 @@ class Findings {
 	private static function repetition( array $record, ?Rule $rule ): ?array {
 		$profiles = \is_array( $record['profiles'] ?? null ) ? $record['profiles'] : [];
 		$worst    = null;
-		foreach ( $profiles as $name => $profile ) {
+		foreach ( $profiles as $state => $profile ) {
 			if ( ! \is_array( $profile ) ) {
 				continue;
 			}
-			$count = Core::num_int( $profile['count'] ?? 0 );
-			if ( $count < self::REPETITION_COUNT ) {
-				continue;
+			foreach ( self::repeats_in( Core::as_string( $state, 'unknown' ), $profile ) as [ $name, $self, $count ] ) {
+				// Non-positive time is a broken record, not a cost.
+				if ( $count < self::REPETITION_COUNT || $self <= 0.0 || ( null !== $worst && $self <= $worst['self_ms'] ) ) {
+					continue;
+				}
+				$worst = [
+					'name'    => $name,
+					'count'   => $count,
+					'self_ms' => $self,
+				];
 			}
-			$self = Core::num_float( $profile['time'] ?? 0 );
-			// Non-positive is a record whose spans do not add up, not a cost.
-			if ( $self <= 0.0 || ( null !== $worst && $self <= $worst['self_ms'] ) ) {
-				continue;
-			}
-			$worst = [
-				'name'    => Core::as_string( $name, 'unknown' ),
-				'count'   => $count,
-				'self_ms' => $self,
-			];
 		}
 		if ( null === $worst ) {
 			return null;
@@ -437,6 +514,42 @@ class Findings {
 				'Unmark it once the caller is identified.'
 			),
 		];
+	}
+
+	/**
+	 * Each thing one profile counts, as `[ name, exclusive ms, calls ]` under
+	 * the name the flame gives it.
+	 *
+	 * A profile is keyed by state and tallies each `l` label in `entries`;
+	 * `LABEL_NAMES` says whether a label is the work that repeats. Where it
+	 * is, each label is its own `<state>: <label>`, and the calls no label
+	 * holds — unlabelled, or past the builder's label cap — stay under the
+	 * bare state at the profile's totals less the labels', so none drop out.
+	 * Where it is not, the state is what repeated.
+	 *
+	 * @param string                 $state   The profile's key.
+	 * @param array<array-key,mixed> $profile `{ entries, count, time }`, per `Request_Builder_Node::push_stack()`.
+	 * @return list<array{0:string,1:float,2:int}>
+	 */
+	private static function repeats_in( string $state, array $profile ): array {
+		$time  = Core::num_float( $profile['time'] ?? 0 );
+		$count = Core::num_int( $profile['count'] ?? 0 );
+		if ( 'work' !== self::LABEL_NAMES[ self::span_kind( $state ) ] ) {
+			return [ [ $state, $time, $count ] ];
+		}
+		$out = [];
+		foreach ( Core::arr( $profile['entries'] ?? null ) as $label => $seen ) {
+			$seen   = Core::arr( $seen );
+			$ms     = Core::num_float( $seen[0] ?? 0 );
+			$calls  = Core::num_int( $seen[1] ?? 0 );
+			$out[]  = [ Flame_Tree::node_name( $state, (string) $label ), $ms, $calls ];
+			$time  -= $ms;
+			$count -= $calls;
+		}
+		if ( $count > 0 ) {
+			$out[] = [ $state, $time, $count ];
+		}
+		return $out;
 	}
 
 	/**
@@ -500,13 +613,7 @@ class Findings {
 				'heaviest' => $heaviest,
 			],
 			'rule_id'  => $rule_id,
-			'proposal' => [
-				'action'    => 'none',
-				'direction' => 'none',
-				'rule_id'   => $rule_id,
-				'why'       => 'A plugin file\'s load is timed by the profiler before any rule applies; no rule edit changes it.',
-				'undo'      => '',
-			],
+			'proposal' => self::no_edit( $rule_id, 'A plugin file\'s load is timed by the profiler before any rule applies; no rule edit changes it.' ),
 		];
 	}
 
@@ -527,7 +634,7 @@ class Findings {
 	 * @param bool                                                         $rule_known Whether `$rule` is the record's resolution; false when the record's stamp did not resolve, and what the rule logged inside the span is not known here.
 	 * @return array<string,mixed>|null The finding, or null when no span holds `DOMINANT_SHARE`.
 	 */
-	private static function dominant_span( array $nodes, float $profiled, ?Rule $rule, float $duration, bool $rule_known = true ): ?array {
+	private static function dominant_span( array $nodes, float $profiled, ?Rule $rule, float $duration, bool $rule_known ): ?array {
 		if ( $profiled <= 0.0 || $duration < self::MIN_DURATION_MS ) {
 			return null;
 		}
@@ -561,6 +668,16 @@ class Findings {
 		if ( null !== $repeat ) {
 			$metric['repeat'] = $repeat;
 		}
+		$contained   = $best['value'] - $best['self_ms'];
+		$child       = self::explaining_child( $nodes, $best_index, $contained );
+		$child_share = null === $child ? 0.0 : $child['value'] / $profiled;
+		if ( null !== $child ) {
+			$metric['child'] = [
+				'name'  => $child['name'],
+				'ms'    => $child['value'],
+				'share' => $child_share,
+			];
+		}
 		$metric += self::worst_shape( $best );
 		return [
 			'kind'     => 'dominant_span',
@@ -571,8 +688,16 @@ class Findings {
 				\array_filter(
 					[
 						self::repeat_detail( $repeat ),
-						self::spent_detail( $best, $self_share ),
-						$rule_known ? self::interior_detail( $best['name'], $rule ) : '',
+						self::spent_detail( $contained, $self_share ),
+						match ( true ) {
+							null !== $child => \sprintf(
+								'%s holds %d%% of the profiled time, the most of anything inside it.',
+								$child['name'],
+								(int) \round( 100 * $child_share )
+							),
+							$rule_known     => self::interior_detail( $best['name'], $rule ),
+							default         => '',
+						},
 					],
 					static fn ( string $sentence ): bool => '' !== $sentence
 				)
@@ -580,11 +705,13 @@ class Findings {
 			'measured' => 'flame',
 			'metric'   => $metric,
 			'rule_id'  => $rule?->id,
-			'proposal' => self::visibility_proposal(
-				$best['name'],
-				$rule,
-				'Unmark it once the responsible listener is known; per-callback profiling is the expensive kind.'
-			),
+			'proposal' => null === $child
+				? self::visibility_proposal(
+					$best['name'],
+					$rule,
+					'Unmark it once the responsible listener is known; per-callback profiling is the expensive kind.'
+				)
+				: self::no_edit( $rule?->id, "Its interior is already in this record, and {$child['name']} holds the most of it; read that before changing the rule." ),
 		];
 	}
 
@@ -599,26 +726,23 @@ class Findings {
 	private static function visibility_proposal( string $span, ?Rule $rule, string $undo ): array {
 		$base   = Flame_Tree::base_name( $span );
 		$advice = self::span_advice( $base, $rule );
-		$binds  = isset( $advice['field'] );
 		// The bare hook, which is what a rule binds and what every row names.
 		$named = Flame_Tree::hook_name( $base );
 		// A transport row binds the flag that logs the span, not the span.
 		$flag = 'transport' === ( $advice['field'] ?? '' ) ? Rule::transport_flag( $base ) : '';
-		$out  = [
-			'action'    => $advice['action'] ?? 'none',
-			'direction' => $advice['direction'] ?? 'none',
-			'rule_id'   => $rule?->id,
-			'why'       => \sprintf( $advice['why'], $named, Hooks::TRANSPORT_HOOKS[ $base ] ?? '', $flag ),
-			'undo'      => $binds ? ( $advice['undo'] ?? $undo ) : '',
-		];
-		if ( '' !== $flag ) {
-			$out['field'] = $flag;
-			$out['value'] = $flag;
-		} elseif ( $binds ) {
-			$out['field'] = $advice['field'];
-			$out['value'] = $named;
+		$why  = \sprintf( $advice['why'], $named, Hooks::TRANSPORT_HOOKS[ $base ] ?? '', $flag );
+		if ( ! isset( $advice['field'] ) ) {
+			return self::no_edit( $rule?->id, $why );
 		}
-		return $out;
+		return [
+			'action'    => $advice['action'],
+			'direction' => $advice['direction'],
+			'rule_id'   => $rule?->id,
+			'why'       => $why,
+			'undo'      => $advice['undo'] ?? $undo,
+			'field'     => '' === $flag ? $advice['field'] : $flag,
+			'value'     => '' === $flag ? $named : $flag,
+		];
 	}
 
 	/**
@@ -664,7 +788,7 @@ class Findings {
 	 * tracing on, the frame carries the caller too.
 	 *
 	 * @param string $base The span's base name, per `Flame_Tree::base_name()`.
-	 * @return string `transport`, `plugin`, `command`, `url_read`, `upkeep`, `hook`, `listener` or `custom`.
+	 * @return 'transport'|'plugin'|'command'|'url_read'|'upkeep'|'hook'|'listener'|'custom'
 	 */
 	private static function span_kind( string $base ): string {
 		if ( Flame_Tree::is_transport_span( $base ) ) {
@@ -692,12 +816,11 @@ class Findings {
 	 * inside the one span guaranteed to contain everything — a `pyrobase` span
 	 * holds 100% of the profiled time and spends 9.5% of it in its own body.
 	 *
-	 * @param Flame_Entry $node       The dominant node.
-	 * @param float                                                  $self_share Its own body's share of the profiled time.
+	 * @param float $contained  What the dominant node's children hold, in milliseconds.
+	 * @param float $self_share Its own body's share of the profiled time.
 	 * @return string A leading sentence, or '' where nothing is contained.
 	 */
-	private static function spent_detail( array $node, float $self_share ): string {
-		$contained = $node['value'] - $node['self_ms'];
+	private static function spent_detail( float $contained, float $self_share ): string {
 		if ( $contained <= 0.0 ) {
 			return '';
 		}
@@ -783,6 +906,29 @@ class Findings {
 	}
 
 	/**
+	 * The heaviest child of a node whose children explain it — they hold at
+	 * least `EXPLAINED_SHARE` of its time — or null when its own body holds
+	 * more, and what it does there is what the reader cannot yet see.
+	 *
+	 * @param list<Flame_Entry> $nodes     Flattened flame nodes.
+	 * @param int               $index     The node's index.
+	 * @param float             $contained What its children hold, in milliseconds.
+	 * @return Flame_Entry|null
+	 */
+	private static function explaining_child( array $nodes, int $index, float $contained ): ?array {
+		if ( $contained < $nodes[ $index ]['value'] * self::EXPLAINED_SHARE ) {
+			return null;
+		}
+		$heaviest = null;
+		foreach ( $nodes as $child ) {
+			if ( $index === $child['parent'] && ( null === $heaviest || $child['value'] > $heaviest['value'] ) ) {
+				$heaviest = $child;
+			}
+		}
+		return $heaviest;
+	}
+
+	/**
 	 * The outermost span on the way up from `$index` — itself included — that
 	 * dominates the profiled time and ran more than once, or null when every
 	 * dominating span ran once. `own` says whether that span IS the dominant
@@ -831,7 +977,7 @@ class Findings {
 	 * @return array<string,mixed>|null The finding, or null when the record accounts for itself.
 	 */
 	private static function unattributed( float $profiled, float $duration, ?string $rule_id ): ?array {
-		if ( $duration < self::MIN_DURATION_MS || $profiled >= $duration * self::UNATTRIBUTED_SHARE ) {
+		if ( $duration < self::MIN_DURATION_MS || $profiled >= $duration * self::EXPLAINED_SHARE ) {
 			return null;
 		}
 		$missing = $duration - $profiled;
@@ -1244,30 +1390,34 @@ class Findings {
 	 * @return array<string,mixed>
 	 */
 	private static function insufficient( string $url, ?Rule $rule, array $metric, string $measured, bool $hookless = true ): array {
-		$proposal = null === $rule
-			? [
+		$proposal = match ( true ) {
+			null === $rule => [
 				'action'    => 'create_rule',
 				'direction' => 'more',
 				'pattern'   => $url,
 				'hooks'     => self::LIFECYCLE_BRACKET,
 				'why'       => 'No rule governs this URL, so nothing about it is logged at all.',
 				'undo'      => 'Delete the rule, or set its action to skip, once the question is answered.',
-			]
-			: [
-				'action'    => $hookless ? 'add_hooks' : 'none',
-				'direction' => $hookless ? 'more' : 'none',
+			],
+			$hookless      => [
+				'action'    => 'add_hooks',
+				'direction' => 'more',
 				'rule_id'   => $rule->id,
 				'pattern'   => $rule->pattern,
-				'hooks'     => $hookless ? self::LIFECYCLE_BRACKET : [],
-				'why'       => $hookless
-					? 'The governing rule registers no hooks, so the request has no interior. '
-						. 'These six split it into phases at a fixed, small cost; the next round subdivides only the phase that held the time.'
-					: 'The rule registers hooks, but none of them ran in this request — it ended before they fired, or nothing matched.',
-				'undo'      => $hookless
-					? 'Trim the hook list back to the phase that mattered once it is identified — '
-						. 'every enabled hook costs overhead on every request this rule matches.'
-					: '',
-			];
+				'hooks'     => self::LIFECYCLE_BRACKET,
+				'why'       => 'The governing rule registers no hooks, so the request has no interior. '
+					. 'These six split it into phases at a fixed, small cost; the next round subdivides only the phase that held the time.',
+				'undo'      => 'Trim the hook list back to the phase that mattered once it is identified — '
+					. 'every enabled hook costs overhead on every request this rule matches.',
+			],
+			default        => self::no_edit(
+				$rule->id,
+				'The rule registers hooks, but none of them ran in this request — it ended before they fired, or nothing matched.'
+			) + [
+				'pattern' => $rule->pattern,
+				'hooks'   => [],
+			],
+		};
 
 		if ( null === $rule ) {
 			$title = 'No rule governs this URL, so nothing is measured';
@@ -1286,6 +1436,23 @@ class Findings {
 			'metric'   => $metric,
 			'rule_id'  => $rule?->id,
 			'proposal' => $proposal,
+		];
+	}
+
+	/**
+	 * A proposal that changes nothing, saying why no rule edit is the step.
+	 *
+	 * @param string|null $rule_id The governing rule's id, or null when none governs.
+	 * @param string      $why     Why no edit acts on the finding.
+	 * @return array<string,mixed>
+	 */
+	private static function no_edit( ?string $rule_id, string $why ): array {
+		return [
+			'action'    => 'none',
+			'direction' => 'none',
+			'rule_id'   => $rule_id,
+			'why'       => $why,
+			'undo'      => '',
 		];
 	}
 
