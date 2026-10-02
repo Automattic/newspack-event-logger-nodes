@@ -322,6 +322,130 @@ class Ask_Assembler {
 	}
 
 	/**
+	 * Every parent in the tree holding children of this name, each with those
+	 * children, that parent's other children, and what the group cost.
+	 *
+	 * @param array<array-key,mixed> $node Subtree root.
+	 * @param string                 $name Span name to collect.
+	 * @return list<array{parent:array<array-key,mixed>,mine:list<array<array-key,mixed>>,siblings:list<array<array-key,mixed>>,ms:float}>
+	 */
+	private static function span_groups( array $node, string $name ): array {
+		$mine     = [];
+		$siblings = [];
+		$children = \is_array( $node['children'] ?? null ) ? $node['children'] : [];
+		foreach ( $children as $child ) {
+			if ( ! \is_array( $child ) ) {
+				continue;
+			}
+			if ( Core::as_string( $child['name'] ?? '' ) === $name ) {
+				$mine[] = $child;
+				continue;
+			}
+			$siblings[] = $child;
+		}
+		$groups = [] === $mine
+			? []
+			: [ [
+				'parent'   => $node,
+				'mine'     => $mine,
+				'siblings' => $siblings,
+				'ms'       => \array_sum( \array_map( static fn ( array $n ): float => Core::num_float( $n['value'] ?? 0 ), $mine ) ),
+			] ];
+		foreach ( $children as $child ) {
+			if ( \is_array( $child ) ) {
+				$groups = \array_merge( $groups, self::span_groups( $child, $name ) );
+			}
+		}
+		return $groups;
+	}
+
+	/**
+	 * One log entry, its neighbours, and the gap either side — which is where
+	 * an uninstrumented call shows up as nothing at all. A `(start)` row also
+	 * carries the span it opens, per `span_of()`, because the row alone holds
+	 * only half of it.
+	 *
+	 * @param array<array-key,mixed> $record A stored request record.
+	 * @param int                    $index  The entry's position in the record; n
+	 *                                       repeats once a nested render restarts it.
+	 * @return array<string,mixed>|null Null when the record holds no such entry.
+	 */
+	public static function for_entry( array $record, int $index ): ?array {
+		$entries = \array_values( Core::arr( $record['entries'] ?? null ) );
+		if ( ! \is_array( $entries[ $index ] ?? null ) ) {
+			return null;
+		}
+
+		$neighbours = [];
+		for ( $i = \max( 0, $index - self::NEIGHBOURS ); $i <= \min( \count( $entries ) - 1, $index + self::NEIGHBOURS ); $i++ ) {
+			if ( $i !== $index && \is_array( $entries[ $i ] ) ) {
+				$neighbours[] = self::entry_shape( $entries[ $i ], $i );
+			}
+		}
+
+		$span = self::span_of( $entries, $index );
+		return [
+			'subject'       => 'entry',
+			'entry'         => self::entry_shape( $entries[ $index ], $index ),
+			...( null === $span ? [] : [ 'span' => $span ] ),
+			'neighbours'    => $neighbours,
+			'gap_before_ms' => self::gap( $entries, $index - 1, $index ),
+			'gap_after_ms'  => self::gap( $entries, $index, $index + 1 ),
+			'url'           => self::url_of( $record ),
+			'caveat'        => Findings::caveat(),
+		];
+	}
+
+	/**
+	 * The milliseconds between two entries, or null when either end is missing.
+	 *
+	 * @param list<mixed> $entries The entry list.
+	 * @param int         $from    Index of the earlier entry.
+	 * @param int         $to      Index of the later entry.
+	 * @return float|null
+	 */
+	private static function gap( array $entries, int $from, int $to ): ?float {
+		if ( ! isset( $entries[ $from ], $entries[ $to ] )
+				|| ! \is_array( $entries[ $from ] ) || ! \is_array( $entries[ $to ] ) ) {
+			return null;
+		}
+		return ( Core::num_float( $entries[ $to ]['ts'] ?? 0 ) - Core::num_float( $entries[ $from ]['ts'] ?? 0 ) ) * 1000.0;
+	}
+
+	/**
+	 * The span a `(start)` row opens, read off the frame `Flame_Tree` builds
+	 * for it — the one whose `i` is the row's position — so the pairing with
+	 * its `(complete)`, the message rule and the children are the flame's own.
+	 * The caller sits on the start's `l`, the statement and the duration on
+	 * the complete, which a start row read alone hides. The tree is built from
+	 * the entries rather than read off the record, whose folded tree carries
+	 * no `i`.
+	 *
+	 * @param list<mixed> $entries The entry list.
+	 * @param int         $index   The row's position.
+	 * @return array{name:string,label:string,message:?string,duration_ms:float,children:list<array{name:string,ms:float,count:int}>}|null Null for a row that opens no span.
+	 */
+	private static function span_of( array $entries, int $index ): ?array {
+		$start = Core::arr( $entries[ $index ] );
+		if ( 1 !== \preg_match( Flame_Tree::PATTERN_START, Core::as_string( $start['k'] ?? '' ), $m ) ) {
+			return null;
+		}
+		$tree = Flame_Tree::build_flame_data( $entries );
+		Flame_Tree::strip_name_suffixes( $tree );
+		$frame = self::frame_at( $tree, $index );
+		if ( null === $frame ) {
+			return null;
+		}
+		return [
+			'name'        => $m[1],
+			'label'       => Core::as_string( $start['l'] ?? '' ),
+			'message'     => \is_string( $frame['message'] ?? null ) ? $frame['message'] : null,
+			'duration_ms' => Core::num_float( $frame['value'] ?? 0 ),
+			'children'    => self::top_spans( $frame['children'] ?? null ),
+		];
+	}
+
+	/**
 	 * A span list as a brief carries it: same-name spans folded into one row,
 	 * slowest first, capped.
 	 *
@@ -368,90 +492,25 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * Every parent in the tree holding children of this name, each with those
-	 * children, that parent's other children, and what the group cost.
+	 * The frame a tree opened at one entry position, or null.
 	 *
-	 * @param array<array-key,mixed> $node Subtree root.
-	 * @param string                 $name Span name to collect.
-	 * @return list<array{parent:array<array-key,mixed>,mine:list<array<array-key,mixed>>,siblings:list<array<array-key,mixed>>,ms:float}>
+	 * @param array<array-key,mixed> $node  A subtree root.
+	 * @param int                    $index The entry position, as `i` names it.
+	 * @return array<array-key,mixed>|null
 	 */
-	private static function span_groups( array $node, string $name ): array {
-		$mine     = [];
-		$siblings = [];
-		$children = \is_array( $node['children'] ?? null ) ? $node['children'] : [];
-		foreach ( $children as $child ) {
-			if ( ! \is_array( $child ) ) {
-				continue;
+	private static function frame_at( array $node, int $index ): ?array {
+		foreach ( Core::arr( $node['children'] ?? null ) as $child ) {
+			$child = Core::arr( $child );
+			$at    = Core::num_int( $child['i'] ?? \PHP_INT_MAX );
+			if ( $index === $at ) {
+				return $child;
 			}
-			if ( Core::as_string( $child['name'] ?? '' ) === $name ) {
-				$mine[] = $child;
-				continue;
-			}
-			$siblings[] = $child;
-		}
-		$groups = [] === $mine
-			? []
-			: [ [
-				'parent'   => $node,
-				'mine'     => $mine,
-				'siblings' => $siblings,
-				'ms'       => \array_sum( \array_map( static fn ( array $n ): float => Core::num_float( $n['value'] ?? 0 ), $mine ) ),
-			] ];
-		foreach ( $children as $child ) {
-			if ( \is_array( $child ) ) {
-				$groups = \array_merge( $groups, self::span_groups( $child, $name ) );
+			$found = $at < $index ? self::frame_at( $child, $index ) : null;
+			if ( null !== $found ) {
+				return $found;
 			}
 		}
-		return $groups;
-	}
-
-	/**
-	 * One log entry, its neighbours, and the gap either side — which is where
-	 * an uninstrumented call shows up as nothing at all.
-	 *
-	 * @param array<array-key,mixed> $record A stored request record.
-	 * @param int                    $index  The entry's position in the record; n
-	 *                                       repeats once a nested render restarts it.
-	 * @return array<string,mixed>|null Null when the record holds no such entry.
-	 */
-	public static function for_entry( array $record, int $index ): ?array {
-		$entries = \array_values( Core::arr( $record['entries'] ?? null ) );
-		if ( ! \is_array( $entries[ $index ] ?? null ) ) {
-			return null;
-		}
-
-		$neighbours = [];
-		for ( $i = \max( 0, $index - self::NEIGHBOURS ); $i <= \min( \count( $entries ) - 1, $index + self::NEIGHBOURS ); $i++ ) {
-			if ( $i !== $index && \is_array( $entries[ $i ] ) ) {
-				$neighbours[] = self::entry_shape( $entries[ $i ], $i );
-			}
-		}
-
-		return [
-			'subject'       => 'entry',
-			'entry'         => self::entry_shape( $entries[ $index ], $index ),
-			'neighbours'    => $neighbours,
-			'gap_before_ms' => self::gap( $entries, $index - 1, $index ),
-			'gap_after_ms'  => self::gap( $entries, $index, $index + 1 ),
-			'url'           => self::url_of( $record ),
-			'caveat'        => Findings::caveat(),
-		];
-	}
-
-	/**
-	 * The milliseconds between two entries, or null when either end is missing.
-	 *
-	 * @param list<mixed> $entries The entry list.
-	 * @param int         $from    Index of the earlier entry.
-	 * @param int         $to      Index of the later entry.
-	 * @return float|null
-	 */
-	private static function gap( array $entries, int $from, int $to ): ?float {
-		if ( ! isset( $entries[ $from ], $entries[ $to ] )
-				|| ! \is_array( $entries[ $from ] ) || ! \is_array( $entries[ $to ] ) ) {
-			return null;
-		}
-		return ( Core::num_float( $entries[ $to ]['ts'] ?? 0 ) - Core::num_float( $entries[ $from ]['ts'] ?? 0 ) ) * 1000.0;
+		return null;
 	}
 
 	/**

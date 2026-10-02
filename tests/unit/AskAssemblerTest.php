@@ -40,8 +40,9 @@ class AskAssemblerTest extends TestCase {
 						'name'     => 'wp_loaded',
 						'value'    => 790.0,
 						'count'    => 3,
+						'max'      => 288.0,
 						'children' => [
-							[ 'name' => 'render_block', 'value' => 700.0, 'count' => 42, 'children' => [] ],
+							[ 'name' => 'render_block', 'value' => 700.0, 'count' => 42, 'max' => 61.5, 'children' => [] ],
 							[ 'name' => 'the_content', 'value' => 60.0, 'children' => [] ],
 						],
 					],
@@ -1109,5 +1110,56 @@ class AskAssemblerTest extends TestCase {
 			'HTTP_HOST',
 			Ask_Assembler::for_entry( $record, 0 )['entry']['m']
 		);
+	}
+
+	/** A query span as logged: its caller on the start, its statement and duration on the complete. */
+	private function query_span_record(): array {
+		return [
+			'url'     => 'https://example.test/wp-admin/post.php',
+			'entries' => [
+				[ 'n' => 1, 'ts' => 3000.000, 'k' => 'process (start)', 'm' => '' ],
+				[ 'n' => 2, 'ts' => 3000.010, 'k' => 'sql (start)', 'l' => 'WP_Query->get_posts', 'm' => '' ],
+				[ 'n' => 3, 'ts' => 3000.011, 'k' => 'QM_DB::remove_placeholder_escape @0 (start)', 'l' => '', 'm' => '' ],
+				[ 'n' => 4, 'ts' => 3000.012, 'k' => 'QM_DB::remove_placeholder_escape @0 (complete)', 'm' => '', 'duration_ms' => 0.0065 ],
+				[ 'n' => 5, 'ts' => 3000.013, 'k' => 'Suppress_Errors::maybe @10 (start)', 'l' => '', 'm' => '' ],
+				[ 'n' => 6, 'ts' => 3000.014, 'k' => 'Suppress_Errors::maybe @10 (complete)', 'm' => '', 'duration_ms' => 0.0125 ],
+				[ 'n' => 7, 'ts' => 3000.015, 'k' => 'QM_DB::remove_placeholder_escape @0 (start)', 'l' => '', 'm' => '' ],
+				[ 'n' => 8, 'ts' => 3000.016, 'k' => 'QM_DB::remove_placeholder_escape @0 (complete)', 'm' => '', 'duration_ms' => 0.0035 ],
+				[ 'n' => 9, 'ts' => 3001.975, 'k' => 'sql (complete)', 'm' => 'SELECT wp_posts.ID FROM wp_posts WHERE 1=1', 'duration_ms' => 1964.7 ],
+				[ 'n' => 10, 'ts' => 3001.980, 'k' => 'process (complete)', 'm' => '' ],
+			],
+		];
+	}
+
+	/** A start row's brief reads its span's frame: label, statement, duration and what ran inside. */
+	public function test_a_start_row_brief_pairs_with_its_complete(): void {
+		$brief = Ask_Assembler::for_entry( $this->query_span_record(), 1 );
+
+		$this->assertSame(
+			[
+				'name'        => 'sql',
+				'label'       => 'WP_Query->get_posts',
+				'message'     => 'SELECT wp_posts.ID FROM wp_posts WHERE 1=1',
+				'duration_ms' => 1964.7,
+				'children'    => [
+					[ 'name' => 'Suppress_Errors::maybe @10', 'ms' => 0.0125, 'count' => 1 ],
+					[ 'name' => 'QM_DB::remove_placeholder_escape @0', 'ms' => 0.01, 'count' => 2 ],
+				],
+			],
+			$brief['span']
+		);
+	}
+
+	/** The start's own message outranks the complete's, as the flame keeps it. */
+	public function test_a_start_rows_own_message_outranks_its_completes(): void {
+		$record                        = $this->query_span_record();
+		$record['entries'][1]['m']     = 'post 3663570';
+
+		$this->assertSame( 'post 3663570', Ask_Assembler::for_entry( $record, 1 )['span']['message'] );
+	}
+
+	/** Only a start row opens a span to pair. */
+	public function test_a_row_that_opens_no_span_carries_none(): void {
+		$this->assertArrayNotHasKey( 'span', Ask_Assembler::for_entry( $this->query_span_record(), 8 ) );
 	}
 }

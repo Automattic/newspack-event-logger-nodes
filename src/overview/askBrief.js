@@ -246,7 +246,9 @@ function findingLines( finding ) {
 		`- **severity:** ${ finding.severity } · **measured:** ${ finding.measured }`
 	);
 	// A statement is the site's own text, so it takes a fenced line of its own.
-	const { shape, ...metric } = finding.metric ?? {};
+	const { shape, chain, ...rest } = finding.metric ?? {};
+	const steps = ( chain ?? [] ).map( ( { shape: ran, ...step } ) => step );
+	const metric = chain ? { ...rest, chain: steps } : rest;
 	const numbers = Object.keys( metric )
 		.flatMap( ( key ) => metricPairs( key, metric[ key ] ) )
 		.join( ' ' );
@@ -255,6 +257,13 @@ function findingLines( finding ) {
 	}
 	if ( shape ) {
 		lines.push( `- **statement:** ${ siteData( shape ) }` );
+	}
+	for ( const step of chain ?? [] ) {
+		if ( step.shape ) {
+			lines.push(
+				`- **statement in ${ step.name }:** ${ siteData( step.shape ) }`
+			);
+		}
 	}
 	const proposal = finding.proposal;
 	if ( proposal && 'none' !== proposal.action ) {
@@ -275,6 +284,21 @@ function findingLines( finding ) {
 	}
 	lines.push( '' );
 	return lines;
+}
+
+/**
+ * What ran directly inside the span a start row opens, folded by name.
+ *
+ * @param {?Object} span The `span` an entry brief carries, if any.
+ * @return {string} The children, or '' where nothing ran inside it.
+ */
+function spanInside( span ) {
+	return ( span?.children ?? [] )
+		.map(
+			( s ) =>
+				`${ s.name } ${ withUnit( s.ms, 'ms' ) }${ times( s.count ) }`
+		)
+		.join( ', ' );
 }
 
 /**
@@ -509,7 +533,17 @@ function bodyLines( brief ) {
 					'entry',
 					`#${ brief.entry?.n } ${ brief.entry?.k } (entry:${ brief.entry?.i })`,
 				],
-				[ 'message', brief.entry?.m, 'site' ],
+				[ 'label', brief.span?.label ],
+				[
+					'message',
+					brief.span ? brief.span.message : brief.entry?.m,
+					'site',
+				],
+				[
+					'duration',
+					brief.span && withUnit( brief.span.duration_ms, 'ms' ),
+				],
+				[ 'inside it', spanInside( brief.span ) ],
 				[
 					'gap before',
 					null === brief.gap_before_ms

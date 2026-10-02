@@ -355,6 +355,7 @@ class FindingsTest extends TestCase {
 				'name'     => 'sql: WP_Query->get_posts',
 				'value'    => 372.0,
 				'count'    => 667,
+				'max'      => 9.5,
 				'children' => [],
 				'shapes'   => [
 					'SELECT * FROM wp_posts WHERE post_type = ?' => [ 4, 41.0 ],
@@ -511,12 +512,14 @@ class FindingsTest extends TestCase {
 						'name'     => 'restapi',
 						'value'    => 198.0,
 						'count'    => 62,
+						'max'      => 7.25,
 						'children' => [],
 					],
 					[
 						'name'     => 'query_sql',
 						'value'    => 182.0,
 						'count'    => 120,
+						'max'      => 3.5,
 						'children' => [],
 					],
 				],
@@ -608,10 +611,10 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A query's label names the CALLER that ran it, not the work: 600 queries
-	 * from fifteen callers are 600 queries, the repeat the span counts.
+	 * A query's label names the caller that ran it, and each caller is judged
+	 * on its own: 600 queries spread over fifteen callers repeat under none.
 	 */
-	public function test_repetition_of_the_query_span_counts_the_span_across_its_callers(): void {
+	public function test_queries_spread_over_many_callers_repeat_under_none(): void {
 		$callers = [];
 		for ( $i = 0; $i < 15; $i++ ) {
 			$callers[ "Caller{$i}->load" ] = [ 19.4, 40 ];
@@ -622,13 +625,7 @@ class FindingsTest extends TestCase {
 		];
 		$rule = $this->instrumented_rule()->with( [ 'log_queries' => true ] );
 
-		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'repetition' );
-
-		$this->assertNotNull( $found );
-		$this->assertSame( 'sql', $found['metric']['name'] );
-		$this->assertSame( 600, $found['metric']['count'] );
-		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
-		$this->assertSame( 'sql', $found['proposal']['value'] );
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $rule ), 'repetition' ) );
 	}
 
 	/**
@@ -671,10 +668,10 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A traced hook labels each firing with its CALLER, which splits the
-	 * flame but not the hook: the hook is what fired and what a rule binds.
+	 * A traced hook labels each firing with its caller, and the caller that
+	 * fired it per item is the repeat; marking the hook is what shows it.
 	 */
-	public function test_repetition_of_a_traced_hook_counts_the_hook_not_its_callers(): void {
+	public function test_repetition_of_a_traced_hook_names_the_caller_that_repeated(): void {
 		$record             = $this->healthy_record();
 		$record['profiles'] = [
 			'the_content hook' => [
@@ -689,9 +686,10 @@ class FindingsTest extends TestCase {
 
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
 
-		$this->assertSame( 'the_content hook', $found['metric']['name'] );
-		$this->assertSame( 212, $found['metric']['count'] );
+		$this->assertSame( 'the_content hook: Theme->render_card', $found['metric']['name'] );
+		$this->assertSame( 150, $found['metric']['count'] );
 		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+		$this->assertSame( 'the_content', $found['proposal']['value'] );
 	}
 
 	public function test_a_repeat_that_spends_nothing_is_not_the_finding(): void {
@@ -1880,25 +1878,22 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * The live hub request: `gyrobase` holds 71% of the profiled time and
-	 * spends 5% in its own body, so its interior is already in the record.
-	 * The finding names the child holding the time instead of asking for
-	 * visibility the record already has.
+	 * The live hub request: `gyrobase` holds 71% of the request, and one grid
+	 * include holds most of `gyrobase`. The finding follows the time into it
+	 * instead of asking for visibility the record already has.
 	 */
-	public function test_a_dominant_span_whose_children_hold_it_names_the_largest(): void {
+	public function test_a_dominant_span_one_child_holds_descends_into_it(): void {
 		$grid = 'include: /Responsive/Grids/Resp-Two-Col-1.html';
 
 		$found = $this->of_kind( Findings::for_request( $this->hub_record(), $this->instrumented_rule() ), 'dominant_span' );
 
 		$this->assertNotNull( $found );
 		$this->assertSame( 'gyrobase', $found['metric']['name'] );
-		$this->assertSame( $grid, $found['metric']['child']['name'] );
-		$this->assertEqualsWithDelta( 731.0, $found['metric']['child']['ms'], 1e-6 );
-		$this->assertEqualsWithDelta( 731.0 / 1663.0, $found['metric']['child']['share'], 1e-6 );
-		$this->assertStringContainsString( "{$grid} holds 44%", $found['detail'] );
+		$this->assertSame( [ [ 'name' => $grid, 'ms' => 731.0, 'share' => 731.0 / 1663.0 ] ], $found['metric']['chain'] );
+		$this->assertStringContainsString( "Inside it, {$grid} holds 44% of the request.", $found['detail'] );
 		$this->assertStringNotContainsString( 'appears only where', $found['detail'] );
 		$this->assertSame( 'none', $found['proposal']['action'] );
-		$this->assertStringContainsString( $grid, $found['proposal']['why'] );
+		$this->assertStringContainsString( 'custom event', $found['proposal']['why'] );
 	}
 
 	/**
@@ -1922,7 +1917,7 @@ class FindingsTest extends TestCase {
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
 
 		$this->assertSame( 'wp_loaded hook', $found['metric']['name'] );
-		$this->assertSame( 'render_block hook', $found['metric']['child']['name'] );
+		$this->assertSame( [ 'render_block hook', 'the_content hook' ], \array_column( $found['metric']['explained'], 'name' ) );
 		$this->assertSame( 'none', $found['proposal']['action'] );
 		$this->assertStringNotContainsString( 'invisible', $found['detail'] );
 	}
@@ -1941,7 +1936,7 @@ class FindingsTest extends TestCase {
 
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
 
-		$this->assertArrayNotHasKey( 'child', $found['metric'] );
+		$this->assertArrayNotHasKey( 'explained', $found['metric'] );
 		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
 	}
 
@@ -2185,7 +2180,7 @@ class FindingsTest extends TestCase {
 		$record['flame']    = [
 			'name'     => 'request',
 			'value'    => 400.0,
-			'children' => [ [ 'name' => 'init hook', 'value' => 375.6, 'count' => 900, 'children' => [] ] ],
+			'children' => [ [ 'name' => 'init hook', 'value' => 375.6, 'count' => 900, 'max' => 1.75, 'children' => [] ] ],
 		];
 		$record['profiles'] = [
 			'the_content hook' => [ 'count' => 900, 'time' => 50.0, 'entries' => [] ],
@@ -2495,7 +2490,7 @@ class FindingsTest extends TestCase {
 									'count'    => 10,
 									'max'      => 5833.0,
 									'children' => [
-										[ 'name' => 'sql: WP_Query->get_posts', 'value' => 52105.4, 'count' => 299, 'children' => [] ],
+										[ 'name' => 'sql: WP_Query->get_posts', 'value' => 52105.4, 'count' => 299, 'max' => 1850.0, 'children' => [] ],
 									],
 								],
 							],
@@ -2580,5 +2575,546 @@ class FindingsTest extends TestCase {
 		$this->assertSame( $revisions, $found['metric']['repeat']['name'] );
 		$this->assertSame( 10, $found['metric']['repeat']['count'] );
 		$this->assertEqualsWithDelta( 59384.0, $found['metric']['repeat']['ms'], 0.5 );
+	}
+
+	/**
+	 * A post save as stored: the link builder holds 82% of the request,
+	 * `do_blocks` two thirds of the builder, and two of the queries inside
+	 * `do_blocks` most of it, though neither alone holds half.
+	 *
+	 * @param list<array<string,mixed>> $inside What runs inside `do_blocks`.
+	 */
+	private function descent_record( array $inside ): array {
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = 3125.0;
+		$record['flame_data']  = [
+			'name'     => 'request',
+			'value'    => 3125.0,
+			'children' => [
+				[
+					'name'     => 'process',
+					'value'    => 3125.0,
+					'children' => [
+						[
+							'name'     => 'the_content hook: Indexable_Link_Builder->build',
+							'value'    => 2562.5,
+							'children' => [
+								[ 'name' => 'do_blocks @9', 'value' => 1718.0, 'children' => $inside ],
+								[ 'name' => 'Image_CDN::filter_the_content @999999', 'value' => 836.0, 'children' => [] ],
+							],
+						],
+					],
+				],
+			],
+		];
+		return $record;
+	}
+
+	/** Leaf frames of one name, one per call. */
+	private function frames( string $name, array $values ): array {
+		return \array_map(
+			static fn ( float $ms ): array => [ 'name' => $name, 'value' => $ms, 'children' => [] ],
+			$values
+		);
+	}
+
+	/** The time is followed down to where no one call holds half its parent, and the calls there are named. */
+	public function test_a_dominant_span_descends_to_the_calls_that_explain_it(): void {
+		$queries = $this->frames( 'sql: WP_Query->get_posts', [ 640.0, 590.0, 95.0, 41.5, 22.0 ] );
+
+		$found = $this->of_kind( Findings::for_request( $this->descent_record( $queries ), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'the_content hook: Indexable_Link_Builder->build', $found['metric']['name'] );
+		$this->assertSame( [ [ 'name' => 'do_blocks @9', 'ms' => 1718.0, 'share' => 1718.0 / 3125.0 ] ], $found['metric']['chain'] );
+		$this->assertSame(
+			[ [ 'name' => 'sql: WP_Query->get_posts', 'ms' => 1388.5, 'count' => 5, 'share' => 1388.5 / 3125.0, 'max' => 640.0 ] ],
+			$found['metric']['explained']
+		);
+		$this->assertArrayNotHasKey( 'child', $found['metric'] );
+		$this->assertStringContainsString( 'Inside it, do_blocks @9 holds 55% of the request.', $found['detail'] );
+		$this->assertStringContainsString( 'sql: WP_Query->get_posts ×5 1.4s (slowest 640.0ms) holds 81% of it.', $found['detail'] );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+	}
+
+	/** Each level holding half its parent in one call is a step of the chain. */
+	public function test_a_dominant_span_descends_through_every_level_one_call_holds(): void {
+		$render = [
+			'name'     => 'render_block hook',
+			'value'    => 1300.0,
+			'children' => [
+				...$this->frames( 'sql: Term_Query->get_terms', [ 410.0 ] ),
+				...$this->frames( 'sql: WP_Query->get_posts', [ 385.0 ] ),
+				...$this->frames( 'wptexturize @10', [ 50.0 ] ),
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $this->descent_record( [ $render ] ), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( [ 'do_blocks @9', 'render_block hook' ], \array_column( $found['metric']['chain'], 'name' ) );
+		$this->assertSame( [ 'sql: Term_Query->get_terms', 'sql: WP_Query->get_posts' ], \array_column( $found['metric']['explained'], 'name' ) );
+		$this->assertStringContainsString( 'Inside it, do_blocks @9 holds 55% of the request; inside that, render_block hook holds 42%.', $found['detail'] );
+		$this->assertStringNotContainsString( 'Most of it', $found['detail'] );
+	}
+
+	/** Where the descent stops on a body nothing inside explains, the proposal is to see inside THAT frame. */
+	public function test_a_descent_stopping_on_an_unexplained_body_proposes_seeing_inside_it(): void {
+		$render = [ 'name' => 'render_block hook', 'value' => 1300.0, 'children' => $this->frames( 'wptexturize @10', [ 120.0 ] ) ];
+
+		$found = $this->of_kind( Findings::for_request( $this->descent_record( [ $render ] ), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertArrayNotHasKey( 'explained', $found['metric'] );
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+		$this->assertSame( 'render_block', $found['proposal']['value'] );
+	}
+
+	/**
+	 * A 4s request whose `do_blocks` holds 52% of it, short of dominant, so
+	 * no dominant span names the frames inside it.
+	 *
+	 * @param list<array<string,mixed>> $inside What runs inside `do_blocks`.
+	 */
+	private function repeat_record( array $inside ): array {
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = 4000.0;
+		$record['flame_data']  = [
+			'name'     => 'request',
+			'value'    => 4000.0,
+			'children' => [
+				[
+					'name'     => 'process',
+					'value'    => 4000.0,
+					'children' => [ [ 'name' => 'do_blocks @9', 'value' => 2100.0, 'children' => $inside ] ],
+				],
+			],
+		];
+		return $record;
+	}
+
+	/**
+	 * The same post save's queries: `sql` ran 172 times across three callers,
+	 * and two of `WP_Query->get_posts`' 31 calls hold 84% of its time. That is
+	 * two slow queries beside quick ones, and no caller repeats.
+	 */
+	public function test_a_few_slow_calls_of_a_caller_are_not_repetition(): void {
+		$quick              = \array_fill( 0, 29, 310.0 / 29 );
+		$record             = $this->repeat_record( $this->frames( 'sql: WP_Query->get_posts', [ 900.0, 780.0, ...$quick ] ) );
+		$record['profiles'] = [
+			'sql' => [
+				'count'   => 172,
+				'time'    => 2036.5,
+				'entries' => [
+					'WP_Query->get_posts'       => [ 1990.0, 31 ],
+					'Yoast\\WP\\Lib\\ORM::execute' => [ 27.5, 118 ],
+					'WP_Term_Query->get_terms'  => [ 19.0, 23 ],
+				],
+			],
+		];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/** Many calls of one caller at a similar cost are the repeat, named by that caller. */
+	public function test_many_similar_calls_of_one_caller_repeat_under_its_name(): void {
+		$record             = $this->repeat_record( $this->frames( 'sql: Term_Cache->prime', \array_fill( 0, 96, 7.5 ) ) );
+		$record['profiles'] = [
+			'sql' => [
+				'count'   => 100,
+				'time'    => 730.0,
+				'entries' => [
+					'Term_Cache->prime' => [ 720.0, 96 ],
+					'update_option'     => [ 10.0, 4 ],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertSame( 'sql: Term_Cache->prime', $found['metric']['name'] ?? null );
+		$this->assertSame( 96, $found['metric']['count'] );
+		$this->assertStringStartsWith( 'sql: Term_Cache->prime fired 96 times', $found['title'] );
+	}
+
+	/**
+	 * A row logged late but stamped inside a window splits it: the gaps are
+	 * either side of it, by timestamp, not across it.
+	 */
+	public function test_a_late_logged_row_stamped_inside_a_window_splits_it(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.010, 'k' => 'request', 'm' => 'GET https://example.test/calendar/today' ],
+			[ 'n' => 3, 'ts' => 2000.020, 'k' => 'init hook (start)', 'm' => '' ],
+			[ 'n' => 4, 'ts' => 2000.030, 'k' => 'init hook (complete)', 'm' => '', 'duration_ms' => 10.0 ],
+			[ 'n' => 5, 'ts' => 2000.900, 'k' => 'wp_loaded hook (start)', 'm' => '' ],
+			[ 'n' => 6, 'ts' => 2000.905, 'k' => 'wp_loaded hook (complete)', 'm' => '', 'duration_ms' => 5.0 ],
+			[ 'n' => 7, 'ts' => 2000.480, 'k' => 'deferred', 'm' => '' ],
+			[ 'n' => 8, 'ts' => 2000.910, 'k' => 'process (complete)', 'm' => '' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertEqualsWithDelta( 450.0, $found['metric']['gap_ms'], 1e-6 );
+		$this->assertSame( 'init hook (complete)', $found['metric']['after'] );
+		$this->assertSame( 'deferred', $found['metric']['before'] );
+		$this->assertSame( [ 3, 6 ], [ $found['metric']['from_i'], $found['metric']['to_i'] ] );
+	}
+
+	/**
+	 * The profiler's rows are logged after the opening rows and stamped
+	 * before them, so the window ahead of the first plugin load is found
+	 * among them, not across the request line.
+	 */
+	public function test_a_window_among_back_dated_rows_is_measured_by_their_stamps(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.600, 'k' => 'request', 'm' => 'GET https://example.test/calendar/today' ],
+			[ 'n' => 3, 'ts' => 2000.601, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 4, 'ts' => 2000.400, 'k' => 'jetpack plugin (start)', 'm' => '' ],
+			[ 'n' => 5, 'ts' => 2000.420, 'k' => 'jetpack plugin (complete)', 'm' => '', 'duration_ms' => 20.0 ],
+			[ 'n' => 6, 'ts' => 2000.640, 'k' => 'init hook (start)', 'm' => '' ],
+			[ 'n' => 7, 'ts' => 2000.650, 'k' => 'init hook (complete)', 'm' => '', 'duration_ms' => 10.0 ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertEqualsWithDelta( 400.0, $found['metric']['gap_ms'], 1e-6 );
+		$this->assertSame( 'process (start)', $found['metric']['after'] );
+		$this->assertSame( 'jetpack plugin (start)', $found['metric']['before'] );
+	}
+
+	/**
+	 * The window from the logger's opening rows to the first span it bound
+	 * is the rest of `plugins_loaded`, which the logger boots inside.
+	 *
+	 * @param float $first_hook When the first bound span opens, seconds past 2000.
+	 * @param float $later_hook When a later one opens.
+	 */
+	private function boot_record( float $first_hook, float $later_hook ): array {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.090, 'k' => 'request', 'm' => 'GET https://example.test/calendar/today' ],
+			[ 'n' => 3, 'ts' => 2000.0901, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 4, 'ts' => 2000.030, 'k' => 'S3-Uploads plugin (start)', 'm' => '' ],
+			[ 'n' => 5, 'ts' => 2000.040, 'k' => 'S3-Uploads plugin (complete)', 'm' => '', 'duration_ms' => 10.0 ],
+			[ 'n' => 6, 'ts' => 2000 + $first_hook, 'k' => 'setup_theme hook (start)', 'm' => '' ],
+			[ 'n' => 7, 'ts' => 2000 + $first_hook + 0.001, 'k' => 'setup_theme hook (complete)', 'm' => '', 'duration_ms' => 1.0 ],
+			[ 'n' => 8, 'ts' => 2000 + $later_hook, 'k' => 'wp_loaded hook (start)', 'm' => '' ],
+			[ 'n' => 9, 'ts' => 2000 + $later_hook + 0.001, 'k' => 'wp_loaded hook (complete)', 'm' => '', 'duration_ms' => 1.0 ],
+		];
+		return $record;
+	}
+
+	public function test_the_loggers_boot_window_says_no_rule_edit_can_time_it(): void {
+		$found = $this->of_kind( Findings::for_request( $this->boot_record( 0.520, 0.530 ), $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'resources', $found['metric']['after'] );
+		$this->assertSame( 'setup_theme hook (start)', $found['metric']['before'] );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'plugins_loaded', $found['proposal']['why'] );
+		$this->assertStringContainsString( 'priority 11', $found['proposal']['why'] );
+	}
+
+	public function test_a_later_request_level_gap_is_no_boot_window(): void {
+		$found = $this->of_kind( Findings::for_request( $this->boot_record( 0.120, 0.700 ), $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'wp_loaded hook (start)', $found['metric']['before'] );
+		$this->assertStringNotContainsString( 'plugins_loaded', $found['proposal']['why'] );
+	}
+
+	/** Uniform calls inside the stop frame are one name, with its whole count and time. */
+	public function test_explaining_calls_merge_by_name(): void {
+		$inside = [ ...$this->frames( 'sql: Term_Cache->prime', \array_fill( 0, 450, 3.0 ) ), ...$this->frames( 'wptexturize @10', [ 80.0 ] ) ];
+
+		$found = $this->of_kind( Findings::for_request( $this->descent_record( $inside ), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame(
+			[ [ 'name' => 'sql: Term_Cache->prime', 'ms' => 1350.0, 'count' => 450, 'share' => 1350.0 / 3125.0, 'max' => 3.0 ] ],
+			$found['metric']['explained']
+		);
+		$this->assertStringContainsString( 'sql: Term_Cache->prime ×450 1.4s (slowest 3.0ms) holds 79% of it.', $found['detail'] );
+	}
+
+	/** Only the names needed to explain the frame are named, and no more than a few. */
+	public function test_explaining_names_stop_at_the_cap(): void {
+		$inside = [];
+		foreach ( [ 'a', 'b', 'c', 'd', 'e' ] as $at => $suffix ) {
+			$inside[] = [ 'name' => "sql: Caller_{$suffix}->load", 'value' => 205.0 - $at, 'children' => [] ];
+		}
+
+		$found = $this->of_kind( Findings::for_request( $this->descent_record( $inside ), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( [ 'sql: Caller_a->load', 'sql: Caller_b->load', 'sql: Caller_c->load' ], \array_column( $found['metric']['explained'], 'name' ) );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'hold 36% of do_blocks @9', $found['proposal']['why'] );
+		$this->assertStringNotContainsString( 'most', $found['proposal']['why'] );
+	}
+
+	/** A descent that ends on a query frame names the statement that frame spent most on. */
+	public function test_a_descent_ending_on_a_query_names_its_statement(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 2000.0;
+		$record['flame']       = [
+			'name'     => 'request',
+			'value'    => 2000.0,
+			'children' => [
+				[
+					'name'     => 'the_content hook',
+					'value'    => 1700.0,
+					'children' => [
+						[
+							'name'     => 'sql: WP_Query->get_posts',
+							'value'    => 1100.0,
+							'count'    => 3,
+							'max'      => 950.0,
+							'children' => [],
+							'shapes'   => [
+								'SELECT * FROM wp_posts WHERE ID = ?' => [ 2, 1040.0 ],
+								'SELECT 1'                           => [ 1, 60.0 ],
+							],
+						],
+					],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'the_content hook', $found['metric']['name'] );
+		$this->assertArrayNotHasKey( 'shape', $found['metric'], 'the dominant span ran no statement' );
+		$this->assertSame( 'sql: WP_Query->get_posts', $found['metric']['chain'][0]['name'] );
+		$this->assertSame( 'SELECT * FROM wp_posts WHERE ID = ?', $found['metric']['chain'][0]['shape'] );
+		$this->assertSame( 2, $found['metric']['chain'][0]['shape_calls'] );
+	}
+
+	/** A folded frame carries its slowest call; one without it is a broken record. */
+	public function test_a_folded_frame_without_its_slowest_call_is_refused(): void {
+		$record                      = $this->healthy_record();
+		$record['flame']['children'] = [ [ 'name' => 'render_block hook', 'value' => 340.0, 'count' => 4, 'children' => [] ] ];
+
+		$this->expectException( \UnexpectedValueException::class );
+		Findings::for_request( $record, $this->instrumented_rule() );
+	}
+
+	/**
+	 * Five seconds in one call beside 500 calls of 4ms are not calls alike:
+	 * the slow one is the dominant span's to name, so no repeat is claimed.
+	 */
+	public function test_calls_unlike_each_other_are_no_repetition(): void {
+		$record                = $this->repeat_record( $this->frames( 'sql: Slow_Report->rows', [ 5000.0, ...\array_fill( 0, 500, 4.0 ) ] ) );
+		$record['duration_ms'] = 12000.0;
+		$record['flame_data']['value']                = 12000.0;
+		$record['flame_data']['children'][0]['value'] = 12000.0;
+		$record['flame_data']['children'][0]['children'][0]['value'] = 7000.0;
+		$record['profiles']    = [ 'sql' => [ 'count' => 501, 'time' => 7000.0, 'entries' => [ 'Slow_Report->rows' => [ 7000.0, 501 ] ] ] ];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/**
+	 * Calls are compared by frame value, children included, so one call
+	 * holding a three-second query is unlike ninety-nine 6ms ones.
+	 */
+	public function test_calls_are_compared_by_frame_value_children_included(): void {
+		$cards = [];
+		for ( $i = 0; $i < 100; $i++ ) {
+			$cards[] = [
+				'name'     => 'function: card',
+				'value'    => 0 === $i ? 3006.0 : 6.0,
+				'children' => 0 === $i ? [ [ 'name' => 'sql: Feed->fetch', 'value' => 3000.0, 'children' => [] ] ] : [],
+			];
+		}
+		$record                = $this->repeat_record( $cards );
+		$record['duration_ms'] = 10000.0;
+		$record['flame_data']['value']                = 10000.0;
+		$record['flame_data']['children'][0]['value'] = 10000.0;
+		$record['flame_data']['children'][0]['children'][0]['value'] = 3700.0;
+		$record['profiles']    = [ 'function' => [ 'count' => 100, 'time' => 600.0, 'entries' => [ 'card' => [ 600.0, 100 ] ] ] ];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/** Lifecycle hooks the rule omits run inside a window ending at a later one: adding them splits it. */
+	public function test_a_boot_window_past_omitted_bracket_hooks_proposes_them(): void {
+		$record                      = $this->boot_record( 0.520, 0.530 );
+		$record['entries'][5]['k']   = 'template_redirect hook (start)';
+		$record['entries'][6]['k']   = 'template_redirect hook (complete)';
+		$rule                        = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'template_redirect', 'wp_loaded' ] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'entry_gap' );
+
+		$this->assertSame( 'add_hooks', $found['proposal']['action'] );
+		$this->assertSame( [ 'setup_theme', 'init' ], $found['proposal']['hooks'] );
+		$this->assertSame(
+			'Before template_redirect the rule omits the lifecycle hooks setup_theme, init; whichever of them fire inside this window will split it.',
+			$found['proposal']['why']
+		);
+	}
+
+	/** A worker's record holds no web request's boot, so the window says nothing about it. */
+	public function test_a_worker_records_first_window_is_no_boot_window(): void {
+		$record              = $this->boot_record( 0.520, 0.530 );
+		$record['is_worker'] = true;
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'setup_theme hook (start)', $found['metric']['before'] );
+		$this->assertStringNotContainsString( 'plugins_loaded', $found['proposal']['why'] );
+	}
+
+	/** A window ending at a command span is the verb's, not the lifecycle's. */
+	public function test_a_window_ending_at_a_command_is_no_boot_window(): void {
+		$record                    = $this->boot_record( 0.520, 0.530 );
+		$record['entries'][5]['k'] = 'Performance_CI_Node urls command (start)';
+		$record['entries'][6]['k'] = 'Performance_CI_Node urls command (complete)';
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'Performance_CI_Node urls command (start)', $found['metric']['before'] );
+		$this->assertStringNotContainsString( 'plugins_loaded', $found['proposal']['why'] );
+	}
+
+	/** A window after a logged bracket hook names the hooks the rule omits between the two. */
+	public function test_a_window_between_bracket_hooks_names_both_ends(): void {
+		$record                    = $this->boot_record( 0.120, 0.700 );
+		$record['entries'][7]['k'] = 'shutdown hook (start)';
+		$record['entries'][8]['k'] = 'shutdown hook (complete)';
+		$rule                      = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'setup_theme', 'shutdown' ] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'entry_gap' );
+
+		$this->assertSame( [ 'init', 'wp_loaded', 'template_redirect', 'wp_head' ], $found['proposal']['hooks'] );
+		$this->assertStringStartsWith( 'Between setup_theme and shutdown the rule omits', $found['proposal']['why'] );
+	}
+
+	/**
+	 * A name nested in itself — blocks inside a block — counts its outermost
+	 * frame alone, so the outer frame holding its inner ones is not read as
+	 * a slow call beside them.
+	 */
+	public function test_a_name_nested_in_itself_still_repeats(): void {
+		$outer              = [
+			'name'     => 'render_block hook',
+			'value'    => 527.0,
+			'children' => $this->frames( 'render_block hook', \array_fill( 0, 50, 10.4 ) ),
+		];
+		$record             = $this->repeat_record( [ $outer ] );
+		$record['profiles'] = [ 'render_block hook' => [ 'count' => 51, 'time' => 527.0, 'entries' => [] ] ];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertSame( 'render_block hook', $found['metric']['name'] ?? null );
+		$this->assertSame( 51, $found['metric']['count'] );
+	}
+
+	/**
+	 * A name the dominant span explains is not on its chain, and the finding
+	 * counts it inside one frame only: its request-wide repeat still reports.
+	 */
+	public function test_an_explained_name_still_repeats(): void {
+		$record             = $this->descent_record( $this->frames( 'sql: Term_Cache->prime', \array_fill( 0, 450, 3.0 ) ) );
+		$record['profiles'] = [ 'sql' => [ 'count' => 450, 'time' => 1350.0, 'entries' => [ 'Term_Cache->prime' => [ 1350.0, 450 ] ] ] ];
+
+		$findings = Findings::for_request( $record, $this->instrumented_rule() );
+
+		$this->assertSame( 'sql: Term_Cache->prime', $this->of_kind( $findings, 'dominant_span' )['metric']['explained'][0]['name'] );
+		$repetition = $this->of_kind( $findings, 'repetition' );
+		$this->assertSame( 'sql: Term_Cache->prime', $repetition['metric']['name'] ?? null );
+		$this->assertSame( 'none', $repetition['proposal']['action'], 'one name, one piece of advice' );
+		$this->assertStringContainsString( 'The dominant span names it inside do_blocks @9; read that finding before changing the rule.', $repetition['detail'] );
+	}
+
+	/** A name on the dominant span's chain is that finding's to tell. */
+	public function test_a_name_on_the_chain_is_left_to_the_dominant_span(): void {
+		$record             = $this->descent_record( $this->frames( 'sql: Term_Cache->prime', \array_fill( 0, 450, 3.0 ) ) );
+		$record['profiles'] = [ 'do_blocks @9' => [ 'count' => 60, 'time' => 368.0, 'entries' => [] ] ];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/**
+	 * A group block wrapping forty blocks, beside nine more: the wrapper's
+	 * own time is what is left once the blocks inside it come off, so the
+	 * fifty calls are alike and repeat.
+	 */
+	public function test_a_wrapper_of_its_own_name_counts_its_own_time(): void {
+		$wrapper            = [
+			'name'     => 'render_block hook',
+			'value'    => 450.0,
+			'children' => $this->frames( 'render_block hook', \array_fill( 0, 40, 10.0 ) ),
+		];
+		$record             = $this->repeat_record( [ $wrapper, ...$this->frames( 'render_block hook', \array_fill( 0, 9, 10.0 ) ) ] );
+		$record['profiles'] = [ 'render_block hook' => [ 'count' => 50, 'time' => 540.0, 'entries' => [] ] ];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertSame( 'render_block hook', $found['metric']['name'] ?? null );
+		$this->assertSame( 50, $found['metric']['count'] );
+	}
+
+	/**
+	 * One 1000ms leaf beside nine wrappers of ninety-nine frames: the leaf is
+	 * the slowest call by its own time, which no estimate from the merged
+	 * group may shrink, so the calls are unlike.
+	 */
+	public function test_a_slow_leaf_beside_wrappers_is_no_repetition(): void {
+		$blocks = [ [ 'name' => 'render_block hook', 'value' => 1000.0, 'children' => [] ] ];
+		for ( $i = 0; $i < 9; $i++ ) {
+			$blocks[] = [ 'name' => 'render_block hook', 'value' => 1000.0, 'children' => $this->frames( 'render_block hook', \array_fill( 0, 10, 99.0 ) ) ];
+		}
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = 40000.0;
+		$record['flame_data']  = [
+			'name'     => 'request',
+			'value'    => 40000.0,
+			'children' => [
+				[
+					'name'     => 'process',
+					'value'    => 40000.0,
+					'children' => [ [ 'name' => 'do_blocks @9', 'value' => 21000.0, 'children' => $blocks ] ],
+				],
+			],
+		];
+		$record['profiles']    = [ 'render_block hook' => [ 'count' => 100, 'time' => 2200.0, 'entries' => [] ] ];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/** A repeat the reader can act on takes the slot ahead of one the dominant span explains. */
+	public function test_an_actionable_repeat_outranks_an_explained_one(): void {
+		$record             = $this->descent_record( $this->frames( 'sql: Term_Cache->prime', \array_fill( 0, 450, 3.0 ) ) );
+		$record['profiles'] = [
+			'sql' => [
+				'count'   => 610,
+				'time'    => 1750.0,
+				'entries' => [
+					'Term_Cache->prime' => [ 1350.0, 450 ],
+					'Options->get'      => [ 400.0, 160 ],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertSame( 'sql: Options->get', $found['metric']['name'] ?? null );
+		$this->assertSame( 'log_transport', $found['proposal']['action'] );
+	}
+
+	/** Most of a name's calls outside the explained frame are this finding's to act on. */
+	public function test_an_explained_name_mostly_called_elsewhere_keeps_its_proposal(): void {
+		$record = $this->descent_record( $this->frames( 'sql: Term_Cache->prime', \array_fill( 0, 450, 3.0 ) ) );
+		$record['flame_data']['children'][0]['children'][] = [
+			'name'     => 'wp_footer hook',
+			'value'    => 1000.0,
+			'children' => $this->frames( 'sql: Term_Cache->prime', \array_fill( 0, 2000, 0.5 ) ),
+		];
+		$record['profiles'] = [ 'sql' => [ 'count' => 2450, 'time' => 2350.0, 'entries' => [ 'Term_Cache->prime' => [ 2350.0, 2450 ] ] ] ];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertSame( 'sql: Term_Cache->prime', $found['metric']['name'] ?? null );
+		$this->assertSame( 'log_transport', $found['proposal']['action'] );
+		$this->assertStringNotContainsString( 'dominant span names it', $found['detail'] );
 	}
 }

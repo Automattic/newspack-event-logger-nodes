@@ -601,6 +601,67 @@ test( 'a finding fences the statement it names instead of running it into the nu
 	);
 } );
 
+test( 'a statement from the descent rides with the frame that ran it', () => {
+	const md = briefToMarkdown( {
+		subject: 'request',
+		findings: [
+			{
+				kind: 'dominant_span',
+				title: 'the_content hook holds 85% of the request',
+				severity: 'high',
+				measured: 'flame',
+				metric: {
+					name: 'the_content hook',
+					ms: 1700,
+					chain: [
+						{
+							name: 'sql: WP_Query->get_posts',
+							ms: 1100,
+							share: 0.55,
+							shape: 'SELECT * FROM wp_posts WHERE ID = ?',
+							shape_calls: 2,
+							shape_ms: 1040,
+						},
+					],
+				},
+			},
+		],
+		caveat: 'c',
+	} );
+
+	const numbers = md
+		.split( '\n' )
+		.find( ( l ) => l.startsWith( '- **numbers:**' ) );
+	expect( numbers ).not.toContain( 'SELECT' );
+	expect( numbers ).toContain( 'chain.0.shape_calls=2' );
+	expect( md ).toContain(
+		'- **statement in sql: WP_Query->get_posts:** <site-data>SELECT * FROM wp_posts WHERE ID = ?</site-data>'
+	);
+} );
+
+test( 'a repeat deferring to the dominant span says so in its detail', () => {
+	const md = briefToMarkdown( {
+		subject: 'request',
+		findings: [
+			{
+				kind: 'repetition',
+				title: 'sql: Term_Cache->prime fired 450 times in one request, holding 1.4s',
+				detail: 'A count this high usually means the work inside is being repeated per item rather than done once. The dominant span names it inside do_blocks @9; read that finding before changing the rule.',
+				severity: 'medium',
+				measured: 'profiles',
+				metric: { name: 'sql: Term_Cache->prime', count: 450 },
+				proposal: { action: 'none', direction: 'none', why: 'x' },
+			},
+		],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain(
+		'The dominant span names it inside do_blocks @9; read that finding before changing the rule.'
+	);
+	expect( md ).not.toContain( '**proposed:**' );
+} );
+
 test( 'an entry brief says where the silence around it starts and ends', () => {
 	const md = briefToMarkdown( {
 		subject: 'entry',
@@ -622,6 +683,62 @@ test( 'an entry brief says where the silence around it starts and ends', () => {
 	expect( md ).toContain(
 		'#1 process (start) (entry:40), #2 template (entry:42)'
 	);
+} );
+
+test( 'a start row brief shows the span its complete closes', () => {
+	const md = briefToMarkdown( {
+		subject: 'entry',
+		entry: { i: 1213, n: 1214, k: 'sql (start)', m: '' },
+		span: {
+			name: 'sql',
+			label: 'WP_Query->get_posts',
+			message: 'SELECT wp_posts.ID FROM wp_posts WHERE 1=1',
+			duration_ms: 1964.7,
+			children: [
+				{ name: 'Suppress_Errors::maybe @10', ms: 0.0125, count: 1 },
+				{
+					name: 'QM_DB::remove_placeholder_escape @0',
+					ms: 0.01,
+					count: 2,
+				},
+			],
+		},
+		neighbours: [],
+		gap_before_ms: 0.4,
+		gap_after_ms: 0.5,
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**label:** WP_Query->get_posts' );
+	expect( md ).toContain(
+		'**message:** <site-data>SELECT wp_posts.ID FROM wp_posts WHERE 1=1</site-data>'
+	);
+	expect( md ).toContain( '**duration:** 1964.7ms' );
+	expect( md ).not.toContain( 'closed at' );
+	expect( md ).toContain(
+		'**inside it:** Suppress_Errors::maybe @10 0.013ms×1, QM_DB::remove_placeholder_escape @0 0.010ms×2'
+	);
+} );
+
+test( 'a start row with nothing inside it lists no children', () => {
+	const md = briefToMarkdown( {
+		subject: 'entry',
+		entry: { i: 4, n: 5, k: 'render (start)', m: 'Event.html' },
+		span: {
+			name: 'render',
+			label: '',
+			message: 'Event.html',
+			duration_ms: 37.25,
+			children: [],
+		},
+		gap_before_ms: null,
+		gap_after_ms: null,
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**duration:** 37.3ms' );
+	expect( md ).not.toContain( '**label:**' );
+	expect( md ).not.toContain( '**inside it:**' );
 } );
 
 test( 'a category brief shows its share and what it competes with', () => {
