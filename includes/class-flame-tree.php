@@ -97,35 +97,38 @@ final class Flame_Tree {
 	public const REQUESTS_EXPIRE = 'requests expire';
 
 	/**
-	 * Every name above: its step of the product chart palette
-	 * (`--np-chart-*`), and the `Findings` kind of a span no rule edit
-	 * reaches inside — `url_read` for a step of the URL read, `upkeep` for
-	 * a builder's own work — or null for a point event. The three URL-read
-	 * spans nest, so they take three unlike steps. The two builders' names
-	 * share steps by what they say — cobalt for a rollup, light cobalt for a
-	 * probe or a checkpoint, emerald for a close or a restore, the warning
-	 * step for a fold or an operator's purge — and the flame
-	 * builder's sweep, which runs a flush and so holds every other flush
-	 * span, takes cobalt, which none of them does. None takes Morganite, the
-	 * command span's.
+	 * Every name above: its hook category (a key of `hook_categories.json`
+	 * `_colors`, so an operator recolouring a category recolours its spans),
+	 * and the `Findings` kind of a span no rule edit reaches inside —
+	 * `url_read` for a step of the URL read, `upkeep` for a builder's own work
+	 * — or null for a point event.
+	 *
+	 * The three URL-read spans nest, so each has a category of its own: the
+	 * page cache Event Logger Page Cache, the header cache Event Logger Cache
+	 * and the fold Event Logger Fold. The builders' own spans and the
+	 * ranked-lists point event take Event Logger, except the flame builder's
+	 * sweep: it runs a flush and so holds every other flush span, so it takes
+	 * Event Logger Shutdown. All are this plugin's own categories, described
+	 * and pattern-free like `Other`, so no third-party hook category's colour
+	 * moves a platform span.
 	 *
 	 * @var array<string,array{0: string, 1: 'url_read'|'upkeep'|null}>
 	 */
 	private const PLATFORM = [
-		self::URL_PAGE_CACHE      => [ '#003DA5', 'url_read' ],
-		self::URL_HEADER_CACHE    => [ '#BD8600', 'url_read' ],
-		self::URL_FOLD            => [ '#117644', 'url_read' ],
-		self::URL_RANK_LISTS      => [ '#B32D2E', null ],
-		self::STATS_WRITES        => [ '#003DA5', null ],
-		self::STATS_PROBE         => [ '#2055B0', null ],
-		self::STATS_RANK_CLOSE    => [ '#117644', 'upkeep' ],
-		self::STATS_SWEEP         => [ '#003DA5', 'upkeep' ],
-		self::STATS_FOLD          => [ '#BD8600', 'upkeep' ],
-		self::STATS_RE_RANK       => [ '#BD8600', 'upkeep' ],
-		self::REQUESTS_WRITES     => [ '#003DA5', null ],
-		self::REQUESTS_CHECKPOINT => [ '#2055B0', 'upkeep' ],
-		self::REQUESTS_RESTORE    => [ '#117644', 'upkeep' ],
-		self::REQUESTS_EXPIRE     => [ '#BD8600', null ],
+		self::URL_PAGE_CACHE      => [ 'Event Logger Page Cache', 'url_read' ],
+		self::URL_HEADER_CACHE    => [ 'Event Logger Cache', 'url_read' ],
+		self::URL_FOLD            => [ 'Event Logger Fold', 'url_read' ],
+		self::URL_RANK_LISTS      => [ 'Event Logger', null ],
+		self::STATS_WRITES        => [ 'Event Logger', null ],
+		self::STATS_PROBE         => [ 'Event Logger', null ],
+		self::STATS_RANK_CLOSE    => [ 'Event Logger', 'upkeep' ],
+		self::STATS_SWEEP         => [ 'Event Logger Shutdown', 'upkeep' ],
+		self::STATS_FOLD          => [ 'Event Logger', 'upkeep' ],
+		self::STATS_RE_RANK       => [ 'Event Logger', 'upkeep' ],
+		self::REQUESTS_WRITES     => [ 'Event Logger', null ],
+		self::REQUESTS_CHECKPOINT => [ 'Event Logger', 'upkeep' ],
+		self::REQUESTS_RESTORE    => [ 'Event Logger', 'upkeep' ],
+		self::REQUESTS_EXPIRE     => [ 'Event Logger', null ],
 	];
 
 	/** What `listener_name()` puts between a listener's callable and its priority. */
@@ -783,13 +786,29 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * Every platform name's chart step, which the dashboards' colour map
-	 * carries beneath the operator's own colours.
+	 * Every platform name's colour: its hook category's, as `Hook_Categorizer`
+	 * merges the base file with the operator's own, which the dashboards'
+	 * colour map carries beneath the operator's per-span colours.
 	 *
-	 * @return array<string,string>
+	 * Never throws: it runs while a page is built, and a failed taxonomy read
+	 * must not take down the dashboards an operator would diagnose it with. A
+	 * span whose category has no string colour is skipped and draws the default
+	 * grey; `Hook_Categorizer` logs a failed read, and the shipped-taxonomy tests
+	 * catch a category the file lacks.
+	 *
+	 * @return array<string,string> Span name to colour.
 	 */
 	public static function platform_colors(): array {
-		return \array_map( static fn ( array $row ): string => $row[0], self::PLATFORM );
+		$categories = Hook_Categorizer::get_categories();
+		$colors     = [];
+		foreach ( self::PLATFORM as $span => $row ) {
+			$colour = $categories[ $row[0] ] ?? null;
+			if ( ! \is_string( $colour ) ) {
+				continue;
+			}
+			$colors[ $span ] = $colour;
+		}
+		return $colors;
 	}
 
 	/**

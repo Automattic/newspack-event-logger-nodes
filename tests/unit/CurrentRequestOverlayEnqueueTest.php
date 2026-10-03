@@ -173,8 +173,10 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 		 * taxonomy the dashboards print, or its hook spans draw the default.
 		 */
 		public function test_inline_data_carries_the_dashboards_hook_categories_on_the_station(): void {
+			// The platform spans' own categories ship with any taxonomy that is not stripped bare.
+			$shipped  = Hook_Categorizer::get_base_config()['_colors'];
 			$taxonomy = [
-				'_colors'   => [ 'Kakapo' => '#5E2D79' ],
+				'_colors'   => [ 'Kakapo' => '#5E2D79' ] + $shipped,
 				'_patterns' => [ 'Kakapo' => [ '^kakapo_' ] ],
 			];
 			Hook_Categorizer::$read_file = static fn ( string $path ): string => (string) \wp_json_encode( $taxonomy );
@@ -185,8 +187,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 			Current_Request_Overlay::enqueue_inline_data();
 
 			$script = (string) ( $GLOBALS['_inline_scripts'][0][1] ?? '' );
-			$this->assertSame( 1, \preg_match( '/window\.eventLoggerHookCategories = (\{.*?\}\});/', $script, $m ), $script );
-			$this->assertSame( $taxonomy, \json_decode( $m[1], true ) );
+			$this->assertSame( 1, \preg_match( '/window\.eventLoggerHookCategories = (\{.*\});window\.eventLoggerCustomColors/s', $script, $m ), $script );
+			$this->assertEquals( $taxonomy, \json_decode( $m[1], true ), 'merged colours and base patterns, and nothing else' );
 		}
 
 		// ── init ────────────────────────────────────────────────────────────
