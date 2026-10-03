@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.120.0] - 2026-10-03
+
 ### Changed
 
+- **Rebuilt against newspack-nodes 2.87.0,** so the bundled debug overlay carries the Compose modal that mints its own messages and the lighter chart palette.
 - **Flame-tree platform spans take hook-category colours.** `Flame_Tree::PLATFORM` names each URL-read and builder span's hook category in place of a chart-palette hex, and five Event Logger categories (Event Logger, Event Logger Page Cache, Event Logger Cache, Event Logger Fold, Event Logger Shutdown) join `hook_categories.json`, so nested spans draw apart and every label holds 4.5:1. An operator's category recolour reaches the platform spans, and a custom span colour still wins. The flame tree no longer reads newspack-nodes' chart palette.
 - **The page publishes the merged category colours.** `window.eventLoggerHookCategories` carries the operator's recolours over the shipped colours and the shipped patterns alone, so hooks, the legend and platform spans read one colour source, and an operator pattern never reaches the browser unguarded.
 - **An operator category colour must be `#rgb` or `#rrggbb`.** Anything else is refused, with one rate-limited log line naming every refused key, and the shipped colour stays. A taxonomy file that fails to read is logged, naming its path and the decode error.
