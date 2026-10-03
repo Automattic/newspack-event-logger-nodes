@@ -6,10 +6,12 @@
 #                                            └→ Table (flame-stats:aggregate, SQLite, <eln:stats_ttl>)
 #                                            └→ Table (flame-stats:url, SQLite, <eln:stats_url_ttl>)
 #                                            └→ Table (flame-stats:url-fine, SQLite, <eln:stats_url_fine_ttl>)
+#   table-probe sweeps the three Tables into the station's Tables tab
 
 var on_demand_idle = 30
 
 include topic-probe
+include table-probe
 
 make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/<topology>.requests.p<partition> <config:deadletter_dir>/<topology>.requests.p<partition>
 make_node Flame_Builder flame-builder

@@ -6,6 +6,12 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.85.0.** The flame builder's topology
+  includes the substrate's `table-probe`, so `flame-stats:aggregate`,
+  `flame-stats:url` and `flame-stats:url-fine` report to the station's Tables
+  tab. Below the floor the plugin stays dormant behind its admin notice.
+  Update the substrate first, then this plugin, then restart the workers.
+
 - **Flush the stats Tables after deploying: a URL sort orders the whole
   URL.** A site `url` list (`urlrank_s`, `urlrank_sh`) stores each entry's
   whole URL where it stored the path, and a page reading a list written
