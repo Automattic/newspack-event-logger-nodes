@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A request's findings no longer call one slow span beside quick ones a repeat.** `Findings::alike()` compared the slowest call with the mean of all calls, which rejects nothing among five calls or fewer, so three `loop` spans of 0.8, 12.5 and 3,751.8 ms read as "ran 3 times at 1.3s each". It now compares the slowest with the mean of the others, so that request names the one slow call and claims no repetition.
+
 ## [0.119.2] - 2026-10-03
 
 ### Changed

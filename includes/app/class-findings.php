@@ -74,10 +74,10 @@ class Findings {
 	private const HOLDING_SHARE = 0.5;
 
 	/**
-	 * Times their mean a name's slowest call may take for its calls to be
-	 * alike, which is what "repeated per item" claims. A slowest call is at
-	 * most `count` times the mean, so this rejects nothing among five calls
-	 * or fewer, and one call holding 98% of eight still reads as unlike.
+	 * Times the mean of the other calls a name's slowest call may take for
+	 * its calls to be alike, which is what "repeated per item" claims. The
+	 * slowest is left out of the mean, so one call dwarfing the rest reads as
+	 * unlike however few calls there are.
 	 */
 	private const SIMILAR_CALL_FACTOR = 5.0;
 
@@ -643,10 +643,11 @@ class Findings {
 	 * the request, or when more than one call holds `HEAVY_REPEAT_SHARE` of
 	 * it, and the calls are `alike()` — "repeated per item" claims no less.
 	 * That reads the flame: the name's slowest frame against the mean of its
-	 * frames, by frame value, children included, so a hook's frame holds its
-	 * listeners and whatever else ran inside it. Calls unlike each other are
-	 * a slow call beside quick ones, for the dominant span to name, and no
-	 * repetition; a name the flame holds no frame of is judged by its count.
+	 * other frames, by frame value, children included, so a hook's frame
+	 * holds its listeners and whatever else ran inside it. Calls unlike each
+	 * other are a slow call beside quick ones, for the dominant span to
+	 * name, and no repetition; a name the flame holds no frame of is judged
+	 * by its count.
 	 * A name the dominant span already names, down its chain, is that
 	 * finding's to tell; one it explains, per `defers()`, repeats here too,
 	 * counted request-wide, and points at that finding in its detail with no
@@ -1417,9 +1418,9 @@ class Findings {
 	 * The outermost span on the way up from `$index` — itself included — that
 	 * dominates the request and ran more than once, or null when every
 	 * dominating span ran once. Its calls must be `alike()`, so one slow call
-	 * beside quick ones is not a repeat. `own` says whether that span IS the
-	 * dominant one, decided by index: a span nested in a same-name ancestor
-	 * is not it.
+	 * beside quick ones, however few, is not a repeat. `own` says whether
+	 * that span IS the dominant one, decided by index: a span nested in a
+	 * same-name ancestor is not it.
 	 *
 	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
 	 * @param int               $index    The dominant node's index.
@@ -1445,7 +1446,8 @@ class Findings {
 
 	/**
 	 * Whether calls are alike: the slowest takes no more than
-	 * `SIMILAR_CALL_FACTOR` times their mean.
+	 * `SIMILAR_CALL_FACTOR` times the mean of the others. A lone call has no
+	 * others and is alike; whether one call repeats is the caller's to ask.
 	 *
 	 * @param float $slowest The slowest call.
 	 * @param float $total   What they hold between them.
@@ -1453,7 +1455,7 @@ class Findings {
 	 * @return bool
 	 */
 	private static function alike( float $slowest, float $total, int $count ): bool {
-		return $slowest <= self::SIMILAR_CALL_FACTOR * $total / \max( 1, $count );
+		return $count < 2 || $slowest <= self::SIMILAR_CALL_FACTOR * ( $total - $slowest ) / ( $count - 1 );
 	}
 
 	/**

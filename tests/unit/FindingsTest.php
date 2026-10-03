@@ -2537,6 +2537,99 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
+	 * Three loop siblings of 0.8, 12.5 and 3751.8ms: the slowest holds 99.6%
+	 * of the request beside two quick calls, so nothing repeated.
+	 */
+	public function test_one_slow_call_beside_two_quick_ones_is_no_repeat(): void {
+		$loops = [];
+		foreach ( [ 0.8, 12.5, 3751.8 ] as $ms ) {
+			$loops[] = [ 'name' => 'loop', 'value' => $ms, 'children' => [] ];
+		}
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = 4180.0;
+		$record['flame_data']  = [
+			'name'     => 'request',
+			'value'    => 4180.0,
+			'children' => [ [ 'name' => 'process', 'value' => 4180.0, 'children' => $loops ] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'loop', $found['metric']['name'] );
+		$this->assertArrayNotHasKey( 'repeat', $found['metric'] );
+		$this->assertStringNotContainsString( 'ran 3 times', $found['detail'] );
+		$this->assertStringNotContainsString( 'across 3 calls', $found['title'] );
+	}
+
+	/** Two uploads of 1015.3 and 1017.5ms are alike, so they are one repeat. */
+	public function test_two_alike_calls_are_a_repeat(): void {
+		$uploads = [];
+		foreach ( [ 1015.3, 1017.5 ] as $ms ) {
+			$uploads[] = [ 'name' => 'fileupload', 'value' => $ms, 'children' => [] ];
+		}
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = 2500.0;
+		$record['flame_data']  = [
+			'name'     => 'request',
+			'value'    => 2500.0,
+			'children' => [ [ 'name' => 'process', 'value' => 2500.0, 'children' => $uploads ] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'fileupload', $found['metric']['name'] );
+		$this->assertSame( 2, $found['metric']['repeat']['count'] ?? null );
+		$this->assertStringContainsString( 'ran 2 times', $found['detail'] );
+	}
+
+	/**
+	 * Two calls are alike up to a 5x ratio: most of the time in one call is a
+	 * slow call, not per-item work. 60 and 11ms (5.45x) are no repeat.
+	 */
+	public function test_two_calls_past_the_similar_ratio_are_no_repetition(): void {
+		$this->assertNull( $this->of_kind( Findings::for_request( $this->two_call_record( 60.0, 11.0 ), $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/** 54 and 11ms (4.9x) are still alike, so the pair repeats. */
+	public function test_two_calls_within_the_similar_ratio_repeat(): void {
+		$found = $this->of_kind( Findings::for_request( $this->two_call_record( 54.0, 11.0 ), $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertSame( 'sql: Pair_Report->rows', $found['metric']['name'] ?? null );
+		$this->assertSame( 2, $found['metric']['count'] ?? null );
+	}
+
+	/** A profile counting calls beside one flame frame has no pair to compare, so it repeats. */
+	public function test_a_profile_counting_calls_beside_one_frame_repeats(): void {
+		$record                = $this->repeat_record( $this->frames( 'sql: Lone_Report->rows', [ 90.0 ] ) );
+		$record['duration_ms'] = 250.0;
+		$record['flame_data']['value']                = 250.0;
+		$record['flame_data']['children'][0]['value'] = 250.0;
+		$record['flame_data']['children'][0]['children'][0]['value'] = 90.0;
+		$record['profiles']    = [ 'sql' => [ 'count' => 7, 'time' => 90.0, 'entries' => [ 'Lone_Report->rows' => [ 90.0, 7 ] ] ] ];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertSame( 7, $found['metric']['count'] ?? null );
+	}
+
+	/**
+	 * A request holding two same-name calls of the given durations.
+	 *
+	 * @param float $first  One call's milliseconds.
+	 * @param float $second The other's.
+	 * @return array<string,mixed>
+	 */
+	private function two_call_record( float $first, float $second ): array {
+		$record                = $this->repeat_record( $this->frames( 'sql: Pair_Report->rows', [ $first, $second ] ) );
+		$record['duration_ms'] = 250.0;
+		$record['flame_data']['value']                = 250.0;
+		$record['flame_data']['children'][0]['value'] = 250.0;
+		$record['flame_data']['children'][0]['children'][0]['value'] = $first + $second;
+		$record['profiles']    = [ 'sql' => [ 'count' => 2, 'time' => $first + $second, 'entries' => [ 'Pair_Report->rows' => [ $first + $second, 2 ] ] ] ];
+		return $record;
+	}
+
+	/**
 	 * The same load UNFOLDED, which is how nearly every record arrives: a
 	 * stored tree keeps each render as its own sibling, so no single one holds
 	 * 60% and the detector fell back to the whole request. Siblings sharing a
