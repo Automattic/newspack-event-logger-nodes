@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.119.1] - 2026-10-02
+
 ### Added
 
 - **Clicking a chart's plot toggles it to double height and back, keyboard too.** The aggregate and category time charts take it from the substrate's shared `AreaTimeChart`; the request scatter and the flame graph keep their own click behaviour.
