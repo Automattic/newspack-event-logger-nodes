@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.119.2] - 2026-10-03
+
+### Changed
+
+- **Rebuilt against newspack-nodes 2.86.0,** so the bundled substrate runtime carries its probe record layout, `END_DISK_BYTES` included.
+
 ## [0.119.1] - 2026-10-02
 
 ### Added
