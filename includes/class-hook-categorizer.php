@@ -7,11 +7,16 @@
  * list. The categories, their colors, their one-line descriptions and the
  * regular expressions that assign hooks to them ship in `hook_categories.json`
  * at the plugin root; a site adds to or overrides any of it through the
- * `newspack_event_logger_nodes_hook_customizations` option. The file also
- * ships whole, through `get_base_config()`, as
- * `window.eventLoggerHookCategories` (`Config::span_palette_js()`), where the
- * Gyroscope legend and every span take their colors, so a change to its shape
- * has to answer for both.
+ * `newspack_event_logger_nodes_hook_customizations` option. Three consumers
+ * read it. The settings page's hook picker takes the categories, colors and
+ * descriptions through the `performance` CI's `list_hooks` verb.
+ * `Config::span_palette_js()` publishes the merged colors beside the BASE
+ * patterns as `window.eventLoggerHookCategories`, where the shared browser
+ * `formatUtils` and the Gyroscope legend take their colors (an operator's own
+ * patterns stay server-side, behind `categorize()`'s guards). And
+ * `Flame_Tree::platform_colors()` reads the same merged colors through
+ * `get_categories()`, so one recolor reaches hooks, the legend and the platform
+ * spans alike. A change to the file's shape has to answer for all three.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -229,6 +234,9 @@ class Hook_Categorizer {
 	 * the grouping in `get_registered_hooks_by_category()` and order the
 	 * picker's sections. The colors ride the `list_hooks` reply.
 	 *
+	 * `Flame_Tree::platform_colors()` takes every platform span's color from
+	 * here, so the operator's recolor of a category recolors its spans.
+	 *
 	 * @return array<string,mixed> Base colors with the user's merged over them.
 	 */
 	public static function get_categories(): array {
@@ -335,7 +343,7 @@ class Hook_Categorizer {
 
 		// Merge colors (user overrides base).
 		/** @var array<string,mixed> $colors config dynamic output. */
-		$colors = \array_merge( Core::arr( $base_colors ), Core::arr( $user_colors ) );
+		$colors = \array_merge( Core::arr( $base_colors ), self::valid_user_colors( Core::arr( $user_colors ) ) );
 
 		// Same precedence as colors: a user description wins.
 		/** @var array<string,mixed> $descriptions config dynamic output. */
@@ -364,6 +372,34 @@ class Hook_Categorizer {
 		];
 
 		return self::$merged_config;
+	}
+
+	/**
+	 * The operator's colors that are hex, `#rgb` or `#rrggbb` and nothing else —
+	 * the browser's `parseHex` reads only hex, and `D` keeps a trailing newline
+	 * out. Anything else (a non-string, a name, `rgb()`, an array) is refused and
+	 * the base color stays, so one bad option value cannot fatal the pages that
+	 * print the palette. The refused keys are collected into ONE rate-limited
+	 * log line naming the option key and every category, since the throttle keys
+	 * on the line's first argument alone.
+	 *
+	 * @param array<array-key,mixed> $colors Category to the operator's color.
+	 * @return array<string,string> The valid ones.
+	 */
+	private static function valid_user_colors( array $colors ): array {
+		$valid   = [];
+		$refused = [];
+		foreach ( $colors as $category => $color ) {
+			if ( \is_string( $color ) && 1 === \preg_match( '/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/Di', $color ) ) {
+				$valid[ (string) $category ] = $color;
+				continue;
+			}
+			$refused[] = (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', (string) $category );
+		}
+		if ( [] !== $refused ) {
+			Core::print_less_often( '[EventLoggerNodes] Hook category colors refused, base kept: ', self::OPTION_NAME . '[colors][' . \implode( '], [', $refused ) . ']' );
+		}
+		return $valid;
 	}
 
 	/**
@@ -398,7 +434,10 @@ class Hook_Categorizer {
 	 * The file sits at the plugin root, beside `includes/`. A missing file, an
 	 * unreadable one, and JSON decoding to anything but an array all yield the
 	 * empty `_colors` / `_patterns` shape: categorization degrades to `Other`
-	 * instead of failing the request.
+	 * instead of failing the request. The failure is never silent: it is logged,
+	 * rate-limited, naming the path and the reason (`json_last_error_msg()` for
+	 * a decode failure), and the platform spans then draw the default grey, which
+	 * is the visible sign of that logged failure.
 	 *
 	 * @return array<string,mixed> Base configuration.
 	 */
@@ -409,6 +448,7 @@ class Hook_Categorizer {
 
 		$json_path = \dirname( __DIR__ ) . '/hook_categories.json';
 		if ( ! \file_exists( $json_path ) ) {
+			Core::print_less_often( '[EventLoggerNodes] Hook category file missing: ', $json_path );
 			self::$base_config = [ '_colors' => [], '_patterns' => [] ];
 			return self::$base_config;
 		}
@@ -416,10 +456,14 @@ class Hook_Categorizer {
 		$read = self::$read_file ?? static fn( string $path ) => \file_get_contents( $path ); // phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsUnknown -- Local file.
 		$json = $read( $json_path );
 		if ( false === $json ) {
+			Core::print_less_often( '[EventLoggerNodes] Hook category file unreadable: ', $json_path );
 			self::$base_config = [ '_colors' => [], '_patterns' => [] ];
 			return self::$base_config;
 		}
 		$decoded = \json_decode( $json, true, 64 );
+		if ( ! \is_array( $decoded ) ) {
+			Core::print_less_often( '[EventLoggerNodes] Hook category file is not a JSON object: ', $json_path . ' (' . \json_last_error_msg() . ')' );
+		}
 		/** @var array<string,mixed> $config json_decode dynamic output. */
 		$config            = Core::arr( $decoded, [ '_colors' => [], '_patterns' => [] ] );
 		self::$base_config = $config;

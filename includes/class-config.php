@@ -124,15 +124,19 @@ class Config {
 
 	/**
 	 * The two globals a span takes its colour from, as one inline script:
-	 * `window.eventLoggerHookCategories`, `hook_categories.json` whole through
-	 * `Hook_Categorizer::get_base_config()`, and `window.eventLoggerCustomColors`,
+	 * `window.eventLoggerHookCategories`, the merged category colors beside the BASE patterns — what the browser
+	 * reads, never an operator's own patterns, which it would compile without
+	 * `Hook_Categorizer::categorize()`'s guards — and `window.eventLoggerCustomColors`,
 	 * {@see span_colors()}. The dashboards print it on their own bundle, and
 	 * the Request tab on every page where no dashboard bundle does.
 	 *
 	 * @return string Inline JS.
 	 */
 	public static function span_palette_js(): string {
-		return 'window.eventLoggerHookCategories = ' . \wp_json_encode( Hook_Categorizer::get_base_config() ) . ';'
+		return 'window.eventLoggerHookCategories = ' . \wp_json_encode( [
+			'_colors'   => Hook_Categorizer::get_categories(),
+			'_patterns' => Hook_Categorizer::get_base_config()['_patterns'] ?? [],
+		] ) . ';'
 			. 'window.eventLoggerCustomColors = ' . \wp_json_encode( self::span_colors() ) . ';';
 	}
 

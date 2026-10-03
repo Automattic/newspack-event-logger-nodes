@@ -209,8 +209,9 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
 			$colors = $this->window_json( 'newspack-nodes-overview', 'eventLoggerCustomColors' );
 			$this->assertSame( '#7A1F3D', $colors['url fold'] ?? null, 'a configured colour wins' );
+			$categories = \Newspack_Event_Logger_Nodes\Hook_Categorizer::get_base_config()['_colors'];
 			$this->assertSame(
-				[ '#003DA5', '#BD8600', '#B32D2E', '#2055B0' ],
+				[ $categories['Event Logger Page Cache'], $categories['Event Logger Cache'], $categories['Event Logger'], $categories['Event Logger'] ],
 				[ $colors['url page cache'] ?? null, $colors['url header cache'] ?? null, $colors['url rank lists'] ?? null, $colors['stats probe'] ?? null ]
 			);
 			$picker = $this->window_json( 'newspack-nodes-overview', 'newspackNodesCustomColors' );

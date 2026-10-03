@@ -3,7 +3,10 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
+use Newspack_Event_Logger_Nodes\Hook_Categorizer;
+use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 /**
@@ -489,46 +492,216 @@ class FlameTreeTest extends TestCase {
 		$this->assertFalse( Flame_Tree::is_command_span( 'wp_loaded hook' ) );
 	}
 
-	/**
-	 * The platform's five names take the product chart palette, each its own
-	 * hue, and none the command span's Morganite: `url fold` nests in either
-	 * cache and the header cache in the page cache, so a shared or near
-	 * colour would draw two frames as one.
-	 */
-	public function test_platform_colours_are_distinct_steps_of_the_chart_palette(): void {
-		$theme = (string) \file_get_contents( \dirname( __DIR__, 3 ) . '/newspack-nodes/src/theme/newspack-theme.scss' );
-		\preg_match_all( '/--np-chart-(\d): (#[0-9a-f]{6});/', $theme, $m );
-		$palette = \array_combine( $m[1], \array_map( 'strtoupper', $m[2] ) );
-		$this->assertCount( 6, $palette, 'the six-step palette DESIGN.product.md names' );
+	/** Every platform span, spelled out, so a dropped or added row fails here. */
+	private const PLATFORM_SPANS = [
+		'url page cache', 'url header cache', 'url fold', 'url rank lists',
+		'stats writes', 'stats rank close', 'stats probe', 'stats fold', 'stats re-rank', 'stats sweep',
+		'requests writes', 'requests checkpoint', 'requests restore', 'requests expire',
+	];
 
-		$colours = \array_map( 'strtoupper', Flame_Tree::platform_colors() );
-		$this->assertSame( [], \array_diff( $colours, $palette ), 'every colour is a chart step' );
-		$named = [
-			Flame_Tree::URL_PAGE_CACHE,
-			Flame_Tree::URL_HEADER_CACHE,
-			Flame_Tree::URL_FOLD,
-			Flame_Tree::URL_RANK_LISTS,
-			Flame_Tree::STATS_WRITES,
-			Flame_Tree::STATS_RANK_CLOSE,
-			Flame_Tree::STATS_PROBE,
-			Flame_Tree::STATS_SWEEP,
-			Flame_Tree::STATS_FOLD,
-			Flame_Tree::STATS_RE_RANK,
-			Flame_Tree::REQUESTS_WRITES,
-			Flame_Tree::REQUESTS_CHECKPOINT,
-			Flame_Tree::REQUESTS_RESTORE,
-			Flame_Tree::REQUESTS_EXPIRE,
-		];
-		$keys = \array_keys( Flame_Tree::platform_colors() );
-		\sort( $named );
-		\sort( $keys );
-		$this->assertSame( $named, $keys, 'every platform name has a step' );
-		$spans = \array_intersect_key( $colours, \array_flip( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD ] ) );
-		$this->assertCount( 3, \array_unique( $spans ), 'the three spans nest, so no two share a step' );
-		$this->assertNotContains( $palette['6'], $colours, 'Morganite is the command span\'s' );
-		// A stop's sweep runs a flush, so every flush span nests in it.
-		foreach ( [ Flame_Tree::STATS_FOLD, Flame_Tree::STATS_RE_RANK, Flame_Tree::STATS_RANK_CLOSE ] as $inner ) {
-			$this->assertNotSame( $colours[ Flame_Tree::STATS_SWEEP ], $colours[ $inner ], $inner );
+	/**
+	 * Nested pairs, derived from the code: `Performance_CI_Node` builds the URL
+	 * page inside `read_through_page( URL_PAGE_CACHE )`, whose build folds
+	 * (`URL_FOLD`) and reads the header through `URL_HEADER_CACHE`, which folds
+	 * too; `Flame_Builder_Node::shutdown_sweep()` spans `STATS_SWEEP` around a
+	 * flush, which spans a rank close, folds and re-ranks and tells the writes.
+	 */
+	private const NESTED_PAIRS = [
+		[ 'url page cache', 'url header cache' ],
+		[ 'url page cache', 'url fold' ],
+		[ 'url header cache', 'url fold' ],
+		[ 'stats sweep', 'stats rank close' ],
+		[ 'stats sweep', 'stats fold' ],
+		[ 'stats sweep', 'stats re-rank' ],
+		[ 'stats sweep', 'stats writes' ],
+	];
+
+	/** The base `hook_categories.json` colours, keyed by category. */
+	private function base_colors(): array {
+		return Hook_Categorizer::get_base_config()['_colors'];
+	}
+
+	private function channel( int $value ): float {
+		$c = $value / 255;
+		return 0.04045 >= $c ? $c / 12.92 : \pow( ( $c + 0.055 ) / 1.055, 2.4 );
+	}
+
+	/** @return array{0: int, 1: int, 2: int} */
+	private function rgb( string $hex ): array {
+		$hex = \ltrim( $hex, '#' );
+		if ( 3 === \strlen( $hex ) ) {
+			$hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+		}
+		return [ \hexdec( \substr( $hex, 0, 2 ) ), \hexdec( \substr( $hex, 2, 2 ) ), \hexdec( \substr( $hex, 4, 2 ) ) ];
+	}
+
+	private function wcag_luminance( string $hex ): float {
+		[ $r, $g, $b ] = $this->rgb( $hex );
+		return 0.2126 * $this->channel( $r ) + 0.7152 * $this->channel( $g ) + 0.0722 * $this->channel( $b );
+	}
+
+	private function contrast( string $one, string $two ): float {
+		$a = $this->wcag_luminance( $one );
+		$b = $this->wcag_luminance( $two );
+		return ( \max( $a, $b ) + 0.05 ) / ( \min( $a, $b ) + 0.05 );
+	}
+
+	/** @return array{0: float, 1: float, 2: float} CIE L*a*b* (D65). */
+	private function lab( string $hex ): array {
+		[ $r, $g, $b ] = \array_map( fn ( int $v ): float => $this->channel( $v ), $this->rgb( $hex ) );
+		$x = ( 0.4124 * $r + 0.3576 * $g + 0.1805 * $b ) / 0.95047;
+		$y = 0.2126 * $r + 0.7152 * $g + 0.0722 * $b;
+		$z = ( 0.0193 * $r + 0.1192 * $g + 0.9505 * $b ) / 1.08883;
+		$f = static fn ( float $t ): float => 0.008856 < $t ? $t ** ( 1 / 3 ) : 7.787 * $t + 16 / 116;
+		return [ 116 * $f( $y ) - 16, 500 * ( $f( $x ) - $f( $y ) ), 200 * ( $f( $y ) - $f( $z ) ) ];
+	}
+
+	private function delta_e( string $one, string $two ): float {
+		$a = $this->lab( $one );
+		$b = $this->lab( $two );
+		return \sqrt( ( $a[0] - $b[0] ) ** 2 + ( $a[1] - $b[1] ) ** 2 + ( $a[2] - $b[2] ) ** 2 );
+	}
+
+	/** The ink `flameColors.js` `pickLabelColor()` puts on a fill, read from its source. */
+	private function label_ink( string $fill ): string {
+		$source = (string) \file_get_contents( \dirname( __DIR__, 2 ) . '/src/overview/flameColors.js' );
+		$this->assertSame( 1, \preg_match( "/DARK_TEXT = '(#[0-9a-f]{6})'/i", $source, $dark ), 'flameColors.js DARK_TEXT' );
+		$this->assertSame( 1, \preg_match( "/LIGHT_TEXT = '(#[0-9a-f]{6})'/i", $source, $light ), 'flameColors.js LIGHT_TEXT' );
+		$this->assertSame( 1, \preg_match( '/LUMINANCE_THRESHOLD = ([0-9.]+);/', $source, $threshold ), 'flameColors.js LUMINANCE_THRESHOLD' );
+		// The PHP replica below must track the JS brightness formula.
+		$this->assertSame(
+			1,
+			\preg_match( '/\( ([0-9.]+) \* r \+ ([0-9.]+) \* g \+ ([0-9.]+) \* b \) \/ 255/', $source, $coefficients ),
+			'flameColors.js relativeLuminance'
+		);
+		$this->assertSame( [ '0.2126', '0.7152', '0.0722' ], \array_slice( $coefficients, 1 ), 'the replica below uses these coefficients' );
+		[ $r, $g, $b ] = $this->rgb( $fill );
+		$brightness    = ( 0.2126 * $r + 0.7152 * $g + 0.0722 * $b ) / 255;
+		return $brightness > (float) $threshold[1] ? $dark[1] : $light[1];
+	}
+
+	public function test_the_platform_names_are_exactly_these_fourteen(): void {
+		$names = \array_keys( Flame_Tree::platform_colors() );
+		$spans = self::PLATFORM_SPANS;
+		\sort( $names );
+		\sort( $spans );
+		$this->assertSame( $spans, $names );
+	}
+
+	/** Every platform category ships in the JSON, and the builders' own carry a description and no pattern. */
+	public function test_every_platform_category_ships_in_hook_categories_json(): void {
+		$base = Hook_Categorizer::get_base_config();
+		foreach ( [ 'Event Logger', 'Event Logger Page Cache', 'Event Logger Cache', 'Event Logger Fold', 'Event Logger Shutdown' ] as $category ) {
+			$this->assertArrayHasKey( $category, $base['_colors'] );
+			$this->assertNotEmpty( $base['_descriptions'][ $category ] ?? '', "{$category} is described" );
+			$this->assertArrayNotHasKey( $category, $base['_patterns'], "{$category} claims no hook" );
+			$this->assertCount( 1, \array_keys( $base['_colors'], $base['_colors'][ $category ], true ), "{$category}'s colour is no other category's" );
+		}
+		$colors = Flame_Tree::platform_colors();
+		$this->assertSame( $base['_colors']['Event Logger Page Cache'], $colors['url page cache'] );
+		$this->assertSame( $base['_colors']['Event Logger Fold'], $colors['url fold'] );
+		$this->assertSame( $base['_colors']['Event Logger'], $colors['url rank lists'] );
+		$this->assertSame( $base['_colors']['Event Logger Cache'], $colors['url header cache'] );
+		$this->assertSame( $base['_colors']['Event Logger Shutdown'], $colors['stats sweep'] );
+		$this->assertSame( $base['_colors']['Event Logger'], $colors['stats writes'] );
+	}
+
+	public function test_every_platform_fill_holds_four_and_a_half_to_one_under_its_flame_label(): void {
+		foreach ( Flame_Tree::platform_colors() as $span => $fill ) {
+			$this->assertGreaterThanOrEqual( 4.5, $this->contrast( $fill, $this->label_ink( $fill ) ), "{$span} {$fill}" );
+		}
+	}
+
+	public function test_nested_platform_spans_differ_by_twenty_delta_e_or_more(): void {
+		$colors = Flame_Tree::platform_colors();
+		foreach ( self::NESTED_PAIRS as [ $outer, $inner ] ) {
+			$this->assertGreaterThanOrEqual( 20.0, $this->delta_e( $colors[ $outer ], $colors[ $inner ] ), "{$outer} / {$inner}" );
+		}
+	}
+
+	public function test_no_platform_colour_is_the_command_spans(): void {
+		$this->assertNotContains( '#905665', \array_map( 'strtolower', Flame_Tree::platform_colors() ) );
+	}
+
+	/** An operator recolouring a category recolours its spans; a custom colour of the span's own name still wins. */
+	public function test_a_user_recolour_reaches_the_span_and_a_custom_colour_overrides_it(): void {
+		\update_option( Hook_Categorizer::OPTION_NAME, [ 'colors' => [ 'Event Logger Page Cache' => '#123ABC' ] ] );
+		Hook_Categorizer::clear_cache();
+		$custom = static fn ( array $colors ): array => [ Flame_Tree::URL_HEADER_CACHE => '#ABC123' ] + $colors;
+		\add_filter( 'newspack_event_logger_nodes_custom_colors', $custom );
+		try {
+			$this->assertSame( '#123ABC', Flame_Tree::platform_colors()[ Flame_Tree::URL_PAGE_CACHE ] );
+			$this->assertSame( '#123ABC', Config::span_colors()[ Flame_Tree::URL_PAGE_CACHE ] );
+			$this->assertSame( '#ABC123', Config::span_colors()[ Flame_Tree::URL_HEADER_CACHE ], 'the custom colour wins' );
+		} finally {
+			\delete_option( Hook_Categorizer::OPTION_NAME );
+			Hook_Categorizer::clear_cache();
+			\remove_filter( 'newspack_event_logger_nodes_custom_colors', $custom );
+		}
+	}
+
+	/**
+	 * One source for colours: a recolour reaches the published hook categories
+	 * and a platform span alike. Only what the browser reads ships: merged
+	 * colours and the BASE patterns, never an operator's own patterns, which the
+	 * browser would compile without `categorize()`'s guards.
+	 */
+	public function test_a_user_recolour_reaches_the_published_global_and_the_platform_spans(): void {
+		\update_option(
+			Hook_Categorizer::OPTION_NAME,
+			[
+				'colors'    => [ 'Lifecycle' => '#0A1B2C', 'Event Logger Page Cache' => '#2C1B0A' ],
+				'patterns'  => [ 'Lifecycle' => [ '^operator_only_' ] ],
+				'overrides' => [ 'some_hook' => 'Lifecycle' ],
+			]
+		);
+		Hook_Categorizer::clear_cache();
+		try {
+			$this->assertSame( 1, \preg_match( '/window\.eventLoggerHookCategories = (\{.*\});window\.eventLoggerCustomColors/s', Config::span_palette_js(), $m ) );
+			$published = \json_decode( $m[1], true );
+			$this->assertSame( [ '_colors', '_patterns' ], \array_keys( $published ), 'only what the browser reads' );
+			$this->assertSame( '#0A1B2C', $published['_colors']['Lifecycle'], 'the hook colour source' );
+			$this->assertSame( '#2C1B0A', $published['_colors']['Event Logger Page Cache'] );
+			$this->assertSame( $published['_colors']['Event Logger Page Cache'], Flame_Tree::platform_colors()[ Flame_Tree::URL_PAGE_CACHE ] );
+			$this->assertSame( Hook_Categorizer::get_base_config()['_patterns'], $published['_patterns'], 'base patterns only' );
+			$this->assertStringNotContainsString( 'operator_only_', $m[1] );
+		} finally {
+			\delete_option( Hook_Categorizer::OPTION_NAME );
+			Hook_Categorizer::clear_cache();
+		}
+	}
+
+	/**
+	 * `platform_colors()` runs during page build, so it never throws: a span
+	 * whose category has no string colour is skipped and draws the default
+	 * grey. A failed taxonomy read is logged by `Hook_Categorizer`, which is the
+	 * signal; a shipped-taxonomy gap is caught by the JSON tests above.
+	 */
+	public function test_a_platform_span_without_a_category_colour_is_skipped_not_thrown(): void {
+		$without = $this->base_colors();
+		unset( $without['Event Logger Cache'] );
+		Hook_Categorizer::$read_file = static fn ( string $path ): string => (string) \wp_json_encode( [ '_colors' => $without, '_patterns' => [] ] );
+		Hook_Categorizer::clear_cache();
+		try {
+			$colors = Flame_Tree::platform_colors();
+			$this->assertArrayNotHasKey( Flame_Tree::URL_HEADER_CACHE, $colors );
+			$this->assertSame( $without['Event Logger'], $colors[ Flame_Tree::STATS_WRITES ] );
+			$this->assertArrayNotHasKey( Flame_Tree::URL_HEADER_CACHE, Config::span_colors() );
+		} finally {
+			Hook_Categorizer::$read_file = null;
+			Hook_Categorizer::clear_cache();
+		}
+
+		// A taxonomy that failed to read leaves every platform span grey, without a throw.
+		Core::set_stderr_handler( static function (): void {} );
+		Core::$recent_log_timers = [];
+		Hook_Categorizer::$read_file = static fn ( string $path ): string => '{ not json';
+		Hook_Categorizer::clear_cache();
+		try {
+			$this->assertSame( [], Flame_Tree::platform_colors() );
+		} finally {
+			Hook_Categorizer::$read_file = null;
+			Hook_Categorizer::clear_cache();
 		}
 	}
 

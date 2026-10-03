@@ -357,4 +357,55 @@ class HookCategorizerTest extends TestCase {
 	public function test_max_pattern_length_constant(): void {
 		$this->assertSame( 100, Hook_Categorizer::MAX_PATTERN_LENGTH );
 	}
+
+	// ── operator colours and a failed read ──────────────────────────────────
+
+	public function test_invalid_operator_colours_are_refused_in_one_log_line_and_the_base_colour_kept(): void {
+		$lines = [];
+		\Newspack_Nodes\Core::$recent_log_timers = [];
+		\Newspack_Nodes\Core::set_stderr_handler( static function ( string $text ) use ( &$lines ): void {
+			$lines[] = $text;
+		} );
+		$base = Hook_Categorizer::get_base_config()['_colors']['Edge Cache'];
+		\update_option( Hook_Categorizer::OPTION_NAME, [
+			'colors' => [
+				'Edge Cache' => 'not-a-colour',
+				'Kakapo'     => [ 'array' ],
+				'Kea'        => '#a1b',
+				'Kaka'       => 'rgb(250, 250, 210)',
+				'Weka'       => "#abc\n",
+				'Takahe'     => '#A1B2C3',
+			],
+		] );
+		Hook_Categorizer::clear_cache();
+
+		$colors = Hook_Categorizer::get_categories();
+		$this->assertSame( $base, $colors['Edge Cache'], 'the base colour stays' );
+		$this->assertSame( '#a1b', $colors['Kea'] );
+		$this->assertSame( '#A1B2C3', $colors['Takahe'] );
+		foreach ( [ 'Kakapo', 'Kaka', 'Weka' ] as $refused ) {
+			$this->assertArrayNotHasKey( $refused, $colors, "{$refused} is refused" );
+		}
+		$this->assertCount( 1, $lines, 'one line names every refused colour' );
+		foreach ( [ Hook_Categorizer::OPTION_NAME, 'Edge Cache', 'Kakapo', 'Kaka', 'Weka' ] as $named ) {
+			$this->assertStringContainsString( $named, $lines[0] );
+		}
+		$this->assertStringNotContainsString( 'Kea', $lines[0] );
+	}
+
+	public function test_a_failed_taxonomy_read_is_logged_with_its_path_and_reason(): void {
+		$logged = '';
+		\Newspack_Nodes\Core::$recent_log_timers = [];
+		\Newspack_Nodes\Core::set_stderr_handler( static function ( string $text ) use ( &$logged ): void {
+			$logged .= $text;
+		} );
+		Hook_Categorizer::$read_file = static fn ( string $path ): string => '{ not json';
+		try {
+			$this->assertSame( [], Hook_Categorizer::get_base_config()['_colors'], 'the request path still degrades' );
+		} finally {
+			Hook_Categorizer::$read_file = null;
+		}
+		$this->assertStringContainsString( 'hook_categories.json', $logged );
+		$this->assertStringContainsString( \json_last_error_msg(), $logged );
+	}
 }
