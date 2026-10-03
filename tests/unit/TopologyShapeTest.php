@@ -89,6 +89,23 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
+	/** The flame builder's topology includes table-probe, so its Tables report. */
+	public function test_the_flame_builder_probes_its_tables(): void {
+		\Newspack_Nodes\Topology_Registry::reset();
+		\Newspack_Nodes\Topology_Registry::register_plugin(
+			'Newspack_Event_Logger_Nodes\\',
+			NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
+		);
+		\Newspack_Nodes\Topology_Registry::register_builtin_dir(
+			\dirname( __DIR__, 3 ) . '/newspack-nodes/topologies'
+		);
+
+		foreach ( [ 'complete', 'performance', 'flame-builder' ] as $topology ) {
+			$types = \array_column( \Newspack_Nodes\Topology_Analyzer::graph_for( $topology )['nodes'], 'type' );
+			$this->assertContains( 'Table_Probe', $types, "$topology: no Table_Probe sweeps its Tables" );
+		}
+	}
+
 	/** Staleness lives in the Age_Sieve between job-router and disk, not in Job_Router. */
 	public function test_job_router_topologies_sieve_by_age_before_disk(): void {
 		foreach ( [ 'job-router', 'complete' ] as $topology ) {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The flame builder includes `table-probe`, so its three SQLite Tables report
+  each operation's window to the station's Tables tab. The substrate floor is
+  newspack-nodes 2.85.0.
+
 ## [0.118.2] - 2026-10-02
 
 ### Added
