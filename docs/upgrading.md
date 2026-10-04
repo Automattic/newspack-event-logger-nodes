@@ -6,6 +6,18 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.90.0.** Hub mode reads the
+  substrate's `Topology_Analyzer::nodes_of_type()` and the `remote_partition`
+  its graph names on each `Remote_Source`. Below the floor the
+  plugin stays dormant behind its admin notice. Update the substrate first,
+  then this plugin, then restart the workers.
+
+- **A `Remote_Source` reading anything but the firehose no longer makes a
+  site a hub.** A topology that wired one to pull another log from a peer
+  was read as a hub and ran per-server stats; it now reads as a spoke. A
+  hub forked from `aggregator` keeps its `firehose.p<partition>` readers
+  and needs nothing.
+
 - **This release needs newspack-nodes 2.85.0.** The flame builder's topology
   includes the substrate's `table-probe`, so `flame-stats:aggregate`,
   `flame-stats:url` and `flame-stats:url-fine` report to the station's Tables

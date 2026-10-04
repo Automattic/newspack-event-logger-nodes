@@ -148,6 +148,9 @@ class Log_Manager {
 
 	private const MAX_DATA_SIZE = 3840;
 
+	/** The firehose's name; each partition is the directory `<name>.p<N>`. */
+	private const FIREHOSE = 'firehose';
+
 	/** @var int Maximum timer stack depth to prevent unbounded growth. */
 	private const MAX_TIMER_DEPTH = 100;
 
@@ -1163,6 +1166,20 @@ class Log_Manager {
 	}
 
 	/**
+	 * Whether a partition name, or a template of one, is a firehose partition:
+	 * what a hub's `Remote_Source` pulls when it aggregates requests. Its
+	 * config tokens resolve strictly, since one left unresolved may hide it.
+	 *
+	 * @param string $partition E.g. `firehose.p<partition>` or `firehose.p3`.
+	 * @return bool
+	 * @throws \RuntimeException On an unresolvable `<ns:key>` token.
+	 */
+	public static function names_firehose( string $partition ): bool {
+		$name = Core::resolve_config_tokens( $partition, true );
+		return 1 === \preg_match( '/^' . self::FIREHOSE . '\.p(?:\d+|<partition>|\{partition\})$/D', $name );
+	}
+
+	/**
 	 * Mint the request id, pick its partition, and attach the firehose Topic.
 	 *
 	 * The id comes from `UNIQUE_ID`, which Apache's mod_unique_id sets and a
@@ -1229,7 +1246,7 @@ class Log_Manager {
 	 * @param string $logs_dir Root the partition dirs hang from.
 	 */
 	public static function firehose_dir_template( string $logs_dir = '<config:logs_dir>' ): string {
-		return \rtrim( $logs_dir, '/' ) . '/firehose.p{partition}';
+		return \rtrim( $logs_dir, '/' ) . '/' . self::FIREHOSE . '.p{partition}';
 	}
 
 	/**

@@ -25,8 +25,10 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Remote_Source_Node;
 use Newspack_Nodes\Config_Utils;
 use Newspack_Nodes\Topology_Analyzer;
 use Newspack_Nodes\Topology_Registry;
@@ -351,7 +353,8 @@ class Config {
 
 	/**
 	 * Derive hub-ness from the active topologies: an `aggregator` topology by
-	 * name or include, or any graph carrying a `Remote_Source` node.
+	 * name or include, or any graph carrying a `Remote_Source` that pulls the
+	 * firehose. A reader pulling any other log aggregates no requests.
 	 *
 	 * Two signals, because neither covers both shapes. The stock `aggregator`'s
 	 * Remote_Source nodes are the `firehose` `Vault_Group`'s children, which
@@ -370,19 +373,23 @@ class Config {
 	 *
 	 * An active topology whose `.tsl` will not read throws: it may be the
 	 * hub, so answering "spoke" would turn its per-server stats off unseen.
+	 * The name signal is read across every active topology first, so a
+	 * reader's unresolvable token never fails a site its name proves a hub.
 	 *
 	 * @return bool True when either signal fires.
 	 * @throws \RuntimeException When an active topology will not read.
 	 */
 	private static function derive_hub_topology(): bool {
-		foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
-			$name = \Newspack_Nodes\Core::as_string( $active );
+		$active = \array_map( Core::as_string( ... ), \array_keys( Bootstrap::get_topologies() ) );
+		foreach ( $active as $name ) {
 			if ( 'aggregator' === $name
 				|| \in_array( 'aggregator', Topology_Analyzer::includes( $name ), true ) ) {
 				return true;
 			}
-			foreach ( Topology_Analyzer::graph_for( $name )['nodes'] as $node ) {
-				if ( 'Remote_Source' === ( $node['type'] ?? '' ) ) {
+		}
+		foreach ( $active as $name ) {
+			foreach ( Topology_Analyzer::nodes_of_type( $name, Remote_Source_Node::class ) as $reader ) {
+				if ( Log_Manager::names_firehose( Core::as_string( $reader['remote_partition'] ?? '' ) ) ) {
 					return true;
 				}
 			}

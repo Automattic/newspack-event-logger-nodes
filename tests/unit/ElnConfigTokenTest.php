@@ -104,6 +104,77 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
+	public function test_is_hub_true_when_a_remote_source_subclass_pulls_the_firehose(): void {
+		require_once \dirname( __DIR__ ) . '/fixtures/class-tapir-pull-node.php';
+		\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\Tests\\Fixtures\\' );
+		$dir = $this->make_temp_dir( 'eln-hub-subclass-' );
+		\file_put_contents( "{$dir}/okapi-tapir.tsl", "make_node Tapir_Pull firehose:okapi okapi firehose.p<partition>\n" );
+		Topology_Registry::register_user_dir( $dir );
+
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-tapir' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
+	public function test_is_hub_true_when_a_remote_source_pulls_one_fixed_firehose_partition(): void {
+		$dir = $this->make_temp_dir( 'eln-hub-fixed-' );
+		\file_put_contents( "{$dir}/okapi-p3.tsl", "make_node Remote_Source firehose:okapi okapi firehose.p3\n" );
+		Topology_Registry::register_user_dir( $dir );
+
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-p3' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
+	public function test_an_unresolvable_token_in_a_pulled_partition_fails_the_hub_derivation_loud(): void {
+		// Unresolved, it might name the firehose: answering "spoke" would turn
+		// that hub's per-server stats off in silence.
+		$dir = $this->make_temp_dir( 'eln-hub-token-' );
+		\file_put_contents( "{$dir}/okapi-tok.tsl", "make_node Remote_Source firehose:okapi okapi firehose.p<wombat9:shard>\n" );
+		Topology_Registry::register_user_dir( $dir );
+
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-tok' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->expectExceptionMessage( 'wombat9:shard' );
+		Core::resolve_config_token( 'eln', 'is_hub' );
+	}
+
+	public function test_an_aggregator_by_name_is_a_hub_whatever_an_earlier_reader_holds(): void {
+		$dir = $this->make_temp_dir( 'eln-hub-name-first-' );
+		\file_put_contents( "{$dir}/peer-ledger.tsl", "make_node Remote_Source ledger:okapi okapi ledger.p<wombat9:shard>\n" );
+		Topology_Registry::register_user_dir( $dir );
+
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'peer-ledger', 'aggregator' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
+	public function test_is_hub_false_when_the_wired_remote_sources_read_another_log(): void {
+		// A spoke may pull some other log from a peer; only a firehose reader
+		// aggregates requests, so only one makes the site a hub.
+		$dir = $this->make_temp_dir( 'eln-hub-other-log-' );
+		\file_put_contents(
+			"{$dir}/okapi-ledger.tsl",
+			"make_node Remote_Source ledger:okapi okapi ledger.p<partition>\n"
+			. "make_node Remote_Source hosefire:okapi okapi hosefire.p<partition>\n"
+		);
+		Topology_Registry::register_user_dir( $dir );
+
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-ledger' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
 	public function test_an_unreadable_active_topology_fails_the_hub_derivation_loud(): void {
 		// Unread, the broken one might be the hub: answering "spoke" would turn
 		// its per-server stats off in silence.
