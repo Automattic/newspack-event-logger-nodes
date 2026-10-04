@@ -18,7 +18,7 @@ The vocabulary here is the substrate's. Its [documentation map](https://github.c
 |-------------|---------|
 | WordPress | 6.5 |
 | PHP | 8.2 |
-| `newspack-nodes` | 2.85.0, installed and active |
+| `newspack-nodes` | 2.90.0, installed and active |
 | A cache backend | Memcached, or APCu |
 | `pdo_sqlite` | On every host running the flame builder |
 
@@ -73,7 +73,7 @@ The settings layer is the substrate's shared [Config System](https://github.com/
 
 Three keys render as checkboxes on the settings page — `enable_logging`, `log_memory` and `flush_every_line`, each classed `all`, so changing one recycles the whole fleet. `rules` has its own editor on that page. The rest are overlay-only: `hook_start_priority` (where [`App\Core`](includes/app/class-core.php) binds `hook_start`, default `-10000`, against a `hook_complete` fixed at `PHP_INT_MAX - 1`), `custom_colors` (event name to hex swatch, for the event pickers) and `recommended_log_events` (the hook picker's "Recommended" menu, which binds nothing itself). The `allowed_users` allowlist narrowing who reaches the dashboards is the SUBSTRATE's key, read through [`Capabilities::can()`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-capabilities.php); this plugin declares none of its own.
 
-Hub-mode is derived, never toggled: an active [`aggregator`](topologies/aggregator.tsl) topology, by name or by include, or any active graph carrying a `Remote_Source` node. Remote-spoke credentials live in the substrate's [**Vault**](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md#the-vault-and-the-hub-user) (the substrate's `vault` CI); `aggregator.tsl` ships its own per-spoke `Remote_Source` wiring as a `Vault_Group` over Vault group `spoke`, so standing a spoke up is adding it to that group.
+Hub-mode is derived, never toggled: an active [`aggregator`](topologies/aggregator.tsl) topology, by name or by include, or any active graph carrying a `Remote_Source` that pulls the firehose. Remote-spoke credentials live in the substrate's [**Vault**](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md#the-vault-and-the-hub-user) (the substrate's `vault` CI); `aggregator.tsl` ships its own per-spoke `Remote_Source` wiring as a `Vault_Group` over Vault group `spoke`, so standing a spoke up is adding it to that group.
 
 ### Logging rules
 

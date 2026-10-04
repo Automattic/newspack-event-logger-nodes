@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Only a firehose reader makes a site a hub.** `<eln:is_hub>` counted every active `Remote_Source`; it now counts one whose `remote_partition` names the firehose, `firehose.p<partition>` or a fixed `firehose.pN`, as `Log_Manager::names_firehose()` decides, so a reader pulling another log from a peer leaves the site a spoke. A `Remote_Source` subclass counts too, and a `<ns:key>` token in a reader's `remote_partition` that will not resolve fails the derivation rather than reading the site as a spoke. The stock `aggregator`, by name or include, still makes a hub with or without readers.
+- **The substrate floor rises to newspack-nodes 2.90.0** for `Topology_Analyzer::nodes_of_type()` and the graph's `remote_partition` field, which the hub derivation reads.
+
 ## [0.120.0] - 2026-10-03
 
 ### Changed
