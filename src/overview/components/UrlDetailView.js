@@ -54,6 +54,7 @@ import { ProfileWithCaption } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
 import { breakdownState } from '../AggregateTimeChart';
 import { errorStatus } from '../../components/errorStatus';
+import SortHeaderButton from './SortHeaderButton';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 
@@ -287,32 +288,14 @@ export default function UrlDetailView( {
 	} );
 
 	/**
-	 * A column header that sorts, carrying the arrow for the current sort.
+	 * The direction a column's header draws: the sort's own on the sorted
+	 * column, none on every other.
 	 *
-	 * Sorting is the parent's: this reports the click and reads `requestSort`
-	 * to decide which arrow, if any, to draw.
-	 *
-	 * @param {string} field   Sort field this header stands for.
-	 * @param {string} label   Already-translated column label.
-	 * @param {string} variant Cell modifier: 'center', 'numeric' or ''.
-	 * @return {import('react').ReactElement} Header element.
+	 * @param {string} field Sort field the header stands for.
+	 * @return {?string} 'asc', 'desc' or null.
 	 */
-	const renderSortHeader = ( field, label, variant = '' ) => (
-		<button
-			type="button"
-			className={ `newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell${
-				variant ? ` event-logger-table__header-btn--${ variant }` : ''
-			}` }
-			onClick={ () => onRequestSort( field ) }
-		>
-			{ label }
-			{ requestSort.field === field && (
-				<span style={ { marginLeft: '4px' } }>
-					{ requestSort.dir === 'desc' ? '\u25BC' : '\u25B2' }
-				</span>
-			) }
-		</button>
-	);
+	const sortDir = ( field ) =>
+		requestSort.field === field ? requestSort.dir : null;
 
 	return (
 		// The picker root: a body click outside a row asks about the URL.
@@ -405,31 +388,42 @@ export default function UrlDetailView( {
 
 				{ /* Outside listRef, so it is never a virtualized row. */ }
 				<div className="event-logger-table__header newspack-nodes-table__header">
-					{ renderSortHeader(
-						'timestamp',
-						__( 'Time', 'newspack-event-logger-nodes' )
-					) }
+					<SortHeaderButton
+						field="timestamp"
+						label={ __( 'Time', 'newspack-event-logger-nodes' ) }
+						dir={ sortDir( 'timestamp' ) }
+						onSort={ onRequestSort }
+					/>
 					<div className="event-logger-table__cell newspack-nodes-table__cell">
 						{ __( 'Method', 'newspack-event-logger-nodes' ) }
 					</div>
 					<div className="event-logger-table__cell newspack-nodes-table__cell">
 						{ __( 'Request ID', 'newspack-event-logger-nodes' ) }
 					</div>
-					{ renderSortHeader(
-						'status_code',
-						__( 'Status', 'newspack-event-logger-nodes' ),
-						'center'
-					) }
-					{ renderSortHeader(
-						'duration_ms',
-						__( 'Duration', 'newspack-event-logger-nodes' ),
-						'numeric'
-					) }
-					{ renderSortHeader(
-						'peak_mb',
-						__( 'Mem', 'newspack-event-logger-nodes' ),
-						'numeric'
-					) }
+					<SortHeaderButton
+						field="status_code"
+						label={ __( 'Status', 'newspack-event-logger-nodes' ) }
+						dir={ sortDir( 'status_code' ) }
+						variant="center"
+						onSort={ onRequestSort }
+					/>
+					<SortHeaderButton
+						field="duration_ms"
+						label={ __(
+							'Duration',
+							'newspack-event-logger-nodes'
+						) }
+						dir={ sortDir( 'duration_ms' ) }
+						variant="numeric"
+						onSort={ onRequestSort }
+					/>
+					<SortHeaderButton
+						field="peak_mb"
+						label={ __( 'Mem', 'newspack-event-logger-nodes' ) }
+						dir={ sortDir( 'peak_mb' ) }
+						variant="numeric"
+						onSort={ onRequestSort }
+					/>
 				</div>
 
 				<div

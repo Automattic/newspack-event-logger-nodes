@@ -62,8 +62,11 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-table__header',
 		'newspack-nodes-table__row',
 		'newspack-nodes-table__cell',
-		'newspack-nodes-sortable-header-button',
 		'entry-status',
+	],
+	'overview/components/SortHeaderButton.js': [
+		'newspack-nodes-table__cell',
+		'newspack-nodes-sortable-header-button',
 	],
 	// The two status modifiers belong to errorStatus.js: the views that paint
 	// an error_status read their tone from it rather than spelling it.
@@ -73,7 +76,6 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-table__header',
 		'newspack-nodes-table__row',
 		'newspack-nodes-table__cell',
-		'newspack-nodes-sortable-header-button',
 		'newspack-nodes-empty-state',
 		'entry-status',
 		'newspack-nodes-status',

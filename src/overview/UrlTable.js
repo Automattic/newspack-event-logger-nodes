@@ -30,6 +30,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { TextControl } from '@wordpress/components';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { PAGE_CONTENT_CLASS } from '../components/DashboardShell';
+import SortHeaderButton from './components/SortHeaderButton';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import {
 	formatAge,
@@ -115,7 +116,8 @@ const pct = ( part, total ) => {
 const COLUMNS = [
 	{
 		field: 'count',
-		width: '60px',
+		// Fits "Errors" and its caret in every monospace skin's face (63px).
+		width: '66px',
 		label: __( 'Reqs', 'newspack-event-logger-nodes' ),
 		errorsLabel: __( 'Errors', 'newspack-event-logger-nodes' ),
 		render: ( url, formatNum, now, errorCounts ) =>
@@ -223,17 +225,6 @@ const CELL_CLASS = {
 	code: '',
 	numeric: ' event-logger-table__cell--numeric',
 	status: ' event-logger-table__cell--status entry-status',
-};
-
-/**
- * Per-kind header modifiers; `code` adds none.
- *
- * `status` needs no entry: an HTTP-class share is not a sort key, so that
- * heading is a `<span>` and never reaches this map.
- */
-const HEADER_CLASS = {
-	code: '',
-	numeric: ' event-logger-table__header-btn--numeric',
 };
 
 /**
@@ -582,19 +573,6 @@ export default function UrlTable( {
 		return formatGroupedCount( Math.round( num ) ) + suffix;
 	}, [] );
 
-	/**
-	 * The arrow marking the column the server sorted on.
-	 *
-	 * @param {string} field Field name.
-	 * @return {string} ' ▲' ascending, ' ▼' descending, '' on every other column.
-	 */
-	const sortIndicator = ( field ) => {
-		if ( sortField !== field ) {
-			return '';
-		}
-		return sortOrder === 'asc' ? ' ▲' : ' ▼';
-	};
-
 	// The page scrolls, not the window; the list scrolls only sideways.
 	const { startIndex, endIndex, paddingTop, paddingBottom } =
 		useVirtualization(
@@ -669,20 +647,22 @@ export default function UrlTable( {
 								{ col.label }
 							</span>
 						) : (
-							<button
+							<SortHeaderButton
 								key={ col.field }
-								type="button"
-								data-field={ col.field }
-								className={ `newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell${
-									HEADER_CLASS[ col.kind ]
-								}` }
-								onClick={ () => handleSort( col.field ) }
-							>
-								{ errorCounts && col.errorsLabel
-									? col.errorsLabel
-									: col.label }
-								{ sortIndicator( col.field ) }
-							</button>
+								field={ col.field }
+								label={
+									errorCounts && col.errorsLabel
+										? col.errorsLabel
+										: col.label
+								}
+								dir={
+									sortField === col.field ? sortOrder : null
+								}
+								variant={
+									'numeric' === col.kind ? 'numeric' : ''
+								}
+								onSort={ handleSort }
+							/>
 						)
 					) }
 				</div>
