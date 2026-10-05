@@ -141,14 +141,20 @@ class McpControllerTest extends TestCase {
 			$this->assertStringNotContainsString( 'ubstring', $search, $tool );
 		}
 		$errors = $tools['performance_urls']['inputSchema']['properties']['errors_only']['description'];
-		$this->assertStringContainsString( 'has a null `avg_ms` and ranks last on the timing sorts', $errors );
+		$this->assertStringContainsString( 'counts toward `count` and `errors`', $errors, 'a timeout counts, untimed' );
 		$this->assertStringNotContainsString( 'ranks at 0', $errors );
+		$this->assertStringContainsString( 'its `avg_ms`, `min_ms` and `max_ms` are null', $tools['performance_urls']['description'], 'it names each row stat null untimed' );
+		$this->assertStringContainsString( 'ranks last on those three sorts', $tools['performance_urls']['description'], 'it says where an untimed row ranks' );
+		$url_bucket = $tools['dump_url']['inputSchema']['properties']['bucket']['description'];
+		$this->assertStringContainsString( 'null means, `min_ms` and `max_ms`', $url_bucket, 'an idle bucket has no extremes' );
+		$this->assertStringContainsString( '`max_ms` is null', $tools['performance_ask']['description'], 'it says an untimed URL has no max' );
 		$url_errors = $tools['dump_url']['inputSchema']['properties']['errors_only']['description'];
 		$this->assertStringContainsString( 'timeouts and fatals', $url_errors );
 		$this->assertStringContainsString( 'past', $url_errors, 'it says the list reaches past the newest 500' );
 		$this->assertStringContainsString( '`stats.errors`', $tools['dump_url']['description'], 'it names the exact error count' );
 		$this->assertStringContainsString( 'null `duration_ms`', $tools['dump_url']['description'], 'it says an unmeasured duration is null' );
 		$this->assertStringContainsString( '`finished_at`', $tools['dump_url']['description'], 'it names the order the list keeps' );
+		$this->assertStringContainsString( '`stats.avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null', $tools['dump_url']['description'], 'it names each stat null unmeasured' );
 		$ask_errors = $tools['performance_ask']['inputSchema']['properties']['errors_only']['description'];
 		$this->assertStringContainsString( '`url:`', $ask_errors, 'errors_only narrows a url: brief too' );
 		$this->assertStringContainsString( '`error_summary`', $ask_errors );
@@ -333,6 +339,16 @@ class McpControllerTest extends TestCase {
 					"tool {$tool} offers --{$arg}, which its verb does not declare"
 				);
 			}
+		}
+	}
+
+	/** The three tools the dashboard's bucket click narrows each take `bucket`. */
+	public function test_the_bucketed_tools_take_a_bucket(): void {
+		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
+
+		foreach ( [ 'performance_urls', 'dump_url', 'performance_ask' ] as $tool ) {
+			$this->assertArrayHasKey( 'bucket', $tools[ $tool ]['args'], $tool );
+			$this->assertStringContainsString( 'Y-m-d-H-i', $tools[ $tool ]['args']['bucket'], $tool );
 		}
 	}
 

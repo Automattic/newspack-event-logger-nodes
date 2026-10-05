@@ -13,6 +13,7 @@
  * budget counts percent-encoded characters, which is what the URL carries.
  */
 import { escapeLt } from './pageFacts';
+import { bucketSpan } from './chartSlots';
 
 const PROMPT_MAX = 6000;
 
@@ -171,6 +172,18 @@ const avgMax = ( avg, max, unit ) =>
 	null === avg
 		? ''
 		: `${ withUnit( avg, unit ) } avg, ${ withUnit( max, unit ) } max`;
+
+/**
+ * A bucket key and the five UTC minutes it names, or '' for none, so
+ * `fields()` leaves the line out.
+ *
+ * @param {?string} key The bucket key a brief was narrowed to.
+ * @return {string} `<key> (<span>)`, the bare key for an odd shape, or ''.
+ */
+const bucketField = ( key ) => {
+	const span = bucketSpan( key );
+	return span ? `${ key } (${ span })` : key ?? '';
+};
 
 /**
  * A URL brief's numbers: the whole URL's stats, or under errors only the
@@ -422,6 +435,7 @@ function bodyLines( brief ) {
 					// What the reader narrowed to; absent ones simply omit.
 					[ 'search', brief.filters?.search, 'site' ],
 					[ 'errors only', brief.filters?.errors_only ? 'yes' : '' ],
+					[ 'bucket', bucketField( brief.filters?.bucket ) ],
 					[
 						'workers',
 						brief.filters?.include_workers
@@ -513,6 +527,7 @@ function bodyLines( brief ) {
 			return [
 				...fields( [
 					[ 'url', brief.url, 'site' ],
+					[ 'bucket', bucketField( brief.bucket ) ],
 					...urlStatPairs( brief ),
 					[
 						'worst recent',

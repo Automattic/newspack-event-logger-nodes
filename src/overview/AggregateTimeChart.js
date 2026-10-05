@@ -49,6 +49,7 @@ import {
 	decodeNameTable,
 	DIM_FIELDS,
 	hasRows,
+	useSlotClick,
 } from './chartSlots';
 
 /**
@@ -170,12 +171,13 @@ export function breakdownState( breakdownData = null ) {
  * may mount it before the first fetch returns — and must keep the dropdowns up
  * around it, since they are the only way to pick a dimension that does.
  *
- * @param {Object}        props                Component props.
- * @param {Object|null}   props.series         The dimension's table, as `breakdownState()` decoded it.
- * @param {string[]|null} props.slots          The bucket keys the reply drew, newest first.
- * @param {string}        [props.metric]       'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
- * @param {string}        [props.breakdown]    Dimension `series` was fetched for, defaulting to 'status'; picks the palette only.
- * @param {string}        [props.serverFilter] Server name for the heading; the caller has already filtered the data.
+ * @param {Object}                      props                Component props.
+ * @param {Object|null}                 props.series         The dimension's table, as `breakdownState()` decoded it.
+ * @param {string[]|null}               props.slots          The bucket keys the reply drew, newest first.
+ * @param {string}                      [props.metric]       'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
+ * @param {string}                      [props.breakdown]    Dimension `series` was fetched for, defaulting to 'status'; picks the palette only.
+ * @param {string}                      [props.serverFilter] Server name for the heading; the caller has already filtered the data.
+ * @param {(bucketKey: string) => void} [props.onSlotClick]  Receives the bucket key of a slot a plain click lands on; without it a plain click does nothing.
  * @return {import('react').ReactElement|null} Rendered chart, or null when the dimension has no series.
  */
 export default function AggregateTimeChart( {
@@ -184,9 +186,10 @@ export default function AggregateTimeChart( {
 	metric = 'volume',
 	breakdown = 'status',
 	serverFilter = '',
+	onSlotClick,
 } ) {
+	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
 	const chartState = useMemo( () => {
-		const axis = buildChartSlots( slots );
 		if ( ! hasRows( series ) || 0 === axis.length ) {
 			return { lines: [], colorMap: {}, hours: 0 };
 		}
@@ -209,7 +212,7 @@ export default function AggregateTimeChart( {
 			( axis.length * BUCKET_SECONDS ) / SECONDS_PER_HOUR
 		);
 		return { lines, colorMap, hours };
-	}, [ series, slots, metric, breakdown ] );
+	}, [ series, axis, metric, breakdown ] );
 
 	// The unit follows the DOMAIN: the chart builds it from the peak it draws.
 	const yFormatFor = Y_FORMATS[ metric ];
@@ -218,6 +221,8 @@ export default function AggregateTimeChart( {
 		( label, index ) => chartState.colorMap[ label ] || chartColor( index ),
 		[ chartState ]
 	);
+
+	const slotClick = useSlotClick( axis, onSlotClick );
 
 	// Guard sits below every hook; hoisting it would break hook order.
 	if ( 0 === chartState.lines.length ) {
@@ -254,6 +259,7 @@ export default function AggregateTimeChart( {
 			yFormatFor={ yFormatFor }
 			yLabel={ yLabels[ metric ] }
 			height={ CHART_HEIGHT }
+			onSlotClick={ slotClick }
 			totalLabel={ __( 'Total', 'newspack-event-logger-nodes' ) }
 			title={
 				sprintf(

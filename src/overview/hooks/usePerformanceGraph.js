@@ -33,10 +33,10 @@
  * edge: it merges each reply into the last one (dedup by rid, newest completion
  * first, 500 rows) and DROPS a reply carrying no request it lacks under an
  * unchanged `last_modified`, so an auto-refresh tick never re-renders the modal
- * for nothing. Opening the modal, rescoping it or flipping Errors Only asks
- * through that same Fetcher with `askNow()`, superseding every older ask,
- * exactly as a `urls` sort change does — never by minting at the receiver
- * beside it. Every slice's `Current` gate, the substrate's, drops the answer
+ * for nothing. Opening the modal, rescoping it, flipping Errors Only or moving
+ * its bucket asks through that same Fetcher with `askNow()`, superseding every
+ * older ask, exactly as a `urls` sort change does — never by minting at the
+ * receiver beside it. Every slice's `Current` gate, the substrate's, drops the answer
  * to a superseded question before it reaches the merge or a view, and sends
  * a refusal to the view itself. `url-detail:timer` is armed only while URL
  * detail is the visible modal and the tab is visible. A request selection
@@ -129,6 +129,12 @@ const REQUESTDETAIL_TIMER = 'request-detail:timer';
 const REQUESTDETAIL_TICK_MS = 1000;
 
 /**
+ * The URL modal's filters while nothing narrows it: every request, over the
+ * whole window. The hook's default, and what the dashboard resets to.
+ */
+export const NO_DETAIL_FILTERS = { errors_only: false, bucket: '' };
+
+/**
  * `dump_url` args for the open modal. The auto-refresh tick and the
  * selection fetch share this, so both ask for the same payload shape and the
  * merge node compares like with like.
@@ -150,18 +156,24 @@ const REQUESTDETAIL_TICK_MS = 1000;
  * @param {Object}      arg              Named arguments.
  * @param {string}      arg.hash         The URL hash.
  * @param {string}      arg.serverFilter Server scope; '' means every server.
- * @param {boolean}     arg.errorsOnly   Ask for the URL's errors alone.
+ * @param {Object}      arg.filters      The modal's `{ errors_only, bucket }`:
+ *                                       the URL's errors alone, and the
+ *                                       five-minute bucket key the header
+ *                                       and list narrow to, '' for none.
  * @param {Object|null} [arg.after]      Partition => `{ segment, offset }`;
  *                                       null asks for the whole window.
  * @return {string[]} The command token array.
  */
-function urlDetailArgs( { hash, serverFilter, errorsOnly, after = null } ) {
+function urlDetailArgs( { hash, serverFilter, filters, after = null } ) {
 	const options = { categories: true };
 	if ( serverFilter ) {
 		options.server = serverFilter;
 	}
-	if ( errorsOnly ) {
+	if ( filters.errors_only ) {
 		options.errors_only = true;
+	}
+	if ( filters.bucket ) {
+		options.bucket = filters.bucket;
 	}
 	if ( after ) {
 		options.after = JSON.stringify( after );
@@ -246,10 +258,11 @@ function overviewArgs( { serverFilter, chartBreakdown } ) {
  * from its own `URLS_PER_PAGE`; the two numbers are one page size, split across
  * two files.
  *
- * The last two options opt IN in opposite directions: `errors_only` narrows a
- * set the verb otherwise returns whole, while `include_workers` widens one the
- * verb excludes by default, because a long-running job would otherwise dominate
- * every average on the page.
+ * Two options opt IN in opposite directions: `errors_only` narrows a set the
+ * verb otherwise returns whole, while `include_workers` widens one the verb
+ * excludes by default, because a long-running job would otherwise dominate
+ * every average on the page. `bucket` narrows to one five-minute slot, each
+ * row then carrying that slot's numbers.
  *
  * @param {Object} arg              Named arguments.
  * @param {Object} arg.urlParams    The table's live search, sort, page and
@@ -280,6 +293,9 @@ function urlsArgs( { urlParams, serverFilter } ) {
 	}
 	if ( urlParams.includeWorkers ) {
 		options.include_workers = '1';
+	}
+	if ( urlParams.bucket ) {
+		options.bucket = urlParams.bucket;
 	}
 	return formatCommandArgs( [], options );
 }
@@ -318,9 +334,13 @@ function urlsArgs( { urlParams, serverFilter } ) {
  * @param {?Object} [opts.selectedUrl]      `{ hash, url }` of the open URL
  *                                          detail modal; null closes and
  *                                          clears the slice.
- * @param {boolean} [opts.urlErrorsOnly]    The modal lists its URL's errors
- *                                          alone, which the server walks past
- *                                          the clean requests to find.
+ * @param {Object}  [opts.detailFilters]    The modal's `{ errors_only,
+ *                                          bucket }`: its URL's errors alone,
+ *                                          which the server walks past the
+ *                                          clean requests to find, and the
+ *                                          bucket key its header and list
+ *                                          narrow to. A change re-asks, so
+ *                                          hold one object per value.
  * @param {?string} [opts.selectedRequest]  Rid of the open request detail
  *                                          modal; null closes and clears it.
  * @return {{ handleUrlParamsChange: (params: Object) => void }} The URL table's params
@@ -335,7 +355,7 @@ export function usePerformanceGraph( opts = {} ) {
 		requestPartition = null,
 		selectedUrl = null,
 		selectedRequest = null,
-		urlErrorsOnly = false,
+		detailFilters = NO_DETAIL_FILTERS,
 	} = opts;
 
 	// The whole opts object, for the dump_url getter's fire-time selection.
@@ -343,10 +363,6 @@ export function usePerformanceGraph( opts = {} ) {
 	optsRef.current = opts;
 
 	// Live UI state read at fire time by the getters and on-demand fetches.
-	const serverFilterRef = useRef( serverFilter );
-	serverFilterRef.current = serverFilter;
-	const chartBreakdownRef = useRef( chartBreakdown );
-	chartBreakdownRef.current = chartBreakdown;
 	const urlParamsRef = useRef( {
 		search: '',
 		sort: 'count',
@@ -354,7 +370,20 @@ export function usePerformanceGraph( opts = {} ) {
 		offset: 0,
 		errorsOnly: false,
 		includeWorkers: false,
+		bucket: '',
 	} );
+	const serverFilterRef = useRef( serverFilter );
+	// @longform A new server is a new set, asked from its first page by the
+	// filter poke below. The table's own report of offset 0 then matches and
+	// asks nothing, so the change puts one urls ask on the wire, not two.
+	if ( serverFilterRef.current !== serverFilter ) {
+		urlParamsRef.current = { ...urlParamsRef.current, offset: 0 };
+	}
+	serverFilterRef.current = serverFilter;
+	const detailFiltersRef = useRef( detailFilters );
+	detailFiltersRef.current = detailFilters;
+	const chartBreakdownRef = useRef( chartBreakdown );
+	chartBreakdownRef.current = chartBreakdown;
 	// Search-debounce handle; the build's cleanup clears it on teardown.
 	const urlFetchTimerRef = useRef( null );
 
@@ -440,7 +469,7 @@ export function usePerformanceGraph( opts = {} ) {
 					return urlDetailArgs( {
 						hash,
 						serverFilter: serverFilterRef.current,
-						errorsOnly: !! optsRef.current.urlErrorsOnly,
+						filters: detailFiltersRef.current,
 						after: Core.node( URLDETAIL_TRANSFORM ).cursor(),
 					} );
 				},
@@ -537,7 +566,7 @@ export function usePerformanceGraph( opts = {} ) {
 	// The URL and server the modal's list was last asked under.
 	const detailScopeRef = useRef( null );
 
-	// dump_url on open, and afresh on a change of scope or of Errors Only.
+	// dump_url on open, and afresh on a change of scope, Errors Only or bucket.
 	useEffect( () => {
 		if ( ! selectedUrl ) {
 			detailScopeRef.current = null;
@@ -555,7 +584,7 @@ export function usePerformanceGraph( opts = {} ) {
 		const ask = urlDetailArgs( {
 			hash: selectedUrl.hash,
 			serverFilter,
-			errorsOnly: urlErrorsOnly,
+			filters: detailFilters,
 		} );
 		const scope = JSON.stringify( [ selectedUrl.hash, serverFilter ] );
 		const relist = scope === detailScopeRef.current;
@@ -567,12 +596,13 @@ export function usePerformanceGraph( opts = {} ) {
 		// under the stamp it holds, and both read the same under every scope.
 		// Uncleared, a rescoped reply is discarded and the modal keeps the
 		// previous server's numbers; its cursor would skip the full read. An
-		// Errors Only flip keeps the URL, so it relists and keeps the flame.
+		// Errors Only or bucket flip keeps the URL, so it relists and keeps
+		// the flame.
 		sendControl( URLDETAIL_TRANSFORM, {
 			action: relist ? 'relist' : 'clear',
 		} );
 		Core.node( URLDETAIL_FETCHER )?.askNow( ask );
-	}, [ selectedUrl, serverFilter, urlErrorsOnly, sendControl ] );
+	}, [ selectedUrl, serverFilter, detailFilters, sendControl ] );
 
 	// Arm dump_url refresh Timer only while URL detail is the visible view.
 	useEffect( () => {
@@ -664,6 +694,7 @@ export function usePerformanceGraph( opts = {} ) {
 	 * @param {number}  params.offset         First row of the page.
 	 * @param {boolean} params.errorsOnly     Narrow to erroring URLs.
 	 * @param {boolean} params.includeWorkers Include worker traffic.
+	 * @param {string}  params.bucket         Five-minute bucket key; '' for none.
 	 */
 	const handleUrlParamsChange = useCallback(
 		( params ) => {
@@ -674,7 +705,8 @@ export function usePerformanceGraph( opts = {} ) {
 				prev.order === params.order &&
 				prev.offset === params.offset &&
 				!! prev.errorsOnly === !! params.errorsOnly &&
-				!! prev.includeWorkers === !! params.includeWorkers
+				!! prev.includeWorkers === !! params.includeWorkers &&
+				prev.bucket === params.bucket
 			) {
 				return;
 			}

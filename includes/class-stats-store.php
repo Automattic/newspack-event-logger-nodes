@@ -3,10 +3,10 @@
  * Stats Store
  *
  * The schema for performance stats, expressed as one small key/value
- * API. Eighteen namespaces (`hourly_h`, `dim_h`, `categories_h`, `url_dim_h`,
- * `url_cat_h`, `lb_h`, `lb_sh`, `urls`, `urls_h`, `urlsrv`, `urlsrv_h`,
- * `urlrank_s`, `urlrank_sh`, `urlhdr`, `urlhdr_h`, `urltoken`, `urlmap`,
- * `url`) live in three SQLite Tables that `flame-builder.tsl` declares, one file per
+ * API. Twenty namespaces (`hourly_h`, `dim_h`, `categories_h`, `url_dim_h`,
+ * `url_cat_h`, `url_row_h`, `lb_h`, `lb_sh`, `urls`, `urls_h`, `urlsrv`,
+ * `urlsrv_h`, `urlrank_s`, `urlrank_sh`, `urlhdr`, `urlhdr_h`, `urltoken`,
+ * `urlbucket`, `urlmap`, `url`) live in three SQLite Tables that `flame-builder.tsl` declares, one file per
  * partition. `Flame_Builder_Node` produces every value and
  * `App\Performance_CI_Node` reads them for the dashboards.
  *
@@ -41,8 +41,10 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * read window, because the hour tiers answer for it behind the recent tail,
  * and `flame-stats:aggregate` holds every other namespace for the window,
  * floored at the `CHART_HOURS` a chart reads. A write states no TTL of its
- * own, but for one: a `urltoken` member lives `max_lifespan()`, the window,
- * from its last add. Otherwise `max_lifespan()` is the READ window alone.
+ * own, but for the indexes, each living one refresh past what it indexes: a
+ * `urltoken` member `max_lifespan()`, the window, and a `urlmap` name or a
+ * `urlbucket` member the aggregate Table's TTL. Otherwise `max_lifespan()` is
+ * the READ window alone.
  *
  * Bucketing is part of the key schema, so it lives here: `bucket_key()` is the
  * five-minute `Y-m-d-H-i` derivation every producer and reader shares, and
@@ -218,6 +220,17 @@ class Stats_Store {
 	public const NS_URLTOKEN = 'urltoken';
 
 	/**
+	 * The bucket index, one set per five-minute bucket per server:
+	 * `urlbucket:{bucket}:{server_key}`, a set KEY whose members are the
+	 * hashes of the URLs that server filed rows for in that bucket, either
+	 * family, each valued by the unix second it was last added. A member
+	 * lives as long as the `url_row_h` slot it points at, and one refresh
+	 * (`filing_ttl()`), so every bucket whose rows are stored can list its
+	 * URLs.
+	 */
+	public const NS_URLBUCKET = 'urlbucket';
+
+	/**
 	 * Width of one `urltoken` time bucket: six hours.
 	 *
 	 * The bucket is the set key's time part, so it trades three costs. A
@@ -237,10 +250,20 @@ class Stats_Store {
 	public const TOKEN_BUCKET_SECONDS = 6 * self::HOUR_SECONDS;
 
 	/**
-	 * Members a search takes from one word's set. A set holding more answers
-	 * the Table's over-limit marker and no member, and narrows nothing.
+	 * Members a read takes from one word's set. A set holding more answers
+	 * the Table's over-limit marker and no member, and its word narrows
+	 * nothing.
 	 */
 	public const URL_SEARCH_MAX = 5000;
+
+	/**
+	 * Members a read takes from one bucket's set, and the (hash, server)
+	 * pairs an unscoped bucket page reads across every set. A bucket's
+	 * candidates are read by key like a search's; this limit is higher than
+	 * `URL_SEARCH_MAX` by Chris's decision, which accepts a slower page on a
+	 * busy hub. A set or a page past it is refused.
+	 */
+	public const URL_BUCKET_MAX = 10000;
 
 	/**
 	 * Words of one search term one read names, longest first, since a
@@ -696,6 +719,9 @@ class Stats_Store {
 
 	/** @var array<string,int>|null Shard token => its bit, built on the first `shard_mask()`. */
 	private static ?array $shard_bits = null;
+
+	/** @var array<string,list<string>> Memoized `chart_buckets()`, under the one bucket it ends at. */
+	private static array $chart_buckets = [];
 
 	/**
 	 * The hourly slot's summed fields; anything else rides through. `count`
@@ -1655,17 +1681,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
-	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
-	 * order, which is what lets expiry compare keys with `<` against a cutoff.
-	 *
-	 * @param int $timestamp Unix timestamp.
-	 */
-	public static function bucket_key( int $timestamp ): string {
-		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
-	}
-
-	/**
 	 * Buckets one window spans: a bucket per width, plus the partial one `now`
 	 * sits in, capped at MAX_READ_BUCKETS.
 	 *
@@ -1725,26 +1740,89 @@ class Stats_Store {
 	}
 
 	/**
-	 * File URL hashes under their words in one `SADD`: each hash a member of
-	 * its server's set for the word in `$now`'s bucket, valued by `$now`. Nothing is read first, and
-	 * a hash filed again in the same bucket rewrites its row, refreshing its
-	 * value and its expiry. A search reads members over the window, so each
-	 * lives the window and one refresh (`filing_ttl()`).
+	 * The five-minute buckets a chart draws, newest first: the
+	 * `MAX_READ_BUCKETS` (288) ending at the one `$now` falls in, whatever
+	 * the retention window. A reply names them as `slots`, and the
+	 * dashboard's axis is exactly these.
+	 *
+	 * Memoized while that bucket is current: one `overview` asks for them
+	 * once per series it draws, and each would otherwise spend 288
+	 * `gmdate()` calls.
+	 *
+	 * @param int $now The reply's clock, read once at its entry.
+	 * @return list<string>
+	 */
+	public static function chart_buckets( int $now ): array {
+		$at = self::bucket_key( $now );
+		if ( ! isset( self::$chart_buckets[ $at ] ) ) {
+			self::$chart_buckets = [
+				$at => \array_map(
+					static fn ( int $back ): string => self::bucket_key( $now - $back * self::BUCKET_SECONDS ),
+					\range( 0, self::MAX_READ_BUCKETS - 1 )
+				),
+			];
+		}
+		return self::$chart_buckets[ $at ];
+	}
+
+	/**
+	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
+	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
+	 * order, which is what lets expiry compare keys with `<` against a cutoff.
+	 *
+	 * @param int $timestamp Unix timestamp.
+	 */
+	public static function bucket_key( int $timestamp ): string {
+		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
+	}
+
+	/**
+	 * The URLs `$server_keys` filed rows for in `$bucket`, in one `SMEMBERS`
+	 * exchange asking each server's set for `URL_BUCKET_MAX` members. A set
+	 * holding more answers `false`, too many URLs to read by key, and a read
+	 * left unanswered sets `$failed` and answers nothing, since a partial
+	 * list would read as the whole bucket.
+	 *
+	 * @param string       $bucket      A `bucket_key()`, `Y-m-d-H-i`.
+	 * @param list<string> $server_keys Each server's `server_key()`.
+	 * @param-out bool     $failed
+	 * @param ?bool        $failed      Set true when the Table left the read unanswered.
+	 * @return array<string,list<string>>|false hash => the server keys naming
+	 *                                          it, or false past the limit.
+	 */
+	public function url_bucket_members( string $bucket, array $server_keys, ?bool &$failed = null ): array|false {
+		$asked = [];
+		foreach ( $server_keys as $server_key ) {
+			$asked[ self::key_at( [ self::NS_URLBUCKET, $server_key ], $bucket ) ] = $server_key;
+		}
+		$found = $this->client->members( $this->table_for( self::NS_URLBUCKET ), \array_keys( $asked ), self::URL_BUCKET_MAX, $failed );
+		if ( $failed ) {
+			return [];
+		}
+		if ( \in_array( null, $found, true ) ) {
+			return false;
+		}
+		$out = [];
+		foreach ( $asked as $key => $server_key ) {
+			foreach ( \array_keys( $found[ $key ] ?? [] ) as $hash ) {
+				$out[ (string) $hash ][] = $server_key;
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * File URL hashes under their words (`add_sets()`), in each server's set
+	 * for the word in `$now`'s bucket, living the window and one refresh.
 	 *
 	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets `[ server_key, word, hashes ]`.
 	 * @param int                                                $now  When the names were written.
 	 * @return array<int,bool> Whether each set landed, in order.
 	 */
 	public function add_url_tokens( array $sets, int $now ): array {
-		$bucket  = self::token_bucket( $now );
-		$keys    = [];
-		$members = [];
-		foreach ( $sets as $i => [ $server_key, $word, $hashes ] ) {
-			$keys[ $i ]              = self::key_at( [ ...self::url_token_parts( $server_key ), $word ], $bucket );
-			$members[ $keys[ $i ] ] = \array_fill_keys( $hashes, $now );
-		}
-		$landed = \array_fill_keys( $this->client->add_members( $this->table_for( self::NS_URLTOKEN ), $members, self::filing_ttl( $this->max_lifespan ) ), true );
-		return \array_map( static fn ( string $key ): bool => isset( $landed[ $key ] ), $keys );
+		$bucket = self::token_bucket( $now );
+		$keys   = \array_map( static fn ( array $set ): string => self::key_at( [ ...self::url_token_parts( $set[0] ), $set[1] ], $bucket ), $sets );
+		return $this->add_sets( self::NS_URLTOKEN, \array_combine( $keys, \array_column( $sets, 2 ) ), $now, self::filing_ttl( $this->max_lifespan ) );
 	}
 
 	/**
@@ -1766,6 +1844,35 @@ class Stats_Store {
 	 */
 	public static function token_bucket( int $timestamp ): string {
 		return \gmdate( 'Y-m-d-H', $timestamp - $timestamp % self::TOKEN_BUCKET_SECONDS );
+	}
+
+	/**
+	 * File URL hashes under the buckets their rows were filed in (`add_sets()`),
+	 * living as long as the `url_row_h` slot each indexes, and one refresh.
+	 *
+	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets `[ bucket, server_key, hashes ]`.
+	 * @param int                                                $now  When the sets were written.
+	 * @return array<int,bool> Whether each set landed, in order.
+	 */
+	public function add_url_buckets( array $sets, int $now ): array {
+		$keys = \array_map( static fn ( array $set ): string => self::key_at( [ self::NS_URLBUCKET, $set[1] ], $set[0] ), $sets );
+		return $this->add_sets( self::NS_URLBUCKET, \array_combine( $keys, \array_column( $sets, 2 ) ), $now, self::filing_ttl( self::aggregate_ttl( $this->max_lifespan ) ) );
+	}
+
+	/**
+	 * Add each set's hashes in one `SADD`, valued by `$now`, reading nothing
+	 * first: a hash filed again refreshes its value and expiry (`filing_ttl()`).
+	 *
+	 * @param string                     $ns   The namespace whose Table holds the sets.
+	 * @param array<string,list<string>> $sets Each set's key => its hashes.
+	 * @param int                        $now  Each member's value.
+	 * @param int                        $ttl  Each member's lifetime.
+	 * @return list<bool> Whether each set landed, in order.
+	 */
+	private function add_sets( string $ns, array $sets, int $now, int $ttl ): array {
+		$members = \array_map( static fn ( array $hashes ): array => \array_fill_keys( $hashes, $now ), $sets );
+		$landed  = \array_fill_keys( $this->client->add_members( $this->table_for( $ns ), $members, $ttl ), true );
+		return \array_map( static fn ( string $key ): bool => isset( $landed[ $key ] ), \array_keys( $sets ) );
 	}
 
 	/**
@@ -2889,12 +2996,27 @@ class Stats_Store {
 	}
 
 	/**
-	 * A mean as a reply or a brief carries it: the number, or null where
-	 * nothing was measured, which a reader shows as unmeasured, never as 0.
+	 * The unix second a bucket opens: `bucket_key()` read back, in UTC.
 	 *
-	 * @param mixed $value The mean a row or a brief holds.
+	 * @param string $bucket A `Y-m-d-H-i` bucket key.
+	 * @throws \InvalidArgumentException On a key that does not parse.
 	 */
-	public static function measured_mean( mixed $value ): ?float {
+	public static function bucket_start( string $bucket ): int {
+		$start = \DateTimeImmutable::createFromFormat( '!Y-m-d-H-i', $bucket, new \DateTimeZone( 'UTC' ) );
+		if ( false === $start ) {
+			throw new \InvalidArgumentException( "Stats_Store: not a Y-m-d-H-i bucket key: '{$bucket}'" );
+		}
+		return $start->getTimestamp();
+	}
+
+	/**
+	 * A measured figure as a reply or a brief carries it — a mean, or a URL
+	 * row's `min_ms` or `max_ms` — the number, or null where nothing was
+	 * measured, which a reader shows as unmeasured, never as 0.
+	 *
+	 * @param mixed $value The figure a row or a brief holds.
+	 */
+	public static function measured_figure( mixed $value ): ?float {
 		return null === $value ? null : Core::num_float( $value );
 	}
 

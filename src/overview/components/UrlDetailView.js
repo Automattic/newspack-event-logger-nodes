@@ -13,7 +13,8 @@
  *   4. Aggregate flame graph, drawn by `RequestTrace`, which holds
  *      d3-flame-graph behind `lazy()` so the sections above it paint first.
  *   5. Aggregate profile breakdown, averaged across the profiled requests.
- *   6. Virtualized recent-requests table with an "Errors Only" toggle.
+ *   6. Virtualized recent-requests table with an "Errors Only" toggle and
+ *      the chip of the five-minute bucket a chart click narrowed it to.
  *
  * The breakdown series is the one read this view issues for itself, because it
  * is a separate round trip from the `dump_url` payload: `url_breakdown` goes
@@ -56,6 +57,8 @@ import { breakdownState } from '../AggregateTimeChart';
 import { errorStatus } from '../../components/errorStatus';
 import { wholeMs } from './HeadlineStats';
 import SortHeaderButton from './SortHeaderButton';
+import BucketChip from './BucketChip';
+import { bucketLabel } from '../chartSlots';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 
@@ -133,6 +136,44 @@ function ErrorsLine( { total, summary } ) {
 	}
 	return <p className="newspack-nodes-status">{ parts.join( ' · ' ) }</p>;
 }
+
+/**
+ * The banner over a narrowed modal: what still describes every request to
+ * the URL, and what the header and list hold instead.
+ *
+ * @param {Object}  filters             The modal's filters.
+ * @param {boolean} filters.errors_only Whether the list holds the URL's errors alone.
+ * @param {string}  filters.bucket      The bucket key the list narrows to; '' for none.
+ * @return {?string} The note, or null while nothing is narrowed.
+ */
+const narrowedNote = ( { errors_only: errorsOnly, bucket } ) => {
+	if ( bucket ) {
+		const span = bucketLabel( bucket );
+		return errorsOnly
+			? sprintf(
+					// translators: %s: the bucket's span, e.g. 14:05–14:10 UTC.
+					__(
+						'The charts, the flame graph and the profile describe every request to this URL; the header and the list below hold its errors in %s.',
+						'newspack-event-logger-nodes'
+					),
+					span
+			  )
+			: sprintf(
+					// translators: %s: the bucket's span, e.g. 14:05–14:10 UTC.
+					__(
+						'The charts, the flame graph and the profile describe every request to this URL; the header and the list below hold %s.',
+						'newspack-event-logger-nodes'
+					),
+					span
+			  );
+	}
+	return errorsOnly
+		? __(
+				'The charts, the flame graph and the profile describe every request to this URL; the list below holds its errors.',
+				'newspack-event-logger-nodes'
+		  )
+		: null;
+};
 
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const RequestRow = memo(
@@ -224,16 +265,19 @@ const RequestRow = memo(
  * lives upstream too: the server answers it, walking past the clean requests
  * that bury a busy URL's errors, so the list, the heading count, the
  * bar-scaling maximum and the response-time scatter all show those errors.
+ * The bucket a chart click picks lives upstream on the same terms, and the
+ * server answers it the same way.
  *
- * @param {Object}                                   props                    Component props.
- * @param {Object}                                   props.urlDetail          The fields this view reads off the `dump_url` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
- * @param {Array}                                    props.sortedRequests     Recent requests, already sorted by the parent.
- * @param {Object}                                   props.requestSort        Current sort as `{ field, dir }`; drives the header arrows only.
- * @param {(field: string) => void}                  props.onRequestSort      Receives a field name when a sortable header is clicked.
- * @param {(rid: string, partition: number) => void} props.onSelectRequest    Receives a rid AND its partition from a row click or a scatter-plot dot.
- * @param {string}                                   props.urlHash            The URL's 12-char hash, which addresses the `url_breakdown` read below.
- * @param {(on: boolean) => void}                    props.onErrorsOnlyChange Receives the flipped value when the toggle is clicked.
- * @param {?Object}                                  [props.detailErrors]     Under Errors Only, the `errorSummary()` of the list; null while every request is listed. The dashboard owns the toggle, so it survives a trip to a request and back.
+ * @param {Object}                                   props                 Component props.
+ * @param {Object}                                   props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
+ * @param {Array}                                    props.sortedRequests  Recent requests, already sorted by the parent.
+ * @param {Object}                                   props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
+ * @param {(field: string) => void}                  props.onRequestSort   Receives a field name when a sortable header is clicked.
+ * @param {(rid: string, partition: number) => void} props.onSelectRequest Receives a rid AND its partition from a row click or a scatter-plot dot.
+ * @param {string}                                   props.urlHash         The URL's 12-char hash, which addresses the `url_breakdown` read below.
+ * @param {{errors_only: boolean, bucket: string}}   props.filters         What the header and list narrow to: Errors Only, and the five-minute bucket key, '' for none. The dashboard owns both, so they survive a trip to a request and back.
+ * @param {(field: string, value: *) => void}        props.onFilterChange  Receives one field of `filters` and its new value: the flipped toggle, the bucket key a chart click lands on, or '' from the chip.
+ * @param {?Object}                                  [props.detailErrors]  Under Errors Only, the `errorSummary()` of the list; null while every request is listed.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {
@@ -243,11 +287,17 @@ export default function UrlDetailView( {
 	onRequestSort,
 	onSelectRequest,
 	urlHash,
-	onErrorsOnlyChange,
+	filters,
+	onFilterChange,
 	detailErrors = null,
 } ) {
 	const listRef = useRef( null );
-	const errorsOnly = null !== detailErrors;
+	const errorsOnly = filters.errors_only;
+	const note = narrowedNote( filters );
+	const pickBucket = useCallback(
+		( key ) => onFilterChange( 'bucket', key ),
+		[ onFilterChange ]
+	);
 
 	// A list the walk cut short reads exactly like a URL with no traffic.
 	const scanNote = urlDetail.scan_stopped_early
@@ -362,12 +412,9 @@ export default function UrlDetailView( {
 	return (
 		// The picker root: a body click outside a row asks about the URL.
 		<div data-ask={ urlHash ? `url:${ urlHash }` : undefined }>
-			{ errorsOnly && (
+			{ note && (
 				<p className="newspack-nodes-banner is-info" role="status">
-					{ __(
-						'The charts, the flame graph and the profile describe every request to this URL; the list below holds its errors.',
-						'newspack-event-logger-nodes'
-					) }
+					{ note }
 				</p>
 			) }
 			{ /* Always mounted: a gate here can strand the operator. */ }
@@ -381,11 +428,13 @@ export default function UrlDetailView( {
 				breakdownOptions={ SCOPED_BREAKDOWN_OPTIONS }
 				loading={ breakdownLoading }
 				error={ breakdownError }
+				onSlotClick={ pickBucket }
 			/>
 
 			<CategoryTimeChart
 				data={ urlDetail?.category_time_series }
 				slots={ urlDetail?.slots ?? null }
+				onSlotClick={ pickBucket }
 			/>
 
 			{ urlDetail.requests?.length > 0 && (
@@ -442,7 +491,9 @@ export default function UrlDetailView( {
 					<button
 						type="button"
 						className={ errorsOnly ? 'button is-active' : 'button' }
-						onClick={ () => onErrorsOnlyChange( ! errorsOnly ) }
+						onClick={ () =>
+							onFilterChange( 'errors_only', ! errorsOnly )
+						}
 					>
 						{ errorsOnly
 							? __(
@@ -454,6 +505,10 @@ export default function UrlDetailView( {
 									'newspack-event-logger-nodes'
 							  ) }
 					</button>
+					<BucketChip
+						bucket={ filters.bucket }
+						onClear={ () => pickBucket( '' ) }
+					/>
 				</div>
 				{ detailErrors && (
 					<ErrorsLine

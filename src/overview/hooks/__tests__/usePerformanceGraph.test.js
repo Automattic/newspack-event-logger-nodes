@@ -16,8 +16,10 @@
  * are covered where they live.
  */
 
+import { createElement, useEffect } from 'react';
 import {
 	renderHook,
+	renderComponent,
 	act,
 	cleanupMounts,
 } from '../../../test-helpers/renderHook';
@@ -345,6 +347,60 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		expect( countVerbs( wire.batches, 'overview' ) ).toBeGreaterThan(
 			before
 		);
+	} );
+
+	/**
+	 * A server change is a new set, asked from its first page. The URL table
+	 * reports its own return to offset 0 in a child effect, which runs before
+	 * this hook's poke, and the two together put ONE urls ask on the wire.
+	 */
+	test( 'a server change from page 3 asks urls once, at offset 0', async () => {
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
+		const base = {
+			search: '',
+			sort: 'count',
+			order: 'desc',
+			errorsOnly: false,
+			includeWorkers: false,
+			bucket: '',
+		};
+		function Table( { onParamsChange, offset } ) {
+			useEffect( () => {
+				onParamsChange( { ...base, offset } );
+			}, [ onParamsChange, offset ] );
+			return null;
+		}
+		function Page( { serverFilter, offset } ) {
+			const { handleUrlParamsChange } = usePerformanceGraph( {
+				serverFilter,
+			} );
+			return createElement( Table, {
+				onParamsChange: handleUrlParamsChange,
+				offset,
+			} );
+		}
+		const { rerender, unmount } = renderComponent(
+			createElement( Page, { serverFilter: '', offset: 200 } )
+		);
+		await act( async () => {} );
+		const before = countVerbs( wire.batches, 'urls' );
+
+		await act( async () => {
+			rerender(
+				createElement( Page, { serverFilter: 'web5', offset: 0 } )
+			);
+		} );
+
+		const asked = wire.batches
+			.flat()
+			.filter( ( m ) => 'urls' === m[ VALUE ]?.name )
+			.slice( before )
+			.map( ( m ) => [
+				option( m[ VALUE ].arguments, 'server' ),
+				option( m[ VALUE ].arguments, 'offset' ),
+			] );
+		expect( asked ).toEqual( [ [ 'web5', undefined ] ] );
+		unmount();
 	} );
 
 	/**
@@ -759,6 +815,103 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 	} );
 } );
 
+describe( 'usePerformanceGraph — the five-minute bucket', () => {
+	test( 'asks urls for the bucket, and again when only the bucket moves', async () => {
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
+		let api;
+		renderHook( () => {
+			api = usePerformanceGraph();
+			return api;
+		} );
+		await act( async () => {} );
+		const base = {
+			search: '',
+			sort: 'count',
+			order: 'desc',
+			offset: 0,
+			bucket: '2026-10-04-13-35',
+		};
+		api.handleUrlParamsChange( base );
+		const asked = () =>
+			wire.batches.flat().filter( ( m ) => m[ VALUE ]?.name === 'urls' );
+		expect( option( asked().at( -1 )[ VALUE ].arguments, 'bucket' ) ).toBe(
+			'2026-10-04-13-35'
+		);
+		const before = asked().length;
+
+		api.handleUrlParamsChange( { ...base, bucket: '2026-10-04-13-40' } );
+
+		expect( asked() ).toHaveLength( before + 1 );
+		expect( option( asked().at( -1 )[ VALUE ].arguments, 'bucket' ) ).toBe(
+			'2026-10-04-13-40'
+		);
+
+		api.handleUrlParamsChange( { ...base, bucket: '' } );
+		expect(
+			option( asked().at( -1 )[ VALUE ].arguments, 'bucket' )
+		).toBeUndefined();
+	} );
+
+	test( 'asks dump_url for the modal bucket, relisting on a change', async () => {
+		const wire = installWire( {
+			dump_url: { last_modified: 1, requests: [] },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'beef4471' },
+				detailFilters: {
+					errors_only: false,
+					bucket: '2026-10-04-13-35',
+				},
+			} );
+		} );
+		const opened = findVerb( wire.batches, 'dump_url' );
+		expect( option( opened[ VALUE ].arguments, 'bucket' ) ).toBe(
+			'2026-10-04-13-35'
+		);
+
+		const controls = [];
+		const merge = Core.node( 'url-detail:transform' );
+		const fill = merge.fill.bind( merge );
+		merge.fill = ( m ) => {
+			if ( m[ VALUE ]?.action ) {
+				controls.push( m[ VALUE ] );
+			}
+			fill( m );
+		};
+		wire.batches.length = 0;
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'beef4471' },
+				detailFilters: {
+					errors_only: false,
+					bucket: '2026-10-04-13-40',
+				},
+			} );
+		} );
+		const moved = findVerb( wire.batches, 'dump_url' );
+		expect( option( moved[ VALUE ].arguments, 'bucket' ) ).toBe(
+			'2026-10-04-13-40'
+		);
+		expect( controls ).toEqual( [ { action: 'relist' } ] );
+
+		wire.batches.length = 0;
+		await act( async () => {
+			Core.node( ROUTER ).fireCb();
+		} );
+		const refreshed = findVerb( wire.batches, 'dump_url' );
+		expect( option( refreshed[ VALUE ].arguments, 'bucket' ) ).toBe(
+			'2026-10-04-13-40'
+		);
+	} );
+} );
+
 describe( 'usePerformanceGraph — timer suspension on modal open / tab visibility', () => {
 	test( 'pauses performance:timer while a URL detail is open, re-arms when it closes', async () => {
 		installWire( {
@@ -959,7 +1112,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 			rerender( {
 				refreshInterval: '0',
 				selectedUrl: { hash: 'f00d7731' },
-				urlErrorsOnly: true,
+				detailFilters: { errors_only: true, bucket: '' },
 			} );
 		} );
 		await act( async () => {
@@ -1207,7 +1360,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 			rerender( {
 				refreshInterval: '0',
 				selectedUrl: { hash: 'beef4471' },
-				urlErrorsOnly: true,
+				detailFilters: { errors_only: true, bucket: '' },
 			} );
 		} );
 		const asked = findVerb( wire.batches, 'dump_url' );
@@ -1295,6 +1448,9 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 				sort: 'count',
 				order: 'desc',
 				offset: 0,
+				errorsOnly: false,
+				includeWorkers: false,
+				bucket: '',
 			} );
 		} );
 		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before );

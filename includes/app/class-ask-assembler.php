@@ -45,6 +45,8 @@ use Newspack_Nodes\Core;
  * span absent from the tree, an entry position past the record's end, a category off
  * the board. `Performance_CI_Node` turns that null into the message the picker
  * shows, so no shaper here decides how a miss reads.
+ *
+ * @phpstan-type Url_Filters array{search: string, errors_only: bool, include_workers: bool, bucket: string}
  */
 class Ask_Assembler {
 
@@ -554,9 +556,13 @@ class Ask_Assembler {
 	 * required arguments: how it ended, and what it was of. A narrower number
 	 * that does not say so reads as the site's.
 	 *
-	 * An errors-only brief is of the errors the walk listed: its `stats` keep
-	 * only the URL's exact `errors`, and `error_summary()` of the list stands
-	 * in for the whole URL's count and means, which describe other traffic.
+	 * The filters are the `url:` brief's share of the page's: under
+	 * `errors_only` the brief is of the errors the walk listed, so its `stats`
+	 * keep only the URL's exact `errors`, and `error_summary()` of the list
+	 * stands in for the whole URL's count and means, which describe other
+	 * traffic. Under a `bucket` it is of one stored bucket: `$stats` are its
+	 * slot, zero where the URL has none, and `$requests` the requests
+	 * completing in it. Its pointer fetches under both.
 	 *
 	 * The worst requests rank by duration, and a null one — no sample taken,
 	 * as `dump_url`'s rows carry it (decision 24) — ranks after every number.
@@ -567,11 +573,13 @@ class Ask_Assembler {
 	 * @param string                            $server            Server the numbers are of; '' is site-wide.
 	 * @param bool                              $scan_stopped_early Whether the walk behind `$requests` ran out of budget.
 	 * @param int                               $requests_window_start Unix time the window those requests were drawn from opens.
-	 * @param bool                              $errors_only       Whether `$requests` lists the URL's timeouts and fatals alone.
+	 * @param Url_Filters                       $filters           The url filters in force.
 	 * @return array<string,mixed>
 	 */
-	public static function for_url( array $stats, array $requests, ?Rule $rule, string $server, bool $scan_stopped_early, int $requests_window_start, bool $errors_only ): array {
-		$summary = $errors_only ? [ 'error_summary' => self::error_summary( $requests ) ] : [];
+	public static function for_url( array $stats, array $requests, ?Rule $rule, string $server, bool $scan_stopped_early, int $requests_window_start, array $filters ): array {
+		$errors_only = $filters['errors_only'];
+		$bucket      = $filters['bucket'];
+		$summary     = $errors_only ? [ 'error_summary' => self::error_summary( $requests ) ] : [];
 		// A measured duration is positive, so -1 ranks every null last.
 		\usort( $requests, static fn ( array $a, array $b ): int => ( $b['duration_ms'] ?? -1 ) <=> ( $a['duration_ms'] ?? -1 ) );
 		$hash = Core::as_string( $stats['hash'] ?? '' );
@@ -583,12 +591,13 @@ class Ask_Assembler {
 			// What these numbers are OF; the pointer below carries it too.
 			'server'             => $server,
 			'errors_only'        => $errors_only,
+			'bucket'             => $bucket,
 			'stats'              => $errors_only
 				? [ 'errors' => Core::num_int( $stats['errors'] ?? null ) ]
 				: [
 					'count'       => Core::num_int( $stats['count'] ?? 0 ),
-					'avg_ms'      => Stats_Store::measured_mean( $stats['avg_ms'] ?? null ),
-					'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
+					'avg_ms'      => Stats_Store::measured_figure( $stats['avg_ms'] ?? null ),
+					'max_ms'      => Stats_Store::measured_figure( $stats['max_ms'] ?? null ),
 					'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 				],
 			...$summary,
@@ -610,6 +619,7 @@ class Ask_Assembler {
 					'hash'        => $hash,
 					'server'      => $server,
 					'errors_only' => $errors_only ? '1' : '',
+					'bucket'      => $bucket,
 				]
 			),
 			'caveat'             => Findings::caveat(),
@@ -817,27 +827,27 @@ class Ask_Assembler {
 				continue;
 			}
 			$row    = Core::arr( $row );
-			$time   = Stats_Store::measured_mean( $row['time'] ?? null );
+			$time   = Stats_Store::measured_figure( $row['time'] ?? null );
 			$total += $time ?? 0.0;
 			if ( (string) $key !== $name ) {
 				$others[] = [
 					'name'        => (string) $key,
 					'avg_time_ms' => $time,
-					'avg_count'   => Stats_Store::measured_mean( $row['count'] ?? null ),
+					'avg_count'   => Stats_Store::measured_figure( $row['count'] ?? null ),
 				];
 			}
 		}
 		\usort( $others, self::by_time( ... ) );
 
 		$mine = Core::arr( $rows[ $name ] );
-		$time = Stats_Store::measured_mean( $mine['time'] ?? null );
+		$time = Stats_Store::measured_figure( $mine['time'] ?? null );
 		return \array_merge(
 			[
 				'subject'     => 'category',
 				'scope'       => $scope,
 				'name'        => $name,
 				'avg_time_ms' => $time,
-				'avg_count'   => Stats_Store::measured_mean( $mine['count'] ?? null ),
+				'avg_count'   => Stats_Store::measured_figure( $mine['count'] ?? null ),
 				'samples'     => $samples ?? Core::num_int( $mine['samples'] ?? 0 ),
 				'share'       => null === $time ? null : ( $total > 0.0 ? $time / $total : 0.0 ),
 				'others'      => \array_slice( $others, 0, self::TOP_SPANS ),
@@ -863,7 +873,7 @@ class Ask_Assembler {
 	 * @param array<string,mixed> $page    A `urls` reply: its totals, whether its URL count is estimated and whether they are provisional, and its data.
 	 * @param array<string,mixed> $board   A `build_leaderboard()` reply.
 	 * @param string              $server  Server the page is scoped to; '' is every server.
-	 * @param array<string,mixed> $filters The url filters in force: search, errors_only, include_workers.
+	 * @param Url_Filters         $filters The url filters in force.
 	 * @return array<string,mixed>
 	 */
 	public static function for_overview( array $page, array $board, string $server, array $filters ): array {
@@ -876,16 +886,17 @@ class Ask_Assembler {
 			'server'     => $server,
 			'scope'      => '' === $server ? 'every server' : $server,
 			'filters'    => [
-				'search'          => Core::as_string( $filters['search'] ?? '' ),
-				'errors_only'     => (bool) ( $filters['errors_only'] ?? false ),
-				'include_workers' => (bool) ( $filters['include_workers'] ?? false ),
+				'search'          => $filters['search'],
+				'errors_only'     => $filters['errors_only'],
+				'include_workers' => $filters['include_workers'],
+				'bucket'          => $filters['bucket'],
 			],
 			// The keys `urls` answers with, which are the page's own readout.
 			'stats'      => null === $totals ? null : [
 				'urls'                => Core::num_int( $totals['urls'] ?? 0 ),
 				'requests'            => Core::num_int( $totals['requests'] ?? 0 ),
-				'avg_ms'              => Stats_Store::measured_mean( $totals['avg_ms'] ?? null ),
-				'avg_peak_mb'         => Stats_Store::measured_mean( $totals['avg_peak_mb'] ?? null ),
+				'avg_ms'              => Stats_Store::measured_figure( $totals['avg_ms'] ?? null ),
+				'avg_peak_mb'         => Stats_Store::measured_figure( $totals['avg_peak_mb'] ?? null ),
 				// This hour's closed buckets, or the last hour until :05.
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
 			] + self::errors_of( $totals ),
@@ -903,9 +914,10 @@ class Ask_Assembler {
 					'performance_urls',
 					[
 						'server'          => $server,
-						'search'          => Core::as_string( $filters['search'] ?? '' ),
-						'errors_only'     => ( $filters['errors_only'] ?? false ) ? '1' : '',
-						'include_workers' => ( $filters['include_workers'] ?? false ) ? '1' : '',
+						'search'          => $filters['search'],
+						'errors_only'     => $filters['errors_only'] ? '1' : '',
+						'include_workers' => $filters['include_workers'] ? '1' : '',
+						'bucket'          => $filters['bucket'],
 					]
 				),
 				...self::fetch( 'performance_overview', [ 'server' => $server ] ),
@@ -948,8 +960,8 @@ class Ask_Assembler {
 			$row    = Core::arr( $row );
 			$rows[] = [
 				'name'        => (string) $name,
-				'avg_time_ms' => Stats_Store::measured_mean( $row['time'] ?? null ),
-				'avg_count'   => Stats_Store::measured_mean( $row['count'] ?? null ),
+				'avg_time_ms' => Stats_Store::measured_figure( $row['time'] ?? null ),
+				'avg_count'   => Stats_Store::measured_figure( $row['count'] ?? null ),
 			];
 		}
 		\usort( $rows, self::by_time( ... ) );
@@ -988,8 +1000,8 @@ class Ask_Assembler {
 				? 'traffic from URLs beyond the per-shard cap'
 				: Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
 			'count'  => Core::num_int( $row['count'] ?? 0 ),
-			'avg_ms' => Stats_Store::measured_mean( $row['avg_ms'] ?? null ),
-			'max_ms' => Core::num_float( $row['max_ms'] ?? 0 ),
+			'avg_ms' => Stats_Store::measured_figure( $row['avg_ms'] ?? null ),
+			'max_ms' => Stats_Store::measured_figure( $row['max_ms'] ?? null ),
 		] + self::errors_of( $row );
 	}
 

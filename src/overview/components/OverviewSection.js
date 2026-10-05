@@ -65,6 +65,7 @@ import HeadlineStats from './HeadlineStats';
  * @param {boolean}                 props.canBreakDownByServer   Whether the page can chart the server axis: no server filter, and the server list either unknown or holding two or more names. A filter would split one server against itself, and withholding the axis before the first reply lands would strand the `server` default on `status` for the session.
  * @param {Object}                  props.breakdownRead          The `breakdownState()` read of the selected dimension's reply, `{ state, series }`.
  * @param {Object|null}             props.categoryData           Category time series, or null.
+ * @param {(key: string) => void}   props.onSlotClick            Narrows the URL table to the bucket key a plain click on either chart lands on.
  * @param {Object}                  props.ask                    The `useAsk` state driving the Ask trigger.
  * @param {?Element}                [props.headerControlsSlot]   Shell header slot to portal the Ask, search and refresh controls into; null while it is pending, undefined renders them inline.
  * @return {import('react').ReactElement|null} Rendered section, or null without overview data.
@@ -95,6 +96,7 @@ export default function OverviewSection( {
 	canBreakDownByServer,
 	breakdownRead,
 	categoryData,
+	onSlotClick,
 	ask,
 	headerControlsSlot,
 } ) {
@@ -291,11 +293,13 @@ export default function OverviewSection( {
 						serverOptions={ serverOptions }
 						serverFilter={ serverFilter }
 						setServerFilter={ setServerFilter }
+						onSlotClick={ onSlotClick }
 					/>
 
 					<CategoryTimeChart
 						data={ categoryData }
 						slots={ overview.slots ?? null }
+						onSlotClick={ onSlotClick }
 					/>
 
 					{ overview.global_leaderboard?.categories && (

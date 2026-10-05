@@ -510,7 +510,157 @@ describe( 'UrlTable', () => {
 			offset: 0,
 			errorsOnly: false,
 			includeWorkers: false,
+			bucket: '',
 		} );
+		unmount();
+	} );
+
+	it( 'asks for the bucket the dashboard narrowed it to', () => {
+		const onParamsChange = jest.fn();
+		const { props, rerender, unmount } = mount( {
+			onParamsChange,
+			bucket: '2026-10-04-13-35',
+		} );
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { bucket: '2026-10-04-13-35' } )
+		);
+		rerender(
+			React.createElement( UrlTable, {
+				...props,
+				bucket: '2026-10-04-13-40',
+			} )
+		);
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { bucket: '2026-10-04-13-40' } )
+		);
+		unmount();
+	} );
+
+	it( 'returns to page 1 when the bucket changes, asking nothing at the old offset', () => {
+		const onParamsChange = jest.fn();
+		const { props, container, rerender, unmount } = mount( {
+			onParamsChange,
+			totalUrls: 800,
+			bucket: '2026-10-04-13-35',
+		} );
+		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
+		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { offset: 200 } )
+		);
+		onParamsChange.mockClear();
+
+		rerender(
+			React.createElement( UrlTable, {
+				...props,
+				bucket: '2026-10-04-13-40',
+			} )
+		);
+
+		expect(
+			onParamsChange.mock.calls.map( ( [ p ] ) => p.offset )
+		).toEqual( [ 0 ] );
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { bucket: '2026-10-04-13-40' } )
+		);
+		expect( container.textContent ).toContain( 'Page 1 of 8' );
+		unmount();
+	} );
+
+	const click = ( label ) => ( container ) =>
+		act( () => button( container, ( t ) => label === t ).click() );
+	it.each( [
+		[ 'Errors Only', click( 'Errors Only' ), { errorsOnly: true } ],
+		[
+			'Include Workers',
+			click( 'Include Workers' ),
+			{ includeWorkers: true },
+		],
+		[
+			'a search',
+			( container ) => type( container, 'kea' ),
+			{ search: 'kea' },
+		],
+		[
+			'a sort',
+			( container ) =>
+				act( () =>
+					button( container, ( t ) => /^Max/.test( t ) ).click()
+				),
+			{ sort: 'max_ms' },
+		],
+		[
+			'a server',
+			( _container, update ) => update( { server: 'edge-04' } ),
+			{},
+		],
+	] )(
+		'%s from page 3 asks once, at offset 0, and stays on page 1',
+		( _name, change, expected ) => {
+			const onParamsChange = jest.fn();
+			const { props, container, rerender, unmount } = mount( {
+				onParamsChange,
+				totalUrls: 800,
+			} );
+			let current = props;
+			const update = ( next ) => {
+				current = { ...current, ...next };
+				rerender( React.createElement( UrlTable, current ) );
+			};
+			act( () =>
+				button( container, ( t ) => t.includes( 'Next' ) ).click()
+			);
+			act( () =>
+				button( container, ( t ) => t.includes( 'Next' ) ).click()
+			);
+			expect( onParamsChange ).toHaveBeenLastCalledWith(
+				expect.objectContaining( { offset: 200 } )
+			);
+			onParamsChange.mockClear();
+
+			change( container, update );
+
+			expect( onParamsChange.mock.calls ).toEqual( [
+				[ expect.objectContaining( { offset: 0, ...expected } ) ],
+			] );
+
+			// The narrowed reply's total keeps page 1, not its last page.
+			update( { totalUrls: 250 } );
+			expect( onParamsChange ).toHaveBeenCalledTimes( 1 );
+			expect( container.textContent ).toContain( 'Page 1 of 3' );
+			unmount();
+		}
+	);
+
+	it( 'shows the bucket as a chip beside Errors Only, which clears it', () => {
+		const onClearBucket = jest.fn();
+		const { container, unmount } = mount( {
+			bucket: '2026-10-04-13-35',
+			onClearBucket,
+		} );
+		const chip = container.querySelector( '.newspack-nodes-badge' );
+		expect( chip.textContent ).toContain( '13:35–13:40 UTC' );
+		expect( chip.previousElementSibling.textContent ).toBe( 'Errors Only' );
+		act( () => chip.querySelector( 'button' ).click() );
+		expect( onClearBucket ).toHaveBeenCalledTimes( 1 );
+		unmount();
+	} );
+
+	it( 'keeps the chip that clears a bucket the server refused', () => {
+		const onClearBucket = jest.fn();
+		const { container, unmount } = mount( {
+			urls: [],
+			totalUrls: 0,
+			bucket: '2026-10-04-13-37',
+			onClearBucket,
+			error: 'bucket must be one of the charted five-minute keys, Y-m-d-H-i in UTC',
+		} );
+		expect( container.textContent ).toContain(
+			'Could not load URLs: bucket must be one of the charted'
+		);
+		const chip = container.querySelector( '.newspack-nodes-badge' );
+		act( () => chip.querySelector( 'button' ).click() );
+		expect( onClearBucket ).toHaveBeenCalledTimes( 1 );
 		unmount();
 	} );
 
@@ -706,7 +856,7 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'renders a dash for the Avg cell of a URL no timed request reached', () => {
+	it( 'renders a dash for the Avg, Min and Max of a URL no timed request reached', () => {
 		const { container, unmount } = mount( {
 			urls: [
 				{ ...URLS[ 0 ], avg_ms: null, min_ms: null, max_ms: null },
@@ -842,6 +992,7 @@ describe( 'the address bar', () => {
 			offset: 0,
 			errorsOnly: true,
 			includeWorkers: true,
+			bucket: '',
 		} );
 		expect( container.querySelector( 'input' ).value ).toBe( 'wp-cron' );
 		expect( button( container, ( t ) => t.startsWith( 'Avg' ) ) ).toBe(
@@ -947,6 +1098,22 @@ describe( 'the address bar', () => {
 			expect.objectContaining( { offset: 300 } )
 		);
 		expect( container.textContent ).toContain( 'Page 4 of 8' );
+		unmount();
+	} );
+
+	it( 'opens a link naming a page, its filters and a bucket on that page', () => {
+		linkTo( 'paged=4&q=feed&sort=max_ms&order=asc&errors=1&workers=1' );
+		const onParamsChange = jest.fn();
+		const { unmount } = mount( {
+			onParamsChange,
+			totalUrls: 800,
+			bucket: '2026-10-04-13-35',
+		} );
+
+		expect(
+			onParamsChange.mock.calls.every( ( c ) => 300 === c[ 0 ].offset )
+		).toBe( true );
+		expect( param( 'paged' ) ).toBe( '4' );
 		unmount();
 	} );
 

@@ -47,7 +47,7 @@
  * | `plan_at()`, the read plan and fine floor   | WALL   | the window a reader reads            |
  * | `rank_due()`, `$current`, `ranked_at`       | WALL   | the page cache's refresh, the reader's open bucket |
  * | `persist_url_names()`, `drain_url_stats()` hour | WALL | the filing refresh against the TTL |
- * | `persist_url_tokens()`                      | WALL   | a member's lifetime and a search's window |
+ * | `persist_url_tokens()`, `persist_url_buckets()` | WALL | a member's lifetime; a bucket set is the `$pending` key |
  * | `last_modified`, `last_flush_time`, `worked_at` | WALL | a reader's dedup, reports, `idle_since()` |
  * | `apply_auto_tune()`'s lock deadline         | MONO   | a stop's wait, a duration here       |
  *
@@ -340,6 +340,25 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @var array<string,true>
 	 */
 	private array $unfolded = [];
+
+	/**
+	 * The URLs this worker has filed in each bucket's set, kept while the
+	 * bucket is no older than the fine floor, which turns with the hour, or
+	 * while a flush still holds it: a worker files a URL once per bucket in
+	 * its life. A restart starts it empty, so the new worker files again.
+	 *
+	 * @var array<string,array<array-key,array<array-key,true>>> bucket => server_key => hash. An all-digit key is an INT key.
+	 */
+	private array $filed_buckets = [];
+
+	/**
+	 * The bucket adds a Table refused, filed again by every flush until they
+	 * land, or until their bucket falls below the fine floor, which turns with
+	 * the hour, and no flush still holds it.
+	 *
+	 * @var array<string,array<array-key,array<array-key,true>>> bucket => server_key => hash. An all-digit key is an INT key.
+	 */
+	private array $owed_buckets = [];
 
 	/** @var array<string,bool> Custom-event-name set ({name => true}). */
 	private array $custom_event_names = [];
@@ -722,7 +741,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// it reached us, so a skewed spoke clock or a bogus duration must
 		// not file into a future bucket — readers walk backwards from now
 		// and never would, the written-then-unreadable bug of decision 19.
-		$timestamp     = \min( $now, $started + (int) \round( $duration_ms / 1000 ) );
+		$timestamp     = \min( $now, self::completed_at( $started, $duration_ms ) );
 		// The per-server gate, resolved once: '' accumulates none.
 		$server_key    = $this->is_hub && $count_global ? $server_name : '';
 
@@ -818,6 +837,19 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			'count'     => 0,
 			'children'  => [],
 		];
+	}
+
+	/**
+	 * The second a request completed at, which files its stats in a bucket:
+	 * its start plus its duration rounded to the second. The `dump_url`
+	 * walk places a request in a bucket by this too. Only the builder clamps
+	 * it to the tick that brought the record, which no reader can know.
+	 *
+	 * @param int   $started     The record's start, in unix seconds.
+	 * @param float $duration_ms The record's duration.
+	 */
+	public static function completed_at( int $started, float $duration_ms ): int {
+		return $started + (int) \round( $duration_ms / 1000 );
 	}
 
 	/**
@@ -1632,6 +1664,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$filing = \array_diff_key( $this->pending, $dropped );
 		$filed  = $this->persist_url_names( $stats_store, $now, $filing );
 		$this->persist_url_tokens( $stats_store, $filed, $now );
+		$this->persist_url_buckets( $stats_store, $filing, $now, $floor );
 		$intents = [];
 		foreach ( $this->pending as $bucket => $acc ) {
 			// Only a bucket its index answered files URL rows.
@@ -1729,10 +1762,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * File each server's written names in the search index: one member per
-	 * distinct word of each name's path (`Stats_Store::path_of()`), valued by
-	 * the tick the name was written at. Blind adds, one `SADD` per
-	 * `WRITE_BATCH_KEYS` sets, because a member needs no read to union.
+	 * File each written name under every distinct word of its path.
 	 *
 	 * @param Stats_Store                              $stats_store Destination.
 	 * @param array<array-key,array<array-key,string>> $names       server => hash => URL.
@@ -1746,14 +1776,76 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$sets[] = [ $key, (string) $token, $hashes ];
 			}
 		}
-		$this->tally( Flame_Tree::STATS_WRITES, 'tokens', \count( $sets ) );
-		foreach ( \array_chunk( $sets, self::WRITE_BATCH_KEYS ) as $chunk ) {
-			$refused = \count( \array_keys( $stats_store->add_url_tokens( $chunk, $now ), false, true ) );
-			if ( $refused > 0 ) {
-				$this->tally( Flame_Tree::STATS_WRITES, 'refused ' . Stats_Store::NS_URLTOKEN, $refused );
-				$this->print_less_often( 'token index write refused; ' . $refused . ' word sets left unfiled' );
+		$this->file_sets( $sets, $now, $stats_store->add_url_tokens( ... ), Stats_Store::NS_URLTOKEN );
+	}
+
+	/**
+	 * File each URL of the flush's buckets in its server's set for the
+	 * bucket, of either family, beside every add still owed: only the URLs
+	 * `$filed_buckets` does not hold. A set that lands joins the memo, and one
+	 * refused is owed to the next flush. Both forget a bucket below `$floor`
+	 * once a flush no longer holds it.
+	 *
+	 * @param Stats_Store              $stats_store Destination.
+	 * @param array<string,Bucket_Acc> $filing      The pending buckets whose URL rows file.
+	 * @param int                      $now         The flush's one read of the tick.
+	 * @param string                   $floor       The oldest bucket of the read plan's fine tail.
+	 */
+	private function persist_url_buckets( Stats_Store $stats_store, array $filing, int $now, string $floor ): void {
+		$young               = static fn ( string $bucket ): bool => $bucket >= $floor || isset( $filing[ $bucket ] );
+		$this->filed_buckets = \array_filter( $this->filed_buckets, $young, \ARRAY_FILTER_USE_KEY );
+		$owed                = \array_filter( $this->owed_buckets, $young, \ARRAY_FILTER_USE_KEY );
+		foreach ( $filing as $bucket => $acc ) {
+			// An all-digit server or hash is an INT key, so it is cast back.
+			foreach ( \array_keys( $acc['url_stats'] + $acc['url_stats_worker'] ) as $server ) {
+				$key                     = Stats_Store::server_key( (string) $server );
+				$rows                    = ( $acc['url_stats'][ $server ] ?? [] ) + ( $acc['url_stats_worker'][ $server ] ?? [] );
+				$owed[ $bucket ][ $key ] = ( $owed[ $bucket ][ $key ] ?? [] ) + \array_fill_keys( \array_keys( $rows ), true );
 			}
 		}
+		$sets = [];
+		foreach ( $owed as $bucket => $servers ) {
+			foreach ( $servers as $key => $hashes ) {
+				$new = \array_diff_key( $hashes, $this->filed_buckets[ $bucket ][ $key ] ?? [] );
+				if ( [] !== $new ) {
+					$sets[] = [ $bucket, (string) $key, \array_map( 'strval', \array_keys( $new ) ) ];
+				}
+			}
+		}
+		$this->owed_buckets = [];
+		foreach ( $this->file_sets( $sets, $now, $stats_store->add_url_buckets( ... ), Stats_Store::NS_URLBUCKET ) as $at => $landed ) {
+			[ $bucket, $key, $hashes ] = $sets[ $at ];
+			$hashes                    = \array_fill_keys( $hashes, true );
+			if ( $landed ) {
+				$this->filed_buckets[ $bucket ][ $key ] = ( $this->filed_buckets[ $bucket ][ $key ] ?? [] ) + $hashes;
+			} else {
+				$this->owed_buckets[ $bucket ][ $key ] = $hashes;
+			}
+		}
+	}
+
+	/**
+	 * Add `$sets` blind, one `SADD` per `WRITE_BATCH_KEYS`, logging refusals.
+	 *
+	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets The sets the adder takes.
+	 * @param int                                                $now  The flush's one read of the tick.
+	 * @param \Closure(list<array{0: string, 1: string, 2: list<string>}>, int): array<int,bool> $add The store's adder.
+	 * @param string                                             $ns   The namespace the sets live in.
+	 * @return list<bool> Whether each set landed, in order.
+	 */
+	private function file_sets( array $sets, int $now, \Closure $add, string $ns ): array {
+		$this->tally( Flame_Tree::STATS_WRITES, "{$ns} sets", \count( $sets ) );
+		$out = [];
+		foreach ( \array_chunk( $sets, self::WRITE_BATCH_KEYS ) as $chunk ) {
+			$landed  = \array_values( $add( $chunk, $now ) );
+			$refused = \count( \array_keys( $landed, false, true ) );
+			if ( $refused > 0 ) {
+				$this->tally( Flame_Tree::STATS_WRITES, 'refused ' . $ns, $refused );
+				$this->print_less_often( "{$ns} write refused; {$refused} sets left unfiled" );
+			}
+			\array_push( $out, ...$landed );
+		}
+		return $out;
 	}
 
 	/**

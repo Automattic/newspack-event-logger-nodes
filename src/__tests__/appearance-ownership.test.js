@@ -39,6 +39,7 @@ const DEAD_SELECTOR_NAMES = [
 ];
 const CANONICAL_CLASS_CONTRACTS = {
 	'components/LoadingFallback.js': [ 'newspack-nodes-performance-loading' ],
+	'components/TagToken.js': [ 'newspack-nodes-badge' ],
 	'components/RequestSummary.js': [ 'newspack-nodes-status', 'is-error' ],
 	'current-request/CurrentRequestTab.js': [
 		'newspack-nodes-empty-state',
@@ -141,7 +142,6 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-badge',
 		'newspack-nodes-status',
 	],
-	'settings/settings/TagInputField.js': [ 'newspack-nodes-badge' ],
 	'rules/RuleEditModal.js': [
 		'newspack-nodes-error-banner',
 		'newspack-nodes-modal',

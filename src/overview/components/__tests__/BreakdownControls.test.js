@@ -1,3 +1,4 @@
+/* global globalThis */
 /**
  * Tests for BreakdownControls — the aggregate chart and its selectors, drawn
  * by both the Overview card and the URL modal.
@@ -11,10 +12,19 @@
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { metric, breakdown, serverFilter, slots, series } ) =>
-		`AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
+	default: ( {
+		metric,
+		breakdown,
+		serverFilter,
+		slots,
+		series,
+		onSlotClick,
+	} ) => {
+		globalThis.__aggregateSlotClick = onSlotClick;
+		return `AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
-		}] slots:${ slots?.[ 0 ] ?? 'none' } rows:${ series?.rows ?? 'none' }`,
+		}] slots:${ slots?.[ 0 ] ?? 'none' } rows:${ series?.rows ?? 'none' }`;
+	},
 } ) );
 
 import * as React from 'react';
@@ -220,6 +230,13 @@ describe( 'BreakdownControls', () => {
 			( label ) => label.textContent
 		);
 		expect( labels ).toEqual( [ 'Metric', 'Breakdown' ] );
+		unmount();
+	} );
+
+	it( 'hands the chart the click that narrows to a bucket', () => {
+		const onSlotClick = jest.fn();
+		const { unmount } = mountBreakdown( { onSlotClick } );
+		expect( globalThis.__aggregateSlotClick ).toBe( onSlotClick );
 		unmount();
 	} );
 } );

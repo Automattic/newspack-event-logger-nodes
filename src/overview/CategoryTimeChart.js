@@ -31,6 +31,7 @@ import {
 	CAT_FIELDS,
 	decodeNameTable,
 	hasRows,
+	useSlotClick,
 } from './chartSlots';
 
 /**
@@ -176,12 +177,13 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
  * `yFormatFor` and `colorAt` still, since `AreaTimeChart` redraws whenever
  * one of them changes.
  *
- * @param {Object}        props       Component props.
- * @param {Object|null}   props.data  Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
- * @param {string[]|null} props.slots The bucket keys the reply drew, newest first.
+ * @param {Object}                      props               Component props.
+ * @param {Object|null}                 props.data          Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
+ * @param {string[]|null}               props.slots         The bucket keys the reply drew, newest first.
+ * @param {(bucketKey: string) => void} [props.onSlotClick] Receives the bucket key of a slot a plain click lands on in any of the three charts; without it a plain click does nothing.
  * @return {import('react').ReactElement[]|null} One chart per view, or null when data is empty.
  */
-export default function CategoryTimeChart( { data, slots } ) {
+export default function CategoryTimeChart( { data, slots, onSlotClick } ) {
 	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
 	const decoded = useMemo(
 		() => decodeNameTable( data, CAT_FIELDS ),
@@ -210,6 +212,8 @@ export default function CategoryTimeChart( { data, slots } ) {
 	// Colour by rank through the skin's own tokens.
 	const colorAt = useCallback( ( _label, index ) => chartColor( index ), [] );
 
+	const slotClick = useSlotClick( axis, onSlotClick );
+
 	// Emptiness asks about the ROWS, and below every hook: order matters.
 	if ( ! hasRows( decoded ) || 0 === axis.length ) {
 		return null;
@@ -225,6 +229,7 @@ export default function CategoryTimeChart( { data, slots } ) {
 			title={ title }
 			height={ CHART_HEIGHT }
 			stackable={ false }
+			onSlotClick={ slotClick }
 		/>
 	) );
 }

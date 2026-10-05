@@ -1,4 +1,4 @@
-/* global KeyboardEvent, MouseEvent, Node */
+/* global globalThis, KeyboardEvent, MouseEvent, Node */
 /**
  * Tests for OverviewSection — render-side branches.
  *
@@ -24,16 +24,28 @@
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { metric, breakdown, serverFilter, data, slots } ) =>
-		`AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
+	default: ( {
+		metric,
+		breakdown,
+		serverFilter,
+		data,
+		slots,
+		onSlotClick,
+	} ) => {
+		globalThis.__aggregateSlotClick = onSlotClick;
+		return `AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
 		},totals=${ undefined === data ? 'none' : 'given' }] slots:${
 			slots?.[ 0 ] ?? 'none'
-		}`,
+		}`;
+	},
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { slots } ) => `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`,
+	default: ( { slots, onSlotClick } ) => {
+		globalThis.__categorySlotClick = onSlotClick;
+		return `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`;
+	},
 } ) );
 
 import * as React from 'react';
@@ -104,6 +116,17 @@ describe( 'OverviewSection', () => {
 		).toBeTruthy();
 		trigger.dispatchEvent( new MouseEvent( 'click', { bubbles: true } ) );
 		expect( start ).toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'hands both charts the click that narrows the table to a bucket', () => {
+		const onSlotClick = jest.fn();
+		const { unmount } = mount(
+			{ slots: slotsEndingAt( '2026-10-04-13-35' ) },
+			{ onSlotClick }
+		);
+		expect( globalThis.__aggregateSlotClick ).toBe( onSlotClick );
+		expect( globalThis.__categorySlotClick ).toBe( onSlotClick );
 		unmount();
 	} );
 

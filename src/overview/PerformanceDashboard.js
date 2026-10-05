@@ -13,9 +13,11 @@
  * What it does own is the UI state the graph's fetchers read at fire time: the
  * server filter, the chart metric and breakdown dimension, the refresh cadence,
  * the partition a located request was found in, the search box and its results,
- * the request-table sort, and the inline "Log this URL" rule editor. The server
- * filter, metric and breakdown also live in the address bar, as `?server=`,
- * `?metric=` and `?breakdown=`, so a shared link opens the same view. The
+ * the request-table sort, the five-minute bucket a chart click narrows the
+ * URL table or the URL modal to, and the inline "Log this URL" rule editor.
+ * The server filter, metric, breakdown and table bucket also live in the
+ * address bar, as `?server=`, `?metric=`, `?breakdown=` and `?bucket=`, so a
+ * shared link opens the same view. The
  * component also runs every command whose reply sets that state: the `?url=`
  * and `?request=` deep-link resolvers, the title lookup for a hash the loaded
  * catalog page does not carry, the search box's exact-rid lookup and its
@@ -58,9 +60,13 @@ import {
 	SERVER,
 	RULES_CI,
 	GREP_RESULT_LIMIT,
+	NO_DETAIL_FILTERS,
 } from './hooks/usePerformanceGraph';
 import useUrlNavigation from './hooks/useUrlNavigation';
-import { useQueryParamChoice } from '@newspack-nodes/shared/hooks/useQueryParamState';
+import {
+	useQueryParamChoice,
+	useQueryParamState,
+} from '@newspack-nodes/shared/hooks/useQueryParamState';
 import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import OverviewSection from './components/OverviewSection';
@@ -163,7 +169,23 @@ export default function PerformanceDashboard( {
 		dir: 'desc',
 	} );
 	// Held here, not in the URL modal, which unmounts for every request.
-	const [ detailErrorsOnly, setDetailErrorsOnly ] = useState( false );
+	const [ detailFilters, setDetailFilters ] = useState( NO_DETAIL_FILTERS );
+	// Same value, same object: the graph re-asks dump_url on a new one.
+	const setDetailFilter = useCallback(
+		( field, value ) =>
+			setDetailFilters( ( prev ) =>
+				prev[ field ] === value ? prev : { ...prev, [ field ]: value }
+			),
+		[]
+	);
+	// @longform The table's bucket, set by an overview chart click. A linked
+	// key goes out as it arrived: the server judges it against the charted
+	// slots, and the chip that shows its refusal is the way out.
+	const [ tableBucket, setTableBucket ] = useQueryParamState(
+		'bucket',
+		( raw ) => raw ?? '',
+		String
+	);
 	const [ chartMetric, setChartMetric ] = useQueryParamChoice(
 		'metric',
 		CHART_METRICS,
@@ -323,15 +345,13 @@ export default function PerformanceDashboard( {
 	// about what is selected NOW, as `dump_url` is. The page's own brief is
 	// about the rows on screen, so it takes the echoed `urlFilters` — the
 	// filters those rows were fetched under — and the live pick only until
-	// the first reply. An open URL modal lists under its own Errors Only, so
-	// a brief asked there narrows as its list does. Above the graph, which
-	// holds its poll while armed.
+	// the first reply. An open URL modal lists under its own Errors Only and
+	// bucket, so a brief asked there narrows as its list does. Above the
+	// graph, which holds its poll while armed.
 	const askFilters = useMemo(
 		() =>
-			selectedUrl
-				? { ...urlFilters, errors_only: detailErrorsOnly }
-				: urlFilters,
-		[ selectedUrl, urlFilters, detailErrorsOnly ]
+			selectedUrl ? { ...urlFilters, ...detailFilters } : urlFilters,
+		[ selectedUrl, urlFilters, detailFilters ]
 	);
 	const ask = useAsk( { onError, serverFilter, urlFilters: askFilters } );
 
@@ -343,7 +363,7 @@ export default function PerformanceDashboard( {
 		requestPartition,
 		selectedUrl,
 		selectedRequest,
-		urlErrorsOnly: detailErrorsOnly,
+		detailFilters,
 		askActive: ask.active,
 	} );
 
@@ -391,11 +411,14 @@ export default function PerformanceDashboard( {
 	 *
 	 * @param {Object} url The `{hash, url}` catalog entry to open.
 	 */
-	// A URL picked from an errors-only table opens narrowed to its errors.
+	// A URL picked from a narrowed table opens narrowed the same way.
 	const openUrl = useCallback(
 		( url ) => {
 			selectRequest( null );
-			setDetailErrorsOnly( !! urlFilters?.errors_only );
+			setDetailFilters( {
+				errors_only: !! urlFilters?.errors_only,
+				bucket: urlFilters?.bucket ?? '',
+			} );
 			selectUrlNow( url );
 		},
 		[ selectRequest, selectUrlNow, urlFilters ]
@@ -715,10 +738,10 @@ export default function PerformanceDashboard( {
 	 */
 	const detailErrors = useMemo(
 		() =>
-			detailErrorsOnly && urlDetail
+			detailFilters.errors_only && urlDetail
 				? errorSummary( urlDetail.requests ?? [] )
 				: null,
-		[ detailErrorsOnly, urlDetail ]
+		[ detailFilters.errors_only, urlDetail ]
 	);
 
 	// `Flame_Builder_Node` builds the tree; nothing here derives one.
@@ -937,6 +960,7 @@ export default function PerformanceDashboard( {
 							selectedUrl,
 							urlDetail,
 							detailErrors,
+							detailFilters,
 							selectedRequest,
 							requestPartition,
 							requestDetail,
@@ -974,6 +998,7 @@ export default function PerformanceDashboard( {
 				setChartBreakdown={ setChartBreakdown }
 				breakdownRead={ chartBreakdownRead }
 				categoryData={ categoryData }
+				onSlotClick={ setTableBucket }
 			/>
 
 			{ /* Main Content */ }
@@ -995,6 +1020,9 @@ export default function PerformanceDashboard( {
 								selectedUrl={ selectedUrl }
 								onSelect={ openUrl }
 								onParamsChange={ handleUrlParamsChange }
+								bucket={ tableBucket }
+								server={ serverFilter }
+								onClearBucket={ () => setTableBucket( '' ) }
 								totalUrls={ urlsSlice?.rows }
 								metric={ chartMetric }
 								ranked={ urlsSlice?.ranked }
@@ -1034,7 +1062,7 @@ export default function PerformanceDashboard( {
 						selectUrl( null );
 						selectRequest( null );
 						// Only the table opens a URL narrowed; forget it here.
-						setDetailErrorsOnly( false );
+						setDetailFilters( NO_DETAIL_FILTERS );
 					} }
 					className="event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"
 					headerActions={
@@ -1147,7 +1175,8 @@ export default function PerformanceDashboard( {
 							onRequestSort={ handleRequestSort }
 							onSelectRequest={ selectRequest }
 							urlHash={ selectedUrl.hash }
-							onErrorsOnlyChange={ setDetailErrorsOnly }
+							filters={ detailFilters }
+							onFilterChange={ setDetailFilter }
 							detailErrors={ detailErrors }
 						/>
 					) }
