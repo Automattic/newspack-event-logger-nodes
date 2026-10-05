@@ -46,6 +46,10 @@ function num( value, fallback = 0 ) {
  * @param {?Object} [state.detailErrors]     Under the modal's Errors Only,
  *                                           the `errorSummary()` of the list
  *                                           on screen. Null otherwise.
+ * @param {?Object} [state.detailFilters]    The modal's `{ errors_only,
+ *                                           bucket }`; its bucket key is
+ *                                           what the header and list narrow
+ *                                           to, '' for the whole window.
  * @param {?string} [state.selectedRequest]  The selected request id.
  * @param {?number} [state.requestPartition] Its partition. Absent reads as 0,
  *                                           the `dump_request` verb's own
@@ -60,6 +64,7 @@ export function pageFacts( {
 	selectedUrl,
 	urlDetail,
 	detailErrors,
+	detailFilters,
 	selectedRequest,
 	requestPartition,
 	requestDetail,
@@ -90,13 +95,14 @@ export function pageFacts( {
 			filters,
 			url: { hash: selectedUrl.hash, url: selectedUrl.url },
 			errors_only: !! detailErrors,
+			bucket: detailFilters?.bucket,
 			stats: detailErrors
 				? { errors: num( stats.errors, null ) }
 				: {
 						count: num( stats.count ),
 						// Null where nothing timed reached the URL: unmeasured.
 						avg_ms: num( stats.avg_ms, null ),
-						max_ms: num( stats.max_ms ),
+						max_ms: num( stats.max_ms, null ),
 						max_peak_mb: num( stats.max_peak_mb ),
 				  },
 			...( detailErrors ? { error_summary: detailErrors } : {} ),

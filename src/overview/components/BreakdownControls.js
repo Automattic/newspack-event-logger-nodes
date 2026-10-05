@@ -46,6 +46,7 @@ import AggregateTimeChart from '../AggregateTimeChart';
  * @param {boolean}                 [props.loading]         True while a read is out. It is not `pending`: a periodic refresh keeps the previous series drawn and still says the read is out.
  * @param {string|null}             [props.error]           Already-translated refusal printed under the chart.
  * @param {string|null}             [props.note]            Already-translated caveat printed under the chart.
+ * @param {(key: string) => void}   [props.onSlotClick]     Receives the bucket key a plain click on the chart lands on.
  * @return {import('react').ReactElement} Rendered panel.
  */
 export default function BreakdownControls( {
@@ -62,6 +63,7 @@ export default function BreakdownControls( {
 	loading = false,
 	error = null,
 	note = null,
+	onSlotClick,
 } ) {
 	// A refusal is terminal: it is why the dimension never arrived.
 	const state = error ? 'error' : breakdownRead.state;
@@ -123,6 +125,7 @@ export default function BreakdownControls( {
 				metric={ metric }
 				breakdown={ breakdown }
 				serverFilter={ serverFilter }
+				onSlotClick={ onSlotClick }
 			/>
 			{ error && (
 				<p className="newspack-nodes-status is-error">{ error }</p>

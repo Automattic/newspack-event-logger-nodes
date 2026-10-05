@@ -1,5 +1,6 @@
 /**
- * Tag and selector geometry. Shared badge/status/control styles own chrome.
+ * Tag input geometry; `TagToken.scss` holds the token's. Shared
+ * badge/status/control styles own chrome.
  */
 
 .event-logger-tag-input {
@@ -20,41 +21,6 @@
 		flex-direction: column;
 		align-items: flex-start;
 		gap: 4px;
-	}
-}
-
-.event-logger-tag-token {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	padding: 4px 6px 4px 10px;
-	font-size: 13px;
-	line-height: 1.4;
-	max-width: 100%;
-}
-
-.event-logger-tag-text {
-	word-break: break-all;
-	overflow-wrap: break-word;
-}
-
-button.components-button.event-logger-tag-remove {
-	flex-shrink: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 18px;
-	height: 18px;
-	min-width: 18px;
-	max-width: 18px;
-	min-height: 18px;
-	max-height: 18px;
-	padding: 0;
-	margin-left: 2px;
-
-	svg {
-		width: 14px;
-		height: 14px;
 	}
 }
 

@@ -5,13 +5,17 @@
  */
 
 import {
+	bucketLabel,
+	bucketSpan,
 	buildChartSlots,
 	CAT_FIELDS,
 	decodeNameTable,
 	DIM_FIELDS,
 	hasRows,
+	useSlotClick,
 } from '../chartSlots';
 import { nameTable, slotsEndingAt } from '../../test-helpers/chartWire';
+import { cleanupMounts, renderHook } from '../../test-helpers/renderHook';
 
 /**
  * A reply's slots at 14:37:11 UTC, newest first as the server sends them.
@@ -163,5 +167,51 @@ describe( 'hasRows', () => {
 				)
 			)
 		).toBe( true );
+	} );
+} );
+
+describe( 'bucketSpan', () => {
+	it( 'names a bucket key as its five UTC minutes', () => {
+		expect( bucketSpan( '2026-10-04-13-35' ) ).toBe( '13:35–13:40 UTC' );
+		expect( bucketSpan( '2026-10-04-23-55' ) ).toBe( '23:55–00:00 UTC' );
+	} );
+
+	it( 'answers null for anything not shaped as a bucket key', () => {
+		expect( bucketSpan( 'kea-junk' ) ).toBeNull();
+		expect( bucketSpan( '2026-10-04-13' ) ).toBeNull();
+		expect( bucketSpan( '' ) ).toBeNull();
+	} );
+} );
+
+describe( 'bucketLabel', () => {
+	it( 'names a bucket key by its span', () => {
+		expect( bucketLabel( '2026-10-04-13-35' ) ).toBe( '13:35–13:40 UTC' );
+	} );
+
+	it( 'names a key of another shape as it arrived', () => {
+		expect( bucketLabel( 'kea-junk' ) ).toBe( 'kea-junk' );
+	} );
+} );
+
+describe( 'useSlotClick', () => {
+	const axis = buildChartSlots( slotsEndingAt( '2026-10-04-13-35', 4 ) );
+
+	afterEach( cleanupMounts );
+
+	it( "maps the frame's slot index to that slot's bucket key", () => {
+		const onSlotClick = jest.fn();
+		const { result } = renderHook( () =>
+			useSlotClick( axis, onSlotClick )
+		);
+
+		result.current( 3 );
+
+		expect( onSlotClick.mock.calls ).toEqual( [ [ '2026-10-04-13-35' ] ] );
+	} );
+
+	it( 'hands the frame no callback when nothing listens', () => {
+		const { result } = renderHook( () => useSlotClick( axis, undefined ) );
+
+		expect( result.current ).toBeUndefined();
 	} );
 } );

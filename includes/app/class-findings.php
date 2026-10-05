@@ -1936,8 +1936,8 @@ class Findings {
 		}
 		$metric = [
 			'count'       => Core::num_int( $stats['count'] ?? 0 ),
-			'avg_ms'      => Stats_Store::measured_mean( $stats['avg_ms'] ?? null ),
-			'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
+			'avg_ms'      => Stats_Store::measured_figure( $stats['avg_ms'] ?? null ),
+			'max_ms'      => Stats_Store::measured_figure( $stats['max_ms'] ?? null ),
 			'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 		];
 		return [ self::insufficient( $url, $rule, $metric, 'url stats' ) ];

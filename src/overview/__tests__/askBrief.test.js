@@ -106,6 +106,7 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 			search: 'wp-admin',
 			errors_only: false,
 			include_workers: true,
+			bucket: '2026-10-04-13-35',
 		},
 		stats: {
 			urls: 137,
@@ -133,6 +134,7 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 	expect( md ).toContain( 'alpha.example' );
 	expect( md ).toContain( 'wp-admin' );
 	expect( md ).toContain( 'workers included' );
+	expect( md ).toContain( '**bucket:** 2026-10-04-13-35 (13:35–13:40 UTC)' );
 	expect( md ).toContain( '4,210 requests' );
 	expect( md ).toContain( '137 urls' );
 	// `num()` gives a sub-1 value three decimals, as it does everywhere else.
@@ -302,6 +304,35 @@ test( 'a URL brief names the worst recent requests by rid', () => {
 	expect( md ).toContain( 'w0rst1 9100.4ms 500' );
 	expect( md ).toContain( 'w0rst2 8200ms 200' );
 	expect( md ).toContain( '**avg_ms:** 812.3' );
+} );
+
+test( 'a URL brief under a bucket names the five minutes its numbers cover', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/kea',
+		bucket: '2026-10-04-23-55',
+		stats: { count: 17, avg_ms: 240, max_peak_mb: 61 },
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**bucket:** 2026-10-04-23-55 (23:55–00:00 UTC)' );
+	expect( md ).toContain( '**count:** 17' );
+} );
+
+test( 'a URL brief over its whole window names no bucket', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/kea',
+		bucket: '',
+		stats: { count: 4210 },
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).not.toContain( '**bucket:**' );
 } );
 
 test( 'an errors-only URL brief renders the errors and their summary, not the whole URL', () => {

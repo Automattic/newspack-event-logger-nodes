@@ -32,11 +32,11 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
 <div class="key">
   <div class="s"><b>evlog</b>the stats keyspace</div>
   <div class="s"><b>p{N}</b>the flame-builder partition</div>
-  <div class="s"><b>{namespace}</b>one of nineteen</div>
+  <div class="s"><b>{namespace}</b>one of twenty</div>
   <div class="s bk"><b>{bucket}</b><span class="mono">Y-m-d-H-i</span> floored to 5 minutes for the URL index's fine tier, or <span class="mono">Y-m-d-H</span> for an hour key</div>
   <div class="s"><b>{scope parts}</b>a list set, a server's fnv1a32, a shard, a url_hash, a dimension</div>
 </div>
-<p class="cap">Within a namespace, lexical order is chronological order, so one flush's current-hour keys are one run of the Table's index. A chart hour key holds its twelve five-minute slots, and a leaderboard hour one sum (decision 35). Three namespaces carry no time: <span class="mono">url</span> and <span class="mono">urlmap</span> key on a hash, <span class="mono">urltoken</span> on a server and a word.</p>
+<p class="cap">Within a namespace, lexical order is chronological order, so one flush's current-hour keys are one run of the Table's index. A chart hour key holds its twelve five-minute slots, and a leaderboard hour one sum (decision 35). Two namespaces carry no time: <span class="mono">url</span> and <span class="mono">urlmap</span> key on a hash.</p>
 
 <table class="ns">
   <tr><th>key, under evlog:p{N}:</th><th>value</th><th>TTL</th></tr>
@@ -60,6 +60,7 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
   <tr class="tier"><td class="k">urlhdr:{bucket}:v5p14:[{set}:][{server_key}]</td><td>the header record beside each set's lists, each server's and the site's: request, timed, milliseconds and peak-memory sums over every row of the set, whether an overflow row was among them, a <span class="mono">Url_Sketch</span> of the URLs stored deflated, and the requests that timed out or fataled. <span class="mono">v5p14</span> is HDR_SHAPE, the layout's version and the sketch's precision. DERIVED</td><td class="t">min( min_lifetime, 7200 )</td></tr>
   <tr class="tier coarse"><td class="k">urlhdr_h:{Y-m-d-H}:v5p14:[{set}:][{server_key}]</td><td>its coarse tier, written beside the hour's lists</td><td class="t">max( 90000, min_lifetime )</td></tr>
   <tr><td class="k">urltoken:{bucket}:{server_key}:{word}</td><td>a SET key, read by <span class="mono">SMEMBERS</span>: one member per URL whose path carries the whole word, 2 characters or more and cut to 12, one set per six-hour bucket per server, the member the URL's hash and its value the second its name was last filed. A flush adds members blind, at most once an hour per URL, and reads nothing; a search unions the window's buckets, and a set past URL_SEARCH_MAX 5,000 members, or buckets past it together, narrow nothing until enough of the members expire</td><td class="t">min_lifetime + 3,605, each member from its last add</td></tr>
+  <tr><td class="k">urlbucket:{bucket}:{server_key}</td><td>a SET key, read by <span class="mono">SMEMBERS</span>: one member per URL that server filed rows for in the five-minute bucket, either family, the member the URL's hash and its value the second it was last added. A flush adds members blind beside the token sets; <span class="mono">--bucket</span> reads the named servers' sets for its candidates, whose numbers are that bucket's slot of each <span class="mono">url_row_h</span>, and a set past URL_SEARCH_MAX 5,000 answers nothing</td><td class="t">max( 90000, min_lifetime ) + 3,605, each member from its last add</td></tr>
 </table>
 
 <h3 style="font-size:14px;margin:18px 0 4px">What one read of the URL index asks for</h3>

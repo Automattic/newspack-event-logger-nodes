@@ -306,7 +306,7 @@ class ItemBudgetTest extends TestCase {
 		$value = [];
 		foreach ( [ false, true ] as $worker ) {
 			foreach ( Stats_Store::buckets_in_hour( '2026-09-22-10' ) as $bucket ) {
-				$intent = self::builder( 'url_row_intent', $bucket, self::SEED_SERVER, 'a1b2c3d4e5f6', self::wide_row( $path, $worker ), $worker );
+				$intent = self::builder( 'url_row_intent', $bucket, self::SEED_SERVER, 'a1b2c3d4e5f6', self::wide_row( $path, $worker ), $worker, static function (): void {} );
 				$value  = $intent['merge']( $value );
 			}
 		}

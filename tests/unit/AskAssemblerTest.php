@@ -16,6 +16,9 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 #[CoversClass( Ask_Assembler::class )]
 class AskAssemblerTest extends TestCase {
 
+	/** The URL filters of an unfiltered page, as the `ask` verb hands them on. */
+	private const FILTERS = [ 'search' => '', 'errors_only' => false, 'include_workers' => false, 'bucket' => '' ];
+
 	private function rule(): Rule {
 		return new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'init', 'wp_loaded' ] );
 	}
@@ -65,7 +68,7 @@ class AskAssemblerTest extends TestCase {
 			'alpha.example',
 			false,
 			1_741_000_800,
-			false
+			self::FILTERS
 		);
 
 		$this->assertSame( 'alpha.example', $brief['server'] );
@@ -310,7 +313,7 @@ class AskAssemblerTest extends TestCase {
 			[ 'rid' => 'c', 'duration_ms' => 1400, 'status_code' => 200, 'partition' => 0 ],
 		];
 
-		$brief = Ask_Assembler::for_url( $stats, $requests, $this->rule(), '', false, 1_741_000_800, false );
+		$brief = Ask_Assembler::for_url( $stats, $requests, $this->rule(), '', false, 1_741_000_800, self::FILTERS );
 
 		$this->assertSame( 'url', $brief['subject'] );
 		$this->assertStringContainsString( '[REDACTED]', $brief['url'] );
@@ -330,8 +333,8 @@ class AskAssemblerTest extends TestCase {
 			$requests[] = [ 'rid' => "r{$n}", 'duration_ms' => 100.0 * $n, 'status_code' => 200, 'partition' => 0 ];
 		}
 
-		$complete = Ask_Assembler::for_url( $stats, $requests, null, 'delta.example', false, 1_741_000_800, false );
-		$stopped  = Ask_Assembler::for_url( $stats, [], null, 'delta.example', true, 1_741_000_800, false );
+		$complete = Ask_Assembler::for_url( $stats, $requests, null, 'delta.example', false, 1_741_000_800, self::FILTERS );
+		$stopped  = Ask_Assembler::for_url( $stats, [], null, 'delta.example', true, 1_741_000_800, self::FILTERS );
 
 		$this->assertCount( Ask_Assembler::WORST_REQUESTS, $complete['worst_requests'] );
 		$this->assertFalse( $complete['scan_stopped_early'] );
@@ -353,7 +356,7 @@ class AskAssemblerTest extends TestCase {
 			'iota.example',
 			false,
 			1_741_000_800,
-			false
+			self::FILTERS
 		);
 
 		$this->assertTrue( $brief( $limit )['requests_capped'] );
@@ -370,7 +373,7 @@ class AskAssemblerTest extends TestCase {
 			'zeta.example',
 			false,
 			1_741_000_800,
-			false
+			self::FILTERS
 		);
 
 		$this->assertSame( 1_741_000_800, $brief['requests_window_start'] );
@@ -536,7 +539,7 @@ class AskAssemblerTest extends TestCase {
 			'',
 			false,
 			1_741_000_800,
-			false
+			self::FILTERS
 		);
 
 		$this->assertArrayNotHasKey( 'breakdown', $brief );
@@ -569,7 +572,7 @@ class AskAssemblerTest extends TestCase {
 			'',
 			false,
 			1_741_000_800,
-			false
+			self::FILTERS
 		);
 
 		$this->assertSame(
@@ -818,7 +821,7 @@ class AskAssemblerTest extends TestCase {
 			'',
 			false,
 			1_741_000_800,
-			false
+			self::FILTERS
 		);
 
 		$this->assertNull( $brief['rule'] );
@@ -837,7 +840,7 @@ class AskAssemblerTest extends TestCase {
 
 		$unmeasured = Ask_Assembler::for_category( $categories, 'sql' );
 		$measured   = Ask_Assembler::for_category( $categories, 'wpdb' );
-		$overview   = Ask_Assembler::for_overview( [ 'data' => [], 'totals' => null, 'estimated' => false, 'provisional' => false ], [ 'categories' => $categories ], '', [] );
+		$overview   = Ask_Assembler::for_overview( [ 'data' => [], 'totals' => null, 'estimated' => false, 'provisional' => false ], [ 'categories' => $categories ], '', self::FILTERS );
 
 		$this->assertSame( [ null, null, null ], [ $unmeasured['avg_time_ms'], $unmeasured['avg_count'], $unmeasured['share'] ] );
 		$this->assertSame( [ [ 'wpdb', 44.5, 7.0 ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'], $o['avg_count'] ], $unmeasured['others'] ) );
@@ -928,7 +931,7 @@ class AskAssemblerTest extends TestCase {
 				],
 			],
 			'www.elsol.com.ar',
-			[ 'search' => 'wp-admin', 'errors_only' => false, 'include_workers' => true ]
+			[ 'search' => 'wp-admin', 'include_workers' => true ] + self::FILTERS
 		);
 
 		$this->assertSame( 'overview', $brief['subject'] );
@@ -973,7 +976,7 @@ class AskAssemblerTest extends TestCase {
 			],
 			[ 'categories' => [] ],
 			'',
-			[]
+			self::FILTERS
 		);
 
 		$this->assertArrayNotHasKey( 'hash', $brief['urls'][0] );
@@ -999,7 +1002,7 @@ class AskAssemblerTest extends TestCase {
 			],
 			[ 'categories' => [] ],
 			'',
-			[ 'errors_only' => true ]
+			[ 'errors_only' => true ] + self::FILTERS
 		);
 
 		$this->assertSame( 7, $brief['stats']['errors'] );
@@ -1013,7 +1016,7 @@ class AskAssemblerTest extends TestCase {
 			[ 'totals' => [ 'requests' => 4210 ], 'estimated' => false, 'provisional' => false, 'data' => [] ],
 			[ 'categories' => [] ],
 			'spoke-07',
-			[ 'search' => 'checkout', 'errors_only' => true, 'include_workers' => true ]
+			[ 'search' => 'checkout', 'errors_only' => true, 'include_workers' => true ] + self::FILTERS
 		);
 
 		$urls = null;
@@ -1043,7 +1046,7 @@ class AskAssemblerTest extends TestCase {
 			[ 'totals' => null, 'estimated' => false, 'provisional' => false, 'data' => [] ],
 			[ 'categories' => [] ],
 			'spoke-01',
-			[]
+			self::FILTERS
 		);
 
 		$this->assertNull( $brief['stats'] );
@@ -1054,8 +1057,8 @@ class AskAssemblerTest extends TestCase {
 	public function test_an_overview_brief_carries_whether_its_url_count_is_estimated(): void {
 		$page = [ 'totals' => [ 'urls' => 4217, 'requests' => 9001 ], 'data' => [] ];
 
-		$estimated = Ask_Assembler::for_overview( $page + [ 'estimated' => true, 'provisional' => true ], [ 'categories' => [] ], '', [] );
-		$counted   = Ask_Assembler::for_overview( $page + [ 'estimated' => false, 'provisional' => false ], [ 'categories' => [] ], '', [] );
+		$estimated = Ask_Assembler::for_overview( $page + [ 'estimated' => true, 'provisional' => true ], [ 'categories' => [] ], '', self::FILTERS );
+		$counted   = Ask_Assembler::for_overview( $page + [ 'estimated' => false, 'provisional' => false ], [ 'categories' => [] ], '', self::FILTERS );
 
 		$this->assertTrue( $estimated['estimated'] );
 		$this->assertTrue( $estimated['provisional'], 'short of records the writer has yet to rank' );
@@ -1070,7 +1073,7 @@ class AskAssemblerTest extends TestCase {
 			[ 'totals' => [ 'requests' => 7 ], 'estimated' => false, 'provisional' => false, 'data' => [] ],
 			[ 'categories' => [] ],
 			'',
-			[]
+			self::FILTERS
 		);
 
 		$this->assertSame( '', $brief['server'] );
@@ -1233,7 +1236,7 @@ class AskAssemblerTest extends TestCase {
 			'kiwi.example',
 			false,
 			1_741_000_800,
-			true
+			[ 'errors_only' => true ] + self::FILTERS
 		);
 
 		$this->assertTrue( $brief['errors_only'] );
@@ -1249,13 +1252,13 @@ class AskAssemblerTest extends TestCase {
 	/** The full list keeps the URL's whole stats, and summarizes no errors. */
 	public function test_a_full_url_brief_keeps_the_whole_url_stats(): void {
 		$brief = Ask_Assembler::for_url(
-			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5, 'errors' => 37 ],
+			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 4210, 'timed_count' => 4173, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5, 'errors' => 37 ],
 			[],
 			$this->rule(),
 			'kiwi.example',
 			false,
 			1_741_000_800,
-			false
+			self::FILTERS
 		);
 
 		$this->assertFalse( $brief['errors_only'] );
@@ -1270,7 +1273,25 @@ class AskAssemblerTest extends TestCase {
 		);
 	}
 
-	public function test_a_url_brief_cannot_be_built_without_saying_whether_it_lists_errors_alone(): void {
+	/**
+	 * A url brief carries its projected row's `max_ms`: null where the row
+	 * timed no request, as `dump_url`'s is, never a 0 that reads as fast.
+	 */
+	public function test_a_url_brief_carries_its_rows_max_ms_null_or_measured(): void {
+		$brief = static fn ( ?float $max ): mixed => Ask_Assembler::for_url(
+			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 6, 'avg_ms' => 41.7, 'max_ms' => $max ],
+			[],
+			null,
+			'',
+			false,
+			1_741_000_800,
+			self::FILTERS
+		)['stats']['max_ms'];
+
+		$this->assertSame( [ null, 893.0 ], [ $brief( null ), $brief( 893.0 ) ] );
+	}
+
+	public function test_a_url_brief_cannot_be_built_without_naming_its_filters(): void {
 		$this->expectException( \ArgumentCountError::class );
 		Ask_Assembler::for_url(
 			[ 'url' => 'https://example.test/quiet', 'hash' => 'd0d0d0d0d0d0', 'count' => 3 ],
@@ -1280,6 +1301,39 @@ class AskAssemblerTest extends TestCase {
 			false,
 			1_741_000_800
 		);
+	}
+
+	/** A bucketed brief names its bucket, and its pointer fetches that bucket. */
+	public function test_a_bucketed_url_brief_names_its_bucket_and_re_fetches_it(): void {
+		$brief = Ask_Assembler::for_url(
+			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 7, 'avg_ms' => 70.0, 'max_ms' => 133.0, 'max_peak_mb' => 3.5, 'errors' => 1 ],
+			[],
+			$this->rule(),
+			'kiwi.example',
+			false,
+			1_791_207_300,
+			[ 'errors_only' => true, 'bucket' => '2026-10-04-13-35' ] + self::FILTERS
+		);
+
+		$this->assertSame( '2026-10-04-13-35', $brief['bucket'] );
+		$this->assertSame(
+			[ 'hash' => '5e5e5e5e5e5e', 'server' => 'kiwi.example', 'errors_only' => '1', 'bucket' => '2026-10-04-13-35' ],
+			$brief['fetch'][0]['arguments']
+		);
+	}
+
+	/** An overview brief's bucket rides its filters and its `performance_urls` pointer. */
+	public function test_a_bucketed_overview_brief_names_its_bucket_and_re_fetches_it(): void {
+		$brief = Ask_Assembler::for_overview(
+			[ 'totals' => [ 'urls' => 2, 'requests' => 18 ], 'estimated' => false, 'provisional' => false, 'data' => [] ],
+			[ 'categories' => [] ],
+			'kiwi.example',
+			[ 'search' => '', 'errors_only' => false, 'include_workers' => false, 'bucket' => '2026-10-04-13-35' ]
+		);
+
+		$this->assertSame( '2026-10-04-13-35', $brief['filters']['bucket'] );
+		$this->assertSame( 'performance_urls', $brief['fetch'][0]['tool'] );
+		$this->assertSame( [ 'server' => 'kiwi.example', 'bucket' => '2026-10-04-13-35' ], $brief['fetch'][0]['arguments'] );
 	}
 
 	/**
@@ -1301,7 +1355,7 @@ class AskAssemblerTest extends TestCase {
 			'',
 			false,
 			1_741_000_800,
-			true
+			[ 'errors_only' => true ] + self::FILTERS
 		);
 
 		$this->assertSame( [ 'abort1', 'fatal1', 'clean1', 'tout1', 'zero1' ], \array_column( $brief['worst_requests'], 'rid' ) );

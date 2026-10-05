@@ -130,6 +130,7 @@ jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	SERVER: 'performance',
 	RULES_CI: 'rules',
 	GREP_RESULT_LIMIT: 20,
+	NO_DETAIL_FILTERS: { errors_only: false, bucket: '' },
 	usePerformanceGraph: ( opts ) => {
 		mockGraphOpts = opts;
 		mockGraphCalls.push( opts );
@@ -789,6 +790,8 @@ describe( 'PerformanceDashboard', () => {
 				globalThis.__overviewProps.setServerFilter( 'edge-01' )
 			);
 			expect( param( 'server' ) ).toBe( 'edge-01' );
+			// The table returns to page 1 on it, as on its own filters.
+			expect( globalThis.__urlTableProps.server ).toBe( 'edge-01' );
 
 			act( () => globalThis.__overviewProps.setServerFilter( '' ) );
 			expect( window.location.search ).toBe( '?page=perf&url=h1' );
@@ -1289,16 +1292,16 @@ describe( 'PerformanceDashboard', () => {
 
 		expect( globalThis.__urlDetailProps.detailErrors ).not.toBeNull();
 		// The server finds the errors, past the clean requests that bury them.
-		expect( mockGraphOpts.urlErrorsOnly ).toBe( true );
+		expect( mockGraphOpts.detailFilters.errors_only ).toBe( true );
 		// The same echo tells the table its rows carry error counts.
 		expect( globalThis.__urlTableProps.errorCounts ).toBe( true );
 
 		// The page holds the modal's choice, so a request and back keeps it.
 		await act( async () => {
-			globalThis.__urlDetailProps.onErrorsOnlyChange( false );
+			globalThis.__urlDetailProps.onFilterChange( 'errors_only', false );
 		} );
 		expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
-		expect( mockGraphOpts.urlErrorsOnly ).toBe( false );
+		expect( mockGraphOpts.detailFilters.errors_only ).toBe( false );
 		unmount();
 	} );
 
@@ -1357,7 +1360,10 @@ describe( 'PerformanceDashboard', () => {
 			const mount = mountDash();
 			await flushEffects();
 			await act( async () => {
-				globalThis.__urlDetailProps.onErrorsOnlyChange( true );
+				globalThis.__urlDetailProps.onFilterChange(
+					'errors_only',
+					true
+				);
 			} );
 			return mount;
 		};
@@ -1404,7 +1410,10 @@ describe( 'PerformanceDashboard', () => {
 		it( 'hands the list no summary when every request is listed', async () => {
 			await openErrorsOnly();
 			await act( async () => {
-				globalThis.__urlDetailProps.onErrorsOnlyChange( false );
+				globalThis.__urlDetailProps.onFilterChange(
+					'errors_only',
+					false
+				);
 			} );
 
 			expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
@@ -1443,7 +1452,10 @@ describe( 'PerformanceDashboard', () => {
 		it( 'asks for every request once the modal lists them all, whatever the table shows', async () => {
 			await openErrorsOnly( { errors_only: true } );
 			await act( async () => {
-				globalThis.__urlDetailProps.onErrorsOnlyChange( false );
+				globalThis.__urlDetailProps.onFilterChange(
+					'errors_only',
+					false
+				);
 			} );
 			await pickUrl();
 
@@ -1503,6 +1515,193 @@ describe( 'PerformanceDashboard', () => {
 			).toEqual( order );
 		}
 	);
+
+	describe( 'the five-minute bucket', () => {
+		const bucketParam = () =>
+			new URLSearchParams( window.location.search ).get( 'bucket' );
+
+		/**
+		 * Open `/kea` from a table narrowed to 13:35, as a row click does.
+		 *
+		 * @return {Promise<Object>} The mount.
+		 */
+		const openFromBucketedTable = async () => {
+			window.history.replaceState(
+				null,
+				'',
+				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35'
+			);
+			mockNavState.selectedUrl = { hash: 'h7', url: '/kea' };
+			mockNavState.selectedRequest = null;
+			mockView = loadedView( {
+				urls: {
+					data: [],
+					filters: { bucket: '2026-10-04-13-35' },
+					loading: false,
+					error: null,
+				},
+				urlDetail: {
+					data: { last_modified: 1, stats: {}, requests: [] },
+					loading: false,
+					error: null,
+				},
+			} );
+			const mount = mountDash();
+			await flushEffects();
+			await act( async () => {
+				globalThis.__urlTableProps.onSelect( {
+					hash: 'h7',
+					url: '/kea',
+				} );
+			} );
+			return mount;
+		};
+
+		it( 'narrows the table to the bucket an overview chart click names', async () => {
+			mockView = loadedView();
+			mountDash();
+			await flushEffects();
+			expect( globalThis.__urlTableProps.bucket ).toBe( '' );
+
+			await act( async () => {
+				globalThis.__overviewProps.onSlotClick( '2026-10-04-13-35' );
+			} );
+
+			expect( bucketParam() ).toBe( '2026-10-04-13-35' );
+			expect( globalThis.__urlTableProps.bucket ).toBe(
+				'2026-10-04-13-35'
+			);
+
+			await act( async () => {
+				globalThis.__urlTableProps.onClearBucket();
+			} );
+			expect( bucketParam() ).toBeNull();
+			expect( globalThis.__urlTableProps.bucket ).toBe( '' );
+		} );
+
+		it( 'hands the table a linked bucket as it arrived, for the server to judge', async () => {
+			window.history.replaceState(
+				null,
+				'',
+				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-37'
+			);
+			mockView = loadedView();
+			mountDash();
+			await flushEffects();
+
+			expect( globalThis.__urlTableProps.bucket ).toBe(
+				'2026-10-04-13-37'
+			);
+			await act( async () => {
+				globalThis.__urlTableProps.onClearBucket();
+			} );
+			expect( bucketParam() ).toBeNull();
+		} );
+
+		it( "opens a URL on the table's bucket, then moves the modal's alone", async () => {
+			const { container } = await openFromBucketedTable();
+
+			expect( mockGraphOpts.detailFilters.bucket ).toBe(
+				'2026-10-04-13-35'
+			);
+			expect( globalThis.__urlDetailProps.filters.bucket ).toBe(
+				'2026-10-04-13-35'
+			);
+
+			await act( async () => {
+				globalThis.__urlDetailProps.onFilterChange(
+					'bucket',
+					'2026-10-04-13-40'
+				);
+			} );
+			expect( mockGraphOpts.detailFilters.bucket ).toBe(
+				'2026-10-04-13-40'
+			);
+			expect( globalThis.__urlTableProps.bucket ).toBe(
+				'2026-10-04-13-35'
+			);
+			const facts = JSON.parse(
+				container.querySelector( '#newspack-nodes-page-facts' )
+					.textContent
+			);
+			expect( facts ).toMatchObject( {
+				surface: 'url',
+				bucket: '2026-10-04-13-40',
+			} );
+
+			await act( async () => {
+				globalThis.__urlDetailProps.onFilterChange( 'bucket', '' );
+			} );
+			expect( mockGraphOpts.detailFilters.bucket ).toBe( '' );
+			expect( globalThis.__urlTableProps.bucket ).toBe(
+				'2026-10-04-13-35'
+			);
+			expect( bucketParam() ).toBe( '2026-10-04-13-35' );
+		} );
+
+		it( 'keeps the modal filters when a click names the bucket they hold', async () => {
+			await openFromBucketedTable();
+			const held = mockGraphOpts.detailFilters;
+			expect( held ).toEqual( {
+				errors_only: false,
+				bucket: '2026-10-04-13-35',
+			} );
+
+			await act( async () => {
+				globalThis.__urlDetailProps.onFilterChange(
+					'bucket',
+					'2026-10-04-13-35'
+				);
+			} );
+
+			// The same object, so the graph re-asks nothing.
+			expect( mockGraphOpts.detailFilters ).toBe( held );
+		} );
+
+		it( 'forgets the modal bucket when the modal closes', async () => {
+			const { rerender } = await openFromBucketedTable();
+			await act( async () => {
+				globalThis.__modalOnRequestClose();
+			} );
+
+			mockNavState.selectedUrl = { hash: 'h4', url: '/linked' };
+			await act( async () => {
+				rerender( dashboard() );
+			} );
+
+			expect( mockGraphOpts.detailFilters.bucket ).toBe( '' );
+			expect( globalThis.__urlDetailProps.filters.bucket ).toBe( '' );
+		} );
+
+		it( "asks under the modal's bucket, not the table's", async () => {
+			await openFromBucketedTable();
+			await act( async () => {
+				globalThis.__urlDetailProps.onFilterChange(
+					'bucket',
+					'2026-10-04-13-40'
+				);
+			} );
+			const target = document.createElement( 'div' );
+			target.setAttribute( 'data-ask', 'url:h7' );
+			document.body.appendChild( target );
+			await act( async () => {
+				globalThis.__overviewProps.ask.start();
+			} );
+			await act( async () => {
+				target.dispatchEvent(
+					new window.MouseEvent( 'mousedown', { bubbles: true } )
+				);
+				target.dispatchEvent(
+					new window.MouseEvent( 'click', { bubbles: true } )
+				);
+			} );
+			target.remove();
+
+			expect( sentTo( 'performance:ask' ).at( -1 ) ).toContain(
+				'--bucket=2026-10-04-13-40'
+			);
+		} );
+	} );
 
 	it( 'opens a URL reached any other way with every request listed', async () => {
 		// Only the table narrows a URL; closing forgets that, so a deep link

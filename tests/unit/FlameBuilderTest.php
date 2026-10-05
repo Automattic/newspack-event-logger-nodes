@@ -7864,7 +7864,7 @@ class FlameBuilderTest extends TestCase {
 				$set( 'wombat' ) => [ [ $new => self::tick() ], 86_417 + 3_605 ],
 				$set( '4486' )   => [ [ $new => self::tick() ], 86_417 + 3_605 ],
 			],
-			self::token_adds()[0],
+			self::adds_of( Stats_Store::NS_URLTOKEN )[0],
 			'the new URL alone, living the window, an hour and a flush'
 		);
 		$this->assertEqualsCanonicalizing( [ $old, $new ], Core::arr( $store->url_token_sets( [ 'wombat' ], [ 'kea.test' ], self::tick() )['wombat'] ?? null ) );
@@ -7889,7 +7889,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
 		$fb->flush();
 		$this->assertSame( [], $store->url_token_sets( [ 'takahe' ], [ self::SEED_SERVER ], self::tick() ), 'the write was refused' );
-		$this->assertStringContainsString( 'token index write refused; 2 word sets left unfiled', $err );
+		$this->assertStringContainsString( 'urltoken write refused; 2 sets left unfiled', $err );
 		$this->assertSame( 2, $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ][ 'refused ' . Stats_Store::NS_URLTOKEN ] ?? null );
 
 		$store->refuse_tokens = false;
@@ -7919,8 +7919,8 @@ class FlameBuilderTest extends TestCase {
 		$this->flush_buckets( $fb, [ self::live_bucket() => [ 'url_stats' => $stats, 'url_names' => $names ] ] );
 
 		$this->assertSame( [ 'SADD' ], \array_keys( $this->asked_verbs( Stats_Store::NS_URLTOKEN ) ), 'no set is read' );
-		$this->assertSame( [ 500, 102 ], \array_map( 'count', self::token_adds() ), 'the sets are added in the flush chunks' );
-		$this->assertSame( 602, $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ]['tokens'] ?? null, 'one set a distinct word' );
+		$this->assertSame( [ 500, 102 ], \array_map( 'count', self::adds_of( Stats_Store::NS_URLTOKEN ) ), 'the sets are added in the flush chunks' );
+		$this->assertSame( 602, $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ]['urltoken sets'] ?? null, 'one set a distinct word' );
 		$own = [ '00', ...\array_map( 'strval', \range( 10, 5990, 10 ) ) ];
 		$read = [];
 		foreach ( \array_chunk( [ 'kea', 'kiwi', ...$own ], Stats_Store::SEARCH_WORDS_READ ) as $words ) {
@@ -7930,15 +7930,336 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * Each recorded `SADD`: set key => [ member map, ttl ].
+	 * A flush files each server's URLs of both families in that server's set
+	 * for the bucket, blind, each member living the aggregate Table's TTL, an
+	 * hour and a flush.
+	 */
+	public function test_a_flush_files_each_servers_urls_of_both_families_in_its_bucket_set(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 13, 38, 12, 10, 4, 2026 );
+		$acc       = ( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null );
+		$acc['url_stats']['b.example']['c4a1c4a1c4a1']        = self::positional_url_row( [ 'count' => 7, 'last_seen' => self::tick(), 'path' => '/kakapo-7731' ] );
+		$acc['url_stats_worker']['b.example']['c4a2c4a2c4a2'] = self::positional_url_row( [ 'count' => 3, 'last_seen' => self::tick(), 'path' => '/wp-cron.php' ] );
+		$acc['url_stats']['k.example']['d5d5d5d5d5d5']        = self::positional_url_row( [ 'count' => 5, 'last_seen' => self::tick(), 'path' => '/kiwi-8842' ] );
+		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [ '2026-10-04-13-35' => $acc ] );
+		$this->forget_stats_asks();
+
+		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, self::tick(), self::fine_floor( $store, self::tick() ) );
+
+		$b = Stats_Store::server_key( 'b.example' );
+		$k = Stats_Store::server_key( 'k.example' );
+		$this->assertSame(
+			[ 'SADD' => [ [ "urlbucket:2026-10-04-13-35:{$b}", "urlbucket:2026-10-04-13-35:{$k}" ] ] ],
+			$this->asked_verbs( Stats_Store::NS_URLBUCKET ),
+			'one add, and no read'
+		);
+		$this->assertSame(
+			[
+				"urlbucket:2026-10-04-13-35:{$b}" => [ [ 'c4a1c4a1c4a1' => self::tick(), 'c4a2c4a2c4a2' => self::tick() ], 90_000 + 3_605 ],
+				"urlbucket:2026-10-04-13-35:{$k}" => [ [ 'd5d5d5d5d5d5' => self::tick() ], 90_000 + 3_605 ],
+			],
+			self::adds_of( Stats_Store::NS_URLBUCKET )[0] ?? null,
+			'the chart span\'s TTL, not the window\'s 43,219'
+		);
+		$this->assertSame(
+			[ 'c4a1c4a1c4a1' => [ $b ], 'c4a2c4a2c4a2' => [ $b ], 'd5d5d5d5d5d5' => [ $k ] ],
+			$store->url_bucket_members( '2026-10-04-13-35', [ $b, $k ] )
+		);
+	}
+
+	/**
+	 * Persist one bucket's rows through `$fb`: `$rows` is family => hash =>
+	 * path, every row filed under b.example.
 	 *
+	 * @param array<string,array<string,string>> $rows Family => hash => path.
+	 * @param string                             $bucket The bucket they fall in.
+	 */
+	private function persist_bucket_rows( Flame_Builder_Node $fb, Stats_Store $store, array $rows, string $bucket = '2026-10-04-13-35' ): void {
+		$acc = ( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null );
+		foreach ( $rows as $family => $paths ) {
+			foreach ( $paths as $hash => $path ) {
+				$acc[ $family ]['b.example'][ $hash ] = self::positional_url_row( [ 'count' => 3, 'last_seen' => self::tick(), 'path' => $path ] );
+			}
+		}
+		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [ $bucket => $acc ] );
+		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, self::tick(), self::fine_floor( $store, self::tick() ) );
+	}
+
+	/**
+	 * A worker files each URL in a bucket's set once: a second flush of the
+	 * same URL in the bucket adds no member, and a URL new to the bucket in
+	 * that flush is filed.
+	 */
+	public function test_two_flushes_of_one_url_in_one_bucket_file_it_once(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 13, 36, 2, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+		Core::$now = \gmmktime( 13, 36, 7, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731', 'e9e9e9e9e9e9' => '/weka-2271' ] ] );
+
+		$b   = Stats_Store::server_key( 'b.example' );
+		$set = "urlbucket:2026-10-04-13-35:{$b}";
+		$this->assertSame(
+			[
+				[ $set => [ [ 'c4a1c4a1c4a1' => \gmmktime( 13, 36, 2, 10, 4, 2026 ) ], 90_000 + 3_605 ] ],
+				[ $set => [ [ 'e9e9e9e9e9e9' => \gmmktime( 13, 36, 7, 10, 4, 2026 ) ], 90_000 + 3_605 ] ],
+			],
+			self::adds_of( Stats_Store::NS_URLBUCKET ),
+			'kakapo once; weka by its own first flush'
+		);
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b ], 'e9e9e9e9e9e9' => [ $b ] ], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ) );
+	}
+
+	/**
+	 * The memo is by URL, not by family: a worker row a later flush brings
+	 * beside a URL's reader row files nothing.
+	 */
+	public function test_a_later_worker_row_of_a_filed_url_adds_no_member(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 13, 36, 2, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+		Core::$now = \gmmktime( 13, 36, 7, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats_worker' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+
+		$set = 'urlbucket:2026-10-04-13-35:' . Stats_Store::server_key( 'b.example' );
+		$this->assertSame( [ [ $set => [ [ 'c4a1c4a1c4a1' => \gmmktime( 13, 36, 2, 10, 4, 2026 ) ], 90_000 + 3_605 ] ] ], self::adds_of( Stats_Store::NS_URLBUCKET ) );
+	}
+
+	/**
+	 * A refused add leaves its URLs out of the memo, so the next flush of
+	 * the bucket files them again, though their rows landed the first time.
+	 */
+	public function test_a_refused_bucket_add_is_filed_again_on_the_next_flush(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fb ) );
+		$fb->set_stats_store( $store );
+		$store->refuse_buckets = true;
+		Core::$now             = \gmmktime( 13, 36, 2, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+		$b = Stats_Store::server_key( 'b.example' );
+		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ), 'the add was refused' );
+
+		$store->refuse_buckets = false;
+		Core::$now             = \gmmktime( 13, 36, 7, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+
+		$this->assertSame( [ [ "urlbucket:2026-10-04-13-35:{$b}" => [ [ 'c4a1c4a1c4a1' => \gmmktime( 13, 36, 7, 10, 4, 2026 ) ], 90_000 + 3_605 ] ] ], self::adds_of( Stats_Store::NS_URLBUCKET ) );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b ] ], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ) );
+	}
+
+	/**
+	 * The memo is the worker's own: a fresh node, as a restart builds, files
+	 * a URL whose slot an earlier worker already wrote and filed.
+	 */
+	public function test_a_restarted_worker_files_a_url_whose_slot_was_already_held(): void {
+		$first = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $first );
+		$first->set_stats_store( $store );
+		Core::$now = \gmmktime( 13, 36, 2, 10, 4, 2026 );
+		$this->persist_bucket_rows( $first, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+
+		$fresh = new Flame_Builder_Node();
+		$fresh->set_stats_store( $store );
+		Core::$now = \gmmktime( 13, 36, 7, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		$this->persist_bucket_rows( $fresh, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+
+		$set = 'urlbucket:2026-10-04-13-35:' . Stats_Store::server_key( 'b.example' );
+		$this->assertSame( [ [ $set => [ [ 'c4a1c4a1c4a1' => \gmmktime( 13, 36, 7, 10, 4, 2026 ) ], 90_000 + 3_605 ] ] ], self::adds_of( Stats_Store::NS_URLBUCKET ) );
+	}
+
+	/**
+	 * The memo is pruned by age, not by the last flush: an idle flush between
+	 * two requests of one URL in one bucket forgets nothing, so the URL is
+	 * filed once.
+	 */
+	public function test_an_idle_flush_between_two_requests_of_one_url_files_it_once(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 13, 36, 2, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+		Core::$now = \gmmktime( 13, 36, 7, 10, 4, 2026 );
+		$this->flush_buckets( $fb, [] );
+		Core::$now = \gmmktime( 13, 36, 12, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+
+		$set = 'urlbucket:2026-10-04-13-35:' . Stats_Store::server_key( 'b.example' );
+		$this->assertSame( [ [ $set => [ [ 'c4a1c4a1c4a1' => \gmmktime( 13, 36, 2, 10, 4, 2026 ) ], 90_000 + 3_605 ] ] ], self::adds_of( Stats_Store::NS_URLBUCKET ) );
+	}
+
+	/**
+	 * A refused add is owed, and a later flush carrying no request for the
+	 * URL files it: the URL needs no further traffic to land in its bucket.
+	 */
+	public function test_a_refused_bucket_add_lands_on_a_later_flush_with_no_request_for_it(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fb ) );
+		$fb->set_stats_store( $store );
+		$store->refuse_buckets = true;
+		Core::$now             = \gmmktime( 13, 36, 2, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+		Core::$now = \gmmktime( 13, 36, 7, 10, 4, 2026 );
+		$this->flush_buckets( $fb, [] );
+		$b = Stats_Store::server_key( 'b.example' );
+		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ), 'refused twice' );
+
+		$store->refuse_buckets = false;
+		Core::$now             = \gmmktime( 13, 41, 9, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'e9e9e9e9e9e9' => '/weka-2271' ] ], '2026-10-04-13-40' );
+		Core::$now = \gmmktime( 13, 41, 14, 10, 4, 2026 );
+		$this->flush_buckets( $fb, [] );
+
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b ] ], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ), 'the owed add landed' );
+		$this->assertSame(
+			[
+				[
+					"urlbucket:2026-10-04-13-35:{$b}" => [ [ 'c4a1c4a1c4a1' => \gmmktime( 13, 41, 9, 10, 4, 2026 ) ], 90_000 + 3_605 ],
+					"urlbucket:2026-10-04-13-40:{$b}" => [ [ 'e9e9e9e9e9e9' => \gmmktime( 13, 41, 9, 10, 4, 2026 ) ], 90_000 + 3_605 ],
+				],
+			],
+			self::adds_of( Stats_Store::NS_URLBUCKET ),
+			'filed once, beside the flush\'s own set, and owed no more'
+		);
+	}
+
+	/**
+	 * A bucket older than the fine floor ages out of the memo and the owed
+	 * list alike: its refused add is dropped, never filed.
+	 */
+	public function test_an_aged_out_buckets_owed_add_is_dropped(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fb ) );
+		$fb->set_stats_store( $store );
+		$store->refuse_buckets = true;
+		Core::$now             = \gmmktime( 13, 57, 2, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ], '2026-10-04-13-55' );
+
+		$store->refuse_buckets = false;
+		Core::$now             = \gmmktime( 14, 0, 31, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		$this->flush_buckets( $fb, [] );
+
+		$this->assertSame( '2026-10-04-14-00', self::fine_floor( $store, self::tick() ), 'the hour turned' );
+		$this->assertSame( [], $this->asked_verbs( Stats_Store::NS_URLBUCKET ), 'nothing owed is filed' );
+		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-55', [ Stats_Store::server_key( 'b.example' ) ] ) );
+	}
+
+	/**
+	 * A bucket below the fine floor stays in the memo while a flush holds
+	 * it: two flushes of a replayed bucket file its URL once.
+	 */
+	public function test_two_flushes_of_a_replayed_bucket_below_the_floor_file_its_url_once(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 15, 7, 2, 10, 4, 2026 );
+		$this->assertGreaterThan( '2026-10-04-13-35', self::fine_floor( $store, self::tick() ), 'the bucket sits below the floor' );
+		$this->forget_stats_asks();
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+		Core::$now = \gmmktime( 15, 7, 7, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+
+		$set = 'urlbucket:2026-10-04-13-35:' . Stats_Store::server_key( 'b.example' );
+		$this->assertSame( [ [ $set => [ [ 'c4a1c4a1c4a1' => \gmmktime( 15, 7, 2, 10, 4, 2026 ) ], 90_000 + 3_605 ] ] ], self::adds_of( Stats_Store::NS_URLBUCKET ) );
+	}
+
+	/**
+	 * A refused add in a bucket below the fine floor is owed to the next
+	 * flush holding that bucket, which files it beside its own URLs.
+	 */
+	public function test_a_refused_add_below_the_floor_lands_on_the_next_flush_holding_its_bucket(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fb ) );
+		$fb->set_stats_store( $store );
+		$store->refuse_buckets = true;
+		Core::$now             = \gmmktime( 15, 7, 2, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
+
+		$store->refuse_buckets = false;
+		Core::$now             = \gmmktime( 15, 7, 7, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'e9e9e9e9e9e9' => '/weka-2271' ] ] );
+
+		$b = Stats_Store::server_key( 'b.example' );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b ], 'e9e9e9e9e9e9' => [ $b ] ], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ), 'the owed add landed beside weka' );
+	}
+
+	/** A request is filed under its start plus its duration, rounded to the second. */
+	public function test_a_request_completes_at_its_start_plus_its_rounded_duration(): void {
+		$start = \gmmktime( 13, 39, 59, 10, 4, 2026 );
+
+		$this->assertSame( [ $start + 1, $start, $start + 3 ], [ Flame_Builder_Node::completed_at( $start, 700.0 ), Flame_Builder_Node::completed_at( $start, 499.0 ), Flame_Builder_Node::completed_at( $start, 2500.0 ) ] );
+	}
+
+	public function test_a_refused_bucket_write_is_logged_and_tallied(): void {
+		Core::$now = \gmmktime( 13, 38, 12, 10, 4, 2026 );
+		$err       = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fb ) );
+		$fb->set_stats_store( $store );
+		$acc   = ( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null );
+		$acc['url_stats']['b.example']['c4a1c4a1c4a1'] = self::positional_url_row( [ 'count' => 7, 'last_seen' => self::tick(), 'path' => '/kakapo-7731' ] );
+		$acc['url_stats']['k.example']['d5d5d5d5d5d5'] = self::positional_url_row( [ 'count' => 5, 'last_seen' => self::tick(), 'path' => '/kiwi-8842' ] );
+		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [ '2026-10-04-13-35' => $acc ] );
+		$store->refuse_buckets = true;
+
+		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, self::tick(), self::fine_floor( $store, self::tick() ) );
+
+		$writes = $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ] ?? [];
+		$this->assertStringContainsString( 'urlbucket write refused; 2 sets left unfiled', $err );
+		$this->assertSame( [ 2, 2 ], [ $writes['urlbucket sets'] ?? null, $writes[ 'refused ' . Stats_Store::NS_URLBUCKET ] ?? null ] );
+		$this->assertArrayNotHasKey( 'refused ' . Stats_Store::NS_URLTOKEN, $writes, 'the words landed' );
+		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-35', [ Stats_Store::server_key( 'b.example' ), Stats_Store::server_key( 'k.example' ) ] ) );
+	}
+
+	public function test_a_bucket_whose_index_went_unanswered_files_no_bucket_set(): void {
+		// A bucket dropped for its index files no URL rows, so no set names them.
+		$fb    = new Flame_Builder_Node();
+		$store = $this->unanswered_store( '/^urlsrv:/', $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 13, 38, 12, 10, 4, 2026 );
+		$acc       = ( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null );
+		$acc['url_stats']['b.example']['c4a1c4a1c4a1'] = self::positional_url_row( [ 'count' => 7, 'last_seen' => self::tick(), 'path' => '/kakapo-7731' ] );
+		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [ '2026-10-04-13-35' => $acc ] );
+		$this->fail_reads( $store, true );
+		$this->forget_stats_asks();
+
+		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, self::tick(), self::fine_floor( $store, self::tick() ) );
+
+		$this->fail_reads( $store, false );
+		$this->assertSame( [], $this->asked_verbs( Stats_Store::NS_URLBUCKET ) );
+		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-35', [ Stats_Store::server_key( 'b.example' ) ] ) );
+	}
+
+	/**
+	 * Each recorded `SADD` naming a set of `$ns`: set key => [ member map, ttl ].
+	 *
+	 * @param string $ns An `NS_*` namespace.
 	 * @return list<array<array-key,mixed>>
 	 */
-	private static function token_adds(): array {
+	private static function adds_of( string $ns ): array {
 		$adds = [];
 		foreach ( VerbHarness::ask_recorder()->asked as $asked ) {
 			if ( \is_array( $asked['value'] ) && isset( $asked['value']['SADD'] ) ) {
-				$adds[] = Core::arr( $asked['value']['SADD'] );
+				$of = \array_filter( Core::arr( $asked['value']['SADD'] ), static fn ( int|string $key ): bool => Stats_Store::namespace_of( (string) $key ) === $ns, \ARRAY_FILTER_USE_KEY );
+				if ( [] !== $of ) {
+					$adds[] = $of;
+				}
 			}
 		}
 		return $adds;
@@ -8116,7 +8437,7 @@ class TinyInternFlameBuilder extends Flame_Builder_Node {
 
 /**
  * A Stats_Store that records every key a flush wrote and every word it
- * filed, and can refuse the word filings outright.
+ * filed, and can refuse the word or bucket filings outright.
  */
 class RecordingStatsStore extends Stats_Store {
 	/** @var list<string> Words filed since a test last zeroed it. */
@@ -8127,6 +8448,9 @@ class RecordingStatsStore extends Stats_Store {
 
 	/** @var bool Whether a word filing is refused. */
 	public bool $refuse_tokens = false;
+
+	/** @var bool Whether a bucket filing is refused. */
+	public bool $refuse_buckets = false;
 
 	/** @var int `add_url_tokens()` calls since a test last zeroed it: one SADD each. */
 	public int $token_adds = 0;
@@ -8165,6 +8489,14 @@ class RecordingStatsStore extends Stats_Store {
 			$this->writes[] = $word;
 		}
 		return $this->refuse_tokens ? \array_fill( 0, \count( $sets ), false ) : parent::add_url_tokens( $sets, $now );
+	}
+
+	/**
+	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets `[ bucket, server_key, hashes ]`.
+	 * @return array<int,bool>
+	 */
+	public function add_url_buckets( array $sets, int $now ): array {
+		return $this->refuse_buckets ? \array_fill( 0, \count( $sets ), false ) : parent::add_url_buckets( $sets, $now );
 	}
 }
 

@@ -8,16 +8,11 @@
 
 import { useState, useEffect, useCallback, useRef } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
-import { Button } from '@wordpress/components';
-import { closeSmall } from '@wordpress/icons';
+import TagToken from '../../components/TagToken';
 import '../styles/tag-input.scss';
 
 /**
- * Tag Input Field component.
- *
- * A token carries `newspack-nodes-badge` beside its own class: the shared badge
- * paints it — background, radius and the inset ring — while `tag-input.scss`
- * contributes only geometry. Without that class a tag reads as bare text.
+ * Tag Input Field component, one `TagToken` per value.
  *
  * @param {Object}                     props                 Component props.
  * @param {string[]}                   [props.initialValues] Seeds the tag list at mount; later renders ignore it, so a caller showing a different list must remount the field.
@@ -101,24 +96,15 @@ export default function TagInputField( {
 			{ values.length > 0 && (
 				<div className={ containerClass }>
 					{ values.map( ( value, index ) => (
-						<div
+						<TagToken
 							key={ index }
-							className="event-logger-tag-token newspack-nodes-badge"
-						>
-							<span className="event-logger-tag-text">
-								{ value }
-							</span>
-							<Button
-								icon={ closeSmall }
-								iconSize={ 16 }
-								onClick={ () => removeValue( index ) }
-								label={ __(
-									'Remove',
-									'newspack-event-logger-nodes'
-								) }
-								className="event-logger-tag-remove"
-							/>
-						</div>
+							label={ value }
+							onRemove={ () => removeValue( index ) }
+							removeLabel={ __(
+								'Remove',
+								'newspack-event-logger-nodes'
+							) }
+						/>
 					) ) }
 				</div>
 			) }

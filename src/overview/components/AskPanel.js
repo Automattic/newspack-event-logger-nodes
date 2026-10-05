@@ -102,9 +102,9 @@ export function useAsk( {
 	const handlePick = useCallback(
 		( descriptors ) => {
 			// @longform No brief may quote numbers outside the scope it was
-			// asked in, so all four filters come from ONE source: the set the
+			// asked in, so every filter comes from ONE source: the set the
 			// visible rows were fetched under, falling back to the live pick
-			// before the first reply. A server read live beside three echoed
+			// before the first reply. A server read live beside the echoed
 			// filters names a server the table is not showing yet.
 			const server = urlFilters?.server ?? serverFilter;
 			ask(
@@ -116,6 +116,9 @@ export function useAsk( {
 					...( urlFilters?.errors_only ? { errors_only: '1' } : {} ),
 					...( urlFilters?.include_workers
 						? { include_workers: '1' }
+						: {} ),
+					...( urlFilters?.bucket
+						? { bucket: urlFilters.bucket }
 						: {} ),
 				} )
 			);

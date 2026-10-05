@@ -13,7 +13,8 @@
  * All of it also lives in the address bar — `?sort=`, `?order=`, `?q=`,
  * `?errors=`, `?workers=` and `?paged=` — so a shared link opens on the same
  * view. The page is `?paged=`, WordPress's own name, because `?page=` names
- * the admin screen.
+ * the admin screen. It owns neither the server filter nor the five-minute
+ * bucket a chart click above sets: the dashboard holds both and hands them in.
  *
  * Rows virtualize against window scroll, and each row's URL cell carries a
  * background bar scaling the active chart metric against the page's p95.
@@ -21,6 +22,7 @@
 
 import {
 	useMemo,
+	useState,
 	useRef,
 	useCallback,
 	useEffect,
@@ -31,6 +33,7 @@ import { TextControl } from '@wordpress/components';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { PAGE_CONTENT_CLASS } from '../components/DashboardShell';
 import SortHeaderButton from './components/SortHeaderButton';
+import BucketChip from './components/BucketChip';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import {
 	formatAge,
@@ -399,18 +402,21 @@ const UrlRow = memo(
  * The URL leaderboard: its search and filter controls, the virtualized table,
  * and the pager beneath it.
  *
- * @param {Object}                   props                Component props.
- * @param {Array<Object>}            props.urls           The page of rows the `urls` verb returned.
- * @param {?Object}                  props.selectedUrl    The row the detail modal is open on, or null.
- * @param {(url: Object) => void}    props.onSelect       Receives a row on click or Enter/Space, and is forwarded to each row.
- * @param {(params: Object) => void} props.onParamsChange Receives `search`, `sort`, `order`, `offset`, `errorsOnly` and `includeWorkers` whenever one of them changes.
- * @param {?number}                  [props.totalUrls]    Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs. Null until a reply has counted them.
- * @param {string}                   [props.metric]       Chart metric the row bars scale.
- * @param {boolean}                  [props.ranked]       Whether the server answered from its per-bucket ranked lists rather than the whole index.
- * @param {number}                   [props.now]          Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
- * @param {boolean}                  [props.errorCounts]  Whether the reply was built under "Errors Only", so the count column shows each row's `errors`.
- * @param {?string}                  [props.error]        The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
- * @param {boolean}                  [props.loading]      Whether a page is asked for and not yet answered.
+ * @param {Object}                   props                 Component props.
+ * @param {Array<Object>}            props.urls            The page of rows the `urls` verb returned.
+ * @param {?Object}                  props.selectedUrl     The row the detail modal is open on, or null.
+ * @param {(url: Object) => void}    props.onSelect        Receives a row on click or Enter/Space, and is forwarded to each row.
+ * @param {(params: Object) => void} props.onParamsChange  Receives `search`, `sort`, `order`, `offset`, `errorsOnly`, `includeWorkers` and `bucket` whenever one of them changes.
+ * @param {string}                   [props.bucket]        The five-minute bucket key the dashboard narrowed the table to; '' for none.
+ * @param {string}                   [props.server]        The server the dashboard scoped the table to; '' for every server.
+ * @param {() => void}               [props.onClearBucket] Drops that bucket, from its chip.
+ * @param {?number}                  [props.totalUrls]     Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs. Null until a reply has counted them.
+ * @param {string}                   [props.metric]        Chart metric the row bars scale.
+ * @param {boolean}                  [props.ranked]        Whether the server answered from its per-bucket ranked lists rather than the whole index.
+ * @param {number}                   [props.now]           Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
+ * @param {boolean}                  [props.errorCounts]   Whether the reply was built under "Errors Only", so the count column shows each row's `errors`.
+ * @param {?string}                  [props.error]         The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
+ * @param {boolean}                  [props.loading]       Whether a page is asked for and not yet answered.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlTable( {
@@ -418,6 +424,9 @@ export default function UrlTable( {
 	selectedUrl,
 	onSelect,
 	onParamsChange,
+	bucket = '',
+	server = '',
+	onClearBucket,
 	totalUrls = null,
 	metric = 'volume',
 	ranked = false,
@@ -451,6 +460,21 @@ export default function UrlTable( {
 		restorePage,
 		( n ) => ( 1 === n ? null : String( n ) )
 	);
+	// A new set starts on page 1, in render: no ask takes the old offset.
+	const filters = JSON.stringify( [
+		searchTerm,
+		sortField,
+		sortOrder,
+		errorsOnly,
+		includeWorkers,
+		bucket,
+		server,
+	] );
+	const [ pagedFilters, setPagedFilters ] = useState( filters );
+	if ( pagedFilters !== filters ) {
+		setPagedFilters( filters );
+		setCurrentPage( 1 );
+	}
 	const listRef = useRef( null );
 	const searchContainerRef = useRef( null );
 
@@ -478,8 +502,7 @@ export default function UrlTable( {
 	 * Sort by a column, flipping direction when it already holds the sort.
 	 *
 	 * A new field starts descending, which puts the busiest and costliest
-	 * rows first on the columns that rank them. The page resets: the same
-	 * offset under a new order names a different set of rows.
+	 * rows first on the columns that rank them.
 	 *
 	 * @param {string} field Field to sort by.
 	 */
@@ -490,17 +513,6 @@ export default function UrlTable( {
 			setSortField( field );
 			setSortOrder( 'desc' );
 		}
-		setCurrentPage( 1 );
-	};
-
-	/**
-	 * Search for a new term, from the first page.
-	 *
-	 * @param {string} value New search value.
-	 */
-	const handleSearchChange = ( value ) => {
-		setSearchTerm( value );
-		setCurrentPage( 1 );
 	};
 
 	// Clamped on READ: a shrinking set strands the page, pager and all.
@@ -531,6 +543,7 @@ export default function UrlTable( {
 			offset,
 			errorsOnly,
 			includeWorkers,
+			bucket,
 		} );
 	}, [
 		searchTerm,
@@ -540,6 +553,7 @@ export default function UrlTable( {
 		offset,
 		errorsOnly,
 		includeWorkers,
+		bucket,
 		onParamsChange,
 	] );
 
@@ -602,7 +616,7 @@ export default function UrlTable( {
 							'newspack-event-logger-nodes'
 						) }
 						value={ searchTerm }
-						onChange={ handleSearchChange }
+						onChange={ setSearchTerm }
 						__nextHasNoMarginBottom
 					/>
 				</div>
@@ -615,6 +629,7 @@ export default function UrlTable( {
 						? __( 'Showing Errors', 'newspack-event-logger-nodes' )
 						: __( 'Errors Only', 'newspack-event-logger-nodes' ) }
 				</button>
+				<BucketChip bucket={ bucket } onClear={ onClearBucket } />
 				<button
 					type="button"
 					className={ includeWorkers ? 'button is-active' : 'button' }

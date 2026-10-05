@@ -13,6 +13,7 @@
  * named fields, so no chart indexes a row by number.
  */
 
+import { useMemo } from '@wordpress/element';
 import { BUCKET_SECONDS } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 /**
@@ -27,6 +28,31 @@ const keyStart = ( key ) => {
 };
 
 /**
+ * A bucket key's five minutes as a UTC span, the way a filter names it.
+ *
+ * @param {?string} key A candidate bucket key, `YYYY-MM-DD-HH-MM`.
+ * @return {?string} `HH:MM–HH:MM UTC`, or null for anything of another shape.
+ */
+export const bucketSpan = ( key ) => {
+	if ( ! /^\d{4}(-\d{2}){4}$/.test( key ) ) {
+		return null;
+	}
+	const start = keyStart( key ).getTime();
+	const hhmm = ( ms ) => new Date( ms ).toISOString().slice( 11, 16 );
+	return `${ hhmm( start ) }–${ hhmm( start + BUCKET_SECONDS * 1000 ) } UTC`;
+};
+
+/**
+ * A bucket filter as a reader sees it. A key of another shape — a stale or
+ * hand-edited `?bucket=` the server refuses — reads as it arrived, so the
+ * control that clears it can still name it.
+ *
+ * @param {string} key A candidate bucket key.
+ * @return {string} Its `bucketSpan()`, or the key itself.
+ */
+export const bucketLabel = ( key ) => bucketSpan( key ) ?? key;
+
+/**
  * Build the slots a chart's time axis is drawn over, oldest first.
  *
  * @param {string[]|null} slots The reply's bucket keys, newest first.
@@ -39,6 +65,19 @@ export const buildChartSlots = ( slots ) =>
 		bucketKey: bucket,
 		seconds: BUCKET_SECONDS,
 	} ) );
+
+/**
+ * Map the slot index `AreaTimeChart` reports back to that slot's bucket key.
+ *
+ * @param {Array<{bucketKey:string}>}   axis          The axis the series sample.
+ * @param {(bucketKey: string) => void} [onSlotClick] The chart's listener.
+ * @return {((index: number) => void)|undefined} The frame's click, held stable; none without a listener.
+ */
+export const useSlotClick = ( axis, onSlotClick ) =>
+	useMemo(
+		() => onSlotClick && ( ( at ) => onSlotClick( axis[ at ].bucketKey ) ),
+		[ axis, onSlotClick ]
+	);
 
 /**
  * A dimensional row's fields, in wire order: `DIM_SUMS` — requests, the

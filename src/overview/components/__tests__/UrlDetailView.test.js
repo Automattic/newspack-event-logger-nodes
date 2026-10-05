@@ -1,4 +1,4 @@
-/* global KeyboardEvent */
+/* global globalThis, KeyboardEvent */
 /**
  * Tests for UrlDetailView — heavy child components mocked at the
  * module boundary. We exercise:
@@ -37,16 +37,21 @@ jest.mock( '../../ResponseTimeChart', () => ( {
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { breakdown, series, slots } ) =>
-		`AGGREGATE[breakdown=${ breakdown },series=${
+	default: ( { breakdown, series, slots, onSlotClick } ) => {
+		globalThis.__aggregateSlotClick = onSlotClick;
+		return `AGGREGATE[breakdown=${ breakdown },series=${
 			series ? 'set' : 'none'
 		}] keys:${ ( series?.names ?? [] ).join( ',' ) } slots:${
 			slots?.[ 0 ] ?? 'none'
-		} `,
+		} `;
+	},
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { slots } ) => `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`,
+	default: ( { slots, onSlotClick } ) => {
+		globalThis.__categorySlotClick = onSlotClick;
+		return `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`;
+	},
 } ) );
 
 import * as React from 'react';
@@ -114,6 +119,8 @@ function mount( overrides = {} ) {
 		onRequestSort: jest.fn(),
 		onSelectRequest: jest.fn(),
 		urlHash: 'deadbeef',
+		filters: { errors_only: false, bucket: '' },
+		onFilterChange: jest.fn(),
 		...overrides,
 	};
 	return {
@@ -310,15 +317,15 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 'asks its owner to flip "Errors Only" on click', () => {
-		const onErrorsOnlyChange = jest.fn();
-		const { container, unmount } = mount( { onErrorsOnlyChange } );
+		const onFilterChange = jest.fn();
+		const { container, unmount } = mount( { onFilterChange } );
 		const button = Array.from(
 			container.querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent === 'Errors Only' );
 		act( () => {
 			button.click();
 		} );
-		expect( onErrorsOnlyChange ).toHaveBeenCalledWith( true );
+		expect( onFilterChange ).toHaveBeenCalledWith( 'errors_only', true );
 		unmount();
 	} );
 
@@ -335,6 +342,7 @@ describe( 'UrlDetailView', () => {
 		};
 		const { container, unmount } = mount( {
 			urlDetail: { ...baseUrlDetail, stats: { errors: 7 } },
+			filters: { errors_only: true, bucket: '' },
 			detailErrors: { listed: 2, status_codes: { 500: 2 } },
 			sortedRequests: [
 				fatal,
@@ -391,6 +399,7 @@ describe( 'UrlDetailView', () => {
 		const last = new Date( 1748960388 * 1000 ).toLocaleString();
 		const { container, unmount } = mount( {
 			urlDetail: { ...baseUrlDetail, stats: { errors: 29 } },
+			filters: { errors_only: true, bucket: '' },
 			detailErrors: {
 				listed: 3,
 				timeouts: 1,
@@ -412,6 +421,7 @@ describe( 'UrlDetailView', () => {
 		const note = 'describe every request to this URL';
 		const errors = mount( {
 			urlDetail: { ...baseUrlDetail, stats: { errors: 0 } },
+			filters: { errors_only: true, bucket: '' },
 			detailErrors: { listed: 0, status_codes: {} },
 		} );
 		expect( errors.container.textContent ).toContain( note );
@@ -424,6 +434,53 @@ describe( 'UrlDetailView', () => {
 		expect( all.container.textContent ).not.toContain( note );
 		expect( all.container.textContent ).not.toContain( 'errors listed' );
 		all.unmount();
+	} );
+
+	it( 'narrows to the bucket either chart is clicked on', () => {
+		const onFilterChange = jest.fn();
+		const { unmount } = mount( { onFilterChange } );
+		globalThis.__aggregateSlotClick( '2026-10-04-13-35' );
+		globalThis.__categorySlotClick( '2026-10-04-13-40' );
+		expect( onFilterChange.mock.calls ).toEqual( [
+			[ 'bucket', '2026-10-04-13-35' ],
+			[ 'bucket', '2026-10-04-13-40' ],
+		] );
+		unmount();
+	} );
+
+	it( 'shows its bucket as a chip beside Errors Only, which clears it', () => {
+		const onFilterChange = jest.fn();
+		const { container, unmount } = mount( {
+			filters: { errors_only: false, bucket: '2026-10-04-13-35' },
+			onFilterChange,
+		} );
+		const chip = container.querySelector( '.newspack-nodes-badge' );
+		expect( chip.textContent ).toContain( '13:35–13:40 UTC' );
+		expect( chip.previousElementSibling.textContent ).toBe( 'Errors Only' );
+		act( () => chip.querySelector( 'button' ).click() );
+		expect( onFilterChange ).toHaveBeenCalledWith( 'bucket', '' );
+		unmount();
+	} );
+
+	it( 'notes under a bucket that the charts and flame cover every request', () => {
+		const note = 'describe every request to this URL';
+		const bucketed = mount( {
+			filters: { errors_only: false, bucket: '2026-10-04-13-35' },
+		} );
+		const banner = bucketed.container.querySelector( '[role="status"]' );
+		expect( banner.textContent ).toContain( note );
+		expect( banner.textContent ).toContain( '13:35–13:40 UTC' );
+		bucketed.unmount();
+
+		const both = mount( {
+			filters: { errors_only: true, bucket: '2026-10-04-13-35' },
+			urlDetail: { ...baseUrlDetail, stats: { errors: 2 } },
+			detailErrors: { listed: 2, status_codes: {} },
+		} );
+		const bothBanner = both.container.querySelector( '[role="status"]' );
+		expect( bothBanner.textContent ).toContain( 'errors' );
+		expect( bothBanner.textContent ).toContain( '13:35–13:40 UTC' );
+		both.unmount();
 	} );
 
 	it( 'labels an incomplete (I) request', async () => {

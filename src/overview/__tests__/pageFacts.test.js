@@ -49,6 +49,22 @@ test( 'a selected URL names itself and what it is', () => {
 	expect( facts.stats.max_ms ).toBe( 2600 );
 } );
 
+test( 'a selected URL nothing timed reached carries max_ms as unmeasured, not 0', () => {
+	const facts = pageFacts( {
+		selectedUrl: { hash: 'moa', url: '/moa' },
+		urlDetail: {
+			stats: { count: 3, avg_ms: null, max_ms: null, max_peak_mb: 2.5 },
+		},
+	} );
+
+	expect( facts.stats ).toEqual( {
+		count: 3,
+		avg_ms: null,
+		max_ms: null,
+		max_peak_mb: 2.5,
+	} );
+} );
+
 test( 'an errors-only URL briefs its exact errors and the summary of the list, as the url: brief does', () => {
 	const summary = { listed: 2, timeouts: 1, fatals: 1, fatal_avg_ms: 2417 };
 	const facts = pageFacts( {
@@ -82,6 +98,29 @@ test( 'a URL listing every request says so and carries no error summary', () => 
 	expect( facts.errors_only ).toBe( false );
 	expect( facts.stats.count ).toBe( 4210 );
 	expect( facts ).not.toHaveProperty( 'error_summary' );
+} );
+
+test( "a URL names the modal's own bucket, beside the table's filters", () => {
+	const facts = pageFacts( {
+		urlFilters: { bucket: '2026-10-04-13-35' },
+		selectedUrl: { hash: 'kea', url: '/kea' },
+		urlDetail: { stats: { count: 17, avg_ms: 240, max_ms: 910 } },
+		detailFilters: { errors_only: false, bucket: '2026-10-04-13-40' },
+	} );
+
+	expect( facts.bucket ).toBe( '2026-10-04-13-40' );
+	expect( facts.filters.bucket ).toBe( '2026-10-04-13-35' );
+	expect( facts.stats.count ).toBe( 17 );
+} );
+
+test( 'a URL listing its whole window names no bucket', () => {
+	const facts = pageFacts( {
+		selectedUrl: { hash: 'kea', url: '/kea' },
+		urlDetail: { stats: { count: 4210 } },
+		detailFilters: { errors_only: false, bucket: '' },
+	} );
+
+	expect( facts.bucket ).toBe( '' );
 } );
 
 test( 'a URL no timed request reached carries its mean as unmeasured', () => {
@@ -259,6 +298,7 @@ test( 'every filter the reply echoes reaches the facts, include_workers first', 
 			search: '/wp-json',
 			errors_only: false,
 			include_workers: true,
+			bucket: '2026-10-04-13-35',
 		},
 	} );
 
@@ -267,6 +307,7 @@ test( 'every filter the reply echoes reaches the facts, include_workers first', 
 		search: '/wp-json',
 		errors_only: false,
 		include_workers: true,
+		bucket: '2026-10-04-13-35',
 	} );
 } );
 
