@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.122.0] - 2026-10-05
+
 ### Added
 
 - **A chart click narrows the URL table, or the URL modal, to the five-minute bucket clicked.** A plain click on the overview's breakdown or category chart sets the table's bucket: the table re-asks `urls --bucket`, a removable chip reading the bucket as a UTC span, `13:35–13:40 UTC ×`, sits beside Errors Only, and the bucket rides the address bar as `?bucket=`, so a shared link opens on it and a stale one shows the refusal with the chip still there to clear it. A URL opened from a bucketed table opens its modal on that bucket, and a click on the modal's breakdown or category chart sets the modal's bucket alone, with its own chip beside its Errors Only toggle; clearing one leaves the other. Shift+click, Enter or Space resizes a chart, the substrate's `AreaTimeChart` reporting a plain click's slot, and the response-time scatter keeps its dot click, which opens a request.
