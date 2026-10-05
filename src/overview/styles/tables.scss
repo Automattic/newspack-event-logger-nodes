@@ -34,6 +34,10 @@
 	}
 }
 
+.event-logger-table__sort-caret {
+	margin-left: 4px;
+}
+
 .event-logger-table__row {
 	display: grid;
 	gap: 8px;
@@ -128,8 +132,8 @@
 
 	.event-logger-table__header,
 	.event-logger-table__row {
-		// Time fits `12/22/2026, 12:17:54 PM`, the longest en-US toLocaleString().
-		grid-template-columns: 24ch 50px minmax(0, 1fr) 50px 70px 50px;
+		// Time fits `12/22/2026, 12:17:54 PM`; sort headers fit label + caret.
+		grid-template-columns: 24ch 50px minmax(0, 1fr) 62px 78px 50px;
 	}
 
 	.event-logger-table__row {

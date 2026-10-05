@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A sort caret stays on its header's line.** On an errors-only page the URL table's count column read "Errors ▼" in a 60px track, and every monospace skin needs 63px, so the caret wrapped beneath the label; the request table's Status and Duration headers ran past their tracks. Both tables draw one `SortHeaderButton`, whose caret is its own element with no space to break at, and the three tracks widen to fit their label and caret in every skin: count 66px, Status 62px, Duration 78px.
+
 ## [0.120.1] - 2026-10-04
 
 ### Changed
