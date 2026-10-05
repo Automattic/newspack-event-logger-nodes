@@ -27,8 +27,11 @@ import {
 	Core,
 	TO,
 	FROM,
+	TYPE,
 	VALUE,
+	TM_ERROR,
 	newMessage,
+	ensureSession,
 	forgetSession,
 	__setAuthFetch,
 } from '@newspack-nodes/runtime';
@@ -148,9 +151,18 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		// Without it the refresh asks once and never again: the outbox holds
 		// an ask that nothing answers until the fail-open window.
 		expect( Core.node( 'url-detail:in' ).target ).toEqual( [
-			'url-detail:transform',
+			'url-detail:in:current',
 			'url-detail:fetch',
 		] );
+		// Every slice gates its edge on the Fetcher's outbox.
+		expect( Core.node( 'url-detail:in:current' ).target ).toEqual( [
+			'url-detail:transform',
+		] );
+		expect( Core.node( 'urls:in' ).target ).toEqual( [
+			'urls:in:current',
+			'urls:fetch',
+		] );
+		expect( Core.node( 'urls:in:current' ).fetcher ).toBe( 'urls:fetch' );
 		// Every name is `<subject>:<role>`; the old spellings are gone.
 		for ( const name of [
 			'perf:timer',
@@ -271,6 +283,55 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		} );
 	} );
 
+	// @longform A filter change is a new question. The answer to the old one,
+	// still on the wire when the filter changed, must not render over the
+	// loading state the new question put up, nor over its answer after.
+	test( 'a reply to the old server filter never reaches the views', async () => {
+		const held = [];
+		installFakeCommandWire( ( m ) => {
+			const name = m[ VALUE ]?.name;
+			if ( 'overview' !== name && 'urls' !== name ) {
+				return null;
+			}
+			if ( 'web7' === option( m[ VALUE ].arguments, 'server' ) ) {
+				return 'overview' === name
+					? { total_requests: 7317 }
+					: { data: [ { hash: 'beef7317' } ], totals: { urls: 1 } };
+			}
+			return new Promise( ( resolve ) =>
+				held.push( () =>
+					resolve(
+						'overview' === name
+							? { total_requests: 4471 }
+							: {
+									data: [ { hash: 'dead4471' } ],
+									totals: { urls: 1 },
+							  }
+					)
+				)
+			);
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {},
+		} );
+		await act( async () => {} );
+		expect( held ).toHaveLength( 2 );
+
+		await act( async () => {
+			rerender( { serverFilter: 'web7' } );
+		} );
+		await act( async () => {
+			held.forEach( ( release ) => release() );
+		} );
+
+		expect( Core.node( 'overview:view' ).view.data ).toEqual( {
+			total_requests: 7317,
+		} );
+		expect( Core.node( 'urls:view' ).view.data ).toEqual( [
+			{ hash: 'beef7317' },
+		] );
+	} );
+
 	test( 'a serverFilter change fires an immediate poke (not just next tick)', async () => {
 		const wire = installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
@@ -363,7 +424,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 	// FROM `request-detail:view`, so one node carried two protocols — its own
 	// controls and a command reply. Every other slice mints from a receiver and
 	// forwards to its view; this one now does too.
-	test( 'dump_request is minted from the receiver, not from the view', async () => {
+	test( 'dump_request is asked through its Fetcher, answered at the receiver', async () => {
 		const wire = installWire( { dump_request: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -379,11 +440,143 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 
 		const receiver = Core.node( 'request-detail:in' );
 		expect( receiver ).toBeTruthy();
-		expect( receiver.target ).toContain( 'request-detail:view' );
+		expect( receiver.target ).toEqual( [
+			'request-detail:in:current',
+			'request-detail:fetch',
+		] );
 		// The reply still reaches the view, through the receiver.
 		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
 			rid: 'r1',
 		} );
+	} );
+
+	// The request modal's own Timer runs only while a request is open to see.
+	test( 'arms request-detail:timer while a request is selected and visible', async () => {
+		installWire( { dump_request: { rid: 'kea4471' } } );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {},
+		} );
+		await act( async () => {} );
+		expect( Core.node( 'request-detail:timer' ).mode ).toBe( 'inactive' );
+
+		await act( async () => {
+			rerender( { selectedRequest: 'kea4471', requestPartition: 3 } );
+		} );
+		expect( Core.node( 'request-detail:timer' ).mode ).toBe( 'router' );
+
+		await act( async () => setVisibility( 'hidden' ) );
+		expect( Core.node( 'request-detail:timer' ).mode ).toBe( 'inactive' );
+		await act( async () => setVisibility( 'visible' ) );
+		expect( Core.node( 'request-detail:timer' ).mode ).toBe( 'router' );
+
+		await act( async () => {
+			rerender( {} );
+		} );
+		expect( Core.node( 'request-detail:timer' ).mode ).toBe( 'inactive' );
+	} );
+
+	// @longform A selection made with no session parks its ask: nothing can
+	// sign it yet. The Timer's next tick after the session appears sends it,
+	// so the modal does not spin on an ask that never went out.
+	test( 'sends an ask parked with no session on the tick after one appears', async () => {
+		installWire( { dump_request: { rid: 'kea4471' } } );
+		forgetSession();
+		__setAuthFetch( async () => null );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {},
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { selectedRequest: 'kea4471', requestPartition: 3 } );
+		} );
+		await act( async () => {
+			Core.node( ROUTER ).fireCb();
+		} );
+		expect( Core.node( 'request-detail:fetch' ).outbox ).toEqual( [
+			expect.objectContaining( { askedAt: 0 } ),
+		] );
+
+		const wire = installWire( { dump_request: { rid: 'kea4471' } } );
+		// The failed /auth left a backoff; a fresh start mints at once.
+		forgetSession();
+		await act( async () => {
+			await ensureSession();
+		} );
+		await act( async () => {
+			Core.node( ROUTER ).fireCb();
+		} );
+
+		expect( countVerbs( wire.batches, 'dump_request' ) ).toBe( 1 );
+		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
+			rid: 'kea4471',
+		} );
+	} );
+
+	// A late answer about the request the operator has left never overwrites
+	// the one now open.
+	test( 'a late dump_request for the previous rid never reaches the view', async () => {
+		const held = [];
+		installFakeCommandWire( ( m ) => {
+			if ( 'dump_request' !== m[ VALUE ]?.name ) {
+				return null;
+			}
+			const rid = m[ VALUE ].arguments[ 0 ];
+			return 'kea4471' === rid
+				? new Promise( ( resolve ) =>
+						held.push( () => resolve( { rid } ) )
+				  )
+				: { rid };
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {},
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { selectedRequest: 'kea4471', requestPartition: 3 } );
+		} );
+		await act( async () => {
+			rerender( { selectedRequest: 'kahu9932', requestPartition: 3 } );
+		} );
+		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
+			rid: 'kahu9932',
+		} );
+
+		await act( async () => {
+			held.forEach( ( release ) => release() );
+		} );
+
+		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
+			rid: 'kahu9932',
+		} );
+	} );
+
+	// Loading keeps the slice, so an uncleared modal shows the old record.
+	test( 'opening another request empties the modal before it loads', async () => {
+		installFakeCommandWire( ( m ) => {
+			if ( 'dump_request' !== m[ VALUE ]?.name ) {
+				return null;
+			}
+			const rid = m[ VALUE ].arguments[ 0 ];
+			return 'kahu9932' === rid ? new Promise( () => {} ) : { rid };
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {},
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { selectedRequest: 'kea4471', requestPartition: 3 } );
+		} );
+		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
+			rid: 'kea4471',
+		} );
+
+		await act( async () => {
+			rerender( { selectedRequest: 'kahu9932', requestPartition: 3 } );
+		} );
+
+		const view = Core.node( 'request-detail:view' ).view;
+		expect( view.loading ).toBe( true );
+		expect( view.data ).not.toEqual( { rid: 'kea4471' } );
 	} );
 
 	test( 'selecting a request fires dump_request with the partition', async () => {
@@ -500,6 +693,37 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before );
 		jest.advanceTimersByTime( 300 );
 		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
+		unmount();
+		jest.useRealTimers();
+	} );
+
+	// @longform A search is the question, not its address: an ask naming its
+	// arguments as a subject put the whole search on FROM, and one long
+	// enough passed MAX_FROM_SIZE, so the command was dropped unsent.
+	test( 'a long search goes out, addressed bare', async () => {
+		jest.useFakeTimers();
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
+		let api;
+		const { unmount } = renderHook( () => {
+			api = usePerformanceGraph();
+			return api;
+		} );
+		await act( async () => {} );
+		const search = 'kakapo-'.repeat( 200 );
+		api.handleUrlParamsChange( {
+			search,
+			sort: 'count',
+			order: 'desc',
+			offset: 0,
+		} );
+		jest.advanceTimersByTime( 300 );
+
+		const sent = wire.batches
+			.flat()
+			.filter( ( m ) => m[ VALUE ]?.name === 'urls' );
+		const asked = sent[ sent.length - 1 ];
+		expect( option( asked[ VALUE ].arguments, 'search' ) ).toBe( search );
+		expect( asked[ FROM ] ).toBe( 'urls:in' );
 		unmount();
 		jest.useRealTimers();
 	} );
@@ -640,6 +864,146 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 			2: { segment: 5, offset: 8192 },
 			3: { segment: 1, offset: 612 },
 		} );
+	} );
+
+	// The arguments ARE the question, so the ask needs no subject to name it.
+	test( 'the open fetch asks through url-detail:fetch, addressed bare', async () => {
+		const wire = installWire( {
+			dump_url: { last_modified: 1, requests: [] },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'f00d7731' },
+			} );
+		} );
+
+		const opened = findVerb( wire.batches, 'dump_url' );
+		expect( opened[ FROM ] ).toBe( 'url-detail:in' );
+		// Answered, so nothing stands and the next tick mints the refresh.
+		expect( Core.node( 'url-detail:fetch' ).outbox ).toEqual( [] );
+	} );
+
+	test( "a refresh tick's reply reaches the view", async () => {
+		let replies = 0;
+		installFakeCommandWire( ( m ) =>
+			'dump_url' === m[ VALUE ]?.name
+				? {
+						last_modified: 1,
+						positions: { 4: { segment: 2, offset: 913 } },
+						requests: [
+							{
+								rid: `kahu-${ ++replies }`,
+								timestamp: 1787000000 + replies,
+							},
+						],
+				  }
+				: null
+		);
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'f00d7731' },
+			} );
+		} );
+		await act( async () => {
+			Core.node( ROUTER ).fireCb();
+		} );
+
+		expect(
+			Core.node( 'url-detail:view' ).view.data.requests.map(
+				( r ) => r.rid
+			)
+		).toEqual( [ 'kahu-2', 'kahu-1' ] );
+	} );
+
+	test( 'a reply to the ask an Errors Only flip superseded never lands', async () => {
+		const held = [];
+		installFakeCommandWire( ( m ) => {
+			if ( 'dump_url' !== m[ VALUE ]?.name ) {
+				return null;
+			}
+			if (
+				! m[ VALUE ].arguments.some( ( t ) =>
+					t.startsWith( '--errors_only' )
+				)
+			) {
+				return new Promise( ( resolve ) => held.push( resolve ) );
+			}
+			return {
+				last_modified: 1,
+				requests: [
+					{ rid: 'tout-1', timestamp: 1787000300, error_status: 'T' },
+				],
+			};
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'f00d7731' },
+			} );
+		} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'f00d7731' },
+				urlErrorsOnly: true,
+			} );
+		} );
+		await act( async () => {
+			held.forEach( ( resolve ) =>
+				resolve( {
+					last_modified: 1,
+					requests: [ { rid: 'clean-1', timestamp: 1787000900 } ],
+				} )
+			);
+		} );
+
+		expect(
+			Core.node( 'url-detail:view' ).view.data.requests.map(
+				( r ) => r.rid
+			)
+		).toEqual( [ 'tout-1' ] );
+	} );
+
+	// A refusal of the modal's ask goes to its view, around the merge.
+	test( 'a NOT_AVAILABLE bounce for the open modal shows on its view', async () => {
+		installFakeCommandWire( ( m ) =>
+			'dump_url' === m[ VALUE ]?.name ? undefined : null
+		);
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'f00d4471' },
+			} );
+		} );
+		const bounce = newMessage();
+		bounce[ TYPE ] = TM_ERROR;
+		bounce[ TO ] = 'url-detail:in';
+		bounce[ VALUE ] = 'NOT_AVAILABLE\n';
+		await act( async () => {
+			Core.node( INTERPRETER ).fill( bounce );
+		} );
+
+		expect( Core.node( 'url-detail:view' ).view.error ).toMatch(
+			/NOT_AVAILABLE/
+		);
 	} );
 
 	test( 'stops the url-detail:timer when a request detail opens, re-arms when it closes', async () => {
@@ -793,6 +1157,74 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		expect( option( overview[ VALUE ].arguments, 'breakdown' ) ).toBe(
 			'server'
 		);
+	} );
+
+	/**
+	 * A busy URL's newest requests bury its errors, so "Errors Only" is the
+	 * server's question: the walk then passes the clean requests to reach
+	 * them. Turning it on starts the list again, so the ask carries no cursor,
+	 * and every refresh after it keeps asking for errors.
+	 */
+	test( 'Errors Only asks dump_url for errors, from a cleared list', async () => {
+		const wire = installWire( {
+			dump_url: {
+				last_modified: 1,
+				positions: { 1: { segment: 4, offset: 7319 } },
+				requests: [],
+			},
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'beef4471' },
+			} );
+		} );
+		const opened = findVerb( wire.batches, 'dump_url' );
+		expect( opened[ VALUE ].arguments ).not.toContain( '--errors_only' );
+
+		// The flip restarts the list under the new ask, keeping the flame, and
+		// the view drops the old list rather than show it under the new toggle.
+		const recordControls = ( name ) => {
+			const seen = [];
+			const node = Core.node( name );
+			const fill = node.fill.bind( node );
+			node.fill = ( m ) => {
+				if ( m[ VALUE ]?.action ) {
+					seen.push( m[ VALUE ] );
+				}
+				fill( m );
+			};
+			return seen;
+		};
+		const controls = recordControls( 'url-detail:transform' );
+		const viewControls = recordControls( 'url-detail:view' );
+		wire.batches.length = 0;
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'beef4471' },
+				urlErrorsOnly: true,
+			} );
+		} );
+		const asked = findVerb( wire.batches, 'dump_url' );
+		expect( asked[ VALUE ].arguments ).toContain( '--errors_only' );
+		expect( option( asked[ VALUE ].arguments, 'after' ) ).toBeUndefined();
+		expect( controls ).toEqual( [ { action: 'relist' } ] );
+		expect( viewControls ).toEqual( [
+			{ action: 'clear' },
+			{ action: 'loading' },
+		] );
+
+		wire.batches.length = 0;
+		await act( async () => {
+			Core.node( ROUTER ).fireCb();
+		} );
+		const refreshed = findVerb( wire.batches, 'dump_url' );
+		expect( refreshed[ VALUE ].arguments ).toContain( '--errors_only' );
 	} );
 
 	test( 'the selected server is emitted in the dump_url args', async () => {

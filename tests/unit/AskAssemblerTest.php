@@ -2,7 +2,9 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\App\Ask_Assembler;
+use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -62,7 +64,8 @@ class AskAssemblerTest extends TestCase {
 			null,
 			'alpha.example',
 			false,
-			1_741_000_800
+			1_741_000_800,
+			false
 		);
 
 		$this->assertSame( 'alpha.example', $brief['server'] );
@@ -307,7 +310,7 @@ class AskAssemblerTest extends TestCase {
 			[ 'rid' => 'c', 'duration_ms' => 1400, 'status_code' => 200, 'partition' => 0 ],
 		];
 
-		$brief = Ask_Assembler::for_url( $stats, $requests, $this->rule(), '', false, 1_741_000_800 );
+		$brief = Ask_Assembler::for_url( $stats, $requests, $this->rule(), '', false, 1_741_000_800, false );
 
 		$this->assertSame( 'url', $brief['subject'] );
 		$this->assertStringContainsString( '[REDACTED]', $brief['url'] );
@@ -327,13 +330,34 @@ class AskAssemblerTest extends TestCase {
 			$requests[] = [ 'rid' => "r{$n}", 'duration_ms' => 100.0 * $n, 'status_code' => 200, 'partition' => 0 ];
 		}
 
-		$complete = Ask_Assembler::for_url( $stats, $requests, null, 'delta.example', false, 1_741_000_800 );
-		$stopped  = Ask_Assembler::for_url( $stats, [], null, 'delta.example', true, 1_741_000_800 );
+		$complete = Ask_Assembler::for_url( $stats, $requests, null, 'delta.example', false, 1_741_000_800, false );
+		$stopped  = Ask_Assembler::for_url( $stats, [], null, 'delta.example', true, 1_741_000_800, false );
 
 		$this->assertCount( Ask_Assembler::WORST_REQUESTS, $complete['worst_requests'] );
 		$this->assertFalse( $complete['scan_stopped_early'] );
 		$this->assertTrue( $stopped['scan_stopped_early'] );
 		$this->assertArrayNotHasKey( 'worst_requests_truncated', $complete );
+	}
+
+	/**
+	 * A list at the cap is the newest RECENT_REQUEST_LIMIT, not the window, so
+	 * the brief says so rather than reading "every request since".
+	 */
+	public function test_a_url_brief_says_when_its_list_holds_the_newest_only(): void {
+		$limit = Performance_CI_Node::RECENT_REQUEST_LIMIT;
+		$row   = static fn ( int $n ): array => [ 'rid' => "kahu{$n}", 'duration_ms' => 40 + $n, 'status_code' => 200, 'partition' => 2 ];
+		$brief = static fn ( int $listed ): array => Ask_Assembler::for_url(
+			[ 'url' => 'https://example.test/kahu', 'hash' => 'c4c4c4c4c4c4', 'count' => 9133 ],
+			\array_map( $row, \range( 1, $listed ) ),
+			null,
+			'iota.example',
+			false,
+			1_741_000_800,
+			false
+		);
+
+		$this->assertTrue( $brief( $limit )['requests_capped'] );
+		$this->assertFalse( $brief( $limit - 1 )['requests_capped'] );
 	}
 
 	public function test_a_url_brief_names_the_window_its_requests_were_drawn_from(): void {
@@ -345,7 +369,8 @@ class AskAssemblerTest extends TestCase {
 			null,
 			'zeta.example',
 			false,
-			1_741_000_800
+			1_741_000_800,
+			false
 		);
 
 		$this->assertSame( 1_741_000_800, $brief['requests_window_start'] );
@@ -510,7 +535,8 @@ class AskAssemblerTest extends TestCase {
 			$this->rule(),
 			'',
 			false,
-			1_741_000_800
+			1_741_000_800,
+			false
 		);
 
 		$this->assertArrayNotHasKey( 'breakdown', $brief );
@@ -542,7 +568,8 @@ class AskAssemblerTest extends TestCase {
 			$this->rule(),
 			'',
 			false,
-			1_741_000_800
+			1_741_000_800,
+			false
 		);
 
 		$this->assertSame(
@@ -790,7 +817,8 @@ class AskAssemblerTest extends TestCase {
 			null,
 			'',
 			false,
-			1_741_000_800
+			1_741_000_800,
+			false
 		);
 
 		$this->assertNull( $brief['rule'] );
@@ -1161,5 +1189,122 @@ class AskAssemblerTest extends TestCase {
 	/** Only a start row opens a span to pair. */
 	public function test_a_row_that_opens_no_span_carries_none(): void {
 		$this->assertArrayNotHasKey( 'span', Ask_Assembler::for_entry( $this->query_span_record(), 8 ) );
+	}
+
+	/**
+	 * `tests/fixtures/error-summary.json` is the case list, and the JS
+	 * `errorSummary()` reads it too, so the URL modal's header and the brief
+	 * summarize one list the same way. Compared as the wire carries it.
+	 *
+	 * @param list<array<string,mixed>> $requests Request rows.
+	 * @param array<string,mixed>       $expected The summary.
+	 */
+	#[DataProvider( 'error_summary_provider' )]
+	public function test_error_summary_matches_the_shared_case_list( array $requests, array $expected ): void {
+		$wire = static fn ( mixed $value ): mixed => \json_decode( (string) \wp_json_encode( $value ), true );
+
+		$this->assertSame( $wire( $expected ), $wire( Ask_Assembler::error_summary( $requests ) ) );
+	}
+
+	/**
+	 * @return array<string,array{list<array<string,mixed>>,array<string,mixed>}>
+	 */
+	public static function error_summary_provider(): array {
+		$cases = \json_decode( (string) \file_get_contents( __DIR__ . '/../fixtures/error-summary.json' ), true );
+		\assert( \is_array( $cases ) );
+		$out = [];
+		foreach ( $cases as $case ) {
+			$out[ (string) $case['name'] ] = [ $case['requests'], $case['expected'] ];
+		}
+		return $out;
+	}
+
+	/** An errors-only brief is of the errors listed, never the URL's whole traffic. */
+	public function test_an_errors_only_url_brief_carries_the_exact_count_and_the_summary_in_place_of_whole_url_stats(): void {
+		$requests = [
+			[ 'rid' => 'kea4410', 'partition' => 2, 'timestamp' => 1741000456, 'duration_ms' => 2417, 'status_code' => 500, 'peak_mb' => 91, 'error_status' => 'F' ],
+			[ 'rid' => 'kea4411', 'partition' => 0, 'timestamp' => 1741000123, 'duration_ms' => 864000, 'status_code' => 0, 'peak_mb' => 37, 'error_status' => 'T' ],
+		];
+
+		$brief = Ask_Assembler::for_url(
+			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5, 'errors' => 37 ],
+			$requests,
+			$this->rule(),
+			'kiwi.example',
+			false,
+			1_741_000_800,
+			true
+		);
+
+		$this->assertTrue( $brief['errors_only'] );
+		$this->assertSame( [ 'errors' => 37 ], $brief['stats'] );
+		$this->assertEquals( Ask_Assembler::error_summary( $requests ), $brief['error_summary'] );
+		$this->assertSame( 1, $brief['error_summary']['timeouts'] );
+		$this->assertSame(
+			[ 'hash' => '5e5e5e5e5e5e', 'server' => 'kiwi.example', 'errors_only' => '1' ],
+			$brief['fetch'][0]['arguments']
+		);
+	}
+
+	/** The full list keeps the URL's whole stats, and summarizes no errors. */
+	public function test_a_full_url_brief_keeps_the_whole_url_stats(): void {
+		$brief = Ask_Assembler::for_url(
+			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5, 'errors' => 37 ],
+			[],
+			$this->rule(),
+			'kiwi.example',
+			false,
+			1_741_000_800,
+			false
+		);
+
+		$this->assertFalse( $brief['errors_only'] );
+		$this->assertSame(
+			[ 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5 ],
+			$brief['stats']
+		);
+		$this->assertArrayNotHasKey( 'error_summary', $brief );
+		$this->assertSame(
+			[ 'hash' => '5e5e5e5e5e5e', 'server' => 'kiwi.example' ],
+			$brief['fetch'][0]['arguments']
+		);
+	}
+
+	public function test_a_url_brief_cannot_be_built_without_saying_whether_it_lists_errors_alone(): void {
+		$this->expectException( \ArgumentCountError::class );
+		Ask_Assembler::for_url(
+			[ 'url' => 'https://example.test/quiet', 'hash' => 'd0d0d0d0d0d0', 'count' => 3 ],
+			[],
+			null,
+			'theta.example',
+			false,
+			1_741_000_800
+		);
+	}
+
+	/**
+	 * `dump_url` rows carry a null duration where none was measured (decision
+	 * 24), so a null ranks after every number and a number ranks by itself:
+	 * the brief trusts the row rather than reading its status a second time.
+	 */
+	public function test_worst_requests_rank_a_null_duration_after_every_number(): void {
+		$brief = Ask_Assembler::for_url(
+			[ 'hash' => 'a7a7a7a7a7a7', 'url' => 'https://example.test/tui', 'count' => 5 ],
+			[
+				[ 'rid' => 'tout1', 'duration_ms' => null, 'status_code' => 0, 'error_status' => 'T', 'partition' => 1 ],
+				[ 'rid' => 'fatal1', 'duration_ms' => 2417, 'status_code' => 500, 'error_status' => 'F', 'partition' => 2 ],
+				[ 'rid' => 'abort1', 'duration_ms' => 41000, 'status_code' => 0, 'error_status' => 'A', 'partition' => 0 ],
+				[ 'rid' => 'clean1', 'duration_ms' => 300, 'status_code' => 200, 'error_status' => null, 'partition' => 3 ],
+				[ 'rid' => 'zero1', 'duration_ms' => null, 'status_code' => 500, 'error_status' => 'F', 'partition' => 0 ],
+			],
+			null,
+			'',
+			false,
+			1_741_000_800,
+			true
+		);
+
+		$this->assertSame( [ 'abort1', 'fatal1', 'clean1', 'tout1', 'zero1' ], \array_column( $brief['worst_requests'], 'rid' ) );
+		$this->assertSame( [ 41000.0, 2417.0, 300.0, null, null ], \array_column( $brief['worst_requests'], 'duration_ms' ) );
 	}
 }

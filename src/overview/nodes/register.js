@@ -24,12 +24,16 @@
  * payload shape. The polled pair takes `loading` when a filter change pokes
  * the tick; the modal slices take `loading`, `clear` and `error` as a
  * selection opens, closes or fails validation; and the merge takes `clear`, so
- * a reopened modal's reply is not discarded as a duplicate.
+ * a reopened modal's reply is not discarded as a duplicate, and `relist` when
+ * Errors Only flips.
+ *
+ * No class here decides whether a reply is still wanted: the substrate's
+ * `Current` gate on each slice's receiver edge passes only the answer to an
+ * ask its Fetcher still holds, and sends a refusal to the view itself.
  */
 import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import { registerSliceViews } from '@newspack-nodes/shared/nodes/slice-view-node';
 import { UrlDetailMergeNode } from './url-detail-merge-node';
-import { UrlsCurrentNode } from './urls-current-node';
 
 /**
  * A slice whose payload IS its data, plus the status fields the graph drives.
@@ -142,11 +146,5 @@ export const views = {
 		 * payload `usePerformanceGraph` reads the `after` cursor off.
 		 */
 		UrlDetailMerge: UrlDetailMergeNode,
-
-		/**
-		 * The gate on the `urls` slice's edge: it lets through only the
-		 * answer to a question the `urls` Fetcher still asks.
-		 */
-		UrlsCurrent: UrlsCurrentNode,
 	} ),
 };

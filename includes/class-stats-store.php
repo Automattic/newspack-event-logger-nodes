@@ -2857,25 +2857,15 @@ class Stats_Store {
 	}
 
 	/**
-	 * Whether a name answers a term: every token of the term is a WORD of it,
-	 * or the whole term appears when the term has no token at all.
+	 * Whether a name answers a term: every token of the term is a WORD of
+	 * it, read the way the index files words, so a candidate whose set named
+	 * it for one word still has to carry every other.
 	 *
-	 * The index files whole words, so the fold it falls back to has to read
-	 * a term the same way. Matching a substring here instead would make `77`
-	 * name `/wombat-1177` through the fold and not through the index, so
-	 * which rows a search returned would turn on whether some other token
-	 * happened to be too common to narrow.
-	 *
-	 * @api The fold, for a candidate the token index already named.
+	 * @api The URL walk, for a candidate the token index named.
 	 * @param string       $name   The URL's path.
-	 * @param string       $term   The lowercased search term.
 	 * @param list<string> $tokens The term's tokens, as `term_tokens()` spells them.
 	 */
-	public static function term_matches( string $name, string $term, array $tokens ): bool {
-		$name = \strtolower( $name );
-		if ( [] === $tokens ) {
-			return \str_contains( $name, $term );
-		}
+	public static function term_matches( string $name, array $tokens ): bool {
 		return [] === \array_diff( $tokens, self::term_tokens( $name ) );
 	}
 

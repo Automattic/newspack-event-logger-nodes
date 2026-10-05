@@ -49,6 +49,41 @@ test( 'a selected URL names itself and what it is', () => {
 	expect( facts.stats.max_ms ).toBe( 2600 );
 } );
 
+test( 'an errors-only URL briefs its exact errors and the summary of the list, as the url: brief does', () => {
+	const summary = { listed: 2, timeouts: 1, fatals: 1, fatal_avg_ms: 2417 };
+	const facts = pageFacts( {
+		selectedUrl: { hash: 'kea', url: '/kea' },
+		urlDetail: { stats: { count: 4210, avg_ms: 812, errors: 29 } },
+		detailErrors: summary,
+	} );
+
+	expect( facts.surface ).toBe( 'url' );
+	expect( facts.errors_only ).toBe( true );
+	expect( facts.stats ).toEqual( { errors: 29 } );
+	expect( facts.error_summary ).toBe( summary );
+} );
+
+test( 'an errors-only URL whose count has not answered carries it as absent', () => {
+	const facts = pageFacts( {
+		selectedUrl: { hash: 'kea', url: '/kea' },
+		urlDetail: { stats: {} },
+		detailErrors: { listed: 0 },
+	} );
+
+	expect( facts.stats.errors ).toBeNull();
+} );
+
+test( 'a URL listing every request says so and carries no error summary', () => {
+	const facts = pageFacts( {
+		selectedUrl: { hash: 'kea', url: '/kea' },
+		urlDetail: { stats: { count: 4210, avg_ms: 812, errors: 29 } },
+	} );
+
+	expect( facts.errors_only ).toBe( false );
+	expect( facts.stats.count ).toBe( 4210 );
+	expect( facts ).not.toHaveProperty( 'error_summary' );
+} );
+
 test( 'a URL no timed request reached carries its mean as unmeasured', () => {
 	const facts = pageFacts( {
 		selectedUrl: { hash: 'ccc', url: '/ruru-6603' },

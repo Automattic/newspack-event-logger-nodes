@@ -1,0 +1,80 @@
+[
+  {
+    "name": "a timeout's eviction wait is no fatal timing, and an unmeasured fatal is none either",
+    "requests": [
+      { "rid": "kea4410", "partition": 2, "timestamp": 1741000456, "duration_ms": 2417, "status_code": 500, "peak_mb": 91, "error_status": "F" },
+      { "rid": "kea4411", "partition": 0, "timestamp": 1741000123, "duration_ms": null, "status_code": 0, "peak_mb": 37, "error_status": "T" },
+      { "rid": "kea4412", "partition": 3, "timestamp": 1741000300, "duration_ms": null, "status_code": 500, "peak_mb": 64, "error_status": "F" }
+    ],
+    "expected": {
+      "listed": 3,
+      "timeouts": 1,
+      "fatals": 2,
+      "fatal_avg_ms": 2417,
+      "fatal_max_ms": 2417,
+      "avg_peak_mb": 64,
+      "max_peak_mb": 91,
+      "first_at": 1741000123,
+      "last_at": 1741000456,
+      "status_codes": { "0": 1, "500": 2 }
+    }
+  },
+  {
+    "name": "mixed status codes, 0 among them, and rows that are neither error",
+    "requests": [
+      { "rid": "tui9901", "partition": 1, "timestamp": 1741003600, "duration_ms": 1200, "status_code": 200, "peak_mb": 12, "error_status": "F" },
+      { "rid": "tui9902", "partition": 0, "timestamp": 1741003000, "duration_ms": 3300, "status_code": 503, "peak_mb": 30, "error_status": "F" },
+      { "rid": "tui9903", "partition": 2, "timestamp": 1741002900, "duration_ms": null, "status_code": 0, "peak_mb": 8, "error_status": "T" },
+      { "rid": "tui9904", "partition": 2, "timestamp": 1741003900, "duration_ms": null, "status_code": 0, "peak_mb": 10, "error_status": "T" },
+      { "rid": "tui9905", "partition": 1, "timestamp": 1741003100, "duration_ms": null, "status_code": 0, "peak_mb": 20, "error_status": "A" },
+      { "rid": "tui9906", "partition": 3, "timestamp": 1741003200, "duration_ms": 75, "status_code": 404, "peak_mb": 40, "error_status": null }
+    ],
+    "expected": {
+      "listed": 6,
+      "timeouts": 2,
+      "fatals": 2,
+      "fatal_avg_ms": 2250,
+      "fatal_max_ms": 3300,
+      "avg_peak_mb": 20,
+      "max_peak_mb": 40,
+      "first_at": 1741002900,
+      "last_at": 1741003900,
+      "status_codes": { "0": 3, "200": 1, "404": 1, "503": 1 }
+    }
+  },
+  {
+    "name": "timeouts alone measure no fatal",
+    "requests": [
+      { "rid": "moa3101", "partition": 0, "timestamp": 1741007777, "duration_ms": null, "status_code": 0, "peak_mb": 6, "error_status": "T" },
+      { "rid": "moa3102", "partition": 1, "timestamp": 1741007000, "duration_ms": null, "status_code": 0, "peak_mb": 9, "error_status": "T" }
+    ],
+    "expected": {
+      "listed": 2,
+      "timeouts": 2,
+      "fatals": 0,
+      "fatal_avg_ms": null,
+      "fatal_max_ms": null,
+      "avg_peak_mb": 7.5,
+      "max_peak_mb": 9,
+      "first_at": 1741007000,
+      "last_at": 1741007777,
+      "status_codes": { "0": 2 }
+    }
+  },
+  {
+    "name": "an empty list summarizes to nothing measured",
+    "requests": [],
+    "expected": {
+      "listed": 0,
+      "timeouts": 0,
+      "fatals": 0,
+      "fatal_avg_ms": null,
+      "fatal_max_ms": null,
+      "avg_peak_mb": null,
+      "max_peak_mb": null,
+      "first_at": null,
+      "last_at": null,
+      "status_codes": {}
+    }
+  }
+]

@@ -2,10 +2,20 @@ import { __ } from '@wordpress/i18n';
 import { formatGroupedCount } from '@newspack-nodes/shared/utils/formatters';
 
 /**
+ * A duration in whole milliseconds.
+ *
+ * @param {number} n Milliseconds.
+ * @return {string} `n` rounded, with its unit.
+ */
+export const wholeMs = ( n ) => `${ n.toFixed( 0 ) }ms`;
+
+/**
  * Every headline number, in its display format and under its labels: the
  * Overview card's full `label`, and the `short` one the URL modal header uses.
+ * `shown`, where a stat declares it, decides from the value whether the stat
+ * appears at all.
  *
- * @type {Object<string,{label: string, short?: string, format: (n: number) => string, onlyWhenPositive?: boolean}>}
+ * @type {Object<string,{label: string, short?: string, format: (n: number) => string, shown?: (n: *) => boolean}>}
  */
 const STATS = {
 	urls: {
@@ -18,14 +28,35 @@ const STATS = {
 	},
 	errors: {
 		label: __( 'Total Errors', 'newspack-event-logger-nodes' ),
+		short: __( 'errors', 'newspack-event-logger-nodes' ),
 		format: formatGroupedCount,
-		// Only an errors-only reply counts them.
-		onlyWhenPositive: true,
+		// Only an errors-only reply counts them, and zero is a count.
+		shown: ( n ) => 'number' === typeof n,
+	},
+	timeouts: {
+		label: __( 'Timeouts', 'newspack-event-logger-nodes' ),
+		short: __( 'timeouts', 'newspack-event-logger-nodes' ),
+		format: formatGroupedCount,
+	},
+	fatals: {
+		label: __( 'Fatals', 'newspack-event-logger-nodes' ),
+		short: __( 'fatals', 'newspack-event-logger-nodes' ),
+		format: formatGroupedCount,
+	},
+	fatal_avg_ms: {
+		label: __( 'Avg Fatal Duration', 'newspack-event-logger-nodes' ),
+		short: __( 'fatal avg', 'newspack-event-logger-nodes' ),
+		format: wholeMs,
+	},
+	fatal_max_ms: {
+		label: __( 'Max Fatal Duration', 'newspack-event-logger-nodes' ),
+		short: __( 'fatal max', 'newspack-event-logger-nodes' ),
+		format: wholeMs,
 	},
 	avg_ms: {
 		label: __( 'Avg Response', 'newspack-event-logger-nodes' ),
 		short: __( 'avg', 'newspack-event-logger-nodes' ),
-		format: ( n ) => `${ n.toFixed( 0 ) }ms`,
+		format: wholeMs,
 	},
 	requests_per_second: {
 		label: __( 'Req/s (recent)', 'newspack-event-logger-nodes' ),
@@ -37,7 +68,7 @@ const STATS = {
 		short: __( 'mem', 'newspack-event-logger-nodes' ),
 		format: ( n ) => `${ n.toFixed( 1 ) }MB`,
 		// Absent on installs that do not sample peak memory.
-		onlyWhenPositive: true,
+		shown: ( n ) => n > 0,
 	},
 };
 
@@ -54,7 +85,8 @@ const STATS = {
 export function headlineStats( totals, keys ) {
 	return keys
 		.filter(
-			( key ) => ! STATS[ key ].onlyWhenPositive || totals?.[ key ] > 0
+			( key ) =>
+				! STATS[ key ].shown || STATS[ key ].shown( totals?.[ key ] )
 		)
 		.map( ( key ) => ( {
 			key,

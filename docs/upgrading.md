@@ -49,6 +49,21 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   dashboard showing `performance_urls` or an `overview:` brief under a
   search shows that error and asks for another word.
 
+- **A search with no word is refused.** A term with no run of two
+  characters or more, such as `a` or `/`, answers
+  `search "<term>" names no word: a search needs a word of 2 characters or more`
+  where it answered zero rows. Nothing walks URL names for a term any more.
+
+- **A rid lookup's not-found is definite.** `search_requests`,
+  `dump_request` and a `request:` ask walk the indexes with no time budget,
+  so they no longer throw `request index scan budget spent before rid <rid>
+  was reached`; `Request not found` means no partition holds the rid.
+
+- **A capped request list is complete.** `dump_url`'s `scan_stopped_early`
+  is true only when the walk spent its time budget; a list of 500 is the
+  newest 500 exactly. The `url:` brief carries `requests_capped` for that
+  case, since such a list is not every request since `requests_window_start`.
+
 - **The 0.112.x Ledger stats are withdrawn; rebuild the stats Tables.**
   The stats are 0.111.2's Tables again. Run, for each active topology that
   includes `flame-builder`:
@@ -80,8 +95,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   the position the caller sent. Do not build the cursor from the rows: a walk
   the budget cut returns its newest rows and leaves older lines unread. `requests` is the 500 that finished last
   across every partition, sorted by completion rather than start, and
-  `scan_stopped_early` is true whenever a partition held more than 500 in the
-  window, so a busy URL carries it from its first read. `aggregate_flame`,
+  `scan_stopped_early` is true only when the walk spent its time budget; a
+  list of 500 is the newest 500, not the whole window. `aggregate_flame`,
   `aggregate_profiles` and `last_modified` describe every partition's traffic
   summed, where they were partition 0's; a client deduplicating on
   `last_modified` alone drops replies carrying new requests.

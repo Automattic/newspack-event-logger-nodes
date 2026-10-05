@@ -3,7 +3,7 @@
  * Tests for UrlDetailView — heavy child components mocked at the
  * module boundary. We exercise:
  *   - sortable column headers fire onRequestSort
- *   - "Errors Only" toggle filters the request list
+ *   - "Errors Only" toggle asks its owner, and labels the server's list
  *   - clicking a request row fires onSelectRequest
  *   - aggregate flame / breakdown / category time series sections
  *     mount when their data is present.
@@ -322,14 +322,108 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'lists only errors while "Errors Only" is on', () => {
-		const { container, unmount } = mount( { errorsOnly: true } );
-		// Only r2 (error_status=F) remains.
-		expect( container.textContent ).toContain( 'Recent Requests (1)' );
+	it( 'lists the errors the server answered while "Errors Only" is on', () => {
+		// The server narrows the list; the view draws what it is handed.
+		const fatal = {
+			rid: 'fatal-6620',
+			timestamp: 1748960777,
+			method: 'GET',
+			duration_ms: 1540,
+			peak_mb: 3,
+			status_code: 500,
+			error_status: 'F',
+		};
+		const { container, unmount } = mount( {
+			urlDetail: { ...baseUrlDetail, stats: { errors: 7 } },
+			detailErrors: { listed: 2, status_codes: { 500: 2 } },
+			sortedRequests: [
+				fatal,
+				{ ...fatal, rid: 'timeout-6621', error_status: 'T' },
+			],
+		} );
+		expect( container.textContent ).toContain( 'Recent Requests (2)' );
 		expect( container.textContent ).toContain( 'Showing Errors' );
-		expect( container.textContent ).toContain( 'r2' );
-		expect( container.textContent ).not.toContain( 'r1' );
+		expect( container.textContent ).toContain( 'fatal-6620' );
+		expect( container.textContent ).toContain( 'timeout-6621' );
 		unmount();
+	} );
+
+	it( 'shows an unmeasured duration as a dash and bars it nothing', () => {
+		// A timeout's duration is the builder's eviction wait (decision 24).
+		const { container, unmount } = mount( {
+			sortedRequests: [
+				{
+					rid: 'tout-864',
+					timestamp: 1748960301,
+					duration_ms: null,
+					peak_mb: 37,
+					status_code: 0,
+					error_status: 'T',
+				},
+				{
+					rid: 'fatal-2417',
+					timestamp: 1748960302,
+					duration_ms: 2417,
+					peak_mb: 91,
+					status_code: 500,
+					error_status: 'F',
+				},
+			],
+		} );
+		const row = ( rid ) =>
+			[
+				...container.querySelectorAll( '.event-logger-table__row' ),
+			].find( ( r ) => r.querySelector( 'code' ).textContent === rid );
+		const cells = ( rid ) =>
+			row( rid ).querySelectorAll( '.event-logger-table__cell' );
+
+		expect( cells( 'tout-864' )[ 4 ].textContent ).toBe( '—' );
+		expect( cells( 'tout-864' )[ 2 ].style.background ).toContain( ' 0%' );
+		expect( cells( 'fatal-2417' )[ 4 ].textContent ).toBe( '2417ms' );
+		expect( cells( 'fatal-2417' )[ 2 ].style.background ).toContain(
+			' 100%'
+		);
+		unmount();
+	} );
+
+	it( 'under Errors Only, lines the list up against the exact count, its span and its status codes', () => {
+		const first = new Date( 1748960301 * 1000 ).toLocaleString();
+		const last = new Date( 1748960388 * 1000 ).toLocaleString();
+		const { container, unmount } = mount( {
+			urlDetail: { ...baseUrlDetail, stats: { errors: 29 } },
+			detailErrors: {
+				listed: 3,
+				timeouts: 1,
+				fatals: 2,
+				first_at: 1748960301,
+				last_at: 1748960388,
+				status_codes: { 0: 1, 500: 2 },
+			},
+		} );
+
+		expect( container.textContent ).toContain( '3 of 29 errors listed' );
+		expect( container.textContent ).toContain( `first ${ first }` );
+		expect( container.textContent ).toContain( `last ${ last }` );
+		expect( container.textContent ).toContain( 'no status ×1, 500 ×2' );
+		unmount();
+	} );
+
+	it( 'notes under Errors Only that the charts describe every request while the list holds errors', () => {
+		const note = 'describe every request to this URL';
+		const errors = mount( {
+			urlDetail: { ...baseUrlDetail, stats: { errors: 0 } },
+			detailErrors: { listed: 0, status_codes: {} },
+		} );
+		expect( errors.container.textContent ).toContain( note );
+		expect( errors.container.textContent ).toContain(
+			'0 of 0 errors listed'
+		);
+		errors.unmount();
+
+		const all = mount();
+		expect( all.container.textContent ).not.toContain( note );
+		expect( all.container.textContent ).not.toContain( 'errors listed' );
+		all.unmount();
 	} );
 
 	it( 'labels an incomplete (I) request', async () => {
@@ -357,35 +451,6 @@ describe( 'UrlDetailView', () => {
 		expect(
 			cell.querySelector( 'span' ).getAttribute( 'title' )
 		).toContain( 'Incomplete' );
-		unmount();
-	} );
-
-	it( 'keeps a timeout and a fatal under "Errors Only", and drops an abort and a gap', () => {
-		const request = ( rid, errorStatus ) => ( {
-			rid,
-			timestamp: 1748960777,
-			method: 'GET',
-			duration_ms: 1540,
-			peak_mb: 3,
-			status_code: 500,
-			error_status: errorStatus,
-		} );
-		const { container, unmount } = mount( {
-			errorsOnly: true,
-			sortedRequests: [
-				request( 'fatal-4417', 'F' ),
-				request( 'timeout-2208', 'T' ),
-				request( 'abort-3391', 'A' ),
-				request( 'gap-9714', 'I' ),
-				request( 'clean-5003', '-' ),
-			],
-		} );
-		expect( container.textContent ).toContain( 'Recent Requests (2)' );
-		expect( container.textContent ).toContain( 'fatal-4417' );
-		expect( container.textContent ).toContain( 'timeout-2208' );
-		for ( const rid of [ 'abort-3391', 'gap-9714', 'clean-5003' ] ) {
-			expect( container.textContent ).not.toContain( rid );
-		}
 		unmount();
 	} );
 
@@ -441,7 +506,7 @@ describe( 'UrlDetailView', () => {
 				{
 					rid: 'r-timeout',
 					timestamp: 1748960003,
-					duration_ms: 0,
+					duration_ms: null,
 					peak_mb: 0,
 					error_status: 'T',
 				},

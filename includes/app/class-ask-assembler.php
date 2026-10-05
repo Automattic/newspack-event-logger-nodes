@@ -554,46 +554,63 @@ class Ask_Assembler {
 	 * required arguments: how it ended, and what it was of. A narrower number
 	 * that does not say so reads as the site's.
 	 *
+	 * An errors-only brief is of the errors the walk listed: its `stats` keep
+	 * only the URL's exact `errors`, and `error_summary()` of the list stands
+	 * in for the whole URL's count and means, which describe other traffic.
+	 *
+	 * The worst requests rank by duration, and a null one — no sample taken,
+	 * as `dump_url`'s rows carry it (decision 24) — ranks after every number.
+	 *
 	 * @param array<array-key,mixed>            $stats             A URL index row.
 	 * @param array<int,array<array-key,mixed>> $requests          Recent requests for that URL.
 	 * @param Rule|null                         $rule              The governing rule, or null.
 	 * @param string                            $server            Server the numbers are of; '' is site-wide.
 	 * @param bool                              $scan_stopped_early Whether the walk behind `$requests` ran out of budget.
 	 * @param int                               $requests_window_start Unix time the window those requests were drawn from opens.
+	 * @param bool                              $errors_only       Whether `$requests` lists the URL's timeouts and fatals alone.
 	 * @return array<string,mixed>
 	 */
-	public static function for_url( array $stats, array $requests, ?Rule $rule, string $server, bool $scan_stopped_early, int $requests_window_start ): array {
-		\usort(
-			$requests,
-			static fn ( array $a, array $b ): int =>
-				Core::num_float( $b['duration_ms'] ?? 0 ) <=> Core::num_float( $a['duration_ms'] ?? 0 )
-		);
+	public static function for_url( array $stats, array $requests, ?Rule $rule, string $server, bool $scan_stopped_early, int $requests_window_start, bool $errors_only ): array {
+		$summary = $errors_only ? [ 'error_summary' => self::error_summary( $requests ) ] : [];
+		// A measured duration is positive, so -1 ranks every null last.
+		\usort( $requests, static fn ( array $a, array $b ): int => ( $b['duration_ms'] ?? -1 ) <=> ( $a['duration_ms'] ?? -1 ) );
+		$hash = Core::as_string( $stats['hash'] ?? '' );
 
 		return [
 			'subject'            => 'url',
 			'url'                => Log_Manager::redact_url( Core::as_string( $stats['url'] ?? '' ) ),
-			'hash'               => Core::as_string( $stats['hash'] ?? '' ),
+			'hash'               => $hash,
 			// What these numbers are OF; the pointer below carries it too.
 			'server'             => $server,
-			'stats'              => [
-				'count'       => Core::num_int( $stats['count'] ?? 0 ),
-				'avg_ms'      => Stats_Store::measured_mean( $stats['avg_ms'] ?? null ),
-				'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
-				'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
-			],
+			'errors_only'        => $errors_only,
+			'stats'              => $errors_only
+				? [ 'errors' => Core::num_int( $stats['errors'] ?? null ) ]
+				: [
+					'count'       => Core::num_int( $stats['count'] ?? 0 ),
+					'avg_ms'      => Stats_Store::measured_mean( $stats['avg_ms'] ?? null ),
+					'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
+					'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
+				],
+			...$summary,
 			'worst_requests'     => \array_map(
-				[ self::class, 'worst_request_shape' ],
+				self::worst_request_shape( ... ),
 				\array_slice( $requests, 0, self::WORST_REQUESTS )
 			),
 			// The WALK, not the five-row slice above it, which always cuts.
 			'scan_stopped_early' => $scan_stopped_early,
 			// What the walk is OF: an empty list is empty of this window only.
 			'requests_window_start' => $requests_window_start,
+			// A full list is the window's newest requests, not all of them.
+			'requests_capped'    => \count( $requests ) >= Performance_CI_Node::RECENT_REQUEST_LIMIT,
 			'rule'               => self::rule_shape( $rule ),
 			'findings'           => Findings::for_url( $stats, $rule ),
 			'fetch'              => self::fetch(
 				'dump_url',
-				[ 'hash' => Core::as_string( $stats['hash'] ?? '' ), 'server' => $server ]
+				[
+					'hash'        => $hash,
+					'server'      => $server,
+					'errors_only' => $errors_only ? '1' : '',
+				]
 			),
 			'caveat'             => Findings::caveat(),
 		];
@@ -632,6 +649,72 @@ class Ask_Assembler {
 			'log_plugin_loads'   => $rule->log_plugin_loads,
 			'trace_hooks'        => $rule->trace_hooks,
 			'trace_callers'      => $rule->trace_callers,
+		];
+	}
+
+	/**
+	 * One recent request, named rather than located: enough to ask about it
+	 * (`request:<rid>:<partition>`) and to see why it is on this list. A null
+	 * duration, one nobody measured, rides as null.
+	 *
+	 * @param array<array-key,mixed> $request A `dump_url` request row.
+	 * @return array<string,mixed>
+	 */
+	private static function worst_request_shape( array $request ): array {
+		return [
+			'rid'          => Core::as_string( $request['rid'] ?? '' ),
+			'partition'    => Core::num_int( $request['partition'] ?? 0 ),
+			'duration_ms'  => null === ( $request['duration_ms'] ?? null ) ? null : Core::num_float( $request['duration_ms'] ),
+			'status_code'  => Core::num_int( $request['status_code'] ?? 0 ),
+			'error_status' => Core::as_string( $request['error_status'] ?? '' ),
+		];
+	}
+
+	/**
+	 * What a list of `dump_url` request rows holds, error by error: how many
+	 * timed out and how many fataled, how long the measured fatals took, the
+	 * peak memory over every row, when the first and the last started, and
+	 * the status codes they answered. The JS `errorSummary()` is its twin, and
+	 * both read the case list in `tests/fixtures/error-summary.json`.
+	 *
+	 * @param array<int,array<array-key,mixed>> $requests The rows.
+	 * @return array{listed:int,timeouts:int,fatals:int,fatal_avg_ms:?float,fatal_max_ms:?float,avg_peak_mb:?float,max_peak_mb:?float,first_at:?int,last_at:?int,status_codes:\stdClass}
+	 */
+	public static function error_summary( array $requests ): array {
+		$timeouts = 0;
+		$fatals   = 0;
+		$fatal_ms = [];
+		$peaks    = [];
+		$starts   = [];
+		$codes    = [];
+		foreach ( $requests as $r ) {
+			$status    = $r['error_status'] ?? '-';
+			$timeouts += 'T' === $status ? 1 : 0;
+			if ( 'F' === $status ) {
+				++$fatals;
+				if ( null !== ( $r['duration_ms'] ?? null ) ) {
+					$fatal_ms[] = Core::num_float( $r['duration_ms'] );
+				}
+			}
+			$peaks[]        = Core::num_float( $r['peak_mb'] ?? null );
+			$starts[]       = Core::num_int( $r['timestamp'] ?? null );
+			$code           = Core::num_int( $r['status_code'] ?? null );
+			$codes[ $code ] = ( $codes[ $code ] ?? 0 ) + 1;
+		}
+		\ksort( $codes );
+
+		return [
+			'listed'       => \count( $requests ),
+			'timeouts'     => $timeouts,
+			'fatals'       => $fatals,
+			'fatal_avg_ms' => Stats_Store::mean( \array_sum( $fatal_ms ), \count( $fatal_ms ) ),
+			'fatal_max_ms' => [] === $fatal_ms ? null : \max( $fatal_ms ),
+			'avg_peak_mb'  => Stats_Store::mean( \array_sum( $peaks ), \count( $peaks ) ),
+			'max_peak_mb'  => [] === $peaks ? null : \max( $peaks ),
+			'first_at'     => [] === $starts ? null : \min( $starts ),
+			'last_at'      => [] === $starts ? null : \max( $starts ),
+			// An object even when keyed 0..n, which would encode as a list.
+			'status_codes' => (object) $codes,
 		];
 	}
 
@@ -919,23 +1002,5 @@ class Ask_Assembler {
 	 */
 	private static function errors_of( array $counted ): array {
 		return isset( $counted['errors'] ) ? [ 'errors' => Core::num_int( $counted['errors'] ) ] : [];
-	}
-
-	/**
-	 * One recent request, named rather than located: enough to ask about it
-	 * (`request:<rid>:<partition>`) and to see why it is on this list.
-	 *
-	 * @param mixed $request A stored index row.
-	 * @return array<string,mixed>
-	 */
-	private static function worst_request_shape( mixed $request ): array {
-		$request = \is_array( $request ) ? $request : [];
-		return [
-			'rid'          => Core::as_string( $request['rid'] ?? '' ),
-			'partition'    => Core::num_int( $request['partition'] ?? 0 ),
-			'duration_ms'  => Core::num_float( $request['duration_ms'] ?? 0 ),
-			'status_code'  => Core::num_int( $request['status_code'] ?? 0 ),
-			'error_status' => Core::as_string( $request['error_status'] ?? '' ),
-		];
 	}
 }
