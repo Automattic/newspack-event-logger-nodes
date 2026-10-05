@@ -32,10 +32,10 @@
  *  - Stats reads fail soft, as `Stats_Store` and the dashboards' "no data"
  *    state do.
  *  - Stats come from the flame builder's store alone.
- *  - Disk scans are bounded twice. The per-URL walk stops at `scan_floor()`,
- *    in a segment that closed before it, because its index carries time.
- *    Every walk, a missing-rid lookup included, also stops after
- *    MAX_SCAN_S of walking, one budget per verb.
+ *  - Disk scans: the per-URL walk stops at `scan_floor()`, in a segment that
+ *    closed before it, because its index carries time, and after MAX_SCAN_S
+ *    of walking, as do its flame rebuild and `grep_requests`. A rid lookup
+ *    walks unbudgeted, so a rid it does not find is not there.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -88,17 +88,16 @@ use Newspack_Nodes\Table_Unavailable;
 class Performance_CI_Node extends Service_CI_Node {
 
 	/**
-	 * Seconds one disk-walking verb may spend reading — .idx lines, or the
-	 * firehose lines `grep_requests` groups — the BACKSTOP for a walk that has
-	 * no better bound, not the bound the common case reaches.
-	 *
-	 * The per-URL walk stops at `scan_floor()`, so its real cost is a retention
-	 * window of index, whatever the index holds behind that. What is left under
-	 * this cap is a walk with nothing to stop it: a rid lookup, which searches
-	 * for one line and cannot know how far back it sits; the flame index,
-	 * whose lines carry no time to compare (`Flame_Builder_Node::index_completion_columns()`);
-	 * and `grep_requests`, whose `recent` window can hold more than a reply
-	 * has time to group.
+	 * Seconds one budgeted walk may spend reading — .idx lines, or the
+	 * firehose lines `grep_requests` groups. Three walks take it:
+	 * `find_recent_requests_for_url()`, `rebuilt_url_aggregate()` over the
+	 * flame index, whose lines carry no time to compare
+	 * (`Flame_Builder_Node::index_completion_columns()`), and
+	 * `run_grep_requests()`, whose `recent` window can hold more than a reply
+	 * has time to group. The per-URL walk also stops at `scan_floor()`, so
+	 * its real cost is a retention window of index. A rid lookup takes no
+	 * budget: it reads until it finds the rid or runs out of index, so its
+	 * not-found is definite.
 	 *
 	 * Time, not a line count, because partitions are walked one after another:
 	 * a count sized to one host's traffic ends a busier hub's walk inside its
@@ -106,10 +105,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * from its URL. An index miss is one `substr` + `trim`, with the clock read
 	 * once per SCAN_CLOCK_STRIDE lines, so a window of millions of index lines
 	 * costs well under a second, and the cap binds only a walk that has
-	 * genuinely run long; a grep line is dearer, grouped whole. A verb that walks twice, as a rid lookup does over requests and
-	 * then flames, spends ONE budget across both. Peak memory stays ONE
-	 * segment's index. A walk that spends it says so; see
-	 * `scan_index_entries()`.
+	 * genuinely run long; a grep line is dearer, grouped whole. A verb that
+	 * walks twice, as `dump_url` does over requests and then flames, spends
+	 * ONE budget across both. Peak memory stays ONE segment's index. A walk
+	 * that spends it says so; see `scan_index_entries()`.
 	 */
 	public const MAX_SCAN_S = 10;
 
@@ -149,7 +148,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const NODE_REQUESTS = 'requests:partition';
 
 	/** `dump_url` per-URL request-list cap, applied to the index walk. */
-	private const RECENT_REQUEST_LIMIT = 500;
+	public const RECENT_REQUEST_LIMIT = 500;
 
 	/** The `urls` verb's offset ceiling; a later offset is clamped to it. */
 	private const URLS_MAX_OFFSET = 10000;
@@ -266,20 +265,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @var \Closure|null
 	 */
 	public static ?\Closure $load_index = null;
-
-	/**
-	 * The switch for the name scan, OFF: the fold a term the token index
-	 * cannot answer falls back to — no token, every token's set past
-	 * `URL_SEARCH_MAX`, or more candidates than that — walking every name
-	 * for it. Off, `urls --search` reads the token index alone: a term with
-	 * no token names nothing, a term too common to narrow is refused, and no
-	 * reply walks names beyond the candidates. Either way each candidate is
-	 * checked against the whole term on its row's own path. The name scan's
-	 * tests turn it on.
-	 *
-	 * @var bool
-	 */
-	public static bool $match_names = false;
 
 	/** This CI's asker for the stats Tables, built on the first read. */
 	private ?Table_Client $client = null;
@@ -483,15 +468,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Locate a single request index entry by rid and return the search shape
 	 * `{rid, partition, url_hash}` — enough for the dashboard to then ask for
 	 * `dump_request`; the request body is not read here. Its own partition is
-	 * tried first, and the shared scan budget spans the fan-out.
+	 * tried first, and the walk takes no budget, so null is a definite miss.
 	 *
 	 * @param string $rid Request id to match.
 	 * @return array<string,mixed>|null Search shape, or null when unmatched.
 	 */
 	private static function find_request_index_entry( string $rid ): ?array {
-		$result  = null;
-		$stopped = self::scan_index_entries(
-			self::search_order( $rid ),
+		$result = null;
+		self::scan_index_entries(
+			self::search_order( $rid, self::NODE_REQUESTS ),
 			'requests',
 			'rid',
 			$rid,
@@ -502,11 +487,9 @@ class Performance_CI_Node extends Service_CI_Node {
 					'url_hash'  => \trim( Core::as_string( $entry['url_hash'] ?? '' ) ),
 				];
 				return false;
-			}
+			},
+			null
 		);
-		if ( null === $result && $stopped ) {
-			self::fail_budget_spent( $rid );
-		}
 		return $result;
 	}
 
@@ -726,7 +709,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string              $descriptor The target.
 	 * @param list<string>        $context    Its containers, outermost last.
 	 * @param string              $server     Reporting server the brief answers for; '' is every server.
-	 * @param array<string,mixed> $filters    The url filters in force, which only `overview:` reads: every other descriptor names one thing, and a filtered view of one thing is the same thing.
+	 * @param array<string,mixed> $filters    The url filters in force, which `overview:` reads whole and `url:` reads for `errors_only`, the list the URL modal holds: every other descriptor names one thing, and a filtered view of one thing is the same thing.
 	 * @param int                 $now        The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException On an unknown descriptor or a missing context.
@@ -739,7 +722,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			case 'overview':
 				return $this->ask_overview( $server, $filters, $now );
 			case 'url':
-				return $this->ask_url( $target['id'], $server, $now );
+				return $this->ask_url( $target['id'], $server, (bool) ( $filters['errors_only'] ?? false ), $now );
 			case 'request':
 				return self::ask_request( $target['id'], self::descriptor_partition( $target ), $context, $server );
 			case 'span':
@@ -802,15 +785,17 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `url:` brief — stats, worst recent requests, and the
-	 * cold-start finding when nothing governs it.
+	 * cold-start finding when nothing governs it. Under `$errors_only` it
+	 * walks for the URL's errors alone, as the modal's list does.
 	 *
-	 * @param string $hash   12-char URL hash the descriptor names.
-	 * @param string $server Server the brief answers for; '' is every server.
-	 * @param int    $now    The reply's clock, read once at its entry.
+	 * @param string $hash        12-char URL hash the descriptor names.
+	 * @param string $server      Server the brief answers for; '' is every server.
+	 * @param bool   $errors_only Whether the brief is of the URL's timeouts and fatals.
+	 * @param int    $now         The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When no URL row carries that hash.
 	 */
-	private function ask_url( string $hash, string $server, int $now ): array {
+	private function ask_url( string $hash, string $server, bool $errors_only, int $now ): array {
 		// @longform Through `row()`, never the loader: the loader emits sums
 		// and leaves the means to the projection, so a reader taking its
 		// output raw quotes a confident 0 for every average. Scoped, because
@@ -820,14 +805,15 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === $stats ) {
 			throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 		}
-		$recent = self::find_recent_requests_for_url( $hash, $now );
+		$recent = self::find_recent_requests_for_url( $hash, $now, $errors_only, self::scan_deadline() );
 		return Ask_Assembler::for_url(
 			$stats,
 			$recent['requests'],
 			Rule_Set::load()->for_url( Core::as_string( $stats['url'] ?? '' ) ),
 			$server,
 			$recent['truncated'],
-			$recent['window_start']
+			$recent['window_start'],
+			$errors_only
 		);
 	}
 
@@ -1274,9 +1260,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The cap is per partition, then on the merged list, because a partition
 	 * says nothing about its siblings: one URL spreads over every partition,
 	 * and a cap spent on the first leaves the newest requests of the rest
-	 * unread. A partition that reached its cap has older entries in the
-	 * window it did not list, so the list stops short of it, and says so as a
-	 * spent budget does.
+	 * unread. Each partition walks newest-first, so one that reached its cap
+	 * has handed over its newest entries and the merged list is the newest
+	 * RECENT_REQUEST_LIMIT exactly: the cap stops nothing short. A full list
+	 * is still not the whole window, which the `url:` brief says.
 	 *
 	 * `$after` tails by POSITION: a partition's index is append-only, and the
 	 * log position each line names grows in index order, so a line at or
@@ -1291,26 +1278,36 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * sent rather than skipping the lines no walk read.
 	 *
 	 * Both endings are the caller's to pass on. A URL whose entries sit behind
-	 * ten seconds of its neighbours' is never reached, and a list that
+	 * ten seconds of its neighbours' is never reached, and a list the budget
 	 * stopped short reads exactly like a URL with no traffic; a list that ran
 	 * out of WINDOW reads the same way, so the floor it stopped at rides back
 	 * with it.
+	 *
+	 * A row's `duration_ms` is null where `Flame_Builder_Node::timing_counts()`
+	 * takes no sample — a timeout's eviction wait, an abort's stop, a zero
+	 * (decision 24) — so no reader shows, plots or ranks it as a timing.
+	 * `finished_at`, its start plus the raw duration, is the completion the
+	 * list is ordered by, and stays the one place that wait is read.
+	 *
+	 * `$errors_only` lists only the requests `Flame_Builder_Node::error_counts()`
+	 * calls errors, so the cap counts errors and the walk passes a busy URL's
+	 * clean requests to reach the ones its newest RECENT_REQUEST_LIMIT bury.
 	 *
 	 * NOT server-scoped: an index entry carries no server, so filtering would
 	 * mean reading every record. Free today because a stored `url` is ABSOLUTE,
 	 * so one url_hash belongs to one site. If a host is ever reported by two
 	 * servers, the server has to go on the index entry.
 	 *
-	 * @param string                                 $url_hash 12-char URL hash to match.
-	 * @param int                                    $now      The reply's clock, read once at its entry.
-	 * @param array<int,array{0:int,1:int}>          $after    Partition => the [segment, offset] its walk ends at, exclusive; a partition absent reads the whole window.
-	 * @param ?float                                 $deadline The verb's shared `scan_deadline()`; null starts one.
+	 * @param string                        $url_hash    12-char URL hash to match.
+	 * @param int                           $now         The reply's clock, read once at its entry.
+	 * @param bool                          $errors_only Whether to list only the requests that errored.
+	 * @param float                         $deadline    The verb's shared `scan_deadline()`.
+	 * @param array<int,array{0:int,1:int}> $after       Partition => the [segment, offset] its walk ends at, exclusive; a partition absent reads the whole window.
 	 * @return array{requests:array<int,array<string,mixed>>, truncated:bool, window_start:int, positions:array<int,array{0:int,1:int}>} The list, whether it stopped short of the window, the window it is of, and each partition's position.
 	 */
-	private static function find_recent_requests_for_url( string $url_hash, int $now, array $after = [], ?float $deadline = null ): array {
+	private static function find_recent_requests_for_url( string $url_hash, int $now, bool $errors_only, float $deadline, array $after = [] ): array {
 		$requests = [];
 		$listed   = [];
-		$capped   = false;
 		$reached  = [];
 		$floor    = self::scan_floor( $now );
 		$spent    = self::scan_index_entries(
@@ -1318,11 +1315,17 @@ class Performance_CI_Node extends Service_CI_Node {
 			'requests',
 			'url_hash',
 			$url_hash,
-			static function ( array $entry, int $partition, int $segment ) use ( &$requests, &$listed, &$capped ): ?string {
+			static function ( array $entry, int $partition, int $segment ) use ( &$requests, &$listed, $errors_only ): ?string {
+				if ( $errors_only && ! Flame_Builder_Node::error_counts( $entry['error_status'] ?? '-' ) ) {
+					return null;
+				}
+				$ms         = Core::num_float( $entry['duration_ms'] ?? 0 );
 				$requests[] = [
 					'rid'          => \trim( Core::as_string( $entry['rid'] ?? '' ) ),
 					'timestamp'    => $entry['timestamp'] ?? 0,
-					'duration_ms'  => $entry['duration_ms'] ?? 0,
+					// Null where no sample was taken (decision 24).
+					'duration_ms'  => Flame_Builder_Node::timing_counts( $ms, $entry['error_status'] ?? '-' ) ? $entry['duration_ms'] : null,
+					'finished_at'  => Core::num_float( $entry['timestamp'] ?? 0 ) + $ms / 1000,
 					'status_code'  => $entry['status_code'] ?? 0,
 					'peak_mb'      => $entry['peak_mb'] ?? 0,
 					'method'       => $entry['method'] ?? '',
@@ -1333,20 +1336,15 @@ class Performance_CI_Node extends Service_CI_Node {
 					'partition'    => $partition,
 				];
 				$listed[ $partition ] = ( $listed[ $partition ] ?? 0 ) + 1;
-				if ( $listed[ $partition ] < self::RECENT_REQUEST_LIMIT ) {
-					return null;
-				}
-				$capped = true;
-				return self::SCAN_STOP_PARTITION;
+				return $listed[ $partition ] < self::RECENT_REQUEST_LIMIT ? null : self::SCAN_STOP_PARTITION;
 			},
-			$floor,
 			$deadline,
+			$floor,
 			$after,
 			$reached
 		);
 
-		$finished = static fn ( array $r ): float => Core::num_float( $r['timestamp'] ) + Core::num_float( $r['duration_ms'] ) / 1000;
-		\usort( $requests, static fn ( array $a, array $b ): int => $finished( $b ) <=> $finished( $a ) );
+		\usort( $requests, static fn ( array $a, array $b ): int => $b['finished_at'] <=> $a['finished_at'] );
 		$seen   = [];
 		$unique = [];
 		foreach ( $requests as $r ) {
@@ -1357,7 +1355,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		return [
 			'requests'     => \array_slice( $unique, 0, self::RECENT_REQUEST_LIMIT ),
-			'truncated'    => $spent || $capped,
+			'truncated'    => $spent,
 			'window_start' => $floor,
 			'positions'    => $reached,
 		];
@@ -1541,9 +1539,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * request.
 	 *
 	 * Rebuilt only on a full read. A tailing read lists only the newest few, and
-	 * a flame folded from them would describe those, not the URL, so it answers
-	 * a null flame, which the dashboard reads as "keep the one you hold", its
-	 * stamp included. A rebuilt flame's `last_modified` is the newest listed
+	 * an errors-only read only the errors, so a flame folded from either would
+	 * describe those, not the URL; each answers a null flame, which the
+	 * dashboard reads as "keep the one you hold", its stamp included. A rebuilt flame's `last_modified` is the newest listed
 	 * request's start, which is when the fold it describes last changed.
 	 *
 	 * One walk of the flame index by URL, under the verb's deadline, each hit
@@ -1558,12 +1556,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string                           $hash     12-char URL hash.
 	 * @param array<int,array<string,mixed>>   $requests The requests `dump_url` lists.
-	 * @param bool                             $tailing  Whether the reply tails the list; a tail rebuilds nothing.
+	 * @param bool                             $partial  Whether the list is a tail or errors only; neither rebuilds.
 	 * @param int                              $now      The reply's clock.
 	 * @param float                            $deadline The verb's shared `scan_deadline()`.
 	 * @return array{flame:?array<array-key,mixed>, profiles:null, last_modified:int, truncated:bool}
 	 */
-	private static function rebuilt_url_aggregate( string $hash, array $requests, bool $tailing, int $now, float $deadline ): array {
+	private static function rebuilt_url_aggregate( string $hash, array $requests, bool $partial, int $now, float $deadline ): array {
 		$newest  = 0;
 		$listed  = [];
 		$missing = [];
@@ -1574,7 +1572,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$missing[ $partition ] = ( $missing[ $partition ] ?? 0 ) + 1;
 		}
 		$rebuilt = [ 'flame' => null, 'profiles' => null, 'last_modified' => $newest, 'truncated' => false ];
-		if ( $tailing ) {
+		if ( $partial ) {
 			return $rebuilt;
 		}
 		$flame = Flame_Builder_Node::empty_url_flame();
@@ -1607,7 +1605,6 @@ class Performance_CI_Node extends Service_CI_Node {
 					}
 					return 0 >= $missing[ $partition ] ? self::SCAN_STOP_PARTITION : null;
 				},
-				null,
 				$deadline
 			);
 			if ( $cut ) {
@@ -1791,11 +1788,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \RuntimeException When the rid resolves nowhere.
 	 */
 	private static function load_request( string $rid, int $partition ): array {
-		$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
-		// `+` keeps the caller's partition first; search_order has the rest.
-		$order  = isset( $dirs[ $partition ] )
-			? [ $partition => $dirs[ $partition ] ] + self::search_order( $rid )
-			: self::search_order( $rid );
+		$order = self::search_order( $rid, self::NODE_REQUESTS );
+		// `+` lifts the caller's partition to the front; the rest keep order.
+		if ( isset( $order[ $partition ] ) ) {
+			$order = [ $partition => $order[ $partition ] ] + $order;
+		}
 		$record = self::find_request( $order, $rid );
 		if ( null === $record ) {
 			throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
@@ -1805,28 +1802,23 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The full request body for a rid, from the first of `$dirs` holding it,
-	 * with any matching flame merged in as `flame_data`. A missing flame is
-	 * normal — they are built asynchronously, into whichever partition their
-	 * builder is wired to, so that lookup fans across all of them — and leaves
-	 * the body otherwise intact.
+	 * with its flame merged in as `flame_data`. The flame builder on partition
+	 * N folds every record of requests.pN into flames.pN, so the flame sits on
+	 * the request's hashed partition, read first. A miss means the builder has
+	 * not reached the record yet, and leaves the body otherwise intact.
 	 *
 	 * @param array<int,string> $dirs Partition index => dir, in search order.
 	 * @param string            $rid  Request id to match.
 	 * @return array<array-key,mixed>|null Decoded request body (keys come from the JSON envelope).
 	 */
 	private static function find_request( array $dirs, string $rid ): ?array {
-		$deadline = self::scan_deadline();
-		$found    = self::first_record( $dirs, 'requests', $rid, $stopped, $deadline );
+		$found = self::first_record( $dirs, 'requests', $rid );
 		if ( null === $found ) {
-			if ( $stopped ) {
-				self::fail_budget_spent( $rid );
-			}
 			return null;
 		}
 		[ $entry, $record ] = $found;
 		$record['url_hash'] = \trim( Core::as_string( $entry['url_hash'] ?? '' ) );
-		// A flame miss is normal, budget or not: unprofiled requests have none.
-		$flame              = self::first_record( Bootstrap::node_dirs( self::NODE_FLAMES ), 'flames', $rid, deadline: $deadline );
+		$flame              = self::first_record( self::search_order( $rid, self::NODE_FLAMES ), 'flames', $rid );
 		if ( null !== $flame ) {
 			$record['flame_data'] = $flame[1];
 		}
@@ -1834,32 +1826,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The ending a spent budget actually had. A rid the walk never reached is
-	 * not a rid that is gone: reported as a definite negative it sends an
-	 * operator after a retention bug that does not exist.
-	 *
-	 * @param string $rid Request id the walk was looking for.
-	 * @throws \RuntimeException Always.
-	 */
-	private static function fail_budget_spent( string $rid ): never {
-		throw new \RuntimeException( \esc_html( "request index scan budget spent before rid {$rid} was reached" ) );
-	}
-
-	/**
 	 * The first STORED record whose index entry matches, paired with that entry.
 	 * One seek, never a log walk: the entry carries segment, offset and length.
+	 * The walk takes no budget, so null means no index holds the rid.
 	 *
-	 * @param array<int,string> $dirs    Partition index => dir, in search order.
-	 * @param string            $log     Log basename ('requests' | 'flames').
-	 * @param string            $rid     Request id the entry must carry.
-	 * @param bool|null         $stopped  Set true when the budget ended the walk.
-	 * @param float|null        $deadline Shared with an earlier walk; null starts one.
-	 * @param-out bool          $stopped
+	 * @param array<int,string> $dirs Partition index => dir, in search order.
+	 * @param string            $log  Log basename ('requests' | 'flames').
+	 * @param string            $rid  Request id the entry must carry.
 	 * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}|null Entry + decoded record.
 	 */
-	private static function first_record( array $dirs, string $log, string $rid, ?bool &$stopped = null, ?float $deadline = null ): ?array {
-		$found   = null;
-		$stopped = self::scan_index_entries(
+	private static function first_record( array $dirs, string $log, string $rid ): ?array {
+		$found = null;
+		self::scan_index_entries(
 			$dirs,
 			$log,
 			'rid',
@@ -1876,8 +1854,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				return null === $found ? null : false;
 			},
-			null,
-			$deadline
+			null
 		);
 		return $found;
 	}
@@ -1886,9 +1863,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Fan a bounded index scan across a set of partition dirs, newest entry
 	 * first, handing every entry whose `$field` equals `$match` to `$on_hit`.
 	 *
-	 * The one boundary MAX_SCAN_S lives at: the budget spans the whole
-	 * fan-out, and the scan ends everywhere the moment it is spent or `$on_hit`
-	 * returns false. Each scratch Partition is built, named, formatted and
+	 * The one boundary MAX_SCAN_S lives at: a caller passing a deadline has
+	 * it span the whole fan-out, and the scan ends everywhere the moment it
+	 * is spent or `$on_hit` returns false. A null deadline walks unbudgeted,
+	 * as a rid lookup does; the parameter has no default, so every caller
+	 * says which it is. Each scratch Partition is built, named, formatted and
 	 * removed here, so a caller carries nothing but its predicate.
 	 *
 	 * The two endings are NOT the same answer, so they are told apart: a caller
@@ -1923,14 +1902,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param callable(array<array-key,mixed>, int, int, Partition_Node): (self::SCAN_STOP_PARTITION|bool|null) $on_hit
 	 *        Return false to end the whole fan-out, `SCAN_STOP_PARTITION` to
 	 *        finish this partition and carry on with the next, null to continue.
-	 * @param int|null          $floor    Stop a closed segment below this completion time; null walks to the budget.
-	 * @param float|null        $deadline A verb's shared `scan_deadline()`; null starts one.
+	 * @param float|null        $deadline A verb's shared `scan_deadline()`; null walks with no budget.
+	 * @param int|null          $floor    Stop a closed segment below this completion time; null walks to the end.
 	 * @param array<int,array{0:int,1:int}> $after   Partition => the [segment, offset] its walk stops at, inclusive of every line at or below it; a request index only.
 	 * @param array<int,array{0:int,1:int}>|null $reached Set to partition => its newest line's [segment, offset], for each partition walked to an end of its own.
 	 * @param-out array<int,array{0:int,1:int}> $reached
 	 * @return bool True when the time budget ended the scan.
 	 */
-	private static function scan_index_entries( array $dirs, string $log, string $field, string $match, callable $on_hit, ?int $floor = null, ?float $deadline = null, array $after = [], ?array &$reached = null ): bool {
+	private static function scan_index_entries( array $dirs, string $log, string $field, string $match, callable $on_hit, ?float $deadline, ?int $floor = null, array $after = [], ?array &$reached = null ): bool {
 		// Both halves of ONE format: never read an index we didn't write.
 		[ $formatter, $parse, $column, $times, $places ] = 'flames' === $log
 			? [ 'flame-index', Flame_Builder_Node::parse_flame_index( ... ), Flame_Builder_Node::index_column( $field ), Flame_Builder_Node::index_completion_columns(), [] ]
@@ -1939,9 +1918,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		$span_end      = [] === $times ? 0 : \max( $times[0][0] + $times[0][1], $times[1][0] + $times[1][1] );
 		$place_end     = [] === $places ? 0 : $places[1][0] + $places[1][1];
 		$reached       = [];
-		$clock     = self::scan_clock();
-		$deadline ??= self::scan_deadline();
-		$spent     = false;
+		$clock         = self::scan_clock();
+		$spent         = false;
 		$lines     = 0;
 		foreach ( $dirs as $p => $dir ) {
 			$stopped = false;
@@ -1958,7 +1936,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$closed = null === $floor || [] === $times ? [] : self::segments_closed_before( $node, $floor );
 			$node->scan_index(
 				static function ( string $line, int $segment ) use ( &$spent, &$stopped, &$lines, &$head, $clock, $deadline, $node, $p, $field, $match, $column, $times, $span_end, $places, $place_end, $bound, $closed, $floor, $parse, $on_hit ): ?bool {
-					if ( 0 === ++$lines % self::SCAN_CLOCK_STRIDE && $clock() > $deadline ) {
+					if ( null !== $deadline && 0 === ++$lines % self::SCAN_CLOCK_STRIDE && $clock() > $deadline ) {
 						$spent   = true;
 						$stopped = true;
 						return false;
@@ -2073,20 +2051,22 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Request partitions to search for `$rid`, its own partition first.
+	 * A node's partitions to search for `$rid`, its own partition first.
 	 *
 	 * A rid rides the same hash the whole way: the firehose Topic routes it by
-	 * KEY, the worker on that partition consumes it, and Request_Builder writes
-	 * it to the request partition of the SAME index. So the hash names the
+	 * KEY, the worker on that partition consumes it, Request_Builder writes it
+	 * to the request partition of the SAME index, and the flame builder there
+	 * folds it into the flame partition of that index. So the hash names the
 	 * partition outright and the rest of the fan-out is a fallback — needed
 	 * because the guess uses the reader's partition count, which lags the
 	 * writer's across a re-partition.
 	 *
-	 * @param string $rid Request id whose hash names the first partition.
+	 * @param string $rid  Request id whose hash names the first partition.
+	 * @param string $node The partition node, requests or flames.
 	 * @return array<int,string> Partition index => dir, hashed partition first.
 	 */
-	private static function search_order( string $rid ): array {
-		$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
+	private static function search_order( string $rid, string $node ): array {
+		$dirs = Bootstrap::node_dirs( $node );
 		$hit  = Partition_Node::hash_to_partition( $rid, \max( 1, \count( $dirs ) ) );
 		if ( ! isset( $dirs[ $hit ] ) ) {
 			return $dirs;
@@ -2220,9 +2200,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * slowest, and one page of it.
 	 *
 	 * A search walks its candidates' rows, read by key (`candidate_rows()`),
-	 * as one group, and reads no shard. The rest is the name scan and the
-	 * pages the lists cannot answer, which walk the whole index,
-	 * ONE SHARD AT A TIME. A url_hash's shard is its first hex digit, so
+	 * as one group, and reads no shard. The rest is the unsearched pages the
+	 * lists cannot answer, which walk the whole index, ONE SHARD AT A TIME. A url_hash's shard is its first hex digit, so
 	 * shards are disjoint and a shard's fold is complete for every URL it
 	 * holds — there is no cross-shard merge to miss. The whole merged index is
 	 * otherwise the count of distinct URLs across the retention window, which
@@ -2271,9 +2250,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		$unread     = false;
 		$candidates = '' === $search
 			? null
-			: self::search_candidates( $search, $tokens, $server, $stores, $plan, $now, $unread ) ?? ( self::$match_names ? null : [] );
+			: self::search_candidates( $search, $tokens, $server, $stores, $plan, $now, $unread );
 
-		// A term's candidates are read by key; the name scan walks the shards.
+		// A term's candidates are read by key; an unsearched page walks shards.
 		$groups = null === $candidates
 			? self::shard_groups( $server, $workers, $errors, $stores, $now )
 			: [ \array_merge( ...\array_map( 'array_values', self::candidate_rows( $candidates, $workers, $errors, $stores, $now ) ) ) ];
@@ -2298,8 +2277,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// Each candidate carries every word, or its cut path hides it.
 				if ( '' !== $search ) {
 					$path = Stats_Store::row_search_path( Core::as_string( $raw_row['url'] ?? '' ) );
-					$cut  = null !== $candidates && \str_ends_with( $path, '…' );
-					if ( ! $cut && ! Stats_Store::term_matches( $path, $search, $tokens ) ) {
+					if ( ! \str_ends_with( $path, '…' ) && ! Stats_Store::term_matches( $path, $tokens ) ) {
 						continue;
 					}
 				}
@@ -2328,9 +2306,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( $overflow as $raw_row ) {
 			$row = self::project_row( $raw_row );
 			// Not one of `totals.urls`, but its requests are real.
-			if ( '' !== $search ) {
-				continue;
-			}
 			++$rows;
 			$requests += Core::num_int( $row['count'] ?? null );
 			$errored  += Core::num_int( $row['errors'] ?? null );
@@ -2469,7 +2444,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The whole index, one shard at a time, both families' where the page
-	 * asks for workers: what the fold walks when it names no candidates.
+	 * asks for workers: walked only for an unsearched page, since a term's
+	 * candidates are read by key.
 	 *
 	 * @param string                 $server  Reporting server; '' reads every server.
 	 * @param bool                   $workers Read the worker family's shards too.
@@ -2488,13 +2464,14 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The hashes the token index names for a term, each with the keys of the
-	 * servers whose sets named it, or null when it cannot answer: a term
-	 * with no token, or a read left unanswered. A term too common to narrow
+	 * servers whose sets named it, or none when a store left a set
+	 * unanswered, which `$unread` reports so the page reads `provisional`.
+	 * A term with no word cannot be searched, and a term too common to narrow
 	 * — every word read over `URL_SEARCH_MAX`, or more candidates than that
-	 * across every server — is REFUSED, because its candidates' rows are
-	 * read by key and that many is a slow read (decision 28); while
-	 * `$match_names` is on it is null instead, the name fold. The caller
-	 * reads null as that fold, or as no rows while the switch is off.
+	 * across every server — is refused because its candidates' rows are read
+	 * by key and that many is a slow read (decision 28): both are REFUSED,
+	 * with nothing behind them.
+	 *
 	 * Which tokens can be answered is the store's to say — `false` is one
 	 * no read can answer, and one token unanswerable among several narrows
 	 * nothing while the rest still do, because every candidate's row is
@@ -2516,13 +2493,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                                            $now    The reply's tick, which dates the token buckets.
 	 * @param-out bool                                       $unread
 	 * @param ?bool                                          $unread Set true when a store left a set unanswered.
-	 * @return array<string,list<string>>|null hash => server keys.
-	 * @throws \RuntimeException On a term too common to read by key.
+	 * @return array<string,list<string>> hash => server keys.
+	 * @throws \RuntimeException On a term with no word, or one too common to read by key.
 	 */
-	private static function search_candidates( string $search, array $tokens, string $server, array $stores, array $plan, int $now, ?bool &$unread = null ): ?array {
+	private static function search_candidates( string $search, array $tokens, string $server, array $stores, array $plan, int $now, ?bool &$unread = null ): array {
 		$unread = false;
 		if ( [] === $tokens ) {
-			return null;
+			throw new \RuntimeException( \esc_html( \sprintf( 'search "%s" names no word: a search needs a word of %d characters or more', $search, Stats_Store::TERM_WORD_MIN ) ) );
 		}
 		$servers_of = [];
 		foreach ( $stores as $at => $store ) {
@@ -2559,7 +2536,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		if ( $unread ) {
-			return null;
+			return [];
 		}
 		// Smallest first: every intersection after it walks the smallest side.
 		\uasort( $usable, static fn ( array $a, array $b ): int => \count( $a ) <=> \count( $b ) );
@@ -2574,7 +2551,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$pairs                       += \count( $candidates[ (string) $hash ] );
 		}
 		if ( null === $result || $pairs > Stats_Store::URL_SEARCH_MAX ) {
-			return self::$match_names ? null : throw new \RuntimeException(
+			throw new \RuntimeException(
 				\esc_html( \sprintf( 'search "%s" is too common: its URLs run past the %d a search reads; add a word', $search, Stats_Store::URL_SEARCH_MAX ) )
 			);
 		}
@@ -3385,13 +3362,14 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
-					'description' => 'Single-URL detail incl. aggregate flame data summed across partitions. Its request list is the newest RECENT_REQUEST_LIMIT inside the window opening at requests_window_start; `after` tails it.',
+					'description' => 'Single-URL detail incl. aggregate flame data summed across partitions. Its request list is the newest RECENT_REQUEST_LIMIT by `finished_at` inside the window opening at requests_window_start, each row\'s `duration_ms` null where no sample was taken; `after` tails it, and `errors_only` keeps only its timeouts and fatals.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'categories', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'after', 'type' => 'json', 'required' => false, 'description' => 'Tails the request list: {"<partition>":{"segment":S,"offset":O}}, the `positions` the last reply reported. Each partition reads only index lines past its own; one absent is read whole.' ],
+						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false, 'description' => 'Lists only the timeouts and fatals, the newest RECENT_REQUEST_LIMIT of them the walk reaches in the window, and rebuilds no flame from them; scan_stopped_early says when the time budget stopped it short.' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				$hash = Core::as_string( $args['hash'] );
@@ -3428,6 +3406,8 @@ class Performance_CI_Node extends Service_CI_Node {
 						'avg_peak_mb'         => $entry['avg_peak_mb'] ?? 0,
 						'max_peak_mb'         => $entry['max_peak_mb'] ?? 0,
 						'last_updated'        => $entry['last_updated'] ?? 0,
+						// Exact: the row's own count, uncapped by the walk.
+						'errors'              => Core::num_int( $entry['errors'] ?? null ),
 						// The header's own window and divisor.
 						'requests_per_second' => self::recent_rate( Core::num_int( $entry['recent_count'] ?? null ), self::recent_keys( self::read_plan( $now ) ) ),
 					];
@@ -3436,12 +3416,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 				}
 
-				$deadline  = self::scan_deadline();
-				$recent    = self::find_recent_requests_for_url( $hash, $now, $after, $deadline );
-				$aggregate = Stats_Store::url_stats( $stores, $hash )
-					?? self::rebuilt_url_aggregate( $hash, $recent['requests'], [] !== $after, $now, $deadline );
+				$errors_only = true === $args['errors_only'];
+				$deadline    = self::scan_deadline();
+				$recent      = self::find_recent_requests_for_url( $hash, $now, $errors_only, $deadline, $after );
+				$aggregate   = Stats_Store::url_stats( $stores, $hash )
+					?? self::rebuilt_url_aggregate( $hash, $recent['requests'], [] !== $after || $errors_only, $now, $deadline );
 				// A stored blob may hold profiles alone; a null flame is meant.
-				$flame     = \array_key_exists( 'flame', $aggregate ) ? $aggregate['flame'] : self::EMPTY_FLAME;
+				$flame       = \array_key_exists( 'flame', $aggregate ) ? $aggregate['flame'] : self::EMPTY_FLAME;
 
 				$payload = [
 					'stats'              => $stats,
@@ -3564,15 +3545,15 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'ask',
 					'capability'  => Capabilities::READ,
-					'description' => 'Assemble the brief for one picker descriptor: `ask <descriptor> [<context-descriptor>…]`, outermost context last.',
+					'description' => 'Assemble the brief for one picker descriptor: `ask <descriptor> [<context-descriptor>…]`, outermost context last. `errors_only` narrows an `overview:` and a `url:` brief to errors.',
 					'args'        => [
 						[ 'name' => 'descriptor', 'type' => 'string', 'required' => true ],
 						// The trailing descriptors, or `--context=` repeated.
 						[ 'name' => 'context', 'type' => 'string', 'required' => false, 'variadic' => true ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-						// The page's own scope; only `overview:` reads them.
+						// `overview:` reads all three; `url:` errors_only.
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false ],
+						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false, 'description' => 'Narrows an `overview:` brief as `urls` narrows it, and a `url:` brief to the timeouts and fatals the URL modal lists under Errors Only: their exact count and their summary in place of the whole URL\'s stats.' ],
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {

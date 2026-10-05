@@ -1805,15 +1805,14 @@ class StatsStoreTest extends TestCase {
 
 	public function test_term_matches_reads_a_term_the_way_the_index_files_it(): void {
 		$path = '/kakapo/nest-9317';
-		$this->assertTrue( Stats_Store::term_matches( $path, 'kakapo', [ 'kakapo' ] ) );
-		$this->assertTrue( Stats_Store::term_matches( '/KAKAPO/nest-9317', 'kakapo', [ 'kakapo' ] ), 'the name is lowercased' );
-		$this->assertTrue( Stats_Store::term_matches( $path, 'kakapo nest', [ 'kakapo', 'nest' ] ), 'every token, in any order' );
-		$this->assertFalse( Stats_Store::term_matches( $path, 'kakapo weka', [ 'kakapo', 'weka' ] ), 'one token missing refuses' );
+		$this->assertTrue( Stats_Store::term_matches( $path, [ 'kakapo' ] ) );
+		$this->assertTrue( Stats_Store::term_matches( '/KAKAPO/nest-9317', [ 'kakapo' ] ), 'the name is lowercased' );
+		$this->assertTrue( Stats_Store::term_matches( $path, [ 'kakapo', 'nest' ] ), 'every token, in any order' );
+		$this->assertFalse( Stats_Store::term_matches( $path, [ 'kakapo', 'weka' ] ), 'one token missing refuses' );
 		// The index files whole words, so a token is a whole word or nothing.
-		$this->assertFalse( Stats_Store::term_matches( $path, 'kaka', [ 'kaka' ] ), 'a word PREFIX never matches' );
-		$this->assertFalse( Stats_Store::term_matches( $path, '317', [ '317' ] ), 'nor does an infix' );
-		$this->assertTrue( Stats_Store::term_matches( '/internationalization', 'internationalize', [ 'internationa' ] ), 'a long word, cut as it is filed' );
-		$this->assertTrue( Stats_Store::term_matches( $path, 'o/n', [] ), 'a term with no token is a substring' );
+		$this->assertFalse( Stats_Store::term_matches( $path, [ 'kaka' ] ), 'a word PREFIX never matches' );
+		$this->assertFalse( Stats_Store::term_matches( $path, [ '317' ] ), 'nor does an infix' );
+		$this->assertTrue( Stats_Store::term_matches( '/internationalization', [ 'internationa' ] ), 'a long word, cut as it is filed' );
 	}
 
 	public function test_a_path_is_filed_under_exactly_its_whole_words(): void {

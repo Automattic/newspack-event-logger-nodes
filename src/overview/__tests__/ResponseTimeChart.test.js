@@ -327,6 +327,38 @@ describe( 'ResponseTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'plots no duration nobody measured, so the mean and trend leave it out', () => {
+		// A timeout's duration is the eviction wait and an abort's ends at
+		// the stop (decision 24): plotted, either flattens every real dot.
+		const { container, unmount } = mountChart( [
+			...REQUESTS,
+			{
+				rid: 'req-timeout',
+				partition: 2,
+				timestamp: 1755000300,
+				duration_ms: null,
+				status_code: 0,
+				error_status: 'T',
+			},
+			{
+				rid: 'req-abort',
+				partition: 1,
+				timestamp: 1755000900,
+				duration_ms: null,
+				status_code: 0,
+				error_status: 'A',
+			},
+		] );
+
+		expect( dots( container ) ).toHaveLength( 4 );
+		const mean = container.querySelector( 'line[stroke-dasharray="5,5"]' );
+		expect( Number( mean.getAttribute( 'y1' ) ) ).toBeCloseTo(
+			expectedCy( MEAN_MS ),
+			6
+		);
+		unmount();
+	} );
+
 	it( 'draws the mean as a dashed line with its own label', () => {
 		const { container, unmount } = mountChart( REQUESTS );
 

@@ -1287,7 +1287,9 @@ describe( 'PerformanceDashboard', () => {
 			} );
 		} );
 
-		expect( globalThis.__urlDetailProps.errorsOnly ).toBe( true );
+		expect( globalThis.__urlDetailProps.detailErrors ).not.toBeNull();
+		// The server finds the errors, past the clean requests that bury them.
+		expect( mockGraphOpts.urlErrorsOnly ).toBe( true );
 		// The same echo tells the table its rows carry error counts.
 		expect( globalThis.__urlTableProps.errorCounts ).toBe( true );
 
@@ -1295,9 +1297,212 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {
 			globalThis.__urlDetailProps.onErrorsOnlyChange( false );
 		} );
-		expect( globalThis.__urlDetailProps.errorsOnly ).toBe( false );
+		expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
+		expect( mockGraphOpts.urlErrorsOnly ).toBe( false );
 		unmount();
 	} );
+
+	describe( 'a URL modal under Errors Only', () => {
+		const ERRORS = [
+			{
+				rid: 'f4tal',
+				partition: 2,
+				timestamp: 1741000456,
+				duration_ms: 2417,
+				status_code: 500,
+				peak_mb: 91,
+				error_status: 'F',
+			},
+			{
+				rid: 't1meout',
+				partition: 0,
+				timestamp: 1741000123,
+				duration_ms: null,
+				status_code: 0,
+				peak_mb: 37,
+				error_status: 'T',
+			},
+		];
+
+		/**
+		 * Open `/kea` and flip its modal to Errors Only.
+		 *
+		 * @param {Object} urlFilters The table's echoed filters.
+		 * @return {Promise<Object>} The mount.
+		 */
+		const openErrorsOnly = async ( urlFilters = {} ) => {
+			mockNavState.selectedUrl = { hash: 'h7', url: '/kea' };
+			mockNavState.selectedRequest = null;
+			mockView = loadedView( {
+				urls: {
+					data: [],
+					filters: urlFilters,
+					loading: false,
+					error: null,
+				},
+				urlDetail: {
+					data: {
+						last_modified: 1,
+						stats: {
+							errors: 29,
+							avg_ms: 812,
+							requests_per_second: 3.75,
+						},
+						requests: ERRORS,
+					},
+					loading: false,
+					error: null,
+				},
+			} );
+			const mount = mountDash();
+			await flushEffects();
+			await act( async () => {
+				globalThis.__urlDetailProps.onErrorsOnlyChange( true );
+			} );
+			return mount;
+		};
+
+		it( 'heads the modal with the exact errors and the summary of the list', async () => {
+			const { container } = await openErrorsOnly();
+			const header = container.querySelector(
+				'.event-logger-header-stats'
+			).textContent;
+
+			expect( header ).toContain( '29errors' );
+			expect( header ).toContain( '1timeouts' );
+			expect( header ).toContain( '1fatals' );
+			expect( header ).toContain( '2417msfatal avg' );
+			expect( header ).toContain( '2417msfatal max' );
+			expect( header ).toContain( '64.0MBmem' );
+			expect( header ).not.toContain( '812ms' );
+			expect( header ).not.toContain( '3.75' );
+		} );
+
+		it( 'hands the list and the facts block the exact count and the summary', async () => {
+			const { container } = await openErrorsOnly();
+
+			expect( globalThis.__urlDetailProps.detailErrors ).toMatchObject( {
+				listed: 2,
+				timeouts: 1,
+				fatals: 1,
+			} );
+			expect(
+				globalThis.__urlDetailProps.detailErrors.total
+			).toBeUndefined();
+			const facts = JSON.parse(
+				container.querySelector( '#newspack-nodes-page-facts' )
+					.textContent
+			);
+			expect( facts ).toMatchObject( {
+				surface: 'url',
+				errors_only: true,
+				stats: { errors: 29 },
+				error_summary: { listed: 2, fatal_max_ms: 2417 },
+			} );
+		} );
+
+		it( 'hands the list no summary when every request is listed', async () => {
+			await openErrorsOnly();
+			await act( async () => {
+				globalThis.__urlDetailProps.onErrorsOnlyChange( false );
+			} );
+
+			expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
+		} );
+
+		/**
+		 * Arm the picker and pick a `url:` element, as a click in the modal does.
+		 */
+		const pickUrl = async () => {
+			const target = document.createElement( 'div' );
+			target.setAttribute( 'data-ask', 'url:h7' );
+			document.body.appendChild( target );
+			await act( async () => {
+				globalThis.__overviewProps.ask.start();
+			} );
+			await act( async () => {
+				target.dispatchEvent(
+					new window.MouseEvent( 'mousedown', { bubbles: true } )
+				);
+				target.dispatchEvent(
+					new window.MouseEvent( 'click', { bubbles: true } )
+				);
+			} );
+			target.remove();
+		};
+
+		it( "asks under the modal's Errors Only, not the table's", async () => {
+			await openErrorsOnly( { errors_only: false } );
+			await pickUrl();
+
+			expect( sentTo( 'performance:ask' ).at( -1 ) ).toContain(
+				'--errors_only=1'
+			);
+		} );
+
+		it( 'asks for every request once the modal lists them all, whatever the table shows', async () => {
+			await openErrorsOnly( { errors_only: true } );
+			await act( async () => {
+				globalThis.__urlDetailProps.onErrorsOnlyChange( false );
+			} );
+			await pickUrl();
+
+			expect( sentTo( 'performance:ask' ).at( -1 ) ).not.toContain(
+				'--errors_only=1'
+			);
+		} );
+	} );
+
+	it.each( [
+		[ 'desc', [ 'slow', 'quick', 'tout', 'abort' ] ],
+		[ 'asc', [ 'quick', 'slow', 'tout', 'abort' ] ],
+	] )(
+		'sorts an unmeasured duration last by %s duration, never as the fastest or the slowest',
+		async ( dir, order ) => {
+			mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+			mockView = loadedView( {
+				urlDetail: {
+					data: {
+						last_modified: 1,
+						stats: {},
+						requests: [
+							{
+								rid: 'tout',
+								timestamp: 3,
+								duration_ms: null,
+								error_status: 'T',
+							},
+							{ rid: 'slow', timestamp: 1, duration_ms: 300 },
+							{
+								rid: 'abort',
+								timestamp: 4,
+								duration_ms: null,
+								error_status: 'A',
+							},
+							{ rid: 'quick', timestamp: 2, duration_ms: 100 },
+						],
+					},
+					loading: false,
+					error: null,
+				},
+			} );
+			mountDash();
+			await flushEffects();
+			// The first click sorts descending, the second ascending.
+			for ( const step of [ 'desc', 'asc' ] ) {
+				act( () => {
+					globalThis.__urlDetailProps.onRequestSort( 'duration_ms' );
+				} );
+				if ( step === dir ) {
+					break;
+				}
+			}
+
+			expect(
+				globalThis.__urlDetailProps.sortedRequests.map( ( r ) => r.rid )
+			).toEqual( order );
+		}
+	);
 
 	it( 'opens a URL reached any other way with every request listed', async () => {
 		// Only the table narrows a URL; closing forgets that, so a deep link
@@ -1334,7 +1539,7 @@ describe( 'PerformanceDashboard', () => {
 			rerender( dashboard() );
 		} );
 
-		expect( globalThis.__urlDetailProps.errorsOnly ).toBe( false );
+		expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
 		unmount();
 	} );
 

@@ -148,6 +148,78 @@ function metricPairs( key, value ) {
 }
 
 /**
+ * A Unix time as an ISO 8601 UTC instant to the second.
+ *
+ * @param {?number} seconds Seconds since the epoch; null or 0 when unknown.
+ * @return {string} The instant, or '' when there is none.
+ */
+const isoTime = ( seconds ) =>
+	seconds
+		? new Date( seconds * 1000 ).toISOString().replace( /\.\d+Z$/, 'Z' )
+		: '';
+
+/**
+ * A mean and its extreme as one field, or '' where nothing was measured, so
+ * `fields()` leaves the line out.
+ *
+ * @param {?number} avg  The mean; null where nothing was measured.
+ * @param {?number} max  The extreme.
+ * @param {string}  unit What the numbers count, such as `ms` or `MB`.
+ * @return {string} `<avg> avg, <max> max`, or ''.
+ */
+const avgMax = ( avg, max, unit ) =>
+	null === avg
+		? ''
+		: `${ withUnit( avg, unit ) } avg, ${ withUnit( max, unit ) } max`;
+
+/**
+ * A URL brief's numbers: the whole URL's stats, or under errors only the
+ * exact error count and the summary of the errors listed, which stand in for
+ * them because the whole URL's numbers describe other traffic.
+ *
+ * @param {Object} brief A `url` brief.
+ * @return {Array<Array>} `fields()` pairs.
+ */
+function urlStatPairs( brief ) {
+	if ( ! brief.errors_only ) {
+		return [
+			[ 'count', brief.stats?.count ],
+			[ 'avg_ms', num( brief.stats?.avg_ms ) ],
+			[ 'max_peak_mb', num( brief.stats?.max_peak_mb ) ],
+		];
+	}
+	const summary = brief.error_summary ?? {};
+	return [
+		[ 'errors only', 'yes' ],
+		[ 'errors', brief.stats?.errors ],
+		[
+			'listed',
+			`${ summary.listed } — ${ summary.timeouts } timeouts, ${ summary.fatals } fatals`,
+		],
+		[
+			'fatal duration',
+			avgMax( summary.fatal_avg_ms, summary.fatal_max_ms, 'ms' ),
+		],
+		[
+			'peak memory',
+			avgMax( summary.avg_peak_mb, summary.max_peak_mb, 'MB' ),
+		],
+		[ 'first error', isoTime( summary.first_at ) ],
+		[ 'last error', isoTime( summary.last_at ) ],
+		[
+			'status codes',
+			Object.entries( summary.status_codes ?? {} )
+				// As the modal's errors line spells it; 0 answered nothing.
+				.map(
+					( [ code, n ] ) =>
+						`${ '0' === code ? 'no status' : code } ${ times( n ) }`
+				)
+				.join( ', ' ),
+		],
+	];
+}
+
+/**
  * A call count as a `×n` suffix, or nothing where the brief carries none — an
  * aggregate span keeps no count, and `×undefined` would read as a value.
  *
@@ -441,9 +513,7 @@ function bodyLines( brief ) {
 			return [
 				...fields( [
 					[ 'url', brief.url, 'site' ],
-					[ 'count', brief.stats?.count ],
-					[ 'avg_ms', num( brief.stats?.avg_ms ) ],
-					[ 'max_peak_mb', num( brief.stats?.max_peak_mb ) ],
+					...urlStatPairs( brief ),
 					[
 						'worst recent',
 						( brief.worst_requests ?? [] )
@@ -459,10 +529,16 @@ function bodyLines( brief ) {
 					// An empty list is empty of this window, not of the URL.
 					[
 						'requests since',
-						brief.requests_window_start
-							? new Date( brief.requests_window_start * 1000 )
-									.toISOString()
-									.replace( /\.\d+Z$/, 'Z' )
+						brief.requests_capped
+							? ''
+							: isoTime( brief.requests_window_start ),
+					],
+					[
+						'requests',
+						brief.requests_capped
+							? `the newest the list holds, since ${ isoTime(
+									brief.requests_window_start
+							  ) }; older ones may be unlisted`
 							: '',
 					],
 					// Its own pair; concatenated it is a bare parenthetical.

@@ -44,7 +44,7 @@ const CHART_HEIGHT = 250;
  * data arrives, so mounting it empty is fine.
  *
  * @param {Object}   props                Component props.
- * @param {Array}    props.requests       Request index entries: { rid, partition, timestamp (seconds), duration_ms, status_code }.
+ * @param {Array}    props.requests       Request index entries: { rid, partition, timestamp (seconds), duration_ms, status_code, error_status }.
  * @param {Function} props.onRequestClick Called with the clicked dot's rid and partition.
  * @return {import('react').ReactElement|null} The chart, or null without data.
  */
@@ -59,9 +59,11 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 	/**
 	 * Plottable points, ascending by time.
 	 *
-	 * A request needs both a timestamp and a duration to place a dot; the
-	 * truthiness test also drops a `duration_ms` of exactly 0. Timestamps
-	 * arrive in seconds and become `Date` objects for the time scale.
+	 * A request needs both a timestamp and a duration to place a dot; `dump_url`
+	 * sends a null duration where none was measured (decision 24), so a
+	 * timeout's eviction wait never reaches the mean or the trend.
+	 * Timestamps arrive in seconds and become `Date` objects for the time
+	 * scale.
 	 *
 	 * @type {Array<{time: Date, duration: number, rid: string, partition: number, status: number, klass: string}>}
 	 */
@@ -70,7 +72,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 			return [];
 		}
 		return requests
-			.filter( ( r ) => r.timestamp && r.duration_ms )
+			.filter( ( r ) => r.timestamp && 'number' === typeof r.duration_ms )
 			.map( ( r ) => ( {
 				time: new Date( r.timestamp * 1000 ),
 				duration: r.duration_ms,

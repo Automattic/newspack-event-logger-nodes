@@ -143,6 +143,16 @@ class McpControllerTest extends TestCase {
 		$errors = $tools['performance_urls']['inputSchema']['properties']['errors_only']['description'];
 		$this->assertStringContainsString( 'has a null `avg_ms` and ranks last on the timing sorts', $errors );
 		$this->assertStringNotContainsString( 'ranks at 0', $errors );
+		$url_errors = $tools['dump_url']['inputSchema']['properties']['errors_only']['description'];
+		$this->assertStringContainsString( 'timeouts and fatals', $url_errors );
+		$this->assertStringContainsString( 'past', $url_errors, 'it says the list reaches past the newest 500' );
+		$this->assertStringContainsString( '`stats.errors`', $tools['dump_url']['description'], 'it names the exact error count' );
+		$this->assertStringContainsString( 'null `duration_ms`', $tools['dump_url']['description'], 'it says an unmeasured duration is null' );
+		$this->assertStringContainsString( '`finished_at`', $tools['dump_url']['description'], 'it names the order the list keeps' );
+		$ask_errors = $tools['performance_ask']['inputSchema']['properties']['errors_only']['description'];
+		$this->assertStringContainsString( '`url:`', $ask_errors, 'errors_only narrows a url: brief too' );
+		$this->assertStringContainsString( '`error_summary`', $ask_errors );
+		$this->assertStringContainsString( 'ranks after every measured one', $tools['performance_ask']['description'], 'it says how worst requests rank' );
 		$overview = $tools['performance_overview'];
 		$this->assertStringContainsString( '`slots`', $overview['description'] );
 		$this->assertStringContainsString( '`avg_ms`', $overview['description'] );
@@ -351,18 +361,13 @@ class McpControllerTest extends TestCase {
 		);
 	}
 
-	public function test_the_two_rid_lookups_warn_that_a_spent_budget_is_not_a_negative(): void {
-		// Both verbs throw `... budget spent before rid <rid> was reached` when
-		// the index walk ends first. An agent whose tool description does not
-		// say so reads that refusal as "no such request" and stops looking.
+	public function test_the_two_rid_lookups_promise_a_definite_answer(): void {
+		// Both walk every index line, so a miss is a definite not-found.
 		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
 
 		foreach ( [ 'search_requests', 'dump_request' ] as $tool ) {
-			$this->assertStringContainsString(
-				'budget spent',
-				$tools[ $tool ]['summary'],
-				"tool {$tool} does not warn about a spent scan budget"
-			);
+			$this->assertStringNotContainsString( 'budget', $tools[ $tool ]['summary'], $tool );
+			$this->assertStringContainsString( 'not found', $tools[ $tool ]['summary'], $tool );
 		}
 	}
 

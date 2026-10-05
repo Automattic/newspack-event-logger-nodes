@@ -68,6 +68,7 @@ import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
 import AskPanel, { AskButton, useAsk } from './components/AskPanel';
 import { headlineStats } from './components/HeadlineStats';
+import { errorSummary } from '../components/errorStatus';
 import { pageFacts, factsJson } from './pageFacts';
 import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
@@ -88,6 +89,47 @@ const UNKNOWN_URL = () => __( 'Unknown URL', 'newspack-event-logger-nodes' );
 import './styles/modal.scss';
 import './styles/tables.scss';
 import './styles/charts.scss';
+
+/**
+ * Order two request rows by one column in one direction. A null duration,
+ * one `dump_url` measured none of (decision 24), ranks LAST either way, as
+ * `Stats_Store::rank_order()` ranks a URL no timed request reached; such rows
+ * keep their order among themselves. A row missing any other field counts as
+ * 0.
+ *
+ * @param {Object}                       a    A `dump_url` request row.
+ * @param {Object}                       b    Another.
+ * @param {{field: string, dir: string}} sort The column and `asc` or `desc`.
+ * @return {number} The comparator's answer.
+ */
+const compareRequests = ( a, b, { field, dir } ) => {
+	if ( 'duration_ms' === field ) {
+		const aMeasured = 'number' === typeof a.duration_ms;
+		if ( aMeasured !== ( 'number' === typeof b.duration_ms ) ) {
+			return aMeasured ? -1 : 1;
+		}
+		if ( ! aMeasured ) {
+			return 0;
+		}
+	}
+	const aVal = a[ field ] ?? 0;
+	const bVal = b[ field ] ?? 0;
+	if ( aVal === bVal ) {
+		return 0;
+	}
+	return ( aVal > bVal ? 1 : -1 ) * ( 'asc' === dir ? 1 : -1 );
+};
+
+/** The URL modal header's stats over every request, and over its errors. */
+const URL_HEADER_STATS = [ 'requests_per_second', 'avg_ms', 'avg_peak_mb' ];
+const ERRORS_HEADER_STATS = [
+	'errors',
+	'timeouts',
+	'fatals',
+	'fatal_avg_ms',
+	'fatal_max_ms',
+	'avg_peak_mb',
+];
 
 // The `?metric=` and `?breakdown=` whitelists: what the dropdowns offer.
 const CHART_METRICS = CHART_METRIC_OPTIONS.map( ( option ) => option.value );
@@ -281,8 +323,17 @@ export default function PerformanceDashboard( {
 	// about what is selected NOW, as `dump_url` is. The page's own brief is
 	// about the rows on screen, so it takes the echoed `urlFilters` — the
 	// filters those rows were fetched under — and the live pick only until
-	// the first reply. Above the graph, which holds its poll while armed.
-	const ask = useAsk( { onError, serverFilter, urlFilters } );
+	// the first reply. An open URL modal lists under its own Errors Only, so
+	// a brief asked there narrows as its list does. Above the graph, which
+	// holds its poll while armed.
+	const askFilters = useMemo(
+		() =>
+			selectedUrl
+				? { ...urlFilters, errors_only: detailErrorsOnly }
+				: urlFilters,
+		[ selectedUrl, urlFilters, detailErrorsOnly ]
+	);
+	const ask = useAsk( { onError, serverFilter, urlFilters: askFilters } );
 
 	// The graph polls and publishes; this page's own verbs are below.
 	const { handleUrlParamsChange } = usePerformanceGraph( {
@@ -292,6 +343,7 @@ export default function PerformanceDashboard( {
 		requestPartition,
 		selectedUrl,
 		selectedRequest,
+		urlErrorsOnly: detailErrorsOnly,
 		askActive: ask.active,
 	} );
 
@@ -643,23 +695,31 @@ export default function PerformanceDashboard( {
 	 *
 	 * Sorting happens here rather than on the server because the modal already
 	 * holds the rows `dump_url` returned, so a column click costs no fetch. A
-	 * row missing the sort field counts as 0 and still takes a position.
+	 * row missing the sort field counts as 0 and still takes a position; a
+	 * duration nobody measured ranks last (`compareRequests()`).
 	 */
 	const sortedRequests = useMemo( () => {
 		if ( ! urlDetail?.requests ) {
 			return [];
 		}
 		const sorted = [ ...urlDetail.requests ];
-		sorted.sort( ( a, b ) => {
-			const aVal = a[ requestSort.field ] ?? 0;
-			const bVal = b[ requestSort.field ] ?? 0;
-			if ( requestSort.dir === 'asc' ) {
-				return aVal > bVal ? 1 : -1;
-			}
-			return aVal < bVal ? 1 : -1;
-		} );
+		sorted.sort( ( a, b ) => compareRequests( a, b, requestSort ) );
 		return sorted;
 	}, [ urlDetail?.requests, requestSort ] );
+
+	/**
+	 * Under the modal's Errors Only, the `errorSummary()` of the errors
+	 * listed, which the header, the list and the facts block take beside the
+	 * exact `stats.errors` in place of the whole URL's numbers, which describe
+	 * other traffic. Null while every request is listed.
+	 */
+	const detailErrors = useMemo(
+		() =>
+			detailErrorsOnly && urlDetail
+				? errorSummary( urlDetail.requests ?? [] )
+				: null,
+		[ detailErrorsOnly, urlDetail ]
+	);
 
 	// `Flame_Builder_Node` builds the tree; nothing here derives one.
 	const requestFlameData = requestDetail?.flame_data ?? null;
@@ -876,6 +936,7 @@ export default function PerformanceDashboard( {
 							urlFilters,
 							selectedUrl,
 							urlDetail,
+							detailErrors,
 							selectedRequest,
 							requestPartition,
 							requestDetail,
@@ -996,11 +1057,15 @@ export default function PerformanceDashboard( {
 							<>
 								{ urlDetail && (
 									<div className="event-logger-header-stats newspack-nodes-stats-grid">
-										{ headlineStats( urlDetail.stats, [
-											'requests_per_second',
-											'avg_ms',
-											'avg_peak_mb',
-										] ).map( ( { key, short, value } ) => (
+										{ headlineStats(
+											{
+												...urlDetail.stats,
+												...detailErrors,
+											},
+											detailErrors
+												? ERRORS_HEADER_STATS
+												: URL_HEADER_STATS
+										).map( ( { key, short, value } ) => (
 											<span
 												key={ key }
 												className="newspack-nodes-stat"
@@ -1082,8 +1147,8 @@ export default function PerformanceDashboard( {
 							onRequestSort={ handleRequestSort }
 							onSelectRequest={ selectRequest }
 							urlHash={ selectedUrl.hash }
-							errorsOnly={ detailErrorsOnly }
 							onErrorsOnlyChange={ setDetailErrorsOnly }
+							detailErrors={ detailErrors }
 						/>
 					) }
 

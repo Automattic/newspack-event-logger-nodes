@@ -304,6 +304,74 @@ test( 'a URL brief names the worst recent requests by rid', () => {
 	expect( md ).toContain( '**avg_ms:** 812.3' );
 } );
 
+test( 'an errors-only URL brief renders the errors and their summary, not the whole URL', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/kea',
+		errors_only: true,
+		stats: { errors: 29 },
+		error_summary: {
+			listed: 3,
+			timeouts: 1,
+			fatals: 2,
+			fatal_avg_ms: 2417.25,
+			fatal_max_ms: 3300,
+			avg_peak_mb: 64.5,
+			max_peak_mb: 91,
+			first_at: 1741000123,
+			last_at: 1741000456,
+			status_codes: { 0: 1, 500: 2 },
+		},
+		worst_requests: [
+			{ rid: 'f4tal', duration_ms: 3300, status_code: 500 },
+			{ rid: 't1meout', duration_ms: null, status_code: 0 },
+		],
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**errors only:** yes' );
+	expect( md ).toContain( '**errors:** 29' );
+	expect( md ).toContain( '**listed:** 3 — 1 timeouts, 2 fatals' );
+	expect( md ).toContain( '**fatal duration:** 2417.3ms avg, 3300ms max' );
+	expect( md ).toContain( '**peak memory:** 64.5MB avg, 91MB max' );
+	expect( md ).toContain( '**first error:** 2025-03-03T11:08:43Z' );
+	expect( md ).toContain( '**last error:** 2025-03-03T11:14:16Z' );
+	expect( md ).toContain( '**status codes:** no status ×1, 500 ×2' );
+	expect( md ).toContain( '**worst recent:** f4tal 3300ms 500, t1meout — 0' );
+	expect( md ).not.toContain( '**count:**' );
+	expect( md ).not.toContain( '**avg_ms:**' );
+} );
+
+test( 'an errors-only URL brief with no measured fatal leaves fatal duration out', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/moa',
+		errors_only: true,
+		stats: { errors: 2 },
+		error_summary: {
+			listed: 2,
+			timeouts: 2,
+			fatals: 0,
+			fatal_avg_ms: null,
+			fatal_max_ms: null,
+			avg_peak_mb: 7.5,
+			max_peak_mb: 9,
+			first_at: 1741007000,
+			last_at: 1741007777,
+			status_codes: { 0: 2 },
+		},
+		worst_requests: [],
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).not.toContain( 'fatal duration' );
+	expect( md ).toContain( '**listed:** 2 — 2 timeouts, 0 fatals' );
+} );
+
 test( 'a URL brief marks worst-recent when the index scan stopped early', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',
@@ -320,6 +388,25 @@ test( 'a URL brief marks worst-recent when the index scan stopped early', () => 
 
 	expect( md ).toContain( '**worst recent:** part1al 2200.5ms 404' );
 	expect( md ).toContain( '**scan:** stopped early — this list is partial' );
+} );
+
+test( 'a capped URL brief reads as the newest requests, not the whole window', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/kahu',
+		stats: { count: 9133, avg_ms: 61.5 },
+		worst_requests: [],
+		requests_window_start: 1741000800,
+		requests_capped: true,
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain(
+		'**requests:** the newest the list holds, since 2025-03-03T11:20:00Z; older ones may be unlisted'
+	);
+	expect( md ).not.toContain( '**requests since:**' );
 } );
 
 test( 'a URL brief names the window its recent rows were drawn from', () => {

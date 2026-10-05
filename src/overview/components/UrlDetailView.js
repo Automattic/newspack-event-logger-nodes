@@ -13,7 +13,7 @@
  *   4. Aggregate flame graph, drawn by `RequestTrace`, which holds
  *      d3-flame-graph behind `lazy()` so the sections above it paint first.
  *   5. Aggregate profile breakdown, averaged across the profiled requests.
- *   6. Virtualized recent-requests table with an "Errors Only" filter.
+ *   6. Virtualized recent-requests table with an "Errors Only" toggle.
  *
  * The breakdown series is the one read this view issues for itself, because it
  * is a separate round trip from the `dump_url` payload: `url_breakdown` goes
@@ -54,6 +54,7 @@ import { ProfileWithCaption } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
 import { breakdownState } from '../AggregateTimeChart';
 import { errorStatus } from '../../components/errorStatus';
+import { wholeMs } from './HeadlineStats';
 import SortHeaderButton from './SortHeaderButton';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
@@ -67,6 +68,72 @@ import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
  */
 const ROW_HEIGHT = 40;
 
+/**
+ * What a row's bar measures: its peak memory under the memory metric, else
+ * its duration, which `dump_url` nulls where none was measured (decision 24).
+ *
+ * @param {Object} req    A request row.
+ * @param {string} metric The chart metric.
+ * @return {number} The bar's value; 0 draws no bar.
+ */
+const barValue = ( req, metric ) => {
+	if ( 'memory' === metric ) {
+		return req.peak_mb || 0;
+	}
+	return req.duration_ms ?? 0;
+};
+
+/**
+ * One status code and its count, as the errors line names it.
+ *
+ * @param {[string, number]} entry `[ code, count ]`.
+ * @return {string} The pair; code 0 is a request that answered nothing.
+ */
+const codeCount = ( [ code, count ] ) =>
+	`${
+		'0' === code ? __( 'no status', 'newspack-event-logger-nodes' ) : code
+	} \u00d7${ count }`;
+
+/**
+ * The one line under an errors-only list: how many of the URL's exact errors
+ * it holds, when the first and the last of them started, and what they
+ * answered.
+ *
+ * @param {Object}  props
+ * @param {?number} props.total   The URL's exact error count, `stats.errors`.
+ * @param {Object}  props.summary The `errorSummary()` of the list.
+ * @return {import('react').ReactElement} The line.
+ */
+function ErrorsLine( { total, summary } ) {
+	const parts = [
+		sprintf(
+			// translators: 1: errors listed, 2: the URL's errors in the window.
+			__( '%1$d of %2$s errors listed', 'newspack-event-logger-nodes' ),
+			summary.listed,
+			'number' === typeof total ? String( total ) : '—'
+		),
+	];
+	if ( summary.first_at ) {
+		parts.push(
+			sprintf(
+				// translators: %s: when the earliest listed error started.
+				__( 'first %s', 'newspack-event-logger-nodes' ),
+				new Date( summary.first_at * 1000 ).toLocaleString()
+			),
+			sprintf(
+				// translators: %s: when the latest listed error started.
+				__( 'last %s', 'newspack-event-logger-nodes' ),
+				new Date( summary.last_at * 1000 ).toLocaleString()
+			)
+		);
+	}
+	const codes = Object.entries( summary.status_codes ?? {} );
+	if ( codes.length ) {
+		parts.push( codes.map( codeCount ).join( ', ' ) );
+	}
+	return <p className="newspack-nodes-status">{ parts.join( ' · ' ) }</p>;
+}
+
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const RequestRow = memo(
 	/**
@@ -79,7 +146,8 @@ const RequestRow = memo(
 	 * than about the URL the modal is open on. Its request-id cell carries a
 	 * bar background whose width is the row's value as a fraction of `maxBar`,
 	 * and its status cell reads `error_status` through `errorStatus()`, falling
-	 * back to the HTTP status code for a request that ended nominally.
+	 * back to the HTTP status code for a request that ended nominally. A
+	 * duration nobody measured shows as a dash and bars nothing.
 	 *
 	 * @param {Object}                                   props          Component props.
 	 * @param {Object}                                   props.req      Request index entry: rid, partition, timestamp, method, status_code, error_status, duration_ms, peak_mb.
@@ -89,9 +157,8 @@ const RequestRow = memo(
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function RequestRow( { req, onSelect, maxBar, metric } ) {
-		const barField = metric === 'memory' ? 'peak_mb' : 'duration_ms';
-		const barValue = req[ barField ] || 0;
-		const barPct = maxBar > 0 ? ( barValue / maxBar ) * 100 : 0;
+		const barPct =
+			maxBar > 0 ? ( barValue( req, metric ) / maxBar ) * 100 : 0;
 		const status = errorStatus( req.error_status );
 		const handleKeyDown = ( e ) => {
 			if ( e.key === 'Enter' || e.key === ' ' ) {
@@ -137,7 +204,9 @@ const RequestRow = memo(
 					) }
 				</div>
 				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-					{ req.duration_ms?.toFixed( 0 ) || 0 }ms
+					{ 'number' === typeof req.duration_ms
+						? wholeMs( req.duration_ms )
+						: '—' }
 				</div>
 				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 					{ req.peak_mb > 0 ? `${ req.peak_mb }MB` : '-' }
@@ -152,8 +221,9 @@ const RequestRow = memo(
  *
  * Sorting lives upstream: the parent sorts and hands back `sortedRequests`,
  * and `requestSort` only tells the headers which arrow to draw. "Errors Only"
- * lives upstream too, and narrows the list, the heading count and the
- * bar-scaling maximum alike.
+ * lives upstream too: the server answers it, walking past the clean requests
+ * that bury a busy URL's errors, so the list, the heading count, the
+ * bar-scaling maximum and the response-time scatter all show those errors.
  *
  * @param {Object}                                   props                    Component props.
  * @param {Object}                                   props.urlDetail          The fields this view reads off the `dump_url` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
@@ -162,8 +232,8 @@ const RequestRow = memo(
  * @param {(field: string) => void}                  props.onRequestSort      Receives a field name when a sortable header is clicked.
  * @param {(rid: string, partition: number) => void} props.onSelectRequest    Receives a rid AND its partition from a row click or a scatter-plot dot.
  * @param {string}                                   props.urlHash            The URL's 12-char hash, which addresses the `url_breakdown` read below.
- * @param {boolean}                                  [props.errorsOnly]       Whether "Errors Only" narrows the list; the dashboard owns it, so it survives a trip to a request and back.
  * @param {(on: boolean) => void}                    props.onErrorsOnlyChange Receives the flipped value when the toggle is clicked.
+ * @param {?Object}                                  [props.detailErrors]     Under Errors Only, the `errorSummary()` of the list; null while every request is listed. The dashboard owns the toggle, so it survives a trip to a request and back.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {
@@ -173,10 +243,11 @@ export default function UrlDetailView( {
 	onRequestSort,
 	onSelectRequest,
 	urlHash,
-	errorsOnly = false,
 	onErrorsOnlyChange,
+	detailErrors = null,
 } ) {
 	const listRef = useRef( null );
+	const errorsOnly = null !== detailErrors;
 
 	// A list the walk cut short reads exactly like a URL with no traffic.
 	const scanNote = urlDetail.scan_stopped_early
@@ -186,34 +257,25 @@ export default function UrlDetailView( {
 		  )
 		: null;
 
-	const filteredRequests = useMemo( () => {
-		if ( ! errorsOnly ) {
-			return sortedRequests;
-		}
-		return sortedRequests.filter(
-			( r ) => errorStatus( r.error_status )?.errored
-		);
-	}, [ sortedRequests, errorsOnly ] );
-
 	const { startIndex, endIndex, paddingTop, paddingBottom } =
 		useVirtualization(
 			listRef,
 			ROW_HEIGHT,
-			filteredRequests.length,
+			sortedRequests.length,
 			'.components-modal__content'
 		);
-	const visibleRequests = filteredRequests.slice( startIndex, endIndex );
+	const visibleRequests = sortedRequests.slice( startIndex, endIndex );
 
 	const [ chartMetric, setChartMetric ] = useState( 'volume' );
 
-	// Row bars scale against the filtered rows, not the whole result set.
-	const maxBar = useMemo( () => {
-		const field = chartMetric === 'memory' ? 'peak_mb' : 'duration_ms';
-		return filteredRequests.reduce(
-			( max, r ) => Math.max( max, r[ field ] || 0 ),
-			0
-		);
-	}, [ filteredRequests, chartMetric ] );
+	const maxBar = useMemo(
+		() =>
+			sortedRequests.reduce(
+				( max, r ) => Math.max( max, barValue( r, chartMetric ) ),
+				0
+			),
+		[ sortedRequests, chartMetric ]
+	);
 	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
 	const [ breakdownData, setBreakdownData ] = useState( null );
 	const [ breakdownSlots, setBreakdownSlots ] = useState( null );
@@ -300,6 +362,14 @@ export default function UrlDetailView( {
 	return (
 		// The picker root: a body click outside a row asks about the URL.
 		<div data-ask={ urlHash ? `url:${ urlHash }` : undefined }>
+			{ errorsOnly && (
+				<p className="newspack-nodes-banner is-info" role="status">
+					{ __(
+						'The charts, the flame graph and the profile describe every request to this URL; the list below holds its errors.',
+						'newspack-event-logger-nodes'
+					) }
+				</p>
+			) }
 			{ /* Always mounted: a gate here can strand the operator. */ }
 			<BreakdownControls
 				breakdownRead={ breakdownRead }
@@ -366,7 +436,7 @@ export default function UrlDetailView( {
 								'Recent Requests (%d)',
 								'newspack-event-logger-nodes'
 							),
-							filteredRequests.length
+							sortedRequests.length
 						) }
 					</h3>
 					<button
@@ -385,6 +455,12 @@ export default function UrlDetailView( {
 							  ) }
 					</button>
 				</div>
+				{ detailErrors && (
+					<ErrorsLine
+						total={ urlDetail.stats?.errors }
+						summary={ detailErrors }
+					/>
+				) }
 
 				{ /* Outside listRef, so it is never a virtualized row. */ }
 				<div className="event-logger-table__header newspack-nodes-table__header">
@@ -430,7 +506,7 @@ export default function UrlDetailView( {
 					ref={ listRef }
 					className="event-logger-table__list newspack-nodes-table"
 				>
-					{ filteredRequests.length === 0 ? (
+					{ sortedRequests.length === 0 ? (
 						<div className="event-logger-table__empty newspack-nodes-empty-state">
 							{ scanNote ||
 								__(
@@ -454,7 +530,7 @@ export default function UrlDetailView( {
 						</>
 					) }
 				</div>
-				{ scanNote && filteredRequests.length > 0 && (
+				{ scanNote && sortedRequests.length > 0 && (
 					<p className="newspack-nodes-status">{ scanNote }</p>
 				) }
 			</div>

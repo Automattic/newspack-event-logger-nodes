@@ -55,7 +55,7 @@
       <div class="r"><b>min_lifetime ≤ 3,600 s</b>13 buckets: the floor sits 3,600 s back.</div>
       <div class="r"><b>between</b>⌈min_lifetime ÷ 300⌉ + 1 buckets: the floor tracks the setting.</div>
       <div class="r"><b>min_lifetime &gt; 85,800 s</b>288 buckets: the floor stops 86,100 s back.</div>
-      <div class="r" style="background:#FBEAEA;border-color:#E6A3A3"><b style="color:#B32D2E">scan_stopped_early: true</b>The list stops short of the floor: the walk spent <span class="mono">MAX_SCAN_S</span> (10 seconds) first, so an empty list is not an idle URL, or a partition held more than <span class="mono">RECENT_REQUEST_LIMIT</span> (500) matches. Each partition is capped at 500 and the merged list keeps the 500 that finished last, so no partition goes unread.</div>
+      <div class="r" style="background:#FBEAEA;border-color:#E6A3A3"><b style="color:#B32D2E">scan_stopped_early: true</b>The walk spent <span class="mono">MAX_SCAN_S</span> (10 seconds) before the floor, so an empty list is not an idle URL. The <span class="mono">RECENT_REQUEST_LIMIT</span> (500) cap never sets it: each partition walks newest-first and is capped at 500, so a list of 500 is exactly the newest 500, not the whole window.</div>
     </div>
   </div>
 

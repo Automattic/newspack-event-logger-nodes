@@ -9,15 +9,6 @@ import { isControl } from '@newspack-nodes/shared/helpers/controlMsg';
 const MERGED_REQUEST_LIMIT = 500;
 
 /**
- * A request's completion in epoch seconds: the list's order, as the server's.
- *
- * @param {Object} r A `dump_url` request row.
- * @return {number} Its start plus its duration.
- */
-const finishedAt = ( r ) =>
-	( r.timestamp || 0 ) + ( r.duration_ms || 0 ) / 1000;
-
-/**
  * The reply fields the stats writer moves on its own clock, apart from the
  * request rows and the flame stamp: a refresh carrying a change in any of
  * them is news even with no new row.
@@ -77,6 +68,17 @@ const liveOf = ( payload ) =>
  * A `clear` control from `controlFrom` resets the retained state and the
  * cursor. `usePerformanceGraph` sends one when the modal opens, when it closes
  * and whenever the server scope changes, so the next reply counts as fresh.
+ * A `relist`, which it sends when Errors Only flips, does the same but keeps
+ * the held flame and profiles: an errors-only reply rebuilds no flame, and the
+ * one held still describes the URL.
+ *
+ * Only the answer to a question the `url-detail:fetch` Fetcher still asks
+ * reaches it: the substrate's `url-detail:in:current` gate ahead of this edge
+ * drops a reply the open, a rescope or an Errors Only flip superseded before
+ * it can push the newer list's rows out.
+ *
+ * A refusal never arrives: the slice's gate sends it to the view, around this
+ * node, so the retained list survives a refresh that failed.
  *
  * Forwarding runs through the base `fill()`, which stamps TO from `target` (the
  * view) and hands the message to the sink `makeNode` wired — the interpreter.
@@ -113,7 +115,7 @@ export class UrlDetailMergeNode extends Node {
 
 		// A control never forwards, VALUE or none; `action` picks the verb.
 		if ( isControl( this, message ) ) {
-			this._control( value?.action );
+			this._control( value );
 			return;
 		}
 
@@ -130,16 +132,27 @@ export class UrlDetailMergeNode extends Node {
 
 	/**
 	 * Apply one control verb: `clear` drops the retained payload and the
-	 * cursor, so the next reply counts as fresh. An unrecognised or absent verb
-	 * is a no-op.
+	 * cursor, so the next reply counts as fresh; `relist` does the same but
+	 * keeps the held flame, profiles and their stamp. An unrecognised or
+	 * absent verb is a no-op.
 	 *
-	 * @param {string|undefined} action The verb.
+	 * @param {?{action?: string}} control The control's VALUE.
 	 */
-	_control( action ) {
-		if ( 'clear' === action ) {
-			this._merged = null;
-			this._cursor = {};
+	_control( control ) {
+		const action = control?.action;
+		if ( 'clear' !== action && 'relist' !== action ) {
+			return;
 		}
+		const held = this._merged;
+		this._merged =
+			'relist' === action && held
+				? {
+						aggregate_flame: held.aggregate_flame,
+						aggregate_profiles: held.aggregate_profiles,
+						last_modified: held.last_modified,
+				  }
+				: null;
+		this._cursor = {};
 	}
 
 	/**
@@ -167,7 +180,8 @@ export class UrlDetailMergeNode extends Node {
 		const merged = {
 			...data,
 			requests: [ ...fresh, ...held ]
-				.sort( ( a, b ) => finishedAt( b ) - finishedAt( a ) )
+				// The server's order: completion, start plus the raw duration.
+				.sort( ( a, b ) => b.finished_at - a.finished_at )
 				.slice( 0, MERGED_REQUEST_LIMIT ),
 		};
 		// The note belongs to the list, so it unions the way the list does.
@@ -216,8 +230,8 @@ export class UrlDetailMergeNode extends Node {
 
 	/**
 	 * Console/palette metadata. `Hidden` keeps this edge transform out of the
-	 * palette: it takes no constructor arguments, answers no verbs, and takes
-	 * its target from the graph `usePerformanceGraph` builds.
+	 * palette: it answers no verbs, and takes its target from the graph
+	 * `usePerformanceGraph` builds.
 	 *
 	 * @return {Object} The node schema.
 	 */
