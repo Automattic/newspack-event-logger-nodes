@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.121.0] - 2026-10-05
+
 ### Added
 
 - **The URL modal's Errors Only reaches past the newest 500 requests.** It filtered the 500 the modal already held, so on a busy URL an older error could not be found at all. `dump_url --errors_only` now lists only the timeouts and fatals, walking past the clean requests toward the window's floor within the scan's time budget, and the toggle asks the server afresh, so the list, its count and the response-time scatter all show those errors. Like a tailing read, an errors-only read rebuilds no flame; the modal keeps the one it holds. A reply asked before a toggle or a server change no longer lands in the newer list. The MCP `dump_url` tool takes `errors_only` too. Under Errors Only the modal describes the errors it lists: its header shows the URL's exact error count, now `dump_url`'s `stats.errors`, beside the timeouts, the fatals, the measured fatals' mean and max and the mean peak memory of the list; the list's heading line reads "N of M errors listed" with the first and last error's start and the status codes answered; a note says the charts, the flame graph and the profile still describe every request. An Ask brief picked in the modal, and the page-facts block, carry the same: the `ask` verb's `errors_only` narrows a `url:` brief as well as an `overview:` one, to `errors_only`, `stats.errors` and an `error_summary` in place of the whole URL's stats. The JS `errorSummary()` and `Ask_Assembler::error_summary()` read one case list, `tests/fixtures/error-summary.json`.
