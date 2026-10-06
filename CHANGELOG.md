@@ -9,10 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.124.3] - 2026-10-06
 
-### Changed
-
-- **Rebuilt against newspack-nodes 2.96.0,** so the debug overlay draws a node's owned Table with its owner named, and offers no delete or rename on it.
-
 ### Fixed
 
 - **The `request` line logs the URL as sent.** `sanitize_text_field()` deleted every `%xx` octet, so `?rest_route=%2Fjetpack%2Fv4%2Fsync%2Fstatus` was logged as `?rest_route=jetpackv4syncstatus`, which could be neither searched for nor replayed. REQUEST_URI and REQUEST_METHOD now keep their percent-encoding and backslashes and lose only C0 controls and DEL, on both producers. Rules match, and URL rows key, on that encoded form, so an encoded path's stats begin a new URL row.
@@ -22,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Rebuilt against newspack-nodes 2.96.0,** so the debug overlay draws a node's owned Table with its owner named, and offers no delete or rename on it.
 - **URL redaction judges each parameter's name as PHP reads it.** One linear walk visits every `?` or `&` parameter in an unshaped string, and a name is redacted when it matches as sent or decoded (`+` and `%20` read as `_`, `%XX` decoded, cut at its first NUL), so `api%5Fkey`, `api+key` and `api[key` go with `api_key`, while a raw space, which no request line carries, leaves prose such as `the client said x=1` alone. `[` and `]` bound a segment, so `data[api_key]` goes too, and `&amp;`, `&#38;` and `&#x26;` separate parameters as `&` does. A string holding neither `?` nor `&` skips the walk. A regex failure replaces everything from the first `?` or `&` with `?[REDACTED]`. Over 300,000 fuzzed strings it keeps no value the previous pattern redacted, and a name holding 4,000 `?` costs 105 µs where the pattern took 157 ms. Both producers read one case list, `tests/fixtures/url-redaction.json`.
 
 ## [0.124.2] - 2026-10-06
