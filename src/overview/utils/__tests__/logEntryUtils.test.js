@@ -1486,6 +1486,26 @@ describe( 'computeVisibleEntries', () => {
 		).toBeUndefined();
 	} );
 
+	it( "names a merged row's two halves by their positions, stored or not", () => {
+		// Rows the fold rebuilt carry no `i`; their positions still differ.
+		const { entries } = computeIndentedEntries( [
+			{ k: 'lead', ts: 1, i: 0 },
+			{ k: 'sql (start)', ts: 1, fromFold: true },
+			{ k: 'sql (complete)', ts: 1, m: 'x', fromFold: true },
+			{ k: 'sql (start)', ts: 1, fromFold: true },
+			{ k: 'sql (complete)', ts: 1, m: 'y', fromFold: true },
+		] );
+		const merged = computeVisibleEntries( entries, new Set() ).filter(
+			( e ) => e.isMerged
+		);
+		expect(
+			merged.map( ( e ) => [ e.originalIdx, e.completeIdx ] )
+		).toEqual( [
+			[ 1, 2 ],
+			[ 3, 4 ],
+		] );
+	} );
+
 	it( 'expands a pair when its pairId is in the set', () => {
 		const { entries } = computeIndentedEntries( [
 			{ k: 'a (start)', ts: 1 },
