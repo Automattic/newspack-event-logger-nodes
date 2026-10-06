@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.124.4] - 2026-10-06
+
+### Changed
+
+- **Rebuilt against newspack-nodes 2.96.1,** so the debug overlay's canvas seats a node's owned Table beside its owner, and lays an untouched graph out again when a poll brings a node or an edge it never covered.
+
 ## [0.124.3] - 2026-10-06
 
 ### Fixed
