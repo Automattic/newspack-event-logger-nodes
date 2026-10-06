@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.124.0] - 2026-10-06
 
+### Changed
+
+- **A plain click on a selected bucket clears the selection.** Cmd- or ctrl-click still removes just that bucket; a plain click on an unselected bucket still selects it alone.
+
 ### Added
 
 - **A drag across the Performance charts selects the buckets it spans.** The overview's breakdown and category charts edit the URL table's selection and the URL modal's charts edit the modal's: a plain drag replaces the selection with every bucket from the drag's first slot to its last, and a cmd- or ctrl-drag adds that span to what is held. Both map the substrate `AreaTimeChart`'s `onSlotRange( from, to, { additive } )` through the chart's axis, beside the click's `onSlotClick`.

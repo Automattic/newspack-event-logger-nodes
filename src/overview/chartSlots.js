@@ -217,7 +217,8 @@ export const bucketSpelling = ( keys ) =>
 
 /**
  * The selection a chart click leaves: a plain click selects its bucket
- * alone, an additive one adds or removes it.
+ * alone, or clears the selection when that bucket is already held; an
+ * additive one adds or removes it.
  *
  * @param {string}  spelling The held selection.
  * @param {string}  key      The clicked bucket.
@@ -225,10 +226,10 @@ export const bucketSpelling = ( keys ) =>
  * @return {string} The new selection's spelling.
  */
 const clickSelection = ( spelling, key, additive ) => {
-	if ( ! additive ) {
-		return key;
-	}
 	const held = bucketsOf( spelling );
+	if ( ! additive ) {
+		return held.includes( key ) ? '' : key;
+	}
 	return bucketSpelling(
 		held.includes( key )
 			? held.filter( ( k ) => k !== key )
