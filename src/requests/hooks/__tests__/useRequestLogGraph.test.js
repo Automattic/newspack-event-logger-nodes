@@ -316,17 +316,17 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
 	} );
 
-	test( 'showing the page reopens the EventSource', () => {
+	test( 'showing the page reopens the EventSource', async () => {
 		const { rerender } = renderHook( () => useRequestLogGraph() );
 		mockPageVisible = false;
 		act( () => rerender( { n: 1 } ) );
 		const before = FakeEventSource.instances.length;
 		mockPageVisible = true;
-		act( () => rerender( { n: 2 } ) );
+		await act( async () => rerender( { n: 2 } ) );
 		expect( FakeEventSource.instances.length ).toBeGreaterThan( before );
 	} );
 
-	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
+	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', async () => {
 		const { rerender } = renderHook( () => useRequestLogGraph() );
 		// Tailed record: ID holds segment:offset:length; FROM holds partition.
 		const rec = completedEnvelope( { rid: 'r1', url: '/a' } );
@@ -340,7 +340,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		act( () => rerender( { n: 1 } ) );
 		// Show → reopen seeks the last offset (fills the gap), not tail.
 		mockPageVisible = true;
-		act( () => rerender( { n: 2 } ) );
+		await act( async () => rerender( { n: 2 } ) );
 		const url = FakeEventSource.last.url;
 		expect( url ).toContain( 'positions=' );
 		const positions = JSON.parse(
@@ -499,7 +499,7 @@ describe( 'useRequestLogGraph — pause vs visibility precedence + replay surviv
 	// isActive gate, so precedence holds by construction. This pins it against a
 	// future fork back to a separate visibility path (the genuinely red-first
 	// version lives on the substrate viewer hooks, which had a separate gate).
-	test( 'a user pause outranks a visibility refocus: pause → hide → refocus stays CLOSED (no auto-resume)', () => {
+	test( 'a user pause outranks a visibility refocus: pause → hide → refocus stays CLOSED (no auto-resume)', async () => {
 		const { result, rerender } = renderHook( () => useRequestLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
@@ -514,7 +514,7 @@ describe( 'useRequestLogGraph — pause vs visibility precedence + replay surviv
 		mockPageVisible = false;
 		act( () => rerender( { n: 1 } ) );
 		mockPageVisible = true;
-		act( () => rerender( { n: 2 } ) );
+		await act( async () => rerender( { n: 2 } ) );
 		expect( FakeEventSource.instances.length ).toBe( afterPause );
 		expect( FakeEventSource.last.closed ).toBe( true );
 	} );

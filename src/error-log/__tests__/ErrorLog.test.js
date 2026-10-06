@@ -191,7 +191,9 @@ describe( 'ErrorLog', () => {
 	it( 'sends the filter to the view node, and honours the placeholder', () => {
 		const node = registerViewFixture();
 		const { container } = mount();
-		const input = container.querySelector( '.newspack-nodes-search-input' );
+		const input = container.querySelector(
+			'.newspack-nodes-search-input input'
+		);
 		expect( input.placeholder ).toBe(
 			'Filter by URL, keyword, message, or request ID…'
 		);

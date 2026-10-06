@@ -321,6 +321,22 @@ test( 'a URL brief under a bucket names the five minutes its numbers cover', () 
 	expect( md ).toContain( '**count:** 17' );
 } );
 
+test( 'a brief under several runs names each as its UTC span', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/kea',
+		bucket: '2026-10-04-23-50..2026-10-05-00-05,2026-10-05-09-15',
+		stats: { count: 17 },
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain(
+		'**bucket:** 2026-10-04-23-50..2026-10-05-00-05,2026-10-05-09-15 (23:50–00:10 UTC, 09:15–09:20 UTC)'
+	);
+} );
+
 test( 'a URL brief over its whole window names no bucket', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',

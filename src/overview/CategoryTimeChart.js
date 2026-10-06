@@ -31,6 +31,7 @@ import {
 	CAT_FIELDS,
 	decodeNameTable,
 	hasRows,
+	useSelectedSlots,
 	useSlotClick,
 } from './chartSlots';
 
@@ -177,13 +178,19 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
  * `yFormatFor` and `colorAt` still, since `AreaTimeChart` redraws whenever
  * one of them changes.
  *
- * @param {Object}                      props               Component props.
- * @param {Object|null}                 props.data          Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
- * @param {string[]|null}               props.slots         The bucket keys the reply drew, newest first.
- * @param {(bucketKey: string) => void} [props.onSlotClick] Receives the bucket key of a slot a plain click lands on in any of the three charts; without it a plain click does nothing.
+ * @param {Object}                                                  props                 Component props.
+ * @param {Object|null}                                             props.data            Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
+ * @param {string[]|null}                                           props.slots           The bucket keys the reply drew, newest first.
+ * @param {(bucketKey: string, click: {additive: boolean}) => void} [props.onSlotClick]   Receives the bucket key of a slot clicked in any of the three charts, and whether cmd or ctrl was held; without it a click does nothing.
+ * @param {string[]}                                                props.selectedBuckets The selected bucket keys, shaded on every view.
  * @return {import('react').ReactElement[]|null} One chart per view, or null when data is empty.
  */
-export default function CategoryTimeChart( { data, slots, onSlotClick } ) {
+export default function CategoryTimeChart( {
+	data,
+	slots,
+	onSlotClick,
+	selectedBuckets,
+} ) {
 	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
 	const decoded = useMemo(
 		() => decodeNameTable( data, CAT_FIELDS ),
@@ -213,6 +220,7 @@ export default function CategoryTimeChart( { data, slots, onSlotClick } ) {
 	const colorAt = useCallback( ( _label, index ) => chartColor( index ), [] );
 
 	const slotClick = useSlotClick( axis, onSlotClick );
+	const selectedSlots = useSelectedSlots( axis, selectedBuckets );
 
 	// Emptiness asks about the ROWS, and below every hook: order matters.
 	if ( ! hasRows( decoded ) || 0 === axis.length ) {
@@ -230,6 +238,7 @@ export default function CategoryTimeChart( { data, slots, onSlotClick } ) {
 			height={ CHART_HEIGHT }
 			stackable={ false }
 			onSlotClick={ slotClick }
+			selectedSlots={ selectedSlots }
 		/>
 	) );
 }

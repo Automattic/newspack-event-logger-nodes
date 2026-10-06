@@ -1,19 +1,32 @@
 /**
- * Tag input geometry; `TagToken.scss` holds the token's. Shared
- * badge/status/control styles own chrome.
+ * Tag input geometry, whose horizontal row the Time field lays out on too;
+ * `TagToken.scss` holds the token's. Shared badge/status/control styles own
+ * chrome.
  */
+
+@use "../../styles/base";
 
 .event-logger-tag-input {
 	max-width: 60em;
+
+	.event-logger-tag-container {
+		margin-bottom: 8px;
+	}
 }
 
+// Centring moves no badge of one height; the Time field's box shares the row.
 .event-logger-tag-container {
-	margin-bottom: 8px;
-
 	&.horizontal {
 		display: flex;
 		flex-wrap: wrap;
+		align-items: center;
 		gap: 4px;
+
+		// A token beside the box stands as tall as the toolbar's controls.
+		&:has(> input) > .event-logger-tag-token {
+			box-sizing: border-box;
+			min-height: base.$control-height;
+		}
 	}
 
 	&.vertical {
@@ -22,10 +35,4 @@
 		align-items: flex-start;
 		gap: 4px;
 	}
-}
-
-.event-logger-tag-input-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
 }

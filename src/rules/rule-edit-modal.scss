@@ -47,13 +47,12 @@
 	}
 
 	.rule-edit-tag-field {
-		.event-logger-tag-input,
-		.event-logger-tag-input-row {
+		.event-logger-tag-input {
 			max-width: none;
 			width: 100%;
 		}
 
-		.event-logger-tag-input-row input {
+		.event-logger-tag-input input {
 			width: 100%;
 		}
 	}

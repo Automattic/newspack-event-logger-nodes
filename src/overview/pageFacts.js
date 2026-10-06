@@ -47,9 +47,10 @@ function num( value, fallback = 0 ) {
  *                                           the `errorSummary()` of the list
  *                                           on screen. Null otherwise.
  * @param {?Object} [state.detailFilters]    The modal's `{ errors_only,
- *                                           bucket }`; its bucket key is
- *                                           what the header and list narrow
- *                                           to, '' for the whole window.
+ *                                           bucket }`; its bucket selection
+ *                                           is what the header and list
+ *                                           narrow to, '' for the whole
+ *                                           window.
  * @param {?string} [state.selectedRequest]  The selected request id.
  * @param {?number} [state.requestPartition] Its partition. Absent reads as 0,
  *                                           the `dump_request` verb's own

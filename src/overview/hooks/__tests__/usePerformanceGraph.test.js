@@ -112,6 +112,16 @@ function countVerbs( batches, verb ) {
 	return count;
 }
 
+/**
+ * The URL modal's next refresh: its Timer reaches a grid boundary, and the
+ * Router's tick fires it. Opening the modal fires that Timer at once, so the
+ * grid's next boundary is a whole interval away.
+ */
+function refreshTick() {
+	Core.node( 'url-detail:timer' ).markDue();
+	Core.node( ROUTER ).fireCb();
+}
+
 // Drive document.visibilityState (matches the visibility tests).
 function setVisibility( state ) {
 	Object.defineProperty( document, 'visibilityState', {
@@ -815,8 +825,11 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 	} );
 } );
 
-describe( 'usePerformanceGraph — the five-minute bucket', () => {
-	test( 'asks urls for the bucket, and again when only the bucket moves', async () => {
+describe( 'usePerformanceGraph — the bucket selection', () => {
+	// Two runs, as the address bar and `--bucket` carry them.
+	const RUNS = '2026-10-04-13-40..2026-10-04-13-50,2026-10-04-14-15';
+
+	test( 'asks urls for the selection by its spelling, and again when only it moves', async () => {
 		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		let api;
 		renderHook( () => {
@@ -839,11 +852,11 @@ describe( 'usePerformanceGraph — the five-minute bucket', () => {
 		);
 		const before = asked().length;
 
-		api.handleUrlParamsChange( { ...base, bucket: '2026-10-04-13-40' } );
+		api.handleUrlParamsChange( { ...base, bucket: RUNS } );
 
 		expect( asked() ).toHaveLength( before + 1 );
 		expect( option( asked().at( -1 )[ VALUE ].arguments, 'bucket' ) ).toBe(
-			'2026-10-04-13-40'
+			RUNS
 		);
 
 		api.handleUrlParamsChange( { ...base, bucket: '' } );
@@ -852,7 +865,7 @@ describe( 'usePerformanceGraph — the five-minute bucket', () => {
 		).toBeUndefined();
 	} );
 
-	test( 'asks dump_url for the modal bucket, relisting on a change', async () => {
+	test( 'asks dump_url for the modal selection, relisting on a change', async () => {
 		const wire = installWire( {
 			dump_url: { last_modified: 1, requests: [] },
 		} );
@@ -891,24 +904,20 @@ describe( 'usePerformanceGraph — the five-minute bucket', () => {
 				selectedUrl: { hash: 'beef4471' },
 				detailFilters: {
 					errors_only: false,
-					bucket: '2026-10-04-13-40',
+					bucket: RUNS,
 				},
 			} );
 		} );
 		const moved = findVerb( wire.batches, 'dump_url' );
-		expect( option( moved[ VALUE ].arguments, 'bucket' ) ).toBe(
-			'2026-10-04-13-40'
-		);
+		expect( option( moved[ VALUE ].arguments, 'bucket' ) ).toBe( RUNS );
 		expect( controls ).toEqual( [ { action: 'relist' } ] );
 
 		wire.batches.length = 0;
 		await act( async () => {
-			Core.node( ROUTER ).fireCb();
+			refreshTick();
 		} );
 		const refreshed = findVerb( wire.batches, 'dump_url' );
-		expect( option( refreshed[ VALUE ].arguments, 'bucket' ) ).toBe(
-			'2026-10-04-13-40'
-		);
+		expect( option( refreshed[ VALUE ].arguments, 'bucket' ) ).toBe( RUNS );
 	} );
 } );
 
@@ -957,7 +966,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 		wire.batches.length = 0;
 		await act( async () => {
-			Core.node( ROUTER ).fireCb();
+			refreshTick();
 		} );
 		const detail = findVerb( wire.batches, 'dump_url' );
 		expect( detail ).toBeTruthy();
@@ -1008,7 +1017,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		// The reply is now retained, so the next tick asks only for what is new.
 		wire.batches.length = 0;
 		await act( async () => {
-			Core.node( ROUTER ).fireCb();
+			refreshTick();
 		} );
 		const refreshed = findVerb( wire.batches, 'dump_url' );
 		expect(
@@ -1068,7 +1077,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 			} );
 		} );
 		await act( async () => {
-			Core.node( ROUTER ).fireCb();
+			refreshTick();
 		} );
 
 		expect(
@@ -1261,6 +1270,106 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => setVisibility( 'visible' ) );
 		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 	} );
+
+	// A minute's cadence: no grid boundary falls inside the test.
+	test( 'a hidden URL modal shown again asks dump_url at once', async () => {
+		const wire = installWire( {
+			dump_url: { last_modified: 1, requests: [] },
+		} );
+		const props = {
+			refreshInterval: '60000',
+			selectedUrl: { hash: 'abc' },
+		};
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '60000' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( props );
+		} );
+		await act( async () => setVisibility( 'hidden' ) );
+		wire.batches.length = 0;
+
+		await act( async () => setVisibility( 'visible' ) );
+
+		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 1 );
+		expect(
+			findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments[ 0 ]
+		).toBe( 'abc' );
+	} );
+
+	test( 'Reset Graph with the URL modal open re-arms its Timer at the interval, not every tick', async () => {
+		const wire = installWire( {
+			dump_url: { last_modified: 1, requests: [] },
+		} );
+		const props = {
+			refreshInterval: '60000',
+			selectedUrl: { hash: 'abc' },
+		};
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '60000' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( props );
+		} );
+
+		await act( async () => Core.bumpGraphGeneration() );
+		wire.batches.length = 0;
+		for ( let i = 0; i < 5; i++ ) {
+			await act( async () => Core.node( ROUTER ).fireCb() );
+		}
+
+		expect( Core.node( 'url-detail:timer' ).interval_ms ).toBe( 60000 );
+		expect( Core.node( 'request-detail:timer' ).mode ).toBe( 'inactive' );
+		expect( countVerbs( wire.batches, 'dump_url' ) ).toBeLessThanOrEqual(
+			1
+		);
+	} );
+
+	test( 'a cadence change while the URL modal is open asks no extra dump_url', async () => {
+		const wire = installWire( {
+			dump_url: { last_modified: 1, requests: [] },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '60000' },
+		} );
+		await act( async () => {} );
+		// One selection object, as the dashboard's state holds it.
+		const selectedUrl = { hash: 'abc' };
+		await act( async () => {
+			rerender( { refreshInterval: '60000', selectedUrl } );
+		} );
+		wire.batches.length = 0;
+
+		await act( async () => {
+			rerender( { refreshInterval: '120000', selectedUrl } );
+		} );
+
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
+		expect( Core.node( 'url-detail:timer' ).interval_ms ).toBe( 120000 );
+		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 0 );
+	} );
+
+	test( 'closing the URL modal stops the url-detail:timer', async () => {
+		installWire( {
+			dump_url: { last_modified: 1, requests: [] },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {},
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { selectedUrl: { hash: 'abc' } } );
+		} );
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
+
+		await act( async () => {
+			rerender( { selectedUrl: null } );
+		} );
+
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'inactive' );
+	} );
 } );
 
 describe( 'usePerformanceGraph — teardown', () => {
@@ -1340,7 +1449,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		expect( opened[ VALUE ].arguments ).not.toContain( '--errors_only' );
 
 		// The flip restarts the list under the new ask, keeping the flame, and
-		// the view drops the old list rather than show it under the new toggle.
+		// the view keeps its slice on screen, marked loading, until it lands.
 		const recordControls = ( name ) => {
 			const seen = [];
 			const node = Core.node( name );
@@ -1367,14 +1476,15 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		expect( asked[ VALUE ].arguments ).toContain( '--errors_only' );
 		expect( option( asked[ VALUE ].arguments, 'after' ) ).toBeUndefined();
 		expect( controls ).toEqual( [ { action: 'relist' } ] );
-		expect( viewControls ).toEqual( [
-			{ action: 'clear' },
-			{ action: 'loading' },
-		] );
+		expect( viewControls ).toEqual( [ { action: 'loading' } ] );
+		expect( Core.node( 'url-detail:view' ).view ).toMatchObject( {
+			data: { last_modified: 1 },
+			loading: true,
+		} );
 
 		wire.batches.length = 0;
 		await act( async () => {
-			Core.node( ROUTER ).fireCb();
+			refreshTick();
 		} );
 		const refreshed = findVerb( wire.batches, 'dump_url' );
 		expect( refreshed[ VALUE ].arguments ).toContain( '--errors_only' );

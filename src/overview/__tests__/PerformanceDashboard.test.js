@@ -51,7 +51,9 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 // suite has no graph for them. The double records each by scope and hands the
 // test `answerCommand`, which fires that verb's own `onDone` — the same
 // callback the real reply would land in, so the paths under test are the real
-// ones and only the wire is stood in for.
+// ones and only the wire is stood in for. It keeps the asks standing as the
+// Fetcher does: `run()` asks, a read's superseding the last, `abandon()`
+// withdraws them all, and an answer to nothing asked stops at the gate.
 const mockCommands = {};
 jest.mock( '@newspack-nodes/shared/hooks/useCommandOnce', () => ( {
 	__esModule: true,
@@ -63,14 +65,25 @@ jest.mock( '@newspack-nodes/shared/hooks/useCommandOnce', () => ( {
 		// an unstable identity re-runs every effect that lists it as a dep.
 		const entry = ( mockCommands[ key ] ??= {
 			sent: [],
+			asked: [],
 			api: {
-				run: ( args ) => mockCommands[ key ].sent.push( args ),
+				run: ( args ) => {
+					const command = mockCommands[ key ];
+					command.sent.push( args );
+					command.asked = command.opts.retry
+						? [ args ]
+						: [ ...command.asked, args ];
+				},
+				abandon: () => {
+					mockCommands[ key ].asked = [];
+				},
 				result: null,
 				error: null,
 				errorData: null,
 				answeredArgs: null,
-				answerFor: () => null,
-				pending: false,
+				get pending() {
+					return 0 < mockCommands[ key ].asked.length;
+				},
 			},
 		} );
 		entry.opts = opts;
@@ -79,7 +92,9 @@ jest.mock( '@newspack-nodes/shared/hooks/useCommandOnce', () => ( {
 } ) );
 
 /**
- * Deliver a reply to the verb registered under `key`.
+ * Deliver a reply to the verb registered under `key`. One naming its `args`
+ * is judged as the gate judges it: dropped unless an ask standing asked
+ * exactly those, which it then settles.
  *
  * @param {string} key    Scope, or `<ci>:<command>`.
  * @param {Object} answer `{ result, error, args }`, as `onDone` receives it.
@@ -88,6 +103,16 @@ function answerCommand( key, answer ) {
 	const entry = mockCommands[ key ];
 	if ( ! entry ) {
 		throw new Error( `no command registered for ${ key }` );
+	}
+	if ( answer.args ) {
+		const echoed = JSON.stringify( answer.args );
+		const at = entry.asked.findIndex(
+			( asked ) => JSON.stringify( asked ) === echoed
+		);
+		if ( 0 > at ) {
+			return;
+		}
+		entry.asked.splice( at, 1 );
 	}
 	act( () =>
 		entry.opts.onDone?.( {
@@ -1148,6 +1173,70 @@ describe( 'PerformanceDashboard', () => {
 		}
 	);
 
+	it( 'keeps the URL modal mounted while a filter flip relists it', async () => {
+		mockNavState.selectedUrl = { hash: 'h9', url: '/heron' };
+		mockNavState.selectedRequest = null;
+		const held = {
+			last_modified: 3,
+			stats: { errors: 7, avg_ms: 431, requests_per_second: 2.5 },
+			requests: [ { rid: 'r-held', status_code: 200 } ],
+		};
+		mockView = loadedView( {
+			urlDetail: { data: held, loading: false, error: null },
+		} );
+		const { container, rerender } = mountDash();
+		await flushEffects();
+		const view = container.querySelector( '[data-testid="url-detail"]' );
+		const stats = container.querySelector( '.event-logger-header-stats' );
+		expect( globalThis.__urlDetailProps.listing ).toBe( false );
+
+		mockView = loadedView( {
+			urlDetail: { data: held, loading: true, error: null },
+		} );
+		await act( async () => {
+			globalThis.__urlDetailProps.onFilterChange( 'errors_only', true );
+		} );
+
+		expect( container.querySelector( '[data-testid="url-detail"]' ) ).toBe(
+			view
+		);
+		expect( container.querySelector( '.event-logger-header-stats' ) ).toBe(
+			stats
+		);
+		expect( container.textContent ).not.toContain( 'Loading URL' );
+		expect( globalThis.__urlDetailProps.listing ).toBe( true );
+		// The held list answers the old ask, so it is not summed as errors.
+		expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
+		expect( stats.textContent ).toContain( '431ms' );
+
+		mockView = loadedView( {
+			urlDetail: {
+				data: {
+					...held,
+					requests: [ { rid: 'r-fatal', status_code: 500 } ],
+				},
+				loading: false,
+				error: null,
+			},
+		} );
+		rerender( dashboard() );
+
+		expect( container.querySelector( '[data-testid="url-detail"]' ) ).toBe(
+			view
+		);
+		expect( globalThis.__urlDetailProps.listing ).toBe( false );
+		expect(
+			globalThis.__urlDetailProps.sortedRequests.map( ( r ) => r.rid )
+		).toEqual( [ 'r-fatal' ] );
+		expect( globalThis.__urlDetailProps.listError ).toBeNull();
+
+		mockView = loadedView( {
+			urlDetail: { data: held, loading: false, error: 'egret refused' },
+		} );
+		rerender( dashboard() );
+		expect( globalThis.__urlDetailProps.listError ).toBe( 'egret refused' );
+	} );
+
 	it( 'renders the URL modal when a URL is selected and detail is present', async () => {
 		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
 		mockNavState.selectedRequest = null;
@@ -1557,26 +1646,102 @@ describe( 'PerformanceDashboard', () => {
 			return mount;
 		};
 
-		it( 'narrows the table to the bucket an overview chart click names', async () => {
+		it( 'edits the table selection from overview chart clicks', async () => {
 			mockView = loadedView();
 			mountDash();
 			await flushEffects();
 			expect( globalThis.__urlTableProps.bucket ).toBe( '' );
+			const click = ( key, additive ) =>
+				act( async () => {
+					globalThis.__overviewProps.onSlotClick( key, { additive } );
+				} );
+
+			await click( '2026-10-04-13-35', false );
+			expect( bucketParam() ).toBe( '2026-10-04-13-35' );
+
+			await click( '2026-10-04-13-40', true );
+			expect( bucketParam() ).toBe(
+				'2026-10-04-13-35..2026-10-04-13-40'
+			);
+			expect( globalThis.__urlTableProps.bucket ).toBe(
+				'2026-10-04-13-35..2026-10-04-13-40'
+			);
+			expect( globalThis.__overviewProps.selectedBuckets ).toEqual( [
+				'2026-10-04-13-35',
+				'2026-10-04-13-40',
+			] );
+
+			await click( '2026-10-04-13-35', true );
+			expect( bucketParam() ).toBe( '2026-10-04-13-40' );
+
+			await click( '2026-10-04-14-00', false );
+			expect( bucketParam() ).toBe( '2026-10-04-14-00' );
+		} );
+
+		it( "hands the table the overview reply's slots for its Time field", async () => {
+			const slots = slotsEndingAt( '2026-10-04-14-00', 6 );
+			mockView = loadedView();
+			mockView.overview.data.slots = slots;
+			mountDash();
+			await flushEffects();
+
+			expect( globalThis.__urlTableProps.slots ).toBe( slots );
+		} );
+
+		it( 'drops a removed token from ?bucket= and from the ask', async () => {
+			window.history.replaceState(
+				null,
+				'',
+				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35..2026-10-04-13-40,2026-10-04-14-00'
+			);
+			mockNavState.selectedUrl = null;
+			mockView = loadedView();
+			const { rerender } = mountDash();
+			await flushEffects();
 
 			await act( async () => {
-				globalThis.__overviewProps.onSlotClick( '2026-10-04-13-35' );
+				globalThis.__urlTableProps.onBucketChange(
+					'2026-10-04-13-35..2026-10-04-13-40'
+				);
 			} );
-
-			expect( bucketParam() ).toBe( '2026-10-04-13-35' );
+			expect( bucketParam() ).toBe(
+				'2026-10-04-13-35..2026-10-04-13-40'
+			);
 			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-35'
+				'2026-10-04-13-35..2026-10-04-13-40'
 			);
 
-			await act( async () => {
-				globalThis.__urlTableProps.onClearBucket();
+			// The urls reply echoes the selection it was asked under.
+			mockView = loadedView( {
+				urls: {
+					data: [],
+					filters: { bucket: '2026-10-04-13-35..2026-10-04-13-40' },
+					loading: false,
+					error: null,
+				},
 			} );
-			expect( bucketParam() ).toBeNull();
-			expect( globalThis.__urlTableProps.bucket ).toBe( '' );
+			await act( async () => {
+				rerender( dashboard() );
+			} );
+			const target = document.createElement( 'div' );
+			target.setAttribute( 'data-ask', 'url:h7' );
+			document.body.appendChild( target );
+			await act( async () => {
+				globalThis.__overviewProps.ask.start();
+			} );
+			await act( async () => {
+				target.dispatchEvent(
+					new window.MouseEvent( 'mousedown', { bubbles: true } )
+				);
+				target.dispatchEvent(
+					new window.MouseEvent( 'click', { bubbles: true } )
+				);
+			} );
+			target.remove();
+
+			expect( sentTo( 'performance:ask' ).at( -1 ) ).toContain(
+				'--bucket=2026-10-04-13-35..2026-10-04-13-40'
+			);
 		} );
 
 		it( 'hands the table a linked bucket as it arrived, for the server to judge', async () => {
@@ -1592,8 +1757,9 @@ describe( 'PerformanceDashboard', () => {
 			expect( globalThis.__urlTableProps.bucket ).toBe(
 				'2026-10-04-13-37'
 			);
+			expect( globalThis.__overviewProps.selectedBuckets ).toEqual( [] );
 			await act( async () => {
-				globalThis.__urlTableProps.onClearBucket();
+				globalThis.__urlTableProps.onBucketChange( '' );
 			} );
 			expect( bucketParam() ).toBeNull();
 		} );
@@ -1637,6 +1803,23 @@ describe( 'PerformanceDashboard', () => {
 				'2026-10-04-13-35'
 			);
 			expect( bucketParam() ).toBe( '2026-10-04-13-35' );
+		} );
+
+		it( "applies an updater the modal hands to the modal's held bucket", async () => {
+			await openFromBucketedTable();
+
+			await act( async () => {
+				globalThis.__urlDetailProps.onFilterChange(
+					'bucket',
+					( held ) => `${ held }..2026-10-04-13-40`
+				);
+			} );
+			expect( mockGraphOpts.detailFilters.bucket ).toBe(
+				'2026-10-04-13-35..2026-10-04-13-40'
+			);
+			expect( globalThis.__urlTableProps.bucket ).toBe(
+				'2026-10-04-13-35'
+			);
 		} );
 
 		it( 'keeps the modal filters when a click names the bucket they hold', async () => {
@@ -2153,7 +2336,7 @@ describe( 'PerformanceDashboard', () => {
 				],
 				truncated: true,
 			},
-			args: [ '/calendar' ],
+			args: sentTo( GREP ).at( -1 ),
 		} );
 		expect( globalThis.__overviewProps.searchResults ).toEqual( [
 			{ rid: 'r1', url: '/calendar', method: 'GET', match_count: 2 },
@@ -2173,7 +2356,7 @@ describe( 'PerformanceDashboard', () => {
 		} );
 		answerCommand( GREP, {
 			result: { results: [], truncated: false, unparseable_lines: 14 },
-			args: [ '/torn' ],
+			args: sentTo( GREP ).at( -1 ),
 		} );
 		expect( globalThis.__overviewProps.searchUnparseableLines ).toBe( 14 );
 
@@ -2196,12 +2379,187 @@ describe( 'PerformanceDashboard', () => {
 		} );
 		answerCommand( GREP, {
 			result: { results: [], truncated: false },
-			args: [ '/nope' ],
+			args: sentTo( GREP ).at( -1 ),
 		} );
 		expect( globalThis.__overviewProps.searchResults ).toBeNull();
 		expect(
 			( globalThis.__overviewProps.searchError || '' ).toLowerCase()
 		).toContain( 'no matches in recent traffic' );
+		unmount();
+	} );
+
+	it( 'emptying the search box drops the last answer with the text', async () => {
+		mockView = loadedView();
+		const { unmount } = mountDash();
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( '/takahe-71' );
+		} );
+		answerCommand( GREP, {
+			result: {
+				results: [
+					{
+						rid: 'r71',
+						url: '/takahe-71',
+						method: 'GET',
+						match_count: 4,
+					},
+				],
+				truncated: true,
+				unparseable_lines: 9,
+			},
+			args: sentTo( GREP ).at( -1 ),
+		} );
+		act( () => globalThis.__overviewProps.setSearchQuery( '/takahe-71' ) );
+		expect( globalThis.__overviewProps.searchResults ).toHaveLength( 1 );
+
+		act( () => globalThis.__overviewProps.setSearchQuery( '' ) );
+
+		expect( globalThis.__overviewProps.searchQuery ).toBe( '' );
+		expect( globalThis.__overviewProps.searchResults ).toBeNull();
+		expect( globalThis.__overviewProps.searchResultsTruncated ).toBe(
+			false
+		);
+		expect(
+			globalThis.__overviewProps.searchUnparseableLines
+		).toBeUndefined();
+
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( 'r404' );
+		} );
+		answerCommand( SEARCH, { result: null, args: [ 'r404' ] } );
+		expect( globalThis.__overviewProps.searchError ).toContain( 'r404' );
+
+		act( () => globalThis.__overviewProps.setSearchQuery( '' ) );
+
+		expect( globalThis.__overviewProps.searchError ).toBeNull();
+		unmount();
+	} );
+
+	it( 'opens what a ?search= lookup finds, leaving the box empty', async () => {
+		mockNavState.initialSearchQuery = 'r-moa-3';
+		mockView = loadedView();
+		const { unmount } = mountDash();
+		await flushEffects();
+		expect( sentTo( SEARCH ) ).toContainEqual( [ 'r-moa-3' ] );
+		expect( globalThis.__overviewProps.searchQuery ).toBe( '' );
+
+		answerCommand( SEARCH, {
+			result: { url_hash: 'h-moa', partition: 4 },
+			args: [ 'r-moa-3' ],
+		} );
+		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'r-moa-3' );
+		unmount();
+	} );
+
+	/**
+	 * Show a grep's one matching row under the box, the pattern typed there.
+	 *
+	 * @param {string} pattern The box's text, a pattern.
+	 * @param {string} rid     The row's request id.
+	 */
+	async function grepShowing( pattern, rid ) {
+		act( () => globalThis.__overviewProps.setSearchQuery( pattern ) );
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( pattern );
+		} );
+		answerCommand( GREP, {
+			result: {
+				results: [
+					{ rid, url: pattern, method: 'GET', match_count: 2 },
+				],
+				truncated: false,
+			},
+			args: sentTo( GREP ).at( -1 ),
+		} );
+	}
+
+	it( 'keeps the pattern in the box while a clicked row is looked up and opened', async () => {
+		mockView = loadedView();
+		const { unmount } = mountDash();
+		await flushEffects();
+		await grepShowing( '/hoiho-12', 'r-hoiho' );
+
+		await act( async () => {
+			await globalThis.__overviewProps.onSelectResult( 'r-hoiho' );
+		} );
+		expect( globalThis.__overviewProps.searchQuery ).toBe( '/hoiho-12' );
+
+		answerCommand( SEARCH, {
+			result: { url_hash: 'h-hoiho', partition: 6 },
+			args: [ 'r-hoiho' ],
+		} );
+		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'r-hoiho' );
+		unmount();
+	} );
+
+	it( 'abandons a clicked row lookup once the box is edited', async () => {
+		mockView = loadedView();
+		const { unmount } = mountDash();
+		await flushEffects();
+		await grepShowing( '/pukeko-8', 'r-pukeko' );
+
+		await act( async () => {
+			await globalThis.__overviewProps.onSelectResult( 'r-pukeko' );
+		} );
+		act( () => globalThis.__overviewProps.setSearchQuery( '/pukeko-9' ) );
+		answerCommand( SEARCH, { result: null, args: [ 'r-pukeko' ] } );
+
+		expect( globalThis.__overviewProps.searchError ).toBeNull();
+		unmount();
+	} );
+
+	it( 'drops an answer that lands after the box emptied or changed under it', async () => {
+		mockView = loadedView();
+		const { unmount } = mountDash();
+		await flushEffects();
+		const grepHit = {
+			results: [
+				{ rid: 'r-kea', url: '/kea-44', method: 'GET', match_count: 3 },
+			],
+			truncated: true,
+			unparseable_lines: 6,
+		};
+
+		act( () => globalThis.__overviewProps.setSearchQuery( '/kea-44' ) );
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( '/kea-44' );
+		} );
+		act( () => globalThis.__overviewProps.setSearchQuery( '' ) );
+		answerCommand( GREP, {
+			result: grepHit,
+			args: sentTo( GREP ).at( -1 ),
+		} );
+		expect( globalThis.__overviewProps.searchResults ).toBeNull();
+		expect( globalThis.__overviewProps.searchError ).toBeNull();
+		expect(
+			globalThis.__overviewProps.searchUnparseableLines
+		).toBeUndefined();
+
+		act( () => globalThis.__overviewProps.setSearchQuery( '/kea-44' ) );
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( '/kea-44' );
+		} );
+		act( () => globalThis.__overviewProps.setSearchQuery( '/kea-45' ) );
+		answerCommand( GREP, {
+			result: grepHit,
+			args: sentTo( GREP ).at( -1 ),
+		} );
+		expect( globalThis.__overviewProps.searchResults ).toBeNull();
+
+		act( () => globalThis.__overviewProps.setSearchQuery( 'r-kaka-9' ) );
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( 'r-kaka-9' );
+		} );
+		act( () => globalThis.__overviewProps.setSearchQuery( '' ) );
+		answerCommand( SEARCH, { result: null, args: [ 'r-kaka-9' ] } );
+		expect( globalThis.__overviewProps.searchError ).toBeNull();
+		answerCommand( SEARCH, {
+			result: { url_hash: 'h-kaka', partition: 5 },
+			args: [ 'r-kaka-9' ],
+		} );
+		expect( mockNavState.selectRequest ).not.toHaveBeenCalled();
+		expect( globalThis.__overviewProps.searchLoading ).toBe( false );
 		unmount();
 	} );
 
@@ -2224,7 +2582,7 @@ describe( 'PerformanceDashboard', () => {
 				],
 				truncated: false,
 			},
-			args: [ '/x' ],
+			args: sentTo( GREP ).at( -1 ),
 		} );
 		await act( async () => {
 			await globalThis.__overviewProps.onSelectResult( 'grep-rid' );

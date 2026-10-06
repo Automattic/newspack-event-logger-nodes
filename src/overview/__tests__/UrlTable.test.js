@@ -98,7 +98,7 @@ const button = ( container, test ) =>
  * @param {string}  text      What the box should hold.
  */
 const type = ( container, text ) => {
-	const input = container.querySelector( 'input[type="text"]' );
+	const input = container.querySelector( 'input[type="search"]' );
 	const setter = Object.getOwnPropertyDescriptor(
 		window.HTMLInputElement.prototype,
 		'value'
@@ -377,6 +377,38 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it( "the search's reset button empties it, asks for every URL and returns to page 1", () => {
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( {
+			onParamsChange,
+			totalUrls: 800,
+		} );
+		type( container, 'kea' );
+		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
+		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { search: 'kea', offset: 200 } )
+		);
+
+		act( () =>
+			container
+				.querySelector( '.components-search-control button' )
+				.click()
+		);
+
+		expect( container.querySelector( 'input[type="search"]' ).value ).toBe(
+			''
+		);
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { search: '', offset: 0 } )
+		);
+		expect(
+			new URLSearchParams( window.location.search ).get( 'q' )
+		).toBeNull();
+		expect( container.textContent ).toContain( 'Page 1 of' );
+		unmount();
+	} );
+
 	it( 'shows the search empty state when the server returns no rows', () => {
 		const { container, unmount } = mount( { urls: [], totalUrls: 0 } );
 		type( container, 'nope' );
@@ -632,35 +664,51 @@ describe( 'UrlTable', () => {
 		}
 	);
 
-	it( 'shows the bucket as a chip beside Errors Only, which clears it', () => {
-		const onClearBucket = jest.fn();
+	it( 'holds the selection in a Time field beside the search box', () => {
+		const onBucketChange = jest.fn();
 		const { container, unmount } = mount( {
-			bucket: '2026-10-04-13-35',
-			onClearBucket,
+			bucket: '2026-10-04-13-30..2026-10-04-13-35,2026-10-04-14-00',
+			slots: [ '2026-10-04-14-00' ],
+			onBucketChange,
 		} );
-		const chip = container.querySelector( '.newspack-nodes-badge' );
-		expect( chip.textContent ).toContain( '13:35–13:40 UTC' );
-		expect( chip.previousElementSibling.textContent ).toBe( 'Errors Only' );
-		act( () => chip.querySelector( 'button' ).click() );
-		expect( onClearBucket ).toHaveBeenCalledTimes( 1 );
+		const field = container.querySelector( '.event-logger-tag-container' );
+		expect(
+			field.previousElementSibling.querySelector( 'input' ).placeholder
+		).toBe( 'Search by whole URL word…' );
+		expect(
+			Array.from(
+				field.querySelectorAll( '.event-logger-tag-text' )
+			).map( ( token ) => token.textContent )
+		).toEqual( [ '13:30–13:40 UTC', '14:00–14:05 UTC' ] );
+		expect( field.querySelectorAll( 'datalist option' ) ).toHaveLength( 1 );
+
+		act( () =>
+			field
+				.querySelector( 'button[aria-label="Remove 14:00–14:05 UTC"]' )
+				.click()
+		);
+		expect( onBucketChange ).toHaveBeenCalledWith(
+			'2026-10-04-13-30..2026-10-04-13-35'
+		);
 		unmount();
 	} );
 
-	it( 'keeps the chip that clears a bucket the server refused', () => {
-		const onClearBucket = jest.fn();
+	it( 'keeps the token that clears a bucket the server refused', () => {
+		const onBucketChange = jest.fn();
 		const { container, unmount } = mount( {
 			urls: [],
 			totalUrls: 0,
 			bucket: '2026-10-04-13-37',
-			onClearBucket,
+			onBucketChange,
 			error: 'bucket must be one of the charted five-minute keys, Y-m-d-H-i in UTC',
 		} );
 		expect( container.textContent ).toContain(
 			'Could not load URLs: bucket must be one of the charted'
 		);
 		const chip = container.querySelector( '.newspack-nodes-badge' );
+		expect( chip.textContent ).toContain( '2026-10-04-13-37' );
 		act( () => chip.querySelector( 'button' ).click() );
-		expect( onClearBucket ).toHaveBeenCalledTimes( 1 );
+		expect( onBucketChange ).toHaveBeenCalledWith( '' );
 		unmount();
 	} );
 
@@ -769,7 +817,7 @@ describe( 'UrlTable', () => {
 
 	it( '/ keyboard focuses the search input', () => {
 		const { container, unmount } = mount();
-		const input = container.querySelector( 'input[type="text"]' );
+		const input = container.querySelector( 'input[type="search"]' );
 		const focusSpy = jest.spyOn( input, 'focus' );
 		act( () => {
 			document.dispatchEvent(
@@ -783,7 +831,7 @@ describe( 'UrlTable', () => {
 
 	it( '/ keyboard shortcut does not steal focus from active text inputs', () => {
 		const { container, unmount } = mount();
-		const searchInput = container.querySelector( 'input[type="text"]' );
+		const searchInput = container.querySelector( 'input[type="search"]' );
 		const focusSpy = jest.spyOn( searchInput, 'focus' );
 		const otherInput = document.createElement( 'input' );
 		document.body.appendChild( otherInput );

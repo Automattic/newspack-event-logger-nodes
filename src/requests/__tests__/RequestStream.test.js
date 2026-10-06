@@ -199,7 +199,9 @@ describe( 'RequestStream', () => {
 	it( 'sends the URL filter to the view node, and honours the placeholder', () => {
 		const node = registerViewFixture();
 		const { container } = mount();
-		const input = container.querySelector( '.newspack-nodes-search-input' );
+		const input = container.querySelector(
+			'.newspack-nodes-search-input input'
+		);
 		expect( input.placeholder ).toBe( 'Filter by URL…' );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,

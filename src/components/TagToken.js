@@ -1,6 +1,6 @@
 /**
- * A removable token: a label and a close-icon button. The rule editor's tag
- * input draws one per value, and the overview draws one for a bucket filter.
+ * A removable token: a label and a close-icon button. `TokenInput` draws one
+ * per token in its row.
  */
 
 import { Button } from '@wordpress/components';

@@ -1731,15 +1731,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * The hour a bucket key falls in — its own leading `Y-m-d-H`.
-	 *
-	 * @param string $bucket A `Y-m-d-H-i` bucket key.
-	 */
-	public static function hour_of( string $bucket ): string {
-		return \substr( $bucket, 0, 13 );
-	}
-
-	/**
 	 * The five-minute buckets a chart draws, newest first: the
 	 * `MAX_READ_BUCKETS` (288) ending at the one `$now` falls in, whatever
 	 * the retention window. A reply names them as `slots`, and the
@@ -1766,49 +1757,74 @@ class Stats_Store {
 	}
 
 	/**
-	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
-	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
-	 * order, which is what lets expiry compare keys with `<` against a cutoff.
+	 * The URLs `$server_keys` filed rows for in any of `$buckets`, each named
+	 * once with the hours whose buckets each server's set named it in, in
+	 * `$buckets` order: a row is read per hour key, so the hour is all a
+	 * reader needs. Each hour's sets are one `SMEMBERS` exchange: one an
+	 * hour the selection touches, 25 at most under the default retention.
+	 * The read stops at the first hour taking the (hash, server) pairs past
+	 * `$budget`, answering `false`: too many URLs to read by key. A set repeats only its own server's pairs, so each is asked for
+	 * the budget left plus the most pairs any one server held before the
+	 * exchange, and one holding more is past the budget unread. A read left
+	 * unanswered sets `$failed` and answers nothing, since a partial list
+	 * would read as the whole selection.
 	 *
-	 * @param int $timestamp Unix timestamp.
+	 * @param list<string> $buckets     `bucket_key()`s, `Y-m-d-H-i`, newest first.
+	 * @param list<string> $server_keys Each server's `server_key()`.
+	 * @param int          $budget      Most (hash, server) pairs the read may name,
+	 *                                  from 0 to `URL_BUCKET_MAX`.
+	 * @param-out bool     $failed
+	 * @param ?bool        $failed      Set true when the Table left the read unanswered.
+	 * @return array<string,array<string,list<string>>>|false hash => server key =>
+	 *                                                        the hours naming it,
+	 *                                                        or false past the budget.
 	 */
-	public static function bucket_key( int $timestamp ): string {
-		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
+	public function url_bucket_members( array $buckets, array $server_keys, int $budget, ?bool &$failed = null ): array|false {
+		$failed = false;
+		$named  = [];
+		$pairs  = 0;
+		$held   = \array_fill_keys( $server_keys, 0 );
+		$hours  = [];
+		foreach ( $buckets as $bucket ) {
+			foreach ( $server_keys as $server_key ) {
+				$hours[ self::hour_of( $bucket ) ][ self::key_at( [ self::NS_URLBUCKET, $server_key ], $bucket ) ] = $server_key;
+			}
+		}
+		foreach ( $hours as $hour => $asked ) {
+			$limit = \max( 1, $budget - $pairs + \max( [ 0, ...$held ] ) );
+			$found = $this->client->members( $this->table_for( self::NS_URLBUCKET ), \array_keys( $asked ), $limit, $failed );
+			if ( $failed ) {
+				return [];
+			}
+			if ( \in_array( null, $found, true ) ) {
+				return false;
+			}
+			foreach ( $asked as $key => $server_key ) {
+				foreach ( \array_keys( $found[ $key ] ?? [] ) as $hash ) {
+					$hash = (string) $hash;
+					if ( ! isset( $named[ $hash ][ $server_key ] ) ) {
+						++$pairs;
+						++$held[ $server_key ];
+						$named[ $hash ][ $server_key ] = [ $hour ];
+					} elseif ( \end( $named[ $hash ][ $server_key ] ) !== $hour ) {
+						$named[ $hash ][ $server_key ][] = $hour;
+					}
+				}
+			}
+			if ( $pairs > $budget ) {
+				return false;
+			}
+		}
+		return $named;
 	}
 
 	/**
-	 * The URLs `$server_keys` filed rows for in `$bucket`, in one `SMEMBERS`
-	 * exchange asking each server's set for `URL_BUCKET_MAX` members. A set
-	 * holding more answers `false`, too many URLs to read by key, and a read
-	 * left unanswered sets `$failed` and answers nothing, since a partial
-	 * list would read as the whole bucket.
+	 * The hour a bucket key falls in — its own leading `Y-m-d-H`.
 	 *
-	 * @param string       $bucket      A `bucket_key()`, `Y-m-d-H-i`.
-	 * @param list<string> $server_keys Each server's `server_key()`.
-	 * @param-out bool     $failed
-	 * @param ?bool        $failed      Set true when the Table left the read unanswered.
-	 * @return array<string,list<string>>|false hash => the server keys naming
-	 *                                          it, or false past the limit.
+	 * @param string $bucket A `Y-m-d-H-i` bucket key.
 	 */
-	public function url_bucket_members( string $bucket, array $server_keys, ?bool &$failed = null ): array|false {
-		$asked = [];
-		foreach ( $server_keys as $server_key ) {
-			$asked[ self::key_at( [ self::NS_URLBUCKET, $server_key ], $bucket ) ] = $server_key;
-		}
-		$found = $this->client->members( $this->table_for( self::NS_URLBUCKET ), \array_keys( $asked ), self::URL_BUCKET_MAX, $failed );
-		if ( $failed ) {
-			return [];
-		}
-		if ( \in_array( null, $found, true ) ) {
-			return false;
-		}
-		$out = [];
-		foreach ( $asked as $key => $server_key ) {
-			foreach ( \array_keys( $found[ $key ] ?? [] ) as $hash ) {
-				$out[ (string) $hash ][] = $server_key;
-			}
-		}
-		return $out;
+	public static function hour_of( string $bucket ): string {
+		return \substr( $bucket, 0, 13 );
 	}
 
 	/**
@@ -2993,6 +3009,94 @@ class Stats_Store {
 		}
 		// An all-digit token is an INT key; every reader promises a string.
 		return \array_map( 'strval', \array_keys( $out ) );
+	}
+
+	/**
+	 * The bucket keys a selection's spelling names, ascending, each once.
+	 *
+	 * A spelling is comma-separated runs, each `start` or `start..end` over
+	 * `bucket_key()`s; `bucket_spelling()` writes the canonical one, which
+	 * the dashboard's address bar, `--bucket`, `filters.bucket` and the MCP
+	 * `bucket` argument all carry. '' selects nothing. A run stops expanding
+	 * one bucket past the limit, so no spelling enumerates more.
+	 *
+	 * @param string $spelling A selection's spelling.
+	 * @return list<string>
+	 * @throws \InvalidArgumentException On a piece that is no five-minute key,
+	 *                                   a run ending before it starts, or more
+	 *                                   than `MAX_READ_BUCKETS` buckets.
+	 */
+	public static function bucket_selection( string $spelling ): array {
+		if ( '' === $spelling ) {
+			return [];
+		}
+		$keys = [];
+		foreach ( \explode( ',', $spelling ) as $run ) {
+			$ends  = \explode( '..', $run, 2 );
+			$first = self::selected_start( $ends[0] );
+			$last  = self::selected_start( $ends[1] ?? $ends[0] );
+			if ( $last < $first ) {
+				throw new \InvalidArgumentException( "bucket run {$run} ends before it starts" );
+			}
+			for ( $at = $first; $at <= $last && \count( $keys ) <= self::MAX_READ_BUCKETS; $at += self::BUCKET_SECONDS ) {
+				$keys[ self::bucket_key( $at ) ] = true;
+			}
+			if ( \count( $keys ) > self::MAX_READ_BUCKETS ) {
+				throw new \InvalidArgumentException( 'bucket selection holds more than ' . self::MAX_READ_BUCKETS . ' buckets' );
+			}
+		}
+		\ksort( $keys, \SORT_STRING );
+		return \array_map( 'strval', \array_keys( $keys ) );
+	}
+
+	/**
+	 * Where one key of a spelling opens, or a refusal naming it.
+	 *
+	 * @param string $key A piece of a spelling.
+	 * @throws \InvalidArgumentException On a piece that is no `bucket_key()`.
+	 */
+	private static function selected_start( string $key ): int {
+		try {
+			$start = self::bucket_start( $key );
+		} catch ( \InvalidArgumentException ) {
+			$start = null;
+		}
+		if ( null === $start || self::bucket_key( $start ) !== $key ) {
+			throw new \InvalidArgumentException( "bucket {$key} must be a five-minute key, Y-m-d-H-i in UTC" );
+		}
+		return $start;
+	}
+
+	/**
+	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
+	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
+	 * order, which is what lets expiry compare keys with `<` against a cutoff.
+	 *
+	 * @param int $timestamp Unix timestamp.
+	 */
+	public static function bucket_key( int $timestamp ): string {
+		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
+	}
+
+	/**
+	 * A selection's canonical spelling: its ascending keys as runs, each
+	 * adjacent pair merged, a lone bucket spelled alone.
+	 *
+	 * @param list<string> $keys Bucket keys, ascending, each once.
+	 */
+	public static function bucket_spelling( array $keys ): string {
+		$runs = [];
+		$last = null;
+		foreach ( $keys as $key ) {
+			$start = self::bucket_start( $key );
+			if ( null !== $last && $start === $last + self::BUCKET_SECONDS ) {
+				$runs[ \array_key_last( $runs ) ][] = $key;
+			} else {
+				$runs[] = [ $key ];
+			}
+			$last = $start;
+		}
+		return \implode( ',', \array_map( static fn ( array $run ): string => 1 === \count( $run ) ? $run[0] : $run[0] . '..' . \end( $run ), $runs ) );
 	}
 
 	/**

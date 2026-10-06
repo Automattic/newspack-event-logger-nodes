@@ -342,13 +342,18 @@ class McpControllerTest extends TestCase {
 		}
 	}
 
-	/** The three tools the dashboard's bucket click narrows each take `bucket`. */
-	public function test_the_bucketed_tools_take_a_bucket(): void {
+	/**
+	 * The three tools a bucket selection narrows each take `bucket`, and
+	 * each says how a selection is spelled and how many buckets it holds.
+	 */
+	public function test_the_bucketed_tools_take_a_selection(): void {
 		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
 
 		foreach ( [ 'performance_urls', 'dump_url', 'performance_ask' ] as $tool ) {
 			$this->assertArrayHasKey( 'bucket', $tools[ $tool ]['args'], $tool );
 			$this->assertStringContainsString( 'Y-m-d-H-i', $tools[ $tool ]['args']['bucket'], $tool );
+			$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30', $tools[ $tool ]['args']['bucket'], $tool );
+			$this->assertStringContainsString( '288', $tools[ $tool ]['args']['bucket'], $tool );
 		}
 	}
 

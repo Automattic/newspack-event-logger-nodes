@@ -153,7 +153,7 @@ test( 'a pick carries the scope the page is showing', () => {
 			search: 'wp-admin',
 			errors_only: false,
 			include_workers: true,
-			bucket: '2026-10-04-13-35',
+			bucket: '2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10',
 		},
 	} );
 
@@ -179,7 +179,7 @@ test( 'a pick carries the scope the page is showing', () => {
 				server: 'alpha.example',
 				search: 'wp-admin',
 				include_workers: '1',
-				bucket: '2026-10-04-13-35',
+				bucket: '2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10',
 			},
 		],
 	] );

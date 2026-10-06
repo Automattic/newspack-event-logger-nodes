@@ -37,8 +37,9 @@ jest.mock( '../../ResponseTimeChart', () => ( {
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { breakdown, series, slots, onSlotClick } ) => {
+	default: ( { breakdown, series, slots, onSlotClick, selectedBuckets } ) => {
 		globalThis.__aggregateSlotClick = onSlotClick;
+		globalThis.__aggregateSelected = selectedBuckets;
 		return `AGGREGATE[breakdown=${ breakdown },series=${
 			series ? 'set' : 'none'
 		}] keys:${ ( series?.names ?? [] ).join( ',' ) } slots:${
@@ -48,8 +49,9 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { slots, onSlotClick } ) => {
+	default: ( { slots, onSlotClick, selectedBuckets } ) => {
 		globalThis.__categorySlotClick = onSlotClick;
+		globalThis.__categorySelected = selectedBuckets;
 		return `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`;
 	},
 } ) );
@@ -176,6 +178,14 @@ describe( 'UrlDetailView', () => {
 	it( 'renders the recent-requests heading with the full count', () => {
 		const { container, unmount } = mount();
 		expect( container.textContent ).toContain( 'Recent Requests (3)' );
+		unmount();
+	} );
+
+	it( 'counts nothing in the heading while the list is asked afresh', () => {
+		const { container, unmount } = mount( { listing: true } );
+		expect( container.querySelector( 'h3' ).textContent ).toBe(
+			'Recent Requests'
+		);
 		unmount();
 	} );
 
@@ -436,29 +446,86 @@ describe( 'UrlDetailView', () => {
 		all.unmount();
 	} );
 
-	it( 'narrows to the bucket either chart is clicked on', () => {
+	it( 'replaces its selection on a plain chart click, and toggles on an additive one', () => {
 		const onFilterChange = jest.fn();
-		const { unmount } = mount( { onFilterChange } );
-		globalThis.__aggregateSlotClick( '2026-10-04-13-35' );
-		globalThis.__categorySlotClick( '2026-10-04-13-40' );
-		expect( onFilterChange.mock.calls ).toEqual( [
-			[ 'bucket', '2026-10-04-13-35' ],
-			[ 'bucket', '2026-10-04-13-40' ],
+		const { unmount } = mount( {
+			filters: { errors_only: false, bucket: '2026-10-04-13-35' },
+			onFilterChange,
+		} );
+		globalThis.__aggregateSlotClick( '2026-10-04-13-50', {
+			additive: false,
+		} );
+		globalThis.__categorySlotClick( '2026-10-04-13-40', {
+			additive: true,
+		} );
+		globalThis.__categorySlotClick( '2026-10-04-13-35', {
+			additive: true,
+		} );
+		// Each click hands an updater, applied here to the selection held.
+		expect(
+			onFilterChange.mock.calls.map( ( [ field, update ] ) => [
+				field,
+				update( '2026-10-04-13-35' ),
+			] )
+		).toEqual( [
+			[ 'bucket', '2026-10-04-13-50' ],
+			[ 'bucket', '2026-10-04-13-35..2026-10-04-13-40' ],
+			[ 'bucket', '' ],
 		] );
 		unmount();
 	} );
 
-	it( 'shows its bucket as a chip beside Errors Only, which clears it', () => {
+	it( "shades the modal's own selection on both charts", () => {
+		const { unmount } = mount( {
+			filters: {
+				errors_only: false,
+				bucket: '2026-10-04-13-30..2026-10-04-13-35',
+			},
+		} );
+		expect( globalThis.__aggregateSelected ).toEqual( [
+			'2026-10-04-13-30',
+			'2026-10-04-13-35',
+		] );
+		expect( globalThis.__categorySelected ).toBe(
+			globalThis.__aggregateSelected
+		);
+		unmount();
+	} );
+
+	it( 'holds its selection in a Time field between the heading and Errors Only', () => {
 		const onFilterChange = jest.fn();
 		const { container, unmount } = mount( {
-			filters: { errors_only: false, bucket: '2026-10-04-13-35' },
+			urlDetail: {
+				...baseUrlDetail,
+				slots: slotsEndingAt( '2026-10-04-14-00', 12 ),
+			},
+			filters: {
+				errors_only: false,
+				bucket: '2026-10-04-13-30,2026-10-04-13-40',
+			},
 			onFilterChange,
 		} );
-		const chip = container.querySelector( '.newspack-nodes-badge' );
-		expect( chip.textContent ).toContain( '13:35–13:40 UTC' );
-		expect( chip.previousElementSibling.textContent ).toBe( 'Errors Only' );
-		act( () => chip.querySelector( 'button' ).click() );
-		expect( onFilterChange ).toHaveBeenCalledWith( 'bucket', '' );
+		const field = container.querySelector( '.event-logger-tag-container' );
+		expect(
+			Array.from(
+				field.parentElement.children,
+				( child ) => child.tagName
+			)
+		).toEqual( [ 'H3', 'DIV', 'BUTTON' ] );
+		expect( field.previousElementSibling.tagName ).toBe( 'H3' );
+		expect( field.nextElementSibling.textContent ).toBe( 'Errors Only' );
+		expect( field.querySelectorAll( 'datalist option' ) ).toHaveLength(
+			12
+		);
+		act( () =>
+			field
+				.querySelector( 'button[aria-label="Remove 13:30–13:35 UTC"]' )
+				.click()
+		);
+		expect( onFilterChange ).toHaveBeenCalledWith(
+			'bucket',
+			'2026-10-04-13-40'
+		);
 		unmount();
 	} );
 
@@ -721,6 +788,108 @@ describe( 'UrlDetailView', () => {
 		);
 		unmount();
 	}, 20000 );
+
+	it( 'keeps its charts, flame and profile on a filter flip, marking the list alone', async () => {
+		const urlDetail = {
+			...baseUrlDetail,
+			slots: slotsEndingAt( '2026-10-04-14-00', 12 ),
+			category_time_series: { names: [], buckets: {} },
+			requests: REQUESTS,
+			aggregate_flame: { children: [ { name: 'heron' } ] },
+			aggregate_profiles: {
+				categories: { hooks: { time: 13, count: 6 } },
+				count: 37,
+				total_time: 13,
+			},
+		};
+		const props = {
+			urlDetail,
+			sortedRequests: REQUESTS,
+			requestSort: { field: 'timestamp', dir: 'desc' },
+			onRequestSort: jest.fn(),
+			onSelectRequest: jest.fn(),
+			urlHash: 'deadbeef',
+			filters: { errors_only: false, bucket: '' },
+			onFilterChange: jest.fn(),
+			listing: false,
+		};
+		const { container, rerender, unmount } = renderComponent(
+			React.createElement( UrlDetailView, props )
+		);
+		await act( async () => {} );
+		/**
+		 * The whole-URL elements, each the deepest one holding its text.
+		 *
+		 * @return {Element[]} Charts, flame container and profile caption.
+		 */
+		const wholeUrl = () => [
+			...[ 'AGGREGATE[', 'CATEGORY', 'RESPONSE_TIME_CHART' ].map(
+				( text ) =>
+					Array.from( container.querySelectorAll( '*' ) )
+						.filter( ( el ) => el.textContent.includes( text ) )
+						.at( -1 )
+			),
+			container.querySelector( '.event-logger-flame-container' ),
+			Array.from( container.querySelectorAll( '*' ) )
+				.filter( ( el ) =>
+					el.textContent.includes( 'Average breakdown across 37' )
+				)
+				.at( -1 ),
+		];
+		const before = wholeUrl();
+		expect( before.every( Boolean ) ).toBe( true );
+		const rows = () =>
+			Array.from(
+				container.querySelectorAll( '[data-ask^="request:"]' ),
+				( row ) => row.getAttribute( 'data-ask' )
+			);
+		expect( rows() ).toHaveLength( 3 );
+
+		rerender(
+			React.createElement( UrlDetailView, {
+				...props,
+				filters: { errors_only: true, bucket: '' },
+				listing: true,
+			} )
+		);
+		await act( async () => {} );
+
+		expect( wholeUrl() ).toEqual( before );
+		wholeUrl().forEach( ( el, i ) => expect( el ).toBe( before[ i ] ) );
+		expect( rows() ).toEqual( [] );
+		expect(
+			container.querySelector( '.event-logger-table__empty' ).textContent
+		).toBe( 'Loading requests…' );
+
+		const fatal = REQUESTS[ 1 ];
+		rerender(
+			React.createElement( UrlDetailView, {
+				...props,
+				urlDetail: { ...urlDetail, requests: [ fatal ] },
+				sortedRequests: [ fatal ],
+				filters: { errors_only: true, bucket: '' },
+				listing: false,
+			} )
+		);
+		await act( async () => {} );
+
+		wholeUrl().forEach( ( el, i ) => expect( el ).toBe( before[ i ] ) );
+		expect( rows() ).toEqual( [ 'request:r2:0' ] );
+		unmount();
+	} );
+
+	it( 'says over the list why its last ask was refused', () => {
+		const { container, unmount } = mount( {
+			listError: 'bucket 2026-10-04-09-07 must be a five-minute key',
+		} );
+		const line = container.querySelector(
+			'.event-logger-table--requests .newspack-nodes-status.is-error'
+		);
+		expect( line.textContent ).toBe(
+			'Could not list requests: bucket 2026-10-04-09-07 must be a five-minute key'
+		);
+		unmount();
+	} );
 
 	it( 'mounts FlameGraph when aggregate_flame has children', async () => {
 		const { container, unmount } = mount( {

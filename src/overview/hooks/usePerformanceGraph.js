@@ -33,13 +33,14 @@
  * edge: it merges each reply into the last one (dedup by rid, newest completion
  * first, 500 rows) and DROPS a reply carrying no request it lacks under an
  * unchanged `last_modified`, so an auto-refresh tick never re-renders the modal
- * for nothing. Opening the modal, rescoping it, flipping Errors Only or moving
- * its bucket asks through that same Fetcher with `askNow()`, superseding every
+ * for nothing. Opening the modal, rescoping it, flipping Errors Only or editing
+ * its buckets asks through that same Fetcher with `askNow()`, superseding every
  * older ask, exactly as a `urls` sort change does — never by minting at the
  * receiver beside it. Every slice's `Current` gate, the substrate's, drops the answer
  * to a superseded question before it reaches the merge or a view, and sends
  * a refusal to the view itself. `url-detail:timer` is armed only while URL
- * detail is the visible modal and the tab is visible. A request selection
+ * detail is the visible modal and the tab is visible, and polls at once each
+ * time it is armed from stopped (`armTimer()`). A request selection
  * asks `dump_request` through `request-detail:fetch` the same way, so the
  * late answer about the request the operator left never lands.
  *
@@ -54,14 +55,21 @@
  */
 
 import { useCallback, useEffect, useRef } from '@wordpress/element';
-import { Core, formatCommandArgs } from '@newspack-nodes/runtime';
+import {
+	Core,
+	formatCommandArgs,
+	useGraphGeneration,
+} from '@newspack-nodes/runtime';
 
 import { controlMsg } from '@newspack-nodes/shared/helpers/controlMsg';
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
+import { armTimer } from '@newspack-nodes/shared/helpers/armTimer';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { views } from '../nodes/register';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
+
+/** @typedef {import('@newspack-nodes/runtime').TimerNode} TimerNode */
 
 /**
  * The server CI mount that owns every verb this dashboard sends.
@@ -158,8 +166,9 @@ export const NO_DETAIL_FILTERS = { errors_only: false, bucket: '' };
  * @param {string}      arg.serverFilter Server scope; '' means every server.
  * @param {Object}      arg.filters      The modal's `{ errors_only, bucket }`:
  *                                       the URL's errors alone, and the
- *                                       five-minute bucket key the header
- *                                       and list narrow to, '' for none.
+ *                                       spelling of the bucket selection
+ *                                       the header and list narrow to, ''
+ *                                       for none.
  * @param {Object|null} [arg.after]      Partition => `{ segment, offset }`;
  *                                       null asks for the whole window.
  * @return {string[]} The command token array.
@@ -261,8 +270,8 @@ function overviewArgs( { serverFilter, chartBreakdown } ) {
  * Two options opt IN in opposite directions: `errors_only` narrows a set the
  * verb otherwise returns whole, while `include_workers` widens one the verb
  * excludes by default, because a long-running job would otherwise dominate
- * every average on the page. `bucket` narrows to one five-minute slot, each
- * row then carrying that slot's numbers.
+ * every average on the page. `bucket` narrows to a selection of five-minute
+ * buckets, by its spelling, each row then carrying their summed numbers.
  *
  * @param {Object} arg              Named arguments.
  * @param {Object} arg.urlParams    The table's live search, sort, page and
@@ -338,8 +347,8 @@ function urlsArgs( { urlParams, serverFilter } ) {
  *                                          bucket }`: its URL's errors alone,
  *                                          which the server walks past the
  *                                          clean requests to find, and the
- *                                          bucket key its header and list
- *                                          narrow to. A change re-asks, so
+ *                                          bucket selection its header and
+ *                                          list narrow to. A change re-asks, so
  *                                          hold one object per value.
  * @param {?string} [opts.selectedRequest]  Rid of the open request detail
  *                                          modal; null closes and clears it.
@@ -388,6 +397,8 @@ export function usePerformanceGraph( opts = {} ) {
 	const urlFetchTimerRef = useRef( null );
 
 	const isPageVisible = usePageVisibility();
+	// A Reset Graph rebuilds both detail Timers stopped; this re-arms them.
+	const graphGeneration = useGraphGeneration();
 
 	/** The overview question the page asks now. */
 	const overviewNow = useCallback(
@@ -441,7 +452,12 @@ export function usePerformanceGraph( opts = {} ) {
 			// @longform On-demand dump_url: an ordinary slice, on its OWN
 			// Timer rather than the shared tick — the modal arms it by
 			// selection. The merge rides the transform slot, so it lands on
-			// the receiver→view edge.
+			// the receiver→view edge. A Timer is born armed at the Router's
+			// cadence, so it starts stopped and the arm effect owns it.
+			const urlDetailTimer = /** @type {TimerNode} */ (
+				interpreter.makeNode( 'Timer', URLDETAIL_TIMER )
+			);
+			urlDetailTimer.stopTimer();
 			addSliceFetcher( interpreter, {
 				fetcher: URLDETAIL_FETCHER,
 				receiver: URLDETAIL_RECV,
@@ -449,18 +465,14 @@ export function usePerformanceGraph( opts = {} ) {
 				view: URLDETAIL_VIEW,
 				viewClass: views.UrlDetailView,
 				controlFrom: URLDETAIL_VIEW,
-				tee: interpreter.makeNode( 'Timer', URLDETAIL_TIMER ),
+				tee: urlDetailTimer,
 				target: TARGET,
 				transform: {
 					name: URLDETAIL_TRANSFORM,
 					nodeClass: views.UrlDetailMerge,
 					controlFrom: URLDETAIL_TRANSFORM,
 				},
-				// @longform
-				// No hash, nothing to ask: a null return sends nothing at
-				// all. The Timer is armed by default when `make_node Timer`
-				// takes no interval, so a tick can reach this before the
-				// effect that owns the arming has disarmed it.
+				// No hash, nothing to ask: a null return sends nothing at all.
 				argsFn: () => {
 					const hash = optsRef.current.selectedUrl?.hash;
 					if ( ! isValidHash( hash ) ) {
@@ -479,6 +491,10 @@ export function usePerformanceGraph( opts = {} ) {
 			// `askNow()`, and the slice's own Timer sends what that could not
 			// and re-asks what went unanswered. A record never changes, so
 			// the getter mints nothing: the Timer only drives the asks.
+			const requestDetailTimer = /** @type {TimerNode} */ (
+				interpreter.makeNode( 'Timer', REQUESTDETAIL_TIMER )
+			);
+			requestDetailTimer.stopTimer();
 			addSliceFetcher( interpreter, {
 				fetcher: REQUESTDETAIL_FETCHER,
 				receiver: REQUESTDETAIL_RECV,
@@ -486,7 +502,7 @@ export function usePerformanceGraph( opts = {} ) {
 				view: REQUESTDETAIL_VIEW,
 				viewClass: views.RequestDetailView,
 				controlFrom: REQUESTDETAIL_VIEW,
-				tee: interpreter.makeNode( 'Timer', REQUESTDETAIL_TIMER ),
+				tee: requestDetailTimer,
 				target: TARGET,
 				argsFn: () => null,
 			} );
@@ -589,8 +605,10 @@ export function usePerformanceGraph( opts = {} ) {
 		const scope = JSON.stringify( [ selectedUrl.hash, serverFilter ] );
 		const relist = scope === detailScopeRef.current;
 		detailScopeRef.current = scope;
-		// The held list answers the old ask; showing it under the new one lies.
-		sendControl( URLDETAIL_VIEW, { action: 'clear' } );
+		// A flip keeps the whole-URL slice up; the list waits under `loading`.
+		if ( ! relist ) {
+			sendControl( URLDETAIL_VIEW, { action: 'clear' } );
+		}
 		sendControl( URLDETAIL_VIEW, { action: 'loading' } );
 		// @longform The merge node drops a reply holding no request it lacks
 		// under the stamp it holds, and both read the same under every scope.
@@ -604,11 +622,14 @@ export function usePerformanceGraph( opts = {} ) {
 		Core.node( URLDETAIL_FETCHER )?.askNow( ask );
 	}, [ selectedUrl, serverFilter, detailFilters, sendControl ] );
 
-	// Arm dump_url refresh Timer only while URL detail is the visible view.
+	// @longform Arm dump_url's Timer only while URL detail is the visible
+	// view. No cleanup stops it: a re-arm from stopped polls at once, so a
+	// cadence change must re-arm the armed Timer; teardown removes the node.
+	// A rebuild hands it a fresh, stopped Timer, hence the generation dep.
 	useEffect( () => {
 		const timer = Core.node( URLDETAIL_TIMER );
 		if ( ! timer ) {
-			return undefined;
+			return;
 		}
 		if (
 			selectedUrl &&
@@ -616,26 +637,30 @@ export function usePerformanceGraph( opts = {} ) {
 			! selectedRequest &&
 			isPageVisible
 		) {
-			timer.setTimer( intervalMs );
-			return () => timer.stopTimer();
+			armTimer( timer, intervalMs );
+		} else {
+			timer.stopTimer();
 		}
-		timer.stopTimer();
-		return undefined;
-	}, [ selectedUrl, selectedRequest, isPageVisible, intervalMs ] );
+	}, [
+		selectedUrl,
+		selectedRequest,
+		isPageVisible,
+		intervalMs,
+		graphGeneration,
+	] );
 
 	// Arm dump_request's Timer only while a request is the visible modal.
 	useEffect( () => {
 		const timer = Core.node( REQUESTDETAIL_TIMER );
 		if ( ! timer ) {
-			return undefined;
+			return;
 		}
 		if ( selectedRequest && isPageVisible ) {
-			timer.setTimer( REQUESTDETAIL_TICK_MS );
-			return () => timer.stopTimer();
+			armTimer( timer, REQUESTDETAIL_TICK_MS );
+		} else {
+			timer.stopTimer();
 		}
-		timer.stopTimer();
-		return undefined;
-	}, [ selectedRequest, isPageVisible ] );
+	}, [ selectedRequest, isPageVisible, graphGeneration ] );
 
 	// Selection-driven dump_request.
 	useEffect( () => {
@@ -694,7 +719,7 @@ export function usePerformanceGraph( opts = {} ) {
 	 * @param {number}  params.offset         First row of the page.
 	 * @param {boolean} params.errorsOnly     Narrow to erroring URLs.
 	 * @param {boolean} params.includeWorkers Include worker traffic.
-	 * @param {string}  params.bucket         Five-minute bucket key; '' for none.
+	 * @param {string}  params.bucket         Bucket selection's spelling; '' for none.
 	 */
 	const handleUrlParamsChange = useCallback(
 		( params ) => {

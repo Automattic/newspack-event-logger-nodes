@@ -4,18 +4,27 @@
  * and for the one decoder every chart reads the name-table wire through.
  */
 
+import * as React from 'react';
+import fs from 'fs';
+import path from 'path';
 import {
 	bucketLabel,
 	bucketSpan,
+	bucketSpelling,
+	bucketsOf,
 	buildChartSlots,
 	CAT_FIELDS,
 	decodeNameTable,
 	DIM_FIELDS,
 	hasRows,
+	runsOf,
+	runSpan,
+	useBucketSelection,
+	useSelectedSlots,
 	useSlotClick,
 } from '../chartSlots';
 import { nameTable, slotsEndingAt } from '../../test-helpers/chartWire';
-import { cleanupMounts, renderHook } from '../../test-helpers/renderHook';
+import { act, cleanupMounts, renderHook } from '../../test-helpers/renderHook';
 
 /**
  * A reply's slots at 14:37:11 UTC, newest first as the server sends them.
@@ -181,6 +190,16 @@ describe( 'bucketSpan', () => {
 		expect( bucketSpan( '2026-10-04-13' ) ).toBeNull();
 		expect( bucketSpan( '' ) ).toBeNull();
 	} );
+
+	it( 'names each run of a selection as its UTC span, in order', () => {
+		expect(
+			bucketSpan( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30' )
+		).toBe( '16:55–17:15 UTC, 18:30–18:35 UTC' );
+	} );
+
+	it( 'answers null for a selection the server would refuse', () => {
+		expect( bucketSpan( '2026-10-05-17-10..2026-10-05-16-55' ) ).toBeNull();
+	} );
 } );
 
 describe( 'bucketLabel', () => {
@@ -190,6 +209,89 @@ describe( 'bucketLabel', () => {
 
 	it( 'names a key of another shape as it arrived', () => {
 		expect( bucketLabel( 'kea-junk' ) ).toBe( 'kea-junk' );
+	} );
+} );
+
+/**
+ * The shared fixture the PHP pair answers to as well: one spelling, two
+ * implementations, held to each other.
+ */
+const FIXTURE = JSON.parse(
+	fs.readFileSync(
+		path.resolve(
+			__dirname,
+			'../../../tests/fixtures/bucket-selection.json'
+		),
+		'utf8'
+	)
+);
+
+/**
+ * The key `buckets` five-minute buckets after `key`.
+ *
+ * @param {string} key     `YYYY-MM-DD-HH-MM`.
+ * @param {number} buckets Buckets to step.
+ * @return {string} The later key.
+ */
+const keyAfter = ( key, buckets ) => {
+	const [ y, m, d, h, i ] = key.split( '-' ).map( Number );
+	return new Date( Date.UTC( y, m - 1, d, h, i ) + buckets * 300000 )
+		.toISOString()
+		.slice( 0, 16 )
+		.replace( /[T:]/g, '-' );
+};
+
+describe( 'bucketsOf and bucketSpelling', () => {
+	it.each( FIXTURE.canonical.map( ( c ) => [ c.spelling, c.keys ] ) )(
+		'reads %j as its keys and spells them back',
+		( spelling, keys ) => {
+			expect( bucketsOf( spelling ) ).toEqual( keys );
+			expect( bucketSpelling( keys ) ).toBe( spelling );
+		}
+	);
+
+	it.each( FIXTURE.normalizes.map( ( c ) => [ c.spelling, c.keys ] ) )(
+		'reads the loose spelling %j as ascending keys, each once',
+		( spelling, keys ) => {
+			expect( bucketsOf( spelling ) ).toEqual( keys );
+		}
+	);
+
+	it.each( FIXTURE.refused )( 'selects nothing for %j', ( spelling ) => {
+		expect( bucketsOf( spelling ) ).toEqual( [] );
+	} );
+
+	it( "holds a selection to the fixture's limit, as the server does", () => {
+		const first = '2026-10-03-06-40';
+		const full = `${ first }..${ keyAfter( first, FIXTURE.max - 1 ) }`;
+
+		expect( bucketsOf( full ) ).toHaveLength( FIXTURE.max );
+		expect(
+			bucketsOf( `${ first }..${ keyAfter( first, FIXTURE.max ) }` )
+		).toEqual( [] );
+		expect( bucketsOf( `${ full },2026-10-05-23-55` ) ).toEqual( [] );
+	} );
+} );
+
+describe( 'runsOf and runSpan', () => {
+	it( 'splits ascending keys into runs of adjacent buckets', () => {
+		expect(
+			runsOf( [
+				'2026-10-04-23-55',
+				'2026-10-05-00-00',
+				'2026-10-05-18-30',
+			] )
+		).toEqual( [
+			[ '2026-10-04-23-55', '2026-10-05-00-00' ],
+			[ '2026-10-05-18-30' ],
+		] );
+	} );
+
+	it( 'names a run by the UTC span from its first bucket to its last', () => {
+		expect( runSpan( [ '2026-10-05-16-55', '2026-10-05-17-00' ] ) ).toBe(
+			'16:55–17:05 UTC'
+		);
+		expect( runSpan( [ '2026-10-04-23-55' ] ) ).toBe( '23:55–00:00 UTC' );
 	} );
 } );
 
@@ -204,14 +306,126 @@ describe( 'useSlotClick', () => {
 			useSlotClick( axis, onSlotClick )
 		);
 
-		result.current( 3 );
+		result.current( 3, { additive: false } );
+		result.current( 1, { additive: true } );
 
-		expect( onSlotClick.mock.calls ).toEqual( [ [ '2026-10-04-13-35' ] ] );
+		expect( onSlotClick.mock.calls ).toEqual( [
+			[ '2026-10-04-13-35', { additive: false } ],
+			[ '2026-10-04-13-25', { additive: true } ],
+		] );
 	} );
 
 	it( 'hands the frame no callback when nothing listens', () => {
 		const { result } = renderHook( () => useSlotClick( axis, undefined ) );
 
 		expect( result.current ).toBeUndefined();
+	} );
+} );
+
+describe( 'useBucketSelection', () => {
+	afterEach( cleanupMounts );
+
+	/**
+	 * Mount the hook over a selection held in React state, as both owners do.
+	 *
+	 * @param {string} first The selection's first spelling.
+	 * @return {{current: Array}} `[ spelling, selectedBuckets, pickBucket ]`.
+	 */
+	const mountSelection = ( first ) =>
+		renderHook( () => {
+			const [ spelling, setSpelling ] = React.useState( first );
+			return [ spelling, ...useBucketSelection( spelling, setSpelling ) ];
+		} ).result;
+
+	/**
+	 * The spelling one click leaves on a held selection.
+	 *
+	 * @param {string}  held     The held selection's spelling.
+	 * @param {string}  key      The clicked bucket.
+	 * @param {boolean} additive Whether cmd or ctrl was held.
+	 * @return {string} The selection after the click.
+	 */
+	const afterClick = ( held, key, additive ) => {
+		const result = mountSelection( held );
+		act( () => result.current[ 2 ]( key, { additive } ) );
+		return result.current[ 0 ];
+	};
+
+	const HELD = '2026-10-05-16-55..2026-10-05-17-00';
+
+	it( 'replaces the selection with the bucket a plain click names', () => {
+		expect( afterClick( HELD, '2026-10-05-18-30', false ) ).toBe(
+			'2026-10-05-18-30'
+		);
+	} );
+
+	it( 'adds the bucket an additive click names, merging a neighbour', () => {
+		expect( afterClick( HELD, '2026-10-05-17-05', true ) ).toBe(
+			'2026-10-05-16-55..2026-10-05-17-05'
+		);
+	} );
+
+	it( 'removes a held bucket a second additive click names', () => {
+		expect( afterClick( HELD, '2026-10-05-16-55', true ) ).toBe(
+			'2026-10-05-17-00'
+		);
+		expect(
+			afterClick( '2026-10-05-17-00', '2026-10-05-17-00', true )
+		).toBe( '' );
+	} );
+
+	it( 'starts afresh when the held spelling would be refused', () => {
+		expect( afterClick( 'kea-junk', '2026-10-05-18-30', true ) ).toBe(
+			'2026-10-05-18-30'
+		);
+	} );
+
+	it( "reads the held spelling's keys for the charts to shade", () => {
+		const result = mountSelection( '2026-10-05-16-55..2026-10-05-17-00' );
+
+		expect( result.current[ 1 ] ).toEqual( [
+			'2026-10-05-16-55',
+			'2026-10-05-17-00',
+		] );
+	} );
+
+	it( 'lands every click of one batch, each on the selection the last left', () => {
+		const result = mountSelection( '2026-10-05-16-55' );
+		const pick = result.current[ 2 ];
+
+		act( () => {
+			pick( '2026-10-05-17-00', { additive: true } );
+			pick( '2026-10-05-18-30', { additive: true } );
+		} );
+
+		expect( result.current[ 0 ] ).toBe(
+			'2026-10-05-16-55..2026-10-05-17-00,2026-10-05-18-30'
+		);
+		expect( result.current[ 2 ] ).toBe( pick );
+
+		act( () => pick( '2026-10-05-17-05', { additive: false } ) );
+		expect( result.current[ 0 ] ).toBe( '2026-10-05-17-05' );
+	} );
+} );
+
+describe( 'useSelectedSlots', () => {
+	const axis = buildChartSlots( slotsEndingAt( '2026-10-04-13-35', 4 ) );
+
+	afterEach( cleanupMounts );
+
+	it( 'names the axis indexes of the selected buckets', () => {
+		const { result } = renderHook( () =>
+			useSelectedSlots( axis, [ '2026-10-04-13-25', '2026-10-04-13-35' ] )
+		);
+
+		expect( [ ...result.current ] ).toEqual( [ 1, 3 ] );
+	} );
+
+	it( 'ignores a selected bucket the axis does not draw', () => {
+		const { result } = renderHook( () =>
+			useSelectedSlots( axis, [ '2026-10-03-09-00' ] )
+		);
+
+		expect( result.current.size ).toBe( 0 );
 	} );
 } );

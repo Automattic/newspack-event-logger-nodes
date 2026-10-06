@@ -1,18 +1,18 @@
 /**
  * The editor for a rule field holding an array of strings. Type a value and
  * press Enter, or blur the input, to add it as a tag; click a tag's remove
- * button, or press Backspace on an empty input, to take one away. Blank and
- * duplicate values are refused, and the whole array is reported through
- * `onChange` after every change.
+ * button, or press Backspace on an empty input, to take one away. Escape
+ * drops what was typed. Blank and duplicate values add nothing, and the whole
+ * array is reported through `onChange` after every change.
  */
 
 import { useState, useEffect, useCallback, useRef } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
-import TagToken from '../../components/TagToken';
+import TokenInput from '../../components/TokenInput';
 import '../styles/tag-input.scss';
 
 /**
- * Tag Input Field component, one `TagToken` per value.
+ * Tag Input Field component, one token per value.
  *
  * @param {Object}                     props                 Component props.
  * @param {string[]}                   [props.initialValues] Seeds the tag list at mount; later renders ignore it, so a caller showing a different list must remount the field.
@@ -26,7 +26,6 @@ export default function TagInputField( {
 	onChange,
 } ) {
 	const [ values, setValues ] = useState( initialValues );
-	const [ inputValue, setInputValue ] = useState( '' );
 
 	// Skip the mount run so the initial render isn't reported as an edit.
 	const didMountRef = useRef( false );
@@ -51,41 +50,15 @@ export default function TagInputField( {
 	}, [] );
 
 	/**
-	 * Add the input's trimmed value as a tag. A blank leaves the input alone;
-	 * a duplicate clears it without adding a second tag.
-	 */
-	const addValue = useCallback( () => {
-		const trimmed = inputValue.trim();
-		if ( ! trimmed ) {
-			return;
-		}
-		setValues( ( prev ) =>
-			prev.includes( trimmed ) ? prev : [ ...prev, trimmed ]
-		);
-		setInputValue( '' );
-	}, [ inputValue ] );
-
-	/**
-	 * Add the typed value on Enter; on Backspace with the input already empty,
-	 * drop the last tag. Backspace with text in the input edits that text.
+	 * Add a typed value as a tag; a duplicate adds nothing.
 	 *
-	 * @param {import('react').KeyboardEvent} e Keyboard event.
+	 * @param {string} draft The trimmed typed value.
 	 */
-	const handleKeyDown = useCallback(
-		( e ) => {
-			if ( 'Enter' === e.key ) {
-				e.preventDefault();
-				addValue();
-				return;
-			}
-			if ( 'Backspace' === e.key && '' === inputValue ) {
-				setValues( ( prev ) =>
-					prev.length > 0 ? prev.slice( 0, -1 ) : prev
-				);
-			}
-		},
-		[ addValue, inputValue ]
-	);
+	const addValue = useCallback( ( draft ) => {
+		setValues( ( prev ) =>
+			prev.includes( draft ) ? prev : [ ...prev, draft ]
+		);
+	}, [] );
 
 	const containerClass = `event-logger-tag-container ${
 		horizontal ? 'horizontal' : 'vertical'
@@ -93,35 +66,18 @@ export default function TagInputField( {
 
 	return (
 		<div className="event-logger-tag-input">
-			{ values.length > 0 && (
-				<div className={ containerClass }>
-					{ values.map( ( value, index ) => (
-						<TagToken
-							key={ index }
-							label={ value }
-							onRemove={ () => removeValue( index ) }
-							removeLabel={ __(
-								'Remove',
-								'newspack-event-logger-nodes'
-							) }
-						/>
-					) ) }
-				</div>
-			) }
-			<div className="event-logger-tag-input-row">
-				<input
-					type="text"
-					value={ inputValue }
-					onChange={ ( e ) => setInputValue( e.target.value ) }
-					onKeyDown={ handleKeyDown }
-					onBlur={ addValue }
-					placeholder={ __(
-						'Type a value and press Enter…',
-						'newspack-event-logger-nodes'
-					) }
-					className="regular-text"
-				/>
-			</div>
+			<TokenInput
+				tokens={ values }
+				onRemove={ removeValue }
+				rowClassName={ containerClass }
+				value=""
+				onCommit={ addValue }
+				placeholder={ __(
+					'Type a value and press Enter…',
+					'newspack-event-logger-nodes'
+				) }
+				className="regular-text"
+			/>
 		</div>
 	);
 }

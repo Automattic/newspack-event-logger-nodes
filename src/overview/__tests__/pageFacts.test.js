@@ -100,16 +100,19 @@ test( 'a URL listing every request says so and carries no error summary', () => 
 	expect( facts ).not.toHaveProperty( 'error_summary' );
 } );
 
-test( "a URL names the modal's own bucket, beside the table's filters", () => {
+test( "a URL names the modal's own selection, beside the table's filters", () => {
 	const facts = pageFacts( {
-		urlFilters: { bucket: '2026-10-04-13-35' },
+		urlFilters: { bucket: '2026-10-04-13-35,2026-10-04-14-00' },
 		selectedUrl: { hash: 'kea', url: '/kea' },
 		urlDetail: { stats: { count: 17, avg_ms: 240, max_ms: 910 } },
-		detailFilters: { errors_only: false, bucket: '2026-10-04-13-40' },
+		detailFilters: {
+			errors_only: false,
+			bucket: '2026-10-04-13-40..2026-10-04-13-50',
+		},
 	} );
 
-	expect( facts.bucket ).toBe( '2026-10-04-13-40' );
-	expect( facts.filters.bucket ).toBe( '2026-10-04-13-35' );
+	expect( facts.bucket ).toBe( '2026-10-04-13-40..2026-10-04-13-50' );
+	expect( facts.filters.bucket ).toBe( '2026-10-04-13-35,2026-10-04-14-00' );
 	expect( facts.stats.count ).toBe( 17 );
 } );
 
