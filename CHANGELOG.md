@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.124.3] - 2026-10-06
+
+### Changed
+
+- **Rebuilt against newspack-nodes 2.96.0,** so the debug overlay draws a node's owned Table with its owner named, and offers no delete or rename on it.
+
 ### Fixed
 
 - **The `request` line logs the URL as sent.** `sanitize_text_field()` deleted every `%xx` octet, so `?rest_route=%2Fjetpack%2Fv4%2Fsync%2Fstatus` was logged as `?rest_route=jetpackv4syncstatus`, which could be neither searched for nor replayed. REQUEST_URI and REQUEST_METHOD now keep their percent-encoding and backslashes and lose only C0 controls and DEL, on both producers. Rules match, and URL rows key, on that encoded form, so an encoded path's stats begin a new URL row.
