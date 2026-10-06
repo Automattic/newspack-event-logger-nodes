@@ -121,17 +121,83 @@ export const runsOf = ( keys ) =>
 	}, /** @type {string[][]} */ ( [] ) );
 
 /**
- * A run as the UTC span it covers, from its first bucket's opening to its
- * last bucket's close.
+ * A clock time in the viewer's locale and zone, `11:40 AM` or `11:40`.
+ *
+ * @type {Intl.DateTimeFormat}
+ */
+const CLOCK = new Intl.DateTimeFormat( undefined, {
+	hour: 'numeric',
+	minute: '2-digit',
+} );
+
+/**
+ * A clock time with its date, for a run crossing local midnight.
+ *
+ * @type {Intl.DateTimeFormat}
+ */
+const DATED = new Intl.DateTimeFormat( undefined, {
+	month: 'short',
+	day: 'numeric',
+	hour: 'numeric',
+	minute: '2-digit',
+} );
+
+/**
+ * A clock time with its zone, for a run the clocks change inside.
+ *
+ * @type {Intl.DateTimeFormat}
+ */
+const ZONED = new Intl.DateTimeFormat( undefined, {
+	hour: 'numeric',
+	minute: '2-digit',
+	timeZoneName: 'short',
+} );
+
+/**
+ * Whether the viewer's locale tells time on a 12-hour clock.
+ *
+ * @return {boolean} True where `CLOCK` writes AM and PM.
+ */
+export const twelveHourClock = () => true === CLOCK.resolvedOptions().hour12;
+
+/**
+ * A pair of formatted ends with a trailing day period they share written
+ * once, at the end, as `11:40–11:45 AM`.
+ *
+ * @param {Intl.DateTimeFormatPart[][]} ends The start's parts and the end's.
+ * @return {Intl.DateTimeFormatPart[][]} The pair, a shared period once.
+ */
+const sharePeriod = ( [ from, to ] ) =>
+	'dayPeriod' === from.at( -1 ).type &&
+	from.at( -1 ).value === to.at( -1 ).value
+		? [ from.slice( 0, -2 ), to ]
+		: [ from, to ];
+
+/**
+ * A run as the span it covers in the viewer's zone, from its first bucket's
+ * opening to its last bucket's close: dated where it crosses local midnight,
+ * zoned where the clocks change inside it.
  *
  * @param {string[]} run Adjacent bucket keys, ascending.
- * @return {string} `HH:MM–HH:MM UTC`.
+ * @return {string} `11:40–11:45 AM`, in the viewer's locale.
  */
 export const runSpan = ( run ) => {
-	const hhmm = ( ms ) => new Date( ms ).toISOString().slice( 11, 16 );
-	return `${ hhmm( keyStart( run[ 0 ] ).getTime() ) }–${ hhmm(
-		keyStart( run.at( -1 ) ).getTime() + BUCKET_MS
-	) } UTC`;
+	const start = keyStart( run[ 0 ] );
+	const end = new Date( keyStart( run.at( -1 ) ).getTime() + BUCKET_MS );
+	const lastMinute = new Date( end.getTime() - 60000 );
+	const parts = ( format ) =>
+		[ start, end ].map( ( at ) => format.formatToParts( at ) );
+	const written = ( ends ) =>
+		ends
+			.map( ( side ) => side.map( ( part ) => part.value ).join( '' ) )
+			.join( '–' );
+	if ( start.toDateString() !== lastMinute.toDateString() ) {
+		return written( parts( DATED ) );
+	}
+	if ( start.getTimezoneOffset() !== end.getTimezoneOffset() ) {
+		return written( parts( ZONED ) );
+	}
+	return written( sharePeriod( parts( CLOCK ) ) );
 };
 
 /**
@@ -171,7 +237,26 @@ const clickSelection = ( spelling, key, additive ) => {
 };
 
 /**
- * A selection as UTC spans, one per run, the way a filter names it.
+ * The selection a chart drag leaves: a plain drag selects its span alone, an
+ * additive one adds the span to what is held.
+ *
+ * @param {string}   spelling The held selection.
+ * @param {string[]} keys     The dragged buckets, ascending.
+ * @param {boolean}  additive Whether cmd or ctrl was held.
+ * @return {string} The new selection's spelling.
+ */
+const rangeSelection = ( spelling, keys, additive ) =>
+	bucketSpelling(
+		[
+			...new Set( [
+				...( additive ? bucketsOf( spelling ) : [] ),
+				...keys,
+			] ),
+		].sort()
+	);
+
+/**
+ * A selection as local spans, one per run, the way a filter names it.
  *
  * @param {?string} spelling A candidate selection's spelling.
  * @return {?string} Each run's `runSpan()`, comma-joined; null for none or
@@ -226,19 +311,48 @@ export const useSlotClick = ( axis, onSlotClick ) =>
 	);
 
 /**
+ * Map the slot range `AreaTimeChart` reports for a drag to the bucket keys
+ * from `axis[ from ]` to `axis[ to ]`, ascending, whichever end the drag
+ * started from, passing on whether it was additive.
+ *
+ * @param {Array<{bucketKey:string}>}                                 axis          The axis the series sample.
+ * @param {(bucketKeys: string[], drag: {additive: boolean}) => void} [onSlotRange] The chart's listener.
+ * @return {((from: number, to: number, drag: {additive: boolean}) => void)|undefined} The frame's drag, held stable; none without a listener.
+ */
+export const useSlotRange = ( axis, onSlotRange ) =>
+	useMemo(
+		() =>
+			onSlotRange &&
+			( ( from, to, { additive } ) =>
+				onSlotRange(
+					axis
+						.slice( Math.min( from, to ), Math.max( from, to ) + 1 )
+						.map( ( slot ) => slot.bucketKey ),
+					{ additive }
+				) ),
+		[ axis, onSlotRange ]
+	);
+
+/**
  * A selection held as its spelling, read as the keys a chart shades and
- * edited by a chart click. The edit is an updater over the held spelling, so
- * every click of one batch lands on the selection the click before it left.
+ * edited by a chart click or drag. Each edit is an updater over the held
+ * spelling, so every edit of one batch lands on the selection the one before
+ * it left.
  *
  * @param {string}                                              spelling The held selection's spelling.
  * @param {(update: string|((held: string) => string)) => void} onChange The holder's setter, taking a spelling or an updater of one.
- * @return {[string[], (bucketKey: string, click: {additive: boolean}) => void]} The selection's keys, and the click that edits it, held stable.
+ * @return {[string[], (bucketKey: string, click: {additive: boolean}) => void, (bucketKeys: string[], drag: {additive: boolean}) => void]} The selection's keys, the click that edits it and the drag that edits it, both held stable.
  */
 export const useBucketSelection = ( spelling, onChange ) => [
 	useMemo( () => bucketsOf( spelling ), [ spelling ] ),
 	useCallback(
 		( key, { additive } ) =>
 			onChange( ( held ) => clickSelection( held, key, additive ) ),
+		[ onChange ]
+	),
+	useCallback(
+		( keys, { additive } ) =>
+			onChange( ( held ) => rangeSelection( held, keys, additive ) ),
 		[ onChange ]
 	),
 ];

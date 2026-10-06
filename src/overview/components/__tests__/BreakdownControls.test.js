@@ -19,8 +19,10 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 		slots,
 		series,
 		onSlotClick,
+		onSlotRange,
 	} ) => {
 		globalThis.__aggregateSlotClick = onSlotClick;
+		globalThis.__aggregateSlotRange = onSlotRange;
 		return `AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
 		}] slots:${ slots?.[ 0 ] ?? 'none' } rows:${ series?.rows ?? 'none' }`;
@@ -237,6 +239,13 @@ describe( 'BreakdownControls', () => {
 		const onSlotClick = jest.fn();
 		const { unmount } = mountBreakdown( { onSlotClick } );
 		expect( globalThis.__aggregateSlotClick ).toBe( onSlotClick );
+		unmount();
+	} );
+
+	it( 'hands the chart the drag that selects a span of buckets', () => {
+		const onSlotRange = jest.fn();
+		const { unmount } = mountBreakdown( { onSlotRange } );
+		expect( globalThis.__aggregateSlotRange ).toBe( onSlotRange );
 		unmount();
 	} );
 } );

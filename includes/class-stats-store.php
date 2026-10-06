@@ -18,6 +18,7 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Durable_Arm;
 use Newspack_Nodes\Table_Client;
+use Newspack_Nodes\Table_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -255,15 +256,6 @@ class Stats_Store {
 	 * nothing.
 	 */
 	public const URL_SEARCH_MAX = 5000;
-
-	/**
-	 * Members a read takes from one bucket's set, and the (hash, server)
-	 * pairs an unscoped bucket page reads across every set. A bucket's
-	 * candidates are read by key like a search's; this limit is higher than
-	 * `URL_SEARCH_MAX` by Chris's decision, which accepts a slower page on a
-	 * busy hub. A set or a page past it is refused.
-	 */
-	public const URL_BUCKET_MAX = 10000;
 
 	/**
 	 * Words of one search term one read names, longest first, since a
@@ -1760,30 +1752,23 @@ class Stats_Store {
 	 * The URLs `$server_keys` filed rows for in any of `$buckets`, each named
 	 * once with the hours whose buckets each server's set named it in, in
 	 * `$buckets` order: a row is read per hour key, so the hour is all a
-	 * reader needs. Each hour's sets are one `SMEMBERS` exchange: one an
-	 * hour the selection touches, 25 at most under the default retention.
-	 * The read stops at the first hour taking the (hash, server) pairs past
-	 * `$budget`, answering `false`: too many URLs to read by key. A set repeats only its own server's pairs, so each is asked for
-	 * the budget left plus the most pairs any one server held before the
-	 * exchange, and one holding more is past the budget unread. A read left
-	 * unanswered sets `$failed` and answers nothing, since a partial list
-	 * would read as the whole selection.
+	 * reader needs. Each hour's sets are one `SMEMBERS` exchange at
+	 * `Table_Node::MAX_MEMBERS_LIMIT`, 25 at most under the default
+	 * retention, and a set holding more is then read whole, `SSCAN` page by
+	 * page, so the read costs one exchange an hour plus one a page for each
+	 * set past the limit. A read left unanswered sets `$failed` and answers
+	 * nothing, since a partial list would read as the whole selection.
 	 *
 	 * @param list<string> $buckets     `bucket_key()`s, `Y-m-d-H-i`, newest first.
 	 * @param list<string> $server_keys Each server's `server_key()`.
-	 * @param int          $budget      Most (hash, server) pairs the read may name,
-	 *                                  from 0 to `URL_BUCKET_MAX`.
 	 * @param-out bool     $failed
 	 * @param ?bool        $failed      Set true when the Table left the read unanswered.
-	 * @return array<string,array<string,list<string>>>|false hash => server key =>
-	 *                                                        the hours naming it,
-	 *                                                        or false past the budget.
+	 * @return array<string,array<string,list<string>>> hash => server key => the hours naming it.
 	 */
-	public function url_bucket_members( array $buckets, array $server_keys, int $budget, ?bool &$failed = null ): array|false {
+	public function url_bucket_members( array $buckets, array $server_keys, ?bool &$failed = null ): array {
 		$failed = false;
 		$named  = [];
-		$pairs  = 0;
-		$held   = \array_fill_keys( $server_keys, 0 );
+		$table  = $this->table_for( self::NS_URLBUCKET );
 		$hours  = [];
 		foreach ( $buckets as $bucket ) {
 			foreach ( $server_keys as $server_key ) {
@@ -1791,28 +1776,26 @@ class Stats_Store {
 			}
 		}
 		foreach ( $hours as $hour => $asked ) {
-			$limit = \max( 1, $budget - $pairs + \max( [ 0, ...$held ] ) );
-			$found = $this->client->members( $this->table_for( self::NS_URLBUCKET ), \array_keys( $asked ), $limit, $failed );
+			$found = $this->client->members( $table, \array_map( 'strval', \array_keys( $asked ) ), Table_Node::MAX_MEMBERS_LIMIT, $failed );
 			if ( $failed ) {
 				return [];
 			}
-			if ( \in_array( null, $found, true ) ) {
-				return false;
-			}
 			foreach ( $asked as $key => $server_key ) {
-				foreach ( \array_keys( $found[ $key ] ?? [] ) as $hash ) {
+				// Null is a set past the limit, read whole; absent holds none.
+				$members = \array_key_exists( $key, $found )
+					? $found[ $key ] ?? $this->client->all_members( $table, $key, Table_Node::MAX_MEMBERS_LIMIT, $failed )
+					: [];
+				if ( $failed ) {
+					return [];
+				}
+				foreach ( \array_keys( $members ) as $hash ) {
 					$hash = (string) $hash;
 					if ( ! isset( $named[ $hash ][ $server_key ] ) ) {
-						++$pairs;
-						++$held[ $server_key ];
 						$named[ $hash ][ $server_key ] = [ $hour ];
 					} elseif ( \end( $named[ $hash ][ $server_key ] ) !== $hour ) {
 						$named[ $hash ][ $server_key ][] = $hour;
 					}
 				}
-			}
-			if ( $pairs > $budget ) {
-				return false;
 			}
 		}
 		return $named;
@@ -1973,7 +1956,9 @@ class Stats_Store {
 	 * once. `last_modified` is the newest partition's flush.
 	 *
 	 * A key present only when some blob held it: `flame` from a `flame_raw`,
-	 * `profiles` from a `profiles`.
+	 * `profiles` from a `profiles` that folded at least one profiled request.
+	 * A blob's profile starts at count 0 and stays there until a timed request
+	 * carrying a profile lands, and a mean over no request is no breakdown.
 	 *
 	 * @param array<int,Stats_Store> $stores   Every partition's store.
 	 * @param string                 $url_hash 12-char URL hash.
@@ -2010,7 +1995,7 @@ class Stats_Store {
 		if ( null !== $flame ) {
 			$stats['flame'] = Flame_Builder_Node::url_flame_for_display( $flame )[1];
 		}
-		if ( null !== $profiles ) {
+		if ( 0 < Core::num_int( $profiles['count'] ?? null ) ) {
 			$stats['profiles'] = self::sums_to_display(
 				Core::num_int( $profiles['count'] ?? null ),
 				Core::num_float( $profiles['sum_req_time'] ?? null ),

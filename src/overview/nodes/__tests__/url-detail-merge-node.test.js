@@ -454,6 +454,34 @@ describe( 'UrlDetailMergeNode — relist', () => {
 		expect( relisted.aggregate_flame ).toBe( flame );
 		expect( relisted.scan_stopped_early ).toBeFalsy();
 	} );
+
+	test( 'a relist keeps the held profile whole, its count beside its categories', () => {
+		const { node, sink } = makeMerge();
+		const profiles = {
+			count: 41,
+			total_time: 88,
+			categories: { render: { time: 61, count: 3 } },
+		};
+		node.fill(
+			reply( {
+				last_modified: 23,
+				aggregate_profiles: profiles,
+				requests: [ { rid: 'clean-7', timestamp: 913 } ],
+			} )
+		);
+
+		node.fill( control( { action: 'relist' } ) );
+		node.fill(
+			reply( {
+				last_modified: 23,
+				aggregate_profiles: null,
+				requests: [ { rid: 'err-7', timestamp: 412 } ],
+			} )
+		);
+
+		const relisted = forwardedPayload( sink, 1 );
+		expect( relisted.aggregate_profiles ).toEqual( profiles );
+	} );
 } );
 
 describe( 'cursor', () => {

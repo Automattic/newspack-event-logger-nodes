@@ -33,6 +33,7 @@ import {
 	hasRows,
 	useSelectedSlots,
 	useSlotClick,
+	useSlotRange,
 } from './chartSlots';
 
 /**
@@ -178,17 +179,19 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
  * `yFormatFor` and `colorAt` still, since `AreaTimeChart` redraws whenever
  * one of them changes.
  *
- * @param {Object}                                                  props                 Component props.
- * @param {Object|null}                                             props.data            Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
- * @param {string[]|null}                                           props.slots           The bucket keys the reply drew, newest first.
- * @param {(bucketKey: string, click: {additive: boolean}) => void} [props.onSlotClick]   Receives the bucket key of a slot clicked in any of the three charts, and whether cmd or ctrl was held; without it a click does nothing.
- * @param {string[]}                                                props.selectedBuckets The selected bucket keys, shaded on every view.
+ * @param {Object}                                                    props                 Component props.
+ * @param {Object|null}                                               props.data            Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
+ * @param {string[]|null}                                             props.slots           The bucket keys the reply drew, newest first.
+ * @param {(bucketKey: string, click: {additive: boolean}) => void}   [props.onSlotClick]   Receives the bucket key of a slot clicked in any of the three charts, and whether cmd or ctrl was held; without it a click does nothing.
+ * @param {(bucketKeys: string[], drag: {additive: boolean}) => void} [props.onSlotRange]   Receives the bucket keys a drag spans in any of the three charts, ascending, and whether cmd or ctrl was held; without it a drag does nothing.
+ * @param {string[]}                                                  props.selectedBuckets The selected bucket keys, shaded on every view.
  * @return {import('react').ReactElement[]|null} One chart per view, or null when data is empty.
  */
 export default function CategoryTimeChart( {
 	data,
 	slots,
 	onSlotClick,
+	onSlotRange,
 	selectedBuckets,
 } ) {
 	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
@@ -220,6 +223,7 @@ export default function CategoryTimeChart( {
 	const colorAt = useCallback( ( _label, index ) => chartColor( index ), [] );
 
 	const slotClick = useSlotClick( axis, onSlotClick );
+	const slotRange = useSlotRange( axis, onSlotRange );
 	const selectedSlots = useSelectedSlots( axis, selectedBuckets );
 
 	// Emptiness asks about the ROWS, and below every hook: order matters.
@@ -238,6 +242,7 @@ export default function CategoryTimeChart( {
 			height={ CHART_HEIGHT }
 			stackable={ false }
 			onSlotClick={ slotClick }
+			onSlotRange={ slotRange }
 			selectedSlots={ selectedSlots }
 		/>
 	) );

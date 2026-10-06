@@ -2120,8 +2120,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	public static function load_row( string $hash, string $server, array $plan, array $stores ): ?array {
 		$candidate = [ $hash => '' === $server ? null : [ Stats_Store::server_key( $server ) => null ] ];
 		$unread    = false;
-		$rows      = self::candidate_rows( \array_fill_keys( \array_keys( $stores ), $candidate ), true, false, $stores, $plan, $unread );
-		$row       = $rows[0][ $hash ] ?? $rows[1][ $hash ] ?? null;
+		$row       = null;
+		// The reader family's row first, as each chunk yields it first.
+		foreach ( self::candidate_rows( \array_fill_keys( \array_keys( $stores ), $candidate ), true, false, $stores, $plan, $unread ) as $group ) {
+			$row ??= $group[0] ?? null;
+		}
 		if ( null === $row && $unread ) {
 			throw new \RuntimeException( \esc_html( "URL stats went unanswered: {$hash} cannot be read now" ) );
 		}
@@ -2204,8 +2207,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * One page of the URL set, walked from the raw index: its totals, its
 	 * slowest, and one page of it.
 	 *
-	 * A search walks its candidates' rows, read by key (`candidate_rows()`),
-	 * as one group, and reads no shard; so does a selection's plan, whose
+	 * A search walks its candidates' rows, read by key (`candidate_rows()`)
+	 * a chunk at a time, and reads no shard; so does a selection's plan, whose
 	 * candidates are the URLs its buckets' sets name (`bucket_candidates()`)
 	 * and whose rows fold its slots. A searched selection checks the term on every
 	 * one of them, because the token index forgets a URL a window and an hour
@@ -2223,11 +2226,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * hub's 512MB inside the fold itself. A server scope reads
 	 * that server's keys alone; no scope reads every server the index names.
 	 *
-	 * The union of the per-shard top-N is exactly the global top-N, because
-	 * every row belongs to exactly one shard — so keeping each shard's best
-	 * `$offset + $limit` by the sort key, and its best `SLOWEST_ROWS` by
-	 * `avg_ms`, loses nothing. `rows` and `totals` accumulate across shards and
-	 * stay site-wide (decision 15).
+	 * Every row belongs to exactly one group, a shard or a chunk of
+	 * candidates, so the best `$offset + $limit` by the sort key, and the
+	 * best `SLOWEST_ROWS` by `avg_ms`, are kept across groups as each is
+	 * folded (`top_rows()`) and lose nothing: the walk holds one group, the
+	 * page and the slowest, however many URLs a selection names. `rows` and
+	 * `totals` accumulate across groups and stay site-wide (decision 15).
 	 *
 	 * @param string                 $server  Reporting server to scope to; '' reads every server.
 	 * @param string                 $search  Case-insensitive whole URL words; '' matches all.
@@ -2253,8 +2257,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		$errored   = 0;
 		$timed     = 0;
 		$recent    = 0;
-		$sum_ms    = 0.0;
-		$sum_peak  = 0.0;
+		// Per family, so a chunked read sums in the order a whole one does.
+		$family_ms   = [];
+		$family_peak = [];
 
 		// Under the filter a count ranks the errors, not the traffic.
 		$rank_key = Stats_Store::rank_key( $sort, $errors );
@@ -2283,11 +2288,13 @@ class Performance_CI_Node extends Service_CI_Node {
 		// Candidates are read by key; a page with none walks shards.
 		$groups = null === $candidates
 			? self::shard_groups( $server, $workers, $errors, $stores, $now )
-			: [ \array_merge( ...\array_map( 'array_values', self::candidate_rows( $candidates, $workers, $errors, $stores, $plan, $unread ) ) ) ];
+			: self::candidate_rows( $candidates, $workers, $errors, $stores, $plan, $unread );
 
 		$overflow = [];
-		foreach ( $groups as $group ) {
-			$kept = [];
+		foreach ( $groups as $family => $group ) {
+			$family_ms[ $family ]   ??= 0.0;
+			$family_peak[ $family ] ??= 0.0;
+			$kept                     = [];
 			foreach ( $group as $raw ) {
 				$raw_row = Core::arr( $raw );
 				// @longform Every shard's overflow row shares ONE key, so a
@@ -2319,18 +2326,18 @@ class Performance_CI_Node extends Service_CI_Node {
 				$errored  += Core::num_int( $row['errors'] ?? null );
 				$recent   += Core::num_int( $row['recent_count'] ?? null );
 				// Denominator from the SAME row as its numerator.
-				$timed    += Core::num_int( $row['timed_count'] ?? null );
-				$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
-				$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
-				$kept[]    = $row;
+				$timed                  += Core::num_int( $row['timed_count'] ?? null );
+				$family_ms[ $family ]   += Core::num_float( $row['sum_ms'] ?? null );
+				$family_peak[ $family ] += Core::num_float( $row['sum_peak_mb'] ?? null );
+				$kept[]                  = $row;
 			}
 
-			// This shard's contenders only; the rest of it is dropped here.
-			$kept    = self::sort_rows( $kept, ...Stats_Store::SLOWEST_LIST );
-			$slowest = \array_merge( $slowest, \array_slice( $kept, 0, self::SLOWEST_ROWS ) );
-			$kept    = self::sort_rows( $kept, $rank_key, $order );
-			$ranked  = \array_merge( $ranked, \array_slice( $kept, 0, $page_keep ) );
+			// This group's contenders join the best so far; the rest drop here.
+			$slowest = self::top_rows( [ ...$slowest, ...$kept ], self::SLOWEST_ROWS, ...Stats_Store::SLOWEST_LIST );
+			$ranked  = self::top_rows( [ ...$ranked, ...$kept ], $page_keep, $rank_key, $order );
 		}
+		$sum_ms   = (float) \array_sum( $family_ms );
+		$sum_peak = (float) \array_sum( $family_peak );
 
 		foreach ( $overflow as $raw_row ) {
 			$row = self::project_row( $raw_row );
@@ -2376,20 +2383,27 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Named URLs' merged rows, read BY KEY: each hash's `url_row_h` value
 	 * under each of its servers, for every key of the read plan — or only
 	 * the keys in the hours whose sets named it there — whose server index
-	 * names that server with the hash's shard (`plan_index()`), in one
-	 * exchange per store, which reads only the hashes named for it. Each is
+	 * names that server with the hash's shard (`plan_index()`). Each is
 	 * folded through `fold_index_row()` in the order the shard walk folds —
 	 * the plan's folded hours, each the sum of its slots as the hour fold
 	 * sums its buckets, then its buckets slot by slot, never their hour's
-	 * sum, each key's servers in the index's order — so a row read here is
-	 * the row the walk shows, the errored filter and the recent rate
-	 * included. An hour a store holds no index for is unfolded, and neither
-	 * reader reads it.
+	 * sum, each key's servers in the index's order, each store in turn — so
+	 * a row read here is the row the walk shows, the errored filter and the
+	 * recent rate included. An hour a store holds no index for is unfolded,
+	 * and neither reader reads it.
+	 *
+	 * Read a chunk at a time, so a walk never holds every candidate's row:
+	 * hashes join a chunk in the order the stores' candidates first name
+	 * them until one more would take a store's reads past
+	 * `Flame_Builder_Node::WRITE_BATCH_KEYS`, one exchange a store a chunk.
+	 * A hash is read and folded whole inside its chunk, and each chunk yields
+	 * its rows family by family, the reader's first, keyed by family, so the
+	 * rows reach the fold in the same order whatever the chunk size.
 	 *
 	 * Exact while the shards' byte cap keeps the URL: a row that cap folds
 	 * into `Other` there is whole here. A store whose server index went
-	 * unanswered reads nothing, and one whose row read did reads what came
-	 * back; each says so through `$unread`.
+	 * unanswered reads nothing, and one whose rows went unanswered loses that
+	 * chunk's; each says so through `$unread`.
 	 *
 	 * @param array<int,array<array-key,array<string,list<string>|null>|null>> $candidates Store => hash => server
 	 *                                                                                    key => the hours naming it there, null
@@ -2400,53 +2414,113 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param Read_Plan                                     $plan       The reply's read plan, the selection's under one.
 	 * @param bool                                          $unread     Set true when a store's server index or rows went unanswered.
 	 * @param-out bool                                      $unread
-	 * @return array<int,array<string,array<string,mixed>>> Family, 0 the reader's and 1 the
-	 *                                                      worker's => hash => merged row.
+	 * @return \Generator<int,list<array<string,mixed>>> Family, 0 the reader's and 1 the
+	 *                                                   worker's => one chunk's merged rows of it.
 	 */
-	private static function candidate_rows( array $candidates, bool $workers, bool $errored, array $stores, array $plan, bool &$unread ): array {
-		$recent   = $plan['recent'];
+	private static function candidate_rows( array $candidates, bool $workers, bool $errored, array $stores, array $plan, bool &$unread ): \Generator {
 		$families = Stats_Store::families( $workers );
-		$rows     = [];
+		$indexes  = [];
 		foreach ( $stores as $p => $store ) {
-			$failed = false;
-			$index  = self::plan_index( $store, $plan, $failed );
-			$unread = $unread || $failed;
+			$failed        = false;
+			$indexes[ $p ] = self::plan_index( $store, $plan, $failed );
+			$unread        = $unread || $failed;
+		}
+		$order = [];
+		foreach ( $candidates as $named ) {
+			$order += $named;
+		}
+		$chunk = [];
+		$sizes = [];
+		foreach ( \array_keys( $order ) as $hash ) {
+			$hash  = (string) $hash;
+			$bits  = Stats_Store::shard_mask( \array_map( static fn ( bool $worker ): string => Stats_Store::url_shard( $hash, $worker ), $families ) );
 			$held  = [];
 			$reads = [];
-			foreach ( $candidates[ $p ] ?? [] as $hash => $keys ) {
-				$hash = (string) $hash;
-				$bits = Stats_Store::shard_mask( \array_map( static fn ( bool $worker ): string => Stats_Store::url_shard( $hash, $worker ), $families ) );
-				foreach ( self::named_index( $index, $keys ) as $at => $entries ) {
+			foreach ( $indexes as $p => $index ) {
+				if ( ! \array_key_exists( $hash, $candidates[ $p ] ?? [] ) ) {
+					continue;
+				}
+				foreach ( self::named_index( $index, $candidates[ $p ][ $hash ] ) as $at => $entries ) {
 					$hour = Stats_Store::hour_of( $at );
 					foreach ( $entries as $key => [ Stats_Store::SRV_NAME => $name, Stats_Store::SRV_SHARDS => $mask ] ) {
 						if ( 0 !== ( $mask & $bits ) ) {
-							$held[ $hash ][ $at ][]            = [ $key, $mask, $name ];
-							$reads[ "{$hour} {$key} {$hash}" ] = [ Stats_Store::url_row_parts( $key, $hash ), $hour ];
+							$held[ $p ][ $at ][]                  = [ $key, $mask, $name ];
+							$reads[ $p ][ "{$hour} {$key} {$hash}" ] = [ Stats_Store::url_row_parts( $key, $hash ), $hour ];
 						}
 					}
 				}
 			}
-			$values = $store->bucket_get_multi( $reads, $failed );
-			$unread = $unread || $failed;
-			foreach ( $held as $hash => $by_key ) {
-				foreach ( $families as $worker ) {
-					$bit    = Stats_Store::shard_mask( [ Stats_Store::url_shard( $hash, $worker ) ] );
-					$family = Stats_Store::url_row_family( $worker );
+			if ( [] === $held ) {
+				continue;
+			}
+			$full = [] !== \array_filter( $reads, static fn ( array $more, int $p ): bool => ( $sizes[ $p ] ?? 0 ) + \count( $more ) > Flame_Builder_Node::WRITE_BATCH_KEYS, \ARRAY_FILTER_USE_BOTH );
+			if ( $full && [] !== $chunk ) {
+				yield from self::fold_chunk( $chunk, $families, $errored, $stores, $plan['recent'], $unread );
+				$chunk = [];
+				$sizes = [];
+			}
+			$chunk[] = [ $hash, $held, $reads ];
+			foreach ( $reads as $p => $more ) {
+				$sizes[ $p ] = ( $sizes[ $p ] ?? 0 ) + \count( $more );
+			}
+		}
+		if ( [] !== $chunk ) {
+			yield from self::fold_chunk( $chunk, $families, $errored, $stores, $plan['recent'], $unread );
+		}
+	}
+
+	/**
+	 * One chunk of candidates read and folded: each store's reads in one
+	 * exchange a `Flame_Builder_Node::WRITE_BATCH_KEYS`, then each hash's
+	 * rows folded store by store, `candidate_rows()`'s order.
+	 *
+	 * @param list<array{0:string,1:array<int,array<string,list<array{0:string,1:int,2:string}>>>,2:array<int,array<string,array{0:array<int,string>,1:string}>>}> $chunk    Hash, store => key =>
+	 *                                                                                                                                                         its index entries, store => its reads.
+	 * @param list<bool>                                                                                                                                       $families The families folded.
+	 * @param bool                                                                                                                                             $errored  Fold each key's errored rows alone.
+	 * @param array<int,Stats_Store>                                                                                                                           $stores   Stores the caller resolved once.
+	 * @param array<string,int>                                                                                                                                $recent   The read plan's `recent`.
+	 * @param bool                                                                                                                                             $unread   Set true when a store's rows went unanswered.
+	 * @param-out bool                                                                                                                                         $unread
+	 * @return array<int,list<array<string,mixed>>> Family => the chunk's merged rows of it.
+	 */
+	private static function fold_chunk( array $chunk, array $families, bool $errored, array $stores, array $recent, bool &$unread ): array {
+		$values = [];
+		foreach ( $stores as $p => $store ) {
+			$reads = \array_replace( [], ...\array_map( static fn ( array $hash ): array => $hash[2][ $p ] ?? [], $chunk ) );
+			foreach ( \array_chunk( $reads, Flame_Builder_Node::WRITE_BATCH_KEYS, true ) as $batch ) {
+				$failed       = false;
+				$values[ $p ] = ( $values[ $p ] ?? [] ) + $store->bucket_get_multi( $batch, $failed );
+				$unread       = $unread || $failed;
+			}
+		}
+		$rows = [];
+		foreach ( $families as $worker ) {
+			$family = Stats_Store::url_row_family( $worker );
+			$group  = [];
+			foreach ( $chunk as [ $hash, $held ] ) {
+				$bit    = Stats_Store::shard_mask( [ Stats_Store::url_shard( $hash, $worker ) ] );
+				$merged = null;
+				foreach ( $held as $p => $by_key ) {
 					foreach ( $by_key as $at => $servers ) {
 						$hour = Stats_Store::hour_of( $at );
 						foreach ( $servers as [ $key, $mask, $name ] ) {
-							$value = Core::arr( 0 === ( $mask & $bit ) ? null : $values[ "{$hour} {$key} {$hash}" ] ?? null );
+							$value = Core::arr( 0 === ( $mask & $bit ) ? null : $values[ $p ][ "{$hour} {$key} {$hash}" ] ?? null );
 							$slots = Core::arr( $value[ $family ] ?? null );
 							$row   = $at === $hour ? self::hour_row( $slots ) : Core::arr( $slots[ Stats_Store::slot_of( $at ) ] ?? null );
 							if ( [] === $row || ( $errored && Stats_Store::row_errors( $row ) <= 0 ) ) {
 								continue;
 							}
 							$row[ Stats_Store::ROW_PATH ] = Core::str( $value[ Stats_Store::URL_ROW_PATH ] ?? '' );
-							$rows[ (int) $worker ][ $hash ] = self::fold_index_row( $rows[ (int) $worker ][ $hash ] ?? self::empty_index_row( $hash ), $row, isset( $recent[ $at ] ), $name );
+							$merged                       = self::fold_index_row( $merged ?? self::empty_index_row( $hash ), $row, isset( $recent[ $at ] ), $name );
 						}
 					}
 				}
+				if ( null !== $merged ) {
+					$group[] = $merged;
+				}
 			}
+			$rows[ (int) $worker ] = $group;
 		}
 		return $rows;
 	}
@@ -2514,12 +2588,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param bool                   $errored Fold each key's errored rows alone.
 	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
 	 * @param int                    $now     The reply's clock, read once at its entry.
-	 * @return \Generator<int,array<int,array<array-key,mixed>>>
+	 * @return \Generator<int,array<int,array<array-key,mixed>>> Family => one shard's rows.
 	 */
 	private static function shard_groups( string $server, bool $workers, bool $errored, array $stores, int $now ): \Generator {
 		foreach ( Stats_Store::families( $workers ) as $worker ) {
 			foreach ( Stats_Store::url_shards( $worker ) as $shard ) {
-				yield self::read_index( $shard, $server, $stores, $now, $errored );
+				yield (int) $worker => self::read_index( $shard, $server, $stores, $now, $errored );
 			}
 		}
 	}
@@ -2624,17 +2698,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the keys of the servers that filed it and the hours whose buckets each
 	 * filed it in: the scoped server's sets, or those of every server
 	 * `indexed_servers()` names. A set names the URLs its own partition filed
-	 * rows for, so each store reads only the hashes its own sets named, in
-	 * one exchange an hour the selection touches, 25 at most a store under
-	 * the default retention. A store that left a set, or the server index
+	 * rows for, so each store reads only the hashes its own sets named, each
+	 * set read whole, page by page. A store that left a set, or the server index
 	 * naming its servers, unanswered adds nothing and says so through
-	 * `$unread`, so the page reads `provisional`. Past
-	 * `URL_BUCKET_MAX` (hash, server) pairs across the whole selection, every
-	 * store and server, each pair counted once however many buckets name it,
-	 * the page is REFUSED, as a term too common is, because each pair's row
-	 * is read by key and that many is a slow read (decision 28). Each store
-	 * reads only the budget the stores before it left, and stops once past
-	 * it.
+	 * `$unread`, so the page reads `provisional`. Nothing caps the URLs a
+	 * selection names: every one is read, at a cost linear in their number
+	 * (decision 28).
 	 *
 	 * @param string                 $server Reporting server; '' is the site.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
@@ -2643,26 +2712,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param bool                   $unread Set true when a store left a set unanswered.
 	 * @return array<int,array<array-key,array<string,list<string>>>> Store => hash =>
 	 *                                                                server key => hours.
-	 * @throws \RuntimeException On more URLs than a read takes.
 	 */
 	private static function bucket_candidates( string $server, array $stores, array $plan, bool &$unread ): array {
-		$out   = [];
-		$pairs = 0;
+		$out = [];
 		foreach ( $stores as $p => $store ) {
 			$keys = \array_map( Stats_Store::server_key( ... ), '' === $server ? self::indexed_servers( $store, $plan, $unread ) : [ $server ] );
 			if ( [] === $keys ) {
 				continue;
 			}
-			$members = $store->url_bucket_members( $plan['fine'], $keys, Stats_Store::URL_BUCKET_MAX - $pairs, $failed );
-			$unread  = $unread || $failed;
-			if ( false === $members ) {
-				$on = '' === $server ? ' across its servers, a URL counted once for each server that served it: too many to read by key; narrow it with --server' : " on {$server}: too many to read by key";
-				throw new \RuntimeException( \esc_html( \sprintf( 'bucket %s names more than %d URLs%s', $plan['bucket'], Stats_Store::URL_BUCKET_MAX, $on ) ) );
-			}
-			foreach ( $members as $hash => $named ) {
-				$out[ $p ][ $hash ] = $named;
-				$pairs             += \count( $named );
-			}
+			$out[ $p ] = $store->url_bucket_members( $plan['fine'], $keys, $failed );
+			$unread    = $unread || $failed;
 		}
 		return $out;
 	}
@@ -2707,6 +2766,21 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * The first `$keep` of `sort_rows()`'s order. A row of the input keeps
+	 * its place among its ties, so trimming a running best after each group
+	 * keeps exactly the rows one sort of every group would.
+	 *
+	 * @param list<array<array-key,mixed>> $rows  Display rows.
+	 * @param int                          $keep  Most rows kept.
+	 * @param string                       $sort  A URL_SORTS field.
+	 * @param string                       $order 'asc' or 'desc'.
+	 * @return list<array<array-key,mixed>>
+	 */
+	private static function top_rows( array $rows, int $keep, string $sort, string $order ): array {
+		return \array_slice( self::sort_rows( $rows, $sort, $order ), 0, $keep );
 	}
 
 	/**

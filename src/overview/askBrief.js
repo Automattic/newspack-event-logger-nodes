@@ -174,16 +174,18 @@ const avgMax = ( avg, max, unit ) =>
 		: `${ withUnit( avg, unit ) } avg, ${ withUnit( max, unit ) } max`;
 
 /**
- * A bucket selection and the UTC spans of its runs, or '' for none, so
- * `fields()` leaves the line out.
+ * A bucket selection, its canonical UTC keys, and the spans of its runs as
+ * the reader saw them, in the reader's zone named by its IANA name; '' for
+ * none, so `fields()` leaves the line out.
  *
  * @param {?string} spelling The selection a brief was narrowed to.
- * @return {string} `<spelling> (<spans>)`, the bare spelling for an odd
- * shape, or ''.
+ * @return {string} `<spelling> (<spans> <zone>)`, the bare spelling for an
+ * odd shape, or ''.
  */
 const bucketField = ( spelling ) => {
 	const span = bucketSpan( spelling );
-	return span ? `${ spelling } (${ span })` : spelling ?? '';
+	const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	return span ? `${ spelling } (${ span } ${ zone })` : spelling ?? '';
 };
 
 /**

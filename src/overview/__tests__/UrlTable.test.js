@@ -679,12 +679,12 @@ describe( 'UrlTable', () => {
 			Array.from(
 				field.querySelectorAll( '.event-logger-tag-text' )
 			).map( ( token ) => token.textContent )
-		).toEqual( [ '13:30–13:40 UTC', '14:00–14:05 UTC' ] );
+		).toEqual( [ '6:30–6:40 AM', '7:00–7:05 AM' ] );
 		expect( field.querySelectorAll( 'datalist option' ) ).toHaveLength( 1 );
 
 		act( () =>
 			field
-				.querySelector( 'button[aria-label="Remove 14:00–14:05 UTC"]' )
+				.querySelector( 'button[aria-label="Remove 7:00–7:05 AM"]' )
 				.click()
 		);
 		expect( onBucketChange ).toHaveBeenCalledWith(

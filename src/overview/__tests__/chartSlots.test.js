@@ -22,6 +22,7 @@ import {
 	useBucketSelection,
 	useSelectedSlots,
 	useSlotClick,
+	useSlotRange,
 } from '../chartSlots';
 import { nameTable, slotsEndingAt } from '../../test-helpers/chartWire';
 import { act, cleanupMounts, renderHook } from '../../test-helpers/renderHook';
@@ -180,9 +181,9 @@ describe( 'hasRows', () => {
 } );
 
 describe( 'bucketSpan', () => {
-	it( 'names a bucket key as its five UTC minutes', () => {
-		expect( bucketSpan( '2026-10-04-13-35' ) ).toBe( '13:35–13:40 UTC' );
-		expect( bucketSpan( '2026-10-04-23-55' ) ).toBe( '23:55–00:00 UTC' );
+	it( "names a bucket key as its five minutes in the viewer's zone", () => {
+		expect( bucketSpan( '2026-10-05-18-40' ) ).toBe( '11:40–11:45 AM' );
+		expect( bucketSpan( '2026-10-05-06-55' ) ).toBe( '11:55 PM–12:00 AM' );
 	} );
 
 	it( 'answers null for anything not shaped as a bucket key', () => {
@@ -191,10 +192,10 @@ describe( 'bucketSpan', () => {
 		expect( bucketSpan( '' ) ).toBeNull();
 	} );
 
-	it( 'names each run of a selection as its UTC span, in order', () => {
+	it( 'names each run of a selection as its local span, in order', () => {
 		expect(
 			bucketSpan( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30' )
-		).toBe( '16:55–17:15 UTC, 18:30–18:35 UTC' );
+		).toBe( '9:55–10:15 AM, 11:30–11:35 AM' );
 	} );
 
 	it( 'answers null for a selection the server would refuse', () => {
@@ -204,7 +205,7 @@ describe( 'bucketSpan', () => {
 
 describe( 'bucketLabel', () => {
 	it( 'names a bucket key by its span', () => {
-		expect( bucketLabel( '2026-10-04-13-35' ) ).toBe( '13:35–13:40 UTC' );
+		expect( bucketLabel( '2026-10-05-18-40' ) ).toBe( '11:40–11:45 AM' );
 	} );
 
 	it( 'names a key of another shape as it arrived', () => {
@@ -287,11 +288,28 @@ describe( 'runsOf and runSpan', () => {
 		] );
 	} );
 
-	it( 'names a run by the UTC span from its first bucket to its last', () => {
+	it( 'names a run by the local span from its first bucket to its last', () => {
 		expect( runSpan( [ '2026-10-05-16-55', '2026-10-05-17-00' ] ) ).toBe(
-			'16:55–17:05 UTC'
+			'9:55–10:05 AM'
 		);
-		expect( runSpan( [ '2026-10-04-23-55' ] ) ).toBe( '23:55–00:00 UTC' );
+		expect( runSpan( [ '2026-10-05-18-55', '2026-10-05-19-00' ] ) ).toBe(
+			'11:55 AM–12:05 PM'
+		);
+	} );
+
+	it( 'dates a run crossing local midnight, and no run ending on it', () => {
+		expect( runSpan( [ '2026-10-05-06-55', '2026-10-05-07-00' ] ) ).toBe(
+			'Oct 4, 11:55 PM–Oct 5, 12:05 AM'
+		);
+		expect( runSpan( [ '2026-10-05-06-50', '2026-10-05-06-55' ] ) ).toBe(
+			'11:50 PM–12:00 AM'
+		);
+	} );
+
+	it( 'names the zone at each end of a run the clocks change inside', () => {
+		expect( runSpan( [ '2026-11-01-08-55' ] ) ).toBe(
+			'1:55 AM PDT–1:00 AM PST'
+		);
 	} );
 } );
 
@@ -317,6 +335,39 @@ describe( 'useSlotClick', () => {
 
 	it( 'hands the frame no callback when nothing listens', () => {
 		const { result } = renderHook( () => useSlotClick( axis, undefined ) );
+
+		expect( result.current ).toBeUndefined();
+	} );
+} );
+
+describe( 'useSlotRange', () => {
+	const axis = buildChartSlots( slotsEndingAt( '2026-10-04-13-35', 6 ) );
+
+	afterEach( cleanupMounts );
+
+	it( 'maps a drag over three slots to those three bucket keys', () => {
+		const onSlotRange = jest.fn();
+		const { result } = renderHook( () =>
+			useSlotRange( axis, onSlotRange )
+		);
+
+		result.current( 1, 3, { additive: false } );
+		result.current( 4, 2, { additive: true } );
+
+		expect( onSlotRange.mock.calls ).toEqual( [
+			[
+				[ '2026-10-04-13-15', '2026-10-04-13-20', '2026-10-04-13-25' ],
+				{ additive: false },
+			],
+			[
+				[ '2026-10-04-13-20', '2026-10-04-13-25', '2026-10-04-13-30' ],
+				{ additive: true },
+			],
+		] );
+	} );
+
+	it( 'hands the frame no callback when nothing listens', () => {
+		const { result } = renderHook( () => useSlotRange( axis, undefined ) );
 
 		expect( result.current ).toBeUndefined();
 	} );
@@ -378,6 +429,41 @@ describe( 'useBucketSelection', () => {
 		expect( afterClick( 'kea-junk', '2026-10-05-18-30', true ) ).toBe(
 			'2026-10-05-18-30'
 		);
+	} );
+
+	/**
+	 * The spelling one drag leaves on a held selection.
+	 *
+	 * @param {string}   held     The held selection's spelling.
+	 * @param {string[]} keys     The dragged buckets, ascending.
+	 * @param {boolean}  additive Whether cmd or ctrl was held.
+	 * @return {string} The selection after the drag.
+	 */
+	const afterDrag = ( held, keys, additive ) => {
+		const result = mountSelection( held );
+		act( () => result.current[ 3 ]( keys, { additive } ) );
+		return result.current[ 0 ];
+	};
+
+	const DRAGGED = [
+		'2026-10-05-18-25',
+		'2026-10-05-18-30',
+		'2026-10-05-18-35',
+	];
+
+	it( 'replaces the selection with the buckets a plain drag spans', () => {
+		expect( afterDrag( HELD, DRAGGED, false ) ).toBe(
+			'2026-10-05-18-25..2026-10-05-18-35'
+		);
+	} );
+
+	it( 'adds the span an additive drag covers, keeping what was held', () => {
+		expect( afterDrag( HELD, DRAGGED, true ) ).toBe(
+			'2026-10-05-16-55..2026-10-05-17-00,2026-10-05-18-25..2026-10-05-18-35'
+		);
+		expect(
+			afterDrag( HELD, [ '2026-10-05-17-00', '2026-10-05-17-05' ], true )
+		).toBe( '2026-10-05-16-55..2026-10-05-17-05' );
 	} );
 
 	it( "reads the held spelling's keys for the charts to shade", () => {

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A drag across the Performance charts selects the buckets it spans.** The overview's breakdown and category charts edit the URL table's selection and the URL modal's charts edit the modal's: a plain drag replaces the selection with every bucket from the drag's first slot to its last, and a cmd- or ctrl-drag adds that span to what is held. Both map the substrate `AreaTimeChart`'s `onSlotRange( from, to, { additive } )` through the chart's axis, beside the click's `onSlotClick`.
+
+### Changed
+
+- **The Time field speaks the viewer's local time, as the charts' axis and tooltips do.** Its tokens, its suggestions, the URL modal's narrowed note and the `ask` brief name each run in the browser's locale and zone, `11:40–11:45 AM` where they read `18:40–18:45 UTC`; a run crossing local midnight names its dates, `Oct 4, 11:50 PM–Oct 5, 12:10 AM`, and one the clocks change inside names both zones, `1:55 AM PDT–1:00 AM PST`. Typing `11:40` or `11:40-12:15` selects the latest charted buckets opening at that local wall-clock time, and the 12-hour backwards rule counts local minutes. Where the locale's clock is 12-hour, `4:55 PM` and `4:55pm` read beside 24-hour times, a range writing AM or PM on both ends or neither; a local time the clocks pass twice selects the later bucket, one they skip is refused as uncharted, and the suggestions offer each local time once. The bucket keys stay UTC: `?bucket=`, `--bucket`, `filters.bucket` and MCP spell them as before, and the brief prints the canonical keys before the local spans and the zone's IANA name, `2026-10-05-18-40 (11:40–11:45 AM America/Los_Angeles)`. Jest runs under `America/Los_Angeles`.
+- **The substrate floor rises to newspack-nodes 2.94.0** for `Table_Client::all_members()` and the `SSCAN` verb behind it, which read a bucket set of any size page by page.
+- **A bucket selection reads every URL its sets name, however many.** `urls` and the `overview:` brief no longer refuse a selection whose sets name too many URLs: each hour's sets are still one `SMEMBERS` exchange, and only a set past `Table_Node::MAX_MEMBERS_LIMIT` (10,000) members is read on, `SSCAN` page by page through the substrate's `Table_Client::all_members()`. The candidates' rows are read and folded a chunk at a time, a chunk filling a store's `Flame_Builder_Node::WRITE_BATCH_KEYS` (500) reads, each chunk folding into the running totals, the page's best rows and the slowest ten, so the page holds one chunk's rows rather than every candidate's and answers what one fold of them all answers. A page costs time linear in the URLs it names and memory bounded by a chunk and the page. A read the Table leaves unanswered still reads the page `provisional`.
+
+### Fixed
+
+- **No breakdown is captioned "across 0 requests".** A URL's stored aggregate seeds its profile at count 0, and it stays there until a timed request carrying a profile lands, so `dump_url` served `{ count: 0, categories: [] }` and the URL modal, guarding on `categories`, which JSON hands the browser as a truthy `[]`, drew an empty breakdown "across 0 requests" above the requests it listed. `Stats_Store::url_stats()` now answers no profile over no profiled request, and the URL modal and the overview's Global Time Breakdown mount the panel only when its count is above zero. A stored profile still carries its own count under a bucket selection.
+
 ## [0.123.0] - 2026-10-05
 
 ### Added

@@ -634,8 +634,8 @@ abstract class TestCase extends RuntimeTestCase {
 	/**
 	 * The requests a test's askers sent naming a key of any of `$namespaces`,
 	 * by verb: one list each of the keys it named of them. A structured
-	 * request names its item keys, and `SMEMBERS` the set keys after its
-	 * limit.
+	 * request names its item keys, `SMEMBERS` the set keys after its limit,
+	 * and `SSCAN` its set key after its limit.
 	 *
 	 * @param string ...$namespaces `NS_*` namespaces.
 	 * @return array<string,list<list<string>>>
@@ -650,7 +650,7 @@ abstract class TestCase extends RuntimeTestCase {
 			} else {
 				$keys = \preg_split( '/\s+/', \trim( $value ), -1, \PREG_SPLIT_NO_EMPTY ) ?: [];
 				$verb = (string) \array_shift( $keys );
-				if ( 'SMEMBERS' === $verb ) {
+				if ( 'SMEMBERS' === $verb || 'SSCAN' === $verb ) {
 					\array_shift( $keys );
 				}
 			}
@@ -674,7 +674,7 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * Answer every `MGET` or `SMEMBERS` asking a key `$pattern` matches with a
+	 * Answer every `MGET`, `SMEMBERS` or `SSCAN` asking a key `$pattern` matches with a
 	 * read failure, as a Table that did not answer the batch would; '' answers
 	 * every one again.
 	 *

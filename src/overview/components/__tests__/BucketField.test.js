@@ -18,8 +18,9 @@ import {
 } from '../../../test-helpers/cascade';
 
 /**
- * The charted slots at 18:40 UTC on 5 October, newest first: the window
- * opens at 18:45 the day before, so every UTC time names one bucket.
+ * The charted slots at 18:40 UTC on 5 October, 11:40 AM in Los Angeles, where
+ * the suite runs, newest first: the window opens at 11:45 AM the day before,
+ * so every local time names one bucket.
  */
 const SLOTS = slotsEndingAt( '2026-10-05-18-40' );
 
@@ -124,8 +125,8 @@ describe( 'BucketField', () => {
 			'2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30'
 		);
 		expect( field.tokens() ).toEqual( [
-			'16:55–17:15 UTC',
-			'18:30–18:35 UTC',
+			'9:55–10:15 AM',
+			'11:30–11:35 AM',
 		] );
 		field.unmount();
 	} );
@@ -183,7 +184,7 @@ describe( 'BucketField', () => {
 				field.container.querySelectorAll( 'button' ),
 				( button ) => button.getAttribute( 'aria-label' )
 			)
-		).toEqual( [ 'Remove 16:55–17:15 UTC', 'Remove 18:30–18:35 UTC' ] );
+		).toEqual( [ 'Remove 9:55–10:15 AM', 'Remove 11:30–11:35 AM' ] );
 		field.unmount();
 	} );
 
@@ -194,87 +195,90 @@ describe( 'BucketField', () => {
 			'Time, e.g. 16:55'
 		);
 		expect( field.input().getAttribute( 'title' ) ).toBe(
-			'16:55 or 16:55-17:30, UTC'
+			'16:55, 4:55 PM or 16:55-17:30, in local time'
 		);
 		field.unmount();
 	} );
 
-	it( 'adds the latest charted bucket at a typed UTC time', () => {
+	it( 'adds the latest charted bucket at a typed local time', () => {
 		const field = mountField( '2026-10-05-18-30' );
-		type( field.input(), '16:55' );
+		type( field.input(), '11:40' );
 		press( field.input(), 'Enter' );
 
-		expect( field.seen ).toEqual( [ '2026-10-05-16-55,2026-10-05-18-30' ] );
+		expect( field.seen ).toEqual( [ '2026-10-05-18-30,2026-10-05-18-40' ] );
 		expect( field.input().value ).toBe( '' );
 		field.unmount();
 	} );
 
 	it( 'adds a bucket for each of two picks, clearing the box between', () => {
 		const field = mountField( '' );
-		pick( field.input(), '17:20' );
+		pick( field.input(), '10:20 AM' );
 		expect( field.input().value ).toBe( '' );
-		pick( field.input(), '09:05' );
+		pick( field.input(), '2:05 AM' );
 
 		expect( field.seen ).toEqual( [
 			'2026-10-05-17-20',
 			'2026-10-05-09-05,2026-10-05-17-20',
 		] );
 		expect( field.tokens() ).toEqual( [
-			'09:05–09:10 UTC',
-			'17:20–17:25 UTC',
+			'2:05–2:10 AM',
+			'10:20–10:25 AM',
 		] );
 		field.unmount();
 	} );
 
 	it( 'adds a typed range through the bucket opening at its end', () => {
 		const field = mountField( '' );
-		type( field.input(), '16:55-17:30' );
+		type( field.input(), '9:55-10:30' );
 		press( field.input(), 'Enter' );
 
 		expect( field.seen ).toEqual( [
 			'2026-10-05-16-55..2026-10-05-17-30',
 		] );
-		expect( field.tokens() ).toEqual( [ '16:55–17:35 UTC' ] );
+		expect( field.tokens() ).toEqual( [ '9:55–10:35 AM' ] );
 		field.unmount();
 	} );
 
 	it( 'adds a forward range longer than 12 hours', () => {
 		const field = mountField( '' );
-		type( field.input(), '04:00-17:30' );
+		type( field.input(), '11:45-23:50' );
 		press( field.input(), 'Enter' );
 
 		expect( field.seen ).toEqual( [
-			'2026-10-05-04-00..2026-10-05-17-30',
+			'2026-10-04-18-45..2026-10-05-06-50',
 		] );
 		expect( field.container.querySelector( '[role="alert"]' ) ).toBeNull();
 		field.unmount();
 	} );
 
-	it( 'reads a range across midnight as the latest run it names', () => {
+	it( 'reads a range across local midnight as the latest run it names', () => {
 		const field = mountField( '' );
 		type( field.input(), '23:50-00:05' );
 		press( field.input(), 'Enter' );
 
 		expect( field.seen ).toEqual( [
-			'2026-10-04-23-50..2026-10-05-00-05',
+			'2026-10-05-06-50..2026-10-05-07-05',
+		] );
+		expect( field.tokens() ).toEqual( [
+			'Oct 4, 11:50 PM–Oct 5, 12:10 AM',
 		] );
 		field.unmount();
 	} );
 
 	it( 'reads a range across midnight at 00:30, its start the day before', () => {
-		const field = mountField( '', slotsEndingAt( '2026-10-05-00-30' ) );
+		const field = mountField( '', slotsEndingAt( '2026-10-05-07-30' ) );
 		type( field.input(), '23:50-00:05' );
 		press( field.input(), 'Enter' );
 
 		expect( field.seen ).toEqual( [
-			'2026-10-04-23-50..2026-10-05-00-05',
+			'2026-10-05-06-50..2026-10-05-07-05',
 		] );
 		field.unmount();
 	} );
 
 	it.each( [
-		[ '17:00, its start charted the day before', '2026-10-05-17-00' ],
-		[ '19:00, its start off the chart', '2026-10-05-19-00' ],
+		[ '17:00, its start charted the day before', '2026-10-06-00-00' ],
+		[ '19:00, its start off the chart', '2026-10-06-02-00' ],
 	] )(
 		'refuses a range running backwards at %s, offering it the right way round',
 		( _, last ) => {
@@ -301,19 +305,19 @@ describe( 'BucketField', () => {
 		expect( field.input().getAttribute( 'aria-invalid' ) ).toBe( 'true' );
 		expect(
 			field.container.querySelector( '[role="alert"]' ).textContent
-		).toBe( 'No charted bucket opens at 16:57 UTC.' );
+		).toBe( 'No charted bucket opens at 16:57.' );
 		field.unmount();
 	} );
 
 	it( 'refuses a range whose start falls before the charted window', () => {
 		const field = mountField( '' );
-		type( field.input(), '18:30-18:50' );
+		type( field.input(), '11:30-11:50' );
 		press( field.input(), 'Enter' );
 
 		expect( field.seen ).toEqual( [] );
 		expect(
 			field.container.querySelector( '[role="alert"]' ).textContent
-		).toBe( 'No charted bucket opens at 18:30 UTC.' );
+		).toBe( 'No charted bucket opens at 11:30.' );
 		field.unmount();
 	} );
 
@@ -414,12 +418,12 @@ describe( 'BucketField', () => {
 			'2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30'
 		);
 		const remove = field.container.querySelector(
-			'button[aria-label="Remove 16:55–17:15 UTC"]'
+			'button[aria-label="Remove 9:55–10:15 AM"]'
 		);
 		act( () => remove.click() );
 
 		expect( field.seen ).toEqual( [ '2026-10-05-18-30' ] );
-		expect( field.tokens() ).toEqual( [ '18:30–18:35 UTC' ] );
+		expect( field.tokens() ).toEqual( [ '11:30–11:35 AM' ] );
 		field.unmount();
 	} );
 
@@ -436,7 +440,7 @@ describe( 'BucketField', () => {
 		field.unmount();
 	} );
 
-	it( 'suggests every charted bucket, newest first, by UTC time', () => {
+	it( 'suggests every charted bucket, newest first, by local time', () => {
 		const field = mountField( '' );
 		const list = document.getElementById(
 			field.input().getAttribute( 'list' )
@@ -444,9 +448,98 @@ describe( 'BucketField', () => {
 		const options = Array.from( list.querySelectorAll( 'option' ) );
 
 		expect( options ).toHaveLength( 288 );
-		expect( options[ 0 ].value ).toBe( '18:40' );
-		expect( options[ 0 ].label ).toBe( '18:40–18:45 UTC' );
-		expect( options.at( -1 ).value ).toBe( '18:45' );
+		expect( options[ 0 ].value ).toBe( '11:40 AM' );
+		expect( options[ 0 ].label ).toBe( '11:40–11:45 AM' );
+		expect( options.at( -1 ).value ).toBe( '11:45 AM' );
+		field.unmount();
+	} );
+
+	it.each( [
+		[ '4:55pm', '2026-10-04-23-55' ],
+		[ '12:05 AM', '2026-10-05-07-05' ],
+		[ '4:55 PM-5:30 pm', '2026-10-04-23-55..2026-10-05-00-30' ],
+	] )( 'reads the 12-hour %j under a 12-hour locale', ( typed, spelling ) => {
+		const field = mountField( '' );
+		type( field.input(), typed );
+		press( field.input(), 'Enter' );
+
+		expect( field.seen ).toEqual( [ spelling ] );
+		field.unmount();
+	} );
+
+	it.each( [ '4:55-5:30 PM', '13:00 PM', '0:30 am', '4:55 p.m.', '24:00' ] )(
+		'refuses %j as no time it reads',
+		( typed ) => {
+			const field = mountField( '' );
+			type( field.input(), typed );
+			press( field.input(), 'Enter' );
+
+			expect( field.seen ).toEqual( [] );
+			expect(
+				field.container.querySelector( '[role="alert"]' ).textContent
+			).toBe( `"${ typed }" is not a time: type 16:55, or 16:55-17:30.` );
+			field.unmount();
+		}
+	);
+
+	describe( 'under a 24-hour locale', () => {
+		beforeEach( () => {
+			const real = Intl.DateTimeFormat.prototype.resolvedOptions;
+			jest.spyOn(
+				Intl.DateTimeFormat.prototype,
+				'resolvedOptions'
+			).mockImplementation( function () {
+				return { ...real.call( this ), hour12: false };
+			} );
+		} );
+
+		afterEach( () => {
+			jest.restoreAllMocks();
+		} );
+
+		it( 'refuses a 12-hour time, and suggests 24-hour ones', () => {
+			const field = mountField( '' );
+			type( field.input(), '4:55 PM' );
+			press( field.input(), 'Enter' );
+
+			expect( field.seen ).toEqual( [] );
+			expect(
+				document
+					.getElementById( field.input().getAttribute( 'list' ) )
+					.querySelector( 'option' ).value
+			).toBe( '11:40' );
+			expect( field.input().getAttribute( 'title' ) ).toBe(
+				'16:55 or 16:55-17:30, in local time'
+			);
+			field.unmount();
+		} );
+	} );
+
+	it( 'takes the later of a local time the clocks fall back through', () => {
+		const field = mountField( '', slotsEndingAt( '2026-11-01-12-00' ) );
+		const values = Array.from(
+			document
+				.getElementById( field.input().getAttribute( 'list' ) )
+				.querySelectorAll( 'option' ),
+			( option ) => option.value
+		);
+		type( field.input(), '1:30' );
+		press( field.input(), 'Enter' );
+
+		expect( field.seen ).toEqual( [ '2026-11-01-09-30' ] );
+		expect( new Set( values ).size ).toBe( values.length );
+		field.unmount();
+	} );
+
+	it( 'refuses a local time the clocks spring forward past', () => {
+		const field = mountField( '', slotsEndingAt( '2026-03-08-18-00' ) );
+		type( field.input(), '2:30' );
+		press( field.input(), 'Enter' );
+
+		expect( field.seen ).toEqual( [] );
+		expect(
+			field.container.querySelector( '[role="alert"]' ).textContent
+		).toBe( 'No charted bucket opens at 2:30.' );
 		field.unmount();
 	} );
 } );

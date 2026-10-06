@@ -134,7 +134,9 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 	expect( md ).toContain( 'alpha.example' );
 	expect( md ).toContain( 'wp-admin' );
 	expect( md ).toContain( 'workers included' );
-	expect( md ).toContain( '**bucket:** 2026-10-04-13-35 (13:35–13:40 UTC)' );
+	expect( md ).toContain(
+		'**bucket:** 2026-10-04-13-35 (6:35–6:40 AM America/Los_Angeles)'
+	);
 	expect( md ).toContain( '4,210 requests' );
 	expect( md ).toContain( '137 urls' );
 	// `num()` gives a sub-1 value three decimals, as it does everywhere else.
@@ -317,11 +319,13 @@ test( 'a URL brief under a bucket names the five minutes its numbers cover', () 
 		caveat: 'c',
 	} );
 
-	expect( md ).toContain( '**bucket:** 2026-10-04-23-55 (23:55–00:00 UTC)' );
+	expect( md ).toContain(
+		'**bucket:** 2026-10-04-23-55 (4:55–5:00 PM America/Los_Angeles)'
+	);
 	expect( md ).toContain( '**count:** 17' );
 } );
 
-test( 'a brief under several runs names each as its UTC span', () => {
+test( 'a brief under several runs names each as its local span', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',
 		url: '/kea',
@@ -333,7 +337,7 @@ test( 'a brief under several runs names each as its UTC span', () => {
 	} );
 
 	expect( md ).toContain(
-		'**bucket:** 2026-10-04-23-50..2026-10-05-00-05,2026-10-05-09-15 (23:50–00:10 UTC, 09:15–09:20 UTC)'
+		'**bucket:** 2026-10-04-23-50..2026-10-05-00-05,2026-10-05-09-15 (4:50–5:10 PM, 2:15–2:20 AM America/Los_Angeles)'
 	);
 } );
 

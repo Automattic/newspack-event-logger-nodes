@@ -8187,68 +8187,139 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A bucket set past `URL_BUCKET_MAX` is refused rather than read short,
-	 * because its candidates are read by key and that many is a slow read
-	 * (decision 28). `urls` and an `overview:` brief refuse it; `dump_url`
-	 * reads one URL's key and no set, so it still answers.
+	 * File `$count` URLs per server in BUCKET's set, each with a row of three
+	 * requests in the bucket's slot and the hour's index naming its server,
+	 * hashes counted up from `a0000000a001` across the servers in order.
+	 *
+	 * @param array<string,int>                         $servers Server => URLs it files.
+	 * @param ?\Closure(int):array<string,int|float|null> $row_of  The named row of the URL
+	 *                                                            counted `$i`; null files three
+	 *                                                            requests of 17 ms each.
+	 * @return array<string,array<string,int|float|null>> hash => the named row filed.
 	 */
-	public function test_a_bucket_naming_more_urls_than_a_read_takes_is_refused(): void {
-		$store  = $this->at_the_bucket_clock();
-		$hashes = $this->seed_the_bucket( $store );
-		// Kea and weka are filed already: this takes the set one past.
-		$over = \array_map( static fn ( int $i ): string => \sprintf( 'f%011x', 0x3517 + $i ), \range( 1, Stats_Store::URL_BUCKET_MAX - 1 ) );
-		$this->assertSame( [ true ], $store->add_url_buckets( [ [ self::BUCKET, Stats_Store::server_key( self::SEED_SERVER ), $over ] ], self::tick() ) );
-
-		$site   = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--bucket=' . self::BUCKET );
-		$brief  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --bucket=' . self::BUCKET );
-		$scoped = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=' . self::SEED_SERVER . ' --bucket=' . self::BUCKET );
-		$detail = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hashes['kea'], '--bucket=' . self::BUCKET ] );
-
-		$refusal = 'bucket ' . self::BUCKET . ' names more than 10000 URLs';
-		$this->assertSame( $refusal . ' across its servers, a URL counted once for each server that served it: too many to read by key; narrow it with --server', \trim( $site ) );
-		$this->assertSame( $refusal . ' across its servers, a URL counted once for each server that served it: too many to read by key; narrow it with --server', \trim( $brief ) );
-		$this->assertSame( $refusal . ' on ' . self::SEED_SERVER . ': too many to read by key', \trim( $scoped ) );
-		$this->assertSame( 7, $detail['stats']['count'] );
+	private function seed_bucket_rows( Stats_Store $store, array $servers, ?\Closure $row_of = null ): array {
+		$row_of ??= static fn ( int $i ): array => [ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 51.0, 'sum_peak_mb' => 6.0, 'errors' => 0, 'min_ms' => 17.0, 'max_ms' => 17.0, 'max_peak_mb' => 2.0, 'last_seen' => 1791207390 ];
+		$base     = 0xa000;
+		$filed    = [];
+		foreach ( $servers as $server => $count ) {
+			$key    = Stats_Store::server_key( $server );
+			$hashes = [];
+			foreach ( \range( $base + 1, $base + $count ) as $i ) {
+				$hash            = \sprintf( 'a%011x', $i );
+				$hashes[]        = $hash;
+				$filed[ $hash ]  = $row_of( $i );
+			}
+			$base  += $count;
+			$writes = \array_map(
+				static fn ( string $hash ): array => [ Stats_Store::url_row_parts( $key, $hash ), '2026-10-04-13', [ Stats_Store::URL_ROW_PATH => "/takahe-{$hash}", Stats_Store::url_row_family( false ) => [ 7 => self::positional_url_row( $filed[ $hash ] ) ] ] ],
+				$hashes
+			);
+			foreach ( \array_chunk( $writes, 1000 ) as $chunk ) {
+				$this->assertNotContains( false, $store->bucket_set_multi( $chunk ) );
+			}
+			$this->assertSame( [ true ], $store->add_url_buckets( [ [ self::BUCKET, $key, $hashes ] ], self::tick() ) );
+			$this->set_url_hour( $store, '2026-10-04-13', Stats_Store::url_shard( $hashes[0], false ), [], $server );
+		}
+		$this->forget_stats_asks();
+		return $filed;
 	}
 
 	/**
-	 * An unscoped bucket page reads up to `URL_BUCKET_MAX` (hash, server)
-	 * pairs, past the `URL_SEARCH_MAX` a search reads: 7,500 answer the page.
+	 * A selection reads every URL its sets name, whatever their number: two
+	 * servers naming 12,345 (hash, server) pairs between them answer all of
+	 * them, refusing none, and their rows are read by key in chunks of
+	 * `Flame_Builder_Node::WRITE_BATCH_KEYS`, never one read of them all.
 	 */
-	public function test_a_bucket_naming_more_urls_than_a_search_reads_answers(): void {
-		$store  = $this->at_the_bucket_clock();
-		$hashes = $this->seed_the_bucket( $store );
-		// Kea and weka are filed already: this takes the set to 7,500.
-		$named = \array_map( static fn ( int $i ): string => \sprintf( 'c%011x', 0x6620 + $i ), \range( 1, 7498 ) );
-		$this->assertSame( [ true ], $store->add_url_buckets( [ [ self::BUCKET, Stats_Store::server_key( self::SEED_SERVER ), $named ] ], self::tick() ) );
-
-		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--bucket=' . self::BUCKET );
-
-		$this->assertIsArray( $page, 'a bucket under its own limit answers' );
-		$this->assertSame( [ $hashes['weka'], $hashes['kea'] ], \array_column( $page['data'], 'hash' ) );
-	}
-
-	/**
-	 * The cap is on the URLs a page reads by key, so it counts each server's
-	 * set: two servers each under `URL_BUCKET_MAX` refuse the site's page
-	 * when their sets together pass it, and each server's page answers.
-	 */
-	public function test_a_bucket_whose_servers_sets_together_pass_the_cap_is_refused(): void {
+	public function test_a_selection_naming_12345_urls_answers_every_one_reading_rows_in_chunks(): void {
 		$store = $this->at_the_bucket_clock();
-		$half  = \intdiv( Stats_Store::URL_BUCKET_MAX, 2 ) + 7;
-		foreach ( [ 'kea.example' => 0xa000, 'moa.example' => 0xb000 ] as $server => $base ) {
-			$hashes = \array_map( static fn ( int $i ): string => \sprintf( 'e%011x', $base + $i ), \range( 1, $half ) );
-			$this->assertSame( [ true ], $store->add_url_buckets( [ [ self::BUCKET, Stats_Store::server_key( $server ), $hashes ] ], self::tick() ) );
-			// The hour's index names the server, in a shard none of its URLs is in.
-			$this->set_url_hour( $store, '2026-10-04-13', '0', [], $server );
+		$this->seed_bucket_rows( $store, [ 'kea.example' => 6172, 'moa.example' => 6173 ] );
+
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--limit=7 --bucket=' . self::BUCKET );
+
+		$this->assertIsArray( $page, \is_string( $page ) ? $page : '' );
+		$this->assertSame( [ 12_345, 37_035 ], [ $page['rows'], $page['totals']['requests'] ] );
+		$this->assertFalse( $page['provisional'] );
+		$chunks = $this->asked_batches( Stats_Store::NS_URL_ROW_HOUR );
+		$this->assertSame( 12_345, \array_sum( \array_map( 'count', $chunks ) ) );
+		$this->assertCount( (int) \ceil( 12_345 / Flame_Builder_Node::WRITE_BATCH_KEYS ), $chunks );
+	}
+
+	/**
+	 * A selection's page folds its candidates' rows chunk by chunk, holding
+	 * no more than a chunk beside the page, and answers what one fold of them
+	 * all answers: 12,345 (hash, server) pairs whose averages tie across
+	 * chunks give the totals, the page at offset 3 and the slowest ten that
+	 * every row ranked at once gives, ties going to the lower hash.
+	 */
+	public function test_a_selection_naming_12345_urls_folds_chunk_by_chunk_to_the_whole_folds_answer(): void {
+		$store = $this->at_the_bucket_clock();
+		$filed = $this->seed_bucket_rows(
+			$store,
+			[ 'kea.example' => 6172, 'moa.example' => 6173 ],
+			static function ( int $i ): array {
+				$count = 1 + $i % 5;
+				$avg   = 10 + ( $i * 7919 ) % 211;
+				return [ 'count' => $count, 'timed_count' => $count, 'sum_ms' => (float) ( $avg * $count ), 'sum_peak_mb' => (float) ( 3 * $count + $i % 7 ), 'errors' => 0, 'min_ms' => (float) $avg, 'max_ms' => (float) $avg, 'max_peak_mb' => 2.0, 'last_seen' => 1791207390 ];
+			}
+		);
+
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--sort=avg_ms --order=desc --offset=3 --limit=7 --bucket=' . self::BUCKET );
+
+		$this->assertIsArray( $page, \is_string( $page ) ? $page : '' );
+		$avg = \array_map( static fn ( array $row ): float => $row['sum_ms'] / $row['timed_count'], $filed );
+		$by  = \array_keys( $avg );
+		\usort( $by, static fn ( string $a, string $b ): int => [ $avg[ $b ], $a ] <=> [ $avg[ $a ], $b ] );
+		$sum = static fn ( string $field ): float => (float) \array_sum( \array_column( $filed, $field ) );
+		$this->assertSame( [ 12_345, 12_345 ], [ $page['rows'], $page['totals']['urls'] ] );
+		$this->assertSame( (int) $sum( 'count' ), $page['totals']['requests'] );
+		$this->assertSame( $sum( 'sum_ms' ) / $sum( 'timed_count' ), $page['totals']['avg_ms'] );
+		$this->assertSame( $sum( 'sum_peak_mb' ) / $sum( 'count' ), $page['totals']['avg_peak_mb'] );
+		$this->assertSame( \array_slice( $by, 3, 7 ), \array_column( $page['data'], 'hash' ) );
+		$this->assertSame( \array_slice( $by, 0, 10 ), \array_column( $page['slowest'], 'hash' ) );
+		$this->assertFalse( $page['provisional'] );
+	}
+
+	/**
+	 * A selection's candidates reach the fold one chunk at a time: each
+	 * group the walk folds holds at most `Flame_Builder_Node::WRITE_BATCH_KEYS`
+	 * rows of one store, and is handed over before the next chunk is read.
+	 */
+	public function test_a_selections_candidates_are_handed_to_the_fold_a_chunk_at_a_time(): void {
+		$this->at_the_bucket_clock();
+		$this->seed_bucket_rows( $this->stats_store( 0, 43200 ), [ 'kea.example' => 6172, 'moa.example' => 6173 ] );
+		$plan       = ( new \ReflectionMethod( Performance_CI_Node::class, 'plan_for' ) )->invoke( null, self::BUCKET, (int) Core::$now );
+		$stores     = $this->live_stores();
+		$unread     = false;
+		$candidates = ( new \ReflectionMethod( Performance_CI_Node::class, 'bucket_candidates' ) )->invokeArgs( null, [ '', $stores, $plan, &$unread ] );
+		$this->forget_stats_asks();
+
+		$groups = ( new \ReflectionMethod( Performance_CI_Node::class, 'candidate_rows' ) )->invokeArgs( null, [ $candidates, false, false, $stores, $plan, &$unread ] );
+		$sizes  = [];
+		$reads  = [];
+		foreach ( $groups as $group ) {
+			$sizes[] = \count( $group );
+			$reads[] = \count( $this->asked_batches( Stats_Store::NS_URL_ROW_HOUR ) );
 		}
 
-		$site  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--bucket=' . self::BUCKET );
-		$kea   = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=kea.example --bucket=' . self::BUCKET );
+		$this->assertSame( 12_345, \array_sum( $sizes ) );
+		$this->assertLessThanOrEqual( Flame_Builder_Node::WRITE_BATCH_KEYS, \max( $sizes ) );
+		$this->assertSame( \range( 1, (int) \ceil( 12_345 / Flame_Builder_Node::WRITE_BATCH_KEYS ) ), $reads, 'one chunk read per group, never ahead of the fold' );
+		$this->assertFalse( $unread );
+	}
 
-		$this->assertSame( 'bucket ' . self::BUCKET . ' names more than 10000 URLs across its servers, a URL counted once for each server that served it: too many to read by key; narrow it with --server', \trim( $site ) );
-		$this->assertIsArray( $kea, 'one server\'s set is under the cap' );
-		$this->assertSame( 'kea.example', $kea['filters']['server'] );
+	/**
+	 * A chunk of a selection's rows the Table left unanswered costs that
+	 * chunk alone, and reads the page `provisional`.
+	 */
+	public function test_a_selections_row_chunk_left_unanswered_is_a_provisional_page(): void {
+		$store = $this->at_the_bucket_clock();
+		$this->seed_bucket_rows( $store, [ 'kea.example' => 1234 ] );
+
+		$this->refuse_stats_reads( '/^' . Stats_Store::NS_URL_ROW_HOUR . ':.*:a0000000a00b$/' );
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--bucket=' . self::BUCKET );
+
+		$this->assertTrue( $page['provisional'] );
+		$this->assertSame( 1234 - Flame_Builder_Node::WRITE_BATCH_KEYS, $page['rows'], 'the unanswered chunk alone' );
 	}
 
 	/**
@@ -8334,6 +8405,47 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'rid-kea-inside-000000000000002' ], \array_column( $reply['requests'], 'rid' ) );
 		$this->assertSame( \gmmktime( 13, 35, 0, 10, 4, 2026 ), $reply['requests_window_start'] );
 		$this->assertArrayNotHasKey( 'filters', $reply, 'the reply envelope already echoes the arguments' );
+	}
+
+	/**
+	 * Under a bucket the profile stays the whole URL's, so it carries the
+	 * stored aggregate's request count, not the slot's.
+	 */
+	public function test_a_bucketed_dump_url_carries_the_stored_profiles_count(): void {
+		$store  = $this->at_the_bucket_clock();
+		$hashes = $this->seed_the_bucket( $store );
+		$this->seed_kea_requests();
+		$this->set_url_stats( $store, $hashes['kea'], [
+			'profiles' => [ 'count' => 23, 'sum_req_time' => 920.0, 'categories' => [
+				'render' => [ 'samples' => 23, 'sum_time' => 690.0, 'sum_count' => 46, 'entries' => [] ],
+			] ],
+		] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hashes['kea'], '--bucket=' . self::BUCKET ] );
+
+		$this->assertSame( 7, $reply['stats']['count'], 'the header is the slot' );
+		$this->assertSame( 23, $reply['aggregate_profiles']['count'], 'the profile is the URL' );
+		$this->assertEqualsWithDelta( 30.0, $reply['aggregate_profiles']['categories']['render']['time'], 1e-6 );
+	}
+
+	/**
+	 * A stored aggregate that folded no profiled request answers no profile,
+	 * so the modal captions no breakdown over 0 requests above a listed one.
+	 */
+	public function test_a_bucketed_dump_url_serves_no_profile_over_no_profiled_request(): void {
+		$store  = $this->at_the_bucket_clock();
+		$hashes = $this->seed_the_bucket( $store );
+		$this->seed_kea_requests();
+		$this->set_url_stats( $store, $hashes['kea'], [
+			'profiles'      => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
+			'last_modified' => 1791207417,
+		] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ $hashes['kea'], '--bucket=' . self::BUCKET ] );
+
+		$this->assertSame( [ 'rid-kea-inside-000000000000002' ], \array_column( $reply['requests'], 'rid' ) );
+		$this->assertNull( $reply['aggregate_profiles'] );
+		$this->assertSame( 1791207417, $reply['last_modified'], 'the blob still answers its stamp' );
 	}
 
 	/** Errors Only and a bucket together list the errors inside the bucket. */
@@ -8702,8 +8814,12 @@ class PerformanceCITest extends TestCase {
 		$rows = $this->asked_keys( Stats_Store::NS_URL_ROW_HOUR );
 		$this->assertCount( 3, $rows, 'one hour key a URL, whatever its slots' );
 		$this->assertSame( $rows, \array_values( \array_unique( $rows ) ) );
-		$sets = $this->asked_verbs( Stats_Store::NS_URLBUCKET )['SMEMBERS'] ?? [];
-		$this->assertCount( 1, $sets, 'one exchange an hour' );
+		$key = Stats_Store::server_key( self::SEED_SERVER );
+		$this->assertSame(
+			[ 'SMEMBERS' => [ [ "urlbucket:2026-10-04-13-40:{$key}", "urlbucket:2026-10-04-13-35:{$key}" ] ] ],
+			$this->asked_verbs( Stats_Store::NS_URLBUCKET ),
+			'one exchange an hour'
+		);
 	}
 
 	/**
@@ -8775,10 +8891,10 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * `URL_BUCKET_MAX` caps the URLs the whole selection names, each counted
-	 * once: the same 6,000 filed in both buckets are 6,003 URLs and answer.
+	 * A URL two selected buckets name is one candidate: the same 6,000 filed
+	 * in both buckets are 6,003 URLs, each read once.
 	 */
-	public function test_the_cap_counts_a_url_in_two_selected_buckets_once(): void {
+	public function test_a_url_in_two_selected_buckets_is_one_candidate(): void {
 		$store  = $this->at_the_bucket_clock();
 		$hashes = $this->seed_the_bucket( $store );
 		$same   = \array_map( static fn ( int $i ): string => \sprintf( 'd%011x', 0x4410 + $i ), \range( 1, 6000 ) );
@@ -8790,78 +8906,6 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $page, \is_string( $page ) ? $page : '' );
 		$this->assertSame( [ $hashes['kea'], $hashes['tui'], $hashes['weka'] ], \array_column( $page['data'], 'hash' ) );
-	}
-
-	/**
-	 * Buckets each under `URL_BUCKET_MAX` refuse the selection when their
-	 * URLs together pass it, naming the selection.
-	 */
-	public function test_the_cap_refuses_a_selection_whose_buckets_together_pass_it(): void {
-		$store = $this->at_the_bucket_clock();
-		$this->seed_the_bucket( $store );
-		foreach ( [ self::BUCKET => 0xa000, '2026-10-04-13-40' => 0xc000 ] as $bucket => $base ) {
-			$apart = \array_map( static fn ( int $i ): string => \sprintf( 'e%011x', $base + $i ), \range( 1, 6000 ) );
-			$this->assertSame( [ true ], $store->add_url_buckets( [ [ $bucket, Stats_Store::server_key( self::SEED_SERVER ), $apart ] ], self::tick() ) );
-		}
-
-		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--bucket=' . self::PAIR );
-
-		$this->assertSame( 'bucket ' . self::PAIR . ' names more than 10000 URLs across its servers, a URL counted once for each server that served it: too many to read by key; narrow it with --server', \trim( $page ) );
-	}
-
-	/**
-	 * The read stops at the hour taking the selection past the cap, newest
-	 * first, and refuses: 14:05 and 14:00 name 12,000 URLs between them, so
-	 * hour 13's set is never asked.
-	 */
-	public function test_the_cap_stops_reading_sets_once_the_selection_passes_it(): void {
-		$store = $this->at_the_bucket_clock();
-		$this->seed_the_bucket( $store );
-		foreach ( [ '2026-10-04-14-05' => 0xa000, '2026-10-04-14-00' => 0xc000 ] as $bucket => $base ) {
-			$apart = \array_map( static fn ( int $i ): string => \sprintf( 'e%011x', $base + $i ), \range( 1, 6000 ) );
-			$this->assertSame( [ true ], $store->add_url_buckets( [ [ $bucket, Stats_Store::server_key( self::SEED_SERVER ), $apart ] ], self::tick() ) );
-		}
-		$this->forget_stats_asks();
-
-		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--bucket=2026-10-04-13-55..2026-10-04-14-05' );
-
-		$this->assertSame( 'bucket 2026-10-04-13-55..2026-10-04-14-05 names more than 10000 URLs across its servers, a URL counted once for each server that served it: too many to read by key; narrow it with --server', \trim( $page ) );
-		$key = Stats_Store::server_key( self::SEED_SERVER );
-		$this->assertSame(
-			[ [ "urlbucket:2026-10-04-14-05:{$key}", "urlbucket:2026-10-04-14-00:{$key}" ] ],
-			$this->asked_verbs( Stats_Store::NS_URLBUCKET )['SMEMBERS'] ?? [],
-			'hour 14 asked, and hour 13 never'
-		);
-	}
-
-	/**
-	 * The cap spans every store: each store's sets are read to the pairs the
-	 * stores before it left, so two partitions of 6,000 each refuse the page.
-	 */
-	public function test_the_cap_carries_from_one_store_to_the_next(): void {
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 2, 'min_lifetime' => 43200 ] );
-		$this->activate_shipped( 'performance', 2 );
-		Core::$now = (float) \gmmktime( 9, 12, 0, 10, 5, 2026 );
-		foreach ( [ 0 => 0xa000, 1 => 0xc000 ] as $partition => $base ) {
-			$store = $this->stats_store( $partition, 43200 );
-			$apart = \array_map( static fn ( int $i ): string => \sprintf( 'e%011x', $base + $i ), \range( 1, 6000 ) );
-			$this->assertSame( [ true ], $store->add_url_buckets( [ [ self::BUCKET, Stats_Store::server_key( self::SEED_SERVER ), $apart ] ], self::tick() ) );
-			// The hour's index names the server, in a shard none of its URLs is in.
-			$this->set_url_hour( $store, '2026-10-04-13', '0', [] );
-		}
-		$this->forget_stats_asks();
-
-		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--bucket=' . self::BUCKET );
-
-		$limits = [];
-		foreach ( VerbHarness::ask_recorder()->asked as $asked ) {
-			$words = \is_string( $asked['value'] ) ? \explode( ' ', \trim( $asked['value'] ) ) : [];
-			if ( 'SMEMBERS' === ( $words[0] ?? '' ) ) {
-				$limits[] = $words[1];
-			}
-		}
-		$this->assertSame( 'bucket ' . self::BUCKET . ' names more than 10000 URLs across its servers, a URL counted once for each server that served it: too many to read by key; narrow it with --server', \trim( $page ) );
-		$this->assertSame( [ '10000', '4000' ], $limits, 'the second store reads what the first left' );
 	}
 
 	/**
