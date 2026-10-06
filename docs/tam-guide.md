@@ -35,7 +35,7 @@ To find the culprit:
 
 - **Sort by Avg** for a URL that is slow every time. **Sort by Max** for one that is slow now and then.
 - **A URL the report names:** type a word from its path into **Search by whole URL word…**. Each word you type must be a whole word of the path, two characters or more: `sports` finds `/blog/sports-news` and `sport` does not. A word in nearly every URL narrows nothing, and a search made only of such words is refused; add a rarer word.
-- **A time the report names:** convert it to your own time zone, then click that moment on any chart. The table narrows to that five-minute bucket, shown beside **Errors Only** in UTC, such as `13:35–13:40 UTC`, and the bucket's × removes it.
+- **A time the report names:** convert it to your own time zone, then click that moment on any chart; cmd-click (ctrl-click) adds or removes another five-minute bucket. Or type it in UTC into the **Time** field beside **Errors Only**, as `16:55` or a range such as `16:55-17:30`. The table narrows to the buckets you chose, shaded on the charts and shown in the field as UTC spans such as `13:35–13:40 UTC`, each with its own × to remove it.
 - **Errors Only** keeps the URLs that had a timeout or a fatal error, and counts only their traffic in the five-minute buckets where they had one. A 5xx is a response, not an error here, and neither is an aborted request.
 - Cron, WP-CLI and job traffic is hidden until you press **Include Workers**.
 - The row **traffic from URLs beyond the per-shard cap** is many quiet URLs folded together, not one URL. It cannot be opened.
@@ -60,7 +60,7 @@ A **T** or **A** request has no measured duration. Its Duration reads `—`, it 
 
 **Errors Only** here keeps the timeouts (**T**) and fatals (**F**), reaching back past the newest 500 requests to find older ones. The header then counts errors, timeouts and fatals, and the fatals' average and slowest time. The charts, the flame graph and the profile still describe every request to the URL, and a note above the list says so.
 
-A chart click in this window narrows the header and the list to that five-minute bucket, as it does the table.
+This window has its own **Time** field, between the list's heading and **Errors Only**. A chart click or a typed time narrows the header and the list to those five-minute buckets, as it does the table.
 
 If the note "The request index scan stopped early, so requests for this URL may be missing." appears, the search ran out of time before it reached the start of the window, so an empty or short list does not mean the URL was idle.
 
@@ -97,7 +97,7 @@ Saving a rule needs the **tune** capability. Without it, send the operator the f
 
 ## Sending the brief to an assistant
 
-The Ask panel also builds a **brief**: a plain-text summary of whatever you clicked, with its numbers, its rule and its findings. Press **Ask AI**, then click what you want to ask about: a URL row or the open URL's window, a request, a flame-graph bar, a profile row, a log line, or the page's background for the whole site. Cmd-click (Ctrl-click) adds more things to one brief, and Escape cancels. A brief picked under **Errors Only** or a chart's bucket says so.
+The Ask panel also builds a **brief**: a plain-text summary of whatever you clicked, with its numbers, its rule and its findings. Press **Ask AI**, then click what you want to ask about: a URL row or the open URL's window, a request, a flame-graph bar, a profile row, a log line, or the page's background for the whole site. Cmd-click (Ctrl-click) adds more things to one brief, and Escape cancels. A brief picked under **Errors Only** or a **Time** selection says so.
 
 - **Copy brief** puts it on your clipboard, to paste into any assistant or ticket.
 - **Ask Claude** copies the brief and opens a new claude.ai conversation. A short brief rides in the link itself; a long one does not fit, so the conversation asks you to paste it.
@@ -150,7 +150,7 @@ The connection needs a custom `Authorization` header. Claude Code takes one; cla
 | read | `performance_overview` and `performance_urls` (the page and its URL table), `dump_url` and `dump_request` (one URL, one request with its findings), `search_requests` and `grep_requests` (find a request by id or by text), `performance_ask` (the same briefs as the panel), `dump_rules` (the logging rules) |
 | tune | the above, plus `rules_upsert` and `rules_delete` (change or remove a logging rule) |
 
-`performance_urls`, `dump_url` and `performance_ask` also take a five-minute bucket in UTC, so Claude can look at the moment a publisher reported. A session sees only its scope's tools, and makes at most 20 calls per 10 seconds. Every answer reaches Claude marked as site data, not instructions, because visitors wrote parts of it: a URL or a user agent can say anything.
+`performance_urls`, `dump_url` and `performance_ask` also take five-minute buckets in UTC, so Claude can look at the moment a publisher reported. A session sees only its scope's tools, and makes at most 20 calls per 10 seconds. Every answer reaches Claude marked as site data, not instructions, because visitors wrote parts of it: a URL or a user agent can say anything.
 
 When you are done, revoke the session under **Sessions** rather than waiting for it to expire.
 
