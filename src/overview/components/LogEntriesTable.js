@@ -22,6 +22,7 @@ import {
 	useCallback,
 	useMemo,
 	useEffect,
+	useLayoutEffect,
 	useRef,
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
@@ -152,6 +153,35 @@ const clearHighlight = () => {
 };
 
 /**
+ * How a row is brought into view: centered in whatever scrolls the table,
+ * which in the request modal is its content pane rather than the window.
+ *
+ * @type {{behavior: 'smooth', block: 'center'}}
+ */
+const CENTERED = { behavior: 'smooth', block: 'center' };
+
+/**
+ * The table row a selector names, by data-pair-id or data-entry-idx.
+ *
+ * @param {Element} table    The table element.
+ * @param {Object}  selector Either { pairId: number } or { entryIdx: number }.
+ * @return {?Element} The row, or null when none is on screen.
+ */
+const findRow = ( table, selector ) => {
+	if ( selector.pairId !== undefined ) {
+		for ( const r of table.querySelectorAll( 'tr[data-pair-id]' ) ) {
+			if (
+				r.getAttribute( 'data-pair-id' ) === String( selector.pairId )
+			) {
+				return r;
+			}
+		}
+		return null;
+	}
+	return table.querySelector( `tr[data-entry-idx="${ selector.entryIdx }"]` );
+};
+
+/**
  * Scroll to a table row by data-pair-id or data-entry-idx and flash-highlight it.
  * Highlights individual <td> cells since <tr> doesn't support box-shadow reliably.
  *
@@ -170,25 +200,11 @@ const scrollToAndHighlight = ( tableRef, selector ) => {
 
 		clearHighlight();
 
-		let row;
-		if ( selector.pairId !== undefined ) {
-			const rows =
-				tableRef.current.querySelectorAll( 'tr[data-pair-id]' );
-			for ( const r of rows ) {
-				if ( r.dataset.pairId === String( selector.pairId ) ) {
-					row = r;
-					break;
-				}
-			}
-		} else if ( selector.entryIdx !== undefined ) {
-			row = tableRef.current.querySelector(
-				`tr[data-entry-idx="${ selector.entryIdx }"]`
-			);
-		}
+		const row = findRow( tableRef.current, selector );
 		if ( ! row ) {
 			return;
 		}
-		row.scrollIntoView( { behavior: 'smooth', block: 'center' } );
+		row.scrollIntoView( CENTERED );
 		const cells = row.querySelectorAll( 'td' );
 		const highlighted = [];
 		for ( const td of cells ) {
@@ -262,8 +278,10 @@ export default function LogEntriesTable( {
 	const tableRef = useRef( null );
 	const searchContainerRef = useRef( null );
 	const [ expandedSet, setExpandedSet ] = useState( () => new Set() );
-	// Bodies opened past BODY_FOLD_LINES, keyed by `n`. Folding is separate.
+	// Bodies opened past BODY_FOLD_LINES, keyed by position in `entries`.
 	const [ expandedBodies, setExpandedBodies ] = useState( () => new Set() );
+	// The row a body toggle resized, centered once its new height lays out.
+	const centerAfterToggleRef = useRef( null );
 	const [ highlightRange, setHighlightRange ] = useState( null );
 
 	// Search state.
@@ -467,18 +485,17 @@ export default function LogEntriesTable( {
 			// the row. That open is TRANSIENT — stepping to the next match puts
 			// it back, so walking a search leaves no trail of bodies the reader
 			// never chose to open; one already open is left alone.
-			const own = entries[ entryIdx ]?.i;
 			const prior = matchOpenedRef.current;
-			matchOpenedRef.current = expandedBodies.has( own ) ? null : own;
+			matchOpenedRef.current = expandedBodies.has( entryIdx )
+				? null
+				: entryIdx;
 
 			setExpandedBodies( ( prev ) => {
 				const next = new Set( prev );
-				if ( null !== prior && prior !== own ) {
+				if ( null !== prior && prior !== entryIdx ) {
 					next.delete( prior );
 				}
-				if ( undefined !== own ) {
-					next.add( own );
-				}
+				next.add( entryIdx );
 				return next;
 			} );
 
@@ -890,14 +907,17 @@ export default function LogEntriesTable( {
 	);
 
 	/**
-	 * Open or close one message body. Stops the click there: the row beneath
-	 * folds on click, and showing more must never move the fold.
+	 * Open or close one message body, and center its row once the new height
+	 * renders. Stops the click there: the row beneath folds on click, and
+	 * showing more must never move the fold.
 	 *
-	 * @param {number} key   The body's fold key: its entry's `i`.
+	 * @param {number} key   The body's fold key: its entry's position.
+	 * @param {number} row   The position the row holding the body stands at.
 	 * @param {Event}  event Click event.
 	 */
-	const toggleBody = useCallback( ( key, event ) => {
+	const toggleBody = useCallback( ( key, row, event ) => {
 		event.stopPropagation();
+		centerAfterToggleRef.current = row;
 		setExpandedBodies( ( prev ) => {
 			const next = new Set( prev );
 			if ( next.has( key ) ) {
@@ -908,6 +928,20 @@ export default function LogEntriesTable( {
 			return next;
 		} );
 	}, [] );
+
+	/**
+	 * Center the row a body toggle resized, after layout so the scroll lands
+	 * on the height the toggle produced. No flash: the reader just clicked it.
+	 */
+	useLayoutEffect( () => {
+		const row = centerAfterToggleRef.current;
+		centerAfterToggleRef.current = null;
+		if ( null !== row ) {
+			findRow( tableRef.current, { entryIdx: row } )?.scrollIntoView(
+				CENTERED
+			);
+		}
+	}, [ expandedBodies ] );
 
 	/**
 	 * Get row style based on highlight state and entry type.
@@ -1137,7 +1171,7 @@ export default function LogEntriesTable( {
 						? '\n'
 						: ' ' ) }
 				{ completeMsg &&
-					renderFoldedBody( entry, completeMsg, entry.completeI ) }
+					renderFoldedBody( entry, completeMsg, entry.completeIdx ) }
 				{ renderTruncatedMark( entry ) }
 				{ renderStatsLine( entry, childBadge ) }
 			</>
@@ -1186,14 +1220,15 @@ export default function LogEntriesTable( {
 	 * a keyword in `NEVER_FOLDED` or a body opening as a statement is exempt. The trace labels and the stats
 	 * stay outside the fold, so folding never hides a number.
 	 *
-	 * @param {Object}  entry Log entry object.
-	 * @param {string}  msg   The formatted message body.
-	 * @param {?number} key   What the fold is remembered under; a merged row's
-	 *                        complete side folds under the complete's own `i`,
-	 *                        and a spliced row, never stored, carries none.
+	 * @param {Object} entry Visible row.
+	 * @param {string} msg   The formatted message body.
+	 * @param {number} key   What the fold is remembered under: the entry's
+	 *                       position in `entries`, which every row has, a
+	 *                       rebuilt fold row included. A merged row's complete
+	 *                       side folds under the complete's own position.
 	 * @return {import('react').ReactNode} The body, folded or whole.
 	 */
-	const renderFoldedBody = ( entry, msg, key = entry.i ) => {
+	const renderFoldedBody = ( entry, msg, key = entry.originalIdx ) => {
 		if ( 'string' !== typeof msg ) {
 			return msg;
 		}
@@ -1215,7 +1250,9 @@ export default function LogEntriesTable( {
 					<button
 						type="button"
 						className="button-link"
-						onClick={ ( event ) => toggleBody( key, event ) }
+						onClick={ ( event ) =>
+							toggleBody( key, entry.originalIdx, event )
+						}
 					>
 						{ open
 							? __( 'Show less', 'newspack-event-logger-nodes' )
@@ -1243,8 +1280,8 @@ export default function LogEntriesTable( {
 
 	/**
 	 * The fatal that ended the request, on the row that ends it: the message,
-	 * folding under the row's own `i` as its empty body never does, then where
-	 * it was raised, muted as the trace labels are.
+	 * folding under the row's own position as its empty body never does, then
+	 * where it was raised, muted as the trace labels are.
 	 *
 	 * @param {Object} entry Log entry object.
 	 * @return {import('react').ReactNode} The fatal, or null.

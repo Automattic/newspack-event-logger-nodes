@@ -22,7 +22,12 @@ jest.mock( '../../RequestProfile', () => ( {
 } ) );
 jest.mock( '../LogEntriesTable', () => ( {
 	__esModule: true,
-	default: ( { revealRef } ) => {
+	default: function MockLogEntriesTable( { revealRef } ) {
+		const React = jest.requireActual( 'react' );
+		React.useEffect( () => {
+			global.__requestDetailTableMounts =
+				( global.__requestDetailTableMounts || 0 ) + 1;
+		}, [] );
 		global.__requestDetailReveal = jest.fn();
 		if ( revealRef ) {
 			revealRef.current = global.__requestDetailReveal;
@@ -52,6 +57,24 @@ async function renderAsync( element ) {
 }
 
 describe( 'RequestDetailView', () => {
+	it( 'mounts a fresh log table for each request, so no fold state carries over', () => {
+		global.__requestDetailTableMounts = 0;
+		const props = ( rid ) =>
+			React.createElement( RequestDetailView, {
+				requestDetail: baseRequest,
+				flameData: null,
+				indentedEntries: [ { k: 'leaf', ts: 1 } ],
+				realEntryCount: 1,
+				rid,
+			} );
+		const { rerender, unmount } = renderComponent( props( 'r-417' ) );
+		rerender( props( 'r-417' ) );
+		expect( global.__requestDetailTableMounts ).toBe( 1 );
+		rerender( props( 'r-928' ) );
+		expect( global.__requestDetailTableMounts ).toBe( 2 );
+		unmount();
+	} );
+
 	it( 'renders URL, time, duration, memory, status', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( RequestDetailView, {

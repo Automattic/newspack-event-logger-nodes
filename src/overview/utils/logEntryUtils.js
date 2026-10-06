@@ -1068,7 +1068,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 					peak_mb: completeEntry?.peak_mb || 0,
 					completeMessage: completeEntry?.m ?? '',
 					// The complete's own position: what its body folds under.
-					completeI: completeEntry?.i,
+					completeIdx: null !== completeEntry ? j : undefined,
 					childCount,
 					isMerged: true,
 					originalIdx: i,

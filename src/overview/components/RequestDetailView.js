@@ -151,6 +151,7 @@ export default function RequestDetailView( {
 			{ /* Log Entries Table, or what a folded request kept instead */ }
 			{ hasEntries && (
 				<LogEntriesTable
+					key={ rid }
 					entries={ indentedEntries }
 					realCount={ realEntryCount }
 					revealRef={ revealRef }

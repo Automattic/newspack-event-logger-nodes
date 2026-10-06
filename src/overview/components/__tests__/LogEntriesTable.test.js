@@ -138,10 +138,18 @@ function makeEntriesWithGapPair() {
 	];
 }
 
+// jsdom implements no scrollIntoView, and a body toggle centers its row.
+const originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView;
+beforeEach( () => {
+	window.HTMLElement.prototype.scrollIntoView = jest.fn();
+} );
+afterEach( () => {
+	window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+} );
+
 describe( 'LogEntriesTable', () => {
 	let rafCallbacks = [];
 	let originalRAF;
-	let originalScrollIntoView;
 
 	beforeEach( () => {
 		rafCallbacks = [];
@@ -150,13 +158,10 @@ describe( 'LogEntriesTable', () => {
 			rafCallbacks.push( cb );
 			return rafCallbacks.length;
 		};
-		originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView;
-		window.HTMLElement.prototype.scrollIntoView = jest.fn();
 	} );
 
 	afterEach( () => {
 		global.requestAnimationFrame = originalRAF;
-		window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
 	} );
 
 	function flushRAF() {
@@ -2483,4 +2488,164 @@ it( 'an unpaired row shows more from its own control, and on a search match', ()
 	expect( container.textContent ).toContain( 'solo-12' );
 	jest.useRealTimers();
 	unmount();
+} );
+
+it( 'Show more opens one merged-tree body, not every row the fold rebuilt', () => {
+	// Fold rows were never stored, so they carry no `i`.
+	const merged = ( tag ) =>
+		[
+			`${ tag } merged`,
+			...Array.from(
+				{ length: 9 },
+				( _, i ) => `1× 2ms  ${ tag }-shape-${ i + 1 }`
+			),
+		].join( '\n' );
+	const entries = [
+		{ n: 1, i: 0, k: 'process (start)', pairId: 1, indent: 0, m: '' },
+		{ n: 2, i: 1, k: 'entries (aggregated)', indent: 1, m: '' },
+		{
+			n: '',
+			k: 'sql (start)',
+			pairId: 7,
+			indent: 1,
+			m: '',
+			fromFold: true,
+		},
+		{
+			n: '',
+			k: 'sql (complete)',
+			pairId: 7,
+			indent: 1,
+			m: merged( 'alpha' ),
+			fromFold: true,
+		},
+		{
+			n: '',
+			k: 'sql (start)',
+			pairId: 8,
+			indent: 1,
+			m: '',
+			fromFold: true,
+		},
+		{
+			n: '',
+			k: 'sql (complete)',
+			pairId: 8,
+			indent: 1,
+			m: merged( 'beta' ),
+			fromFold: true,
+		},
+		{ n: 3, i: 2, k: 'process (complete)', pairId: 1, indent: 0, m: '' },
+	];
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+	const toggles = () =>
+		Array.from( container.querySelectorAll( 'button' ) ).filter( ( b ) =>
+			b.textContent.startsWith( 'Show ' )
+		);
+	expect( toggles().map( ( b ) => b.textContent ) ).toEqual( [
+		'Show more',
+		'Show more',
+	] );
+
+	act( () => toggles()[ 0 ].click() );
+
+	expect( container.textContent ).toContain( 'alpha-shape-9' );
+	expect( container.textContent ).not.toContain( 'beta-shape-9' );
+	expect( toggles().map( ( b ) => b.textContent ) ).toEqual( [
+		'Show less',
+		'Show more',
+	] );
+	unmount();
+} );
+
+describe( 'centering the row a body toggle resized', () => {
+	const longBody = Array.from(
+		{ length: 12 },
+		( _, i ) => `line-${ i + 1 }`
+	).join( '\n' );
+
+	/**
+	 * Mount the stock tree with a long body on `db (start)`, recording the
+	 * row and the text it holds at each `scrollIntoView` call.
+	 *
+	 * @return {Object} The mount, the calls, and a toggle finder.
+	 */
+	const mount = () => {
+		const calls = [];
+		window.HTMLElement.prototype.scrollIntoView = jest.fn(
+			function ( options ) {
+				calls.push( { row: this, text: this.textContent, options } );
+			}
+		);
+		const entries = makeEntries();
+		entries[ 1 ] = { ...entries[ 1 ], m: longBody };
+		const mounted = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const toggle = () =>
+			Array.from( mounted.container.querySelectorAll( 'button' ) ).find(
+				( b ) => b.textContent.startsWith( 'Show ' )
+			);
+		return { ...mounted, calls, toggle };
+	};
+
+	it( 'centers the row on Show more once the whole body has rendered', () => {
+		const { container, calls, toggle, unmount } = mount();
+		const row = toggle().closest( 'tr' );
+
+		act( () => toggle().click() );
+
+		expect( calls ).toHaveLength( 1 );
+		expect( calls[ 0 ].row ).toBe( row );
+		expect( calls[ 0 ].options ).toEqual( {
+			behavior: 'smooth',
+			block: 'center',
+		} );
+		expect( calls[ 0 ].text ).toContain( 'line-12' );
+		// The reader just clicked this row; it gets no flash.
+		for ( const td of row.querySelectorAll( 'td' ) ) {
+			expect( td.style.boxShadow ).toBe( '' );
+		}
+		expect( container.textContent ).toContain( 'line-12' );
+		unmount();
+	} );
+
+	it( 'centers the row on Show less once the body has shrunk', () => {
+		const { calls, toggle, unmount } = mount();
+		act( () => toggle().click() );
+		const row = toggle().closest( 'tr' );
+
+		act( () => toggle().click() );
+
+		expect( calls ).toHaveLength( 2 );
+		expect( calls[ 1 ].row ).toBe( row );
+		expect( calls[ 1 ].options.block ).toBe( 'center' );
+		expect( calls[ 1 ].text ).toContain( 'line-5' );
+		expect( calls[ 1 ].text ).not.toContain( 'line-12' );
+		unmount();
+	} );
+
+	it( "centers a merged row's row when its complete side toggles", () => {
+		const calls = [];
+		window.HTMLElement.prototype.scrollIntoView = jest.fn( function () {
+			calls.push( this );
+		} );
+		const entries = makeEntries();
+		// render (start)/(complete) is childless, so it stays one merged row.
+		entries[ 5 ] = { ...entries[ 5 ], m: longBody };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const button = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => 'Show more' === b.textContent );
+		const row = button.closest( 'tr' );
+
+		act( () => button.click() );
+
+		expect( calls ).toEqual( [ row ] );
+		unmount();
+	} );
 } );

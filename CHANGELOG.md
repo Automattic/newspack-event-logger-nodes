@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Show more opens the one body it sits under.** In an aggregated request, the rows rebuilt from the merged flame tree shared one fold key, so opening one long `sql (complete)` body opened every one of them. Every body now folds under its entry's position in the log, which each row carries, rebuilt or stored.
+- **Show more and Show less center their row** in the request modal once the body's new height renders, so the row the reader clicked stays in view.
+- **Each request opens its log table fresh.** The request modal mounts a new table per request id, so the bodies and pairs opened on one request stay closed on the next.
+
 ## [0.124.1] - 2026-10-06
 
 ### Changed
