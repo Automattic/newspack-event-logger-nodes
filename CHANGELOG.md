@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.124.2] - 2026-10-06
+
+### Changed
+
+- **Rebuilt against newspack-nodes 2.95.1,** so the debug overlay's idle cards fade straight to their dim, a hover-out no longer replays a wire's draw animation, and the canvas fills its empty room before it widens.
+
 ### Fixed
 
 - **Show more opens the one body it sits under.** In an aggregated request, the rows rebuilt from the merged flame tree shared one fold key, so opening one long `sql (complete)` body opened every one of them. Every body now folds under its entry's position in the log, which each row carries, rebuilt or stored.
