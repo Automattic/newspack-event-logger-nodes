@@ -8226,36 +8226,36 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * A selection reads every URL its sets name, whatever their number: two
-	 * servers naming 12,345 (hash, server) pairs between them answer all of
+	 * servers naming 1,235 (hash, server) pairs between them answer all of
 	 * them, refusing none, and their rows are read by key in chunks of
 	 * `Flame_Builder_Node::WRITE_BATCH_KEYS`, never one read of them all.
 	 */
-	public function test_a_selection_naming_12345_urls_answers_every_one_reading_rows_in_chunks(): void {
+	public function test_a_selection_naming_1235_urls_answers_every_one_reading_rows_in_chunks(): void {
 		$store = $this->at_the_bucket_clock();
-		$this->seed_bucket_rows( $store, [ 'kea.example' => 6172, 'moa.example' => 6173 ] );
+		$this->seed_bucket_rows( $store, [ 'kea.example' => 617, 'moa.example' => 618 ] );
 
 		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--limit=7 --bucket=' . self::BUCKET );
 
 		$this->assertIsArray( $page, \is_string( $page ) ? $page : '' );
-		$this->assertSame( [ 12_345, 37_035 ], [ $page['rows'], $page['totals']['requests'] ] );
+		$this->assertSame( [ 1_235, 3_705 ], [ $page['rows'], $page['totals']['requests'] ] );
 		$this->assertFalse( $page['provisional'] );
 		$chunks = $this->asked_batches( Stats_Store::NS_URL_ROW_HOUR );
-		$this->assertSame( 12_345, \array_sum( \array_map( 'count', $chunks ) ) );
-		$this->assertCount( (int) \ceil( 12_345 / Flame_Builder_Node::WRITE_BATCH_KEYS ), $chunks );
+		$this->assertSame( 1_235, \array_sum( \array_map( 'count', $chunks ) ) );
+		$this->assertCount( (int) \ceil( 1_235 / Flame_Builder_Node::WRITE_BATCH_KEYS ), $chunks );
 	}
 
 	/**
 	 * A selection's page folds its candidates' rows chunk by chunk, holding
 	 * no more than a chunk beside the page, and answers what one fold of them
-	 * all answers: 12,345 (hash, server) pairs whose averages tie across
+	 * all answers: 1,235 (hash, server) pairs whose averages tie across
 	 * chunks give the totals, the page at offset 3 and the slowest ten that
 	 * every row ranked at once gives, ties going to the lower hash.
 	 */
-	public function test_a_selection_naming_12345_urls_folds_chunk_by_chunk_to_the_whole_folds_answer(): void {
+	public function test_a_selection_naming_1235_urls_folds_chunk_by_chunk_to_the_whole_folds_answer(): void {
 		$store = $this->at_the_bucket_clock();
 		$filed = $this->seed_bucket_rows(
 			$store,
-			[ 'kea.example' => 6172, 'moa.example' => 6173 ],
+			[ 'kea.example' => 617, 'moa.example' => 618 ],
 			static function ( int $i ): array {
 				$count = 1 + $i % 5;
 				$avg   = 10 + ( $i * 7919 ) % 211;
@@ -8270,7 +8270,7 @@ class PerformanceCITest extends TestCase {
 		$by  = \array_keys( $avg );
 		\usort( $by, static fn ( string $a, string $b ): int => [ $avg[ $b ], $a ] <=> [ $avg[ $a ], $b ] );
 		$sum = static fn ( string $field ): float => (float) \array_sum( \array_column( $filed, $field ) );
-		$this->assertSame( [ 12_345, 12_345 ], [ $page['rows'], $page['totals']['urls'] ] );
+		$this->assertSame( [ 1_235, 1_235 ], [ $page['rows'], $page['totals']['urls'] ] );
 		$this->assertSame( (int) $sum( 'count' ), $page['totals']['requests'] );
 		$this->assertSame( $sum( 'sum_ms' ) / $sum( 'timed_count' ), $page['totals']['avg_ms'] );
 		$this->assertSame( $sum( 'sum_peak_mb' ) / $sum( 'count' ), $page['totals']['avg_peak_mb'] );
@@ -8286,7 +8286,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_a_selections_candidates_are_handed_to_the_fold_a_chunk_at_a_time(): void {
 		$this->at_the_bucket_clock();
-		$this->seed_bucket_rows( $this->stats_store( 0, 43200 ), [ 'kea.example' => 6172, 'moa.example' => 6173 ] );
+		$this->seed_bucket_rows( $this->stats_store( 0, 43200 ), [ 'kea.example' => 617, 'moa.example' => 618 ] );
 		$plan       = ( new \ReflectionMethod( Performance_CI_Node::class, 'plan_for' ) )->invoke( null, self::BUCKET, (int) Core::$now );
 		$stores     = $this->live_stores();
 		$unread     = false;
@@ -8301,9 +8301,9 @@ class PerformanceCITest extends TestCase {
 			$reads[] = \count( $this->asked_batches( Stats_Store::NS_URL_ROW_HOUR ) );
 		}
 
-		$this->assertSame( 12_345, \array_sum( $sizes ) );
+		$this->assertSame( 1_235, \array_sum( $sizes ) );
 		$this->assertLessThanOrEqual( Flame_Builder_Node::WRITE_BATCH_KEYS, \max( $sizes ) );
-		$this->assertSame( \range( 1, (int) \ceil( 12_345 / Flame_Builder_Node::WRITE_BATCH_KEYS ) ), $reads, 'one chunk read per group, never ahead of the fold' );
+		$this->assertSame( \range( 1, (int) \ceil( 1_235 / Flame_Builder_Node::WRITE_BATCH_KEYS ) ), $reads, 'one chunk read per group, never ahead of the fold' );
 		$this->assertFalse( $unread );
 	}
 

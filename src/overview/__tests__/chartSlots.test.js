@@ -410,6 +410,13 @@ describe( 'useBucketSelection', () => {
 		);
 	} );
 
+	it( 'clears the whole selection when a plain click names a held bucket', () => {
+		expect( afterClick( HELD, '2026-10-05-17-00', false ) ).toBe( '' );
+		expect(
+			afterClick( '2026-10-05-18-30', '2026-10-05-18-30', false )
+		).toBe( '' );
+	} );
+
 	it( 'adds the bucket an additive click names, merging a neighbour', () => {
 		expect( afterClick( HELD, '2026-10-05-17-05', true ) ).toBe(
 			'2026-10-05-16-55..2026-10-05-17-05'
