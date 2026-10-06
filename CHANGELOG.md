@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.124.1] - 2026-10-06
+
+### Changed
+
+- **Rebuilt against newspack-nodes 2.95.0,** so the debug overlay's canvas dims a card whose counter held still since the last poll, and lays the graph out clear of where each wire is drawn.
+
 ## [0.124.0] - 2026-10-06
 
 ### Changed
