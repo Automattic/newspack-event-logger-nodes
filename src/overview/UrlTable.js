@@ -13,8 +13,9 @@
  * All of it also lives in the address bar — `?sort=`, `?order=`, `?q=`,
  * `?errors=`, `?workers=` and `?paged=` — so a shared link opens on the same
  * view. The page is `?paged=`, WordPress's own name, because `?page=` names
- * the admin screen. It owns neither the server filter nor the five-minute
- * bucket a chart click above sets: the dashboard holds both and hands them in.
+ * the admin screen. It owns neither the server filter nor the bucket
+ * selection its Time field and the charts above edit: the dashboard holds
+ * both and hands them in.
  *
  * Rows virtualize against window scroll, and each row's URL cell carries a
  * background bar scaling the active chart metric against the page's p95.
@@ -29,11 +30,11 @@ import {
 	memo,
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { TextControl } from '@wordpress/components';
+import { SearchControl } from '@wordpress/components';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { PAGE_CONTENT_CLASS } from '../components/DashboardShell';
 import SortHeaderButton from './components/SortHeaderButton';
-import BucketChip from './components/BucketChip';
+import BucketField from './components/BucketField';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import {
 	formatAge,
@@ -402,21 +403,22 @@ const UrlRow = memo(
  * The URL leaderboard: its search and filter controls, the virtualized table,
  * and the pager beneath it.
  *
- * @param {Object}                   props                 Component props.
- * @param {Array<Object>}            props.urls            The page of rows the `urls` verb returned.
- * @param {?Object}                  props.selectedUrl     The row the detail modal is open on, or null.
- * @param {(url: Object) => void}    props.onSelect        Receives a row on click or Enter/Space, and is forwarded to each row.
- * @param {(params: Object) => void} props.onParamsChange  Receives `search`, `sort`, `order`, `offset`, `errorsOnly`, `includeWorkers` and `bucket` whenever one of them changes.
- * @param {string}                   [props.bucket]        The five-minute bucket key the dashboard narrowed the table to; '' for none.
- * @param {string}                   [props.server]        The server the dashboard scoped the table to; '' for every server.
- * @param {() => void}               [props.onClearBucket] Drops that bucket, from its chip.
- * @param {?number}                  [props.totalUrls]     Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs. Null until a reply has counted them.
- * @param {string}                   [props.metric]        Chart metric the row bars scale.
- * @param {boolean}                  [props.ranked]        Whether the server answered from its per-bucket ranked lists rather than the whole index.
- * @param {number}                   [props.now]           Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
- * @param {boolean}                  [props.errorCounts]   Whether the reply was built under "Errors Only", so the count column shows each row's `errors`.
- * @param {?string}                  [props.error]         The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
- * @param {boolean}                  [props.loading]       Whether a page is asked for and not yet answered.
+ * @param {Object}                     props                  Component props.
+ * @param {Array<Object>}              props.urls             The page of rows the `urls` verb returned.
+ * @param {?Object}                    props.selectedUrl      The row the detail modal is open on, or null.
+ * @param {(url: Object) => void}      props.onSelect         Receives a row on click or Enter/Space, and is forwarded to each row.
+ * @param {(params: Object) => void}   props.onParamsChange   Receives `search`, `sort`, `order`, `offset`, `errorsOnly`, `includeWorkers` and `bucket` whenever one of them changes.
+ * @param {string}                     [props.bucket]         The spelling of the bucket selection the dashboard narrowed the table to; '' for none.
+ * @param {string[]|null}              [props.slots]          The charted bucket keys, newest first, which the Time field resolves a typed time against.
+ * @param {string}                     [props.server]         The server the dashboard scoped the table to; '' for every server.
+ * @param {(spelling: string) => void} [props.onBucketChange] Receives the selection the Time field leaves.
+ * @param {?number}                    [props.totalUrls]      Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs. Null until a reply has counted them.
+ * @param {string}                     [props.metric]         Chart metric the row bars scale.
+ * @param {boolean}                    [props.ranked]         Whether the server answered from its per-bucket ranked lists rather than the whole index.
+ * @param {number}                     [props.now]            Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
+ * @param {boolean}                    [props.errorCounts]    Whether the reply was built under "Errors Only", so the count column shows each row's `errors`.
+ * @param {?string}                    [props.error]          The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
+ * @param {boolean}                    [props.loading]        Whether a page is asked for and not yet answered.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlTable( {
@@ -425,8 +427,9 @@ export default function UrlTable( {
 	onSelect,
 	onParamsChange,
 	bucket = '',
+	slots = null,
 	server = '',
-	onClearBucket,
+	onBucketChange,
 	totalUrls = null,
 	metric = 'volume',
 	ranked = false,
@@ -609,17 +612,25 @@ export default function UrlTable( {
 				} }
 			>
 				<div ref={ searchContainerRef } style={ { flex: 1 } }>
-					<TextControl
-						__next40pxDefaultSize
+					<SearchControl
+						__nextHasNoMarginBottom
+						label={ __(
+							'Search by whole URL word',
+							'newspack-event-logger-nodes'
+						) }
 						placeholder={ __(
 							'Search by whole URL word…',
 							'newspack-event-logger-nodes'
 						) }
 						value={ searchTerm }
 						onChange={ setSearchTerm }
-						__nextHasNoMarginBottom
 					/>
 				</div>
+				<BucketField
+					value={ bucket }
+					slots={ slots }
+					onChange={ onBucketChange }
+				/>
 				<button
 					type="button"
 					className={ errorsOnly ? 'button is-active' : 'button' }
@@ -629,7 +640,6 @@ export default function UrlTable( {
 						? __( 'Showing Errors', 'newspack-event-logger-nodes' )
 						: __( 'Errors Only', 'newspack-event-logger-nodes' ) }
 				</button>
-				<BucketChip bucket={ bucket } onClear={ onClearBucket } />
 				<button
 					type="button"
 					className={ includeWorkers ? 'button is-active' : 'button' }

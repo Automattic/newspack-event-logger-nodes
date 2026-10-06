@@ -174,15 +174,16 @@ const avgMax = ( avg, max, unit ) =>
 		: `${ withUnit( avg, unit ) } avg, ${ withUnit( max, unit ) } max`;
 
 /**
- * A bucket key and the five UTC minutes it names, or '' for none, so
+ * A bucket selection and the UTC spans of its runs, or '' for none, so
  * `fields()` leaves the line out.
  *
- * @param {?string} key The bucket key a brief was narrowed to.
- * @return {string} `<key> (<span>)`, the bare key for an odd shape, or ''.
+ * @param {?string} spelling The selection a brief was narrowed to.
+ * @return {string} `<spelling> (<spans>)`, the bare spelling for an odd
+ * shape, or ''.
  */
-const bucketField = ( key ) => {
-	const span = bucketSpan( key );
-	return span ? `${ key } (${ span })` : key ?? '';
+const bucketField = ( spelling ) => {
+	const span = bucketSpan( spelling );
+	return span ? `${ spelling } (${ span })` : spelling ?? '';
 };
 
 /**

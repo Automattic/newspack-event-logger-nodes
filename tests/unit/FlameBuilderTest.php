@@ -1739,7 +1739,7 @@ class FlameBuilderTest extends TestCase {
 		$this->set_url_shard( $store, "{$hour}-10", 'w5', [ '5b5b5b5b5b5b' => self::positional_url_row( [ 'count' => 2, 'worker' => true, 'path' => '/moa' ] ) ], 'moa.test' );
 		$this->forget_stats_asks();
 
-		$fb->roll_up_hours( $store, [ 'fine' => [], 'hours' => [ $hour ] ], [ $hour ] );
+		$fb->roll_up_hours( $store, [ 'fine' => [], 'hours' => [ $hour ] ], [ $hour ], self::tick() );
 
 		$kea  = Stats_Store::server_key( 'kea.test' );
 		$moa  = Stats_Store::server_key( 'moa.test' );
@@ -4227,7 +4227,7 @@ class FlameBuilderTest extends TestCase {
 	private static function roll_up( Flame_Builder_Node $fb, int $now ): void {
 		$store = self::store_of( $fb );
 		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( $store->max_lifespan(), $now ) );
-		$fb->roll_up_hours( $store, $plan, $plan['hours'] );
+		$fb->roll_up_hours( $store, $plan, $plan['hours'], $now );
 	}
 
 	/** The oldest bucket of the read plan's fine tail at `$now`. */
@@ -4963,7 +4963,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$fb->set_stats_store( $store );
 
-		( new \ReflectionMethod( $fb, 'rank_hours_from_store' ) )->invoke( $fb, $store, [ $hour ] );
+		( new \ReflectionMethod( $fb, 'rank_hours_from_store' ) )->invoke( $fb, $store, [ $hour ], self::tick() );
 
 		$this->assertSame( [], $this->url_rank_done( $store, $hour, 'cron-4417.test' ) );
 		$this->assertSame( [], $store->url_hours_derived( [ $hour ] )[ $hour ] );
@@ -5032,7 +5032,7 @@ class FlameBuilderTest extends TestCase {
 		$store->writes = 0;
 		$this->fail_reads( $store, true );
 
-		$folded = ( new \ReflectionMethod( $fb, 'fold_hour_into_store' ) )->invoke( $fb, $store, '2026-08-27-13', false );
+		$folded = ( new \ReflectionMethod( $fb, 'fold_hour_into_store' ) )->invoke( $fb, $store, '2026-08-27-13', false, self::tick() );
 
 		$this->assertNull( $folded );
 		$this->assertSame( 0, $store->writes, 'no hour folded serverless or short' );
@@ -5103,7 +5103,7 @@ class FlameBuilderTest extends TestCase {
 		$store->writes = 0;
 		$this->fail_reads( $store, true );
 
-		( new \ReflectionMethod( $fb, 'rank_hours_from_store' ) )->invoke( $fb, $store, [ $hour ] );
+		( new \ReflectionMethod( $fb, 'rank_hours_from_store' ) )->invoke( $fb, $store, [ $hour ], self::tick() );
 
 		$this->assertSame( 0, $store->writes );
 		$this->assertSame( [ $hour => true ], ( new \ReflectionProperty( $fb, 'stale_hours' ) )->getValue( $fb ) );
@@ -7964,8 +7964,8 @@ class FlameBuilderTest extends TestCase {
 			'the chart span\'s TTL, not the window\'s 43,219'
 		);
 		$this->assertSame(
-			[ 'c4a1c4a1c4a1' => [ $b ], 'c4a2c4a2c4a2' => [ $b ], 'd5d5d5d5d5d5' => [ $k ] ],
-			$store->url_bucket_members( '2026-10-04-13-35', [ $b, $k ] )
+			[ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'c4a2c4a2c4a2' => [ $b => [ '2026-10-04-13' ] ], 'd5d5d5d5d5d5' => [ $k => [ '2026-10-04-13' ] ] ],
+			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b, $k ], Stats_Store::URL_BUCKET_MAX )
 		);
 	}
 
@@ -8012,7 +8012,7 @@ class FlameBuilderTest extends TestCase {
 			self::adds_of( Stats_Store::NS_URLBUCKET ),
 			'kakapo once; weka by its own first flush'
 		);
-		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b ], 'e9e9e9e9e9e9' => [ $b ] ], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ) );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'e9e9e9e9e9e9' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ) );
 	}
 
 	/**
@@ -8045,7 +8045,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now             = \gmmktime( 13, 36, 2, 10, 4, 2026 );
 		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
 		$b = Stats_Store::server_key( 'b.example' );
-		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ), 'the add was refused' );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'the add was refused' );
 
 		$store->refuse_buckets = false;
 		Core::$now             = \gmmktime( 13, 36, 7, 10, 4, 2026 );
@@ -8053,7 +8053,7 @@ class FlameBuilderTest extends TestCase {
 		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
 
 		$this->assertSame( [ [ "urlbucket:2026-10-04-13-35:{$b}" => [ [ 'c4a1c4a1c4a1' => \gmmktime( 13, 36, 7, 10, 4, 2026 ) ], 90_000 + 3_605 ] ] ], self::adds_of( Stats_Store::NS_URLBUCKET ) );
-		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b ] ], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ) );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ) );
 	}
 
 	/**
@@ -8112,7 +8112,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now = \gmmktime( 13, 36, 7, 10, 4, 2026 );
 		$this->flush_buckets( $fb, [] );
 		$b = Stats_Store::server_key( 'b.example' );
-		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ), 'refused twice' );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'refused twice' );
 
 		$store->refuse_buckets = false;
 		Core::$now             = \gmmktime( 13, 41, 9, 10, 4, 2026 );
@@ -8121,7 +8121,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now = \gmmktime( 13, 41, 14, 10, 4, 2026 );
 		$this->flush_buckets( $fb, [] );
 
-		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b ] ], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ), 'the owed add landed' );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'the owed add landed' );
 		$this->assertSame(
 			[
 				[
@@ -8153,7 +8153,7 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame( '2026-10-04-14-00', self::fine_floor( $store, self::tick() ), 'the hour turned' );
 		$this->assertSame( [], $this->asked_verbs( Stats_Store::NS_URLBUCKET ), 'nothing owed is filed' );
-		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-55', [ Stats_Store::server_key( 'b.example' ) ] ) );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-55' ], [ Stats_Store::server_key( 'b.example' ) ], Stats_Store::URL_BUCKET_MAX ) );
 	}
 
 	/**
@@ -8193,7 +8193,7 @@ class FlameBuilderTest extends TestCase {
 		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'e9e9e9e9e9e9' => '/weka-2271' ] ] );
 
 		$b = Stats_Store::server_key( 'b.example' );
-		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b ], 'e9e9e9e9e9e9' => [ $b ] ], $store->url_bucket_members( '2026-10-04-13-35', [ $b ] ), 'the owed add landed beside weka' );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'e9e9e9e9e9e9' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'the owed add landed beside weka' );
 	}
 
 	/** A request is filed under its start plus its duration, rounded to the second. */
@@ -8224,7 +8224,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertStringContainsString( 'urlbucket write refused; 2 sets left unfiled', $err );
 		$this->assertSame( [ 2, 2 ], [ $writes['urlbucket sets'] ?? null, $writes[ 'refused ' . Stats_Store::NS_URLBUCKET ] ?? null ] );
 		$this->assertArrayNotHasKey( 'refused ' . Stats_Store::NS_URLTOKEN, $writes, 'the words landed' );
-		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-35', [ Stats_Store::server_key( 'b.example' ), Stats_Store::server_key( 'k.example' ) ] ) );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ Stats_Store::server_key( 'b.example' ), Stats_Store::server_key( 'k.example' ) ], Stats_Store::URL_BUCKET_MAX ) );
 	}
 
 	public function test_a_bucket_whose_index_went_unanswered_files_no_bucket_set(): void {
@@ -8243,7 +8243,165 @@ class FlameBuilderTest extends TestCase {
 
 		$this->fail_reads( $store, false );
 		$this->assertSame( [], $this->asked_verbs( Stats_Store::NS_URLBUCKET ) );
-		$this->assertSame( [], $store->url_bucket_members( '2026-10-04-13-35', [ Stats_Store::server_key( 'b.example' ) ] ) );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ Stats_Store::server_key( 'b.example' ) ], Stats_Store::URL_BUCKET_MAX ) );
+	}
+
+	/**
+	 * An add refused until its bucket aged out of the owed list is filed by
+	 * the fold of its hour, from the shard rows the fold reads anyway.
+	 */
+	public function test_the_hour_fold_files_a_bucket_whose_refused_add_aged_out(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fb ) );
+		$fb->set_stats_store( $store );
+		$store->refuse_buckets = true;
+		Core::$now             = \gmmktime( 13, 57, 2, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ], '2026-10-04-13-55' );
+		$store->refuse_buckets = false;
+		Core::$now             = \gmmktime( 14, 0, 31, 10, 4, 2026 );
+		$this->flush_buckets( $fb, [] );
+		$b = Stats_Store::server_key( 'b.example' );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-55' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'the owed add aged out' );
+
+		Core::$now = \gmmktime( 14, 0, 36, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		self::roll_up( $fb, self::tick() );
+
+		$this->assertSame(
+			[ [ "urlbucket:2026-10-04-13-55:{$b}" => [ [ 'c4a1c4a1c4a1' => \gmmktime( 14, 0, 36, 10, 4, 2026 ) ], 90_000 + 3_605 ] ] ],
+			self::adds_of( Stats_Store::NS_URLBUCKET ),
+			'one add, valued by the fold\'s tick'
+		);
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-55' ], [ $b ], Stats_Store::URL_BUCKET_MAX ) );
+	}
+
+	/** The fold adds an already-filed URL again, and its set still names it once. */
+	public function test_the_hour_fold_re_adds_a_filed_url_harmlessly(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 13, 36, 2, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731', 'e9e9e9e9e9e9' => '/weka-2271' ] ] );
+
+		Core::$now = \gmmktime( 14, 0, 36, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		self::roll_up( $fb, self::tick() );
+
+		$b   = Stats_Store::server_key( 'b.example' );
+		$set = "urlbucket:2026-10-04-13-35:{$b}";
+		$at  = \gmmktime( 14, 0, 36, 10, 4, 2026 );
+		$this->assertSame( [ [ $set => [ [ 'c4a1c4a1c4a1' => $at, 'e9e9e9e9e9e9' => $at ], 90_000 + 3_605 ] ] ], self::adds_of( Stats_Store::NS_URLBUCKET ) );
+		$this->assertSame(
+			[ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'e9e9e9e9e9e9' => [ $b => [ '2026-10-04-13' ] ] ],
+			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX )
+		);
+	}
+
+	/**
+	 * A worker-family row names its URL in the fold's filing as a reader row
+	 * does, and neither family's overflow row names one.
+	 */
+	public function test_the_hour_fold_files_worker_rows_and_no_overflow_row(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fb ) );
+		$fb->set_stats_store( $store );
+		$store->refuse_buckets = true;
+		Core::$now             = \gmmktime( 13, 46, 2, 10, 4, 2026 );
+		$this->persist_bucket_rows( $fb, $store, [ 'url_stats_worker' => [ 'c4a2c4a2c4a2' => '/wp-cron.php' ] ], '2026-10-04-13-45' );
+		$this->set_url_shard( $store, '2026-10-04-13-20', '7', [ Stats_Store::OTHER_KEY => self::positional_url_row( [ 'count' => 9 ] ) ], 'k.example' );
+		$this->set_url_shard( $store, '2026-10-04-13-20', 'w7', [ Stats_Store::OTHER_WORKER_KEY => self::positional_url_row( [ 'count' => 4, 'worker' => true ] ) ], 'k.example' );
+		$store->refuse_buckets = false;
+
+		Core::$now = \gmmktime( 14, 0, 36, 10, 4, 2026 );
+		$this->forget_stats_asks();
+		self::roll_up( $fb, self::tick() );
+
+		$b = Stats_Store::server_key( 'b.example' );
+		$this->assertSame(
+			[ [ "urlbucket:2026-10-04-13-45:{$b}" => [ [ 'c4a2c4a2c4a2' => \gmmktime( 14, 0, 36, 10, 4, 2026 ) ], 90_000 + 3_605 ] ] ],
+			self::adds_of( Stats_Store::NS_URLBUCKET ),
+			'the worker row filed, the overflow rows not'
+		);
+	}
+
+	/** The fold's filing goes out one `SADD` per `WRITE_BATCH_KEYS` sets. */
+	public function test_the_hour_folds_filing_is_chunked(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 14, 0, 36, 10, 4, 2026 );
+		$hour      = '2026-10-04-13';
+		$writes    = [];
+		foreach ( Stats_Store::buckets_in_hour( $hour ) as $bucket ) {
+			$index = [];
+			for ( $i = 0; $i < 42; $i++ ) {
+				$key           = Stats_Store::server_key( "s{$i}.example" );
+				$writes[]      = [ Stats_Store::url_shard_parts( $key, '3' ), $bucket, [ '3a3a3a3a3a3a' => self::positional_url_row( [ 'count' => 2 ] ) ] ];
+				$index[ $key ] = [ Stats_Store::SRV_NAME => "s{$i}.example", Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( [ '3' ] ) ];
+			}
+			$writes[] = [ Stats_Store::url_srv_parts( false ), $bucket, $index ];
+		}
+		$this->assertNotContains( false, $store->bucket_set_multi( $writes ) );
+		$this->forget_stats_asks();
+
+		$fb->roll_up_hours( $store, [ 'fine' => [], 'hours' => [ $hour ] ], [ $hour ], self::tick() );
+
+		$this->assertSame( [ 500, 4 ], \array_map( 'count', self::adds_of( Stats_Store::NS_URLBUCKET ) ), '42 servers in twelve buckets' );
+		$this->assertSame( 504, $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ]['urlbucket sets'] ?? null );
+	}
+
+	/**
+	 * A stale hour missing a shard folds again from its fine buckets, and
+	 * that fold files them; one ranked from its coarse rows files nothing,
+	 * since an hour row names no bucket.
+	 */
+	public function test_a_stale_hour_files_its_buckets_only_when_it_folds_again(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 43_219, asker: $fb );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 14, 20, 36, 10, 4, 2026 );
+		$b         = Stats_Store::server_key( 'b.example' );
+		$hour      = '2026-10-04-13';
+		$this->set_url_shard( $store, '2026-10-04-13-25', '3', [ '3c3c3c3c3c3c' => self::positional_url_row( [ 'count' => 8, 'path' => '/takahe-5521' ] ) ], 'b.example' );
+		$index = [ $b => [ Stats_Store::SRV_NAME => 'b.example', Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( [ '3' ] ) ] ];
+		$this->assertSame( [ true ], $store->bucket_set_multi( [ [ Stats_Store::url_srv_parts( true ), $hour, $index ] ] ) );
+		$stale = new \ReflectionProperty( $fb, 'stale_hours' );
+		$rank  = new \ReflectionMethod( $fb, 'rank_hours_from_store' );
+
+		$stale->setValue( $fb, [ $hour => 'DONE missing' ] );
+		$this->forget_stats_asks();
+		$rank->invoke( $fb, $store, [ $hour ], self::tick() );
+		$this->assertSame(
+			[ [ "urlbucket:2026-10-04-13-25:{$b}" => [ [ '3c3c3c3c3c3c' => self::tick() ], 90_000 + 3_605 ] ] ],
+			self::adds_of( Stats_Store::NS_URLBUCKET ),
+			'the missing shard folds the hour again, and files its bucket'
+		);
+
+		$stale->setValue( $fb, [ $hour => 'late write' ] );
+		$this->forget_stats_asks();
+		$rank->invoke( $fb, $store, [ $hour ], self::tick() );
+		$this->assertSame( [], self::adds_of( Stats_Store::NS_URLBUCKET ), 'the whole hour ranks from its coarse rows' );
+	}
+
+	/** A refused fold filing is logged and tallied as the flush's is. */
+	public function test_a_refused_fold_filing_is_logged_and_tallied(): void {
+		$err = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+		$fb    = new Flame_Builder_Node();
+		$store = new RecordingStatsStore( ...$this->stats_store_args( 0, 43_219, $fb ) );
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 14, 0, 36, 10, 4, 2026 );
+		$this->set_url_shard( $store, '2026-10-04-13-05', '3', [ '3a3a3a3a3a3a' => self::positional_url_row( [ 'count' => 6, 'path' => '/kea' ] ) ], 'kea.test' );
+		$this->set_url_shard( $store, '2026-10-04-13-10', 'w5', [ '5b5b5b5b5b5b' => self::positional_url_row( [ 'count' => 2, 'worker' => true, 'path' => '/moa' ] ) ], 'moa.test' );
+		$store->refuse_buckets = true;
+
+		self::roll_up( $fb, self::tick() );
+
+		$writes = $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ] ?? [];
+		$this->assertStringContainsString( 'urlbucket write refused; 2 sets left unfiled', $err );
+		$this->assertSame( [ 2, 2 ], [ $writes['urlbucket sets'] ?? null, $writes[ 'refused ' . Stats_Store::NS_URLBUCKET ] ?? null ] );
 	}
 
 	/**

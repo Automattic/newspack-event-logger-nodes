@@ -68,9 +68,9 @@ const liveOf = ( payload ) =>
  * A `clear` control from `controlFrom` resets the retained state and the
  * cursor. `usePerformanceGraph` sends one when the modal opens, when it closes
  * and whenever the server scope changes, so the next reply counts as fresh.
- * A `relist`, which it sends when Errors Only flips, does the same but keeps
- * the held flame and profiles: an errors-only reply rebuilds no flame, and the
- * one held still describes the URL.
+ * A `relist`, which it sends when Errors Only or the bucket flips, does the
+ * same but keeps the held flame and profiles: an errors-only reply rebuilds no
+ * flame, and the one held still describes the URL.
  *
  * Only the answer to a question the `url-detail:fetch` Fetcher still asks
  * reaches it: the substrate's `url-detail:in:current` gate ahead of this edge

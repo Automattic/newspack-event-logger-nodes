@@ -38,8 +38,11 @@ export const compile = ( file ) =>
 						const relative = url
 							.slice( SHARED_ALIAS.length )
 							.replace( /^\/+/, '' );
-						return pathToFileURL(
-							path.join( NODES_SHARED, relative )
+						// Sass checks the global URL, which jsdom replaces.
+						return new URL(
+							pathToFileURL(
+								path.join( NODES_SHARED, relative )
+							).href
 						);
 					},
 				},
@@ -64,6 +67,26 @@ export const compileLocal = ( relative ) =>
  */
 export const compileShared = ( relative ) =>
 	compile( path.join( NODES_SHARED, relative ) );
+
+/**
+ * A shared design token's compiled value, read from `_tokens.scss` itself.
+ *
+ * @param {string} name The token without its `$`, e.g. 'control-height'.
+ * @return {string} The value the token compiles to.
+ */
+export const sharedToken = ( name ) => {
+	let value;
+	postcss
+		.parse(
+			sass.compileString( `@use "tokens"; a { b: tokens.$${ name }; }`, {
+				loadPaths: [ path.join( NODES_SHARED, 'styles' ) ],
+			} ).css
+		)
+		.walkDecls( ( declaration ) => {
+			value = declaration.value;
+		} );
+	return value;
+};
 
 /**
  * Selector specificity as [ids, classes, elements], counting `:where()` as 0.

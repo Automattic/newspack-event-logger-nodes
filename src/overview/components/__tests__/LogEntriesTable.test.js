@@ -1892,7 +1892,7 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
-	it( 'search nav buttons (prev/next/clear) work', () => {
+	it( 'search nav buttons (prev/next) work', () => {
 		const entries = makeEntries();
 		jest.useFakeTimers();
 		const { container, unmount } = renderComponent(
@@ -1913,12 +1913,12 @@ describe( 'LogEntriesTable', () => {
 		const navButtons = container.querySelectorAll(
 			'.log-entries-search__nav'
 		);
-		expect( navButtons.length ).toBeGreaterThanOrEqual( 3 );
+		// The search box's own reset button is the clear; no third button.
+		expect( navButtons.length ).toBe( 2 );
 		navButtons.forEach( ( button ) => {
 			expect( button.classList.contains( 'button' ) ).toBe( true );
 			expect( button.classList.contains( 'button-small' ) ).toBe( true );
 		} );
-		// Click each in turn — prev/next/clear.
 		act( () => navButtons[ 0 ].click() );
 		flushRAF();
 		act( () => navButtons[ 1 ].click() );
@@ -1926,8 +1926,42 @@ describe( 'LogEntriesTable', () => {
 		// Once more on prev (covers the wrap-around branch).
 		act( () => navButtons[ 0 ].click() );
 		flushRAF();
-		act( () => navButtons[ 2 ].click() );
-		// After clear, the search controls disappear.
+		expect( container.textContent ).toMatch( /\d+\/\d+/ );
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	it( "the search's reset button clears it and refolds what the search opened", () => {
+		const entries = makeEntries();
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const dbRows = () =>
+			container.querySelectorAll( 'tr[data-pair-id="2"]' ).length;
+		const foldedRows = dbRows();
+		// The query row sits inside the folded db pair; walking to it unfolds.
+		searchFor(
+			container,
+			container.querySelector( 'input' ),
+			'logged value'
+		);
+		act( () =>
+			container
+				.querySelectorAll( '.log-entries-search__nav' )[ 1 ]
+				.click()
+		);
+		flushRAF();
+		expect( dbRows() ).not.toBe( foldedRows );
+
+		act( () =>
+			container
+				.querySelector( '.components-search-control button' )
+				.click()
+		);
+
+		expect( container.querySelector( 'input' ).value ).toBe( '' );
+		expect( dbRows() ).toBe( foldedRows );
 		expect(
 			container.querySelectorAll( '.log-entries-search__nav' ).length
 		).toBe( 0 );

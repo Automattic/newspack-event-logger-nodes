@@ -13,9 +13,9 @@
  * What it does own is the UI state the graph's fetchers read at fire time: the
  * server filter, the chart metric and breakdown dimension, the refresh cadence,
  * the partition a located request was found in, the search box and its results,
- * the request-table sort, the five-minute bucket a chart click narrows the
- * URL table or the URL modal to, and the inline "Log this URL" rule editor.
- * The server filter, metric, breakdown and table bucket also live in the
+ * the request-table sort, the bucket selections that narrow the URL table
+ * and the URL modal, and the inline "Log this URL" rule editor.
+ * The server filter, metric, breakdown and table selection also live in the
  * address bar, as `?server=`, `?metric=`, `?breakdown=` and `?bucket=`, so a
  * shared link opens the same view. The
  * component also runs every command whose reply sets that state: the `?url=`
@@ -81,6 +81,7 @@ import { BLANK_RULE } from '../rules/constants';
 
 import UrlTable from './UrlTable';
 import { breakdownState } from './AggregateTimeChart';
+import { useBucketSelection } from './chartSlots';
 
 /**
  * The stand-in title for a URL whose hash is selected but whose name has not
@@ -137,6 +138,21 @@ const ERRORS_HEADER_STATS = [
 	'avg_peak_mb',
 ];
 
+/**
+ * A search box with nothing answered under it: the lookup's miss or the grep's
+ * error, the grep's rows and whether the server capped them, and the lines it
+ * skipped as unparseable, undefined until a grep answers.
+ */
+const NO_SEARCH_ANSWER = {
+	error: null,
+	results: null,
+	truncated: false,
+	unparseableLines: undefined,
+};
+
+/** A query the search box looks up as one exact request id. */
+const RID_SHAPE = /^[a-zA-Z0-9_-]+$/;
+
 // The `?metric=` and `?breakdown=` whitelists: what the dropdowns offer.
 const CHART_METRICS = CHART_METRIC_OPTIONS.map( ( option ) => option.value );
 const CHART_BREAKDOWNS = CHART_BREAKDOWN_OPTIONS.map(
@@ -172,19 +188,29 @@ export default function PerformanceDashboard( {
 	const [ detailFilters, setDetailFilters ] = useState( NO_DETAIL_FILTERS );
 	// Same value, same object: the graph re-asks dump_url on a new one.
 	const setDetailFilter = useCallback(
-		( field, value ) =>
-			setDetailFilters( ( prev ) =>
-				prev[ field ] === value ? prev : { ...prev, [ field ]: value }
-			),
+		( field, update ) =>
+			setDetailFilters( ( prev ) => {
+				const value =
+					'function' === typeof update
+						? update( prev[ field ] )
+						: update;
+				return prev[ field ] === value
+					? prev
+					: { ...prev, [ field ]: value };
+			} ),
 		[]
 	);
-	// @longform The table's bucket, set by an overview chart click. A linked
-	// key goes out as it arrived: the server judges it against the charted
-	// slots, and the chip that shows its refusal is the way out.
+	// @longform The table's bucket selection, as its spelling. A linked one
+	// goes out as it arrived: the server judges it against the charted slots,
+	// and the Time field's token that shows its refusal is the way out.
 	const [ tableBucket, setTableBucket ] = useQueryParamState(
 		'bucket',
 		( raw ) => raw ?? '',
 		String
+	);
+	const [ tableBuckets, pickTableBucket ] = useBucketSelection(
+		tableBucket,
+		setTableBucket
 	);
 	const [ chartMetric, setChartMetric ] = useQueryParamChoice(
 		'metric',
@@ -209,14 +235,7 @@ export default function PerformanceDashboard( {
 	);
 
 	const [ searchQuery, setSearchQuery ] = useState( '' );
-	const [ searchError, setSearchError ] = useState( null );
-	const [ searchLoading, setSearchLoading ] = useState( false );
-	// grep_requests result rows, and whether the server capped them.
-	const [ searchResults, setSearchResults ] = useState( null );
-	const [ searchResultsTruncated, setSearchResultsTruncated ] =
-		useState( false );
-	// Lines the last grep skipped as unparseable; undefined until it answers.
-	const [ searchUnparseableLines, setSearchUnparseableLines ] = useState();
+	const [ searchAnswer, setSearchAnswer ] = useState( NO_SEARCH_ANSWER );
 	const [ requestPartition, setRequestPartition ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = usePersistedChoice(
 		'event-logger-refresh-interval',
@@ -570,27 +589,32 @@ export default function PerformanceDashboard( {
 	}, [ deepLink, askDeepLinkRequest, askDeepLinkUrl ] );
 
 	/**
-	 * Look one exact request id up in the request index and open it. One ask per
-	 * submit, and a miss is an answer: it fills the search box's error instead
-	 * of being re-asked.
+	 * Look one exact request id up in the request index and open it. A RETRIED
+	 * read: a second lookup supersedes the first, and a miss is an answer that
+	 * fills the search box's error instead of being re-asked.
 	 */
-	const { run: searchForRequest } = useCommandOnce( {
+	const {
+		run: searchForRequest,
+		abandon: abandonRequestSearch,
+		pending: requestSearchPending,
+	} = useCommandOnce( {
 		ci: SERVER,
 		command: 'search_requests',
 		scope: 'request-search',
+		retry: true,
 		onDone: ( { result, args } ) => {
-			setSearchLoading( false );
 			if ( ! found( result ) ) {
-				setSearchError(
-					sprintf(
+				setSearchAnswer( {
+					...NO_SEARCH_ANSWER,
+					error: sprintf(
 						// translators: %s: the request ID that was searched for.
 						__(
 							'Request "%s" not found — prefix with / to search recent traffic',
 							'newspack-event-logger-nodes'
 						),
 						args[ 0 ]
-					)
-				);
+					),
+				} );
 				return;
 			}
 			applyFoundRequest( args[ 0 ], result );
@@ -603,8 +627,10 @@ export default function PerformanceDashboard( {
 	} );
 
 	/**
-	 * Run the exact-id search, clearing the previous answer first so a stale
-	 * error or result list never sits under a search still in flight.
+	 * Run the exact-id search: from the box, from a `?search=` link, or from
+	 * a pattern-search row, which carries the rid alone, while the URL hash
+	 * and partition the modal needs come only from `search_requests`. The last
+	 * answer clears, so a stale error or list never sits under it in flight.
 	 *
 	 * @param {string} rid The request id to look up.
 	 */
@@ -613,10 +639,7 @@ export default function PerformanceDashboard( {
 			if ( ! rid || ! rid.trim() ) {
 				return;
 			}
-			setSearchLoading( true );
-			setSearchError( null );
-			setSearchResults( null );
-			setSearchUnparseableLines( undefined );
+			setSearchAnswer( NO_SEARCH_ANSWER );
 			searchForRequest( formatCommandArgs( [ rid.trim() ] ) );
 		},
 		[ searchForRequest ]
@@ -627,47 +650,45 @@ export default function PerformanceDashboard( {
 	 * `GREP_RESULT_LIMIT` matching requests. No match reports through the search
 	 * box's error line, so an empty list never sits there unexplained.
 	 */
-	const { run: requestGrep } = useCommandOnce( {
+	const {
+		run: requestGrep,
+		abandon: abandonGrep,
+		pending: grepPending,
+	} = useCommandOnce( {
 		ci: SERVER,
 		command: 'grep_requests',
 		// A search pattern is free text the operator typed, not an identity.
 		subjectOf: () => null,
 		onDone: ( { result, error } ) => {
-			setSearchLoading( false );
-			setSearchUnparseableLines( result?.unparseable_lines );
 			const results = result?.results ?? [];
-			if ( results.length > 0 ) {
-				setSearchResults( results );
-				setSearchResultsTruncated( !! result?.truncated );
-				return;
-			}
-			setSearchError(
-				error ||
-					__(
-						'No matches in recent traffic',
-						'newspack-event-logger-nodes'
-					)
-			);
+			const matched = results.length > 0;
+			setSearchAnswer( {
+				error: matched
+					? null
+					: error ||
+					  __(
+							'No matches in recent traffic',
+							'newspack-event-logger-nodes'
+					  ),
+				results: matched ? results : null,
+				truncated: matched && !! result?.truncated,
+				unparseableLines: result?.unparseable_lines,
+			} );
 		},
 	} );
 
 	/**
 	 * Pattern-search recent firehose traffic and render the matching-request
-	 * list.
+	 * list. The pattern rides by name, so one opening `--` is never an option.
 	 *
 	 * @param {string} pattern The search pattern.
 	 */
 	const patternSearch = useCallback(
 		( pattern ) => {
-			setSearchLoading( true );
-			setSearchError( null );
-			setSearchResults( null );
-			setSearchResultsTruncated( false );
-			setSearchUnparseableLines( undefined );
+			setSearchAnswer( NO_SEARCH_ANSWER );
 			requestGrep(
-				// Named, so a pattern opening `--` is never read as an option.
 				formatCommandArgs( [], {
-					pattern: pattern.trim(),
+					pattern,
 					limit: GREP_RESULT_LIMIT,
 				} )
 			);
@@ -688,7 +709,7 @@ export default function PerformanceDashboard( {
 			if ( ! trimmed ) {
 				return;
 			}
-			if ( /^[a-zA-Z0-9_-]+$/.test( trimmed ) ) {
+			if ( RID_SHAPE.test( trimmed ) ) {
 				searchRequest( trimmed );
 			} else {
 				patternSearch( trimmed );
@@ -698,19 +719,22 @@ export default function PerformanceDashboard( {
 	);
 
 	/**
-	 * Open a pattern-search result by re-running the exact-rid path. A grep row
-	 * carries the rid alone, and the URL hash and partition the modal needs come
-	 * only from `search_requests`.
+	 * Take the search box's text. Any edit abandons the search in flight, a
+	 * clicked row's lookup included, so its answer fills nothing; emptying the
+	 * box also drops the last answer, which answers nothing under a blank box.
 	 *
-	 * @param {string} rid The request id of the clicked row.
+	 * @param {string} query The box's new text.
 	 */
-	const selectSearchResult = useCallback(
-		( rid ) => {
-			setSearchResults( null );
-			setSearchResultsTruncated( false );
-			searchRequest( rid );
+	const changeSearchQuery = useCallback(
+		( query ) => {
+			setSearchQuery( query );
+			abandonRequestSearch();
+			abandonGrep();
+			if ( '' === query ) {
+				setSearchAnswer( NO_SEARCH_ANSWER );
+			}
 		},
-		[ searchRequest ]
+		[ abandonRequestSearch, abandonGrep ]
 	);
 
 	/**
@@ -734,14 +758,16 @@ export default function PerformanceDashboard( {
 	 * Under the modal's Errors Only, the `errorSummary()` of the errors
 	 * listed, which the header, the list and the facts block take beside the
 	 * exact `stats.errors` in place of the whole URL's numbers, which describe
-	 * other traffic. Null while every request is listed.
+	 * other traffic. Null while every request is listed, and while the list
+	 * is asked afresh, because the rows held then answer the old filters.
 	 */
+	const detailListing = !! urlDetailSlice?.loading;
 	const detailErrors = useMemo(
 		() =>
-			detailFilters.errors_only && urlDetail
+			detailFilters.errors_only && urlDetail && ! detailListing
 				? errorSummary( urlDetail.requests ?? [] )
 				: null,
-		[ detailFilters.errors_only, urlDetail ]
+		[ detailFilters.errors_only, urlDetail, detailListing ]
 	);
 
 	// `Flame_Builder_Node` builds the tree; nothing here derives one.
@@ -980,14 +1006,14 @@ export default function PerformanceDashboard( {
 				setServerFilter={ setServerFilter }
 				serverNames={ serverNames }
 				searchQuery={ searchQuery }
-				setSearchQuery={ setSearchQuery }
-				searchLoading={ searchLoading }
-				searchError={ searchError }
+				setSearchQuery={ changeSearchQuery }
+				searchLoading={ requestSearchPending || grepPending }
+				searchError={ searchAnswer.error }
 				onSearch={ handleSearch }
-				searchResults={ searchResults }
-				searchResultsTruncated={ searchResultsTruncated }
-				searchUnparseableLines={ searchUnparseableLines }
-				onSelectResult={ selectSearchResult }
+				searchResults={ searchAnswer.results }
+				searchResultsTruncated={ searchAnswer.truncated }
+				searchUnparseableLines={ searchAnswer.unparseableLines }
+				onSelectResult={ searchRequest }
 				refreshInterval={ refreshInterval }
 				setRefreshInterval={ setRefreshInterval }
 				headerControlsSlot={ headerControlsSlot }
@@ -998,7 +1024,8 @@ export default function PerformanceDashboard( {
 				setChartBreakdown={ setChartBreakdown }
 				breakdownRead={ chartBreakdownRead }
 				categoryData={ categoryData }
-				onSlotClick={ setTableBucket }
+				onSlotClick={ pickTableBucket }
+				selectedBuckets={ tableBuckets }
 			/>
 
 			{ /* Main Content */ }
@@ -1021,8 +1048,9 @@ export default function PerformanceDashboard( {
 								onSelect={ openUrl }
 								onParamsChange={ handleUrlParamsChange }
 								bucket={ tableBucket }
+								slots={ overview?.slots ?? null }
 								server={ serverFilter }
-								onClearBucket={ () => setTableBucket( '' ) }
+								onBucketChange={ setTableBucket }
 								totalUrls={ urlsSlice?.rows }
 								metric={ chartMetric }
 								ranked={ urlsSlice?.ranked }
@@ -1177,6 +1205,8 @@ export default function PerformanceDashboard( {
 							urlHash={ selectedUrl.hash }
 							filters={ detailFilters }
 							onFilterChange={ setDetailFilter }
+							listing={ detailListing }
+							listError={ urlDetailSlice.error }
 							detailErrors={ detailErrors }
 						/>
 					) }

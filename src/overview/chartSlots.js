@@ -13,8 +13,11 @@
  * named fields, so no chart indexes a row by number.
  */
 
-import { useMemo } from '@wordpress/element';
-import { BUCKET_SECONDS } from '@newspack-nodes/shared/hooks/useTimeChart';
+import { useCallback, useMemo } from '@wordpress/element';
+import {
+	BUCKET_MS,
+	BUCKET_SECONDS,
+} from '@newspack-nodes/shared/hooks/useTimeChart';
 
 /**
  * The first instant of a bucket key, in UTC, which is how the server keys it.
@@ -28,29 +31,168 @@ const keyStart = ( key ) => {
 };
 
 /**
- * A bucket key's five minutes as a UTC span, the way a filter names it.
+ * Buckets a selection may hold: the chart's 288, `MAX_READ_BUCKETS` in PHP.
  *
- * @param {?string} key A candidate bucket key, `YYYY-MM-DD-HH-MM`.
- * @return {?string} `HH:MM–HH:MM UTC`, or null for anything of another shape.
+ * @type {number}
  */
-export const bucketSpan = ( key ) => {
+const SELECTION_MAX = 288;
+
+/**
+ * The bucket key an instant falls in, `YYYY-MM-DD-HH-MM` UTC.
+ *
+ * @param {number} ms A bucket's first instant, in milliseconds.
+ * @return {string} Its key.
+ */
+const keyAt = ( ms ) =>
+	new Date( ms ).toISOString().slice( 0, 16 ).replace( /[T:]/g, '-' );
+
+/**
+ * Where one piece of a spelling opens: the twin of
+ * `Stats_Store::selected_start()`, so a key passes only when it is the key of
+ * its own first instant.
+ *
+ * @param {string} key A piece of a spelling.
+ * @return {?number} The bucket's first instant, in milliseconds; null for a
+ * piece that is no five-minute key.
+ */
+const selectedStart = ( key ) => {
 	if ( ! /^\d{4}(-\d{2}){4}$/.test( key ) ) {
 		return null;
 	}
-	const start = keyStart( key ).getTime();
-	const hhmm = ( ms ) => new Date( ms ).toISOString().slice( 11, 16 );
-	return `${ hhmm( start ) }–${ hhmm( start + BUCKET_SECONDS * 1000 ) } UTC`;
+	const ms = keyStart( key ).getTime();
+	return keyAt( ms ) === key && 0 === ms % BUCKET_MS ? ms : null;
 };
 
 /**
- * A bucket filter as a reader sees it. A key of another shape — a stale or
+ * The bucket keys a selection's spelling names, ascending, each once: the
+ * twin of `Stats_Store::bucket_selection()`, selecting nothing where that
+ * one refuses.
+ *
+ * A spelling is comma-separated runs, each `start` or `start..end` over
+ * bucket keys; `bucketSpelling()` writes the canonical one. '' selects
+ * nothing, and so does a piece that is no five-minute key, a run ending
+ * before it starts, or more than 288 buckets.
+ *
+ * @param {string} spelling A selection's spelling.
+ * @return {string[]} Its keys, ascending; [] when refused.
+ */
+export const bucketsOf = ( spelling ) => {
+	const keys = new Set();
+	for ( const run of '' === spelling ? [] : spelling.split( ',' ) ) {
+		const cut = run.indexOf( '..' );
+		const first = selectedStart( -1 === cut ? run : run.slice( 0, cut ) );
+		const last = -1 === cut ? first : selectedStart( run.slice( cut + 2 ) );
+		if ( null === first || null === last || last < first ) {
+			return [];
+		}
+		for (
+			let at = first;
+			at <= last && keys.size <= SELECTION_MAX;
+			at += BUCKET_MS
+		) {
+			keys.add( keyAt( at ) );
+		}
+		if ( keys.size > SELECTION_MAX ) {
+			return [];
+		}
+	}
+	return [ ...keys ].sort();
+};
+
+/**
+ * Split ascending keys into runs of adjacent buckets.
+ *
+ * @param {string[]} keys Bucket keys, ascending, each once.
+ * @return {string[][]} The runs, each its keys in order.
+ */
+export const runsOf = ( keys ) =>
+	keys.reduce( ( runs, key ) => {
+		const run = runs.at( -1 );
+		if (
+			run &&
+			keyStart( key ).getTime() ===
+				keyStart( run.at( -1 ) ).getTime() + BUCKET_MS
+		) {
+			run.push( key );
+		} else {
+			runs.push( [ key ] );
+		}
+		return runs;
+	}, /** @type {string[][]} */ ( [] ) );
+
+/**
+ * A run as the UTC span it covers, from its first bucket's opening to its
+ * last bucket's close.
+ *
+ * @param {string[]} run Adjacent bucket keys, ascending.
+ * @return {string} `HH:MM–HH:MM UTC`.
+ */
+export const runSpan = ( run ) => {
+	const hhmm = ( ms ) => new Date( ms ).toISOString().slice( 11, 16 );
+	return `${ hhmm( keyStart( run[ 0 ] ).getTime() ) }–${ hhmm(
+		keyStart( run.at( -1 ) ).getTime() + BUCKET_MS
+	) } UTC`;
+};
+
+/**
+ * A selection's canonical spelling: its keys as runs, each adjacent pair
+ * merged, a lone bucket spelled alone. The twin of
+ * `Stats_Store::bucket_spelling()`.
+ *
+ * @param {string[]} keys Bucket keys, ascending, each once.
+ * @return {string} The spelling; '' for none.
+ */
+export const bucketSpelling = ( keys ) =>
+	runsOf( keys )
+		.map( ( run ) =>
+			1 === run.length ? run[ 0 ] : `${ run[ 0 ] }..${ run.at( -1 ) }`
+		)
+		.join( ',' );
+
+/**
+ * The selection a chart click leaves: a plain click selects its bucket
+ * alone, an additive one adds or removes it.
+ *
+ * @param {string}  spelling The held selection.
+ * @param {string}  key      The clicked bucket.
+ * @param {boolean} additive Whether cmd or ctrl was held.
+ * @return {string} The new selection's spelling.
+ */
+const clickSelection = ( spelling, key, additive ) => {
+	if ( ! additive ) {
+		return key;
+	}
+	const held = bucketsOf( spelling );
+	return bucketSpelling(
+		held.includes( key )
+			? held.filter( ( k ) => k !== key )
+			: [ ...held, key ].sort()
+	);
+};
+
+/**
+ * A selection as UTC spans, one per run, the way a filter names it.
+ *
+ * @param {?string} spelling A candidate selection's spelling.
+ * @return {?string} Each run's `runSpan()`, comma-joined; null for none or
+ * for a spelling the server would refuse.
+ */
+export const bucketSpan = ( spelling ) => {
+	const runs = runsOf(
+		'string' === typeof spelling ? bucketsOf( spelling ) : []
+	);
+	return runs.length ? runs.map( runSpan ).join( ', ' ) : null;
+};
+
+/**
+ * A selection as a reader sees it. A spelling of another shape — a stale or
  * hand-edited `?bucket=` the server refuses — reads as it arrived, so the
  * control that clears it can still name it.
  *
- * @param {string} key A candidate bucket key.
- * @return {string} Its `bucketSpan()`, or the key itself.
+ * @param {string} spelling A candidate selection's spelling.
+ * @return {string} Its `bucketSpan()`, or the spelling itself.
  */
-export const bucketLabel = ( key ) => bucketSpan( key ) ?? key;
+export const bucketLabel = ( spelling ) => bucketSpan( spelling ) ?? spelling;
 
 /**
  * Build the slots a chart's time axis is drawn over, oldest first.
@@ -67,17 +209,56 @@ export const buildChartSlots = ( slots ) =>
 	} ) );
 
 /**
- * Map the slot index `AreaTimeChart` reports back to that slot's bucket key.
+ * Map the slot index `AreaTimeChart` reports back to that slot's bucket key,
+ * passing on whether the click was additive.
  *
- * @param {Array<{bucketKey:string}>}   axis          The axis the series sample.
- * @param {(bucketKey: string) => void} [onSlotClick] The chart's listener.
- * @return {((index: number) => void)|undefined} The frame's click, held stable; none without a listener.
+ * @param {Array<{bucketKey:string}>}                               axis          The axis the series sample.
+ * @param {(bucketKey: string, click: {additive: boolean}) => void} [onSlotClick] The chart's listener.
+ * @return {((index: number, click: {additive: boolean}) => void)|undefined} The frame's click, held stable; none without a listener.
  */
 export const useSlotClick = ( axis, onSlotClick ) =>
 	useMemo(
-		() => onSlotClick && ( ( at ) => onSlotClick( axis[ at ].bucketKey ) ),
+		() =>
+			onSlotClick &&
+			( ( at, { additive } ) =>
+				onSlotClick( axis[ at ].bucketKey, { additive } ) ),
 		[ axis, onSlotClick ]
 	);
+
+/**
+ * A selection held as its spelling, read as the keys a chart shades and
+ * edited by a chart click. The edit is an updater over the held spelling, so
+ * every click of one batch lands on the selection the click before it left.
+ *
+ * @param {string}                                              spelling The held selection's spelling.
+ * @param {(update: string|((held: string) => string)) => void} onChange The holder's setter, taking a spelling or an updater of one.
+ * @return {[string[], (bucketKey: string, click: {additive: boolean}) => void]} The selection's keys, and the click that edits it, held stable.
+ */
+export const useBucketSelection = ( spelling, onChange ) => [
+	useMemo( () => bucketsOf( spelling ), [ spelling ] ),
+	useCallback(
+		( key, { additive } ) =>
+			onChange( ( held ) => clickSelection( held, key, additive ) ),
+		[ onChange ]
+	),
+];
+
+/**
+ * The axis indexes a chart shades for the selected buckets.
+ *
+ * @param {Array<{bucketKey:string}>} axis            The axis the series sample.
+ * @param {string[]}                  selectedBuckets The selection's keys.
+ * @return {Set<number>} The indexes of the selected buckets the axis draws.
+ */
+export const useSelectedSlots = ( axis, selectedBuckets ) =>
+	useMemo( () => {
+		const selected = new Set( selectedBuckets );
+		return new Set(
+			axis.flatMap( ( slot, at ) =>
+				selected.has( slot.bucketKey ) ? [ at ] : []
+			)
+		);
+	}, [ axis, selectedBuckets ] );
 
 /**
  * A dimensional row's fields, in wire order: `DIM_SUMS` — requests, the

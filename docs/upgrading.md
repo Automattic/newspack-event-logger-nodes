@@ -6,6 +6,31 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **`--bucket` takes a selection, and its refusals name the key.** `urls`,
+  `dump_url`, `ask` and their MCP tools read `bucket` as comma-separated
+  runs of `Y-m-d-H-i` keys, `start..end` inclusive, so a single key reads
+  as before. A malformed or off-grid key is refused as
+  `bucket <key> must be a five-minute key, Y-m-d-H-i in UTC`, where the
+  old message, `bucket must be a five-minute key, Y-m-d-H-i in UTC`, named
+  no key. A client matching the old text whole no longer matches; match
+  from `must be` on, which both carry. `filters.bucket` and both briefs
+  echo the canonical spelling, which can differ from what was sent. A PHP
+  caller of `Stats_Store::url_bucket_members()` passes a list of buckets
+  where it passed one, and a budget of (hash, server) pairs before
+  `$failed`; each hash maps to server key => the hours whose buckets named it, where
+  it mapped to a list of server keys.
+
+- **`Flame_Builder_Node::roll_up_hours()` takes the tick.** Its fourth
+  parameter is the flush's one read of `Core::$now`, which the hour fold
+  values its bucket filings by: pass the tick the caller planned at.
+
+- **This release needs newspack-nodes 2.93.0.** A tag token's remove ×
+  takes its ink from the `--wp-components-color-*` tokens the substrate's
+  `newspack-nodes-ui` style handle sets on each skin, and keeps no colour of
+  its own; below 2.93.0 it vanishes on a dark skin. Below the floor the
+  plugin stays dormant behind its admin notice. Update the substrate first,
+  then this plugin, then restart the workers.
+
 - **This release needs newspack-nodes 2.90.0.** Hub mode reads the
   substrate's `Topology_Analyzer::nodes_of_type()` and the `remote_partition`
   its graph names on each `Remote_Source`. Below the floor the

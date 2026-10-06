@@ -31,8 +31,10 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 		data,
 		slots,
 		onSlotClick,
+		selectedBuckets,
 	} ) => {
 		globalThis.__aggregateSlotClick = onSlotClick;
+		globalThis.__aggregateSelected = selectedBuckets;
 		return `AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
 		},totals=${ undefined === data ? 'none' : 'given' }] slots:${
@@ -42,8 +44,9 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { slots, onSlotClick } ) => {
+	default: ( { slots, onSlotClick, selectedBuckets } ) => {
 		globalThis.__categorySlotClick = onSlotClick;
+		globalThis.__categorySelected = selectedBuckets;
 		return `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`;
 	},
 } ) );
@@ -107,7 +110,7 @@ describe( 'OverviewSection', () => {
 			{ ask: { active: false, start, cancel: jest.fn() } }
 		);
 		const trigger = container.querySelector( '[data-ask-trigger]' );
-		const search = container.querySelector( 'input[type="text"]' );
+		const search = container.querySelector( 'input[type="search"]' );
 		expect( trigger ).toBeTruthy();
 		expect( search ).toBeTruthy();
 		expect(
@@ -127,6 +130,17 @@ describe( 'OverviewSection', () => {
 		);
 		expect( globalThis.__aggregateSlotClick ).toBe( onSlotClick );
 		expect( globalThis.__categorySlotClick ).toBe( onSlotClick );
+		unmount();
+	} );
+
+	it( "hands both charts the table's selection to shade", () => {
+		const selectedBuckets = [ '2026-10-04-13-25', '2026-10-04-13-35' ];
+		const { unmount } = mount(
+			{ slots: slotsEndingAt( '2026-10-04-13-35' ) },
+			{ selectedBuckets }
+		);
+		expect( globalThis.__aggregateSelected ).toBe( selectedBuckets );
+		expect( globalThis.__categorySelected ).toBe( selectedBuckets );
 		unmount();
 	} );
 
@@ -443,7 +457,7 @@ describe( 'OverviewSection', () => {
 				onSearch,
 			}
 		);
-		const input = container.querySelector( 'input[type="text"]' );
+		const input = container.querySelector( 'input[type="search"]' );
 		// No sibling dashboard's search carries a submit button; nor does this.
 		expect(
 			Array.from( container.querySelectorAll( 'button' ) ).some(
@@ -460,6 +474,23 @@ describe( 'OverviewSection', () => {
 		} );
 		expect( onSearch ).toHaveBeenCalledTimes( 1 );
 		expect( onSearch ).toHaveBeenCalledWith( 'rid-123' );
+		unmount();
+	} );
+
+	it( "the request search's reset button empties the box through its setter", () => {
+		const setSearchQuery = jest.fn();
+		const { container, unmount } = mount(
+			{},
+			{ searchQuery: 'rid-kea-29', setSearchQuery }
+		);
+		const control = container.querySelector( '.components-search-control' );
+		expect( control.querySelector( 'input' ).labels[ 0 ].textContent ).toBe(
+			'Request ID or /url pattern'
+		);
+
+		act( () => control.querySelector( 'button' ).click() );
+
+		expect( setSearchQuery ).toHaveBeenLastCalledWith( '' );
 		unmount();
 	} );
 

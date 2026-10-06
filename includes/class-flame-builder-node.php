@@ -1519,7 +1519,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			// worker, so a respawn is the only way the memo goes stale.
 			// Reading before the writes are placed keeps the first flush after
 			// one from leaving rows in fine buckets a folded hour replaced.
-			$this->roll_up_hours( $stats_store, $plan, $this->foldable( $stats_store, $plan['hours'], $now ) );
+			$this->roll_up_hours( $stats_store, $plan, $this->foldable( $stats_store, $plan['hours'], $now ), $now );
 			// Lexical order IS chronological, which is what bucket_key() buys.
 			$filed = $this->persist_aggregate_stats( $stats_store, $now, (string) \end( $plan['fine'] ) );
 			$this->drain_url_stats( $stats_store, $now, $filed );
@@ -1825,30 +1825,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Add `$sets` blind, one `SADD` per `WRITE_BATCH_KEYS`, logging refusals.
-	 *
-	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets The sets the adder takes.
-	 * @param int                                                $now  The flush's one read of the tick.
-	 * @param \Closure(list<array{0: string, 1: string, 2: list<string>}>, int): array<int,bool> $add The store's adder.
-	 * @param string                                             $ns   The namespace the sets live in.
-	 * @return list<bool> Whether each set landed, in order.
-	 */
-	private function file_sets( array $sets, int $now, \Closure $add, string $ns ): array {
-		$this->tally( Flame_Tree::STATS_WRITES, "{$ns} sets", \count( $sets ) );
-		$out = [];
-		foreach ( \array_chunk( $sets, self::WRITE_BATCH_KEYS ) as $chunk ) {
-			$landed  = \array_values( $add( $chunk, $now ) );
-			$refused = \count( \array_keys( $landed, false, true ) );
-			if ( $refused > 0 ) {
-				$this->tally( Flame_Tree::STATS_WRITES, 'refused ' . $ns, $refused );
-				$this->print_less_often( "{$ns} write refused; {$refused} sets left unfiled" );
-			}
-			\array_push( $out, ...$landed );
-		}
-		return $out;
-	}
-
-	/**
 	 * One bucket's URL index intents: each family's rows filed under its own
 	 * server, one intent per server per shard, and the index naming each
 	 * server with the shards it filed, both families in one mask.
@@ -1964,7 +1940,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$this->rank_buckets( $stats_store, \array_keys( $this->rank_pending ), $now );
 		$this->rank_hours_from_store(
 			$stats_store,
-			\array_slice( \array_keys( $this->stale_hours ), 0, self::ROLLUP_HOURS_PER_FLUSH )
+			\array_slice( \array_keys( $this->stale_hours ), 0, self::ROLLUP_HOURS_PER_FLUSH ),
+			$now
 		);
 	}
 
@@ -2314,8 +2291,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param Stats_Store                                    $stats_store Source and destination.
 	 * @param array{fine: list<string>, hours: list<string>} $plan        The flush's read plan.
 	 * @param list<string>                                   $foldable    The plan hours `foldable()` names.
+	 * @param int                                            $now         The flush's one read of the tick.
 	 */
-	public function roll_up_hours( Stats_Store $stats_store, array $plan, array $foldable ): void {
+	public function roll_up_hours( Stats_Store $stats_store, array $plan, array $foldable, int $now ): void {
 		// Drop what left the window, so the memo cannot outgrow it.
 		$planned            = \array_flip( $plan['hours'] );
 		$this->folded_hours = \array_intersect_key( $this->folded_hours, $planned );
@@ -2358,7 +2336,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			// A crash between shards leaves no index, so the hour folds again.
 			$fold = $this->spanned(
 				Flame_Tree::STATS_FOLD,
-				fn (): ?array => $this->fold_hour_into_store( $stats_store, $hour, false ),
+				fn (): ?array => $this->fold_hour_into_store( $stats_store, $hour, false, $now ),
 				static fn ( ?array $fold ): array => [ "{$hour}: missing index", $fold ?? [ 'unanswered' => true ] ]
 			);
 			if ( null === $fold ) {
@@ -2423,8 +2401,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * @param Stats_Store  $stats_store Source and destination.
 	 * @param list<string> $hours       Hour keys.
+	 * @param int          $now         The flush's one read of the tick.
 	 */
-	private function rank_hours_from_store( Stats_Store $stats_store, array $hours ): void {
+	private function rank_hours_from_store( Stats_Store $stats_store, array $hours, int $now ): void {
 		foreach ( \array_chunk( $hours, self::ROLLUP_HOURS_PER_FLUSH ) as $chunk ) {
 			$index = $stats_store->server_index( $chunk, [], $index_failed );
 			$rows  = [];
@@ -2457,7 +2436,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				if ( isset( $short[ $hour ] ) ) {
 					$fold = $this->spanned(
 						Flame_Tree::STATS_FOLD,
-						fn (): ?array => $this->fold_hour_into_store( $stats_store, $hour, true ),
+						fn (): ?array => $this->fold_hour_into_store( $stats_store, $hour, true, $now ),
 						static fn ( ?array $fold ): array => [ "{$hour}: missing shard", $fold ?? [ 'unanswered' => true ] ]
 					);
 					if ( null !== $fold ) {
@@ -2507,13 +2486,18 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * expired, and overwriting from it would empty the index, the rows and
 	 * the lists the hour still holds.
 	 *
+	 * The rows it reads name each bucket's URLs, so the fold files them in
+	 * the bucket index again (`refile_buckets()`), healing an add the flush
+	 * owed until its bucket aged out.
+	 *
 	 * @param Stats_Store $stats_store Source and destination.
 	 * @param string      $hour        Hour key.
 	 * @param bool        $held        The hour holds an index, so it was folded before.
+	 * @param int         $now         The flush's one read of the tick.
 	 * @return array{servers: int, rows: int, writes: int, refused: int}|null What
 	 *         the fold wrote, for its `stats fold` span; null where it folded nothing.
 	 */
-	private function fold_hour_into_store( Stats_Store $stats_store, string $hour, bool $held ): ?array {
+	private function fold_hour_into_store( Stats_Store $stats_store, string $hour, bool $held, int $now ): ?array {
 		$shards  = Stats_Store::every_shard();
 		$names   = [];
 		$reads   = [];
@@ -2527,14 +2511,15 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$names[ $key ] ??= $server;
 				foreach ( Stats_Store::shards_in( $mask, true ) as $shard ) {
 					$reads[] = [ Stats_Store::url_shard_parts( $key, $shard ), $bucket ];
-					$owner[] = [ $names[ $key ], $shard ];
+					$owner[] = [ $names[ $key ], $shard, $bucket, $key ];
 				}
 			}
 		}
 		if ( $held && [] === $names ) {
 			return [ 'servers' => 0, 'rows' => 0, 'writes' => 0, 'refused' => 0 ];
 		}
-		$rows = \array_fill_keys( \array_values( $names ), [] );
+		$rows   = \array_fill_keys( \array_values( $names ), [] );
+		$filing = [];
 		foreach ( \array_chunk( $reads, self::WRITE_BATCH_KEYS, true ) as $chunk ) {
 			$values = $stats_store->bucket_get_multi( $chunk, $chunk_failed );
 			if ( Stats_Store::unanswered( $values, $chunk_failed ) ) {
@@ -2542,11 +2527,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			}
 			foreach ( $values as $at => $value ) {
 				if ( null !== $value ) {
-					[ $server, $shard ]        = $owner[ $at ];
-					$rows[ $server ][ $shard ] = self::merge_url_rows( $rows[ $server ][ $shard ] ?? [], $value );
+					[ $server, $shard, $bucket, $key ] = $owner[ $at ];
+					$rows[ $server ][ $shard ]         = self::merge_url_rows( $rows[ $server ][ $shard ] ?? [], $value );
+					$filing[ $bucket ][ $key ]         = ( $filing[ $bucket ][ $key ] ?? [] ) + $value;
 				}
 			}
 		}
+		$this->refile_buckets( $stats_store, $filing, $now );
 		$writes = [];
 		$ranked = [];
 		$named  = [];
@@ -2588,6 +2575,56 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			'writes'  => \count( $writes ) + $ranks['writes'],
 			'refused' => $refused + $ranks['refused'],
 		];
+	}
+
+	/**
+	 * File each URL a folded bucket's shards hold in that bucket's set of its
+	 * server, blind, through the flush's own adder: idempotent, so a URL the
+	 * flush filed is added again harmlessly. An overflow row names no URL,
+	 * so a URL a shard's byte cap folded into it is not filed here.
+	 *
+	 * @param Stats_Store                                           $stats_store Destination.
+	 * @param array<string,array<array-key,array<array-key,mixed>>> $filing      Bucket => server key =>
+	 *                                                                           the rows its shards hold.
+	 * @param int                                                   $now         The flush's one read of the tick.
+	 */
+	private function refile_buckets( Stats_Store $stats_store, array $filing, int $now ): void {
+		$sets = [];
+		foreach ( $filing as $bucket => $servers ) {
+			foreach ( $servers as $key => $rows ) {
+				// An all-digit server key or hash is an INT key; cast back.
+				$hashes = \array_map( 'strval', \array_keys( $rows ) );
+				$named  = \array_values( \array_filter( $hashes, static fn ( string $hash ): bool => ! Stats_Store::is_other_key( $hash ) ) );
+				if ( [] !== $named ) {
+					$sets[] = [ $bucket, (string) $key, $named ];
+				}
+			}
+		}
+		$this->file_sets( $sets, $now, $stats_store->add_url_buckets( ... ), Stats_Store::NS_URLBUCKET );
+	}
+
+	/**
+	 * Add `$sets` blind, one `SADD` per `WRITE_BATCH_KEYS`, logging refusals.
+	 *
+	 * @param list<array{0: string, 1: string, 2: list<string>}> $sets The sets the adder takes.
+	 * @param int                                                $now  The flush's one read of the tick.
+	 * @param \Closure(list<array{0: string, 1: string, 2: list<string>}>, int): array<int,bool> $add The store's adder.
+	 * @param string                                             $ns   The namespace the sets live in.
+	 * @return list<bool> Whether each set landed, in order.
+	 */
+	private function file_sets( array $sets, int $now, \Closure $add, string $ns ): array {
+		$this->tally( Flame_Tree::STATS_WRITES, "{$ns} sets", \count( $sets ) );
+		$out = [];
+		foreach ( \array_chunk( $sets, self::WRITE_BATCH_KEYS ) as $chunk ) {
+			$landed  = \array_values( $add( $chunk, $now ) );
+			$refused = \count( \array_keys( $landed, false, true ) );
+			if ( $refused > 0 ) {
+				$this->tally( Flame_Tree::STATS_WRITES, 'refused ' . $ns, $refused );
+				$this->print_less_often( "{$ns} write refused; {$refused} sets left unfiled" );
+			}
+			\array_push( $out, ...$landed );
+		}
+		return $out;
 	}
 
 	/**

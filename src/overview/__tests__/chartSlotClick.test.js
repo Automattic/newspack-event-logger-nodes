@@ -49,12 +49,24 @@ describe( 'AggregateTimeChart onSlotClick', () => {
 				onSlotClick,
 			} )
 		);
-		charts().at( -1 ).onSlotClick( 3 );
-		charts().at( -1 ).onSlotClick( 0 );
+		charts().at( -1 ).onSlotClick( 3, { additive: false } );
+		charts().at( -1 ).onSlotClick( 0, { additive: true } );
 		expect( onSlotClick.mock.calls ).toEqual( [
-			[ '2026-10-04-13-35' ],
-			[ '2026-10-04-13-20' ],
+			[ '2026-10-04-13-35', { additive: false } ],
+			[ '2026-10-04-13-20', { additive: true } ],
 		] );
+		unmount();
+	} );
+
+	it( 'shades the selected buckets at their axis indexes', () => {
+		const { unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				series,
+				slots: SLOTS,
+				selectedBuckets: [ '2026-10-04-13-25', '2026-10-04-13-35' ],
+			} )
+		);
+		expect( [ ...charts().at( -1 ).selectedSlots ] ).toEqual( [ 1, 3 ] );
 		unmount();
 	} );
 
@@ -82,12 +94,28 @@ describe( 'CategoryTimeChart onSlotClick', () => {
 			} )
 		);
 		expect( charts() ).toHaveLength( 3 );
-		charts().forEach( ( chart ) => chart.onSlotClick( 1 ) );
+		charts().forEach( ( chart ) =>
+			chart.onSlotClick( 1, { additive: true } )
+		);
 		expect( onSlotClick.mock.calls ).toEqual( [
-			[ '2026-10-04-13-25' ],
-			[ '2026-10-04-13-25' ],
-			[ '2026-10-04-13-25' ],
+			[ '2026-10-04-13-25', { additive: true } ],
+			[ '2026-10-04-13-25', { additive: true } ],
+			[ '2026-10-04-13-25', { additive: true } ],
 		] );
+		unmount();
+	} );
+
+	it( 'shades the selected buckets on every view', () => {
+		const { unmount } = renderComponent(
+			React.createElement( CategoryTimeChart, {
+				data,
+				slots: SLOTS,
+				selectedBuckets: [ '2026-10-04-13-30' ],
+			} )
+		);
+		charts().forEach( ( chart ) =>
+			expect( [ ...chart.selectedSlots ] ).toEqual( [ 2 ] )
+		);
 		unmount();
 	} );
 

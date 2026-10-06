@@ -8,6 +8,7 @@
 import * as React from 'react';
 import TagInputField from '../TagInputField';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
+import { compileLocal, resolveCascade } from '../../../test-helpers/cascade';
 
 /**
  * Set a controlled-input's value AND dispatch a React-friendly change.
@@ -34,13 +35,18 @@ function setControlledValue( input, value ) {
  *
  * @param {HTMLInputElement} input Input element to key.
  * @param {string}           key   KeyboardEvent key name.
+ * @return {KeyboardEvent} The dispatched event.
  */
 function pressKey( input, key ) {
-	act( () => {
-		input.dispatchEvent(
-			new KeyboardEvent( 'keydown', { key, bubbles: true } )
-		);
+	const event = new KeyboardEvent( 'keydown', {
+		key,
+		bubbles: true,
+		cancelable: true,
 	} );
+	act( () => {
+		input.dispatchEvent( event );
+	} );
+	return event;
 }
 
 describe( 'TagInputField', () => {
@@ -125,6 +131,53 @@ describe( 'TagInputField', () => {
 		act( () => setControlledValue( input, '/alpha' ) );
 		pressKey( input, 'Enter' );
 
+		expect(
+			container.querySelectorAll( '.event-logger-tag-text' )
+		).toHaveLength( 1 );
+		unmount();
+	} );
+
+	it( 'clears the box after a duplicate, adding nothing', () => {
+		const seen = [];
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				initialValues: [ '/kea' ],
+				onChange: ( v ) => seen.push( v ),
+			} )
+		);
+
+		const input = container.querySelector( 'input[type="text"]' );
+		act( () => setControlledValue( input, ' /kea ' ) );
+		pressKey( input, 'Enter' );
+
+		expect( input.value ).toBe( '' );
+		expect( seen ).toEqual( [] );
+		unmount();
+	} );
+
+	it( 'lets Enter in an empty box through, keeping it only to add', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, { initialValues: [ '/kea' ] } )
+		);
+
+		const input = container.querySelector( 'input[type="text"]' );
+		expect( pressKey( input, 'Enter' ).defaultPrevented ).toBe( false );
+		act( () => setControlledValue( input, '/weka' ) );
+		expect( pressKey( input, 'Enter' ).defaultPrevented ).toBe( true );
+		unmount();
+	} );
+
+	it( 'drops the typed text on Escape, and holds the Escape', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, { initialValues: [ '/kea' ] } )
+		);
+
+		const input = container.querySelector( 'input[type="text"]' );
+		act( () => setControlledValue( input, '/weka' ) );
+		const event = pressKey( input, 'Escape' );
+
+		expect( input.value ).toBe( '' );
+		expect( event.defaultPrevented ).toBe( true );
 		expect(
 			container.querySelectorAll( '.event-logger-tag-text' )
 		).toHaveLength( 1 );
@@ -221,5 +274,40 @@ describe( 'TagInputField', () => {
 				.className
 		).toContain( 'horizontal' );
 		horizontal.unmount();
+	} );
+
+	it( 'keeps its tag row 8px above the box it sits over', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				initialValues: [ '/takahe' ],
+				horizontal: true,
+			} )
+		);
+		const row = container.querySelector( '.event-logger-tag-container' );
+
+		expect(
+			resolveCascade( row, [
+				compileLocal( 'settings/styles/tag-input.scss' ),
+			] )[ 'margin-bottom' ]
+		).toBe( '8px' );
+		unmount();
+	} );
+
+	it( 'keeps its tags badge-sized, since no box shares their row', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				initialValues: [ '/takahe' ],
+				horizontal: true,
+			} )
+		);
+		const token = container.querySelector( '.event-logger-tag-token' );
+
+		expect(
+			resolveCascade( token, [
+				compileLocal( 'components/TagToken.scss' ),
+				compileLocal( 'settings/styles/tag-input.scss' ),
+			] )[ 'min-height' ]
+		).toBeUndefined();
+		unmount();
 	} );
 } );

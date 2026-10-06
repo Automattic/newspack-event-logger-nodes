@@ -316,17 +316,17 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
 	} );
 
-	test( 'showing the page reopens the EventSource', () => {
+	test( 'showing the page reopens the EventSource', async () => {
 		const { rerender } = renderHook( () => useErrorLogGraph() );
 		mockPageVisible = false;
 		act( () => rerender( { n: 1 } ) );
 		const before = FakeEventSource.instances.length;
 		mockPageVisible = true;
-		act( () => rerender( { n: 2 } ) );
+		await act( async () => rerender( { n: 2 } ) );
 		expect( FakeEventSource.instances.length ).toBeGreaterThan( before );
 	} );
 
-	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
+	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', async () => {
 		const { rerender } = renderHook( () => useErrorLogGraph() );
 		// A tailed record: segment:offset:length in ID, partition dir in FROM.
 		const rec = errorEnvelope( 'r1', { ts: 1, k: 'error', m: 'x' } );
@@ -338,7 +338,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		mockPageVisible = false;
 		act( () => rerender( { n: 1 } ) );
 		mockPageVisible = true;
-		act( () => rerender( { n: 2 } ) );
+		await act( async () => rerender( { n: 2 } ) );
 		const url = FakeEventSource.last.url;
 		expect( url ).toContain( 'positions=' );
 		const positions = JSON.parse(
@@ -375,7 +375,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		expect( Core.node( VIEW ).view.paused ).toBe( false );
 	} );
 
-	test( 'a user pause outranks a visibility refocus: pause → hide → refocus stays CLOSED', () => {
+	test( 'a user pause outranks a visibility refocus: pause → hide → refocus stays CLOSED', async () => {
 		// Pause and visibility are combined into ONE isActive gate, so a refocus
 		// cannot auto-resume a user-paused stream. Regression guard against a
 		// fork back to a separate visibility path.
@@ -386,7 +386,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		mockPageVisible = false;
 		act( () => rerender( { n: 1 } ) );
 		mockPageVisible = true;
-		act( () => rerender( { n: 2 } ) );
+		await act( async () => rerender( { n: 2 } ) );
 		expect( FakeEventSource.instances.length ).toBe( afterPause );
 		expect( FakeEventSource.last.closed ).toBe( true );
 	} );
@@ -460,7 +460,7 @@ describe( 'useErrorLogGraph — glob browse', () => {
 		mockPageVisible = false;
 		act( () => rerender( { n: 1 } ) );
 		mockPageVisible = true;
-		act( () => rerender( { n: 2 } ) );
+		await act( async () => rerender( { n: 2 } ) );
 		// The reopened stream is still the browsed dir, not the glob.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.p5' );
 	} );

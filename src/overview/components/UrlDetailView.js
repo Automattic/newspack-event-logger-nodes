@@ -13,8 +13,8 @@
  *   4. Aggregate flame graph, drawn by `RequestTrace`, which holds
  *      d3-flame-graph behind `lazy()` so the sections above it paint first.
  *   5. Aggregate profile breakdown, averaged across the profiled requests.
- *   6. Virtualized recent-requests table with an "Errors Only" toggle and
- *      the chip of the five-minute bucket a chart click narrowed it to.
+ *   6. Virtualized recent-requests table with the Time field holding the
+ *      buckets the list narrows to, and an "Errors Only" toggle after it.
  *
  * The breakdown series is the one read this view issues for itself, because it
  * is a separate round trip from the `dump_url` payload: `url_breakdown` goes
@@ -57,8 +57,8 @@ import { breakdownState } from '../AggregateTimeChart';
 import { errorStatus } from '../../components/errorStatus';
 import { wholeMs } from './HeadlineStats';
 import SortHeaderButton from './SortHeaderButton';
-import BucketChip from './BucketChip';
-import { bucketLabel } from '../chartSlots';
+import BucketField from './BucketField';
+import { bucketLabel, useBucketSelection } from '../chartSlots';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 
@@ -143,7 +143,7 @@ function ErrorsLine( { total, summary } ) {
  *
  * @param {Object}  filters             The modal's filters.
  * @param {boolean} filters.errors_only Whether the list holds the URL's errors alone.
- * @param {string}  filters.bucket      The bucket key the list narrows to; '' for none.
+ * @param {string}  filters.bucket      The bucket selection the list narrows to; '' for none.
  * @return {?string} The note, or null while nothing is narrowed.
  */
 const narrowedNote = ( { errors_only: errorsOnly, bucket } ) => {
@@ -265,8 +265,8 @@ const RequestRow = memo(
  * lives upstream too: the server answers it, walking past the clean requests
  * that bury a busy URL's errors, so the list, the heading count, the
  * bar-scaling maximum and the response-time scatter all show those errors.
- * The bucket a chart click picks lives upstream on the same terms, and the
- * server answers it the same way.
+ * The bucket selection the charts and the Time field edit lives upstream on
+ * the same terms, and the server answers it the same way.
  *
  * @param {Object}                                   props                 Component props.
  * @param {Object}                                   props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
@@ -275,8 +275,10 @@ const RequestRow = memo(
  * @param {(field: string) => void}                  props.onRequestSort   Receives a field name when a sortable header is clicked.
  * @param {(rid: string, partition: number) => void} props.onSelectRequest Receives a rid AND its partition from a row click or a scatter-plot dot.
  * @param {string}                                   props.urlHash         The URL's 12-char hash, which addresses the `url_breakdown` read below.
- * @param {{errors_only: boolean, bucket: string}}   props.filters         What the header and list narrow to: Errors Only, and the five-minute bucket key, '' for none. The dashboard owns both, so they survive a trip to a request and back.
- * @param {(field: string, value: *) => void}        props.onFilterChange  Receives one field of `filters` and its new value: the flipped toggle, the bucket key a chart click lands on, or '' from the chip.
+ * @param {{errors_only: boolean, bucket: string}}   props.filters         What the header and list narrow to: Errors Only, and the bucket selection's spelling, '' for none. The dashboard owns both, so they survive a trip to a request and back.
+ * @param {(field: string, value: *) => void}        props.onFilterChange  Receives one field of `filters` and its new value, or an updater of its held one: the flipped toggle, the Time field's selection, or a chart click's updater.
+ * @param {boolean}                                  [props.listing]       Whether the list is being asked afresh under new filters; the rows it holds answer the old ones, so the list alone shows it loading.
+ * @param {?string}                                  [props.listError]     Why the last ask for the list was refused, or null; the list keeps what it held.
  * @param {?Object}                                  [props.detailErrors]  Under Errors Only, the `errorSummary()` of the list; null while every request is listed.
  * @return {import('react').ReactElement} Rendered component.
  */
@@ -289,14 +291,20 @@ export default function UrlDetailView( {
 	urlHash,
 	filters,
 	onFilterChange,
+	listing = false,
+	listError = null,
 	detailErrors = null,
 } ) {
 	const listRef = useRef( null );
 	const errorsOnly = filters.errors_only;
 	const note = narrowedNote( filters );
-	const pickBucket = useCallback(
-		( key ) => onFilterChange( 'bucket', key ),
+	const setBucket = useCallback(
+		( update ) => onFilterChange( 'bucket', update ),
 		[ onFilterChange ]
+	);
+	const [ selectedBuckets, pickBucket ] = useBucketSelection(
+		filters.bucket,
+		setBucket
 	);
 
 	// A list the walk cut short reads exactly like a URL with no traffic.
@@ -429,12 +437,14 @@ export default function UrlDetailView( {
 				loading={ breakdownLoading }
 				error={ breakdownError }
 				onSlotClick={ pickBucket }
+				selectedBuckets={ selectedBuckets }
 			/>
 
 			<CategoryTimeChart
 				data={ urlDetail?.category_time_series }
 				slots={ urlDetail?.slots ?? null }
 				onSlotClick={ pickBucket }
+				selectedBuckets={ selectedBuckets }
 			/>
 
 			{ urlDetail.requests?.length > 0 && (
@@ -479,15 +489,25 @@ export default function UrlDetailView( {
 					} }
 				>
 					<h3 style={ { margin: 0 } }>
-						{ sprintf(
-							// translators: %d: number of recent requests shown.
-							__(
-								'Recent Requests (%d)',
-								'newspack-event-logger-nodes'
-							),
-							sortedRequests.length
-						) }
+						{ listing
+							? __(
+									'Recent Requests',
+									'newspack-event-logger-nodes'
+							  )
+							: sprintf(
+									// translators: %d: number of recent requests shown.
+									__(
+										'Recent Requests (%d)',
+										'newspack-event-logger-nodes'
+									),
+									sortedRequests.length
+							  ) }
 					</h3>
+					<BucketField
+						value={ filters.bucket }
+						slots={ urlDetail?.slots ?? null }
+						onChange={ setBucket }
+					/>
 					<button
 						type="button"
 						className={ errorsOnly ? 'button is-active' : 'button' }
@@ -505,11 +525,19 @@ export default function UrlDetailView( {
 									'newspack-event-logger-nodes'
 							  ) }
 					</button>
-					<BucketChip
-						bucket={ filters.bucket }
-						onClear={ () => pickBucket( '' ) }
-					/>
 				</div>
+				{ listError && (
+					<p className="newspack-nodes-status is-error">
+						{ sprintf(
+							// translators: %s: the error message.
+							__(
+								'Could not list requests: %s',
+								'newspack-event-logger-nodes'
+							),
+							listError
+						) }
+					</p>
+				) }
 				{ detailErrors && (
 					<ErrorsLine
 						total={ urlDetail.stats?.errors }
@@ -561,13 +589,18 @@ export default function UrlDetailView( {
 					ref={ listRef }
 					className="event-logger-table__list newspack-nodes-table"
 				>
-					{ sortedRequests.length === 0 ? (
+					{ listing || sortedRequests.length === 0 ? (
 						<div className="event-logger-table__empty newspack-nodes-empty-state">
-							{ scanNote ||
-								__(
-									'No requests to display',
-									'newspack-event-logger-nodes'
-								) }
+							{ listing
+								? __(
+										'Loading requests…',
+										'newspack-event-logger-nodes'
+								  )
+								: scanNote ||
+								  __(
+										'No requests to display',
+										'newspack-event-logger-nodes'
+								  ) }
 						</div>
 					) : (
 						<>
@@ -585,7 +618,7 @@ export default function UrlDetailView( {
 						</>
 					) }
 				</div>
-				{ scanNote && sortedRequests.length > 0 && (
+				{ scanNote && ! listing && sortedRequests.length > 0 && (
 					<p className="newspack-nodes-status">{ scanNote }</p>
 				) }
 			</div>

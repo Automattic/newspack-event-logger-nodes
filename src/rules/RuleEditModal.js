@@ -15,6 +15,12 @@
  * stands would keep a rule's hooks and thresholds alive under an action that
  * logs nothing.
  *
+ * Its fields and actions are one form, so Enter in the pattern or a threshold
+ * saves, as Save rule does. Enter on a typed significant event commits the tag
+ * instead, its box preventing the key; an empty box lets Enter save. The two
+ * pickers sit outside that form, portalled and beside it in the tree, so
+ * Enter in a picker's search saves nothing.
+ *
  * The draft's id round-trips untouched. `Rules_CI_Node` mints a rule's id from
  * its pattern, so an edit that moves the pattern arrives carrying the OLD id,
  * which is the only thing telling `upsert` which entry this edit replaces.
@@ -30,6 +36,7 @@ import {
 	CheckboxControl,
 } from '@wordpress/components';
 
+import { submitProps } from '@newspack-nodes/shared/utils/submitProps';
 import HookSelectorModal from '../settings/settings/HookSelectorModal';
 
 /**
@@ -178,291 +185,305 @@ export default function RuleEditModal( {
 			onRequestClose={ onCancel }
 			className={ `${ SKIN_CLASSES } ${ className }`.trim() }
 		>
-			<div className="rule-edit-body">
-				<TextControl
-					__next40pxDefaultSize
-					__nextHasNoMarginBottom
-					label={ __( 'URL pattern', 'newspack-event-logger-nodes' ) }
-					help={ __(
-						'A prefix like /blog, or an exact match ending in ? (e.g. /about?).',
-						'newspack-event-logger-nodes'
-					) }
-					name="rule-pattern"
-					value={ pattern }
-					onChange={ setPattern }
-				/>
+			<form { ...submitProps( handleSave ) }>
+				<div className="rule-edit-body">
+					<TextControl
+						__next40pxDefaultSize
+						__nextHasNoMarginBottom
+						label={ __(
+							'URL pattern',
+							'newspack-event-logger-nodes'
+						) }
+						help={ __(
+							'A prefix like /blog, or an exact match ending in ? (e.g. /about?).',
+							'newspack-event-logger-nodes'
+						) }
+						name="rule-pattern"
+						value={ pattern }
+						onChange={ setPattern }
+					/>
 
-				<SelectControl
-					__next40pxDefaultSize
-					__nextHasNoMarginBottom
-					label={ __( 'Action', 'newspack-event-logger-nodes' ) }
-					name="rule-action"
-					value={ action }
-					options={ [
-						{
-							label: __( 'Log', 'newspack-event-logger-nodes' ),
-							value: 'log',
-						},
-						{
-							label: __( 'Skip', 'newspack-event-logger-nodes' ),
-							value: 'skip',
-						},
-					] }
-					onChange={ setAction }
-				/>
-
-				{ isLog && (
-					<>
-						<div className="rule-edit-hooks-field">
-							<BaseControl.VisualLabel className="rule-edit-field-label">
-								{ __( 'Hooks', 'newspack-event-logger-nodes' ) }
-							</BaseControl.VisualLabel>
-							<button
-								type="button"
-								className="button"
-								onClick={ () => setIsHooksOpen( true ) }
-							>
-								{ __(
-									'Select Hooks',
+					<SelectControl
+						__next40pxDefaultSize
+						__nextHasNoMarginBottom
+						label={ __( 'Action', 'newspack-event-logger-nodes' ) }
+						name="rule-action"
+						value={ action }
+						options={ [
+							{
+								label: __(
+									'Log',
 									'newspack-event-logger-nodes'
-								) }
-							</button>
-							<span className="rule-edit-field-count newspack-nodes-status">
-								{ sprintf(
-									// translators: %d: number of selected hooks.
-									_n(
-										'%d hook',
-										'%d hooks',
-										hooks.length,
+								),
+								value: 'log',
+							},
+							{
+								label: __(
+									'Skip',
+									'newspack-event-logger-nodes'
+								),
+								value: 'skip',
+							},
+						] }
+						onChange={ setAction }
+					/>
+
+					{ isLog && (
+						<>
+							<div className="rule-edit-hooks-field">
+								<BaseControl.VisualLabel className="rule-edit-field-label">
+									{ __(
+										'Hooks',
 										'newspack-event-logger-nodes'
-									),
-									hooks.length
-								) }
-							</span>
-						</div>
-
-						<div className="rule-edit-custom-field">
-							<BaseControl.VisualLabel className="rule-edit-field-label">
-								{ __(
-									'Custom events',
-									'newspack-event-logger-nodes'
-								) }
-							</BaseControl.VisualLabel>
-							<button
-								type="button"
-								className="button"
-								onClick={ () => setIsCustomOpen( true ) }
-							>
-								{ __(
-									'Select Events',
-									'newspack-event-logger-nodes'
-								) }
-							</button>
-							<span className="rule-edit-field-count newspack-nodes-status">
-								{ sprintf(
-									// translators: %d: number of selected custom events.
-									_n(
-										'%d event',
-										'%d events',
-										customEvents.length,
+									) }
+								</BaseControl.VisualLabel>
+								<button
+									type="button"
+									className="button"
+									onClick={ () => setIsHooksOpen( true ) }
+								>
+									{ __(
+										'Select Hooks',
 										'newspack-event-logger-nodes'
-									),
-									customEvents.length
-								) }
-							</span>
-						</div>
+									) }
+								</button>
+								<span className="rule-edit-field-count newspack-nodes-status">
+									{ sprintf(
+										// translators: %d: number of selected hooks.
+										_n(
+											'%d hook',
+											'%d hooks',
+											hooks.length,
+											'newspack-event-logger-nodes'
+										),
+										hooks.length
+									) }
+								</span>
+							</div>
 
-						<div className="rule-edit-tag-field components-base-control">
-							<BaseControl.VisualLabel className="rule-edit-field-label">
-								{ __(
-									'Significant events',
-									'newspack-event-logger-nodes'
-								) }
-							</BaseControl.VisualLabel>
-							<TagInputField
-								initialValues={ significant }
-								onChange={ setSignificant }
-								horizontal
-							/>
-							<p className="components-base-control__help">
-								{ __(
-									'Events/hooks protected from auto-disable.',
-									'newspack-event-logger-nodes'
-								) }
-							</p>
-						</div>
+							<div className="rule-edit-custom-field">
+								<BaseControl.VisualLabel className="rule-edit-field-label">
+									{ __(
+										'Custom events',
+										'newspack-event-logger-nodes'
+									) }
+								</BaseControl.VisualLabel>
+								<button
+									type="button"
+									className="button"
+									onClick={ () => setIsCustomOpen( true ) }
+								>
+									{ __(
+										'Select Events',
+										'newspack-event-logger-nodes'
+									) }
+								</button>
+								<span className="rule-edit-field-count newspack-nodes-status">
+									{ sprintf(
+										// translators: %d: number of selected custom events.
+										_n(
+											'%d event',
+											'%d events',
+											customEvents.length,
+											'newspack-event-logger-nodes'
+										),
+										customEvents.length
+									) }
+								</span>
+							</div>
 
-						<div className="rule-edit-threshold-row">
-							<TextControl
-								__next40pxDefaultSize
+							<div className="rule-edit-tag-field components-base-control">
+								<BaseControl.VisualLabel className="rule-edit-field-label">
+									{ __(
+										'Significant events',
+										'newspack-event-logger-nodes'
+									) }
+								</BaseControl.VisualLabel>
+								<TagInputField
+									initialValues={ significant }
+									onChange={ setSignificant }
+									horizontal
+								/>
+								<p className="components-base-control__help">
+									{ __(
+										'Events/hooks protected from auto-disable.',
+										'newspack-event-logger-nodes'
+									) }
+								</p>
+							</div>
+
+							<div className="rule-edit-threshold-row">
+								<TextControl
+									__next40pxDefaultSize
+									__nextHasNoMarginBottom
+									type="number"
+									label={ __(
+										'Auto-disable threshold',
+										'newspack-event-logger-nodes'
+									) }
+									help={ __(
+										'Occurrence count before an event auto-disables. 0 = off.',
+										'newspack-event-logger-nodes'
+									) }
+									name="rule-auto-disable-threshold"
+									value={ autoDisable }
+									onChange={ setAutoDisable }
+								/>
+
+								<TextControl
+									__next40pxDefaultSize
+									__nextHasNoMarginBottom
+									type="number"
+									label={ __(
+										'Auto-protect time threshold (ms)',
+										'newspack-event-logger-nodes'
+									) }
+									help={ __(
+										'Duration in ms above which a slow event is protected. 0 = off.',
+										'newspack-event-logger-nodes'
+									) }
+									name="rule-auto-protect-time-threshold"
+									value={ autoProtect }
+									onChange={ setAutoProtect }
+								/>
+							</div>
+
+							<CheckboxControl
+								name="rule-log-queries"
 								__nextHasNoMarginBottom
-								type="number"
 								label={ __(
-									'Auto-disable threshold',
+									'Log database queries',
 									'newspack-event-logger-nodes'
 								) }
 								help={ __(
-									'Occurrence count before an event auto-disables. 0 = off.',
+									'Times every query as its own flame span. Two log entries per query, so a query-heavy request gets much slower.',
 									'newspack-event-logger-nodes'
 								) }
-								name="rule-auto-disable-threshold"
-								value={ autoDisable }
-								onChange={ setAutoDisable }
+								checked={ logQueries }
+								onChange={ setLogQueries }
 							/>
 
-							<TextControl
-								__next40pxDefaultSize
-								__nextHasNoMarginBottom
-								type="number"
-								label={ __(
-									'Auto-protect time threshold (ms)',
-									'newspack-event-logger-nodes'
-								) }
-								help={ __(
-									'Duration in ms above which a slow event is protected. 0 = off.',
-									'newspack-event-logger-nodes'
-								) }
-								name="rule-auto-protect-time-threshold"
-								value={ autoProtect }
-								onChange={ setAutoProtect }
-							/>
-						</div>
-
-						<CheckboxControl
-							name="rule-log-queries"
-							__nextHasNoMarginBottom
-							label={ __(
-								'Log database queries',
-								'newspack-event-logger-nodes'
-							) }
-							help={ __(
-								'Times every query as its own flame span. Two log entries per query, so a query-heavy request gets much slower.',
-								'newspack-event-logger-nodes'
-							) }
-							checked={ logQueries }
-							onChange={ setLogQueries }
-						/>
-
-						<CheckboxControl
-							__nextHasNoMarginBottom
-							name="rule-log-http"
-							label={ __(
-								'Log HTTP requests',
-								'newspack-event-logger-nodes'
-							) }
-							help={ __(
-								'Times every outbound HTTP request as its own flame span. Two log entries per request, so a request that calls many APIs gets a little slower.',
-								'newspack-event-logger-nodes'
-							) }
-							checked={ logHttp }
-							onChange={ setLogHttp }
-						/>
-
-						<CheckboxControl
-							__nextHasNoMarginBottom
-							name="rule-log-plugin-loads"
-							label={ __(
-								'Log plugin load time',
-								'newspack-event-logger-nodes'
-							) }
-							help={ __(
-								'Times each site-activated plugin as its own flame span. The measuring happens either way; this is two log entries per plugin, before the request does any work.',
-								'newspack-event-logger-nodes'
-							) }
-							checked={ logPluginLoads }
-							onChange={ setLogPluginLoads }
-						/>
-
-						<div className="rule-edit-trace-row">
 							<CheckboxControl
 								__nextHasNoMarginBottom
-								name="rule-trace-hooks"
+								name="rule-log-http"
 								label={ __(
-									'Trace hook callers',
+									'Log HTTP requests',
 									'newspack-event-logger-nodes'
 								) }
-								help={
-									traceHooks
-										? __(
-												'Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph. The number traces that many calls from each CALLER of a hook, query shape or outbound URL further, recording the twenty frames above each — expensive, so 1 already reaches every caller. At 0 every span still carries its label and none records a backtrace.',
-												'newspack-event-logger-nodes'
-										  )
-										: __(
-												'Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph.',
-												'newspack-event-logger-nodes'
-										  )
-								}
-								checked={ traceHooks }
-								onChange={ setTraceHooks }
+								help={ __(
+									'Times every outbound HTTP request as its own flame span. Two log entries per request, so a request that calls many APIs gets a little slower.',
+									'newspack-event-logger-nodes'
+								) }
+								checked={ logHttp }
+								onChange={ setLogHttp }
 							/>
 
-							{ traceHooks && (
-								<div className="rule-edit-trace-count">
-									<TextControl
-										__next40pxDefaultSize
-										__nextHasNoMarginBottom
-										hideLabelFromVision
-										type="number"
-										label={ __(
-											'Calls traced per caller of each hook, query shape and URL',
-											'newspack-event-logger-nodes'
-										) }
-										name="rule-trace-callers"
-										value={ traceCallers }
-										onChange={ setTraceCallers }
-									/>
-									<span className="newspack-nodes-status is-muted">
-										{ __(
-											'traced per caller of each hook, query shape and URL',
-											'newspack-event-logger-nodes'
-										) }
-									</span>
-								</div>
-							) }
-						</div>
-					</>
-				) }
+							<CheckboxControl
+								__nextHasNoMarginBottom
+								name="rule-log-plugin-loads"
+								label={ __(
+									'Log plugin load time',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									'Times each site-activated plugin as its own flame span. The measuring happens either way; this is two log entries per plugin, before the request does any work.',
+									'newspack-event-logger-nodes'
+								) }
+								checked={ logPluginLoads }
+								onChange={ setLogPluginLoads }
+							/>
 
-				{ error && (
-					<p className="rule-edit-error newspack-nodes-error-banner">
-						{ error }
-					</p>
-				) }
-			</div>
+							<div className="rule-edit-trace-row">
+								<CheckboxControl
+									__nextHasNoMarginBottom
+									name="rule-trace-hooks"
+									label={ __(
+										'Trace hook callers',
+										'newspack-event-logger-nodes'
+									) }
+									help={
+										traceHooks
+											? __(
+													'Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph. The number traces that many calls from each CALLER of a hook, query shape or outbound URL further, recording the twenty frames above each — expensive, so 1 already reaches every caller. At 0 every span still carries its label and none records a backtrace.',
+													'newspack-event-logger-nodes'
+											  )
+											: __(
+													'Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph.',
+													'newspack-event-logger-nodes'
+											  )
+									}
+									checked={ traceHooks }
+									onChange={ setTraceHooks }
+								/>
 
-			<div className="rule-edit-actions">
-				{ onDelete && (
+								{ traceHooks && (
+									<div className="rule-edit-trace-count">
+										<TextControl
+											__next40pxDefaultSize
+											__nextHasNoMarginBottom
+											hideLabelFromVision
+											type="number"
+											label={ __(
+												'Calls traced per caller of each hook, query shape and URL',
+												'newspack-event-logger-nodes'
+											) }
+											name="rule-trace-callers"
+											value={ traceCallers }
+											onChange={ setTraceCallers }
+										/>
+										<span className="newspack-nodes-status is-muted">
+											{ __(
+												'traced per caller of each hook, query shape and URL',
+												'newspack-event-logger-nodes'
+											) }
+										</span>
+									</div>
+								) }
+							</div>
+						</>
+					) }
+
+					{ error && (
+						<p className="rule-edit-error newspack-nodes-error-banner">
+							{ error }
+						</p>
+					) }
+				</div>
+
+				<div className="rule-edit-actions">
+					{ onDelete && (
+						<button
+							type="button"
+							className="button button-link-delete rule-edit-actions__delete"
+							onClick={ () =>
+								confirmDelete
+									? onDelete()
+									: setConfirmDelete( true )
+							}
+						>
+							{ confirmDelete
+								? __(
+										'Confirm delete',
+										'newspack-event-logger-nodes'
+								  )
+								: __(
+										'Delete rule',
+										'newspack-event-logger-nodes'
+								  ) }
+						</button>
+					) }
 					<button
 						type="button"
-						className="button button-link-delete rule-edit-actions__delete"
-						onClick={ () =>
-							confirmDelete
-								? onDelete()
-								: setConfirmDelete( true )
-						}
+						className="button"
+						onClick={ onCancel }
 					>
-						{ confirmDelete
-							? __(
-									'Confirm delete',
-									'newspack-event-logger-nodes'
-							  )
-							: __(
-									'Delete rule',
-									'newspack-event-logger-nodes'
-							  ) }
+						{ __( 'Cancel', 'newspack-event-logger-nodes' ) }
 					</button>
-				) }
-				<button type="button" className="button" onClick={ onCancel }>
-					{ __( 'Cancel', 'newspack-event-logger-nodes' ) }
-				</button>
-				<button
-					type="button"
-					className="button button-primary"
-					onClick={ handleSave }
-				>
-					{ __( 'Save rule', 'newspack-event-logger-nodes' ) }
-				</button>
-			</div>
+					<button type="submit" className="button button-primary">
+						{ __( 'Save rule', 'newspack-event-logger-nodes' ) }
+					</button>
+				</div>
+			</form>
 
 			<HookSelectorModal
 				isOpen={ isHooksOpen }

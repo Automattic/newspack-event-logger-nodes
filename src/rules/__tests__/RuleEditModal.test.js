@@ -74,9 +74,34 @@ const LOG_RULE = {
 	hooks_in: 'inline',
 };
 
+// A real click, whose activation behaviour submits a submit button's form.
 function click( el ) {
 	act( () => {
-		el.dispatchEvent( new Event( 'click', { bubbles: true } ) );
+		el.click();
+	} );
+}
+
+// Dispatch a key; the return is false when a handler prevented its default.
+function keyDown( el, key ) {
+	let allowed;
+	act( () => {
+		allowed = el.dispatchEvent(
+			new window.KeyboardEvent( 'keydown', {
+				key,
+				bubbles: true,
+				cancelable: true,
+			} )
+		);
+	} );
+	return allowed;
+}
+
+// jsdom performs no implicit submission, so Enter is the form's submit event.
+function submit( form ) {
+	act( () => {
+		form.dispatchEvent(
+			new Event( 'submit', { bubbles: true, cancelable: true } )
+		);
 	} );
 }
 
@@ -540,5 +565,101 @@ describe( 'RuleEditModal — validation', () => {
 		expect(
 			document.querySelector( '[role="dialog"]' ).textContent
 		).toContain( 'Pattern is required' );
+	} );
+} );
+
+describe( 'RuleEditModal — Enter saves through the form', () => {
+	let onSave;
+	const mounted = [];
+
+	afterEach( () => {
+		while ( mounted.length ) {
+			mounted.pop().unmount();
+		}
+	} );
+
+	function mount( rule, props = {} ) {
+		onSave = jest.fn();
+		const r = renderComponent(
+			<RuleEditModal
+				rule={ rule }
+				onSave={ onSave }
+				onCancel={ jest.fn() }
+				{ ...props }
+			/>
+		);
+		mounted.push( r );
+		return document.querySelector( '[role="dialog"] form' );
+	}
+
+	test( 'one noValidate form holds the body and the actions', () => {
+		const form = mount( LOG_RULE );
+		expect( form.noValidate ).toBe( true );
+		expect(
+			[ ...form.children ].map( ( child ) => child.className )
+		).toEqual( [ 'rule-edit-body', 'rule-edit-actions' ] );
+	} );
+
+	test( 'Save rule is the submit and every other button is plain', () => {
+		const form = mount(
+			{ ...LOG_RULE, significant_events: [ 'heron_lands' ] },
+			{ onDelete: jest.fn() }
+		);
+		expect( saveButton().type ).toBe( 'submit' );
+		const others = [ ...form.querySelectorAll( 'button' ) ].filter(
+			( b ) => b !== saveButton()
+		);
+		// Select Hooks, Select Events, the tag's remove, Delete and Cancel.
+		expect( others ).toHaveLength( 5 );
+		others.forEach( ( b ) => expect( b.type ).toBe( 'button' ) );
+	} );
+
+	test( 'a form submit saves the draft', () => {
+		const form = mount( { ...LOG_RULE, pattern: '/egret' } );
+		submit( form );
+		expect( onSave ).toHaveBeenCalledTimes( 1 );
+		expect( onSave.mock.calls[ 0 ][ 0 ].pattern ).toBe( '/egret' );
+	} );
+
+	test( 'Enter in the pattern or a threshold is left to the form', () => {
+		const form = mount( LOG_RULE );
+		for ( const name of [
+			'rule-pattern',
+			'rule-auto-disable-threshold',
+			'rule-auto-protect-time-threshold',
+		] ) {
+			const input = form.querySelector( `input[name="${ name }"]` );
+			expect( input.form ).toBe( form );
+			expect( keyDown( input, 'Enter' ) ).toBe( true );
+		}
+	} );
+
+	test( 'Enter on a typed significant event adds it and holds the save', () => {
+		const form = mount( LOG_RULE );
+		const tag = form.querySelector( '.event-logger-tag-input input' );
+		setInput( tag, 'heron_lands' );
+		expect( keyDown( tag, 'Enter' ) ).toBe( false );
+		expect( onSave ).not.toHaveBeenCalled();
+		expect(
+			form.querySelector( '.rule-edit-tag-field' ).textContent
+		).toContain( 'heron_lands' );
+		// An empty box has nothing to commit, so its Enter saves the rule.
+		expect( keyDown( tag, 'Enter' ) ).toBe( true );
+		submit( form );
+		expect( onSave.mock.calls[ 0 ][ 0 ].significant_events ).toEqual( [
+			'checkout',
+			'heron_lands',
+		] );
+	} );
+
+	test( 'Enter on a significant-events box holding only spaces clears it and saves nothing', () => {
+		const form = mount( LOG_RULE );
+		const tag = form.querySelector( '.event-logger-tag-input input' );
+		setInput( tag, '   ' );
+		expect( keyDown( tag, 'Enter' ) ).toBe( false );
+		expect( onSave ).not.toHaveBeenCalled();
+		expect(
+			form.querySelector( '.event-logger-tag-input input' ).value
+		).toBe( '' );
 	} );
 } );

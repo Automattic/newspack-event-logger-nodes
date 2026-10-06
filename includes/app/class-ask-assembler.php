@@ -560,9 +560,9 @@ class Ask_Assembler {
 	 * `errors_only` the brief is of the errors the walk listed, so its `stats`
 	 * keep only the URL's exact `errors`, and `error_summary()` of the list
 	 * stands in for the whole URL's count and means, which describe other
-	 * traffic. Under a `bucket` it is of one stored bucket: `$stats` are its
-	 * slot, zero where the URL has none, and `$requests` the requests
-	 * completing in it. Its pointer fetches under both.
+	 * traffic. Under a `bucket` it is of a selection of stored buckets:
+	 * `$stats` sum their slots, zero where the URL has none, and `$requests`
+	 * are the requests completing in them. Its pointer fetches under both.
 	 *
 	 * The worst requests rank by duration, and a null one — no sample taken,
 	 * as `dump_url`'s rows carry it (decision 24) — ranks after every number.

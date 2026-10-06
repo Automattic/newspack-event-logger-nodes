@@ -25,7 +25,7 @@ import {
 	useRef,
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { TextControl } from '@wordpress/components';
+import { SearchControl } from '@wordpress/components';
 import {
 	getStateColor,
 	hexToRgba,
@@ -1327,14 +1327,20 @@ export default function LogEntriesTable( {
 			</div>
 			<div className="log-entries-search">
 				<div ref={ searchContainerRef } style={ { flex: 1 } }>
-					<TextControl
-						__next40pxDefaultSize
+					<SearchControl
+						__nextHasNoMarginBottom
+						label={ __(
+							'Search entries',
+							'newspack-event-logger-nodes'
+						) }
 						placeholder={ __(
 							'Search entries…',
 							'newspack-event-logger-nodes'
 						) }
 						value={ searchQuery }
-						onChange={ setSearchQuery }
+						onChange={ ( term ) =>
+							term ? setSearchQuery( term ) : clearSearch()
+						}
 						onKeyDown={ ( e ) => {
 							if (
 								e.key === 'Enter' &&
@@ -1352,7 +1358,6 @@ export default function LogEntriesTable( {
 								}
 							}
 						} }
-						__nextHasNoMarginBottom
 					/>
 				</div>
 				{ searchQuery && (
@@ -1404,17 +1409,6 @@ export default function LogEntriesTable( {
 							) }
 						>
 							&#9660;
-						</button>
-						<button
-							type="button"
-							className="button button-small log-entries-search__nav"
-							onClick={ clearSearch }
-							title={ __(
-								'Clear search (Esc)',
-								'newspack-event-logger-nodes'
-							) }
-						>
-							&#10005;
 						</button>
 					</div>
 				) }
