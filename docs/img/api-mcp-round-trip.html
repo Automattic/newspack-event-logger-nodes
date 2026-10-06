@@ -49,7 +49,7 @@
     <div class="chip"><span class="st">401</span>The header does not match the Bearer shape.</div>
     <div class="chip"><span class="st">401</span><span class="mono">Command_Auth::load_session_record( handle )</span> finds no live session, or its secret fails <span class="mono">hash_equals</span>.</div>
     <div class="chip"><span class="st pass">&#10003;</span>The request BECOMES the session's minting user (<span class="mono">wp_set_current_user</span>); the session's scope is installed as <span class="mono">Capabilities::$session_scope</span>, a ceiling and never a grant.</div>
-    <div class="chip"><span class="st">429</span>The handle's 21st call inside one 10-second bucket (<span class="mono">RATE_LIMIT_BURST</span> 20, <span class="mono">RATE_LIMIT_WINDOW_S</span> 10). Checked last, so an unauthenticated flood cannot fill the transient table.</div>
+    <div class="chip"><span class="st">429</span>The handle's 21st call inside any trailing 10 seconds (<span class="mono">RATE_LIMIT_BURST</span> 20, <span class="mono">RATE_LIMIT_WINDOW_S</span> 10), each admitted call holding one slot claimed by an atomic cache <span class="mono">add()</span>; 503 when neither memcached nor APCu is available, or the slot read fails. Checked last, so an unauthenticated flood cannot fill the slots.</div>
   </div>
 </div>
 
@@ -58,7 +58,7 @@
   <div class="body">
     <div class="chip"><span class="mono">initialize</span> answers <span class="mono">protocolVersion</span> 2025-06-18, <span class="mono">capabilities.tools</span>, <span class="mono">serverInfo</span> (name, plugin version) and <span class="mono">instructions</span>: the <span class="mono">&lt;site-data&gt;</span> rule, then the measurement caveat from <span class="mono">Findings::caveat()</span>.</div>
     <div class="chip"><span class="mono">notifications/initialized</span> answers nothing: JSON-RPC forbids replying to a notification.</div>
-    <div class="chip"><span class="mono">tools/list</span> answers only the tools whose declared role <span class="mono">Capabilities::can()</span> allows, which tests BOTH halves: the ceiling and the user's own capability.</div>
+    <div class="chip"><span class="mono">tools/list</span> answers only the tools whose verb's declared capability <span class="mono">Capabilities::can()</span> allows, which tests BOTH halves: the ceiling and the user's own capability.</div>
         <div class="chip danger">Any other method: error <span class="mono">-32601 Unknown method: &lt;method&gt;</span>. A body that is not a JSON-RPC request: <span class="mono">-32600</span>.</div>
   </div>
 </div>

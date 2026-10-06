@@ -325,7 +325,7 @@ class RequestFlightTest extends TestCase {
 		$rb->name( 'rb-delta-on' );
 		$got = [];
 		$rb->sink( $this->capture_sink( $got ) );
-		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET', 'timestamp' => 10.0, 'last_log_ts' => 10.0 ] );
+		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET', 'timestamp' => 10.0, 'last_log_ts' => 10.0, 'tracker_ts' => 10.0 ] );
 
 		$rb->set_inflight_delta( true );
 		$flight = $rb->flight();
@@ -335,16 +335,51 @@ class RequestFlightTest extends TestCase {
 		$flight->fire_cb();
 		$this->assertCount( 1, $this->inflight_messages( $got ) );
 
-		// Second tick: the row's last_log_ts (10) < watermark (100) → suppressed.
+		// Second tick: the row's tracker_ts (10) < watermark (100) → suppressed.
 		Core::$now = 200.0;
 		$flight->fire_cb();
 		$this->assertCount( 1, $this->inflight_messages( $got ), 'unchanged row suppressed under delta' );
 
-		// Advance the row's activity past the watermark → re-emitted next tick.
+		// The builder applies a line past the watermark → re-emitted next tick.
 		$rb->cache->get( 'r-1' )->last_log_ts = 150.0;
+		$rb->cache->get( 'r-1' )->tracker_ts  = 250.0;
 		Core::$now = 300.0;
 		$flight->fire_cb();
 		$this->assertCount( 2, $this->inflight_messages( $got ), 'advanced row re-emitted under delta' );
+	}
+
+	/**
+	 * The watermark is the builder's clock, so a row's advance is read on that
+	 * clock too: a line its producer stamped before a fire, applied after it,
+	 * is an advance the next fire ships.
+	 */
+	public function test_delta_on_ships_a_line_stamped_before_a_fire_and_applied_after_it(): void {
+		Core::$now = 400.0;
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-delta-late' );
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+		$rb->cache->set( 'r-7', (object) [ 'url' => '/kea', 'request_method' => 'GET', 'timestamp' => 310.0, 'last_log_ts' => 320.0, 'tracker_ts' => 330.0 ] );
+		$rb->set_inflight_delta( true );
+		$flight = $rb->flight();
+		$flight->target( 'gyroscope_partition' );
+		$flight->fire_cb();
+		$this->assertCount( 1, $this->inflight_messages( $got ) );
+
+		// Stamped 395, before the fire at 400; the builder applies it at 460.
+		$request              = $rb->cache->get( 'r-7' );
+		$request->last_log_ts = 395.0;
+		$request->tracker_ts  = 460.0;
+		Core::$now            = 500.0;
+		$flight->fire_cb();
+
+		$shipped = $this->inflight_messages( $got );
+		$this->assertCount( 2, $shipped, 'the late-applied line ships' );
+		$this->assertSame( 395.0, $shipped[1][ Message::VALUE ]['last_log_ts'] );
+
+		Core::$now = 600.0;
+		$flight->fire_cb();
+		$this->assertCount( 2, $this->inflight_messages( $got ), 'and ships once' );
 	}
 
 	public function test_inflight_row_carries_url_and_user_agent_whole(): void {

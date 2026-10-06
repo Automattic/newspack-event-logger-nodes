@@ -97,14 +97,14 @@ Logging is per-URL, never global: there is no `log_urls`, `skip_urls`, `log_even
 
 #### Adding an MCP tool
 
-`App\MCP_Controller` registers this plugin's one REST route, `POST /wp-json/newspack-event-logger-nodes/v1/mcp`, a JSON-RPC server (protocol `2025-06-18`) wrapping verbs that already exist. Ten tools ship, declared in the private `TOOLS` map as `{ node, verb, role, summary, args }`: seven `performance` reads (`overview`, `urls`, `dump_url`, `search_requests`, `dump_request`, `grep_requests`, `ask`) plus `dump_rules`, `rules_upsert` and `rules_delete`.
+`App\MCP_Controller` registers this plugin's one REST route, `POST /wp-json/newspack-event-logger-nodes/v1/mcp`, a JSON-RPC server (protocol `2025-06-18`) wrapping verbs that already exist. Ten tools ship, declared in the private `TOOLS` map as `{ node, class, verb, summary, args }`: seven `performance` reads (`overview`, `urls`, `dump_url`, `search_requests`, `dump_request`, `grep_requests`, `ask`) plus `dump_rules`, `rules_upsert` and `rules_delete`.
 
 1. The verb must exist first, with its own `capability`. A tool is a wrapper, never a second implementation.
-2. Add one `TOOLS` entry. `role` must match the verb's declared capability: `tools/list` shows only what the caller's session scope covers, and offering a tool that will refuse is worse than not offering it.
+2. Add one `TOOLS` entry naming the node, its class and the verb. The tool carries no role: `tools/list` and `tools/call` read the verb's declared `capability`, so a session is offered only what its scope covers, and `tools/list` reads each arg's type, requiredness and variadic-ness from the verb's `args` too. A node mounted under another class, or a verb the class does not declare, throws `\LogicException`.
 3. Write the `summary` for an agent that cannot see the code. `Findings::caveat()` rides every tool description, so the measurement caveat is already carried — say what the tool answers and what an error means.
 4. Every argument rides by name, as `--key=value` through `Command_Args::format()`, and the verb binds it against its declared args, so a tool arg must name a declared arg and no order here tracks the verb's.
 
-Authorization takes a `Bearer <handle>.<secret>` scoped session: the controller becomes that session's minting user and installs the scope as a ceiling, so a scope can only ever subtract. Rate limit is `RATE_LIMIT_BURST` 20 per `RATE_LIMIT_WINDOW_S` 10, keyed by handle and checked after the credential.
+Authorization takes a `Bearer <handle>.<secret>` scoped session: the controller becomes that session's minting user and installs the scope as a ceiling, so a scope can only ever subtract. Rate limit is `RATE_LIMIT_BURST` 20 in any trailing `RATE_LIMIT_WINDOW_S` 10, keyed by handle, claimed one slot a call through the shared cache's atomic `add()`, and checked after the credential.
 
 #### Adding a React dashboard / page
 

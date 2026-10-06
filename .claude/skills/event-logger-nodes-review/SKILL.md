@@ -312,7 +312,7 @@ Ten more CIs are substrate-owned, mounted on the same hook by `newspack_nodes_mo
 
 - **The scope is a ceiling, never a grant.** A `Bearer <handle>.<secret>` names a live session; the controller becomes that session's minting user and installs `Capabilities::$session_scope`, so a manage-scoped session minted by someone who can do nothing still does nothing. `Bootstrap::fleet_gate()` runs first.
 - **`tools/list` offers only what the scope covers**, and `Findings::caveat()` — the measurement caveat — rides EVERY tool description, not just the first read. A new tool that drops the caveat hands a model a number it will over-read.
-- **Rate limiting is per handle**, `RATE_LIMIT_BURST` 20 per `RATE_LIMIT_WINDOW_S` 10, checked AFTER the credential so an unauthenticated flood cannot poison the transient table. MCP does not route through `/command`, so the substrate's per-user cap does not bound it.
+- **Rate limiting is per handle**, `RATE_LIMIT_BURST` 20 in any trailing `RATE_LIMIT_WINDOW_S` 10: each admitted call claims one slot through the atomic `add()` of `Cache_Backend::shared_first()`, never a transient, which has no atomic claim. It is checked AFTER the credential so an unauthenticated flood cannot fill the slots, and with no cache to claim in, or a slot read that fails, the door answers 503 rather than run unmetered. MCP does not route through `/command`, so the substrate's per-user cap does not bound it.
 - **A brief redacts.** `Ask_Assembler` puts every URL through `Log_Manager::redact_url()`, allowlists the environment rather than filtering it, ships the `environment_v3` entry with no body, and caps entries. A new brief field bypassing that path leaks.
 
 ## Dashboards

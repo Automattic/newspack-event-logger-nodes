@@ -1211,4 +1211,31 @@ abstract class TestCase extends RuntimeTestCase {
 		$ok = self::set_url_row_values( $store, $bucket, $shard, $rows, $server ) && $ok;
 		return self::index_server( $store, $bucket, $server, false, [] === $rows ? [] : [ $shard ] ) && $ok;
 	}
+
+	/**
+	 * Run the deferred bootstrap, then `$body`, then put back every static the
+	 * bootstrap registers into.
+	 *
+	 * @param \Closure(): void $body What to run while the registrations stand.
+	 */
+	protected static function with_deferred_bootstrap( \Closure $body ): void {
+		$formatters = new \ReflectionProperty( \Newspack_Nodes\Formatters::class, 'registry' );
+		$saved      = [
+			'actions'    => $GLOBALS['_wp_actions'],
+			'filters'    => $GLOBALS['_wp_test_filters'] ?? [],
+			'around'     => \Newspack_Nodes\Command_Interpreter_Node::$around_dispatch,
+			'resolvers'  => \Newspack_Nodes\Core::$config_resolvers,
+			'formatters' => $formatters->getValue(),
+		];
+		try {
+			\newspack_event_logger_nodes_boot();
+			$body();
+		} finally {
+			$GLOBALS['_wp_actions']                                    = $saved['actions'];
+			$GLOBALS['_wp_test_filters']                               = $saved['filters'];
+			\Newspack_Nodes\Command_Interpreter_Node::$around_dispatch = $saved['around'];
+			\Newspack_Nodes\Core::$config_resolvers                    = $saved['resolvers'];
+			$formatters->setValue( null, $saved['formatters'] );
+		}
+	}
 }

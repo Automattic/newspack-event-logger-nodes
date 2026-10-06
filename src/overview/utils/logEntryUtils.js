@@ -213,9 +213,9 @@ export const isEmptyPairStart = ( entries, idx ) => {
 	return (
 		!! next &&
 		hasPair( entry ) &&
-		( entry.k || '' ).includes( '(start)' ) &&
+		null !== pairBaseName( entry.k ) &&
 		next.pairId === entry.pairId &&
-		( next.k || '' ).includes( '(complete)' )
+		null !== pairCompleteName( next.k )
 	);
 };
 
@@ -260,7 +260,7 @@ export const formatFullTimestamp = ( ts ) => {
 	}
 	const hundredth = Math.round( ts * 100 );
 	const centis = hundredth % 100;
-	const date = new Date( ts * 1000 );
+	const date = new Date( hundredth * 10 );
 	return (
 		date.toLocaleTimeString( 'en-US', TIME_FORMAT_OPTIONS ) +
 		'.' +
@@ -1039,7 +1039,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 					const inner = entries[ j ];
 					if (
 						inner.pairId === entry.pairId &&
-						( inner.k || '' ).includes( '(complete)' )
+						null !== pairCompleteName( inner.k )
 					) {
 						completeEntry = inner;
 						break;
@@ -1240,9 +1240,8 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 	}
 
 	// The target's containing pair must be expanded for it to show.
-	const keyword = targetEntry.k || '';
-	const isStart = keyword.includes( '(start)' );
-	const isComplete = keyword.includes( '(complete)' );
+	const isStart = null !== pairBaseName( targetEntry.k );
+	const isComplete = null !== pairCompleteName( targetEntry.k );
 
 	if ( isStart && hasPair( targetEntry ) ) {
 		ids.add( targetEntry.pairId );
@@ -1256,7 +1255,7 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 		if (
 			e.indent === needIndent &&
 			hasPair( e ) &&
-			( e.k || '' ).includes( '(start)' )
+			null !== pairBaseName( e.k )
 		) {
 			ids.add( e.pairId );
 			needIndent--;

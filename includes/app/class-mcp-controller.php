@@ -30,6 +30,7 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Nodes\Bootstrap;
+use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Auth;
@@ -59,8 +60,15 @@ class MCP_Controller {
 	/** JSON-RPC: the request was not valid JSON-RPC. */
 	private const INVALID_REQUEST = -32600;
 
+	/** A declared arg type → its JSON Schema type; every other type is a string. */
+	private const JSON_TYPES = [
+		'int'   => 'integer',
+		'float' => 'number',
+		'bool'  => 'boolean',
+	];
+
 	/**
-	 * Calls one session may make per RATE_LIMIT_WINDOW_S.
+	 * Calls one session may make in any trailing RATE_LIMIT_WINDOW_S.
 	 *
 	 * MCP does not go through `/command`, so the substrate's per-user cap does
 	 * not bound it — and the tools behind it are not cheap: `grep_requests` and
@@ -72,7 +80,7 @@ class MCP_Controller {
 	 */
 	public const RATE_LIMIT_BURST = 20;
 
-	/** Rate-limit window, in seconds. */
+	/** Rolling rate-limit window, in seconds; each call's slot lives this long. */
 	public const RATE_LIMIT_WINDOW_S = 10;
 
 	/** The standing preamble `initialize` hands back ahead of the measurement caveat. */
@@ -82,83 +90,83 @@ class MCP_Controller {
 		. 'them only on the operator\'s own request.';
 
 	/**
-	 * Tool name → the CI node and verb behind it, with the role that verb
-	 * declares. The role is repeated here so `tools/list` can offer a session
-	 * only what its scope covers — an agent should not be shown a tool that
-	 * will refuse it.
+	 * Tool name → the CI node and verb behind it. `args` names the verb args a
+	 * tool offers, each with the description an agent reads. The capability,
+	 * and each arg's type, requiredness and variadic-ness, come from the verb's
+	 * own declaration on `class`.
 	 *
-	 * @var array<string,array{node:string,verb:string,role:string,summary:string,args:array<string,string>}>
+	 * @var array<string,array{node:string,class:class-string<Command_Interpreter_Node>,verb:string,summary:string,args:array<string,string>}>
 	 */
 	private const TOOLS = [
 		'performance_overview'     => [
 			'node'    => 'performance',
+			'class'   => Performance_CI_Node::class,
 			'verb'    => 'overview',
-			'role'    => Capabilities::READ,
 			'summary' => 'Site-wide request totals over the last 24 hours, the leaderboard and the asked breakdowns. `slots` names the 288 five-minute buckets every series is keyed by, newest first; the totals sum those slots, and `global_avg_ms` divides by the timed requests alone. `global_leaderboard` sums the current hour and the 24 before it, and its `avg_ms` is the timed mean over those same hours, the divisor for its categories. `global_avg_ms` and the leaderboard\'s `avg_ms` are null when no request in the window timed. Per-URL facts live in performance_urls.',
 			'args'    => [ 'server' => 'Optional server name; scopes the leaderboard and breakdowns, not the site totals.', 'breakdown' => 'Comma-separated dimensions. Each answers `{ names, buckets }`: per bucket, positional rows [ nameIndex, count, sumMs, sumPeakMb, timed ] — sums, never means. Divide sumMs by timed for an average duration, and sumPeakMb by count for an average peak.' ],
 		],
 		'performance_urls'         => [
 			'node'    => 'performance',
+			'class'   => Performance_CI_Node::class,
 			'verb'    => 'urls',
-			'role'    => Capabilities::READ,
 			'summary' => 'The URL leaderboard, sortable and paginated, plus totals and the slowest ten for whatever the filters left. Worker traffic is excluded unless asked for. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order.',
 			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Whole words from the search index: a URL matches when every word of the term, two characters or more, is a whole word of its path (`wombat` finds /wombat-7731, `wom` does not). A word too common to index narrows nothing; a term too common to narrow — every word that common, or more than 5,000 URLs in all — is refused with an error saying so: add a word. A term with no word of two characters or more is refused too.','server' => 'Optional server name to scope every row and total to.', 'errors_only' => 'Keeps only the traffic of the five-minute buckets (hours, before the current hour) in which each URL had a timeout or fatal (a 5xx is a response, not one): a row, the totals and the slowest ten count that traffic alone, the totals gain the `errors` every row carries, and a count sort ranks by it. A timeout carries no duration, so it counts toward `count` and `errors`; a fatal is timed and counts toward both. An abort or a gap in the log is no error.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.', 'bucket' => 'A selection of five-minute buckets, each `Y-m-d-H-i` in UTC, written as comma-separated runs, each one bucket or `start..end` inclusive, ascending with adjacent buckets merged: `2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30` is four adjacent buckets and one apart. Any order and overlap is accepted, and `filters.bucket` answers the canonical spelling. A selection holds at most 288 buckets, each valid while its rows are stored: no later than the current bucket and no older than the stats Table keeps them, 25 hours or the stats window when that is longer, so every one of the 288 `slots` keys performance_overview names, even past the URL window. Narrows the page to the URLs filed in any selected bucket: each row, the totals and the slowest ten are the selected buckets\' numbers summed, and `requests_per_second` is their count over 300 seconds a bucket. A search checks the term on each of the selection\'s URLs, so a word too common to index narrows it rather than being refused. A key off the five-minute grid, a run ending before it starts and more than 288 buckets are refused, and so is a key in the future or aged out, each with an error naming the key or the limit.' ],
 		],
 		'dump_url'                 => [
 			'node'    => 'performance',
+			'class'   => Performance_CI_Node::class,
 			'verb'    => 'dump_url',
-			'role'    => Capabilities::READ,
 			'summary' => 'One URL: stats, the aggregate flame and profile summed over every partition, and its newest 500 requests by completion, `finished_at`, each with a null `duration_ms` where none was measured: a timeout\'s eviction wait, an abort\'s stop, a zero. The list is every request since `requests_window_start`, or, holding 500, the newest 500 of them. `scan_stopped_early` true means the index walk ran out of its time budget before `requests_window_start`; an empty list is then not an idle URL. `stats.errors` is the URL\'s exact count of timeouts and fatals over the stats window, which no list cap or walk budget shortens; `stats.avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured.',
-			'args'    => [ 'hash' => 'The 12-char URL hash (required).', 'server' => 'Optional server name; scopes the stats the way performance_urls scopes the row.', 'errors_only' => 'Lists only the timeouts and fatals, walking past the clean requests that bury them in the full list: the newest 500 of them the walk reaches in the window, and `scan_stopped_early` true when its time budget stopped it short of `requests_window_start`. An abort or a gap in the log is no error. The flame is not rebuilt from them: a URL whose stored flame has expired answers a null one.', 'bucket' => 'A selection of five-minute buckets, as performance_urls takes it: comma-separated runs of `Y-m-d-H-i` UTC keys, each one bucket or `start..end` inclusive (`2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30`), at most 288 buckets. `stats` become the selected buckets\' numbers summed and the list the requests completing inside any of them, at their start plus duration rounded to the second as the stats file them, `requests_window_start` the earliest bucket\'s start. A URL with no traffic in the selection answers zero `count` and `errors`, null means, `min_ms` and `max_ms`, and an empty list; `URL not found` means no stored row or name carries the hash, and `URL stats went unanswered` that a stats read failed, so ask again. The breakdown series and the flame stay the whole URL\'s, and no flame is rebuilt from the list.' ],
+			'args'    => [ 'hash' => 'The 12-char URL hash.', 'server' => 'Optional server name; scopes the stats the way performance_urls scopes the row.', 'errors_only' => 'Lists only the timeouts and fatals, walking past the clean requests that bury them in the full list: the newest 500 of them the walk reaches in the window, and `scan_stopped_early` true when its time budget stopped it short of `requests_window_start`. An abort or a gap in the log is no error. The flame is not rebuilt from them: a URL whose stored flame has expired answers a null one.', 'bucket' => 'A selection of five-minute buckets, as performance_urls takes it: comma-separated runs of `Y-m-d-H-i` UTC keys, each one bucket or `start..end` inclusive (`2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30`), at most 288 buckets. `stats` become the selected buckets\' numbers summed and the list the requests completing inside any of them, at their start plus duration rounded to the second as the stats file them, `requests_window_start` the earliest bucket\'s start. A URL with no traffic in the selection answers zero `count` and `errors`, null means, `min_ms` and `max_ms`, and an empty list; `URL not found` means no stored row or name carries the hash, and `URL stats went unanswered` that a stats read failed, so ask again. The breakdown series and the flame stay the whole URL\'s, and no flame is rebuilt from the list.' ],
 		],
 		'search_requests'          => [
 			'node'    => 'performance',
+			'class'   => Performance_CI_Node::class,
 			'verb'    => 'search_requests',
-			'role'    => Capabilities::READ,
 			'summary' => 'Locate a request by id; returns {rid, partition, url_hash}. The walk reads every index line it needs, so a `Request not found` error is definite: no partition holds that rid.',
-			'args'    => [ 'rid' => 'The request id (required).' ],
+			'args'    => [ 'rid' => 'The request id.' ],
 		],
 		'dump_request'             => [
 			'node'    => 'performance',
+			'class'   => Performance_CI_Node::class,
 			'verb'    => 'dump_request',
-			'role'    => Capabilities::READ,
 			'summary' => 'One request in full, with its flame data and computed findings. The walk reads every index line it needs, so a `Request not found` error is definite: no partition holds that rid.',
-			'args'    => [ 'rid' => 'The request id (required).', 'partition' => 'Optional: the partition to search first. Every partition is searched either way.' ],
+			'args'    => [ 'rid' => 'The request id.', 'partition' => 'Optional: the partition to search first. Every partition is searched either way.' ],
 		],
 		'grep_requests'            => [
 			'node'    => 'performance',
+			'class'   => Performance_CI_Node::class,
 			'verb'    => 'grep_requests',
-			'role'    => Capabilities::READ,
 			'summary' => 'Pattern-search recent traffic; returns matching requests, not lines.',
-			'args'    => [ 'pattern' => 'Case-insensitive pattern (required).', 'limit' => 'Max matches.' ],
+			'args'    => [ 'pattern' => 'Case-insensitive pattern.', 'limit' => 'Max matches.' ],
 		],
 		'performance_ask'          => [
 			'node'    => 'performance',
+			'class'   => Performance_CI_Node::class,
 			'verb'    => 'ask',
-			'role'    => Capabilities::READ,
 			'summary' => 'The brief for one thing: `overview:site` (the dashboard as scoped), `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<i>` (an entry\'s `i`, its position in the request) or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument; a span or a category given a `url:` descriptor instead answers from that URL\'s aggregate. A `url:` brief\'s worst requests rank by measured duration: a timeout or an abort, whose duration is a wait and not a timing, and a duration of 0, ranks after every measured one with a null `duration_ms`. Where no timed request reached a URL, its `max_ms` is null, in a `url:` brief\'s `stats` and its finding\'s `metric` and on an `overview:` brief\'s URL rows, as its `avg_ms` is.',
-			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'search' => 'The search an `overview:` brief answers under: whole words from the search index, matched and refused as performance_urls matches and refuses them; ignored by every other descriptor.','include_workers' => 'Worker traffic an `overview:` brief counts; excluded by default, as performance_urls excludes it.', 'errors_only' => 'Narrows an `overview:` brief to the buckets in which each URL had a timeout or fatal, as performance_urls narrows it, and counts their errors. Narrows a `url:` brief to the timeouts and fatals dump_url lists under errors_only: `stats` then carries only the URL\'s exact `errors`, and `error_summary` summarizes the errors listed (timeouts, fatals, the measured fatals\' mean and max, peak memory, the first and last start, the status codes) in place of the whole URL\'s count and means.', 'server' => 'Optional server name; scopes an overview: brief, a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate, which is every server\'s.', 'bucket' => 'A selection of five-minute buckets, as performance_urls takes it: comma-separated runs of `Y-m-d-H-i` UTC keys, each one bucket or `start..end` inclusive (`2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30`), at most 288 buckets. Narrows an `overview:` brief as performance_urls narrows it, and a `url:` brief as dump_url does, to the selected buckets\' numbers and the requests completing inside them; either brief carries the canonical spelling. Ignored, and never refused, by every other descriptor.' ],
+			'args'    => [ 'descriptor' => 'What to ask about.', 'context' => 'The containing descriptor, if any.', 'search' => 'The search an `overview:` brief answers under: whole words from the search index, matched and refused as performance_urls matches and refuses them; ignored by every other descriptor.','include_workers' => 'Worker traffic an `overview:` brief counts; excluded by default, as performance_urls excludes it.', 'errors_only' => 'Narrows an `overview:` brief to the buckets in which each URL had a timeout or fatal, as performance_urls narrows it, and counts their errors. Narrows a `url:` brief to the timeouts and fatals dump_url lists under errors_only: `stats` then carries only the URL\'s exact `errors`, and `error_summary` summarizes the errors listed (timeouts, fatals, the measured fatals\' mean and max, peak memory, the first and last start, the status codes) in place of the whole URL\'s count and means.', 'server' => 'Optional server name; scopes an overview: brief, a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate, which is every server\'s.', 'bucket' => 'A selection of five-minute buckets, as performance_urls takes it: comma-separated runs of `Y-m-d-H-i` UTC keys, each one bucket or `start..end` inclusive (`2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30`), at most 288 buckets. Narrows an `overview:` brief as performance_urls narrows it, and a `url:` brief as dump_url does, to the selected buckets\' numbers and the requests completing inside them; either brief carries the canonical spelling. Ignored, and never refused, by every other descriptor.' ],
 		],
 		'dump_rules'               => [
 			'node'    => 'rules',
+			'class'   => Rules_CI_Node::class,
 			'verb'    => 'dump',
-			'role'    => Capabilities::READ,
 			'summary' => 'The per-URL logging ruleset. The finest grain a rule has is a URL pattern.',
 			'args'    => [],
 		],
 		'rules_upsert'             => [
 			'node'    => 'rules',
+			'class'   => Rules_CI_Node::class,
 			'verb'    => 'upsert',
-			'role'    => Capabilities::TUNE,
 			'summary' => 'Create or replace one rule. Enabling hooks costs overhead on every request the rule matches, so narrow it again once the question is answered.',
-			'args'    => [ 'rule' => 'The rule as JSON (required).' ],
+			'args'    => [ 'rule' => 'The rule as JSON.' ],
 		],
 		'rules_delete'             => [
 			'node'    => 'rules',
+			'class'   => Rules_CI_Node::class,
 			'verb'    => 'delete',
-			'role'    => Capabilities::TUNE,
 			'summary' => 'Delete one rule by id.',
-			'args'    => [ 'id' => 'The rule id (required).' ],
+			'args'    => [ 'id' => 'The rule id.' ],
 		],
 	];
 
@@ -193,25 +201,38 @@ class MCP_Controller {
 	}
 
 	/**
-	 * Per-session rolling-window rate limit, keyed by handle. Checked AFTER the
-	 * credential, so an unauthenticated flood cannot poison the transient
-	 * table — the ordering `Spawn_Controller` and `HTTP_In_Node` both use.
+	 * Per-session rolling-window rate limit, keyed by handle. Each admitted
+	 * call claims one of RATE_LIMIT_BURST slots for RATE_LIMIT_WINDOW_S, so
+	 * the live slots are the calls of the trailing window and each frees one
+	 * window after the call that claimed it. The claim is the shared cache's
+	 * atomic `add()`, which two concurrent requests cannot both win; the read
+	 * before it only picks which slots to try. Transients offer no atomic
+	 * claim. With no shared cache to claim in, or one whose slot read fails,
+	 * the door refuses rather than run unmetered.
+	 *
+	 * Checked AFTER the credential, so an unauthenticated flood cannot poison
+	 * the slots — the ordering `Spawn_Controller` and `HTTP_In_Node` both use.
 	 *
 	 * @param string $handle Session handle the bearer credential named.
 	 * @return true|\WP_Error
 	 */
 	private static function check_rate_limit( string $handle ) {
-		if ( ! \function_exists( 'get_transient' ) || ! \function_exists( 'set_transient' ) ) {
-			return true;
+		$backend = Cache_Backend::shared_first();
+		$slots   = [];
+		for ( $slot = 0; $slot < self::RATE_LIMIT_BURST; $slot++ ) {
+			$slots[] = Cache_Backend::site_key( "eln-mcp-rl:{$handle}:{$slot}" );
 		}
-		$bucket = (int) \floor( \time() / self::RATE_LIMIT_WINDOW_S );
-		$key    = "newspack_eln_mcp_rl:{$handle}:{$bucket}";
-		$count  = Core::as_int( \get_transient( $key ) );
-		if ( $count >= self::RATE_LIMIT_BURST ) {
-			return new \WP_Error( 'rate_limited', 'Too many MCP calls; please slow down.', [ 'status' => 429 ] );
+		$failed = true;
+		$held   = $backend?->read_multi( $slots, $failed ) ?? [];
+		if ( null === $backend || $failed ) {
+			return new \WP_Error( 'rate_limit_unavailable', 'MCP calls are metered in memcached or APCu, and neither answered.', [ 'status' => 503 ] );
 		}
-		\set_transient( $key, $count + 1, self::RATE_LIMIT_WINDOW_S * 2 );
-		return true;
+		foreach ( $slots as $key ) {
+			if ( ! \array_key_exists( $key, $held ) && $backend->add( $key, 1, self::RATE_LIMIT_WINDOW_S ) ) {
+				return true;
+			}
+		}
+		return new \WP_Error( 'rate_limited', 'Too many MCP calls; please slow down.', [ 'status' => 429 ] );
 	}
 
 	/**
@@ -260,19 +281,20 @@ class MCP_Controller {
 	 * @param mixed                $id     JSON-RPC id.
 	 * @param array<array-key,mixed> $params The `tools/call` params.
 	 * @return array<string,mixed>
+	 * @throws \LogicException When the tool's node is not mounted as its class.
 	 */
 	private static function call_tool( mixed $id, array $params ): array {
 		$name = Core::as_string( $params['name'] ?? '' );
 		$tool = self::TOOLS[ $name ] ?? null;
-		if ( null === $tool || ! Capabilities::can( $tool['role'] ) ) {
+		if ( null === $tool || ! Capabilities::can( self::capability( $name, $tool ) ) ) {
 			return self::error( $id, self::METHOD_NOT_FOUND, "Unknown tool: {$name}" );
 		}
 
 		// `/command` is not the only door; build the graph here too.
 		Bootstrap::mount_request_graph();
 		$node = Core::node( $tool['node'] );
-		if ( ! $node instanceof Command_Interpreter_Node ) {
-			return self::error( $id, self::INVALID_REQUEST, "The {$tool['node']} interpreter is not mounted." );
+		if ( ! $node instanceof $tool['class'] ) {
+			throw new \LogicException( \esc_html( "{$name} needs a {$tool['class']} mounted as {$tool['node']}" ) );
 		}
 
 		try {
@@ -371,12 +393,18 @@ class MCP_Controller {
 		$out = [];
 		foreach ( self::TOOLS as $name => $tool ) {
 			// BOTH halves: scope covers it AND the minting user holds it.
-			if ( ! Capabilities::can( $tool['role'] ) ) {
+			if ( ! Capabilities::can( self::capability( $name, $tool ) ) ) {
 				continue;
 			}
+			$declared   = \array_column( Core::arr( self::declaration( $name, $tool )['args'] ?? [] ), null, 'name' );
 			$properties = [];
+			$required   = [];
 			foreach ( $tool['args'] as $arg => $description ) {
-				$properties[ $arg ] = [ 'type' => 'string', 'description' => $description ];
+				$spec = Core::arr( $declared[ $arg ] ?? throw new \LogicException( \esc_html( "{$name} offers --{$arg}, which its verb does not declare" ) ) );
+				$properties[ $arg ] = self::arg_schema( $spec ) + [ 'description' => $description ];
+				if ( true === ( $spec['required'] ?? false ) ) {
+					$required[] = $arg;
+				}
 			}
 			$out[] = [
 				'name'        => $name,
@@ -387,10 +415,48 @@ class MCP_Controller {
 					'properties'           => empty( $properties ) ? new \stdClass() : $properties,
 					// The verb refuses an argument it does not declare.
 					'additionalProperties' => false,
-				],
+				] + ( [] === $required ? [] : [ 'required' => $required ] ),
 			];
 		}
 		return $out;
+	}
+
+	/**
+	 * The JSON Schema type of one declared verb arg: its token type as JSON
+	 * names it, and a list of that type for a variadic arg.
+	 *
+	 * @param array<array-key,mixed> $spec The arg's declaration.
+	 * @return array<string,mixed>
+	 */
+	private static function arg_schema( array $spec ): array {
+		$member = [ 'type' => self::JSON_TYPES[ Core::as_string( $spec['type'] ?? '' ) ] ?? 'string' ];
+		return true === ( $spec['variadic'] ?? false ) ? [ 'type' => 'array', 'items' => $member ] : $member;
+	}
+
+	/**
+	 * The role a tool's verb demands: its declared `capability`, MANAGE when
+	 * it declares none, the default the interpreter's own gate applies.
+	 *
+	 * @param string                                                            $name Tool name.
+	 * @param array{class:class-string<Command_Interpreter_Node>,verb:string} $tool The tool's entry.
+	 * @return string One of Capabilities::READ|TUNE|MANAGE.
+	 * @throws \LogicException When the class declares no such verb.
+	 */
+	private static function capability( string $name, array $tool ): string {
+		return Core::as_string( self::declaration( $name, $tool )['capability'] ?? Capabilities::MANAGE );
+	}
+
+	/**
+	 * The `commands` entry a tool's verb has in its class's schema.
+	 *
+	 * @param string                                         $name Tool name.
+	 * @param array{class:class-string<Command_Interpreter_Node>,verb:string} $tool The tool's entry.
+	 * @return array<array-key,mixed>
+	 * @throws \LogicException When the class declares no such verb.
+	 */
+	private static function declaration( string $name, array $tool ): array {
+		return Command_Interpreter_Node::declared_verbs( $tool['class'] )[ $tool['verb'] ]
+			?? throw new \LogicException( \esc_html( "{$name} fronts {$tool['verb']}, which {$tool['class']} does not declare" ) );
 	}
 
 	/**

@@ -73,15 +73,15 @@
 
   <div class="card" id="s2"><div class="where">Request_Flight_Node · hidden Timer_Node sibling</div>
     <h3><span class="mono">fire()</span> rides the Router's TIMER, every 1 s</h3>
-    <p><span class="mono">set_inflight_target gyroscope:partition</span> arms it: a non-empty string target registers the hitchhike, and any other value stops the timer. <span class="mono">inflight_snapshot()</span> builds one row per rid, with eleven keys:</p>
-    <div class="keys"><span>method</span><span>url</span><span>state</span><span>what</span><span>time_ms</span><span>est_ms</span><span>start_time</span><span>last_log_ts</span><span>lag_ms</span><span>remote_addr</span><span>user_agent</span></div>
+    <p><span class="mono">set_inflight_target gyroscope:partition</span> arms it: a non-empty string target registers the hitchhike, and any other value stops the timer. <span class="mono">inflight_snapshot()</span> builds one row per rid, with twelve keys:</p>
+    <div class="keys"><span>method</span><span>url</span><span>state</span><span>what</span><span>time_ms</span><span>est_ms</span><span>start_time</span><span>last_log_ts</span><span>tracker_ts</span><span>lag_ms</span><span>remote_addr</span><span>user_agent</span></div>
     <p><span class="mono">state</span> is the innermost open span's name, or <span class="mono">process</span> when none is open. <span class="mono">est_ms</span> is <span class="mono">time_ms</span> plus the age of <span class="mono">tracker_ts</span>, so an idle row's estimate keeps growing.</p>
   </div>
 
   <div class="card" id="s3" style="margin-top:10px"><div class="where">which rows go</div>
     <div class="pair">
       <div><b>Full mode (default)</b><p>Every row, every tick. A fresh subscriber holds the whole cache after one tick.</p></div>
-      <div><b>Delta mode</b><p>Only rows whose <span class="mono">last_log_ts</span> is not older than the fire watermark.</p></div>
+      <div><b>Delta mode</b><p>Only rows whose <span class="mono">tracker_ts</span> is not older than the fire watermark: both are the worker's clock, so a line stamped before a fire and folded after it still ships, once.</p></div>
     </div>
   </div>
 
@@ -94,7 +94,7 @@
   </div>
 
   <div class="callout" style="margin-top:10px"><h4>The watermark governs a dropped row's retry</h4>
-    <p><span class="mono">last_fire_ts</span> takes the fire's start time, and only when at least one row shipped. Full mode never reads it, so a dropped row is offered again every tick. Under delta mode, once any sibling ships, the dropped row's <span class="mono">last_log_ts</span> falls behind the watermark, and the row is not offered again until its request logs a new line. The browser keeps the last row it received for that rid, unrefreshed.</p>
+    <p><span class="mono">last_fire_ts</span> takes the fire's start time, and only when at least one row shipped. Full mode never reads it, so a dropped row is offered again every tick. Under delta mode, once any sibling ships, the dropped row's <span class="mono">tracker_ts</span> falls behind the watermark, and the row is not offered again until the builder folds a new line for its request. The browser keeps the last row it received for that rid, unrefreshed.</p>
   </div>
 
   <div class="card" id="s6" style="margin-top:10px"><div class="where">Request_Builder_Node · on completion</div>
@@ -120,7 +120,7 @@
   <div class="ln"><span class="k">b7</span><span class="src">Flight</span><br>"process"<br>est_ms 2104<span class="ann">no new line; est_ms still grows</span></div>
   <div class="dlt"><b>The same stretch under delta mode</b>b7 logs no line after its first row, so its +1 s and +2 s rows are never sent. a1's +1 s row goes only if a1 logged a line after the first tick. Both completions go either way: they come from the tee, not from Flight.</div>
   <div class="legend">
-    <div><i></i><span>Request_Flight_Node row: KEY = rid, eleven keys, <span class="mono">state</span> a span name</span></div>
+    <div><i></i><span>Request_Flight_Node row: KEY = rid, twelve keys, <span class="mono">state</span> a span name</span></div>
     <div><i class="tee"></i><span>completed:tee summary: KEY = rid, ten keys, <span class="mono">state</span> = complete</span></div>
   </div>
 </div>

@@ -39,8 +39,9 @@ use Newspack_Nodes\Timer_Node;
 class Request_Flight_Node extends Timer_Node {
 
 	/**
-	 * Wall-clock timestamp of the last fire that shipped a row. Delta mode skips
-	 * every row whose `last_log_ts` predates it; full mode never reads it.
+	 * Builder-clock timestamp of the last fire that shipped a row. Delta mode
+	 * skips every row whose `tracker_ts`, the builder-clock moment it last
+	 * applied a line, predates it; full mode never reads it.
 	 */
 	private float $last_fire_ts = 0.0;
 
@@ -77,7 +78,7 @@ class Request_Flight_Node extends Timer_Node {
 		$delta     = $this->delta();
 		foreach ( $rows as $rid => $row ) {
 			// Delta mode skips a row with no activity since the last fire.
-			if ( $delta && Core::as_float( $row['last_log_ts'] ?? 0 ) < $watermark ) {
+			if ( $delta && Core::as_float( $row['tracker_ts'] ) < $watermark ) {
 				continue;
 			}
 			$message                   = Message::new_message();
@@ -109,8 +110,9 @@ class Request_Flight_Node extends Timer_Node {
 	 * Each row's `state` carries the top-of-stack hook name and `what` that
 	 * frame's label, `time_ms` the span from process start to the last log
 	 * line, `est_ms` that span plus the age of the tracker timestamp (elapsed
-	 * time for a request still running), and `lag_ms` how far the tracker has
-	 * run past that last line. The rid rides `Message::KEY` on the wire, never
+	 * time for a request still running), `tracker_ts` the builder-clock moment
+	 * it last applied a line, and `lag_ms` how far that moment has run past
+	 * the last line's own stamp. The rid rides `Message::KEY` on the wire, never
 	 * duplicated in the row. (PHP coerces an all-digits rid to an int key;
 	 * `fire()` casts it back.)
 	 *
@@ -157,6 +159,7 @@ class Request_Flight_Node extends Timer_Node {
 				'est_ms'      => \round( $time_ms + $age_ms, 1 ),
 				'start_time'  => $start_time,
 				'last_log_ts' => $last_log_ts,
+				'tracker_ts'  => $tracker_ts,
 				'lag_ms'      => \max( 0, \round( ( $tracker_ts - $last_log_ts ) * 1000, 1 ) ),
 				'remote_addr' => Core::as_string( $remote_addr_v ),
 				'user_agent'  => $user_agent,

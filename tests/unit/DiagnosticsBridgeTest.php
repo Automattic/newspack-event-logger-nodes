@@ -421,28 +421,21 @@ class DiagnosticsBridgeTest extends TestCase {
 	 * Every static the body registers into is put back afterwards.
 	 */
 	public function test_the_deferred_bootstrap_spans_a_dispatched_verb_around_the_wrapper_before_it(): void {
-		$lm         = $this->started_log_manager();
-		$formatters = new \ReflectionProperty( \Newspack_Nodes\Formatters::class, 'registry' );
-		$saved      = [
-			'actions'    => $GLOBALS['_wp_actions'],
-			'filters'    => $GLOBALS['_wp_test_filters'] ?? [],
-			'around'     => Command_Interpreter_Node::$around_dispatch,
-			'resolvers'  => \Newspack_Nodes\Core::$config_resolvers,
-			'formatters' => $formatters->getValue(),
-		];
+		$lm     = $this->started_log_manager();
+		$around = Command_Interpreter_Node::$around_dispatch;
+		$uptime = '';
 		Command_Interpreter_Node::$around_dispatch = static function ( Command_Interpreter_Node $ci, string $verb, \Closure $run ): mixed {
 			Log_Manager::started_instance()?->message( 'moa-7747', [ 'm' => $verb ] );
 			return $run();
 		};
 		try {
-			\newspack_event_logger_nodes_boot();
-			$uptime = self::interpreter( 'kiwi-7747' )->dispatch( 'uptime' );
+			self::with_deferred_bootstrap(
+				static function () use ( &$uptime ): void {
+					$uptime = self::interpreter( 'kiwi-7747' )->dispatch( 'uptime' );
+				}
+			);
 		} finally {
-			$GLOBALS['_wp_actions']                    = $saved['actions'];
-			$GLOBALS['_wp_test_filters']               = $saved['filters'];
-			Command_Interpreter_Node::$around_dispatch = $saved['around'];
-			\Newspack_Nodes\Core::$config_resolvers   = $saved['resolvers'];
-			$formatters->setValue( null, $saved['formatters'] );
+			Command_Interpreter_Node::$around_dispatch = $around;
 		}
 		$lm->finish();
 

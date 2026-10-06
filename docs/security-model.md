@@ -86,7 +86,7 @@ The substrate's security model tables its own doors: the auth, spawn, health-cac
 
 | Door | Who opens it | What it checks |
 |---|---|---|
-| The MCP server | A bearer credential naming a live session, 20 calls per ten seconds | Strict shape; constant-time key compare; scope can only subtract from the session's. Two tools write; both need `tune`. Every success result leaves inside a `<site-data>` fence the `initialize` instructions explain, hex-escaped so no payload can close it. |
+| The MCP server | A bearer credential naming a live session, 20 calls in any trailing ten seconds | Strict shape; constant-time key compare; scope can only subtract from the session's. Two tools write; both need `tune`. Every success result leaves inside a `<site-data>` fence the `initialize` instructions explain, hex-escaped so no payload can close it. |
 | The `admin_post` handler, reset settings (the substrate registers two more, its own reset and flush cache) | `manage` with a nonce | Nonce, then capability. |
 | The profiler mu-plugin | Every request | Per-plugin load timings only, once the logger has started. |
 
