@@ -1678,6 +1678,34 @@ describe( 'PerformanceDashboard', () => {
 			expect( bucketParam() ).toBe( '2026-10-04-14-00' );
 		} );
 
+		it( 'edits the table selection from overview chart drags', async () => {
+			mockView = loadedView();
+			mountDash();
+			await flushEffects();
+			const drag = ( keys, additive ) =>
+				act( async () => {
+					globalThis.__overviewProps.onSlotRange( keys, {
+						additive,
+					} );
+				} );
+
+			await drag(
+				[ '2026-10-04-13-35', '2026-10-04-13-40', '2026-10-04-13-45' ],
+				false
+			);
+			expect( bucketParam() ).toBe(
+				'2026-10-04-13-35..2026-10-04-13-45'
+			);
+
+			await drag( [ '2026-10-04-14-10', '2026-10-04-14-15' ], true );
+			expect( bucketParam() ).toBe(
+				'2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10..2026-10-04-14-15'
+			);
+			expect( globalThis.__urlTableProps.bucket ).toBe(
+				'2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10..2026-10-04-14-15'
+			);
+		} );
+
 		it( "hands the table the overview reply's slots for its Time field", async () => {
 			const slots = slotsEndingAt( '2026-10-04-14-00', 6 );
 			mockView = loadedView();

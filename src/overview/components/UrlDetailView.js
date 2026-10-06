@@ -151,7 +151,7 @@ const narrowedNote = ( { errors_only: errorsOnly, bucket } ) => {
 		const span = bucketLabel( bucket );
 		return errorsOnly
 			? sprintf(
-					// translators: %s: the bucket's span, e.g. 14:05–14:10 UTC.
+					// translators: %s: the bucket's local span, e.g. 7:05–7:10 AM.
 					__(
 						'The charts, the flame graph and the profile describe every request to this URL; the header and the list below hold its errors in %s.',
 						'newspack-event-logger-nodes'
@@ -159,7 +159,7 @@ const narrowedNote = ( { errors_only: errorsOnly, bucket } ) => {
 					span
 			  )
 			: sprintf(
-					// translators: %s: the bucket's span, e.g. 14:05–14:10 UTC.
+					// translators: %s: the bucket's local span, e.g. 7:05–7:10 AM.
 					__(
 						'The charts, the flame graph and the profile describe every request to this URL; the header and the list below hold %s.',
 						'newspack-event-logger-nodes'
@@ -302,7 +302,7 @@ export default function UrlDetailView( {
 		( update ) => onFilterChange( 'bucket', update ),
 		[ onFilterChange ]
 	);
-	const [ selectedBuckets, pickBucket ] = useBucketSelection(
+	const [ selectedBuckets, pickBucket, pickRange ] = useBucketSelection(
 		filters.bucket,
 		setBucket
 	);
@@ -437,6 +437,7 @@ export default function UrlDetailView( {
 				loading={ breakdownLoading }
 				error={ breakdownError }
 				onSlotClick={ pickBucket }
+				onSlotRange={ pickRange }
 				selectedBuckets={ selectedBuckets }
 			/>
 
@@ -444,6 +445,7 @@ export default function UrlDetailView( {
 				data={ urlDetail?.category_time_series }
 				slots={ urlDetail?.slots ?? null }
 				onSlotClick={ pickBucket }
+				onSlotRange={ pickRange }
 				selectedBuckets={ selectedBuckets }
 			/>
 
@@ -468,14 +470,14 @@ export default function UrlDetailView( {
 					</div>
 				) }
 
-			{ urlDetail.aggregate_profiles?.categories && (
+			{ urlDetail.aggregate_profiles?.count > 0 && (
 				<ProfileWithCaption
 					profiles={ urlDetail.aggregate_profiles.categories }
 					totalMs={ urlDetail.stats?.avg_ms }
 					totalProfiledTime={
-						urlDetail.aggregate_profiles?.total_time
+						urlDetail.aggregate_profiles.total_time
 					}
-					count={ urlDetail.aggregate_profiles?.count || 0 }
+					count={ urlDetail.aggregate_profiles.count }
 				/>
 			) }
 

@@ -37,8 +37,16 @@ jest.mock( '../../ResponseTimeChart', () => ( {
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { breakdown, series, slots, onSlotClick, selectedBuckets } ) => {
+	default: ( {
+		breakdown,
+		series,
+		slots,
+		onSlotClick,
+		onSlotRange,
+		selectedBuckets,
+	} ) => {
 		globalThis.__aggregateSlotClick = onSlotClick;
+		globalThis.__aggregateSlotRange = onSlotRange;
 		globalThis.__aggregateSelected = selectedBuckets;
 		return `AGGREGATE[breakdown=${ breakdown },series=${
 			series ? 'set' : 'none'
@@ -49,8 +57,9 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { slots, onSlotClick, selectedBuckets } ) => {
+	default: ( { slots, onSlotClick, onSlotRange, selectedBuckets } ) => {
 		globalThis.__categorySlotClick = onSlotClick;
+		globalThis.__categorySlotRange = onSlotRange;
 		globalThis.__categorySelected = selectedBuckets;
 		return `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`;
 	},
@@ -475,6 +484,32 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
+	it( 'replaces its selection on a plain chart drag, and adds the span on an additive one', () => {
+		const onFilterChange = jest.fn();
+		const { unmount } = mount( {
+			filters: { errors_only: false, bucket: '2026-10-04-13-35' },
+			onFilterChange,
+		} );
+		globalThis.__aggregateSlotRange(
+			[ '2026-10-04-13-45', '2026-10-04-13-50', '2026-10-04-13-55' ],
+			{ additive: false }
+		);
+		globalThis.__categorySlotRange(
+			[ '2026-10-04-13-45', '2026-10-04-13-50', '2026-10-04-13-55' ],
+			{ additive: true }
+		);
+		expect(
+			onFilterChange.mock.calls.map( ( [ field, update ] ) => [
+				field,
+				update( '2026-10-04-13-35' ),
+			] )
+		).toEqual( [
+			[ 'bucket', '2026-10-04-13-45..2026-10-04-13-55' ],
+			[ 'bucket', '2026-10-04-13-35,2026-10-04-13-45..2026-10-04-13-55' ],
+		] );
+		unmount();
+	} );
+
 	it( "shades the modal's own selection on both charts", () => {
 		const { unmount } = mount( {
 			filters: {
@@ -519,7 +554,7 @@ describe( 'UrlDetailView', () => {
 		);
 		act( () =>
 			field
-				.querySelector( 'button[aria-label="Remove 13:30–13:35 UTC"]' )
+				.querySelector( 'button[aria-label="Remove 6:30–6:35 AM"]' )
 				.click()
 		);
 		expect( onFilterChange ).toHaveBeenCalledWith(
@@ -536,7 +571,7 @@ describe( 'UrlDetailView', () => {
 		} );
 		const banner = bucketed.container.querySelector( '[role="status"]' );
 		expect( banner.textContent ).toContain( note );
-		expect( banner.textContent ).toContain( '13:35–13:40 UTC' );
+		expect( banner.textContent ).toContain( '6:35–6:40 AM' );
 		bucketed.unmount();
 
 		const both = mount( {
@@ -546,7 +581,7 @@ describe( 'UrlDetailView', () => {
 		} );
 		const bothBanner = both.container.querySelector( '[role="status"]' );
 		expect( bothBanner.textContent ).toContain( 'errors' );
-		expect( bothBanner.textContent ).toContain( '13:35–13:40 UTC' );
+		expect( bothBanner.textContent ).toContain( '6:35–6:40 AM' );
 		both.unmount();
 	} );
 
@@ -919,6 +954,25 @@ describe( 'UrlDetailView', () => {
 		expect( container.textContent ).toContain(
 			'Average breakdown across 100 requests'
 		);
+		unmount();
+	} );
+
+	it( 'captions no breakdown over 0 requests above a listed request', () => {
+		// A PHP empty array arrives as `[]`, which is truthy.
+		const { container, unmount } = mount( {
+			urlDetail: {
+				...baseUrlDetail,
+				requests: REQUESTS.slice( 0, 1 ),
+				aggregate_profiles: {
+					categories: [],
+					count: 0,
+					total_time: null,
+				},
+			},
+			sortedRequests: REQUESTS.slice( 0, 1 ),
+		} );
+		expect( container.textContent ).not.toContain( 'Average breakdown' );
+		expect( container.textContent ).not.toContain( 'Total Profiled' );
 		unmount();
 	} );
 

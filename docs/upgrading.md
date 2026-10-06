@@ -6,6 +6,13 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.94.0.** A bucket selection reads
+  every URL its sets name through the substrate's
+  `Table_Client::all_members()` and its `SSCAN` verb, which read a set of
+  any size page by page, and no selection is refused for naming too many
+  URLs. Below the floor the plugin stays dormant behind its admin notice.
+  Update the substrate first, then this plugin, then restart the workers.
+
 - **`--bucket` takes a selection, and its refusals name the key.** `urls`,
   `dump_url`, `ask` and their MCP tools read `bucket` as comma-separated
   runs of `Y-m-d-H-i` keys, `start..end` inclusive, so a single key reads
@@ -16,8 +23,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   from `must be` on, which both carry. `filters.bucket` and both briefs
   echo the canonical spelling, which can differ from what was sent. A PHP
   caller of `Stats_Store::url_bucket_members()` passes a list of buckets
-  where it passed one, and a budget of (hash, server) pairs before
-  `$failed`; each hash maps to server key => the hours whose buckets named it, where
+  where it passed one; each hash maps to server key => the hours whose buckets named it, where
   it mapped to a list of server keys.
 
 - **`Flame_Builder_Node::roll_up_hours()` takes the tick.** Its fourth

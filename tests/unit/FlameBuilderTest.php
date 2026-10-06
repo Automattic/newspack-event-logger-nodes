@@ -7965,7 +7965,7 @@ class FlameBuilderTest extends TestCase {
 		);
 		$this->assertSame(
 			[ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'c4a2c4a2c4a2' => [ $b => [ '2026-10-04-13' ] ], 'd5d5d5d5d5d5' => [ $k => [ '2026-10-04-13' ] ] ],
-			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b, $k ], Stats_Store::URL_BUCKET_MAX )
+			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b, $k ] )
 		);
 	}
 
@@ -8012,7 +8012,7 @@ class FlameBuilderTest extends TestCase {
 			self::adds_of( Stats_Store::NS_URLBUCKET ),
 			'kakapo once; weka by its own first flush'
 		);
-		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'e9e9e9e9e9e9' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ) );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'e9e9e9e9e9e9' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ] ) );
 	}
 
 	/**
@@ -8045,7 +8045,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now             = \gmmktime( 13, 36, 2, 10, 4, 2026 );
 		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
 		$b = Stats_Store::server_key( 'b.example' );
-		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'the add was refused' );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ] ), 'the add was refused' );
 
 		$store->refuse_buckets = false;
 		Core::$now             = \gmmktime( 13, 36, 7, 10, 4, 2026 );
@@ -8053,7 +8053,7 @@ class FlameBuilderTest extends TestCase {
 		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'c4a1c4a1c4a1' => '/kakapo-7731' ] ] );
 
 		$this->assertSame( [ [ "urlbucket:2026-10-04-13-35:{$b}" => [ [ 'c4a1c4a1c4a1' => \gmmktime( 13, 36, 7, 10, 4, 2026 ) ], 90_000 + 3_605 ] ] ], self::adds_of( Stats_Store::NS_URLBUCKET ) );
-		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ) );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ] ) );
 	}
 
 	/**
@@ -8112,7 +8112,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now = \gmmktime( 13, 36, 7, 10, 4, 2026 );
 		$this->flush_buckets( $fb, [] );
 		$b = Stats_Store::server_key( 'b.example' );
-		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'refused twice' );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ] ), 'refused twice' );
 
 		$store->refuse_buckets = false;
 		Core::$now             = \gmmktime( 13, 41, 9, 10, 4, 2026 );
@@ -8121,7 +8121,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now = \gmmktime( 13, 41, 14, 10, 4, 2026 );
 		$this->flush_buckets( $fb, [] );
 
-		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'the owed add landed' );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ] ), 'the owed add landed' );
 		$this->assertSame(
 			[
 				[
@@ -8153,7 +8153,7 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame( '2026-10-04-14-00', self::fine_floor( $store, self::tick() ), 'the hour turned' );
 		$this->assertSame( [], $this->asked_verbs( Stats_Store::NS_URLBUCKET ), 'nothing owed is filed' );
-		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-55' ], [ Stats_Store::server_key( 'b.example' ) ], Stats_Store::URL_BUCKET_MAX ) );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-55' ], [ Stats_Store::server_key( 'b.example' ) ] ) );
 	}
 
 	/**
@@ -8193,7 +8193,7 @@ class FlameBuilderTest extends TestCase {
 		$this->persist_bucket_rows( $fb, $store, [ 'url_stats' => [ 'e9e9e9e9e9e9' => '/weka-2271' ] ] );
 
 		$b = Stats_Store::server_key( 'b.example' );
-		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'e9e9e9e9e9e9' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'the owed add landed beside weka' );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'e9e9e9e9e9e9' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ] ), 'the owed add landed beside weka' );
 	}
 
 	/** A request is filed under its start plus its duration, rounded to the second. */
@@ -8224,7 +8224,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertStringContainsString( 'urlbucket write refused; 2 sets left unfiled', $err );
 		$this->assertSame( [ 2, 2 ], [ $writes['urlbucket sets'] ?? null, $writes[ 'refused ' . Stats_Store::NS_URLBUCKET ] ?? null ] );
 		$this->assertArrayNotHasKey( 'refused ' . Stats_Store::NS_URLTOKEN, $writes, 'the words landed' );
-		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ Stats_Store::server_key( 'b.example' ), Stats_Store::server_key( 'k.example' ) ], Stats_Store::URL_BUCKET_MAX ) );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ Stats_Store::server_key( 'b.example' ), Stats_Store::server_key( 'k.example' ) ] ) );
 	}
 
 	public function test_a_bucket_whose_index_went_unanswered_files_no_bucket_set(): void {
@@ -8243,7 +8243,7 @@ class FlameBuilderTest extends TestCase {
 
 		$this->fail_reads( $store, false );
 		$this->assertSame( [], $this->asked_verbs( Stats_Store::NS_URLBUCKET ) );
-		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ Stats_Store::server_key( 'b.example' ) ], Stats_Store::URL_BUCKET_MAX ) );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ Stats_Store::server_key( 'b.example' ) ] ) );
 	}
 
 	/**
@@ -8261,7 +8261,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now             = \gmmktime( 14, 0, 31, 10, 4, 2026 );
 		$this->flush_buckets( $fb, [] );
 		$b = Stats_Store::server_key( 'b.example' );
-		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-55' ], [ $b ], Stats_Store::URL_BUCKET_MAX ), 'the owed add aged out' );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-55' ], [ $b ] ), 'the owed add aged out' );
 
 		Core::$now = \gmmktime( 14, 0, 36, 10, 4, 2026 );
 		$this->forget_stats_asks();
@@ -8272,7 +8272,7 @@ class FlameBuilderTest extends TestCase {
 			self::adds_of( Stats_Store::NS_URLBUCKET ),
 			'one add, valued by the fold\'s tick'
 		);
-		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-55' ], [ $b ], Stats_Store::URL_BUCKET_MAX ) );
+		$this->assertSame( [ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-55' ], [ $b ] ) );
 	}
 
 	/** The fold adds an already-filed URL again, and its set still names it once. */
@@ -8293,7 +8293,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ [ $set => [ [ 'c4a1c4a1c4a1' => $at, 'e9e9e9e9e9e9' => $at ], 90_000 + 3_605 ] ] ], self::adds_of( Stats_Store::NS_URLBUCKET ) );
 		$this->assertSame(
 			[ 'c4a1c4a1c4a1' => [ $b => [ '2026-10-04-13' ] ], 'e9e9e9e9e9e9' => [ $b => [ '2026-10-04-13' ] ] ],
-			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ], Stats_Store::URL_BUCKET_MAX )
+			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $b ] )
 		);
 	}
 

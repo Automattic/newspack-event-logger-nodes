@@ -11,6 +11,9 @@ const {
 	createJestConfig,
 } = require( '../newspack-nodes/src/build-kit/jest.cjs' );
 
+// A zone with DST and an offset from UTC, so local-time labels are tested.
+process.env.TZ = 'America/Los_Angeles';
+
 module.exports = createJestConfig( {
 	aliasBase: path.resolve( __dirname, '../newspack-nodes/src' ),
 	pinReactFrom: path.resolve( __dirname, 'node_modules' ),

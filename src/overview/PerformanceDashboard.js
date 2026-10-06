@@ -208,10 +208,8 @@ export default function PerformanceDashboard( {
 		( raw ) => raw ?? '',
 		String
 	);
-	const [ tableBuckets, pickTableBucket ] = useBucketSelection(
-		tableBucket,
-		setTableBucket
-	);
+	const [ tableBuckets, pickTableBucket, pickTableRange ] =
+		useBucketSelection( tableBucket, setTableBucket );
 	const [ chartMetric, setChartMetric ] = useQueryParamChoice(
 		'metric',
 		CHART_METRICS,
@@ -1025,6 +1023,7 @@ export default function PerformanceDashboard( {
 				breakdownRead={ chartBreakdownRead }
 				categoryData={ categoryData }
 				onSlotClick={ pickTableBucket }
+				onSlotRange={ pickTableRange }
 				selectedBuckets={ tableBuckets }
 			/>
 

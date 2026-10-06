@@ -51,6 +51,7 @@ import {
 	hasRows,
 	useSelectedSlots,
 	useSlotClick,
+	useSlotRange,
 } from './chartSlots';
 
 /**
@@ -172,14 +173,15 @@ export function breakdownState( breakdownData = null ) {
  * may mount it before the first fetch returns — and must keep the dropdowns up
  * around it, since they are the only way to pick a dimension that does.
  *
- * @param {Object}                                                  props                 Component props.
- * @param {Object|null}                                             props.series          The dimension's table, as `breakdownState()` decoded it.
- * @param {string[]|null}                                           props.slots           The bucket keys the reply drew, newest first.
- * @param {string}                                                  [props.metric]        'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
- * @param {string}                                                  [props.breakdown]     Dimension `series` was fetched for, defaulting to 'status'; picks the palette only.
- * @param {string}                                                  [props.serverFilter]  Server name for the heading; the caller has already filtered the data.
- * @param {(bucketKey: string, click: {additive: boolean}) => void} [props.onSlotClick]   Receives the bucket key of a clicked slot, and whether cmd or ctrl was held; without it a click does nothing.
- * @param {string[]}                                                props.selectedBuckets The selected bucket keys, shaded on the plot.
+ * @param {Object}                                                    props                 Component props.
+ * @param {Object|null}                                               props.series          The dimension's table, as `breakdownState()` decoded it.
+ * @param {string[]|null}                                             props.slots           The bucket keys the reply drew, newest first.
+ * @param {string}                                                    [props.metric]        'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
+ * @param {string}                                                    [props.breakdown]     Dimension `series` was fetched for, defaulting to 'status'; picks the palette only.
+ * @param {string}                                                    [props.serverFilter]  Server name for the heading; the caller has already filtered the data.
+ * @param {(bucketKey: string, click: {additive: boolean}) => void}   [props.onSlotClick]   Receives the bucket key of a clicked slot, and whether cmd or ctrl was held; without it a click does nothing.
+ * @param {(bucketKeys: string[], drag: {additive: boolean}) => void} [props.onSlotRange]   Receives the bucket keys a drag spans, ascending, and whether cmd or ctrl was held; without it a drag does nothing.
+ * @param {string[]}                                                  props.selectedBuckets The selected bucket keys, shaded on the plot.
  * @return {import('react').ReactElement|null} Rendered chart, or null when the dimension has no series.
  */
 export default function AggregateTimeChart( {
@@ -189,6 +191,7 @@ export default function AggregateTimeChart( {
 	breakdown = 'status',
 	serverFilter = '',
 	onSlotClick,
+	onSlotRange,
 	selectedBuckets,
 } ) {
 	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
@@ -226,6 +229,7 @@ export default function AggregateTimeChart( {
 	);
 
 	const slotClick = useSlotClick( axis, onSlotClick );
+	const slotRange = useSlotRange( axis, onSlotRange );
 	const selectedSlots = useSelectedSlots( axis, selectedBuckets );
 
 	// Guard sits below every hook; hoisting it would break hook order.
@@ -264,6 +268,7 @@ export default function AggregateTimeChart( {
 			yLabel={ yLabels[ metric ] }
 			height={ CHART_HEIGHT }
 			onSlotClick={ slotClick }
+			onSlotRange={ slotRange }
 			selectedSlots={ selectedSlots }
 			totalLabel={ __( 'Total', 'newspack-event-logger-nodes' ) }
 			title={

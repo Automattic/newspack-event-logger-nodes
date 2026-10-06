@@ -48,7 +48,7 @@ final class Stats_Ask_Recorder_Node extends Node {
 	public array $asked = [];
 
 	/**
-	 * While set, a pattern: an `MGET` or `SMEMBERS` asking a key it matches is
+	 * While set, a pattern: an `MGET`, `SMEMBERS` or `SSCAN` asking a key it matches is
 	 * answered here with the TM_ERROR its Table sends when the read fails, and
 	 * never reaches the Table: a batch that went unanswered.
 	 */
@@ -91,7 +91,7 @@ final class Stats_Ask_Recorder_Node extends Node {
 	private function refuses( mixed $value ): ?string {
 		$words = '' !== $this->refuse && \is_string( $value ) ? ( \preg_split( '/\s+/', \trim( $value ), -1, \PREG_SPLIT_NO_EMPTY ) ?: [] ) : [];
 		$verb  = \array_shift( $words );
-		if ( 'SMEMBERS' === $verb ) {
+		if ( 'SMEMBERS' === $verb || 'SSCAN' === $verb ) {
 			// Its limit comes before the keys.
 			\array_shift( $words );
 		} elseif ( 'MGET' !== $verb ) {

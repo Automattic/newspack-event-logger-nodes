@@ -391,6 +391,24 @@ class StatsStoreTest extends TestCase {
 		$this->assertEqualsWithDelta( 3.0, $stats['profiles']['categories']['wpdb']['count'], 1e-6 );
 	}
 
+	public function test_url_stats_hands_out_no_profile_over_no_profiled_request(): void {
+		// The flush seeds a fresh blob's profile at count 0; a request with no
+		// profile, or an untimed one, leaves it there.
+		$store = $this->stats_store( partition: 0 );
+		$this->set_url_stats( $store, 'urlhash-z', [
+			'last_modified' => 1790000533,
+			'profiles'      => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
+		] );
+		$this->set_url_stats( $this->stats_store( partition: 1 ), 'urlhash-z', [
+			'profiles' => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
+		] );
+
+		$stats = Stats_Store::url_stats( [ $store, $this->stats_store( partition: 1 ) ], 'urlhash-z' );
+
+		$this->assertSame( 1790000533, $stats['last_modified'] );
+		$this->assertArrayNotHasKey( 'profiles', $stats );
+	}
+
 	public function test_url_stats_is_null_when_no_partition_holds_the_url(): void {
 		$this->assertNull( Stats_Store::url_stats( [ $this->stats_store( partition: 0 ), $this->stats_store( partition: 1 ) ], 'urlhash-none' ) );
 	}
@@ -2184,12 +2202,12 @@ class StatsStoreTest extends TestCase {
 				'b2b2b2b2b2b2' => [ $kea => [ '2026-10-04-13' ], $moa => [ '2026-10-04-13' ] ],
 				'481169627974' => [ $moa => [ '2026-10-04-13' ] ],
 			],
-			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea, $moa ], Stats_Store::URL_BUCKET_MAX, $failed )
+			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea, $moa ], $failed )
 		);
 		$this->assertFalse( $failed );
 		$this->assertSame(
 			[ 'a1a1a1a1a1a1' => [ $kea => [ '2026-10-04-13' ] ], 'b2b2b2b2b2b2' => [ $kea => [ '2026-10-04-13' ] ] ],
-			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ], Stats_Store::URL_BUCKET_MAX ),
+			$store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ] ),
 			'only the servers asked'
 		);
 	}
@@ -2213,15 +2231,15 @@ class StatsStoreTest extends TestCase {
 		);
 
 		$this->assertSame( [ true, false, true ], $landed );
-		$this->assertSame( [ 'c3c3c3c3c3c3' => [ $kea => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-40' ], [ $kea ], Stats_Store::URL_BUCKET_MAX ) );
+		$this->assertSame( [ 'c3c3c3c3c3c3' => [ $kea => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-40' ], [ $kea ] ) );
 	}
 
 	/**
-	 * A selection's sets are read one exchange an HOUR, newest first, and a
-	 * URL its buckets name is one hash carrying each server that named it,
-	 * with the hours whose buckets named it there, each once.
+	 * A URL a selection's buckets name is one hash carrying each server that
+	 * named it, with the hours whose buckets named it there, newest first,
+	 * each once.
 	 */
-	public function test_a_selections_sets_are_read_one_exchange_an_hour_naming_each_url_once(): void {
+	public function test_a_selection_names_each_url_once_with_the_hours_naming_it(): void {
 		$store = $this->stats_store( partition: 1, max_lifespan: 43_219 );
 		$kea   = Stats_Store::server_key( 'kea.test' );
 		$moa   = Stats_Store::server_key( 'moa.test' );
@@ -2236,7 +2254,7 @@ class StatsStoreTest extends TestCase {
 		);
 		$this->forget_stats_asks();
 
-		$members = $store->url_bucket_members( [ '2026-10-04-14-05', '2026-10-04-13-50', '2026-10-04-13-35' ], [ $kea, $moa ], Stats_Store::URL_BUCKET_MAX, $failed );
+		$members = $store->url_bucket_members( [ '2026-10-04-14-05', '2026-10-04-13-50', '2026-10-04-13-35' ], [ $kea, $moa ], $failed );
 
 		$this->assertFalse( $failed );
 		$this->assertEqualsCanonicalizing( [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2', 'd4d4d4d4d4d4' ], \array_keys( $members ) );
@@ -2244,74 +2262,14 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [ $kea => [ '2026-10-04-13' ] ], $members['a1a1a1a1a1a1'] );
 		$this->assertSame(
 			[
-				[ "urlbucket:2026-10-04-14-05:{$kea}", "urlbucket:2026-10-04-14-05:{$moa}" ],
-				[ "urlbucket:2026-10-04-13-50:{$kea}", "urlbucket:2026-10-04-13-50:{$moa}", "urlbucket:2026-10-04-13-35:{$kea}", "urlbucket:2026-10-04-13-35:{$moa}" ],
+				'SMEMBERS' => [
+					[ "urlbucket:2026-10-04-14-05:{$kea}", "urlbucket:2026-10-04-14-05:{$moa}" ],
+					[ "urlbucket:2026-10-04-13-50:{$kea}", "urlbucket:2026-10-04-13-50:{$moa}", "urlbucket:2026-10-04-13-35:{$kea}", "urlbucket:2026-10-04-13-35:{$moa}" ],
+				],
 			],
-			$this->asked_verbs( Stats_Store::NS_URLBUCKET )['SMEMBERS'] ?? [],
-			'one exchange an hour'
+			$this->asked_verbs( Stats_Store::NS_URLBUCKET ),
+			'one exchange an hour, and no page past it'
 		);
-	}
-
-	/**
-	 * Each hour's sets are one exchange, read newest first, and the read
-	 * stops at the first hour whose URLs take the selection past its budget:
-	 * the older hour's set is never asked.
-	 */
-	public function test_a_selection_stops_reading_sets_once_its_urls_pass_the_budget(): void {
-		$store = $this->stats_store( partition: 2, max_lifespan: 43_219 );
-		$kea   = Stats_Store::server_key( 'kea.test' );
-		$store->add_url_buckets(
-			[
-				[ '2026-10-04-14-05', $kea, [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2', 'c3c3c3c3c3c3' ] ],
-				[ '2026-10-04-13-55', $kea, [ 'd4d4d4d4d4d4', 'e5e5e5e5e5e5', 'f6f6f6f6f6f6' ] ],
-				[ '2026-10-04-12-35', $kea, [ '17a917a917a9' ] ],
-			],
-			\gmmktime( 14, 7, 3, 10, 4, 2026 )
-		);
-		$this->forget_stats_asks();
-
-		$members = $store->url_bucket_members( [ '2026-10-04-14-05', '2026-10-04-13-55', '2026-10-04-12-35' ], [ $kea ], 5, $failed );
-
-		$this->assertFalse( $members, 'six URLs pass a budget of five' );
-		$this->assertFalse( $failed, 'the Table answered every set it was asked' );
-		$this->assertSame(
-			[ [ "urlbucket:2026-10-04-14-05:{$kea}" ], [ "urlbucket:2026-10-04-13-55:{$kea}" ] ],
-			$this->asked_verbs( Stats_Store::NS_URLBUCKET )['SMEMBERS'] ?? [],
-			'two hours asked, and hour 12\'s never'
-		);
-	}
-
-	/**
-	 * An hour's sets are asked for the budget left plus the most URLs any
-	 * one server has named so far, since a set repeats only its own
-	 * server's: past that, the selection is over budget whatever it holds.
-	 */
-	public function test_each_buckets_sets_are_read_to_the_budget_left_and_a_servers_urls_so_far(): void {
-		$store = $this->stats_store( partition: 2, max_lifespan: 43_219 );
-		$kea   = Stats_Store::server_key( 'kea.test' );
-		$moa   = Stats_Store::server_key( 'moa.test' );
-		$store->add_url_buckets(
-			[
-				[ '2026-10-04-13-45', $kea, [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2', 'c3c3c3c3c3c3' ] ],
-				[ '2026-10-04-13-45', $moa, [ 'd4d4d4d4d4d4' ] ],
-				[ '2026-10-04-12-40', $kea, [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2', 'e5e5e5e5e5e5', 'f6f6f6f6f6f6', '17a917a917a9' ] ],
-			],
-			\gmmktime( 13, 47, 3, 10, 4, 2026 )
-		);
-		$this->forget_stats_asks();
-
-		$members = $store->url_bucket_members( [ '2026-10-04-13-45', '2026-10-04-12-40' ], [ $kea, $moa ], 5, $failed );
-
-		$limits = [];
-		foreach ( \Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness::ask_recorder()->asked as $asked ) {
-			$words = \is_string( $asked['value'] ) ? \explode( ' ', \trim( $asked['value'] ) ) : [];
-			if ( 'SMEMBERS' === ( $words[0] ?? '' ) ) {
-				$limits[] = $words[1];
-			}
-		}
-		$this->assertFalse( $members, 'kea\'s second set holds five, past the four it may' );
-		$this->assertFalse( $failed );
-		$this->assertSame( [ '5', '4' ], $limits, 'the budget, then one left and kea\'s three' );
 	}
 
 	public function test_another_buckets_set_answers_nothing_for_this_one(): void {
@@ -2319,9 +2277,9 @@ class StatsStoreTest extends TestCase {
 		$kea   = Stats_Store::server_key( 'kea.test' );
 		$store->add_url_buckets( [ [ '2026-10-04-13-40', $kea, [ 'a1a1a1a1a1a1' ] ] ], \gmmktime( 13, 44, 2, 10, 4, 2026 ) );
 
-		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ], Stats_Store::URL_BUCKET_MAX, $failed ) );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ], $failed ) );
 		$this->assertFalse( $failed, 'a set never filed is an answer, not a failure' );
-		$this->assertSame( [ 'a1a1a1a1a1a1' => [ $kea => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-40' ], [ $kea ], Stats_Store::URL_BUCKET_MAX ) );
+		$this->assertSame( [ 'a1a1a1a1a1a1' => [ $kea => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-40' ], [ $kea ] ) );
 	}
 
 	/**
@@ -2340,59 +2298,56 @@ class StatsStoreTest extends TestCase {
 			$at( 0 );
 			$store->add_url_buckets( [ [ '2026-10-04-13-35', $kea, [ 'a1a1a1a1a1a1' ] ] ], 1_700_000_321 );
 			$at( 7_411 + 3_605 );
-			$this->assertSame( [ 'a1a1a1a1a1a1' => [ $kea => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ], Stats_Store::URL_BUCKET_MAX ), 'past a word\'s lifetime' );
+			$this->assertSame( [ 'a1a1a1a1a1a1' => [ $kea => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ] ), 'past a word\'s lifetime' );
 			$at( 90_000 + 3_604 );
-			$this->assertSame( [ 'a1a1a1a1a1a1' => [ $kea => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ], Stats_Store::URL_BUCKET_MAX ), 'a second short' );
+			$this->assertSame( [ 'a1a1a1a1a1a1' => [ $kea => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ] ), 'a second short' );
 			$at( 90_000 + 3_605 );
-			$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ], Stats_Store::URL_BUCKET_MAX ), 'retired' );
+			$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea ] ), 'retired' );
 		} finally {
 			Core::$clock = $clock;
 		}
 	}
 
 	/**
-	 * A set past `URL_BUCKET_MAX` is too many URLs to read by key, which the
-	 * store answers `false`; a read the Table left unanswered is a failure,
-	 * `[]` with `$failed` set, and the two never read alike.
+	 * A bucket's set is read whole however many URLs it names: 12,345
+	 * members, past what one `SMEMBERS` answers, come back beside another
+	 * server's, the hour's sets asked in one exchange and only the set over
+	 * the limit paged after it. A read the Table left unanswered is a failure, `[]`
+	 * with `$failed` set, never a short list.
 	 */
-	public function test_a_bucket_set_over_the_limit_answers_false_and_an_unanswered_read_fails(): void {
+	public function test_a_bucket_set_is_read_whole_and_an_unanswered_read_fails(): void {
 		$store = $this->stats_store( partition: 3, max_lifespan: 43_219 );
 		$kea   = Stats_Store::server_key( 'kea.test' );
 		$moa   = Stats_Store::server_key( 'moa.test' );
-		$over  = \array_map( static fn ( int $i ): string => \sprintf( 'e%011x', $i ), \range( 0, Stats_Store::URL_BUCKET_MAX ) );
+		$named = \array_map( static fn ( int $i ): string => \sprintf( 'e%011x', $i ), \range( 1, 12_345 ) );
 		$store->add_url_buckets(
 			[
-				[ '2026-10-04-13-35', $kea, $over ],
+				[ '2026-10-04-13-35', $kea, $named ],
 				[ '2026-10-04-13-35', $moa, [ 'b2b2b2b2b2b2' ] ],
 			],
 			\gmmktime( 13, 41, 7, 10, 4, 2026 )
 		);
 
-		$this->assertFalse( $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea, $moa ], Stats_Store::URL_BUCKET_MAX, $failed ), 'a set past the limit' );
-		$this->assertFalse( $failed, 'the Table answered every set' );
-		$this->assertSame( [ 'b2b2b2b2b2b2' => [ $moa => [ '2026-10-04-13' ] ] ], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $moa ], Stats_Store::URL_BUCKET_MAX ), 'a set under it answers' );
+		$this->forget_stats_asks();
+
+		$members = $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $kea, $moa ], $failed );
+
+		$this->assertFalse( $failed, 'the Table answered every page' );
+		$this->assertSame(
+			[
+				'SMEMBERS' => [ [ "urlbucket:2026-10-04-13-35:{$kea}", "urlbucket:2026-10-04-13-35:{$moa}" ] ],
+				'SSCAN'    => [ [ "urlbucket:2026-10-04-13-35:{$kea}" ], [ "urlbucket:2026-10-04-13-35:{$kea}" ] ],
+			],
+			$this->asked_verbs( Stats_Store::NS_URLBUCKET ),
+			'the hour in one exchange, then pages for the set past its limit alone'
+		);
+		$this->assertCount( 12_346, $members );
+		$this->assertSame( [ $kea => [ '2026-10-04-13' ] ], $members['e00000003039'] );
+		$this->assertSame( [ $moa => [ '2026-10-04-13' ] ], $members['b2b2b2b2b2b2'] );
 
 		$this->refuse_stats_reads( '/^urlbucket:/' );
-		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $moa ], Stats_Store::URL_BUCKET_MAX, $failed ) );
+		$this->assertSame( [], $store->url_bucket_members( [ '2026-10-04-13-35' ], [ $moa ], $failed ) );
 		$this->assertTrue( $failed, 'a read the Table left unanswered' );
-	}
-
-	/**
-	 * A bucket's set is read to `URL_BUCKET_MAX`, past the `URL_SEARCH_MAX` a
-	 * word's set is read to: 7,500 members answer every one.
-	 */
-	public function test_a_bucket_set_past_the_search_limit_answers_under_the_bucket_limit(): void {
-		$store = $this->stats_store( partition: 2, max_lifespan: 43_219 );
-		$weka  = Stats_Store::server_key( 'weka.test' );
-		$named = \array_map( static fn ( int $i ): string => \sprintf( 'd%011x', $i ), \range( 1, 7500 ) );
-		$store->add_url_buckets( [ [ '2026-10-04-13-40', $weka, $named ] ], \gmmktime( 13, 44, 11, 10, 4, 2026 ) );
-
-		$members = $store->url_bucket_members( [ '2026-10-04-13-40' ], [ $weka ], Stats_Store::URL_BUCKET_MAX, $failed );
-
-		$this->assertFalse( $failed );
-		$this->assertIsArray( $members, 'a bucket under its own limit answers' );
-		$this->assertCount( 7500, $members );
-		$this->assertSame( [ $weka => [ '2026-10-04-13' ] ], $members['d00000001d4c'] );
 	}
 
 	/**

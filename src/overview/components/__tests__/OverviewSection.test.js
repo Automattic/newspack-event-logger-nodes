@@ -31,9 +31,11 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 		data,
 		slots,
 		onSlotClick,
+		onSlotRange,
 		selectedBuckets,
 	} ) => {
 		globalThis.__aggregateSlotClick = onSlotClick;
+		globalThis.__aggregateSlotRange = onSlotRange;
 		globalThis.__aggregateSelected = selectedBuckets;
 		return `AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
@@ -44,8 +46,9 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { slots, onSlotClick, selectedBuckets } ) => {
+	default: ( { slots, onSlotClick, onSlotRange, selectedBuckets } ) => {
 		globalThis.__categorySlotClick = onSlotClick;
+		globalThis.__categorySlotRange = onSlotRange;
 		globalThis.__categorySelected = selectedBuckets;
 		return `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`;
 	},
@@ -130,6 +133,17 @@ describe( 'OverviewSection', () => {
 		);
 		expect( globalThis.__aggregateSlotClick ).toBe( onSlotClick );
 		expect( globalThis.__categorySlotClick ).toBe( onSlotClick );
+		unmount();
+	} );
+
+	it( 'hands both charts the drag that selects a span of buckets', () => {
+		const onSlotRange = jest.fn();
+		const { unmount } = mount(
+			{ slots: slotsEndingAt( '2026-10-04-13-35' ) },
+			{ onSlotRange }
+		);
+		expect( globalThis.__aggregateSlotRange ).toBe( onSlotRange );
+		expect( globalThis.__categorySlotRange ).toBe( onSlotRange );
 		unmount();
 	} );
 
@@ -409,6 +423,16 @@ describe( 'OverviewSection', () => {
 		expect( container.textContent ).toContain( 'Total Profiled' );
 		expect( container.textContent ).toContain( 'Average breakdown' );
 		expect( container.textContent ).toContain( '50' );
+		unmount();
+	} );
+
+	it( 'captions no breakdown over 0 requests when the window profiled none', () => {
+		// A PHP empty array arrives as `[]`, which is truthy.
+		const { container, unmount } = mount( {
+			global_leaderboard: { categories: [], total_time: null, count: 0 },
+			global_avg_ms: 30,
+		} );
+		expect( container.textContent ).not.toContain( 'Average breakdown' );
 		unmount();
 	} );
 

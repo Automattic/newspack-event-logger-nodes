@@ -226,11 +226,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	];
 
 	/**
-	 * Keys per read/write batch in a flush. Bounds the held set: one chunk is
-	 * at most one shard's worth of rows, which is the largest value the schema
-	 * writes. Raise only against a measured peak.
+	 * Keys per read/write batch in a flush, and per row read a selection's
+	 * page makes by key. Bounds the held set: one chunk is at most one shard's
+	 * worth of rows, which is the largest value the schema writes. Raise only
+	 * against a measured peak.
 	 */
-	private const WRITE_BATCH_KEYS = 500;
+	public const WRITE_BATCH_KEYS = 500;
 
 	/**
 	 * Closed hours one flush folds into the coarse tier, and stale hours it

@@ -32,22 +32,23 @@ import AggregateTimeChart from '../AggregateTimeChart';
  * chart draws, so the blank frame and the line beneath it cannot disagree, and
  * a reply the caller already read is never decoded again here.
  *
- * @param {Object}                                            props                   Component props.
- * @param {Object}                                            props.breakdownRead     The caller's `breakdownState()` read of the dimension's reply: `{ state, series }`.
- * @param {string[]|null}                                     props.slots             The bucket keys the reply drew, which the chart's axis is.
- * @param {string}                                            props.metric            'volume' | 'avg' | 'cumulative' | 'memory'.
- * @param {(value: string) => void}                           props.setMetric         Metric setter.
- * @param {string}                                            props.breakdown         Selected dimension, a value from `breakdownOptions`.
- * @param {(value: string) => void}                           props.setBreakdown      Breakdown dimension setter.
- * @param {Array<Object>}                                     props.breakdownOptions  `{ label, value }` dimension choices: what still splits inside the caller's scope.
- * @param {Array<Object>|null}                                [props.serverOptions]   `{ label, value }` server choices; null renders no Server select, and `[]` is truthy, so it renders an empty one.
- * @param {string}                                            [props.serverFilter]    Selected server name, or '' for all servers.
- * @param {(value: string) => void}                           [props.setServerFilter] Server filter setter, required alongside `serverOptions`.
- * @param {boolean}                                           [props.loading]         True while a read is out. It is not `pending`: a periodic refresh keeps the previous series drawn and still says the read is out.
- * @param {string|null}                                       [props.error]           Already-translated refusal printed under the chart.
- * @param {string|null}                                       [props.note]            Already-translated caveat printed under the chart.
- * @param {(key: string, click: {additive: boolean}) => void} [props.onSlotClick]     Receives the bucket key a click on the chart lands on, and `{ additive }`.
- * @param {string[]}                                          props.selectedBuckets   The selected bucket keys the chart shades.
+ * @param {Object}                                              props                   Component props.
+ * @param {Object}                                              props.breakdownRead     The caller's `breakdownState()` read of the dimension's reply: `{ state, series }`.
+ * @param {string[]|null}                                       props.slots             The bucket keys the reply drew, which the chart's axis is.
+ * @param {string}                                              props.metric            'volume' | 'avg' | 'cumulative' | 'memory'.
+ * @param {(value: string) => void}                             props.setMetric         Metric setter.
+ * @param {string}                                              props.breakdown         Selected dimension, a value from `breakdownOptions`.
+ * @param {(value: string) => void}                             props.setBreakdown      Breakdown dimension setter.
+ * @param {Array<Object>}                                       props.breakdownOptions  `{ label, value }` dimension choices: what still splits inside the caller's scope.
+ * @param {Array<Object>|null}                                  [props.serverOptions]   `{ label, value }` server choices; null renders no Server select, and `[]` is truthy, so it renders an empty one.
+ * @param {string}                                              [props.serverFilter]    Selected server name, or '' for all servers.
+ * @param {(value: string) => void}                             [props.setServerFilter] Server filter setter, required alongside `serverOptions`.
+ * @param {boolean}                                             [props.loading]         True while a read is out. It is not `pending`: a periodic refresh keeps the previous series drawn and still says the read is out.
+ * @param {string|null}                                         [props.error]           Already-translated refusal printed under the chart.
+ * @param {string|null}                                         [props.note]            Already-translated caveat printed under the chart.
+ * @param {(key: string, click: {additive: boolean}) => void}   [props.onSlotClick]     Receives the bucket key a click on the chart lands on, and `{ additive }`.
+ * @param {(keys: string[], drag: {additive: boolean}) => void} [props.onSlotRange]     Receives the bucket keys a drag on the chart spans, and `{ additive }`.
+ * @param {string[]}                                            props.selectedBuckets   The selected bucket keys the chart shades.
  * @return {import('react').ReactElement} Rendered panel.
  */
 export default function BreakdownControls( {
@@ -65,6 +66,7 @@ export default function BreakdownControls( {
 	error = null,
 	note = null,
 	onSlotClick,
+	onSlotRange,
 	selectedBuckets,
 } ) {
 	// A refusal is terminal: it is why the dimension never arrived.
@@ -128,6 +130,7 @@ export default function BreakdownControls( {
 				breakdown={ breakdown }
 				serverFilter={ serverFilter }
 				onSlotClick={ onSlotClick }
+				onSlotRange={ onSlotRange }
 				selectedBuckets={ selectedBuckets }
 			/>
 			{ error && (
