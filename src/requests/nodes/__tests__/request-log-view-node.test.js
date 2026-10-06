@@ -335,7 +335,6 @@ test( 'fills sensible defaults for missing fields on the appended row', () => {
 	expect( v.lines ).toHaveLength( 1 );
 	const e = v.lines[ 0 ];
 	expect( e.rid ).toBe( '' );
-	expect( e.method ).toBe( 'GET' );
 	expect( e.duration_ms ).toBe( 0 );
 	expect( e.status_code ).toBe( 0 );
 	expect( e.remote_addr ).toBe( '' );

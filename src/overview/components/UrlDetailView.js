@@ -191,7 +191,7 @@ const RequestRow = memo(
 	 * duration nobody measured shows as a dash and bars nothing.
 	 *
 	 * @param {Object}                                   props          Component props.
-	 * @param {Object}                                   props.req      Request index entry: rid, partition, timestamp, method, status_code, error_status, duration_ms, peak_mb.
+	 * @param {Object}                                   props.req      Request index entry: rid, partition, timestamp, method (`Other` for an undeclared one), status_code, error_status, duration_ms, peak_mb.
 	 * @param {(rid: string, partition: number) => void} props.onSelect Receives the row's rid and partition on click or keyboard activation.
 	 * @param {number}                                   props.maxBar   Largest bar value across the filtered rows; 0 draws no bar.
 	 * @param {string}                                   props.metric   Chart metric; 'memory' bars peak_mb, every other value bars duration_ms.
@@ -222,7 +222,7 @@ const RequestRow = memo(
 					{ new Date( req.timestamp * 1000 ).toLocaleString() }
 				</div>
 				<div className="event-logger-table__cell newspack-nodes-table__cell">
-					{ req.method || '-' }
+					{ req.method }
 				</div>
 				<div
 					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--mono"

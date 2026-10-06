@@ -10,7 +10,7 @@ import { __ } from '@wordpress/i18n';
 
 /**
  * @param {Object}                    props              Component props.
- * @param {Object}                    props.request      Decoded request body: `url`, the HTTP verb as `request_method` (durable body) or `method` (compact summary), `timestamp` in seconds, `duration_ms`, `peak_mb`, `status_code`.
+ * @param {Object}                    props.request      Decoded request body: `request_url`, the URL the request fetched with its query, set from the request line that also sets the `url` the builder files a record by, so a body without one is no record the builder emits and renders `not recorded`; the HTTP verb as `request_method`, `timestamp` in seconds, `duration_ms`, `peak_mb`, `status_code`.
  * @param {string}                    [props.statusNote] Already-translated note appended to the status code. Its presence marks the row as an error, because the code cannot: `Request_Builder_Node` stamps `error_status` for a fatal, a timeout, an abort or a gap in the log, and any of those can accompany a 200.
  * @param {import('react').ReactNode} [props.errorRow]   Row rendered after the status, for a caller that shows the verdict as its own badge; one that folds the verdict into `statusNote` instead passes nothing.
  * @return {import('react').ReactElement} The summary rows.
@@ -28,8 +28,9 @@ export default function RequestSummary( {
 		<>
 			<p>
 				<strong>{ __( 'URL:', 'newspack-event-logger-nodes' ) }</strong>{ ' ' }
-				{ request.request_method || request.method || '' }{ ' ' }
-				{ request.url }
+				{ request.request_url
+					? `${ request.request_method } ${ request.request_url }`
+					: __( 'not recorded', 'newspack-event-logger-nodes' ) }
 			</p>
 			<p>
 				<strong>

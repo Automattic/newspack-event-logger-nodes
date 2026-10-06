@@ -143,13 +143,13 @@ class Request_Flight_Node extends Timer_Node {
 			$tracker_ts    = Core::as_float( $tracker_v, $now );
 			$time_ms       = ( $last_log_ts - $start_time ) * 1000;
 			$age_ms        = ( $now - $tracker_ts ) * 1000;
-			$method_v      = $r['request_method'] ?? 'GET';
+			$method_v      = $r['request_method'] ?? '';
 			$remote_addr_v = $r['remote_addr'] ?? '';
 			$user_agent_v  = $r['user_agent'] ?? '';
 			$url        = Request_Builder_Node::resolved_request_url( $request );
 			$user_agent = Core::as_string( $user_agent_v );
 			$out[ Core::as_string( $rid ) ] = [
-				'method'      => Core::as_string( $method_v, 'GET' ),
+				'method'      => Core::as_string( $method_v ),
 				'url'         => $url,
 				'state'       => Request_Builder_Node::extract_state( $r ),
 				'what'        => Request_Builder_Node::extract_what( $r ),

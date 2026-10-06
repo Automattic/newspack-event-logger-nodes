@@ -32,7 +32,7 @@ const SECTION_STYLE = { marginBottom: '20px' };
 
 /**
  * `requestDetail` is the durable request body `record_of()` writes and
- * `dump_request` reads back: `url`, `request_method`, `timestamp` (seconds),
+ * `dump_request` reads back: `request_url`, `request_method`, `timestamp` (seconds),
  * `duration_ms`, `peak_mb`, `status_code`, `profiles`, `error_status` and
  * `folded`, plus the `findings` `dump_request` computes for it — absent when
  * no detector ran, which is not the same answer as an empty list.

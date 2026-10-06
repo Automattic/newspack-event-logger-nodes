@@ -747,13 +747,24 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * The record's URL, redacted through the one path the firehose uses.
+	 * The URL the record's request fetched, query kept, redacted through the
+	 * one path the firehose uses. The stored `url` is per path, so a
+	 * `?rest_route=` call would read as the homepage.
+	 *
+	 * The builder sets `request_url` from the same request line that sets the
+	 * `url` it stores a record by, so a record without one is refused.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
 	 * @return string
+	 * @throws \RuntimeException When the record carries no `request_url`.
 	 */
 	private static function url_of( array $record ): string {
-		return Log_Manager::redact_url( Core::as_string( $record['url'] ?? '' ) );
+		$url = $record['request_url'] ?? null;
+		if ( ! \is_string( $url ) || '' === $url ) {
+			$rid = Core::as_string( $record['rid'] ?? '' );
+			throw new \RuntimeException( \esc_html( "request {$rid} carries no request_url" ) );
+		}
+		return Log_Manager::redact_url( $url );
 	}
 
 	/**

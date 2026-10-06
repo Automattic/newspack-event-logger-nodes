@@ -1989,10 +1989,27 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A record whose URL names no host throws at the fold's intake, before
-	 * anything of it is folded or forwarded, and the builder folds the next.
+	 * Records a request line always fills in, broken one field at a time.
+	 *
+	 * @return array<string,array{0:array<string,mixed>,1:string}>
 	 */
-	public function test_a_record_naming_no_host_throws_before_anything_is_folded(): void {
+	public static function records_refused_at_intake(): array {
+		return [
+			'naming no host'     => [ [ 'url' => '/unknown-7731' ], '/unknown-7731' ],
+			'carrying no method' => [ [ 'url' => 'https://kea-7713.test/tui-7731', 'request_method' => '' ], 'no method' ],
+		];
+	}
+
+	/**
+	 * A record whose URL names no host, or that carries no method, throws at
+	 * the fold's intake, before anything of it is folded or forwarded, and
+	 * the builder folds the next.
+	 *
+	 * @param array<string,mixed> $overrides What breaks the record.
+	 * @param string              $refusal   What the throw names.
+	 */
+	#[DataProvider( 'records_refused_at_intake' )]
+	public function test_a_record_refused_at_intake_throws_before_anything_is_folded( array $overrides, string $refusal ): void {
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
@@ -2002,10 +2019,10 @@ class FlameBuilderTest extends TestCase {
 		$fb->sink( $flames );
 
 		try {
-			$this->fill_request_at( $fb, $this->completed_request( [ 'url' => '/unknown-7731', 'timestamp' => self::tick() ] ), '7:100:41' );
-			$this->fail( 'a hostless record is refused' );
+			$this->fill_request_at( $fb, $this->completed_request( [ 'timestamp' => self::tick() ] + $overrides ), '7:100:41' );
+			$this->fail( 'the record is refused' );
 		} catch ( \InvalidArgumentException $e ) {
-			$this->assertStringContainsString( '/unknown-7731', $e->getMessage() );
+			$this->assertStringContainsString( $refusal, $e->getMessage() );
 		}
 		$this->assertSame( [], $flames->captured, 'nothing is forwarded' );
 		$this->assertSame( [], $this->get_stats( $fb )['pending_buckets'], 'nothing is folded' );
@@ -5425,7 +5442,7 @@ class FlameBuilderTest extends TestCase {
 		$n = 0;
 		foreach ( [
 			[ 'k' => 'process (start)', 'm' => '4471 on host', 'l' => '' ],
-			[ 'k' => 'request', 'm' => 'POST /wp-json/newspack-nodes/v1/workers/spawn' ],
+			[ 'k' => 'request', 'm' => 'POST https://kea.test/wp-json/newspack-nodes/v1/workers/spawn' ],
 			[ 'k' => $told['k'], 'm' => $told['m'], 'keep' => 1 ],
 			[ 'k' => 'process (complete)', 'duration_ms' => 595000.0, 'status_code' => 200 ],
 		] as $entry ) {
@@ -6397,6 +6414,36 @@ class FlameBuilderTest extends TestCase {
 			[ 2, 83.0, 4.5, 2 ],
 			$this->get_hour_slot( $store, Stats_Store::url_dim_parts( Log_Manager::url_hash( 'https://example.com/quartz' ) ), $bucket, 'method' )['PATCH']
 		);
+	}
+
+	/**
+	 * The method axis is bounded: a declared method files as itself, and every
+	 * other method shares one label, so invented methods mint no new keys.
+	 */
+	public function test_undeclared_methods_share_one_label_on_the_method_axis(): void {
+		$fb    = new Flame_Builder_Node();
+		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
+		$fb->set_stats_store( $store );
+
+		$now = self::tick();
+		foreach ( [ 'QZXA', 'QZXB', 'GET' ] as $method ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'            => 'https://example.com/garnet',
+				'request_method' => $method,
+				'duration_ms'    => 23.0,
+				'timestamp'      => $now,
+			] ) );
+		}
+		$fb->flush();
+
+		$bucket = Stats_Store::bucket_key( $now );
+		$global = $this->get_hour_slot( $store, Stats_Store::dim_parts( 'method', '' ), $bucket );
+		$by_url = $this->get_hour_slot( $store, Stats_Store::url_dim_parts( Log_Manager::url_hash( 'https://example.com/garnet' ) ), $bucket, 'method' );
+		foreach ( [ $global, $by_url ] as $slot ) {
+			$this->assertSame( [ 'Other', 'GET' ], \array_keys( $slot ) );
+			$this->assertSame( 2, $slot['Other'][ Stats_Store::DIM_COUNT ] );
+			$this->assertSame( 1, $slot['GET'][ Stats_Store::DIM_COUNT ] );
+		}
 	}
 
 	public function test_a_dimension_value_nothing_measured_is_not_stored(): void {

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `request` line logs the URL as sent.** `sanitize_text_field()` deleted every `%xx` octet, so `?rest_route=%2Fjetpack%2Fv4%2Fsync%2Fstatus` was logged as `?rest_route=jetpackv4syncstatus`, which could be neither searched for nor replayed. REQUEST_URI and REQUEST_METHOD now keep their percent-encoding and backslashes and lose only C0 controls and DEL, on both producers. Rules match, and URL rows key, on that encoded form, so an encoded path's stats begin a new URL row.
+- **The request modal and the request briefs name the URL the request fetched.** A record carries `request_url`, query included, beside the per-path `url` its URL row keys on. The request, span, entry and request-category briefs and the request modal show it, where a `?rest_route=` call read as the homepage. The brief refuses a record without one, and the modal reads "URL not recorded". The request stream, the in-flight rows and the error log still name the per-path URL, the row each links to.
+- **A request is logged whatever its method.** The request line parsed only eight methods, so a `PURGE` or `PROPFIND` request left no record. Any method token followed by an absolute URL now parses. Both producers log a method's space, `&` and `?` as `_` and cut it to 32 bytes, so neither a separator nor a long method can cost the URL, and log an empty one as `CLI`. A method outside the index's table indexes as `X` and aggregates as `Other`, and the record keeps the real method. A request still in flight before its request line shows no method rather than GET. Gyrobase's `(truncated, original N bytes)` stub is not read as a request line.
+- **A significant span's finding points where its time is.** It told the reader to read the listeners, though it appears only when they hold under half the span. It now states the share they hold and points at the round trip's statement or URL, or at a hook's own unwrapped time. The proposal's reason gives only the verdict, and the split is stated once.
+
+### Changed
+
+- **URL redaction judges each parameter's name as PHP reads it.** One linear walk visits every `?` or `&` parameter in an unshaped string, and a name is redacted when it matches as sent or decoded (`+` and `%20` read as `_`, `%XX` decoded, cut at its first NUL), so `api%5Fkey`, `api+key` and `api[key` go with `api_key`, while a raw space, which no request line carries, leaves prose such as `the client said x=1` alone. `[` and `]` bound a segment, so `data[api_key]` goes too, and `&amp;`, `&#38;` and `&#x26;` separate parameters as `&` does. A string holding neither `?` nor `&` skips the walk. A regex failure replaces everything from the first `?` or `&` with `?[REDACTED]`. Over 300,000 fuzzed strings it keeps no value the previous pattern redacted, and a name holding 4,000 `?` costs 105 µs where the pattern took 157 ms. Both producers read one case list, `tests/fixtures/url-redaction.json`.
+
 ## [0.124.2] - 2026-10-06
 
 ### Changed

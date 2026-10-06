@@ -149,7 +149,11 @@ class Findings {
 	 * edited together. In a `why`, `%1$s` (or `%s`) takes the name a rule edit
 	 * would bind, the bare hook, `%2$s` the filter a transport span covers,
 	 * from `App\Core::TRANSPORT_HOOKS`, and `%3$s` the flag that logs it. A
-	 * row whose `field` is `transport` binds that flag rather than the span.
+	 * `detail` is prose, never a format string: `{held}` takes the percent of
+	 * the span its children hold, which `dominant_span()` measures and fills
+	 * in by `strtr()`; a `why` is also read where that is unknown,
+	 * so it carries no share. A row whose `field` is `transport` binds that
+	 * flag rather than the span.
 	 * Keys are `<kind>` and `significant:<kind>`,
 	 * plus the one cell `transport:unlogged` for a rule that does not log the
 	 * span; a second such cell makes the key a tuple and this table a matrix.
@@ -158,12 +162,12 @@ class Findings {
 	 */
 	private const SPAN_ADVICE = [
 		'significant:hook' => [
-			'detail' => 'It is already a significant event, so its listeners are logged — read those next.',
-			'why'    => 'It is already a significant event; its listeners are in this record.',
+			'detail' => 'The spans logged inside it hold {held}% of it, and its own time holds the rest: listeners the logger cannot wrap, one that takes an argument by reference or shares the logger\'s start priority, and the dispatch around them.',
+			'why'    => 'It is already a significant event; no rule edit reaches further.',
 		],
 		'significant:transport' => [
-			'detail' => 'It is already a significant event, so the listeners on the filter it runs through are logged — read those next.',
-			'why'    => 'It is already a significant event; the listeners on its filter are in this record.',
+			'detail' => 'The listeners on the filter it runs through hold {held}% of it, and the round trip itself holds the rest, in the database or at the remote end. Its statement or URL is what to read.',
+			'why'    => 'It is already a significant event, so the `%2$s` filter\'s listeners are in this record; no rule edit reaches further.',
 		],
 		'transport:unlogged' => [
 			'detail'    => 'The rule does not log this span, so the listeners on the filter it runs through are not wrapped.',
@@ -957,6 +961,10 @@ class Findings {
 	 * less, its own body holds the time, and the proposal is what would show
 	 * inside THAT frame. The statement fields describe that frame too.
 	 *
+	 * The detail states a frame's split once. Where the descent took no step
+	 * and the frame's sentence gives the share of everything the span contains,
+	 * that sentence is the split, and `spent_detail()` is left out.
+	 *
 	 * @param list<Flame_Entry> $nodes      Flattened flame nodes.
 	 * @param Rule|null         $rule       The governing rule, or null when none does.
 	 * @param float             $duration   Request duration in milliseconds.
@@ -1014,11 +1022,15 @@ class Findings {
 		} else {
 			$chain[ \array_key_last( $chain ) ] += self::worst_shape( $nodes[ $stop ] );
 		}
-		$explained = self::explaining( $nodes, $stop, $duration );
-		$metric   += \array_filter( [ 'chain' => $chain, 'explained' => $explained ] );
 		$frame     = $nodes[ $stop ];
-		// Explained names hold half the frame, so its value is above zero.
-		$held      = [] === $explained ? 0 : (int) \round( 100 * \array_sum( \array_column( $explained, 'ms' ) ) / $frame['value'] );
+		$children  = \array_filter( $nodes, static fn ( array $node ): bool => $stop === $node['parent'] );
+		$explained = self::explaining( $children, $frame['value'], $duration );
+		$metric   += \array_filter( [ 'chain' => $chain, 'explained' => $explained ] );
+		// A dominant span or a holding child, so its value is above zero.
+		$held      = (int) \round( 100 * ( [] === $explained ? $frame['value'] - $frame['self_ms'] : \array_sum( \array_column( $explained, 'ms' ) ) ) / $frame['value'] );
+		$advice    = [] === $explained && $rule_known ? self::span_advice( Flame_Tree::base_name( $frame['name'] ), $rule )['detail'] : '';
+		// Without a chain, a sentence stating all it contains is $best's split.
+		$split_said = [] === $chain && ( [] === $explained ? \str_contains( $advice, '{held}' ) : \count( $explained ) === \count( $children ) );
 		return [
 			'kind'     => 'dominant_span',
 			'severity' => 'high',
@@ -1028,13 +1040,9 @@ class Findings {
 				\array_filter(
 					[
 						self::repeat_detail( $repeat ),
-						self::spent_detail( $best, $duration ),
+						$split_said ? '' : self::spent_detail( $best, $duration ),
 						$chain_said,
-						match ( true ) {
-							[] !== $explained => self::explained_detail( $explained, $held ),
-							$rule_known       => self::span_advice( Flame_Tree::base_name( $frame['name'] ), $rule )['detail'],
-							default           => '',
-						},
+						[] === $explained ? \strtr( $advice, [ '{held}' => (string) $held ] ) : self::explained_detail( $explained, $held ),
 					],
 					static fn ( string $sentence ): bool => '' !== $sentence
 				)
@@ -1286,14 +1294,13 @@ class Findings {
 	 * hold under `EXPLAINED_SHARE` of it, and past that only the names needed
 	 * to reach it, at most `EXPLAINED_NAMED`, which may stop short of it.
 	 *
-	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
-	 * @param int               $index    The frame's index.
-	 * @param float             $duration Request duration in milliseconds.
+	 * @param array<Flame_Entry> $children The frame's children.
+	 * @param float              $value    The frame's time in milliseconds.
+	 * @param float              $duration Request duration in milliseconds.
 	 * @return list<array{name:string,ms:float,count:int,share:float,max:float}>
 	 */
-	private static function explaining( array $nodes, int $index, float $duration ): array {
-		$children = \array_values( \array_filter( $nodes, static fn ( array $node ): bool => $index === $node['parent'] ) );
-		$target   = $nodes[ $index ]['value'] * self::EXPLAINED_SHARE;
+	private static function explaining( array $children, float $value, float $duration ): array {
+		$target = $value * self::EXPLAINED_SHARE;
 		if ( $target <= 0.0 || \array_sum( \array_column( $children, 'value' ) ) < $target ) {
 			return [];
 		}

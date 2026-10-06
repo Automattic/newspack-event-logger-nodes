@@ -75,7 +75,7 @@ class RequestBuilderNarrationTest extends TestCase {
 	private static function request( Request_Builder_Node $rb, string $rid, int $pairs, bool $complete = true ): int {
 		$n = 1;
 		self::line( $rb, $n++, $rid, 'process (start)' );
-		self::line( $rb, $n++, $rid, 'request', [ 'm' => "GET /{$rid}" ] );
+		self::line( $rb, $n++, $rid, 'request', [ 'm' => "GET https://kea.test/{$rid}" ] );
 		for ( $i = 0; $i < $pairs; $i++ ) {
 			self::line( $rb, $n++, $rid, 'save (start)' );
 			self::line( $rb, $n++, $rid, 'save (complete)', [ 'duration_ms' => 1 + $i ] );

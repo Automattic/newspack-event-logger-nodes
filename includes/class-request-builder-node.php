@@ -116,19 +116,29 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	public const ERROR_STATUSES = [ 'F', 'T', 'A', 'I' ];
 
 	/**
+	 * The one label every method outside `METHOD_CODES` indexes and aggregates
+	 * under. A request line accepts any method token, so naming each would let
+	 * a visitor mint index codes and stats keys at will. It is the stats'
+	 * overflow key, so the method axis's cap folds into the same row.
+	 */
+	public const METHOD_OTHER = Stats_Store::OTHER_KEY;
+
+	/**
 	 * The index line's 1-char method column, written here and read back through
-	 * `array_flip()`. Two hand-kept tables is how a method added to one side
-	 * decodes as a bare letter on the other.
+	 * `array_flip()`, and the bounded method vocabulary `method_label()` maps
+	 * every request onto. Two hand-kept tables is how a method added to one
+	 * side decodes as a bare letter on the other.
 	 */
 	private const METHOD_CODES = [
-		'GET'     => 'G',
-		'POST'    => 'P',
-		'HEAD'    => 'H',
-		'DELETE'  => 'D',
-		'PUT'     => 'U',
-		'PATCH'   => 'A',
-		'OPTIONS' => 'O',
-		'CLI'     => 'C',
+		'GET'              => 'G',
+		'POST'             => 'P',
+		'HEAD'             => 'H',
+		'DELETE'           => 'D',
+		'PUT'              => 'U',
+		'PATCH'            => 'A',
+		'OPTIONS'          => 'O',
+		'CLI'              => 'C',
+		self::METHOD_OTHER => 'X',
 	];
 
 	/**
@@ -217,9 +227,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 	/** The one width `format_index_entry()` writes and `parse_request_index()` reads. */
 	private const INDEX_LINE_BYTES = 97;
-
-	/** Longest `request` line the URL regex scans; past it, no URL is read. */
-	private const MAX_PAYLOAD_SCAN_LENGTH = 8192;
 
 	/** Max distinct labels tracked per profiled state (bounds runaway memory). */
 	private const MAX_PROFILE_ENTRY_LABELS = 1000;
@@ -1053,16 +1060,12 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		};
 
 		$s[ Log_Manager::REQUEST_LINE ] = function ( \stdClass $request, array $entry ): void {
-			$message = $entry['m'] ?? '';
-			if ( ! \is_string( $message ) ) {
+			$line = Log_Manager::parse_request_line( $entry['m'] ?? null );
+			if ( null === $line ) {
 				return;
 			}
-			if ( \strlen( $message ) < self::MAX_PAYLOAD_SCAN_LENGTH && \preg_match( '/^(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CLI)\s+(.+)$/', $message, $m ) ) {
-				// Strip query: URL rows aggregate per path; '?' marks workers.
-				$request->url = \explode( '?', $m[1], 2 )[0];
-			}
-			$parts                   = \explode( ' ', $message, 2 );
-			$request->request_method = $parts[0];
+			// URL rows aggregate per query-less `url`; '?' on it marks workers.
+			[ $request->request_method, $request->request_url, $request->url ] = $line;
 		};
 
 		$s[ Log_Manager::ENVIRONMENT ] = function ( \stdClass $request, array $entry ): void {
@@ -1466,7 +1469,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$dur = Core::num_float( $r['duration_ms'] ?? null );
 		// No rid here — it rides Message::KEY on the completed stream.
 		return [
-			'method'       => Core::as_string( $r['request_method'] ?? 'GET' ),
+			'method'       => Core::as_string( $r['request_method'] ),
 			'url'          => self::resolved_request_url( $request ),
 			'start_time'   => $ts,
 			'end_time'     => $ts + ( $dur / 1000 ),
@@ -1758,9 +1761,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * `METHOD_CODES` inverted, memoized — the reader runs per index line, and
-	 * a second hand-written table is a lockstep hazard the round-trip test
-	 * would only catch after someone edited one side.
+	 * `METHOD_CODES` inverted, memoized.
 	 *
 	 * @return array<string,string>
 	 */
@@ -1805,6 +1806,87 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$request->fatal_line   = Core::int( $entry['fatal_line'] ?? 0, 0 );
 		$request->fatal_type   = Core::int( $entry['fatal_type'] ?? 0, 0 );
 		$request->fatal_plugin = Core::str( $entry['fatal_plugin'] ?? '', '' );
+	}
+
+	/**
+	 * Format index entry callback for Partition::with_index().
+	 *
+	 * Registered as the `request-index` formatter; `parse_request_index()` is
+	 * the reader for the lines this writes. The layout is fixed-width and
+	 * append-only, `INDEX_LINE_BYTES` wide, so the reader slices each field by
+	 * constant offset and refuses anything shorter. Change a width and every
+	 * existing `.idx` on disk decodes as garbage.
+	 *
+	 * Two cases skip indexing, both by the substrate's null-or-'' contract: a
+	 * record with no URL, and a position too large for its column — an offset,
+	 * length, or segment that would overflow its width is dropped rather than
+	 * written truncated, which would decode as a valid but wrong seek.
+	 *
+	 * @param array<int,mixed>  $message  The unpacked message array; VALUE is index 6.
+	 * @param array<string,int> $position Position array.
+	 * @return string|null Index entry or null.
+	 */
+	public static function format_index_entry( array $message, array $position ): ?string {
+		$value = $message[ Message::VALUE ] ?? null;
+		if ( ! \is_array( $value ) || empty( $value['url'] ) ) {
+			return null;
+		}
+		// Decoded request envelope: string-keyed map, mixed-by-design values.
+		/** @var array<string,mixed> $value */
+		$request = (object) $value;
+
+		$rid          = Core::str( $request->rid ?? '' );
+		$url          = Core::str( $request->url ?? '' );
+		$url_hash     = Log_Manager::url_hash( $url );
+		$timestamp    = Core::as_int( $request->timestamp ?? Core::$now );
+		$duration_ms  = Core::as_int( $request->duration_ms ?? 0 );
+		$status_code  = Core::as_int( $request->status_code ?? 0 );
+		$peak_mb      = Core::as_float( $request->peak_mb ?? 0 );
+		$error_status = Core::str( $request->error_status ?? '-', '-' );
+		$segment      = $position['segment'];
+		$offset       = $position['offset'];
+		$length       = $position['length'];
+
+		if ( $offset > 9999999999 || $length > 99999999 || $segment > 999999 ) {
+			return '';
+		}
+
+		// peak_mb: 6 chars, integer MB zero-padded (max 999999 MB).
+		$peak_mb_int = \min( (int) \round( $peak_mb ), 999999 );
+
+		$method = self::METHOD_CODES[ self::method_label( $request->request_method ?? null ) ];
+
+		return \str_pad( \substr( $rid, 0, 32 ), 32 )
+			. \str_pad( \substr( $url_hash, 0, 12 ), 12 )
+			. \str_pad( (string) $timestamp, 10, '0', STR_PAD_LEFT )
+			. \str_pad( (string) \min( $duration_ms, 99999999 ), 8, '0', STR_PAD_LEFT )
+			. \str_pad( (string) \min( $status_code, 999 ), 3, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $segment, 6, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $offset, 10, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $length, 8, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $peak_mb_int, 6, '0', STR_PAD_LEFT )
+			. $method
+			. $error_status;
+	}
+
+	/**
+	 * A request's method in the bounded vocabulary the index and the stats
+	 * axes share: a `METHOD_CODES` method as itself, anything else as
+	 * `METHOD_OTHER`. The record keeps the real method.
+	 *
+	 * The request line sets a record's url and method together, and only a
+	 * url-ful record is indexed or aggregated, so a missing method is a
+	 * broken record, not an unknown one.
+	 *
+	 * @param mixed $method The record's `request_method`.
+	 * @return string A `METHOD_CODES` key.
+	 * @throws \InvalidArgumentException When the record carries no method.
+	 */
+	public static function method_label( mixed $method ): string {
+		if ( ! \is_string( $method ) || '' === $method ) {
+			throw new \InvalidArgumentException( 'request record carries no method' );
+		}
+		return isset( self::METHOD_CODES[ $method ] ) ? $method : self::METHOD_OTHER;
 	}
 
 	/**
@@ -1935,68 +2017,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$this->carry_moved = true;
 		$this->narrate( Flame_Tree::REQUESTS_EXPIRE, static fn (): array => [ 'purged', [ 'requests' => $dropped ] ] );
 		return $dropped;
-	}
-
-	/**
-	 * Format index entry callback for Partition::with_index().
-	 *
-	 * Registered as the `request-index` formatter; `parse_request_index()` is
-	 * the reader for the lines this writes. The layout is fixed-width and
-	 * append-only, `INDEX_LINE_BYTES` wide, so the reader slices each field by
-	 * constant offset and refuses anything shorter. Change a width and every
-	 * existing `.idx` on disk decodes as garbage.
-	 *
-	 * Two cases skip indexing, both by the substrate's null-or-'' contract: a
-	 * record with no URL, and a position too large for its column — an offset,
-	 * length, or segment that would overflow its width is dropped rather than
-	 * written truncated, which would decode as a valid but wrong seek.
-	 *
-	 * @param array<int,mixed>  $message  The unpacked message array; VALUE is index 6.
-	 * @param array<string,int> $position Position array.
-	 * @return string|null Index entry or null.
-	 */
-	public static function format_index_entry( array $message, array $position ): ?string {
-		$value = $message[ Message::VALUE ] ?? null;
-		if ( ! \is_array( $value ) || empty( $value['url'] ) ) {
-			return null;
-		}
-		// Decoded request envelope: string-keyed map, mixed-by-design values.
-		/** @var array<string,mixed> $value */
-		$request = (object) $value;
-
-		$rid          = Core::str( $request->rid ?? '' );
-		$url          = Core::str( $request->url ?? '' );
-		$url_hash     = Log_Manager::url_hash( $url );
-		$timestamp    = Core::as_int( $request->timestamp ?? Core::$now );
-		$duration_ms  = Core::as_int( $request->duration_ms ?? 0 );
-		$status_code  = Core::as_int( $request->status_code ?? 0 );
-		$peak_mb      = Core::as_float( $request->peak_mb ?? 0 );
-		$error_status = Core::str( $request->error_status ?? '-', '-' );
-		$segment      = $position['segment'];
-		$offset       = $position['offset'];
-		$length       = $position['length'];
-
-		if ( $offset > 9999999999 || $length > 99999999 || $segment > 999999 ) {
-			return '';
-		}
-
-		// peak_mb: 6 chars, integer MB zero-padded (max 999999 MB).
-		$peak_mb_int = \min( (int) \round( $peak_mb ), 999999 );
-
-		$rm_raw = $request->request_method ?? 'GET';
-		$method = self::METHOD_CODES[ Core::str( $rm_raw, 'GET' ) ] ?? 'G';
-
-		return \str_pad( \substr( $rid, 0, 32 ), 32 )
-			. \str_pad( \substr( $url_hash, 0, 12 ), 12 )
-			. \str_pad( (string) $timestamp, 10, '0', STR_PAD_LEFT )
-			. \str_pad( (string) \min( $duration_ms, 99999999 ), 8, '0', STR_PAD_LEFT )
-			. \str_pad( (string) \min( $status_code, 999 ), 3, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $segment, 6, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $offset, 10, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $length, 8, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $peak_mb_int, 6, '0', STR_PAD_LEFT )
-			. $method
-			. $error_status;
 	}
 
 	/** @param string $target Node name, or '' to stop emitting summaries. */

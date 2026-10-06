@@ -19,13 +19,17 @@ class AskAssemblerTest extends TestCase {
 	/** The URL filters of an unfiltered page, as the `ask` verb hands them on. */
 	private const FILTERS = [ 'search' => '', 'errors_only' => false, 'include_workers' => false, 'bucket' => '' ];
 
+	/** The URL a record's request fetched, as the builder stores it: query kept, redacted at log time. */
+	private const REQUEST_URL = 'https://example.test/calendar/today?view=week&token=[REDACTED]';
+
 	private function rule(): Rule {
 		return new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'init', 'wp_loaded' ] );
 	}
 
 	private function record(): array {
 		return [
-			'url'         => 'https://example.test/calendar/today?token=hunter2seekrit',
+			'url'         => 'https://example.test/calendar/today',
+			'request_url' => self::REQUEST_URL,
 			'duration_ms' => 812.0,
 			'status_code' => 200,
 			'remote_addr' => '203.0.113.7',
@@ -137,10 +141,12 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	public function test_a_request_brief_redacts_the_url_and_drops_the_environment(): void {
-		$brief = Ask_Assembler::for_request( $this->record(), $this->rule() );
+		$record                = $this->record();
+		$record['request_url'] = 'https://example.test/calendar/today?view=week&token=hunter2seekrit';
 
-		$this->assertStringNotContainsString( 'hunter2seekrit', (string) \wp_json_encode( $brief ) );
-		$this->assertStringContainsString( '[REDACTED]', $brief['url'] );
+		$brief = Ask_Assembler::for_request( $record, $this->rule() );
+
+		$this->assertSame( 'https://example.test/calendar/today?view=week&token=[REDACTED]', $brief['url'] );
 		$encoded = (string) \wp_json_encode( $brief );
 		$this->assertStringNotContainsString( '203.0.113.7', $encoded, 'no IPs' );
 		$this->assertStringNotContainsString( 'secret build', $encoded, 'no user agents' );
@@ -158,7 +164,7 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_a_request_brief_names_its_server_in_its_url(): void {
 		$record                = $this->record();
-		$record['url']         = 'https://spoke-17.example/aisle-4417';
+		$record['request_url'] = 'https://spoke-17.example/aisle-4417';
 		$record['server_name'] = 'heron-3301.test';
 
 		$brief = Ask_Assembler::for_request( $record, $this->rule() );
@@ -166,6 +172,51 @@ class AskAssemblerTest extends TestCase {
 		$this->assertStringStartsWith( 'https://spoke-17.example/', $brief['url'] );
 		$this->assertArrayNotHasKey( 'server_name', $brief['env'] );
 		$this->assertStringNotContainsString( 'heron-3301', (string) \wp_json_encode( $brief ) );
+	}
+
+	/**
+	 * Every per-request brief, each named by the shaper that builds it.
+	 *
+	 * @return array<string,array{0:\Closure(array<array-key,mixed>):?array<string,mixed>}>
+	 */
+	public static function per_request_briefs(): array {
+		return [
+			'request'  => [ static fn ( array $record ): ?array => Ask_Assembler::for_request( $record, null ) ],
+			'span'     => [ static fn ( array $record ): ?array => Ask_Assembler::for_span( $record, 'wp_loaded', null ) ],
+			'entry'    => [ static fn ( array $record ): ?array => Ask_Assembler::for_entry( $record, 0 ) ],
+			'category' => [ static fn ( array $record ): ?array => Ask_Assembler::for_request_category( $record, 'gyrobase' ) ],
+		];
+	}
+
+	/**
+	 * A per-request brief names the URL its request fetched, query and all,
+	 * from the record's `request_url`, redacted: the stored `url` is per path,
+	 * so a `?rest_route=` call reads as `/`.
+	 */
+	#[DataProvider( 'per_request_briefs' )]
+	public function test_a_per_request_brief_carries_the_url_its_request_fetched( \Closure $brief ): void {
+		$record                = $this->record();
+		$record['url']         = 'https://example.test/';
+		$record['request_url'] = 'https://example.test/?rest_route=%2Fzz%2Fv9&token=kea7719&fields=a%2Cb';
+		$record['profiles']    = [ 'gyrobase' => [ 'time' => 410.0, 'count' => 12, 'entries' => [] ] ];
+
+		$this->assertSame( 'https://example.test/?rest_route=%2Fzz%2Fv9&token=[REDACTED]&fields=a%2Cb', $brief( $record )['url'] );
+	}
+
+	/**
+	 * The builder sets `request_url` on the record with the `url` it stores
+	 * by, so a record without it is refused rather than given a guess.
+	 */
+	#[DataProvider( 'per_request_briefs' )]
+	public function test_a_per_request_brief_refuses_a_record_with_no_request_url( \Closure $brief ): void {
+		$record             = $this->record();
+		$record['rid']      = 'kea-7719';
+		$record['profiles'] = [ 'gyrobase' => [ 'time' => 410.0, 'count' => 12, 'entries' => [] ] ];
+		unset( $record['request_url'] );
+
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'request kea-7719 carries no request_url' );
+		$brief( $record );
 	}
 
 	public function test_entries_ride_only_when_the_record_is_small(): void {
@@ -272,7 +323,8 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_an_entry_is_found_by_its_position_when_a_nested_render_repeats_its_number(): void {
 		$record = [
-			'entries' => [
+			'request_url' => self::REQUEST_URL,
+			'entries'     => [
 				[ 'n' => 11, 'ts' => 1000.0, 'k' => 'plugin (start)', 'm' => 'php' ],
 				[ 'n' => 12, 'ts' => 1000.1, 'k' => 'gyrobase (start)', 'm' => '' ],
 				[ 'n' => 11, 'ts' => 1000.2, 'k' => 'include (start)', 'm' => 'perl' ],
@@ -410,7 +462,8 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_a_span_brief_folds_repeated_children_into_one_row(): void {
 		$record = [
-			'flame' => [
+			'request_url' => self::REQUEST_URL,
+			'flame'       => [
 				'name'     => 'request',
 				'value'    => 100.0,
 				'children' => [
@@ -444,7 +497,8 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_a_span_brief_folds_the_span_it_is_about(): void {
 		$record = [
-			'flame' => [
+			'request_url' => self::REQUEST_URL,
+			'flame'       => [
 				'name'     => 'request',
 				'value'    => 100.0,
 				'children' => [
@@ -471,7 +525,8 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_a_span_brief_reports_the_parent_holding_the_time(): void {
 		$record = [
-			'flame' => [
+			'request_url' => self::REQUEST_URL,
+			'flame'       => [
 				'name'     => 'request',
 				'value'    => 940.0,
 				'children' => [
@@ -514,7 +569,8 @@ class AskAssemblerTest extends TestCase {
 			$children[] = [ 'name' => "child{$i}", 'value' => (float) $i, 'children' => [] ];
 		}
 		$record = [
-			'flame' => [
+			'request_url' => self::REQUEST_URL,
+			'flame'       => [
 				'name'     => 'request',
 				'value'    => 100.0,
 				'children' => [ [ 'name' => 'component', 'value' => 45.0, 'children' => $children ] ],
@@ -1100,6 +1156,7 @@ class AskAssemblerTest extends TestCase {
 		// entry itself ships its category and nothing else.
 		$record = [
 			'url'            => 'https://example.test/newsroom/desk',
+			'request_url'    => 'https://example.test/newsroom/desk',
 			'request_method' => 'POST',
 			'server_name'    => 'example.test',
 			'entries'        => [
@@ -1132,7 +1189,8 @@ class AskAssemblerTest extends TestCase {
 	/** Only the environment map is reduced; every other entry body is intact. */
 	public function test_an_ordinary_entry_map_is_untouched(): void {
 		$record = [
-			'entries' => [
+			'request_url' => self::REQUEST_URL,
+			'entries'     => [
 				[ 'n' => 3, 'ts' => 1000.0, 'k' => 'http', 'm' => [ 'HTTP_HOST' => 'api.example.test', 'ms' => 41 ] ],
 			],
 		];
@@ -1146,8 +1204,9 @@ class AskAssemblerTest extends TestCase {
 	/** A query span as logged: its caller on the start, its statement and duration on the complete. */
 	private function query_span_record(): array {
 		return [
-			'url'     => 'https://example.test/wp-admin/post.php',
-			'entries' => [
+			'url'         => 'https://example.test/wp-admin/post.php',
+			'request_url' => 'https://example.test/wp-admin/post.php?post=3663570&action=edit',
+			'entries'     => [
 				[ 'n' => 1, 'ts' => 3000.000, 'k' => 'process (start)', 'm' => '' ],
 				[ 'n' => 2, 'ts' => 3000.010, 'k' => 'sql (start)', 'l' => 'WP_Query->get_posts', 'm' => '' ],
 				[ 'n' => 3, 'ts' => 3000.011, 'k' => 'QM_DB::remove_placeholder_escape @0 (start)', 'l' => '', 'm' => '' ],

@@ -161,7 +161,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	private function write_request( array $body, int $partition = 0 ): string {
-		return $this->write_indexed( 'requests', Request_Builder_Node::format_index_entry( ... ), $body, $partition );
+		// The request line that gives a record its url gives it a method too.
+		return $this->write_indexed( 'requests', Request_Builder_Node::format_index_entry( ... ), $body + [ 'request_method' => 'GET' ], $partition );
 	}
 
 	private function write_flame( array $body, int $partition = 0 ): string {
@@ -2363,7 +2364,7 @@ class PerformanceCITest extends TestCase {
 		// that caller got "missing context" for doing exactly what it said.
 		$rid  = 'ctxrid0000000000';
 		$this->write_request( [
-			'rid' => $rid, 'url' => 'https://example.test/x', 'duration_ms' => 10.0,
+			'rid' => $rid, 'url' => 'https://example.test/x', 'request_url' => 'https://example.test/x', 'duration_ms' => 10.0,
 			'entries' => [ [ 'k' => 'span', 'n' => 'wp_loaded', 'd' => 5.0 ] ],
 			'profiles' => [ 'wpdb' => [ 'time' => 0.004, 'count' => 2, 'entries' => [] ] ],
 		] );
@@ -3694,9 +3695,9 @@ class PerformanceCITest extends TestCase {
 		// One completed request whose URL matches, plus a non-matching one.
 		$this->write_firehose( 0, [
 			[ 'rid' => 'grepR1', 'k' => 'process (start)', 'm' => '12345 on host', 'ts' => 1700000000.0, 'n' => 1 ],
-			[ 'rid' => 'grepR1', 'k' => 'request', 'm' => 'GET /calendar/today?x=1', 'ts' => 1700000000.0, 'n' => 2 ],
+			[ 'rid' => 'grepR1', 'k' => 'request', 'm' => 'PROPFIND https://kea.test/calendar/today?x=1', 'ts' => 1700000000.0, 'n' => 2 ],
 			[ 'rid' => 'grepR1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.4, 'n' => 3, 'duration_ms' => 400 ],
-			[ 'rid' => 'grepNoise', 'k' => 'request', 'm' => 'GET /feed', 'ts' => 1700000001.0, 'n' => 1 ],
+			[ 'rid' => 'grepNoise', 'k' => 'request', 'm' => 'GET https://kea.test/feed', 'ts' => 1700000001.0, 'n' => 1 ],
 			[ 'rid' => 'grepNoise', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000001.2, 'n' => 2 ],
 		] );
 
@@ -3712,8 +3713,8 @@ class PerformanceCITest extends TestCase {
 
 		$summary = $result['results'][0];
 		$this->assertSame( 'grepR1', $summary['rid'] );
-		$this->assertSame( '/calendar/today', $summary['url'] );
-		$this->assertSame( 'GET', $summary['method'] );
+		$this->assertSame( 'https://kea.test/calendar/today', $summary['url'] );
+		$this->assertSame( 'PROPFIND', $summary['method'] );
 		$this->assertGreaterThanOrEqual( 1, $summary['match_count'] );
 		$this->assertStringContainsString( '/calendar', $summary['first_match_excerpt'] );
 	}
@@ -3724,11 +3725,11 @@ class PerformanceCITest extends TestCase {
 		$entries = [];
 		$lines   = ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride();
 		for ( $i = 0; $i < $lines; $i++ ) {
-			$entries[] = [ 'rid' => "noise{$i}", 'k' => 'request', 'm' => 'GET /feed', 'ts' => 1700000000.0, 'n' => 1 ];
+			$entries[] = [ 'rid' => "noise{$i}", 'k' => 'request', 'm' => 'GET https://kea.test/feed', 'ts' => 1700000000.0, 'n' => 1 ];
 		}
 		$this->write_firehose( 0, $entries );
 		$this->write_firehose( 1, [
-			[ 'rid' => 'lateMatch', 'k' => 'request', 'm' => 'GET /past-the-budget-4471', 'ts' => 1700000900.0, 'n' => 1 ],
+			[ 'rid' => 'lateMatch', 'k' => 'request', 'm' => 'GET https://kea.test/past-the-budget-4471', 'ts' => 1700000900.0, 'n' => 1 ],
 			[ 'rid' => 'lateMatch', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000900.5, 'n' => 2 ],
 		] );
 		$seconds      = 0.0;
@@ -3747,7 +3748,7 @@ class PerformanceCITest extends TestCase {
 		// Three matching completed requests; --limit=2 → 2 results + truncated.
 		$entries = [];
 		foreach ( [ 'gA', 'gB', 'gC' ] as $i => $rid ) {
-			$entries[] = [ 'rid' => $rid, 'k' => 'request', 'm' => "GET /match/{$rid}", 'ts' => 1700000000.0 + $i, 'n' => 1 ];
+			$entries[] = [ 'rid' => $rid, 'k' => 'request', 'm' => "GET https://kea.test/match/{$rid}", 'ts' => 1700000000.0 + $i, 'n' => 1 ];
 			$entries[] = [ 'rid' => $rid, 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.5 + $i, 'n' => 2 ];
 		}
 		$this->write_firehose( 0, $entries );
@@ -3762,7 +3763,7 @@ class PerformanceCITest extends TestCase {
 	/** `max(1, (int) 'abc')` answers one result and calls it the whole match set. */
 	public function test_grep_requests_refuses_a_malformed_limit(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'lim1', 'k' => 'request', 'm' => 'GET /match/a', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'lim1', 'k' => 'request', 'm' => 'GET https://kea.test/match/a', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'lim1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.5, 'n' => 2 ],
 		] );
 
@@ -3774,7 +3775,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_grep_requests_empty_when_no_match(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'z1', 'k' => 'request', 'm' => 'GET /other', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'z1', 'k' => 'request', 'm' => 'GET https://kea.test/other', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'z1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
 		] );
 
@@ -3788,7 +3789,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_grep_requests_skips_and_counts_torn_lines(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'oakum7', 'k' => 'request', 'm' => 'GET /oakum-3391', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'oakum7', 'k' => 'request', 'm' => 'GET https://kea.test/oakum-3391', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'oakum7', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
 		] );
 		$log = $this->tmp . '/logs/firehose.p0/0.log';
@@ -3803,7 +3804,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_grep_requests_reports_no_unparseable_lines_on_a_clean_log(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'clean1', 'k' => 'request', 'm' => 'GET /bilge-812', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'clean1', 'k' => 'request', 'm' => 'GET https://kea.test/bilge-812', 'ts' => 1700000000.0, 'n' => 1 ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', '/bilge-812' );
@@ -4011,6 +4012,7 @@ class PerformanceCITest extends TestCase {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-rule-12345678901234567890123',
 			'url'            => 'https://example.test/some/path',
+			'request_url'    => 'https://example.test/some/path',
 			'rule_id'        => Rule_Set::id_for( '/' ),
 			'timestamp'      => 1700001000,
 			'duration_ms'    => 90,
@@ -4030,6 +4032,7 @@ class PerformanceCITest extends TestCase {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-req-123456789012345678',
 			'url'            => 'https://example.com/asked-about',
+			'request_url'    => 'https://example.com/asked-about?rest_route=%2Fkea%2Fv4&view=4471',
 			'timestamp'      => 1700000800,
 			'duration_ms'    => 120,
 			'status_code'    => 200,
@@ -4041,7 +4044,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'request', $result['subject'] );
-		$this->assertSame( 'https://example.com/asked-about', $result['url'] );
+		$this->assertSame( 'https://example.com/asked-about?rest_route=%2Fkea%2Fv4&view=4471', $result['url'], 'the URL the request fetched, not the per-path row' );
 		$this->assertEquals( 120.0, $result['duration_ms'] );
 	}
 
@@ -4092,6 +4095,7 @@ class PerformanceCITest extends TestCase {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-span-12345678901234567',
 			'url'            => 'https://example.com/asked-span',
+			'request_url'    => 'https://example.com/asked-span',
 			'timestamp'      => 1700000900,
 			'duration_ms'    => 500,
 			'status_code'    => 200,
@@ -4121,6 +4125,7 @@ class PerformanceCITest extends TestCase {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-entry-1234567890123456',
 			'url'            => 'https://example.com/asked-entry',
+			'request_url'    => 'https://example.com/asked-entry',
 			'timestamp'      => 1700000900,
 			'duration_ms'    => 500,
 			'status_code'    => 200,
@@ -4246,6 +4251,7 @@ class PerformanceCITest extends TestCase {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-under-url-12345678901234',
 			'url'            => 'https://example.com/asked-under',
+			'request_url'    => 'https://example.com/asked-under',
 			'timestamp'      => 1700000800,
 			'duration_ms'    => 120,
 			'status_code'    => 200,
@@ -4863,7 +4869,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_grep_requests_answers_a_pattern_scan(): void {
 		$this->write_firehose( 0, [
-			[ 'rid' => 'g7', 'k' => 'request', 'm' => 'GET /elsewhere', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'g7', 'k' => 'request', 'm' => 'GET https://kea.test/elsewhere', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'g7', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
 		] );
 
@@ -8625,6 +8631,7 @@ class PerformanceCITest extends TestCase {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-ask-aged-12345678901234567',
 			'url'            => 'https://example.com/kea-4410',
+			'request_url'    => 'https://example.com/kea-4410',
 			'timestamp'      => \gmmktime( 8, 59, 0, 10, 5, 2026 ),
 			'duration_ms'    => 120,
 			'status_code'    => 200,
