@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.123.0] - 2026-10-05
+
 ### Added
 
 - **The URL table and the URL modal each hold a selection of five-minute buckets in a Time field.** A plain chart click selects one bucket and cmd- or ctrl-click adds or removes one; typing `16:55` or `16:55-17:30` adds buckets, picking a charted bucket from the field's suggestions adds it at once and empties the box for the next pick, and a run of adjacent buckets reads as one token, removed by its own ×. A typed range whose end falls before its start crosses midnight when the wrapped run is 12 hours or less, as `23:50-00:05` does, and longer is refused as backwards, `17:30-16:55 runs backwards; did you mean 16:55-17:30?`; a forward range of any length, such as `04:00-17:30`, is taken. The field sits ahead of Errors Only in the table and between the Recent Requests heading and Errors Only in the modal. Selected slots are shaded on the charts, the field replaces the bucket chip, and `?bucket=` carries the canonical spelling.
