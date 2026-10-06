@@ -50,7 +50,7 @@
     <div class="entry">
       <div class="f"><b>n</b>the line number, stamped by the writer; the builder gap-checks it</div>
       <div class="f"><b>k</b>the category. <span class="m">x (start)</span> opens a span, <span class="m">x (complete)</span> closes it, <span class="m">process (start|complete|aborted)</span> brackets the record. Never renamed.</div>
-      <div class="f data"><b>…the caller's keys</b><span class="m">m</span> the payload (a string carrying <span class="m">?</span> is URL-redacted first); <span class="m">l</span> the aggregation label; <span class="m">duration_ms</span> on a close; <span class="m">caller</span> under <span class="m">trace_callers</span>; <span class="m">rule</span> on the start line. A caller's own <span class="m">ts</span> wins over the stamp, which is how the profiler back-dates plugin-load rows.</div>
+      <div class="f data"><b>…the caller's keys</b><span class="m">m</span> the payload (an unshaped string is URL-redacted first); <span class="m">l</span> the aggregation label; <span class="m">duration_ms</span> on a close; <span class="m">caller</span> under <span class="m">trace_callers</span>; <span class="m">rule</span> on the start line. A caller's own <span class="m">ts</span> wins over the stamp, which is how the profiler back-dates plugin-load rows.</div>
       <div class="f"><b>ts</b>the same cached clock the TIMESTAMP slot carries</div>
       <div class="f" style="background:#FBEAEA;border-color:#E6A3A3"><b style="color:#B32D2E">truncated</b>present, and true, only when the ladder ran</div>
     </div>

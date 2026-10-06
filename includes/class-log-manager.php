@@ -146,6 +146,17 @@ class Log_Manager {
 	/** Per-value byte cap for environment_v3 map values. */
 	private const ENV_VALUE_MAX = 256;
 
+	/** The bytes a logged `$_SERVER` value is stripped of: C0 controls and DEL. */
+	private const CONTROL_CHARS = '/[\x00-\x1F\x7F]/';
+
+	/**
+	 * Bytes of REQUEST_METHOD the request line keeps: room for every
+	 * registered method, the longest of which runs 17. Without a cap, a
+	 * method of a few KB fills the entry, and the trim of `m` takes the
+	 * URL with it. `Gyrobase::Log` carries the same value.
+	 */
+	private const REQUEST_METHOD_MAX = 32;
+
 	private const MAX_DATA_SIZE = 3840;
 
 	/** The firehose's name; each partition is the directory `<name>.p<N>`. */
@@ -158,17 +169,17 @@ class Log_Manager {
 	private const NS_PER_MS = 1_000_000;
 
 	/**
-	 * Regex for sensitive URL query parameters, matched by the SHAPE of the
-	 * parameter name. `$1` is the `?`/`&` delimiter and `$2` the whole name,
-	 * so the body is usable verbatim as Perl's `s/…/$1$2=[REDACTED]/ig`:
-	 * `Gyrobase::Log::_redact_url` carries the identical copy, and
-	 * `tools/check-firehose-parity.py` in dndocker diffs the two bodies.
+	 * A credential-shaped query parameter NAME, tested by `redact_url()`
+	 * against the name as PHP reads it. `Gyrobase::Log` carries the identical
+	 * copy, and `tools/check-firehose-parity.py` in dndocker diffs the two.
 	 *
 	 * Two tiers, because a short token collides with ordinary words: a name
 	 * CONTAINING a credential token is redacted wherever the token sits, with
 	 * `auth` sparing the core query var `author`; a short token counts only as a
-	 * whole SEGMENT of the name, bounded by its ends or by `_`, `-` or `.`, so
-	 * `consumer_key` and `api-key` go while `keyword` and `postcode` stay.
+	 * whole SEGMENT of the name, bounded by its ends, by `_`, `-`, `.` or `[`,
+	 * at its start by `?` and at its end by `]`, so `consumer_key`, `api-key`,
+	 * `x?key`, `key[]`, `api[key` and `data[key]` go while `keyword` and
+	 * `postcode` stay.
 	 *
 	 * This is a DENYLIST: a credential under a name carrying none of these
 	 * tokens reaches the log in cleartext. The segment rule over-reaches on
@@ -178,7 +189,21 @@ class Log_Manager {
 	 *
 	 * @var string
 	 */
-	private const URL_REDACT_PATTERN = '/([?&])(?=[^=&#]*(?:secret|token|pass(?:w|phrase)|pwd|hmac|nonce|session|credential|bearer|signature|apikey|subscriptionkey|cache_cozy_warm|authorization|auth(?!or))|(?:[^=&#]*[_.\-])?(?:key|sig|code|pass|pin|otp|client)[_.\-=\[])([^=&#]*)=[^&]*/i';
+	private const URL_REDACT_PATTERN = '/(?:secret|token|pass(?:w|phrase)|pwd|hmac|nonce|session|credential|bearer|signature|apikey|subscriptionkey|cache_cozy_warm|authorization|auth(?!or))|(?:\A|[_.\-?\[])(?:key|sig|code|pass|pin|otp|client)(?:[_.\-\[\]]|\z)/i';
+
+	/**
+	 * A query parameter's head: its run of separators, the name as sent, and
+	 * the `=` that makes it a parameter, empty when the name ends at `&`, `#`
+	 * or the end. A separator is `?` or `&`, taking with it the rest of an
+	 * HTML character reference for `&` — `amp;`, `#38;` or `#x26;`, padded
+	 * with zeros or not, in either case — so the name read behind
+	 * `esc_url()`'s `&#038;token=` is `token`. A `?` takes it too, which only
+	 * trims a prefix no credential token sits in. Keeping `[?&]` first lets
+	 * Perl's start-class scan find a head.
+	 *
+	 * @var string
+	 */
+	private const URL_PARAMETER = '/(?:[?&](?:(?:amp|#0*38|#x0*26);)?)+([^=&#]*)(=?)/i';
 
 	/** @var array<int,self> Stack of suspended parent Log_Manager instances. */
 	private static $context_stack = [];
@@ -232,7 +257,7 @@ class Log_Manager {
 	private $request_time = null;
 	/** @var float|null Wall-clock request start (microtime), from the profiler drop-in. */
 	private $request_ts = null;
-	/** @var string Sanitized REQUEST_URI, or '/unknown' when there is none. */
+	/** @var string REQUEST_URI as sent, percent-encoding intact, less CONTROL_CHARS; '/unknown' when unset. */
 	private $request_url = '';
 
 	/**
@@ -309,8 +334,8 @@ class Log_Manager {
 			unset( $newspack_profiler['request_time'], $newspack_profiler['request_ts'] );
 		}
 
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( Core::as_string( $_SERVER['REQUEST_URI'] ) ) ) : '/unknown';
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- CONTROL_CHARS stripped; read before wp_magic_quotes() slashes $_SERVER.
+		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \preg_replace( self::CONTROL_CHARS, '', Core::as_string( $_SERVER['REQUEST_URI'] ) ) ?? '' : '/unknown';
 		if ( $this->matches_url_filter( $this->request_url ) ) {
 			// Resolved first: a request with no host never starts.
 			$origin        = self::origin();
@@ -582,8 +607,8 @@ class Log_Manager {
 	 * SQL can sit, and a URL carrying a query string reaches a statement only
 	 * inside a literal. What is left is keywords, identifiers and placeholders.
 	 *
-	 * Redacting one is worse than wasted. `URL_REDACT_PATTERN` reads a
-	 * placeholder as a query delimiter, and its value half runs to the next `&`
+	 * Redacting one is worse than wasted. `redact_url()` reads a placeholder
+	 * as a parameter head, and its value runs to the next `&`
 	 * — which SQL has none of — so a single column named like a credential
 	 * truncates the statement from that `=` to the end. `Gyrobase::Log::start`
 	 * carries the same flag.
@@ -1180,6 +1205,33 @@ class Log_Manager {
 	}
 
 	/**
+	 * Split a `REQUEST_LINE` entry's `m` into the record's `request_method`,
+	 * its `request_url` with the query, and its `url`, that URL less its
+	 * query. The one parse of that line, for the readers that show a request
+	 * and those that aggregate per URL alike.
+	 *
+	 * The method is any token: both producers write `REQUEST_METHOD` as the
+	 * client sent it, less control characters, with each space, `&` and `?`
+	 * read as `_` so it stays one token and opens no query head, cut to
+	 * `REQUEST_METHOD_MAX` bytes, or `CLI` when nothing is left, so refusing
+	 * an unlisted one would let a visitor keep a request out of the log by
+	 * choosing its method. The URL must be absolute, `scheme://` and more, because both
+	 * producers write it under its origin. A line `fit_data()` trimmed to fit
+	 * the entry still parses, so a visitor cannot hide a request behind a
+	 * long URL: its entry carries `truncated`, and its `request_url` and
+	 * `url` are read from the trimmed prefix.
+	 *
+	 * @param mixed $message The entry's `m`.
+	 * @return array{0:string,1:string,2:string}|null [ request_method, request_url, url ], or null when `m` is no request line.
+	 */
+	public static function parse_request_line( mixed $message ): ?array {
+		if ( ! \is_string( $message ) || 1 !== \preg_match( '~^(\S+) ([a-z][a-z\d+.-]*://.+)$~Di', $message, $m ) ) {
+			return null;
+		}
+		return [ $m[1], $m[2], \explode( '?', $m[2], 2 )[0] ];
+	}
+
+	/**
 	 * Mint the request id, pick its partition, and attach the firehose Topic.
 	 *
 	 * The id comes from `UNIQUE_ID`, which Apache's mod_unique_id sets and a
@@ -1299,9 +1351,11 @@ class Log_Manager {
 		$this->times[] = [ 'label' => self::REQUEST_LABEL, 'ts' => $process_hr ];
 		$this->log_worker();
 
-		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
-		$redacted_url = self::redact_url( $this->request_url );
-		$this->message( self::REQUEST_LINE, [ 'm' => "{$method} {$origin}{$redacted_url}" ] );
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- CONTROL_CHARS stripped, as REQUEST_URI is.
+		$method = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \preg_replace( self::CONTROL_CHARS, '', $_SERVER['REQUEST_METHOD'] ) ?? '' : '';
+		$method = \strtr( $method, ' &?', '___' );
+		$method = '' === $method ? 'CLI' : \substr( $method, 0, self::REQUEST_METHOD_MAX );
+		$this->message( self::REQUEST_LINE, [ 'm' => "{$method} {$origin}{$this->request_url}" ] );
 
 		// The record that caused this request; ID seeks onto the log.
 		if ( [] !== self::$job_message ) {
@@ -1366,11 +1420,9 @@ class Log_Manager {
 			if ( \is_array( $value ) ) {
 				continue;
 			}
-			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', Core::as_string( $value ) ) ?? '';
-			// Redact URL secrets in values with a query, not just HTTP_REFERER.
-			if ( false !== \strpos( $sanitized, '?' ) ) {
-				$sanitized = self::redact_url( $sanitized );
-			}
+			$sanitized = \preg_replace( self::CONTROL_CHARS, '', Core::as_string( $value ) ) ?? '';
+			// Redact URL secrets in every value, not just HTTP_REFERER.
+			$sanitized = self::redact_url( $sanitized );
 			// Cap AFTER redaction so truncation can't hide a secret's boundary.
 			if ( \strlen( $sanitized ) > self::ENV_VALUE_MAX ) {
 				$sanitized = \substr( $sanitized, 0, self::ENV_VALUE_MAX ) . '…';
@@ -1436,7 +1488,7 @@ class Log_Manager {
 		if ( ! $this->started ) {
 			return false;
 		}
-		if ( ! $shaped && isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
+		if ( ! $shaped && isset( $data['m'] ) && \is_string( $data['m'] ) ) {
 			$data['m'] = self::redact_url( $data['m'] );
 		}
 		if ( null === $this->topic ) {
@@ -1515,11 +1567,65 @@ class Log_Manager {
 	 * already written — the Ask brief, an agent surface — goes through here,
 	 * not through a second pattern that would drift from this one.
 	 *
+	 * The one place either producer decides whether a string has a query, and
+	 * the answer is every head in it: one linear walk over each separator
+	 * `URL_PARAMETER` reads, followed by a name and `=`, wherever it sits, so
+	 * a string with no head comes back as written, and one holding neither
+	 * `?` nor `&` comes back before any PCRE call. A name is sensitive when
+	 * `URL_REDACT_PATTERN` matches it as sent OR as `read_name()` reads it,
+	 * a reading taken only for a name holding `%` or `+`, and either
+	 * way it is written back as sent. A `?` inside a name stays part of it,
+	 * and a short token may start a segment at that `?`, so `x?key` is
+	 * sensitive, as is `xtoken?a`, whose token sits ahead of it; a `?` inside
+	 * a value opens its own parameter. A sensitive name keeps its head and
+	 * has its value, up to the next `&`, replaced by `[REDACTED]`, and a
+	 * parameter whose name starts inside that value is skipped. A run of
+	 * separators is one head, and each head is read in turn, so memory stays
+	 * flat however many a hostile string packs.
+	 * A PCRE failure keeps only the text ahead of the first `?` or `&` and
+	 * appends `?[REDACTED]`, never the URL as sent.
+	 * `Gyrobase::Log::_redact_url` is the Perl twin.
+	 *
 	 * @param string $url URL to redact.
 	 * @return string Redacted URL.
 	 */
 	public static function redact_url( string $url ): string {
-		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
+		if ( false === \strpbrk( $url, '?&' ) ) {
+			return $url;
+		}
+		$redacted = '';
+		$copied   = 0;
+		$value    = 0;
+		while ( 1 === \preg_match( self::URL_PARAMETER, $url, $parameter, \PREG_OFFSET_CAPTURE, $value ) ) {
+			[ [ $head, $offset ], [ $name, $at ], [ $equals ] ] = $parameter;
+			$value = $offset + \strlen( $head );
+			if ( '' === $equals || $at <= $copied ) {
+				continue;
+			}
+			if ( 0 === \preg_match( self::URL_REDACT_PATTERN, $name ) && ( false === \strpbrk( $name, '%+' ) || 0 === \preg_match( self::URL_REDACT_PATTERN, self::read_name( $name ) ) ) ) {
+				continue;
+			}
+			$end       = \strpos( $url, '&', $value );
+			$redacted .= \substr( $url, $copied, $value - $copied ) . '[REDACTED]';
+			$copied    = false === $end ? \strlen( $url ) : $end;
+		}
+		if ( \PREG_NO_ERROR !== \preg_last_error() ) {
+			return \substr( $url, 0, \strcspn( $url, '?&' ) ) . '?[REDACTED]';
+		}
+		return $redacted . \substr( $url, $copied );
+	}
+
+	/**
+	 * A query parameter name as PHP reads it: `%XX` decoded, `+` and `%20`
+	 * read as `_`, and cut at its first NUL, so `api%5Fkey`, `api+key` and
+	 * `api%20key` all read `api_key`, and `key%00x` reads `key`. A raw space
+	 * stays a space: no request line carries one, so it is prose, and reading
+	 * it as `_` would make `The client said` a `_client_` segment.
+	 *
+	 * @param string $name The name as sent.
+	 */
+	public static function read_name( string $name ): string {
+		return \explode( "\0", \urldecode( \str_ireplace( [ '+', '%20' ], '_', $name ) ), 2 )[0];
 	}
 
 	/**

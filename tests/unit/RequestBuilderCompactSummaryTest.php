@@ -185,6 +185,14 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$this->assertSame( 'POST', $snap['r-2']['method'] );
 	}
 
+	public function test_inflight_snapshot_carries_an_absent_method_as_blank(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-snap-no-method' );
+		$rb->cache->set( 'r-early-9031', (object) [ 'timestamp' => 3.0 ] );
+		$snap = $rb->flight->inflight_snapshot();
+		$this->assertSame( '', $snap['r-early-9031']['method'] );
+	}
+
 	public function test_set_completed_target_via_verb_enables_compact_summary_on_next_completion(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );

@@ -35,11 +35,12 @@ A new producer of potentially-large jobs routed through `Log_Manager` is broken:
 | `ENV_ALLOWLIST` | 32 `$_SERVER` keys, membership AND order |
 | `ENV_VALUE_MAX` | 256 bytes per value |
 | The elision marker `log_environment()` appends to a capped value | U+2026 on both sides |
-| `URL_REDACT_PATTERN` | 21 redacted query parameters |
+| `URL_REDACT_PATTERN`, `URL_PARAMETER`, `CONTROL_CHARS` | Byte-identical bodies and flags |
+| `url-redaction.json` | Both copies identical, and both redactors give its expected output on every case |
 
 Neither plugin can host the check — only the dndocker tree sees both producers. `tools/check-firehose-parity.py` is it, and ELN's `pre-push` runs it whenever this tree is the checkout. It also refuses an allowlisted key that reads as a secret.
 
-Those four values, plus where each producer applies the pattern and that neither applies it to a queued job body, are the whole of what it compares. `MAX_DATA_SIZE` (3840) is not among them and the script never reads it, because the Perl side bounds a different thing: `$MAX_LINE_SIZE` is PIPE_BUF itself, 4096, applied to the PACKED LINE rather than to the encoded entry, and its overflow path replaces `m` with a `(truncated, original N bytes)` stub instead of trimming it in a loop. Moving 3840 therefore draws no mechanical warning: reason the two producers against `Log.pm` by hand.
+Those rows, plus where each producer applies the redactor (with no query test of its own), that both strip the request URL of control characters, and that neither redacts a query shape or a queued job body, are the whole of what it compares. `MAX_DATA_SIZE` (3840) is not among them and the script never reads it, because the Perl side bounds a different thing: `$MAX_LINE_SIZE` is PIPE_BUF itself, 4096, applied to the PACKED LINE rather than to the encoded entry, and its overflow path replaces `m` with a `(truncated, original N bytes)` stub instead of trimming it in a loop. Moving 3840 therefore draws no mechanical warning: reason the two producers against `Log.pm` by hand.
 
 **Cap AFTER redaction.** Reversing the two would let a truncation expose the tail of a secret the redaction covered. A diff editing either side alone ships two producers writing different lines.
 

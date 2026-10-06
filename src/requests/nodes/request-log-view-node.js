@@ -102,7 +102,7 @@ export class RequestLogViewNode extends LogStreamViewNode {
 		}
 		const rid = 'string' === typeof message[ KEY ] ? message[ KEY ] : '';
 		const url = req.url;
-		const method = req.method || 'GET';
+		const method = req.method;
 		const statusCode = req.status_code || 0;
 		return {
 			timestamp: req.end_time || 0,

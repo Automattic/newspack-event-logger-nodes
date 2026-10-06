@@ -43,6 +43,7 @@ import { renderComponent, act } from '../../../test-helpers/renderHook';
 const baseRequest = {
 	request_method: 'GET',
 	url: '/foo',
+	request_url: '/foo?kea=4417',
 	timestamp: 1748960000, // 2025-06-03 14:13:20 UTC.
 	duration_ms: 123.456,
 	peak_mb: 4,
@@ -85,8 +86,7 @@ describe( 'RequestDetailView', () => {
 			} )
 		);
 		const text = container.textContent;
-		expect( text ).toContain( '/foo' );
-		expect( text ).toContain( 'GET' );
+		expect( text ).toContain( 'GET /foo?kea=4417' );
 		expect( text ).toContain( '123.46' );
 		expect( text ).toContain( '4 MB' );
 		expect( text ).toContain( '200' );

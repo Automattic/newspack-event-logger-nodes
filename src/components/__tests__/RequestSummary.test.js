@@ -11,7 +11,8 @@ import { renderComponent } from '../../test-helpers/renderHook';
 
 const request = {
 	request_method: 'PATCH',
-	url: '/wp-json/newspack-nodes/v1/command',
+	url: 'https://kea.test/',
+	request_url: 'https://kea.test/?rest_route=%2Fzz%2Fv9&fields=a%2Cb',
 	timestamp: 1234567890, // 2009-02-13 23:31:30 UTC.
 	duration_ms: 777.777,
 	peak_mb: 313,
@@ -26,8 +27,9 @@ describe( 'RequestSummary', () => {
 			React.createElement( RequestSummary, { request } )
 		);
 		const text = container.textContent;
-		expect( text ).toContain( 'PATCH' );
-		expect( text ).toContain( '/wp-json/newspack-nodes/v1/command' );
+		expect( text ).toContain(
+			'PATCH https://kea.test/?rest_route=%2Fzz%2Fv9&fields=a%2Cb'
+		);
 		expect( text ).toContain(
 			new Date( 1234567890 * 1000 ).toLocaleString()
 		);
@@ -37,19 +39,27 @@ describe( 'RequestSummary', () => {
 		unmount();
 	} );
 
-	it( 'falls back to the compact summary spelling of the HTTP verb', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( RequestSummary, {
-				request: {
-					...request,
-					request_method: undefined,
-					method: 'HEAD',
-				},
-			} )
-		);
-		expect( container.textContent ).toContain( 'HEAD' );
-		unmount();
-	} );
+	it.each( [
+		[ 'absent', undefined ],
+		[ 'empty', '' ],
+	] )(
+		'says the URL was not recorded when request_url is %s',
+		( _, value ) => {
+			const { container, unmount } = renderComponent(
+				React.createElement( RequestSummary, {
+					request: {
+						...request,
+						request_method: undefined,
+						request_url: value,
+					},
+				} )
+			);
+			expect( rows( container )[ 0 ].textContent ).toBe(
+				'URL: not recorded'
+			);
+			unmount();
+		}
+	);
 
 	it( 'places a dash rather than the epoch when there is no timestamp', () => {
 		const { container, unmount } = renderComponent(

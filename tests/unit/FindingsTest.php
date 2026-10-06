@@ -115,7 +115,7 @@ class FindingsTest extends TestCase {
 		$record['duration_ms']  = 856000.0;
 		$record['entries']      = [
 			[ 'n' => 1, 'ts' => 6000.000, 'k' => 'process (start)', 'm' => '' ],
-			[ 'n' => 2, 'ts' => 6000.001, 'k' => 'request', 'm' => 'GET /calendar/today' ],
+			[ 'n' => 2, 'ts' => 6000.001, 'k' => 'request', 'm' => 'GET https://kea.test/calendar/today' ],
 			[ 'n' => 3, 'ts' => 6000.002, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
 			[ 'n' => 4, 'ts' => 6000.104, 'k' => 'template_redirect hook (start)', 'm' => '' ],
 			[ 'n' => 1, 'ts' => 6000.410, 'k' => 'gyrobase (start)', 'm' => '' ],
@@ -475,6 +475,24 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 'the_content hook', $found['metric']['name'] );
 	}
 
+	/**
+	 * A repeat of a hook the rule already marks significant carries no share
+	 * of its listeners, so the proposal's verdict reads alone: no number, and
+	 * no claim about where the rest of the time is.
+	 */
+	public function test_repetition_of_a_significant_hook_gives_only_the_verdict(): void {
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'the_content hook' => [ 'count' => 340, 'time' => 30.0, 'entries' => [] ],
+		];
+		$rule = $this->instrumented_rule()->with( [ 'significant_events' => [ 'the_content' ] ] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'repetition' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertSame( 'It is already a significant event; no rule edit reaches further.', $found['proposal']['why'] );
+	}
+
 	public function test_repetition_reads_the_records_own_exclusive_time(): void {
 		// `Flame_Tree` never writes `count` — only `Flame_Fold` does — so on an
 		// UNFOLDED record every node defaulted to 1 and this finding could not
@@ -533,7 +551,58 @@ class FindingsTest extends TestCase {
 		// 396.0 held, 380.0 of it inside its two children.
 		$this->assertEqualsWithDelta( 16.0, $found['metric']['self_ms'], 1e-6 );
 		$this->assertEqualsWithDelta( 0.04, $found['metric']['self_share'], 1e-6 );
-		$this->assertStringContainsString( '4%', $found['detail'] );
+		// restapi alone reaches half of it, so its 50% is not the body's split.
+		$this->assertStringContainsString( 'It spends 4% of the request in its own body', $found['detail'] );
+		$this->assertStringContainsString( 'holds 50% of it', $found['detail'] );
+	}
+
+	/** Named children holding all it contains state its split, so it is said once. */
+	public function test_children_named_whole_state_the_split_once(): void {
+		$record                      = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[
+				'name'     => 'wp_loaded hook',
+				'value'    => 372.0,
+				'children' => [
+					[ 'name' => 'render_block hook', 'value' => 131.0, 'children' => [] ],
+					[ 'name' => 'the_content hook', 'value' => 117.0, 'children' => [] ],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( [ 'render_block hook', 'the_content hook' ], \array_column( $found['metric']['explained'], 'name' ) );
+		// 248ms of 372ms is 67%; its body's 124ms of the request would be 31%.
+		$this->assertStringContainsString( 'hold 67% of it', $found['detail'] );
+		$this->assertSame( 1, \substr_count( $found['detail'], '%' ) );
+	}
+
+	public function test_children_named_in_part_keep_the_body_sentence_when_the_percents_round_alike(): void {
+		$record                      = $this->healthy_record();
+		$record['duration_ms']       = 1100.0;
+		$record['flame']['value']    = 1100.0;
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 50.0, 'children' => [] ],
+			[
+				'name'     => 'wp_loaded hook',
+				'value'    => 1000.0,
+				'children' => [
+					[ 'name' => 'render_block hook', 'value' => 400.0, 'children' => [] ],
+					[ 'name' => 'the_content hook', 'value' => 346.0, 'children' => [] ],
+					[ 'name' => 'wp_footer hook', 'value' => 8.0, 'children' => [] ],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		// 746ms named and 754ms contained both round to 75%; 8ms is unnamed.
+		$this->assertSame( [ 'render_block hook', 'the_content hook' ], \array_column( $found['metric']['explained'], 'name' ) );
+		$this->assertStringContainsString( 'hold 75% of it', $found['detail'] );
+		// Its body's 246ms of the 1100ms request is 22%.
+		$this->assertStringContainsString( 'It spends 22% of the request in its own body', $found['detail'] );
 	}
 
 	public function test_an_already_significant_custom_event_is_not_credited_with_listeners(): void {
@@ -1126,7 +1195,7 @@ class FindingsTest extends TestCase {
 		$record['folded']  = true;
 		$record['entries'] = [
 			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
-			[ 'n' => 2, 'ts' => 2000.001, 'k' => 'request', 'm' => 'GET /calendar/today' ],
+			[ 'n' => 2, 'ts' => 2000.001, 'k' => 'request', 'm' => 'GET https://kea.test/calendar/today' ],
 			[ 'n' => 3, 'ts' => 2000.010, 'k' => 'template_redirect hook (start)', 'm' => '' ],
 			[ 'n' => 4, 'ts' => 2000.020, 'k' => 'render (start)', 'l' => 'Event.html', 'm' => '' ],
 			[ 'n' => 5, 'ts' => 2000.030, 'k' => 'render (complete)', 'm' => '', 'duration_ms' => 10.0 ],
@@ -1848,7 +1917,126 @@ class FindingsTest extends TestCase {
 		$found = $this->of_kind( Findings::for_request( $this->traced_hook_record(), $rule ), 'dominant_span' );
 
 		$this->assertSame( 'none', $found['proposal']['action'] );
-		$this->assertStringContainsString( 'listeners', $found['detail'] );
+		$this->assertStringContainsString( 'its own time', $found['detail'] );
+		$this->assertStringNotContainsString( 'read those', $found['detail'] );
+	}
+
+	/**
+	 * A significant hook whose wrapped listeners hold under half of it spends
+	 * the rest in its own time: listeners the logger cannot wrap and the
+	 * dispatch around them. The detail states the share they hold, measured,
+	 * and names that own time, never the listeners; the proposal gives only
+	 * the verdict, so the two never say the same sentence.
+	 */
+	public function test_a_significant_hook_whose_own_time_dominates_names_the_unwrapped_listeners(): void {
+		$rule                        = $this->instrumented_rule()->with( [ 'significant_events' => [ 'template_redirect' ] ] );
+		$record                      = $this->healthy_record();
+		$record['duration_ms']       = 8317.0;
+		$record['flame']['value']    = 8317.0;
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 23.0, 'children' => [] ],
+			[
+				'name'     => 'template_redirect hook',
+				'value'    => 8191.0,
+				'children' => [ [ 'name' => 'Redirect_Manager::maybe_redirect @10', 'value' => 57.0, 'children' => [] ] ],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'dominant_span' );
+
+		$this->assertSame( 'template_redirect hook', $found['metric']['name'] );
+		$this->assertArrayNotHasKey( 'explained', $found['metric'] );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		// 57ms of listeners inside 8,191ms rounds to 1%.
+		$this->assertStringContainsString( 'hold 1% of it', $found['detail'] );
+		$this->assertStringContainsString( 'its own time', $found['detail'] );
+		$this->assertStringContainsString( 'by reference', $found['detail'] );
+		$this->assertStringContainsString( 'start priority', $found['detail'] );
+		$this->assertStringNotContainsString( 'read those', $found['detail'] );
+		$this->assertSame( 'It is already a significant event; no rule edit reaches further.', $found['proposal']['why'] );
+		$this->assertStringNotContainsString( $found['proposal']['why'], $found['detail'] );
+		$this->assertSame( 1, \substr_count( $found['detail'], '%' ) );
+	}
+
+	/**
+	 * The share the logged spans hold is of the FRAME, and the detail states
+	 * the frame's split once. The hook holds 65% of the request and its
+	 * listeners 37% of it: 24% against the request, 0% with no children.
+	 */
+	public function test_a_significant_hooks_logged_share_is_of_the_hook_and_said_once(): void {
+		$rule                        = $this->instrumented_rule()->with( [ 'significant_events' => [ 'template_redirect' ] ] );
+		$record                      = $this->healthy_record();
+		$record['duration_ms']       = 2417.0;
+		$record['flame']['value']    = 2417.0;
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 23.0, 'children' => [] ],
+			[
+				'name'     => 'template_redirect hook',
+				'value'    => 1571.0,
+				'children' => [
+					[ 'name' => 'Redirect_Manager::maybe_redirect @10', 'value' => 412.0, 'children' => [] ],
+					[ 'name' => 'WPSEO_Redirect::handle @20', 'value' => 169.0, 'children' => [] ],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'dominant_span' );
+
+		$this->assertSame( 'template_redirect hook', $found['metric']['name'] );
+		$this->assertArrayNotHasKey( 'chain', $found['metric'] );
+		$this->assertArrayNotHasKey( 'explained', $found['metric'] );
+		// 581ms of listeners inside 1,571ms rounds to 37%.
+		$this->assertStringContainsString( 'hold 37% of it', $found['detail'] );
+		$this->assertSame( 1, \substr_count( $found['detail'], '%' ) );
+	}
+
+	/**
+	 * A `SPAN_ADVICE` detail is prose, never a format string: the two rows
+	 * stating the held share name it as `{held}`, followed by a literal `%`
+	 * that `sprintf()` would read as the `% o` conversion, rendering 37 as
+	 * `{held}45f it`. The render tests above show that share intact.
+	 */
+	public function test_span_advice_names_the_share_in_the_two_rows_that_state_it(): void {
+		/** @var array<string,array<string,string>> $advice */
+		$advice  = ( new \ReflectionClassConstant( Findings::class, 'SPAN_ADVICE' ) )->getValue();
+		$holding = \array_filter( $advice, static fn ( array $row ): bool => \str_contains( $row['detail'], '{held}' ) );
+
+		$this->assertSame( [ 'significant:hook', 'significant:transport' ], \array_keys( $holding ) );
+		foreach ( $holding as $row ) {
+			$this->assertStringContainsString( 'hold {held}% of it', $row['detail'] );
+		}
+	}
+
+	/**
+	 * Below a chain the frame sentence is the stop's split and the leading
+	 * one the dominant span's, so each is said once and both stand.
+	 */
+	public function test_a_chain_states_the_dominant_spans_body_and_the_stops_split(): void {
+		$rule                        = $this->instrumented_rule()->with( [ 'significant_events' => [ 'the_content' ] ] );
+		$record                      = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[
+				'name'     => 'wp_loaded hook',
+				'value'    => 372.0,
+				'children' => [
+					[
+						'name'     => 'the_content hook',
+						'value'    => 220.0,
+						'children' => [ [ 'name' => 'Image_CDN::filter_the_content @10', 'value' => 50.0, 'children' => [] ] ],
+					],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'dominant_span' );
+
+		$this->assertSame( 'wp_loaded hook', $found['metric']['name'] );
+		$this->assertSame( [ 'the_content hook' ], \array_column( $found['metric']['chain'], 'name' ) );
+		// 152ms of 400ms in its own body; 220ms holds 55%; 50ms of 220ms is 23%.
+		$this->assertStringContainsString( 'It spends 38% of the request in its own body', $found['detail'] );
+		$this->assertStringContainsString( 'Inside it, the_content hook holds 55% of the request.', $found['detail'] );
+		$this->assertStringContainsString( 'hold 23% of it', $found['detail'] );
 	}
 
 	/**
@@ -1947,7 +2135,47 @@ class FindingsTest extends TestCase {
 		$found = $this->of_kind( Findings::for_request( $this->query_record(), $rule ), 'dominant_span' );
 
 		$this->assertSame( 'none', $found['proposal']['action'] );
-		$this->assertStringContainsString( 'listeners', $found['detail'] );
+		$this->assertStringContainsString( 'round trip', $found['detail'] );
+		$this->assertStringNotContainsString( 'read those', $found['detail'] );
+	}
+
+	/**
+	 * A significant query span whose listeners hold under half of it spends
+	 * the rest on the round trip, so the detail states the share they hold,
+	 * measured, and sends the reader to the statement it names, never to the
+	 * listeners on the `query` filter; the proposal gives only the verdict.
+	 */
+	public function test_a_significant_query_span_whose_self_time_dominates_points_at_the_round_trip(): void {
+		$rule                        = $this->instrumented_rule()->with( [ 'significant_events' => [ 'sql' ], 'log_queries' => true ] );
+		$statement                   = 'SELECT COUNT(*), SUM(CRC32(CONCAT_WS(?, ID, post_modified))) FROM wp_posts WHERE ID BETWEEN ? AND ?';
+		$record                      = $this->healthy_record();
+		$record['duration_ms']       = 600611.0;
+		$record['flame']['value']    = 600611.0;
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 87.0, 'children' => [] ],
+			[
+				'name'     => 'sql: Automattic\\Jetpack\\Sync\\Replicastore\\Table_Checksum->calculate_checksum',
+				'value'    => 600424.0,
+				'count'    => 3,
+				'max'      => 600301.0,
+				'children' => [ [ 'name' => 'Query_Monitor::filter_query @10', 'value' => 40.0, 'children' => [] ] ],
+				'shapes'   => [ $statement => [ 3, 600384.0 ] ],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'dominant_span' );
+
+		$this->assertSame( $statement, $found['metric']['shape'] );
+		$this->assertArrayNotHasKey( 'explained', $found['metric'] );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'round trip', $found['detail'] );
+		$this->assertStringContainsString( 'statement', $found['detail'] );
+		$this->assertStringNotContainsString( 'read those', $found['detail'] );
+		$this->assertStringContainsString( '`query` filter', $found['proposal']['why'] );
+		$this->assertStringContainsString( 'no rule edit reaches further', $found['proposal']['why'] );
+		foreach ( [ 'round trip', 'statement', '%' ] as $repeated ) {
+			$this->assertStringNotContainsString( $repeated, $found['proposal']['why'] );
+		}
 	}
 
 	/** A rule that does not log the span cannot wrap its listeners: the edit to propose is the flag, not the mark. */

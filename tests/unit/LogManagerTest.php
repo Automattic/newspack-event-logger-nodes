@@ -2353,10 +2353,198 @@ class LogManagerTest extends TestCase {
 			}
 		}
 		$this->assertNotNull( $request, 'process should log a request entry' );
-		$this->assertStringContainsString( 'POST https://example.test/api/work', (string) ( $request['m'] ?? '' ) );
-		$this->assertStringContainsString( 'key=[REDACTED]', (string) ( $request['m'] ?? '' ), 'request URL must be redacted' );
-		$this->assertStringNotContainsString( 'key=hidden', (string) ( $request['m'] ?? '' ) );
-		$this->assertStringContainsString( 'q=visible', (string) ( $request['m'] ?? '' ) );
+		$this->assertSame( 'POST https://example.test/api/work?key=[REDACTED]&q=visible', $request['m'] ?? null, 'the request line is redacted' );
+	}
+
+	/** The request line carries REQUEST_URI's percent-encoded octets as sent. */
+	public function test_log_process_keeps_percent_encoded_octets(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+		$_SERVER['SERVER_NAME']    = 'octet-6613.test';
+		$_SERVER['HTTPS']          = 'on';
+		$_SERVER['REQUEST_URI']    = '/?rest_route=%2Fzz%2Fv9%2Fqq&fields=a%2Cb';
+
+		$this->fresh_log_manager()->finish();
+
+		$lines = \array_column( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ), 'm' );
+		$this->assertSame( [ 'GET https://octet-6613.test/?rest_route=%2Fzz%2Fv9%2Fqq&fields=a%2Cb' ], \array_values( $lines ) );
+	}
+
+	/** Control characters never reach the request line; the rest of the URI does. */
+	public function test_log_process_strips_control_characters_from_the_url(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+		$_SERVER['SERVER_NAME']    = 'ctl-3391.test';
+		$_SERVER['HTTPS']          = 'on';
+		$_SERVER['REQUEST_URI']    = "/ctl\x07-path\x7F?k[]=1";
+
+		$this->fresh_log_manager()->finish();
+
+		$lines = \array_column( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ), 'm' );
+		$this->assertSame( [ 'GET https://ctl-3391.test/ctl-path?k[]=1' ], \array_values( $lines ) );
+	}
+
+	/**
+	 * The request line keeps REQUEST_URI's backslashes as sent: the logger
+	 * reads it before `wp_magic_quotes()` slashes `$_SERVER`, so there is
+	 * nothing to unslash.
+	 */
+	public function test_log_process_keeps_backslashes_in_the_url(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+		$_SERVER['SERVER_NAME']    = 'slash-5527.test';
+		$_SERVER['HTTPS']          = 'on';
+		$_SERVER['REQUEST_URI']    = '/a\\b?x=1';
+
+		$this->fresh_log_manager()->finish();
+
+		$lines = \array_column( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ), 'm' );
+		$this->assertSame( [ 'GET https://slash-5527.test/a\\b?x=1' ], \array_values( $lines ) );
+	}
+
+	/**
+	 * The request line keeps a method's percent octets and loses only its
+	 * control characters, so the line still parses and the request keeps
+	 * its record.
+	 */
+	public function test_log_process_keeps_a_percent_octet_method(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$_SERVER['REQUEST_METHOD'] = "%47%45\x07%54";
+		$_SERVER['SERVER_NAME']    = 'verb-8821.test';
+		$_SERVER['HTTPS']          = 'on';
+		$_SERVER['REQUEST_URI']    = '/thistle';
+
+		$this->fresh_log_manager()->finish();
+
+		$lines = \array_column( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ), 'm' );
+		$this->assertSame( [ '%47%45%54 https://verb-8821.test/thistle' ], \array_values( $lines ) );
+		$this->assertSame(
+			[ '%47%45%54', 'https://verb-8821.test/thistle', 'https://verb-8821.test/thistle' ],
+			Log_Manager::parse_request_line( $lines[ \array_key_first( $lines ) ] )
+		);
+	}
+
+	/**
+	 * A method long enough to fill the entry is cut to its first 32 bytes, so
+	 * the trim that would otherwise take the URL leaves the line whole.
+	 */
+	public function test_a_long_method_cannot_push_the_url_out_of_the_request_line(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$_SERVER['REQUEST_METHOD'] = \str_repeat( 'PROPFIND', 475 );
+		$_SERVER['SERVER_NAME']    = 'verb-6093.test';
+		$_SERVER['HTTPS']          = 'on';
+		$_SERVER['REQUEST_URI']    = '/sorrel?n=4';
+
+		$this->fresh_log_manager()->finish();
+
+		$requests = \array_values( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ) );
+		$this->assertCount( 1, $requests );
+		$this->assertSame(
+			[ \str_repeat( 'PROPFIND', 4 ), 'https://verb-6093.test/sorrel?n=4', 'https://verb-6093.test/sorrel' ],
+			Log_Manager::parse_request_line( $requests[0]['m'] )
+		);
+	}
+
+	/**
+	 * A method that is empty, or nothing but control characters, logs as
+	 * `CLI`, as an absent one does, so the line still parses.
+	 *
+	 * @return array<string,array{0:string}>
+	 */
+	public static function blank_methods(): array {
+		return [
+			'empty'              => [ '' ],
+			'control characters' => [ "\x07\x7F" ],
+		];
+	}
+
+	#[DataProvider( 'blank_methods' )]
+	public function test_a_blank_method_logs_as_cli( string $method ): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$_SERVER['REQUEST_METHOD'] = $method;
+		$_SERVER['SERVER_NAME']    = 'verb-7154.test';
+		$_SERVER['HTTPS']          = 'on';
+		$_SERVER['REQUEST_URI']    = '/yarrow';
+
+		$this->fresh_log_manager()->finish();
+
+		$lines = \array_column( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ), 'm' );
+		$this->assertSame( [ 'CLI https://verb-7154.test/yarrow' ], \array_values( $lines ) );
+	}
+
+	/**
+	 * A method holding whitespace, `&` or `?` logs each as `_`, so the line
+	 * parses with its URL and the redactor opens no parameter in the method.
+	 *
+	 * @return array<string,array{0:string,1:string}>
+	 */
+	public static function separator_methods(): array {
+		return [
+			'trailing space' => [ 'GET ', 'GET_' ],
+			'inner space'    => [ 'A B', 'A_B' ],
+			'ampersand'      => [ 'X&TOKEN', 'X_TOKEN' ],
+			'question mark'  => [ 'Y?KEY', 'Y_KEY' ],
+		];
+	}
+
+	#[DataProvider( 'separator_methods' )]
+	public function test_a_method_logs_its_separators_as_underscores( string $method, string $logged ): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$_SERVER['REQUEST_METHOD'] = $method;
+		$_SERVER['SERVER_NAME']    = 'verb-2286.test';
+		$_SERVER['HTTPS']          = 'on';
+		$_SERVER['REQUEST_URI']    = '/p?a=1&b=2';
+
+		$this->fresh_log_manager()->finish();
+
+		$lines = \array_column( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ), 'm' );
+		$this->assertSame( [ "{$logged} https://verb-2286.test/p?a=1&b=2" ], \array_values( $lines ) );
+		$this->assertSame(
+			[ $logged, 'https://verb-2286.test/p?a=1&b=2', 'https://verb-2286.test/p' ],
+			Log_Manager::parse_request_line( $lines[ \array_key_first( $lines ) ] )
+		);
+	}
+
+	/**
+	 * A request line too long for the entry is trimmed, still parses, and
+	 * its `request_url` is the trimmed prefix.
+	 */
+	public function test_a_trimmed_request_line_parses_as_its_prefix(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+		$_SERVER['SERVER_NAME']    = 'long-3307.test';
+		$_SERVER['HTTPS']          = 'on';
+		$_SERVER['REQUEST_URI']    = '/burdock?q=' . \str_repeat( 'w', 5000 );
+
+		$this->fresh_log_manager()->finish();
+
+		$requests = \array_values( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ) );
+		$this->assertCount( 1, $requests );
+		$this->assertTrue( $requests[0]['truncated'] ?? false, 'the entry says it was trimmed' );
+		$line = Log_Manager::parse_request_line( $requests[0]['m'] );
+		$this->assertNotNull( $line, 'the trimmed line still parses' );
+		[ $method, $request_url, $url ] = $line;
+		$this->assertSame( 'GET', $method );
+		$this->assertStringStartsWith( 'https://long-3307.test/burdock?q=www', $request_url );
+		$this->assertLessThan( \strlen( 'https://long-3307.test/burdock?q=' ) + 5000, \strlen( $request_url ) );
+		$this->assertSame( 'https://long-3307.test/burdock', $url );
+	}
+
+	/** A rule matches a percent-encoded URI on its encoded form. */
+	public function test_matches_url_filter_sees_percent_encoded_octets(): void {
+		$this->require_config_or_skip();
+		$this->set_rules_option( [ [ 'id' => 'rr', 'pattern' => '/?rest_route=%2fzz%2f', 'action' => 'log' ] ] );
+
+		$_SERVER['REQUEST_URI'] = '/?rest_route=%2Fzz%2Fv9%2Fqq';
+		$this->assertTrue( $this->fresh_log_manager()->is_started(), 'the encoded query prefix matches' );
 	}
 
 	public function test_log_process_https_off_uses_http_scheme(): void {
@@ -3240,206 +3428,120 @@ class LogManagerTest extends TestCase {
 		$path2 = \WP_PLUGIN_DIR . '/raw-segment';
 		$this->assertSame( 'raw-segment', $this->invoke_extract_plugin_slug( $path2 ) );
 	}
-	/**
-	 * The cache-cozy warm secret is a credential in a query parameter.
-	 *
-	 * `01-newspack-cache-cozy.php` builds `?cache_cozy_warm=<32 hex>` with
-	 * `add_query_arg`, generated once and never rotated. `$request->url` strips
-	 * the query string, but the firehose `request` line records the URL whole —
-	 * and `aggregator.tsl` replicates a spoke's raw firehose to the hub, so a
-	 * hub operator holding only the least-privilege `hub-user` account reads
-	 * every spoke's warm secret.
-	 *
-	 * The pattern matches a parameter by the shape of its name; this pins the
-	 * one name the census found that no shape rule would guess.
-	 */
+
 	/** The wire string readers group by; the JS fold exemption spells it too. */
 	public function test_the_environment_category_is_the_wire_string_readers_expect(): void {
 		$this->assertSame( 'environment_v3', Log_Manager::ENVIRONMENT );
 	}
 
-	public function test_the_cache_cozy_warm_secret_is_redacted(): void {
-		$this->assertSame(
-			'https://example.test/?cache_cozy_warm=[REDACTED]',
-			Log_Manager::redact_url( 'https://example.test/?cache_cozy_warm=0123456789abcdef0123456789abcdef' )
-		);
-		$this->assertSame(
-			'https://example.test/?a=1&cache_cozy_warm=[REDACTED]&b=2',
-			Log_Manager::redact_url( 'https://example.test/?a=1&cache_cozy_warm=deadbeef&b=2' ),
-			'and it stops at the parameter boundary'
-		);
-	}
-
 	/**
-	 * Names the census found on live hosts, and the local redactors they used
-	 * to need. `subscription-Key` was carried by two forks of the film-times
-	 * client; `client`, `sig` and `apiKey` by the SinglePlatform pair. Covering
-	 * them centrally is what makes those copies redundant, so this is the test
-	 * that has to hold once they are gone.
+	 * Each case in `tests/fixtures/url-redaction.json` redacts as written.
 	 *
-	 * @dataProvider central_redaction_provider
+	 * `Gyrobase::Log`'s suite reads its own copy, and dndocker's
+	 * `tools/check-firehose-parity.py` holds the two copies identical and runs
+	 * both redactors over them, so a case added here binds both producers.
 	 */
-	public function test_the_central_pattern_covers_the_local_redactors( string $url, string $expected ): void {
+	#[DataProvider( 'url_redaction_provider' )]
+	public function test_redact_url_gives_the_shared_verdict( string $url, string $expected ): void {
 		$this->assertSame( $expected, Log_Manager::redact_url( $url ) );
 	}
 
 	/**
 	 * @return array<string,array{string,string}>
 	 */
-	public static function central_redaction_provider(): array {
+	public static function url_redaction_provider(): array {
+		$cases = \json_decode( (string) \file_get_contents( __DIR__ . '/../fixtures/url-redaction.json' ), true );
+		\assert( \is_array( $cases ) );
+		$out = [];
+		foreach ( $cases as $case ) {
+			$out[ (string) $case[0] ] = [ (string) $case[1], (string) $case[2] ];
+		}
+		return $out;
+	}
+
+	/** A PCRE failure redacts the whole query rather than logging it as sent. */
+	public function test_redact_url_fails_closed_when_pcre_fails(): void {
+		$jit   = (string) \ini_get( 'pcre.jit' );
+		$limit = (string) \ini_get( 'pcre.backtrack_limit' );
+		\ini_set( 'pcre.jit', '0' );
+		\ini_set( 'pcre.backtrack_limit', '1' );
+		try {
+			$redacted = Log_Manager::redact_url( 'https://pcre.test/a&b?apikey=lemongrass88&p=3' );
+		} finally {
+			\ini_set( 'pcre.jit', $jit );
+			\ini_set( 'pcre.backtrack_limit', $limit );
+		}
+		$this->assertSame( 'https://pcre.test/a?[REDACTED]', $redacted );
+	}
+
+	/**
+	 * A string holding neither `?` nor `&` returns as written without a PCRE
+	 * call: the error a forced failure left stays unread and uncleared.
+	 */
+	public function test_redact_url_spends_no_pcre_call_on_a_plain_line(): void {
+		$jit   = (string) \ini_get( 'pcre.jit' );
+		$limit = (string) \ini_get( 'pcre.backtrack_limit' );
+		\ini_set( 'pcre.jit', '0' );
+		\ini_set( 'pcre.backtrack_limit', '1' );
+		try {
+			\preg_match( '/(a|aa)+$/', \str_repeat( 'a', 24 ) . 'c' );
+		} finally {
+			\ini_set( 'pcre.jit', $jit );
+			\ini_set( 'pcre.backtrack_limit', $limit );
+		}
+		$armed    = \preg_last_error();
+		$redacted = Log_Manager::redact_url( 'template_redirect hook (start)' );
+		$after    = \preg_last_error();
+
+		$this->assertSame( \PREG_BACKTRACK_LIMIT_ERROR, $armed, 'the failure is armed' );
+		$this->assertSame( 'template_redirect hook (start)', $redacted );
+		$this->assertSame( \PREG_BACKTRACK_LIMIT_ERROR, $after, 'no PCRE call cleared it' );
+	}
+
+	/**
+	 * A request line splits into the record's `request_method`, its
+	 * `request_url` with the query, and its `url`, that URL less its query.
+	 * The method is whatever token the producer wrote, because both producers
+	 * write `REQUEST_METHOD` as the client sent it.
+	 *
+	 * @return array<string,array{string,array{string,string,string}}>
+	 */
+	public static function request_lines(): array {
 		return [
-			'array-valued key'            => [
-				'https://x.example.test/?key[]=AKIAcardamom&b=2',
-				'https://x.example.test/?key[]=[REDACTED]&b=2',
-			],
-			'bare subscriptionkey'        => [
-				'https://ee.iva-api.com/x?subscriptionkey=shibboleth9&b=2',
-				'https://ee.iva-api.com/x?subscriptionkey=[REDACTED]&b=2',
-			],
-			'film-times subscription-Key' => [
-				'https://ee.iva-api.com/x?a=1&subscription-Key=shibboleth&b=2',
-				'https://ee.iva-api.com/x?a=1&subscription-Key=[REDACTED]&b=2',
-			],
-			'SinglePlatform client' => [
-				'https://api.example.test/v1?client=cardamom&page=2',
-				'https://api.example.test/v1?client=[REDACTED]&page=2',
-			],
-			'SinglePlatform sig' => [
-				'https://api.example.test/v1?sig=vestibule&page=2',
-				'https://api.example.test/v1?sig=[REDACTED]&page=2',
-			],
-			'signature, whatever its case' => [
-				'https://api.example.test/v1?Signature=vestibule',
-				'https://api.example.test/v1?Signature=[REDACTED]',
-			],
-			'SinglePlatform apiKey, whatever its case' => [
-				'https://api.example.test/v1?apiKey=cardamom',
-				'https://api.example.test/v1?apiKey=[REDACTED]',
-			],
+			'a query'          => [ 'PATCH https://kea.test/?rest_route=%2Fzz%2Fv9&fields=a%2Cb', [ 'PATCH', 'https://kea.test/?rest_route=%2Fzz%2Fv9&fields=a%2Cb', 'https://kea.test/' ] ],
+			'a CLI job'        => [ 'CLI http://kea.test/jobs/kea-sync/4471', [ 'CLI', 'http://kea.test/jobs/kea-sync/4471', 'http://kea.test/jobs/kea-sync/4471' ] ],
+			'a WebDAV method'  => [ 'PROPFIND https://kea.test/dav?depth=1', [ 'PROPFIND', 'https://kea.test/dav?depth=1', 'https://kea.test/dav' ] ],
+			'a cache method'   => [ 'PURGE https://kea.test/feed/', [ 'PURGE', 'https://kea.test/feed/', 'https://kea.test/feed/' ] ],
+			'a lowercase verb' => [ 'get https://kea.test/x?y=2', [ 'get', 'https://kea.test/x?y=2', 'https://kea.test/x' ] ],
 		];
 	}
 
-	/**
-	 * The pattern matches a parameter by the SHAPE of its name, not by whole
-	 * name, so a credential wrapped in a vendor's prefix is still covered.
-	 *
-	 *
-	 * @dataProvider credential_name_shape_provider
-	 */
-	public function test_redact_url_matches_a_credential_by_name_shape( string $url, string $expected ): void {
-		$this->assertSame( $expected, Log_Manager::redact_url( $url ) );
+	/** @param array{string,string,string} $parsed */
+	#[DataProvider( 'request_lines' )]
+	public function test_parse_request_line_splits_method_request_url_and_url( string $message, array $parsed ): void {
+		$this->assertSame( $parsed, Log_Manager::parse_request_line( $message ) );
 	}
 
 	/**
-	 * @return array<string,array{string,string}>
+	 * What holds no method and absolute URL parses as none.
+	 *
+	 * @return array<string,array{mixed}>
 	 */
-	public static function credential_name_shape_provider(): array {
+	public static function non_request_lines(): array {
 		return [
-			'consumer_key' => [
-				'https://shop.test/wp-json/wc/v3/orders?consumer_key=ck_7f3a91c2e4&per_page=5',
-				'https://shop.test/wp-json/wc/v3/orders?consumer_key=[REDACTED]&per_page=5',
-			],
-			'consumer_secret' => [
-				'https://shop.test/wp-json/wc/v3/orders?consumer_secret=cs_9e4b0d17aa',
-				'https://shop.test/wp-json/wc/v3/orders?consumer_secret=[REDACTED]',
-			],
-			'api-key, hyphenated' => [
-				'https://api.test/v2?api-key=pelican-4471&page=3',
-				'https://api.test/v2?api-key=[REDACTED]&page=3',
-			],
-			'signature' => [
-				'https://api.test/v2?signature=quillon9931',
-				'https://api.test/v2?signature=[REDACTED]',
-			],
-			'sig, a whole segment' => [
-				'https://api.test/v2?sig=marzipan22&page=3',
-				'https://api.test/v2?sig=[REDACTED]&page=3',
-			],
-			'hmac' => [
-				'https://api.test/v2?hmac=8801fbace2',
-				'https://api.test/v2?hmac=[REDACTED]',
-			],
-			'code, the OAuth exchange grant' => [
-				'https://site.test/callback?code=granary7712&state=ok',
-				'https://site.test/callback?code=[REDACTED]&state=ok',
-			],
-			'oauth_token' => [
-				'https://api.test/v2?oauth_token=tarragon5518',
-				'https://api.test/v2?oauth_token=[REDACTED]',
-			],
-			'_wpnonce' => [
-				'https://site.test/wp-admin/admin.php?action=x&_wpnonce=6d2ca41f09',
-				'https://site.test/wp-admin/admin.php?action=x&_wpnonce=[REDACTED]',
-			],
-			'X-Amz-Signature' => [
-				'https://s3.test/o?X-Amz-Date=20260911T0000Z&X-Amz-Signature=4c19ee73bb',
-				'https://s3.test/o?X-Amz-Date=20260911T0000Z&X-Amz-Signature=[REDACTED]',
-			],
-			'client_secret' => [
-				'https://idp.test/token?grant_type=code&client_secret=hazelnut3390',
-				'https://idp.test/token?grant_type=code&client_secret=[REDACTED]',
-			],
-			'access_token' => [
-				'https://api.test/v2?access_token=saffron6604',
-				'https://api.test/v2?access_token=[REDACTED]',
-			],
-			'apiKey, whatever its case' => [
-				'https://api.test/v2?apiKey=juniper8127',
-				'https://api.test/v2?apiKey=[REDACTED]',
-			],
-			'authorization, which the author exception must not spare' => [
-				'https://api.test/v2?authorization=Bearer%20clove4420',
-				'https://api.test/v2?authorization=[REDACTED]',
-			],
-			// The segment rule cannot tell a postal code from an OAuth one, nor
-			// a public OAuth identifier from the credential beside it. These
-			// two are the price of `code` and `client`; pinned, not hidden.
-			'country_code, the documented cost' => [
-				'https://api.test/v2?country_code=CA&page=3',
-				'https://api.test/v2?country_code=[REDACTED]&page=3',
-			],
-			'client_id, the documented cost' => [
-				'https://idp.test/token?client_id=widgets&grant_type=code',
-				'https://idp.test/token?client_id=[REDACTED]&grant_type=code',
-			],
+			'no url'         => [ 'GET' ],
+			'empty url'      => [ 'GET ' ],
+			'array body'     => [ [ 'GET', 'https://kea.test/' ] ],
+			'absent'         => [ null ],
+			'overflow stub'  => [ '(truncated, original 4213 bytes)' ],
+			'a bare path'    => [ 'GET /jobs/kea-sync/4471' ],
+			'a scheme alone' => [ 'GET https://' ],
 		];
 	}
 
-	/**
-	 * The shape rule must not eat what an operator reads the URL log FOR.
-	 *
-	 * `?p=`, `?s=`, `?page=` and the `utm_*` family are the whole point of
-	 * logging a URL, and `author` is a core query var one letter from a
-	 * credential token. `country_code` is the one name that loses this
-	 * argument; `credential_name_shape_provider` pins it.
-	 *
-	 * @dataProvider ordinary_parameter_provider
-	 */
-	public function test_redact_url_keeps_an_ordinary_parameter( string $url ): void {
-		$this->assertSame( $url, Log_Manager::redact_url( $url ) );
-	}
-
-	/**
-	 * @return array<string,array{string}>
-	 */
-	public static function ordinary_parameter_provider(): array {
-		return [
-			'keyword'    => [ 'https://site.test/?keyword=marmalade' ],
-			'keywords'   => [ 'https://site.test/?keywords=marmalade,quince' ],
-			'author'     => [ 'https://site.test/?author=41' ],
-			'authors'    => [ 'https://site.test/?authors=41,42' ],
-			'postcode'   => [ 'https://site.test/?postcode=97701' ],
-			'zipcode'    => [ 'https://site.test/?zipcode=97701' ],
-			'design'     => [ 'https://site.test/?design=brutalist' ],
-			'p'          => [ 'https://site.test/?p=8814' ],
-			's'          => [ 'https://site.test/?s=tamarind' ],
-			'page'       => [ 'https://site.test/?page=7' ],
-			'utm_source' => [ 'https://site.test/?utm_source=newsletter&utm_medium=email' ],
-			'rest_route' => [ 'https://site.test/?rest_route=/wp/v2/posts' ],
-			'_locale'    => [ 'https://site.test/wp-admin/admin-ajax.php?action=heartbeat&_locale=user' ],
-			'ver'        => [ 'https://site.test/wp-includes/js/jquery.js?ver=3.7.1' ],
-			'cb'         => [ 'https://site.test/style.css?cb=20260911' ],
-		];
+	#[DataProvider( 'non_request_lines' )]
+	public function test_parse_request_line_refuses_what_is_no_request_line( mixed $message ): void {
+		$this->assertNull( Log_Manager::parse_request_line( $message ) );
 	}
 
 	/**

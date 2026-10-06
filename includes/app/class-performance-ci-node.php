@@ -617,8 +617,10 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( Log_Manager::REQUEST_START === $key ) {
 				$ts = Core::num_float( $entry['ts'] ?? $ts );
 			}
-			if ( Log_Manager::REQUEST_LINE === $key && '' === $method ) {
-				[ $method, $url ] = self::parse_request_line( Core::as_string( $entry['m'] ?? '' ) );
+			$request_line = Log_Manager::REQUEST_LINE === $key && '' === $method ? Log_Manager::parse_request_line( $entry['m'] ?? null ) : null;
+			if ( null !== $request_line ) {
+				// A grep row names the query-less URL, as a record's url does.
+				[ $method, , $url ] = $request_line;
 			}
 
 			if ( 1 === \preg_match( $regex, $line ) ) {
@@ -637,20 +639,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			'match_count'         => $match_count,
 			'first_match_excerpt' => $excerpt,
 		];
-	}
-
-	/**
-	 * Parse a firehose `request` entry's `m` ("METHOD full-url") into [method, url].
-	 * Mirrors Request_Builder_Node's request-line parse (query stripped from url).
-	 *
-	 * @param string $message The entry's `m` field.
-	 * @return array{0:string,1:string}
-	 */
-	private static function parse_request_line( string $message ): array {
-		$parts  = \explode( ' ', $message, 2 );
-		$method = $parts[0];
-		$url    = isset( $parts[1] ) ? \explode( '?', $parts[1], 2 )[0] : '';
-		return [ $method, $url ];
 	}
 
 	/**
@@ -1333,7 +1321,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'finished_at'  => $finished,
 					'status_code'  => $entry['status_code'] ?? 0,
 					'peak_mb'      => $entry['peak_mb'] ?? 0,
-					'method'       => $entry['method'] ?? '',
+					'method'       => $entry['method'],
 					'error_status' => $entry['error_status'] ?? null,
 					'segment'      => $entry['segment'] ?? $segment,
 					'offset'       => $entry['offset'] ?? 0,

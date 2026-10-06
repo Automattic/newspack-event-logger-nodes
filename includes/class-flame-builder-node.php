@@ -120,7 +120,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * One table drives all three accumulations of a request — global, per
 	 * reporting server, and per URL — so an axis added here appears in all
 	 * three. `status_category` is the one field no producer writes;
-	 * `accumulate_dimensions()` derives it from the status code first. The
+	 * `accumulate_dimensions()` derives it from the status code first, and
+	 * `fold_record()` maps `request_method` onto `method_label()` on intake. The
 	 * seventh axis, `server`, is the URL's host and files globally alone.
 	 *
 	 * @var array<string,string>
@@ -581,8 +582,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		}
 
 		$url = Core::str( $request['url'] ?? '' );
-		// A hostless URL throws before any fold; the reader dead-letters it.
+		// A hostless URL or no method throws before any fold; it dead-letters.
 		$server_name = Stats_Store::server_of( $url );
+		// Bounded: an invented method must not mint a stats key of its own.
+		$request['request_method'] = Request_Builder_Node::method_label( $request['request_method'] ?? null );
 
 		$rid_raw  = $request['rid'] ?? '';
 		$rid      = Core::str( $rid_raw );

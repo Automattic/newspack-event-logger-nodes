@@ -96,7 +96,9 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	// `dump_request` returns the request envelope this fixture mirrors.
 	answerWith( {
 		rid: 'abc123',
-		url: '/wp-admin/index.php',
+		url: 'https://example.test/wp-admin/index.php',
+		request_method: 'POST',
+		request_url: 'https://example.test/wp-admin/index.php?weka=7713',
 		duration_ms: 432,
 		status_code: 200,
 		error_status: '-',
@@ -145,7 +147,12 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	expect( text ).toContain( 'abc123' ); // the rid itself
 	expect( text ).toContain( '432' ); // duration ms
 	expect( text ).toContain( '200' ); // status code
-	expect( text ).toContain( '/wp-admin/index.php' ); // url
+	const urlRow = [ ...view.container.querySelectorAll( 'p' ) ].find(
+		( p ) => 'URL:' === p.querySelector( 'strong' )?.textContent
+	);
+	expect( urlRow.textContent ).toBe(
+		'URL: POST https://example.test/wp-admin/index.php?weka=7713'
+	);
 	expect( text ).toContain( 'Time' ); // the timestamp card label
 	const link = view.container.querySelector( 'a[href*="request=abc123"]' );
 	expect( link ).not.toBeNull();
