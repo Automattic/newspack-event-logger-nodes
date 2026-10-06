@@ -68,13 +68,29 @@ class DashboardMenuGateTest extends TestCase {
 	}
 
 	/**
+	 * The dashboards call the substrate, so they wait for the boot the
+	 * version floor gates: loading the plugin file registers neither hook.
+	 */
+	public function test_the_dashboards_register_only_from_the_version_gated_boot(): void {
+		$this->assertArrayNotHasKey( 'admin_menu', $GLOBALS['_eln_boot_actions'] );
+		$this->assertArrayNotHasKey( 'admin_enqueue_scripts', $GLOBALS['_eln_boot_actions'] );
+
+		self::with_deferred_bootstrap(
+			function (): void {
+				$this->assertContains( 'newspack_event_logger_nodes_register_admin_menu', $GLOBALS['_wp_actions']['admin_menu'] ?? [] );
+				$this->assertContains( 'newspack_event_logger_nodes_enqueue_dashboards', $GLOBALS['_wp_actions']['admin_enqueue_scripts'] ?? [] );
+			}
+		);
+	}
+
+	/**
 	 * WordPress moves every admin notice after `.wp-header-end`, or failing
 	 * that after the first `.wrap h1`, which on a React page is inside the
 	 * app: the Request Log's notice landed on top of its toolbar.
 	 */
 	public function test_every_dashboard_page_anchors_notices_above_its_app(): void {
 		$GLOBALS['_current_user_login'] = 'chris-newspack';
-		\do_action( 'admin_menu' );
+		\newspack_event_logger_nodes_register_admin_menu();
 
 		$callbacks = [];
 		foreach ( (array) $GLOBALS['_admin_menu_pages'] as $args ) {
@@ -100,7 +116,7 @@ class DashboardMenuGateTest extends TestCase {
 		$this->restrict_to( 'adminnewspack', 'dispatch' );
 		$GLOBALS['_current_user_login'] = 'chris-newspack';
 
-		\do_action( 'admin_menu' );
+		\newspack_event_logger_nodes_register_admin_menu();
 
 		$this->assertSame(
 			[],
@@ -116,7 +132,7 @@ class DashboardMenuGateTest extends TestCase {
 		$this->restrict_to( 'adminnewspack', 'dispatch' );
 		$GLOBALS['_current_user_login'] = 'dispatch';
 
-		\do_action( 'admin_menu' );
+		\newspack_event_logger_nodes_register_admin_menu();
 
 		$slugs = $this->registered_slugs();
 		foreach ( [ 'event-logger-overview', 'event-logger-errors', 'event-logger-gyroscope', 'event-logger-requests' ] as $slug ) {
@@ -152,7 +168,7 @@ class DashboardMenuGateTest extends TestCase {
 		];
 		$GLOBALS['_current_user_login'] = 'granular-operator-8841';
 
-		\do_action( 'admin_menu' );
+		\newspack_event_logger_nodes_register_admin_menu();
 
 		$caps = $this->registered_capabilities();
 		foreach ( [ 'event-logger-overview', 'event-logger-errors', 'event-logger-gyroscope', 'event-logger-requests' ] as $slug ) {
@@ -171,7 +187,7 @@ class DashboardMenuGateTest extends TestCase {
 		$GLOBALS['_current_user_login'] = 'interloper-4416';
 		Config::reset();
 
-		\do_action( 'admin_menu' );
+		\newspack_event_logger_nodes_register_admin_menu();
 
 		$this->assertSame(
 			[],

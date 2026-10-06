@@ -42,9 +42,12 @@ budget is tunable through the `newspack_nodes/command_rate_limit` filter, clampe
 minimum of 1. The capability is verified before the limit, so an unauthenticated flood
 cannot poison the transient table.
 
-The MCP route meters itself: `RATE_LIMIT_BURST = 20` calls per `RATE_LIMIT_WINDOW_S = 10`
-seconds, keyed by session handle. MCP does not go through `/command`, so the substrate's
-per-user cap does not bound it.
+The MCP route meters itself: `RATE_LIMIT_BURST = 20` calls in any trailing
+`RATE_LIMIT_WINDOW_S = 10` seconds, keyed by session handle. Each admitted call claims one of
+20 slots through the shared cache's atomic `add()` — memcached, else APCu — for the window, so
+concurrent requests cannot both take the last one. With neither cache, or a slot read that
+fails, the route answers 503 `rate_limit_unavailable` rather than run unmetered. MCP does not go through `/command`, so
+the substrate's per-user cap does not bound it.
 
 SSE rate-limiting is independent and **fail-closed**: `SSE_Out_Node` consults
 [`\Newspack_Nodes\SSE_Slot_Pool`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-sse-slot-pool.php) before opening headers, and memcache down means HTTP 429.
@@ -268,8 +271,11 @@ interpreter. Every argument rides by name, a list as one `--<name>=` token a mem
 verb binds it: an argument the verb does not declare answers `isError` with
 `unknown option --<name>`, which each tool's `inputSchema` announces as
 `additionalProperties: false`, and a map or a null answers `isError` before anything is sent.
+A tool's visibility follows its verb's declared `capability`, and each property's type and
+the schema's `required` list come from the verb's own declared args: an `int` is an `integer`, a `float` a `number`, a `bool` a `boolean`, a variadic arg
+such as `ask`'s `context` an array of its type, and every other type a `string`.
 
-![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the verb's interpreter. One JSON-RPC request per POST carries a Bearer handle.secret credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 on a handle's 21st call inside one 10-second bucket. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and instructions carrying the <site-data> rule ahead of the measurement caveat, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns every named argument into a --key=value token, which the verb binds by name; and dispatches on the same CI /command reaches. A return becomes one text block: the reply JSON-encoded with JSON_HEX_TAG and wrapped in <site-data>, so no payload can close the fence; a throw becomes result.isError with the message unfenced, a tool error rather than a transport error. Below: a read session sees eight tools, a tune session two more, and six verbs have no tool at all: performance.url_breakdown, list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
+![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the verb's interpreter. One JSON-RPC request per POST carries a Bearer handle.secret credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 on a handle's 21st call inside any trailing 10 seconds, or 503 when neither memcached nor APCu is available, or the slot read fails. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and instructions carrying the <site-data> rule ahead of the measurement caveat, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns every named argument into a --key=value token, which the verb binds by name; and dispatches on the same CI /command reaches. A return becomes one text block: the reply JSON-encoded with JSON_HEX_TAG and wrapped in <site-data>, so no payload can close the fence; a throw becomes result.isError with the message unfenced, a tool error rather than a transport error. Below: a read session sees eight tools, a tune session two more, and six verbs have no tool at all: performance.url_breakdown, list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
 
 **Permission**: an `Authorization: Bearer <handle>.<secret>` header naming a live command
 session, issued from the station's Sessions tab or from `POST /wp-json/newspack-nodes/v1/auth`.

@@ -31,9 +31,6 @@
  *    hooks — register at file scope. Without the substrate the action never
  *    fires, so a presence guard would be dead weight.
  *
- * The admin menu and dashboard enqueues also register at file scope, guarding
- * only on the substrate class they call into.
- *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -198,6 +195,10 @@ function newspack_event_logger_nodes_boot(): void {
 		2
 	);
 
+	// The dashboards call substrate APIs the version floor guarantees.
+	\add_action( 'admin_menu', 'newspack_event_logger_nodes_register_admin_menu' );
+	\add_action( 'admin_enqueue_scripts', 'newspack_event_logger_nodes_enqueue_dashboards' );
+
 	// The MCP surface; reaching it takes a scoped session credential.
 	\add_action(
 		'rest_api_init',
@@ -352,63 +353,59 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 /**
  * Register the Event Logger admin menu: a top-level Performance page plus one
  * submenu per React dashboard. Every callback prints a bare mount div; the tree
- * that fills it comes from the `admin_enqueue_scripts` closure below, so a page
- * whose bundle is missing renders empty rather than fataling.
+ * that fills it comes from `newspack_event_logger_nodes_enqueue_dashboards()`,
+ * so a page whose bundle is missing renders empty rather than fataling.
  *
  * The settings page is not here — `Admin\Admin` adds it under Settings.
+ *
+ * @api Hooked to `admin_menu` by the deferred bootstrap.
  */
-\add_action(
-	'admin_menu',
-	static function (): void {
-		if ( ! \function_exists( 'add_menu_page' ) ) {
-			return;
-		}
-		if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
-			return;
-		}
-		// The substrate owns this gate: MANAGE, narrowed by `allowed_users`.
-		if ( ! \Newspack_Nodes\Capabilities::can( \Newspack_Nodes\Capabilities::MANAGE ) ) {
-			return;
-		}
-		$manage_cap = \Newspack_Nodes\Capabilities::cap_for( \Newspack_Nodes\Capabilities::MANAGE );
-		// Notices go after `.wp-header-end`; without one, inside the app.
-		$header_end           = '<hr class="wp-header-end">';
-		$performance_callback = static fn () => print( $header_end . '<div id="event-logger-admin" class="event-logger-admin-page"></div>' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- hardcoded markup.
-		\add_menu_page(
-			'Event Logger',
-			'Event Logger',
-			$manage_cap,
-			'event-logger-overview',
-			$performance_callback,
-			'dashicons-chart-line',
-			80
-		);
+function newspack_event_logger_nodes_register_admin_menu(): void {
+	if ( ! \function_exists( 'add_menu_page' ) ) {
+		return;
+	}
+	// The substrate owns this gate: MANAGE, narrowed by `allowed_users`.
+	if ( ! \Newspack_Nodes\Capabilities::can( \Newspack_Nodes\Capabilities::MANAGE ) ) {
+		return;
+	}
+	$manage_cap = \Newspack_Nodes\Capabilities::cap_for( \Newspack_Nodes\Capabilities::MANAGE );
+	// Notices go after `.wp-header-end`; without one, inside the app.
+	$header_end           = '<hr class="wp-header-end">';
+	$performance_callback = static fn () => print( $header_end . '<div id="event-logger-admin" class="event-logger-admin-page"></div>' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- hardcoded markup.
+	\add_menu_page(
+		'Event Logger',
+		'Event Logger',
+		$manage_cap,
+		'event-logger-overview',
+		$performance_callback,
+		'dashicons-chart-line',
+		80
+	);
+	\add_submenu_page(
+		'event-logger-overview',
+		'Performance Dashboard',
+		'Performance',
+		$manage_cap,
+		'event-logger-overview',
+		$performance_callback
+	);
+	$dashboards = [
+		'event-logger-errors'      => [ 'Error Log', 'Errors', '<div id="event-logger-errors" class="event-logger-admin-page"></div>' ],
+		'event-logger-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
+		'event-logger-requests'    => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
+	];
+	foreach ( $dashboards as $slug => [ $title, $menu_title, $mount_html ] ) {
 		\add_submenu_page(
 			'event-logger-overview',
-			'Performance Dashboard',
-			'Performance',
+			$title,
+			$menu_title,
 			$manage_cap,
-			'event-logger-overview',
-			$performance_callback
-		);
-		$dashboards = [
-			'event-logger-errors'      => [ 'Error Log', 'Errors', '<div id="event-logger-errors" class="event-logger-admin-page"></div>' ],
-			'event-logger-gyroscope'   => [ 'Gyroscope', 'Gyroscope', '<div id="event-logger-gyroscope" class="event-logger-gyroscope-page"></div>' ],
-			'event-logger-requests'    => [ 'Request Log', 'Request Log', '<div id="event-logger-stream" class="event-logger-stream-page"></div>' ],
-		];
-		foreach ( $dashboards as $slug => [ $title, $menu_title, $mount_html ] ) {
-			\add_submenu_page(
-				'event-logger-overview',
-				$title,
-				$menu_title,
-				$manage_cap,
-				$slug,
-				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $mount_html is a hardcoded constant string from $dashboards above, not user input.
+			$slug,
+			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $mount_html is a hardcoded constant string from $dashboards above, not user input.
 			static fn () => print( $header_end . $mount_html )
-			);
-		}
+		);
 	}
-);
+}
 
 /**
  * Enqueue the React tree for whichever Event Logger page is rendering.
@@ -424,87 +421,82 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
  * `window.*` payloads below bind to that handle, so they only ship when the
  * bundle did.
  *
+ * @api Hooked to `admin_enqueue_scripts` by the deferred bootstrap.
  * @param string $hook Current admin page hook suffix; unused, since the `page` slug gates instead.
  */
-\add_action(
-	'admin_enqueue_scripts',
-	static function ( string $hook ): void {
-		if ( ! \function_exists( 'wp_enqueue_script' ) ) {
-			return;
-		}
-		if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
-			return;
-		}
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only admin-page dispatch, no form data processed.
-		$page = isset( $_GET['page'] ) && \is_string( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
-		$page_to_tree = [
-			'event-logger-overview'                  => 'overview',
-			'event-logger-errors'                    => 'error-log',
-			'event-logger-gyroscope'                 => 'gyroscope',
-			'event-logger-requests'                  => 'requests',
-			'newspack-event-logger-nodes'            => 'settings',
-		];
-		if ( ! \array_key_exists( $page, $page_to_tree ) ) {
-			return;
-		}
-		$tree = $page_to_tree[ $page ];
-		$style_deps = [ 'wp-components', 'newspack-nodes-ui' ];
-		if ( \in_array( $tree, [ 'overview', 'error-log', 'gyroscope', 'requests' ], true ) ) {
-			$style_deps = [ 'wp-components', 'newspack-nodes-graph' ];
-		}
-		if ( 'settings' === $tree ) {
-			// The per-field reset toggle rides the settings form alone.
-			\Newspack_Nodes\Config_System\Field_Reset_Assets::enqueue();
-		}
+function newspack_event_logger_nodes_enqueue_dashboards( string $hook ): void {
+	if ( ! \function_exists( 'wp_enqueue_script' ) ) {
+		return;
+	}
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only admin-page dispatch, no form data processed.
+	$page = isset( $_GET['page'] ) && \is_string( $_GET['page'] ) ? \sanitize_text_field( \wp_unslash( $_GET['page'] ) ) : '';
+	$page_to_tree = [
+		'event-logger-overview'                  => 'overview',
+		'event-logger-errors'                    => 'error-log',
+		'event-logger-gyroscope'                 => 'gyroscope',
+		'event-logger-requests'                  => 'requests',
+		'newspack-event-logger-nodes'            => 'settings',
+	];
+	if ( ! \array_key_exists( $page, $page_to_tree ) ) {
+		return;
+	}
+	$tree = $page_to_tree[ $page ];
+	$style_deps = [ 'wp-components', 'newspack-nodes-ui' ];
+	if ( \in_array( $tree, [ 'overview', 'error-log', 'gyroscope', 'requests' ], true ) ) {
+		$style_deps = [ 'wp-components', 'newspack-nodes-graph' ];
+	}
+	if ( 'settings' === $tree ) {
+		// The per-field reset toggle rides the settings form alone.
+		\Newspack_Nodes\Config_System\Field_Reset_Assets::enqueue();
+	}
 
-		$rest_url      = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
-		$nonce         = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '';
-		$restart_nonce = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'newspack_nodes_restart_worker' ) : '';
-		$localized     = [
-			'restUrl'      => \esc_url_raw( $rest_url ),
-			'nonce'        => $nonce,
-			'restartNonce'      => $restart_nonce,
-			'tree'              => $tree,
-			'version'           => \NEWSPACK_EVENT_LOGGER_NODES_VERSION,
-		];
+	$rest_url      = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
+	$nonce         = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '';
+	$restart_nonce = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'newspack_nodes_restart_worker' ) : '';
+	$localized     = [
+		'restUrl'      => \esc_url_raw( $rest_url ),
+		'nonce'        => $nonce,
+		'restartNonce'      => $restart_nonce,
+		'tree'              => $tree,
+		'version'           => \NEWSPACK_EVENT_LOGGER_NODES_VERSION,
+	];
 
-		$handle = \Newspack_Nodes\Admin\Admin::enqueue_react_page(
-			[
-				'handle'           => "newspack-nodes-{$tree}",
-				'page'             => $page,
-				'dir'              => NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}",
-				'url'              => NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}",
-				'version_fallback' => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
-				'style_deps'       => $style_deps,
-				'localize'         => $localized,
-			]
-		);
-		if ( null === $handle ) {
-			return;
-		}
+	$handle = \Newspack_Nodes\Admin\Admin::enqueue_react_page(
+		[
+			'handle'           => "newspack-nodes-{$tree}",
+			'page'             => $page,
+			'dir'              => NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}",
+			'url'              => NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}",
+			'version_fallback' => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
+			'style_deps'       => $style_deps,
+			'localize'         => $localized,
+		]
+	);
+	if ( null === $handle ) {
+		return;
+	}
 
-		$rest_root = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
+	$rest_root = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
+	\wp_add_inline_script(
+		$handle,
+		'window.eventLoggerDashboards = ' . \wp_json_encode( [
+			'restUrl' => $rest_root,
+			'nonce'   => $nonce,
+		] ) . ';'
+		. \Newspack_Event_Logger_Nodes\Config::span_palette_js(),
+		'before'
+	);
+
+	// settings + overview both render pickers from these window lists.
+	if ( 'settings' === $tree || 'overview' === $tree ) {
+		$recommended         = \Newspack_Event_Logger_Nodes\Config::value( 'recommended_log_events' );
+		$recommended         = \is_array( $recommended ) ? \array_values( \array_filter( $recommended, 'is_string' ) ) : [];
+		$custom_colors       = \Newspack_Event_Logger_Nodes\Config::get_custom_colors();
 		\wp_add_inline_script(
 			$handle,
-			'window.eventLoggerDashboards = ' . \wp_json_encode( [
-				'restUrl' => $rest_root,
-				'nonce'   => $nonce,
-			] ) . ';'
-			. \Newspack_Event_Logger_Nodes\Config::span_palette_js(),
+			'window.newspackNodesRecommendedHooks = ' . \wp_json_encode( $recommended ) . ';'
+			. 'window.newspackNodesCustomColors = ' . \wp_json_encode( $custom_colors ) . ';',
 			'before'
 		);
-
-		// settings + overview both render pickers from these window lists.
-		if ( 'settings' === $tree || 'overview' === $tree ) {
-			$recommended         = \Newspack_Event_Logger_Nodes\Config::value( 'recommended_log_events' );
-			$recommended         = \is_array( $recommended ) ? \array_values( \array_filter( $recommended, 'is_string' ) ) : [];
-			$custom_colors       = \Newspack_Event_Logger_Nodes\Config::get_custom_colors();
-			\wp_add_inline_script(
-				$handle,
-				'window.newspackNodesRecommendedHooks = ' . \wp_json_encode( $recommended ) . ';'
-				. 'window.newspackNodesCustomColors = ' . \wp_json_encode( $custom_colors ) . ';',
-				'before'
-			);
-		}
 	}
-);
+}

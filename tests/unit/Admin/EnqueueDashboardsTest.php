@@ -1,12 +1,11 @@
 <?php
 /**
- * EnqueueDashboardsTest: the admin_enqueue_scripts dispatch closure now routes
- * its script + index.css + NewspackNodesData localize through the substrate's
+ * EnqueueDashboardsTest: the admin_enqueue_scripts callback routes its
+ * script + index.css + NewspackNodesData localize through the substrate's
  * shared Admin::enqueue_react_page() registrar, keeping every per-tree extra.
  *
- * Drives the captured admin_enqueue_scripts dispatch closure with a page slug
- * in $_GET, then asserts on the recording stubs. (The closure is captured at
- * file-load time because sibling tests clear $GLOBALS['_wp_actions'].)
+ * Drives `newspack_event_logger_nodes_enqueue_dashboards()` with a page slug
+ * in $_GET, then asserts on the recording stubs.
  */
 
 namespace {
@@ -34,12 +33,6 @@ namespace {
 			return true;
 		}
 	}
-
-	// Capture the dispatch closure at test-file-load time (after the plugin file
-	// registered it at bootstrap, before any test clears $GLOBALS['_wp_actions']).
-	// Other ELN tests reset that global, which would otherwise unregister the
-	// closure and make `do_action` a no-op for our case.
-	$GLOBALS['_eln_enqueue_dispatch'] = $GLOBALS['_wp_actions']['admin_enqueue_scripts'][0] ?? null;
 }
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
@@ -61,11 +54,9 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$_GET = [];
 		}
 
-		/** Invoke the captured admin_enqueue_scripts dispatch closure. */
+		/** Invoke the admin_enqueue_scripts callback the deferred bootstrap hooks. */
 		private function dispatch( string $hook ): void {
-			$cb = $GLOBALS['_eln_enqueue_dispatch'] ?? null;
-			$this->assertIsCallable( $cb, 'admin_enqueue_scripts dispatch closure not captured at load time' );
-			$cb( $hook );
+			\newspack_event_logger_nodes_enqueue_dashboards( $hook );
 		}
 
 		/** Find the NewspackNodesData localize record for $handle. */

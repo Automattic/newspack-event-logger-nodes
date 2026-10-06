@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MCP rate limit rolls.** A session gets 20 calls in any trailing ten seconds, where a fixed ten-second bucket let it send 20 just before a boundary and 20 just after. Each admitted call claims a slot through the shared cache's atomic `add()`, so concurrent calls on one session can no longer all read a count under the limit. A host with neither memcached nor APCu, or whose slot read fails, now answers 503 `rate_limit_unavailable` instead of running the route unmetered.
+- **MCP tool schemas say what each tool requires.** `tools/list` reads each property's type, and the `required` list, from the verb's own declared args, so `dump_url` requires `hash`, `ask` types `context` as a list, and `limit` is an integer. A tool's visibility follows its verb's declared capability rather than a copy in the tool map, and a tool node mounted under the wrong class is a server error rather than a `-32600` answer.
+- **The Gyroscope's delta mode ships a line folded after a fire.** It compared the producer's stamp with the builder's fire clock, so a line stamped before a fire and folded after it never refreshed its row. Each in-flight row now carries `tracker_ts`, when the builder folded its last line, and delta mode compares that.
+- **The dashboards wait for the substrate version gate.** The admin menu and the dashboard enqueues register from the version-gated bootstrap, so a substrate below the floor no longer gets a menu calling APIs it lacks.
+- **The request log's clock rounds with its hundredths.** A timestamp ending in `.996` rendered the previous second with `.00`.
+- **Only a keyword ending in `(complete)` closes a pair** in the request log's fold, highlight, reveal and search paths, as the pairing itself already required, so a row such as `render (complete) (truncated)` stays a child.
+
 ## [0.124.5] - 2026-10-06
 
 ### Changed

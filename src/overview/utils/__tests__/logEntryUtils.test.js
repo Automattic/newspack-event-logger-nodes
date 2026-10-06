@@ -64,6 +64,12 @@ describe( 'formatFullTimestamp', () => {
 		expect( formatFullTimestamp( 0 ) ).toBe( '' );
 		expect( formatFullTimestamp( undefined ) ).toBe( '' );
 	} );
+
+	it( 'rounds the clock and the hundredths as one instant', () => {
+		// .996 rounds up into the next second; both parts must say so.
+		const ts = Date.UTC( 2026, 9, 6, 17, 42, 9 ) / 1000 + 0.996;
+		expect( formatFullTimestamp( ts ) ).toBe( '10:42:10.00' );
+	} );
 } );
 
 describe( 'hasPair', () => {
@@ -117,6 +123,13 @@ describe( 'isEmptyPairStart', () => {
 		expect(
 			isEmptyPairStart( [ start, gap, child, gap, complete ], 0 )
 		).toBe( false );
+	} );
+
+	it( 'is false when the next row only mentions (complete) mid-keyword', () => {
+		const leaf = { k: 'render (complete) (truncated)', pairId: 37 };
+		expect( isEmptyPairStart( [ start, leaf, complete ], 0 ) ).toBe(
+			false
+		);
 	} );
 
 	it( 'is false for an unpaired row and past the end of the list', () => {
@@ -1523,6 +1536,20 @@ describe( 'computeVisibleEntries', () => {
 		expect( visible.some( ( e ) => e.isMerged ) ).toBe( false );
 	} );
 
+	it( 'collapses past a child that only mentions (complete) mid-keyword', () => {
+		const { entries } = computeIndentedEntries( [
+			{ k: 'a (start)', ts: 1 },
+			{ k: 'render (complete) (truncated)', ts: 1.001 },
+			{ k: 'a (complete)', ts: 1.002, duration_ms: 7 },
+		] );
+		const merged = computeVisibleEntries( entries, new Set() ).find(
+			( e ) => e.isMerged
+		);
+		expect( merged.childCount ).toBe( 1 );
+		expect( merged.duration_ms ).toBe( 7 );
+		expect( merged.completeIdx ).toBe( 2 );
+	} );
+
 	it( "never collapses the outermost 'process' pair", () => {
 		const { entries } = computeIndentedEntries( [
 			{ k: 'process (start)', ts: 1 },
@@ -1596,6 +1623,22 @@ describe( 'getAncestorPairIds', () => {
 		// 'b (start)' at indent 1: own pairId + walk back to 'a (start)'.
 		const bIdx = entries.findIndex( ( e ) => e.k === 'b (start)' );
 		const ids = getAncestorPairIds( bIdx, entries );
+		expect( ids.has( entries[ 0 ].pairId ) ).toBe( true );
+		expect( ids.has( entries[ 1 ].pairId ) ).toBe( true );
+	} );
+
+	it( 'treats a leaf that only mentions (complete) as a child, not a close', () => {
+		const { entries } = computeIndentedEntries( [
+			{ k: 'a (start)', ts: 1 },
+			{ k: 'b (start)', ts: 1.001 },
+			{ k: 'render (complete) (truncated)', ts: 1.002 },
+			{ k: 'b (complete)', ts: 1.003 },
+			{ k: 'a (complete)', ts: 1.004 },
+		] );
+		const leafIdx = entries.findIndex(
+			( e ) => e.k === 'render (complete) (truncated)'
+		);
+		const ids = getAncestorPairIds( leafIdx, entries );
 		expect( ids.has( entries[ 0 ].pairId ) ).toBe( true );
 		expect( ids.has( entries[ 1 ].pairId ) ).toBe( true );
 	} );

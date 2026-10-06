@@ -185,6 +185,101 @@ class McpControllerTest extends TestCase {
 		$this->assertContains( 'rules_upsert', $names );
 	}
 
+	/**
+	 * Lists every tool a TUNE session sees, keyed by name.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private function tune_tools(): array {
+		[ , $bearer ] = $this->session( Capabilities::TUNE );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+		$tools = $controller->dispatch(
+			$this->request( [ 'jsonrpc' => '2.0', 'id' => 31, 'method' => 'tools/list' ], $bearer )
+		)['result']['tools'];
+		return \array_column( $tools, null, 'name' );
+	}
+
+	/** A tool's schema requires exactly the args its verb refuses to go without. */
+	public function test_each_tool_schema_requires_what_its_verb_requires(): void {
+		$tools = $this->tune_tools();
+
+		$required = [
+			'dump_url'        => [ 'hash' ],
+			'search_requests' => [ 'rid' ],
+			'dump_request'    => [ 'rid' ],
+			'grep_requests'   => [ 'pattern' ],
+			'performance_ask' => [ 'descriptor' ],
+			'rules_upsert'    => [ 'rule' ],
+			'rules_delete'    => [ 'id' ],
+		];
+		foreach ( $required as $name => $args ) {
+			$this->assertSame( $args, $tools[ $name ]['inputSchema']['required'] ?? null, $name );
+		}
+		foreach ( [ 'performance_overview', 'performance_urls', 'dump_rules' ] as $name ) {
+			$this->assertArrayNotHasKey( 'required', $tools[ $name ]['inputSchema'], $name );
+		}
+	}
+
+	/** A variadic arg is a list, and a typed arg carries its JSON type. */
+	public function test_each_tool_schema_types_its_args_as_the_verb_declares(): void {
+		$tools = $this->tune_tools();
+
+		$context = $tools['performance_ask']['inputSchema']['properties']['context'];
+		$this->assertSame( 'array', $context['type'] );
+		$this->assertSame( [ 'type' => 'string' ], $context['items'] );
+		$this->assertStringContainsString( 'containing descriptor', $context['description'] );
+
+		$urls = $tools['performance_urls']['inputSchema']['properties'];
+		$this->assertSame( 'integer', $urls['limit']['type'] );
+		$this->assertSame( 'boolean', $urls['errors_only']['type'] );
+		$this->assertSame( 'string', $urls['sort']['type'] );
+		$this->assertSame( 'integer', $tools['dump_request']['inputSchema']['properties']['partition']['type'] );
+	}
+
+	/** Requiredness lives in the verb declaration, never in a description. */
+	public function test_no_tool_arg_spells_requiredness_in_prose(): void {
+		foreach ( $this->tune_tools() as $name => $tool ) {
+			foreach ( (array) $tool['inputSchema']['properties'] as $arg => $schema ) {
+				$this->assertStringNotContainsString( '(required)', $schema['description'], "{$name} --{$arg}" );
+			}
+		}
+	}
+
+	/**
+	 * A tool is offered exactly when the session may spend the capability its
+	 * verb declares; the tool map keeps no role of its own to disagree with it.
+	 */
+	public function test_tool_visibility_follows_the_verbs_declared_capability(): void {
+		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
+		foreach ( $tools as $name => $spec ) {
+			$this->assertArrayNotHasKey( 'role', $spec, $name );
+		}
+
+		foreach ( [ Capabilities::READ, Capabilities::TUNE ] as $scope ) {
+			[ , $bearer ] = $this->session( $scope );
+			$controller   = new MCP_Controller();
+			$controller->check_permission( $this->request( [], $bearer ) );
+
+			$expected = [];
+			foreach ( $tools as $name => $spec ) {
+				$capability = \Newspack_Nodes\Command_Interpreter_Node::declared_verbs( $spec['class'] )[ $spec['verb'] ]['capability'];
+				if ( Capabilities::can( $capability ) ) {
+					$expected[] = $name;
+				}
+			}
+			$listed = \array_column(
+				$controller->dispatch(
+					$this->request( [ 'jsonrpc' => '2.0', 'id' => 41, 'method' => 'tools/list' ], $bearer )
+				)['result']['tools'],
+				'name'
+			);
+
+			$this->assertNotSame( [], $expected, $scope );
+			$this->assertSame( $expected, $listed, $scope );
+		}
+	}
+
 	/** Every tool description carries the caveat; a bare ratio invites invention. */
 	public function test_every_tool_says_what_is_not_measured(): void {
 		[ , $bearer ] = $this->session( Capabilities::READ );
@@ -302,25 +397,52 @@ class McpControllerTest extends TestCase {
 		$this->assertArrayHasKey( 'total_requests', $decoded );
 	}
 
+	/**
+	 * A tool's node mounted under another class is drift between the tool map
+	 * and the mount, a server fault rather than a bad request: it throws.
+	 */
+	public function test_a_tool_node_of_the_wrong_class_is_a_server_fault(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+		$saved = $GLOBALS['_wp_actions'];
+		unset( $GLOBALS['_wp_actions']['newspack_nodes/request_graph_ready'] );
+		Core::node( 'performance' )?->remove_node();
+		$decoy = new \Newspack_Nodes\Command_Interpreter_Node();
+		$decoy->name( 'performance' );
+
+		try {
+			$this->expectException( \LogicException::class );
+			$this->expectExceptionMessage( 'performance' );
+			$controller->dispatch(
+				$this->request(
+					[
+						'jsonrpc' => '2.0',
+						'id'      => 43,
+						'method'  => 'tools/call',
+						'params'  => [ 'name' => 'performance_overview', 'arguments' => [] ],
+					],
+					$bearer
+				)
+			);
+		} finally {
+			$GLOBALS['_wp_actions'] = $saved;
+			$decoy->remove_node();
+		}
+	}
+
 	public function test_every_tool_arg_names_a_real_verb_arg(): void {
-		// The tool map is a hand-maintained second copy of the verb args, and
-		// nothing else compares the two: a verb that renames or drops an option
-		// leaves an agent calling something that no longer exists. Every tool is
-		// resolved through its OWN node and a verb no node declares FAILS —
-		// skipping an unresolvable tool would excuse exactly the drift this
-		// exists to catch. The prose summaries have no gate; nothing mechanical
-		// can check those.
-		$nodes = [
-			'performance' => \Newspack_Event_Logger_Nodes\App\Performance_CI_Node::class,
-			'rules'       => \Newspack_Event_Logger_Nodes\App\Rules_CI_Node::class,
-			'discovery'   => \Newspack_Event_Logger_Nodes\App\Discovery_CI_Node::class,
-		];
+		// The tool map names the args it offers, and a verb that renames or
+		// drops an option leaves an agent calling something that no longer
+		// exists. Every tool is resolved through its OWN node's class, and a
+		// verb that class does not declare FAILS — skipping an unresolvable
+		// tool would excuse exactly the drift this exists to catch. The prose
+		// summaries have no gate; nothing mechanical can check those.
 		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
 		$this->assertNotEmpty( $tools );
 
 		foreach ( $tools as $tool => $spec ) {
-			$class = $nodes[ $spec['node'] ] ?? null;
-			$this->assertNotNull( $class, "tool {$tool} names an unknown node '{$spec['node']}'" );
+			$class = $spec['class'];
 
 			$declared = null;
 			foreach ( $class::node_schema()['commands'] ?? [] as $command ) {
@@ -449,6 +571,107 @@ class McpControllerTest extends TestCase {
 
 		$this->assertInstanceOf( \WP_Error::class, $last );
 		$this->assertSame( 'rate_limited', $last->get_error_code() );
+	}
+
+	/**
+	 * How many of `$calls` permission checks the door admits.
+	 */
+	private function admitted( MCP_Controller $controller, string $bearer, int $calls ): int {
+		$admitted = 0;
+		for ( $i = 0; $i < $calls; $i++ ) {
+			if ( true === $controller->check_permission( $this->request( [], $bearer ) ) ) {
+				++$admitted;
+			}
+		}
+		return $admitted;
+	}
+
+	/** Pins the cache's expiry clock, which is the window's only clock. */
+	private function at( int $now ): void {
+		\assert( Core::$memd instanceof InMemoryMemcached );
+		Core::$memd->clock = static fn (): int => $now;
+	}
+
+	/**
+	 * The budget is the calls of the trailing RATE_LIMIT_WINDOW_S, so a burst
+	 * just before a ten-second boundary still counts just after it, and each
+	 * call's room returns one window after that call alone.
+	 */
+	public function test_the_window_rolls_with_each_call_rather_than_resetting(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+
+		$this->at( 1_800_000_003 );
+		$this->assertSame( 7, $this->admitted( $controller, $bearer, 7 ) );
+		$this->at( 1_800_000_008 );
+		$this->assertSame( 13, $this->admitted( $controller, $bearer, 14 ) );
+
+		$this->at( 1_800_000_011 );
+		$this->assertSame( 0, $this->admitted( $controller, $bearer, 3 ), 'a boundary frees nothing' );
+
+		$this->at( 1_800_000_013 );
+		$this->assertSame( 7, $this->admitted( $controller, $bearer, 9 ), 'the first seven calls have aged out, alone' );
+
+		$this->at( 1_800_000_018 );
+		$this->assertSame( 13, $this->admitted( $controller, $bearer, 15 ) );
+	}
+
+	/**
+	 * Admission is the atomic claim, never the read before it: a read that
+	 * misses slots another request holds still admits nobody past the budget.
+	 */
+	public function test_a_stale_read_cannot_admit_past_the_budget(): void {
+		[ $minted, $bearer ] = $this->session( Capabilities::READ );
+		$memd                = Core::$memd;
+		\assert( $memd instanceof InMemoryMemcached );
+		for ( $slot = 0; $slot < MCP_Controller::RATE_LIMIT_BURST; $slot++ ) {
+			$key = Cache_Backend::site_key( "eln-mcp-rl:{$minted['handle']}:{$slot}" );
+			$memd->add( $key, 1, MCP_Controller::RATE_LIMIT_WINDOW_S );
+			$memd->fail_next_get( $key, \Memcached::RES_NOTFOUND );
+		}
+
+		$result = ( new MCP_Controller() )->check_permission( $this->request( [], $bearer ) );
+
+		$this->assertInstanceOf( \WP_Error::class, $result );
+		$this->assertSame( 'rate_limited', $result->get_error_code() );
+	}
+
+	/**
+	 * A cache that cannot answer the slot read cannot meter either: the door
+	 * refuses as unavailable, and spends no claim on a backend already failing.
+	 */
+	public function test_a_failed_slot_read_refuses_the_door_as_unavailable(): void {
+		[ $minted, $bearer ] = $this->session( Capabilities::READ );
+		$dead                = new class() extends InMemoryMemcached {
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				return false;
+			}
+		};
+		Core::$memd = $dead;
+
+		$result = ( new MCP_Controller() )->check_permission( $this->request( [], $bearer ) );
+
+		$this->assertInstanceOf( \WP_Error::class, $result );
+		$this->assertSame( 'rate_limit_unavailable', $result->get_error_code() );
+		$this->assertSame( 503, $result->data['status'] ?? null );
+		$this->assertSame(
+			[],
+			\array_filter( $dead->keys(), static fn ( string $key ): bool => \str_contains( $key, "eln-mcp-rl:{$minted['handle']}" ) ),
+			'no slot was claimed'
+		);
+	}
+
+	/** With no cache to meter in, the door refuses rather than run unmetered. */
+	public function test_a_host_with_no_shared_cache_refuses_the_door(): void {
+		[ , $bearer ]               = $this->session( Capabilities::READ );
+		Core::$memd                 = null;
+		Cache_Backend::$apcu_usable = static fn (): bool => false;
+
+		$result = ( new MCP_Controller() )->check_permission( $this->request( [], $bearer ) );
+
+		$this->assertInstanceOf( \WP_Error::class, $result );
+		$this->assertSame( 'rate_limit_unavailable', $result->get_error_code() );
+		$this->assertSame( 503, $result->data['status'] ?? null );
 	}
 
 	public function test_an_unknown_method_is_a_jsonrpc_error(): void {

@@ -32,9 +32,10 @@ for page in "$@"; do
 
 	# On `load`, not during parse: the capture honours the time budget, so a
 	# height read earlier would measure a page the screenshot never shows.
+	# The window height includes rows that are not viewport; add them back.
 	{
 		cat "$src"
-		printf '<title></title><script>addEventListener("load",()=>{document.title=document.documentElement.scrollHeight})</script>'
+		printf '<title></title><script>addEventListener("load",()=>{document.title=document.documentElement.scrollHeight+outerHeight-innerHeight})</script>'
 	} > "$probe"
 
 	height=$("$CHROME" --headless --disable-gpu --hide-scrollbars \
@@ -55,5 +56,8 @@ for page in "$@"; do
 	# render happened is a PNG newer than the page it came from.
 	[ "$png" -nt "$src" ] || { echo "${0##*/}: $name: no PNG written" >&2; exit 1; }
 
-	echo "$name.png  ${WIDTH}x${height} @${SCALE}x"
+	# The rows below the viewport come out blank; crop them off.
+	python3 -I "$(dirname "$0")/../docs/img/autocrop.py" "$png" >/dev/null
+
+	echo "$name.png  ${WIDTH}x${height} window @${SCALE}x, cropped"
 done

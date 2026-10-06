@@ -15,7 +15,10 @@
 
 import * as React from 'react';
 import LogEntriesTable from '../LogEntriesTable';
-import { formatFullTimestamp } from '../../utils/logEntryUtils';
+import {
+	computeIndentedEntries,
+	formatFullTimestamp,
+} from '../../utils/logEntryUtils';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
 
 /**
@@ -642,6 +645,26 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'counts a child that only looks like a close as a match of its own', () => {
+		// `kea(complete)` lacks the space a pair keyword carries, so the pairing
+		// reads it as a child of `kea`, and the search must agree.
+		const { entries } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1 },
+			{ n: 2, k: 'kea (start)', ts: 1.01 },
+			{ n: 3, k: 'kea(complete)', ts: 1.02 },
+			{ n: 4, k: 'kea (complete)', ts: 1.03 },
+			{ n: 5, k: 'process (complete)', ts: 1.04 },
+		] );
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		searchFor( container, container.querySelector( 'input' ), 'kea' );
+		expect( container.textContent ).toContain( '2 matches' );
+		jest.useRealTimers();
+		unmount();
+	} );
+
 	it( 'keeps a complete whose message matches, not just its keyword', () => {
 		const entries = makeEntries();
 		entries[ 5 ] = { ...entries[ 5 ], m: 'render queue drained qz41' };
@@ -811,6 +834,35 @@ describe( 'LogEntriesTable', () => {
 				);
 			} )
 		).not.toThrow();
+		unmount();
+	} );
+
+	it( 'folding a pair folds the pairs past a child that only mentions (complete)', () => {
+		const { entries } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1 },
+			{ n: 2, k: 'alpha (start)', ts: 1.01 },
+			{ n: 3, k: 'render (complete) (truncated)', ts: 1.02 },
+			{ n: 4, k: 'beta (start)', ts: 1.03 },
+			{ n: 5, k: 'kiwi-4471', ts: 1.04 },
+			{ n: 6, k: 'beta (complete)', ts: 1.05 },
+			{ n: 7, k: 'alpha (complete)', ts: 1.06 },
+			{ n: 8, k: 'process (complete)', ts: 1.07 },
+		] );
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const alphaRow = () =>
+			Array.from( container.querySelectorAll( 'tbody tr' ) ).find(
+				( r ) => r.textContent.includes( 'alpha' )
+			);
+		const unfoldBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
+		act( () => unfoldBtn.click() );
+		act( () => alphaRow().click() );
+		act( () => alphaRow().click() );
+		expect( container.textContent ).toContain( 'beta' );
+		expect( container.textContent ).not.toContain( 'kiwi-4471' );
 		unmount();
 	} );
 

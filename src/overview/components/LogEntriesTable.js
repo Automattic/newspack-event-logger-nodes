@@ -67,7 +67,7 @@ const hasDuration = ( entry ) =>
  */
 const findStartIdx = ( entries, pairId ) =>
 	entries.findIndex(
-		( e ) => e.pairId === pairId && ( e.k || '' ).includes( '(start)' )
+		( e ) => e.pairId === pairId && null !== pairBaseName( e.k )
 	);
 
 /**
@@ -116,7 +116,7 @@ const collectDescendantPairIds = ( entries, startIdx, pairId ) => {
 	const ids = [];
 	for ( let i = startIdx + 1; i < entries.length; i++ ) {
 		const e = entries[ i ];
-		if ( e.pairId === pairId && ( e.k || '' ).includes( '(complete)' ) ) {
+		if ( e.pairId === pairId && null !== pairCompleteName( e.k ) ) {
 			break;
 		}
 		if (
@@ -398,14 +398,14 @@ export default function LogEntriesTable( {
 					continue;
 				}
 				const paired = hasPair( e );
-				if ( keywordHit && paired && keyword.endsWith( '(start)' ) ) {
+				if ( keywordHit && paired && null !== pairBaseName( e.k ) ) {
 					startKeywordHits.add( e.pairId );
 				}
 				// The pair's start already matched — count the pair once.
 				if (
 					! messageHit &&
 					paired &&
-					keyword.endsWith( '(complete)' ) &&
+					null !== pairCompleteName( e.k ) &&
 					startKeywordHits.has( e.pairId )
 				) {
 					continue;
@@ -810,7 +810,6 @@ export default function LogEntriesTable( {
 				return null;
 			}
 			const entry = visibleEntries[ idx ];
-			const keyword = entry.k || '';
 			const entryPairId = entry.pairId;
 
 			if ( entryPairId === null || entryPairId === undefined ) {
@@ -822,22 +821,20 @@ export default function LogEntriesTable( {
 				return { start: idx, end: idx };
 			}
 
-			if ( keyword.includes( '(start)' ) ) {
+			if ( null !== pairBaseName( entry.k ) ) {
 				for ( let i = idx + 1; i < visibleEntries.length; i++ ) {
 					if (
 						visibleEntries[ i ].pairId === entryPairId &&
-						( visibleEntries[ i ].k || '' ).includes( '(complete)' )
+						null !== pairCompleteName( visibleEntries[ i ].k )
 					) {
 						return { start: idx, end: i };
 					}
 				}
-			} else if ( keyword.includes( '(complete)' ) ) {
+			} else if ( null !== pairCompleteName( entry.k ) ) {
 				for ( let i = idx - 1; i >= 0; i-- ) {
 					if (
 						visibleEntries[ i ].pairId === entryPairId &&
-						( ( visibleEntries[ i ].k || '' ).includes(
-							'(start)'
-						) ||
+						( null !== pairBaseName( visibleEntries[ i ].k ) ||
 							visibleEntries[ i ].isMerged )
 					) {
 						return { start: i, end: idx };
@@ -1024,7 +1021,7 @@ export default function LogEntriesTable( {
 		// Merged/complete rows and duration-stat entries carry their own stats.
 		const carriesStats =
 			entry.isMerged ||
-			( entry.k || '' ).includes( '(complete)' ) ||
+			null !== pairCompleteName( entry.k ) ||
 			hasDuration( entry );
 		return carriesStats || traceLines( entry ).length ? '' : '-';
 	};
