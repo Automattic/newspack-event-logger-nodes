@@ -246,7 +246,7 @@ Each worker group is one declarative `.tsl` file in [`topologies/`](../topologie
 | `var <key> = <value>;` | Declare frontmatter the runtime reads via `Topology_Analyzer::frontmatter()`. |
 | `secure` | Climb the interpreter's secure ratchet one level, retiring management verbs. |
 
-`<partition>` and `<topology>` are bound by [`Topology_Loader`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-topology-loader.php); `<config:logs_dir>`, `<config:num_segments>` and friends resolve against the substrate Config. Four tokens resolve against the application Config, through [`Config::resolve_eln_token()`](../includes/class-config.php): `<eln:is_hub>`, `<eln:stats_ttl>`, `<eln:stats_url_ttl>` and `<eln:stats_url_fine_ttl>`. The last three are the stats Tables' TTLs, each derived from the same window: `Config::stats_ttl()` is the window floored at the `Stats_Store::CHART_HOURS` (25) hours a chart reads, 90,000 seconds; `Config::stats_url_ttl()` is a twenty-fourth of the window, floored at an hour; and `Config::stats_url_fine_ttl()` is the fine tier's two hours, capped at the window.
+`<topology>` is bound by [`Topology_Loader`](https://github.com/Automattic/newspack-nodes/blob/main/includes/class-topology-loader.php), and `{partition}` is resolved by the node, at the worker's partition, in each argument its schema marks; a line writing `<partition>` fails to load. `<config:logs_dir>`, `<config:num_segments>` and friends resolve against the substrate Config. Four tokens resolve against the application Config, through [`Config::resolve_eln_token()`](../includes/class-config.php): `<eln:is_hub>`, `<eln:stats_ttl>`, `<eln:stats_url_ttl>` and `<eln:stats_url_fine_ttl>`. The last three are the stats Tables' TTLs, each derived from the same window: `Config::stats_ttl()` is the window floored at the `Stats_Store::CHART_HOURS` (25) hours a chart reads, 90,000 seconds; `Config::stats_url_ttl()` is a twenty-fourth of the window, floored at an hour; and `Config::stats_url_fine_ttl()` is the fine tier's two hours, capped at the window.
 
 `<topology>` names the FLEET, which is why every offsetlog and dead-letter path carries it: an offsetlog is a reader's cursor and the reader is the fleet, so a `request-builder` fleet and a `job-router` fleet tailing the same `firehose.pN` keep separate cursors instead of stealing each other's position. That is also what lets several topologies share one byte-identical Consumer line — composing them with `include` then collapses that to a single reader.
 
@@ -265,12 +265,12 @@ The assembly branch. Tails `firehose.pN`; `Request_Builder` writes `requests.pN`
 ```tsl
 include topic-probe
 
-make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/<topology>.firehose.p<partition> <config:deadletter_dir>/<topology>.firehose.p<partition>
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.p{partition} <config:offsets_dir>/<topology>.firehose.p{partition} <config:deadletter_dir>/<topology>.firehose.p{partition}
 make_node Partition alerts:partition <config:logs_dir>/alerts.p0
 make_node Partition errors:partition <config:logs_dir>/errors.p0
 make_node Partition gyroscope:partition <config:logs_dir>/gyroscope.p0 1048576
 make_node Partition completed:partition <config:logs_dir>/completed.p0 1048576
-make_node Partition requests:partition <config:logs_dir>/requests.p<partition>
+make_node Partition requests:partition <config:logs_dir>/requests.p{partition}
 make_node Request_Builder request-builder 100 3
 make_node Tee completed:tee
 cmd firehose:consumer:config add_snapshot_node request-builder
@@ -292,7 +292,7 @@ Four things in that file are load-bearing.
 
 **Partition arguments are positional and optional.** The full signature is `make_node Partition <name> <dir> [segment_size] [min_segments] [num_segments] [max_segments] [min_lifetime] [lifetime]`. [`Partition_Node::node_schema()`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-partition-node.php) defaults each retention argument to its matching `<config:…>` token, so `alerts:partition`, `errors:partition` and `requests:partition` — which pass a directory and nothing else — resolve to exactly the values an explicit tail would spell out. `gyroscope:partition` and `completed:partition` pass one further argument each, pinning a 1 MiB segment size against the configured `segment_size` (64 MiB by default): both are high-rate `.p0` logs whose readers only ever want the recent tail, so small segments keep retention cheap.
 
-**Four of the five output partitions are `.p0`, not `.p<partition>`.** Every partition's request-builder appends to the same `alerts.p0`, `errors.p0`, `gyroscope.p0` and `completed.p0`. That is safe precisely because none of them lifts the PIPE_BUF cap: each write stays a single atomic append, which is what makes a shared multi-writer log correct. `requests:partition` is the one per-partition output, and it is the one that runs `void_warranty`.
+**Four of the five output partitions are `.p0`, not `.p{partition}`.** Every partition's request-builder appends to the same `alerts.p0`, `errors.p0`, `gyroscope.p0` and `completed.p0`. That is safe precisely because none of them lifts the PIPE_BUF cap: each write stays a single atomic append, which is what makes a shared multi-writer log correct. `requests:partition` is the one per-partition output, and it is the one that runs `void_warranty`.
 
 **`void_warranty` on `requests:partition`** lifts the per-message cap to 32 MiB (`Partition_Node::MAX_LARGE_LINE_SIZE`) *without* a per-Partition lock — that partition is written by exactly one worker fleet, and the substrate refuses to spawn a topology set where two fleets write the same partition, so the exclusivity lock `allow_large_writes` carries is redundant here. Full `Request_Builder` request documents regularly exceed the 4 KB PIPE_BUF ceiling on pages with many timed hooks. Everything that must fit in PIPE_BUF instead routes through [`\Newspack_Nodes\Line_Fitter::fit()`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-line-fitter.php), which halves the listed VALUE fields until the packed line fits and drops the line loudly when nothing is left to cut — `m` and `url` for the error and alert entries `Request_Builder_Node` fans out, `url` and `user_agent` for its compact completed summaries and for the in-flight rows `Request_Flight_Node` ships.
 
@@ -306,12 +306,12 @@ Per-partition flame builder. Tails `requests.pN`; `Flame_Builder` emits `flames.
 include topic-probe
 include table-probe
 
-make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/<topology>.requests.p<partition> <config:deadletter_dir>/<topology>.requests.p<partition>
+make_node Consumer requests:consumer <config:logs_dir>/requests.p{partition} <config:offsets_dir>/<topology>.requests.p{partition} <config:deadletter_dir>/<topology>.requests.p{partition}
 make_node Flame_Builder flame-builder
-make_node Partition flames:partition <config:logs_dir>/flames.p<partition>
-make_node Table flame-stats:aggregate evlog:p<partition> <eln:stats_ttl> sqlite
-make_node Table flame-stats:url evlog:p<partition> <eln:stats_url_ttl> sqlite
-make_node Table flame-stats:url-fine evlog:p<partition> <eln:stats_url_fine_ttl> sqlite
+make_node Partition flames:partition <config:logs_dir>/flames.p{partition}
+make_node Table flame-stats:aggregate evlog:p{partition} <eln:stats_ttl> sqlite
+make_node Table flame-stats:url evlog:p{partition} <eln:stats_url_ttl> sqlite
+make_node Table flame-stats:url-fine evlog:p{partition} <eln:stats_url_fine_ttl> sqlite
 cmd requests:consumer:config add_snapshot_node flame-builder
 cmd flame-builder:config set_aggregate_target flame-stats:aggregate
 cmd flame-builder:config set_url_target flame-stats:url
@@ -327,7 +327,7 @@ secure
 
 `set_aggregate_target`, `set_url_target` and `set_url_fine_target` name the three stats Tables, the way `set_errors_target` names request-builder's errors partition: each takes a `node_name`, so the document canvas draws flame-builder's edge to each Table and lays the Tables out below it, and `extra_targets()` returns what they named, so the live canvas draws the same edges. Each refuses any name but the Table the `performance` readers mount for its role. `configure_stats` then constructs the `Stats_Store` over the Tables they named, refusing to run until all three have, taking its retention window from `Config::stats_retention_seconds()` — the substrate's `min_lifetime` (default 43200), floored at `Stats_Store::MIN_RETENTION_SECONDS` (3600). The partition is in each Table's file, not in the store. Auto-tune thresholds live on each LOG rule, not on a topology token; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)).
 
-The three `make_node Table` lines declare the stats Tables, each `evlog:p<partition>` on the substrate's `sqlite` backend at its TTL token: `flame-stats:aggregate` holds every namespace but two groups, `flame-stats:url` the per-URL blob, and `flame-stats:url-fine` the fine `urls`, `urlsrv`, `urlrank_s` and `urlhdr` buckets ([Stats Schema](#stats-schema)). Each keeps one file per partition, `{base}/tables/{table}.p{N}.sqlite`, and a Table that cannot open — `pdo_sqlite` missing, `{base}/tables` unwritable — fails the topology at load, naming the Table ([decision 34](architecture-decisions.md#decision-34-stats-live-in-sqlite-tables-and-nothing-repairs-a-loss)). The builder asks them by message through its `Table_Client`; the `performance` CI mounts the ones a verb reads, read-only, for the rest of the request.
+The three `make_node Table` lines declare the stats Tables, each `evlog:p{partition}` on the substrate's `sqlite` backend at its TTL token: `flame-stats:aggregate` holds every namespace but two groups, `flame-stats:url` the per-URL blob, and `flame-stats:url-fine` the fine `urls`, `urlsrv`, `urlrank_s` and `urlhdr` buckets ([Stats Schema](#stats-schema)). Each keeps one file per partition, `{base}/tables/{table}.p{N}.sqlite`, and a Table that cannot open — `pdo_sqlite` missing, `{base}/tables` unwritable — fails the topology at load, naming the Table ([decision 34](architecture-decisions.md#decision-34-stats-live-in-sqlite-tables-and-nothing-repairs-a-loss)). The builder asks them by message through its `Table_Client`; the `performance` CI mounts the ones a verb reads, read-only, for the rest of the request.
 
 `set_is_hub <eln:is_hub>` turns on the three per-server AGGREGATES — the `lb_sh` leaderboard, the per-server dimensional series and the per-server category series — because only an aggregating hub has more than one reporting server to spread across them. The URL index's per-server keys are deliberately NOT gated by it: every URL row is filed under its server's key on a spoke as on a hub ([decision 30](architecture-decisions.md#decision-30-every-memcache-value-is-one-servers-carries-nothing-its-key-implies-and-fits-one-item)), so a spoke's table reads the same keys a hub's does.
 
@@ -338,7 +338,7 @@ The job-routing half, reading jobs out of the firehose. Tails `firehose.pN` and,
 ```tsl
 include job-intake
 
-make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/<topology>.firehose.p<partition> <config:deadletter_dir>/<topology>.firehose.p<partition>
+make_node Consumer firehose:consumer <config:logs_dir>/firehose.p{partition} <config:offsets_dir>/<topology>.firehose.p{partition} <config:deadletter_dir>/<topology>.firehose.p{partition}
 make_node Job_Router job-router
 make_node Age_Sieve jobs:sieve 900 1
 cmd firehose:consumer:config set_multi_writer true
@@ -434,9 +434,9 @@ secure
 
 Standing a hub up is a Vault operation: add each spoke to Vault group `spoke` (`vault add <id> --group=spoke …`) and the group builds and configures its `Remote_Source` on the next reload. An install with no such entries has an empty group and ingests nothing.
 
-[`Remote_Source`](https://github.com/Automattic/newspack-nodes/blob/main/includes/class-remote-source-node.php) is a broker: `<vault-id>` names the spoke (supplied by the group as each member's own Vault id, `{id}`), the next two arguments are the roots each reader's offsetlog and dead letters nest under, at `<kind>` (`firehose.p0`, `sources:php`), and each later token is a `<source>:<target>` pair naming a stream and where its lines go. A pair is also the declaration of where a spoke's lines may go: a firehose record carries no TO, and a reader refuses a line a spoke addressed. Scope the roots with `<topology>` so two hubs pulling one spoke stream never share a cursor. A broker publishes its status under `remote:<broker>:p<partition>`, so `remote:spokes:<id>:p0`.
+[`Remote_Source`](https://github.com/Automattic/newspack-nodes/blob/main/includes/class-remote-source-node.php) is a broker: `<vault-id>` names the spoke (supplied by the group as each member's own Vault id, `{id}`), the next two arguments are the roots each reader's offsetlog and dead letters nest under, at `<kind>` (`firehose.p0`, `sources:php`), and each later token is a `<source>:<target>` pair naming a stream and where its lines go. A pair is also the declaration of where a spoke's lines may go: a firehose record carries no TO, and a reader refuses a line a spoke addressed. Scope the roots with `<topology>` so two hubs pulling one spoke stream never share a cursor. A broker publishes its status under `remote:<broker>:p{partition}`, so `remote:spokes:<id>:p0`.
 
-The topology mounts once per worker partition. A pair whose source is written with a partition token reads in every worker, so `firehose.p{partition}` gives each worker its own partition of every spoke's firehose; `sources/php` names none, so worker p0 alone reads it, and `php-errors:tail` follows the hub's own log on p0 alone too. The token is the brace spelling because the Shell resolves `<partition>` before the broker sees it, and the pair would then read as fixed; the analyzer refuses a pair source naming `<partition>`, so such a topology fails its analysis, which `wp nodes doctor` reports, rather than pulling nothing. On a multi-partition hub, worker p0 carries `firehose.p0` and `sources/php` on one connection per spoke and tails the hub's own log; p1 and up each carry their own firehose partition.
+The topology mounts once per worker partition. A pair whose source names `{partition}` reads in every worker, so `firehose.p{partition}` gives each worker its own partition of every spoke's firehose; `sources/php` names none, so worker p0 alone reads it, and `php-errors:tail` follows the hub's own log on p0 alone too. On a multi-partition hub, worker p0 carries `firehose.p0` and `sources/php` on one connection per spoke and tails the hub's own log; p1 and up each carry their own firehose partition.
 
 `set_multi_writer` belongs on every spoke, because every request process there appends to its firehose. It asks the SPOKE's reader to hold a superseded segment for the seal grace; without it a straggler's last line — typically the request's terminal `process (complete)` — is orphaned, and the request never finalizes on the hub.
 

@@ -162,7 +162,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * TSL node names the disk-walking verbs resolve their partitions through.
 	 * The dirs come from the DECLARATION (`Bootstrap::node_dirs`), never from a
 	 * path this class builds: request-builder alone pins `alerts.p0` and
-	 * `gyroscope.p0` while `requests.p<partition>` expands, so any assumption
+	 * `gyroscope.p0` while `requests.p{partition}` expands, so any assumption
 	 * about the naming scheme is wrong for most of its partitions.
 	 */
 	private const NODE_FLAMES   = 'flames:partition';

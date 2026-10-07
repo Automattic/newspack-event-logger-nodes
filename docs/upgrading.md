@@ -6,6 +6,15 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **A topology writing `<partition>` fails to load; write `{partition}`.**
+  The substrate resolves `{partition}` in each argument a node's schema
+  marks, at the worker's partition, and the Shell refuses `<partition>`
+  anywhere in a line. A custom topology built on this plugin's, such as a
+  fork of `request-builder` or `flame-builder`, rewrites
+  `<config:logs_dir>/requests.p<partition>` as
+  `<config:logs_dir>/requests.p{partition}` and the stats Tables'
+  `evlog:p<partition>` as `evlog:p{partition}`. `<topology>` is unchanged.
+
 - **A hub is a topology declaring `var is_hub = 1`.** `<eln:is_hub>` reads
   each active topology's own top-level frontmatter, and the stock `hub` and
   `aggregator` declare it. A topology's name and the logs its

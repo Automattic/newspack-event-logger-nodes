@@ -298,7 +298,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_a_table_declared_with_a_zero_ttl_fails_the_verb_loud(): void {
-		$reply = $this->fire_overview_with_topology( 'stats-kea-3717', 'make_node Table flame-stats:aggregate evlog:p<partition> 0 sqlite' );
+		$reply = $this->fire_overview_with_topology( 'stats-kea-3717', 'make_node Table flame-stats:aggregate evlog:p{partition} 0 sqlite' );
 
 		$this->assertIsString( $reply, 'a refusal, not a zeroed dashboard' );
 		$this->assertStringContainsString( 'TTL', $reply );
@@ -306,7 +306,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_a_table_two_topologies_declare_differently_fails_the_verb_loud(): void {
 		// Operator misconfiguration is no unreachable backend (decision 3): it says so.
-		$reply = $this->fire_overview_with_topology( 'stats-kea-7731', 'make_node Table flame-stats:aggregate evlog:p<partition> 777 sqlite', [ 'performance' ] );
+		$reply = $this->fire_overview_with_topology( 'stats-kea-7731', 'make_node Table flame-stats:aggregate evlog:p{partition} 777 sqlite', [ 'performance' ] );
 
 		$this->assertIsString( $reply, 'a refusal, not a zeroed dashboard' );
 		$this->assertStringContainsString( 'declared differently', $reply );

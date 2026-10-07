@@ -529,7 +529,7 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/**
 	 * The Table node writing one partition of a stats Table: opened under the
-	 * declared name with `<partition>` bound, as a worker opens it, then
+	 * declared name with `{partition}` bound, as a worker opens it, then
 	 * renamed so one process can hold several partitions' writers and a
 	 * reader's mount of the same file keeps its own name.
 	 *
