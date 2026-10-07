@@ -57,7 +57,7 @@ A test must not wait in real time: it pins `Core::$now` here, or the substrate's
 
 ### Git hooks
 
-Hooks are the tracked `scripts/pre-commit`, `commit-msg` and `pre-push`, reached through the `core.hooksPath` that `composer install` sets; a clone that never ran it has no hooks. `pre-commit` first runs `sync-shared-scripts.sh`, which refreshes the vendored tooling from `../newspack-nodes/scripts/`, so **edit shared scripts there, not here.** Only `build.mjs`, `pre-push`, `lint-eln-docs.sh`, `render-diagram.sh` and `bump-version.sh` belong to this plugin. `pre-commit` then runs `lint-staged`, which scopes each gate to the staged file's type and runs `reorder-node-methods --check` on every staged PHP and JS file. Its `fix-blank-lines.php` step is the one gate that REWRITES what you staged: it collapses runs of blank lines and still exits 0.
+Hooks are the tracked `scripts/pre-commit`, `commit-msg` and `pre-push`, reached through the `core.hooksPath` that `composer install` sets; a clone that never ran it has no hooks. `pre-commit` first runs `sync-shared-scripts.sh`, which refreshes the vendored tooling from `../newspack-nodes/scripts/`, so **edit shared scripts there, not here.** Only `build.mjs`, `pre-push`, `lint-eln-docs.sh` and `bump-version.sh` belong to this plugin. `pre-commit` then runs `lint-staged`, which scopes each gate to the staged file's type and runs `reorder-node-methods --check` on every staged PHP and JS file. Its `fix-blank-lines.php` step is the one gate that REWRITES what you staged: it collapses runs of blank lines and still exits 0.
 
 ## Versioning & Release
 
@@ -128,7 +128,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix and the stats Tables' files; `uninstall.php` requires it and the Composer autoloader by hand because the main file does not run on DELETE |
 | `topologies/` | Eleven `.tsl` graphs, named by filename: five primitives and six compositions |
 | `mu-plugins/00-newspack-profiler.php` | The standalone profiler drop-in, shipped as its own release asset |
-| `scripts/` | This plugin's `build.mjs`, `pre-push`, `lint-eln-docs.sh`, `render-diagram.sh` (a `docs/img/*.html` sheet to PNG; `CHROME=` overrides the browser path) and `bump-version.sh`; everything else is vendored |
+| `scripts/` | This plugin's `build.mjs`, `pre-push`, `lint-eln-docs.sh` and `bump-version.sh`; everything else is vendored, `render-diagram.sh` (the `docs/img` sheets to PNG) and its `autocrop.py` included |
 | `src/` | Six esbuild entries: five dashboards and the `current-request` tab. Shared SCSS forwards the substrate's tokens and mixins, so never create a local `_tokens.scss` or `_mixins.scss` |
 | `types/` | Ambient declarations for `lint:types`; a new `window.*` global needs one in `globals.d.ts` |
 | `tests/` | PHPUnit `unit/` and `integration/`; config at `tests/phpunit.xml` |

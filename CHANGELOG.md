@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`scripts/render-diagram.sh` and `autocrop.py` are vendored from newspack-nodes**, which renders every `docs/img` sheet when given no argument; `docs/img/render.sh` is removed.
+
 ### Fixed
 
 - **The MCP rate limit rolls.** A session gets 20 calls in any trailing ten seconds, where a fixed ten-second bucket let it send 20 just before a boundary and 20 just after. Each admitted call claims a slot through the shared cache's atomic `add()`, so concurrent calls on one session can no longer all read a count under the limit. A host with neither memcached nor APCu, or whose slot read fails, now answers 503 `rate_limit_unavailable` instead of running the route unmetered.

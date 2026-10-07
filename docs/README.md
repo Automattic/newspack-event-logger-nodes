@@ -28,4 +28,4 @@ Three chapters, in reading order.
 - [Getting started](https://github.com/Automattic/newspack-nodes/blob/main/docs/getting-started.md): from zero to a running pipeline.
 - [Hub and spoke](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md): the connection the hub control chapter here runs over.
 
-Every diagram is an HTML sheet under [`docs/img/`](img) beside the PNG it renders to; [`docs/img/render.sh`](img/render.sh) re-renders them all through headless Chrome.
+Every diagram is an HTML sheet under [`docs/img/`](img) beside the PNG it renders to; [`scripts/render-diagram.sh`](../scripts/render-diagram.sh) re-renders them all through headless Chrome, or only the sheets you name, each at its measured height.
