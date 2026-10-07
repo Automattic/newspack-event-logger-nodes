@@ -353,8 +353,9 @@ class Config {
 
 	/**
 	 * Derive hub-ness from the active topologies: an `aggregator` topology by
-	 * name or include, or any graph carrying a `Remote_Source` that pulls the
-	 * firehose. A reader pulling any other log aggregates no requests.
+	 * name or include, or any graph carrying a `Remote_Source` with a pair whose
+	 * source names the firehose. A reader pulling any other log aggregates no
+	 * requests.
 	 *
 	 * Two signals, because neither covers both shapes. The stock `aggregator`'s
 	 * Remote_Source nodes are the `firehose` `Vault_Group`'s children, which
@@ -389,8 +390,10 @@ class Config {
 		}
 		foreach ( $active as $name ) {
 			foreach ( Topology_Analyzer::nodes_of_type( $name, Remote_Source_Node::class ) as $reader ) {
-				if ( Log_Manager::names_firehose( Core::as_string( $reader['remote_partition'] ?? '' ) ) ) {
-					return true;
+				foreach ( Core::arr( $reader['pairs'] ) as $pair ) {
+					if ( Log_Manager::names_firehose( Core::as_string( Core::arr( $pair )['source'] ) ) ) {
+						return true;
+					}
 				}
 			}
 		}

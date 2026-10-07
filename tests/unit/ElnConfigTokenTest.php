@@ -92,7 +92,7 @@ class ElnConfigTokenTest extends TestCase {
 		$dir = $this->make_temp_dir( 'eln-hub-fork-' );
 		\file_put_contents(
 			"{$dir}/okapi-fanout.tsl",
-			"make_node Remote_Source firehose:okapi okapi firehose.p<partition>\n"
+			"make_node Remote_Source firehose:okapi okapi /tmp/okapi-off /tmp/okapi-dl firehose.p<partition>:next-okapi\n"
 		);
 		\file_put_contents( "{$dir}/okapi-hub.tsl", "include okapi-fanout\n" );
 		Topology_Registry::register_user_dir( $dir );
@@ -104,11 +104,26 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
+	public function test_is_hub_true_when_the_firehose_is_one_pair_among_several(): void {
+		$dir = $this->make_temp_dir( 'eln-hub-pairs-' );
+		\file_put_contents(
+			"{$dir}/okapi-pairs.tsl",
+			"make_node Remote_Source spokes:okapi okapi /tmp/pairs-off /tmp/pairs-dl sources/php:php-okapi firehose.p<partition>:next-okapi\n"
+		);
+		Topology_Registry::register_user_dir( $dir );
+
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-pairs' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
 	public function test_is_hub_true_when_a_remote_source_subclass_pulls_the_firehose(): void {
 		require_once \dirname( __DIR__ ) . '/fixtures/class-tapir-pull-node.php';
 		\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\Tests\\Fixtures\\' );
 		$dir = $this->make_temp_dir( 'eln-hub-subclass-' );
-		\file_put_contents( "{$dir}/okapi-tapir.tsl", "make_node Tapir_Pull firehose:okapi okapi firehose.p<partition>\n" );
+		\file_put_contents( "{$dir}/okapi-tapir.tsl", "make_node Tapir_Pull firehose:okapi okapi /tmp/tapir-off /tmp/tapir-dl firehose.p<partition>:next-tapir\n" );
 		Topology_Registry::register_user_dir( $dir );
 
 		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-tapir' ];
@@ -120,7 +135,7 @@ class ElnConfigTokenTest extends TestCase {
 
 	public function test_is_hub_true_when_a_remote_source_pulls_one_fixed_firehose_partition(): void {
 		$dir = $this->make_temp_dir( 'eln-hub-fixed-' );
-		\file_put_contents( "{$dir}/okapi-p3.tsl", "make_node Remote_Source firehose:okapi okapi firehose.p3\n" );
+		\file_put_contents( "{$dir}/okapi-p3.tsl", "make_node Remote_Source firehose:okapi okapi /tmp/p3-off /tmp/p3-dl firehose.p3:next-p3\n" );
 		Topology_Registry::register_user_dir( $dir );
 
 		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-p3' ];
@@ -134,7 +149,7 @@ class ElnConfigTokenTest extends TestCase {
 		// Unresolved, it might name the firehose: answering "spoke" would turn
 		// that hub's per-server stats off in silence.
 		$dir = $this->make_temp_dir( 'eln-hub-token-' );
-		\file_put_contents( "{$dir}/okapi-tok.tsl", "make_node Remote_Source firehose:okapi okapi firehose.p<wombat9:shard>\n" );
+		\file_put_contents( "{$dir}/okapi-tok.tsl", "make_node Remote_Source firehose:okapi okapi /tmp/tok-off /tmp/tok-dl firehose.p<wombat9:shard>:next-tok\n" );
 		Topology_Registry::register_user_dir( $dir );
 
 		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-tok' ];
@@ -147,7 +162,7 @@ class ElnConfigTokenTest extends TestCase {
 
 	public function test_an_aggregator_by_name_is_a_hub_whatever_an_earlier_reader_holds(): void {
 		$dir = $this->make_temp_dir( 'eln-hub-name-first-' );
-		\file_put_contents( "{$dir}/peer-ledger.tsl", "make_node Remote_Source ledger:okapi okapi ledger.p<wombat9:shard>\n" );
+		\file_put_contents( "{$dir}/peer-ledger.tsl", "make_node Remote_Source ledger:okapi okapi /tmp/led-off /tmp/led-dl ledger.p<wombat9:shard>:next-led\n" );
 		Topology_Registry::register_user_dir( $dir );
 
 		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'peer-ledger', 'aggregator' ];
@@ -163,8 +178,8 @@ class ElnConfigTokenTest extends TestCase {
 		$dir = $this->make_temp_dir( 'eln-hub-other-log-' );
 		\file_put_contents(
 			"{$dir}/okapi-ledger.tsl",
-			"make_node Remote_Source ledger:okapi okapi ledger.p<partition>\n"
-			. "make_node Remote_Source hosefire:okapi okapi hosefire.p<partition>\n"
+			"make_node Remote_Source ledger:okapi okapi /tmp/led-off /tmp/led-dl ledger.p<partition>:next-led sources/php:next-php\n"
+			. "make_node Remote_Source hosefire:okapi okapi /tmp/hose-off /tmp/hose-dl hosefire.p<partition>:next-hose\n"
 		);
 		Topology_Registry::register_user_dir( $dir );
 
