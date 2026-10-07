@@ -5856,7 +5856,7 @@ class PerformanceCITest extends TestCase {
 					$this->assertSame( $hashes, \array_column( $folded['data'], 'hash' ), "{$page}, {$order}" );
 				}
 			}
-			$this->set_url_rank_lists_of( $store, $bucket, $by_server );
+			$this->set_url_rank_lists_of( $store, [ $bucket ], $by_server );
 			$this->seed_hour_lists();
 			$this->seed_hour_lists( [], 'zeta.example' );
 			foreach ( [ 'the site' => [ $site, [] ], 'a server' => [ $scope, [ '--server=zeta.example' ] ] ] as $page => [ $orders, $args ] ) {
@@ -5883,7 +5883,7 @@ class PerformanceCITest extends TestCase {
 		$bucket    = $this->current_url_bucket();
 		$by_server = [ 'zeta.example' => [ 'a3117c0ffee1' => [ 'url' => 'https://zeta.example/a-3117/kea', 'count' => 3, 'last_seen' => self::tick() ] ] ];
 		$this->set_url_bucket( $store, $bucket, $by_server['zeta.example'], 'zeta.example' );
-		$this->set_url_rank_lists_of( $store, $bucket, $by_server );
+		$this->set_url_rank_lists_of( $store, [ $bucket ], $by_server );
 		$this->seed_hour_lists();
 		$store->bucket_set_multi( [ [
 			Stats_Store::url_rank_parts( 'url', 'asc', '', false ),
@@ -5975,7 +5975,7 @@ class PerformanceCITest extends TestCase {
 			$kea[ \sprintf( 'a%011x', $i ) ] = [ 'url' => "https://kea.test/k-{$i}", 'count' => 100 + $i, 'last_seen' => $now - 300 ];
 			$moa[ \sprintf( 'b%011x', $i ) ] = [ 'url' => "https://moa.test/m-{$i}", 'count' => 100 + $i, 'last_seen' => $now - 300 ];
 		}
-		$this->set_url_rank_lists_of( $store, $older, [ 'kea.test' => $kea, 'moa.test' => $moa ] );
+		$this->set_url_rank_lists_of( $store, [ $older ], [ 'kea.test' => $kea, 'moa.test' => $moa ] );
 		$this->set_url_rank_lists( $store, $newer, [ $heavy => [ 'url' => 'https://moa.test/heavy-9999', 'count' => 1, 'last_seen' => $now ] ], false, 'moa.test' );
 		$this->set_url_bucket( $store, $newer, [ $heavy => [ 'url' => 'https://moa.test/heavy-9999', 'count' => 1, 'last_seen' => $now ] ], 'moa.test' );
 		$this->seed_hour_lists();
@@ -6232,14 +6232,9 @@ class PerformanceCITest extends TestCase {
 	 * @param int          $partitions Stores the active topology declares.
 	 */
 	private function seed_hour_lists( array $skip = [], string $server = self::SEED_SERVER, int $partitions = 3 ): void {
-		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) );
+		$hours = \array_values( \array_diff( Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) )['hours'], $skip ) );
 		for ( $partition = 0; $partition < $partitions; ++$partition ) {
-			$store = $this->stats_store( $partition, 86400 );
-			foreach ( $plan['hours'] as $hour ) {
-				if ( ! \in_array( $hour, $skip, true ) ) {
-					$this->set_url_rank_lists( $store, $hour, [], true, $server );
-				}
-			}
+			$this->set_url_rank_lists_of( $this->stats_store( $partition, 86400 ), $hours, [ $server => [] ], true );
 		}
 	}
 
@@ -7763,17 +7758,19 @@ class PerformanceCITest extends TestCase {
 	 * later one, whose `min_ms asc` list cuts them: `min_ms asc` is not
 	 * exact, and a row listed by its timeouts alone carries no minimum.
 	 *
+	 * On the one partition `setUp()` activates: the spread is across
+	 * buckets, and every sort pays this seed again.
+	 *
 	 * @return array{0: array<string,list<array<string,mixed>>>, 1: \Closure(): void} Each URL's
 	 *         named rows by bucket, and the clock's restore.
 	 */
 	private function seed_spread_window(): array {
-		$this->activate_shipped( 'performance', 3 );
 		$previous    = Core::$clock;
 		$ticked      = Core::$now;
 		$now         = self::tick() - self::tick() % 3600 + 20 * 60 + 30;
 		Core::$clock = static fn (): float => (float) $now;
 		Core::right_now();
-		$store   = $this->stats_store( 1, 86400 );
+		$store   = $this->stats_store();
 		$earlier = Stats_Store::bucket_key( $now - Stats_Store::BUCKET_SECONDS );
 		$later   = Stats_Store::bucket_key( $now );
 		$row     = static fn ( string $path, int $count, int $timed, float $avg, float $min, float $max, float $peak, int $seen ): array => [
@@ -7812,7 +7809,7 @@ class PerformanceCITest extends TestCase {
 				$by_url[ (string) $hash ][] = $named;
 			}
 		}
-		$this->seed_hour_lists();
+		$this->seed_hour_lists( [], self::SEED_SERVER, 1 );
 		return [
 			$by_url,
 			static function () use ( $previous, $ticked ): void {

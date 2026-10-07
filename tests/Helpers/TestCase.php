@@ -975,20 +975,23 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param string                                   $server Reporting server.
 	 */
 	protected function set_url_rank_lists( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, array $rows, bool $hour = false, string $server = self::SEED_SERVER ): bool {
-		return $this->set_url_rank_lists_of( $store, $key, [ $server => $rows ], $hour );
+		return $this->set_url_rank_lists_of( $store, [ $key ], [ $server => $rows ], $hour );
 	}
 
 	/**
-	 * Seed every ranked list of several servers for one key from NAMED rows,
-	 * ranked together as one ranking of the key writes them, the site's
-	 * lists and record included, and name each server in the key's index.
+	 * Seed every ranked list of several servers under each key from NAMED
+	 * rows, ranked together as one ranking of a key writes them, the site's
+	 * lists and record included, and name each server in each key's index.
+	 *
+	 * A list carries no key of its own, so one ranking serves every key, and
+	 * every key's lists land in one write.
 	 *
 	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store     Destination.
-	 * @param string                                   $key       Bucket or hour key.
+	 * @param list<string>                             $keys      Bucket or hour keys.
 	 * @param array<string,array<array-key,mixed>>     $by_server Server => named rows by hash.
 	 * @param bool                                     $hour      The coarse tier.
 	 */
-	protected function set_url_rank_lists_of( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, array $by_server, bool $hour = false ): bool {
+	protected function set_url_rank_lists_of( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $keys, array $by_server, bool $hour = false ): bool {
 		$servers = [];
 		foreach ( $by_server as $server => $rows ) {
 			foreach ( $rows as $hash => $row ) {
@@ -999,16 +1002,70 @@ abstract class TestCase extends RuntimeTestCase {
 			}
 			$servers[ $server ] ??= [];
 		}
-		$writes = \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( self::by_shard( $servers ), $hour, $key );
-		// As the writer does: each server's DONE marker for the hour beside its lists.
-		foreach ( $hour ? \array_keys( $servers ) : [] as $server ) {
-			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts( \Newspack_Event_Logger_Nodes\Stats_Store::server_key( (string) $server ) ), $key, [] ];
+		$ranked = \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( self::by_shard( $servers ), $hour, '' );
+		$writes = [];
+		foreach ( $keys as $key ) {
+			foreach ( $ranked as [ $parts, , $data ] ) {
+				$writes[] = [ $parts, $key, $data ];
+			}
+			// As the writer does: each server's DONE marker for the hour beside its lists.
+			foreach ( $hour ? \array_keys( $servers ) : [] as $server ) {
+				$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts( \Newspack_Event_Logger_Nodes\Stats_Store::server_key( (string) $server ) ), $key, [] ];
+			}
 		}
 		$ok = ! \in_array( false, $store->bucket_set_multi( $writes ), true );
-		foreach ( \array_keys( $servers ) as $server ) {
-			$ok = self::index_server( $store, $key, (string) $server, $hour, [] ) && $ok;
+		foreach ( $keys as $key ) {
+			foreach ( \array_keys( $servers ) as $server ) {
+				$ok = self::index_server( $store, $key, (string) $server, $hour, [] ) && $ok;
+			}
 		}
 		return $ok;
+	}
+
+	/**
+	 * Every hour of `$hours` derived as a steady worker leaves it, idle:
+	 * folded (`fold_url_hours()`), then ranked, the site's lists and records
+	 * beside the server's, and the server marked DONE.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
+	 * @param list<string>                             $hours  Hour keys.
+	 * @param string                                   $server The server folded.
+	 */
+	protected function settle_url_hours( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $hours, string $server = self::SEED_SERVER ): bool {
+		$ok = self::fold_url_hours( $store, $hours, [ $server ] );
+		return $this->set_url_rank_lists_of( $store, $hours, [ $server => [] ], true ) && $ok;
+	}
+
+	/**
+	 * What a fold leaves for each hour of `$hours`, unranked: every shard of
+	 * both families written empty for each of `$servers`, and each server
+	 * merged into the hour's index naming all of them. One read, one write.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store   Destination.
+	 * @param list<string>                             $hours   Hour keys.
+	 * @param list<string>                             $servers Server names folded.
+	 */
+	protected static function fold_url_hours( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $hours, array $servers ): bool {
+		$shards  = [ ...Stats_Store::url_shards(), ...Stats_Store::url_shards( true ) ];
+		$entries = [];
+		foreach ( $servers as $server ) {
+			$entries[ Stats_Store::server_key( $server ) ] = [
+				Stats_Store::SRV_NAME   => $server,
+				Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( $shards ),
+			];
+		}
+		$parts  = Stats_Store::url_srv_parts( true );
+		$held   = $store->bucket_get_multi( \array_map( static fn ( string $hour ): array => [ $parts, $hour ], $hours ) );
+		$writes = [];
+		foreach ( $hours as $i => $hour ) {
+			foreach ( \array_keys( $entries ) as $key ) {
+				foreach ( $shards as $shard ) {
+					$writes[] = [ Stats_Store::url_hour_parts( $key, $shard ), $hour, [] ];
+				}
+			}
+			$writes[] = [ $parts, $hour, Stats_Store::merge_index( Stats_Store::index_entries( $held[ $i ] ?? [] ), $entries ) ];
+		}
+		return ! \in_array( false, $store->bucket_set_multi( $writes ), true );
 	}
 
 	/**
