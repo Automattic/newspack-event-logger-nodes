@@ -7,9 +7,10 @@
  * span in the flame graph, an anomalous log line. THE TARGET IS THE SCOPE, so
  * there is no per-surface branching and no guessing what you meant.
  *
- * Cmd/Ctrl-click adds to the selection, matching the modifier that already
- * ships on these same elements. A picker click is not consent to send: the
- * assembled brief is shown here first, and copying it is a separate act.
+ * Cmd/Ctrl-click adds to the selection and a second one takes the pick back
+ * out, matching the modifier that already ships on these same elements. A
+ * picker click is not consent to send: the assembled brief is shown here
+ * first, and copying it is a separate act.
  *
  * The three parts live together because the picker is ONE document-level mode.
  * It marks the body, makes every `[data-ask]` element focusable and swallows
@@ -19,7 +20,13 @@
  * control, beside the request's back button.
  */
 
-import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import Modal from '@newspack-nodes/shared/components/Modal';
 import AskPageRing from '@newspack-nodes/shared/components/AskPageRing';
@@ -59,7 +66,7 @@ import FindingList from './FindingList';
  *                                          view of one thing is that thing.
  * @return {{active: boolean, start: Function, cancel: Function, briefs: Object[], open: boolean, close: Function}}
  *   The mode and what it gathered: `start` and `cancel` arm and disarm the
- *   picker, `briefs` holds one assembled reply per pick in arrival order,
+ *   picker, `briefs` holds one assembled reply per standing pick, in pick order,
  *   `open` says the picker is done and something arrived, and `close` discards
  *   the selection.
  */
@@ -68,7 +75,8 @@ export function useAsk( {
 	serverFilter = '',
 	urlFilters = null,
 } = {} ) {
-	const [ briefs, setBriefs ] = useState( [] );
+	// One per standing pick; `brief` stays null until its answer arrives.
+	const [ picks, setPicks ] = useState( [] );
 
 	const onErrorRef = useRef( onError );
 	onErrorRef.current = onError;
@@ -77,11 +85,14 @@ export function useAsk( {
 	// NOT a retried read, though it reads: a retry SUPERSEDES, and multi-select
 	// is several asks in flight at once — the earlier one's answer is wanted,
 	// so superseding drops a brief the user asked for. Each ask queues and goes
-	// exactly once, and every reply appends.
+	// exactly once, and each reply fills the pick whose descriptor it echoes
+	// first: one unpicked meanwhile has no entry left, so its answer lands
+	// nowhere. No subject rides the address, which a long span name outgrows.
 	const { run: ask } = useCommandOnce( {
 		ci: 'performance',
 		command: 'ask',
-		onDone: ( { result, error } ) => {
+		subjectOf: () => null,
+		onDone: ( { result, error, args } ) => {
 			if ( error ) {
 				onErrorRef.current?.( error );
 				return;
@@ -95,12 +106,22 @@ export function useAsk( {
 				);
 				return;
 			}
-			setBriefs( ( prior ) => [ ...prior, result ] );
+			setPicks( ( prior ) =>
+				prior.map( ( pick ) =>
+					pick.descriptor === args[ 0 ] && ! pick.brief
+						? { ...pick, brief: result }
+						: pick
+				)
+			);
 		},
 	} );
 
 	const handlePick = useCallback(
 		( descriptors ) => {
+			setPicks( ( prior ) => [
+				...prior,
+				{ descriptor: descriptors[ 0 ], brief: null },
+			] );
 			// @longform No brief may quote numbers outside the scope it was
 			// asked in, so every filter comes from ONE source: the set the
 			// visible rows were fetched under, falling back to the live pick
@@ -126,10 +147,24 @@ export function useAsk( {
 		[ ask, serverFilter, urlFilters ]
 	);
 
+	const handleUnpick = useCallback( ( [ descriptor ] ) => {
+		setPicks( ( prior ) =>
+			prior.filter( ( pick ) => pick.descriptor !== descriptor )
+		);
+	}, [] );
+
+	const discard = useCallback( () => setPicks( [] ), [] );
+
 	const { active, start, cancel } = useAskPicker( {
 		onPick: handlePick,
-		onAbandon: () => setBriefs( [] ),
+		onUnpick: handleUnpick,
+		onAbandon: discard,
 	} );
+
+	const briefs = useMemo(
+		() => picks.flatMap( ( { brief } ) => ( brief ? [ brief ] : [] ) ),
+		[ picks ]
+	);
 
 	// @longform
 	// The SELECTION belongs to one picker session: arming starts a fresh one,
@@ -139,7 +174,6 @@ export function useAsk( {
 	// instead puts the brief in front of the next thing being Cmd-clicked, and
 	// a flag read at reply time would answer for whichever pick landed last.
 	const open = ! active && 0 < briefs.length;
-	const discard = useCallback( () => setBriefs( [] ), [] );
 	const startPicking = useCallback( () => {
 		discard();
 		start();

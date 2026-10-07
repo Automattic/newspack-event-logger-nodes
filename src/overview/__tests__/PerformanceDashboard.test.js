@@ -2749,10 +2749,28 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 		} );
-		const { unmount } = mountDash();
+		const { container, unmount } = mountDash();
 		await flushEffects();
+		// A brief answers a pick; the request view is mocked, so plant one.
+		const request = document.createElement( 'div' );
+		request.setAttribute( 'data-ask', 'request:r1:3' );
+		document.body.appendChild( request );
+		act( () => container.querySelector( '[data-ask-trigger]' ).click() );
+		act( () => {
+			request.dispatchEvent(
+				new window.MouseEvent( 'mousedown', { bubbles: true } )
+			);
+			request.dispatchEvent(
+				new window.MouseEvent( 'click', { bubbles: true } )
+			);
+		} );
+		request.remove();
+		expect( sentTo( 'performance:ask' ).at( -1 )[ 0 ] ).toBe(
+			'request:r1:3'
+		);
 		answerCommand( 'performance:ask', {
 			result: { subject: 'request', url: '/foo', findings: [] },
+			args: sentTo( 'performance:ask' ).at( -1 ),
 		} );
 
 		expect(

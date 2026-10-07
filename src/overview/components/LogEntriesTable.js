@@ -257,6 +257,19 @@ const STATEMENT_LEAD =
 	/^\s*(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|SHOW|DESCRIBE|EXPLAIN|CREATE|ALTER|DROP|TRUNCATE)\b/i;
 
 /**
+ * Cancel a Cmd/Ctrl press on the rows. That press opens the click that
+ * unfolds a subtree, and Firefox would otherwise select and outline the cells
+ * under it. A plain press keeps its default, so a drag still selects text.
+ *
+ * @param {import('react').MouseEvent} event Mousedown event.
+ */
+function cancelModifiedPress( event ) {
+	if ( event.metaKey || event.ctrlKey ) {
+		event.preventDefault();
+	}
+}
+
+/**
  * Log Entries Table component.
  *
  * Every pair starts folded: `expandedSet` holds the pairIds the reader has
@@ -1496,6 +1509,7 @@ export default function LogEntriesTable( {
 											? entry.originalIdx
 											: undefined
 									}
+									onMouseDown={ cancelModifiedPress }
 									onClick={ ( e ) =>
 										handleRowClick( entry, idx, e )
 									}

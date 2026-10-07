@@ -1,7 +1,8 @@
 /**
  * The `?` picker, end to end without a wire: `useAsk` holds the mode, a click on
- * anything carrying `data-ask` becomes an `ask` verb, and every reply appends a
- * brief the panel shows before a single byte leaves the page.
+ * anything carrying `data-ask` becomes an `ask` verb, and each reply fills the
+ * pick its address names with a brief the panel shows before a single byte
+ * leaves the page. Taking a pick back takes its brief with it.
  *
  * The verb is doubled at the hook boundary — the test fires the same `onDone`
  * the real reply lands in, so the paths under test are the production ones and
@@ -48,6 +49,11 @@ const BRIEF = {
 	caveat: 'It does not see SQL.',
 };
 
+// Past the 128 encoded characters a reply address may carry as its subject.
+const LONG_SPAN = `span:${ 'wp_loaded > Newspack\\Some_Class::a_long_method '.repeat(
+	4
+) }`;
+
 // The dashboard shape: one picker, one panel, and something askable.
 function Harness( {
 	onError,
@@ -64,6 +70,12 @@ function Harness( {
 					791ms
 				</span>
 			</div>
+			<span data-ask="url:/shop-7" id="other">
+				/shop-7
+			</span>
+			<span data-ask={ LONG_SPAN } id="long">
+				long span
+			</span>
 			<p id="nothing">nothing askable here</p>
 			<AskPanel ask={ ask } />
 		</div>
@@ -88,8 +100,8 @@ const arm = () =>
 
 // Click the askable element — the picker reads the modifier on mousedown, so
 // both events are dispatched.
-const clickTarget = ( { additive = false } = {} ) => {
-	const target = view.container.querySelector( '#target' );
+const clickTarget = ( { additive = false, id = 'target' } = {} ) => {
+	const target = view.container.querySelector( `#${ id }` );
 	act( () => {
 		target.dispatchEvent(
 			new window.MouseEvent( 'mousedown', {
@@ -114,9 +126,19 @@ const pick = ( options = {} ) => {
 
 const dialog = () => view.container.querySelector( '[role="dialog"]' );
 
-const answer = ( payload ) => {
+// @longform What a real reply carries: no subject, because `useAsk` sends
+// none, and the tokens it answered echoed back as `args`, the descriptor
+// first. The mock's trailing options object is no token, so it is not echoed.
+const answer = ( payload, descriptor = 'request:abc123' ) => {
+	const tokens = sent.findLast( ( args ) => args[ 0 ] === descriptor ) ?? [
+		descriptor,
+	];
 	act( () => {
-		askOpts.onDone( payload );
+		askOpts.onDone( {
+			subject: null,
+			args: tokens.filter( ( token ) => 'string' === typeof token ),
+			...payload,
+		} );
 	} );
 };
 
@@ -407,8 +429,11 @@ test( 'the plain pick that ends the selection opens it with everything queued', 
 	clickTarget( { additive: true } );
 	answer( { result: BRIEF } );
 
-	clickTarget();
-	answer( { result: { ...BRIEF, subject: 'entry', findings: [] } } );
+	clickTarget( { id: 'other' } );
+	answer(
+		{ result: { ...BRIEF, subject: 'entry', findings: [] } },
+		'url:/shop-7'
+	);
 
 	expect( view.container.textContent ).toContain( 'About 2 selected things' );
 } );
@@ -419,6 +444,9 @@ test( 'a fresh pick starts a fresh selection', () => {
 	arm();
 	clickTarget( { additive: true } );
 	answer( { result: BRIEF } );
+	clickTarget( { id: 'other' } );
+	answer( { result: { ...BRIEF, subject: 'url' } }, 'url:/shop-7' );
+	expect( view.container.textContent ).toContain( 'About 2' );
 
 	pick();
 	answer( { result: BRIEF } );
@@ -492,4 +520,96 @@ test( 'a pick that hits nothing askable stays armed and stays quiet', () => {
 	expect(
 		document.documentElement.classList.contains( 'newspack-nodes-asking' )
 	).toBe( true );
+} );
+
+// A second modified click on a pick takes it back out, and its brief with it.
+test( 'unpicking a pick drops the brief it brought', () => {
+	render();
+	arm();
+	clickTarget( { additive: true } );
+	answer( { result: BRIEF } );
+	clickTarget( { additive: true } );
+
+	clickTarget( { id: 'other' } );
+	answer( { result: { ...BRIEF, subject: 'url' } }, 'url:/shop-7' );
+
+	expect( view.container.textContent ).toContain( 'About this url' );
+	expect( view.container.textContent ).not.toContain( 'About 2' );
+} );
+
+// The answer to a pick already taken back still arrives; it must not land.
+test( 'a brief answering a pick already unpicked never lands', () => {
+	render();
+	arm();
+	clickTarget( { additive: true } );
+	clickTarget( { additive: true } );
+	answer( { result: BRIEF } );
+
+	clickTarget( { id: 'other' } );
+	answer( { result: { ...BRIEF, subject: 'url' } }, 'url:/shop-7' );
+
+	expect( view.container.textContent ).toContain( 'About this url' );
+} );
+
+// A plain click on what is already picked finishes the selection; asking
+// about it again would show its brief twice.
+test( 'finishing on a pick asks nothing more', () => {
+	render();
+	arm();
+	clickTarget( { additive: true } );
+	answer( { result: BRIEF } );
+
+	clickTarget();
+
+	expect( sent ).toHaveLength( 1 );
+	expect( view.container.textContent ).toContain( 'About this span' );
+} );
+
+// @longform A descriptor too long to ride a reply's address still gets its
+// brief: the reply is matched on the arguments it echoes, never its address.
+test( 'a pick whose descriptor is too long for an address still gets its brief', () => {
+	render();
+	expect( encodeURIComponent( LONG_SPAN ).length ).toBeGreaterThan( 128 );
+	expect( askOpts.subjectOf( [ LONG_SPAN ] ) ).toBeNull();
+	arm();
+
+	clickTarget( { id: 'long' } );
+	answer( { result: BRIEF }, LONG_SPAN );
+
+	expect( view.container.textContent ).toContain( 'About this span' );
+} );
+
+// Replies land in whatever order the server answers; the panel keeps the
+// order the reader picked in.
+test( 'briefs show in pick order whatever order they are answered in', () => {
+	render();
+	arm();
+	clickTarget( { additive: true } );
+	clickTarget( { additive: true, id: 'other' } );
+
+	answer(
+		{
+			result: {
+				...BRIEF,
+				subject: 'url',
+				findings: [
+					{ ...BRIEF.findings[ 0 ], title: 'second-pick-73' },
+				],
+			},
+		},
+		'url:/shop-7'
+	);
+	answer( {
+		result: {
+			...BRIEF,
+			findings: [ { ...BRIEF.findings[ 0 ], title: 'first-pick-41' } ],
+		},
+	} );
+	clickTarget( { id: 'other' } );
+
+	const text = view.container.textContent;
+	expect( text ).toContain( 'About 2 selected things' );
+	expect( text.indexOf( 'first-pick-41' ) ).toBeLessThan(
+		text.indexOf( 'second-pick-73' )
+	);
 } );

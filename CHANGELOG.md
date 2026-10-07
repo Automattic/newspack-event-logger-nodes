@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The substrate floor rises to newspack-nodes 2.98.0** for the `data-ask-picked` paint in its `newspack-nodes-ui` stylesheet. The picker hook is bundled here at build time, so an older substrate would run the selection with nothing showing what is picked.
+
+### Fixed
+
+- **A Cmd/Ctrl press on a request-log row no longer selects table cells in Firefox.** Each row cancels the default of a modified `mousedown`, which Firefox spends selecting and outlining individual cells; the click that follows still arrives, so Cmd-click on a foldable row still unfolds its whole subtree, and a plain press keeps its default, so a drag still selects text.
+- **Ask AI's multi-select takes a pick back out.** A second Cmd/Ctrl-click on a picked element removes it, and `useAsk` drops its brief: the selection is one entry per standing pick, keyed by its target descriptor, and each reply fills the pick whose descriptor it echoes as its first argument, so the answer to a pick removed before it arrived lands nowhere. No subject rides the reply's address, so a span name past the 128 characters an address may carry still gets its brief. Briefs show in pick order rather than arrival order. A plain click on an element already picked finishes the selection without asking about it twice. Picked elements, a whole log row included, are painted by the substrate's `data-ask-picked` style.
+
 ## [0.125.0] - 2026-10-06
 
 ### Changed

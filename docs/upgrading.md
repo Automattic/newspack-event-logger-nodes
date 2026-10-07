@@ -6,6 +6,12 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.98.0.** The Ask picker marks
+  each element a pick stands on, and the substrate's `newspack-nodes-ui`
+  stylesheet, which 2.98.0 extends, is what paints that mark. Below the
+  floor the plugin stays dormant behind its admin notice. Update the
+  substrate first, then this plugin, then restart the workers.
+
 - **This release needs newspack-nodes 2.97.0.** The MCP door meters each
   session through the substrate's `Rate_Limit`, which 2.97.0 adds. Below
   the floor the plugin stays dormant behind its admin notice. Update the
