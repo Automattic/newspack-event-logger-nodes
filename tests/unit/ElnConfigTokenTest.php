@@ -115,15 +115,21 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '1', Topology_Analyzer::frontmatter( 'hub' )['is_hub'] ?? null );
 	}
 
-	public function test_an_unreadable_active_topology_fails_loud_when_none_declares(): void {
-		// Unread, the broken one may be the hub the operator activated.
-		$dir = $this->make_temp_dir( 'eln-hub-broken-' );
-		\file_put_contents( "{$dir}/numbat-ledger.tsl", "make_node Echo numbat-echo-5521\n" );
-		\file_put_contents( "{$dir}/okapi-shard.tsl", "var is_hub = 1\nmake_node Echo okapi-twin-7719\nmake_node Null okapi-twin-7719\n" );
-		$this->activate_user_topologies( $dir, [ 'okapi-shard', 'numbat-ledger' ] );
+	public function test_a_declaration_stands_though_the_topology_includes_a_file_that_is_absent(): void {
+		$dir = $this->make_temp_dir( 'eln-hub-broken-include-' );
+		\file_put_contents( "{$dir}/okapi-shard.tsl", "var is_hub = 1\ninclude absent-lab-7719\nmake_node Echo okapi-echo-7719\n" );
+		$this->activate_user_topologies( $dir, [ 'okapi-shard' ] );
+
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
+	public function test_an_active_name_no_tsl_resolves_fails_loud_naming_it(): void {
+		$dir = $this->make_temp_dir( 'eln-hub-missing-' );
+		\file_put_contents( "{$dir}/wombat-relay.tsl", "var is_hub = 1\nmake_node Echo wombat-echo-3301\n" );
+		$this->activate_user_topologies( $dir, [ 'wombat-relay', 'ghost-shard-8841' ] );
 
 		$this->expectException( \RuntimeException::class );
-		$this->expectExceptionMessage( 'okapi-shard' );
+		$this->expectExceptionMessage( 'ghost-shard-8841' );
 		Core::resolve_config_token( 'eln', 'is_hub' );
 	}
 
