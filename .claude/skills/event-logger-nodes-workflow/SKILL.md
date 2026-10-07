@@ -201,7 +201,7 @@ npm run lint:php     # phpcs + the 80-column comment gate
 npm run lint:js      # eslint + comment gate + lint-contract.mjs (the ADR gates)
 npm run lint:scss    # stylelint + lint-styles.mjs
 npm run lint:types   # tsc against tsconfig.check.json
-npm run lint:shell   # shellcheck over pre-push and scripts/*.sh
+npm run lint:shell   # shellcheck over pre-push, pre-push.local and scripts/*.sh
 npm run test:js      # jest
 npm run lint:deadcode     # = lint:phpstan — level 10, strict rules AND dead code
 npm run lint:deadcode:js  # knip over the JS
@@ -213,7 +213,7 @@ bash scripts/check-substrate-floor.sh  # is the declared floor high enough?
 
 Both dead-code audits gate `pre-commit` on staged files, and both exclude tests as consumers, so an export only its own test imports reads as dead. Verify the call path before deleting anything either tool names — most findings are live by hook, by reflection, by `.tsl` topology or from JS. On the JS side mark a deliberate one `@testonly` in its docblock, which `knip.json` reads as a tag; the PHP side has no such tag, and a false positive is silenced in `phpstan-deadcode.neon`'s `ignoreErrors`. knip cannot parse JSX in a `.js` file, which drops that file's `import()` expressions, so every `lazy( () => import( './X' ) )` target is an `entry` in `knip.json`.
 
-Five gates run on every push, docs-only included: the jest suite with coverage, its per-file 90% gate, `scripts/lint-docs.sh`, `scripts/check-substrate-floor.sh` and dndocker's `tools/check-firehose-parity.py`, which holds `Log_Manager` and the Perl `Gyrobase::Log` to one wire contract — the 34-key `ENV_ALLOWLIST`, `ENV_VALUE_MAX` (256), the U+2026 elision marker and `URL_REDACT_PATTERN` are hand-maintained copies in two repos, and only dndocker sees both. It also refuses an allowlisted key that reads as a secret. The floor check and the parity check skip cleanly when the checkout each needs is absent.
+Seven gates run on every push, docs-only included: the jest suite with coverage, its per-file 90% gate, `scripts/lint-docs.sh`, `scripts/lint-wp-pin.mjs`, `scripts/check-substrate-floor.sh`, `scripts/lint-eln-docs.sh` and dndocker's `tools/check-firehose-parity.py`, which holds `Log_Manager` and the Perl `Gyrobase::Log` to one wire contract — the 34-key `ENV_ALLOWLIST`, `ENV_VALUE_MAX` (256), the U+2026 elision marker and `URL_REDACT_PATTERN` are hand-maintained copies in two repos, and only dndocker sees both. It also refuses an allowlisted key that reads as a secret. The floor check and the parity check skip cleanly when the checkout each needs is absent.
 
 `pre-push` runs the right subset for the file types in the push range, so pushing is the gate — don't duplicate it by hand.
 
