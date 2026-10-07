@@ -111,11 +111,11 @@ Three invariants a diff must keep:
 
 ### 9. No operator hub toggle
 
-There is no `enable_workers` and no `enable_aggregator`; `tests/unit/RetiredConfigKeysTest.php` guards both names. Hub-mode derives from whether the `aggregator` topology — plus `hub-control` for settings and discovery fan-out — sits in the substrate's active `topologies` list. Fresh installs are spokes or standalone.
+There is no `enable_workers` and no `enable_aggregator`; `tests/unit/RetiredConfigKeysTest.php` guards both names. A site is a hub when an active topology declares `var is_hub = 1` in its own top-level frontmatter, as the stock `hub` and `aggregator` do; `hub-control` adds the settings and discovery fan-out. Fresh installs are spokes or standalone.
 
 Settings fan-out is the substrate `Settings_Sync_Node` graph in the `hub-control` topology. `Auto_Tuner_Node` mutates the one rule its message names (`rule_id`) and persists the whole list through `Rule_Set::save()`, which records a settings event like any admin edit — no `remote_manager` job, no `suppress_sync`. Its write is gated on `authorized()`: the `NEWSPACK_NODES_WORKER_TYPE` env a worker carries, or `manage_options`. A visitor holds neither, and neither does a `wp nodes run` worker started without `--user` — its decisions are dropped. Nothing fans the settings event out unless `hub-control` is active and per-spoke `HTTP_Out` egress is wired — by hand or as a `Vault_Group`; **missing consumers ARE the structural gate**.
 
-Push back on any diff introducing a hub flag — an `enable_aggregator` / `enable_workers` check, a `Hub::is_active()` helper, a polarity check around the fan-out. Each puts an operator toggle back in front of a decision the active topology set already makes.
+Push back on any diff introducing a hub flag — an `enable_aggregator` / `enable_workers` check, a `Hub::is_active()` helper, a polarity check around the fan-out — and on code deciding hub-ness from a topology's or a log's name. What a node reads is defined in TSL alone, and the hub's own TSL already declares what it is.
 
 ### 10. The substrate floor is a version, not a presence check
 

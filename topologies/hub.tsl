@@ -1,7 +1,10 @@
 # hub.tsl — both hub legs, aggregator's firehose and PHP error-log ingest and
 # hub-control's settings/discovery egress, in one worker. Frontmatter is read
-# from the top-level file only, so both `var` pins below must live here — an
-# included file's own frontmatter is skipped.
+# from the top-level file only, so all three `var` pins below must live here —
+# an included file's own frontmatter is skipped.
+#
+# `is_hub = 1` declares the site a hub, which `<eln:is_hub>` reads; the one in
+# `aggregator` counts only where that file is activated on its own.
 #
 # `num_partitions = 1` does two things at once: it keeps hub-control's
 # single-instance control plane single (without it, a hub configured above
@@ -18,6 +21,7 @@
 # hub's SSE pulls and its outbound settings/discovery commands stay open
 # rather than cold-starting on the next reconcile pass.
 
+var is_hub = 1
 var num_partitions = 1
 var on_demand_idle = 0
 

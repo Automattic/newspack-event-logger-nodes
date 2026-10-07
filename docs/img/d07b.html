@@ -26,11 +26,12 @@
   .math .op { flex: 0 0 26px; font-size: 17px; color: #787C82; align-self: center; padding: 0; }
 </style>
 <div class="sheet">
-  <h1>The live hub is four lines, and fifteen names a spoke</h1>
+  <h1>The live hub is five lines, and fifteen names a spoke</h1>
   <p class="sub">The top-level topology names ONE include, ELN's own <span class="mono">hub</span> composition, which runs both stock <span class="mono">Vault_Group</span> legs — each a <span class="mono">make_node</span> line building a child per Vault entry in group <span class="mono">spoke</span> — and each child still costs the hub the names below.</p>
 
   <div class="listing">
     <header>aggregator-hub.tsl <span>· the whole top-level file</span></header>
+    <div class="ln"><div class="code"><span class="k">var</span> is_hub = 1</div><div class="why">Declares the site a hub. <span class="mono">hub</span> declares it too, but an included file's frontmatter is skipped.</div></div>
     <div class="ln"><div class="code"><span class="k">var</span> on_demand_idle = 0</div><div class="why">The worker never idles out, so the streams stay open.</div></div>
     <div class="ln"><div class="code"><span class="k">var</span> num_partitions = 1</div><div class="why">One instance holds every spoke.</div></div>
     <div class="ln"><div class="code"><span class="k">include</span> hub</div><div class="why">ELN's own composition of <span class="mono">aggregator</span> (firehose and PHP errors in) and <span class="mono">hub-control</span> (commands out) — both legs, below.</div></div>

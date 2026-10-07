@@ -4,11 +4,8 @@
  *
  * The substrate resolves `<ns:key>` tokens via per-namespace resolvers
  * (Core::register_config_namespace / resolve_config_token). This plugin
- * registers an `eln` namespace for its app-specific tokens (is_hub and the
- * stats Table TTLs) so `<eln:KEY>` resolves to the same value the old
- * merged-config `<config:KEY>` produced. The auto_disable_threshold /
- * auto_protect_time_threshold / significant_events_csv tokens were retired
- * with the seven global settings the per-URL ruleset absorbed (Task 10).
+ * registers an `eln` namespace for its app-specific tokens: is_hub, which an
+ * active topology declares in its own frontmatter, and the stats Table TTLs.
  * Keys it does not own resolve to ''.
  *
  * @package Newspack_Event_Logger_Nodes
@@ -18,6 +15,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Topology_Analyzer;
 use Newspack_Nodes\Topology_Registry;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
@@ -30,15 +28,16 @@ class ElnConfigTokenTest extends TestCase {
 		parent::setUp();
 		$this->saved_resolvers  = Core::$config_resolvers;
 		$GLOBALS['_wp_options'] = [];
-		// `is_hub` derives from active-topology membership; the active names are
-		// resolved against the stock topology dir, so register it here (other
-		// test classes reset the registry) so `aggregator` synthesizes.
+		// Other classes reset the registry, so the stock dir is registered here
+		// for the shipped `aggregator` and `hub` to resolve.
 		Topology_Registry::register_stock_dir( \dirname( __DIR__, 2 ) . '/topologies' );
 		\Newspack_Nodes\Config::reset();
 		Config::reset();
 	}
 
 	protected function tearDown(): void {
+		// A case may shadow the stock dir; the next setUp re-registers.
+		Topology_Registry::reset();
 		Core::$config_resolvers = $this->saved_resolvers;
 		$GLOBALS['_wp_options'] = [];
 		\Newspack_Nodes\Config::reset();
@@ -54,186 +53,99 @@ class ElnConfigTokenTest extends TestCase {
 
 	// --- is_hub resolver ----------------------------------------------------
 
-	public function test_is_hub_false_when_aggregator_topology_inactive(): void {
-		// A site whose active topologies DON'T include `aggregator` is a spoke,
-		// and a bool token renders as `0`, which a `bool` arg binds as false.
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub' ) );
-	}
-
-	public function test_is_hub_true_when_aggregator_topology_active(): void {
-		// A hub is a site whose active topologies include `aggregator`.
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'aggregator' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
-	}
-
-	public function test_is_hub_true_when_an_active_topology_wraps_aggregator(): void {
-		// Deployments run the stock aggregator through a locally-named wrapper,
-		// so the ACTIVE name is never `aggregator` and a name match sees a spoke.
-		$dir = $this->make_temp_dir( 'eln-hub-wrapper-' );
-		\file_put_contents( "{$dir}/okapi-hub.tsl", "include aggregator\n" );
-		Topology_Registry::register_user_dir( $dir );
-
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-hub' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
+	public function test_an_active_topology_declaring_is_hub_makes_a_hub(): void {
+		$dir = $this->make_temp_dir( 'eln-hub-declared-' );
+		\file_put_contents( "{$dir}/numbat-ledger.tsl", "make_node Echo numbat-echo-5521\n" );
+		\file_put_contents( "{$dir}/wombat-relay.tsl", "var is_hub = 1\nmake_node Echo wombat-echo-3301\n" );
+		$this->activate_user_topologies( $dir, [ 'numbat-ledger', 'wombat-relay' ] );
 
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
-	public function test_is_hub_true_when_an_active_topology_wires_remote_sources(): void {
-		// A deployment that FORKS the stock aggregator to change one argument
-		// renames it, so no name in the include chain is `aggregator` — but the
-		// graph still reads from spokes, which is what makes a site a hub.
-		$dir = $this->make_temp_dir( 'eln-hub-fork-' );
+	public function test_no_declaration_makes_a_spoke_whatever_its_readers_pull(): void {
+		// A firehose reader is wiring, not a declaration: only the var counts.
+		$dir = $this->make_temp_dir( 'eln-hub-undeclared-' );
+		\file_put_contents( "{$dir}/numbat-ledger.tsl", "make_node Echo numbat-echo-5521\n" );
 		\file_put_contents(
-			"{$dir}/okapi-fanout.tsl",
-			"make_node Remote_Source firehose:okapi okapi /tmp/okapi-off /tmp/okapi-dl firehose.p{partition}:next-okapi\n"
+			"{$dir}/quokka-fanout.tsl",
+			"var is_hub = 0\nmake_node Remote_Source firehose:quokka quokka /tmp/quokka-off /tmp/quokka-dl firehose.p{partition}:next-quokka\n"
 		);
-		\file_put_contents( "{$dir}/okapi-hub.tsl", "include okapi-fanout\n" );
-		Topology_Registry::register_user_dir( $dir );
-
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-hub' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
-	}
-
-	public function test_is_hub_true_when_the_firehose_is_one_pair_among_several(): void {
-		$dir = $this->make_temp_dir( 'eln-hub-pairs-' );
-		\file_put_contents(
-			"{$dir}/okapi-pairs.tsl",
-			"make_node Remote_Source spokes:okapi okapi /tmp/pairs-off /tmp/pairs-dl sources/php:php-okapi firehose.p{partition}:next-okapi\n"
-		);
-		Topology_Registry::register_user_dir( $dir );
-
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-pairs' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
-	}
-
-	public function test_is_hub_true_when_a_remote_source_subclass_pulls_the_firehose(): void {
-		require_once \dirname( __DIR__ ) . '/fixtures/class-tapir-pull-node.php';
-		\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\Tests\\Fixtures\\' );
-		$dir = $this->make_temp_dir( 'eln-hub-subclass-' );
-		\file_put_contents( "{$dir}/okapi-tapir.tsl", "make_node Tapir_Pull firehose:okapi okapi /tmp/tapir-off /tmp/tapir-dl firehose.p{partition}:next-tapir\n" );
-		Topology_Registry::register_user_dir( $dir );
-
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-tapir' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
-	}
-
-	public function test_is_hub_true_when_a_remote_source_pulls_one_fixed_firehose_partition(): void {
-		$dir = $this->make_temp_dir( 'eln-hub-fixed-' );
-		\file_put_contents( "{$dir}/okapi-p3.tsl", "make_node Remote_Source firehose:okapi okapi /tmp/p3-off /tmp/p3-dl firehose.p3:next-p3\n" );
-		Topology_Registry::register_user_dir( $dir );
-
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-p3' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
-	}
-
-	public function test_an_unresolvable_token_in_a_pulled_partition_fails_the_hub_derivation_loud(): void {
-		// Unresolved, it might name the firehose: answering "spoke" would turn
-		// that hub's per-server stats off in silence.
-		$dir = $this->make_temp_dir( 'eln-hub-token-' );
-		\file_put_contents( "{$dir}/okapi-tok.tsl", "make_node Remote_Source firehose:okapi okapi /tmp/tok-off /tmp/tok-dl firehose.p<wombat9:shard>:next-tok\n" );
-		Topology_Registry::register_user_dir( $dir );
-
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-tok' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->expectExceptionMessage( 'wombat9:shard' );
-		Core::resolve_config_token( 'eln', 'is_hub' );
-	}
-
-	public function test_an_aggregator_by_name_is_a_hub_whatever_an_earlier_reader_holds(): void {
-		$dir = $this->make_temp_dir( 'eln-hub-name-first-' );
-		\file_put_contents( "{$dir}/peer-ledger.tsl", "make_node Remote_Source ledger:okapi okapi /tmp/led-off /tmp/led-dl ledger.p<wombat9:shard>:next-led\n" );
-		Topology_Registry::register_user_dir( $dir );
-
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'peer-ledger', 'aggregator' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
-
-		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
-	}
-
-	public function test_is_hub_false_when_the_wired_remote_sources_read_another_log(): void {
-		// A spoke may pull some other log from a peer; only a firehose reader
-		// aggregates requests, so only one makes the site a hub.
-		$dir = $this->make_temp_dir( 'eln-hub-other-log-' );
-		\file_put_contents(
-			"{$dir}/okapi-ledger.tsl",
-			"make_node Remote_Source ledger:okapi okapi /tmp/led-off /tmp/led-dl ledger.p{partition}:next-led sources/php:next-php\n"
-			. "make_node Remote_Source hosefire:okapi okapi /tmp/hose-off /tmp/hose-dl hosefire.p{partition}:next-hose\n"
-		);
-		Topology_Registry::register_user_dir( $dir );
-
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-ledger' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
+		$this->activate_user_topologies( $dir, [ 'numbat-ledger', 'quokka-fanout' ] );
 
 		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
-	public function test_an_unreadable_active_topology_fails_the_hub_derivation_loud(): void {
-		// Unread, the broken one might be the hub: answering "spoke" would turn
-		// its per-server stats off in silence.
-		$dir = $this->make_temp_dir( 'eln-hub-broken-' );
-		\file_put_contents( "{$dir}/okapi-shard.tsl", "make_node Echo okapi-twin-7719\nmake_node Null okapi-twin-7719\n" );
-		Topology_Registry::register_user_dir( $dir );
+	public function test_a_declaration_in_an_included_file_only_makes_a_spoke(): void {
+		// Frontmatter is the top-level file's alone, as num_partitions is.
+		$dir = $this->make_temp_dir( 'eln-hub-included-' );
+		\file_put_contents( "{$dir}/numbat-core.tsl", "var is_hub = 1\nmake_node Echo numbat-echo-7702\n" );
+		\file_put_contents( "{$dir}/numbat-shell.tsl", "include numbat-core\n" );
+		$this->activate_user_topologies( $dir, [ 'numbat-shell' ] );
 
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'okapi-shard', 'combined' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
+		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
+	public function test_a_declaration_other_than_one_or_zero_fails_loud_naming_its_topology(): void {
+		$dir = $this->make_temp_dir( 'eln-hub-malformed-' );
+		\file_put_contents( "{$dir}/wombat-relay.tsl", "var is_hub = 1\nmake_node Echo wombat-echo-3301\n" );
+		\file_put_contents( "{$dir}/quokka-tally.tsl", "var is_hub = yes\nmake_node Echo quokka-echo-8814\n" );
+		$this->activate_user_topologies( $dir, [ 'wombat-relay', 'quokka-tally' ] );
 
 		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessageMatches( '/quokka-tally.*yes/' );
 		Core::resolve_config_token( 'eln', 'is_hub' );
 	}
 
-	public function test_a_failed_hub_derivation_is_memoized_until_the_local_cache_resets(): void {
-		// Every <eln:is_hub> resolution would otherwise re-walk every active
-		// topology: the failure is derived once and raised again as it was.
-		$dir = $this->make_temp_dir( 'eln-hub-memo-' );
-		\file_put_contents( "{$dir}/quokka-shard.tsl", "make_node Echo quokka-twin-4417\nmake_node Null quokka-twin-4417\n" );
-		Topology_Registry::register_user_dir( $dir );
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'quokka-shard', 'aggregator' ];
+	public function test_a_topology_named_aggregator_without_the_declaration_makes_a_spoke(): void {
+		// The name is not a signal: a stock dir shadowing the shipped file
+		// with one that declares nothing leaves the site a spoke.
+		$dir = $this->make_temp_dir( 'eln-hub-named-' );
+		\file_put_contents( "{$dir}/aggregator.tsl", "make_node Echo aggregator-echo-6630\n" );
+		Topology_Registry::reset();
+		Topology_Registry::register_stock_dir( $dir );
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'aggregator' ];
 		\Newspack_Nodes\Config::reset();
 		Config::reset();
 
-		$first = $this->resolution_failure();
-		// Repaired on disk: only a fresh derivation could see it.
-		\file_put_contents( "{$dir}/quokka-shard.tsl", "make_node Echo quokka-twin-4417\n" );
-		\Newspack_Nodes\Topology_Analyzer::reset_caches();
-		$second = $this->resolution_failure();
-
-		$this->assertSame( $first, $second, 'the second resolution re-raises the first failure' );
-		Config::reset_local_cache();
-		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ), 'a reset derives afresh' );
+		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
-	/** What resolving `<eln:is_hub>` threw; fails the test when it threw nothing. */
-	private function resolution_failure(): \Throwable {
-		try {
-			Core::resolve_config_token( 'eln', 'is_hub' );
-		} catch ( \Throwable $e ) {
-			return $e;
-		}
-		$this->fail( 'expected the hub derivation to throw' );
+	public function test_the_stock_hub_topologies_declare_themselves(): void {
+		$this->assertSame( '1', Topology_Analyzer::frontmatter( 'aggregator' )['is_hub'] ?? null );
+		$this->assertSame( '1', Topology_Analyzer::frontmatter( 'hub' )['is_hub'] ?? null );
+	}
+
+	public function test_an_unreadable_active_topology_fails_loud_when_none_declares(): void {
+		// Unread, the broken one may be the hub the operator activated.
+		$dir = $this->make_temp_dir( 'eln-hub-broken-' );
+		\file_put_contents( "{$dir}/numbat-ledger.tsl", "make_node Echo numbat-echo-5521\n" );
+		\file_put_contents( "{$dir}/okapi-shard.tsl", "var is_hub = 1\nmake_node Echo okapi-twin-7719\nmake_node Null okapi-twin-7719\n" );
+		$this->activate_user_topologies( $dir, [ 'okapi-shard', 'numbat-ledger' ] );
+
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'okapi-shard' );
+		Core::resolve_config_token( 'eln', 'is_hub' );
+	}
+
+	public function test_a_readable_declaration_makes_a_hub_beside_an_unreadable_topology(): void {
+		$dir = $this->make_temp_dir( 'eln-hub-beside-broken-' );
+		\file_put_contents( "{$dir}/okapi-shard.tsl", "make_node Echo okapi-twin-7719\nmake_node Null okapi-twin-7719\n" );
+		\file_put_contents( "{$dir}/wombat-relay.tsl", "var is_hub = 1\nmake_node Echo wombat-echo-3301\n" );
+		$this->activate_user_topologies( $dir, [ 'okapi-shard', 'wombat-relay' ] );
+
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
+	/**
+	 * Serve `$dir` as the user topology dir and activate `$names` from it.
+	 *
+	 * @param list<string> $names Active topology names.
+	 */
+	private function activate_user_topologies( string $dir, array $names ): void {
+		Topology_Registry::register_user_dir( $dir );
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = $names;
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
 	}
 
 	// --- schema-token / owned-empty guards ----------------------------------
@@ -241,9 +153,9 @@ class ElnConfigTokenTest extends TestCase {
 	public function test_an_owned_but_empty_token_is_resolved_not_unresolvable(): void {
 		// A spoke's is_hub is owned and false, NOT unresolvable — strict
 		// resolution must return '0' and not throw.
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined' ];
-		\Newspack_Nodes\Config::reset();
-		Config::reset();
+		$dir = $this->make_temp_dir( 'eln-hub-owned-' );
+		\file_put_contents( "{$dir}/numbat-ledger.tsl", "make_node Echo numbat-echo-5521\n" );
+		$this->activate_user_topologies( $dir, [ 'numbat-ledger' ] );
 
 		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub', true ) );
 	}
@@ -254,7 +166,7 @@ class ElnConfigTokenTest extends TestCase {
 		// footgun) resolves to '' silently in prod but THROWS under strict, which
 		// is exactly what schema-arg resolution now uses. This walks Flame_Builder's
 		// schema and fails loud if any token isn't owned.
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'aggregator' ];
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'aggregator' ];
 		\Newspack_Nodes\Config::reset();
 		Config::reset();
 
