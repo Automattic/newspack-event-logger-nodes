@@ -121,11 +121,12 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// newspack-nodes-ui handle; below it a tag token's × vanishes on dark.
 	// 2.94.0 is Table_Client::all_members() and SSCAN, which read a bucket
 	// set of any size; below it every bucket selection fatals.
+	// 2.97.0 is Rate_Limit, which meters the MCP door; below it that fatals.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.94.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.97.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

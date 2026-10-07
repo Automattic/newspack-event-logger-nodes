@@ -573,92 +573,26 @@ class McpControllerTest extends TestCase {
 		$this->assertSame( 'rate_limited', $last->get_error_code() );
 	}
 
-	/**
-	 * How many of `$calls` permission checks the door admits.
-	 */
-	private function admitted( MCP_Controller $controller, string $bearer, int $calls ): int {
-		$admitted = 0;
-		for ( $i = 0; $i < $calls; $i++ ) {
-			if ( true === $controller->check_permission( $this->request( [], $bearer ) ) ) {
-				++$admitted;
-			}
-		}
-		return $admitted;
-	}
-
-	/** Pins the cache's expiry clock, which is the window's only clock. */
-	private function at( int $now ): void {
-		\assert( Core::$memd instanceof InMemoryMemcached );
-		Core::$memd->clock = static fn (): int => $now;
-	}
-
-	/**
-	 * The budget is the calls of the trailing RATE_LIMIT_WINDOW_S, so a burst
-	 * just before a ten-second boundary still counts just after it, and each
-	 * call's room returns one window after that call alone.
-	 */
-	public function test_the_window_rolls_with_each_call_rather_than_resetting(): void {
+	/** A session's budget is the calls of its trailing RATE_LIMIT_WINDOW_S. */
+	public function test_a_session_gets_its_budget_back_one_window_later(): void {
 		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-
-		$this->at( 1_800_000_003 );
-		$this->assertSame( 7, $this->admitted( $controller, $bearer, 7 ) );
-		$this->at( 1_800_000_008 );
-		$this->assertSame( 13, $this->admitted( $controller, $bearer, 14 ) );
-
-		$this->at( 1_800_000_011 );
-		$this->assertSame( 0, $this->admitted( $controller, $bearer, 3 ), 'a boundary frees nothing' );
-
-		$this->at( 1_800_000_013 );
-		$this->assertSame( 7, $this->admitted( $controller, $bearer, 9 ), 'the first seven calls have aged out, alone' );
-
-		$this->at( 1_800_000_018 );
-		$this->assertSame( 13, $this->admitted( $controller, $bearer, 15 ) );
-	}
-
-	/**
-	 * Admission is the atomic claim, never the read before it: a read that
-	 * misses slots another request holds still admits nobody past the budget.
-	 */
-	public function test_a_stale_read_cannot_admit_past_the_budget(): void {
-		[ $minted, $bearer ] = $this->session( Capabilities::READ );
-		$memd                = Core::$memd;
+		$memd         = Core::$memd;
 		\assert( $memd instanceof InMemoryMemcached );
-		for ( $slot = 0; $slot < MCP_Controller::RATE_LIMIT_BURST; $slot++ ) {
-			$key = Cache_Backend::site_key( "eln-mcp-rl:{$minted['handle']}:{$slot}" );
-			$memd->add( $key, 1, MCP_Controller::RATE_LIMIT_WINDOW_S );
-			$memd->fail_next_get( $key, \Memcached::RES_NOTFOUND );
-		}
-
-		$result = ( new MCP_Controller() )->check_permission( $this->request( [], $bearer ) );
-
-		$this->assertInstanceOf( \WP_Error::class, $result );
-		$this->assertSame( 'rate_limited', $result->get_error_code() );
-	}
-
-	/**
-	 * A cache that cannot answer the slot read cannot meter either: the door
-	 * refuses as unavailable, and spends no claim on a backend already failing.
-	 */
-	public function test_a_failed_slot_read_refuses_the_door_as_unavailable(): void {
-		[ $minted, $bearer ] = $this->session( Capabilities::READ );
-		$dead                = new class() extends InMemoryMemcached {
-			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
-				return false;
+		$controller = new MCP_Controller();
+		$admitted   = function ( int $calls ) use ( $controller, $bearer ): int {
+			$n = 0;
+			for ( $i = 0; $i < $calls; $i++ ) {
+				$n += true === $controller->check_permission( $this->request( [], $bearer ) ) ? 1 : 0;
 			}
+			return $n;
 		};
-		Core::$memd = $dead;
 
-		$result = ( new MCP_Controller() )->check_permission( $this->request( [], $bearer ) );
-
-		$this->assertInstanceOf( \WP_Error::class, $result );
-		$this->assertSame( 'rate_limit_unavailable', $result->get_error_code() );
-		$this->assertSame( 503, $result->data['status'] ?? null );
-		$this->assertSame(
-			[],
-			\array_filter( $dead->keys(), static fn ( string $key ): bool => \str_contains( $key, "eln-mcp-rl:{$minted['handle']}" ) ),
-			'no slot was claimed'
-		);
+		$memd->clock = static fn (): int => 1_800_000_003;
+		$this->assertSame( MCP_Controller::RATE_LIMIT_BURST, $admitted( MCP_Controller::RATE_LIMIT_BURST + 1 ) );
+		$memd->clock = static fn (): int => 1_800_000_003 + MCP_Controller::RATE_LIMIT_WINDOW_S - 1;
+		$this->assertSame( 0, $admitted( 1 ), 'still inside the window' );
+		$memd->clock = static fn (): int => 1_800_000_003 + MCP_Controller::RATE_LIMIT_WINDOW_S;
+		$this->assertSame( 1, $admitted( 1 ) );
 	}
 
 	/** With no cache to meter in, the door refuses rather than run unmetered. */

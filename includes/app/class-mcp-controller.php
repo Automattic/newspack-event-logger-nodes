@@ -30,12 +30,12 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Nodes\Bootstrap;
-use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Auth;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Rate_Limit;
 
 \defined( 'ABSPATH' ) || exit;
 
@@ -68,7 +68,7 @@ class MCP_Controller {
 	];
 
 	/**
-	 * Calls one session may make in any trailing RATE_LIMIT_WINDOW_S.
+	 * Calls one session may make per RATE_LIMIT_WINDOW_S.
 	 *
 	 * MCP does not go through `/command`, so the substrate's per-user cap does
 	 * not bound it — and the tools behind it are not cheap: `grep_requests` and
@@ -80,7 +80,7 @@ class MCP_Controller {
 	 */
 	public const RATE_LIMIT_BURST = 20;
 
-	/** Rolling rate-limit window, in seconds; each call's slot lives this long. */
+	/** Slot TTL, in seconds; memcached frees a slot 9 to 10 seconds after its call. */
 	public const RATE_LIMIT_WINDOW_S = 10;
 
 	/** The standing preamble `initialize` hands back ahead of the measurement caveat. */
@@ -169,71 +169,6 @@ class MCP_Controller {
 			'args'    => [ 'id' => 'The rule id.' ],
 		],
 	];
-
-	/**
-	 * Gate: a Bearer `<handle>.<key>` naming a live session. On success this
-	 * BECOMES that session's minting user and installs its scope as the
-	 * request's ceiling, which is what makes the scope subtractive.
-	 *
-	 * @param \WP_REST_Request $req Request.
-	 * @return true|\WP_Error
-	 */
-	public function check_permission( \WP_REST_Request $req ) {
-		// Network-global fleet: a subsite must not reach the main site's.
-		$gate = Bootstrap::fleet_gate();
-		if ( null !== $gate ) {
-			return $gate;
-		}
-		$header = Core::as_string( $req->get_header( 'authorization' ) ?? '' );
-		if ( ! \preg_match( '/^Bearer\s+([0-9a-f]{32})\.([0-9a-f]{64})$/iD', \trim( $header ), $m ) ) {
-			return new \WP_Error( 'mcp_unauthorized', 'A Bearer <handle>.<key> session credential is required.', [ 'status' => 401 ] );
-		}
-		$record = Command_Auth::load_session_record( $m[1] );
-		if ( null === $record || ! \hash_equals( $record['key'], $m[2] ) ) {
-			return new \WP_Error( 'mcp_unauthorized', 'That session is unknown or expired.', [ 'status' => 401 ] );
-		}
-		if ( \function_exists( 'wp_set_current_user' ) ) {
-			// Whose authority is being spent. The scope only ever narrows it.
-			\wp_set_current_user( $record['user'] );
-		}
-		Capabilities::$session_scope = $record['scope'];
-		return self::check_rate_limit( $m[1] );
-	}
-
-	/**
-	 * Per-session rolling-window rate limit, keyed by handle. Each admitted
-	 * call claims one of RATE_LIMIT_BURST slots for RATE_LIMIT_WINDOW_S, so
-	 * the live slots are the calls of the trailing window and each frees one
-	 * window after the call that claimed it. The claim is the shared cache's
-	 * atomic `add()`, which two concurrent requests cannot both win; the read
-	 * before it only picks which slots to try. Transients offer no atomic
-	 * claim. With no shared cache to claim in, or one whose slot read fails,
-	 * the door refuses rather than run unmetered.
-	 *
-	 * Checked AFTER the credential, so an unauthenticated flood cannot poison
-	 * the slots — the ordering `Spawn_Controller` and `HTTP_In_Node` both use.
-	 *
-	 * @param string $handle Session handle the bearer credential named.
-	 * @return true|\WP_Error
-	 */
-	private static function check_rate_limit( string $handle ) {
-		$backend = Cache_Backend::shared_first();
-		$slots   = [];
-		for ( $slot = 0; $slot < self::RATE_LIMIT_BURST; $slot++ ) {
-			$slots[] = Cache_Backend::site_key( "eln-mcp-rl:{$handle}:{$slot}" );
-		}
-		$failed = true;
-		$held   = $backend?->read_multi( $slots, $failed ) ?? [];
-		if ( null === $backend || $failed ) {
-			return new \WP_Error( 'rate_limit_unavailable', 'MCP calls are metered in memcached or APCu, and neither answered.', [ 'status' => 503 ] );
-		}
-		foreach ( $slots as $key ) {
-			if ( ! \array_key_exists( $key, $held ) && $backend->add( $key, 1, self::RATE_LIMIT_WINDOW_S ) ) {
-				return true;
-			}
-		}
-		return new \WP_Error( 'rate_limited', 'Too many MCP calls; please slow down.', [ 'status' => 429 ] );
-	}
 
 	/**
 	 * The JSON-RPC entry point.
@@ -457,6 +392,43 @@ class MCP_Controller {
 	private static function declaration( string $name, array $tool ): array {
 		return Command_Interpreter_Node::declared_verbs( $tool['class'] )[ $tool['verb'] ]
 			?? throw new \LogicException( \esc_html( "{$name} fronts {$tool['verb']}, which {$tool['class']} does not declare" ) );
+	}
+
+	/**
+	 * Gate: a Bearer `<handle>.<key>` naming a live session. On success this
+	 * BECOMES that session's minting user and installs its scope as the
+	 * request's ceiling, which is what makes the scope subtractive. Then it
+	 * meters the session by handle through `Rate_Limit`.
+	 *
+	 * @param \WP_REST_Request $req Request.
+	 * @return true|\WP_Error A 401 without a live session, a 429 over budget,
+	 *                        a 503 with no cache to meter in.
+	 */
+	public function check_permission( \WP_REST_Request $req ) {
+		// Network-global fleet: a subsite must not reach the main site's.
+		$gate = Bootstrap::fleet_gate();
+		if ( null !== $gate ) {
+			return $gate;
+		}
+		$header = Core::as_string( $req->get_header( 'authorization' ) ?? '' );
+		if ( ! \preg_match( '/^Bearer\s+([0-9a-f]{32})\.([0-9a-f]{64})$/iD', \trim( $header ), $m ) ) {
+			return new \WP_Error( 'mcp_unauthorized', 'A Bearer <handle>.<key> session credential is required.', [ 'status' => 401 ] );
+		}
+		$record = Command_Auth::load_session_record( $m[1] );
+		if ( null === $record || ! \hash_equals( $record['key'], $m[2] ) ) {
+			return new \WP_Error( 'mcp_unauthorized', 'That session is unknown or expired.', [ 'status' => 401 ] );
+		}
+		if ( \function_exists( 'wp_set_current_user' ) ) {
+			// Whose authority is being spent. The scope only ever narrows it.
+			\wp_set_current_user( $record['user'] );
+		}
+		Capabilities::$session_scope = $record['scope'];
+		// After the credential, so an unauthenticated flood spends no slots.
+		return match ( Rate_Limit::claim( "eln-mcp:{$m[1]}", self::RATE_LIMIT_BURST, self::RATE_LIMIT_WINDOW_S ) ) {
+			Rate_Limit::ADMITTED    => true,
+			Rate_Limit::THROTTLED   => new \WP_Error( 'rate_limited', 'Too many MCP calls; please slow down.', [ 'status' => 429 ] ),
+			Rate_Limit::UNAVAILABLE => new \WP_Error( 'rate_limit_unavailable', 'MCP calls are metered in memcached or APCu, and neither answered.', [ 'status' => 503 ] ),
+		};
 	}
 
 	/**
