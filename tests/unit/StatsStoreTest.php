@@ -1826,9 +1826,7 @@ class StatsStoreTest extends TestCase {
 		// Hours 07 and 09 hold every key of the one server their index names;
 		// 08 holds a chart hour key and no index. A chart key is no URL fold's
 		// business: the flush writes it through.
-		foreach ( [ '2026-09-21-07', '2026-09-21-09' ] as $hour ) {
-			self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
-		}
+		self::fold_url_hours( $store, [ '2026-09-21-07', '2026-09-21-09' ], [ 'kea.test' ] );
 		$store->bucket_set_multi( [
 			[ Stats_Store::lb_parts( '' ), '2026-09-21-07', [] ],
 			[ Stats_Store::lb_parts( '' ), '2026-09-21-08', [] ],
@@ -1847,14 +1845,14 @@ class StatsStoreTest extends TestCase {
 		// is not, so the probe names moa.test alone and the ranker re-ranks
 		// that server's hour rather than every server's.
 		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
-		self::seed_folded_hour( $store, '2026-09-21-11', [ 'kea.test', 'moa.test' ] );
-		self::seed_ranked_hour( $store, '2026-09-21-11', [ 'kea.test' ] );
+		self::fold_url_hours( $store, [ '2026-09-21-11' ], [ 'kea.test', 'moa.test' ] );
+		$this->set_url_rank_lists_of( $store, [ '2026-09-21-11' ], [ 'kea.test' => [] ], true );
 		$this->assertSame(
 			[ '2026-09-21-11' => [ 'moa.test' ] ],
 			$store->url_hours_derived( [ '2026-09-21-11' ] )
 		);
 
-		self::seed_ranked_hour( $store, '2026-09-21-11', [ 'moa.test' ] );
+		$this->set_url_rank_lists_of( $store, [ '2026-09-21-11' ], [ 'moa.test' => [] ], true );
 		$this->assertSame(
 			[ '2026-09-21-11' => [] ],
 			$store->url_hours_derived( [ '2026-09-21-11' ] )
@@ -1922,7 +1920,7 @@ class StatsStoreTest extends TestCase {
 	public function test_a_reader_memoizes_no_index_a_failed_read_missed(): void {
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$hour  = '2026-09-21-19';
-		self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
+		self::fold_url_hours( $store, [ $hour ], [ 'kea.test' ] );
 		$store->server_indexes = [];
 		$this->break_stats_table( Stats_Store::TABLE_AGGREGATE );
 
@@ -1945,7 +1943,7 @@ class StatsStoreTest extends TestCase {
 	public function test_the_derived_read_says_when_a_table_left_it_unanswered(): void {
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$hour  = '2026-09-21-19';
-		self::seed_folded_hour( $store, $hour, [ 'kea.test' ] );
+		self::fold_url_hours( $store, [ $hour ], [ 'kea.test' ] );
 		$this->break_stats_table( Stats_Store::TABLE_AGGREGATE );
 
 		$store->url_hours_derived( [ $hour ], $failed );
@@ -2341,7 +2339,8 @@ class StatsStoreTest extends TestCase {
 			$this->asked_verbs( Stats_Store::NS_URLBUCKET ),
 			'the hour in one exchange, then pages for the set past its limit alone'
 		);
-		$this->assertCount( 12_346, $members );
+		// A count, not the map: a passing assertion exports its whole value.
+		$this->assertSame( 12_346, \count( $members ) );
 		$this->assertSame( [ $kea => [ '2026-10-04-13' ] ], $members['e00000003039'] );
 		$this->assertSame( [ $moa => [ '2026-10-04-13' ] ], $members['b2b2b2b2b2b2'] );
 
@@ -2545,43 +2544,6 @@ class StatsStoreTest extends TestCase {
 	private static function rank_url_rows( array $rows, int $n, string $server = 'kea.test' ): array {
 		/** @var array<string,array<string,list<array<int,mixed>>>> */
 		return ( new \ReflectionMethod( Stats_Store::class, 'rank_url_rows' ) )->invoke( null, $rows, $n, false, $server );
-	}
-
-	/**
-	 * What a fold leaves for one hour: the index naming `$servers`, and
-	 * every shard of both families written, empty, for each of them.
-	 *
-	 * @param list<string> $servers Server names.
-	 */
-	private static function seed_folded_hour( Stats_Store $store, string $hour, array $servers ): void {
-		$index  = [];
-		$writes = [];
-		foreach ( $servers as $server ) {
-			$key           = Stats_Store::server_key( $server );
-			$index[ $key ] = [
-				Stats_Store::SRV_NAME   => $server,
-				Stats_Store::SRV_SHARDS => Stats_Store::shard_mask( [ ...Stats_Store::url_shards(), ...Stats_Store::url_shards( true ) ] ),
-			];
-			foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $shard ) {
-				$writes[] = [ Stats_Store::url_hour_parts( $key, $shard ), $hour, [] ];
-			}
-		}
-		$writes[] = [ Stats_Store::url_srv_parts( true ), $hour, $index ];
-		$store->bucket_set_multi( $writes );
-	}
-
-	/**
-	 * What a ranking leaves for one hour: each server's fourteen lists, empty,
-	 * and its DONE marker beside them.
-	 *
-	 * @param list<string> $servers Server names.
-	 */
-	private static function seed_ranked_hour( Stats_Store $store, string $hour, array $servers ): void {
-		$writes = Stats_Store::ranked_writes( self::by_shard( \array_fill_keys( $servers, [] ) ), true, $hour );
-		foreach ( $servers as $server ) {
-			$writes[] = [ Stats_Store::url_rank_done_parts( Stats_Store::server_key( $server ) ), $hour, [] ];
-		}
-		$store->bucket_set_multi( $writes );
 	}
 
 	public function test_the_estimate_follows_the_serializer_the_handle_is_configured_with(): void {

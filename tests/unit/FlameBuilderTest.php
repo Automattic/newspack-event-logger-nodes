@@ -5190,22 +5190,6 @@ class FlameBuilderTest extends TestCase {
 	];
 
 	/**
-	 * Every hour of the plan at `$now` derived as a steady worker leaves it:
-	 * folded, indexed and ranked, the site's lists and records beside one
-	 * server's, each server marked DONE.
-	 *
-	 * @param list<string> $hours The hours to settle.
-	 */
-	private function settle_hours( Stats_Store $store, array $hours ): void {
-		foreach ( $hours as $hour ) {
-			foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $shard ) {
-				$this->seed_url_hour( $store, $hour, $shard, [] );
-			}
-			$this->set_url_rank_lists( $store, $hour, [], true );
-		}
-	}
-
-	/**
 	 * Run one worker lifetime — a restore, a flush every five seconds with a
 	 * request in each, a checkpoint every thirty, a clean stop — and return
 	 * the narration it wrote, with what reached stderr.
@@ -5307,7 +5291,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_a_steady_worker_lifetime_narrates_a_couple_dozen_lines(): void {
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400 );
 		$from  = \gmmktime( 14, 1, 0, 9, 22, 2026 );
-		$this->settle_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $from ) )['hours'] );
+		$this->settle_url_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $from ) )['hours'] );
 		$fb = new Flame_Builder_Node();
 		$fb->sink( new Capture_Sink_Node() );
 		$fb->set_stats_store( $store );
@@ -5365,7 +5349,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_a_stop_a_rank_close_line_raises_waits_for_the_flush(): void {
 		$store = new StopArmingStatsStore( ...$this->stats_store_args( 0, 86400 ) );
 		$from  = \gmmktime( 14, 1, 0, 9, 22, 2026 );
-		$this->settle_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $from ) )['hours'] );
+		$this->settle_url_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $from ) )['hours'] );
 		$fb = new Flame_Builder_Node();
 		$fb->sink( new Capture_Sink_Node() );
 		$fb->set_stats_store( $store );
@@ -5538,7 +5522,7 @@ class FlameBuilderTest extends TestCase {
 		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
 		$now   = \gmmktime( 14, 22, 0, 9, 22, 2026 );
 		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'][2];
-		$this->settle_hours( $store, [ $hour ] );
+		$this->settle_url_hours( $store, [ $hour ] );
 		$store->bucket_forget_multi( [ [ Stats_Store::url_rank_done_parts( Stats_Store::server_key( self::SEED_SERVER ) ), $hour ] ] );
 		$fb->set_stats_store( $store );
 		$stale = new \ReflectionProperty( $fb, 'stale_hours' );
@@ -6221,14 +6205,7 @@ class FlameBuilderTest extends TestCase {
 		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		// Every hour already derived — index, rows and lists — so the probe is
 		// all this flush does.
-		$families = \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) );
-		$hours    = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'];
-		foreach ( $hours as $hour ) {
-			foreach ( $families as $shard ) {
-				$this->seed_url_hour( $store, $hour, $shard, [] );
-			}
-			$this->set_url_rank_lists( $store, $hour, [], true );
-		}
+		$this->settle_url_hours( $store, Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'] );
 		$fb->set_stats_store( $store );
 
 		$this->forget_stats_asks();
@@ -7966,14 +7943,17 @@ class FlameBuilderTest extends TestCase {
 		$this->flush_buckets( $fb, [ self::live_bucket() => [ 'url_stats' => $stats, 'url_names' => $names ] ] );
 
 		$this->assertSame( [ 'SADD' ], \array_keys( $this->asked_verbs( Stats_Store::NS_URLTOKEN ) ), 'no set is read' );
-		$this->assertSame( [ 500, 102 ], \array_map( 'count', self::adds_of( Stats_Store::NS_URLTOKEN ) ), 'the sets are added in the flush chunks' );
+		$adds = self::adds_of( Stats_Store::NS_URLTOKEN );
+		$this->assertSame( [ 500, 102 ], \array_map( 'count', $adds ), 'the sets are added in the flush chunks' );
 		$this->assertSame( 602, $this->get_stats( $fb )['narration'][ Flame_Tree::STATS_WRITES ]['urltoken sets'] ?? null, 'one set a distinct word' );
-		$own = [ '00', ...\array_map( 'strval', \range( 10, 5990, 10 ) ) ];
-		$read = [];
-		foreach ( \array_chunk( [ 'kea', 'kiwi', ...$own ], Stats_Store::SEARCH_WORDS_READ ) as $words ) {
-			$read += \array_filter( $store->url_token_sets( $words, [ self::SEED_SERVER ], self::tick() ) );
+		$word_of = static fn ( int|string $key ): string => \substr( (string) \strrchr( (string) $key, ':' ), 1 );
+		$own     = [ '00', ...\array_map( 'strval', \range( 10, 5990, 10 ) ) ];
+		$this->assertEqualsCanonicalizing( [ 'kea', 'kiwi', ...$own ], \array_map( $word_of, \array_keys( \array_merge( ...$adds ) ) ), 'each word its set' );
+		// Each add landed whole: the first and last word it filed read back.
+		foreach ( $adds as $add ) {
+			$words = [ $word_of( (string) \array_key_first( $add ) ), $word_of( (string) \array_key_last( $add ) ) ];
+			$this->assertSame( $words, \array_map( 'strval', \array_keys( \array_filter( $store->url_token_sets( $words, [ self::SEED_SERVER ], self::tick() ) ) ) ) );
 		}
-		$this->assertSame( [ 'kea', 'kiwi', ...$own ], \array_map( 'strval', \array_keys( $read ) ), 'each word its set' );
 	}
 
 	/**

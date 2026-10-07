@@ -172,7 +172,7 @@ class RequestBuilderNarrationTest extends TestCase {
 
 	public function test_a_fold_heavy_lifetime_counts_each_folds_trigger_in_the_rollup(): void {
 		// Distinct from the 50000 and 20000 defaults, and from each other.
-		$rb = $this->builder( [ '100', '3', '40', '24' ] );
+		$rb = $this->builder( [ '100', '3', '22', '14' ] );
 		$t  = self::FROM;
 
 		$narration = $this->narrated(
@@ -183,10 +183,10 @@ class RequestBuilderNarrationTest extends TestCase {
 					$t,
 					static function ( int $at ) use ( $rb ): void {
 						// Past the per-request cap alone.
-						self::request( $rb, "runaway-{$at}", 15 );
+						self::request( $rb, "runaway-{$at}", 6 );
 						// Two under the cap whose sum crosses the pool budget.
-						$a = self::request( $rb, "pool-a-{$at}", 10, false );
-						$b = self::request( $rb, "pool-b-{$at}", 10, false );
+						$a = self::request( $rb, "pool-a-{$at}", 5, false );
+						$b = self::request( $rb, "pool-b-{$at}", 5, false );
 						self::line( $rb, $a, "pool-a-{$at}", 'process (complete)', [ 'duration_ms' => 9, 'status_code' => 200 ] );
 						self::line( $rb, $b, "pool-b-{$at}", 'process (complete)', [ 'duration_ms' => 9, 'status_code' => 200 ] );
 					}
@@ -201,9 +201,9 @@ class RequestBuilderNarrationTest extends TestCase {
 		$sum    = static fn ( string $counter ): int => \array_sum( \array_map( static fn ( string $m ): int => \preg_match( "/(?:^| · )(\\d+) {$counter}(?: · |$)/", $m, $hit ) ? (int) $hit[1] : 0, $writes ) );
 		$this->assertSame( 119, $sum( 'folded max_entries_per_request' ), 'one a tick' );
 		$this->assertSame( 119, $sum( 'folded entry_budget' ), 'one a tick' );
-		// Each runaway folds at 24 entries, keeping 10; each pool fold keeps 10 of 22.
+		// Each runaway folds at 14 entries, keeping 10; each pool fold keeps 10 of 12.
 		$this->assertSame(
-			'948 lines · 36 records · 36 summaries · 12 folded max_entries_per_request · 168 reclaimed max_entries_per_request · 12 folded entry_budget · 144 reclaimed entry_budget',
+			'492 lines · 36 records · 36 summaries · 12 folded max_entries_per_request · 48 reclaimed max_entries_per_request · 12 folded entry_budget · 24 reclaimed entry_budget',
 			$writes[1],
 			'a minute of them'
 		);
