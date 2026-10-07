@@ -13,7 +13,7 @@ and the WordPress hooks it fires and consumes.
 | `GET /wp-json/newspack-nodes/v1/messages/stream` | substrate ([`Rest\SSE_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-sse-out-node.php)) | Subscribes to one or more `<log>.pN` partitions and emits 7-field message envelopes as SSE events. A log-registry source subscribes as `sources/<name>`. |
 | `POST /wp-json/newspack-nodes/v1/auth` | substrate ([`Rest\Auth_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-auth-controller.php)) | Mints the scoped command session an MCP bearer credential names. |
 | `POST /wp-json/newspack-nodes/v1/workers/spawn` | substrate ([`Rest\Spawn_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-spawn-controller.php)) | HMAC-validated worker bootstrap. Not for public callers. |
-| `POST /wp-json/newspack-nodes/v1/health/cache` | substrate ([`Rest\Health_Cache_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-health-cache-controller.php)) | Token-gated cache probe the state doctor calls. |
+| `POST /wp-json/newspack-nodes/v1/health/runtime` | substrate ([`Rest\Health_Runtime_Controller`](https://github.com/Automattic/newspack-nodes/blob/main/includes/rest/class-health-runtime-controller.php)) | Token-gated runtime probe `wp nodes doctor` calls: the web runtime's cache backend and log sources. |
 
 This plugin contributes the verbs its three CIs expose; it registers no route under the
 `newspack-nodes/v1` namespace. See [`../../newspack-nodes/docs/API.md`](https://github.com/Automattic/newspack-nodes/blob/main/docs/API.md)

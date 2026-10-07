@@ -358,7 +358,7 @@ class Config {
 	 * requests.
 	 *
 	 * Two signals, because neither covers both shapes. The stock `aggregator`'s
-	 * Remote_Source nodes are the `firehose` `Vault_Group`'s children, which
+	 * Remote_Source nodes are the `spokes` `Vault_Group`'s children, which
 	 * exist — at runtime, and in the flatten this second signal walks — only
 	 * once Vault group `spoke` has members, so a stock aggregator with an empty
 	 * group is given away only by its name. A deployment that forks the stock

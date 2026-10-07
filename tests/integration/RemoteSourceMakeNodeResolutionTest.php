@@ -5,8 +5,8 @@
  * The old ELN `Newspack_Event_Logger_Nodes\Remote_Source_Node` is deleted; the
  * self-sufficient substrate `Newspack_Nodes\Remote_Source_Node` (with its
  * SSE_In + HTTP_Out patrons) replaces it. With both production namespaces
- * registered, `make_node Remote_Source <name> <vault> <topic> <partition>`
- * MUST resolve the SUBSTRATE class — there can be no first-registered-wins
+ * registered, `make_node Remote_Source <name> <vault> <offsetlog_root>
+ * <deadletter_root> <source:target>…` MUST resolve the SUBSTRATE class — there can be no first-registered-wins
  * ambiguity because the ELN class is gone.
  *
  * @package Newspack_Event_Logger_Nodes
@@ -39,7 +39,7 @@ class RemoteSourceMakeNodeResolutionTest extends TestCase {
 		$interpreter->name( '_command_interpreter' );
 		$interpreter->sink( $router );
 
-		$node = $interpreter->make_node( 'Remote_Source', 'spokes:austin', 'austin', '/tmp/resolve-off', '/tmp/resolve-dl', 'firehose.p0:next-resolve' );
+		$node = $interpreter->make_node( 'Remote_Source', 'spoke-x', 'austin', '/tmp/rs-off', '/tmp/rs-dl', 'firehose.p0:next-austin' );
 
 		$this->assertInstanceOf( Remote_Source_Node::class, $node );
 		$this->assertSame( 'Newspack_Nodes\\Remote_Source_Node', \get_class( $node ) );
