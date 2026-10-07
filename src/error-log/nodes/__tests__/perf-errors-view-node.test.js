@@ -325,9 +325,11 @@ describe( 'error-log:view — seek feedback (single-dir browse)', () => {
 		v.fill(
 			controlMsg( {
 				action: 'browse',
-				endSegment: 105,
-				endOffset: 1200,
-				knownSegments: [ 97, 98, 105 ],
+				segments: [
+					{ id: 97, size: 1 },
+					{ id: 98, size: 1 },
+					{ id: 105, size: 1200 },
+				],
 			} )
 		);
 		// A rewind starts clean: replays must not mix into the live tail.
@@ -347,9 +349,11 @@ describe( 'error-log:view — seek feedback (single-dir browse)', () => {
 		v.fill(
 			controlMsg( {
 				action: 'browse',
-				endSegment: 105,
-				endOffset: 1200,
-				knownSegments: [ 97, 98, 105 ],
+				segments: [
+					{ id: 97, size: 1 },
+					{ id: 98, size: 1 },
+					{ id: 105, size: 1200 },
+				],
 			} )
 		);
 		v.fill( controlMsg( { action: 'follow' } ) );
