@@ -237,7 +237,7 @@ class MCP_Controller {
 		} catch ( \Throwable $e ) {
 			return self::result( $id, [
 				'isError' => true,
-				'content' => [ [ 'type' => 'text', 'text' => \html_entity_decode( $e->getMessage(), \ENT_QUOTES ) ] ],
+				'content' => [ [ 'type' => 'text', 'text' => Core::message_of( $e ) ] ],
 			] );
 		}
 

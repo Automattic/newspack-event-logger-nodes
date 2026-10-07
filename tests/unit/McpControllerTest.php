@@ -768,4 +768,27 @@ class McpControllerTest extends TestCase {
 		$this->assertTrue( $reply['result']['isError'] );
 		$this->assertStringContainsString( 'URL not found', $reply['result']['content'][0]['text'] );
 	}
+
+	/** A refusal's escaped quotes reach the agent as plain text. */
+	public function test_a_refusal_message_reaches_the_agent_unescaped(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$reply = $controller->dispatch(
+			$this->request(
+				[
+					'jsonrpc' => '2.0',
+					'id'      => 11,
+					'method'  => 'tools/call',
+					'params'  => [ 'name' => 'performance_overview', 'arguments' => [ 'zq"x' => '1' ] ],
+				],
+				$bearer
+			)
+		);
+
+		$text = $reply['result']['content'][0]['text'];
+		$this->assertStringContainsString( 'zq"x', $text );
+		$this->assertStringNotContainsString( '&quot;', $text );
+	}
 }
