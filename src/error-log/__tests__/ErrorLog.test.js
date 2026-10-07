@@ -358,7 +358,7 @@ describe( 'ErrorLog', () => {
 		// An empty catalog is the state every cold load starts in — the reply
 		// rides the router tick — so this dashboard passes no empty label:
 		// "no partitions" would be false for the first second on a machine
-		// that has them. The Partition Viewer makes the opposite choice.
+		// that has them. The Log Viewer makes the opposite choice.
 		it( 'claims nothing about partitions it has not heard about', () => {
 			registerViewFixture();
 			const { container } = mount();

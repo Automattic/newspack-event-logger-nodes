@@ -102,7 +102,7 @@ A dashboard reaches the server two ways, both of them the substrate's: a TM_COMM
 
 `performance.list_hooks` answers two surfaces because one editor serves both: the Performance dashboard's "Log this URL" opens the same `RuleEditModal`, and the same hook picker beneath it, that the settings page's ruleset table opens.
 
-Two verbs answer no dashboard. `performance.set` is the write a hub's settings sync pushes at a spoke, and [`discovery.get`](docs/API.md#discovery--spoke-side-hook-and-event-roster) reports a spoke's hook and custom-event roster — to the hub's [`Discovery_Collector_Node`](includes/class-discovery-collector-node.php), and to the substrate's `vault` CI when it probes one spoke's connection. Substrate-owned surfaces live on the substrate's own **Nodes** admin page, as its tabs: Overview, Jobs, Console, Partition Viewer, Config Audit, Vault, Sessions and Aggregator.
+Two verbs answer no dashboard. `performance.set` is the write a hub's settings sync pushes at a spoke, and [`discovery.get`](docs/API.md#discovery--spoke-side-hook-and-event-roster) reports a spoke's hook and custom-event roster — to the hub's [`Discovery_Collector_Node`](includes/class-discovery-collector-node.php), and to the substrate's `vault` CI when it probes one spoke's connection. Substrate-owned surfaces live on the substrate's own **Nodes** admin page, as its tabs: Overview, Jobs, Console, Log Viewer, Config Audit, Vault, Sessions and Aggregator.
 
 For the full per-CI verb tables and the TM_COMMAND envelope shape, see [docs/API.md](docs/API.md).
 
