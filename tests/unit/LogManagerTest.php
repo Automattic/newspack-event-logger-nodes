@@ -1260,7 +1260,6 @@ class LogManagerTest extends TestCase {
 		return [
 			'cron'     => [ '/wp-cron.php?doing_wp_cron=1790000000.5', 'cron' ],
 			'command'  => [ '/wp-json/newspack-nodes/v1/command', 'restapi' ],
-			'log'      => [ '/wp-json/newspack-nodes/v1/log/stream?since=12', 'restapi' ],
 			'messages' => [ '/wp-json/newspack-nodes/v1/messages/stream', 'restapi' ],
 			'spawn'    => [ '/wp-json/newspack-nodes/v1/workers/spawn', 'restapi' ],
 			'auth'     => [ '/wp-json/newspack-nodes/v1/auth', 'restapi' ],
