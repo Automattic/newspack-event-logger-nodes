@@ -36,8 +36,8 @@
 #
 # Each substrate Remote_Source is self-sufficient (it patrons its own SSE_In +
 # HTTP_Out, owns its offsetlog, and publishes a status snapshot under the
-# install-scoped cache key remote:<node-name>:<remote_partition>, e.g.
-# remote:firehose:<id>:firehose.p0). SSL/HTTPS policy comes from the substrate
+# install-scoped cache key remote:<broker>:p<worker partition>, e.g.
+# remote:spoke-1:p0). SSL/HTTPS policy comes from the substrate
 # vault_verify_ssl / vault_require_ssl config — not a per-topology setter.
 #
 # A Vault id colliding with a declared node name (e.g. `topic`) fails the

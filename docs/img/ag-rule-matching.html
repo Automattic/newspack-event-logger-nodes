@@ -42,14 +42,13 @@ table.m td .r { display:inline-block; width:18px; height:18px; border-radius:4px
 
   <div class="worked">
     <div class="card" style="padding:12px 16px">
-      <h3>One URL against five exact skips an operator wrote, plus two log rules</h3>
+      <h3>One URL against four exact skips an operator wrote, plus two log rules</h3>
       <p style="margin:0">Target: <span class="mono">/wp-json/newspack-nodes/v1/command?x=1</span>. The matcher walks its sorted list top to bottom, longest pattern first within a rank.</p>
       <table class="m">
         <tr><th>sorted order</th><th>rule</th><th>verdict for this URL</th></tr>
         <tr><td><span class="r">0</span></td><td class="p">/jobs/x?job-worker → log</td><td class="v">path differs</td></tr>
         <tr><td><span class="r">1</span></td><td class="p">/wp-json/newspack-nodes/v1/messages/stream? → skip</td><td class="v">path differs (43 characters, so first in its rank)</td></tr>
         <tr><td><span class="r">1</span></td><td class="p">/wp-json/newspack-nodes/v1/workers/spawn? → skip</td><td class="v">path differs (41)</td></tr>
-        <tr><td><span class="r">1</span></td><td class="p">/wp-json/newspack-nodes/v1/log/stream? → skip</td><td class="v">path differs (38)</td></tr>
         <tr class="win"><td><span class="r">1</span></td><td class="p">/wp-json/newspack-nodes/v1/command? → skip</td><td class="v">path equal: governs. The query never mattered.</td></tr>
         <tr><td><span class="r">1</span></td><td class="p">/wp-cron.php? → skip</td><td class="v">not reached</td></tr>
         <tr><td><span class="r">2</span></td><td class="p">/wp-json → log</td><td class="v">would have matched, but sits below every exact rule however long it is</td></tr>

@@ -124,11 +124,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// 2.97.0 is Rate_Limit, which meters the MCP door; below it that fatals.
 	// 2.98.0 is the data-ask-picked paint on the newspack-nodes-ui handle;
 	// below it an Ask pick shows no mark, so nothing says what is selected.
+	// 2.99.0 is the SSE broker, which replaces /log/stream; below it the
+	// hub's reader nodes are unknown.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.98.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.99.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

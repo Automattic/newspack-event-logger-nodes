@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The substrate floor rises to newspack-nodes 2.99.0,** which removes `/log/stream` and adds the SSE broker.
+
 ## [0.126.1] - 2026-10-06
 
 ### Fixed
