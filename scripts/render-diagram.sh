@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Render docs/img/<name>.html to <name>.png at the size the sheet actually is.
 #
+# With no argument it renders every sheet in this plugin's docs/img; given
+# pages, it renders those alone.
+#
 # Headless Chrome screenshots the VIEWPORT, so the height is measured before
 # the capture rather than guessed: a probe copy of the page reports its own
 # scrollHeight through --dump-dom, and that height becomes the window. Every
@@ -16,9 +19,15 @@ set -euo pipefail
 CHROME=${CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}
 WIDTH=1120
 SCALE=2
+here=$(cd "$(dirname "$0")" && pwd)
 
-[ $# -ge 1 ] || { echo "usage: ${0##*/} <docs/img/name.html> [...]" >&2; exit 2; }
 [ -x "$CHROME" ] || { echo "${0##*/}: no Chrome at $CHROME (set CHROME=)" >&2; exit 1; }
+
+if [ $# -eq 0 ]; then
+	shopt -s nullglob
+	set -- "$here"/../docs/img/*.html
+	[ $# -ge 1 ] || { echo "${0##*/}: no sheets in $here/../docs/img" >&2; exit 1; }
+fi
 
 for page in "$@"; do
 	dir=$(cd "$(dirname "$page")" && pwd)
@@ -57,7 +66,7 @@ for page in "$@"; do
 	[ "$png" -nt "$src" ] || { echo "${0##*/}: $name: no PNG written" >&2; exit 1; }
 
 	# The rows below the viewport come out blank; crop them off.
-	python3 -I "$(dirname "$0")/../docs/img/autocrop.py" "$png" >/dev/null
+	python3 -I "$here/autocrop.py" "$png" >/dev/null
 
 	echo "$name.png  ${WIDTH}x${height} window @${SCALE}x, cropped"
 done
