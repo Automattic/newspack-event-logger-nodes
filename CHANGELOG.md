@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The substrate floor rises to newspack-nodes 2.98.0** for the `data-ask-picked` paint in its `newspack-nodes-ui` stylesheet. The picker hook is bundled here at build time, so an older substrate would run the selection with nothing showing what is picked.
+- **`Request_Builder_Node`'s TM_REQUEST verb `GET_CACHE` is now `GET_STATS`,** the name `Flame_Builder_Node`'s report already answers to, so `request request-builder GET_STATS` reads the in-flight depth. The reply's `pending_count`, `oldest_rid`, `oldest_age_s`, `sample` and `line_counter` are unchanged; `GET_CACHE` is refused as `unknown request verb: GET_CACHE`.
 
 ### Fixed
 

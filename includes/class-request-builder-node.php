@@ -298,7 +298,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** @var string Late-bound node NAME `alert` entries also forward to ('' = off). */
 	private $alerts_target = '';
 
-	/** @var int Firehose lines seen since start, narration aside; reported by `GET_CACHE`. */
+	/** @var int Firehose lines seen since start, narration aside; reported by `GET_STATS`. */
 	private $line_counter = 0;
 
 	/** Whether what a checkpoint carries may have moved since the last one told. */
@@ -1890,12 +1890,12 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * The `GET_CACHE` reply data, which `answer_request()` sends back: in-flight
+	 * The `GET_STATS` reply data, which `answer_request()` sends back: in-flight
 	 * depth for the REPL and dashboards.
 	 *
 	 * @return array<string,mixed>
 	 */
-	private function cache_report(): array {
+	private function stats_report(): array {
 		$now     = (int) Core::$now;
 		$samples = [];
 		$oldest_rid = null;
@@ -2142,10 +2142,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			],
 			'requests'    => [
 				[
-					'name'        => 'GET_CACHE',
+					'name'        => 'GET_STATS',
 					'description' => 'In-flight request count + oldest pending rid + sample.',
 					'reply_shape' => '{ pending_count, oldest_rid, oldest_age_s, sample, line_counter }',
-					'handler'     => static fn ( self $node ): array => $node->cache_report(),
+					'handler'     => static fn ( self $node ): array => $node->stats_report(),
 				],
 			],
 		];
