@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.126.0] - 2026-10-06
+
 ### Changed
 
 - **The substrate floor rises to newspack-nodes 2.98.0** for the `data-ask-picked` paint in its `newspack-nodes-ui` stylesheet. The picker hook is bundled here at build time, so an older substrate would run the selection with nothing showing what is picked.
