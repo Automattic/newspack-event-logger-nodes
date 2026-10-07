@@ -20,6 +20,10 @@ import {
 	formatFullTimestamp,
 } from '../../utils/logEntryUtils';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
+import {
+	ASK_PICKED_ATTR,
+	useAskPicker,
+} from '@newspack-nodes/shared/hooks/useAskPicker';
 
 /**
  * Build a typical entry tree:
@@ -2698,6 +2702,191 @@ describe( 'centering the row a body toggle resized', () => {
 		act( () => button.click() );
 
 		expect( calls ).toEqual( [ row ] );
+		unmount();
+	} );
+} );
+
+/**
+ * A pair nested two deep under the outermost one, so a recursive unfold has a
+ * subtree to open: `outer` holds `inner`, which holds the leaf.
+ *
+ * @return {Array} Indented entries.
+ */
+function makeNestedEntries() {
+	const row = ( n, k, pairId, indent, m = '' ) => ( {
+		n,
+		ts: 1700000100 + n,
+		startTs: 1700000100 + n,
+		k,
+		m,
+		pairId,
+		indent,
+		originalIdx: n - 1,
+		i: 40 + n,
+	} );
+	return [
+		row( 1, 'process (start)', 11, 0, '/nested' ),
+		row( 2, 'outer (start)', 12, 1 ),
+		row( 3, 'inner (start)', 13, 2 ),
+		row( 4, 'leaf', null, 3, 'leaf-value-17' ),
+		row( 5, 'inner (complete)', 13, 2 ),
+		row( 6, 'outer (complete)', 12, 1 ),
+		row( 7, 'process (complete)', 11, 0 ),
+	];
+}
+
+// A press as the browser delivers it: cancelable, so a prevented default
+// reads back as `false` from dispatchEvent.
+function press( el, init = {} ) {
+	let kept;
+	act( () => {
+		kept = el.dispatchEvent(
+			new MouseEvent( 'mousedown', {
+				bubbles: true,
+				cancelable: true,
+				...init,
+			} )
+		);
+	} );
+	return kept;
+}
+
+function cmdClick( el ) {
+	press( el, { metaKey: true } );
+	act( () => {
+		el.dispatchEvent(
+			new MouseEvent( 'click', { bubbles: true, metaKey: true } )
+		);
+	} );
+}
+
+const rowNamed = ( container, text ) =>
+	Array.from( container.querySelectorAll( 'tbody tr' ) ).find( ( r ) =>
+		r.textContent.includes( text )
+	);
+
+const foldAll = ( container ) =>
+	act( () =>
+		Array.from( container.querySelectorAll( 'button' ) )
+			.find( ( b ) => b.textContent.includes( 'Fold All' ) )
+			.click()
+	);
+
+describe( 'modified presses on the rows', () => {
+	// Firefox selects and outlines individual cells on an accel-press; on
+	// these rows that press means "unfold the subtree", so its default goes.
+	it( 'cancels the default of a Cmd or Ctrl press on a row', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: makeNestedEntries(),
+			} )
+		);
+		const cell = rowNamed( container, 'process' ).querySelector(
+			'td:last-child'
+		);
+
+		expect( press( cell, { metaKey: true } ) ).toBe( false );
+		expect( press( cell, { ctrlKey: true } ) ).toBe( false );
+		unmount();
+	} );
+
+	it( 'keeps the default of a plain press, so a drag still selects text', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: makeNestedEntries(),
+			} )
+		);
+		const cell = rowNamed( container, 'process' ).querySelector(
+			'td:last-child'
+		);
+
+		expect( press( cell ) ).toBe( true );
+		expect( press( cell, { shiftKey: true } ) ).toBe( true );
+		unmount();
+	} );
+
+	it( 'still unfolds the whole subtree on a Cmd-click', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: makeNestedEntries(),
+			} )
+		);
+		foldAll( container );
+		expect( container.textContent ).not.toContain( 'leaf-value-17' );
+
+		cmdClick( rowNamed( container, 'outer' ) );
+
+		expect( container.textContent ).toContain( 'inner (start)' );
+		expect( container.textContent ).toContain( 'leaf-value-17' );
+		unmount();
+	} );
+} );
+
+describe( 'the rows under an armed Ask picker', () => {
+	// The dashboard's shape: one picker armed over the real table.
+	function AskableTable( { entries } ) {
+		const { start } = useAskPicker( { onPick: () => {} } );
+		return React.createElement(
+			'div',
+			null,
+			React.createElement(
+				'button',
+				{ type: 'button', 'data-ask-trigger': '', onClick: start },
+				'ask'
+			),
+			// The request the table sits in, as RequestDetailView renders it.
+			React.createElement(
+				'div',
+				{ 'data-ask': 'request:r9:2' },
+				React.createElement( LogEntriesTable, { entries } )
+			)
+		);
+	}
+
+	function armed() {
+		const view = renderComponent(
+			React.createElement( AskableTable, {
+				entries: makeNestedEntries(),
+			} )
+		);
+		foldAll( view.container );
+		act( () =>
+			view.container.querySelector( '[data-ask-trigger]' ).click()
+		);
+		return view;
+	}
+
+	afterEach( () => {
+		document.documentElement.classList.remove( 'newspack-nodes-asking' );
+	} );
+
+	// @longform A header cell belongs to no row, so only the picker can
+	// cancel this press: the rows cancel their own whether armed or not.
+	it( 'cancels the default of a modified press on an askable outside the rows', () => {
+		const { container, unmount } = armed();
+		const header = container.querySelector( 'thead th:last-child' );
+
+		expect( press( header, { metaKey: true } ) ).toBe( false );
+		expect( press( header ) ).toBe( true );
+		unmount();
+	} );
+
+	it( 'toggles the whole row into and out of the picked set', () => {
+		const { container, unmount } = armed();
+		const outer = rowNamed( container, 'outer' );
+		const cell = outer.querySelector( 'td:last-child' );
+
+		cmdClick( cell );
+		expect( outer.getAttribute( 'data-ask' ) ).toBe( 'entry:42' );
+		expect( outer.hasAttribute( ASK_PICKED_ATTR ) ).toBe( true );
+		expect(
+			container.querySelectorAll( `td[${ ASK_PICKED_ATTR }]` )
+		).toHaveLength( 0 );
+
+		cmdClick( cell );
+		expect( outer.hasAttribute( ASK_PICKED_ATTR ) ).toBe( false );
+		// The picker owns the gesture: neither click reached the fold.
+		expect( container.textContent ).not.toContain( 'leaf-value-17' );
 		unmount();
 	} );
 } );
