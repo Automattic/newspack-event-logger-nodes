@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.126.1] - 2026-10-06
+
+### Fixed
+
+- **A run of picked request-log rows reads as one block, and every Ask pick shows its mark.** Rebuilt against newspack-nodes 2.98.1, whose shared stylesheet paints each pick with an `!important` tint and ring. Two adjacent picked rows no longer show a doubled bar between them, an even row no longer loses its tint to the zebra stripe, and the row just clicked keeps its ring through the focus reset. A picked flame-graph frame strokes its rect; before, it showed no mark at all.
+
 ## [0.126.0] - 2026-10-06
 
 ### Changed
