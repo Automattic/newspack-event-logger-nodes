@@ -323,7 +323,12 @@ describe( 'error-log:view — seek feedback (single-dir browse)', () => {
 		v.fill( controlMsg( { action: 'select', dir: 'errors.p3' } ) );
 		v.fill( envWithId( '97:0:40', 'pre-browse' ) );
 		v.fill(
-			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
+			controlMsg( {
+				action: 'browse',
+				endSegment: 105,
+				endOffset: 1200,
+				knownSegments: [ 97, 98, 105 ],
+			} )
 		);
 		// A rewind starts clean: replays must not mix into the live tail.
 		expect( v.lines ).toHaveLength( 0 );
@@ -340,7 +345,12 @@ describe( 'error-log:view — seek feedback (single-dir browse)', () => {
 		const v = makeView( 'error-log:view' );
 		v.fill( controlMsg( { action: 'select', dir: 'errors.p3' } ) );
 		v.fill(
-			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
+			controlMsg( {
+				action: 'browse',
+				endSegment: 105,
+				endOffset: 1200,
+				knownSegments: [ 97, 98, 105 ],
+			} )
 		);
 		v.fill( controlMsg( { action: 'follow' } ) );
 		expect( v.mode ).toBe( 'live' );

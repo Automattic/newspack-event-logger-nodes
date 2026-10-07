@@ -387,7 +387,12 @@ describe( 'request-log:view — seek feedback (single-dir browse)', () => {
 		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
 		v.fill( rowWithId( '97:0:40', { rid: 'pre-browse' } ) );
 		v.fill(
-			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
+			controlMsg( {
+				action: 'browse',
+				endSegment: 105,
+				endOffset: 1200,
+				knownSegments: [ 97, 98, 105 ],
+			} )
 		);
 		// A rewind starts clean: replays must not mix into the live tail.
 		expect( v.lines ).toHaveLength( 0 );
@@ -404,7 +409,12 @@ describe( 'request-log:view — seek feedback (single-dir browse)', () => {
 		const v = makeView( 'request-log:view' );
 		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
 		v.fill(
-			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
+			controlMsg( {
+				action: 'browse',
+				endSegment: 105,
+				endOffset: 1200,
+				knownSegments: [ 97, 98, 105 ],
+			} )
 		);
 		v.fill( controlMsg( { action: 'follow' } ) );
 		expect( v.mode ).toBe( 'live' );
