@@ -83,7 +83,7 @@ command_node flame-stats:aggregate:config \
     get urlmap:<hash>                      # a verb at <cwd>/<path>, cwd unchanged (aliases: command, cmd)
 request flame-stats:aggregate \
     SMEMBERS 20 urltoken:2026-09-29-12:<server_key>:wombat  # a stats Table answers its protocol: GET, MGET, SMEMBERS, TOUCH, RM
-request request-builder GET_CACHE          # in-flight depth (alias of request_node)
+request request-builder GET_STATS          # in-flight depth (alias of request_node)
 request flame-builder GET_STATS            # stats accumulator + pending buckets
 cmd request-builder:config purge           # drop every in-flight request, reporting the count
 cd request-builder:config                  # send later verbs TO that interpreter; `cd /` resets
@@ -91,11 +91,11 @@ cd request-builder:config                  # send later verbs TO that interprete
 
 Valid `ls` flags are `-a`, `-c`, `-l`, `-s` and `-t`, combinable as `-alst`. There is no `-o` flag: the connection model is `sink`/`target`, with no `owner`. That is also why `-a` is the form to reach for — without it the argument scopes by SINK, and every node in these graphs sinks into `_command_interpreter` and steers with `target`, so `ls request-builder` prints nothing at all.
 
-`GET_CACHE` and `GET_STATS` are the two TM_REQUEST verbs worth knowing, because they answer the questions the dashboards cannot:
+`GET_STATS` is the TM_REQUEST verb worth knowing on both builders, because it answers the questions the dashboards cannot:
 
 | Verb | Node | Reply |
 |---|---|---|
-| `GET_CACHE` | `request-builder` | `{ pending_count, oldest_rid, oldest_age_s, sample, line_counter }` |
+| `GET_STATS` | `request-builder` | `{ pending_count, oldest_rid, oldest_age_s, sample, line_counter }` |
 | `GET_STATS` | `flame-builder` | `{ stats_count, pending_url_count, intern_count, pending_buckets, last_flush_age_s, auto_tune_pending_count, is_hub, significant_events_count, narration }` |
 
 A `line_counter` of 0 on a busy site means the firehose Consumer is reading nothing. A climbing `oldest_age_s` means requests are stranding in flight — `Request_Builder_Node` evicts them 720 to 1080 seconds after their last line (three buckets rotating every 360 seconds, and the 720-second floor is what clears a worker's 595-second spawn request by two minutes) and writes them out with `error_status='T'`.

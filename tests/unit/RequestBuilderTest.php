@@ -79,7 +79,7 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
-	 * Read the in-flight cache count via the production GET_CACHE request
+	 * Read the in-flight cache count via the production GET_STATS request
 	 * verb (the same path the dashboard reads), not a test-only accessor.
 	 */
 	private function cache_size( Request_Builder_Node $rb ): int {
@@ -90,7 +90,7 @@ class RequestBuilderTest extends TestCase {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_REQUEST;
 		$message[ Message::FROM ]  = 'test-probe';
-		$message[ Message::VALUE ] = 'GET_CACHE';
+		$message[ Message::VALUE ] = 'GET_STATS';
 		$rb->fill( $message );
 
 		$rb->sink( $prev );
@@ -101,7 +101,7 @@ class RequestBuilderTest extends TestCase {
 				return (int) $captured[ Message::VALUE ]['data']['pending_count'];
 			}
 		}
-		$this->fail( 'GET_CACHE reply not captured' );
+		$this->fail( 'GET_STATS reply not captured' );
 	}
 
 	// --- Basic lifecycle --------------------------------------------------
@@ -2065,7 +2065,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 0, $capture->captured );
 	}
 
-	// --- TM_REQUEST verbs (GET_CACHE) ------------------------------------
+	// --- TM_REQUEST verbs (GET_STATS) ------------------------------------
 
 	private function request_msg( string $verb, string $from = 'asker', string $id = 'req-1' ): array {
 		$message                      = Message::new_message();
@@ -2077,13 +2077,13 @@ class RequestBuilderTest extends TestCase {
 		return $message;
 	}
 
-	public function test_get_cache_returns_empty_payload_on_empty_cache(): void {
+	public function test_get_stats_returns_empty_payload_on_empty_cache(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
-		$message = $this->request_msg( 'GET_CACHE' );
+		$message = $this->request_msg( 'GET_STATS' );
 		$rb->fill( $message );
 
 		$this->assertCount( 1, $capture->captured );
@@ -2096,14 +2096,18 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'asker', $reply[ Message::TO ] );
 		$this->assertSame( 'req-1', $reply[ Message::ID ] );
 		$payload = $reply[ Message::VALUE ];
-		$this->assertSame( 'GET_CACHE', $payload['verb'] );
+		$this->assertSame( 'GET_STATS', $payload['verb'] );
+		$this->assertSame(
+			[ 'pending_count', 'oldest_rid', 'oldest_age_s', 'sample', 'line_counter' ],
+			\array_keys( $payload['data'] )
+		);
 		$this->assertSame( 0, $payload['data']['pending_count'] );
 		$this->assertNull( $payload['data']['oldest_rid'] );
 		$this->assertSame( 0, $payload['data']['oldest_age_s'] );
 		$this->assertSame( [], $payload['data']['sample'] );
 	}
 
-	public function test_get_cache_reports_the_oldest_pending_request(): void {
+	public function test_get_stats_reports_the_oldest_pending_request(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -2116,7 +2120,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 1, 'rid-new', 'process (start)', [ 'ts' => 1_700_000_800 ] );
 		$this->fill( $rb, 1, 'rid-old', 'process (start)', [ 'ts' => 1_700_000_600 ] );
 
-		$rb->fill( $this->request_msg( 'GET_CACHE' ) );
+		$rb->fill( $this->request_msg( 'GET_STATS' ) );
 
 		$payload = $capture->captured[0][ Message::VALUE ];
 		$this->assertSame( 2, $payload['data']['pending_count'] );
@@ -2124,7 +2128,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 300, $payload['data']['oldest_age_s'] );
 	}
 
-	public function test_get_cache_reports_pending_count_and_sample(): void {
+	public function test_get_stats_reports_pending_count_and_sample(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -2135,14 +2139,14 @@ class RequestBuilderTest extends TestCase {
 			$this->fill( $rb, $i, "rid-$i", 'process (start)' );
 		}
 
-		$message = $this->request_msg( 'GET_CACHE' );
+		$message = $this->request_msg( 'GET_STATS' );
 		$rb->fill( $message );
 
 		// Discard early captured emits (this test doesn't emit any since no
-		// `process (complete)`). The GET_CACHE reply is the only message.
+		// `process (complete)`). The GET_STATS reply is the only message.
 		$this->assertCount( 1, $capture->captured );
 		$payload = $capture->captured[0][ Message::VALUE ];
-		$this->assertSame( 'GET_CACHE', $payload['verb'] );
+		$this->assertSame( 'GET_STATS', $payload['verb'] );
 		$this->assertSame( 7, $payload['data']['pending_count'] );
 		// Cache iterator yields newest first; sample caps at 5.
 		$this->assertCount( 5, $payload['data']['sample'] );
@@ -2157,26 +2161,26 @@ class RequestBuilderTest extends TestCase {
 		}
 	}
 
-	public function test_get_cache_counts_lines_but_not_itself(): void {
+	public function test_get_stats_counts_lines_but_not_itself(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
-		// Three real lines bump line_counter; the GET_CACHE request goes
+		// Three real lines bump line_counter; the GET_STATS request goes
 		// through the TM_REQUEST branch and does NOT bump it.
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea.test/x' ] );
 		$this->fill( $rb, 3, 'r1', 'process (complete)' );
 
-		$message = $this->request_msg( 'GET_CACHE' );
+		$message = $this->request_msg( 'GET_STATS' );
 		$rb->fill( $message );
 
 		// The TM_REQUEST response is the last captured message (after the
 		// `process (complete)` emission).
 		$last    = $capture->captured[ \count( $capture->captured ) - 1 ];
 		$payload = $last[ Message::VALUE ];
-		$this->assertSame( 'GET_CACHE', $payload['verb'] );
+		$this->assertSame( 'GET_STATS', $payload['verb'] );
 		$this->assertSame( 3, $payload['data']['line_counter'] );
 	}
 
@@ -2192,7 +2196,7 @@ class RequestBuilderTest extends TestCase {
 		$message[ Message::TYPE ]     = Message::TM_STRUCT | Message::TM_RESPONSE;
 		$message[ Message::FROM ]     = 'asker';
 		$message[ Message::ID ]       = 'req-1';
-		$message[ Message::VALUE ]    = 'GET_CACHE';
+		$message[ Message::VALUE ]    = 'GET_STATS';
 		$rb->fill( $message );
 
 		// Neither dispatched as a request nor as a TM_STRUCT entry (no flag).
@@ -2214,18 +2218,37 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( "unknown request verb: WHATEVER_NOT_REAL\n", $reply[ Message::VALUE ] );
 	}
 
+	/**
+	 * The in-flight report answers to `GET_STATS` alone, matching
+	 * `Flame_Builder_Node`; `GET_CACHE` is no verb of this node.
+	 */
+	public function test_get_cache_is_an_unknown_request_verb(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->name( 'rb' );
+
+		$this->fill( $rb, 1, 'rid-pending', 'process (start)' );
+		$rb->fill( $this->request_msg( 'GET_CACHE' ) );
+
+		$this->assertCount( 1, $capture->captured );
+		$reply = $capture->captured[0];
+		$this->assertSame( Message::TM_ERROR, $reply[ Message::TYPE ] );
+		$this->assertSame( "unknown request verb: GET_CACHE\n", $reply[ Message::VALUE ] );
+	}
+
 	public function test_a_lowercase_request_verb_is_answered(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 		$rb->name( 'rb' );
 
-		// Lowercased verb still routes to GET_CACHE via strtoupper.
-		$message = $this->request_msg( 'get_cache' );
+		// Lowercased verb still routes to GET_STATS via strtoupper.
+		$message = $this->request_msg( 'get_stats' );
 		$rb->fill( $message );
 
 		$payload = $capture->captured[0][ Message::VALUE ];
-		$this->assertSame( 'GET_CACHE', $payload['verb'] );
+		$this->assertSame( 'GET_STATS', $payload['verb'] );
 		$this->assertArrayHasKey( 'pending_count', $payload['data'] );
 	}
 
