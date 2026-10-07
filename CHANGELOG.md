@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.125.0] - 2026-10-06
+
 ### Changed
 
 - **`scripts/render-diagram.sh` and `autocrop.py` are vendored from newspack-nodes**, which renders every `docs/img` sheet when given no argument; `docs/img/render.sh` is removed.
