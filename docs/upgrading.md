@@ -6,6 +6,24 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **The hub pulls each spoke's PHP error log beside its firehose, on one
+  connection.** The `firehose` group is `spokes`; each spoke's firehose
+  and `sources/php` readers keep cursors under `<topology>.<id>/`, and
+  `php-errors.p0` collects every spoke's PHP errors and the hub's own. Hub
+  cursors under `<topology>.firehose.<id>.p<n>` are not carried over: each
+  spoke's firehose reader starts from the spoke's tail. The firehose pair
+  is written `firehose.p{partition}`, so on a hub activating `aggregator`
+  with more than one partition each worker pulls its own firehose
+  partition, while `sources/php` and the hub's own error log are read by
+  worker p0 alone.
+
+- **Every `sources/<name>` `aggregator` names must resolve where it is read.**
+  The hub's `php-errors:tail` fails the load when the hub has no `php`
+  source, and a spoke without one refuses the hub's subscription, so the hub
+  loses that spoke's whole stream, firehose included. The built-in `php`
+  needs PHP's `error_log` set to an absolute file path. Read
+  `wp nodes doctor`'s `log-sources` row on each site.
+
 - **This release needs newspack-nodes 2.98.0.** The Ask picker marks
   each element a pick stands on, and the substrate's `newspack-nodes-ui`
   stylesheet, which 2.98.0 extends, is what paints that mark. Below the

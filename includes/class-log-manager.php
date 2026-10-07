@@ -295,7 +295,7 @@ class Log_Manager {
 		'/wp-cron.php'                                => 'cron',
 		'/wp-json/newspack-nodes/v1/auth'             => 'restapi',
 		'/wp-json/newspack-nodes/v1/command'          => 'restapi',
-		'/wp-json/newspack-nodes/v1/health/cache'     => 'restapi',
+		'/wp-json/newspack-nodes/v1/health/runtime'   => 'restapi',
 		'/wp-json/newspack-nodes/v1/messages/stream'  => 'restapi',
 		'/wp-json/newspack-nodes/v1/workers/spawn'    => 'restapi',
 		'/wp-json/newspack-event-logger-nodes/v1/mcp' => 'restapi',

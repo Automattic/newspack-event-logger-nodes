@@ -1264,7 +1264,7 @@ class LogManagerTest extends TestCase {
 			'spawn'    => [ '/wp-json/newspack-nodes/v1/workers/spawn', 'restapi' ],
 			'auth'     => [ '/wp-json/newspack-nodes/v1/auth', 'restapi' ],
 			'mcp'      => [ '/wp-json/newspack-event-logger-nodes/v1/mcp', 'restapi' ],
-			'health'   => [ '/wp-json/newspack-nodes/v1/health/cache', 'restapi' ],
+			'health'   => [ '/wp-json/newspack-nodes/v1/health/runtime', 'restapi' ],
 		];
 	}
 

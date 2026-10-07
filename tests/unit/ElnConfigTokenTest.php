@@ -92,7 +92,7 @@ class ElnConfigTokenTest extends TestCase {
 		$dir = $this->make_temp_dir( 'eln-hub-fork-' );
 		\file_put_contents(
 			"{$dir}/okapi-fanout.tsl",
-			"make_node Remote_Source firehose:okapi okapi /tmp/okapi-off /tmp/okapi-dl firehose.p<partition>:next-okapi\n"
+			"make_node Remote_Source firehose:okapi okapi /tmp/okapi-off /tmp/okapi-dl firehose.p{partition}:next-okapi\n"
 		);
 		\file_put_contents( "{$dir}/okapi-hub.tsl", "include okapi-fanout\n" );
 		Topology_Registry::register_user_dir( $dir );
@@ -108,7 +108,7 @@ class ElnConfigTokenTest extends TestCase {
 		$dir = $this->make_temp_dir( 'eln-hub-pairs-' );
 		\file_put_contents(
 			"{$dir}/okapi-pairs.tsl",
-			"make_node Remote_Source spokes:okapi okapi /tmp/pairs-off /tmp/pairs-dl sources/php:php-okapi firehose.p<partition>:next-okapi\n"
+			"make_node Remote_Source spokes:okapi okapi /tmp/pairs-off /tmp/pairs-dl sources/php:php-okapi firehose.p{partition}:next-okapi\n"
 		);
 		Topology_Registry::register_user_dir( $dir );
 
@@ -123,7 +123,7 @@ class ElnConfigTokenTest extends TestCase {
 		require_once \dirname( __DIR__ ) . '/fixtures/class-tapir-pull-node.php';
 		\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\Tests\\Fixtures\\' );
 		$dir = $this->make_temp_dir( 'eln-hub-subclass-' );
-		\file_put_contents( "{$dir}/okapi-tapir.tsl", "make_node Tapir_Pull firehose:okapi okapi /tmp/tapir-off /tmp/tapir-dl firehose.p<partition>:next-tapir\n" );
+		\file_put_contents( "{$dir}/okapi-tapir.tsl", "make_node Tapir_Pull firehose:okapi okapi /tmp/tapir-off /tmp/tapir-dl firehose.p{partition}:next-tapir\n" );
 		Topology_Registry::register_user_dir( $dir );
 
 		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-tapir' ];
@@ -178,8 +178,8 @@ class ElnConfigTokenTest extends TestCase {
 		$dir = $this->make_temp_dir( 'eln-hub-other-log-' );
 		\file_put_contents(
 			"{$dir}/okapi-ledger.tsl",
-			"make_node Remote_Source ledger:okapi okapi /tmp/led-off /tmp/led-dl ledger.p<partition>:next-led sources/php:next-php\n"
-			. "make_node Remote_Source hosefire:okapi okapi /tmp/hose-off /tmp/hose-dl hosefire.p<partition>:next-hose\n"
+			"make_node Remote_Source ledger:okapi okapi /tmp/led-off /tmp/led-dl ledger.p{partition}:next-led sources/php:next-php\n"
+			. "make_node Remote_Source hosefire:okapi okapi /tmp/hose-off /tmp/hose-dl hosefire.p{partition}:next-hose\n"
 		);
 		Topology_Registry::register_user_dir( $dir );
 

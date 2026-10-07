@@ -102,10 +102,25 @@ class HubTopologyTest extends TestCase {
 	public function test_mounts_the_firehose_leg(): void {
 		$this->load_hub();
 
-		$this->assertInstanceOf( Vault_Group_Node::class, Core::node( 'firehose' ) );
+		$this->assertInstanceOf( Vault_Group_Node::class, Core::node( 'spokes' ) );
 		$this->assertInstanceOf( Remote_Job_Rewrite_Node::class, Core::node( 'remote-job-rewrite' ) );
 		$this->assertInstanceOf( Topic_Node::class, Core::node( 'firehose:topic' ) );
-		$this->assertInstanceOf( Remote_Source_Node::class, Core::node( 'firehose:tw7' ) );
+		$this->assertInstanceOf( Remote_Source_Node::class, Core::node( 'spokes:tw7' ) );
+	}
+
+	/**
+	 * What one spoke costs the hub worker's registry, as `hub-control.md` and
+	 * its `d07b` sheet count it: thirteen names for its broker, and two for
+	 * its settings link.
+	 */
+	public function test_one_spoke_costs_thirteen_broker_names_and_two_settings_names(): void {
+		$this->load_hub();
+		Core::node( 'spokes:tw7' )->fire();
+
+		$names   = \array_keys( Core::$nodes_by_name );
+		$under   = static fn ( string $root ): array => \array_values( \array_filter( $names, static fn ( string $name ): bool => $root === $name || \str_starts_with( $name, "{$root}:" ) ) );
+		$this->assertCount( 13, $under( 'spokes:tw7' ), \implode( ', ', $under( 'spokes:tw7' ) ) );
+		$this->assertCount( 2, $under( 'settings:tw7' ), \implode( ', ', $under( 'settings:tw7' ) ) );
 	}
 
 	public function test_mounts_the_settings_leg(): void {
@@ -117,12 +132,12 @@ class HubTopologyTest extends TestCase {
 		$this->assertInstanceOf( Null_Node::class, Core::node( 'null' ) );
 	}
 
-	public function test_settings_group_shares_the_same_spoke_membership_as_firehose(): void {
+	public function test_settings_group_shares_the_same_spoke_membership_as_spokes(): void {
 		$this->load_hub();
 
-		// firehose and settings are two independent Vault_Group nodes, both
-		// over group `spoke`, so the one seeded `tw7` entry builds a child in
-		// each — an HTTP_Out here, a Remote_Source on firehose.
+		// spokes and settings are two independent Vault_Group nodes, both over
+		// group `spoke`, so the one seeded `tw7` entry builds a child in each —
+		// an HTTP_Out here, a Remote_Source on spokes.
 		$this->assertInstanceOf( HTTP_Out_Node::class, Core::node( 'settings:tw7' ) );
 	}
 
