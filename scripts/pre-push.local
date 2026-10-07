@@ -1,0 +1,31 @@
+# shellcheck shell=bash
+# newspack-event-logger-nodes' constants and gates, sourced by scripts/pre-push.
+
+push_gates() {
+	# Every Stats_Store NS_* constant has a guide row, and every row a constant.
+	script_gate lint-eln-docs.sh \
+		"lint-eln-docs (Stats_Store namespace vs guide table)" \
+		"lint-eln-docs failed — namespace docs drifted (see above)" \
+		"lint-eln-docs clean"
+
+	# Log_Manager and Gyrobase::Log write one line; only dndocker sees both.
+	local parity="${DNDOCKER}/tools/check-firehose-parity.py"
+	if [[ -f "$parity" ]] && command -v python3 >/dev/null 2>&1; then
+		step "firehose parity (PHP vs Perl producer)"
+		python3 "$parity" >&2 || fail "firehose parity failed — the two producers would write different lines (see above)"
+		ok "firehose parity clean"
+	fi
+}
+
+container_gates() { :; }
+
+# PHPUnit runs straight from the /services mount, never /usr/src.
+# shellcheck disable=SC2034 # scripts/pre-push reads every constant
+{
+	readonly PLUGIN_SLUG="newspack-event-logger-nodes"
+	readonly CONTAINER="${HOST}-pyrobase1-1"
+	readonly DEPLOY_CONTAINER="$CONTAINER"
+	readonly DEPLOY_SCRIPT="/services/pyrobase/setup/${PLUGIN_SLUG}.sh"
+	readonly TEST_DIR_IN_CONTAINER="/services/pyrobase/sources/${PLUGIN_SLUG}/tests"
+	readonly COVERAGE_DIR="${PLUGIN_SLUG}-coverage"
+}

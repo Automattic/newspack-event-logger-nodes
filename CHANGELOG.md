@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`scripts/render-diagram.sh` and `autocrop.py` are vendored from newspack-nodes**, which renders every `docs/img` sheet when given no argument; `docs/img/render.sh` is removed.
 - **The substrate floor rises to newspack-nodes 2.97.0** for `Rate_Limit`, which now meters the MCP route. The controller's private copy of the same atomic limiter is gone; the budget, the per-handle key, the 429 and the 503 are unchanged.
+- **`scripts/pre-push` is newspack-nodes' shared hook**, vendored by `sync-shared-scripts.sh`. This plugin's half is `scripts/pre-push.local`: its container constants, then `lint-eln-docs.sh` and firehose parity, which run after the shared hook's substrate floor check. The vendored `test-*.sh` copies are gone; those self-tests run in newspack-nodes alone. `lint:shell` and lint-staged check `pre-push.local` too.
 
 ### Fixed
 
