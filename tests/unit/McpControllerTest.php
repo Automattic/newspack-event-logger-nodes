@@ -595,6 +595,24 @@ class McpControllerTest extends TestCase {
 		$this->assertSame( 1, $admitted( 1 ) );
 	}
 
+	/** A spent budget stays spent one literal second on, whatever the window. */
+	public function test_a_session_is_still_refused_one_second_after_exhausting_its_budget(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$memd         = Core::$memd;
+		\assert( $memd instanceof InMemoryMemcached );
+		$controller   = new MCP_Controller();
+
+		$memd->clock = static fn (): int => 1_800_000_003;
+		for ( $i = 0; $i < MCP_Controller::RATE_LIMIT_BURST; $i++ ) {
+			$this->assertTrue( $controller->check_permission( $this->request( [], $bearer ) ) );
+		}
+		$memd->clock = static fn (): int => 1_800_000_004;
+		$result      = $controller->check_permission( $this->request( [], $bearer ) );
+
+		$this->assertInstanceOf( \WP_Error::class, $result, 'the window outlasts one second' );
+		$this->assertSame( 'rate_limited', $result->get_error_code() );
+	}
+
 	/** With no cache to meter in, the door refuses rather than run unmetered. */
 	public function test_a_host_with_no_shared_cache_refuses_the_door(): void {
 		[ , $bearer ]               = $this->session( Capabilities::READ );

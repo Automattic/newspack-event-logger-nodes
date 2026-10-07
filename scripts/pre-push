@@ -21,7 +21,8 @@
 # Everything else is smart-scoped by file type touched in the push range:
 #
 #   PHP changed  → npm run lint:php + deploy + coverage suite + container_gates
-#                  + per-class 90% gate
+#                  + per-class 90% gate; refused from a git worktree, because
+#                  the container mounts the main checkout and would test that
 #   JS changed   → npm run lint:js   + npm run build
 #   TS changed   → npm run lint:types, where package.json declares it
 #   SCSS changed → npm run lint:scss + npm run build
@@ -211,6 +212,9 @@ fi
 
 # --- PHP: deploy and the coverage suite, when the container is running. ----
 if [[ -n "$php_changed" ]]; then
+	if [[ "$(git rev-parse --path-format=absolute --git-dir)" != "$(git rev-parse --path-format=absolute --git-common-dir)" ]]; then
+		fail "PHP push from the worktree ${TOPLEVEL}: ${CONTAINER} mounts the main checkout, so its deploy and coverage gates would test code this push does not contain — push from the main checkout"
+	fi
 	if ! command -v docker >/dev/null 2>&1 \
 	   || ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER}$"; then
 		step "$(dim "container ${CONTAINER} not available — skipping deploy + coverage")"
