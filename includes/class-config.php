@@ -288,19 +288,20 @@ class Config {
 	 * `var is_hub = 1` in its own top-level frontmatter. A hub says what it is
 	 * in TSL; neither a topology's name nor the logs its readers pull count.
 	 *
-	 * Every readable topology's value is checked, so a malformed one fails
-	 * however the others answer. An unreadable topology may be the hub the
-	 * operator activated, so it fails the answer unless a readable one has
-	 * already declared it.
+	 * Only the file is read, so a broken include costs a topology nothing.
+	 * Every active name is checked, so a malformed declaration or a name no
+	 * `.tsl` resolves fails however the others answer.
 	 *
 	 * @return bool True when an active topology declares `is_hub = 1`.
-	 * @throws \RuntimeException When a declaration is neither 1 nor 0, or no
-	 *                           readable topology declares and one will not read.
+	 * @throws \RuntimeException When a declaration is neither 1 nor 0, or an
+	 *                           active name has no `.tsl`.
 	 */
 	private static function declares_hub(): bool {
-		[ $readable, $unreadable ] = Bootstrap::active_topologies();
-		$hub                       = false;
-		foreach ( \array_keys( $readable ) as $name ) {
+		$hub = false;
+		foreach ( Bootstrap::active_names() as $name ) {
+			if ( null === Topology_Registry::resolve( $name ) ) {
+				throw new \RuntimeException( \esc_html( "is_hub unknown: active topology '{$name}' has no .tsl" ) );
+			}
 			$declared = Topology_Analyzer::frontmatter( $name )['is_hub'] ?? null;
 			if ( null === $declared || '0' === $declared ) {
 				continue;
@@ -311,13 +312,6 @@ class Config {
 				);
 			}
 			$hub = true;
-		}
-		if ( ! $hub && [] !== $unreadable ) {
-			throw new \RuntimeException(
-				\esc_html( 'is_hub unknown: active topology will not read: ' . \implode( ', ', \array_keys( $unreadable ) ) ),
-				0,
-				\array_values( $unreadable )[0]
-			);
 		}
 		return $hub;
 	}
