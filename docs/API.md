@@ -485,7 +485,7 @@ Named substrate callables the bootstrap registers alongside them:
 
 - The config namespace `eln`, resolving `<eln:KEY>` tokens in `.tsl` through
   `Config::resolve_eln_token()`. It owns four keys and returns null for any other:
-  `is_hub` (whether a hub topology is active) and the three stats Tables' TTLs
+  `is_hub` (whether an active topology declares `var is_hub = 1`) and the three stats Tables' TTLs
   `stats_ttl`, `stats_url_ttl` and `stats_url_fine_ttl`, each derived from
   `Config::stats_retention_seconds()` rather than stored.
 - Two `Formatters` — `request-index` and `flame-index` — that the topology index legs

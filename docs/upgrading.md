@@ -6,6 +6,17 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **A hub is a topology declaring `var is_hub = 1`.** `<eln:is_hub>` reads
+  each active topology's own top-level frontmatter, and the stock `hub` and
+  `aggregator` declare it. A topology's name and the logs its
+  `Remote_Source` readers pull no longer count, and an included file's
+  frontmatter is skipped, so a custom hub topology that includes `hub` or
+  `aggregator`, or forks either, reads as a spoke and turns its per-server
+  stats off until it adds `var is_hub = 1` to its own file. Any value but
+  `1` or `0` fails the flame builder's load, naming the topology. A PHP
+  caller of `Log_Manager::names_firehose()` has nothing to call: the method
+  is removed.
+
 - **The hub pulls each spoke's PHP error log beside its firehose, on one
   connection.** The `firehose` group is `spokes`; each spoke's firehose
   and `sources/php` readers keep cursors under `<topology>.<id>/`, and

@@ -239,7 +239,7 @@ The session's scope is a ceiling, never a grant: `tools/list` offers only what t
 
 ## Hub / spoke routing
 
-A node is a hub when `Config::resolve_eln_token( 'is_hub' )` says so, and it answers on either of two signals because neither covers both shapes: an active topology named `aggregator` or including it, or any active graph carrying a `Remote_Source` with a pair whose source names the firehose. That accessor is the only way in — the derivation behind it and its memoization wrapper are both private, so a `wp eval` aimed at either throws a PHP Error. There is no operator toggle, and `tests/unit/RetiredConfigKeysTest.php` guards `enable_aggregator` and `enable_workers` against coming back as one.
+A node is a hub when an active topology's own top-level frontmatter declares `var is_hub = 1`, which `Config::resolve_eln_token( 'is_hub' )` reads; the stock `hub` and `aggregator` declare it. A custom topology that includes either and reads as a spoke is missing its own declaration, because an included file's frontmatter is skipped. That accessor is the only way in — the reader behind it is private, so a `wp eval` aimed at it throws a PHP Error. There is no operator toggle, and `tests/unit/RetiredConfigKeysTest.php` guards `enable_aggregator` and `enable_workers` against coming back as one.
 
 Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally runs `aggregator`, whose `spokes` `Vault_Group` builds one substrate `Remote_Source_Node` broker per member of Vault group `spoke`. Each broker pulls its spoke's firehose and `sources/php` on one connection; this plugin's `Remote_Job_Rewrite_Node`, the firehose pair's target, rewrites the ingested `k:"job"` lines to `k:"remote_job"`, which the hub's `Job_Worker_Node` dispatches against the separate `newspack_nodes/remote_job_handlers` map, and the `sources/php` pair lands in `php-errors.p0` beside the hub's own error log. A spoke joins by a Vault edit, and its credentials live in the substrate Vault.
 
@@ -248,7 +248,7 @@ The hub's other sweep is `Discovery_Collector_Node`, mounted by `hub-control`: i
 Diagnostic flow:
 
 ```bash
-# Is this node a hub? Derived from the active graphs, not an option.
+# Is this node a hub? Declared by an active topology's frontmatter.
 wp nodes types                 # active topology groups the fleet spawns
 wp nodes status                # every catalog topology plus what is live
 

@@ -115,8 +115,6 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// argument and the builder times a reprocess out on the wall.
 	// 2.85.0 is the table-probe topology flame-builder.tsl includes; below it
 	// the topology fails to load.
-	// 2.90.0 is Topology_Analyzer::nodes_of_type() and the graph's
-	// remote_partition, which <eln:is_hub> reads; below it that fatals.
 	// 2.93.0 is the skin's --wp-components-color-* tokens on the
 	// newspack-nodes-ui handle; below it a tag token's × vanishes on dark.
 	// 2.94.0 is Table_Client::all_members() and SSCAN, which read a bucket

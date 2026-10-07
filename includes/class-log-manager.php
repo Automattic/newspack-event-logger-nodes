@@ -1190,20 +1190,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Whether a partition name, or a template of one, is a firehose partition:
-	 * what a hub's `Remote_Source` pulls when it aggregates requests. Its
-	 * config tokens resolve strictly, since one left unresolved may hide it.
-	 *
-	 * @param string $partition E.g. `firehose.p<partition>` or `firehose.p3`.
-	 * @return bool
-	 * @throws \RuntimeException On an unresolvable `<ns:key>` token.
-	 */
-	public static function names_firehose( string $partition ): bool {
-		$name = Core::resolve_config_tokens( $partition, true );
-		return 1 === \preg_match( '/^' . self::FIREHOSE . '\.p(?:\d+|<partition>|\{partition\})$/D', $name );
-	}
-
-	/**
 	 * Split a `REQUEST_LINE` entry's `m` into the record's `request_method`,
 	 * its `request_url` with the query, and its `url`, that URL less its
 	 * query. The one parse of that line, for the readers that show a request

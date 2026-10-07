@@ -28,7 +28,6 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Remote_Source_Node;
 use Newspack_Nodes\Config_Utils;
 use Newspack_Nodes\Topology_Analyzer;
 use Newspack_Nodes\Topology_Registry;
@@ -83,30 +82,6 @@ class Config {
 	 * @var (\Closure(array<string,mixed>): array<string,mixed>)|null
 	 */
 	public static ?\Closure $read_shipped_config = null;
-
-	/**
-	 * Memoized `is_hub`. A process-lifetime constant, but deriving it walks
-	 * every active topology's graph — cleared by `reset_local_cache()`.
-	 *
-	 * @var bool|null
-	 */
-	private static ?bool $is_hub = null;
-
-	/**
-	 * What the last `is_hub` derivation threw, raised again by every later
-	 * resolution until `reset_local_cache()`, so one unreadable topology is
-	 * walked once per process rather than once per `<eln:is_hub>`.
-	 *
-	 * @var \Throwable|null
-	 */
-	private static ?\Throwable $is_hub_failure = null;
-
-	/**
-	 * Set while `has_hub_topology()` is deriving, to break re-entrancy.
-	 *
-	 * @var bool
-	 */
-	private static bool $deriving_is_hub = false;
 
 	/**
 	 * Fully-qualified option names that must NOT autoload — the single source of
@@ -215,7 +190,7 @@ class Config {
 	public static function resolve_eln_token( string $key ) {
 		// Derived, never constants: a widened stats window widens each.
 		return match ( $key ) {
-			'is_hub'             => self::has_hub_topology(),
+			'is_hub'             => self::declares_hub(),
 			'stats_ttl'          => (string) Stats_Store::aggregate_ttl( self::stats_retention_seconds() ),
 			'stats_url_ttl'      => (string) self::stats_url_ttl(),
 			'stats_url_fine_ttl' => (string) Stats_Store::fine_ttl( self::stats_retention_seconds() ),
@@ -309,95 +284,42 @@ class Config {
 	}
 
 	/**
-	 * Whether any active topology makes this install a hub, memoized because
-	 * deriving it walks every active topology's graph. A failed derivation is
-	 * memoized too, and re-raised; a cooperative stop is not a derivation's
-	 * answer and propagates unmemoized. `reset_local_cache()` drops both; the
-	 * guard below covers re-entrancy rather than cost. Rethrown inside a
-	 * `finally` during another exception, the memo gains that exception on its
-	 * chain — PHP's doing, harmless to classification.
+	 * Whether an active topology declares this install a hub, through
+	 * `var is_hub = 1` in its own top-level frontmatter. A hub says what it is
+	 * in TSL; neither a topology's name nor the logs its readers pull count.
 	 *
-	 * @return bool True when an active topology aggregates from spokes.
-	 * @throws \Throwable What the derivation threw, the same instance each time.
+	 * Every readable topology's value is checked, so a malformed one fails
+	 * however the others answer. An unreadable topology may be the hub the
+	 * operator activated, so it fails the answer unless a readable one has
+	 * already declared it.
+	 *
+	 * @return bool True when an active topology declares `is_hub = 1`.
+	 * @throws \RuntimeException When a declaration is neither 1 nor 0, or no
+	 *                           readable topology declares and one will not read.
 	 */
-	private static function has_hub_topology(): bool {
-		if ( null !== self::$is_hub ) {
-			return self::$is_hub;
-		}
-		if ( null !== self::$is_hub_failure ) {
-			throw self::$is_hub_failure;
-		}
-		// @longform
-		// Re-entrancy, not just caching: graph_for() resolves the config
-		// tokens in a `set_*target` line, so a topology naming <eln:is_hub>
-		// there would recurse through here until PHP died. flame-builder.tsl
-		// already carries `set_is_hub <eln:is_hub>`, spared only because that
-		// verb misses the analyzer's `^set_\w*target$` match — one rename
-		// away. Claiming "not a hub" while deriving breaks the cycle.
-		if ( self::$deriving_is_hub ) {
-			return false;
-		}
-		self::$deriving_is_hub = true;
-		try {
-			self::$is_hub = self::derive_hub_topology();
-		} catch ( \Newspack_Nodes\Worker_Should_Stop $e ) {
-			throw $e;
-		} catch ( \Throwable $e ) {
-			self::$is_hub_failure = $e;
-			throw $e;
-		} finally {
-			self::$deriving_is_hub = false;
-		}
-		return self::$is_hub;
-	}
-
-	/**
-	 * Derive hub-ness from the active topologies: an `aggregator` topology by
-	 * name or include, or any graph carrying a `Remote_Source` with a pair whose
-	 * source names the firehose. A reader pulling any other log aggregates no
-	 * requests.
-	 *
-	 * Two signals, because neither covers both shapes. The stock `aggregator`'s
-	 * Remote_Source nodes are the `spokes` `Vault_Group`'s children, which
-	 * exist — at runtime, and in the flatten this second signal walks — only
-	 * once Vault group `spoke` has members, so a stock aggregator with an empty
-	 * group is given away only by its name. A deployment that forks the stock
-	 * file to change an argument renames it, and no name in a chain of renamed
-	 * forks says `aggregator`, so such a fork is given away only by its wired
-	 * readers, once its own group has members. Matching on the name alone reads
-	 * such a hub as a spoke and turns its per-server stats off.
-	 *
-	 * The result is memoized PER PROCESS by `has_hub_topology()`, so a renamed
-	 * fork whose group is still empty when a worker boots reads as a spoke for
-	 * that worker's whole life, even after Vault members arrive later — only a
-	 * restart re-derives it.
-	 *
-	 * An active topology whose `.tsl` will not read throws: it may be the
-	 * hub, so answering "spoke" would turn its per-server stats off unseen.
-	 * The name signal is read across every active topology first, so a
-	 * reader's unresolvable token never fails a site its name proves a hub.
-	 *
-	 * @return bool True when either signal fires.
-	 * @throws \RuntimeException When an active topology will not read.
-	 */
-	private static function derive_hub_topology(): bool {
-		$active = \array_map( Core::as_string( ... ), \array_keys( Bootstrap::get_topologies() ) );
-		foreach ( $active as $name ) {
-			if ( 'aggregator' === $name
-				|| \in_array( 'aggregator', Topology_Analyzer::includes( $name ), true ) ) {
-				return true;
+	private static function declares_hub(): bool {
+		[ $readable, $unreadable ] = Bootstrap::active_topologies();
+		$hub                       = false;
+		foreach ( \array_keys( $readable ) as $name ) {
+			$declared = Topology_Analyzer::frontmatter( $name )['is_hub'] ?? null;
+			if ( null === $declared || '0' === $declared ) {
+				continue;
 			}
-		}
-		foreach ( $active as $name ) {
-			foreach ( Topology_Analyzer::nodes_of_type( $name, Remote_Source_Node::class ) as $reader ) {
-				foreach ( Core::arr( $reader['pairs'] ) as $pair ) {
-					if ( Log_Manager::names_firehose( Core::as_string( Core::arr( $pair )['source'] ) ) ) {
-						return true;
-					}
-				}
+			if ( '1' !== $declared ) {
+				throw new \RuntimeException(
+					\esc_html( "topology '{$name}' declares is_hub = {$declared}; it must be 1 or 0" )
+				);
 			}
+			$hub = true;
 		}
-		return false;
+		if ( ! $hub && [] !== $unreadable ) {
+			throw new \RuntimeException(
+				\esc_html( 'is_hub unknown: active topology will not read: ' . \implode( ', ', \array_keys( $unreadable ) ) ),
+				0,
+				\array_values( $unreadable )[0]
+			);
+		}
+		return $hub;
 	}
 
 	/**
@@ -540,8 +462,6 @@ class Config {
 	public static function reset_local_cache(): void {
 		self::$config          = null;
 		self::$config_defaults = null;
-		self::$is_hub          = null;
-		self::$is_hub_failure  = null;
 		self::$unrecognized    = [];
 	}
 

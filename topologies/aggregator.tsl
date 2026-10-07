@@ -71,7 +71,12 @@
 # A Vault id colliding with a declared node name — `config`, the slot of the
 # group's own `spokes:config` — fails the load, naming the id; on reload it
 # escapes after every other spoke is built.
+#
+# `is_hub = 1` is what makes the site a hub: `<eln:is_hub>` reads it from the
+# top-level file of each active topology, so it counts when this file is
+# activated on its own, and a topology including this one declares its own.
 
+var is_hub = 1
 var on_demand_idle = 0
 
 include topic-probe
