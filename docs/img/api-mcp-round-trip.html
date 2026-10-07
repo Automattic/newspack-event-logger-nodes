@@ -49,7 +49,7 @@
     <div class="chip"><span class="st">401</span>The header does not match the Bearer shape.</div>
     <div class="chip"><span class="st">401</span><span class="mono">Command_Auth::load_session_record( handle )</span> finds no live session, or its secret fails <span class="mono">hash_equals</span>.</div>
     <div class="chip"><span class="st pass">&#10003;</span>The request BECOMES the session's minting user (<span class="mono">wp_set_current_user</span>); the session's scope is installed as <span class="mono">Capabilities::$session_scope</span>, a ceiling and never a grant.</div>
-    <div class="chip"><span class="st">429</span>The handle's 21st call inside any trailing 10 seconds (<span class="mono">RATE_LIMIT_BURST</span> 20, <span class="mono">RATE_LIMIT_WINDOW_S</span> 10), each admitted call holding one slot claimed by an atomic cache <span class="mono">add()</span>; 503 when neither memcached nor APCu is available, or the slot read fails. Checked last, so an unauthenticated flood cannot fill the slots.</div>
+    <div class="chip"><span class="st">429</span>All 20 of the handle's slots held (<span class="mono">RATE_LIMIT_BURST</span> 20, <span class="mono">RATE_LIMIT_WINDOW_S</span> 10): each admitted call claims one through <span class="mono">Rate_Limit::claim()</span>'s atomic cache <span class="mono">add()</span>, and the slot frees one window after its claim. A <b>503</b> <span class="mono">rate_limit_unavailable</span> instead when neither memcached nor APCu answers, or the slot read fails. Checked last, so an unauthenticated flood spends no slots.</div>
   </div>
 </div>
 

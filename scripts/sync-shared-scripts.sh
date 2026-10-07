@@ -27,6 +27,7 @@ SUBSTRATE_DIR="$PLUGIN_DIR/../newspack-nodes"
 SELF="sync-shared-scripts.sh"
 
 # Everything except this script, which phase 1 owns.
+# pre-push.local is each plugin's own, so it is never named here.
 SHARED="reorder-node-methods.php reorder-node-methods.js coverage-gate-js.mjs
 	coverage-gate.py lint-comments.mjs lint-comments.php fix-blank-lines.php
 	test-coverage-gate.sh test-coverage-gate-js.sh test-reorder-node-methods.sh
@@ -36,7 +37,7 @@ SHARED="reorder-node-methods.php reorder-node-methods.js coverage-gate-js.mjs
 	lint-styles.mjs test-lint-styles.sh
 	lint-wp-pin.mjs test-lint-wp-pin.sh
 	check-substrate-floor.sh phpstan-substrate-floor.php phpstan-floor.neon
-	pre-commit commit-msg lint-docs.sh
+	pre-commit commit-msg pre-push .shellcheckrc lint-docs.sh
 	render-diagram.sh autocrop.py"
 
 [ -d "$SUBSTRATE_DIR/scripts" ] || exit 0
