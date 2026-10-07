@@ -13,12 +13,12 @@ var on_demand_idle = 30
 include topic-probe
 include table-probe
 
-make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/<topology>.requests.p<partition> <config:deadletter_dir>/<topology>.requests.p<partition>
+make_node Consumer requests:consumer <config:logs_dir>/requests.p{partition} <config:offsets_dir>/<topology>.requests.p{partition} <config:deadletter_dir>/<topology>.requests.p{partition}
 make_node Flame_Builder flame-builder
-make_node Partition flames:partition <config:logs_dir>/flames.p<partition>
-make_node Table flame-stats:aggregate evlog:p<partition> <eln:stats_ttl> sqlite
-make_node Table flame-stats:url evlog:p<partition> <eln:stats_url_ttl> sqlite
-make_node Table flame-stats:url-fine evlog:p<partition> <eln:stats_url_fine_ttl> sqlite
+make_node Partition flames:partition <config:logs_dir>/flames.p{partition}
+make_node Table flame-stats:aggregate evlog:p{partition} <eln:stats_ttl> sqlite
+make_node Table flame-stats:url evlog:p{partition} <eln:stats_url_ttl> sqlite
+make_node Table flame-stats:url-fine evlog:p{partition} <eln:stats_url_fine_ttl> sqlite
 command_node requests:consumer:config add_snapshot_node flame-builder
 command_node flame-builder:config set_aggregate_target flame-stats:aggregate
 command_node flame-builder:config set_url_target flame-stats:url

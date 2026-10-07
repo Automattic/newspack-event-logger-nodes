@@ -11,7 +11,8 @@
  * Loads each affected TSL file in-process via Topology_Loader against a
  * real CommandInterpreter sink (the same path the reconcile pass + worker take
  * at spawn time), then asserts on Core's node registry and on the
- * patron state the :config verbs mutated.
+ * patron state the :config verbs mutated. A load on a worker other than p0
+ * also pins which logs each worker reads and writes as its own.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -88,7 +89,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	 * back in `_command_interpreter` (which doesn't know about sibling
 	 * CIs) and the verb never executes.
 	 */
-	private function load_topology( string $name ): Command_Interpreter_Node {
+	private function load_topology( string $name, int $partition = 0 ): Command_Interpreter_Node {
 		$router = new Router_Node();
 		$router->name( '_router' );
 
@@ -96,7 +97,7 @@ class TopologyCompactSummaryTest extends TestCase {
 		$interpreter->name( '_command_interpreter' );
 		$interpreter->sink( $router );
 
-		Topology_Loader::load( $name, 0, $interpreter );
+		Topology_Loader::load( $name, $partition, $interpreter );
 		return $interpreter;
 	}
 
@@ -248,6 +249,38 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->assertSame( 5, $this->partition_geometry( $completed, 'num_segments' ) );
 		$this->assertSame( 120, $this->partition_geometry( $completed, 'min_lifetime' ) );
 		$this->assertSame( 7200, $this->partition_geometry( $completed, 'lifetime' ) );
+	}
+
+	/**
+	 * Worker p3 reads and writes its own partition of every per-worker log —
+	 * the firehose and requests it consumes, the requests and flames it writes,
+	 * each cursor and quarantine beside them — while the four shared outputs
+	 * stay the `.p0` every worker appends to.
+	 */
+	public function test_worker_three_resolves_its_own_partition_of_every_per_worker_log(): void {
+		$this->load_topology( 'complete', 3 );
+
+		foreach ( [ 'firehose', 'requests' ] as $log ) {
+			$consumer = Core::node( "{$log}:consumer" );
+			$this->assertStringEndsWith( "/{$log}.p3", $this->read_private( $consumer, 'source_dir' ) );
+			$this->assertStringEndsWith( "/complete.{$log}.p3", $this->read_private( $consumer, 'offsetlog_dir' ) );
+			$this->assertStringEndsWith( "/complete.{$log}.p3", $this->read_private( $consumer, 'deadletter_dir' ) );
+		}
+		foreach ( [ 'requests' => 'p3', 'flames' => 'p3', 'alerts' => 'p0', 'errors' => 'p0', 'gyroscope' => 'p0', 'completed' => 'p0' ] as $log => $suffix ) {
+			$this->assertStringEndsWith( "/{$log}.{$suffix}", $this->read_private( Core::node( "{$log}:partition" ), 'partition_dir' ) );
+		}
+	}
+
+	/**
+	 * A spoke's worker p3 tails its own partition of the job feed.
+	 */
+	public function test_job_feed_worker_three_tails_its_own_feed_partition(): void {
+		$this->load_topology( 'job-feed', 3 );
+
+		$consumer = Core::node( 'jobfeed:consumer' );
+		$this->assertStringEndsWith( '/jobfeed.p3', $this->read_private( $consumer, 'source_dir' ) );
+		$this->assertStringEndsWith( '/job-feed.jobfeed.p3', $this->read_private( $consumer, 'offsetlog_dir' ) );
+		$this->assertStringEndsWith( '/job-feed.jobfeed.p3', $this->read_private( $consumer, 'deadletter_dir' ) );
 	}
 
 	private function partition_geometry( Partition_Node $partition, string $prop ): int {

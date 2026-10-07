@@ -13,7 +13,7 @@
 # the Vault on reload — a spoke is added or dropped by editing group
 # membership, never by hand-editing this file. Each Remote_Source is a broker
 # holding ONE connection to its spoke, which carries both of the spoke's
-# streams the pairs name, `firehose.p<partition>` and `sources/php` (the
+# streams the pairs name, `firehose.p{partition}` and `sources/php` (the
 # spoke's PHP error log); each stream is read by its own Remote_Consumer,
 # published as `spokes:<id>:<kind>`, with its own cursor under
 # `<topology>.{id}/`. Never hand-wire a second Remote_Source for a spoke
@@ -39,14 +39,12 @@
 # absolute file path; `wp nodes doctor`'s `log-sources` row checks what each
 # site reads itself.
 #
-# The topology mounts once per worker partition. The firehose pair writes its
-# token deferred, `{partition}`, so each worker pulls its own partition of
-# every spoke's firehose; `sources/php` and the hub's own log name no
-# partition, so worker p0 alone reads them. On a multi-partition hub, worker
-# p0 carries `firehose.p0` and `sources/php` on one connection per spoke and
-# tails the hub's own log; p1 and up each carry their own firehose partition.
-# `<partition>` would be resolved before the broker sees it and the pair read
-# as fixed, so the analyzer refuses a pair source naming it.
+# The topology mounts once per worker partition. The firehose pair names
+# `{partition}`, so each worker pulls its own partition of every spoke's
+# firehose; `sources/php` and the hub's own log name no partition, so worker
+# p0 alone reads them. On a multi-partition hub, worker p0 carries
+# `firehose.p0` and `sources/php` on one connection per spoke and tails the
+# hub's own log; p1 and up each carry their own firehose partition.
 #
 # assume_clean_shutdown and set_multi_writer are recorded ONCE, on the group,
 # and replayed to every broker present now or built later, which fans each
@@ -64,7 +62,7 @@
 # pulling one spoke stream must not share one.
 #
 # Each broker patrons its own SSE_In + HTTP_Out and publishes a status
-# snapshot under the install-scoped cache key remote:<broker>:p<partition>,
+# snapshot under the install-scoped cache key remote:<broker>:p{partition},
 # e.g. remote:spokes:<id>:p0. SSL/HTTPS policy comes from the substrate
 # vault_verify_ssl / vault_require_ssl config — not a per-topology setter.
 #
