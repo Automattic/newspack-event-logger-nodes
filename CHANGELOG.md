@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A fatal names its plugin when the plugin runs from a release directory, or from a docroot behind a symlink.** PHP reports a fatal's file with every symlink resolved, so a plugin the atomic deploy swaps in reports `wp-content/plugin-releases/<slug>/<release>/<slug>/…`, never `WP_PLUGIN_DIR`, and `fatal_plugin` came back empty for every such plugin. `Log_Manager` reads the slug from either layout, matching each root both as written and as resolved.
 - **A WP-CLI process logs under the site's own host instead of fataling.** WP-CLI sets no `SERVER_NAME`, so `Log_Manager`'s constructor threw `RuntimeException` in any CLI path that started a request context — `wp pyrobase cron run import-film-times`, through `CronManager::run_job_now()` and `begin_job_context()`, among them. Under WP-CLI with no `SERVER_NAME`, `Log_Manager::origin()` takes the scheme and host from `home_url()`, and still throws when `home_url()` names no host. A `SERVER_NAME` and `HTTPS` the process set still name the origin, under WP-CLI too, and a web request with no `SERVER_NAME` still throws.
 
 ## [0.128.1] - 2026-10-08

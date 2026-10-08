@@ -526,6 +526,11 @@ if ( ! defined( 'WP_PLUGIN_DIR' ) ) {
 	define( 'WP_PLUGIN_DIR', '/tmp/test-wp-plugins' );
 }
 
+// Per process, so a test may build it as a symlink without racing a peer.
+if ( ! defined( 'WP_CONTENT_DIR' ) ) {
+	define( 'WP_CONTENT_DIR', "{$newspack_test_base}-wp-content" );
+}
+
 // Canonical shared WP shims from the substrate; local overrides above win.
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/wp-shims.php';
 
