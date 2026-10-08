@@ -928,8 +928,8 @@ class Log_Manager {
 	 * can route on it. Spliced into the URI whole, it nests a second scheme and
 	 * host inside the path and reads as though the executing host served it —
 	 * `https://www.spoke.com/jobs/evtemplate/https://hub/Tools/UpdateSite.html`.
-	 * log_process() supplies the real host from origin(), which reads
-	 * SERVER_NAME, so only the path belongs here. A URL carrying no path names no template — the handler
+	 * log_process() supplies the real host from origin(), so only the path
+	 * belongs here. A URL carrying no path names no template — the handler
 	 * returns early on exactly that input — so it yields '' and the caller drops
 	 * the segment, giving the bare `/jobs/{handler}` an id-less job already has.
 	 *
@@ -1301,18 +1301,28 @@ class Log_Manager {
 
 	/**
 	 * The `scheme://host` this request was served under: SERVER_NAME, with
-	 * the scheme HTTPS names. Every logged URL carries a host, so a request
-	 * with none is refused rather than logged as a path.
+	 * the scheme HTTPS names. A WP-CLI process that set no SERVER_NAME takes
+	 * both from home_url(), the site's own origin. Every logged URL carries a
+	 * host, so a request with none is refused rather than logged as a path.
 	 *
-	 * @throws \RuntimeException When SERVER_NAME is unset or empty.
+	 * @throws \RuntimeException When SERVER_NAME is unset or empty outside WP-CLI, or under WP-CLI when home_url() names no host either.
 	 */
 	private static function origin(): string {
 		$server_name = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
-		if ( '' === $server_name ) {
+		if ( '' !== $server_name ) {
+			$scheme = ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ? 'https' : 'http';
+			return "{$scheme}://{$server_name}";
+		}
+		if ( ! ( \defined( 'WP_CLI' ) && \WP_CLI ) ) {
 			throw new \RuntimeException( 'Log_Manager: SERVER_NAME is unset, so the request has no host to log its URL under' );
 		}
-		$scheme = ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ? 'https' : 'http';
-		return "{$scheme}://{$server_name}";
+		$home   = \home_url();
+		$scheme = Core::as_string( \wp_parse_url( $home, \PHP_URL_SCHEME ) );
+		$host   = Core::as_string( \wp_parse_url( $home, \PHP_URL_HOST ) );
+		if ( '' === $scheme || '' === $host ) {
+			throw new \RuntimeException( 'Log_Manager: SERVER_NAME is unset and home_url() names no host, so the WP-CLI request has no host to log its URL under' );
+		}
+		return "{$scheme}://{$host}";
 	}
 
 	/**

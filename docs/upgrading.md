@@ -157,8 +157,9 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes tables flush --yes && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`.
   Then delete `{base}/ledgers/` by hand; nothing reads it.
 
-- **Every logged URL carries its host.** A request with no `SERVER_NAME`
-  never starts: `Log_Manager`'s constructor throws. A request record carries
+- **Every logged URL carries its host.** A web request with no
+  `SERVER_NAME` never starts: `Log_Manager`'s constructor throws. A WP-CLI
+  process with no `SERVER_NAME` logs under `home_url()`'s scheme and host. A request record carries
   no `server_name`; read the server off its URL's host. A record already in
   `requests.pN` whose URL has no host is dead-lettered by the flame builder.
   A request brief's `env` no longer carries `server_name`.
