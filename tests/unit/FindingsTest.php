@@ -1626,13 +1626,75 @@ class FindingsTest extends TestCase {
 		$this->assertStringContainsString( 'absence of evidence', $found['detail'] );
 	}
 
-	public function test_no_rule_at_all_is_the_first_class_cold_start_finding(): void {
-		$found = $this->of_kind( Findings::for_request( $this->healthy_record(), null ), 'insufficient_instrumentation' );
+	/**
+	 * A gyrobase CLI save, shaped as the hub stored rid yfujCNu5wPbfnKOXv4uBKQ:
+	 * the Perl producer consults no rule and stamps none, so `rule_id` is ''.
+	 */
+	private function ruleless_engine_record(): array {
+		return [
+			'url'            => 'http://admin./',
+			'request_method' => 'CLI',
+			'rule_id'        => '',
+			'duration_ms'    => 858.412,
+			'status_code'    => 200,
+			'error_status'   => '-',
+			'entries'        => [
+				[ 'n' => 1, 'ts' => 4200.000, 'k' => 'process (start)', 'm' => '34 on localhost', 'l' => '' ],
+				[ 'n' => 2, 'ts' => 4200.001, 'k' => 'request', 'm' => 'CLI http://admin./' ],
+				[ 'n' => 3, 'ts' => 4200.002, 'k' => 'save (start)', 'm' => '' ],
+				[ 'n' => 4, 'ts' => 4200.850, 'k' => 'save (complete)', 'm' => '', 'duration_ms' => 847.716 ],
+				[ 'n' => 5, 'ts' => 4200.858, 'k' => 'process (complete)', 'm' => '', 'duration_ms' => 858.412 ],
+			],
+			'flame_data'     => [
+				'name'     => 'request',
+				'value'    => 858.412,
+				'children' => [
+					[
+						'name'     => 'process',
+						'value'    => 858.412,
+						'children' => [
+							[
+								'name'     => 'save',
+								'value'    => 847.716,
+								'children' => [
+									[
+										'name'     => 'validation',
+										'value'    => 836.703,
+										'children' => [ [ 'name' => 'include: /Validation/Administrative.html', 'value' => 798.382, 'children' => [] ] ],
+									],
+								],
+							],
+						],
+					],
+				],
+			],
+		];
+	}
 
-		$this->assertNotNull( $found );
-		$this->assertNull( $found['rule_id'] );
-		$this->assertSame( 'create_rule', $found['proposal']['action'] );
-		$this->assertSame( '/calendar/today', $found['proposal']['pattern'] );
+	/**
+	 * A record no rule governs was written by a producer that consults no
+	 * rule: `Log_Manager` writes one only after a log rule matched, and stamps
+	 * its id. The record itself proves the request was logged, and no rule
+	 * edit — least of all WordPress lifecycle hooks — reaches its producer.
+	 */
+	public function test_a_record_no_rule_governs_is_not_called_unmeasured(): void {
+		$findings = Findings::for_request( $this->ruleless_engine_record(), null );
+
+		$this->assertNull( $this->of_kind( $findings, 'insufficient_instrumentation' ) );
+		$this->assertNotNull( $this->of_kind( $findings, 'dominant_span' ), 'its spans are measured and read' );
+		foreach ( $findings as $finding ) {
+			$this->assertNotSame( 'create_rule', $finding['proposal']['action'] ?? null, $finding['kind'] );
+			$this->assertNotSame( Findings::LIFECYCLE_BRACKET, $finding['proposal']['hooks'] ?? null, $finding['kind'] );
+		}
+	}
+
+	/** Without spans the record still exists, so it is not called unlogged. */
+	public function test_a_spanless_record_no_rule_governs_is_not_called_unmeasured(): void {
+		$record               = $this->ruleless_engine_record();
+		$record['flame_data'] = [ 'name' => 'request', 'value' => 0.0, 'children' => [] ];
+		$record['entries']    = \array_slice( $record['entries'], 0, 2 );
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, null ), 'insufficient_instrumentation' ) );
 	}
 
 	/**
@@ -1797,12 +1859,14 @@ class FindingsTest extends TestCase {
 
 	/** A rule's pattern is a path, so an absolute URL as one would match nothing. */
 	public function test_a_rule_to_create_is_patterned_on_the_path(): void {
-		$record        = $this->healthy_record();
-		$record['url'] = 'https://example.test/calendar/today';
+		$found = $this->of_kind(
+			Findings::for_url( [ 'url' => 'https://example.test/moa/kiwi', 'count' => 3 ], null ),
+			'insufficient_instrumentation'
+		);
 
-		$found = $this->of_kind( Findings::for_request( $record, null ), 'insufficient_instrumentation' );
-
-		$this->assertSame( '/calendar/today', $found['proposal']['pattern'] );
+		$this->assertNull( $found['rule_id'] );
+		$this->assertSame( 'create_rule', $found['proposal']['action'] );
+		$this->assertSame( '/moa/kiwi', $found['proposal']['pattern'] );
 	}
 
 	/**
