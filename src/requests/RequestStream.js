@@ -4,8 +4,8 @@
  * A THIN wrapper over the shared `LogStreamViewer` chrome (toolbar, filter,
  * counts + rate, pause, step, offset jump, Debug, Clear, banner, body split,
  * virtualized `LogRowList`). The `request-log:*` node graph (mounted by
- * `useRequestLogGraph`) owns all data: `request-log:link` holds the EventSource
- * and fans its frames through the `request-log:stream` Tee into
+ * `useRequestLogGraph`) owns all data: it rides the page's one stream link,
+ * `_stream`, which routes its frames through the `request-log:stream` Tee into
  * `request-log:view` (a `LogStreamViewNode` subclass), whose ring the list reads
  * straight off the node each frame — row data never becomes React state. This
  * component supplies only the differing pieces: the column set + picker, the
@@ -274,7 +274,7 @@ export default function RequestStream( {
 			pickerLabel={ browse.pickerLabel }
 			isPaused={ isPaused }
 			connectionError={ connectionError }
-			linkNode="request-log:link"
+			streamNode="request-log:stream"
 			onTogglePause={ () => setPaused( ! isPaused ) }
 			onStep={ step }
 			onJump={ browse.jump }

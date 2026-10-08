@@ -22,8 +22,9 @@ const RAW_LOGS = 'raw-logs';
  *
  * @param {Object}   spec              The dashboard's declaration.
  * @param {string}   spec.prefix       Node-name prefix for every soft node
- *                                     this hook mounts: the stream backbone,
- *                                     the paused read and the browse catalog.
+ *                                     this hook mounts: the stream Tee, the
+ *                                     view, the paused read and the browse
+ *                                     catalog.
  * @param {string}   spec.group        The dashboard's group, whose
  *                                     `shell:<group>` Tap its commands pass.
  * @param {string}   spec.glob         Partition glob this dashboard tails.

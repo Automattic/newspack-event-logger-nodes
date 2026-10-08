@@ -3,8 +3,8 @@
  * Tachikoma's Gyroscope.
  *
  * A THIN view over the `gyroscope:*` node graph `useGyroscopeGraph` mounts. The
- * graph owns the data: `gyroscope:link`, a substrate `RemoteLink`, holds the SSE
- * connection and targets the `gyroscope:stream` Tee, which copies every frame to
+ * graph owns the data: it rides the page's one stream link, `_stream`, which
+ * routes its frames to the `gyroscope:stream` Tee, and the Tee copies each to
  * `gyroscope:view`. That view node dispatches the in-flight and completion
  * envelopes itself and owns the model — the rid-keyed map, the snapshot that
  * reaps and orders it, and the requests-per-second readout. This component only
@@ -457,7 +457,7 @@ export default function Inflight( { maxRows = 20, headerControlsSlot } ) {
 					'newspack-event-logger-nodes'
 				) }
 			/>
-			<UnparseableLinesNotice node="gyroscope:link" />
+			<UnparseableLinesNotice node="gyroscope:stream" />
 
 			{ showColumnPicker && (
 				<ColumnPicker

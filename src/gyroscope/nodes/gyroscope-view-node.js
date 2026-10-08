@@ -53,9 +53,10 @@ const INFLIGHT_STALE_MS = 20 * 60 * 1000;
  * correct under BOTH producer modes (full per-tick re-emit / delta) with NO mode
  * awareness. It tests the ORIGIN first — a message from `controlFrom` is a
  * control the React layer filled in locally, whose `action` picks the verb
- * (the low-frequency path; `useGyroscopeGraph` sends `clear` before every
- * (re)connect). A control is never recognised by what its payload
- * looks like: a record carrying an `action` is a record. Everything else is one:
+ * (the low-frequency path; `useGyroscopeGraph` sends `clear` each time the
+ * graph rides the page's stream — at mount, after a rebuild and on refocus —
+ * and not when the SseIn alone reopens). A control is never recognised by what
+ * its payload looks like: a record carrying an `action` is a record. Everything else is one:
  * - object VALUE with `state` `complete` and a non-empty KEY: a completion — the
  *   source of RETIREMENT under both modes. Merge, derive time_ms/est_ms.
  * - object VALUE with any other `state` and a non-empty KEY: an in-flight upsert
@@ -191,10 +192,11 @@ export class GyroscopeViewNode extends ReactBridge( Node ) {
 	/**
 	 * Empty the request map and the RPS window.
 	 *
-	 * `useGyroscopeGraph` sends a `clear` before every (re)connect: a
-	 * reconnecting stream re-emits every live request from scratch, so anything
-	 * held from the previous connection would linger as a row no producer will
-	 * ever complete.
+	 * `useGyroscopeGraph` sends a `clear` each time the graph rides the page's
+	 * stream — at mount, after a rebuild and on refocus — and none when the SseIn
+	 * alone reopens. The producer re-emits every live request, so a row held
+	 * from before the graph rode would linger where no producer will ever
+	 * complete it.
 	 */
 	_clear() {
 		this.requests.clear();

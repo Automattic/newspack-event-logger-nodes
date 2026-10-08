@@ -1,6 +1,6 @@
 /**
  * useGlobStreamGraph tests — the glob dashboard, mounted for real so the
- * RemoteLink, the command wire and the router all run.
+ * page's stream link, the command wire and the router all run.
  *
  * Segment browsing, the seeks and the pause gate belong to the substrate hooks
  * it declares (`useSegmentBrowse`, `useStreamGraph`) and are asserted there;
@@ -21,6 +21,7 @@ import {
 	VALUE,
 	forgetSession,
 	__setAuthFetch,
+	reservedNames,
 } from '@newspack-nodes/runtime';
 import { isControl } from '@newspack-nodes/shared/helpers/controlMsg';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
@@ -69,7 +70,7 @@ const PREFIX = 'globtest';
 
 /** The declared group, distinct from every real dashboard's. */
 const GROUP = 'pangolin';
-const LINK = 'globtest:link';
+const LINK = reservedNames.STREAM;
 const VIEW = 'globtest:view';
 const GLOB = 'errors.*';
 
@@ -134,7 +135,7 @@ async function renderBrowse( {
 	return { ...hook, view: () => Core.node( VIEW ), wire };
 }
 
-/** What the stream is currently subscribed to. */
+/** What the page's stream is currently subscribed to; this graph rides alone. */
 const subscribedTo = () => Core.node( LINK ).sseIn.subscribe;
 
 /**
