@@ -16,12 +16,14 @@
  * verbs in one tick means more nodes, never one node telling replies apart.
  *
  * `dump` is the odd one out, deliberately: it is a publish, not an await. It is
- * minted FROM the `rules:in` Tee and filled through the `_shell` Tap
- * (observable at `connect _shell`), so its reply lands back on that Tee and
- * fans into `rules:view`, the render model every consumer reads.
+ * minted FROM the `rules:in` Tee and filled into `rules:dump`, a plain Node
+ * whose target addresses the editor's `shell:rules` Tap (observable at
+ * `connect shell:rules`), so its reply lands back on that Tee and fans into
+ * `rules:view`, the render model every consumer reads. That target is also what
+ * mounts the Tap: the exospine claims the group a built node targets.
  *
- * Either way the Router peels `_http` off the TO, HttpOutNode POSTs, and the
- * reply routes home by the TO the server echoed.
+ * Either way the Router peels `shell:rules` and `_http` off the TO, HttpOutNode
+ * POSTs, and the reply routes home by the TO the server echoed.
  *
  * The wire contract mirrors `Rules_CI_Node`: `save` and `upsert` pass the raw
  * JSON as a single argument token (the handler `json_decode`s `$args[0]`),
@@ -40,17 +42,20 @@ import {
 	Core,
 	mountExospine,
 	useNodeField,
-	TO,
 	formatCommandArgs,
 	ensureSession,
-	reservedNames as names,
+	TO,
 } from '@newspack-nodes/runtime';
 
 import { views } from './nodes/register';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
+import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
 /** The server-side CI mount every verb here is addressed to. */
 const RULES_CI = 'rules';
+
+/** The group every command the editor sends belongs to. */
+const GROUP = 'rules';
 
 /** The Tee that mints `dump` and, by TO=FROM, receives its reply. */
 const RECV = 'rules:in';
@@ -58,24 +63,26 @@ const RECV = 'rules:in';
 /** The slice view holding the table's render model. */
 const VIEW = 'rules:view';
 
+/** The node `dump` leaves through, targeting the editor's egress. */
+const DUMP = 'rules:dump';
+
 /**
  * Ask the `rules` CI to re-dump, minted FROM the table's own receiver Tee: the
  * server echoes TO=FROM, so the reply lands on `rules:in`, fans into
  * `rules:view` and repaints the table. That repaint IS the result — nothing is
  * returned and no caller awaits one.
  *
- * The Tee carries no target, so the egress address is stamped on the message
- * here rather than configured on the node.
- *
- * @param {Object} shell The `_shell` Tap every command routes through.
+ * `command()` stamps the Tee's own fan-out as TO; cleared, the message leaves
+ * through `rules:dump`, which stamps its target, the editor's egress, as any
+ * Node stamps an empty TO.
  */
-function fireDump( shell ) {
+function fireDump() {
 	const m = Core.node( RECV )?.command( 'dump', [] ) ?? null;
 	if ( null === m ) {
 		return; // unauthenticated; re-auth is under way
 	}
-	m[ TO ] = `${ names.HTTP }/rules`;
-	shell.fill( m );
+	m[ TO ] = '';
+	Core.node( DUMP )?.fill( m );
 }
 
 /**
@@ -108,33 +115,33 @@ export function useRulesGraph( opts = {} ) {
 	optsRef.current = opts;
 
 	const interpreterRef = useRef( null );
-	const shellRef = useRef( null );
 
 	// Bumped on every rebuild so useNodeField re-subscribes to the fresh view.
 	const [ , bumpBuild ] = useState( 0 );
 
 	useEffect( () => {
-		const build = ( { interpreter, shell } ) => {
+		const build = ( { interpreter } ) => {
 			const recv = interpreter.makeNode( 'Tee', RECV );
 			interpreter.makeNode( views.RulesView, VIEW );
 			recv.connectNode( VIEW );
+			interpreter
+				.makeNode( 'Node', DUMP )
+				.connectNode( egressPath( GROUP, RULES_CI ) );
 
 			interpreterRef.current = interpreter;
-			shellRef.current = shell;
 
 			bumpBuild( ( n ) => n + 1 );
 
 			// One dump once the session is up; its reply repaints the table.
 			ensureSession().then( () => {
-				if ( shellRef.current !== shell ) {
+				if ( interpreterRef.current !== interpreter ) {
 					return; // unmounted or rebuilt while /auth was in flight
 				}
-				fireDump( shell );
+				fireDump();
 			} );
 
 			return () => {
 				interpreterRef.current = null;
-				shellRef.current = null;
 			};
 		};
 
@@ -148,8 +155,8 @@ export function useRulesGraph( opts = {} ) {
 	const settle = useCallback(
 		( verb ) =>
 			( { error } ) => {
-				if ( ! error && shellRef.current ) {
-					fireDump( shellRef.current );
+				if ( ! error ) {
+					fireDump();
 				}
 				onMutationRef.current?.( { verb, error } );
 			},
@@ -158,33 +165,33 @@ export function useRulesGraph( opts = {} ) {
 
 	// A document cannot address a reply: save sends no subject, upsert an id.
 	const saveOnce = useCommandOnce( {
+		group: GROUP,
 		ci: RULES_CI,
 		command: 'save',
 		subjectOf: () => null,
 		onDone: settle( 'save' ),
 	} );
 	const upsertOnce = useCommandOnce( {
+		group: GROUP,
 		ci: RULES_CI,
 		command: 'upsert',
 		subjectOf: ( [ rule ] ) => JSON.parse( rule ).id ?? null,
 		onDone: settle( 'upsert' ),
 	} );
 	const deleteOnce = useCommandOnce( {
+		group: GROUP,
 		ci: RULES_CI,
 		command: 'delete',
 		onDone: settle( 'delete' ),
 	} );
 	const resetOnce = useCommandOnce( {
+		group: GROUP,
 		ci: RULES_CI,
 		command: 'reset',
 		onDone: settle( 'reset' ),
 	} );
 
-	const dump = useCallback( () => {
-		if ( shellRef.current ) {
-			fireDump( shellRef.current );
-		}
-	}, [] );
+	const dump = useCallback( () => fireDump(), [] );
 
 	// save/upsert: the JSON is ONE token, the verb's `rules` or `rule` arg.
 	const saveAll = useCallback(

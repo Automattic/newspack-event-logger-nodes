@@ -4,7 +4,7 @@
  *
  * The graph:
  *   performance:timer (Timer) → performance:tee (Tee) → overview:fetch, urls:fetch (Fetchers,
- *     each with an argsFn getter reading current React UI state) → _shell/_http/performance
+ *     each with an argsFn getter reading current React UI state) → shell:overview/_http/performance
  *   overview:in (Tee) → overview:view (OverviewView)
  *   urls:in     (Tee) → urls:view     (UrlsView)
  *   url-detail:transform (UrlDetailMerge) → url-detail:view (UrlDetailView)   [on-demand]
@@ -185,6 +185,24 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
+	} );
+
+	test( "routes each slice through its family's Tap, all three declared by the poll", () => {
+		installWire();
+		renderHook( () => usePerformanceGraph() );
+		const interpreter = Core.node( INTERPRETER );
+		for ( const [ fetcher, group ] of [
+			[ 'overview:fetch', 'overview' ],
+			[ 'urls:fetch', 'overview' ],
+			[ 'url-detail:fetch', 'url' ],
+			[ 'request-detail:fetch', 'request' ],
+		] ) {
+			expect( Core.node( fetcher ).target ).toBe(
+				`shell:${ group }/_http/performance`
+			);
+			expect( Core.node( `shell:${ group }` ).sink ).toBe( interpreter );
+		}
+		expect( Core.node( '_shell' ).counter ).toBe( 0 );
 	} );
 
 	test( 'builds the on-demand detail nodes through an interpreter that never registered their names', () => {

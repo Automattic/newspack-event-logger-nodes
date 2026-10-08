@@ -54,6 +54,7 @@ import {
 	CHART_METRIC_OPTIONS,
 	CHART_BREAKDOWN_OPTIONS,
 	DEFAULT_CHART_BREAKDOWN,
+	GROUPS,
 } from './constants';
 import {
 	usePerformanceGraph,
@@ -464,6 +465,7 @@ export default function PerformanceDashboard( {
 	 * answered, which is how the guard below tells whose title it is.
 	 */
 	const { run: lookupUrl } = useCommandOnce( {
+		group: GROUPS.url,
 		ci: SERVER,
 		command: 'dump_url',
 		scope: 'url-lookup',
@@ -527,6 +529,7 @@ export default function PerformanceDashboard( {
 	 * stands, and a not-found is an answer that ends it.
 	 */
 	const { run: askDeepLinkRequest } = useCommandOnce( {
+		group: GROUPS.request,
 		ci: SERVER,
 		command: 'search_requests',
 		scope: 'request-deeplink',
@@ -550,6 +553,7 @@ export default function PerformanceDashboard( {
 	 * falls outside the loaded catalog page and so carries no title.
 	 */
 	const { run: askDeepLinkUrl } = useCommandOnce( {
+		group: GROUPS.url,
 		ci: SERVER,
 		command: 'dump_url',
 		scope: 'url-deeplink',
@@ -596,6 +600,7 @@ export default function PerformanceDashboard( {
 		abandon: abandonRequestSearch,
 		pending: requestSearchPending,
 	} = useCommandOnce( {
+		group: GROUPS.request,
 		ci: SERVER,
 		command: 'search_requests',
 		scope: 'request-search',
@@ -653,6 +658,7 @@ export default function PerformanceDashboard( {
 		abandon: abandonGrep,
 		pending: grepPending,
 	} = useCommandOnce( {
+		group: GROUPS.performance,
 		ci: SERVER,
 		command: 'grep_requests',
 		// A search pattern is free text the operator typed, not an identity.
@@ -820,6 +826,7 @@ export default function PerformanceDashboard( {
 	 * label and the draft it opens always agree with the ruleset last read.
 	 */
 	const { run: dumpRules } = useCommandOnce( {
+		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'dump',
 		retry: true,
@@ -862,6 +869,7 @@ export default function PerformanceDashboard( {
 	 * success re-reads the ruleset rather than patching the copy in hand.
 	 */
 	const { run: upsertRule } = useCommandOnce( {
+		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'upsert',
 		// The rule DOCUMENT is the first token; the rule it names is the id.
@@ -895,6 +903,7 @@ export default function PerformanceDashboard( {
 	 * Delete one rule by id, on the same reply contract as `upsertRule`.
 	 */
 	const { run: removeRule } = useCommandOnce( {
+		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'delete',
 		onDone: ( { result, error } ) => {

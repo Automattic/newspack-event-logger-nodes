@@ -38,6 +38,7 @@ import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import { formatCommandArgs, nodesData } from '@newspack-nodes/runtime';
 import { askClaudeUrl, briefToMarkdown, clipboardBrief } from '../askBrief';
 import FindingList from './FindingList';
+import { GROUPS } from '../constants';
 
 /**
  * The picker's state, held once for the whole dashboard.
@@ -89,6 +90,7 @@ export function useAsk( {
 	// first: one unpicked meanwhile has no entry left, so its answer lands
 	// nowhere. No subject rides the address, which a long span name outgrows.
 	const { run: ask } = useCommandOnce( {
+		group: GROUPS.performance,
 		ci: 'performance',
 		command: 'ask',
 		subjectOf: () => null,

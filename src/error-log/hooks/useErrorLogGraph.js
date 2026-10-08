@@ -27,6 +27,7 @@ export function useErrorLogGraph( opts = {} ) {
 	return useGlobStreamGraph(
 		{
 			prefix: 'error-log',
+			group: 'errors',
 			glob: 'errors.*',
 			viewClass: views.PerfErrorsView,
 		},

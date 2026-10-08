@@ -38,7 +38,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { formatCommandArgs } from '@newspack-nodes/runtime';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import { SERVER } from '../hooks/usePerformanceGraph';
-import { SCOPED_BREAKDOWN_OPTIONS } from '../constants';
+import { GROUPS, SCOPED_BREAKDOWN_OPTIONS } from '../constants';
 
 /**
  * How often the breakdown series is re-fetched, in milliseconds.
@@ -359,6 +359,7 @@ export default function UrlDetailView( {
 	 * instead would drag a full request-index walk the chart keeps nothing of.
 	 */
 	const { run: fetchBreakdown } = useCommandOnce( {
+		group: GROUPS.url,
 		ci: SERVER,
 		command: 'url_breakdown',
 		retry: true,

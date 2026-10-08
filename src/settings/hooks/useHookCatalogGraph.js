@@ -27,6 +27,9 @@ const RECEIVER = 'hook-catalog:in';
 /** View node: parses the reply and publishes the slice `useNodeField` reads. */
 const VIEW = 'hook-catalog:view';
 
+/** The group the picker's command belongs to, naming the Tap it passes. */
+const GROUP = 'hooks';
+
 /**
  * Poll cadence. The taxonomy moves when a plugin registers a hook rather than
  * with traffic, so the picker asks on a slow retry instead of every tick.
@@ -65,7 +68,7 @@ export function useHookCatalogGraph( opts = {} ) {
 				view: VIEW,
 				viewClass: views.HookCatalogView,
 				tee,
-				target: egressPath( 'performance' ),
+				target: egressPath( GROUP, 'performance' ),
 			} ),
 		timerName: 'hook-catalog:timer',
 		teeName: 'hook-catalog:tee',

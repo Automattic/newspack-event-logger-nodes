@@ -27,6 +27,7 @@ export function useRequestLogGraph( opts = {} ) {
 	return useGlobStreamGraph(
 		{
 			prefix: 'request-log',
+			group: 'requests',
 			glob: 'completed.*',
 			viewClass: views.RequestLogView,
 		},
