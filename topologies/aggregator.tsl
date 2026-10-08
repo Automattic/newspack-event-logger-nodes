@@ -27,10 +27,11 @@
 # cursor advances past it.
 #
 # `php-errors.p0` collects every spoke's PHP error log and the hub's own,
-# which `php-errors:tail` follows; each line's FROM opens with the reader or
-# the Tail that took it, so the log tells its sources apart. Worker p0 is its
-# only writer, so `void_warranty` lifts its 4 KB cap and a database error line
-# past PIPE_BUF still lands.
+# which `php-errors:tail` follows. A line from the hub's own log opens its FROM
+# with that Tail; a spoke's line keeps the FROM the spoke sent, which names no
+# spoke, so the log does not tell one spoke's lines from another's. Worker p0
+# is its only writer, so `void_warranty` lifts its 4 KB cap and a database
+# error line past PIPE_BUF still lands.
 #
 # Every `sources/<name>` a pair or a Tail names must resolve where it is
 # read, or that leg fails loud: a spoke lacking `php` refuses the

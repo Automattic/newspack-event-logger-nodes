@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`php-errors.p0` no longer names the spoke a line came from.** With newspack-nodes' `Remote_Consumer` relaying the spoke's FROM trail unchanged, a spoke's PHP error line keeps the FROM the spoke sent; only the hub's own lines, which open with `php-errors:tail`, stand apart.
+
 ## [0.127.1] - 2026-10-07
 
 ### Changed
