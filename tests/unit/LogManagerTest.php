@@ -3463,6 +3463,31 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( 'raw-segment', $this->invoke_extract_plugin_slug( $path2 ) );
 	}
 
+	/** A plugin swapped in as a release runs from that release, which a fatal names. */
+	public function test_extract_plugin_slug_reads_the_slug_from_a_release_path(): void {
+		$path = \WP_CONTENT_DIR . '/plugin-releases/kereru-9182/20261008223021288837917-61651-v4.2.0/kereru-9182/includes/class-x.php';
+		$this->assertSame( 'kereru-9182', $this->invoke_extract_plugin_slug( $path ) );
+	}
+
+	/** PHP names a fatal's file with every symlink resolved, the content dir's included. */
+	public function test_extract_plugin_slug_matches_the_resolved_content_dir(): void {
+		$real = \sys_get_temp_dir() . '/eln-real-content-' . \getmypid();
+		\mkdir( $real . '/plugin-releases', 0777, true );
+		\symlink( $real, \WP_CONTENT_DIR );
+		try {
+			$path = \realpath( $real ) . '/plugin-releases/tui-5520/20261008223021288837917-61651-v1.9.0/tui-5520/tui-5520.php';
+			$this->assertSame( 'tui-5520', $this->invoke_extract_plugin_slug( $path ) );
+		} finally {
+			\unlink( \WP_CONTENT_DIR );
+			\exec( 'rm -rf ' . \escapeshellarg( $real ) );
+		}
+	}
+
+	/** A file directly in a plugin's release root sits in no release, so names no plugin. */
+	public function test_extract_plugin_slug_returns_null_for_a_release_path_without_a_plugin_dir(): void {
+		$this->assertNull( $this->invoke_extract_plugin_slug( \WP_CONTENT_DIR . '/plugin-releases/kereru-9182/stray.php' ) );
+	}
+
 	/** The wire string readers group by; the JS fold exemption spells it too. */
 	public function test_the_environment_category_is_the_wire_string_readers_expect(): void {
 		$this->assertSame( 'environment_v3', Log_Manager::ENVIRONMENT );

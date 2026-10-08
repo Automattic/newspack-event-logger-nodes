@@ -411,23 +411,36 @@ class Log_Manager {
 	/**
 	 * Extract plugin slug from a file path.
 	 *
+	 * PHP names the file with every symlink resolved, so each root matches as
+	 * written and as resolved. A plugin the deploy swaps in runs from
+	 * `WP_CONTENT_DIR/plugin-releases/<slug>/<release>/<slug>/`, which its
+	 * `plugins/<slug>` symlink points at; the slug there is the third segment.
+	 *
 	 * @param string $file File path from error_get_last().
-	 * @return string|null Plugin slug or null if not in plugins dir.
+	 * @return string|null Plugin slug or null if not in a plugin's tree.
 	 */
 	private static function extract_plugin_slug( string $file ): ?string {
-		if ( ! \defined( 'WP_PLUGIN_DIR' ) ) {
-			return null;
+		$roots = [];
+		if ( \defined( 'WP_PLUGIN_DIR' ) ) {
+			$roots[ WP_PLUGIN_DIR ] = 0;
 		}
-		$plugins_dir = \trailingslashit( WP_PLUGIN_DIR );
-		if ( 0 !== \strpos( $file, $plugins_dir ) ) {
-			return null;
+		if ( \defined( 'WP_CONTENT_DIR' ) ) {
+			$roots[ WP_CONTENT_DIR . '/plugin-releases' ] = 2;
 		}
-		$relative = \substr( $file, \strlen( $plugins_dir ) );
-		$slug     = \explode( '/', $relative )[0];
-		if ( '.php' === \substr( $slug, -4 ) ) {
-			$slug = \substr( $slug, 0, -4 );
+		foreach ( $roots as $root => $segment ) {
+			foreach ( [ $root, \realpath( $root ) ] as $dir ) {
+				if ( false === $dir || 0 !== \strpos( $file, \trailingslashit( $dir ) ) ) {
+					continue;
+				}
+				$segments = \explode( '/', \substr( $file, \strlen( \trailingslashit( $dir ) ) ) );
+				if ( 0 === $segment ) {
+					return '.php' === \substr( $segments[0], -4 ) ? \substr( $segments[0], 0, -4 ) : $segments[0];
+				}
+				// A release's own root holds no plugin file.
+				return isset( $segments[ $segment + 1 ] ) ? $segments[ $segment ] : null;
+			}
 		}
-		return $slug;
+		return null;
 	}
 
 	/**
