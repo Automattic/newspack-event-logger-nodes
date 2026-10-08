@@ -3,9 +3,11 @@
  * the canonical rule-#2 backbone (`_command_interpreter` → `_router`) through
  * the substrate's HTTP boundary node:
  *
- *   _http     (HttpOutNode) — the POST /command egress; `.client` is the
- *             transport it POSTs through
- *   rules:in  (Tee) → rules:view (a RulesView slice), repainted by every `dump`
+ *   _http       (HttpOutNode) — the POST /command egress; `.client` is the
+ *               transport it POSTs through
+ *   rules:fetch (Fetcher) → shell:rules/_http/rules, asking for `dump`
+ *   rules:in    (Tee) → rules:view (a RulesView slice), repainted by every
+ *               `dump`, then → rules:fetch, settling the ask
  *
  * Nothing here pairs a reply with its request, because the addressing already
  * is the correlation. Each MUTATING verb owns its own nodes — one
@@ -15,12 +17,15 @@
  * `message[ID]`, no `replies` map and nothing keyed by one; sending several
  * verbs in one tick means more nodes, never one node telling replies apart.
  *
- * `dump` is the odd one out, deliberately: it is a publish, not an await. It is
- * minted FROM the `rules:in` Tee and filled into `rules:dump`, a plain Node
- * whose target addresses the editor's `shell:rules` Tap (observable at
- * `connect shell:rules`), so its reply lands back on that Tee and fans into
- * `rules:view`, the render model every consumer reads. That target is also what
- * mounts the Tap: the exospine claims the group a built node targets.
+ * `dump` is the odd one out, deliberately: it is a publish, not an await. The
+ * `rules:fetch` Fetcher asks for it FROM the `rules:in` Tee, targeting the
+ * editor's `shell:rules` Tap (observable at `connect shell:rules`), so its
+ * reply lands back on that Tee and fans into `rules:view`, the render model
+ * every consumer reads, and then into the Fetcher, which settles the ask. It
+ * passes no `<receiver>:current` gate, because every dump asks the same `[]`:
+ * a gate cannot tell a stale reply from a fresh one, and the last one wins.
+ * That target is also what mounts the Tap: the exospine claims the group a
+ * built node targets.
  *
  * Either way the Router peels `shell:rules` and `_http` off the TO, HttpOutNode
  * POSTs, and the reply routes home by the TO the server echoed.
@@ -44,45 +49,34 @@ import {
 	useNodeField,
 	formatCommandArgs,
 	ensureSession,
-	TO,
 } from '@newspack-nodes/runtime';
 
 import { views } from './nodes/register';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
+import { GROUPS } from '../overview/constants';
 
 /** The server-side CI mount every verb here is addressed to. */
 const RULES_CI = 'rules';
 
-/** The group every command the editor sends belongs to. */
-const GROUP = 'rules';
-
-/** The Tee that mints `dump` and, by TO=FROM, receives its reply. */
+/** The Tee `dump` is asked FROM and, by TO=FROM, receives its reply. */
 const RECV = 'rules:in';
 
 /** The slice view holding the table's render model. */
 const VIEW = 'rules:view';
 
-/** The node `dump` leaves through, targeting the editor's egress. */
-const DUMP = 'rules:dump';
+/** The Fetcher that asks for `dump`, targeting the editor's egress. */
+const FETCH = 'rules:fetch';
 
 /**
- * Ask the `rules` CI to re-dump, minted FROM the table's own receiver Tee: the
- * server echoes TO=FROM, so the reply lands on `rules:in`, fans into
- * `rules:view` and repaints the table. That repaint IS the result — nothing is
- * returned and no caller awaits one.
- *
- * `command()` stamps the Tee's own fan-out as TO; cleared, the message leaves
- * through `rules:dump`, which stamps its target, the editor's egress, as any
- * Node stamps an empty TO.
+ * Ask the `rules` CI to re-dump, FROM the table's own receiver Tee: the server
+ * echoes TO=FROM, so the reply lands on `rules:in`, fans into `rules:view` and
+ * repaints the table. That repaint IS the result — nothing is returned and no
+ * caller awaits one. The ask supersedes one still standing, because a dump
+ * after a mutation must go out even while an earlier dump is unanswered.
  */
 function fireDump() {
-	const m = Core.node( RECV )?.command( 'dump', [] ) ?? null;
-	if ( null === m ) {
-		return; // unauthenticated; re-auth is under way
-	}
-	m[ TO ] = '';
-	Core.node( DUMP )?.fill( m );
+	Core.node( FETCH )?.askNow( [] );
 }
 
 /**
@@ -123,10 +117,12 @@ export function useRulesGraph( opts = {} ) {
 		const build = ( { interpreter } ) => {
 			const recv = interpreter.makeNode( 'Tee', RECV );
 			interpreter.makeNode( views.RulesView, VIEW );
-			recv.connectNode( VIEW );
 			interpreter
-				.makeNode( 'Node', DUMP )
-				.connectNode( egressPath( GROUP, RULES_CI ) );
+				.makeNode( 'Fetcher', FETCH, [ RECV, 'dump' ] )
+				.connectNode( egressPath( GROUPS.rules, RULES_CI ) );
+			// No answers() gate: every dump asks the same, and the last wins.
+			recv.connectNode( VIEW );
+			recv.connectNode( FETCH );
 
 			interpreterRef.current = interpreter;
 
@@ -165,27 +161,27 @@ export function useRulesGraph( opts = {} ) {
 
 	// A document cannot address a reply: save sends no subject, upsert an id.
 	const saveOnce = useCommandOnce( {
-		group: GROUP,
+		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'save',
 		subjectOf: () => null,
 		onDone: settle( 'save' ),
 	} );
 	const upsertOnce = useCommandOnce( {
-		group: GROUP,
+		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'upsert',
 		subjectOf: ( [ rule ] ) => JSON.parse( rule ).id ?? null,
 		onDone: settle( 'upsert' ),
 	} );
 	const deleteOnce = useCommandOnce( {
-		group: GROUP,
+		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'delete',
 		onDone: settle( 'delete' ),
 	} );
 	const resetOnce = useCommandOnce( {
-		group: GROUP,
+		group: GROUPS.rules,
 		ci: RULES_CI,
 		command: 'reset',
 		onDone: settle( 'reset' ),

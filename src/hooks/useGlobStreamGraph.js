@@ -42,17 +42,17 @@ export function useGlobStreamGraph(
 ) {
 	const graph = useStreamGraph( {
 		prefix,
+		group,
 		subscribe: glob,
 		viewClass,
 		maxEntries: opts.maxEntries,
 	} );
 	const step = useSteppedRead( {
 		graph,
-		group,
 		ci: RAW_LOGS,
 		command: 'read_message',
 	} );
-	const browse = useGlobBrowse( { group, glob, graph, step } );
+	const browse = useGlobBrowse( { glob, graph, step } );
 	const { setPaused, setFilter, clear } = graph;
 
 	return {

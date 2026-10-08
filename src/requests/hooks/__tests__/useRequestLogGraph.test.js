@@ -98,8 +98,6 @@ afterEach( () => jest.restoreAllMocks() );
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = reservedNames.STREAM;
-// The key this graph rides the page link under: its prefix.
-const RIDER = 'request-log';
 // The page link: a patron-owned `:sse-in` + shared _http/_heartbeat singletons.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
@@ -166,12 +164,19 @@ describe( 'useRequestLogGraph — exospine + page link wiring', () => {
 		);
 	} );
 
+	test( 'its reads pass the `shell:request-log` Tap, named apart from the request family', async () => {
+		renderHook( () => useRequestLogGraph() );
+		await act( async () => {} );
+		expect( Core.node( 'request-log-catalog:fetch' ).target ).toBe(
+			'shell:request-log/_http/raw-logs'
+		);
+	} );
+
 	test( 'the request log rides the page link with its glob', async () => {
 		renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );
-		expect( Core.node( LINK ).graphs.get( RIDER ) ).toMatchObject( {
+		expect( Core.node( LINK ).graphs.get( TEE ) ).toMatchObject( {
 			subscribe: [ 'completed.*' ],
-			target: TEE,
 			parked: false,
 		} );
 	} );
@@ -200,7 +205,7 @@ describe( 'useRequestLogGraph — exospine + page link wiring', () => {
 		expect( tee.constructor.name ).toBe( 'TeeNode' );
 		expect( tee.sink ).toBe( interpreter );
 		// The link routes this graph's frames to the Tee, which fans to the view.
-		expect( Core.node( LINK ).graphs.get( RIDER ).target ).toBe( TEE );
+		expect( Core.node( LINK ).graphs.has( TEE ) ).toBe( true );
 		expect( tee.target ).toEqual( [ VIEW ] );
 	} );
 

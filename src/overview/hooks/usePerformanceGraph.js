@@ -87,6 +87,9 @@ export const SERVER = 'performance';
  */
 export const RULES_CI = 'rules';
 
+/** The egress the two polled slices share: `overview` and `urls`. */
+const OVERVIEW_TARGET = egressPath( GROUPS.overview, SERVER );
+
 /**
  * The cadence a caller passing no `refreshInterval` polls at, and the fallback
  * for a setting `parseInt` cannot read.
@@ -433,7 +436,7 @@ export function usePerformanceGraph( opts = {} ) {
 				viewClass: views.OverviewView,
 				controlFrom: OVERVIEW_VIEW,
 				tee,
-				target: egressPath( GROUPS.overview, SERVER ),
+				target: OVERVIEW_TARGET,
 				argsFn: overviewNow,
 			} );
 			addSliceFetcher( interpreter, {
@@ -444,7 +447,7 @@ export function usePerformanceGraph( opts = {} ) {
 				viewClass: views.UrlsView,
 				controlFrom: URLS_VIEW,
 				tee,
-				target: egressPath( GROUPS.overview, SERVER ),
+				target: OVERVIEW_TARGET,
 				argsFn: urlsNow,
 			} );
 

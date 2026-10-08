@@ -27,12 +27,10 @@ import RequestTrace from '../overview/components/RequestTrace';
 import RequestProfile from '../overview/RequestProfile';
 import FindingList from '../overview/components/FindingList';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
+import { GROUPS } from '../overview/constants';
 
 /** The view node's name: the poll fills it, `useNodeField` reads it. */
 const VIEW = 'current-request:view';
-
-/** The group the tab's command belongs to, naming the Tap it passes. */
-const GROUP = 'current-request';
 
 /** Every router tick: the record lands the moment the worker writes it. */
 const POLL_INTERVAL_MS = 1000;
@@ -116,7 +114,7 @@ export default function CurrentRequestTab() {
 				view: VIEW,
 				viewClass: views.CurrentRequestView,
 				tee,
-				target: egressPath( GROUP, 'performance' ),
+				target: egressPath( GROUPS.currentRequest, 'performance' ),
 			} ),
 		timerName: 'current-request:timer',
 		teeName: 'current-request:tee',

@@ -121,11 +121,14 @@ export const SCOPED_BREAKDOWN_OPTIONS = CHART_BREAKDOWN_OPTIONS.filter(
 export const DEFAULT_CHART_BREAKDOWN = 'server';
 
 /**
- * The groups this dashboard's commands travel, each through its own
+ * The groups this plugin's commands travel, each through its own
  * `shell:<group>` Tap so `connect shell:<group>` watches one family alone.
  * `usePerformanceGraph` polls under `overview`, `url` and `request`;
  * `PerformanceDashboard`, `UrlDetailView` and `AskPanel` send their one-shot
- * commands under `url`, `request`, `performance` and `rules`.
+ * commands under `url`, `request`, `performance` and `rules`; the rules editor
+ * sends under `rules`, the hook picker under `hooks`, the current-request tab
+ * under `currentRequest`, and the request and error streams under `requestLog`
+ * and `errorLog`.
  */
 export const GROUPS = {
 	overview: 'overview',
@@ -133,4 +136,8 @@ export const GROUPS = {
 	request: 'request',
 	url: 'url',
 	rules: 'rules',
+	hooks: 'hooks',
+	currentRequest: 'current-request',
+	requestLog: 'request-log',
+	errorLog: 'error-log',
 };
