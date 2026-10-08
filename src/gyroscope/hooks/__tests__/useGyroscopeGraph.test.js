@@ -77,8 +77,6 @@ beforeEach( () => {
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = reservedNames.STREAM;
-// The key this graph rides the page link under: its prefix.
-const RIDER = 'gyroscope';
 // The FROM the server sends a gyroscope record under: the reader's stamp,
 // then the producer's name.
 const STAMPED = 'gyroscope.p0/request-builder';
@@ -147,9 +145,8 @@ describe( 'useGyroscopeGraph — exospine + page link wiring', () => {
 	test( 'the gyroscope rides the page link with its glob', async () => {
 		renderHook( () => useGyroscopeGraph() );
 		await act( async () => {} );
-		expect( Core.node( LINK ).graphs.get( RIDER ) ).toMatchObject( {
+		expect( Core.node( LINK ).graphs.get( TEE ) ).toMatchObject( {
 			subscribe: [ 'gyroscope.*' ],
-			target: TEE,
 			parked: false,
 		} );
 	} );
@@ -177,7 +174,7 @@ describe( 'useGyroscopeGraph — exospine + page link wiring', () => {
 		expect( tee.constructor.name ).toBe( 'TeeNode' );
 		expect( tee.sink ).toBe( interpreter );
 		// The link routes this graph's frames to the Tee, which fans to the view.
-		expect( Core.node( LINK ).graphs.get( RIDER ).target ).toBe( TEE );
+		expect( Core.node( LINK ).graphs.has( TEE ) ).toBe( true );
 		expect( tee.target ).toEqual( [ VIEW ] );
 	} );
 
@@ -338,7 +335,7 @@ describe( 'useGyroscopeGraph — end-to-end routing through the exospine', () =>
 } );
 
 describe( 'useGyroscopeGraph — skipped lines', () => {
-	test( "the server's skipped-line frame reaches the notice on gyroscope:stream as this graph's share", async () => {
+	test( "the server's skipped-line frame lands on the page link as this graph's share", async () => {
 		renderHook( () => useGyroscopeGraph() );
 		await act( async () => {} );
 		// Lines skipped on a dir this graph carries, and on one it does not.
@@ -350,7 +347,9 @@ describe( 'useGyroscopeGraph — skipped lines', () => {
 		act( () => {
 			FakeEventSource.last.dispatch( 'unparseable_lines', pack( frame ) );
 		} );
-		expect( Core.node( TEE ).setStateCache.UNPARSEABLE_LINES ).toBe( 3 );
+		expect( Core.node( LINK ).unparseableByTarget ).toEqual( {
+			[ TEE ]: 3,
+		} );
 	} );
 } );
 

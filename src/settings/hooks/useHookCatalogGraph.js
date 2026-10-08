@@ -17,6 +17,7 @@ import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import { views } from '../nodes/register';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
+import { GROUPS } from '../../overview/constants';
 
 /** Fetcher node: turns each tick into one `list_hooks` command. */
 const FETCHER = 'hook-catalog:fetch';
@@ -26,9 +27,6 @@ const RECEIVER = 'hook-catalog:in';
 
 /** View node: parses the reply and publishes the slice `useNodeField` reads. */
 const VIEW = 'hook-catalog:view';
-
-/** The group the picker's command belongs to, naming the Tap it passes. */
-const GROUP = 'hooks';
 
 /**
  * Poll cadence. The taxonomy moves when a plugin registers a hook rather than
@@ -68,7 +66,7 @@ export function useHookCatalogGraph( opts = {} ) {
 				view: VIEW,
 				viewClass: views.HookCatalogView,
 				tee,
-				target: egressPath( GROUP, 'performance' ),
+				target: egressPath( GROUPS.hooks, 'performance' ),
 			} ),
 		timerName: 'hook-catalog:timer',
 		teeName: 'hook-catalog:tee',

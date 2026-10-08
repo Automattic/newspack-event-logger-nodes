@@ -32,7 +32,8 @@ const ROUTER = '_router';
 const HTTP = '_http';
 const RECV = 'rules:in';
 const VIEW = 'rules:view';
-const ALL_GRAPH_NAMES = [ HTTP, RECV, VIEW ];
+const FETCH = 'rules:fetch';
+const ALL_GRAPH_NAMES = [ HTTP, RECV, VIEW, FETCH ];
 
 const SAMPLE_RULES = [
 	{
@@ -117,11 +118,12 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		}
 	} );
 
-	test( 'the receiver Tee fans to exactly the view', async () => {
+	test( 'the receiver Tee fans to the view, then to the Fetcher it settles', async () => {
 		installWire();
 		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		expect( Core.node( RECV ).target ).toEqual( [ VIEW ] );
+		expect( Core.node( RECV ).target ).toEqual( [ VIEW, FETCH ] );
+		expect( Core.node( 'rules:in:current' ) ).toBeNull();
 	} );
 
 	test( 'does NOT mount the REPL-only nodes', async () => {
@@ -162,13 +164,23 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 
 	// The dump's own egress names the group, so its Tap stands for the table
 	// even with no one-shot of the editor's mounted beside it.
-	test( 'dump leaves through `rules:dump`, whose target names the group', async () => {
-		installWire();
+	test( 'dump is the `rules:fetch` Fetcher’s, whose target names the group', async () => {
+		installWire( { dump: { rules: SAMPLE_RULES } } );
 		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const dump = Core.node( 'rules:dump' );
-		expect( dump.target ).toBe( 'shell:rules/_http/rules' );
-		expect( dump.counter ).toBe( 1 );
+		const fetch = Core.node( FETCH );
+		expect( fetch.receiver ).toBe( RECV );
+		expect( fetch.verb ).toBe( 'dump' );
+		expect( fetch.target ).toBe( 'shell:rules/_http/rules' );
+		expect( Core.node( 'rules:dump' ) ).toBeNull();
+	} );
+
+	test( 'the dump reply settles the Fetcher’s ask at `rules:in`', async () => {
+		const wire = installWire( { dump: { rules: SAMPLE_RULES } } );
+		renderHook( () => useRulesGraph() );
+		await act( async () => {} );
+		expect( countVerbs( wire.batches, 'dump' ) ).toBe( 1 );
+		expect( Core.node( FETCH ).outbox ).toEqual( [] );
 	} );
 
 	/**
@@ -310,6 +322,34 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-dump', () => {
 		const save = findVerb( wire.batches, 'save' );
 		expect( save[ VALUE ].arguments ).toEqual( [
 			JSON.stringify( SAMPLE_RULES ),
+		] );
+	}, 15000 );
+
+	test( 'a stale dump answered first still leaves the later dump’s rows', async () => {
+		const held = [];
+		const hold = () =>
+			new Promise( ( resolve ) => {
+				held.push( resolve );
+			} );
+		installFakeCommandWire( ( m ) => {
+			const name = m[ VALUE ]?.name;
+			if ( 'dump' === name ) {
+				return hold();
+			}
+			return 'save' === name ? { saved: 1 } : null;
+		} );
+		const { result } = renderHook( () => useRulesGraph() );
+		await act( async () => {} );
+		act( () => result.current.saveAll( [ SAMPLE_RULES[ 0 ] ] ) );
+		await waitFor( () => expect( held ).toHaveLength( 2 ) );
+
+		await act( async () => held[ 0 ]( { rules: [ SAMPLE_RULES[ 1 ] ] } ) );
+		await act( async () =>
+			held[ 1 ]( { rules: [ { ...SAMPLE_RULES[ 0 ], id: 'r9-post' } ] } )
+		);
+
+		expect( result.current.rules.map( ( r ) => r.id ) ).toEqual( [
+			'r9-post',
 		] );
 	}, 15000 );
 

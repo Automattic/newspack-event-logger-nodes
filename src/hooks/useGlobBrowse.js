@@ -43,9 +43,9 @@ const RAW_LOGS = 'raw-logs';
  * the view.
  *
  * @param {Object}     o       Hook options.
- * @param {string}     o.group The dashboard's group, whose Tap its reads pass.
  * @param {string}     o.glob  The subscription glob (e.g. `errors.*`).
- * @param {Object}     o.graph The `useStreamGraph` handle this browses.
+ * @param {Object}     o.graph The `useStreamGraph` handle this browses, whose
+ *                             group's Tap its reads pass.
  * @param {() => void} o.step  Deliver one record while paused.
  * @return {{ pickerOptions: Object[], pickerLabel: string,
  *   selectedPartition: string, selectPartition: (key: string) => void,
@@ -53,7 +53,7 @@ const RAW_LOGS = 'raw-logs';
  *   The toolbar picker, and — only once a dir is selected — the segment rail
  *   and the offset jump into it.
  */
-export default function useGlobBrowse( { group, glob, graph, step } ) {
+export default function useGlobBrowse( { glob, graph, step } ) {
 	const globPrefix = glob.endsWith( '*' ) ? glob.slice( 0, -1 ) : glob;
 	const { prefix, control, resubscribe, seek, setPaused } = graph;
 	const viewName = `${ prefix }:view`;
@@ -73,8 +73,7 @@ export default function useGlobBrowse( { group, glob, graph, step } ) {
 		[ globPrefix ]
 	);
 	const partitions = useLogCatalog( {
-		prefix,
-		group,
+		graph,
 		ci: RAW_LOGS,
 		command: 'list_logs',
 		keep: inGlob,
@@ -83,7 +82,7 @@ export default function useGlobBrowse( { group, glob, graph, step } ) {
 	const { source, refresh } = useLogStatusSegments( {
 		sub: selectedPartition,
 		scope: `${ prefix }-segments`,
-		group,
+		graph,
 	} );
 
 	// Switch partition: reset+arm the view's seek (dir), or widen to glob ('').
