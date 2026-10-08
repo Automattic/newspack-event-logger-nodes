@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The substrate floor rises to newspack-nodes 2.102.0,** whose shared stream link and `shell:<group>` Taps the dashboards are built against, and whose page global `Core` they share with the substrate's bundles.
 - **Every dashboard command passes its group's `shell:<group>` Tap rather than `_shell`.** The Performance dashboard sends under five groups — `overview` (the overview and URL-table polls), `url` (URL detail, URL lookup and deep link, the per-URL breakdown), `request` (request detail, search and deep link), `performance` (Ask and grep) and `rules` (the inline rule editor) — so its debug sheet draws each family's fan-in on its own card. The rules editor sends under `rules`, its `dump` included, which a `rules:fetch` Fetcher asks for and its reply at `rules:in` settles, the hook picker under `hooks`, the current-request tab under `current-request`, and the error and request streams under `error-log` and `request-log`. Built against newspack-nodes' `egressPath( group, ci )`.
 - **The Error Log, the Request Log and the Gyroscope ride the page's one stream link, `_stream`.** None mounts a `<prefix>:link` of its own, so a page showing several stream graphs holds one EventSource. Built against newspack-nodes' shared stream link.
 
