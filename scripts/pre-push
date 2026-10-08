@@ -133,10 +133,12 @@ js_changed="$(echo   "$changed" | grep -E '\.(js|jsx|mjs|cjs|ts|tsx)$' | grep -v
 ts_changed="$(echo   "$changed" | grep -E '\.(ts|tsx)$'       | grep -v -E '^(node_modules/|build/|release/)' || true)"
 scss_changed="$(echo "$changed" | grep -E '\.scss$'          | grep -v -E '^(node_modules/|build/|release/)' || true)"
 
-# The container gates run only for PHP, and only while the container is up.
+# Read the listing whole: an early grep -q exit SIGPIPEs docker under pipefail.
 container_up() {
-	command -v docker >/dev/null 2>&1 \
-		&& docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER}$"
+	local names
+	command -v docker >/dev/null 2>&1 || return 1
+	names="$(docker ps --format '{{.Names}}' 2>/dev/null)" || return 1
+	grep -qxF "$CONTAINER" <<<"$names"
 }
 
 # The container mounts the main checkout, never a worktree: refuse up front.
