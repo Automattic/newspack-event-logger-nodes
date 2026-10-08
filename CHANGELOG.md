@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.128.1] - 2026-10-08
+
 ### Changed
 
 - **Every dashboard command passes its group's `<group>:shell` Tap, no longer `shell:<group>`,** so `connect overview:shell`, `connect url:shell` and `connect rules:shell` watch those groups, and the error and request streams pass `error-log:shell` and `request-log:shell`. Built against newspack-nodes' renamed group Taps.
