@@ -79,16 +79,16 @@ var on_demand_idle = 0
 
 include topic-probe
 
+make_node Vault_Group spokes Remote_Source spoke <config:offsets_dir>/<topology>.{id} <config:deadletter_dir>/<topology>.{id} firehose.p{partition}:remote-job-rewrite sources/php:php-errors:partition
 make_node Remote_Job_Rewrite remote-job-rewrite
 make_node Topic     firehose:topic       <config:logs_dir>/firehose.p{partition}
-make_node Partition php-errors:partition <config:logs_dir>/php-errors.p0
 make_node File_Tail php-errors:tail      sources/php <config:offsets_dir>/<topology>.php-errors.tail <config:deadletter_dir>/<topology>.php-errors.tail
-make_node Vault_Group spokes Remote_Source spoke <config:offsets_dir>/<topology>.{id} <config:deadletter_dir>/<topology>.{id} firehose.p{partition}:remote-job-rewrite sources/php:php-errors:partition
+make_node Partition php-errors:partition <config:logs_dir>/php-errors.p0
 
 command_node spokes:config assume_clean_shutdown true
 command_node spokes:config set_multi_writer true
-command_node php-errors:partition:config void_warranty
 connect_node php-errors:tail php-errors:partition
+command_node php-errors:partition:config void_warranty
 connect_node remote-job-rewrite firehose:topic
 
 secure
