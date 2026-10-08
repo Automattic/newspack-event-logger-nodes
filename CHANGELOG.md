@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.127.3] - 2026-10-08
+
 ### Fixed
 
 - **A request record no rule governs is no longer called unmeasured.** `Log_Manager` writes a record only after a log rule matched, and stamps that rule's id, so a record with no stamp comes from a producer that consults no rule: gyrobase's Perl engine. Its brief said, at high severity, "No rule governs this URL, so nothing is measured", over a record holding its own spans, and proposed `create_rule` with WordPress lifecycle hooks that request never fires. Such a record now gets no `insufficient_instrumentation` finding; a URL brief with no rule still gets the `create_rule` cold start.
