@@ -124,7 +124,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// below it an Ask pick shows no mark, so nothing says what is selected.
 	// 2.99.0 is the SSE broker, which replaces /log/stream; below it the
 	// hub's reader nodes are unknown.
-	// 2.102.0 is the page's shared stream link and the shell:<group> Taps;
+	// 2.102.0 is the page's shared stream link and the group Taps;
 	// the dashboards share the page global Core with the substrate's
 	// bundles, so a bundle built against an earlier substrate breaks them.
 	// Raise the floor whenever a new hard requirement appears. The floor is

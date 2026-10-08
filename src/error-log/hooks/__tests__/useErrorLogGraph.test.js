@@ -164,11 +164,11 @@ describe( 'useErrorLogGraph — exospine + page link wiring', () => {
 		);
 	} );
 
-	test( 'its reads pass the `shell:error-log` Tap, named apart from the request family', async () => {
+	test( 'its reads pass the `error-log:shell` Tap, named apart from the request family', async () => {
 		renderHook( () => useErrorLogGraph() );
 		await act( async () => {} );
 		expect( Core.node( 'error-log-catalog:fetch' ).target ).toBe(
-			'shell:error-log/_http/raw-logs'
+			'error-log:shell/_http/raw-logs'
 		);
 	} );
 

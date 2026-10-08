@@ -26,7 +26,7 @@ const RAW_LOGS = 'raw-logs';
  *                                     view, the paused read and the browse
  *                                     catalog.
  * @param {string}   spec.group        The dashboard's group, whose
- *                                     `shell:<group>` Tap its commands pass.
+ *                                     `<group>:shell` Tap its commands pass.
  * @param {string}   spec.glob         Partition glob this dashboard tails.
  * @param {Function} spec.viewClass    View-model node class to mount.
  * @param {Object}   [opts]            Per-mount options.
