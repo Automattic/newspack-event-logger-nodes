@@ -163,4 +163,4 @@ GPL-2.0-or-later
 
 ## Status
 
-This plugin releases independently of the substrate: it declares a minimum runtime version, not a matching one, and the plugin header and `CHANGELOG.md` carry its own. The dashboards clip onto the substrate's browser backbone — `_router`, `_command_interpreter`, `_shell`, `_http` and `_heartbeat` — and its canonical UI layer. The `status.get` verb — substrate-owned — reports the runtime version, the partition count, the active topologies and cache reachability; it carries no separate application version.
+This plugin releases independently of the substrate: it declares a minimum runtime version, not a matching one, and the plugin header and `CHANGELOG.md` carry its own. The dashboards clip onto the substrate's browser backbone — `_router`, `_command_interpreter`, `_shell`, `_http`, `_heartbeat` and `_stream` — and its canonical UI layer. The `status.get` verb — substrate-owned — reports the runtime version, the partition count, the active topologies and cache reachability; it carries no separate application version.
