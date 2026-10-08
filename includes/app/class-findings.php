@@ -252,7 +252,8 @@ class Findings {
 		// A share needs a timing sample (decision 24) long enough to divide.
 		$shares   = Flame_Builder_Node::timing_counts( $duration, $record['error_status'] ?? '-' ) && $duration >= self::MIN_DURATION_MS;
 		$stopped  = self::stopped( $record, $entries, $rule );
-		$cold     = $missing ? null : self::cold_start( $record, $rule, $nodes, null === $stopped ? $duration : null );
+		// Unstamped, or stamped by a rule this ruleset does not hold.
+		$cold    = null === $rule ? null : self::cold_start( $record, $rule, $nodes, null === $stopped ? $duration : null );
 		$dominant = $shares ? self::dominant_span( $nodes, $rule, $duration, ! $missing, $entries ) : null;
 		$findings = \array_values(
 			\array_filter(
@@ -1466,22 +1467,25 @@ class Findings {
 	}
 
 	/**
-	 * Insufficient instrumentation, if it applies: no rule governs the URL, the
-	 * governing rule registers no hooks, or the record holds no span at all.
+	 * Insufficient instrumentation, if it applies: the governing rule registers
+	 * no hooks, or the record holds no span at all.
+	 *
+	 * A record with no rule gets none. `Log_Manager` writes a record only once
+	 * a log rule matched, and stamps its id, so an unstamped record came from a
+	 * producer that consults no rule — gyrobase's Perl engine. The record
+	 * proves the request was logged, and no rule edit reaches its producer.
 	 *
 	 * @param array<array-key,mixed> $record   The request record.
-	 * @param Rule|null              $rule     The governing rule, or null when none does.
+	 * @param Rule                   $rule     The governing rule.
 	 * @param list<Flame_Entry>      $nodes    Flattened flame nodes.
 	 * @param float|null             $duration Request duration in milliseconds, or null where `stopped()` reports where it ends.
 	 * @return array<string,mixed>|null The finding, or null when the rule and the record between them measure enough.
 	 */
-	private static function cold_start( array $record, ?Rule $rule, array $nodes, ?float $duration ): ?array {
-		$has_spans = [] !== $nodes;
-		$hooks     = null === $rule ? [] : self::hooks_of( $rule );
+	private static function cold_start( array $record, Rule $rule, array $nodes, ?float $duration ): ?array {
+		$hooks = self::hooks_of( $rule );
 		// Significant and custom events instrument an interior too.
-		$declares  = [] !== $hooks || ( null !== $rule
-			&& ( [] !== $rule->significant_events || [] !== $rule->custom_events ) );
-		if ( null !== $rule && $declares && $has_spans ) {
+		$declares = [] !== $hooks || [] !== $rule->significant_events || [] !== $rule->custom_events;
+		if ( $declares && [] !== $nodes ) {
 			return null;
 		}
 		return self::insufficient(
@@ -1951,9 +1955,10 @@ class Findings {
 	}
 
 	/**
-	 * The insufficient-instrumentation finding, in either flavour: create a
-	 * rule for a URL nothing governs, or bracket the lifecycle on a rule that
-	 * registers nothing. Both propose MORE, and both name their own removal.
+	 * The insufficient-instrumentation finding: create a rule for a URL nothing
+	 * governs, which only `for_url()` asks, or bracket the lifecycle on a rule
+	 * that registers nothing. Both propose MORE, and both name their own
+	 * removal. A rule whose hooks ran nowhere in the record proposes nothing.
 	 *
 	 * @param string                 $url      The URL, whose path a `create_rule` proposal takes as its pattern.
 	 * @param Rule|null              $rule     The governing rule, or null when none does.
