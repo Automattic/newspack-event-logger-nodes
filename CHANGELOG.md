@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.127.1] - 2026-10-07
+
+### Changed
+
+- **Rebuilt against newspack-nodes 2.100.0.** The debug overlay's Inspector shows a `Fetcher`'s `command` alone, with its arguments in their own field.
+
 ## [0.127.0] - 2026-10-07
 
 ### Changed
