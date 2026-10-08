@@ -124,11 +124,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// below it an Ask pick shows no mark, so nothing says what is selected.
 	// 2.99.0 is the SSE broker, which replaces /log/stream; below it the
 	// hub's reader nodes are unknown.
+	// 2.102.0 is the page's shared stream link and the shell:<group> Taps;
+	// the dashboards share the page global Core with the substrate's
+	// bundles, so a bundle built against an earlier substrate breaks them.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.99.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.102.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

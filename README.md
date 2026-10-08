@@ -18,7 +18,7 @@ The vocabulary here is the substrate's. Its [documentation map](https://github.c
 |-------------|---------|
 | WordPress | 6.5 |
 | PHP | 8.2 |
-| `newspack-nodes` | 2.98.0, installed and active |
+| `newspack-nodes` | 2.102.0, installed and active |
 | A cache backend | Memcached, or APCu |
 | `pdo_sqlite` | On every host running the flame builder |
 
