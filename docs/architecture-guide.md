@@ -410,7 +410,7 @@ Order matters. `job-hub` is included last and, through `job-router`, wires `fire
 
 ### `topologies/aggregator.tsl`
 
-Hub-side ingest. A `spokes` `Vault_Group` over Vault group `spoke` builds one `Remote_Source` broker per spoke and follows the Vault on reload. Each broker holds one SSE connection carrying two of its spoke's streams, each read by its own `Remote_Consumer`: the firehose, which the ELN `Remote_Job_Rewrite` node flips from `k:"job"` to `k:"remote_job"` before the multi-partition `Topic` KEY-routes it by request-id hash, so each downstream firehose-consuming partition sees its own slice; and `sources/php`, the spoke's PHP error log, which lands in `php-errors.p0` beside the hub's own, followed by `php-errors:tail`. Each line's FROM opens with the reader or the Tail that took it.
+Hub-side ingest. A `spokes` `Vault_Group` over Vault group `spoke` builds one `Remote_Source` broker per spoke and follows the Vault on reload. Each broker holds one SSE connection carrying two of its spoke's streams, each read by its own `Remote_Consumer`: the firehose, which the ELN `Remote_Job_Rewrite` node flips from `k:"job"` to `k:"remote_job"` before the multi-partition `Topic` KEY-routes it by request-id hash, so each downstream firehose-consuming partition sees its own slice; and `sources/php`, the spoke's PHP error log, which lands in `php-errors.p0` beside the hub's own, followed by `php-errors:tail`. A line from the hub's own log opens its FROM with that Tail; a spoke's line keeps the FROM the spoke sent, which names no spoke, so the log does not tell one spoke's lines from another's.
 
 ```tsl
 include topic-probe

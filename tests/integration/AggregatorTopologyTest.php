@@ -155,7 +155,7 @@ class AggregatorTopologyTest extends TestCase {
 		$line                      = 'PHP Warning:  WordPress database error ' . \str_repeat( 'q', 6144 ) . "\n";
 		$message                   = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_BYTESTREAM;
-		$message[ \Newspack_Nodes\Message::FROM ]  = 'spokes:tw7:sources:php/sources/php';
+		$message[ \Newspack_Nodes\Message::FROM ]  = 'sources/php';
 		$message[ \Newspack_Nodes\Message::VALUE ] = $line;
 
 		$partition = Core::node( 'php-errors:partition' );
