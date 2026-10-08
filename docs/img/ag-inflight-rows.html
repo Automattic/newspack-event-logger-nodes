@@ -131,7 +131,7 @@
 
   <div class="card" id="b1"><div class="where">useGyroscopeGraph · SSE</div>
     <h3>One stream, subscribed to <span class="mono">gyroscope.*</span></h3>
-    <p>A RemoteLink feeds the <span class="mono">gyroscope:stream</span> Tee, which copies every frame to <span class="mono">gyroscope:view</span>. A <span class="mono">clear</span> empties the model before every (re)connect.</p>
+    <p>The page's stream link, <span class="mono">_stream</span>, feeds the <span class="mono">gyroscope:stream</span> Tee, which copies every frame to <span class="mono">gyroscope:view</span>. A <span class="mono">clear</span> empties the model each time the graph rides that stream: at mount, after a rebuild and on refocus, but not when the SseIn alone reopens.</p>
   </div>
 
   <div class="card" id="b2" style="margin-top:10px"><div class="where">GyroscopeViewNode · fill()</div>
@@ -169,7 +169,7 @@
 
 <div class="bottom">
   <div class="card"><h3>Three ways a row leaves the table</h3>
-    <p><b>A completion arrives</b>, normal or timed out (T), and the next snapshot shows it once and deletes it. <b>Fifteen minutes pass unrefreshed</b>, and the snapshot deletes it unrendered; that and a reconnect are the only exits for a request <span class="mono">purge</span> discarded, which emits no summary, or for a producer that died. <b>The stream reconnects</b>, and its <span class="mono">clear</span> empties the model.</p>
+    <p><b>A completion arrives</b>, normal or timed out (T), and the next snapshot shows it once and deletes it. <b>Fifteen minutes pass unrefreshed</b>, and the snapshot deletes it unrendered; that and a fresh ride are the only exits for a request <span class="mono">purge</span> discarded, which emits no summary, or for a producer that died. <b>The graph rides the stream again</b>, at a remount, a rebuild or a refocus, and its <span class="mono">clear</span> empties the model.</p>
   </div>
   <div class="callout"><h4>Delta mode stops refreshing an idle row</h4>
     <p>A row whose request logs nothing is not re-sent, so its <span class="mono">_seen</span> stops advancing: a request silent for 15 minutes leaves the table while it is still running. Full mode refreshes every row each tick, so only a row the server stopped offering ages out.</p>

@@ -15,7 +15,7 @@ jest.mock( '../hooks/useGyroscopeGraph', () => ( {
 } ) );
 
 import * as React from 'react';
-import { Core, Node, mountExospine } from '@newspack-nodes/runtime';
+import { Core, mountExospine, reservedNames } from '@newspack-nodes/runtime';
 import Inflight from '../Inflight';
 import { publishSkippedLines } from '@newspack-nodes/shared/test-utils/skippedLines';
 import {
@@ -102,7 +102,7 @@ describe( 'Inflight', () => {
 	};
 
 	it( 'shows the lines its stream skipped as unparseable', () => {
-		publishSkippedLines( 'gyroscope:link', 4 );
+		publishSkippedLines( 'gyroscope:stream', 4 );
 		registerViewFixture();
 		const { container } = mount();
 		expect( container.textContent ).toContain(
@@ -430,8 +430,8 @@ describe( 'Inflight', () => {
 
 	it( 'does not render stream staleness in the toolbar', () => {
 		registerViewFixture( { rps: 7.3 } );
-		const link = new Node();
-		link.name = 'gyroscope:link';
+		// The page link the exospine host mounted, gone stale.
+		const link = Core.node( reservedNames.STREAM );
 		link.lastEventTime = () => Date.now() - 37_000;
 		const { container } = mount();
 		tickRefresh();

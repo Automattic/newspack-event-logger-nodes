@@ -5,14 +5,13 @@
  * A THIN wrapper over the shared `LogStreamViewer` chrome (toolbar, filter,
  * counts + rate, pause, step, offset jump, Debug, Clear, banner, body split,
  * virtualized `LogRowList`). The `error-log:*` node graph (mounted by
- * `useErrorLogGraph`) owns all data: `error-log:link` (a substrate
- * `RemoteLink`) holds the EventSource and fans its frames through the
- * `error-log:stream` Tee into `error-log:view` (a `LogStreamViewNode`
- * subclass), whose ring the list reads straight off the node each frame — row
- * data never becomes React state. This component supplies only the differing
- * pieces: the fixed column set, the grid row/header renderers, the entry-count
- * and rate labels, the filter placeholder, the toolbar partition picker, and
- * the segment rail.
+ * `useErrorLogGraph`) owns all data: it rides the page's one stream link,
+ * `_stream`, which routes its frames through the `error-log:stream` Tee into
+ * `error-log:view` (a `LogStreamViewNode` subclass), whose ring the list
+ * reads straight off the node each frame — row data never becomes React state.
+ * This component supplies only the differing pieces: the fixed column set, the
+ * grid row/header renderers, the entry-count and rate labels, the filter
+ * placeholder, the toolbar partition picker, and the segment rail.
  *
  * Click a request ID for its full trace in the Performance Dashboard; click a
  * URL for that URL's stats.
@@ -270,7 +269,7 @@ export default function ErrorLog( { headerControlsSlot } ) {
 			pickerLabel={ browse.pickerLabel }
 			isPaused={ isPaused }
 			connectionError={ connectionError }
-			linkNode="error-log:link"
+			streamNode="error-log:stream"
 			onTogglePause={ () => setPaused( ! isPaused ) }
 			onStep={ step }
 			onJump={ browse.jump }

@@ -17,10 +17,10 @@ import { views } from '../nodes/gyroscope-view-node';
 import { useStreamGraph } from '@newspack-nodes/shared/hooks/useStreamGraph';
 
 /**
- * Mount the Gyroscope graph and hold its SSE connection while the page is
+ * Mount the Gyroscope graph and ride the page's stream while the page is
  * visible.
  *
- * The prefix is a contract rather than a label: it names the three nodes, and
+ * The prefix is a contract rather than a label: it names the two nodes, and
  * `Inflight.js` reaches `gyroscope:view` by that literal string — the
  * reconnect banner through `useNodeField`, the row list through the
  * `snapshot()` its refresh tick calls. The view class is handed over rather
@@ -30,7 +30,7 @@ import { useStreamGraph } from '@newspack-nodes/shared/hooks/useStreamGraph';
  *
  * Returns nothing: this dashboard offers no pause, step or filter control,
  * and React reads the model off `gyroscope:view` and the skipped-line count
- * off `gyroscope:link`. Reset Graph needs no wiring here either —
+ * off `gyroscope:stream`. Reset Graph needs no wiring here either —
  * `useStreamGraph` mounts through `mountExospine`, which subscribes the
  * rebuild to `Core.bumpGraphGeneration()`.
  */

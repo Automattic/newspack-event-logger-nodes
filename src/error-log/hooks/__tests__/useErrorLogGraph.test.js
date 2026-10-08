@@ -1,18 +1,20 @@
 /**
- * useErrorLogGraph tests — the Error Log dashboard graph migrated onto the
- * substrate's canonical rule-#2 backbone (`_command_interpreter → _router`) via
- * a SINGLE `RemoteLink` node plus the single `error-log:view` view-model node.
+ * useErrorLogGraph tests — the Error Log dashboard graph on the substrate's
+ * canonical rule-#2 backbone (`_command_interpreter → _router`): the
+ * `error-log:stream` Tee and the `error-log:view` view-model node, riding the
+ * page's one stream link, `_stream`.
  *
- * RemoteLink composes the three I/O children every SSE dashboard used to wire by
- * hand — `error-log:link:sse-in` (SseIn), `error-log:link:http` (HttpOut) and
- * `error-log:link:heartbeat` (Heartbeat) — and wires the `connected → slot`
- * bridge to its own heartbeat. The dead `error-log:route` classifier and the
- * `error-log:transform` Callback are gone — the view's `fill()` shapes raw
- * envelopes inline.
+ * The page link composes its own `_stream:sse-in` (SseIn) and shares the
+ * `_http` (HttpOut) and `_heartbeat` (Heartbeat) singletons, wiring the
+ * `connected → slot` bridge to that heartbeat. The `error-log:route`
+ * classifier and the `error-log:transform` Callback stay gone — the view's
+ * `fill()` shapes raw envelopes inline.
  *
  * EventSource is faked via `global.EventSource`; SseInNode's connection logic is
  * unmocked here — we drive a `msg` event through the fake EventSource and
- * assert it actually routes the composed sse-in → view. The slot keep-alive
+ * assert it routes link → Tee → view. The link opens once per tick, so a test
+ * flushes the microtask before it reads the fake, and each record carries the
+ * stamp the server gives it. The slot keep-alive
  * bridge mirrors useRequestLogGraph exactly: a `connected` envelope populates
  * the composed heartbeat's `{slot,partition}`, and the Router TIMER drives
  * `heartbeat.fire` (via notify_timer) so the slot keep-alive actually fires.
@@ -36,6 +38,7 @@ import {
 	Node,
 	useNodeField,
 	mountExospine,
+	reservedNames,
 } from '@newspack-nodes/runtime';
 
 let mockPageVisible = true;
@@ -92,8 +95,10 @@ afterEach( () => jest.restoreAllMocks() );
 
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
-const LINK = 'error-log:link';
-// RemoteLink has an the SseIn + shares the reserved _http/_heartbeat.
+const LINK = reservedNames.STREAM;
+// The key this graph rides the page link under: its prefix.
+const RIDER = 'error-log';
+// The page link owns its SseIn + shares the reserved _http/_heartbeat.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'error-log:view';
@@ -111,9 +116,11 @@ const LEASE_OWNER = '9007199254740993';
 const HARNESS_SESSION = 'e2e11111e2e22222e2e33333e2e44444';
 
 // Build a `connected` envelope as a flat `KEY VALUE` string (SseInNode shape).
+// The server sends its own frames FROM the reserved `_stream`.
 function connectedEnvelope( { slot = 3 } = {} ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_INFO;
+	m[ FROM ] = LINK;
 	m[ KEY ] = 'connected';
 	const parts = [ `SESSION ${ HARNESS_SESSION }` ];
 	if ( null !== slot && undefined !== slot ) {
@@ -124,58 +131,75 @@ function connectedEnvelope( { slot = 3 } = {} ) {
 	return m;
 }
 
-// An error envelope as the wire delivers it (KEY=rid, VALUE=row).
+// An error envelope as the wire delivers it (KEY=rid, VALUE=row), FROM the
+// reader's stamp and then the producer's name.
 function errorEnvelope( rid, value ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = 'errors.p0/request-builder';
 	m[ KEY ] = rid;
 	m[ VALUE ] = value;
 	return m;
 }
 
 // Transport double keyed by verb, built on the shared HttpOut-seam helper.
-describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
-	test( 'mounts the backbone + one RemoteLink (sharing the reserved _http/_heartbeat) + the view', () => {
+describe( 'useErrorLogGraph — exospine + page link wiring', () => {
+	test( 'mounts the backbone (sharing the reserved _http/_heartbeat) + the view', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		// The view sinks into the interpreter.
 		expect( Core.node( VIEW ) ).toBeTruthy();
 		expect( Core.node( VIEW ).sink ).toBe( interpreter );
-		// RemoteLink shares _http + _heartbeat, each sinking into interpreter.
+		// The page link shares _http + _heartbeat, each sinking into it.
 		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
-		// Registered so `trace` reaches it; patron keeps it off the canvas.
-		expect( Core.node( 'error-log:link:sse-in' ) ).toBe(
-			Core.node( 'error-log:link' ).sseIn
+		// No link of its own: the page link's SseIn, registered for `trace`.
+		expect( Core.node( 'error-log:link' ) ).toBeNull();
+		expect( Core.node( `${ LINK }:sse-in` ) ).toBe(
+			Core.node( LINK ).sseIn
 		);
 	} );
 
-	test( 'does not mount the retired error-log:route / error-log:transform nodes', () => {
+	test( 'the error log rides the page link with its glob', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
+		expect( Core.node( LINK ).graphs.get( RIDER ) ).toMatchObject( {
+			subscribe: [ 'errors.*' ],
+			target: TEE,
+			parked: false,
+		} );
+	} );
+
+	test( 'does not mount the retired error-log:route / error-log:transform nodes', async () => {
+		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		for ( const name of REMOVED_NODE_NAMES ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 
-	test( 'inserts an inspectable Tee on the stream edge: link → tee → view', () => {
+	test( 'inserts an inspectable Tee on the stream edge: link → tee → view', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		const interpreter = Core.node( INTERPRETER );
 		const tee = Core.node( TEE );
 		expect( tee ).toBeTruthy();
 		expect( tee.constructor.name ).toBe( 'TeeNode' );
 		expect( tee.sink ).toBe( interpreter );
-		// The link re-homes received frames to the Tee, which fans to the view.
-		expect( Core.node( LINK ).sseIn.target ).toBe( TEE );
+		// The link routes this graph's frames to the Tee, which fans to the view.
+		expect( Core.node( LINK ).graphs.get( RIDER ).target ).toBe( TEE );
 		expect( tee.target ).toEqual( [ VIEW ] );
 	} );
 
-	test( 'fans the live stream to a debug-overlay watcher without disturbing the view', () => {
+	test( 'fans the live stream to a debug-overlay watcher without disturbing the view', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		const watcher = new Node();
 		watcher.name = 'watcher';
 		const seen = [];
@@ -195,29 +219,32 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 		expect( Core.node( VIEW ).lines[ 0 ].rid ).toBe( 'r-watch' );
 	} );
 
-	test( 'steers flow with targets: the `:sse-in` subscribes on `errors` and routes to view; heartbeat → _http/workers', () => {
+	test( 'steers flow with targets: the page link subscribes on `errors` and routes to view; heartbeat → _http/workers', async () => {
 		renderHook( () => useErrorLogGraph() );
-		// The the SseIn opened against the `errors` subscribe topic.
+		await act( async () => {} );
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.*' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
-	test( 'opens an EventSource against /messages/stream?subscribe=errors.* when visible', () => {
+	test( 'opens an EventSource against /messages/stream?subscribe=errors.* when visible', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		expect( FakeEventSource.last ).toBeTruthy();
 		expect( FakeEventSource.last.url ).toBe(
-			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=errors.*&_wpnonce=NONCE&session=e2e11111e2e22222e2e33333e2e44444&stream=error-log%3Alink%3Asse-in'
+			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=errors.*&_wpnonce=NONCE&session=e2e11111e2e22222e2e33333e2e44444&stream=_stream%3Asse-in'
 		);
 	} );
 
-	test( 'does not open an EventSource on mount when the page is hidden', () => {
+	test( 'does not open an EventSource on mount when the page is hidden', async () => {
 		mockPageVisible = false;
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		expect( FakeEventSource.last ).toBeNull();
 	} );
 
-	test( 'the composed HttpOut defaults its transport on the first POST', () => {
+	test( 'the composed HttpOut defaults its transport on the first POST', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		const http = Core.node( HTTP );
 		// HttpOut defaults its transport on the first POST, so nothing is
 		// wired until something is sent — which is what makes a palette drop
@@ -229,8 +256,9 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 } );
 
 describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
-	test( 'a `connected` envelope populates heartbeat.slot', () => {
+	test( 'a `connected` envelope populates heartbeat.slot', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
@@ -240,8 +268,9 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
 	} );
 
-	test( 'a `connected` envelope with no slot leaves heartbeat slot null', () => {
+	test( 'a `connected` envelope with no slot leaves heartbeat slot null', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		expectConsoleWarn(
 			'ERROR: SseInNode: connected envelope missing or invalid SLOT'
 		);
@@ -254,10 +283,12 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
 	} );
 
-	test( 'the Router TIMER drives heartbeat.fire (via notify_timer) so the slot keep-alive actually fires', () => {
-		jest.useFakeTimers();
+	test( 'the Router TIMER drives heartbeat.fire (via notify_timer) so the slot keep-alive actually fires', async () => {
+		// The page link opens on a microtask; only the clock is faked.
+		jest.useFakeTimers( { doNotFake: [ 'queueMicrotask' ] } );
 		try {
 			renderHook( () => useErrorLogGraph() );
+			await act( async () => {} );
 			const http = Core.node( HTTP );
 			const postBatch = jest.fn().mockResolvedValue( [] );
 			http.client = { buildMessage: () => newMessage(), postBatch };
@@ -279,8 +310,9 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 } );
 
 describe( 'useErrorLogGraph — end-to-end routing through the exospine', () => {
-	test( 'an errors envelope from the EventSource flows into error-log:view', () => {
+	test( 'an errors envelope from the EventSource flows into error-log:view', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
@@ -300,8 +332,9 @@ describe( 'useErrorLogGraph — end-to-end routing through the exospine', () => 
 } );
 
 describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
-	test( 'hiding the page closes the EventSource AND clears the heartbeat slot', () => {
+	test( 'hiding the page closes the EventSource AND clears the heartbeat slot', async () => {
 		const { rerender } = renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
@@ -311,32 +344,33 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
 		const beforeHide = FakeEventSource.last;
 		mockPageVisible = false;
-		act( () => rerender( { n: 1 } ) );
+		await act( async () => rerender( { n: 1 } ) );
 		expect( beforeHide.closed ).toBe( true );
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
 	} );
 
 	test( 'showing the page reopens the EventSource', async () => {
 		const { rerender } = renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		mockPageVisible = false;
-		act( () => rerender( { n: 1 } ) );
+		await act( async () => rerender( { n: 1 } ) );
 		const before = FakeEventSource.instances.length;
 		mockPageVisible = true;
 		await act( async () => rerender( { n: 2 } ) );
-		expect( FakeEventSource.instances.length ).toBeGreaterThan( before );
+		expect( FakeEventSource.instances.length ).toBe( before + 1 );
 	} );
 
 	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', async () => {
 		const { rerender } = renderHook( () => useErrorLogGraph() );
-		// A tailed record: segment:offset:length in ID, partition dir in FROM.
+		await act( async () => {} );
+		// A tailed record: segment:offset:length in ID, the dir's stamp in FROM.
 		const rec = errorEnvelope( 'r1', { ts: 1, k: 'error', m: 'x' } );
-		rec[ FROM ] = 'errors.p0';
 		rec[ ID ] = '4:512:100';
 		act( () => {
 			FakeEventSource.last.dispatch( 'msg', pack( rec ) );
 		} );
 		mockPageVisible = false;
-		act( () => rerender( { n: 1 } ) );
+		await act( async () => rerender( { n: 1 } ) );
 		mockPageVisible = true;
 		await act( async () => rerender( { n: 2 } ) );
 		const url = FakeEventSource.last.url;
@@ -351,8 +385,9 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		} );
 	} );
 
-	test( 'setPaused(true) closes the EventSource and clears the heartbeat slot', () => {
+	test( 'setPaused(true) closes the EventSource and clears the heartbeat slot', async () => {
 		const { result } = renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
@@ -360,18 +395,19 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 			);
 		} );
 		const openSource = FakeEventSource.last;
-		act( () => result.current.setPaused( true ) );
+		await act( async () => result.current.setPaused( true ) );
 		expect( openSource.closed ).toBe( true );
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
 		expect( Core.node( VIEW ).view.paused ).toBe( true );
 	} );
 
-	test( 'setPaused(false) reopens the EventSource', () => {
+	test( 'setPaused(false) reopens the EventSource', async () => {
 		const { result } = renderHook( () => useErrorLogGraph() );
-		act( () => result.current.setPaused( true ) );
+		await act( async () => {} );
+		await act( async () => result.current.setPaused( true ) );
 		const before = FakeEventSource.instances.length;
-		act( () => result.current.setPaused( false ) );
-		expect( FakeEventSource.instances.length ).toBeGreaterThan( before );
+		await act( async () => result.current.setPaused( false ) );
+		expect( FakeEventSource.instances.length ).toBe( before + 1 );
 		expect( Core.node( VIEW ).view.paused ).toBe( false );
 	} );
 
@@ -380,19 +416,21 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		// cannot auto-resume a user-paused stream. Regression guard against a
 		// fork back to a separate visibility path.
 		const { result, rerender } = renderHook( () => useErrorLogGraph() );
-		act( () => result.current.setPaused( true ) );
+		await act( async () => {} );
+		await act( async () => result.current.setPaused( true ) );
 		expect( FakeEventSource.last.closed ).toBe( true );
 		const afterPause = FakeEventSource.instances.length;
 		mockPageVisible = false;
-		act( () => rerender( { n: 1 } ) );
+		await act( async () => rerender( { n: 1 } ) );
 		mockPageVisible = true;
 		await act( async () => rerender( { n: 2 } ) );
 		expect( FakeEventSource.instances.length ).toBe( afterPause );
 		expect( FakeEventSource.last.closed ).toBe( true );
 	} );
 
-	test( 'clear() empties the view buffer', () => {
+	test( 'clear() empties the view buffer', async () => {
 		const { result } = renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'msg',
@@ -458,7 +496,7 @@ describe( 'useErrorLogGraph — glob browse', () => {
 		);
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.p5' );
 		mockPageVisible = false;
-		act( () => rerender( { n: 1 } ) );
+		await act( async () => rerender( { n: 1 } ) );
 		mockPageVisible = true;
 		await act( async () => rerender( { n: 2 } ) );
 		// The reopened stream is still the browsed dir, not the glob.
@@ -467,8 +505,9 @@ describe( 'useErrorLogGraph — glob browse', () => {
 } );
 
 describe( 'useErrorLogGraph — teardown', () => {
-	test( 'unmount tears down the RemoteLink children + the backbone and closes the EventSource', () => {
+	test( 'unmount tears down the page link + the backbone and closes the EventSource', async () => {
 		const { unmount } = renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		const sourceAtMount = FakeEventSource.last;
 		unmount();
 		// The ROUTER is the page's heartbeat and is never torn down.
@@ -478,8 +517,9 @@ describe( 'useErrorLogGraph — teardown', () => {
 		expect( sourceAtMount.closed ).toBe( true );
 	} );
 
-	test( 'late envelopes after unmount do not throw', () => {
+	test( 'late envelopes after unmount do not throw', async () => {
 		const { unmount } = renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		const source = FakeEventSource.last;
 		unmount();
 		expect( () =>
@@ -497,34 +537,35 @@ describe( 'useErrorLogGraph — graphGeneration Reset Graph', () => {
 	beforeEach( () => {
 		mountExospine();
 	} );
-	test( 'a graphGeneration bump rebuilds the graph nodes fresh (backbone preserved)', () => {
+	test( 'a graphGeneration bump rebuilds the graph nodes fresh (backbone preserved)', async () => {
 		renderHook( () => useErrorLogGraph() );
+		await act( async () => {} );
 		const firstView = Core.node( VIEW );
 		const firstHttp = Core.node( HTTP );
 		const backbone = Core.node( INTERPRETER );
 		expect( firstView ).not.toBeNull();
 
-		act( () => {
+		await act( async () => {
 			Core.bumpGraphGeneration();
 		} );
 
 		// Soft nodes rebuild fresh; backbone (incl shared `_http`) survives.
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
-		// The rebuilt link reopened the SseIn on the `errors` topic.
+		// The rebuilt graph rides the page link on the `errors` topic again.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.*' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );
 
-	test( 'a graphGeneration bump re-renders the consumer so useNodeField re-subscribes to the fresh view', () => {
+	test( 'a graphGeneration bump re-renders the consumer so useNodeField re-subscribes to the fresh view', async () => {
 		const { result } = renderHook( () => {
 			useErrorLogGraph();
 			return useNodeField( VIEW, 'view' );
 		} );
 		const firstView = Core.node( VIEW );
 
-		act( () => {
+		await act( async () => {
 			Core.bumpGraphGeneration();
 		} );
 		const freshView = Core.node( VIEW );
@@ -537,12 +578,13 @@ describe( 'useErrorLogGraph — graphGeneration Reset Graph', () => {
 		expect( result.current ).toEqual( { paused: true } );
 	} );
 
-	test( 'reinit while paused re-publishes paused:true so the UI matches the closed stream', () => {
+	test( 'reinit while paused re-publishes paused:true so the UI matches the closed stream', async () => {
 		const { result } = renderHook( () => useErrorLogGraph() );
-		act( () => result.current.setPaused( true ) );
+		await act( async () => {} );
+		await act( async () => result.current.setPaused( true ) );
 		expect( Core.node( VIEW ).view.paused ).toBe( true );
 
-		act( () => {
+		await act( async () => {
 			Core.bumpGraphGeneration();
 		} );
 

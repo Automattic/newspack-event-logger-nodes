@@ -124,7 +124,7 @@ describe( 'ErrorLog', () => {
 	}
 
 	it( 'shows the lines its stream skipped as unparseable', () => {
-		publishSkippedLines( 'error-log:link', 2 );
+		publishSkippedLines( 'error-log:stream', 2 );
 		registerViewFixture();
 		const { container } = mount();
 		expect( container.textContent ).toContain(

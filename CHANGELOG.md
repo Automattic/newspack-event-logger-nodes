@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Every dashboard command passes its group's `shell:<group>` Tap rather than `_shell`.** The Performance dashboard sends under five groups — `overview` (the overview and URL-table polls), `url` (URL detail, URL lookup and deep link, the per-URL breakdown), `request` (request detail, search and deep link), `performance` (Ask and grep) and `rules` (the inline rule editor) — so its debug sheet draws each family's fan-in on its own card. The rules editor sends under `rules`, its `dump` included, the hook picker under `hooks`, the current-request tab under `current-request`, and the error and request streams under `errors` and `requests`. Built against newspack-nodes' `egressPath( group, ci )`.
+- **The Error Log, the Request Log and the Gyroscope ride the page's one stream link, `_stream`.** None mounts a `<prefix>:link` of its own, so a page showing several stream graphs holds one EventSource. Built against newspack-nodes' shared stream link.
+
+### Fixed
+
+- **The Error Log, the Request Log and the Gyroscope show their skipped-line notice again.** Each reads its count off its own `<prefix>:stream`, where the page's link publishes that graph's share; built against the shared link alone, the three read a node that no longer exists and showed nothing.
 
 ## [0.127.3] - 2026-10-08
 

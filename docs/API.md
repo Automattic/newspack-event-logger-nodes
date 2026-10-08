@@ -246,8 +246,9 @@ The stream's lifecycle — the `retry` and `connected` envelopes, heartbeats, `s
 client's assertion that more than one process appends the subscribed logs, which buys the
 reader a grace window and costs nothing but that when wrong. Per-line transforms live in the
 browser, inside each dashboard's view node (`RequestLogViewNode`, `GyroscopeViewNode`,
-`PerfErrorsViewNode`); the browser consumes the stream through the `<link>:sse-in` node
-(`SseInNode`) each `RemoteLink` owns.
+`PerfErrorsViewNode`); the browser consumes the stream through `_stream:sse-in`
+(`SseInNode`), owned by the page's one `RemoteLink`, `_stream`, which every stream graph on
+the page rides.
 
 ## Worker spawn
 
