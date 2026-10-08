@@ -4,7 +4,7 @@
  *
  * The graph:
  *   performance:timer (Timer) → performance:tee (Tee) → overview:fetch, urls:fetch (Fetchers,
- *     each with an argsFn getter reading current React UI state) → shell:overview/_http/performance
+ *     each with an argsFn getter reading current React UI state) → overview:shell/_http/performance
  *   overview:in (Tee) → overview:view (OverviewView)
  *   urls:in     (Tee) → urls:view     (UrlsView)
  *   url-detail:transform (UrlDetailMerge) → url-detail:view (UrlDetailView)   [on-demand]
@@ -198,9 +198,9 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 			[ 'request-detail:fetch', 'request' ],
 		] ) {
 			expect( Core.node( fetcher ).target ).toBe(
-				`shell:${ group }/_http/performance`
+				`${ group }:shell/_http/performance`
 			);
-			expect( Core.node( `shell:${ group }` ).sink ).toBe( interpreter );
+			expect( Core.node( `${ group }:shell` ).sink ).toBe( interpreter );
 		}
 		expect( Core.node( '_shell' ).counter ).toBe( 0 );
 	} );

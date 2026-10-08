@@ -154,11 +154,11 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		expect( msg[ VALUE ].name ).toBe( 'dump' );
 	} );
 
-	test( "dump leaves through the editor's `shell:rules` Tap, never the console's", async () => {
+	test( "dump leaves through the editor's `rules:shell` Tap, never the console's", async () => {
 		installWire();
 		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		expect( Core.node( 'shell:rules' ).counter ).toBe( 1 );
+		expect( Core.node( 'rules:shell' ).counter ).toBe( 1 );
 		expect( Core.node( '_shell' ).counter ).toBe( 0 );
 	} );
 
@@ -171,7 +171,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		const fetch = Core.node( FETCH );
 		expect( fetch.receiver ).toBe( RECV );
 		expect( fetch.verb ).toBe( 'dump' );
-		expect( fetch.target ).toBe( 'shell:rules/_http/rules' );
+		expect( fetch.target ).toBe( 'rules:shell/_http/rules' );
 		expect( Core.node( 'rules:dump' ) ).toBeNull();
 	} );
 

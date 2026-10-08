@@ -3,7 +3,7 @@
  * onto the substrate's batched-poll toolkit (exospine + `_http` + a tick).
  *
  * The hook emits `list_hooks` as a TM_COMMAND through the interpreter
- * (FROM=`hookcatalog:in`, TO=`shell:hooks/_http/performance`); the reply routes via
+ * (FROM=`hookcatalog:in`, TO=`hooks:shell/_http/performance`); the reply routes via
  * TO=FROM back into `hookcatalog:view`, which extracts hooks_by_category.
  *
  * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each
@@ -74,11 +74,11 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		expect( Core.node( HTTP ).sink ).toBe( interpreter );
-		// The Fetcher reaches `shell:hooks` — the picker's own Tap — as a
+		// The Fetcher reaches `hooks:shell` — the picker's own Tap — as a
 		// TARGET hop; it sinks into the interpreter.
 		expect( Core.node( RECEIVER ).sink ).toBe( interpreter );
 		expect( Core.node( FETCHER ).target ).toBe(
-			`shell:hooks/${ HTTP }/performance`
+			`hooks:shell/${ HTTP }/performance`
 		);
 	} );
 

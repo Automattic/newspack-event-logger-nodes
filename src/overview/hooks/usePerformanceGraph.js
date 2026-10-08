@@ -11,7 +11,7 @@
  * one POST:
  *
  *   performance:timer (Timer) → performance:tee (Tee) → overview:fetch, urls:fetch (Fetchers)
- *                                       → shell:overview/_http/performance
+ *                                       → overview:shell/_http/performance
  *   overview:in (Tee) → overview:in:current (Current) → overview:view (OverviewView)
  *   urls:in     (Tee) → urls:in:current (Current) → urls:view (UrlsView)
  *
@@ -26,9 +26,9 @@
  *
  *   url-detail:in (Tee) → url-detail:in:current (Current)
  *                       → url-detail:transform (UrlDetailMerge) → url-detail:view (UrlDetailView)
- *   url-detail:timer (Timer) → url-detail:fetch (Fetcher) → shell:url/_http/performance
+ *   url-detail:timer (Timer) → url-detail:fetch (Fetcher) → url:shell/_http/performance
  *   request-detail:in (Tee) → request-detail:in:current (Current) → request-detail:view (RequestDetailView)
- *   request-detail:timer (Timer) → request-detail:fetch (Fetcher) → shell:request/_http/performance
+ *   request-detail:timer (Timer) → request-detail:fetch (Fetcher) → request:shell/_http/performance
  *
  * The dump_url reply rides through `UrlDetailMergeNode` on the gate → view
  * edge: it merges each reply into the last one (dedup by rid, newest completion

@@ -122,7 +122,7 @@ export const DEFAULT_CHART_BREAKDOWN = 'server';
 
 /**
  * The groups this plugin's commands travel, each through its own
- * `shell:<group>` Tap so `connect shell:<group>` watches one family alone.
+ * `<group>:shell` Tap so `connect <group>:shell` watches one family alone.
  * `usePerformanceGraph` polls under `overview`, `url` and `request`;
  * `PerformanceDashboard`, `UrlDetailView` and `AskPanel` send their one-shot
  * commands under `url`, `request`, `performance` and `rules`; the rules editor

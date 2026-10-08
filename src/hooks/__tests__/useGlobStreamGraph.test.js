@@ -190,7 +190,7 @@ describe( 'the partition catalog', () => {
 			result.current.browse.pickerOptions.map( ( p ) => p.key )
 		).toEqual( [ '', 'errors.p0', 'errors.p3' ] );
 		// The catalog left through the dashboard's own Tap.
-		expect( Core.node( 'shell:pangolin' ).counter ).toBeGreaterThan( 0 );
+		expect( Core.node( 'pangolin:shell' ).counter ).toBeGreaterThan( 0 );
 	} );
 
 	// The toolbar picker's rows, ready to render: the empty row widens the

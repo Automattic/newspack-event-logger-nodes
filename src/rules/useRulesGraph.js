@@ -5,7 +5,7 @@
  *
  *   _http       (HttpOutNode) — the POST /command egress; `.client` is the
  *               transport it POSTs through
- *   rules:fetch (Fetcher) → shell:rules/_http/rules, asking for `dump`
+ *   rules:fetch (Fetcher) → rules:shell/_http/rules, asking for `dump`
  *   rules:in    (Tee) → rules:view (a RulesView slice), repainted by every
  *               `dump`, then → rules:fetch, settling the ask
  *
@@ -19,7 +19,7 @@
  *
  * `dump` is the odd one out, deliberately: it is a publish, not an await. The
  * `rules:fetch` Fetcher asks for it FROM the `rules:in` Tee, targeting the
- * editor's `shell:rules` Tap (observable at `connect shell:rules`), so its
+ * editor's `rules:shell` Tap (observable at `connect rules:shell`), so its
  * reply lands back on that Tee and fans into `rules:view`, the render model
  * every consumer reads, and then into the Fetcher, which settles the ask. It
  * passes no `<receiver>:current` gate, because every dump asks the same `[]`:
@@ -27,7 +27,7 @@
  * That target is also what mounts the Tap: the exospine claims the group a
  * built node targets.
  *
- * Either way the Router peels `shell:rules` and `_http` off the TO, HttpOutNode
+ * Either way the Router peels `rules:shell` and `_http` off the TO, HttpOutNode
  * POSTs, and the reply routes home by the TO the server echoed.
  *
  * The wire contract mirrors `Rules_CI_Node`: `save` and `upsert` pass the raw
