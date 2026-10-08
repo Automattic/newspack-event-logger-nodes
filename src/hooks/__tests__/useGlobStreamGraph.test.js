@@ -66,6 +66,9 @@ class FakeGlobView extends Node {
 }
 
 const PREFIX = 'globtest';
+
+/** The declared group, distinct from every real dashboard's. */
+const GROUP = 'pangolin';
 const LINK = 'globtest:link';
 const VIEW = 'globtest:view';
 const GLOB = 'errors.*';
@@ -111,6 +114,7 @@ async function renderBrowse( {
 		hook = renderHook( () =>
 			useGlobStreamGraph( {
 				prefix: PREFIX,
+				group: GROUP,
 				glob,
 				viewClass: FakeGlobView,
 			} )
@@ -184,6 +188,8 @@ describe( 'the partition catalog', () => {
 		expect(
 			result.current.browse.pickerOptions.map( ( p ) => p.key )
 		).toEqual( [ '', 'errors.p0', 'errors.p3' ] );
+		// The catalog left through the dashboard's own Tap.
+		expect( Core.node( 'shell:pangolin' ).counter ).toBeGreaterThan( 0 );
 	} );
 
 	// The toolbar picker's rows, ready to render: the empty row widens the
@@ -274,6 +280,7 @@ describe( 'the partition catalog', () => {
 			hook = renderHook( () =>
 				useGlobStreamGraph( {
 					prefix: PREFIX,
+					group: GROUP,
 					glob: GLOB,
 					viewClass: FakeGlobView,
 				} )
@@ -352,6 +359,7 @@ describe( 'moving the selection', () => {
 			hook = renderHook( () =>
 				useGlobStreamGraph( {
 					prefix: PREFIX,
+					group: GROUP,
 					glob: GLOB,
 					viewClass: FakeGlobView,
 				} )

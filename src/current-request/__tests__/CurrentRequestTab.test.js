@@ -138,6 +138,8 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	expect( sent[ VALUE ].arguments ).toEqual( [ 'abc123', '--partition=2' ] );
 	// Addressed, not correlated: the reply routes back on FROM alone.
 	expect( sent[ FROM ] ).toBe( 'current-request:in' );
+	// The ask left through the tab's own Tap.
+	expect( Core.node( 'shell:current-request' ).counter ).toBeGreaterThan( 0 );
 	expect( Core.node( 'current-request:view' ) ).toBeTruthy();
 	expect( Core.node( 'currentrequest:view' ) ).toBeNull();
 	expect( sent[ ID ] ).toBe( '' );

@@ -33,7 +33,6 @@ import {
 } from '@newspack-nodes/shared/hooks/useLogPositions';
 import { LIVE } from '@newspack-nodes/shared/nodes/seekTracker';
 import { useLogCatalog } from '@newspack-nodes/shared/hooks/useStreamGraph';
-import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
 /** The substrate service CI that catalogs the on-disk logs. */
 const RAW_LOGS = 'raw-logs';
@@ -44,6 +43,7 @@ const RAW_LOGS = 'raw-logs';
  * the view.
  *
  * @param {Object}     o       Hook options.
+ * @param {string}     o.group The dashboard's group, whose Tap its reads pass.
  * @param {string}     o.glob  The subscription glob (e.g. `errors.*`).
  * @param {Object}     o.graph The `useStreamGraph` handle this browses.
  * @param {() => void} o.step  Deliver one record while paused.
@@ -53,7 +53,7 @@ const RAW_LOGS = 'raw-logs';
  *   The toolbar picker, and — only once a dir is selected — the segment rail
  *   and the offset jump into it.
  */
-export default function useGlobBrowse( { glob, graph, step } ) {
+export default function useGlobBrowse( { group, glob, graph, step } ) {
 	const globPrefix = glob.endsWith( '*' ) ? glob.slice( 0, -1 ) : glob;
 	const { prefix, control, resubscribe, seek, setPaused } = graph;
 	const viewName = `${ prefix }:view`;
@@ -74,14 +74,16 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 	);
 	const partitions = useLogCatalog( {
 		prefix,
+		group,
+		ci: RAW_LOGS,
 		command: 'list_logs',
-		target: egressPath( RAW_LOGS ),
 		keep: inGlob,
 	} );
 
 	const { source, refresh } = useLogStatusSegments( {
 		sub: selectedPartition,
 		scope: `${ prefix }-segments`,
+		group,
 	} );
 
 	// Switch partition: reset+arm the view's seek (dir), or widen to glob ('').

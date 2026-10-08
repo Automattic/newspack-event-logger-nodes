@@ -152,6 +152,25 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		expect( msg[ VALUE ].name ).toBe( 'dump' );
 	} );
 
+	test( "dump leaves through the editor's `shell:rules` Tap, never the console's", async () => {
+		installWire();
+		renderHook( () => useRulesGraph() );
+		await act( async () => {} );
+		expect( Core.node( 'shell:rules' ).counter ).toBe( 1 );
+		expect( Core.node( '_shell' ).counter ).toBe( 0 );
+	} );
+
+	// The dump's own egress names the group, so its Tap stands for the table
+	// even with no one-shot of the editor's mounted beside it.
+	test( 'dump leaves through `rules:dump`, whose target names the group', async () => {
+		installWire();
+		renderHook( () => useRulesGraph() );
+		await act( async () => {} );
+		const dump = Core.node( 'rules:dump' );
+		expect( dump.target ).toBe( 'shell:rules/_http/rules' );
+		expect( dump.counter ).toBe( 1 );
+	} );
+
 	/**
 	 * Mount races /auth: the graph is built synchronously, the session arrives a
 	 * round trip later. Firing the dump before then mints it UNSIGNED and the

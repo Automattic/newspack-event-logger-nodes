@@ -1,5 +1,6 @@
 /**
- * The Performance Dashboard's dropdown vocabularies.
+ * The Performance Dashboard's dropdown vocabularies, and the groups its
+ * commands travel.
  *
  * `PerformanceDashboard` reads the refresh cadences and the breakdown default,
  * `OverviewSection` the refresh cadences and the breakdown dimensions, and
@@ -118,3 +119,18 @@ export const SCOPED_BREAKDOWN_OPTIONS = CHART_BREAKDOWN_OPTIONS.filter(
  * the session.
  */
 export const DEFAULT_CHART_BREAKDOWN = 'server';
+
+/**
+ * The groups this dashboard's commands travel, each through its own
+ * `shell:<group>` Tap so `connect shell:<group>` watches one family alone.
+ * `usePerformanceGraph` polls under `overview`, `url` and `request`;
+ * `PerformanceDashboard`, `UrlDetailView` and `AskPanel` send their one-shot
+ * commands under `url`, `request`, `performance` and `rules`.
+ */
+export const GROUPS = {
+	overview: 'overview',
+	performance: 'performance',
+	request: 'request',
+	url: 'url',
+	rules: 'rules',
+};

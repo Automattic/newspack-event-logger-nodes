@@ -425,6 +425,28 @@ describe( 'PerformanceDashboard', () => {
 		jest.clearAllMocks();
 	} );
 
+	it( 'sends each one-shot under the group of the family it belongs to', () => {
+		mockView = null;
+		const { unmount } = mountDash();
+		const groupOf = Object.fromEntries(
+			Object.entries( mockCommands ).map( ( [ key, c ] ) => [
+				key,
+				c.opts.group,
+			] )
+		);
+		expect( groupOf ).toMatchObject( {
+			'url-lookup': 'url',
+			'url-deeplink': 'url',
+			'request-deeplink': 'request',
+			'request-search': 'request',
+			'performance:grep_requests': 'performance',
+			'rules:dump': 'rules',
+			'rules:upsert': 'rules',
+			'rules:delete': 'rules',
+		} );
+		unmount();
+	} );
+
 	it( 'shows the loading spinner while the view model is null', () => {
 		mockView = null;
 		const { container, unmount } = mountDash();

@@ -24,6 +24,8 @@ const RAW_LOGS = 'raw-logs';
  * @param {string}   spec.prefix       Node-name prefix for every soft node
  *                                     this hook mounts: the stream backbone,
  *                                     the paused read and the browse catalog.
+ * @param {string}   spec.group        The dashboard's group, whose
+ *                                     `shell:<group>` Tap its commands pass.
  * @param {string}   spec.glob         Partition glob this dashboard tails.
  * @param {Function} spec.viewClass    View-model node class to mount.
  * @param {Object}   [opts]            Per-mount options.
@@ -33,7 +35,10 @@ const RAW_LOGS = 'raw-logs';
  *   Control callbacks and the browse model for the thin React view; the view's
  *   own `view` field is read through `useNodeField`.
  */
-export function useGlobStreamGraph( { prefix, glob, viewClass }, opts = {} ) {
+export function useGlobStreamGraph(
+	{ prefix, group, glob, viewClass },
+	opts = {}
+) {
 	const graph = useStreamGraph( {
 		prefix,
 		subscribe: glob,
@@ -42,10 +47,11 @@ export function useGlobStreamGraph( { prefix, glob, viewClass }, opts = {} ) {
 	} );
 	const step = useSteppedRead( {
 		graph,
+		group,
 		ci: RAW_LOGS,
 		command: 'read_message',
 	} );
-	const browse = useGlobBrowse( { glob, graph, step } );
+	const browse = useGlobBrowse( { group, glob, graph, step } );
 	const { setPaused, setFilter, clear } = graph;
 
 	return {
