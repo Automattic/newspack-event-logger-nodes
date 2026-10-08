@@ -2546,7 +2546,7 @@ class LogManagerTest extends TestCase {
 		$this->assertStringNotContainsString( 'https://plain.test', (string) ( $request['m'] ?? '' ) );
 	}
 
-	/** A request with no SERVER_NAME never starts, whatever the site's home URL. */
+	/** A web request with no SERVER_NAME never starts, whatever the site's home URL. */
 	public function test_log_process_without_server_name_throws_naming_it(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
@@ -2570,6 +2570,68 @@ class LogManagerTest extends TestCase {
 		}
 		$this->assertStringContainsString( 'SERVER_NAME', $thrown?->getMessage() ?? '' );
 		$this->assertNull( Log_Manager::started_instance(), 'a request with no host never starts' );
+	}
+
+	/**
+	 * Under WP-CLI a request logs under the site's own scheme and host, which
+	 * home_url() names; WP-CLI sets no SERVER_NAME and no HTTPS.
+	 */
+	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+	public function test_cli_request_logs_under_the_home_url_origin(): void {
+		$this->require_config_or_skip();
+		\define( 'WP_CLI', true );
+		unset( $_SERVER['SERVER_NAME'], $_SERVER['HTTPS'] );
+		$_SERVER['REQUEST_URI']       = '/jobs/import-film-times-6602';
+		$_SERVER['REQUEST_METHOD']    = 'POST';
+		$GLOBALS['_wp_test_home_url'] = 'https://quokka-4417.example';
+
+		$lm = Log_Manager::instance();
+		$lm->finish();
+
+		$this->assertSame( 'POST https://quokka-4417.example/jobs/import-film-times-6602', $this->request_line() );
+	}
+
+	/** Under WP-CLI a SERVER_NAME the process set still names the host. */
+	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+	public function test_cli_request_with_a_server_name_logs_under_it(): void {
+		$this->require_config_or_skip();
+		\define( 'WP_CLI', true );
+		$_SERVER['SERVER_NAME']       = 'wombat-2281.test';
+		$_SERVER['HTTPS']             = 'on';
+		$_SERVER['REQUEST_URI']       = '/cli/numbat-3390';
+		$_SERVER['REQUEST_METHOD']    = 'GET';
+		$GLOBALS['_wp_test_home_url'] = 'http://numbat-3390.example';
+
+		$lm = Log_Manager::instance();
+		$lm->finish();
+
+		$this->assertSame( 'GET https://wombat-2281.test/cli/numbat-3390', $this->request_line() );
+	}
+
+	/** Under WP-CLI a home_url() naming no host still refuses to start. */
+	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+	public function test_cli_request_with_a_hostless_home_url_throws(): void {
+		$this->require_config_or_skip();
+		\define( 'WP_CLI', true );
+		unset( $_SERVER['SERVER_NAME'], $_SERVER['HTTPS'] );
+		$_SERVER['REQUEST_URI']       = '/cli/path-8812';
+		$GLOBALS['_wp_test_home_url'] = '';
+
+		$thrown = null;
+		try {
+			Log_Manager::instance();
+		} catch ( \RuntimeException $e ) {
+			$thrown = $e;
+		}
+		$this->assertStringContainsString( 'home_url()', $thrown?->getMessage() ?? '' );
+		$this->assertNull( Log_Manager::started_instance(), 'a request with no host never starts' );
+	}
+
+	/** The `m` of the one `request` line the firehose holds. */
+	private function request_line(): string {
+		$requests = \array_values( \array_filter( $this->written_entries(), static fn ( array $e ): bool => Log_Manager::REQUEST_LINE === ( $e['k'] ?? '' ) ) );
+		$this->assertCount( 1, $requests );
+		return (string) $requests[0]['m'];
 	}
 
 	// -- finish() orphan handling --------------------------------------------
