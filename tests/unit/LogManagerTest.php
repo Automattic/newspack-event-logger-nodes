@@ -276,6 +276,20 @@ class LogManagerTest extends TestCase {
 		$this->assertMatchesRegularExpression( '/^[a-z0-9]+$/', $rid );
 	}
 
+	public function test_every_request_id_is_32_characters(): void {
+		for ( $i = 0; $i < 2000; $i++ ) {
+			$this->assertSame( 32, \strlen( Log_Manager::generate_request_id() ) );
+		}
+	}
+
+	/** A chunk drawn small keeps its width, so no draw shortens the id. */
+	public function test_a_request_id_pads_each_chunk_to_eight_digits(): void {
+		$this->assertSame(
+			'00000001' . '00000000' . 'e13wu1of' . '00000010',
+			Log_Manager::encode_request_id( "\0\0\0\0\x01" . \str_repeat( "\0", 5 ) . \str_repeat( "\xff", 5 ) . "\0\0\0\0\x24" )
+		);
+	}
+
 	public function test_generate_request_id_uniqueness(): void {
 		$ids = [];
 		for ( $i = 0; $i < 50; $i++ ) {
@@ -3426,6 +3440,17 @@ class LogManagerTest extends TestCase {
 			\Newspack_Nodes\Topology_Registry::reset_basename_cache();
 			\delete_option( 'newspack_nodes_topologies' );
 			\Newspack_Nodes\Config::reset();
+		}
+	}
+
+	/** Neither hook store keeps the topology filter the test above added. */
+	#[\PHPUnit\Framework\Attributes\Depends( 'test_firehose_dirs_ignore_a_wider_topology_declaration' )]
+	public function test_a_topology_filter_does_not_outlive_its_test(): void {
+		$this->assertArrayNotHasKey( 'wide', \apply_filters( 'newspack_nodes/topologies', [] ) );
+		foreach ( $GLOBALS['_wp_test_filters']['newspack_nodes/topologies'] ?? [] as $listeners ) {
+			foreach ( $listeners as $listener ) {
+				$this->assertArrayNotHasKey( 'wide', $listener( [] ) );
+			}
 		}
 	}
 

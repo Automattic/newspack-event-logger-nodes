@@ -226,6 +226,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		'url_hash' => [ 32, 12 ],
 	];
 
+	/** The one width `format_index_entry()` writes and `parse_flame_index()` reads. */
+	private const INDEX_LINE_BYTES = 68;
+
 	/**
 	 * Keys per read/write batch in a flush, and per row read a selection's
 	 * page makes by key. Bounds the held set: one chunk is at most one shard's
@@ -3733,14 +3736,15 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Parse one flame index line back into its fields — the inverse of
-	 * `format_index_entry()`, and bound to the same fixed widths.
+	 * `format_index_entry()`, and bound to the same fixed widths. A line of
+	 * any other length is a truncated, half-written or run-together record.
 	 *
 	 * @param string $line Index line.
-	 * @return array{rid: string, url_hash: string, segment: int, offset: int, length: int}|null Null when the line is short.
+	 * @return array{rid: string, url_hash: string, segment: int, offset: int, length: int}|null Null when the line is not `INDEX_LINE_BYTES` long.
 	 */
 	public static function parse_flame_index( string $line ): ?array {
 		$line = \rtrim( $line, "\n" );
-		if ( \strlen( $line ) < 68 ) {
+		if ( self::INDEX_LINE_BYTES !== \strlen( $line ) ) {
 			return null;
 		}
 		return [

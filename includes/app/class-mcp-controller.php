@@ -173,15 +173,23 @@ class MCP_Controller {
 	/**
 	 * The JSON-RPC entry point.
 	 *
+	 * A message with no `id` member is a notification, whatever its method,
+	 * and JSON-RPC forbids answering one: the transport acknowledges it with
+	 * a bodiless 202, as MCP's HTTP transport requires. A request whose `id`
+	 * is null is still a request, and is answered.
+	 *
 	 * @param \WP_REST_Request $req Request.
-	 * @return array<string,mixed>|null A JSON-RPC response, or null for a notification.
+	 * @return array<string,mixed>|\WP_REST_Response A JSON-RPC response, or the 202 for a notification.
 	 */
-	public function dispatch( \WP_REST_Request $req ): ?array {
+	public function dispatch( \WP_REST_Request $req ): array|\WP_REST_Response {
 		$body = \json_decode( $req->get_body(), true );
 		if ( ! \is_array( $body ) || ! isset( $body['method'] ) ) {
 			return self::error( null, self::INVALID_REQUEST, 'Not a JSON-RPC request.' );
 		}
-		$id     = $body['id'] ?? null;
+		if ( ! \array_key_exists( 'id', $body ) ) {
+			return new \WP_REST_Response( null, 202 );
+		}
+		$id     = $body['id'];
 		$method = Core::as_string( $body['method'] );
 		$params = \is_array( $body['params'] ?? null ) ? $body['params'] : [];
 
@@ -198,9 +206,6 @@ class MCP_Controller {
 					],
 					'instructions'    => self::INSTRUCTIONS . ' ' . Findings::caveat(),
 				] );
-			case 'notifications/initialized':
-				// JSON-RPC forbids answering a notification (it has no id).
-				return null;
 			case 'tools/list':
 				return self::result( $id, [ 'tools' => self::visible_tools() ] );
 			case 'tools/call':

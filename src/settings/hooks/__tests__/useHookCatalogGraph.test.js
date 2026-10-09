@@ -35,7 +35,19 @@ const HTTP = '_http';
 const RECEIVER = 'hook-catalog:in';
 const FETCHER = 'hook-catalog:fetch';
 const VIEW = 'hook-catalog:view';
-const ALL_GRAPH_NAMES = [ HTTP, RECEIVER, VIEW ];
+const TIMER = 'hook-catalog:timer';
+const TEE = 'hook-catalog:tee';
+const TAP = 'hooks:shell';
+const ALL_GRAPH_NAMES = [
+	HTTP,
+	TAP,
+	TIMER,
+	TEE,
+	FETCHER,
+	RECEIVER,
+	`${ RECEIVER }:current`,
+	VIEW,
+];
 
 // The ask rides the router tick, so a dispatch is a wait, not a flush.
 const waitForBatch = ( wire, atLeast = 1 ) =>
@@ -242,14 +254,16 @@ describe( 'useHookCatalogGraph — fetch errors fall back to an empty map (mirro
 describe( 'useHookCatalogGraph — teardown', () => {
 	test( 'unmount unregisters every graph node + the backbone', () => {
 		installWire();
+		// Open, because a closed picker mounts nothing for teardown to remove.
 		const { unmount } = renderHook( () =>
-			useHookCatalogGraph( { isOpen: false } )
+			useHookCatalogGraph( { isOpen: true } )
 		);
+		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER ] ) {
+			expect( Core.node( name ) ).toBeTruthy();
+		}
 		unmount();
 		// The ROUTER is the page's heartbeat and is never torn down.
-		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER ] ) {
-			expect( Core.node( name ) ).toBeNull();
-		}
+		expect( [ ...Core.nodes.keys() ] ).toEqual( [ ROUTER ] );
 	} );
 
 	test( 'a reply resolving after unmount does not throw (sink may be gone)', async () => {

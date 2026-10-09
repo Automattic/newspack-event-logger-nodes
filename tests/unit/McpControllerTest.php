@@ -547,17 +547,55 @@ class McpControllerTest extends TestCase {
 		$this->assertSame( [], $tools );
 	}
 
-	/** JSON-RPC forbids a response to a notification (no `id`). */
-	public function test_a_notification_gets_no_response(): void {
+	/** A dispatcher holding the door open for a read session. */
+	private function read_door(): array {
 		[ , $bearer ] = $this->session( Capabilities::READ );
 		$controller   = new MCP_Controller();
 		$controller->check_permission( $this->request( [], $bearer ) );
+		return [ $controller, $bearer ];
+	}
 
-		$this->assertNull(
-			$controller->dispatch(
-				$this->request( [ 'jsonrpc' => '2.0', 'method' => 'notifications/initialized' ], $bearer )
-			)
+	/**
+	 * A message carrying no `id` is a notification, whatever its method, and
+	 * JSON-RPC forbids answering one; the transport acknowledges it bodiless.
+	 */
+	public function test_a_notification_gets_no_response(): void {
+		[ $controller, $bearer ] = $this->read_door();
+
+		foreach ( [ 'notifications/initialized', 'tools/list', 'wizard/summon' ] as $method ) {
+			$reply = $controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'method' => $method ], $bearer ) );
+
+			$this->assertInstanceOf( \WP_REST_Response::class, $reply, $method );
+			$this->assertSame( 202, $reply->get_status(), $method );
+			$this->assertNull( $reply->get_data(), $method );
+		}
+	}
+
+	/** A null `id` is still an id: the message is a request, and is answered. */
+	public function test_a_request_whose_id_is_null_is_answered(): void {
+		[ $controller, $bearer ] = $this->read_door();
+
+		$reply = $controller->dispatch(
+			$this->request( [ 'jsonrpc' => '2.0', 'id' => null, 'method' => 'tools/list' ], $bearer )
 		);
+
+		$this->assertIsArray( $reply );
+		$this->assertArrayHasKey( 'id', $reply );
+		$this->assertNull( $reply['id'] );
+		$this->assertIsList( $reply['result']['tools'] );
+	}
+
+	/** Silence follows the missing `id`, never the method's name. */
+	public function test_an_initialized_message_carrying_an_id_is_answered(): void {
+		[ $controller, $bearer ] = $this->read_door();
+
+		$reply = $controller->dispatch(
+			$this->request( [ 'jsonrpc' => '2.0', 'id' => 'n-31', 'method' => 'notifications/initialized' ], $bearer )
+		);
+
+		$this->assertIsArray( $reply );
+		$this->assertSame( 'n-31', $reply['id'] );
+		$this->assertSame( -32601, $reply['error']['code'] );
 	}
 
 	public function test_the_door_rate_limits_a_looping_agent(): void {
