@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.128.3] - 2026-10-09
+
 ### Fixed
 
 - **The MCP route refuses a body whose `jsonrpc` is not `"2.0"` or whose `method` is not a string.** `MCP_Controller::dispatch()` checked only for a `method` member, so `"jsonrpc": "1.0"`, a missing `jsonrpc` or a non-string `method` was dispatched and answered as 2.0. Each now answers `-32600` with a null `id`.
