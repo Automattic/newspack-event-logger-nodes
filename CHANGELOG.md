@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.128.2] - 2026-10-08
+
 ### Fixed
 
 - **A fatal names its plugin when the plugin runs from a release directory, or from a docroot behind a symlink.** PHP reports a fatal's file with every symlink resolved, so a plugin the atomic deploy swaps in reports `wp-content/plugin-releases/<slug>/<release>/<slug>/…`, never `WP_PLUGIN_DIR`, and `fatal_plugin` came back empty for every such plugin. `Log_Manager` reads the slug from either layout, matching each root both as written and as resolved.
