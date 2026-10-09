@@ -7556,6 +7556,15 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNull( Flame_Builder_Node::parse_flame_index( 'too-short' ) );
 	}
 
+	public function test_parse_flame_index_refuses_a_line_one_byte_long(): void {
+		$message                   = Message::new_message();
+		$message[ Message::VALUE ] = [ 'rid' => 'r9k2', 'url_hash' => 'a1b2c3d4e5f6' ];
+		$line = Flame_Builder_Node::format_index_entry( $message, [ 'segment' => 3, 'offset' => 4096, 'length' => 812 ] );
+
+		$this->assertSame( 'r9k2', Flame_Builder_Node::parse_flame_index( $line )['rid'] );
+		$this->assertNull( Flame_Builder_Node::parse_flame_index( $line . '5' ) );
+	}
+
 	public function test_format_index_entry_handles_deeply_nested_flame(): void {
 		// A MAX_STACK_DEPTH (50) deeply-nested flame VALUE: the formatter reads the
 		// already-unpacked message array, so there is no json_decode depth to exceed.

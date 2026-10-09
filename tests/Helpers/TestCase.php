@@ -30,6 +30,16 @@ abstract class TestCase extends RuntimeTestCase {
 	private array $stats_table_dirs = [];
 
 	/**
+	 * The `_wp_test_filters` table at setUp, restored in tearDown. The base
+	 * class restores `_wp_actions` alone, and this bootstrap's add_filter()
+	 * records each callback in both, so a per-test filter otherwise outlives
+	 * its test in the by-priority table AppCoreTest reads.
+	 *
+	 * @var array<string,array<int,list<callable>>>
+	 */
+	private array $saved_wp_test_filters = [];
+
+	/**
 	 * The server the URL seed helpers file rows under when a test names none:
 	 * the `server_name` a completed request carries by default, so a row a
 	 * test seeds and a row the flush writes land under one key.
@@ -193,6 +203,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function setUp(): void {
 		parent::setUp();
+		$this->saved_wp_test_filters = $GLOBALS['_wp_test_filters'] ?? [];
 		// No user is current until a test, or the request graph, logs one in.
 		unset( $GLOBALS['_current_user_id'] );
 		// The monotonic clock tracks the tick, as every test here dates by it.
@@ -322,7 +333,8 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( \array_keys( $this->stats_table_dirs ) as $dir ) {
 			$this->rmdir_recursive( $dir );
 		}
-		$this->stats_table_dirs = [];
+		$this->stats_table_dirs      = [];
+		$GLOBALS['_wp_test_filters'] = $this->saved_wp_test_filters;
 		parent::tearDown();
 	}
 

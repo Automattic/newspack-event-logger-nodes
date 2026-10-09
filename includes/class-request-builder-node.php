@@ -1730,15 +1730,16 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 *
 	 * Columns: rid(32) url_hash(12) timestamp(10) duration_ms(8) status_code(3)
 	 * segment(6) offset(10) length(8) peak_mb(6) method(1) error_status(1) —
-	 * one width, the one `format_index_entry()` writes. A shorter line is a
-	 * truncated or half-written record, and is refused.
+	 * one width, the one `format_index_entry()` writes. A line of any other
+	 * length is a truncated, half-written or run-together record, and is
+	 * refused.
 	 *
 	 * @param string $line Index line.
 	 * @return array<string,mixed>|null Parsed entry, or null when malformed.
 	 */
 	public static function parse_request_index( string $line ): ?array {
 		$line = \rtrim( $line, "\n" );
-		if ( \strlen( $line ) < self::INDEX_LINE_BYTES ) {
+		if ( self::INDEX_LINE_BYTES !== \strlen( $line ) ) {
 			return null;
 		}
 		$entry = [
@@ -1814,7 +1815,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * Registered as the `request-index` formatter; `parse_request_index()` is
 	 * the reader for the lines this writes. The layout is fixed-width and
 	 * append-only, `INDEX_LINE_BYTES` wide, so the reader slices each field by
-	 * constant offset and refuses anything shorter. Change a width and every
+	 * constant offset and refuses any other length. Change a width and every
 	 * existing `.idx` on disk decodes as garbage.
 	 *
 	 * Two cases skip indexing, both by the substrate's null-or-'' contract: a

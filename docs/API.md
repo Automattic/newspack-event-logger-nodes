@@ -269,9 +269,10 @@ POST /wp-json/newspack-event-logger-nodes/v1/mcp
 
 An [MCP](https://modelcontextprotocol.io/) server over verbs this plugin already answers. It
 speaks protocol revision `2025-06-18` as [JSON-RPC](https://www.jsonrpc.org/specification),
-and one POST carries every method: `initialize`, `notifications/initialized`
-(answered with nothing — JSON-RPC forbids replying to a notification), `tools/list` and
-`tools/call`. It adds no runtime surface: `tools/call` mounts the same request graph
+and one POST carries every method: `initialize`, `notifications/initialized`, `tools/list` and
+`tools/call`. A message with no `id` member is a notification, whatever its method, and gets a
+bodiless `202 Accepted`, because JSON-RPC forbids replying to one; a request whose `id` is
+`null` is still a request, and is answered. It adds no runtime surface: `tools/call` mounts the same request graph
 `/command` does, through `Bootstrap::mount_request_graph()`, and dispatches through the same
 interpreter. Every argument rides by name, a list as one `--<name>=` token a member, and the
 verb binds it: an argument the verb does not declare answers `isError` with
@@ -412,7 +413,8 @@ false.
 | `static firehose_dir_template( string $logs_dir = '<config:logs_dir>' ): string` | `{logs_dir}/firehose.p{partition}`. The `{partition}` spelling is load-bearing — `Topic_Node` substitutes only that one. |
 | `static url_hash( string ): string` | 12-char FNV-1a. The shared URL identity primitive, also behind `Rule_Set::id_for()`. The two hash different inputs — a rule id hashes a PATTERN, a stats bucket a concrete URL — so don't join them. |
 | `static fnv1a32( string, int $seed = 2166136261 ): int` | The hash underneath it. |
-| `static generate_request_id(): string` | 32 base-36 characters over 25 random bytes. |
+| `static generate_request_id(): string` | 32 base-36 characters over 20 random bytes, eight a five-byte chunk. |
+| `static encode_request_id( string $bytes ): string` | The spelling `generate_request_id()` uses: eight zero-padded base-36 digits per five bytes. |
 | `static redact_url( string ): string` | The ONE redaction path; public for that reason. Replaces the value of any query parameter whose NAME, as sent or as PHP reads it, is credential-shaped with `[REDACTED]`, keeping the name as sent; [URL-secret redaction](architecture-guide.md#url-secret-redaction) has the rules. |
 | `static parse_request_line( mixed ): ?array` | `[ request_method, request_url, url ]` from a `request` entry's `m`: any method token, the absolute URL with its query, and that URL less its query; null when `m` holds no method and `scheme://` URL, the overflow stub `(truncated, original N bytes)` among them. The one parse of that line, for readers that show a request and readers that aggregate per URL alike. |
 

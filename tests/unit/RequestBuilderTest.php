@@ -1037,24 +1037,35 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 1, $this->cache_size( $rb ) );
 	}
 
-	public function test_truncation_when_entries_exceed_max(): void {
-		// Reduce MAX_ENTRIES_PER_REQUEST? It's a constant. Fast smoke test:
-		// Fill 100 entries (well below 50000) and ensure no truncation marker.
+	public function test_a_request_past_its_entry_cap_folds_to_its_ends(): void {
+		// max_entries_per_request = 25, far below the 20000 default: entry 25
+		// folds the request, so its record ships the head, a marker counting
+		// the merged middle, and the newest tail rows, never a truncated list.
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
+		$rb->name( 'request-builder' );
 		$rb->sink( $capture );
+		$rb->arguments( [ '100', '2', '100000', '25' ] );
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea.test/x' ] );
 		for ( $i = 0; $i < 100; $i++ ) {
 			$this->fill( $rb, $i + 3, 'r1', 'noise', [ 'm' => "msg-$i" ] );
 		}
-		// Contiguous n (real firehose numbering) — the sequence validator skips gaps.
 		$this->fill( $rb, 103, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
+		$this->assertTrue( $req['folded'] ?? false );
 		$this->assertArrayNotHasKey( 'truncated', $req );
-		$this->assertCount( 103, $req['entries'] ); // start + request + 100 noise + complete
+		$this->assertSame(
+			[ ...\range( 1, 10 ), 11, ...\range( 94, 103 ) ],
+			\array_column( $req['entries'], 'n' )
+		);
+		$this->assertSame( 'msg-7', $req['entries'][9]['m'] );
+		$this->assertSame( Request_Builder_Node::FOLD_MARKER_KEY, $req['entries'][10]['k'] );
+		$this->assertSame( '83 entries merged under memory pressure', $req['entries'][10]['m'] );
+		$this->assertSame( 'msg-91', $req['entries'][11]['m'] );
+		$this->assertSame( 'process (complete)', $req['entries'][20]['k'] );
 	}
 
 	// --- Errors sink ------------------------------------------------------
@@ -2386,7 +2397,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea.test/x' ] );
-		// Single char but not in [-, F, T] → fall back.
+		// Single char outside '-' and ERROR_STATUSES → fall back.
 		$this->fill(
 			$rb,
 			3,
@@ -2859,9 +2870,8 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( $blocker, Core::node( 'taken:flight' ) );
 	}
 	public function test_the_index_parser_takes_the_current_line_only(): void {
-		// The writer emits one width. Accepting the four shorter historical
-		// widths meant every truncated or half-written line parsed as an older
-		// version instead of being refused.
+		// The writer emits one width, so a line of any other length is a
+		// truncated, half-written or run-together record, and is refused.
 		$request              = new \stdClass();
 		$request->rid         = 'r5nyq83m4v1p';
 		$request->url         = 'https://x.test/reviews/8813';
@@ -2884,6 +2894,10 @@ class RequestBuilderTest extends TestCase {
 		$this->assertNull(
 			Request_Builder_Node::parse_request_index( \substr( $line, 0, -1 ) ),
 			'a line one byte short is refused, not read as an older version'
+		);
+		$this->assertNull(
+			Request_Builder_Node::parse_request_index( $line . '7' ),
+			'a line one byte long is refused, not read by its first 97 bytes'
 		);
 	}
 

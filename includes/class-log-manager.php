@@ -1300,16 +1300,26 @@ class Log_Manager {
 	}
 
 	/**
-	 * Generate a new request ID: 32 base-36 characters over 25 random bytes.
+	 * Generate a new request ID: 32 base-36 characters over 20 random bytes.
 	 *
 	 * @return string
 	 */
 	public static function generate_request_id(): string {
+		return self::encode_request_id( \random_bytes( 20 ) );
+	}
+
+	/**
+	 * Spell bytes as a request id, eight base-36 digits per five bytes.
+	 *
+	 * @param string $bytes Raw bytes, a multiple of five long.
+	 * @return string
+	 */
+	public static function encode_request_id( string $bytes ): string {
 		$rid = '';
-		for ( $i = 0; $i < 5; $i++ ) {
-			$rid .= \base_convert( \bin2hex( \random_bytes( 5 ) ), 16, 36 );
+		foreach ( \str_split( $bytes, 5 ) as $chunk ) {
+			$rid .= \str_pad( \base_convert( \bin2hex( $chunk ), 16, 36 ), 8, '0', STR_PAD_LEFT );
 		}
-		return \substr( $rid, 0, 32 );
+		return $rid;
 	}
 
 	/**
