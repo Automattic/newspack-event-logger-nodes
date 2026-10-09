@@ -183,14 +183,18 @@ class MCP_Controller {
 	 */
 	public function dispatch( \WP_REST_Request $req ): array|\WP_REST_Response {
 		$body = \json_decode( $req->get_body(), true );
-		if ( ! \is_array( $body ) || ! isset( $body['method'] ) ) {
-			return self::error( null, self::INVALID_REQUEST, 'Not a JSON-RPC request.' );
+		if (
+			! \is_array( $body )
+			|| '2.0' !== ( $body['jsonrpc'] ?? null )
+			|| ! \is_string( $body['method'] ?? null )
+		) {
+			return self::error( null, self::INVALID_REQUEST, 'Not a JSON-RPC 2.0 request.' );
 		}
 		if ( ! \array_key_exists( 'id', $body ) ) {
 			return new \WP_REST_Response( null, 202 );
 		}
 		$id     = $body['id'];
-		$method = Core::as_string( $body['method'] );
+		$method = $body['method'];
 		$params = \is_array( $body['params'] ?? null ) ? $body['params'] : [];
 
 		switch ( $method ) {
