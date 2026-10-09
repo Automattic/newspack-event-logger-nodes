@@ -272,7 +272,8 @@ speaks protocol revision `2025-06-18` as [JSON-RPC](https://www.jsonrpc.org/spec
 and one POST carries every method: `initialize`, `notifications/initialized`, `tools/list` and
 `tools/call`. A message with no `id` member is a notification, whatever its method, and gets a
 bodiless `202 Accepted`, because JSON-RPC forbids replying to one; a request whose `id` is
-`null` is still a request, and is answered. It adds no runtime surface: `tools/call` mounts the same request graph
+`null` is still a request, and is answered. A body without `"jsonrpc": "2.0"`, or whose
+`method` is not a string, answers `-32600` with a null `id`. It adds no runtime surface: `tools/call` mounts the same request graph
 `/command` does, through `Bootstrap::mount_request_graph()`, and dispatches through the same
 interpreter. Every argument rides by name, a list as one `--<name>=` token a member, and the
 verb binds it: an argument the verb does not declare answers `isError` with

@@ -32,11 +32,11 @@ class McpControllerTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
-		Cache_Backend::$apcu_usable           = static fn (): bool => false;
-		Capabilities::$session_scope          = null;
-		$GLOBALS['_wp_test_current_user_can'] = [];
-		$GLOBALS['_wp_test_current_user_id']  = 0;
-		Core::$memd                           = $this->prev_memd;
+		Cache_Backend::$apcu_usable          = static fn (): bool => false;
+		Capabilities::$session_scope         = null;
+		$GLOBALS['_wp_test_current_user_id'] = 0;
+		Core::$memd                          = $this->prev_memd;
+		unset( $GLOBALS['_current_user_can'] );
 		parent::tearDown();
 	}
 
@@ -69,6 +69,8 @@ class McpControllerTest extends TestCase {
 		);
 
 		$this->assertInstanceOf( \WP_Error::class, $result );
+		$this->assertSame( 'mcp_unauthorized', $result->get_error_code() );
+		$this->assertSame( 401, $result->data['status'] ?? null );
 	}
 
 	public function test_a_valid_session_installs_its_ceiling(): void {
@@ -688,15 +690,29 @@ class McpControllerTest extends TestCase {
 		$this->assertSame( [ $controller, 'check_permission' ], $route['permission_callback'] );
 	}
 
-	public function test_a_body_that_is_not_jsonrpc_is_refused(): void {
-		[ , $bearer ] = $this->session( Capabilities::READ );
-		$controller   = new MCP_Controller();
-		$controller->check_permission( $this->request( [], $bearer ) );
+	/**
+	 * JSON-RPC 2.0 requires `jsonrpc` to be exactly "2.0" and `method` a
+	 * string. A refused body is answered with a null id, whatever it carried.
+	 */
+	public function test_a_body_that_is_not_jsonrpc_2_0_is_refused(): void {
+		[ $controller, $bearer ] = $this->read_door();
 
-		$reply = $controller->dispatch( $this->request( [ 'hello' => 'there' ], $bearer ) );
+		$bodies = [
+			'not json-rpc'    => [ 'hello' => 'there' ],
+			'no method'       => [ 'jsonrpc' => '2.0', 'id' => 50 ],
+			'version 1.0'     => [ 'jsonrpc' => '1.0', 'id' => 51, 'method' => 'tools/list' ],
+			'no version'      => [ 'id' => 52, 'method' => 'tools/list' ],
+			'numeric version' => [ 'jsonrpc' => 2.0, 'id' => 53, 'method' => 'tools/list' ],
+			'array method'    => [ 'jsonrpc' => '2.0', 'id' => 54, 'method' => [ 'tools/list' ] ],
+			'numeric method'  => [ 'jsonrpc' => '2.0', 'id' => 55, 'method' => 7 ],
+		];
+		foreach ( $bodies as $label => $body ) {
+			$reply = $controller->dispatch( $this->request( $body, $bearer ) );
 
-		$this->assertSame( -32600, $reply['error']['code'] );
-		$this->assertNull( $reply['id'], 'a request with no id cannot be answered with one' );
+			$this->assertIsArray( $reply, $label );
+			$this->assertSame( -32600, $reply['error']['code'], $label );
+			$this->assertNull( $reply['id'], $label );
+		}
 	}
 
 	/**
