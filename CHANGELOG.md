@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The substrate floor rises to newspack-nodes 2.104.0,** whose page link routes by pairs; the bundled stream hooks call `addPairs()`.
 - **The response-time chart's trend line takes no pointer, so a hit test no longer strokes its curve.** `ResponseTimeChart` draws it with `pointer-events="none"`; the dots under it keep their hover and click.
 - **The Performance dashboard's time charts remember their expansion and stack pick.** `AggregateTimeChart` and `CategoryTimeChart` take a required `storageKey` naming their placement and persist each metric's or view's choices under `<storageKey>:<metric>` or `<storageKey>:<mode>`: `event-logger-overview-chart-{aggregate,category}` on the overview card, `event-logger-url-detail-chart-{aggregate,category}` in the URL modal. `BreakdownControls` hands its `storageKey` to the aggregate chart. Needs the substrate's `AreaTimeChart` `storageKey`.
 

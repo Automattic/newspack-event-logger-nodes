@@ -6,10 +6,10 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
-- **This release needs newspack-nodes 2.102.0, deployed with it.** The
-  dashboards ride the substrate's shared stream link and its group Taps,
-  and share the page global `Core` with the substrate's bundles, whose
-  shape 2.102.0 changes. Below the floor the plugin stays dormant behind
+- **This release needs newspack-nodes 2.104.0, deployed with it.** The
+  dashboards ride the substrate's shared stream link by declared pairs
+  (`addPairs()`, 2.104.0) and its group Taps, and share the page global
+  `Core` with the substrate's bundles, whose shape 2.102.0 changes. Below the floor the plugin stays dormant behind
   its admin notice; deploy the substrate and this plugin together, then
   restart the workers.
 
