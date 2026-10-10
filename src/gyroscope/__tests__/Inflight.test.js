@@ -102,7 +102,7 @@ describe( 'Inflight', () => {
 	};
 
 	it( 'shows the lines its stream skipped as unparseable', () => {
-		publishSkippedLines( 'gyroscope:stream', 4 );
+		publishSkippedLines( 'gyroscope.p4', 4 );
 		registerViewFixture();
 		const { container } = mount();
 		expect( container.textContent ).toContain(

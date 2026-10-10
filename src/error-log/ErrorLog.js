@@ -22,6 +22,7 @@ import { __, _n } from '@wordpress/i18n';
 
 import { Core, useNodeField } from '@newspack-nodes/runtime';
 import { useErrorLogGraph } from './hooks/useErrorLogGraph';
+import { STREAM_GLOBS } from '../overview/constants';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
 import {
 	Cell,
@@ -269,7 +270,7 @@ export default function ErrorLog( { headerControlsSlot } ) {
 			pickerLabel={ browse.pickerLabel }
 			isPaused={ isPaused }
 			connectionError={ connectionError }
-			streamNode="error-log:stream"
+			subscribe={ [ STREAM_GLOBS.errorLog ] }
 			onTogglePause={ () => setPaused( ! isPaused ) }
 			onStep={ step }
 			onJump={ browse.jump }

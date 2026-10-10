@@ -335,7 +335,7 @@ describe( 'useGyroscopeGraph — end-to-end routing through the exospine', () =>
 } );
 
 describe( 'useGyroscopeGraph — skipped lines', () => {
-	test( "the server's skipped-line frame lands on the page link as this graph's share", async () => {
+	test( "the server's skipped-line frame lands on the page link by stamp", async () => {
 		renderHook( () => useGyroscopeGraph() );
 		await act( async () => {} );
 		// Lines skipped on a dir this graph carries, and on one it does not.
@@ -347,8 +347,9 @@ describe( 'useGyroscopeGraph — skipped lines', () => {
 		act( () => {
 			FakeEventSource.last.dispatch( 'unparseable_lines', pack( frame ) );
 		} );
-		expect( Core.node( LINK ).unparseableByTarget ).toEqual( {
-			[ TEE ]: 3,
+		expect( Core.node( LINK ).unparseableByStamp ).toEqual( {
+			'gyroscope.p0': 3,
+			'errors.p0': 5,
 		} );
 	} );
 } );

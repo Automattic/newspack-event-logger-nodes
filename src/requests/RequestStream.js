@@ -21,6 +21,7 @@ import { __, _n } from '@wordpress/i18n';
 
 import { Core, useNodeField } from '@newspack-nodes/runtime';
 import { useRequestLogGraph } from './hooks/useRequestLogGraph';
+import { STREAM_GLOBS } from '../overview/constants';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
 import ColumnPicker from '@newspack-nodes/shared/components/ColumnPicker';
 import { useColumnPicker } from '@newspack-nodes/shared/hooks/useColumnPicker';
@@ -274,7 +275,7 @@ export default function RequestStream( {
 			pickerLabel={ browse.pickerLabel }
 			isPaused={ isPaused }
 			connectionError={ connectionError }
-			streamNode="request-log:stream"
+			subscribe={ [ STREAM_GLOBS.requestLog ] }
 			onTogglePause={ () => setPaused( ! isPaused ) }
 			onStep={ step }
 			onJump={ browse.jump }
