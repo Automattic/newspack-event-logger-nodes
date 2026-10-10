@@ -35,6 +35,7 @@ import AggregateTimeChart from '../AggregateTimeChart';
  * @param {Object}                                              props                   Component props.
  * @param {Object}                                              props.breakdownRead     The caller's `breakdownState()` read of the dimension's reply: `{ state, series }`.
  * @param {string[]|null}                                       props.slots             The bucket keys the reply drew, which the chart's axis is.
+ * @param {string}                                              props.storageKey        Untranslated placement name for the chart; see AggregateTimeChart.
  * @param {string}                                              props.metric            'volume' | 'avg' | 'cumulative' | 'memory'.
  * @param {(value: string) => void}                             props.setMetric         Metric setter.
  * @param {string}                                              props.breakdown         Selected dimension, a value from `breakdownOptions`.
@@ -54,6 +55,7 @@ import AggregateTimeChart from '../AggregateTimeChart';
 export default function BreakdownControls( {
 	breakdownRead,
 	slots,
+	storageKey,
 	metric,
 	setMetric,
 	breakdown,
@@ -126,6 +128,7 @@ export default function BreakdownControls( {
 			<AggregateTimeChart
 				series={ breakdownRead.series }
 				slots={ slots }
+				storageKey={ storageKey }
 				metric={ metric }
 				breakdown={ breakdown }
 				serverFilter={ serverFilter }

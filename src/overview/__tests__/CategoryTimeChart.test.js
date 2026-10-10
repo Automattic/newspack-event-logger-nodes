@@ -107,6 +107,14 @@ const d3Mock = d3.__chain;
  */
 const SLOTS = slotsEndingAt( '2026-09-29-14-35' );
 
+// A CategoryTimeChart on SLOTS under a test storage key.
+const categoryChart = ( props ) =>
+	React.createElement( CategoryTimeChart, {
+		storageKey: 'test:category',
+		slots: SLOTS,
+		...props,
+	} );
+
 // The panel's views, in render order: time, count, average.
 const [ TIME_VIEW, COUNT_VIEW, AVERAGE_VIEW ] = [ 0, 1, 2 ];
 const VIEW_COUNT = 3;
@@ -120,12 +128,47 @@ describe( 'CategoryTimeChart', () => {
 				v.mockClear();
 			}
 		} );
+		window.localStorage.clear();
+	} );
+
+	it( 'refuses to draw without a storageKey', () => {
+		const quiet = jest
+			.spyOn( console, 'error' )
+			.mockImplementation( () => {} );
+		try {
+			expect( () =>
+				renderComponent(
+					categoryChart( { storageKey: undefined, data: null } )
+				)
+			).toThrow( 'CategoryTimeChart: storageKey is required' );
+		} finally {
+			quiet.mockRestore();
+		}
+	} );
+
+	it( 'keeps each view’s corner choices under <storageKey>:<mode>', () => {
+		window.localStorage.setItem( 'test:category:count:expanded', '1' );
+		const { container, unmount } = renderComponent(
+			categoryChart( {
+				data: {
+					names: [ 'db' ],
+					buckets: { [ bucketKeyNow() ]: [ [ 0, 1500, 30, 30 ] ] },
+				},
+			} )
+		);
+		expect(
+			[
+				...container.querySelectorAll(
+					'.newspack-nodes-chart__expand'
+				),
+			].map( ( b ) => b.getAttribute( 'aria-expanded' ) )
+		).toEqual( [ 'false', 'true', 'false' ] );
+		unmount();
 	} );
 
 	it( 'draws exactly one chart per declared view, in render order', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				slots: SLOTS,
+			categoryChart( {
 				data: {
 					names: [ 'redis' ],
 					buckets: { '2019-07-04-13-45': [ [ 0, 8123, 419, 419 ] ] },
@@ -145,8 +188,7 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'titles every view Y-axis with the quantity it plots', () => {
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				slots: SLOTS,
+			categoryChart( {
 				data: {
 					names: [ 'redis' ],
 					buckets: { [ bucketKeyNow() ]: [ [ 0, 8123, 419, 419 ] ] },
@@ -163,7 +205,7 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'draws nothing before a reply names the window it read', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
+			categoryChart( {
 				slots: null,
 				data: {
 					names: [ 'redis' ],
@@ -177,7 +219,9 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'returns null when data is null', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data: null } )
+			categoryChart( {
+				data: null,
+			} )
 		);
 		expect( container.textContent ).toBe( '' );
 		unmount();
@@ -185,8 +229,7 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'draws nothing for a malformed reply', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				slots: SLOTS,
+			categoryChart( {
 				// A row one field short: a reply the decoder refuses whole.
 				data: {
 					names: [ 'memcache' ],
@@ -200,7 +243,9 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'returns null when data is empty object', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data: {} } )
+			categoryChart( {
+				data: {},
+			} )
 		);
 		expect( container.textContent ).toBe( '' );
 		unmount();
@@ -212,8 +257,7 @@ describe( 'CategoryTimeChart', () => {
 		// overview reply deliverable. An empty payload still has both keys, so
 		// emptiness is a question about the buckets, not about the envelope.
 		const empty = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				slots: SLOTS,
+			categoryChart( {
 				data: { names: [], buckets: {} },
 			} )
 		);
@@ -221,8 +265,7 @@ describe( 'CategoryTimeChart', () => {
 		empty.unmount();
 
 		const drawn = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				slots: SLOTS,
+			categoryChart( {
 				data: {
 					names: [ 'total', 'db' ],
 					buckets: {
@@ -255,7 +298,9 @@ describe( 'CategoryTimeChart', () => {
 		};
 
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 
 		// renderFn must have been wired up by useTimeChart.
@@ -282,7 +327,9 @@ describe( 'CategoryTimeChart', () => {
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 		const [ time, count, average ] = d3Mock.datum.mock.calls
 			.slice( -VIEW_COUNT )
@@ -309,7 +356,9 @@ describe( 'CategoryTimeChart', () => {
 		};
 
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 		expect( d3Mock.select ).toHaveBeenCalled();
 		unmount();
@@ -355,7 +404,9 @@ describe( 'CategoryTimeChart', () => {
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 		const rateAt = ( index ) =>
 			getFormatEntry( COUNT_VIEW )( index ).find(
@@ -379,7 +430,9 @@ describe( 'CategoryTimeChart', () => {
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 		const entries = getFormatEntry( TIME_VIEW )( lastSlotIndex() );
 		expect( Array.isArray( entries ) ).toBe( true );
@@ -401,7 +454,9 @@ describe( 'CategoryTimeChart', () => {
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 		const formatEntry = getFormatEntry( AVERAGE_VIEW );
 		expect( Array.isArray( formatEntry( lastSlotIndex() ) ) ).toBe( true );
@@ -421,7 +476,9 @@ describe( 'CategoryTimeChart', () => {
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 		const formatEntry = getFormatEntry( COUNT_VIEW );
 		expect( Array.isArray( formatEntry( lastSlotIndex() ) ) ).toBe( true );
@@ -431,8 +488,7 @@ describe( 'CategoryTimeChart', () => {
 	it( 'renderFn no-ops when containerRef is null', () => {
 		// Re-invoke captured renderFn with null containerRef → early return.
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				slots: SLOTS,
+			categoryChart( {
 				data: {
 					names: [ 'foo' ],
 					buckets: { [ bucketKeyNow() ]: [ [ 0, 10, 1, 1 ] ] },
@@ -454,8 +510,7 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'offers no stack toggle: a callback counts inside its hook', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				slots: SLOTS,
+			categoryChart( {
 				data: {
 					names: [ 'db', 'http' ],
 					buckets: {

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Performance dashboard's time charts remember their expansion and stack pick.** `AggregateTimeChart` and `CategoryTimeChart` take a required `storageKey` naming their placement and persist each metric's or view's choices under `<storageKey>:<metric>` or `<storageKey>:<mode>`: `event-logger-overview-chart-{aggregate,category}` on the overview card, `event-logger-url-detail-chart-{aggregate,category}` in the URL modal. `BreakdownControls` hands its `storageKey` to the aggregate chart. Needs the substrate's `AreaTimeChart` `storageKey`.
+
 - **The streaming dashboards ride `_stream` by pairs,** through the substrate's `useStreamGraph`; `ls -al _stream:` shows each glob stamp's route.
 - **Each streaming dashboard's skipped-line notice names its glob,** from `STREAM_GLOBS` in `src/overview/constants.js`, which the three graph hooks tail.
 

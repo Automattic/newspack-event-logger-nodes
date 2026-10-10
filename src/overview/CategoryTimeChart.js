@@ -182,6 +182,7 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
  * @param {Object}                                                    props                 Component props.
  * @param {Object|null}                                               props.data            Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
  * @param {string[]|null}                                             props.slots           The bucket keys the reply drew, newest first.
+ * @param {string}                                                    props.storageKey      Untranslated placement name; each view takes `<storageKey>:<mode>`, see AreaTimeChart.
  * @param {(bucketKey: string, click: {additive: boolean}) => void}   [props.onSlotClick]   Receives the bucket key of a slot clicked in any of the three charts, and whether cmd or ctrl was held; without it a click does nothing.
  * @param {(bucketKeys: string[], drag: {additive: boolean}) => void} [props.onSlotRange]   Receives the bucket keys a drag spans in any of the three charts, ascending, and whether cmd or ctrl was held; without it a drag does nothing.
  * @param {string[]}                                                  props.selectedBuckets The selected bucket keys, shaded on every view.
@@ -190,10 +191,14 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
 export default function CategoryTimeChart( {
 	data,
 	slots,
+	storageKey,
 	onSlotClick,
 	onSlotRange,
 	selectedBuckets,
 } ) {
+	if ( ! storageKey ) {
+		throw new TypeError( 'CategoryTimeChart: storageKey is required' );
+	}
 	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
 	const decoded = useMemo(
 		() => decodeNameTable( data, CAT_FIELDS ),
@@ -234,6 +239,7 @@ export default function CategoryTimeChart( {
 	return CATEGORY_VIEWS.map( ( { mode, title, yLabel }, index ) => (
 		<AreaTimeChart
 			key={ mode }
+			storageKey={ `${ storageKey }:${ mode }` }
 			series={ series[ index ] }
 			colorAt={ colorAt }
 			yFormatFor={ yFormatsFor[ index ] }

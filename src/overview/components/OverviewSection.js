@@ -289,6 +289,7 @@ export default function OverviewSection( {
 					<BreakdownControls
 						breakdownRead={ breakdownRead }
 						slots={ overview.slots ?? null }
+						storageKey="event-logger-overview-chart-aggregate"
 						metric={ chartMetric }
 						setMetric={ setChartMetric }
 						breakdown={ chartBreakdown }
@@ -303,6 +304,7 @@ export default function OverviewSection( {
 					/>
 
 					<CategoryTimeChart
+						storageKey="event-logger-overview-chart-category"
 						data={ categoryData }
 						slots={ overview.slots ?? null }
 						onSlotClick={ onSlotClick }

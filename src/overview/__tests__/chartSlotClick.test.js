@@ -32,6 +32,22 @@ import {
 // Four slots, newest first, as the reply names them.
 const SLOTS = slotsEndingAt( '2026-10-04-13-35', 4 );
 
+// An AggregateTimeChart on SLOTS under a test storage key.
+const aggregateChart = ( props ) =>
+	React.createElement( AggregateTimeChart, {
+		storageKey: 'test:aggregate',
+		slots: SLOTS,
+		...props,
+	} );
+
+// A CategoryTimeChart on SLOTS under a test storage key.
+const categoryChart = ( props ) =>
+	React.createElement( CategoryTimeChart, {
+		storageKey: 'test:category',
+		slots: SLOTS,
+		...props,
+	} );
+
 const charts = () => globalThis.__areaCharts ?? [];
 
 beforeEach( () => {
@@ -46,9 +62,8 @@ describe( 'AggregateTimeChart onSlotClick', () => {
 	it( 'hands back the bucket key of the slot clicked', () => {
 		const onSlotClick = jest.fn();
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
+			aggregateChart( {
 				series,
-				slots: SLOTS,
 				onSlotClick,
 			} )
 		);
@@ -64,9 +79,8 @@ describe( 'AggregateTimeChart onSlotClick', () => {
 	it( 'hands back the bucket keys a drag over three slots spans', () => {
 		const onSlotRange = jest.fn();
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
+			aggregateChart( {
 				series,
-				slots: SLOTS,
 				onSlotRange,
 			} )
 		);
@@ -82,9 +96,8 @@ describe( 'AggregateTimeChart onSlotClick', () => {
 
 	it( 'shades the selected buckets at their axis indexes', () => {
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
+			aggregateChart( {
 				series,
-				slots: SLOTS,
 				selectedBuckets: [ '2026-10-04-13-25', '2026-10-04-13-35' ],
 			} )
 		);
@@ -94,7 +107,9 @@ describe( 'AggregateTimeChart onSlotClick', () => {
 
 	it( 'gives the frame no click or drag to report without a callback', () => {
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, { series, slots: SLOTS } )
+			aggregateChart( {
+				series,
+			} )
 		);
 		expect( charts().at( -1 ).onSlotClick ).toBeUndefined();
 		expect( charts().at( -1 ).onSlotRange ).toBeUndefined();
@@ -110,9 +125,8 @@ describe( 'CategoryTimeChart onSlotClick', () => {
 	it( 'hands every view the same slot-to-bucket mapping', () => {
 		const onSlotClick = jest.fn();
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
+			categoryChart( {
 				data,
-				slots: SLOTS,
 				onSlotClick,
 			} )
 		);
@@ -131,9 +145,8 @@ describe( 'CategoryTimeChart onSlotClick', () => {
 	it( 'hands every view the same drag-to-buckets mapping', () => {
 		const onSlotRange = jest.fn();
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
+			categoryChart( {
 				data,
-				slots: SLOTS,
 				onSlotRange,
 			} )
 		);
@@ -150,9 +163,8 @@ describe( 'CategoryTimeChart onSlotClick', () => {
 
 	it( 'shades the selected buckets on every view', () => {
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
+			categoryChart( {
 				data,
-				slots: SLOTS,
 				selectedBuckets: [ '2026-10-04-13-30' ],
 			} )
 		);
@@ -164,7 +176,9 @@ describe( 'CategoryTimeChart onSlotClick', () => {
 
 	it( 'gives the frames no click or drag to report without a callback', () => {
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 		charts().forEach( ( chart ) => {
 			expect( chart.onSlotClick ).toBeUndefined();
