@@ -162,6 +162,8 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 					.attr( 'stroke', '#4a90d9' )
 					.attr( 'stroke-width', 1.5 )
 					.attr( 'stroke-opacity', 0.5 )
+					// Hit tests stroke the curve; the dots own the pointer.
+					.attr( 'pointer-events', 'none' )
 					.attr(
 						'd',
 						d3
