@@ -362,6 +362,7 @@ export default function UrlDetailView( {
 		group: GROUPS.url,
 		ci: SERVER,
 		command: 'url_breakdown',
+		scope: 'url-breakdown',
 		retry: true,
 		// Subject is the PAIR, not the hash: a superseded reply fills nothing.
 		subjectOf: ( args ) => args.join( ' ' ),
@@ -403,7 +404,7 @@ export default function UrlDetailView( {
 		loadBreakdown( chartBreakdown );
 	}, [ chartBreakdown, loadBreakdown ] );
 	useRouterTick( {
-		name: 'url-breakdown:timer',
+		name: 'url-breakdown-refresh:timer',
 		onTick: reloadBreakdown,
 		intervalMs: BREAKDOWN_REFRESH_MS,
 	} );

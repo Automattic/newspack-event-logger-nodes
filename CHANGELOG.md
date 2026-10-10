@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Performance page's one-shot commands name their nodes without the `performance:` prefix.** The `grep_requests`, `ask` and `url_breakdown` one-shots take the explicit scopes `grep-requests`, `ask` and `url-breakdown` in place of the default `performance:<command>`, so the debug overlay reads `grep-requests:fetch` where it read `performance:grep_requests:fetch`. The breakdown chart's five-minute refresh Timer becomes `url-breakdown-refresh:timer`, clear of the `url-breakdown:timer` its one-shot now owns.
+
 ## [0.129.0] - 2026-10-10
 
 ### Changed

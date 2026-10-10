@@ -1023,7 +1023,7 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	// The breakdown series is this view's OWN read now, so what it sends is
+	// The breakdown series is this view's own read, so what it sends is
 	// asserted on the wire rather than through an injected fetcher.
 	it( 'asks url_breakdown for the initial breakdown on mount', async () => {
 		// It keeps only the series, so it must not ask the verb that walks
@@ -1046,11 +1046,14 @@ describe( 'UrlDetailView', () => {
 			'deadbeef',
 			'--breakdown=status',
 		] );
-		// The read keeps the one-shot default scope; its refresh tick is a
-		// subject of its own, so the two never collide on `:timer`.
-		expect( msg[ FROM ] ).toMatch( /^performance:url_breakdown:in\// );
-		expect( Core.node( 'url-breakdown:timer' ) ).toBeTruthy();
-		expect( Core.node( 'urldetail:breakdown' ) ).toBeNull();
+		// The read's scope is `url-breakdown`; its refresh tick is a subject
+		// of its own, so the two never collide on `:timer`.
+		expect( msg[ FROM ] ).toMatch( /^url-breakdown:in\// );
+		const readTimer = Core.node( 'url-breakdown:timer' );
+		const refreshTimer = Core.node( 'url-breakdown-refresh:timer' );
+		expect( readTimer ).toBeTruthy();
+		expect( refreshTimer ).toBeTruthy();
+		expect( refreshTimer ).not.toBe( readTimer );
 		expect(
 			wire.batches
 				.flat()
