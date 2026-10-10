@@ -176,6 +176,7 @@ export function breakdownState( breakdownData = null ) {
  * @param {Object}                                                    props                 Component props.
  * @param {Object|null}                                               props.series          The dimension's table, as `breakdownState()` decoded it.
  * @param {string[]|null}                                             props.slots           The bucket keys the reply drew, newest first.
+ * @param {string}                                                    props.storageKey      Untranslated placement name; the chart takes `<storageKey>:<metric>`, see AreaTimeChart.
  * @param {string}                                                    [props.metric]        'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
  * @param {string}                                                    [props.breakdown]     Dimension `series` was fetched for, defaulting to 'status'; picks the palette only.
  * @param {string}                                                    [props.serverFilter]  Server name for the heading; the caller has already filtered the data.
@@ -187,6 +188,7 @@ export function breakdownState( breakdownData = null ) {
 export default function AggregateTimeChart( {
 	series,
 	slots,
+	storageKey,
 	metric = 'volume',
 	breakdown = 'status',
 	serverFilter = '',
@@ -194,6 +196,9 @@ export default function AggregateTimeChart( {
 	onSlotRange,
 	selectedBuckets,
 } ) {
+	if ( ! storageKey ) {
+		throw new TypeError( 'AggregateTimeChart: storageKey is required' );
+	}
 	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
 	const chartState = useMemo( () => {
 		if ( ! hasRows( series ) || 0 === axis.length ) {
@@ -256,10 +261,11 @@ export default function AggregateTimeChart( {
 
 	const titleSuffix = serverFilter ? ` — ${ serverFilter }` : '';
 
-	// Keyed on the metric, so a pick retires with it.
+	// Keyed on the metric, so each metric remounts onto its own stored choices.
 	return (
 		<AreaTimeChart
 			key={ metric }
+			storageKey={ `${ storageKey }:${ metric }` }
 			stackable={ STACKABLE_METRICS.includes( metric ) }
 			className="event-logger-aggregate-time-chart"
 			series={ chartState.lines }

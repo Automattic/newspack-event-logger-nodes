@@ -430,6 +430,7 @@ export default function UrlDetailView( {
 			<BreakdownControls
 				breakdownRead={ breakdownRead }
 				slots={ breakdownSlots }
+				storageKey="event-logger-url-detail-chart-aggregate"
 				metric={ chartMetric }
 				setMetric={ setChartMetric }
 				breakdown={ chartBreakdown }
@@ -443,6 +444,7 @@ export default function UrlDetailView( {
 			/>
 
 			<CategoryTimeChart
+				storageKey="event-logger-url-detail-chart-category"
 				data={ urlDetail?.category_time_series }
 				slots={ urlDetail?.slots ?? null }
 				onSlotClick={ pickBucket }

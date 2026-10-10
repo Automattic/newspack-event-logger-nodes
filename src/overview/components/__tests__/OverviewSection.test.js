@@ -24,16 +24,18 @@
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( {
-		metric,
-		breakdown,
-		serverFilter,
-		data,
-		slots,
-		onSlotClick,
-		onSlotRange,
-		selectedBuckets,
-	} ) => {
+	default: ( props ) => {
+		const {
+			metric,
+			breakdown,
+			serverFilter,
+			data,
+			slots,
+			onSlotClick,
+			onSlotRange,
+			selectedBuckets,
+		} = props;
+		globalThis.__aggregateStorageKey = props.storageKey;
 		globalThis.__aggregateSlotClick = onSlotClick;
 		globalThis.__aggregateSlotRange = onSlotRange;
 		globalThis.__aggregateSelected = selectedBuckets;
@@ -46,7 +48,9 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { slots, onSlotClick, onSlotRange, selectedBuckets } ) => {
+	default: ( props ) => {
+		const { slots, onSlotClick, onSlotRange, selectedBuckets } = props;
+		globalThis.__categoryStorageKey = props.storageKey;
 		globalThis.__categorySlotClick = onSlotClick;
 		globalThis.__categorySlotRange = onSlotRange;
 		globalThis.__categorySelected = selectedBuckets;
@@ -99,6 +103,11 @@ function mount( overview, overrides = {} ) {
 	return renderComponent( React.createElement( OverviewSection, props ) );
 }
 
+beforeEach( () => {
+	globalThis.__aggregateStorageKey = undefined;
+	globalThis.__categoryStorageKey = undefined;
+} );
+
 describe( 'OverviewSection', () => {
 	it( 'returns null when overview is null', () => {
 		const { container, unmount } = mount( null );
@@ -122,6 +131,19 @@ describe( 'OverviewSection', () => {
 		).toBeTruthy();
 		trigger.dispatchEvent( new MouseEvent( 'click', { bubbles: true } ) );
 		expect( start ).toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'names its two charts by the overview placement keys', () => {
+		const { unmount } = mount( {
+			slots: slotsEndingAt( '2026-10-04-13-35' ),
+		} );
+		expect( globalThis.__aggregateStorageKey ).toBe(
+			'event-logger-overview-chart-aggregate'
+		);
+		expect( globalThis.__categoryStorageKey ).toBe(
+			'event-logger-overview-chart-category'
+		);
 		unmount();
 	} );
 

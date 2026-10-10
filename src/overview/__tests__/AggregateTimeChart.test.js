@@ -119,6 +119,14 @@ const d3Mock = d3.__chain;
  */
 const SLOTS = slotsEndingAt( '2026-09-29-14-35' );
 
+// An AggregateTimeChart on SLOTS under a test storage key.
+const aggregateChart = ( props ) =>
+	React.createElement( AggregateTimeChart, {
+		storageKey: 'test:aggregate',
+		slots: SLOTS,
+		...props,
+	} );
+
 function bucketKeyNow() {
 	return SLOTS[ 0 ];
 }
@@ -156,12 +164,49 @@ describe( 'AggregateTimeChart', () => {
 		} );
 		const useTimeChart = require( '@newspack-nodes/shared/hooks/useTimeChart' );
 		useTimeChart.setupTooltip.mockClear();
+		window.localStorage.clear();
+	} );
+
+	it( 'refuses to draw without a storageKey', () => {
+		const quiet = jest
+			.spyOn( console, 'error' )
+			.mockImplementation( () => {} );
+		try {
+			expect( () =>
+				renderComponent(
+					aggregateChart( { storageKey: undefined, series: null } )
+				)
+			).toThrow( 'AggregateTimeChart: storageKey is required' );
+		} finally {
+			quiet.mockRestore();
+		}
+	} );
+
+	it( 'keeps each metric’s corner choices under <storageKey>:<metric>', () => {
+		window.localStorage.setItem( 'test:aggregate:avg:expanded', '1' );
+		const series = dimTable( {
+			[ bucketKeyNow() ]: { '5xx': [ 7, 917, 3, 7 ] },
+		} );
+		const expandedAt = ( metric ) => {
+			const { container, unmount } = renderComponent(
+				aggregateChart( {
+					series,
+					metric,
+				} )
+			);
+			const expanded = container
+				.querySelector( '.newspack-nodes-chart__expand' )
+				.getAttribute( 'aria-expanded' );
+			unmount();
+			return expanded;
+		};
+		expect( expandedAt( 'avg' ) ).toBe( 'true' );
+		expect( expandedAt( 'volume' ) ).toBe( 'false' );
 	} );
 
 	it( 'returns null when the breakdown is null', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series: null,
 			} )
 		);
@@ -171,8 +216,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'returns null when the breakdown is empty', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series: dimTable( {} ),
 			} )
 		);
@@ -182,7 +226,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'draws nothing before a reply names the window it read', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
+			aggregateChart( {
 				slots: null,
 				series: dimTable( {
 					[ bucketKeyNow() ]: { GET: [ 37, 740, 3, 37 ] },
@@ -197,8 +241,7 @@ describe( 'AggregateTimeChart', () => {
 		const bk = bucketKeyNow();
 		const series = dimTable( { [ bk ]: { '5xx': [ 7, 917, 3, 7 ] } } );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'avg',
 				breakdown: 'status',
@@ -214,8 +257,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'titles the chart the last 24 hours', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series: dimTable( {
 					[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
 				} ),
@@ -235,8 +277,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
 		} );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				breakdown: 'ua',
@@ -253,7 +294,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'titles a one-hour axis in the singular', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
+			aggregateChart( {
 				slots: slotsEndingAt( '2026-09-29-14-35', 12 ),
 				series: dimTable( {
 					[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
@@ -271,7 +312,7 @@ describe( 'AggregateTimeChart', () => {
 	it( 'titles a fractional axis in whole hours, rounded', () => {
 		// Twenty slots are 100 minutes: two hours, never "1 Hours".
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
+			aggregateChart( {
 				slots: slotsEndingAt( '2026-09-29-14-35', 20 ),
 				series: dimTable( {
 					[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
@@ -288,7 +329,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'titles the hours its slots span', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
+			aggregateChart( {
 				slots: slotsEndingAt( '2026-09-29-14-35', 144 ),
 				series: dimTable( {
 					[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
@@ -313,8 +354,7 @@ describe( 'AggregateTimeChart', () => {
 		const { state, series } = breakdownState( malformed );
 		expect( state ).toBe( 'empty' );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				breakdown: 'ua',
@@ -356,8 +396,7 @@ describe( 'AggregateTimeChart', () => {
 			[ 'cumulative', 'Time per 5 min' ],
 		] ) {
 			const { unmount } = renderComponent(
-				React.createElement( AggregateTimeChart, {
-					slots: SLOTS,
+				aggregateChart( {
 					series,
 					metric,
 					breakdown: 'method',
@@ -377,8 +416,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bk ]: { '5xx': [ 4, 1000, 12, 4 ] },
 		} );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'avg',
 				breakdown: 'status',
@@ -397,8 +435,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bucketKeyNow() ]: { 'kea-ua/7': [ 3, 100, 3, 2 ] },
 		} );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'avg',
 				breakdown: 'ua',
@@ -421,8 +458,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bk ]: { slow: [ 1, 140000, 3, 1 ] },
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'avg',
 				breakdown: 'status',
@@ -443,8 +479,7 @@ describe( 'AggregateTimeChart', () => {
 		const bk = bucketKeyNow();
 		const series = dimTable( { [ bk ]: { fast: [ 4, 1000, 3, 4 ] } } );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'avg',
 				breakdown: 'status',
@@ -465,8 +500,7 @@ describe( 'AggregateTimeChart', () => {
 		// the totals are handed over here and must still draw nothing.
 		const bk = bucketKeyNow();
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				data: { [ bk ]: { count: 313, sum_ms: 4711 } },
 				series: null,
 				metric: 'avg',
@@ -482,8 +516,7 @@ describe( 'AggregateTimeChart', () => {
 		// which dimension came back empty, and the chart draws no series.
 		const bk = bucketKeyNow();
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				data: { [ bk ]: { count: 313, sum_ms: 4711 } },
 				series: dimTable( { [ bk ]: {} } ),
 				metric: 'avg',
@@ -500,8 +533,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bk ]: { 'curl/8.7.1': [ 50, 500, 10, 50 ] },
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				breakdown: 'ua',
@@ -527,8 +559,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bk ]: { 'curl/8.7.1': [ 50, 500, 10, 50 ] },
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'memory',
 				breakdown: 'ua',
@@ -549,8 +580,7 @@ describe( 'AggregateTimeChart', () => {
 			},
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'cumulative',
 				breakdown: 'status',
@@ -569,8 +599,7 @@ describe( 'AggregateTimeChart', () => {
 			},
 		} );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				breakdown: 'status',
@@ -592,8 +621,7 @@ describe( 'AggregateTimeChart', () => {
 			},
 		} );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'avg',
 				breakdown: 'method',
@@ -613,8 +641,7 @@ describe( 'AggregateTimeChart', () => {
 			},
 		} );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'memory',
 				breakdown: 'server',
@@ -632,8 +659,7 @@ describe( 'AggregateTimeChart', () => {
 		const bk = bucketKeyNow();
 		const series = dimTable( { [ bk ]: { '5xx': [ 1, 10, 3, 1 ] } } );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				serverFilter: 'edge-01',
@@ -657,8 +683,7 @@ describe( 'AggregateTimeChart', () => {
 			},
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'cumulative',
 				breakdown: 'status',
@@ -682,8 +707,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bk ]: { '2xx': [ 47, 470, 3, 47 ], '5xx': [ 453, 4530, 3, 453 ] },
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				breakdown: 'status',
@@ -713,8 +737,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bk ]: { minor: [ 1, 600, 3, 1 ], major: [ 1, 44400, 3, 1 ] },
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'cumulative',
 				breakdown: 'ua',
@@ -743,8 +766,7 @@ describe( 'AggregateTimeChart', () => {
 		} );
 		const props = { series, breakdown: 'status' };
 		const { container, rerender, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				...props,
 				metric: 'volume',
 			} )
@@ -754,8 +776,7 @@ describe( 'AggregateTimeChart', () => {
 			'Total'
 		);
 		rerender(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				...props,
 				metric: 'avg',
 			} )
@@ -780,8 +801,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bucketKeyNow() ]: { '2xx': [ 47, 470, 3, 47 ] },
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric,
 				breakdown: 'status',
@@ -799,8 +819,7 @@ describe( 'AggregateTimeChart', () => {
 			[ bk ]: { '5xx': [ 50, 500, 3, 50 ] },
 		} );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 			} )
@@ -816,8 +835,7 @@ describe( 'AggregateTimeChart', () => {
 		const bk = bucketKeyNow();
 		const series = dimTable( { [ bk ]: { '5xx': [ 1, 1, 3, 1 ] } } );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 			} )
@@ -849,8 +867,7 @@ describe( 'AggregateTimeChart', () => {
 				[ at( 42 ) ]: { 'edge-kea': [ 2, 500, 10, 2 ] },
 			} );
 			const { unmount } = renderComponent(
-				React.createElement( AggregateTimeChart, {
-					slots: SLOTS,
+				aggregateChart( {
 					series,
 					metric,
 					breakdown: 'server',
@@ -879,8 +896,7 @@ describe( 'AggregateTimeChart', () => {
 			[ at( 52 ) ]: { '5xx': [ 1, 300, 77, 1 ] },
 		} );
 		const { unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'memory',
 				breakdown: 'status',

@@ -37,14 +37,16 @@ jest.mock( '../../ResponseTimeChart', () => ( {
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( {
-		breakdown,
-		series,
-		slots,
-		onSlotClick,
-		onSlotRange,
-		selectedBuckets,
-	} ) => {
+	default: ( props ) => {
+		const {
+			breakdown,
+			series,
+			slots,
+			onSlotClick,
+			onSlotRange,
+			selectedBuckets,
+		} = props;
+		globalThis.__aggregateStorageKey = props.storageKey;
 		globalThis.__aggregateSlotClick = onSlotClick;
 		globalThis.__aggregateSlotRange = onSlotRange;
 		globalThis.__aggregateSelected = selectedBuckets;
@@ -57,7 +59,9 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { slots, onSlotClick, onSlotRange, selectedBuckets } ) => {
+	default: ( props ) => {
+		const { slots, onSlotClick, onSlotRange, selectedBuckets } = props;
+		globalThis.__categoryStorageKey = props.storageKey;
 		globalThis.__categorySlotClick = onSlotClick;
 		globalThis.__categorySlotRange = onSlotRange;
 		globalThis.__categorySelected = selectedBuckets;
@@ -115,6 +119,8 @@ const REQUESTS = [
 let wire;
 
 beforeEach( () => {
+	globalThis.__aggregateStorageKey = undefined;
+	globalThis.__categoryStorageKey = undefined;
 	Core.reset();
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
 	wire = installFakeCommandWire( () => ( {
@@ -507,6 +513,17 @@ describe( 'UrlDetailView', () => {
 			[ 'bucket', '2026-10-04-13-45..2026-10-04-13-55' ],
 			[ 'bucket', '2026-10-04-13-35,2026-10-04-13-45..2026-10-04-13-55' ],
 		] );
+		unmount();
+	} );
+
+	it( 'names its two charts by the url-detail placement keys', () => {
+		const { unmount } = mount();
+		expect( globalThis.__aggregateStorageKey ).toBe(
+			'event-logger-url-detail-chart-aggregate'
+		);
+		expect( globalThis.__categoryStorageKey ).toBe(
+			'event-logger-url-detail-chart-category'
+		);
 		unmount();
 	} );
 

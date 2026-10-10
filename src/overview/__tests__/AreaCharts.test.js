@@ -18,6 +18,22 @@ import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
  */
 const SLOTS = slotsEndingAt( '2026-09-29-14-35' );
 
+// An AggregateTimeChart on SLOTS under a test storage key.
+const aggregateChart = ( props ) =>
+	React.createElement( AggregateTimeChart, {
+		storageKey: 'test:aggregate',
+		slots: SLOTS,
+		...props,
+	} );
+
+// A CategoryTimeChart on SLOTS under a test storage key.
+const categoryChart = ( props ) =>
+	React.createElement( CategoryTimeChart, {
+		storageKey: 'test:category',
+		slots: SLOTS,
+		...props,
+	} );
+
 function bucketKeyNow() {
 	return SLOTS[ 0 ];
 }
@@ -56,6 +72,8 @@ function valueLabels( container, title ) {
 	);
 }
 
+beforeEach( () => window.localStorage.clear() );
+
 describe( 'area chart frame', () => {
 	/**
 	 * The legend rows beside the plot, in order.
@@ -88,8 +106,7 @@ describe( 'area chart frame', () => {
 			},
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				breakdown: 'ua',
@@ -123,8 +140,7 @@ describe( 'area chart frame', () => {
 			},
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				breakdown: 'status',
@@ -159,8 +175,7 @@ describe( 'area chart frame', () => {
 			},
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'avg',
 				breakdown: 'ua',
@@ -187,7 +202,9 @@ describe( 'area chart frame', () => {
 			},
 		};
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 		// The panel draws three views; the first answers for the frame.
 		expect( legendRows( container ).length ).toBeGreaterThanOrEqual( 2 );
@@ -203,8 +220,7 @@ describe( 'area chart frame', () => {
 			},
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'cumulative',
 				breakdown: 'status',
@@ -233,8 +249,7 @@ describe( 'area chart frame', () => {
 			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 3, 51, 3, 3 ] },
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				breakdown: 'ua',
@@ -253,7 +268,9 @@ describe( 'area chart frame', () => {
 			buckets: { [ bucketKeyNow() ]: [ [ 0, 6, 2, 2 ] ] },
 		};
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, { data, slots: SLOTS } )
+			categoryChart( {
+				data,
+			} )
 		);
 
 		expect( valueLabels( container, 'Average Time per Event' ) ).toEqual( [
@@ -275,8 +292,7 @@ describe( 'chart frame', () => {
 			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 61, 7300, 3, 61 ] },
 		} );
 		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				slots: SLOTS,
+			aggregateChart( {
 				series,
 				metric: 'volume',
 				breakdown: 'ua',
