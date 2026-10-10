@@ -8,7 +8,7 @@
 
 import { views } from '../nodes/request-log-view-node';
 import { useGlobStreamGraph } from '../../hooks/useGlobStreamGraph';
-import { GROUPS } from '../../overview/constants';
+import { GROUPS, STREAM_GLOBS } from '../../overview/constants';
 
 /**
  * Mount the Request Log graph and return the React view's controls.
@@ -29,7 +29,7 @@ export function useRequestLogGraph( opts = {} ) {
 		{
 			prefix: 'request-log',
 			group: GROUPS.requestLog,
-			glob: 'completed.*',
+			glob: STREAM_GLOBS.requestLog,
 			viewClass: views.RequestLogView,
 		},
 		opts

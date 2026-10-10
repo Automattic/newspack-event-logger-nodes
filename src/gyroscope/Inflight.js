@@ -28,6 +28,7 @@ import { __, _n } from '@wordpress/i18n';
 import { Core, useNodeField } from '@newspack-nodes/runtime';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 import { useGyroscopeGraph } from './hooks/useGyroscopeGraph';
+import { STREAM_GLOBS } from '../overview/constants';
 import { INFLIGHT_REFRESH_OPTIONS } from './constants';
 import {
 	formatDuration,
@@ -457,7 +458,7 @@ export default function Inflight( { maxRows = 20, headerControlsSlot } ) {
 					'newspack-event-logger-nodes'
 				) }
 			/>
-			<UnparseableLinesNotice node="gyroscope:stream" />
+			<UnparseableLinesNotice subscribe={ [ STREAM_GLOBS.gyroscope ] } />
 
 			{ showColumnPicker && (
 				<ColumnPicker

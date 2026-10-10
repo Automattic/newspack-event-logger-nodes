@@ -8,7 +8,7 @@
 
 import { views } from '../nodes/perf-errors-view-node';
 import { useGlobStreamGraph } from '../../hooks/useGlobStreamGraph';
-import { GROUPS } from '../../overview/constants';
+import { GROUPS, STREAM_GLOBS } from '../../overview/constants';
 
 /**
  * Mount the Error Log graph and return the React view's controls.
@@ -29,7 +29,7 @@ export function useErrorLogGraph( opts = {} ) {
 		{
 			prefix: 'error-log',
 			group: GROUPS.errorLog,
-			glob: 'errors.*',
+			glob: STREAM_GLOBS.errorLog,
 			viewClass: views.PerfErrorsView,
 		},
 		opts

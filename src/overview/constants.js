@@ -141,3 +141,13 @@ export const GROUPS = {
 	requestLog: 'request-log',
 	errorLog: 'error-log',
 };
+
+/**
+ * The partition glob each streaming dashboard tails: its graph rides it, and
+ * its skipped-line notice sums the stamps it carries.
+ */
+export const STREAM_GLOBS = {
+	errorLog: 'errors.*',
+	requestLog: 'completed.*',
+	gyroscope: 'gyroscope.*',
+};

@@ -15,6 +15,7 @@
 
 import { views } from '../nodes/gyroscope-view-node';
 import { useStreamGraph } from '@newspack-nodes/shared/hooks/useStreamGraph';
+import { STREAM_GLOBS } from '../../overview/constants';
 
 /**
  * Mount the Gyroscope graph and ride the page's stream while the page is
@@ -30,14 +31,14 @@ import { useStreamGraph } from '@newspack-nodes/shared/hooks/useStreamGraph';
  *
  * Returns nothing: this dashboard offers no pause, step or filter control,
  * and React reads the model off `gyroscope:view` and the skipped-line count
- * off `gyroscope:stream`. Reset Graph needs no wiring here either —
- * `useStreamGraph` mounts through `mountExospine`, which subscribes the
- * rebuild to `Core.bumpGraphGeneration()`.
+ * off the page link, by its glob's stamps. Reset Graph needs no wiring here
+ * either — `useStreamGraph` mounts through `mountExospine`, which subscribes
+ * the rebuild to `Core.bumpGraphGeneration()`.
  */
 export function useGyroscopeGraph() {
 	useStreamGraph( {
 		prefix: 'gyroscope',
-		subscribe: 'gyroscope.*',
+		subscribe: STREAM_GLOBS.gyroscope,
 		viewClass: views.GyroscopeView,
 		// Rows that predate a connection gap are stale.
 		clearOnOpen: true,
