@@ -661,6 +661,7 @@ export default function PerformanceDashboard( {
 		group: GROUPS.performance,
 		ci: SERVER,
 		command: 'grep_requests',
+		scope: 'grep-requests',
 		// A search pattern is free text the operator typed, not an identity.
 		subjectOf: () => null,
 		onDone: ( { result, error } ) => {

@@ -138,7 +138,7 @@ const SEARCH = 'request-search';
 const LOOKUP = 'url-lookup';
 const DEEP_REQUEST = 'request-deeplink';
 const DEEP_URL = 'url-deeplink';
-const GREP = 'performance:grep_requests';
+const GREP = 'grep-requests';
 const RULES_DUMP = 'rules:dump';
 const RULES_UPSERT = 'rules:upsert';
 const RULES_DELETE = 'rules:delete';
@@ -439,7 +439,8 @@ describe( 'PerformanceDashboard', () => {
 			'url-deeplink': 'url',
 			'request-deeplink': 'request',
 			'request-search': 'request',
-			'performance:grep_requests': 'performance',
+			'grep-requests': 'performance',
+			ask: 'performance',
 			'rules:dump': 'rules',
 			'rules:upsert': 'rules',
 			'rules:delete': 'rules',
@@ -1555,9 +1556,7 @@ describe( 'PerformanceDashboard', () => {
 			await openErrorsOnly( { errors_only: false } );
 			await pickUrl();
 
-			expect( sentTo( 'performance:ask' ).at( -1 ) ).toContain(
-				'--errors_only=1'
-			);
+			expect( sentTo( 'ask' ).at( -1 ) ).toContain( '--errors_only=1' );
 		} );
 
 		it( 'asks for every request once the modal lists them all, whatever the table shows', async () => {
@@ -1570,7 +1569,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			await pickUrl();
 
-			expect( sentTo( 'performance:ask' ).at( -1 ) ).not.toContain(
+			expect( sentTo( 'ask' ).at( -1 ) ).not.toContain(
 				'--errors_only=1'
 			);
 		} );
@@ -1789,7 +1788,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			target.remove();
 
-			expect( sentTo( 'performance:ask' ).at( -1 ) ).toContain(
+			expect( sentTo( 'ask' ).at( -1 ) ).toContain(
 				'--bucket=2026-10-04-13-35..2026-10-04-13-40'
 			);
 		} );
@@ -1930,7 +1929,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			target.remove();
 
-			expect( sentTo( 'performance:ask' ).at( -1 ) ).toContain(
+			expect( sentTo( 'ask' ).at( -1 ) ).toContain(
 				'--bucket=2026-10-04-13-40'
 			);
 		} );
@@ -2787,12 +2786,10 @@ describe( 'PerformanceDashboard', () => {
 			);
 		} );
 		request.remove();
-		expect( sentTo( 'performance:ask' ).at( -1 )[ 0 ] ).toBe(
-			'request:r1:3'
-		);
-		answerCommand( 'performance:ask', {
+		expect( sentTo( 'ask' ).at( -1 )[ 0 ] ).toBe( 'request:r1:3' );
+		answerCommand( 'ask', {
 			result: { subject: 'request', url: '/foo', findings: [] },
-			args: sentTo( 'performance:ask' ).at( -1 ),
+			args: sentTo( 'ask' ).at( -1 ),
 		} );
 
 		expect(

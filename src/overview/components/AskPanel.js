@@ -93,6 +93,7 @@ export function useAsk( {
 		group: GROUPS.performance,
 		ci: 'performance',
 		command: 'ask',
+		scope: 'ask',
 		subjectOf: () => null,
 		onDone: ( { result, error, args } ) => {
 			if ( error ) {
