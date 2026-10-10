@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.129.0] - 2026-10-10
+
 ### Changed
 
 - **The substrate floor rises to newspack-nodes 2.104.0,** whose page link routes by pairs; the bundled stream hooks call `addPairs()`.
