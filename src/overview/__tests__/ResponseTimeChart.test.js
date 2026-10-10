@@ -327,6 +327,14 @@ describe( 'ResponseTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'leaves the pointer to the dots: the trend line takes none', () => {
+		const { container, unmount } = mountChart( REQUESTS );
+
+		const trend = container.querySelector( 'path[stroke="#4a90d9"]' );
+		expect( trend.getAttribute( 'pointer-events' ) ).toBe( 'none' );
+		unmount();
+	} );
+
 	it( 'plots no duration nobody measured, so the mean and trend leave it out', () => {
 		// A timeout's duration is the eviction wait and an abort's ends at
 		// the stop (decision 24): plotted, either flattens every real dot.
