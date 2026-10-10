@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The streaming dashboards ride `_stream` by pairs,** through the substrate's `useStreamGraph`; `ls -al _stream:` shows each glob stamp's route.
 - **Each streaming dashboard's skipped-line notice names its glob,** from `STREAM_GLOBS` in `src/overview/constants.js`, which the three graph hooks tail.
 
 ## [0.128.3] - 2026-10-09
