@@ -6,6 +6,15 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **Reclaim the stats Tables with newspack-nodes after 2.104.1.** A stats
+  schema change is migrated by
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`,
+  for each active topology that includes `flame-builder`, such as `performance` or `complete`. `wp nodes tables flush` is gone, and on
+  2.104.1 or earlier `gc --force` leaves the Table files in place while it
+  deletes the cursors, so the replay below folds into the old Tables and
+  counts every retained request twice. The
+  topology's firehose cursor goes with them, so its reactivated request builder reads the retained firehose from the start and refills the Tables with that history in the new shape; on `complete` its job router re-reads `jobintake` the same way and runs every retained job younger than the `jobs:sieve` window, 900 seconds, again.
+
 - **This release needs newspack-nodes 2.104.0, deployed with it.** The
   dashboards ride the substrate's shared stream link by declared pairs
   (`addPairs()`, 2.104.0) and its group Taps, and share the page global
@@ -111,21 +120,23 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   tab. Below the floor the plugin stays dormant behind its admin notice.
   Update the substrate first, then this plugin, then restart the workers.
 
-- **Flush the stats Tables after deploying: a URL sort orders the whole
+- **Reclaim the stats Tables after deploying: a URL sort orders the whole
   URL.** A site `url` list (`urlrank_s`, `urlrank_sh`) stores each entry's
   whole URL where it stored the path, and a page reading a list written
   before the upgrade answers an error, `Stats_Store: no server to join
   '<path>' to`, rather than show a URL with no host. Run
-  `wp nodes tables flush flame-stats:aggregate flame-stats:url-fine`
-  (decision 5), or the three-Table flush below, which covers it.
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`,
+  for each active topology that includes `flame-builder`, such as `performance` or `complete`
+  (decision 5).
 
-- **Flush the stats Tables after deploying: search and `dump_url` read a
+- **Reclaim the stats Tables after deploying: search and `dump_url` read a
   new namespace.** Each URL's row is also filed by key, as
   `url_row_h:{Y-m-d-H}:{server_key}:{hash}`, and `urls --search`,
   `dump_url` and `ask url:` read it there instead of a shard of the index.
   An hour written before the upgrade holds no such key, so those three read
   it as empty while the table beside them still counts it. Run
-  `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine`
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`,
+  for each active topology that includes `flame-builder`, such as `performance` or `complete`
   (decision 5); nothing reads the missing keys any other way.
 
 - **A search too common to narrow is refused.** A term naming more than
@@ -154,7 +165,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 - **The 0.112.x Ledger stats are withdrawn; rebuild the stats Tables.**
   The stats are 0.111.2's Tables again. Run, for each active topology that
   includes `flame-builder`:
-  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes tables flush && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`.
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`.
   Then delete `{base}/ledgers/` by hand; nothing reads it.
 
 - **Every logged URL carries its host.** A web request with no
@@ -189,11 +200,12 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   summed, where they were partition 0's; a client deduplicating on
   `last_modified` alone drops replies carrying new requests.
 
-- **Flush the stats Tables after deploying: the URL row gained a field.**
+- **Reclaim the stats Tables after deploying: the URL row gained a field.**
   `Stats_Store::ROW_ERRORS` sits at index 8, so `ROW_MIN_MS` through
   `ROW_PATH` moved one along, to 9 through 14, and a row written before
   reads misaligned. Run
-  `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine`
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`,
+  for each active topology that includes `flame-builder`, such as `performance` or `complete`
   (decision 5); the URL table and its ranked lists refill from the next
   flushes. Header records moved to `HDR_VERSION` 5, `urlhdr:{bucket}:v5p14:…`,
   so a v4 record reads as missing. A PHP caller reading a stored row
@@ -228,11 +240,12 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   the first flush after the upgrade. From then on `wp nodes memcache flush`
   reaches memcached and APCu alone. A stats reset, and the migration of a
   stats schema change, is
-  `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine`, which
-  replaces each partition's SQLite files however many rows they hold.
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`,
+  for each active topology that includes `flame-builder`, such as `performance` or `complete`,
+  which deletes each partition's SQLite files however many rows they hold.
   `wp nodes tables list` names every declared Table. Command sessions moved
   to a wpdb Table in the same substrate release, so a salt rotation no
-  longer revokes them either; flushing `nodes-sessions` by name does.
+  longer revokes them either; `wp nodes session revoke --all` does.
 
 - **The search index moves to six-hour buckets; nothing migrates.**
   `urltoken:{server_key}:{word}` became
@@ -399,8 +412,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   arrives. Nothing reads the old memcache stats keys, and memcache reclaims
   them by TTL or eviction. `wp nodes memcache flush` deletes nothing: it
   rotates the salt, which orphans every memcache key, and restarts every
-  worker. It no longer touches the stats at all; `wp nodes tables flush`
-  empties them.
+  worker. It no longer touches the stats at all; deactivating the topology
+  and running `wp nodes gc --force` deletes them.
 
 - **The stats mirror is gone.** A user-dir or console-saved topology that
   still names `set_stats_target` or `set_flame_topn` fails to load on the
