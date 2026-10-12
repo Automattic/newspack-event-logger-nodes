@@ -154,7 +154,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 - **The 0.112.x Ledger stats are withdrawn; rebuild the stats Tables.**
   The stats are 0.111.2's Tables again. Run, for each active topology that
   includes `flame-builder`:
-  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes tables flush --yes && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`.
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes tables flush && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`.
   Then delete `{base}/ledgers/` by hand; nothing reads it.
 
 - **Every logged URL carries its host.** A web request with no
