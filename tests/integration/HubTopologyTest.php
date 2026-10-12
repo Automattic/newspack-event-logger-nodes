@@ -110,16 +110,16 @@ class HubTopologyTest extends TestCase {
 
 	/**
 	 * What one spoke costs the hub worker's registry, as `hub-control.md` and
-	 * its `d07b` sheet count it: thirteen names for its broker, and two for
+	 * its `d07b` sheet count it: eighteen names for its broker, and two for
 	 * its settings link.
 	 */
-	public function test_one_spoke_costs_thirteen_broker_names_and_two_settings_names(): void {
+	public function test_one_spoke_costs_eighteen_broker_names_and_two_settings_names(): void {
 		$this->load_hub();
 		Core::node( 'spokes:tw7' )->fire();
 
 		$names   = \array_keys( Core::$nodes_by_name );
 		$under   = static fn ( string $root ): array => \array_values( \array_filter( $names, static fn ( string $name ): bool => $root === $name || \str_starts_with( $name, "{$root}:" ) ) );
-		$this->assertCount( 13, $under( 'spokes:tw7' ), \implode( ', ', $under( 'spokes:tw7' ) ) );
+		$this->assertCount( 18, $under( 'spokes:tw7' ), \implode( ', ', $under( 'spokes:tw7' ) ) );
 		$this->assertCount( 2, $under( 'settings:tw7' ), \implode( ', ', $under( 'settings:tw7' ) ) );
 	}
 

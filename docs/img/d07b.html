@@ -26,7 +26,7 @@
   .math .op { flex: 0 0 26px; font-size: 17px; color: #787C82; align-self: center; padding: 0; }
 </style>
 <div class="sheet">
-  <h1>The live hub is five lines, and fifteen names a spoke</h1>
+  <h1>The live hub is five lines, and twenty names a spoke</h1>
   <p class="sub">The top-level topology names ONE include, ELN's own <span class="mono">hub</span> composition, which runs both stock <span class="mono">Vault_Group</span> legs — each a <span class="mono">make_node</span> line building a child per Vault entry in group <span class="mono">spoke</span> — and each child still costs the hub the names below.</p>
 
   <div class="listing">
@@ -62,30 +62,30 @@
 
     <div style="flex:0 0 386px">
       <div class="card">
-        <h3>What one child, <span class="mono">spokes:bend</span>, costs: thirteen names</h3>
+        <h3>What one child, <span class="mono">spokes:bend</span>, costs: eighteen names</h3>
         <p style="margin-bottom:10px">The group builds one Remote_Source per Vault entry named in group <span class="mono">spoke</span> — <span class="mono">bend</span> here. Each child builds the rest of this tree itself on its first tick, a reader per stream with its own cursor and quarantine, and each takes a name in the worker's registry.</p>
         <div class="tree">
           <div><span style="font-weight:600">spokes:bend</span> <span class="t">· the broker</span></div>
           <div><span class="t">├─</span> spokes:bend:config <span class="t">· verbs</span></div>
-          <div><span class="t">├─</span> <span class="own">spokes:bend:sse-in</span> <span class="t">· the stream</span></div>
-          <div><span class="t">├─</span> <span class="own">spokes:bend:http-out</span> <span class="t">· commands</span></div>
+          <div><span class="t">├─</span> spokes:bend:sse-in <span class="t">· the stream, hidden</span></div>
+          <div><span class="t">├─</span> <span class="own">spokes:bend:http-out</span> <span class="t">· commands, + :config</span></div>
           <div><span class="t">├─</span> <span class="own">spokes:bend:null</span> <span class="t">· unaddressed</span></div>
           <div><span class="t">├─</span> <span class="own">spokes:bend:firehose.p0</span> <span class="t">· reader</span></div>
-          <div><span class="t">│&nbsp;&nbsp;├─</span> :config <span class="t">·</span> :offsetlog <span class="t">·</span> :deadletter</div>
+          <div><span class="t">│&nbsp;&nbsp;├─</span> :config <span class="t">·</span> :offsetlog <span class="t">·</span> :deadletter <span class="t">· each + :config</span></div>
           <div><span class="t">└─</span> <span class="own">spokes:bend:sources:php</span> <span class="t">· reader</span></div>
-          <div><span class="t">&nbsp;&nbsp;&nbsp;└─</span> :config <span class="t">·</span> :offsetlog <span class="t">·</span> :deadletter</div>
+          <div><span class="t">&nbsp;&nbsp;&nbsp;└─</span> :config <span class="t">·</span> :offsetlog <span class="t">·</span> :deadletter <span class="t">· each + :config</span></div>
         </div>
-        <p style="margin:10px 0 0">The five in blue are hidden: the broker owns them and names them after itself; it rebuilds its transports when its credentials change.</p>
+        <p style="margin:10px 0 0">The four in blue are the broker's sidecars: it patrons and names them, they open from the "…" on its card, and it rebuilds its transports when its credentials change. <span class="mono">:sse-in</span> is patroned too but hidden from every console surface, no <span class="mono">:config</span> is anyone's sidecar, and each reader's offsetlog and dead letters open from that reader's own "…".</p>
       </div>
 
       <div class="card" style="margin-top:16px">
         <h3>What one spoke costs the registry</h3>
         <div class="math">
-          <div><div class="big">13</div><div class="cap2">the broker<br>and its readers</div></div>
+          <div><div class="big">18</div><div class="cap2">the broker<br>and its readers</div></div>
           <div class="op">+</div>
           <div><div class="big">2</div><div class="cap2">the settings link<br>and its interpreter</div></div>
           <div class="op">=</div>
-          <div><div class="big">15</div><div class="cap2">names per spoke, in<br>one worker process</div></div>
+          <div><div class="big">20</div><div class="cap2">names per spoke, in<br>one worker process</div></div>
         </div>
         <p style="font-size:12px;color:#50575E;line-height:1.5;margin:4px 0 0">Both counts are pinned by <span class="mono">HubTopologyTest</span>. Beside them sit the nodes every hub worker holds once, whatever its spoke count: the router, the fleet, the rewrite node, the firehose Topic, <span class="mono">php-errors.p0</span> and the hub's own error-log Tail, and the two Vault_Group nodes.</p>
       </div>

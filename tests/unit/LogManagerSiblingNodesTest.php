@@ -117,6 +117,7 @@ class LogManagerSiblingNodesTest extends TestCase {
 		$topic = $this->topic( $lm );
 		$this->assertInstanceOf( Topic_Node::class, $topic );
 		$this->assertSame( $topic, $topic->patron(), 'firehose Topic must be self-patron-linked so dump_metadata hides it' );
+		$this->assert_owned_nodes_keep_their_config();
 	}
 
 	/**
