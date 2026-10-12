@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.129.3] - 2026-10-12
+
+### Changed
+
+- **The bundled debug overlay and topology canvas come from newspack-nodes 2.105.1:** a card fed by nothing that feeds only a hub sits in the column before the hub, and no longer pushes it a column right; and a half step opens only in the block whose wires open it.
+
 ## [0.129.2] - 2026-10-12
 
 ### Changed
