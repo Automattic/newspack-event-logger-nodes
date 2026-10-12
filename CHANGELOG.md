@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **A logged request builds no `:config` interpreter for the firehose.** `Log_Manager` builds its per-request firehose Topic with the substrate's `without_config()`, so neither the Topic nor its partitions registers a `{name}:config`, which a patron no longer drops. This needs the newspack-nodes release that ships `without_config()`; the `version_at_least()` floor rises to it at release.
+- **A logged request builds no `:config` interpreter for the firehose.** `Log_Manager` builds its per-request firehose Topic with the substrate's `without_config()`, so neither the Topic nor its partitions registers a `{name}:config`, which a patron no longer drops. The substrate floor rises to newspack-nodes 2.105.0, which ships `without_config()`.
 
 ## [0.129.1] - 2026-10-10
 

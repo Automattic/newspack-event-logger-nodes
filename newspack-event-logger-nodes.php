@@ -129,11 +129,12 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// bundles, so a bundle built against an earlier substrate breaks them.
 	// 2.104.0 is the page link that routes by pairs, which the bundled
 	// stream hooks call.
+	// 2.105.0 is Node::without_config(), which the firehose Topic uses.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.104.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.105.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

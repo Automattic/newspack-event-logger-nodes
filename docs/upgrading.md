@@ -6,7 +6,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
-- **Reclaim the stats Tables with newspack-nodes after 2.104.1.** A stats
+- **Reclaim the stats Tables with newspack-nodes 2.105.0.** A stats
   schema change is migrated by
   `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`,
   for each active topology that includes `flame-builder`, such as `performance` or `complete`. `wp nodes tables flush` is gone, and on
@@ -15,8 +15,9 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   counts every retained request twice. The
   topology's firehose cursor goes with them, so its reactivated request builder reads the retained firehose from the start and refills the Tables with that history in the new shape; on `complete` its job router re-reads `jobintake` the same way and runs every retained job younger than the `jobs:sieve` window, 900 seconds, again.
 
-- **This release needs newspack-nodes 2.104.0, deployed with it.** The
-  dashboards ride the substrate's shared stream link by declared pairs
+- **This release needs newspack-nodes 2.105.0, deployed with it.** A
+  logged request builds its firehose Topic with `without_config()`
+  (2.105.0). The dashboards ride the substrate's shared stream link by declared pairs
   (`addPairs()`, 2.104.0) and its group Taps, and share the page global
   `Core` with the substrate's bundles, whose shape 2.102.0 changes. Below the floor the plugin stays dormant behind
   its admin notice; deploy the substrate and this plugin together, then
