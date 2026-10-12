@@ -63,7 +63,7 @@ The cross-worker auto-tune lock in `Flame_Builder_Node::apply_auto_tune()` is an
 
 ### 5. Flushing is the substrate's one button
 
-`Cache_Backend::rotate_salt()` moves the install scope for every Newspack plugin's memcached and APCu keys at once; a durable Table's key carries no salt, so the SQLite stats rows stay, and `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine` is what empties them. `Stats_Store` keeps no salt of its own, and there is no `flush_all()`. `wp nodes memcache flush` and the admin's "Flush Caches" button are the two callers.
+`Cache_Backend::rotate_salt()` moves the install scope for every Newspack plugin's memcached and APCu keys at once; a durable Table's key carries no salt, so the SQLite stats rows stay, and deactivating the topology and running `wp nodes gc --force` is what deletes them. `Stats_Store` keeps no salt of its own, and there is no `flush_all()`. `wp nodes memcache flush` and the admin's "Flush Caches" button are the two callers.
 
 The scope is memoized per process, so a live worker keeps writing the OLD prefix until it respawns. `rotate_salt()` itself therefore asks every live worker to restart, on every rotation, the first seed included; `wp nodes memcache flush` fails when the salt did not move and warns, beside its success line, when the restart did not land, and a worker whose restart did not land keeps the old scope until its next spawn. A diff that adds a restart of its own after a rotation duplicates the substrate's, and one that catches the flush's failure hides a salt that never moved.
 

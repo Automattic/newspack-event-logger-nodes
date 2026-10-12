@@ -38,7 +38,7 @@ Each key expires on its own, so retention is its Table's time to live, derived f
 
 ## Durable statistics
 
-The Tables are SQLite files under the runtime's base directory, one per Table per partition, so memcache failing or restarting costs the statistics nothing, and nothing evicts a row before its time to live. Every flush writes the bucket still filling too, so the consumer's checkpoint carries only the crumb of the last record counted, and a respawned worker's replay counts nothing twice. The dashboards read the Tables in place, which ties them to the flame builder's host. The Tables' keys carry no salt, so [`wp nodes memcache flush`](https://github.com/Automattic/newspack-nodes/blob/main/docs/cli.md) leaves the statistics alone; `wp nodes tables flush flame-stats:aggregate flame-stats:url flame-stats:url-fine` starts them empty, and they fill again as traffic arrives.
+The Tables are SQLite files under the runtime's base directory, one per Table per partition, so memcache failing or restarting costs the statistics nothing, and nothing evicts a row before its time to live. Every flush writes the bucket still filling too, so the consumer's checkpoint carries only the crumb of the last record counted, and a respawned worker's replay counts nothing twice. The dashboards read the Tables in place, which ties them to the flame builder's host. The Tables' keys carry no salt, so [`wp nodes memcache flush`](https://github.com/Automattic/newspack-nodes/blob/main/docs/cli.md) leaves the statistics alone; deactivating the topology and running `wp nodes gc --force`, then activating it again, rebuilds them from the retained firehose, read again from its start.
 
 ## Jobs ride the firehose too
 
