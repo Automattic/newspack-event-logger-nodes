@@ -10,11 +10,12 @@
  * what the Gyroscope dashboard renders. Its non-public DN ancestor is named in
  * newspack-nodes' `docs/tachikoma-lineage.md`.
  *
- * Hidden twice over: the substrate's patron filter in `dump_metadata` drops it
- * from the live canvas, and `node_schema`'s `Hidden` category drops it from the
- * palette. Both knobs therefore surface on the patron's `:config` interpreter
- * instead — `set_inflight_target`, which enables snapshotting by naming a
- * destination, and `set_inflight_delta`.
+ * The request builder patrons it, so it stays off the canvas and opens from
+ * the "…" on the builder's card, and `node_schema`'s `Hidden` category keeps
+ * it off the palette. A `Timer_Node` builds no `:config` of its own, so both
+ * knobs surface on the patron's `:config` interpreter — `set_inflight_target`,
+ * which enables snapshotting by naming a destination, and
+ * `set_inflight_delta`.
  *
  * @package Newspack_Event_Logger_Nodes
  */

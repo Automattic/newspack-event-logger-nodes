@@ -18,7 +18,8 @@
  *   - test_migrated_cis_appear_in_substrate_class_catalog_as_service: fires the
  *     substrate's `Classes_CI list` and asserts every CI's shell_name is in the
  *     catalog with `category === 'Service'`. A future typo dropping a category
- *     back to ''/'Hidden' would silently re-hide the interpreter; this fails loudly.
+ *     to '' would silently drop the interpreter from the catalog, and one to
+ *     'Hidden' would mislabel it; this fails loudly on either.
  *   - test_every_schema_verb_installs_as_a_command: for each CI, asserts every
  *     verb in its node_schema()['commands'] is a key in `commands()` — the
  *     schema→commands derivation actually installed each verb (symmetry with the
@@ -84,10 +85,10 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	 * shell_name appears with `category === 'Service'`.
 	 *
 	 * Non-vacuous: the `category === 'Service'` assertion can fail — it would if
-	 * an interpreter's node_schema category were dropped back to ''/'Hidden' (the substrate
-	 * filters those out of the catalog entirely, so the shell_name would simply
-	 * be absent and assertArrayHasKey fails first; if it were some OTHER
-	 * non-empty category it would appear but assertSame catches it). A
+	 * an interpreter's node_schema category were dropped to '' (the substrate
+	 * filters that out of the catalog entirely, so the shell_name would simply
+	 * be absent and assertArrayHasKey fails first; if it were 'Hidden' or some
+	 * OTHER non-empty category it would appear but assertSame catches it). A
 	 * stale/empty composer classmap fails LOUDLY at the assertNotEmpty guard, not
 	 * vacuously green — mirrors the substrate ClassesCITest guard.
 	 */
@@ -115,7 +116,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 			$this->assertArrayHasKey(
 				$shell_name,
 				$by_shell,
-				"migrated CI '{$shell_name}' is absent from the substrate class catalog — its node_schema category was dropped to ''/'Hidden', or class discovery is broken"
+				"migrated CI '{$shell_name}' is absent from the substrate class catalog — its node_schema category was dropped to '', or class discovery is broken"
 			);
 			$this->assertSame(
 				'Service',
