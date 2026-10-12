@@ -1271,6 +1271,8 @@ class Log_Manager {
 		} else {
 			$this->topic = new Topic_Node();
 			$this->topic->patron( $this->topic );
+			// Per request: no :config here or on the partitions it builds.
+			$this->topic->without_config();
 			$this->topic->name( '_firehose:topic' );
 			$this->topic->arguments( [ $dir_template, (string) $num_partitions, (string) $segment_size, (string) $min_segments, (string) $num_segments, (string) $max_segments, (string) $min_lifetime, (string) $lifetime ] );
 			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );

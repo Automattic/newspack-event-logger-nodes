@@ -117,7 +117,27 @@ class LogManagerSiblingNodesTest extends TestCase {
 		$topic = $this->topic( $lm );
 		$this->assertInstanceOf( Topic_Node::class, $topic );
 		$this->assertSame( $topic, $topic->patron(), 'firehose Topic must be self-patron-linked so dump_metadata hides it' );
-		$this->assert_owned_nodes_keep_their_config();
+	}
+
+	/**
+	 * A logged request builds the firehose Topic and the partitions it writes
+	 * with no `:config`: nothing on a page view takes a verb.
+	 */
+	public function test_a_logged_request_builds_no_config_for_the_firehose(): void {
+		$this->require_config_or_skip();
+		$lm = Log_Manager::instance();
+		$lm->start( 'init' );
+		$lm->message( 'probe 4471', [ 'm' => 'firehose without config' ] );
+
+		$partitions = \array_filter(
+			\array_keys( Core::$nodes_by_name ),
+			static fn ( string $name ): bool => 1 === \preg_match( '/^_firehose:topic:p\d+$/', $name )
+		);
+		$this->assertNotEmpty( $partitions, 'the request wrote a partition' );
+		$this->assertNull( Core::node( '_firehose:topic:config' ) );
+		foreach ( $partitions as $name ) {
+			$this->assertNull( Core::node( "{$name}:config" ), "{$name} took a :config" );
+		}
 	}
 
 	/**
