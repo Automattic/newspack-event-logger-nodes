@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.130.0] - 2026-10-13
+
 ### Changed
 
 - **Needs newspack-nodes 2.106.0, and bundles its console and stream.** The topology console's "…" on an owner's card opens a grid of its sidecars as live cards, asking for them through `dump_metadata -o`, which an older substrate answers with an empty map; below 2.106.0 the plugin stays dormant. The dashboards read the substrate's raw-block stream through `fetch()`, which keeps Firefox responsive at hundreds of thousands of lines a second.
