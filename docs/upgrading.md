@@ -6,6 +6,11 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.107.0.** Its bundled Triage view
+  removes a dead-letter record with `dl_remove`, which an older substrate
+  refuses as an unknown verb, so the plugin stays dormant below 2.107.0.
+  Deploy the substrate first.
+
 - **This release needs newspack-nodes 2.106.0.** Its bundled topology
   console asks for an owner's sidecars through `dump_metadata -o`, which an
   older substrate answers with an empty map, so the plugin stays dormant
