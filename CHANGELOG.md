@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A settings push of a bool the spoke already holds writes nothing.** The `performance` `set` verb compared the stored option with the pushed value strictly, and the options table hands a bool back as `'1'` or `''` while the push coerces to `true` or `false`, so every unchanged push rewrote the option, recorded a settings event and reset config. A hub syncing to itself re-pushed on each of those events without end. The stored value is now read through the same coercion as the pushed one, and an unchanged ruleset push no longer resets config either.
+
 ## [0.130.0] - 2026-10-13
 
 ### Changed

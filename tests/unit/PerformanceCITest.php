@@ -94,6 +94,7 @@ class PerformanceCITest extends TestCase {
 		VerbHarness::reset();
 		Core::$clock                        = null;
 		Settings_Event_Writer::$append_seam = null;
+		unset( $GLOBALS['_test_fire_option_actions'] );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
 		Hook_Categorizer::clear_cache();
@@ -4703,6 +4704,115 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'value required', $result );
 		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+	}
+
+	/**
+	 * Fire the option actions the production settings watcher listens on, as a
+	 * live request does, spy on config resets, and hand back both captures.
+	 *
+	 * @return array{events: \ArrayObject<int,mixed>, resets: \ArrayObject<int,mixed>}
+	 */
+	private function watch_settings_writes(): array {
+		$events = new \ArrayObject();
+		$resets = new \ArrayObject();
+		Settings_Event_Writer::$append_seam = static function ( array $m ) use ( $events ): void {
+			$events[] = $m;
+		};
+		$GLOBALS['_test_fire_option_actions'] = true;
+		\add_action( \Newspack_Nodes\Config::RESET_ACTION, static function () use ( $resets ): void {
+			$resets[] = true;
+		} );
+		return [ 'events' => $events, 'resets' => $resets ];
+	}
+
+	/**
+	 * A bool option comes back from the options table as `'1'` while the hub
+	 * pushes the word `1`, which coerces to `true`: the same value in another
+	 * PHP type must write nothing, record no settings event and reset nothing.
+	 */
+	public function test_set_verb_pushing_the_stored_true_in_its_wire_form_writes_nothing(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = '1';
+		$seen = $this->watch_settings_writes();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', '1' ] );
+
+		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_log_memory', 'updated' => false ], $result );
+		$this->assertSame( '1', $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'], 'the stored row is untouched' );
+		$this->assertCount( 0, $seen['events'], 'no settings event' );
+		$this->assertCount( 0, $seen['resets'], 'no config reset' );
+	}
+
+	/** The options table hands a stored false back as `''`, which a hub's blank equals. */
+	public function test_set_verb_pushing_the_stored_false_in_its_wire_form_writes_nothing(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] = '';
+		$seen = $this->watch_settings_writes();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_flush_every_line', '' ] );
+
+		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_flush_every_line', 'updated' => false ], $result );
+		$this->assertSame( '', $GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] );
+		$this->assertCount( 0, $seen['events'] );
+	}
+
+	/** The counterpart guard: a value that moved still writes and records its event. */
+	public function test_set_verb_pushing_a_changed_bool_still_writes_and_records_it(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = '1';
+		$seen = $this->watch_settings_writes();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', '' ] );
+
+		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_log_memory', 'updated' => true ], $result );
+		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+		$this->assertCount( 1, $seen['events'] );
+	}
+
+	/**
+	 * The settings-sync loop's shape: a hub re-pushes the option on every
+	 * event it reads, so two identical pushes in a row must both be no-ops.
+	 */
+	public function test_set_verb_two_identical_bool_pushes_in_a_row_write_nothing(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = '1';
+		$seen = $this->watch_settings_writes();
+
+		$first  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', '1' ] );
+		$second = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', '1' ] );
+
+		$this->assertFalse( $first['updated'] ?? null );
+		$this->assertFalse( $second['updated'] ?? null );
+		$this->assertCount( 0, $seen['events'], 'neither push feeds the sync another event' );
+	}
+
+	/**
+	 * A ruleset re-pushed as the hub sends it — hydrated, JSON on the wire,
+	 * decoded and run through sanitize_text_field — equals the stored one, so
+	 * it saves nothing, records no event and resets nothing.
+	 */
+	public function test_set_verb_pushing_the_stored_ruleset_in_its_wire_form_writes_nothing(): void {
+		( new Rule_Set( [] ) )->save( [
+			new Rule(
+				Rule_Set::id_for( '/marmot-9142/' ),
+				'/marmot-9142/',
+				Rule::ACTION_LOG,
+				auto_disable_threshold: 7331,
+				auto_protect_time_threshold: 2.5,
+				significant_events: [ 'kea_landing' ],
+				custom_events: [ 'kea_flight' ],
+				hooks: [ 'wp_loaded', 'init' ],
+				log_http: true,
+				trace_callers: 3
+			),
+			new Rule( Rule_Set::id_for( '/dowser?' ), '/dowser?', Rule::ACTION_SKIP ),
+		] );
+		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
+		$wire   = (string) \wp_json_encode( Rule_Set::hydrate_array( $stored ) );
+		$seen   = $this->watch_settings_writes();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ Rule_Set::OPTION_RULES, $wire ] );
+
+		$this->assertSame( [ 'option' => Rule_Set::OPTION_RULES, 'updated' => false ], $result );
+		$this->assertSame( $stored, $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] );
+		$this->assertCount( 0, $seen['events'], 'no settings event' );
+		$this->assertCount( 0, $seen['resets'], 'no config reset' );
 	}
 
 	public function test_array_option_json_preserves_nested_structure(): void {

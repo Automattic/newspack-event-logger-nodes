@@ -3908,7 +3908,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				// apply_synced re-tiers and holds its own no-op gate.
 				if ( Rule_Set::OPTION_RULES === $option && \is_array( $sanitized ) ) {
 					$changed = Rule_Set::apply_synced( $sanitized );
-					AppConfig::reset();
+					if ( $changed ) {
+						AppConfig::reset();
+					}
 					return [
 						'option'  => $option,
 						'updated' => $changed,
@@ -3920,8 +3922,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				// synced option on its sweep whether or not it
 				// moved, and a reload is not free: it fires
 				// Config::RESET_ACTION on every worker, which
-				// re-parses every .tsl for the same answer.
-				if ( \get_option( $option, null ) === $sanitized ) {
+				// re-parses every .tsl for the same answer. Compare
+				// in the option's own type: the options table
+				// hands a bool back as '1' or ''.
+				$stored = \get_option( $option, null );
+				$held   = \is_scalar( $stored ) ? self::sanitize_settings_value( Core::as_string( $stored ), $type ) : $stored;
+				if ( $held === $sanitized ) {
 					return [
 						'option'  => $option,
 						'updated' => false,
