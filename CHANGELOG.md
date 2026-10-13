@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Test fixtures and the ADR on span tables name `query_cache`, not `query_sql`.** Both engines renamed the `<evQuery>` span and moved it over the query-cache phase, where it carries the query's signature shape rather than a statement. Nothing here keyed on the name; the fixtures used it as a sample span, and the one reqgrep fixture testing a multi-line statement message now uses `sql (start)`, a span that carries statements. The ADR listed `query_sql` among the producers carrying a shaped statement, which `query_cache` is not.
+
 ### Fixed
 
 - **A settings push of a bool the spoke already holds writes nothing.** The `performance` `set` verb compared the stored option with the pushed value strictly, and the options table hands a bool back as `'1'` or `''` while the push coerces to `true` or `false`, so every unchanged push rewrote the option, recorded a settings event and reset config. A hub syncing to itself re-pushed on each of those events without end. The stored value is now read through the same coercion as the pushed one, and an unchanged ruleset push no longer resets config either.

@@ -765,8 +765,8 @@ describe( 'computeIndentedEntries', () => {
 		{ n: 1, k: 'process (start)', ts: 1 },
 		{ n: 2, k: 'gyrobase (start)', ts: 1 },
 		{ n: 3, k: 'entries (aggregated)', ts: 1 },
-		{ n: 4, k: 'query_sql (start)', ts: 1 },
-		{ n: 5, k: 'query_sql (complete)', ts: 1 },
+		{ n: 4, k: 'query_cache (start)', ts: 1 },
+		{ n: 5, k: 'query_cache (complete)', ts: 1 },
 		{ n: 6, k: 'gyrobase (complete)', ts: 1 },
 		{ n: 7, k: 'process (complete)', ts: 1 },
 	];
@@ -1379,8 +1379,8 @@ describe( 'computeIndentedEntries', () => {
 			{ n: 2, k: 'gyrobase (start)', ts: 1 },
 			{ n: 3, k: 'gyrobase (start)', ts: 1 },
 			{ n: 4, k: 'entries (aggregated)', ts: 1 },
-			{ n: 5, k: 'query_sql (start)', ts: 1 },
-			{ n: 6, k: 'query_sql (complete)', ts: 1 },
+			{ n: 5, k: 'query_cache (start)', ts: 1 },
+			{ n: 6, k: 'query_cache (complete)', ts: 1 },
 			{ n: 7, k: 'gyrobase (complete)', ts: 1 },
 			{ n: 8, k: 'process (complete)', ts: 1 },
 		] );

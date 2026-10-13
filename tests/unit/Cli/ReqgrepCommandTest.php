@@ -216,7 +216,7 @@ class ReqgrepCommandTest extends TestCase {
 		$rid = 'termR';
 		$ts  = 1700000000.0;
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/sql', 'ts' => $ts ] );
-		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'query_sql (start)', 'm' => "SELECT 1\n  FROM t\n LIMIT 1 OFFSET 0", 'ts' => $ts + 0.1 ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'sql (start)', 'm' => "SELECT 1\n  FROM t\n LIMIT 1 OFFSET 0", 'ts' => $ts + 0.1 ] );
 		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/sql', 'ts' => $ts + 0.5 ] );
 
 		$this->assertGreaterThan( 0, \count( $captured ) );
@@ -368,13 +368,13 @@ class ReqgrepCommandTest extends TestCase {
 		// the dashboard's CUT_INSIDE fixture in logEntryUtils.test.js.
 		$rid = 'foldR';
 		$ts  = 1700000000.0;
-		foreach ( [ 'process (start)', 'gyrobase (start)', 'entries (aggregated)', 'query_sql (start)', 'query_sql (complete)', 'gyrobase (complete)', 'process (complete)' ] as $i => $key ) {
+		foreach ( [ 'process (start)', 'gyrobase (start)', 'entries (aggregated)', 'query_cache (start)', 'query_cache (complete)', 'gyrobase (complete)', 'process (complete)' ] as $i => $key ) {
 			$this->feed( $cmd, [ 'n' => $i + 1, 'rid' => $rid, 'k' => $key, 'm' => 'x', 'ts' => $ts + $i / 10 ] );
 		}
 		$out = self::joined( $captured );
 
 		$this->assertSame( 8, $this->indent_of( 'entries (aggregated)', $out ), 'the marker sits inside the span the fold cut open' );
-		$this->assertSame( 8, $this->indent_of( 'query_sql (start)', $out ), 'and so do the children that survived it' );
+		$this->assertSame( 8, $this->indent_of( 'query_cache (start)', $out ), 'and so do the children that survived it' );
 		$this->assertSame( 4, $this->indent_of( 'gyrobase (complete)', $out ), 'gyrobase closes at its own level, not the top column' );
 	}
 

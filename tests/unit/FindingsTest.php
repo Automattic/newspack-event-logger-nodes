@@ -534,7 +534,7 @@ class FindingsTest extends TestCase {
 						'children' => [],
 					],
 					[
-						'name'     => 'query_sql',
+						'name'     => 'query_cache',
 						'value'    => 182.0,
 						'count'    => 120,
 						'max'      => 3.5,

@@ -649,7 +649,7 @@ class AskAssemblerTest extends TestCase {
 			0,
 			0.0,
 			[ 'init' ],
-			[ 'loop', 'query_sql', 'component_include' ],
+			[ 'loop', 'query_cache', 'component_include' ],
 			[ 'init', 'wp_loaded' ]
 		);
 		$brief = Ask_Assembler::for_request( $this->record(), $rule );
