@@ -20,6 +20,8 @@ import {
 	Node,
 	VALUE,
 	forgetSession,
+	newMessage,
+	pack,
 	__setAuthFetch,
 	reservedNames,
 } from '@newspack-nodes/runtime';
@@ -265,6 +267,8 @@ describe( 'the partition catalog', () => {
 	// A refusal is an ANSWER, so nothing retries it: the picker recovers only
 	// because the catalog is polled.
 	test( 'a refused catalog fills on the next tick', async () => {
+		// The catalog polls every ten seconds; only the clock is faked.
+		jest.useFakeTimers( { doNotFake: [ 'queueMicrotask' ] } );
 		let refuse = true;
 		wire = installFakeCommandWire( ( m ) => {
 			if ( 'list_logs' !== m[ VALUE ]?.name ) {
@@ -287,16 +291,23 @@ describe( 'the partition catalog', () => {
 				} )
 			);
 		} );
-		expect( hook.result.current.browse.pickerOptions ).toEqual( [] );
-		await waitFor(
-			() =>
-				expect(
-					hook.result.current.browse.pickerOptions?.map(
-						( p ) => p.key
-					)
-				).toEqual( [ '', 'errors.p0', 'errors.p3' ] ),
-			{ timeout: 15000 }
-		);
+		try {
+			expect( hook.result.current.browse.pickerOptions ).toEqual( [] );
+			// A live stream's heartbeat, so its watchdog sees no silence.
+			await act( async () => {
+				jest.advanceTimersByTime( 6000 );
+				FakeEventSource.last.listeners.heartbeat?.forEach( ( cb ) =>
+					cb( { data: pack( newMessage() ) } )
+				);
+				jest.advanceTimersByTime( 5000 );
+			} );
+			await act( async () => {} );
+			expect(
+				hook.result.current.browse.pickerOptions?.map( ( p ) => p.key )
+			).toEqual( [ '', 'errors.p0', 'errors.p3' ] );
+		} finally {
+			jest.useRealTimers();
+		}
 	} );
 
 	test( 'a catalog that is not a list leaves the picker empty', async () => {
