@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.130.0
+ * Version: 0.131.0
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -37,7 +37,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.130.0' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.131.0' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -132,11 +132,12 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// 2.105.0 is Node::without_config(), which the firehose Topic uses.
 	// 2.106.0 is dump_metadata -o, which the bundled topology console asks
 	// for an owner's sidecars; an older substrate answers it with nothing.
+	// 2.107.0 is dl_remove, which the bundled Triage view sends.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.106.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.107.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

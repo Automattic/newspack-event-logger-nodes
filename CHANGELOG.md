@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.131.0] - 2026-10-13
+
 ### Changed
 
+- **Requires newspack-nodes 2.107.0.** The bundled Triage view removes a dead-letter record with `dl_remove`, which an older substrate refuses as an unknown verb, and the bundled topology console opens an owner's sidecars on the canvas; below 2.107.0 the plugin stays dormant.
 - **Test fixtures and the ADR on span tables name `query_cache`, not `query_sql`.** Both engines renamed the `<evQuery>` span and moved it over the query-cache phase, where it carries the query's signature shape rather than a statement. Nothing here keyed on the name; the fixtures used it as a sample span, and the one reqgrep fixture testing a multi-line statement message now uses `sql (start)`, a span that carries statements. The ADR listed `query_sql` among the producers carrying a shaped statement, which `query_cache` is not.
 
 ### Fixed
