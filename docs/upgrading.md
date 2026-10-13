@@ -6,6 +6,11 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.106.0.** Its bundled topology
+  console asks for an owner's sidecars through `dump_metadata -o`, which an
+  older substrate answers with an empty map, so the plugin stays dormant
+  below 2.106.0. Deploy the substrate first.
+
 - **Reclaim the stats Tables with newspack-nodes 2.105.0.** A stats
   schema change is migrated by
   `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`,
