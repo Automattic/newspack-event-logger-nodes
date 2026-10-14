@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.132.1] - 2026-10-14
+
 ### Fixed
 
 - **The flame builder drains its per-URL trees at 200 URLs as well as every 5 seconds.** A replay folds far faster than the tick: one 5-second window held ~1,100 one-hit URLs, each a ~175 KB tree, and the drain that followed passed 512 MB, so the worker died before its cursor committed and its successor replayed the same stretch forever. The record that brings the accumulator to `URL_ACCUMULATOR_LIMIT` (200) runs the checkpoint's drain, `write_pending()`; a failure there raises as a plain `Worker_Should_Stop`, so the Consumer replays the record rather than dead-lettering it. The accumulator is a plain map in place of the 5 × 1000 `LRU_Cache`.
