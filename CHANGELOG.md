@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.131.2] - 2026-10-13
+
+### Changed
+
+- **Bundles newspack-nodes 2.108.1's console,** which reads its topology list from its own payload, so a page opened in a background tab no longer loses `?topology=`. The substrate floor stays at 2.107.0.
+
 ## [0.131.1] - 2026-10-13
 
 ### Changed
