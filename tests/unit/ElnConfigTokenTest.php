@@ -68,7 +68,7 @@ class ElnConfigTokenTest extends TestCase {
 		\file_put_contents( "{$dir}/numbat-ledger.tsl", "make_node Echo numbat-echo-5521\n" );
 		\file_put_contents(
 			"{$dir}/quokka-fanout.tsl",
-			"var is_hub = 0\nmake_node Remote_Source firehose:quokka quokka /tmp/quokka-off /tmp/quokka-dl firehose.p{partition}:next-quokka\n"
+			"var is_hub = 0\nmake_node Remote_Source firehose:quokka quokka /tmp/quokka-off /tmp/quokka-dl firehose.p{partition}=next-quokka\n"
 		);
 		$this->activate_user_topologies( $dir, [ 'numbat-ledger', 'quokka-fanout' ] );
 

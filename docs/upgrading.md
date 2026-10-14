@@ -6,6 +6,16 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.109.0, which spells a log stamp with
+  `:` and a broker pair with `=`.** `aggregator.tsl` now writes
+  `firehose.p{partition}=remote-job-rewrite sources:php=php-errors:partition`
+  where it wrote `firehose.p{partition}:remote-job-rewrite
+  sources/php:php-errors:partition`, and its `php-errors:tail` follows
+  `sources:php` where it followed `sources/php`. A copy of that topology
+  carrying its own pairs takes the same rewrite. An older substrate refuses
+  both spellings, so the plugin stays dormant below 2.109.0. Deploy the
+  substrate first.
+
 - **This release needs newspack-nodes 2.107.0.** Its bundled Triage view
   removes a dead-letter record with `dl_remove`, which an older substrate
   refuses as an unknown verb, so the plugin stays dormant below 2.107.0.
