@@ -251,11 +251,13 @@ class ItemBudgetTest extends TestCase {
 		}
 		unset( $category );
 		$hash = 'a1b2c3d4e5f6';
-		( new \ReflectionProperty( $fb, 'url_acc' ) )->getValue( $fb )->set(
-			$hash,
+		( new \ReflectionProperty( $fb, 'url_acc' ) )->setValue(
+			$fb,
 			[
-				'flame'    => [ 'name' => 'aggregate', 'sum_value' => self::WIDE_FLOAT, 'count' => self::WIDE_COUNT, 'children' => $children ],
-				'profiles' => $profiles,
+				$hash => [
+					'flame'    => [ 'name' => 'aggregate', 'sum_value' => self::WIDE_FLOAT, 'count' => self::WIDE_COUNT, 'children' => $children ],
+					'profiles' => $profiles,
+				],
 			]
 		);
 
