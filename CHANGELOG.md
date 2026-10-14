@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.131.1] - 2026-10-13
+
+### Changed
+
+- **Bundles newspack-nodes 2.108.0's console.** The bundled topology console moves between cards from the keyboard, opens a broker reader's cursor in the Log Viewer, and no longer paints a node a declared node publishes as drift. The substrate floor stays at 2.107.0.
+
 ## [0.131.0] - 2026-10-13
 
 ### Changed
