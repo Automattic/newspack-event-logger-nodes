@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.132.2] - 2026-10-14
+
+### Changed
+
+- **Rebuilt against newspack-nodes 2.109.1:** the topology console's shell warns on every unresolved config token rather than once per window.
+
 ## [0.132.1] - 2026-10-14
 
 ### Fixed
