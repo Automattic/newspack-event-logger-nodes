@@ -175,7 +175,7 @@ describe( 'useRequestLogGraph — exospine + page link wiring', () => {
 	test( "the request log adds its glob's pair to the page link", async () => {
 		renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );
-		expect( Core.node( LINK ).pairs ).toEqual( [ `completed.*:${ TEE }` ] );
+		expect( Core.node( LINK ).pairs ).toEqual( [ `completed.*=${ TEE }` ] );
 	} );
 
 	test( 'steers flow with targets: the page link subscribes on `completed` and routes to view (and heartbeat → _http/workers)', async () => {
@@ -202,7 +202,7 @@ describe( 'useRequestLogGraph — exospine + page link wiring', () => {
 		expect( tee.constructor.name ).toBe( 'TeeNode' );
 		expect( tee.sink ).toBe( interpreter );
 		// The link routes this graph's frames to the Tee, which fans to the view.
-		expect( Core.node( LINK ).pairs ).toContain( `completed.*:${ TEE }` );
+		expect( Core.node( LINK ).pairs ).toContain( `completed.*=${ TEE }` );
 		expect( tee.target ).toEqual( [ VIEW ] );
 	} );
 

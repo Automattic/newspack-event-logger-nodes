@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The hub's `aggregator` topology speaks newspack-nodes 2.109.0's spelling.** Its broker pairs are `firehose.p{partition}=remote-job-rewrite` and `sources:php=php-errors:partition`, where they were `firehose.p{partition}:remote-job-rewrite` and `sources/php:php-errors:partition`, and `php-errors:tail` follows `sources:php`, where it followed `sources/php`. The bundled stream hooks hand the page link `<sub>=<tee>` pairs. The substrate floor rises to 2.109.0.
+
 ## [0.131.2] - 2026-10-13
 
 ### Changed

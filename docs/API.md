@@ -10,7 +10,7 @@ and the WordPress hooks it fires and consumes.
 |----------|-------|---------|
 | `POST /wp-json/newspack-event-logger-nodes/v1/mcp` | this plugin ([`App\MCP_Controller`](../includes/app/class-mcp-controller.php)) | JSON-RPC MCP server over ten verbs the dashboards already drive. |
 | `POST /wp-json/newspack-nodes/v1/command` | substrate ([`Rest\HTTP_In_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-http-in-node.php)) | Routes a batch of packed command Messages to named CI nodes and writes the replies back. |
-| `GET /wp-json/newspack-nodes/v1/messages/stream` | substrate ([`Rest\SSE_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-sse-out-node.php)) | Subscribes to one or more `<log>.pN` partitions and emits 7-field message envelopes as SSE events. A log-registry source subscribes as `sources/<name>`. |
+| `GET /wp-json/newspack-nodes/v1/messages/stream` | substrate ([`Rest\SSE_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-sse-out-node.php)) | Subscribes to one or more `<log>.pN` partitions and emits 7-field message envelopes as SSE events. A log-registry source subscribes as `sources:<name>`. |
 | `POST /wp-json/newspack-nodes/v1/auth` | substrate ([`Rest\Auth_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-auth-controller.php)) | Mints the scoped command session an MCP bearer credential names. |
 | `POST /wp-json/newspack-nodes/v1/workers/spawn` | substrate ([`Rest\Spawn_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-spawn-controller.php)) | HMAC-validated worker bootstrap. Not for public callers. |
 | `POST /wp-json/newspack-nodes/v1/health/runtime` | substrate ([`Rest\Health_Runtime_Controller`](https://github.com/Automattic/newspack-nodes/blob/main/includes/rest/class-health-runtime-controller.php)) | Token-gated runtime probe `wp nodes doctor` calls: the web runtime's cache backend and log sources. |
@@ -249,7 +249,7 @@ browser, inside each dashboard's view node (`RequestLogViewNode`, `GyroscopeView
 `PerfErrorsViewNode`); the browser consumes the stream through `_stream:sse-in`
 (`SseInNode`), owned by the page's one `RemoteLink`, `_stream`, which every stream graph on
 the page rides by adding pairs, and which hands each record to its stamp's Tee,
-`_stream:<kind>`.
+`_stream:<stamp>`.
 
 ## Worker spawn
 

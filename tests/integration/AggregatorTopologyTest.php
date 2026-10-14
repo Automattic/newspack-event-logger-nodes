@@ -4,7 +4,7 @@
  *
  * The hub topology mounts no Stream_Merger. It ships a `spokes` Vault_Group
  * over group `spoke` (one Remote_Source broker per spoke, following the Vault
- * on reload, each carrying the spoke's firehose and `sources/php` on one
+ * on reload, each carrying the spoke's firehose and `sources:php` on one
  * connection), the Remote_Job_Rewrite_Node that flips aggregated `k:"job"`
  * lines to `k:"remote_job"` before the Topic write, the firehose Topic sink,
  * and `php-errors.p0` with the hub's own error-log Tail beside it. Loads the
@@ -131,7 +131,7 @@ class AggregatorTopologyTest extends TestCase {
 
 	/**
 	 * Worker p2 of a multi-partition hub carries the spoke's `firehose.p2`
-	 * alone: `sources/php` and the hub's own error log are read once, on p0.
+	 * alone: `sources:php` and the hub's own error log are read once, on p0.
 	 */
 	public function test_off_partition_zero_a_worker_reads_its_own_firehose_partition_alone(): void {
 		$this->seed_vault( 'tw7', [ 'url' => 'https://tw7.example', 'group' => 'spoke' ] );
@@ -155,7 +155,7 @@ class AggregatorTopologyTest extends TestCase {
 		$line                      = 'PHP Warning:  WordPress database error ' . \str_repeat( 'q', 6144 ) . "\n";
 		$message                   = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_BYTESTREAM;
-		$message[ \Newspack_Nodes\Message::FROM ]  = 'sources/php';
+		$message[ \Newspack_Nodes\Message::FROM ]  = 'sources:php';
 		$message[ \Newspack_Nodes\Message::VALUE ] = $line;
 
 		$partition = Core::node( 'php-errors:partition' );
@@ -166,7 +166,7 @@ class AggregatorTopologyTest extends TestCase {
 
 	/**
 	 * A spoke joining on RELOAD is built as the load builds one: worker p2
-	 * reads its `firehose.p2` and leaves `sources/php` to p0.
+	 * reads its `firehose.p2` and leaves `sources:php` to p0.
 	 */
 	public function test_a_spoke_joining_on_reload_off_partition_zero_reads_its_firehose_alone(): void {
 		$this->load_aggregator( 2 );
