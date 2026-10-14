@@ -13,13 +13,15 @@
  * some way behind that moment, so around a boundary it routinely lands in a
  * bucket older than the newest one seen — which is why `$pending` is a map
  * rather than one rotating slot.
- * `flush()` merges each bucket into the stats Tables through `Stats_Store`
- * (the stats schema) at most once per FLUSH_INTERVAL_SEC, capping as it writes,
- * then drops them. It also folds each hour of the URL index its data clock
- * has left into the coarse `urls_h` tier, which is what keeps a reader off
- * 288 fine buckets per shard. Per-URL flame trees take a different route:
- * they are held in `$url_acc`, folded onto each URL's stored aggregate, and
- * drain through `drain_url_stats()`.
+ * `write_pending()` merges each bucket into the stats Tables through
+ * `Stats_Store` (the stats schema), capping as it writes, then drops them.
+ * It runs every FLUSH_INTERVAL_SEC, and sooner once `$url_acc` holds
+ * URL_ACCUMULATOR_LIMIT URLs, whichever comes first. It also folds each
+ * hour of the URL index its data clock has left into the coarse `urls_h`
+ * tier, which is what keeps a reader off 288 fine buckets per shard.
+ * Per-URL flame trees take a different route: they are held in `$url_acc`,
+ * folded onto each URL's stored aggregate, and drain through
+ * `drain_url_stats()`.
  *
  * One side channel hangs off that pipeline: the request's governing `Rule`
  * drives auto-tune. Hooks that fire too often, custom events to disable, and
@@ -60,12 +62,12 @@ use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Idle_Reporter;
-use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 use Newspack_Nodes\Shutdown_Sweeper;
 use Newspack_Nodes\Table_Client;
 use Newspack_Nodes\Timer_Node;
+use Newspack_Nodes\Worker_Should_Stop;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -402,17 +404,24 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** @var array<string,Bucket_Acc> Accumulators by bucket key, drained at flush(). */
 	private array $pending = [];
 
-	/** Per-URL aggregates one accumulator bucket holds before it rotates. */
-	private const URL_ACCUMULATOR_SIZE = 1000;
-
-	/** Accumulator buckets retained; capacity is roughly the product. */
-	private const URL_ACCUMULATOR_BUCKETS = 5;
+	/**
+	 * URLs `$url_acc` holds before the record reaching the count drains it,
+	 * whatever the tick. A replay folds far faster than the tick, and each
+	 * URL holds a tree of a few hundred spans, which the drain copies twice
+	 * more while it writes, so the count is what bounds a window's memory.
+	 * The Tables answer before the ask returns and buffer nothing, so a drain
+	 * releases what it wrote when it ends.
+	 */
+	public const URL_ACCUMULATOR_LIMIT = 200;
 
 	/**
-	 * Each URL's aggregate — flame tree and profile sums — as this flush has
-	 * folded it onto the stored one, by url_hash; drained at flush().
+	 * Each URL's aggregate — flame tree and profile sums — as this window has
+	 * folded it onto the stored one, by url_hash. An all-digit hash is an INT
+	 * key.
+	 *
+	 * @var array<array-key,array<array-key,mixed>>
 	 */
-	private LRU_Cache $url_acc;
+	private array $url_acc = [];
 
 	/**
 	 * The crumb (`Message::ID`) of the last record folded into the
@@ -467,7 +476,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$this->last_flush_time = Core::$now;
 		$this->worked_at       = Core::$now;
 		$this->worked_at_hr    = self::monotonic();
-		$this->url_acc         = new LRU_Cache( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
 		$this->client          = new Table_Client( $this, Stats_Store::TABLES );
 
 		// Owned auto-tuner sibling (patron-linked; hidden from the canvas).
@@ -507,9 +515,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * partition, and is folded into every accumulator. A record whose URL names
 	 * no host throws `InvalidArgumentException` before any of that, so the
 	 * Consumer dead-letters it and reads on. Any other message is dropped.
-	 * Nothing here flushes: the flush is the node's own periodic work, run from
-	 * `fire()`, so a failed store write raises from the tick rather than being
-	 * charged to whichever record happened to arrive.
+	 * The record that brings `$url_acc` to URL_ACCUMULATOR_LIMIT drains it
+	 * through `drain_at_limit()`.
 	 *
 	 * The message runs inside `deferring()`, which holds a cooperative stop a
 	 * downstream forward raises until this message's own bookkeeping is
@@ -626,6 +633,27 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		if ( '' === $crumb || $crumb !== $this->counted ) {
 			$this->accumulate_all_stats( $url, $server_name, $url_hash, $flame_data, $profiles, $request );
 			$this->counted = $crumb;
+			if ( \count( $this->url_acc ) >= self::URL_ACCUMULATOR_LIMIT ) {
+				$this->drain_at_limit();
+			}
+		}
+	}
+
+	/**
+	 * Drain the accumulators from the record path, through the
+	 * `write_pending()` a checkpoint runs; auto-tune waits for the tick.
+	 *
+	 * A failure, a clean stop included, raises as a plain stop: the drain is
+	 * the node's work, not the record's, so the Consumer neither dead-letters
+	 * the record nor commits past it, and the successor replays it.
+	 *
+	 * @throws Worker_Should_Stop Carrying whatever failed the drain (ADR-14).
+	 */
+	private function drain_at_limit(): void {
+		try {
+			$this->write_pending();
+		} catch ( \Throwable $e ) {
+			throw Worker_Should_Stop::combine( [ new Worker_Should_Stop( 'stats drain failed' ), $e ] );
 		}
 	}
 
@@ -636,10 +664,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @return array<string,mixed>
 	 */
 	private function stats_report(): array {
-		$stats_count = \iterator_count( $this->url_acc->iterate() );
 		$now = Core::$now;
 		return [
-			'stats_count'              => $stats_count,
+			'stats_count'              => \count( $this->url_acc ),
 			'pending_url_count'        => \array_sum( \array_map( static fn ( array $acc ): int => \array_sum( \array_map( 'count', $acc['url_stats'] ) ), $this->pending ) ),
 			'intern_count'             => \count( self::$intern ),
 			'pending_buckets'          => \array_keys( $this->pending ),
@@ -702,7 +729,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Fold one completed request into every accumulator.
 	 *
-	 * The order below is fixed: per-URL flame aggregate (LRU), bucket selection,
+	 * The order below is fixed: per-URL flame aggregate, bucket selection,
 	 * per-URL row, hourly totals, the seven dimensional axes, and finally the
 	 * profile loop that feeds the leaderboards, the category time series, and
 	 * auto-tune.
@@ -783,7 +810,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$this->print_less_often( 'stats: a URL blob read failed; its update is skipped' );
 			return;
 		}
-		$this->url_acc->set( $url_hash, $aggregate );
+		$this->url_acc[ $url_hash ] = $aggregate;
 		$this->tally( Flame_Tree::STATS_WRITES, 'url blobs' );
 	}
 
@@ -806,11 +833,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private function accumulate_url_aggregate( string $url_hash, array $flame_data, float $duration_ms, bool $record_timing, int $done, ?bool &$unread = null ): array {
 		$unread = false;
 		// Un-drained if held, else what was last persisted for a cold key.
-		$cached = $this->url_acc->get( $url_hash );
-		if ( null === $cached && null !== $this->stats_store ) {
-			$cached = $this->stats_store->url_aggregate( $url_hash, $unread );
+		$aggregate = $this->url_acc[ $url_hash ] ?? null;
+		if ( null === $aggregate && null !== $this->stats_store ) {
+			$aggregate = $this->stats_store->url_aggregate( $url_hash, $unread );
 		}
-		$aggregate = \is_array( $cached ) ? $cached : null;
 		if ( null === $aggregate ) {
 			$aggregate = [
 				'flame'    => self::empty_url_flame(),
@@ -1502,7 +1528,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * The durable half of a flush: write every pending bucket and the per-URL
 	 * aggregates, and start clean. Every checkpoint runs it before its cursor
-	 * commits, so nothing the cursor has passed is left unwritten. What a
+	 * commits, so nothing the cursor has passed is left unwritten, and so does
+	 * the record bringing `$url_acc` to URL_ACCUMULATOR_LIMIT. What a
 	 * fatal costs is a double-count — the deltas between the last checkpoint
 	 * and the crash are already in the Tables and get replayed on top (see
 	 * the CHANGELOG's Known section).
@@ -1531,7 +1558,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$filed = $this->persist_aggregate_stats( $stats_store, $now, (string) \end( $plan['fine'] ) );
 			$this->drain_url_stats( $stats_store, $now, $filed );
 		}
-		$this->url_acc->flush();
+		$this->url_acc = [];
 		// A flush with nothing folded is upkeep, which never keeps a worker up.
 		if ( [] !== $this->pending ) {
 			$this->worked_at    = Core::$now;
@@ -2132,9 +2159,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private function persist_url_names( Stats_Store $stats_store, int $now, array $filing ): array {
 		$hour    = Stats_Store::hour_of( Stats_Store::bucket_key( $now ) );
 		$stamped = [];
-		// Iterated, not got: a get promotes, and a rotation evicts undrained.
-		foreach ( $this->url_acc->iterate() as $hash => $blob ) {
-			$stamped[ (string) $hash ] = Core::arr( Core::arr( $blob )['filed'] ?? null );
+		foreach ( $this->url_acc as $hash => $blob ) {
+			$stamped[ (string) $hash ] = Core::arr( $blob['filed'] ?? null );
 		}
 		$filed = [];
 		foreach ( $filing as $acc ) {
@@ -3252,11 +3278,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			}
 		}
 		$writes = [];
-		foreach ( $this->url_acc->iterate() as $url_hash => $aggregate ) {
-			if ( ! \is_array( $aggregate ) ) {
-				continue;
-			}
-			/** @var array<string,mixed> $aggregate */
+		foreach ( $this->url_acc as $url_hash => $aggregate ) {
 			// Half the item for profiles, a quarter for each copy of the tree.
 			$aggregate['profiles'] = self::cap_leaderboard( Core::arr( $aggregate['profiles'] ?? null ), \intdiv( Stats_Store::ITEM_BUDGET, 2 ) );
 			// Finalized flame for display; keep flame_raw for merging.

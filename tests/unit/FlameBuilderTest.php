@@ -505,6 +505,162 @@ class FlameBuilderTest extends TestCase {
 		$this->assertEqualsWithDelta( 633.0, \array_sum( \array_column( $totals, 'sum_ms' ) ), 1e-6 );
 	}
 
+	/**
+	 * The record that brings the per-URL accumulator to its limit drains it
+	 * as a tick would, so a reader folding faster than the tick holds no more
+	 * than the limit's worth of URL trees at once. No tick fires here.
+	 */
+	public function test_the_record_reaching_the_url_limit_drains_what_it_holds(): void {
+		$this->set_rule();
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$store = $this->stats_store( partition: 0, max_lifespan: 86400, asker: $fb );
+		$fb->set_stats_store( $store );
+		$limit = Flame_Builder_Node::URL_ACCUMULATOR_LIMIT;
+
+		for ( $i = 1; $i <= $limit + 7; $i++ ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'url' => "https://example.com/wren-{$i}", 'duration_ms' => 37.0 ] ) );
+		}
+
+		$totals = \array_values( $this->recent_hourly( $store ) );
+		$this->assertSame( $limit, \array_sum( \array_column( $totals, 'count' ) ), 'the first batch landed' );
+		$this->assertEqualsWithDelta( 37.0 * $limit, \array_sum( \array_column( $totals, 'sum_ms' ) ), 1e-6 );
+		$this->assertSame( 7, $this->stats_count( $fb ), 'only the remainder is held' );
+		$blob = static fn ( int $i ): mixed => $store->bucket_get_multi( [ [ [ Stats_Store::NS_URL ], Log_Manager::url_hash( "https://example.com/wren-{$i}" ) ] ] )[0] ?? null;
+		$this->assertIsArray( $blob( $limit ), 'the URL that reached the limit was drained' );
+		$this->assertNull( $blob( $limit + 1 ), 'a URL past the limit waits for the next drain' );
+	}
+
+	/**
+	 * A drain the record path runs is the node's work, not the record's: a
+	 * store that fails it, or a clean stop raised inside it, raises a plain
+	 * stop carrying the failure, so the reader neither dead-letters the
+	 * record nor commits past it, and the successor replays from it.
+	 *
+	 * @param \Closure(): \Throwable $failure What the store throws mid-drain.
+	 * @param string|null           $cause   The failure the stop carries.
+	 */
+	#[DataProvider( 'drain_failures' )]
+	public function test_a_failed_drain_at_the_url_limit_stops_the_reader_on_its_record( \Closure $failure, ?string $cause ): void {
+		$this->set_rule();
+		$tmp   = $this->make_temp_dir( 'flame-builder-drain-' );
+		$limit = Flame_Builder_Node::URL_ACCUMULATOR_LIMIT;
+		$topic = new \Newspack_Nodes\Topic_Node();
+		// One segment holds every record, so the cursor reads as one offset.
+		$topic->arguments( [ "{$tmp}/requests.p{partition}", '1', '1048576' ] );
+		for ( $i = 1; $i <= $limit + 3; $i++ ) {
+			$message                   = Message::new_message();
+			$message[ Message::TYPE ]  = Message::TM_STRUCT;
+			$message[ Message::KEY ]   = "r-ibis-{$i}";
+			$message[ Message::VALUE ] = $this->completed_request( [ 'rid' => "r-ibis-{$i}", 'url' => "https://example.com/ibis-{$i}", 'duration_ms' => 53.0 ] );
+			$topic->fill( $message );
+		}
+		$topic->flush();
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store(
+			new class( $failure, ...$this->stats_store_args( 0, 86400, $fb ) ) extends Stats_Store {
+				public function __construct( private \Closure $failure, mixed ...$args ) {
+					parent::__construct( ...$args );
+				}
+
+				public function bucket_set_multi( array $writes ): array {
+					throw ( $this->failure )();
+				}
+			}
+		);
+		$consumer = new \Newspack_Nodes\Consumer_Node();
+		$consumer->arguments( [ "{$tmp}/requests.p0", "{$tmp}/offsets/fb/p0", "{$tmp}/deadletter/fb/p0" ] );
+		$consumer->name( 'requests:consumer' );
+		$consumer->sink( $fb );
+
+		$thrown = null;
+		try {
+			$this->pump_consumer( $consumer );
+		} catch ( \Newspack_Nodes\Worker_Should_Stop $e ) {
+			$thrown = $e;
+		}
+
+		$this->assertNotNull( $thrown, 'the failed drain stops the worker' );
+		$this->assertFalse( \Newspack_Nodes\Worker_Should_Stop::is_clean( $thrown ), 'the reader must replay the record' );
+		$this->assertSame( $cause, $thrown->getPrevious()?->getMessage() );
+		$this->assertSame( 0, $consumer->list_deadletter( 10 )['total'], 'nothing is dead-lettered' );
+		$segments = \glob( "{$tmp}/requests.p0/*.log" ) ?: [];
+		$this->assertCount( 1, $segments );
+		$lines  = \array_slice( \file( $segments[0] ) ?: [], 0, $limit - 1 );
+		$offset = \array_sum( \array_map( 'strlen', $lines ) );
+		$this->assertSame(
+			\Newspack_Nodes\Log_Position::format( (int) \basename( $segments[0], '.log' ), $offset, null ),
+			$consumer->cursor_position(),
+			'the cursor stands on the record that reached the limit'
+		);
+	}
+
+	/**
+	 * The record whose drain failed is counted before the drain runs, so the
+	 * stop's shutdown sweep writes it, the checkpoint names it, and the
+	 * successor's replay of it adds nothing: every record counted once.
+	 */
+	public function test_a_failed_drain_at_the_url_limit_counts_its_record_once_across_the_replay(): void {
+		$this->set_rule();
+		$limit = Flame_Builder_Node::URL_ACCUMULATOR_LIMIT;
+		$store = new class( ...$this->stats_store_args( 0, 86400 ) ) extends Stats_Store {
+			public bool $refuse = true;
+
+			public function bucket_set_multi( array $writes ): array {
+				if ( $this->refuse ) {
+					$this->refuse = false;
+					throw new \RuntimeException( 'flame-stats:aggregate hiccup at the limit' );
+				}
+				return parent::bucket_set_multi( $writes );
+			}
+		};
+		$first = new Flame_Builder_Node();
+		$first->name( 'fb' );
+		$first->set_stats_store( $store );
+		$egret = fn ( int $i ): array => $this->completed_request( [ 'url' => "https://example.com/egret-{$i}", 'duration_ms' => 29.0 ] );
+		for ( $i = 1; $i < $limit; $i++ ) {
+			$this->fill_request_at( $first, $egret( $i ), "5:{$i}0:9" );
+		}
+		try {
+			$this->fill_request_at( $first, $egret( $limit ), "5:{$limit}0:9" );
+			$this->fail( 'expected the failed drain to stop the worker' );
+		} catch ( \Newspack_Nodes\Worker_Should_Stop $e ) {
+			$this->assertFalse( \Newspack_Nodes\Worker_Should_Stop::is_clean( $e ) );
+		}
+		$first->shutdown_sweep();
+		$checkpoint = \json_decode( (string) \wp_json_encode( $first->save_state() ), true );
+		$first->remove_node();
+		$this->assertSame( "5:{$limit}0:9", $checkpoint['counted'] ?? null, 'the checkpoint names the stopped record' );
+
+		$successor = new Flame_Builder_Node();
+		$successor->name( 'fb' );
+		$successor->set_stats_store( $store );
+		$successor->restore_state( $checkpoint );
+		for ( $i = $limit; $i <= $limit + 3; $i++ ) {
+			$this->fill_request_at( $successor, $egret( $i ), "5:{$i}0:9" );
+		}
+		$successor->flush();
+
+		$totals = \array_values( $this->recent_hourly( $store ) );
+		$this->assertSame( $limit + 3, \array_sum( \array_column( $totals, 'count' ) ), 'each record counted once' );
+		$this->assertEqualsWithDelta( 29.0 * ( $limit + 3 ), \array_sum( \array_column( $totals, 'sum_ms' ) ), 1e-6 );
+	}
+
+	/**
+	 * A store failure and a bare clean stop, each thrown mid-drain, with the
+	 * failure the stop must carry.
+	 *
+	 * @return array<string,array{\Closure(): \Throwable, string|null}>
+	 */
+	public static function drain_failures(): array {
+		return [
+			'store failure' => [ static fn (): \Throwable => new \RuntimeException( 'flame-stats:aggregate went away mid-drain' ), 'flame-stats:aggregate went away mid-drain' ],
+			'clean stop'    => [ static fn (): \Throwable => new \Newspack_Nodes\Worker_Should_Stop_Clean( 'heron' ), null ],
+		];
+	}
+
 	public function test_non_bytestream_message_skipped(): void {
 		$fb                        = new Flame_Builder_Node();
 		$message                   = Message::new_message();
