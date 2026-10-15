@@ -23,7 +23,7 @@ final class UninstallStatsTablesTest extends TestCase {
 			Table_Node::file( Stats_Store::TABLE_AGGREGATE, 0 ),
 			Table_Node::file( Stats_Store::TABLE_AGGREGATE, 0 ) . '-wal',
 			Table_Node::file( Stats_Store::TABLE_URL, 3 ),
-			Table_Node::file( Stats_Store::TABLE_URL_FINE, 15 ) . '-shm',
+			Table_Node::file( Stats_Store::TABLE_URL_FINE, \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS - 1 ) . '-shm',
 		];
 		$kept = Table_Node::file( 'eln-rule-hooks', 0 );
 		foreach ( [ ...$doomed, $kept ] as $file ) {

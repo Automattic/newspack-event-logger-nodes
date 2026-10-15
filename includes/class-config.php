@@ -45,6 +45,9 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Config {
 
+	/** Shortest retention window the stats Tables work with, in seconds. */
+	public const MIN_RETENTION_SECONDS = 3600;
+
 	/** Staging option: custom-event names spokes reported to the hub; read by the admin UI. */
 	public const OPTION_DISCOVERED_EVENTS = 'newspack_event_logger_nodes_discovered_events';
 
@@ -200,7 +203,7 @@ class Config {
 
 	/** The per-URL blob's lifetime: a twenty-fourth of the window, floored at an hour. */
 	private static function stats_url_ttl(): int {
-		return \max( Stats_Store::HOUR_SECONDS, \intdiv( self::stats_retention_seconds(), 24 ) );
+		return \max( Bucket::HOUR_SECONDS, \intdiv( self::stats_retention_seconds(), 24 ) );
 	}
 
 	/**
@@ -211,10 +214,10 @@ class Config {
 	 * ("keep nothing extra") is neither a usable TTL nor a drawable axis.
 	 *
 	 * @api
-	 * @return int Retention window in seconds, at least Stats_Store::MIN_RETENTION_SECONDS.
+	 * @return int Retention window in seconds, at least `MIN_RETENTION_SECONDS`.
 	 */
 	public static function stats_retention_seconds(): int {
-		return \max( Stats_Store::MIN_RETENTION_SECONDS, Core::num_int( self::value( 'min_lifetime' ) ) );
+		return \max( self::MIN_RETENTION_SECONDS, Core::num_int( self::value( 'min_lifetime' ) ) );
 	}
 
 	/**

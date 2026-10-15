@@ -59,28 +59,6 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 'path', Stats_Store::ROW_FIELD_NAMES[ Stats_Store::ROW_PATH ] );
 	}
 
-	public function test_a_row_path_drops_the_https_origin_of_its_own_server(): void {
-		// The server is in the KEY, so a value repeating it pays for nothing.
-		// Only an https origin naming the row's own server is implied: any
-		// other scheme, or a host the key does not name, is kept whole, so a
-		// reader rebuilding `https://{server}{path}` never shows a wrong URL.
-		$this->assertSame( '/kakapo-4417?q=9', Stats_Store::row_path( 'https://kea.test/kakapo-4417?q=9', 'kea.test' ) );
-		$this->assertSame( 'http://kea.test/kakapo-4417', Stats_Store::row_path( 'http://kea.test/kakapo-4417', 'kea.test' ) );
-		$this->assertSame( 'https://moa.test/weka-1308', Stats_Store::row_path( 'https://moa.test/weka-1308', 'kea.test' ) );
-		$this->assertSame( 'https://kea.test?q=3', Stats_Store::row_path( 'https://kea.test?q=3', 'kea.test' ), 'no path to stand alone' );
-	}
-
-	public function test_a_row_path_is_capped_with_an_ellipsis(): void {
-		// The hash is the identity and the path is display, so a query-string
-		// flood cannot grow one row past the cap.
-		$long = 'https://kea.test/' . \str_repeat( 'takahe-', 400 );
-		$path = Stats_Store::row_path( $long, 'kea.test' );
-		$this->assertSame( Stats_Store::MAX_PATH_BYTES, \strlen( $path ) );
-		$this->assertStringEndsWith( '…', $path );
-		$this->assertStringStartsWith( '/takahe-takahe-', $path );
-		$this->assertSame( '/short-5521', Stats_Store::row_path( 'https://kea.test/short-5521', 'kea.test' ) );
-	}
-
 	public function test_the_category_entry_is_positional_and_contiguous(): void {
 		// The same mechanism for the second value decision 18 governs: every
 		// CAT_SUMS field ADDS, so the table is the whole index set, and a
@@ -651,162 +629,6 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 77, ( $store->get_slots( Stats_Store::url_cat_parts( 'aaaaaaaaaaaa' ), [ Stats_Store::hour_of( $bucket ) ] )[ $bucket ] ?? [] )['wpdb'][ Stats_Store::CAT_CALLS ] );
 	}
 
-	public function test_bucket_key_floors_to_the_bucket_width(): void {
-		// 12:47 UTC belongs to the 12:45 bucket.
-		$this->assertSame( '2026-02-03-12-45', Stats_Store::bucket_key( \gmmktime( 12, 47, 33, 2, 3, 2026 ) ) );
-	}
-
-	/** A bucket opens on the UTC second `bucket_key()` floors to, whatever the zone. */
-	public function test_a_bucket_starts_on_the_utc_second_its_key_names(): void {
-		$zone = \date_default_timezone_get();
-		\date_default_timezone_set( 'Pacific/Chatham' );
-		try {
-			$this->assertSame( \gmmktime( 13, 35, 0, 10, 4, 2026 ), Stats_Store::bucket_start( '2026-10-04-13-35' ) );
-			$this->assertSame( '2026-12-31-23-55', Stats_Store::bucket_key( Stats_Store::bucket_start( '2026-12-31-23-55' ) ) );
-		} finally {
-			\date_default_timezone_set( $zone );
-		}
-	}
-
-	/**
-	 * A key that does not parse as `Y-m-d-H-i` is refused rather than read
-	 * as the epoch.
-	 *
-	 * @param string $bucket The refused key.
-	 */
-	#[DataProvider( 'unparsed_buckets' )]
-	public function test_a_bucket_key_that_does_not_parse_has_no_start( string $bucket ): void {
-		$this->expectException( \InvalidArgumentException::class );
-		Stats_Store::bucket_start( $bucket );
-	}
-
-	/** @return array<string,array{0:string}> */
-	public static function unparsed_buckets(): array {
-		return [
-			'garbage'       => [ 'kakapo' ],
-			'trailing data' => [ '2026-10-04-13-35x' ],
-			'an hour key'   => [ '2026-10-04-13' ],
-			'empty'         => [ '' ],
-		];
-	}
-
-	/**
-	 * `tests/fixtures/bucket-selection.json` lists the selections both
-	 * languages spell: a canonical spelling and its keys read each other
-	 * back, a loose spelling parses to sorted keys with no repeat, and a
-	 * malformed one is refused.
-	 *
-	 * @return array<string,mixed>
-	 */
-	private static function selection_cases(): array {
-		return Core::arr( \json_decode( (string) \file_get_contents( __DIR__ . '/../fixtures/bucket-selection.json' ), true ) );
-	}
-
-	/** @return array<string,array{0:list<string>,1:string}> */
-	public static function canonical_selections(): array {
-		$out = [];
-		foreach ( Core::arr( self::selection_cases()['canonical'] ?? null ) as $case ) {
-			$case                                     = Core::arr( $case );
-			$out[ Core::as_string( $case['spelling'] ) ] = [ \array_values( \array_map( Core::as_string( ... ), Core::arr( $case['keys'] ) ) ), Core::as_string( $case['spelling'] ) ];
-		}
-		return $out;
-	}
-
-	/** @return array<string,array{0:string,1:list<string>}> */
-	public static function loose_selections(): array {
-		$out = [];
-		foreach ( Core::arr( self::selection_cases()['normalizes'] ?? null ) as $case ) {
-			$case                                     = Core::arr( $case );
-			$out[ Core::as_string( $case['spelling'] ) ] = [ Core::as_string( $case['spelling'] ), \array_values( \array_map( Core::as_string( ... ), Core::arr( $case['keys'] ) ) ) ];
-		}
-		return $out;
-	}
-
-	/** @return array<string,array{0:string}> */
-	public static function refused_selections(): array {
-		$out = [];
-		foreach ( Core::arr( self::selection_cases()['refused'] ?? null ) as $spelling ) {
-			$out[ Core::as_string( $spelling ) ] = [ Core::as_string( $spelling ) ];
-		}
-		return $out;
-	}
-
-	/**
-	 * A canonical spelling parses to its keys, and its keys spell it.
-	 *
-	 * @param list<string> $keys     The selected bucket keys, ascending.
-	 * @param string       $spelling Their canonical spelling.
-	 */
-	#[DataProvider( 'canonical_selections' )]
-	public function test_a_canonical_selection_round_trips( array $keys, string $spelling ): void {
-		$this->assertSame( $keys, Stats_Store::bucket_selection( $spelling ) );
-		$this->assertSame( $spelling, Stats_Store::bucket_spelling( $keys ) );
-	}
-
-	/**
-	 * A loose spelling parses to its keys ascending, each once.
-	 *
-	 * @param string       $spelling A non-canonical spelling.
-	 * @param list<string> $keys     The keys it names.
-	 */
-	#[DataProvider( 'loose_selections' )]
-	public function test_a_loose_selection_normalizes( string $spelling, array $keys ): void {
-		$this->assertSame( $keys, Stats_Store::bucket_selection( $spelling ) );
-	}
-
-	/**
-	 * A spelling naming no five-minute key, a run ending before it starts,
-	 * or an empty run is refused.
-	 *
-	 * @param string $spelling The refused spelling.
-	 */
-	#[DataProvider( 'refused_selections' )]
-	public function test_a_malformed_selection_is_refused( string $spelling ): void {
-		$this->expectException( \InvalidArgumentException::class );
-		Stats_Store::bucket_selection( $spelling );
-	}
-
-	/**
-	 * A selection holds at most `MAX_READ_BUCKETS` keys: a run of 288 parses,
-	 * and one bucket more is refused naming the limit, before any run that
-	 * long is enumerated.
-	 */
-	public function test_a_selection_past_the_read_limit_is_refused(): void {
-		$first = \gmmktime( 6, 40, 0, 10, 3, 2026 );
-		$last  = Stats_Store::bucket_key( $first + ( Stats_Store::MAX_READ_BUCKETS - 1 ) * Stats_Store::BUCKET_SECONDS );
-
-		$this->assertCount( 288, Stats_Store::bucket_selection( "2026-10-03-06-40..{$last}" ) );
-		foreach ( [ '2026-10-03-06-35..' . $last, "2026-10-03-06-40..{$last},2026-10-05-23-55", '2026-10-03-06-40..2126-10-03-06-40' ] as $over ) {
-			try {
-				Stats_Store::bucket_selection( $over );
-				$this->fail( "{$over} parsed" );
-			} catch ( \InvalidArgumentException $e ) {
-				$this->assertSame( 'bucket selection holds more than 288 buckets', $e->getMessage() );
-			}
-		}
-	}
-
-	/** The read limit is the one the shared fixture names, which JS holds to. */
-	public function test_the_read_limit_is_the_fixtures(): void {
-		$this->assertSame( self::selection_cases()['max'] ?? null, Stats_Store::MAX_READ_BUCKETS );
-	}
-
-	/** A refusal names the piece of the spelling it could not read. */
-	public function test_a_refused_selection_names_what_it_could_not_read(): void {
-		foreach ( [
-			'2026-10-05-16-55,2026-10-05-16-57' => 'bucket 2026-10-05-16-57 must be a five-minute key, Y-m-d-H-i in UTC',
-			'2026-10-05-16-55,kea'              => 'bucket kea must be a five-minute key, Y-m-d-H-i in UTC',
-			'2026-10-05-17-10..2026-10-05-16-55' => 'bucket run 2026-10-05-17-10..2026-10-05-16-55 ends before it starts',
-		] as $spelling => $message ) {
-			try {
-				Stats_Store::bucket_selection( $spelling );
-				$this->fail( "{$spelling} parsed" );
-			} catch ( \InvalidArgumentException $e ) {
-				$this->assertSame( $message, $e->getMessage() );
-			}
-		}
-	}
-
 	/**
 	 * The buckets a chart draws are the 288 ending at the one `$now` falls
 	 * in, newest first, whatever the retention window.
@@ -865,49 +687,11 @@ class StatsStoreTest extends TestCase {
 		);
 	}
 
-	public function test_a_urls_path_drops_its_scheme_and_host_alone(): void {
-		// An authority with no path is the case that bites: everything after
-		// the host is the path, or the host swallows a query.
-		$this->assertSame(
-			[ '/reports', '/?cache-cozy', '?q=1', '' ],
-			\array_map(
-				[ Stats_Store::class, 'path_of' ],
-				[ 'https://alpha.test/reports', 'https://alpha.test/?cache-cozy', 'https://alpha.test?q=1', 'https://alpha.test' ]
-			)
-		);
-	}
-
-	/** Every logged URL carries its host, so a hostless one is refused, never read as a bare path. */
-	public function test_a_hostless_url_is_refused(): void {
-		foreach ( [ '/bare-7731', '/r?to=https://kea.test/aisle-9', 'https:///no-host-7731', '' ] as $url ) {
-			foreach ( [ 'path_of', 'server_of' ] as $reader ) {
-				try {
-					Stats_Store::$reader( $url );
-					$this->fail( "{$reader}( '{$url}' ) answered" );
-				} catch ( \InvalidArgumentException $e ) {
-					$this->assertStringContainsString( "no host: '{$url}'", $e->getMessage() );
-				}
-			}
-		}
-	}
-
-	/** A URL's server is its host. */
-	public function test_a_urls_server_is_its_host(): void {
-		$this->assertSame( 'kea.test', Stats_Store::server_of( 'https://kea.test/sku-41?q=9' ) );
-		$this->assertSame( 'wren.test', Stats_Store::server_of( 'http://wren.test?q=3' ) );
-		$this->assertSame( 'kea.test', Stats_Store::server_of( 'https://kea.test' ) );
-	}
-
 	/** A row cut to its path is searched as it is; one kept whole is a URL, searched by its path. */
 	public function test_a_rows_search_path_is_its_url_path(): void {
 		$this->assertSame( '/kakapo-4417?q=9', Stats_Store::row_search_path( '/kakapo-4417?q=9' ) );
 		$this->assertSame( '/kakapo-4417', Stats_Store::row_search_path( 'http://kea.test/kakapo-4417' ) );
 		$this->assertSame( '?q=3', Stats_Store::row_search_path( 'https://kea.test?q=3' ) );
-	}
-
-	public function test_a_mean_over_no_requests_is_null(): void {
-		$this->assertNull( Stats_Store::mean( 12.5, 0 ) );
-		$this->assertEqualsWithDelta( 2.5, Stats_Store::mean( 12.5, 5 ), 1e-9 );
 	}
 
 	public function test_a_leaderboard_of_no_profiled_request_has_no_means(): void {

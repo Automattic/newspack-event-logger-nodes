@@ -15,6 +15,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Event_Logger_Nodes\App\Ask_Assembler;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Durable_Arm;
 use Newspack_Nodes\Table_Client;
@@ -98,7 +99,7 @@ class Stats_Store {
 	 * slotted hour value takes no byte cap: its count caps bound each slot
 	 * (decision 35).
 	 */
-	public const ITEM_BUDGET              = 900000;
+	public const ITEM_BUDGET              = Rule_Set::ITEM_BUDGET;
 
 	/**
 	 * Bytes each stored part costs under each serializer, before the strings
@@ -106,7 +107,7 @@ class Stats_Store {
 	 * Measured with twelve-digit counts, doubles at their longest spelling
 	 * and no string repeated, which igbinary would store once; the rest is
 	 * margin. `url_row` includes its hash key, `flame_node` its key in its
-	 * parent's list, and `hook` one name's framing in a rule's hook list.
+	 * parent's list.
 	 */
 	private const OVERHEADS = [
 		self::SERIALIZER_PHP      => [
@@ -114,22 +115,20 @@ class Stats_Store {
 			'lb_category' => 180,
 			'lb_entry'    => 100,
 			'flame_node'  => 130,
-			'hook'        => 20,
 		],
 		self::SERIALIZER_IGBINARY => [
 			'url_row'     => 160,
 			'lb_category' => 56,
 			'lb_entry'    => 44,
 			'flame_node'  => 36,
-			'hook'        => 8,
 		],
 	];
 
 	/** PHP's own `serialize()`: the larger, and what a handle-less estimate assumes. */
-	public const SERIALIZER_PHP = 'php';
+	public const SERIALIZER_PHP = Rule_Set::SERIALIZER_PHP;
 
 	/** igbinary: what a stored value takes where the memcached handle uses it. */
-	public const SERIALIZER_IGBINARY = 'igbinary';
+	public const SERIALIZER_IGBINARY = Rule_Set::SERIALIZER_IGBINARY;
 
 	/** The dimension naming the reporting server — the axis the picker is built from. */
 	public const DIM_SERVER      = 'server';
@@ -418,9 +417,6 @@ class Stats_Store {
 	 */
 	public const NS_URLMAP      = 'urlmap';
 
-	/** Shortest retention window the stats Tables work with, in seconds. */
-	public const MIN_RETENTION_SECONDS = 3600;
-
 	/**
 	 * A stored DIMENSIONAL entry is positional, indexed by these — decision 18's
 	 * shape, as `CAT_MS` below, on the third value to earn it. `{"c":29,"s":1.0,"m":1.0,"t":27}`
@@ -485,7 +481,7 @@ class Stats_Store {
 	 *
 	 * Decision 1. Safe as a URL row key: a url_hash is 12 hex characters.
 	 */
-	public const OTHER_KEY = 'Other';
+	public const OTHER_KEY = Request_Builder_Node::METHOD_OTHER;
 
 	/** The overflow row's worker half — see `other_key()`. */
 	public const OTHER_WORKER_KEY = 'Other:worker';
@@ -548,13 +544,6 @@ class Stats_Store {
 	public const ROW_PATH        = 14;
 
 	/**
-	 * Longest `ROW_PATH` kept, in bytes, `…` included. The hash is the
-	 * identity and the path is display, so a query-string flood cannot grow
-	 * one row past it.
-	 */
-	public const MAX_PATH_BYTES = 1024;
-
-	/**
 	 * A ranked-list entry is POSITIONAL (decision 18): the hash, the row's
 	 * fourteen numbers `ROW_COUNT`..`ROW_WORKER` and never `ROW_PATH`, and on
 	 * the `url` lists alone the URL it ranked by: its `ROW_PATH` on a
@@ -615,13 +604,13 @@ class Stats_Store {
 	];
 
 	/** Bucket width in minutes — the granularity every bucketed namespace is keyed at. */
-	private const BUCKET_MINUTES = 5;
+	private const BUCKET_MINUTES = Bucket::SECONDS / 60;
 
 	/** The same width in seconds — the geometry every rate over these buckets divides by. */
-	public const BUCKET_SECONDS = self::BUCKET_MINUTES * 60;
+	public const BUCKET_SECONDS = Bucket::SECONDS;
 
 	/** Seconds an hour key spans. */
-	public const HOUR_SECONDS = 3600;
+	public const HOUR_SECONDS = Bucket::HOUR_SECONDS;
 
 	/**
 	 * Five-minute slots one chart hour value holds (decision 35), positional
@@ -638,7 +627,7 @@ class Stats_Store {
 	 * round: a point read for one URL costs a single shard, and no value
 	 * approaches `ITEM_BUDGET`, which one unsharded blob exceeds.
 	 */
-	public const MAX_READ_BUCKETS = 288;
+	public const MAX_READ_BUCKETS = Bucket::MAX_SELECTION;
 
 	/**
 	 * Hour keys a chart reads: the MAX_READ_BUCKETS slots it draws span 24
@@ -1749,6 +1738,17 @@ class Stats_Store {
 	}
 
 	/**
+	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC. Lexical order is
+	 * chronological order, which is what lets expiry compare keys with `<`
+	 * against a cutoff.
+	 *
+	 * @param int $timestamp Unix timestamp.
+	 */
+	public static function bucket_key( int $timestamp ): string {
+		return Bucket::key( Bucket::id( $timestamp ) );
+	}
+
+	/**
 	 * The URLs `$server_keys` filed rows for in any of `$buckets`, each named
 	 * once with the hours whose buckets each server's set named it in, in
 	 * `$buckets` order: a row is read per hour key, so the hour is all a
@@ -1902,50 +1902,12 @@ class Stats_Store {
 	}
 
 	/**
-	 * The PATH of a URL: what a search matches, with no scheme or host.
-	 *
-	 * The server is the picker's question, so a term matching the host would
-	 * make one box ask the dropdown's. The authority ends at whichever
-	 * delimiter comes first, so an authority with no path keeps its query on
-	 * the path.
+	 * The PATH of a URL; see `Url_Parts::path_of()`.
 	 *
 	 * @param string $url A logged URL, which carries its host.
-	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public static function path_of( string $url ): string {
-		[ $offset, $length ] = self::authority( $url );
-		return \substr( $url, $offset + $length );
-	}
-
-	/**
-	 * The server a URL was logged by: its host, which the producer writes
-	 * from the server name it serves under.
-	 *
-	 * @param string $url A logged URL, which carries its host.
-	 * @throws \InvalidArgumentException When the URL has no host.
-	 */
-	public static function server_of( string $url ): string {
-		return \substr( $url, ...self::authority( $url ) );
-	}
-
-	/**
-	 * Where a URL's host lies, `[ offset, length ]`: after a `://` that
-	 * comes before any `/`, `?` or `#`, and up to the first of them.
-	 *
-	 * @param string $url A logged URL, which carries its host.
-	 * @return array{0:int,1:int}
-	 * @throws \InvalidArgumentException When the URL has no host: no `://`
-	 *                                   ahead of its path, or an empty host.
-	 */
-	private static function authority( string $url ): array {
-		$at = \strpos( $url, '://' );
-		if ( false !== $at && $at <= \strcspn( $url, '/?#' ) ) {
-			$length = \strcspn( $url, '/?#', $at + 3 );
-			if ( 0 < $length ) {
-				return [ $at + 3, $length ];
-			}
-		}
-		throw new \InvalidArgumentException( "Stats_Store: URL has no host: '{$url}'" );
+		return Url_Parts::path_of( $url );
 	}
 
 	/**
@@ -2066,15 +2028,13 @@ class Stats_Store {
 	}
 
 	/**
-	 * A mean over the things that HAVE a value. Dividing by every request
-	 * instead would understate it by the unmeasured fraction, and the mean
-	 * of none is null: not measured, never 0.
+	 * A mean over the things that HAVE a value; see `Ask_Assembler::mean()`.
 	 *
 	 * @param float $sum Summed values.
 	 * @param int   $n   How many contributed one.
 	 */
 	public static function mean( float $sum, int $n ): ?float {
-		return $n > 0 ? $sum / $n : null;
+		return Ask_Assembler::mean( $sum, $n );
 	}
 
 	/**
@@ -2226,22 +2186,13 @@ class Stats_Store {
 	}
 
 	/**
-	 * The `ROW_PATH` of a URL served by `$server`: what the key does not
-	 * already say. An https URL whose authority is the server keeps only its
-	 * path, which `join_url()` joins back as `https://{server}{path}`; any
-	 * other URL, an http one, is kept whole, so no reader shows a scheme it
-	 * was not. Cut to `MAX_PATH_BYTES`, the last of them an ellipsis.
+	 * The `ROW_PATH` of a URL served by `$server`; see `Url_Parts::row_path()`.
 	 *
 	 * @param string $url    The stored URL.
 	 * @param string $server The server whose key the row is filed under.
 	 */
 	public static function row_path( string $url, string $server ): string {
-		$origin = 'https://' . $server;
-		$path   = \str_starts_with( $url, $origin . '/' ) ? \substr( $url, \strlen( $origin ) ) : $url;
-		if ( \strlen( $path ) <= self::MAX_PATH_BYTES ) {
-			return $path;
-		}
-		return \mb_strcut( $path, 0, self::MAX_PATH_BYTES - \strlen( '…' ), 'UTF-8' ) . '…';
+		return Url_Parts::row_path( $url, $server );
 	}
 
 	/**
@@ -2997,116 +2948,58 @@ class Stats_Store {
 	}
 
 	/**
+	 * The server a URL was logged by; see `Url_Parts::server_of()`.
+	 *
+	 * @param string $url A logged URL, which carries its host.
+	 */
+	public static function server_of( string $url ): string {
+		return Url_Parts::server_of( $url );
+	}
+
+	/**
 	 * The bucket keys a selection's spelling names, ascending, each once.
 	 *
-	 * A spelling is comma-separated runs, each `start` or `start..end` over
-	 * `bucket_key()`s; `bucket_spelling()` writes the canonical one, which
-	 * the dashboard's address bar, `--bucket`, `filters.bucket` and the MCP
-	 * `bucket` argument all carry. '' selects nothing. A run stops expanding
-	 * one bucket past the limit, so no spelling enumerates more.
-	 *
-	 * @param string $spelling A selection's spelling.
+	 * @param string $spelling A selection's spelling; see `Bucket::selection()`.
 	 * @return list<string>
-	 * @throws \InvalidArgumentException On a piece that is no five-minute key,
-	 *                                   a run ending before it starts, or more
-	 *                                   than `MAX_READ_BUCKETS` buckets.
+	 * @throws \InvalidArgumentException On a spelling `Bucket::selection()` refuses.
 	 */
 	public static function bucket_selection( string $spelling ): array {
-		if ( '' === $spelling ) {
-			return [];
-		}
 		$keys = [];
-		foreach ( \explode( ',', $spelling ) as $run ) {
-			$ends  = \explode( '..', $run, 2 );
-			$first = self::selected_start( $ends[0] );
-			$last  = self::selected_start( $ends[1] ?? $ends[0] );
-			if ( $last < $first ) {
-				throw new \InvalidArgumentException( "bucket run {$run} ends before it starts" );
-			}
-			for ( $at = $first; $at <= $last && \count( $keys ) <= self::MAX_READ_BUCKETS; $at += self::BUCKET_SECONDS ) {
-				$keys[ self::bucket_key( $at ) ] = true;
-			}
-			if ( \count( $keys ) > self::MAX_READ_BUCKETS ) {
-				throw new \InvalidArgumentException( 'bucket selection holds more than ' . self::MAX_READ_BUCKETS . ' buckets' );
+		foreach ( Bucket::selection( $spelling, \PHP_INT_MAX ) as [ $first, $last ] ) {
+			for ( $bucket = $first; $bucket <= $last; $bucket++ ) {
+				$keys[] = Bucket::key( $bucket );
 			}
 		}
-		\ksort( $keys, \SORT_STRING );
-		return \array_map( 'strval', \array_keys( $keys ) );
+		return $keys;
 	}
 
 	/**
-	 * Where one key of a spelling opens, or a refusal naming it.
-	 *
-	 * @param string $key A piece of a spelling.
-	 * @throws \InvalidArgumentException On a piece that is no `bucket_key()`.
-	 */
-	private static function selected_start( string $key ): int {
-		try {
-			$start = self::bucket_start( $key );
-		} catch ( \InvalidArgumentException ) {
-			$start = null;
-		}
-		if ( null === $start || self::bucket_key( $start ) !== $key ) {
-			throw new \InvalidArgumentException( "bucket {$key} must be a five-minute key, Y-m-d-H-i in UTC" );
-		}
-		return $start;
-	}
-
-	/**
-	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
-	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
-	 * order, which is what lets expiry compare keys with `<` against a cutoff.
-	 *
-	 * @param int $timestamp Unix timestamp.
-	 */
-	public static function bucket_key( int $timestamp ): string {
-		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
-	}
-
-	/**
-	 * A selection's canonical spelling: its ascending keys as runs, each
-	 * adjacent pair merged, a lone bucket spelled alone.
+	 * A selection's canonical spelling.
 	 *
 	 * @param list<string> $keys Bucket keys, ascending, each once.
 	 */
 	public static function bucket_spelling( array $keys ): string {
-		$runs = [];
-		$last = null;
-		foreach ( $keys as $key ) {
-			$start = self::bucket_start( $key );
-			if ( null !== $last && $start === $last + self::BUCKET_SECONDS ) {
-				$runs[ \array_key_last( $runs ) ][] = $key;
-			} else {
-				$runs[] = [ $key ];
-			}
-			$last = $start;
-		}
-		return \implode( ',', \array_map( static fn ( array $run ): string => 1 === \count( $run ) ? $run[0] : $run[0] . '..' . \end( $run ), $runs ) );
+		return Bucket::spelling( Bucket::selection( \implode( ',', $keys ), \PHP_INT_MAX ) );
 	}
 
 	/**
 	 * The unix second a bucket opens: `bucket_key()` read back, in UTC.
 	 *
 	 * @param string $bucket A `Y-m-d-H-i` bucket key.
-	 * @throws \InvalidArgumentException On a key that does not parse.
+	 * @throws \InvalidArgumentException On a key `Bucket::of_key()` refuses.
 	 */
 	public static function bucket_start( string $bucket ): int {
-		$start = \DateTimeImmutable::createFromFormat( '!Y-m-d-H-i', $bucket, new \DateTimeZone( 'UTC' ) );
-		if ( false === $start ) {
-			throw new \InvalidArgumentException( "Stats_Store: not a Y-m-d-H-i bucket key: '{$bucket}'" );
-		}
-		return $start->getTimestamp();
+		return Bucket::of_key( $bucket ) * Bucket::SECONDS;
 	}
 
 	/**
-	 * A measured figure as a reply or a brief carries it — a mean, or a URL
-	 * row's `min_ms` or `max_ms` — the number, or null where nothing was
-	 * measured, which a reader shows as unmeasured, never as 0.
+	 * A measured figure as a reply or a brief carries it; see
+	 * `Ask_Assembler::measured_figure()`.
 	 *
 	 * @param mixed $value The figure a row or a brief holds.
 	 */
 	public static function measured_figure( mixed $value ): ?float {
-		return null === $value ? null : Core::num_float( $value );
+		return Ask_Assembler::measured_figure( $value );
 	}
 
 	/**
@@ -3227,7 +3120,7 @@ class Stats_Store {
 	 * stats Table stores with — the one place a cap learns it.
 	 *
 	 * @param string $part An `OVERHEADS` part: `url_row`, `lb_category`,
-	 *                     `lb_entry`, `flame_node` or `hook`.
+	 *                     `lb_entry` or `flame_node`.
 	 * @throws \LogicException When no estimate names the part.
 	 */
 	public static function overhead( string $part ): int {

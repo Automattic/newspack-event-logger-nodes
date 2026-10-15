@@ -39,6 +39,7 @@ use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Settings_Event_Writer;
 use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Bootstrap;
@@ -5506,7 +5507,7 @@ class PerformanceCITest extends TestCase {
 		for ( $i = 0; $i < 300; $i++ ) {
 			$count = 999_999_999_999 - $i;
 			$rows[ \sprintf( '%012x', $i ) ] = [
-				'url'   => "https://{$server}" . \str_pad( "/{$i}/", Stats_Store::MAX_PATH_BYTES, 'x' ),
+				'url'   => "https://{$server}" . \str_pad( "/{$i}/", Url_Parts::MAX_PATH_BYTES, 'x' ),
 				'count' => $count, 'timed_count' => $count, 'count_2xx' => $count, 'count_3xx' => $count,
 				'count_4xx' => $count, 'count_5xx' => $count, 'sum_ms' => $wide, 'sum_peak_mb' => $wide,
 				'min_ms' => $wide, 'max_ms' => $wide, 'max_peak_mb' => $wide, 'last_seen' => self::tick(),

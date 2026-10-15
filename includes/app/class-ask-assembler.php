@@ -30,7 +30,6 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Rule;
-use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Core;
 
 \defined( 'ABSPATH' ) || exit;
@@ -596,8 +595,8 @@ class Ask_Assembler {
 				? [ 'errors' => Core::num_int( $stats['errors'] ?? null ) ]
 				: [
 					'count'       => Core::num_int( $stats['count'] ?? 0 ),
-					'avg_ms'      => Stats_Store::measured_figure( $stats['avg_ms'] ?? null ),
-					'max_ms'      => Stats_Store::measured_figure( $stats['max_ms'] ?? null ),
+					'avg_ms'      => self::measured_figure( $stats['avg_ms'] ?? null ),
+					'max_ms'      => self::measured_figure( $stats['max_ms'] ?? null ),
 					'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 				],
 			...$summary,
@@ -717,15 +716,27 @@ class Ask_Assembler {
 			'listed'       => \count( $requests ),
 			'timeouts'     => $timeouts,
 			'fatals'       => $fatals,
-			'fatal_avg_ms' => Stats_Store::mean( \array_sum( $fatal_ms ), \count( $fatal_ms ) ),
+			'fatal_avg_ms' => self::mean( \array_sum( $fatal_ms ), \count( $fatal_ms ) ),
 			'fatal_max_ms' => [] === $fatal_ms ? null : \max( $fatal_ms ),
-			'avg_peak_mb'  => Stats_Store::mean( \array_sum( $peaks ), \count( $peaks ) ),
+			'avg_peak_mb'  => self::mean( \array_sum( $peaks ), \count( $peaks ) ),
 			'max_peak_mb'  => [] === $peaks ? null : \max( $peaks ),
 			'first_at'     => [] === $starts ? null : \min( $starts ),
 			'last_at'      => [] === $starts ? null : \max( $starts ),
 			// An object even when keyed 0..n, which would encode as a list.
 			'status_codes' => (object) $codes,
 		];
+	}
+
+	/**
+	 * A mean over the things that HAVE a value. Dividing by every request
+	 * instead would understate it by the unmeasured fraction, and the mean
+	 * of none is null: not measured, never 0.
+	 *
+	 * @param float $sum Summed values.
+	 * @param int   $n   How many contributed one.
+	 */
+	public static function mean( float $sum, int $n ): ?float {
+		return $n > 0 ? $sum / $n : null;
 	}
 
 	/**
@@ -838,27 +849,27 @@ class Ask_Assembler {
 				continue;
 			}
 			$row    = Core::arr( $row );
-			$time   = Stats_Store::measured_figure( $row['time'] ?? null );
+			$time   = self::measured_figure( $row['time'] ?? null );
 			$total += $time ?? 0.0;
 			if ( (string) $key !== $name ) {
 				$others[] = [
 					'name'        => (string) $key,
 					'avg_time_ms' => $time,
-					'avg_count'   => Stats_Store::measured_figure( $row['count'] ?? null ),
+					'avg_count'   => self::measured_figure( $row['count'] ?? null ),
 				];
 			}
 		}
 		\usort( $others, self::by_time( ... ) );
 
 		$mine = Core::arr( $rows[ $name ] );
-		$time = Stats_Store::measured_figure( $mine['time'] ?? null );
+		$time = self::measured_figure( $mine['time'] ?? null );
 		return \array_merge(
 			[
 				'subject'     => 'category',
 				'scope'       => $scope,
 				'name'        => $name,
 				'avg_time_ms' => $time,
-				'avg_count'   => Stats_Store::measured_figure( $mine['count'] ?? null ),
+				'avg_count'   => self::measured_figure( $mine['count'] ?? null ),
 				'samples'     => $samples ?? Core::num_int( $mine['samples'] ?? 0 ),
 				'share'       => null === $time ? null : ( $total > 0.0 ? $time / $total : 0.0 ),
 				'others'      => \array_slice( $others, 0, self::TOP_SPANS ),
@@ -906,8 +917,8 @@ class Ask_Assembler {
 			'stats'      => null === $totals ? null : [
 				'urls'                => Core::num_int( $totals['urls'] ?? 0 ),
 				'requests'            => Core::num_int( $totals['requests'] ?? 0 ),
-				'avg_ms'              => Stats_Store::measured_figure( $totals['avg_ms'] ?? null ),
-				'avg_peak_mb'         => Stats_Store::measured_figure( $totals['avg_peak_mb'] ?? null ),
+				'avg_ms'              => self::measured_figure( $totals['avg_ms'] ?? null ),
+				'avg_peak_mb'         => self::measured_figure( $totals['avg_peak_mb'] ?? null ),
 				// This hour's closed buckets, or the last hour until :05.
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
 			] + self::errors_of( $totals ),
@@ -971,8 +982,8 @@ class Ask_Assembler {
 			$row    = Core::arr( $row );
 			$rows[] = [
 				'name'        => (string) $name,
-				'avg_time_ms' => Stats_Store::measured_figure( $row['time'] ?? null ),
-				'avg_count'   => Stats_Store::measured_figure( $row['count'] ?? null ),
+				'avg_time_ms' => self::measured_figure( $row['time'] ?? null ),
+				'avg_count'   => self::measured_figure( $row['count'] ?? null ),
 			];
 		}
 		\usort( $rows, self::by_time( ... ) );
@@ -1011,8 +1022,8 @@ class Ask_Assembler {
 				? 'traffic from URLs beyond the per-shard cap'
 				: Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
 			'count'  => Core::num_int( $row['count'] ?? 0 ),
-			'avg_ms' => Stats_Store::measured_figure( $row['avg_ms'] ?? null ),
-			'max_ms' => Stats_Store::measured_figure( $row['max_ms'] ?? null ),
+			'avg_ms' => self::measured_figure( $row['avg_ms'] ?? null ),
+			'max_ms' => self::measured_figure( $row['max_ms'] ?? null ),
 		] + self::errors_of( $row );
 	}
 
@@ -1025,5 +1036,16 @@ class Ask_Assembler {
 	 */
 	private static function errors_of( array $counted ): array {
 		return isset( $counted['errors'] ) ? [ 'errors' => Core::num_int( $counted['errors'] ) ] : [];
+	}
+
+	/**
+	 * A measured figure as a reply or a brief carries it — a mean, or a URL
+	 * row's `min_ms` or `max_ms` — the number, or null where nothing was
+	 * measured, which a reader shows as unmeasured, never as 0.
+	 *
+	 * @param mixed $value The figure a row or a brief holds.
+	 */
+	public static function measured_figure( mixed $value ): ?float {
+		return null === $value ? null : Core::num_float( $value );
 	}
 }

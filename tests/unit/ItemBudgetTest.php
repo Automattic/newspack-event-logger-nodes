@@ -6,6 +6,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 
@@ -146,7 +147,7 @@ class ItemBudgetTest extends TestCase {
 		// igbinary, and nothing but bytes to cap them.
 		$rows = [];
 		for ( $i = 0; $i < 3000; $i++ ) {
-			$rows[ \sprintf( '%012x', $i ) ] = self::wide_row( self::wide( "/{$i}/", Stats_Store::MAX_PATH_BYTES ) );
+			$rows[ \sprintf( '%012x', $i ) ] = self::wide_row( self::wide( "/{$i}/", Url_Parts::MAX_PATH_BYTES ) );
 		}
 		$rows[ Stats_Store::OTHER_KEY ]        = self::wide_row( '' );
 		$rows[ Stats_Store::OTHER_WORKER_KEY ] = self::wide_row( '', true );
@@ -162,7 +163,7 @@ class ItemBudgetTest extends TestCase {
 		self::estimate_for( $serializer );
 		$rows = [];
 		for ( $i = 0; $i < 1500; $i++ ) {
-			$rows[ \sprintf( '%012x', $i ) ] = self::plain_row( 3000 - $i, self::wide( "/{$i}/", Stats_Store::MAX_PATH_BYTES ) );
+			$rows[ \sprintf( '%012x', $i ) ] = self::plain_row( 3000 - $i, self::wide( "/{$i}/", Url_Parts::MAX_PATH_BYTES ) );
 		}
 		$total = \array_sum( \array_column( $rows, Stats_Store::ROW_COUNT ) );
 
@@ -283,7 +284,7 @@ class ItemBudgetTest extends TestCase {
 		$servers = [];
 		foreach ( [ self::SEED_SERVER, $longest ] as $at => $server ) {
 			for ( $i = 0; $i < 2 * Stats_Store::URL_RANK_N_HOUR; $i++ ) {
-				$servers[ $server ][ \sprintf( '%012x', $at << 20 | $i ) ] = self::wide_row( self::wide( "/{$i}/", Stats_Store::MAX_PATH_BYTES ) );
+				$servers[ $server ][ \sprintf( '%012x', $at << 20 | $i ) ] = self::wide_row( self::wide( "/{$i}/", Url_Parts::MAX_PATH_BYTES ) );
 			}
 		}
 
@@ -304,7 +305,7 @@ class ItemBudgetTest extends TestCase {
 	// ----- url_row_h: counted, twelve slots a family -----
 
 	public function test_a_url_row_hour_of_every_slot_and_the_longest_path_fits_the_item_budget(): void {
-		$path  = self::wide( '/kea/', Stats_Store::MAX_PATH_BYTES );
+		$path  = self::wide( '/kea/', Url_Parts::MAX_PATH_BYTES );
 		$value = [];
 		foreach ( [ false, true ] as $worker ) {
 			foreach ( Stats_Store::buckets_in_hour( '2026-09-22-10' ) as $bucket ) {
@@ -330,7 +331,7 @@ class ItemBudgetTest extends TestCase {
 		$this->assertIsArray( $name );
 		self::assert_fits_both( $name, 'a url name' );
 		$this->assertSame( Stats_Store::row_path( $url, self::SEED_SERVER ), $name[1], 'the name takes the row\'s path cap' );
-		$this->assertLessThanOrEqual( Stats_Store::MAX_PATH_BYTES, \strlen( $name[1] ) );
+		$this->assertLessThanOrEqual( Url_Parts::MAX_PATH_BYTES, \strlen( $name[1] ) );
 	}
 
 	// ----- dim_h, url_dim_h, categories_h, url_cat_h: counted per slot -----

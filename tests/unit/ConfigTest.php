@@ -145,8 +145,8 @@ class ConfigTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
 		Config::reset();
 
-		$this->assertSame( 3600, \Newspack_Event_Logger_Nodes\Stats_Store::MIN_RETENTION_SECONDS );
-		$this->assertSame( \Newspack_Event_Logger_Nodes\Stats_Store::MIN_RETENTION_SECONDS, Config::stats_retention_seconds() );
+		$this->assertSame( 3600, Config::MIN_RETENTION_SECONDS );
+		$this->assertSame( Config::MIN_RETENTION_SECONDS, Config::stats_retention_seconds() );
 	}
 
 	/**

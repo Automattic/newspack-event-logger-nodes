@@ -15,7 +15,6 @@ use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Table_Node;
-use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 use PHPUnit\Framework\Attributes\DataProviderExternal;
 
@@ -649,12 +648,17 @@ final class RuleSetTest extends TestCase {
 	private static function widest_hooks( string $serializer, int $extra = 0 ): array {
 		\Newspack_Event_Logger_Nodes\Tests\TestCase::estimate_for( $serializer );
 		$name  = 200;
-		$count = \intdiv( Stats_Store::ITEM_BUDGET, Stats_Store::overhead( 'hook' ) + $name ) + $extra;
+		$count = \intdiv( Rule_Set::ITEM_BUDGET, ( Rule_Set::SERIALIZER_IGBINARY === $serializer ? 8 : 20 ) + $name ) + $extra;
 		$hooks = [];
 		for ( $i = 0; $i < $count; $i++ ) {
 			$hooks[] = \str_pad( "hook_{$i}_", $name, 'x' );
 		}
 		return $hooks;
+	}
+
+	/** One cache item holds 900,000 bytes of hooks, under memcached's 1,048,576. */
+	public function test_the_item_budget_sits_under_memcacheds_item(): void {
+		$this->assertSame( 900000, Rule_Set::ITEM_BUDGET );
 	}
 
 	#[DataProviderExternal( \Newspack_Event_Logger_Nodes\Tests\TestCase::class, 'serializers' )]
@@ -665,10 +669,10 @@ final class RuleSetTest extends TestCase {
 		$cached = $this->hooks_table()->lookup( 'w1' );
 
 		$this->assertSame( $hooks, $cached );
-		$bytes = Stats_Store::SERIALIZER_IGBINARY === $serializer
+		$bytes = Rule_Set::SERIALIZER_IGBINARY === $serializer
 			? \strlen( (string) \igbinary_serialize( $cached ) )
 			: \strlen( \serialize( $cached ) );
-		$this->assertLessThanOrEqual( Stats_Store::ITEM_BUDGET, $bytes );
+		$this->assertLessThanOrEqual( Rule_Set::ITEM_BUDGET, $bytes );
 	}
 
 	#[DataProviderExternal( \Newspack_Event_Logger_Nodes\Tests\TestCase::class, 'serializers' )]
