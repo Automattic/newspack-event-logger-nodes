@@ -172,11 +172,14 @@ describe( 'useRequestLogGraph — exospine + page link wiring', () => {
 		);
 	} );
 
-	test( 'the request log adds its glob as a source on the page link', async () => {
+	test( 'the request log attaches to its glob on the page link', async () => {
 		renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );
 		expect( Core.node( LINK ).sources ).toEqual( [
-			{ stamp: 'completed.*', target: TEE },
+			{ stamp: 'completed.*', target: `${ LINK }:completed.*` },
+		] );
+		expect( Core.node( `${ LINK }:completed.*` ).target ).toEqual( [
+			TEE,
 		] );
 	} );
 
@@ -203,11 +206,8 @@ describe( 'useRequestLogGraph — exospine + page link wiring', () => {
 		expect( tee ).toBeTruthy();
 		expect( tee.constructor.name ).toBe( 'TeeNode' );
 		expect( tee.sink ).toBe( interpreter );
-		// The link routes this graph's frames to the Tee, which fans to the view.
-		expect( Core.node( LINK ).sources ).toContainEqual( {
-			stamp: 'completed.*',
-			target: TEE,
-		} );
+		// The glob's Tee on the link fans to this graph's Tee, then the view.
+		expect( Core.node( `${ LINK }:completed.*` ).target ).toContain( TEE );
 		expect( tee.target ).toEqual( [ VIEW ] );
 	} );
 

@@ -142,11 +142,14 @@ describe( 'useGyroscopeGraph — exospine + page link wiring', () => {
 		);
 	} );
 
-	test( 'the gyroscope adds its glob as a source on the page link', async () => {
+	test( 'the gyroscope attaches to its glob on the page link', async () => {
 		renderHook( () => useGyroscopeGraph() );
 		await act( async () => {} );
 		expect( Core.node( LINK ).sources ).toEqual( [
-			{ stamp: 'gyroscope.*', target: TEE },
+			{ stamp: 'gyroscope.*', target: `${ LINK }:gyroscope.*` },
+		] );
+		expect( Core.node( `${ LINK }:gyroscope.*` ).target ).toEqual( [
+			TEE,
 		] );
 	} );
 
@@ -172,11 +175,8 @@ describe( 'useGyroscopeGraph — exospine + page link wiring', () => {
 		expect( tee ).toBeTruthy();
 		expect( tee.constructor.name ).toBe( 'TeeNode' );
 		expect( tee.sink ).toBe( interpreter );
-		// The link routes this graph's frames to the Tee, which fans to the view.
-		expect( Core.node( LINK ).sources ).toContainEqual( {
-			stamp: 'gyroscope.*',
-			target: TEE,
-		} );
+		// The glob's Tee on the link fans to this graph's Tee, then the view.
+		expect( Core.node( `${ LINK }:gyroscope.*` ).target ).toContain( TEE );
 		expect( tee.target ).toEqual( [ VIEW ] );
 	} );
 

@@ -15,8 +15,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   php-errors:partition`, where the `make_node` line carried them as
   `<source>=<target>` pairs. A copy of that topology, or a hand-written
   broker, takes the same rewrite: move each pair to an `add_source <source>
-  <target>` line. The bundled stream hooks hand the page link
-  `addSource( stamp, target )` calls. An older substrate refuses both, so the
+  <target>` line. The bundled stream hooks attach each view to the page
+  link with `attachView( stamp, target )`. An older substrate refuses both, so the
   plugin stays dormant below 2.110.0. Deploy the two together: deploying
   the substrate first is not enough this time, because the previous release
   (0.132.x, floor 2.109.0) passes 2.110.0's handshake and then breaks on
