@@ -121,10 +121,8 @@ describe( 'useUrlNavigation', () => {
 		unmount();
 	} );
 
-	// @longform The hash it can answer, it answers; the RID it reports. The
-	// rid alone carries the PARTITION, and selecting a request without one
-	// renders "Could not determine the partition for this request" until the
-	// answer lands — so the caller selects it, with the partition, not here.
+	// @longform The hash it can answer, it answers; the RID it reports, and
+	// the caller resolves it, which answers the URL it was made on.
 	it( 'selects the ?url= it can answer and REPORTS the ?request=', () => {
 		setLocation( 'http://localhost/wp-admin/?url=aaa&request=req_123' );
 		const { result, unmount } = renderHook( () =>
@@ -145,9 +143,7 @@ describe( 'useUrlNavigation', () => {
 		unmount();
 	} );
 
-	// The rid is the more specific key: it answers BOTH the url hash and the
-	// partition. Trusting ?url= alone left the partition unresolved, so the
-	// request detail never fetched and the modal rendered empty. A link
+	// The rid is the more specific key: it answers its own url hash. A link
 	// carrying a rid therefore reports it EVEN when the hash is on this page.
 	it( 'reports the request id even when ?url= is one this page could answer', async () => {
 		setLocation(
@@ -211,7 +207,7 @@ describe( 'useUrlNavigation', () => {
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS )
 		);
-		// Select as the caller does once it has the partition; the bootstrap
+		// Select as the caller does once the rid resolves; the bootstrap
 		// only REPORTS a rid.
 		act( () => result.current.selectRequest( 'r1' ) );
 		expect( result.current.selectedRequest ).toBe( 'r1' );
@@ -227,10 +223,9 @@ describe( 'useUrlNavigation', () => {
 	// ── back/forward to a request ─────────────────────────────────────────
 	//
 	// A popstate carrying a rid re-enters the SAME deep-link path a fresh load
-	// takes. The rid alone carries the partition, so selecting it here rendered
-	// "Could not determine the partition for this request" on every Forward.
+	// takes, so Forward opens a request exactly as a reload does.
 
-	it( 'reports the rid on a popstate to a request instead of selecting it partition-less', async () => {
+	it( 'reports the rid on a popstate to a request instead of selecting it', async () => {
 		const paged = [ { hash: 'zeta7', url: '/deep/zeta' } ];
 		setLocation( 'http://localhost/wp-admin/?url=zeta7' );
 		const { result, unmount } = renderHook( () =>
@@ -267,8 +262,8 @@ describe( 'useUrlNavigation', () => {
 		await act( async () => {
 			window.dispatchEvent( new Event( 'popstate' ) );
 		} );
-		// The caller answers the intent, partition in hand, as the dashboard
-		// does once search_requests replies.
+		// The caller answers the intent, as the dashboard does once
+		// search_requests replies.
 		await act( async () => {
 			result.current.clearDeepLink();
 			result.current.selectRequest( 'q9kfwjrid42' );

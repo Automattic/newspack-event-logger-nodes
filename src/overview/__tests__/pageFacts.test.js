@@ -153,7 +153,6 @@ test( 'a selected request wins over its URL, and carries its findings', () => {
 	const facts = pageFacts( {
 		selectedUrl: { hash: 'aaa', url: '/slow' },
 		selectedRequest: 'rid-1',
-		requestPartition: 2,
 		requestDetail: {
 			duration_ms: 812,
 			status_code: 200,
@@ -163,7 +162,7 @@ test( 'a selected request wins over its URL, and carries its findings', () => {
 	} );
 
 	expect( facts.surface ).toBe( 'request' );
-	expect( facts.request ).toEqual( { rid: 'rid-1', partition: 2 } );
+	expect( facts.request ).toEqual( { rid: 'rid-1' } );
 	expect( facts.duration_ms ).toBe( 812 );
 	expect( facts.findings ).toEqual( [
 		{ kind: 'stopped', title: 'x', severity: 'high' },

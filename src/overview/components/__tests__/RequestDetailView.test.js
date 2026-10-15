@@ -76,6 +76,46 @@ describe( 'RequestDetailView', () => {
 		unmount();
 	} );
 
+	it( 'names its request to the picker by rid alone', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestDetailView, {
+				requestDetail: baseRequest,
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+				rid: 'rid-tieke-3317',
+			} )
+		);
+		expect(
+			container
+				.querySelector( '.event-logger-request-detail' )
+				.getAttribute( 'data-ask' )
+		).toBe( 'request:rid-tieke-3317' );
+		unmount();
+	} );
+
+	it( 'says the flame lookup ran out of time, never that the request is unprofiled', () => {
+		const view = ( flameCut ) =>
+			renderComponent(
+				React.createElement( RequestDetailView, {
+					requestDetail: { ...baseRequest, flame_cut: flameCut },
+					flameData: null,
+					indentedEntries: [ { k: 'leaf', ts: 1 } ],
+					realEntryCount: 1,
+				} )
+			);
+		const cut = view( true );
+		expect( cut.container.textContent ).toContain(
+			'The flame lookup ran out of time, so no trace is shown here; that does not mean none was recorded.'
+		);
+		cut.unmount();
+		const whole = view( false );
+		expect( whole.container.textContent ).not.toContain(
+			'ran out of time'
+		);
+		whole.unmount();
+	} );
+
 	it( 'renders URL, time, duration, memory, status', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( RequestDetailView, {

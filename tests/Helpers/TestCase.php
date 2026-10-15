@@ -7,6 +7,9 @@ use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 
 abstract class TestCase extends RuntimeTestCase {
 
+	/** The Row_Table `flame-builder.tsl` declares with the Flame_Facts schema. */
+	protected const FACTS_TABLE = 'flame-facts';
+
 	/**
 	 * Scratch tree the `tests/configs/logging-*.php` configs point at: this
 	 * process's base, `NEWSPACK_TEST_BASE_DIR`, with `-logging` after it.
@@ -71,16 +74,16 @@ abstract class TestCase extends RuntimeTestCase {
 			$router = new \Newspack_Nodes\Router_Node();
 			$router->name( \Newspack_Nodes\Node_Names::ROUTER );
 		}
-		if ( ! \Newspack_Nodes\Core::node( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE ) instanceof \Newspack_Nodes\Row_Table_Node ) {
+		if ( ! \Newspack_Nodes\Core::node( self::FACTS_TABLE ) instanceof \Newspack_Nodes\Row_Table_Node ) {
 			$table = new \Newspack_Nodes\Row_Table_Node();
-			$table->name( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE );
+			$table->name( self::FACTS_TABLE );
 			$table->arguments( [ 'Flame_Facts' ] );
 			$table->sink( VerbHarness::request_graph() );
 		}
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->arguments( [] );
-		$fb->set_facts_target( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE );
+		$fb->set_facts_target( self::FACTS_TABLE );
 		$fb->sink( VerbHarness::request_graph() );
 		return $fb;
 	}
@@ -119,18 +122,18 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @return list<list<mixed>>
 	 */
 	protected function facts( string $sql, string $partition = '0' ): array {
-		$pdo = new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE, (int) $partition ) );
+		$pdo = new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( self::FACTS_TABLE, (int) $partition ) );
 		return \array_map( 'array_values', $pdo->query( $sql )->fetchAll( \PDO::FETCH_NUM ) );
 	}
 
 	/** Make every write to the `flame-facts` file's `requests` table fail, until `mend_facts()`. */
 	protected function break_facts(): void {
-		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE, 0 ) ) )->exec( 'ALTER TABLE requests RENAME TO requests_broken' );
+		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( self::FACTS_TABLE, 0 ) ) )->exec( 'ALTER TABLE requests RENAME TO requests_broken' );
 	}
 
 	/** Undo `break_facts()`, rows intact. */
 	protected function mend_facts(): void {
-		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE, 0 ) ) )->exec( 'ALTER TABLE requests_broken RENAME TO requests' );
+		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( self::FACTS_TABLE, 0 ) ) )->exec( 'ALTER TABLE requests_broken RENAME TO requests' );
 	}
 
 	/** Advance the tick by $seconds, then fire the Router's TIMER. */

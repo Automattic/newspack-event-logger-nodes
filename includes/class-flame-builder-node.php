@@ -131,18 +131,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	public static ?\Closure $usleep_fn = null;
 
-	/**
-	 * Where each RAW-COMPARABLE field sits on an index line, `[offset, length]`.
-	 *
-	 * Only columns whose trimmed bytes equal the parsed value belong here: a
-	 * scan pre-filters on them and parses only on a hit, so a zero-padded
-	 * column would answer a question it cannot answer.
-	 */
-	private const INDEX_COLUMNS = [
-		'rid'      => [ 0, 32 ],
-		'url_hash' => [ 32, 12 ],
-	];
-
 	/** The one width `format_index_entry()` writes and `parse_flame_index()` reads. */
 	private const INDEX_LINE_BYTES = 68;
 
@@ -999,21 +987,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			'offset'     => (int) \substr( $line, 50, 10 ),
 			'length'     => (int) \substr( $line, 60, 8 ),
 		];
-	}
-
-	/**
-	 * Where a raw-comparable field sits on the line this class writes.
-	 *
-	 * The scan that reads these lines compares ONE column before parsing, and
-	 * the offsets it slices with have to come from the writer that laid the
-	 * line out. A field with no such column answers `[]`, and its caller falls
-	 * back to the parse.
-	 *
-	 * @param string $field Index-entry field name.
-	 * @return array{0:int,1:int}|array{} Offset and length, or [] when none.
-	 */
-	public static function index_column( string $field ): array {
-		return self::INDEX_COLUMNS[ $field ] ?? [];
 	}
 
 	/**

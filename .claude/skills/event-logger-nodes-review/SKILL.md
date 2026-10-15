@@ -136,7 +136,7 @@ Inherited from the substrate: array VALUE → `TM_STRUCT`, string VALUE → `TM_
 
 ### 14. Index formatters receive the unpacked message array
 
-Two named formatters are registered because TSL has no closures: `request-index` → `Request_Builder_Node::format_index_entry` and `flame-index` → `Flame_Builder_Node::format_index_entry`. Both take `( array $message, array $position ): ?string` and read `$message[ Message::VALUE ]` directly.
+One named formatter is registered because TSL has no closures: `flame-index` → `Flame_Builder_Node::format_index_entry`. It takes `( array $message, array $position ): ?string` and reads `$message[ Message::VALUE ]` directly. `requests.pN` keeps no index: a request is found by its row.
 
 Push back on a `json_decode` inside a formatter, or a `string $line` / by-ref `$data` signature. The substrate passes the unpacked array, so a decode there operates on the wrong type. A new index leg needs a `Formatters::register()` call in the bootstrap, not an inline callable in the `.tsl`.
 

@@ -196,11 +196,7 @@ function newspack_event_logger_nodes_boot(): void {
 		[ \Newspack_Event_Logger_Nodes\Config::class, 'resolve_eln_token' ]
 	);
 
-	// Named callables the .tsl index legs reference; TSL has no closures.
-	\Newspack_Nodes\Formatters::register(
-		'request-index',
-		\Newspack_Event_Logger_Nodes\Request_Builder_Node::format_index_entry( ... )
-	);
+	// The named callable the flame index leg references; TSL has no closures.
 	\Newspack_Nodes\Formatters::register(
 		'flame-index',
 		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( ... )

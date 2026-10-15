@@ -53,12 +53,41 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `requests_per_second` divides by the seconds the selected buckets have run.
 
 - **`dump_url` answers `{ stats, requests, requests_capped, aggregate_flame,
-  aggregate_profiles }`.** The `breakdown`, `categories` and `after`
+  flame_cut, aggregate_profiles }`.** The `breakdown`, `categories` and `after`
   arguments are refused, and `scan_stopped_early`, `requests_window_start`,
   `positions`, `last_modified`, `slots`, `breakdown_time_series` and
-  `category_time_series` are gone. Each listed request carries its `partition`,
-  `segment`, `offset` and `length`, and its `timestamp` is its start. A caller
-  tailing the list with `--after` re-asks it whole instead.
+  `category_time_series` are gone. A listed request's `timestamp` is its
+  start. A caller tailing the list with `--after` re-asks it whole instead.
+  `aggregate_flame` is null under `errors_only` or a selection, and when
+  `MAX_SCAN_S` cut the rebuild, which alone answers `flame_cut` true.
+
+- **`dump_request` reads a request through its row.** A rid no request row
+  names answers `Request not found`: one aged past the seven days the rows
+  keep, though its record is still in `requests.p{N}`, and one the flame
+  builder has not written yet, for up to its five-second flush after the
+  request finishes. The flame is read from the row's partition alone, and
+  `flame_cut` true says `MAX_SCAN_S` cut that lookup, so an absent
+  `flame_data` says nothing of whether the request was profiled. A
+  `request:` ask reads it the same way.
+
+- **`search_requests` answers `{ rid, url_hash }` from the request's row.**
+  `partition` is gone from its answer, and a rid no row names answers
+  `Request not found`, as `dump_request` does. Rows that will not open answer
+  `no request <rid>: the stats rows did not open` from both. `requests.p{N}`
+  keeps no index, so a copy of `request-builder.tsl` drops its
+  `command_node requests:partition:config with_index request-index` line:
+  the formatter is gone, and the line no longer resolves.
+
+- **A request is named by its rid alone.** `dump_request` refuses
+  `--partition` (`unknown option --partition`), and its MCP tool drops the
+  argument. The `ask` verb's request descriptor is `request:<rid>`: the old
+  `request:<rid>:<partition>` answers `unknown descriptor`, as the target and
+  as a context. `dump_url`'s request rows and a `url:` brief's
+  `worst_requests` carry no `partition`. The current-request overlay's
+  `NewspackEventLoggerNodes.currentRequest` global is `{ rid, perfUrl }`, and
+  `Log_Manager::get_partition()` and `Current_Request_Overlay::inline_data_js()`'s
+  partition argument are gone. A client drops the partition wherever it
+  sent one.
 
 - **`url_breakdown` is gone.** Ask `query` grouped by `bucket` and the
   dimension, filtered `url=<hash>`, for the four sums `url_breakdown`
@@ -82,14 +111,20 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `Flame_Builder_Node::merge_url_flames()`,
   `Flame_Builder_Node::index_completion_columns()` and `WRITE_BATCH_KEYS`,
   `Request_Builder_Node::index_completion_columns()` and
-  `index_position_columns()`, and the `Flame_Tree` span names
+  `index_position_columns()`, `Flame_Facts_Row_Schema::TABLE`,
+  `Flame_Builder_Node::index_column()`, `Flame_Tree::AGGREGATE_EXPIRY_SEC`,
+  and the `Flame_Tree` span names
   `URL_PAGE_CACHE`, `URL_HEADER_CACHE`, `URL_FOLD`, `URL_RANK_LISTS`,
   `STATS_RANK_CLOSE`, `STATS_PROBE`, `STATS_FOLD` and `STATS_RE_RANK`. A
   reader of the stats asks `App\Stats_Query::run()` instead.
   `Ask_Assembler::for_url()` takes `( $stats, $requests, $requests_capped,
   $rule, $server, $filters )`, and `for_url_span()` and `for_url_category()`
   each take the server last. `Flame_Tree::prune_lightest( $root, $max_nodes )`
-  takes a node count.
+  takes a node count, and `merge_flame_children_incremental( $existing,
+  $incoming )` takes no clock and stamps no `ts`. A reader of the Flame_Facts
+  rows reads it as `Row_Table_Node::read( Flame_Facts_Row_Schema::class, … )`,
+  so a topology may declare it under any name. `delete_stats_tables( $topologies_dir )` takes the plugin's shipped
+  topologies.
 
 - **This release needs newspack-nodes 2.110.0, which takes a broker's
   sources by `add_source`.** `aggregator.tsl` now builds its `spokes` group

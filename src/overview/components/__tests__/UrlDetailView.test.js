@@ -114,7 +114,6 @@ const baseUrlDetail = {
 const REQUESTS = [
 	{
 		rid: 'r1',
-		partition: 5,
 		timestamp: 1748960000,
 		method: 'GET',
 		duration_ms: 100,
@@ -210,6 +209,31 @@ describe( 'UrlDetailView', () => {
 		expect( values ).not.toContain( 'server' );
 		expect( values ).toContain( 'status_class' );
 		unmount();
+	} );
+
+	it( 'says the aggregate flame ran out of time when its rebuild was cut', () => {
+		const cut = mount( {
+			urlDetail: {
+				...baseUrlDetail,
+				aggregate_flame: null,
+				flame_cut: true,
+			},
+		} );
+		expect( cut.container.textContent ).toContain(
+			'The flame lookup ran out of time, so no trace is shown here; that does not mean none was recorded.'
+		);
+		cut.unmount();
+		const whole = mount( {
+			urlDetail: {
+				...baseUrlDetail,
+				aggregate_flame: null,
+				flame_cut: false,
+			},
+		} );
+		expect( whole.container.textContent ).not.toContain(
+			'ran out of time'
+		);
+		whole.unmount();
 	} );
 
 	it( 'renders the recent-requests heading with the full count', () => {
@@ -675,8 +699,8 @@ describe( 'UrlDetailView', () => {
 		act( () => {
 			r1Row.click();
 		} );
-		// The partition rides with the rid; the detail cannot recover it.
-		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1', 5 );
+		// The rid alone names the request; its row names the rest.
+		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1' );
 		unmount();
 	} );
 
@@ -694,8 +718,8 @@ describe( 'UrlDetailView', () => {
 				} )
 			);
 		} );
-		// The partition rides with the rid; the detail cannot recover it.
-		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1', 5 );
+		// The rid alone names the request; its row names the rest.
+		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1' );
 		unmount();
 	} );
 
@@ -933,7 +957,7 @@ describe( 'UrlDetailView', () => {
 		await act( async () => {} );
 
 		wholeUrl().forEach( ( el, i ) => expect( el ).toBe( before[ i ] ) );
-		expect( rows() ).toEqual( [ 'request:r2:0' ] );
+		expect( rows() ).toEqual( [ 'request:r2' ] );
 		unmount();
 	} );
 

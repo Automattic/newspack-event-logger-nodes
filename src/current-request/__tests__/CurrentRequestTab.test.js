@@ -2,7 +2,7 @@
  * Current-Request overlay tab — summarizes THIS page's request (the one the
  * overlay is riding), renders its flame graph + profile breakdown, and
  * deep-links to the full performance trace. Data comes from the `performance`
- * CI's `dump_request` verb, addressed by the rid + partition the page
+ * CI's `dump_request` verb, addressed by the rid the page
  * localizes into `window.NewspackEventLoggerNodes.currentRequest`.
  */
 
@@ -90,7 +90,6 @@ const waitFor = async ( assert ) => {
 test( 'renders the request summary cards + full-trace deep link when found', async () => {
 	setBlob( {
 		rid: 'abc123',
-		partition: 2,
 		perfUrl: 'admin.php?page=event-logger-overview',
 	} );
 	// `dump_request` returns the request envelope this fixture mirrors.
@@ -135,7 +134,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	const sent = seen.mock.calls[ 0 ][ 0 ];
 	expect( sent[ TO ] ).toBe( 'performance' );
 	expect( sent[ VALUE ].name ).toBe( 'dump_request' );
-	expect( sent[ VALUE ].arguments ).toEqual( [ 'abc123', '--partition=2' ] );
+	expect( sent[ VALUE ].arguments ).toEqual( [ 'abc123' ] );
 	// Addressed, not correlated: the reply routes back on FROM alone.
 	expect( sent[ FROM ] ).toBe( 'current-request:in' );
 	// The ask left through the tab's own Tap.
@@ -176,7 +175,6 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 test( 'keeps the found request across a re-render from the host', async () => {
 	setBlob( {
 		rid: 'sticky77',
-		partition: 5,
 		perfUrl: 'admin.php?page=event-logger-overview',
 	} );
 	answerWith( {
@@ -214,7 +212,6 @@ test( 'keeps the found request across a re-render from the host', async () => {
 test( 'renders the flame graph written after the record was found', async () => {
 	setBlob( {
 		rid: 'lateflame42',
-		partition: 3,
 		perfUrl: 'admin.php?page=event-logger-overview',
 	} );
 	const record = {
@@ -260,10 +257,10 @@ test( 'renders the flame graph written after the record was found', async () => 
 	expect( view.container.textContent ).toContain( 'Request Trace' );
 } );
 
-// A site running no `flame-builder` topology has no flame coming, so waiting on
-// one is waiting forever. The ask outlives the record by a few ticks, no more.
+// An unprofiled request has no flame coming, so waiting on one is waiting
+// forever. The ask outlives the record by a few ticks, no more.
 test( 'stops asking a few ticks past the record when no flame arrives', async () => {
-	setBlob( { rid: 'noflame13', partition: 7, perfUrl: 'admin.php?page=x' } );
+	setBlob( { rid: 'noflame13', perfUrl: 'admin.php?page=x' } );
 	const wire = installFakeCommandWire( () => ( {
 		rid: 'noflame13',
 		url: '/wp-admin/themes.php',
@@ -291,6 +288,58 @@ test( 'stops asking a few ticks past the record when no flame arrives', async ()
 	expect( asks ).toBeGreaterThan( 1 );
 	expect( asks ).toBeLessThanOrEqual( 8 );
 	expect( wire.batches.length ).toBe( asks );
+} );
+
+// A site running no `flame-builder` topology has no stats rows to find the
+// request by, so no ask will ever find it: the tab says why and stops.
+test( 'stops asking and says why when the stats rows did not open', async () => {
+	setBlob( { rid: 'nofacts21', perfUrl: 'admin.php?page=x' } );
+	const wire = installFakeCommandWire(
+		() => new Error( 'no request nofacts21: the stats rows did not open' )
+	);
+
+	let view;
+	await act( async () => {
+		view = render( <CurrentRequestTab /> );
+	} );
+	await waitFor( () =>
+		expect( view.container.textContent ).toContain(
+			'no request nofacts21: the stats rows did not open'
+		)
+	);
+	const asks = wire.batches.length;
+	for ( let i = 0; i < 4; i++ ) {
+		await tick();
+	}
+
+	expect( wire.batches.length ).toBe( asks );
+	expect( view.container.textContent.toLowerCase() ).not.toContain(
+		'still processing'
+	);
+} );
+
+// A cut lookup is no unprofiled request: the tab says the lookup timed out.
+test( 'says the flame lookup ran out of time when it was cut', async () => {
+	setBlob( { rid: 'cutflame8', perfUrl: 'admin.php?page=x' } );
+	answerWith( {
+		rid: 'cutflame8',
+		url: '/wp-admin/tools.php',
+		duration_ms: 77.5,
+		status_code: 200,
+		error_status: '-',
+		timestamp: 1760000002,
+		flame_cut: true,
+	} );
+
+	let view;
+	await act( async () => {
+		view = render( <CurrentRequestTab /> );
+	} );
+	await act( async () => {} );
+
+	expect( view.container.textContent ).toContain(
+		'The flame lookup ran out of time, so no trace is shown here; that does not mean none was recorded.'
+	);
 } );
 
 // No Refresh button: the tab asks again every tick, so the only thing one

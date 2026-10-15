@@ -38,7 +38,7 @@ const URL_CHIP_OPTIONS = FILTER_FIELD_OPTIONS.filter(
 );
 
 import ResponseTimeChart from '../ResponseTimeChart';
-import RequestTrace from './RequestTrace';
+import RequestTrace, { FlameCutNote } from './RequestTrace';
 import CategoryTimeChart from '../CategoryTimeChart';
 import { ProfileWithCaption } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
@@ -174,7 +174,7 @@ const RequestRow = memo(
 	 * One row of the recent-requests table, memoized so scrolling re-renders
 	 * only the rows that entered the window.
 	 *
-	 * The row is a button: click or Enter/Space hands rid + partition to
+	 * The row is a button: click or Enter/Space hands its rid to
 	 * `onSelect`. It also carries the `?` picker's `request:` descriptor as
 	 * `data-ask`, so a picker click on a row asks about that request rather
 	 * than about the URL the modal is open on. Its request-id cell carries a
@@ -183,11 +183,11 @@ const RequestRow = memo(
 	 * back to the HTTP status code for a request that ended nominally. A
 	 * duration nobody measured shows as a dash and bars nothing.
 	 *
-	 * @param {Object}                                   props          Component props.
-	 * @param {Object}                                   props.req      Request index entry: rid, partition, timestamp, method (`Other` for an undeclared one), status_code, error_status, duration_ms, peak_mb.
-	 * @param {(rid: string, partition: number) => void} props.onSelect Receives the row's rid and partition on click or keyboard activation.
-	 * @param {number}                                   props.maxBar   Largest bar value across the filtered rows; 0 draws no bar.
-	 * @param {string}                                   props.metric   Chart metric; 'memory' bars peak_mb, every other value bars duration_ms.
+	 * @param {Object}                props          Component props.
+	 * @param {Object}                props.req      Request row: rid, timestamp, method (`Other` for an undeclared one), status_code, error_status, duration_ms, peak_mb.
+	 * @param {(rid: string) => void} props.onSelect Receives the row's rid on click or keyboard activation.
+	 * @param {number}                props.maxBar   Largest bar value across the filtered rows; 0 draws no bar.
+	 * @param {string}                props.metric   Chart metric; 'memory' bars peak_mb, every other value bars duration_ms.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function RequestRow( { req, onSelect, maxBar, metric } ) {
@@ -197,7 +197,7 @@ const RequestRow = memo(
 		const handleKeyDown = ( e ) => {
 			if ( e.key === 'Enter' || e.key === ' ' ) {
 				e.preventDefault();
-				onSelect( req.rid, req.partition );
+				onSelect( req.rid );
 			}
 		};
 
@@ -205,10 +205,10 @@ const RequestRow = memo(
 			<div
 				role="button"
 				tabIndex={ 0 }
-				data-ask={ `request:${ req.rid }:${ req.partition ?? 0 }` }
+				data-ask={ `request:${ req.rid }` }
 				className="event-logger-table__row newspack-nodes-table__row"
 				style={ { height: ROW_HEIGHT } }
-				onClick={ () => onSelect( req.rid, req.partition ) }
+				onClick={ () => onSelect( req.rid ) }
 				onKeyDown={ handleKeyDown }
 			>
 				<div className="event-logger-table__cell newspack-nodes-table__cell">
@@ -263,11 +263,11 @@ const RequestRow = memo(
  * question: its dimensions and chips.
  *
  * @param {Object}                                               props                 Component props.
- * @param {Object}                                               props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, aggregate_flame and aggregate_profiles.
+ * @param {Object}                                               props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, aggregate_flame, flame_cut and aggregate_profiles.
  * @param {Array}                                                props.sortedRequests  Recent requests, already sorted by the parent.
  * @param {Object}                                               props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
  * @param {(field: string) => void}                              props.onRequestSort   Receives a field name when a sortable header is clicked.
- * @param {(rid: string, partition: number) => void}             props.onSelectRequest Receives a rid AND its partition from a row click or a scatter-plot dot.
+ * @param {(rid: string) => void}                                props.onSelectRequest Receives a rid from a row click or a scatter-plot dot.
  * @param {string}                                               props.urlHash         The URL's 12-char hash, which the `?` picker asks about.
  * @param {{errors_only: boolean, bucket: string}}               props.filters         What the header and list narrow to: Errors Only, and the bucket selection's spelling, '' for none. The dashboard owns both, so they survive a trip to a request and back.
  * @param {(field: string, value: *) => void}                    props.onFilterChange  Receives one field of `filters` and its new value, or an updater of its held one: the flipped toggle, the Time field's selection, or a chart click's updater.
@@ -411,6 +411,8 @@ export default function UrlDetailView( {
 						/>
 					</div>
 				) }
+
+			{ urlDetail.flame_cut && <FlameCutNote /> }
 
 			{ urlDetail.aggregate_profiles?.count > 0 && (
 				<ProfileWithCaption

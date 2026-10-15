@@ -4,11 +4,11 @@
  * memory — and a deep link to the full performance trace. It does NOT duplicate
  * the dashboard; it summarizes in-page and links out for history.
  *
- * The page localizes `{ rid, partition, perfUrl }` into
+ * The page localizes `{ rid, perfUrl }` into
  * `window.NewspackEventLoggerNodes.currentRequest`; the summary, flame graph,
  * and profile breakdown are fetched from the `performance` CI's `dump_request`
- * verb (by rid + partition). The request-builder processes the firehose
- * asynchronously, so a just-loaded page won't be in the log for a beat — that's
+ * verb (by rid). The request and flame builders process the firehose
+ * asynchronously, so a just-loaded page has no request row for a beat — that's
  * the "still processing" state. There is no Refresh: the tab asks each tick
  * until the record and its flame land, so a button would only repeat an ask
  * the tick already makes.
@@ -23,7 +23,9 @@ import { views } from './nodes/register';
 import RequestSummary from '../components/RequestSummary';
 import { errorStatus } from '../components/errorStatus';
 // Reuse the perf dashboard's trace + profile; its flame graph is lazy.
-import RequestTrace from '../overview/components/RequestTrace';
+import RequestTrace, {
+	FlameCutNote,
+} from '../overview/components/RequestTrace';
 import RequestProfile from '../overview/RequestProfile';
 import FindingList from '../overview/components/FindingList';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
@@ -39,13 +41,20 @@ const POLL_INTERVAL_MS = 1000;
 const FLAME_RETRY_TICKS = 5;
 
 /**
+ * The tail of `Performance_CI_Node::stats_outage()`'s refusal: no stats rows
+ * opened, as on a site running no `flame-builder` topology, so no later ask
+ * can find the request by its row.
+ */
+const STATS_OUTAGE = 'the stats rows did not open';
+
+/**
  * The page-injected anchor for THIS request.
  *
  * `Current_Request_Overlay::enqueue_inline_data()` writes it, and only on a
  * page that enqueued this bundle, so an empty object is a normal miss — as is
  * an empty `rid`, which is what an unlogged request leaves behind.
  *
- * @return {{rid?: string, partition?: number, perfUrl?: string}} The blob, or {}.
+ * @return {{rid?: string, perfUrl?: string}} The blob, or {}.
  */
 function currentRequestData() {
 	return (
@@ -59,11 +68,12 @@ function currentRequestData() {
 /**
  * The overlay's "Request" tab.
  *
- * Four states, in the order they render: `idle` when the page localized no rid
+ * Five states, in the order they render: `idle` when the page localized no rid
  * (logging off, running as root, or no matching `log` rule), `loading` until
- * the poll graph mounts the view node, `processing` while the request-builder
- * has yet to write the record, and `found` once `dump_request` answers with
- * one.
+ * the poll graph mounts the view node, `outage` once `dump_request` answers
+ * that the stats rows did not open, which stops the asking, `processing`
+ * while the request-builder has yet to write the record, and `found` once
+ * `dump_request` answers with one.
  *
  * The load is desired state rather than an event: the tab POLLS for its own
  * record until one arrives, so a record written a second after the page
@@ -76,20 +86,22 @@ function currentRequestData() {
  * @return {import('react').ReactElement} The tab.
  */
 export default function CurrentRequestTab() {
-	const { rid = '', partition = 0, perfUrl = '' } = currentRequestData();
+	const { rid = '', perfUrl = '' } = currentRequestData();
 
 	// The record lives on the view node for as long as the tab is mounted.
 	const model = useNodeField( VIEW, 'view' );
 	const request = model?.request ?? null;
 	const flameData = request?.flame_data;
 	const hasFlame = !! ( flameData && flameData.children?.length > 0 );
+	const outage =
+		! request && !! model?.error && model.error.includes( STATS_OUTAGE );
 
 	// @longform
 	// The flame is a SECOND write: Flame_Builder consumes requests.log after
 	// Request_Builder writes the record, so the reply that finds the request
 	// almost always predates its flame. Asking on past the record delivers the
-	// trace without a reload, and the retry bound keeps a site running no
-	// flame-builder topology from asking for one forever.
+	// trace without a reload, and the retry bound keeps an unprofiled request
+	// from asking for one forever.
 	const [ asksSinceFound, setAsksSinceFound ] = useState( 0 );
 	useEffect( () => {
 		if ( model?.request ) {
@@ -99,18 +111,18 @@ export default function CurrentRequestTab() {
 
 	// @longform
 	// The ask keeps going until the record exists, which serves both failure
-	// modes at once: dump_request answers nothing until requests.log has the
-	// record, and a refused command answers the same way, so an expired session
-	// recovers on the same retry a slow write does. Settling PAUSES rather than
-	// disabling: `enabled` tears the graph down, taking the view node that owns
-	// the answer with it.
+	// modes at once: dump_request answers nothing until a request row names
+	// the record, and a refused command answers the same way, so an expired
+	// session recovers on the same retry a slow write does. Settling PAUSES
+	// rather than disabling: `enabled` tears the graph down, taking the view
+	// node that owns the answer with it.
 	useBatchedPoll( {
 		build: ( { interpreter, tee } ) =>
 			addSliceFetcher( interpreter, {
 				fetcher: 'current-request:fetch',
 				receiver: 'current-request:in',
 				command: 'dump_request',
-				argsFn: () => formatCommandArgs( [ rid ], { partition } ),
+				argsFn: () => formatCommandArgs( [ rid ] ),
 				view: VIEW,
 				viewClass: views.CurrentRequestView,
 				tee,
@@ -119,7 +131,7 @@ export default function CurrentRequestTab() {
 		timerName: 'current-request:timer',
 		teeName: 'current-request:tee',
 		enabled: Boolean( rid ),
-		paused: hasFlame || asksSinceFound > FLAME_RETRY_TICKS,
+		paused: hasFlame || asksSinceFound > FLAME_RETRY_TICKS || outage,
 		intervalMs: POLL_INTERVAL_MS,
 	} );
 
@@ -140,6 +152,14 @@ export default function CurrentRequestTab() {
 		return (
 			<div className="eln-current-request eln-current-request--loading newspack-nodes-performance-loading">
 				<p>{ __( 'Loading…', 'newspack-event-logger-nodes' ) }</p>
+			</div>
+		);
+	}
+
+	if ( outage ) {
+		return (
+			<div className="eln-current-request eln-current-request--outage newspack-nodes-status">
+				<p>{ model.error }</p>
 			</div>
 		);
 	}
@@ -192,6 +212,7 @@ export default function CurrentRequestTab() {
 				</div>
 			) }
 			{ hasFlame && <RequestTrace flameData={ flameData } /> }
+			{ ! hasFlame && request.flame_cut && <FlameCutNote /> }
 			{ hasProfiles && (
 				<div className="eln-current-request__profiles">
 					<RequestProfile

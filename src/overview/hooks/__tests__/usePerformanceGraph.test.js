@@ -523,7 +523,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { selectedRequest: 'r1', requestPartition: 2 } );
+			rerender( { selectedRequest: 'r1' } );
 		} );
 
 		const req = findVerb( wire.batches, 'dump_request' );
@@ -552,7 +552,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		expect( Core.node( 'request-detail:timer' ).mode ).toBe( 'inactive' );
 
 		await act( async () => {
-			rerender( { selectedRequest: 'kea4471', requestPartition: 3 } );
+			rerender( { selectedRequest: 'kea4471' } );
 		} );
 		expect( Core.node( 'request-detail:timer' ).mode ).toBe( 'router' );
 
@@ -579,7 +579,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { selectedRequest: 'kea4471', requestPartition: 3 } );
+			rerender( { selectedRequest: 'kea4471' } );
 		} );
 		await act( async () => {
 			Core.node( ROUTER ).fireCb();
@@ -624,10 +624,10 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { selectedRequest: 'kea4471', requestPartition: 3 } );
+			rerender( { selectedRequest: 'kea4471' } );
 		} );
 		await act( async () => {
-			rerender( { selectedRequest: 'kahu9932', requestPartition: 3 } );
+			rerender( { selectedRequest: 'kahu9932' } );
 		} );
 		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
 			rid: 'kahu9932',
@@ -656,14 +656,14 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { selectedRequest: 'kea4471', requestPartition: 3 } );
+			rerender( { selectedRequest: 'kea4471' } );
 		} );
 		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
 			rid: 'kea4471',
 		} );
 
 		await act( async () => {
-			rerender( { selectedRequest: 'kahu9932', requestPartition: 3 } );
+			rerender( { selectedRequest: 'kahu9932' } );
 		} );
 
 		const view = Core.node( 'request-detail:view' ).view;
@@ -671,21 +671,18 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		expect( view.data ).not.toEqual( { rid: 'kea4471' } );
 	} );
 
-	test( 'selecting a request fires dump_request with the partition', async () => {
+	test( 'selecting a request fires dump_request with its rid alone', async () => {
 		const wire = installWire( { dump_request: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( {
-				selectedRequest: 'r1',
-				requestPartition: 2,
-			} );
+			rerender( { selectedRequest: 'rid-ruru-6630' } );
 		} );
 		const req = findVerb( wire.batches, 'dump_request' );
 		expect( req ).toBeTruthy();
-		expect( option( req[ VALUE ].arguments, 'partition' ) ).toBe( '2' );
+		expect( req[ VALUE ].arguments ).toEqual( [ 'rid-ruru-6630' ] );
 	} );
 } );
 
@@ -1111,7 +1108,6 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 			rerender( {
 				selectedUrl: { hash: 'abc' },
 				selectedRequest: 'r1',
-				requestPartition: 0,
 			} );
 		} );
 		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'inactive' );
@@ -1536,41 +1532,6 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 		expect( Core.node( 'request-detail:view' ).view.error ).toBe(
 			'Invalid request ID format'
 		);
-	} );
-
-	test( 'an unresolved partition reports an error instead of doing nothing', async () => {
-		// Silence here was the whole bug: no fetch, no loading state, no error,
-		// so the modal rendered neither the request nor the URL sections.
-		const wire = installWire( { dump_request: { rid: 'r1' } } );
-		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: {},
-		} );
-		await act( async () => {} );
-		await act( async () => {
-			rerender( { selectedRequest: 'r1', requestPartition: null } );
-		} );
-
-		expect( findVerb( wire.batches, 'dump_request' ) ).toBeNull();
-		expect( Core.node( 'request-detail:view' ).view.error ).toBeTruthy();
-	} );
-
-	test( 'never reconstructs the partition from the recent-request window', async () => {
-		// That window is a page of recent requests, not a source of truth about
-		// one request: a deep link to an older rid simply is not in it.
-		const wire = installWire( { dump_request: { rid: 'r1' } } );
-		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: {},
-		} );
-		await act( async () => {} );
-		await act( async () => {
-			rerender( {
-				selectedRequest: 'r1',
-				requestPartition: null,
-				urlDetailData: { requests: [ { rid: 'r1', partition: 3 } ] },
-			} );
-		} );
-
-		expect( findVerb( wire.batches, 'dump_request' ) ).toBeNull();
 	} );
 } );
 

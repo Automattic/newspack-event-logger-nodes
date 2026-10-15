@@ -66,15 +66,14 @@
     <h3><span class="n">3</span><span class="mono">merge_flame_children_incremental()</span></h3>
     <p>Into the URL's aggregate, keyed on <span class="mono">name</span>, recursively:</p>
     <div class="lines">
-      new name → { name, <span class="k">sum_value</span>: value, <span class="k">ts</span>: now, children: [] }<br>
-      seen name → sum_value += value; ts = now<br>
-      children → the same merge, one level down<br>
-      ts &lt; now − <span class="k">3600</span> → dropped
+      new name → { name, <span class="k">sum_value</span>: value, children: [] }<br>
+      seen name → sum_value += value<br>
+      children → the same merge, one level down
     </div>
     <p>An incoming node's <span class="mono">detail</span> and <span class="mono">t</span> never reach the aggregate, which has merged many requests and holds no single position. No per-node tally is kept.</p>
     <h3 style="margin-top:10px"><span class="n">4</span><span class="mono">finalize_flame_node()</span></h3>
     <div class="lines">value = sum_value / <span class="k">requests the aggregate covers</span></div>
-    <p>The divisor is the aggregate's own request count, never a per-node tally, so a node seen in a minority of requests averages down: the flame shows mean cost per request. The blob, <span class="mono">url:{hash}</span>, carries no bucket, and a reader takes the first partition's blob whole rather than summing across partitions.</p>
+    <p>The divisor is the aggregate's own request count, never a per-node tally, so a node seen in a minority of requests averages down: the flame shows mean cost per request. The aggregate is rebuilt per answer from the listed requests' stored flames and never stored, so nothing in it ages out.</p>
   </div>
 </div>
 

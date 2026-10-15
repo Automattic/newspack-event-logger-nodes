@@ -1628,87 +1628,6 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'https://kea.test/x', $req['url'] );
 	}
 
-	// --- index format ----------------------------------------------------
-	// (url_hash moved to Log_Manager; see LogManagerTest for its coverage.)
-
-	public function test_format_index_entry_round_trip(): void {
-		$req = [
-			'rid'            => 'abcdef',
-			'url'            => '/post/123',
-			'timestamp'      => 1_700_000_000,
-			'duration_ms'    => 50,
-			'status_code'    => 200,
-			'peak_mb'        => 32,
-			'request_method' => 'GET',
-			'error_status'   => '-',
-		];
-		// The formatter receives the unpacked message array; VALUE at index 6.
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::VALUE ]     = $req;
-		$position = [ 'segment' => 5, 'offset' => 1024, 'length' => 100 ];
-
-		$entry = Request_Builder_Node::format_index_entry( $message, $position );
-		$this->assertNotNull( $entry );
-		$this->assertSame( 97, \strlen( $entry ) );
-
-		$parsed = Request_Builder_Node::parse_request_index( $entry );
-		$this->assertSame( 'abcdef', $parsed['rid'] );
-		$this->assertSame( 1_700_000_000, $parsed['timestamp'] );
-		$this->assertSame( 50, $parsed['duration_ms'] );
-		$this->assertSame( 200, $parsed['status_code'] );
-		$this->assertSame( 5, $parsed['segment'] );
-		$this->assertSame( 1024, $parsed['offset'] );
-		$this->assertSame( 100, $parsed['length'] );
-		$this->assertSame( 32, $parsed['peak_mb'] );
-		$this->assertSame( 'GET', $parsed['method'] );
-	}
-
-	public function test_format_index_entry_stamps_an_unstarted_request_with_the_tick(): void {
-		Core::$now                 = 1_600_000_123.0;
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_STRUCT;
-		$message[ Message::VALUE ] = [ 'rid' => 'no-start', 'url' => '/never/started', 'request_method' => 'GET' ];
-
-		$line = (string) Request_Builder_Node::format_index_entry(
-			$message,
-			[ 'segment' => 1, 'offset' => 0, 'length' => 10 ]
-		);
-
-		$this->assertSame( 1_600_000_123, Request_Builder_Node::parse_request_index( $line )['timestamp'] );
-	}
-
-	/**
-	 * The scan pre-filters on a raw column before parsing, so the offsets it
-	 * slices with have to come from the writer that laid the line out.
-	 */
-	public function test_index_column_locates_the_matchable_fields_the_writer_wrote(): void {
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_STRUCT;
-		$message[ Message::VALUE ] = [
-			'rid'            => 'zz9-prefilter-rid-7f31',
-			'url'            => '/prefilter/6612',
-			'timestamp'      => 1_711_222_333,
-			'duration_ms'    => 4321,
-			'status_code'    => 418,
-			'peak_mb'        => 77,
-			'request_method' => 'PATCH',
-		];
-		$line = (string) Request_Builder_Node::format_index_entry(
-			$message,
-			[ 'segment' => 4, 'offset' => 2048, 'length' => 96 ]
-		);
-
-		[ $rid_offset, $rid_length ]   = Request_Builder_Node::index_column( 'rid' );
-		[ $hash_offset, $hash_length ] = Request_Builder_Node::index_column( 'url_hash' );
-
-		$this->assertSame( 'zz9-prefilter-rid-7f31', \trim( \substr( $line, $rid_offset, $rid_length ) ) );
-		$this->assertSame(
-			\Newspack_Event_Logger_Nodes\Log_Manager::url_hash( '/prefilter/6612' ),
-			\trim( \substr( $line, $hash_offset, $hash_length ) )
-		);
-	}
-
 	/**
 	 * A worker's spawn request lives its whole `max_runtime`, 595 seconds, so
 	 * the window a silent request is given must outlast one: at 400 to 600
@@ -1718,62 +1637,6 @@ class RequestBuilderTest extends TestCase {
 		$rotation = ( new \ReflectionClassConstant( Request_Builder_Node::class, 'BUCKET_ROTATION_S' ) )->getValue();
 		// The floor is two whole rotations: the first after landing is partial.
 		$this->assertGreaterThan( 595, $rotation * ( Request_Builder_Node::DEFAULT_NUM_BUCKETS - 1 ) );
-	}
-
-	public function test_index_column_offers_no_column_for_a_field_the_raw_line_encodes(): void {
-		// `method` is a 1-char code and `timestamp` is zero-padded, so neither
-		// column equals its parsed value; a scan on those must still parse.
-		$this->assertSame( [], Request_Builder_Node::index_column( 'method' ) );
-		$this->assertSame( [], Request_Builder_Node::index_column( 'timestamp' ) );
-	}
-
-	/**
-	 * `A` (aborted) must survive the index round trip. The writer emitted it but
-	 * the reader accepted only F/T, so every aborted request came back with no
-	 * error_status at all — invisible to the URL detail view's errors filter and
-	 * to anything else reading the index.
-	 *
-	 * @dataProvider error_status_provider
-	 */
-	public function test_format_index_entry_round_trips_every_error_status( string $status ): void {
-		$req = [
-			'rid'            => 'abcdef',
-			'url'            => '/post/123',
-			'timestamp'      => 1_700_000_000,
-			'duration_ms'    => 50,
-			'status_code'    => 0,
-			'peak_mb'        => 32,
-			'request_method' => 'GET',
-			'error_status'   => $status,
-		];
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_STRUCT;
-		$message[ Message::VALUE ] = $req;
-
-		$entry = Request_Builder_Node::format_index_entry(
-			$message,
-			[ 'segment' => 5, 'offset' => 1024, 'length' => 100 ]
-		);
-		$parsed = Request_Builder_Node::parse_request_index( (string) $entry );
-
-		$this->assertSame( $status, $parsed['error_status'] ?? '-' );
-	}
-
-	/** @return array<string, array{0:string}> */
-	public static function error_status_provider(): array {
-		return [
-			'fatal'   => [ 'F' ],
-			'timeout' => [ 'T' ],
-			'aborted' => [ 'A' ],
-		];
-	}
-
-	public function test_format_index_entry_returns_null_for_missing_url(): void {
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::VALUE ]     = [ 'rid' => 'x' ];
-		$position = [ 'segment' => 0, 'offset' => 0, 'length' => 0 ];
-		$this->assertNull( Request_Builder_Node::format_index_entry( $message, $position ) );
 	}
 
 	// --- Maintenance ------------------------------------------------------
@@ -2438,104 +2301,24 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'https://kea.test/x', $req['url'] );
 	}
 
-	// --- format_index_entry: size bounds + method codes -------------------
+	// --- method labels ---------------------------------------------------
 
-	private function format_index_for( array $value, array $position ): ?string {
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_STRUCT;
-		$message[ Message::VALUE ] = $value;
-		return Request_Builder_Node::format_index_entry( $message, $position );
-	}
-
-	public function test_format_index_entry_returns_empty_when_offset_exceeds_cap(): void {
-		$out = $this->format_index_for(
-			[ 'rid' => 'r1', 'url' => '/x' ],
-			// 10_000_000_000 > 9_999_999_999 ceiling.
-			[ 'segment' => 0, 'offset' => 10_000_000_000, 'length' => 100 ]
-		);
-		$this->assertSame( '', $out );
-	}
-
-	public function test_format_index_entry_returns_empty_when_length_exceeds_cap(): void {
-		$out = $this->format_index_for(
-			[ 'rid' => 'r1', 'url' => '/x' ],
-			// 100_000_000 > 99_999_999 ceiling.
-			[ 'segment' => 0, 'offset' => 0, 'length' => 100_000_000 ]
-		);
-		$this->assertSame( '', $out );
-	}
-
-	public function test_format_index_entry_returns_empty_when_segment_id_exceeds_cap(): void {
-		$out = $this->format_index_for(
-			[ 'rid' => 'r1', 'url' => '/x' ],
-			// 1_000_000 > 999_999 ceiling.
-			[ 'segment' => 1_000_000, 'offset' => 0, 'length' => 100 ]
-		);
-		$this->assertSame( '', $out );
-	}
-
-	public function test_format_index_entry_returns_null_when_value_is_not_array(): void {
-		// A message where VALUE is a string (TM_BYTESTREAM-shaped).
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$message[ Message::VALUE ] = 'raw';
-		$this->assertNull(
-			Request_Builder_Node::format_index_entry(
-				$message,
-				[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
-			)
-		);
-	}
-
-	public function test_format_index_entry_clamps_peak_mb_at_999999(): void {
-		$line = $this->format_index_for(
-			[ 'rid' => 'big', 'url' => '/x', 'request_method' => 'GET', 'peak_mb' => 5_000_000.0 ],
-			[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
-		);
-		$this->assertNotNull( $line );
-		$this->assertNotSame( '', $line );
-		// peak_mb field: 6 chars starting at position 89.
-		$peak_segment = \substr( $line, 89, 6 );
-		$this->assertSame( '999999', $peak_segment );
-	}
-
-	/**
-	 * Each method's one-letter index code is the on-disk format: the writer
-	 * puts that letter in the method column and the reader names it back.
-	 */
-	public function test_index_writes_and_reads_every_method_code(): void {
-		$cases = [
-			'GET'     => 'G',
-			'POST'    => 'P',
-			'HEAD'    => 'H',
-			'DELETE'  => 'D',
-			'PUT'     => 'U',
-			'PATCH'   => 'A',
-			'OPTIONS' => 'O',
-			'CLI'     => 'C',
-			'Other'   => 'X',
-		];
-		foreach ( $cases as $method => $code ) {
-			$line = (string) $this->format_index_for(
-				[ 'rid' => 'r1', 'url' => '/x', 'request_method' => $method ],
-				[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
-			);
-			$this->assertSame( $code, \substr( $line, 95, 1 ), "method=$method writes code=$code" );
-			$this->assertSame( $method, Request_Builder_Node::parse_request_index( $line )['method'] ?? null, "code=$code reads back as $method" );
+	/** Each declared method labels as itself, and only those do. */
+	public function test_every_declared_method_labels_as_itself(): void {
+		foreach ( [ 'GET', 'POST', 'HEAD', 'DELETE', 'PUT', 'PATCH', 'OPTIONS', 'CLI' ] as $method ) {
+			$this->assertSame( $method, Request_Builder_Node::method_label( $method ) );
 		}
+		$this->assertSame( 'Other', Request_Builder_Node::method_label( 'get' ), 'a method is matched as written' );
 	}
 
 	/**
-	 * The request line sets a record's url and method together, so a url-ful
-	 * record carrying no method is refused rather than indexed under one.
+	 * The request line sets a record's url and method together, so a record
+	 * carrying no method has no label rather than one invented for it.
 	 */
-	public function test_a_record_carrying_no_method_refuses_to_index(): void {
+	public function test_a_record_carrying_no_method_has_no_label(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'no method' );
-		$this->format_index_for(
-			[ 'rid' => 'r-moa-5521', 'url' => 'https://moa-5521.test/x' ],
-			[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
-		);
+		Request_Builder_Node::method_label( null );
 	}
 
 	/**
@@ -2556,10 +2339,10 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A method outside the index's table keeps its real name on the record and
-	 * indexes under the one bounded other bucket, never as GET.
+	 * A method outside the vocabulary keeps its real name on the record and
+	 * labels as the one bounded other bucket, never as GET.
 	 */
-	public function test_an_undeclared_method_indexes_as_other_and_records_its_real_name(): void {
+	public function test_an_undeclared_method_labels_as_other_and_records_its_real_name(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -2569,54 +2352,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 3, 'r1', 'process (complete)' );
 
 		$this->assertSame( 'PURGE', $this->captured_request( $capture )['request_method'] );
-
-		$line   = (string) Request_Builder_Node::format_index_entry( $capture->captured[0], [ 'segment' => 0, 'offset' => 0, 'length' => 0 ] );
-		$parsed = Request_Builder_Node::parse_request_index( $line );
-		$this->assertSame( 'Other', $parsed['method'] );
-	}
-
-	public function test_format_index_entry_writes_error_status_t_when_timed_out(): void {
-		$line = $this->format_index_for(
-			[ 'rid' => 'r1', 'url' => '/x', 'request_method' => 'GET', 'error_status' => 'T' ],
-			[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
-		);
-		$this->assertNotNull( $line );
-		// error_status: 1 char at position 96.
-		$this->assertSame( 'T', \substr( $line, 96, 1 ) );
-	}
-
-	// --- parse_request_index defensive paths ------------------------------
-
-	public function test_parse_request_index_returns_null_for_short_line(): void {
-		$this->assertNull( Request_Builder_Node::parse_request_index( 'too-short' ) );
-		$this->assertNull( Request_Builder_Node::parse_request_index( \str_repeat( 'x', 88 ) ) );
-	}
-
-	public function test_parse_request_index_v4_invalid_error_status_dropped(): void {
-		// v4-length line but error_status char is neither 'F' nor 'T' → field
-		// is omitted from the parsed array.
-		$base = \str_pad( 'rid', 32 ) . \str_pad( 'urlh', 12 ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 3, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 6, '0', \STR_PAD_LEFT );
-		$v4   = $base . 'G' . '-';
-		$this->assertSame( 97, \strlen( $v4 ) );
-		$parsed = Request_Builder_Node::parse_request_index( $v4 );
-		$this->assertNotNull( $parsed );
-		// '-' is not in [F, T] → no error_status key.
-		$this->assertArrayNotHasKey( 'error_status', $parsed );
-	}
-
-	public function test_parse_request_index_strips_trailing_newline(): void {
-		// Lines on disk are newline-terminated: rtrim before measuring length,
-		// or every line on disk reads one byte short and is refused.
-		$base = \str_pad( 'rid_nl', 32 ) . \str_pad( 'urlh', 12 ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 3, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . 'G' . '-';
-		$parsed = Request_Builder_Node::parse_request_index( $base . "\n" );
-		$this->assertNotNull( $parsed );
-		$this->assertSame( 'rid_nl', $parsed['rid'] );
+		$this->assertSame( 'Other', Request_Builder_Node::method_label( 'PURGE' ) );
 	}
 
 	// --- emit_entry: silent on missing target / missing sink --------------
@@ -2840,38 +2576,6 @@ class RequestBuilderTest extends TestCase {
 		$this->assertNull( Core::node( 'taken' ) );
 		$this->assertSame( $blocker, Core::node( 'taken:flight' ) );
 	}
-	public function test_the_index_parser_takes_the_current_line_only(): void {
-		// The writer emits one width, so a line of any other length is a
-		// truncated, half-written or run-together record, and is refused.
-		$request              = new \stdClass();
-		$request->rid         = 'r5nyq83m4v1p';
-		$request->url         = 'https://x.test/reviews/8813';
-		$request->request_method = 'GET';
-		$request->timestamp   = 1700000123;
-		$request->duration_ms = 417;
-		$request->status_code = 503;
-		$request->peak_mb     = 91;
-		$request->error_status = 'T';
-		$message              = Message::new_message();
-		$message[ Message::VALUE ] = (array) $request;
-
-		$line = Request_Builder_Node::format_index_entry(
-			$message,
-			[ 'segment' => 4, 'offset' => 71, 'length' => 908 ]
-		);
-		$this->assertIsString( $line );
-
-		$this->assertIsArray( Request_Builder_Node::parse_request_index( $line ) );
-		$this->assertNull(
-			Request_Builder_Node::parse_request_index( \substr( $line, 0, -1 ) ),
-			'a line one byte short is refused, not read as an older version'
-		);
-		$this->assertNull(
-			Request_Builder_Node::parse_request_index( $line . '7' ),
-			'a line one byte long is refused, not read by its first 97 bytes'
-		);
-	}
-
 	public function test_the_target_setter_verbs_round_trip_through_dump_config(): void {
 		// Each is one trim-and-assign; the dump has to replay every one of them
 		// or a serialized topology comes back with its secondary emits dark.

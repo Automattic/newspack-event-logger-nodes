@@ -2837,7 +2837,7 @@ describe( 'the rows under an armed Ask picker', () => {
 			// The request the table sits in, as RequestDetailView renders it.
 			React.createElement(
 				'div',
-				{ 'data-ask': 'request:r9:2' },
+				{ 'data-ask': 'request:r9' },
 				React.createElement( LogEntriesTable, { entries } )
 			)
 		);

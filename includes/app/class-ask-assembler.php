@@ -149,27 +149,22 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * Split `type:id`, and a `request`'s id into `rid:partition`. Every other
-	 * id is taken whole, colons included, because a span or listener name
-	 * carries them. Null on anything outside the vocabulary, so a hand-typed
-	 * or stale descriptor is refused rather than half-honoured.
+	 * Split `type:id`. A request is named by its rid alone, which holds no
+	 * colon; every other id is taken whole, colons included, because a span
+	 * or listener name carries them. Null on anything outside the vocabulary,
+	 * so a hand-typed or stale descriptor is refused rather than half-honoured.
 	 *
-	 * @param string $descriptor `type:id`, or `request:rid:partition`, as a `data-ask` attribute carries it.
-	 * @return array{type:string,id:string,qualifier:string}|null
+	 * @param string $descriptor `type:id`, as a `data-ask` attribute carries it.
+	 * @return array{type:string,id:string}|null
 	 */
 	public static function parse_descriptor( string $descriptor ): ?array {
 		[ $type, $id ] = \array_pad( \explode( ':', $descriptor, 2 ), 2, '' );
-		$qualifier     = '';
-		if ( 'request' === $type ) {
-			[ $id, $qualifier ] = \array_pad( \explode( ':', $id, 2 ), 2, '' );
-		}
-		if ( '' === $id || ! \in_array( $type, self::TYPES, true ) ) {
+		if ( '' === $id || ! \in_array( $type, self::TYPES, true ) || ( 'request' === $type && \str_contains( $id, ':' ) ) ) {
 			return null;
 		}
 		return [
-			'type'      => $type,
-			'id'        => $id,
-			'qualifier' => $qualifier,
+			'type' => $type,
+			'id'   => $id,
 		];
 	}
 
@@ -660,7 +655,7 @@ class Ask_Assembler {
 
 	/**
 	 * One recent request, named rather than located: enough to ask about it
-	 * (`request:<rid>:<partition>`) and to see why it is on this list. A null
+	 * (`request:<rid>`) and to see why it is on this list. A null
 	 * duration, one nobody measured, rides as null.
 	 *
 	 * @param array<array-key,mixed> $request A `dump_url` request row.
@@ -669,7 +664,6 @@ class Ask_Assembler {
 	private static function worst_request_shape( array $request ): array {
 		return [
 			'rid'          => Core::as_string( $request['rid'] ?? '' ),
-			'partition'    => Core::num_int( $request['partition'] ?? 0 ),
 			'duration_ms'  => null === ( $request['duration_ms'] ?? null ) ? null : Core::num_float( $request['duration_ms'] ),
 			'status_code'  => Core::num_int( $request['status_code'] ?? 0 ),
 			'error_status' => Core::as_string( $request['error_status'] ?? '' ),

@@ -91,30 +91,28 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// Test helpers — disk-seeded request + flame index entries.
-	//
-	// Mirror RequestLogControllerTest's `write_request` and the FlameBuilder
-	// index layout so the verb's scan_index walk picks up our seeded data.
+	// Test helpers — disk-seeded request and flame records, their index
+	// entries, and each request's row naming where its record sits.
 	// -------------------------------------------------------------------------
 
 	/** Bytes already appended per scratch segment path — the append offset. */
 	private array $segment_bytes = [];
 	/**
-	 * Append one record to a scratch `{log}.p{N}` segment plus its index, and
-	 * return its rid. Requests and flames differ only in the log name and the
-	 * formatter, whose signatures match.
+	 * Append one record to a scratch `{log}.p{N}` segment, and its index line
+	 * where the log keeps one, and return where it sits. Requests keep none;
+	 * flames keep the `flame-index` line.
 	 *
 	 * APPENDS. Rewriting the whole segment per record made seeding O(n^2) in
 	 * bytes, which the cap tests pay 500 times over; the offset ledger is what
 	 * lets the write be an append without re-reading to find the end.
 	 *
 	 * @param string   $log       Log basename ('requests' | 'flames').
-	 * @param callable $format    `format_index_entry( array $message, array $position ): ?string`.
+	 * @param ?callable $format   `format_index_entry( array $message, array $position ): ?string`, or null for no index.
 	 * @param array    $body      Record VALUE.
 	 * @param int      $partition Partition index.
-	 * @return string The record's rid.
+	 * @return array{segment:int, offset:int, length:int} The record's place.
 	 */
-	private function write_indexed( string $log, callable $format, array $body, int $partition ): string {
+	private function write_indexed( string $log, ?callable $format, array $body, int $partition ): array {
 		$segment_dir = $this->tmp . "/logs/{$log}.p{$partition}";
 		if ( ! \is_dir( $segment_dir ) ) {
 			\mkdir( $segment_dir, 0755, true );
@@ -123,6 +121,7 @@ class PerformanceCITest extends TestCase {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::TIMESTAMP ] = (float) ( $body['timestamp'] ?? self::tick() );
+		$message[ Message::KEY ]       = Core::as_string( $body['rid'] ?? '' );
 		$message[ Message::VALUE ]     = $body;
 		$packed                        = Message::packed( $message );
 
@@ -131,23 +130,56 @@ class PerformanceCITest extends TestCase {
 		\file_put_contents( $seg_path, $packed, FILE_APPEND | LOCK_EX );
 		$this->segment_bytes[ $seg_path ] = $offset + \strlen( $packed );
 
-		$index_line = $format(
-			$message,
-			[ 'segment' => 0, 'offset' => $offset, 'length' => \strlen( $packed ) ]
-		);
+		$position   = [ 'segment' => 0, 'offset' => $offset, 'length' => \strlen( $packed ) ];
+		$index_line = null === $format ? null : $format( $message, $position );
 		if ( null !== $index_line && '' !== $index_line ) {
 			\file_put_contents( "{$segment_dir}/0.idx", $index_line . "\n", FILE_APPEND | LOCK_EX );
+			self::appended_at_the_tick( "{$segment_dir}/0.idx" );
 		}
-		return Core::as_string( $body['rid'] ?? '' );
+		return $position;
 	}
 
+	/**
+	 * Date an index's last append at the reply's tick, as the builder appends
+	 * a flame no earlier than the tick its request's row finished by.
+	 */
+	private static function appended_at_the_tick( string $index ): void {
+		\touch( $index, (int) Core::$now );
+	}
+
+	/**
+	 * Lines no lookup matches, appended to a flame index at the tick: enough
+	 * that a walk reading them all runs past MAX_SCAN_S on a stepping clock.
+	 */
+	private function pad_flame_index( int $partition = 0 ): void {
+		$index = $this->tmp . "/logs/flames.p{$partition}/0.idx";
+		\file_put_contents( $index, \str_repeat( "x\n", ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride() ), FILE_APPEND | LOCK_EX );
+		self::appended_at_the_tick( $index );
+	}
+
+	/**
+	 * A completed request as production stores it: its record in
+	 * `requests.p{N}`, keyed by its rid, and its row naming where it sits.
+	 */
 	private function write_request( array $body, int $partition = 0 ): string {
+		$this->seed_request( [ 'rid' => $body['rid'] ] + $this->write_record( $body, $partition ), $partition );
+		return Core::as_string( $body['rid'] );
+	}
+
+	/**
+	 * A request's record with no row, as one the rows have not reached or
+	 * have aged past.
+	 *
+	 * @return array{segment:int, offset:int, length:int} The record's place.
+	 */
+	private function write_record( array $body, int $partition = 0 ): array {
 		// The request line that gives a record its url gives it a method too.
-		return $this->write_indexed( 'requests', Request_Builder_Node::format_index_entry( ... ), $body + [ 'request_method' => 'GET' ], $partition );
+		return $this->write_indexed( 'requests', null, $body + [ 'request_method' => 'GET' ], $partition );
 	}
 
 	private function write_flame( array $body, int $partition = 0 ): string {
-		return $this->write_indexed( 'flames', Flame_Builder_Node::format_index_entry( ... ), $body, $partition );
+		$this->write_indexed( 'flames', Flame_Builder_Node::format_index_entry( ... ), $body, $partition );
+		return Core::as_string( $body['rid'] );
 	}
 
 	/**
@@ -270,64 +302,37 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
 		$this->assertSame( 'right', $result['flame_data']['flame']['name'] );
+		$this->assertFalse( $result['flame_cut'] );
 	}
 
-	/**
-	 * A rid lookup walks unbudgeted (MAX_SCAN_S bounds the URL walks alone),
-	 * so a rid behind more lines than that budget covers is still found.
-	 */
-	public function test_the_rid_lookups_find_a_rid_past_max_scan_s(): void {
-		$this->fill_request_index_past_the_budget();
+	/** A rid is looked up in its row; no index is walked. */
+	public function test_search_requests_answers_from_the_row(): void {
+		$place = $this->write_record( [ 'rid' => 'rid-row-kea-5513', 'url' => 'https://example.com/row-kea-5513' ] );
+		$this->seed_request( [ 'rid' => 'rid-row-kea-5513', 'url' => 'https://seed.example/row-kea-5513/' ] + $place );
 
-		$found  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', 'rid-buried-under-the-budget' );
-		$record = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-buried-under-the-budget' );
+		$found = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', 'rid-row-kea-5513' );
 
-		$this->assertIsArray( $found, \is_string( $found ) ? $found : '' );
-		$this->assertSame( 0, $found['partition'] );
-		$this->assertIsArray( $record, \is_string( $record ) ? $record : '' );
-		$this->assertSame( 'https://example.com/buried-under-the-budget', $record['url'] );
+		$this->assertSame( [ 'rid' => 'rid-row-kea-5513', 'url_hash' => Log_Manager::url_hash( 'https://seed.example/row-kea-5513/' ) ], $found );
 	}
 
-	/** An unknown rid is a definite answer: every index line was read. */
-	public function test_an_unknown_rid_is_not_found_however_long_the_walk(): void {
-		$this->fill_request_index_past_the_budget();
+	/** What search finds, `dump_request` opens: a rid no row names is not found. */
+	public function test_search_requests_finds_no_rid_no_row_names(): void {
+		$this->write_record( [ 'rid' => 'rid-rowless-5514', 'url' => 'https://example.com/rowless-5514' ] );
 
-		$searched = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', 'rid-never-filed-6f21' );
-		$dumped   = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-never-filed-8c04' );
+		$searched = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', 'rid-rowless-5514' );
 
-		$this->assertSame( 'Request not found: rid=rid-never-filed-6f21', \trim( Core::as_string( $searched ) ) );
-		$this->assertSame( 'Request not found: rid=rid-never-filed-8c04', \trim( Core::as_string( $dumped ) ) );
+		$this->assertSame( 'Request not found: rid=rid-rowless-5514', \trim( Core::as_string( $searched ) ) );
 	}
 
-	/**
-	 * Bury p0's request index under more lines than the scan's clock allows.
-	 */
-	private function fill_request_index_past_the_budget(): void {
-		// One real record first: a segment with no `.log` is no segment.
-		$this->write_request( [
-			'rid'         => 'rid-buried-under-the-budget',
-			'url'         => 'https://example.com/buried-under-the-budget',
-			'timestamp'   => 1700005200,
-			'duration_ms' => 15,
-		] );
-		$this->run_out_the_scan_clock_over_newer_lines();
-	}
+	/** An outage is named as one, never read as an absent request. */
+	public function test_search_requests_names_an_outage_rather_than_an_absence(): void {
+		$rid = $this->write_request( [ 'rid' => 'rid-dark-5515', 'url' => 'https://example.com/dark-5515' ] );
+		\update_option( 'newspack_nodes_topologies', [] );
+		\Newspack_Nodes\Config::reset();
 
-	/**
-	 * Advance the scan's clock one second per reading and append more lines to
-	 * p0's request index than MAX_SCAN_S of those readings cover, at one
-	 * reading per SCAN_CLOCK_STRIDE lines.
-	 */
-	private function run_out_the_scan_clock_over_newer_lines(): void {
-		$seconds      = 0.0;
-		Core::$clock = static function () use ( &$seconds ): float {
-			return $seconds += 1.0;
-		};
-		\file_put_contents(
-			$this->tmp . '/logs/requests.p0/0.idx',
-			\str_repeat( "x\n", ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride() ),
-			FILE_APPEND | LOCK_EX
-		);
+		$searched = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', $rid );
+
+		$this->assertSame( 'no request rid-dark-5515: the stats rows did not open', \trim( Core::as_string( $searched ) ) );
 	}
 
 	/** Lines the index walk reads between two looks at the clock. */
@@ -335,8 +340,8 @@ class PerformanceCITest extends TestCase {
 		return (int) ( new \ReflectionClassConstant( Performance_CI_Node::class, 'SCAN_CLOCK_STRIDE' ) )->getValue();
 	}
 
-	public function test_dump_request_finds_a_flame_past_max_scan_s(): void {
-		// Both walks are unbudgeted, so a flame behind a deep index is found.
+	/** The flame lookup spends MAX_SCAN_S at most; the record answers without it. */
+	public function test_dump_request_a_flame_lookup_past_max_scan_s_answers_no_flame(): void {
 		$this->write_request( [
 			'rid'         => 'rid-deep-flame-73920184665021',
 			'url'         => 'https://example.com/deep-flame-here',
@@ -347,11 +352,7 @@ class PerformanceCITest extends TestCase {
 			'rid'   => 'rid-deep-flame-73920184665021',
 			'flame' => [ 'name' => 'deep', 'value' => 23, 'children' => [] ],
 		] );
-		\file_put_contents(
-			$this->tmp . '/logs/flames.p0/0.idx',
-			\str_repeat( "x\n", ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride() ),
-			FILE_APPEND | LOCK_EX
-		);
+		$this->pad_flame_index();
 		$reads       = 0;
 		Core::$clock = static function () use ( &$reads ): float {
 			return (float) ++$reads;
@@ -359,7 +360,55 @@ class PerformanceCITest extends TestCase {
 
 		$record = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-deep-flame-73920184665021' );
 
-		$this->assertSame( 'deep', $record['flame_data']['flame']['name'] ?? null );
+		$this->assertSame( 'https://example.com/deep-flame-here', $record['url'] );
+		$this->assertArrayNotHasKey( 'flame_data', $record );
+		$this->assertTrue( $record['flame_cut'], 'a cut lookup is no missing flame' );
+	}
+
+	/**
+	 * A flame segment whose index took its last line before the request
+	 * finished cannot hold its flame, so the lookup ends there uncut.
+	 */
+	public function test_a_flame_lookup_ends_at_a_segment_closed_before_the_request_finished(): void {
+		$rid = $this->write_request( [ 'rid' => 'rid-tui-closed-6621', 'url' => 'https://example.com/tui-closed-6621' ] );
+		$this->write_flame( [ 'rid' => 'rid-tui-other-6621', 'flame' => [ 'name' => 'other', 'value' => 7, 'children' => [] ] ] );
+		$this->pad_flame_index();
+		\touch( $this->tmp . '/logs/flames.p0/0.idx', (int) Core::$now - 3 * Bucket::HOUR_SECONDS );
+		$reads       = 0;
+		Core::$clock = static function () use ( &$reads ): float {
+			return (float) ++$reads;
+		};
+
+		$record = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
+
+		$this->assertArrayNotHasKey( 'flame_data', $record );
+		$this->assertFalse( $record['flame_cut'] );
+		$this->assertLessThan( 3, $reads, 'no line of the closed segment was timed' );
+	}
+
+	/** A row whose place holds another request's record names no request. */
+	public function test_dump_request_refuses_a_place_holding_another_rids_record(): void {
+		$place = $this->write_record( [ 'rid' => 'rid-weka-other-6620', 'url' => 'https://example.com/weka-other-6620' ] );
+		$this->seed_request( [ 'rid' => 'rid-weka-asked-6620' ] + $place );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-weka-asked-6620' );
+
+		$this->assertSame( 'Request not found: rid=rid-weka-asked-6620', \trim( Core::as_string( $reply ) ) );
+	}
+
+	/** A span under a request whose flame lookup was cut names the timeout. */
+	public function test_a_span_under_a_request_whose_flame_lookup_was_cut_says_so(): void {
+		$rid = $this->write_request( [ 'rid' => 'rid-ruru-cut-6622', 'url' => 'https://example.com/ruru-cut-6622', 'request_url' => 'https://example.com/ruru-cut-6622' ] );
+		$this->write_flame( [ 'rid' => $rid, 'name' => 'request', 'value' => 9, 'children' => [ [ 'name' => 'wp_loaded', 'value' => 9, 'children' => [] ] ] ] );
+		$this->pad_flame_index();
+		$seconds     = 0.0;
+		Core::$clock = static function () use ( &$seconds ): float {
+			return $seconds += 1.0;
+		};
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', "request:{$rid}" ] );
+
+		$this->assertSame( "no span 'wp_loaded' in this request: its flame lookup ran out of time", \trim( Core::as_string( $reply ) ) );
 	}
 
 	/**
@@ -409,7 +458,7 @@ class PerformanceCITest extends TestCase {
 			new Performance_CI_Node(),
 			'performance',
 			'ask',
-			"category:wpdb --context=request:{$rid}:0"
+			"category:wpdb --context=request:{$rid}"
 		);
 
 		// 'request', not 'recent window': only the context path reaches the
@@ -418,7 +467,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_ask_category_refuses_a_callback_row_before_reading_any_board(): void {
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:hooks @10', 'request:nosuchrid:0' ] );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:hooks @10', 'request:nosuchrid' ] );
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( "'hooks @10' is a callback row", $result );
 	}
@@ -527,22 +576,12 @@ class PerformanceCITest extends TestCase {
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-cold-p1-5530981', 'ms' => 70.0 ], 1 );
 		$this->write_flame( [ 'rid' => 'rid-cold-p1-5530981', 'url_hash' => $hash, 'name' => 'request', 'value' => 70, 'children' => [] ], 1 );
-		$this->write_flame( [ 'rid' => 'rid-elsewhere-000001', 'url_hash' => 'f00f00f00f00', 'name' => 'request', 'value' => 1, 'children' => [] ], 0 );
-		$reads       = 0;
-		Core::$clock = static function () use ( &$reads ): float {
-			++$reads;
-			return 8080.0;
-		};
-		// The stats rows read the clock too, alike both times.
-		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
-		$shallow = $reads;
-		\file_put_contents( $this->tmp . '/logs/flames.p0/0.idx', \str_repeat( "x\n", 50 * self::clock_stride() ), FILE_APPEND | LOCK_EX );
-		$reads = 0;
+		$this->write_flame( [ 'rid' => 'rid-cold-p1-5530981', 'url_hash' => $hash, 'name' => 'request', 'value' => 9000.5, 'children' => [ [ 'name' => 'stray-p0', 'value' => 9000.5, 'children' => [] ] ] ], 0 );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertEqualsWithDelta( 70.0, $result['aggregate_flame']['value'], 0.001 );
-		$this->assertLessThan( 10, $reads - $shallow, "p0's flame index was walked" );
+		$this->assertSame( [], $result['aggregate_flame']['children'], "p0's flame index was read" );
 	}
 
 	public function test_dump_url_verb_rejects_unauthorized(): void {
@@ -559,70 +598,22 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'permission denied', $result );
 	}
 
-	// -------------------------------------------------------------------------
-	// Partition span: the dashboard reads a topology's OWN worker count, not
-	// the global `num_partitions`. The hub runs four workers on a global 1, so
-	// a reader looping to the global sees a quarter of the fleet. Both tests
-	// activate the SHIPPED topologies so a renamed node fails them.
-	// -------------------------------------------------------------------------
+	/** A context naming no descriptor type is refused by name. */
+	public function test_ask_refuses_a_context_naming_no_descriptor_type(): void {
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', 'kea-4471' ] );
 
-	public function test_search_requests_spans_the_topologys_own_worker_count(): void {
-		// Global num_partitions stays 1; performance runs 4. A rid living in p2 is
-		// invisible to a reader that loops to the global.
-		$this->activate_shipped( 'performance', 4 );
-		$rid = $this->write_request(
-			[
-				'rid'            => 'rid-high-partition-000000000001',
-				'url'            => 'https://example.com/deep',
-				'timestamp'      => 1700000400,
-				'duration_ms'    => 20,
-				'status_code'    => 200,
-				'peak_mb'        => 3,
-				'request_method' => 'GET',
-			],
-			2
-		);
-
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', $rid );
-
-		$this->assertIsArray( $result );
-		$this->assertSame( 2, $result['partition'] );
+		$this->assertSame( 'unknown descriptor: kea-4471', \trim( Core::as_string( $reply ) ) );
 	}
 
-	public function test_search_requests_tries_the_rids_own_partition_first(): void {
-		// This rid hashes to 3 of 4. Seeded in BOTH 3 and 0, an ascending scan
-		// returns 0 — only hash-first returns 3.
-		$this->activate_shipped( 'performance', 4 );
-		$body = [
-			'rid'            => 'rid-hash-order-0000000000000001',
-			'url'            => 'https://example.com/hashed',
-			'timestamp'      => 1700000400,
-			'duration_ms'    => 20,
-			'status_code'    => 200,
-			'peak_mb'        => 3,
-			'request_method' => 'GET',
-		];
-		$this->assertSame( 3, \Newspack_Nodes\Partition_Node::hash_to_partition( $body['rid'], 4 ) );
-		$this->write_request( $body, 0 );
-		$rid = $this->write_request( $body, 3 );
-
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', $rid );
-
-		$this->assertIsArray( $result );
-		$this->assertSame( 3, $result['partition'] );
-	}
-
-	public function test_dump_request_says_not_found_when_no_topology_is_active(): void {
-		// Nothing declares requests:partition, so there is no partition set to
-		// be outside of. "invalid partition" blames the caller for a request
-		// that is merely unfindable.
+	/** A stats file that will not open is an outage, never an absent request. */
+	public function test_dump_request_names_an_outage_rather_than_an_absence(): void {
+		$rid = $this->write_request( [ 'rid' => 'rid-dark-8812', 'url' => 'https://example.com/dark-8812' ] );
 		\update_option( 'newspack_nodes_topologies', [] );
 		\Newspack_Nodes\Config::reset();
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'some-rid' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
+		$this->assertSame( 'no request rid-dark-8812: the stats rows did not open', \trim( Core::as_string( $result ) ) );
 	}
 
 	// -------------------------------------------------------------------------
@@ -643,9 +634,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_search_requests_verb_locates_known_rid(): void {
-		// Seed one request — search should return {rid, partition, url_hash}.
-		// Rid must be ≤32 chars or it gets truncated when written into the
-		// fixed-width .idx field and the round-trip lookup fails.
+		// Seed one request — search should return {rid, url_hash}.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-search-12345678901234567890',
 			'url'            => 'https://example.com/searchable',
@@ -664,10 +653,8 @@ class PerformanceCITest extends TestCase {
 			$rid
 		);
 
-		$this->assertIsArray( $result );
+		$this->assertSame( [ 'rid', 'url_hash' ], \array_keys( $result ) );
 		$this->assertSame( $rid, $result['rid'] );
-		$this->assertSame( 0, $result['partition'] );
-		$this->assertNotEmpty( $result['url_hash'] );
 	}
 
 	/**
@@ -904,47 +891,17 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'https://example.com/elsewhere', $result['url'] );
 	}
 
-	/**
-	 * A malformed --partition casts to 0, so the verb answers for a partition
-	 * the operator never named — and where the rid is absent, blames the rid.
-	 */
-	public function test_dump_request_verb_refuses_a_malformed_partition(): void {
-		$rid = $this->write_request( [
-			'rid'         => 'rid-malformed-partition-flag',
-			'url'         => 'https://example.com/p0-only',
-			'timestamp'   => 1700000600,
-			'duration_ms' => 12,
-			'events'      => [ [ 'k' => 'process (start)', 'm' => '/p0-only', 'ts' => 1700000600.0 ] ],
-		] );
+	/** The row names the record's partition; a caller names none. */
+	public function test_dump_request_refuses_a_partition(): void {
+		$rid = $this->write_request( [ 'rid' => 'rid-no-hint-6612', 'url' => 'https://example.com/no-hint-6612' ] );
 
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'dump_request',
-			$rid . ' --partition=abc'
-		);
-
-		$this->assertIsString( $result, 'a malformed --partition must not answer for p0' );
-		$this->assertStringContainsString( 'partition', \strtolower( $result ) );
-	}
-
-	public function test_dump_request_verb_rejects_invalid_partition(): void {
-		// num_partitions = 1 (test setUp), partition = 5 is out of range.
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'dump_request',
-			'whatever --partition=5'
-		);
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid . ' --partition=0' );
 
 		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid partition', \strtolower( $result ) );
+		$this->assertStringContainsString( 'partition', $result );
 	}
 
 	public function test_dump_request_verb_returns_body_for_known_rid(): void {
-		// Rid must be ≤32 chars so the round-trip through the .idx fixed-width
-		// field doesn't drop characters and break the lookup.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-detail-12345678901234567890',
 			'url'            => 'https://example.com/detailed',
@@ -1048,7 +1005,7 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'GET',
 		] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}:0" );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}" );
 
 		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
 		$this->assertNotNull( $result['rule'], 'the record named its rule; nothing had to be re-derived' );
@@ -1067,7 +1024,7 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'GET',
 		] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}:0" );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}" );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'request', $result['subject'] );
@@ -1076,46 +1033,17 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A partition that is not a canonical decimal is refused: cast, `abc`
-	 * named p0 and `-3` p-3, and the record was found anyway.
+	 * A request is named by its rid alone. The old `request:<rid>:<partition>`
+	 * is refused, as the target and as a span's context, never half-read.
 	 */
-	#[DataProvider( 'non_canonical_partitions' )]
-	public function test_ask_refuses_a_request_descriptor_whose_partition_is_not_canonical( string $partition, bool $as_context ): void {
-		$rid = $this->write_request( [
-			'rid'            => 'rid-ask-part-1234567890123456',
-			'url'            => 'https://example.com/asked-partition',
-			'timestamp'      => 1700000900,
-			'duration_ms'    => 500,
-			'status_code'    => 200,
-			'peak_mb'        => 2,
-			'request_method' => 'GET',
-			'flame'          => [
-				'name'     => 'request',
-				'value'    => 500.0,
-				'children' => [ [ 'name' => 'wp_loaded', 'value' => 480.0, 'children' => [] ] ],
-			],
-		] );
-		$request = "request:{$rid}:{$partition}";
+	public function test_ask_refuses_a_request_descriptor_naming_a_partition(): void {
+		$rid = $this->write_request( [ 'rid' => 'rid-ask-part-5521', 'url' => 'https://example.com/asked-partition', 'duration_ms' => 500 ] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', $as_context ? [ 'span:wp_loaded', $request ] : [ $request ] );
+		$target  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}:2" );
+		$context = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', "request:{$rid}:2" ] );
 
-		$this->assertIsString( $result );
-		$this->assertSame( "invalid partition in {$request}", \trim( $result ) );
-	}
-
-	/**
-	 * Request descriptors whose partition is no canonical decimal, as the
-	 * target and as a span's context.
-	 *
-	 * @return array<string,array{0:string,1:bool}>
-	 */
-	public static function non_canonical_partitions(): array {
-		$cases = [];
-		foreach ( [ 'abc', '-3', '', '07' ] as $partition ) {
-			$cases[ "target '{$partition}'" ]  = [ $partition, false ];
-			$cases[ "context '{$partition}'" ] = [ $partition, true ];
-		}
-		return $cases;
+		$this->assertSame( "unknown descriptor: request:{$rid}:2", \trim( Core::as_string( $target ) ) );
+		$this->assertSame( "unknown descriptor: request:{$rid}:2", \trim( Core::as_string( $context ) ) );
 	}
 
 	public function test_ask_resolves_a_span_through_its_request_context(): void {
@@ -1139,7 +1067,7 @@ class PerformanceCITest extends TestCase {
 			new Performance_CI_Node(),
 			'performance',
 			'ask',
-			[ 'span:wp_loaded', "request:{$rid}:0" ]
+			[ 'span:wp_loaded', "request:{$rid}" ]
 		);
 
 		$this->assertIsArray( $result );
@@ -1166,7 +1094,7 @@ class PerformanceCITest extends TestCase {
 
 		$ask = static function ( string $descriptor ) use ( $rid ): mixed {
 			VerbHarness::reset();
-			return VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ $descriptor, "request:{$rid}:0" ] );
+			return VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ $descriptor, "request:{$rid}" ] );
 		};
 
 		$result = $ask( 'entry:1' );
@@ -1191,7 +1119,7 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'GET',
 		] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ "request:{$rid}:0", 'url:cafebabe3456', '--server=alpha.example' ] );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ "request:{$rid}", 'url:cafebabe3456', '--server=alpha.example' ] );
 
 		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
 		$this->assertSame( 'dump_url', $result['fetch'][1]['tool'] );
@@ -1206,33 +1134,74 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * The flame builder on partition N writes flames.pN from requests.pN, so a
-	 * rid's flame sits on its request's hashed partition, which is read first.
+	 * The flame builder on partition N writes flames.pN and the row naming
+	 * requests.pN, so a rid's flame is read from its row's partition alone.
 	 */
-	public function test_the_flame_lookup_reads_the_hashed_partition_first(): void {
+	public function test_the_flame_lookup_reads_its_rows_partition(): void {
 		$this->activate_shipped( 'performance', 4 );
-		$count = \count( Bootstrap::node_dirs( 'requests:partition' ) );
-		$this->assertSame( 4, $count );
-		$this->assertSame( $count, \count( Bootstrap::node_dirs( 'flames:partition' ) ) );
-		$rid = '';
-		for ( $i = 0; '' === $rid; $i++ ) {
-			$candidate = \sprintf( 'rid-kakapo-%06d', $i );
-			if ( 0 !== Partition_Node::hash_to_partition( $candidate, $count ) ) {
-				$rid = $candidate;
-			}
-		}
-		$home = Partition_Node::hash_to_partition( $rid, $count );
-		$this->write_request( [ 'rid' => $rid, 'url' => 'https://example.com/kakapo', 'timestamp' => 1700000611, 'duration_ms' => 19 ], $home );
-		$this->write_flame( [ 'rid' => $rid, 'flame' => [ 'name' => 'stray', 'value' => 3, 'children' => [] ] ], 0 );
-		$this->write_flame( [ 'rid' => $rid, 'flame' => [ 'name' => 'home', 'value' => 19, 'children' => [] ] ], $home );
+		$rid = 'rid-kakapo-hashed-elsewhere-1';
+		$this->assertNotSame( 2, Partition_Node::hash_to_partition( $rid, 4 ) );
+		$this->write_request( [ 'rid' => $rid, 'url' => 'https://example.com/kakapo', 'timestamp' => 1700000611, 'duration_ms' => 19 ], 2 );
+		$this->write_flame( [ 'rid' => $rid, 'flame' => [ 'name' => 'stray', 'value' => 3, 'children' => [] ] ], Partition_Node::hash_to_partition( $rid, 4 ) );
+		$this->write_flame( [ 'rid' => $rid, 'flame' => [ 'name' => 'home', 'value' => 19, 'children' => [] ] ], 2 );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
 		$this->assertSame( 'home', $result['flame_data']['flame']['name'] );
 	}
 
+	/** The record is read once, at the place its row names; no index is walked. */
+	public function test_dump_request_reads_the_record_at_its_rows_position(): void {
+		$this->write_record( [ 'rid' => 'rid-ahead-of-it-6620', 'url' => 'https://example.com/ahead-6620' ] );
+		$place = $this->write_record( [ 'rid' => 'rid-row-placed-6620', 'url' => 'https://example.com/row-placed-6620', 'duration_ms' => 19 ] );
+		$this->seed_request( [ 'rid' => 'rid-row-placed-6620' ] + $place );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-row-placed-6620' );
+
+		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
+		$this->assertSame( 'https://example.com/row-placed-6620', $result['url'] );
+		$this->assertSame( Log_Manager::url_hash( 'https://seed.example/seed-path/' ), $result['url_hash'], 'the hash its row names' );
+	}
+
+	/** An index is read only where this process registered its writer. */
+	public function test_an_index_read_refuses_an_unregistered_formatter(): void {
+		$rid = $this->write_request( [ 'rid' => 'rid-unformatted-3318', 'url' => 'https://example.com/unformatted-3318' ] );
+		$registry = new \ReflectionProperty( \Newspack_Nodes\Formatters::class, 'registry' );
+		$saved    = $registry->getValue();
+		\Newspack_Nodes\Formatters::reset();
+		try {
+			$dumped = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
+		} finally {
+			$registry->setValue( null, $saved );
+		}
+
+		$this->assertSame( 'index formatter not registered: flame-index', \trim( Core::as_string( $dumped ) ) );
+	}
+
+	/** A record no row names, aged past or not yet flushed, is not found. */
+	public function test_dump_request_answers_not_found_for_a_record_no_row_names(): void {
+		$this->write_record( [ 'rid' => 'rid-rowless-4410', 'url' => 'https://example.com/rowless-4410', 'duration_ms' => 23 ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-rowless-4410' );
+
+		$this->assertSame( 'Request not found: rid=rid-rowless-4410', \trim( Core::as_string( $result ) ) );
+	}
+
+	/** A row whose place holds no record is no request either. */
+	public function test_dump_request_answers_not_found_where_the_row_points_at_nothing(): void {
+		$this->write_record( [ 'rid' => 'rid-real-7781', 'url' => 'https://example.com/real-7781' ] );
+		$this->seed_request( [ 'rid' => 'rid-gone-7781', 'segment' => 0, 'offset' => 900000, 'length' => 311 ] );
+		$this->seed_request( [ 'rid' => 'rid-placeless-7781' ] );
+
+		$gone      = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-gone-7781' );
+		$placeless = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-placeless-7781' );
+
+		$this->assertSame( 'Request not found: rid=rid-gone-7781', \trim( Core::as_string( $gone ) ) );
+		$this->assertSame( 'Request not found: rid=rid-placeless-7781', \trim( Core::as_string( $placeless ) ) );
+	}
+
 	public function test_dump_request_verb_merges_flame_data_when_present(): void {
-		// Rid must be ≤32 chars (fixed-width .idx field) so the lookup matches.
+		// The flame index keeps 32 chars of a rid; a longer one never matches.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-flame-123456789012345678901',
 			'url'            => 'https://example.com/with-flame',
@@ -1305,8 +1274,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'dump_request',
-			'--partition=0'
+			'dump_request'
 		);
 
 		$this->assertIsString( $result );
@@ -1911,14 +1879,10 @@ class PerformanceCITest extends TestCase {
 		$this->assertTrue( $args['rid']['required'] );
 	}
 
-	public function test_dump_request_verb_declares_required_rid_optional_partition(): void {
-		// dump_request needs a rid; partition defaults to 0.
+	public function test_dump_request_verb_declares_a_required_rid_alone(): void {
 		$args = self::args_by_name( 'dump_request' );
-		$this->assertSame( [ 'rid', 'partition' ], \array_keys( $args ) );
+		$this->assertSame( [ 'rid' ], \array_keys( $args ) );
 		$this->assertTrue( $args['rid']['required'] );
-		$this->assertSame( 'int', $args['partition']['type'] );
-		$this->assertFalse( $args['partition']['required'] );
-		$this->assertSame( 0, $args['partition']['default'] );
 	}
 
 	public function test_set_verb_declares_a_required_option_and_an_optional_value(): void {
@@ -1976,36 +1940,6 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// ── disk-walk fan-out, index-row shape, leaderboard arithmetic ───────────
-
-	/**
-	 * The flame lookup fans across EVERY flame partition: the builder writes to
-	 * whichever one it is wired into, so a flame for a p0 request can land in p2.
-	 */
-	public function test_dump_request_merges_a_flame_written_to_another_partition(): void {
-		$this->activate_shipped( 'performance', 3 );
-		$rid = $this->write_request( [
-			'rid'            => 'rid-flame-elsewhere-00000000001',
-			'url'            => 'https://example.com/flame-in-p2',
-			'timestamp'      => 1700003100,
-			'duration_ms'    => 27,
-			'status_code'    => 200,
-			'peak_mb'        => 4,
-			'request_method' => 'GET',
-		] );
-		$this->write_flame(
-			[
-				'rid'      => $rid,
-				'url_hash' => Log_Manager::url_hash( 'https://example.com/flame-in-p2' ),
-				'flame'    => [ 'name' => 'request', 'value' => 27, 'children' => [] ],
-			],
-			2
-		);
-
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
-
-		$this->assertIsArray( $result );
-		$this->assertSame( 27, $result['flame_data']['flame']['value'] );
-	}
 
 	public function test_the_reply_clock_is_the_ticks_own_rather_than_the_wall(): void {
 		// Inside the drain the tick refreshes `Core::$now`, and every reader on
@@ -2181,7 +2115,7 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'GET',
 		] );
 
-		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}:0 --bucket=2026-10-01-00-00" );
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid} --bucket=2026-10-01-00-00" );
 
 		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : '' );
 		$this->assertSame( 'request', $brief['subject'] );
@@ -2694,11 +2628,11 @@ class PerformanceCITest extends TestCase {
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) );
 
-		$this->assertSame( [ 'stats', 'requests', 'requests_capped', 'aggregate_flame', 'aggregate_profiles' ], \array_keys( $reply ) );
+		$this->assertSame( [ 'stats', 'requests', 'requests_capped', 'aggregate_flame', 'flame_cut', 'aggregate_profiles' ], \array_keys( $reply ) );
 		$this->assertSame(
 			[
-				[ 'rid' => 'rid-takahe-new', 'timestamp' => $latest * 300 - 46, 'duration_ms' => null, 'finished_at' => $latest * 300 + 19.5, 'status_code' => 504, 'peak_mb' => 12.75, 'method' => 'GET', 'error_status' => 'T', 'segment' => 5, 'offset' => 2218, 'length' => 640, 'partition' => 1 ],
-				[ 'rid' => 'rid-takahe-old', 'timestamp' => ( $latest - 4 ) * 300 - 31, 'duration_ms' => 2412.5, 'finished_at' => ( $latest - 4 ) * 300 + 7.5, 'status_code' => 201, 'peak_mb' => 31.25, 'method' => 'POST', 'error_status' => '-', 'segment' => 3, 'offset' => 7104, 'length' => 911, 'partition' => 0 ],
+				[ 'rid' => 'rid-takahe-new', 'timestamp' => $latest * 300 - 46, 'duration_ms' => null, 'finished_at' => $latest * 300 + 19.5, 'status_code' => 504, 'peak_mb' => 12.75, 'method' => 'GET', 'error_status' => 'T' ],
+				[ 'rid' => 'rid-takahe-old', 'timestamp' => ( $latest - 4 ) * 300 - 31, 'duration_ms' => 2412.5, 'finished_at' => ( $latest - 4 ) * 300 + 7.5, 'status_code' => 201, 'peak_mb' => 31.25, 'method' => 'POST', 'error_status' => '-' ],
 			],
 			$reply['requests']
 		);
@@ -2841,8 +2775,10 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_url_flame_is_rebuilt_from_flames(): void {
 		$hash = $this->seed_a_url_with_two_flames();
 
-		$flame = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash )['aggregate_flame'];
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+		$flame = $reply['aggregate_flame'];
 
+		$this->assertFalse( $reply['flame_cut'] );
 		$this->assertSame( 'aggregate', $flame['name'] );
 		$this->assertSame( 50.5, $flame['value'], 'per-request means: (40.5 + 60.5) / 2' );
 		$this->assertSame( 'wp_loaded', $flame['children'][0]['name'] );
@@ -2909,6 +2845,7 @@ class PerformanceCITest extends TestCase {
 			$this->write_flame( [ 'rid' => $rid, 'url_hash' => $hash, 'name' => 'request', 'value' => $ms, 'children' => [] ], $partition );
 		}
 		\file_put_contents( $this->tmp . '/logs/flames.p1/0.idx', \str_pad( 'rid-imposter-9931', 32 ) . $hash . "\n", FILE_APPEND | LOCK_EX );
+		self::appended_at_the_tick( $this->tmp . '/logs/flames.p1/0.idx' );
 
 		$flame = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash )['aggregate_flame'];
 
@@ -2925,19 +2862,71 @@ class PerformanceCITest extends TestCase {
 		);
 	}
 
+	/** A rebuild the clock cuts short answers no flame, never a partial one. */
 	public function test_a_flame_rebuild_the_clock_cuts_short_answers_no_flame(): void {
 		$hash = $this->seed_a_url_with_two_flames();
-		\file_put_contents(
-			$this->tmp . '/logs/flames.p0/0.idx',
-			\str_repeat( "x\n", ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride() ),
-			FILE_APPEND | LOCK_EX
-		);
+		$this->pad_flame_index();
 		$seconds     = 0.0;
 		Core::$clock = static function () use ( &$seconds ): float {
 			return $seconds += 1.0;
 		};
 
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+
+		$this->assertNull( $reply['aggregate_flame'] );
+		$this->assertTrue( $reply['flame_cut'] );
+	}
+
+	/** A flame segment closed before the oldest listed request finished is never read. */
+	public function test_a_flame_rebuild_ends_at_a_segment_closed_before_its_requests_finished(): void {
+		$url = 'https://seed.example/pukeko-closed-6623/';
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-pukeko-6623', 'ms' => 21.5 ] );
+		$this->write_flame( [ 'rid' => 'rid-pukeko-other-6623', 'url_hash' => 'f00f00f00f00', 'name' => 'request', 'value' => 1, 'children' => [] ] );
+		$this->pad_flame_index();
+		\touch( $this->tmp . '/logs/flames.p0/0.idx', (int) Core::$now - 3 * Bucket::HOUR_SECONDS );
+		$seconds     = 0.0;
+		Core::$clock = static function () use ( &$seconds ): float {
+			return $seconds += 1.0;
+		};
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) );
+
+		$this->assertSame( [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ], $reply['aggregate_flame'] );
+		$this->assertFalse( $reply['flame_cut'] );
+	}
+
+	/**
+	 * A listed rid whose flame was never stored makes the lookup read its
+	 * partition's whole index; the budget bounds that walk on every poll.
+	 */
+	public function test_a_listed_rid_with_no_stored_flame_spends_the_budget_and_no_more(): void {
+		$url  = 'https://seed.example/hihi-missing-5520/';
+		$hash = self::hash_of( $url );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-hihi-unflamed-5520', 'ms' => 31.5 ] );
+		for ( $i = 0; $i < ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride(); $i++ ) {
+			$this->write_flame( [ 'rid' => \sprintf( 'rid-other-%05d', $i ), 'url_hash' => 'f00f00f00f00', 'name' => 'request', 'value' => 1, 'children' => [] ] );
+		}
+		$reads       = 0;
+		Core::$clock = static function () use ( &$reads ): float {
+			return (float) ++$reads;
+		};
+
 		$this->assertNull( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash )['aggregate_flame'] );
+		$this->assertLessThan( Performance_CI_Node::MAX_SCAN_S + 20, $reads, 'the clock is read once a stride, so the walk stopped near the budget' );
+	}
+
+	/** A span under a URL whose rebuild ran out of time says so. */
+	public function test_a_span_under_a_url_whose_rebuild_ran_out_of_time_says_so(): void {
+		$hash = $this->seed_a_url_with_two_flames();
+		$this->pad_flame_index();
+		$seconds     = 0.0;
+		Core::$clock = static function () use ( &$seconds ): float {
+			return $seconds += 1.0;
+		};
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', "url:{$hash}" ] );
+
+		$this->assertSame( "no aggregate for URL {$hash}: its flame rebuild ran out of time", \trim( Core::as_string( $reply ) ) );
 	}
 
 	public function test_a_worker_only_url_answers_its_detail_and_is_absent_from_site_totals(): void {
@@ -3102,24 +3091,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( "no span 'shutdown' in this URL's aggregate", $reply );
 	}
 
-	public function test_a_span_under_a_url_whose_rebuild_ran_out_of_time_says_so(): void {
-		$hash = $this->seed_a_url_with_two_flames();
-		\file_put_contents(
-			$this->tmp . '/logs/flames.p0/0.idx',
-			\str_repeat( "x\n", ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride() ),
-			FILE_APPEND | LOCK_EX
-		);
-		$seconds     = 0.0;
-		Core::$clock = static function () use ( &$seconds ): float {
-			return $seconds += 1.0;
-		};
-
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', "url:{$hash}" ] );
-
-		$this->assertIsString( $reply );
-		$this->assertStringContainsString( "no aggregate for URL {$hash}", $reply );
-	}
-
 	public function test_a_span_under_an_unknown_url_is_not_found(): void {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', 'url:cafebabe1357' ] );
 
@@ -3142,6 +3113,7 @@ class PerformanceCITest extends TestCase {
 				'requests'           => [],
 				'requests_capped'    => false,
 				'aggregate_flame'    => null,
+				'flame_cut'          => false,
 				'aggregate_profiles' => null,
 			],
 			$reply
