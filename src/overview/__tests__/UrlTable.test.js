@@ -118,18 +118,14 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'names the pager count as rows, not URLs', () => {
-		// A capped bucket carries synthetic overflow rows: sliceable, so the
-		// pager pages over them, but not URLs, so the header excludes them.
-		// The two counts legitimately differ, which is exactly why the pager
-		// has to say which one it is showing — "502 URLs" beside a header
-		// reading 500 is the same number twice, wrong once.
+	it( 'names the pager count as the URLs the filters left', () => {
+		// Every row is one URL, so the pager counts what the header counts.
 		const { container, unmount } = mount( { totalUrls: 502 } );
 
 		const info = container.querySelector(
 			'.event-logger-table__pagination-info'
 		);
-		expect( info.textContent ).toBe( '1\u2013100 of 502 rows' );
+		expect( info.textContent ).toBe( '1\u2013100 of 502 URLs' );
 		unmount();
 	} );
 
@@ -189,36 +185,39 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'does not offer the aggregate row as a URL', () => {
-		// The `Other` row stands for every URL past the per-bucket cap, so its
-		// key is not a url_hash and `dump_url` cannot answer for it. Making
-		// it clickable would open a modal that errors on a row whose whole job
-		// is to keep the totals honest.
+	it( 'renders no overflow row', () => {
+		// Every row is one URL the server counted exactly; a row flagged as
+		// an aggregate is still that URL, opened and asked about as any other.
 		const onSelect = jest.fn();
 		const { container, unmount } = mount( {
 			urls: [
 				{ ...URLS[ 0 ] },
-				{ hash: 'Other', aggregate: true, count: 900, avg_ms: 12 },
+				{
+					hash: 'c0ffee71',
+					url: 'https://kea.example/huia/',
+					aggregate: true,
+					count: 900,
+					avg_ms: 12,
+				},
 			],
 			onSelect,
 		} );
 
-		const rows = container.querySelectorAll( '.event-logger-table__row' );
-		const other = rows[ rows.length - 1 ];
-		expect( other.getAttribute( 'role' ) ).not.toBe( 'button' );
-		expect( other.hasAttribute( 'data-ask' ) ).toBe( false );
-		// It carries no `url` — the writer stores none, because a label
-		// authored there is untranslated and searchable. The client names it,
-		// and names it for the REQUESTS the row counts: the Reqs column holds
-		// their traffic, not how many URLs folded, which nothing stores.
-		expect( other.textContent ).toContain(
-			'traffic from URLs beyond the per-shard cap'
+		expect( container.querySelector( '.is-aggregate' ) ).toBeNull();
+		expect( container.textContent ).not.toContain(
+			'beyond the per-shard cap'
 		);
-		expect( other.textContent ).not.toContain( 'other URLs beyond' );
-		other.dispatchEvent(
+		const rows = container.querySelectorAll( '.event-logger-table__row' );
+		const last = rows[ rows.length - 1 ];
+		expect( last.getAttribute( 'role' ) ).toBe( 'button' );
+		expect( last.getAttribute( 'data-ask' ) ).toBe( 'url:c0ffee71' );
+		expect( last.textContent ).toContain( 'https://kea.example/huia/' );
+		last.dispatchEvent(
 			new window.MouseEvent( 'click', { bubbles: true } )
 		);
-		expect( onSelect ).not.toHaveBeenCalled();
+		expect( onSelect ).toHaveBeenCalledWith(
+			expect.objectContaining( { hash: 'c0ffee71' } )
+		);
 		unmount();
 	} );
 
@@ -714,7 +713,7 @@ describe( 'UrlTable', () => {
 
 	it( 'shows total count summary when total <= URLS_PER_PAGE (100)', () => {
 		const { container, unmount } = mount( { totalUrls: 3 } );
-		expect( container.textContent ).toContain( '3 rows' );
+		expect( container.textContent ).toContain( '3 URLs' );
 		expect( container.textContent ).not.toContain( 'Prev' );
 		unmount();
 	} );
@@ -964,46 +963,57 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'shows when each URL was last seen, as an age from the server clock', () => {
-		const { container, unmount } = mount( {
-			urls: [ { ...URLS[ 0 ], last_updated: 1000 } ],
-			totalUrls: 1,
-			now: 1300,
+	describe( 'last seen', () => {
+		afterEach( () => jest.useRealTimers() );
+
+		it( 'ages each URL against the browser clock, in whole seconds', () => {
+			jest.useFakeTimers();
+			jest.setSystemTime( new Date( 1758500000400 ) );
+			const { container, unmount } = mount( {
+				urls: [ { ...URLS[ 0 ], last_updated: 1758499699.75 } ],
+				totalUrls: 1,
+			} );
+			const cell = container.querySelector(
+				'.event-logger-table__list [data-field="last_updated"]'
+			);
+			expect( cell.textContent ).toBe( '5m' );
+			unmount();
 		} );
-		const cell = container.querySelector(
-			'.event-logger-table__list [data-field="last_updated"]'
-		);
-		expect( cell.textContent ).toBe( '5m' );
-		unmount();
+
+		it( 'reads a completion the browser clock has not reached as just now', () => {
+			jest.useFakeTimers();
+			jest.setSystemTime( new Date( 1758500000000 ) );
+			const { container, unmount } = mount( {
+				urls: [ { ...URLS[ 0 ], last_updated: 1758500004.5 } ],
+				totalUrls: 1,
+			} );
+			const cell = container.querySelector(
+				'.event-logger-table__list [data-field="last_updated"]'
+			);
+			expect( cell.textContent ).toBe( '0s' );
+			unmount();
+		} );
+
+		it( 'renders "-" for a row with no last_updated', () => {
+			const { container, unmount } = mount( {
+				urls: [ URLS[ 0 ] ],
+				totalUrls: 1,
+			} );
+			const cell = container.querySelector(
+				'.event-logger-table__list [data-field="last_updated"]'
+			);
+			expect( cell.textContent ).toBe( '-' );
+			unmount();
+		} );
 	} );
 
-	it( 'renders "-" for a row with no last_updated, even once now is set', () => {
-		const { container, unmount } = mount( {
-			urls: [ URLS[ 0 ] ],
-			totalUrls: 1,
-			now: 1300,
-		} );
-		const cell = container.querySelector(
-			'.event-logger-table__list [data-field="last_updated"]'
-		);
-		expect( cell.textContent ).toBe( '-' );
-		unmount();
-	} );
-
-	it( 'says when the page is ranked per bucket', () => {
+	it( 'says nothing of ranking: every mean is request-weighted', () => {
 		const { container, unmount } = mount( { ranked: true } );
-		const note = container.querySelector(
-			'.event-logger-table__pagination-info .event-logger-table__ranked-note'
-		);
-		expect( note.textContent ).toBe(
-			'Ranked per bucket; Avg and Mem are means of bucket averages'
-		);
-		unmount();
-		const plain = mount();
 		expect(
-			plain.container.querySelector( '.event-logger-table__ranked-note' )
+			container.querySelector( '.event-logger-table__ranked-note' )
 		).toBeNull();
-		plain.unmount();
+		expect( container.textContent ).not.toContain( 'bucket averages' );
+		unmount();
 	} );
 
 	it( 'names the search as a whole-word match', () => {

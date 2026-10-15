@@ -13,7 +13,7 @@
  *   - renders the stats grid (URLs, requests, avg ms, req/s)
  *   - shows the optional peak-memory stat only when > 0
  *   - keeps the chart panel mounted whatever the selected dimension holds
- *   - mounts the global-leaderboard section when global_leaderboard exists
+ *   - mounts the leaderboard section when the overview's leaderboard exists
  *   - offers the Server breakdown only while `canBreakDownByServer` says the
  *     page can chart that axis. Choosing the active dimension against that
  *     rule belongs to PerformanceDashboard, and is tested there.
@@ -27,42 +27,73 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 	default: ( props ) => {
 		const {
 			metric,
-			breakdown,
+			dims,
 			serverFilter,
-			data,
+			series,
 			slots,
 			onSlotClick,
 			onSlotRange,
 			selectedBuckets,
 		} = props;
 		globalThis.__aggregateStorageKey = props.storageKey;
+		globalThis.__aggregateSlots = slots;
 		globalThis.__aggregateSlotClick = onSlotClick;
 		globalThis.__aggregateSlotRange = onSlotRange;
 		globalThis.__aggregateSelected = selectedBuckets;
-		return `AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
-			serverFilter || ''
-		},totals=${ undefined === data ? 'none' : 'given' }] slots:${
-			slots?.[ 0 ] ?? 'none'
-		}`;
+		return `AGGREGATE[metric=${ metric },dims=${ dims.join(
+			'+'
+		) },server=${ serverFilter || '' },names=${
+			series?.names.length ?? 'none'
+		}] slots:${ slots?.[ 0 ] ?? 'none' }`;
 	},
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
 	default: ( props ) => {
-		const { slots, onSlotClick, onSlotRange, selectedBuckets } = props;
+		const { data, slots, onSlotClick, onSlotRange, selectedBuckets } =
+			props;
 		globalThis.__categoryStorageKey = props.storageKey;
+		globalThis.__categorySlots = slots;
 		globalThis.__categorySlotClick = onSlotClick;
 		globalThis.__categorySlotRange = onSlotRange;
 		globalThis.__categorySelected = selectedBuckets;
-		return `CATEGORY slots:${ slots?.[ 0 ] ?? 'none' }`;
+		return `CATEGORY rows:${ data?.rows.length ?? 'none' } slots:${
+			slots?.[ 0 ] ?? 'none'
+		}`;
 	},
 } ) );
 
 import * as React from 'react';
 import OverviewSection from '../OverviewSection';
-import { breakdownState } from '../../AggregateTimeChart';
+import { SERIES_MEASURES } from '../../constants';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
-import { nameTable, slotsEndingAt } from '../../../test-helpers/chartWire';
+import { rowsWire } from '../../../test-helpers/chartWire';
+
+/**
+ * A view slice holding a `query` answer, as `useNodeField` hands one over.
+ *
+ * @param {?Object} data   The answer, or null before one.
+ * @param {Object}  [more] Status fields, as `loading` or `error`.
+ * @return {Object} The slice.
+ */
+const sliceOf = ( data, more = {} ) => ( {
+	data,
+	loading: false,
+	error: null,
+	...more,
+} );
+
+/**
+ * A chart answer grouped by `bucket` and `ua`, over the given selection.
+ *
+ * @param {Array[]} rows   Its rows.
+ * @param {string}  bucket The selection it echoes.
+ * @return {Object} The answer.
+ */
+const uaAnswer = ( rows, bucket = '2026-09-28-14-40..2026-09-29-14-35' ) =>
+	rowsWire( [ 'bucket', 'ua', ...SERIES_MEASURES ], rows, {
+		filters: { filter: {}, bucket, search: '' },
+	} );
 
 const baseTotals = {
 	urls: 7,
@@ -72,11 +103,17 @@ const baseTotals = {
 	requests_per_second: 1.25,
 };
 
-function mount( overview, overrides = {} ) {
-	const props = {
+/**
+ * The section's props over `overview`, with `overrides` set.
+ *
+ * @param {?Object} overview  The overview slice payload.
+ * @param {Object}  overrides Props to set.
+ * @return {Object} The props.
+ */
+function mountProps( overview, overrides = {} ) {
+	return {
 		overview,
 		urlTotals: baseTotals,
-		breakdownAvgMs: 42,
 		serverFilter: '',
 		setServerFilter: jest.fn(),
 		serverNames: [],
@@ -92,15 +129,35 @@ function mount( overview, overrides = {} ) {
 		setRefreshInterval: jest.fn(),
 		chartMetric: 'volume',
 		setChartMetric: jest.fn(),
-		chartBreakdown: 'status',
+		chartBreakdown: 'ua',
 		setChartBreakdown: jest.fn(),
+		chartThenBy: '',
+		setChartThenBy: jest.fn(),
+		chartChips: [],
+		setChartChips: jest.fn(),
 		canBreakDownByServer: true,
-		breakdownRead: breakdownState( null ),
-		categoryData: null,
+		chartSlice: sliceOf( null ),
+		categoriesSlice: sliceOf( null ),
+		selectedBuckets: [],
 		ask: { active: false, start: jest.fn(), cancel: jest.fn() },
 		...overrides,
 	};
-	return renderComponent( React.createElement( OverviewSection, props ) );
+}
+
+/**
+ * Mount the section over `overview`, with `overrides` set.
+ *
+ * @param {?Object} overview  The overview slice payload.
+ * @param {Object}  overrides Props to set.
+ * @return {Object} The mounted section.
+ */
+function mount( overview, overrides = {} ) {
+	return renderComponent(
+		React.createElement(
+			OverviewSection,
+			mountProps( overview, overrides )
+		)
+	);
 }
 
 beforeEach( () => {
@@ -135,9 +192,7 @@ describe( 'OverviewSection', () => {
 	} );
 
 	it( 'names its two charts by the overview placement keys', () => {
-		const { unmount } = mount( {
-			slots: slotsEndingAt( '2026-10-04-13-35' ),
-		} );
+		const { unmount } = mount( {} );
 		expect( globalThis.__aggregateStorageKey ).toBe(
 			'event-logger-overview-chart-aggregate'
 		);
@@ -149,10 +204,7 @@ describe( 'OverviewSection', () => {
 
 	it( 'hands both charts the click that narrows the table to a bucket', () => {
 		const onSlotClick = jest.fn();
-		const { unmount } = mount(
-			{ slots: slotsEndingAt( '2026-10-04-13-35' ) },
-			{ onSlotClick }
-		);
+		const { unmount } = mount( {}, { onSlotClick } );
 		expect( globalThis.__aggregateSlotClick ).toBe( onSlotClick );
 		expect( globalThis.__categorySlotClick ).toBe( onSlotClick );
 		unmount();
@@ -160,10 +212,7 @@ describe( 'OverviewSection', () => {
 
 	it( 'hands both charts the drag that selects a span of buckets', () => {
 		const onSlotRange = jest.fn();
-		const { unmount } = mount(
-			{ slots: slotsEndingAt( '2026-10-04-13-35' ) },
-			{ onSlotRange }
-		);
+		const { unmount } = mount( {}, { onSlotRange } );
 		expect( globalThis.__aggregateSlotRange ).toBe( onSlotRange );
 		expect( globalThis.__categorySlotRange ).toBe( onSlotRange );
 		unmount();
@@ -171,35 +220,146 @@ describe( 'OverviewSection', () => {
 
 	it( "hands both charts the table's selection to shade", () => {
 		const selectedBuckets = [ '2026-10-04-13-25', '2026-10-04-13-35' ];
-		const { unmount } = mount(
-			{ slots: slotsEndingAt( '2026-10-04-13-35' ) },
-			{ selectedBuckets }
-		);
+		const { unmount } = mount( {}, { selectedBuckets } );
 		expect( globalThis.__aggregateSelected ).toBe( selectedBuckets );
 		expect( globalThis.__categorySelected ).toBe( selectedBuckets );
 		unmount();
 	} );
 
-	it( 'hands both charts the slots the overview reply named', () => {
-		const { container, unmount } = mount( {
-			slots: slotsEndingAt( '2026-09-29-14-35' ),
-		} );
+	it( 'hands each chart the buckets its own answer read', () => {
+		const { container, unmount } = mount(
+			{},
+			{
+				chartSlice: sliceOf(
+					uaAnswer( [], '2026-09-29-14-25..2026-09-29-14-35' )
+				),
+				categoriesSlice: sliceOf(
+					uaAnswer( [], '2026-09-29-13-05..2026-09-29-13-15' )
+				),
+			}
+		);
 		expect( container.textContent ).toContain( '] slots:2026-09-29-14-35' );
 		expect( container.textContent ).toContain(
-			'CATEGORY slots:2026-09-29-14-35'
+			'CATEGORY rows:0 slots:2026-09-29-13-15'
 		);
 		unmount();
 	} );
 
-	it( 'says the totals start on the hour', () => {
-		const { container, unmount } = mount( {} );
-		expect(
-			container
-				.querySelector( '.event-logger-overview-stats' )
-				.getAttribute( 'title' )
-		).toBe(
-			'The current hour so far and the whole hours before it: the window starts on the hour.'
+	it( "keeps each chart's slots across a re-render with the same answers", () => {
+		const props = {
+			chartSlice: sliceOf( uaAnswer( [] ) ),
+			categoriesSlice: sliceOf(
+				uaAnswer( [], '2026-09-29-13-05..2026-09-29-13-15' )
+			),
+		};
+		const { rerender, unmount } = mount( {}, props );
+		const [ aggregate, category ] = [
+			globalThis.__aggregateSlots,
+			globalThis.__categorySlots,
+		];
+
+		rerender(
+			React.createElement( OverviewSection, {
+				...mountProps( {}, props ),
+				searchQuery: 'kea',
+			} )
 		);
+
+		expect( globalThis.__aggregateSlots ).toBe( aggregate );
+		expect( globalThis.__categorySlots ).toBe( category );
+		unmount();
+	} );
+
+	it( 'charts one dimension where Then by repeats Breakdown', () => {
+		const { container, unmount } = mount(
+			{},
+			{
+				chartThenBy: 'ua',
+				chartSlice: sliceOf(
+					uaAnswer( [ [ '2026-09-29-14-35', 'kea/7', 2, 9, 1, 2 ] ] )
+				),
+			}
+		);
+		expect( container.textContent ).toContain(
+			'AGGREGATE[metric=volume,dims=ua,server=,names=1]'
+		);
+		unmount();
+	} );
+
+	it( 'hands the chart the series its answer holds, by both dimensions', () => {
+		const { container, unmount } = mount(
+			{},
+			{
+				chartThenBy: 'server',
+				chartSlice: sliceOf(
+					rowsWire(
+						[ 'bucket', 'ua', 'server', ...SERIES_MEASURES ],
+						[
+							[
+								'2026-09-29-14-35',
+								'kea/7',
+								'a.example',
+								2,
+								9,
+								1,
+								2,
+							],
+							[
+								'2026-09-29-14-35',
+								'tui/2',
+								'a.example',
+								1,
+								4,
+								1,
+								1,
+							],
+						]
+					)
+				),
+			}
+		);
+		expect( container.textContent ).toContain(
+			'AGGREGATE[metric=volume,dims=ua+server,server=,names=2]'
+		);
+		unmount();
+	} );
+
+	it( 'says the chart is loading, and prints what refused it', () => {
+		const loading = mount(
+			{},
+			{ chartSlice: sliceOf( null, { loading: true } ) }
+		);
+		expect( loading.container.textContent ).toContain( 'Loading…' );
+		loading.unmount();
+
+		const refused = mount(
+			{},
+			{
+				chartSlice: sliceOf( null, {
+					error: 'unknown requests field plumage',
+				} ),
+			}
+		);
+		expect(
+			refused.container.querySelector( '.newspack-nodes-status.is-error' )
+				.textContent
+		).toBe( 'unknown requests field plumage' );
+		refused.unmount();
+	} );
+
+	it( 'hands the chips their setter, and offers them every filter field', () => {
+		const setChartChips = jest.fn();
+		const { container, unmount } = mount(
+			{},
+			{ chartChips: [ 'country=NZ' ], setChartChips }
+		);
+		expect( container.textContent ).toContain( 'Country = NZ' );
+		act( () => {
+			container
+				.querySelector( 'button[aria-label="Remove Country = NZ"]' )
+				.click();
+		} );
+		expect( setChartChips ).toHaveBeenCalledWith( [] );
 		unmount();
 	} );
 
@@ -238,15 +398,14 @@ describe( 'OverviewSection', () => {
 		// set's, which is a narrower question than the card is asking.
 		const { container } = mount(
 			{
-				total_requests: 33049,
-				global_avg_ms: 42,
-				global_leaderboard: {
+				leaderboard: {
 					categories: { db: { time: 95.1, count: 3 } },
 					total_time: 95.1,
 					count: 1,
+					avg_ms: 317,
 				},
 			},
-			{ serverFilter: 'edge-01', breakdownAvgMs: 317 }
+			{ serverFilter: 'edge-01' }
 		);
 
 		// 95.1ms of db time against a 317ms average reads as 30.0%.
@@ -257,7 +416,7 @@ describe( 'OverviewSection', () => {
 		// Every headline number describes the set the table below lists, so a
 		// server filter narrows this count instead of standing apart from it.
 		const { container } = mount(
-			{ total_requests: 33049 },
+			{},
 			{
 				serverFilter: 'edge-01',
 				urlTotals: { ...baseTotals, urls: 313, requests: 9001 },
@@ -270,55 +429,24 @@ describe( 'OverviewSection', () => {
 		expect( container.textContent ).not.toContain( 'all servers' );
 	} );
 
-	it( 'says the totals are provisional when the writer still owes a fold or a ranking', () => {
-		// The header skipped an hour the writer has yet to fold or rank, or
-		// a read that went unanswered, so the totals run short, and say so.
-		const { container: provisional, unmount } = mount(
-			{ total_requests: 33049 },
-			{
-				urlTotals: { ...baseTotals, requests: 9001 },
-				urlsProvisional: true,
-			}
-		);
-		// The canonical info banner, a live region, and no bespoke class.
-		expect(
-			provisional.querySelector(
-				'.newspack-nodes-banner.is-info[role="status"]'
-			)?.textContent
-		).toMatch( /not yet folded or ranked, or a read went unanswered/ );
-		unmount();
-
-		const { container: settled } = mount(
-			{ total_requests: 33049 },
-			{
-				urlTotals: { ...baseTotals, requests: 9001 },
-				urlsProvisional: false,
-			}
-		);
-		expect( settled.querySelector( '.newspack-nodes-banner' ) ).toBeNull();
-	} );
-
 	it( 'says an absent total is absent, not zero', () => {
 		// A plausible zero is how the original bug hid: `0 Unique URLs` beside
 		// 33,049 requests read as a fact. Before the first reply lands there is
 		// no answer yet, and saying so is the honest render.
-		const { container } = mount(
-			{ total_requests: 33049 },
-			{ urlTotals: null }
-		);
+		const { container } = mount( {}, { urlTotals: null } );
 
 		expect( container.textContent ).toContain( '—' );
 		expect( container.textContent ).not.toContain( '0Unique URLs' );
 	} );
 
-	it( 'labels the rate recent, since its window straddles the hour', () => {
+	it( 'labels the rate per second over the window', () => {
 		const { container } = mount( {}, { urlTotals: baseTotals } );
 
 		expect(
 			Array.from(
 				container.querySelectorAll( '.newspack-nodes-stat-label' )
 			).map( ( label ) => label.textContent )
-		).toContain( 'Req/s (recent)' );
+		).toContain( 'Req/s' );
 	} );
 
 	it( 'shows the peak-memory stat only when the displayed stats include it', () => {
@@ -334,7 +462,7 @@ describe( 'OverviewSection', () => {
 		ua();
 
 		const { container: b, unmount: ub } = mount(
-			{ global_avg_peak_mb: 12.3 },
+			{ totals: { avg_peak_mb: 12.3 } },
 			{ urlTotals: { ...baseTotals, avg_peak_mb: 4.7 } }
 		);
 		expect( statLabels( b ) ).toContain( 'Avg Peak Memory' );
@@ -345,18 +473,15 @@ describe( 'OverviewSection', () => {
 
 	it.each( [
 		[ 'has not arrived', null ],
-		[ 'arrived with no values', { names: [], buckets: {} } ],
+		[ 'arrived with no values', uaAnswer( [] ) ],
 	] )(
 		'keeps the chart panel up when the dimension %s',
-		( _label, breakdownData ) => {
+		( _label, answer ) => {
 			// The Metric, Breakdown and Server selectors live in that panel,
 			// and they are the only way to pick a dimension that draws.
 			const { container, unmount } = mount(
 				{},
-				{
-					breakdownRead: breakdownState( breakdownData ),
-					chartBreakdown: 'ua',
-				}
+				{ chartSlice: sliceOf( answer ) }
 			);
 			expect( container.textContent ).toContain( 'AGGREGATE' );
 			expect( container.textContent ).toContain( 'Breakdown' );
@@ -371,7 +496,7 @@ describe( 'OverviewSection', () => {
 		const { container, unmount } = mount(
 			{},
 			{
-				breakdownRead: breakdownState( { names: [], buckets: {} } ),
+				chartSlice: sliceOf( uaAnswer( [] ) ),
 				serverFilter: 'edge-01',
 				serverNames: [ 'edge-01', 'edge-02' ],
 			}
@@ -414,33 +539,14 @@ describe( 'OverviewSection', () => {
 		}
 	);
 
-	it( 'hands the chart no totals series to legend "Total"', () => {
-		// A breakdown is ALWAYS selected here, so the totals are never the
-		// requested view — and the chart drew them as "Total" regardless.
-		const { container, unmount } = mount(
-			{},
-			{
-				breakdownRead: breakdownState(
-					nameTable( {
-						'2026-08-25-09-15': {
-							'curl/8.7.1': [ 313, 3130, 3, 313 ],
-						},
-					} )
-				),
-			}
-		);
-		expect( container.textContent ).toContain( 'totals=none' );
-		unmount();
-	} );
-
-	it( 'mounts the global-leaderboard section when global_leaderboard.categories is present', () => {
+	it( "mounts the leaderboard section from the overview's leaderboard", () => {
 		const { container, unmount } = mount( {
-			global_leaderboard: {
+			leaderboard: {
 				categories: { hooks: { time: 10, count: 4 } },
 				total_time: 10,
 				count: 50,
+				avg_ms: 30,
 			},
-			global_avg_ms: 30,
 		} );
 		expect( container.textContent ).toContain( 'Total Profiled' );
 		expect( container.textContent ).toContain( 'Average breakdown' );
@@ -451,8 +557,12 @@ describe( 'OverviewSection', () => {
 	it( 'captions no breakdown over 0 requests when the window profiled none', () => {
 		// A PHP empty array arrives as `[]`, which is truthy.
 		const { container, unmount } = mount( {
-			global_leaderboard: { categories: [], total_time: null, count: 0 },
-			global_avg_ms: 30,
+			leaderboard: {
+				categories: [],
+				total_time: null,
+				count: 0,
+				avg_ms: 30,
+			},
 		} );
 		expect( container.textContent ).not.toContain( 'Average breakdown' );
 		unmount();

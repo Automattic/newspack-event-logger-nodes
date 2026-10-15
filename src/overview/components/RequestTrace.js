@@ -43,7 +43,6 @@ const FlameGraph = lazy( () => import( '../FlameGraph' ) );
  * @param {Object}                               props                 Component props.
  * @param {Object}                               props.flameData       Flame tree root from `Flame_Tree`, for one request or aggregated across many.
  * @param {string}                               [props.title]         Heading, already translated; defaults to "Request Trace".
- * @param {number}                               [props.lastModified]  Server timestamp gating the graph's in-place update; omit for a single request, whose flame never changes.
  * @param {(i: ?number, path: string[]) => void} [props.onRevealEntry] Called on Cmd/Ctrl+click with the position of the entry the frame opened at, or null, and the frame's path, root-first frame names.
  * @param {Array<Object>}                        [props.entries]       The request's log entries, for the peak-memory track; the track draws nothing without them, which is how the aggregate and overlay views render.
  * @return {import('react').ReactElement} The trace section.
@@ -51,7 +50,6 @@ const FlameGraph = lazy( () => import( '../FlameGraph' ) );
 export default function RequestTrace( {
 	flameData,
 	title = __( 'Request Trace', 'newspack-event-logger-nodes' ),
-	lastModified,
 	onRevealEntry,
 	entries,
 } ) {
@@ -70,7 +68,6 @@ export default function RequestTrace( {
 			>
 				<FlameGraph
 					data={ flameData }
-					lastModified={ lastModified }
 					onRevealEntry={ onRevealEntry }
 				/>
 			</Suspense>

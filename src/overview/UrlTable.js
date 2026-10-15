@@ -77,9 +77,8 @@ const restorePage = ( raw ) => {
 const URLS_PER_PAGE = 100;
 
 /**
- * The last offset the `urls` verb serves
- * (`Performance_CI_Node::URLS_MAX_OFFSET`); it clamps a later one to this, so
- * the pager stops at the page that starts here.
+ * The last offset the `urls` verb serves (`Stats_Query::MAX_OFFSET`); it
+ * clamps a later one to this, so the pager stops at the page that starts here.
  */
 const URLS_MAX_OFFSET = 10000;
 
@@ -124,7 +123,7 @@ const COLUMNS = [
 		width: '66px',
 		label: __( 'Reqs', 'newspack-event-logger-nodes' ),
 		errorsLabel: __( 'Errors', 'newspack-event-logger-nodes' ),
-		render: ( url, formatNum, now, errorCounts ) =>
+		render: ( url, formatNum, errorCounts ) =>
 			formatNum( errorCounts ? url.errors : url.count ),
 	},
 	{
@@ -132,16 +131,7 @@ const COLUMNS = [
 		width: 'minmax(0, 1fr)',
 		label: __( 'URL', 'newspack-event-logger-nodes' ),
 		kind: 'code',
-		render: ( url ) => (
-			<code>
-				{ url.aggregate
-					? __(
-							'traffic from URLs beyond the per-shard cap',
-							'newspack-event-logger-nodes'
-					  )
-					: url.url }
-			</code>
-		),
+		render: ( url ) => <code>{ url.url }</code>,
 	},
 	{
 		field: 'count_2xx',
@@ -197,10 +187,23 @@ const COLUMNS = [
 		field: 'last_updated',
 		width: '90px',
 		label: __( 'Last seen', 'newspack-event-logger-nodes' ),
-		render: ( url, formatNum, now ) =>
-			now > 0 ? formatAge( url.last_updated, now ) : '-',
+		render: ( url ) => lastSeen( url.last_updated ),
 	},
 ].map( ( col ) => ( { kind: 'numeric', ...col } ) );
+
+/**
+ * How long ago a URL last completed a request, by the browser's clock in
+ * whole seconds; a completion the clock has not reached yet reads as now.
+ *
+ * @param {?number} finishedAt Epoch seconds of its newest completion.
+ * @return {string} Its age, or '-' for none.
+ */
+function lastSeen( finishedAt ) {
+	const now = Math.floor( Date.now() / 1000 );
+	return finishedAt
+		? formatAge( Math.min( Math.floor( finishedAt ), now ), now )
+		: '-';
+}
 
 /**
  * The `grid-template-columns` the header and every row are laid out on.
@@ -252,16 +255,15 @@ const cellClass = ( col ) =>
  * @param {Object}   col         Column declaration from COLUMNS.
  * @param {Object}   url         One row of the `urls` reply.
  * @param {Function} formatNum   Number formatter, from the table.
- * @param {number}   now         Unix timestamp the page's ages are measured from.
  * @param {boolean}  errorCounts Whether the count cell shows the row's `errors`.
  * @return {string|import('react').ReactElement} Cell content.
  */
-const renderCell = ( col, url, formatNum, now, errorCounts ) => {
+const renderCell = ( col, url, formatNum, errorCounts ) => {
 	if ( 'status' === col.kind ) {
 		return pct( url[ col.field ], url.count );
 	}
 	return col.render
-		? col.render( url, formatNum, now, errorCounts )
+		? col.render( url, formatNum, errorCounts )
 		: formatNum( url[ col.field ], 'ms' );
 };
 
@@ -321,8 +323,8 @@ const UrlRow = memo(
 	 *
 	 * The URL cell carries a background bar whose width is this row's value as
 	 * a fraction of `maxAvg`; a row above that value fills the cell and stops.
-	 * A selectable row is a button carrying the `?` picker's `url:`
-	 * descriptor, so a picker click asks about this URL rather than the page.
+	 * The row is a button carrying the `?` picker's `url:` descriptor, so a
+	 * picker click asks about this URL rather than the page.
 	 *
 	 * @param {Object}                       props             Component props.
 	 * @param {Object}                       props.url         One row of the `urls` reply.
@@ -331,7 +333,6 @@ const UrlRow = memo(
 	 * @param {(n: number, s?: string) => *} props.formatNum   Number formatter, from the table.
 	 * @param {number}                       props.maxAvg      The page's p95 of the measured bar metric; 0 draws no bar.
 	 * @param {string}                       props.barField    The row field the bar measures, from `barFieldFor()`.
-	 * @param {number}                       props.now         Unix timestamp the page's ages are measured from.
 	 * @param {boolean}                      props.errorCounts Whether the count cell shows the row's `errors`.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
@@ -342,7 +343,6 @@ const UrlRow = memo(
 		formatNum,
 		maxAvg,
 		barField,
-		now,
 		errorCounts,
 	} ) {
 		// A URL no timed request reached is unmeasured, and draws no bar.
@@ -361,23 +361,16 @@ const UrlRow = memo(
 			}
 		};
 
-		// Stands for many URLs; its key is no url_hash, so nothing to open.
-		const selectable = ! url.aggregate;
-
 		return (
 			<div
-				{ ...( selectable
-					? {
-							role: 'button',
-							tabIndex: 0,
-							'data-ask': `url:${ url.hash }`,
-							onClick: () => onSelect( url ),
-							onKeyDown: handleKeyDown,
-					  }
-					: {} ) }
+				role="button"
+				tabIndex={ 0 }
+				data-ask={ `url:${ url.hash }` }
+				onClick={ () => onSelect( url ) }
+				onKeyDown={ handleKeyDown }
 				className={ `event-logger-table__row newspack-nodes-table__row${
 					isSelected ? ' is-selected' : ''
-				}${ selectable ? '' : ' is-aggregate' }` }
+				}` }
 				style={ {
 					height: ROW_HEIGHT,
 					gridTemplateColumns: GRID_TEMPLATE,
@@ -391,7 +384,7 @@ const UrlRow = memo(
 						className={ cellClass( col ) }
 						style={ 'code' === col.kind ? barStyle : undefined }
 					>
-						{ renderCell( col, url, formatNum, now, errorCounts ) }
+						{ renderCell( col, url, formatNum, errorCounts ) }
 					</div>
 				) ) }
 			</div>
@@ -412,10 +405,8 @@ const UrlRow = memo(
  * @param {string[]|null}              [props.slots]          The charted bucket keys, newest first, which the Time field resolves a typed time against.
  * @param {string}                     [props.server]         The server the dashboard scoped the table to; '' for every server.
  * @param {(spelling: string) => void} [props.onBucketChange] Receives the selection the Time field leaves.
- * @param {?number}                    [props.totalUrls]      Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs. Null until a reply has counted them.
+ * @param {?number}                    [props.totalUrls]      The URLs the server's filters left, which the pager pages over. Null until a reply has counted them.
  * @param {string}                     [props.metric]         Chart metric the row bars scale.
- * @param {boolean}                    [props.ranked]         Whether the server answered from its per-bucket ranked lists rather than the whole index.
- * @param {number}                     [props.now]            Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
  * @param {boolean}                    [props.errorCounts]    Whether the reply was built under "Errors Only", so the count column shows each row's `errors`.
  * @param {?string}                    [props.error]          The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
  * @param {boolean}                    [props.loading]        Whether a page is asked for and not yet answered.
@@ -432,8 +423,6 @@ export default function UrlTable( {
 	onBucketChange,
 	totalUrls = null,
 	metric = 'volume',
-	ranked = false,
-	now = 0,
 	errorCounts = false,
 	error = null,
 	loading = false,
@@ -715,7 +704,6 @@ export default function UrlTable( {
 								formatNum={ formatNum }
 								maxAvg={ maxAvg }
 								barField={ barField }
-								now={ now }
 								errorCounts={ errorCounts }
 							/>
 						) )
@@ -727,9 +715,9 @@ export default function UrlTable( {
 				<span className="event-logger-table__pagination-info newspack-nodes-status">
 					{ total > URLS_PER_PAGE &&
 						sprintf(
-							// translators: 1: first row number on the page, 2: last row number on the page, 3: total number of rows.
+							// translators: 1: first URL number on the page, 2: last URL number on the page, 3: total number of URLs.
 							__(
-								'%1$s–%2$s of %3$s rows',
+								'%1$s–%2$s of %3$s URLs',
 								'newspack-event-logger-nodes'
 							),
 							formatGroupedCount( offset + 1 ),
@@ -741,26 +729,15 @@ export default function UrlTable( {
 					{ total > 0 &&
 						total <= URLS_PER_PAGE &&
 						sprintf(
-							// translators: %s: number of rows in the table.
+							// translators: %s: number of URLs in the table.
 							_n(
-								'%s row',
-								'%s rows',
+								'%s URL',
+								'%s URLs',
 								total,
 								'newspack-event-logger-nodes'
 							),
 							formatGroupedCount( total )
 						) }
-					{ ranked && (
-						<>
-							{ total > 0 && ' · ' }
-							<span className="event-logger-table__ranked-note">
-								{ __(
-									'Ranked per bucket; Avg and Mem are means of bucket averages',
-									'newspack-event-logger-nodes'
-								) }
-							</span>
-						</>
-					) }
 				</span>
 				{ total > URLS_PER_PAGE && (
 					<div className="event-logger-table__pagination-controls">

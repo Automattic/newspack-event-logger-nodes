@@ -765,24 +765,21 @@ export const withTimeSpacers = ( root, maxSpacers = PRUNE_HARD_MAX_NODES ) => {
 /**
  * Flame graph component.
  *
- * The chart is built once and updated in place afterwards, so an auto-refresh
- * neither flickers nor loses the viewer's zoom and tooltip. Omitting
- * `lastModified` (a single request, whose flame never changes) makes every
- * render count as a change.
+ * The chart is built once and updated in place each time `data` is a new
+ * tree, so an auto-refresh neither flickers nor loses the viewer's zoom and
+ * tooltip.
  *
  * @param {Object}                               props                 Component props.
  * @param {Object}                               props.data            Flame tree root: { name, value, children[] }.
- * @param {number}                               [props.lastModified]  Server timestamp gating updates; omit for single requests.
  * @param {(i: ?number, path: string[]) => void} [props.onRevealEntry] Called on Cmd/Ctrl+Click with the position of the log entry the frame opened at — null for a frame carrying none, an aggregate's or a folded request's — and the frame's path, root-first frame names; absent disables reveal.
  * @return {import('react').ReactElement} Rendered component.
  */
-export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
+export default function FlameGraph( { data, onRevealEntry } ) {
 	const containerRef = useRef( null );
 	const chartRef = useRef( null );
 	const tooltipRef = useRef( null );
 	const metaClickRef = useRef( false ); // Cmd/Ctrl held at the last mousedown.
 	const zoomedNodeRef = useRef( null ); // zoomed path across refreshes.
-	const lastChangeKeyRef = useRef( '' ); // last rendered lastModified.
 
 	const prunedData = useMemo( () => pruneFlameGraph( data ), [ data ] );
 	// Spacers ride the same ceiling pruning enforces.
@@ -809,49 +806,36 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		// Category palette: a span reads the same color everywhere.
 		const colorMapper = createColorMapper();
 
-		const dataChanged = lastModified
-			? String( lastModified ) !== lastChangeKeyRef.current
-			: true; // No timestamp: a single request's flame never changes.
-
 		if ( chartRef.current ) {
-			if ( dataChanged ) {
-				if ( lastModified ) {
-					lastChangeKeyRef.current = String( lastModified );
+			const tooltipHasState = tooltipRef.current?.hasState?.();
+
+			// Update in place — rebuilding the chart flickers.
+			chartRef.current
+				.width( width )
+				.setColorMapper( colorMapper )
+				.transitionDuration( 0 );
+			chartRef.current.update( framedData );
+
+			// Re-zoom to where the viewer was before the data changed.
+			if ( zoomedNodeRef.current ) {
+				const selection = d3.select( container ).datum();
+				const targetNode = findNodeByPath(
+					selection,
+					zoomedNodeRef.current
+				);
+				if ( targetNode ) {
+					chartRef.current.zoomTo( targetNode );
 				}
+			}
+			// After the re-zoom: it rebuilds the frames, unstamped.
+			restamp( container );
 
-				const tooltipHasState = tooltipRef.current?.hasState?.();
-
-				// Update in place — rebuilding the chart flickers.
-				chartRef.current
-					.width( width )
-					.setColorMapper( colorMapper )
-					.transitionDuration( 0 );
-				chartRef.current.update( framedData );
-
-				// Re-zoom to where the viewer was before the data changed.
-				if ( zoomedNodeRef.current ) {
-					const selection = d3.select( container ).datum();
-					const targetNode = findNodeByPath(
-						selection,
-						zoomedNodeRef.current
-					);
-					if ( targetNode ) {
-						chartRef.current.zoomTo( targetNode );
-					}
-				}
-				// After the re-zoom: it rebuilds the frames, unstamped.
-				restamp( container );
-
-				// Restore tooltip state (else it vanishes on refresh/zoom).
-				if ( tooltipHasState ) {
-					tooltipRef.current?.restore?.();
-				}
+			// Restore tooltip state (else it vanishes on refresh/zoom).
+			if ( tooltipHasState ) {
+				tooltipRef.current?.restore?.();
 			}
 		} else {
 			// First run: build the chart and its tooltip.
-			if ( lastModified ) {
-				lastChangeKeyRef.current = String( lastModified );
-			}
 			const tip = createTooltip();
 			tooltipRef.current = tip;
 
@@ -900,7 +884,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				metaClickRef.current = e.metaKey || e.ctrlKey;
 			} );
 		}
-	}, [ framedData, lastModified, onRevealEntry ] );
+	}, [ framedData, onRevealEntry ] );
 
 	// Tear down on unmount; tooltips live on <body>, outside React's reach.
 	useEffect( () => {

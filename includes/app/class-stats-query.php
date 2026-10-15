@@ -35,9 +35,13 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * `-`, the record's own spelling. A filter matches what a group answers,
  * `Unknown` included. Worker requests count unless a filter leaves them out.
  * A sort ranks a null last in either order, and a `url` group also sorts by
- * its `url_name`, server then path.
+ * its `url_name`, server then path. Under `top`, the tuples of the group's
+ * non-time fields rank by the sum over their time rows of `top_by`, a measure
+ * that adds across buckets, highest first and ties by their values, and every
+ * time row of the top ones answers, in rank order, with `groups` the tuples
+ * the selection holds.
  *
- * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string}
+ * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string}
  */
 final class Stats_Query {
 
@@ -61,6 +65,18 @@ final class Stats_Query {
 
 	/** The farthest row a page may start at. */
 	public const MAX_OFFSET = 10000;
+
+	/** Most tuples a `top` answer ranks in: the series one chart draws. */
+	public const MAX_TOP = 20;
+
+	/** The fields that place a row in time; `top` ranks the other fields. */
+	private const TIME_FIELDS = [ 'bucket', 'hour', 'day' ];
+
+	/** The measures `top` ranks by: those whose buckets sum to the tuple's. */
+	private const ADDITIVE = [
+		'requests' => [ 'count', 'timed', 'sum_ms', 'sum_peak_mb', 'errors', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx' ],
+		'timings'  => [ 'ms', 'calls', 'requests' ],
+	];
 
 	/** Fields holding integers, so a filter's digits bind as one. */
 	private const INTEGER_FIELDS = [ 'bucket', 'hour', 'day', 'status', 'status_class', 'worker', 'profiled', 'listener' ];
@@ -248,10 +264,12 @@ final class Stats_Query {
 	 * false (decision 3).
 	 *
 	 * @param array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>,
-	 *              buckets:list<array{0:int,1:int}>, sort?:string, order?:string, limit?:int, offset?:int, search?:string} $spec
-	 * @return array{source:string, table:string, columns:list<string>, rows:list<list<mixed>>, available:bool}
+	 *              buckets:list<array{0:int,1:int}>, sort?:string, order?:string, limit?:int, offset?:int, search?:string,
+	 *              top?:int, top_by?:string} $spec
+	 * @return array{source:string, table:string, columns:list<string>, rows:list<list<mixed>>, groups:?int, available:bool}
 	 * @throws \InvalidArgumentException naming an unknown source, field, measure
-	 *                                   or sort, or a field the table read lacks.
+	 *                                   or sort, a field the table read lacks,
+	 *                                   or a `top` it cannot rank.
 	 */
 	public static function run( array $spec ): array {
 		$spec = self::checked( $spec );
@@ -264,12 +282,18 @@ final class Stats_Query {
 				throw new \InvalidArgumentException( \esc_html( "a {$spec['source']} query naming these fields reads {$table}, which holds no {$field}" ) );
 			}
 		}
-		$rows = self::read( static fn ( Row_Reader $reader, array $aliases ): array => self::rows( $reader, $aliases, $spec, $table ) );
+		$rows   = self::read( static fn ( Row_Reader $reader, array $aliases ): array => self::rows( $reader, $aliases, $spec, $table ) );
+		$groups = null;
+		if ( null !== $spec['top'] && null !== $rows ) {
+			$groups = [] === $rows ? 0 : Core::num_int( \array_slice( $rows[0], -1 )[0] ?? null );
+			$rows   = \array_map( static fn ( array $row ): array => \array_slice( $row, 0, -1 ), $rows );
+		}
 		return [
 			'source'    => $spec['source'],
 			'table'     => $table,
 			'columns'   => self::columns( $spec ),
 			'rows'      => $rows ?? [],
+			'groups'    => $groups,
 			'available' => null !== $rows,
 		];
 	}
@@ -335,34 +359,48 @@ final class Stats_Query {
 	private static function statement( array $spec, string $table, array $aliases ): array {
 		$def    = self::TABLES[ $table ];
 		$fields = \array_values( \array_unique( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] ) );
+		$named  = null === $spec['top'] ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
 		$inputs = [];
-		foreach ( $spec['measure'] as $name ) {
+		foreach ( $named as $name ) {
 			\array_push( $inputs, ...$def['measures'][ $name ][1] );
 		}
 		$inputs = \array_values( \array_unique( $inputs ) );
 
 		[ $from, $binds ] = self::union( self::arm( $spec, $table, $fields, $inputs ), $aliases );
 
-		$groups = [];
-		$select = [];
-		$sorts  = [];
+		$groups  = [];
+		$keys    = [];
+		$select  = [];
+		$columns = [];
+		$sorts   = [];
 		foreach ( $spec['group'] as $i => $field ) {
 			$groups[]        = "f{$i}";
 			$select[]        = "f{$i}";
+			$columns[]       = "f{$i}";
 			$sorts[ $field ] = [ "f{$i}" ];
+			if ( ! \in_array( $field, self::TIME_FIELDS, true ) ) {
+				$keys[] = "f{$i}";
+			}
 			if ( 'url' === $field ) {
-				\array_push( $select, "MIN( s{$i} )", "MIN( n{$i} )" );
-				$sorts['url_name'] = [ "MIN( s{$i} )", "MIN( n{$i} )" ];
+				\array_push( $select, "MIN( s{$i} ) AS w{$i}", "MIN( n{$i} ) AS x{$i}" );
+				\array_push( $columns, "w{$i}", "x{$i}" );
+				$sorts['url_name'] = [ "w{$i}", "x{$i}" ];
 			}
 		}
 		if ( [] !== \array_intersect( $spec['measure'], self::RANKED ) ) {
-			$over = [] === $groups ? '' : 'PARTITION BY ' . \implode( ', ', $groups ) . ' ';
-			$from = "( SELECT *, ROW_NUMBER() OVER ( {$over}ORDER BY m_ms IS NULL, m_ms ) AS m_rank, COUNT( m_ms ) OVER ( {$over}) AS m_ranked FROM {$from} )";
+			$from = self::with_ranks( $from, $groups );
 		}
-		$kinds = "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'";
 		foreach ( $spec['measure'] as $j => $name ) {
-			$select[]       = \str_replace( '{error_kinds}', $kinds, $def['measures'][ $name ][0] ) . " AS v{$j}";
+			$select[]       = self::aggregate( $def, $name ) . " AS v{$j}";
+			$columns[]      = "v{$j}";
 			$sorts[ $name ] = [ "v{$j}" ];
+		}
+		if ( null !== $spec['top'] ) {
+			$select[] = self::aggregate( $def, $spec['top_by'] ) . ' AS t';
+		}
+		$grouped = 'SELECT ' . \implode( ', ', $select ) . " FROM {$from}" . ( [] === $groups ? '' : ' GROUP BY ' . \implode( ', ', $groups ) );
+		if ( null !== $spec['top'] ) {
+			return [ self::ranked( $grouped, $columns, $groups, $keys ), [ ...$binds, $spec['top'] ] ];
 		}
 		$order = $groups;
 		if ( '' !== $spec['sort'] ) {
@@ -370,11 +408,51 @@ final class Stats_Query {
 			$direction = ' ' . \strtoupper( $spec['order'] ) . ' NULLS LAST';
 			\array_unshift( $order, ...\array_map( static fn ( string $column ): string => $column . $direction, $sorted ) );
 		}
-		$sql = 'SELECT ' . \implode( ', ', $select ) . " FROM {$from}"
-			. ( [] === $groups ? '' : ' GROUP BY ' . \implode( ', ', $groups ) )
-			. ( [] === $order ? '' : ' ORDER BY ' . \implode( ', ', $order ) )
-			. ' LIMIT ? OFFSET ?';
+		$sql = $grouped . ( [] === $order ? '' : ' ORDER BY ' . \implode( ', ', $order ) ) . ' LIMIT ? OFFSET ?';
 		return [ $sql, [ ...$binds, $spec['limit'], $spec['offset'] ] ];
+	}
+
+	/**
+	 * A `top` statement over the grouped rows, the union read once: each
+	 * tuple of `$keys` ranked by the sum over its time rows of `t`, highest
+	 * first and ties by the tuple's values, and the rows of the top ones in
+	 * rank order, each carrying the tuples' count last. SQLite evaluates one
+	 * window level per SELECT, so each level nests the one before.
+	 *
+	 * @param string       $grouped The grouped SELECT, its `top_by` aggregate named `t`.
+	 * @param list<string> $columns The answer's columns, as the grouped SELECT names them.
+	 * @param list<string> $groups  Every group column.
+	 * @param list<string> $keys    The non-time group columns.
+	 */
+	private static function ranked( string $grouped, array $columns, array $groups, array $keys ): string {
+		$tuple   = \implode( ', ', $keys );
+		$summed  = "SELECT *, SUM( t ) OVER ( PARTITION BY {$tuple} ) AS r_t FROM ( {$grouped} )";
+		$ranked  = "SELECT *, DENSE_RANK() OVER ( ORDER BY r_t DESC NULLS LAST, {$tuple} ) AS r_pos FROM ( {$summed} )";
+		$counted = "SELECT *, MAX( r_pos ) OVER () AS r_groups FROM ( {$ranked} )";
+		return 'SELECT ' . \implode( ', ', $columns ) . ", r_groups FROM ( {$counted} ) WHERE r_pos <= ? ORDER BY r_pos, " . \implode( ', ', $groups );
+	}
+
+	/**
+	 * A measure's aggregate over the arm inputs, its error kinds spelled.
+	 *
+	 * @param array{measures:array<string,array{0:string,1:list<string>}>} $def  The table answering the spec.
+	 * @param string                                                          $name The measure.
+	 */
+	private static function aggregate( array $def, string $name ): string {
+		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][0] );
+	}
+
+	/**
+	 * `$from` with each row's rank among the timed requests of its group, as
+	 * `m_rank`, and how many of them were timed, as `m_ranked`, which the
+	 * percentiles read.
+	 *
+	 * @param string       $from   A row source.
+	 * @param list<string> $groups The columns a group is.
+	 */
+	private static function with_ranks( string $from, array $groups ): string {
+		$over = [] === $groups ? '' : 'PARTITION BY ' . \implode( ', ', $groups ) . ' ';
+		return "( SELECT *, ROW_NUMBER() OVER ( {$over}ORDER BY m_ms IS NULL, m_ms ) AS m_rank, COUNT( m_ms ) OVER ( {$over}) AS m_ranked FROM {$from} )";
 	}
 
 	/**
@@ -383,19 +461,20 @@ final class Stats_Query {
 	 * A timings spec reads `timings_site` unless a URL is grouped, filtered
 	 * or searched; a requests spec reads `requests_hourly` when every field
 	 * and measure it names is one the rollup keeps and every bucket range
-	 * covers whole hours.
+	 * covers whole hours, its `top_by` among them.
 	 *
-	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string} $spec
+	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string, top_by?:string} $spec
 	 */
 	public static function table_for( array $spec ): string {
-		$named  = [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ];
+		$named    = [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ];
+		$measures = '' === ( $spec['top_by'] ?? '' ) ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
 		$by_url = \in_array( 'url', $named, true ) || '' !== ( $spec['search'] ?? '' );
 		if ( 'timings' === $spec['source'] ) {
 			return $by_url ? 'timings' : 'timings_site';
 		}
 		$hourly = ! $by_url
 			&& [] === \array_diff( $named, self::HOURLY_FIELDS )
-			&& [] === \array_diff( $spec['measure'], self::HOURLY_MEASURES )
+			&& [] === \array_diff( $measures, self::HOURLY_MEASURES )
 			&& [] === \array_filter( $spec['buckets'], static fn ( array $range ): bool => 0 !== $range[0] % self::BUCKETS_PER_HOUR || 0 !== ( $range[1] + 1 ) % self::BUCKETS_PER_HOUR );
 		return $hourly ? 'requests_hourly' : 'requests';
 	}
@@ -566,9 +645,13 @@ final class Stats_Query {
 			'offset'  => Core::as_int( $spec['offset'] ?? 0 ),
 			'search'  => Core::as_string( $spec['search'] ?? '' ),
 		];
-		$checked['match'] = '' === $checked['search'] ? '' : self::match( $checked['search'] );
+		$checked['match']                     = '' === $checked['search'] ? '' : self::match( $checked['search'] );
+		[ $checked['top'], $checked['top_by'] ] = self::top( $spec, $source, $group );
 		if ( [] === $checked['buckets'] ) {
 			throw new \InvalidArgumentException( 'a query names at least one bucket range' );
+		}
+		foreach ( \array_diff_assoc( $group, \array_unique( $group ) ) as $name ) {
+			throw new \InvalidArgumentException( \esc_html( "{$name} is grouped twice" ) );
 		}
 		foreach ( \array_intersect( $measure, $group ) as $name ) {
 			throw new \InvalidArgumentException( \esc_html( "{$name} names both a group and a measure" ) );
@@ -587,6 +670,53 @@ final class Stats_Query {
 			throw new \InvalidArgumentException( \esc_html( "offset {$checked['offset']} is outside 0.." . self::MAX_OFFSET ) );
 		}
 		return $checked;
+	}
+
+	/**
+	 * A spec's `top` and `top_by`, checked: a top names a measure of its
+	 * source to rank by, a time field to answer and a non-time field to rank,
+	 * and takes no page, since its rows are bounded by its buckets times its
+	 * top. No top answers null and ''.
+	 *
+	 * @param array<string,mixed> $spec   As `run()` takes it.
+	 * @param string              $source Its source.
+	 * @param list<string>        $group  Its group fields.
+	 * @return array{0:?int, 1:string}
+	 * @throws \InvalidArgumentException Naming what it refuses.
+	 */
+	private static function top( array $spec, string $source, array $group ): array {
+		$top_by = Core::as_string( $spec['top_by'] ?? '' );
+		if ( null === ( $spec['top'] ?? null ) ) {
+			if ( '' !== $top_by ) {
+				throw new \InvalidArgumentException( \esc_html( "top_by {$top_by} needs a top" ) );
+			}
+			return [ null, '' ];
+		}
+		$top = Core::as_int( $spec['top'] );
+		if ( $top < 1 || $top > self::MAX_TOP ) {
+			throw new \InvalidArgumentException( \esc_html( "top {$top} is outside 1.." . self::MAX_TOP ) );
+		}
+		if ( '' === $top_by ) {
+			throw new \InvalidArgumentException( \esc_html( "top {$top} names no top_by measure to rank by" ) );
+		}
+		if ( ! \in_array( $top_by, self::ADDITIVE[ $source ], true ) ) {
+			throw new \InvalidArgumentException( \esc_html( "top_by {$top_by} is no {$source} measure that adds across buckets: one of " . \implode( ', ', self::ADDITIVE[ $source ] ) ) );
+		}
+		if ( [] === \array_intersect( $group, self::TIME_FIELDS ) ) {
+			throw new \InvalidArgumentException( \esc_html( 'top needs a time field in its group: ' . \implode( ', ', self::TIME_FIELDS ) ) );
+		}
+		if ( [] === \array_diff( $group, self::TIME_FIELDS ) ) {
+			throw new \InvalidArgumentException( 'top needs a non-time field in its group to rank' );
+		}
+		foreach ( [ 'limit', 'offset' ] as $page ) {
+			if ( \array_key_exists( $page, $spec ) ) {
+				throw new \InvalidArgumentException( \esc_html( "top takes no {$page}: its rows are its top tuples' buckets" ) );
+			}
+		}
+		if ( '' !== Core::as_string( $spec['sort'] ?? '' ) ) {
+			throw new \InvalidArgumentException( 'top takes no sort: its rows come in rank order' );
+		}
+		return [ $top, $top_by ];
 	}
 
 	/**

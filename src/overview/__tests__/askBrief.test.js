@@ -140,7 +140,8 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 	expect( md ).toContain( '4,210 requests' );
 	expect( md ).toContain( '137 urls' );
 	// `num()` gives a sub-1 value three decimals, as it does everywhere else.
-	expect( md ).toContain( '0.830/s recent' );
+	expect( md ).toContain( '0.830/s' );
+	expect( md ).not.toContain( '/s recent' );
 	expect( md ).toContain( '/wp-admin/post.php' );
 	expect( md ).toContain( '5efdf8a72d74' );
 	expect( md ).toContain( 'sql' );
@@ -180,9 +181,8 @@ test( 'an errors-only brief counts the errors before the traffic', () => {
 	expect( md ).toContain( '6 errors in 6100×' );
 } );
 
-// `urls` answers totals: null where a server filter cannot be split out of
-// pre-split rows. A brief printing 0 there would read as an idle site.
-test( 'an overview brief with unscopable totals says so rather than zero', () => {
+// A brief carrying no totals prints no traffic line: 0 would read as idle.
+test( 'an overview brief with no totals prints no traffic, never zero', () => {
 	const md = briefToMarkdown( {
 		subject: 'overview',
 		server: 'spoke-01',
@@ -194,7 +194,8 @@ test( 'an overview brief with unscopable totals says so rather than zero', () =>
 		caveat: 'c',
 	} );
 
-	expect( md ).toContain( 'no per-server totals' );
+	expect( md ).not.toContain( '**traffic:**' );
+	expect( md ).not.toContain( 'pre-split' );
 	expect( md ).not.toContain( '0 requests' );
 } );
 
@@ -230,7 +231,7 @@ test( 'an overview brief shows an unmeasured mean as a dash with no unit', () =>
 		caveat: 'c',
 	} );
 
-	expect( md ).toContain( '29 requests, 3 urls, — avg, 0.410/s recent' );
+	expect( md ).toContain( '29 requests, 3 urls, — avg, 0.410/s' );
 	expect( md ).toContain( '29× — avg, — worst' );
 	expect( md ).toContain( '11× 61.5ms avg, 140ms worst' );
 	expect( md ).not.toContain( '—ms' );
@@ -423,7 +424,7 @@ test( 'an errors-only URL brief with no measured fatal leaves fatal duration out
 	expect( md ).toContain( '**listed:** 2 — 2 timeouts, 0 fatals' );
 } );
 
-test( 'a URL brief marks worst-recent when the index scan stopped early', () => {
+test( 'a URL brief names its worst recent requests and no scan', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',
 		url: '/quiet/page',
@@ -438,7 +439,7 @@ test( 'a URL brief marks worst-recent when the index scan stopped early', () => 
 	} );
 
 	expect( md ).toContain( '**worst recent:** part1al 2200.5ms 404' );
-	expect( md ).toContain( '**scan:** stopped early — this list is partial' );
+	expect( md ).not.toContain( '**scan:**' );
 } );
 
 test( 'a capped URL brief reads as the newest requests, not the whole window', () => {
@@ -447,7 +448,6 @@ test( 'a capped URL brief reads as the newest requests, not the whole window', (
 		url: '/kahu',
 		stats: { count: 9133, avg_ms: 61.5 },
 		worst_requests: [],
-		requests_window_start: 1741000800,
 		requests_capped: true,
 		rule: null,
 		findings: [],
@@ -455,48 +455,27 @@ test( 'a capped URL brief reads as the newest requests, not the whole window', (
 	} );
 
 	expect( md ).toContain(
-		'**requests:** the newest the list holds, since 2025-03-03T11:20:00Z; older ones may be unlisted'
+		'**requests:** the newest the list holds; older ones are unlisted'
 	);
-	expect( md ).not.toContain( '**requests since:**' );
 } );
 
-test( 'a URL brief names the window its recent rows were drawn from', () => {
-	// An empty list is empty OF a window; without naming it, the reader takes
-	// it for the URL's whole record.
+test( 'an uncapped URL brief says nothing of the list cap', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',
-		url: '/quiet/page',
-		stats: { count: 3, avg_ms: 55.25 },
+		url: '/kahu',
+		stats: { count: 41, avg_ms: 61.5 },
 		worst_requests: [],
-		scan_stopped_early: false,
-		requests_window_start: 1741000800,
+		requests_capped: false,
 		rule: null,
 		findings: [],
 		caveat: 'c',
 	} );
 
-	expect( md ).toContain( '**requests since:** 2025-03-03T11:20:00Z' );
+	expect( md ).not.toContain( '**requests:**' );
+	expect( md ).not.toContain( 'since' );
 } );
 
-test( 'a URL brief with no rows at all drops the label the scan note hung off', () => {
-	// The empty list is exactly the case the note exists for, and a label
-	// whose whole value is a parenthetical is not a sentence.
-	const md = briefToMarkdown( {
-		subject: 'url',
-		url: '/never/reached',
-		stats: { count: 3, avg_ms: 55.25 },
-		worst_requests: [],
-		scan_stopped_early: true,
-		rule: null,
-		findings: [],
-		caveat: 'c',
-	} );
-
-	expect( md ).not.toContain( 'worst recent' );
-	expect( md ).toContain( '**scan:** stopped early — this list is partial' );
-} );
-
-test( 'a URL brief whose scan finished says nothing about the five-row slice', () => {
+test( 'a URL brief says nothing about the five-row slice', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',
 		url: '/busy/page',
@@ -504,7 +483,6 @@ test( 'a URL brief whose scan finished says nothing about the five-row slice', (
 		worst_requests: [
 			{ rid: 'wh0le1', duration_ms: 3300.5, status_code: 500 },
 		],
-		scan_stopped_early: false,
 		rule: null,
 		findings: [],
 		caveat: 'c',

@@ -276,6 +276,14 @@ class McpControllerTest extends TestCase {
 		}
 		$this->assertSame( 'integer', $properties['limit']['type'] );
 		$this->assertSame( 'integer', $properties['offset']['type'] );
+		$this->assertSame( 'integer', $properties['top']['type'] );
+		$this->assertSame( 'string', $properties['top_by']['type'] );
+		$this->assertStringContainsString( 'at most 20', $properties['top']['description'] );
+		foreach ( [ 'count', 'timed', 'sum_ms', 'sum_peak_mb', 'errors', 'count_2xx', 'count_5xx', 'ms', 'calls', 'requests' ] as $additive ) {
+			$this->assertStringContainsString( "`{$additive}`", $properties['top_by']['description'], $additive );
+		}
+		$this->assertStringContainsString( 'adds across buckets', $properties['top_by']['description'] );
+		$this->assertStringContainsString( '`groups`', $tool['description'], 'it says what `groups` counts' );
 		$this->assertStringContainsString( 'one value', $properties['filter']['description'] );
 		$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30', $properties['bucket']['description'] );
 		$this->assertStringContainsString( 'unless filtered `worker=0`', $tool['description'], 'it says worker traffic counts' );

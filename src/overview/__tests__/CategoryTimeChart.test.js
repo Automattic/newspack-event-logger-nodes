@@ -97,7 +97,22 @@ jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
 import * as React from 'react';
 import * as d3 from 'd3';
 import CategoryTimeChart from '../CategoryTimeChart';
-import { slotsEndingAt } from '../../test-helpers/chartWire';
+import { seriesWire, slotsEndingAt } from '../../test-helpers/chartWire';
+import { CATEGORY_MEASURES } from '../constants';
+
+/**
+ * A `query` answer of category rows, each `[ ms, calls ]` by bucket and name.
+ *
+ * @param {Object<string,Object<string,number[]>>} series  Bucket => category => `[ ms, calls ]`.
+ * @param {Object}                                 [extra] Answer fields to set.
+ * @return {Object} The answer.
+ */
+const cats = ( series, extra ) =>
+	seriesWire( 'category', CATEGORY_MEASURES, series, {
+		source: 'timings',
+		table: 'timings_site',
+		...extra,
+	} );
 import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
@@ -150,10 +165,7 @@ describe( 'CategoryTimeChart', () => {
 		window.localStorage.setItem( 'test:category:count:expanded', '1' );
 		const { container, unmount } = renderComponent(
 			categoryChart( {
-				data: {
-					names: [ 'db' ],
-					buckets: { [ bucketKeyNow() ]: [ [ 0, 1500, 30, 30 ] ] },
-				},
+				data: cats( { [ bucketKeyNow() ]: { db: [ 1500, 30 ] } } ),
 			} )
 		);
 		expect(
@@ -169,10 +181,7 @@ describe( 'CategoryTimeChart', () => {
 	it( 'draws exactly one chart per declared view, in render order', () => {
 		const { container, unmount } = renderComponent(
 			categoryChart( {
-				data: {
-					names: [ 'redis' ],
-					buckets: { '2019-07-04-13-45': [ [ 0, 8123, 419, 419 ] ] },
-				},
+				data: cats( { '2019-07-04-13-45': { redis: [ 8123, 419 ] } } ),
 			} )
 		);
 		const headings = [ ...container.querySelectorAll( 'h3' ) ].map(
@@ -189,10 +198,7 @@ describe( 'CategoryTimeChart', () => {
 	it( 'titles every view Y-axis with the quantity it plots', () => {
 		const { unmount } = renderComponent(
 			categoryChart( {
-				data: {
-					names: [ 'redis' ],
-					buckets: { [ bucketKeyNow() ]: [ [ 0, 8123, 419, 419 ] ] },
-				},
+				data: cats( { [ bucketKeyNow() ]: { redis: [ 8123, 419 ] } } ),
 			} )
 		);
 		const expected = [ 'Time', 'Events', 'Time per Event' ];
@@ -207,10 +213,7 @@ describe( 'CategoryTimeChart', () => {
 		const { container, unmount } = renderComponent(
 			categoryChart( {
 				slots: null,
-				data: {
-					names: [ 'redis' ],
-					buckets: { [ bucketKeyNow() ]: [ [ 0, 8123, 419, 419 ] ] },
-				},
+				data: cats( { [ bucketKeyNow() ]: { redis: [ 8123, 419 ] } } ),
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
@@ -230,35 +233,30 @@ describe( 'CategoryTimeChart', () => {
 	it( 'draws nothing for a malformed reply', () => {
 		const { container, unmount } = renderComponent(
 			categoryChart( {
-				// A row one field short: a reply the decoder refuses whole.
-				data: {
-					names: [ 'memcache' ],
-					buckets: { [ bucketKeyNow() ]: [ [ 0, 8123, 419 ] ] },
-				},
+				// A measure that is no number: an answer refused whole.
+				data: cats( {
+					[ bucketKeyNow() ]: { memcache: [ 8123, '419' ] },
+				} ),
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
 		unmount();
 	} );
 
-	it( 'returns null when data is empty object', () => {
+	it( 'returns null when the stats rows did not open', () => {
 		const { container, unmount } = renderComponent(
 			categoryChart( {
-				data: {},
+				data: cats( {}, { available: false } ),
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
 		unmount();
 	} );
 
-	it( 'draws from the compact wire shape and treats an empty one as no data', () => {
-		// The series arrives as a name TABLE plus positional rows: one category
-		// name rides once rather than once per bucket, which is what keeps the
-		// overview reply deliverable. An empty payload still has both keys, so
-		// emptiness is a question about the buckets, not about the envelope.
+	it( 'draws from the query answer and treats one with no rows as no data', () => {
 		const empty = renderComponent(
 			categoryChart( {
-				data: { names: [], buckets: {} },
+				data: cats( {} ),
 			} )
 		);
 		expect( empty.container.textContent ).toBe( '' );
@@ -266,15 +264,7 @@ describe( 'CategoryTimeChart', () => {
 
 		const drawn = renderComponent(
 			categoryChart( {
-				data: {
-					names: [ 'total', 'db' ],
-					buckets: {
-						[ bucketKeyNow() ]: [
-							[ 0, 5000, 100, 100 ],
-							[ 1, 1500, 30, 30 ],
-						],
-					},
-				},
+				data: cats( { [ bucketKeyNow() ]: { db: [ 1500, 30 ] } } ),
 			} )
 		);
 		expect(
@@ -284,18 +274,14 @@ describe( 'CategoryTimeChart', () => {
 	} );
 
 	it( 'gives every view its own chart frame and tooltip', () => {
-		const data = {
-			names: [ 'total', 'db', 'render', 'cache' ],
-			buckets: {
-				[ bucketKeyNow() ]: [
-					[ 0, 5000, 100, 100 ],
-					[ 1, 1500, 30, 30 ],
-					[ 2, 3500, 70, 70 ],
-					// count=0 drives the average-mode divide-by-zero path.
-					[ 3, 0, 0, 0 ],
-				],
+		const data = cats( {
+			[ bucketKeyNow() ]: {
+				db: [ 1500, 30 ],
+				render: [ 3500, 70 ],
+				// No calls drives the average-mode divide-by-zero path.
+				cache: [ 0, 0 ],
 			},
-		};
+		} );
 
 		const { container, unmount } = renderComponent(
 			categoryChart( {
@@ -319,13 +305,10 @@ describe( 'CategoryTimeChart', () => {
 	} );
 
 	it( 'plots a mean over no calls as a gap, where a rate over them is a real 0', () => {
-		const data = {
-			names: [ 'db' ],
-			buckets: {
-				[ SLOTS[ 0 ] ]: [ [ 0, 900, 0, 0 ] ],
-				[ SLOTS[ 1 ] ]: [ [ 0, 3000, 12, 12 ] ],
-			},
-		};
+		const data = cats( {
+			[ SLOTS[ 0 ] ]: { db: [ 900, 0 ] },
+			[ SLOTS[ 1 ] ]: { db: [ 3000, 12 ] },
+		} );
 		const { unmount } = renderComponent(
 			categoryChart( {
 				data,
@@ -350,10 +333,7 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'handles buckets where category stats are missing', () => {
 		// Bucket key matches no slot → exercises the value=0 fallback.
-		const data = {
-			names: [ 'db' ],
-			buckets: { '1970-01-01-00-00': [ [ 0, 10, 1, 1 ] ] },
-		};
+		const data = cats( { '1970-01-01-00-00': { db: [ 10, 1 ] } } );
 
 		const { unmount } = renderComponent(
 			categoryChart( {
@@ -396,13 +376,10 @@ describe( 'CategoryTimeChart', () => {
 	}
 
 	it( 'reads the oldest slot and the newest as rates over their five minutes', () => {
-		const data = {
-			names: [ 'memcache' ],
-			buckets: {
-				'2026-09-28-14-40': [ [ 0, 1, 900, 900 ] ],
-				[ bucketKeyNow() ]: [ [ 0, 1, 1500, 1500 ] ],
-			},
-		};
+		const data = cats( {
+			'2026-09-28-14-40': { memcache: [ 1, 900 ] },
+			[ bucketKeyNow() ]: { memcache: [ 1, 1500 ] },
+		} );
 		const { unmount } = renderComponent(
 			categoryChart( {
 				data,
@@ -419,16 +396,13 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'formatYValue covers all branches via tooltip formatEntry callback', () => {
 		// varying magnitudes drive the <0.001 / <1 / >=1 time-mode branches.
-		const data = {
-			names: [ 'tiny', 'mid', 'big' ],
-			buckets: {
-				[ bucketKeyNow() ]: [
-					[ 0, 0.0001, 1, 1 ],
-					[ 1, 150000, 1, 1 ],
-					[ 2, 900000, 1, 1 ],
-				],
+		const data = cats( {
+			[ bucketKeyNow() ]: {
+				tiny: [ 0.0001, 1 ],
+				mid: [ 150000, 1 ],
+				big: [ 900000, 1 ],
 			},
-		};
+		} );
 		const { unmount } = renderComponent(
 			categoryChart( {
 				data,
@@ -443,16 +417,13 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'formatYValue covers average-mode microsecond / second / ms branches', () => {
 		// average mode: value = t/c (in same units).
-		const data = {
-			names: [ 'submicro', 'bigsec', 'normal' ],
-			buckets: {
-				[ bucketKeyNow() ]: [
-					[ 0, 0.5, 1000, 1000 ], // 0.0005ms → microsecond
-					[ 1, 2000, 1, 1 ], // value=2000ms → s branch
-					[ 2, 5, 1, 1 ], // value=5ms → ms branch
-				],
+		const data = cats( {
+			[ bucketKeyNow() ]: {
+				submicro: [ 0.5, 1000 ],
+				bigsec: [ 2000, 1 ],
+				normal: [ 5, 1 ],
 			},
-		};
+		} );
 		const { unmount } = renderComponent(
 			categoryChart( {
 				data,
@@ -465,16 +436,13 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'formatYValue covers count-mode K/s and per-second branches', () => {
 		// count mode: value = c/BUCKET_SECONDS.
-		const data = {
-			names: [ 'high', 'low', 'zero' ],
-			buckets: {
-				[ bucketKeyNow() ]: [
-					[ 0, 1, 1_000_000, 1 ], // → K/s branch (~3333/s)
-					[ 1, 1, 5, 1 ], // → per-second branch
-					[ 2, 0, 0, 0 ], // → '0' branch
-				],
+		const data = cats( {
+			[ bucketKeyNow() ]: {
+				high: [ 1, 1_000_000 ],
+				low: [ 1, 5 ],
+				zero: [ 0, 0 ],
 			},
-		};
+		} );
 		const { unmount } = renderComponent(
 			categoryChart( {
 				data,
@@ -489,10 +457,7 @@ describe( 'CategoryTimeChart', () => {
 		// Re-invoke captured renderFn with null containerRef → early return.
 		const { unmount } = renderComponent(
 			categoryChart( {
-				data: {
-					names: [ 'foo' ],
-					buckets: { [ bucketKeyNow() ]: [ [ 0, 10, 1, 1 ] ] },
-				},
+				data: cats( { [ bucketKeyNow() ]: { foo: [ 10, 1 ] } } ),
 			} )
 		);
 
@@ -508,18 +473,41 @@ describe( 'CategoryTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'says how many categories it leaves out', () => {
+		const { container, unmount } = renderComponent(
+			categoryChart( {
+				data: cats(
+					{ [ bucketKeyNow() ]: { sql: [ 90, 3 ], init: [ 40, 2 ] } },
+					{ groups: 63 }
+				),
+			} )
+		);
+		expect( container.textContent ).toContain(
+			'Showing the top 2 of 63 series.'
+		);
+		unmount();
+	} );
+
+	it( 'draws a category named total as a category like any other', () => {
+		const { unmount } = renderComponent(
+			categoryChart( {
+				data: cats( { [ bucketKeyNow() ]: { total: [ 70, 7 ] } } ),
+			} )
+		);
+		const entries = getFormatEntry( COUNT_VIEW )( lastSlotIndex() );
+		expect( entries.map( ( entry ) => entry.label ) ).toContain( 'total' );
+		unmount();
+	} );
+
 	it( 'offers no stack toggle: a callback counts inside its hook', () => {
 		const { container, unmount } = renderComponent(
 			categoryChart( {
-				data: {
-					names: [ 'db', 'http' ],
-					buckets: {
-						[ bucketKeyNow() ]: [
-							[ 0, 5000, 100, 100 ],
-							[ 1, 1500, 30, 30 ],
-						],
+				data: cats( {
+					[ bucketKeyNow() ]: {
+						db: [ 5000, 100 ],
+						http: [ 1500, 30 ],
 					},
-				},
+				} ),
 			} )
 		);
 		expect(

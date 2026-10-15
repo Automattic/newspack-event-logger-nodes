@@ -3,21 +3,23 @@
  * Performance Dashboard — the orchestrator over the dashboard's node graph.
  *
  * `usePerformanceGraph` mounts the graph and owns every fetch; this component
- * owns none. The graph publishes its data through FOUR independent per-slice
- * view nodes — `overview:view`, `urls:view`, `url-detail:view`,
+ * owns none. The graph publishes its data through independent per-slice view
+ * nodes — `overview:view`, `urls:view`, `chart:view`, `categories:view`,
+ * `url-detail:view`, `url-chart:view`, `url-categories:view` and
  * `request-detail:view`. This component reads each slice with its own
  * `useNodeField`, derives the render-time values, and hands the URL table's
  * paging back through `handleUrlParamsChange`, the one callback the hook
  * returns.
  *
  * What it does own is the UI state the graph's fetchers read at fire time: the
- * server filter, the chart metric and breakdown dimension, the refresh cadence,
+ * server filter, the chart metric, dimensions and chips, the refresh cadence,
  * the partition a located request was found in, the search box and its results,
  * the request-table sort, the bucket selections that narrow the URL table
- * and the URL modal, and the inline "Log this URL" rule editor.
- * The server filter, metric, breakdown and table selection also live in the
- * address bar, as `?server=`, `?metric=`, `?breakdown=` and `?bucket=`, so a
- * shared link opens the same view. The
+ * and the URL modal, the URL modal chart's question, and the inline "Log this
+ * URL" rule editor. The server filter, metric, both dimensions and the table
+ * selection also live in the address bar, as `?server=`, `?metric=`,
+ * `?breakdown=`, `?then=` and `?bucket=`, so a shared link opens the same
+ * view. The
  * component also runs every command whose reply sets that state: the `?url=`
  * and `?request=` deep-link resolvers, the title lookup for a hash the loaded
  * catalog page does not carry, the search box's exact-rid lookup and its
@@ -61,6 +63,8 @@ import {
 	SERVER,
 	RULES_CI,
 	GREP_RESULT_LIMIT,
+	NO_CHIPS,
+	NO_DETAIL_CHART,
 	NO_DETAIL_FILTERS,
 } from './hooks/usePerformanceGraph';
 import useUrlNavigation from './hooks/useUrlNavigation';
@@ -81,7 +85,6 @@ import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
 
 import UrlTable from './UrlTable';
-import { breakdownState } from './AggregateTimeChart';
 import { useBucketSelection } from './chartSlots';
 
 /**
@@ -101,9 +104,8 @@ import './styles/charts.scss';
 /**
  * Order two request rows by one column in one direction. A null duration,
  * one `dump_url` measured none of (decision 24), ranks LAST either way, as
- * `Stats_Store::rank_order()` ranks a URL no timed request reached; such rows
- * keep their order among themselves. A row missing any other field counts as
- * 0.
+ * the `urls` verb ranks a URL no timed request reached; such rows keep their
+ * order among themselves. A row missing any other field counts as 0.
  *
  * @param {Object}                       a    A `dump_url` request row.
  * @param {Object}                       b    Another.
@@ -154,11 +156,12 @@ const NO_SEARCH_ANSWER = {
 /** A query the search box looks up as one exact request id. */
 const RID_SHAPE = /^[a-zA-Z0-9_-]+$/;
 
-// The `?metric=` and `?breakdown=` whitelists: what the dropdowns offer.
+// The address-bar whitelists: what the dropdowns offer.
 const CHART_METRICS = CHART_METRIC_OPTIONS.map( ( option ) => option.value );
 const CHART_BREAKDOWNS = CHART_BREAKDOWN_OPTIONS.map(
 	( option ) => option.value
 );
+const CHART_THEN_BYS = [ '', ...CHART_BREAKDOWNS ];
 
 /**
  * The dashboard's one component: the overview card, the URL table, and the
@@ -217,8 +220,25 @@ export default function PerformanceDashboard( {
 		'volume'
 	);
 
-	// Every reply names every server; null until the first one lands.
-	const [ serverNames, setServerNames ] = useState( null );
+	// Read each slice from its own per-slice view node (null until mounted).
+	const overviewSlice = useNodeField( 'overview:view', 'view' );
+	const urlsSlice = useNodeField( 'urls:view', 'view' );
+	const chartSlice = useNodeField( 'chart:view', 'view' );
+	const categoriesSlice = useNodeField( 'categories:view', 'view' );
+	const urlDetailSlice = useNodeField( 'url-detail:view', 'view' );
+	const urlChartSlice = useNodeField( 'url-chart:view', 'view' );
+	const urlCategoriesSlice = useNodeField( 'url-categories:view', 'view' );
+	const requestDetailSlice = useNodeField( 'request-detail:view', 'view' );
+	const overview = overviewSlice?.data ?? null;
+
+	// @longform Every overview answer names every server with traffic, busiest
+	// first; the select lists them by name. Null until the first one lands,
+	// which is neither one server nor several.
+	const answeredServers = overview?.servers;
+	const serverNames = useMemo(
+		() => ( answeredServers ? [ ...answeredServers ].sort() : null ),
+		[ answeredServers ]
+	);
 	// The server filter is page-wide scope, not the overview card's own.
 	const [ serverFilter, setServerFilter ] = useQueryParamChoice(
 		'server',
@@ -226,11 +246,27 @@ export default function PerformanceDashboard( {
 		''
 	);
 
-	// The breakdown dimension rides the `overview` fetch, so it lives here.
+	// The chart's question rides the `chart` fetch, so it lives here.
 	const [ chartBreakdown, setChartBreakdown ] = useQueryParamChoice(
 		'breakdown',
 		CHART_BREAKDOWNS,
 		DEFAULT_CHART_BREAKDOWN
+	);
+	const [ chartThenBy, setChartThenBy ] = useQueryParamChoice(
+		'then',
+		CHART_THEN_BYS,
+		''
+	);
+	const [ chartChips, setChartChips ] = useState( NO_CHIPS );
+	// The URL modal chart's question, which survives a trip to a request.
+	const [ detailChart, setDetailChart ] = useState( NO_DETAIL_CHART );
+	// Same value, same object: the graph re-asks the chart on a new one.
+	const changeDetailChart = useCallback(
+		( field, value ) =>
+			setDetailChart( ( prev ) =>
+				prev[ field ] === value ? prev : { ...prev, [ field ]: value }
+			),
+		[]
 	);
 
 	const [ searchQuery, setSearchQuery ] = useState( '' );
@@ -252,50 +288,15 @@ export default function PerformanceDashboard( {
 	// The catalog is a fresh array on every poll; `applyFoundRequest` is not.
 	const urlsRef = useRef( [] );
 
-	// Read each slice from its own per-slice view node (null until mounted).
-	const overviewSlice = useNodeField( 'overview:view', 'view' );
-	const urlsSlice = useNodeField( 'urls:view', 'view' );
-	const urlDetailSlice = useNodeField( 'url-detail:view', 'view' );
-	const requestDetailSlice = useNodeField( 'request-detail:view', 'view' );
-
-	const overview = overviewSlice?.data ?? null;
 	const urls = useMemo( () => urlsSlice?.data ?? [], [ urlsSlice?.data ] );
 	// The filtered set's own numbers, computed once, server-side.
 	const urlTotals = urlsSlice?.totals ?? null;
-	const urlsProvisional = urlsSlice?.provisional ?? false;
 	// The same set's slowest, and what the set is, as the server applied it.
 	const urlSlowest = urlsSlice?.slowest ?? null;
 	const urlFilters = urlsSlice?.filters ?? null;
 	const urlDetail = urlDetailSlice?.data ?? null;
 	const requestDetail = requestDetailSlice?.data ?? null;
 	urlsRef.current = urls;
-
-	// The overview reply's own series, read straight off the slice.
-	const categoryData = useMemo(
-		() => overview?.category_time_series ?? null,
-		[ overview ]
-	);
-	const serverBreakdownData = useMemo(
-		() => overview?.breakdowns?.server ?? null,
-		[ overview ]
-	);
-	// @longform Read once: the server names, the Time Breakdown and a chart
-	// broken down by server all share it.
-	const serverRead = useMemo(
-		() => breakdownState( serverBreakdownData ),
-		[ serverBreakdownData ]
-	);
-	useEffect( () => {
-		if ( 'pending' === serverRead.state ) {
-			return;
-		}
-		// A reply the decoder refuses landed, and names no server.
-		if ( ! serverRead.series ) {
-			setServerNames( [] );
-			return;
-		}
-		setServerNames( [ ...serverRead.series.names ].sort() );
-	}, [ serverRead ] );
 
 	// @longform One server draws a single bar, and a server filter draws that
 	// server against itself, so neither can chart this axis. Derived rather
@@ -308,27 +309,11 @@ export default function PerformanceDashboard( {
 		! serverFilter && ( serverNames === null || serverNames.length >= 2 );
 	const activeBreakdown =
 		'server' === chartBreakdown && ! canBreakDownByServer
-			? 'status'
+			? 'status_class'
 			: chartBreakdown;
-
-	/**
-	 * The drawn dimension's `breakdownState()` read.
-	 *
-	 * Keyed off `activeBreakdown` rather than the operator's choice, so the
-	 * chart and the dropdown never disagree when `server` falls back. An absent
-	 * key is a dropdown switch the reply has not caught up with, which
-	 * `breakdownState` reads as `pending` instead of as an empty dimension. The
-	 * server axis takes `serverRead` itself, so that reply decodes once.
-	 */
-	const chartBreakdownRead = useMemo(
-		() =>
-			'server' === activeBreakdown
-				? serverRead
-				: breakdownState(
-						overview?.breakdowns?.[ activeBreakdown ] ?? null
-				  ),
-		[ overview, activeBreakdown, serverRead ]
-	);
+	// The second dimension falls away on the same terms.
+	const activeThenBy =
+		'server' === chartThenBy && ! canBreakDownByServer ? '' : chartThenBy;
 
 	const {
 		selectedUrl,
@@ -377,11 +362,14 @@ export default function PerformanceDashboard( {
 	const { handleUrlParamsChange } = usePerformanceGraph( {
 		serverFilter,
 		chartBreakdown: activeBreakdown,
+		chartThenBy: activeThenBy,
+		chartChips,
 		refreshInterval,
 		requestPartition,
 		selectedUrl,
 		selectedRequest,
 		detailFilters,
+		detailChart,
 		askActive: ask.active,
 	} );
 
@@ -798,15 +786,6 @@ export default function PerformanceDashboard( {
 		[ requestDetail?.entries, requestDetail?.flame ]
 	);
 
-	/**
-	 * The wall clock the Time Breakdown divides by: the board's own `avg_ms`.
-	 *
-	 * Its categories come from `build_leaderboard( server )`, over the board's
-	 * 25 hour keys, so the average is that board's, over those same keys — a
-	 * server's under a server filter — and never the charts' 288 slots.
-	 */
-	const breakdownAvgMs = overview?.global_leaderboard?.avg_ms;
-
 	// Inline "Log this URL" state: the open draft, the ruleset, and the error.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
 	// The whole ruleset as the server last reported it; null until it answers.
@@ -1008,8 +987,6 @@ export default function PerformanceDashboard( {
 				ask={ ask }
 				overview={ overview }
 				urlTotals={ urlTotals }
-				urlsProvisional={ urlsProvisional }
-				breakdownAvgMs={ breakdownAvgMs }
 				serverFilter={ serverFilter }
 				setServerFilter={ setServerFilter }
 				serverNames={ serverNames }
@@ -1030,8 +1007,12 @@ export default function PerformanceDashboard( {
 				chartBreakdown={ activeBreakdown }
 				canBreakDownByServer={ canBreakDownByServer }
 				setChartBreakdown={ setChartBreakdown }
-				breakdownRead={ chartBreakdownRead }
-				categoryData={ categoryData }
+				chartThenBy={ activeThenBy }
+				setChartThenBy={ setChartThenBy }
+				chartChips={ chartChips }
+				setChartChips={ setChartChips }
+				chartSlice={ chartSlice }
+				categoriesSlice={ categoriesSlice }
 				onSlotClick={ pickTableBucket }
 				onSlotRange={ pickTableRange }
 				selectedBuckets={ tableBuckets }
@@ -1062,8 +1043,6 @@ export default function PerformanceDashboard( {
 								onBucketChange={ setTableBucket }
 								totalUrls={ urlsSlice?.rows }
 								metric={ chartMetric }
-								ranked={ urlsSlice?.ranked }
-								now={ urlsSlice?.as_of }
 								errorCounts={ !! urlFilters?.errors_only }
 								error={ urlsSlice?.error ?? null }
 								loading={ !! urlsSlice?.loading }
@@ -1100,6 +1079,7 @@ export default function PerformanceDashboard( {
 						selectRequest( null );
 						// Only the table opens a URL narrowed; forget it here.
 						setDetailFilters( NO_DETAIL_FILTERS );
+						setDetailChart( NO_DETAIL_CHART );
 					} }
 					className="event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"
 					headerActions={
@@ -1217,6 +1197,10 @@ export default function PerformanceDashboard( {
 							listing={ detailListing }
 							listError={ urlDetailSlice.error }
 							detailErrors={ detailErrors }
+							chartSlice={ urlChartSlice }
+							categoriesSlice={ urlCategoriesSlice }
+							chart={ detailChart }
+							onChartChange={ changeDetailChart }
 						/>
 					) }
 

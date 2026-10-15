@@ -2,12 +2,13 @@
  * URL Detail View — the body of the Performance dashboard's URL modal.
  *
  * `PerformanceDashboard` opens a modal for one URL and renders this view inside
- * it. The view owns no slice: everything but the breakdown series draws a
- * payload the parent already fetched from the `performance` CI's `dump_url`
- * verb. Top to bottom:
+ * it. The view owns no slice and asks nothing: it draws the three slices the
+ * parent's graph asks each tick — the `dump_url` payload, and the URL's two
+ * `query` answers. Top to bottom:
  *
- *   1. Aggregate time chart of the breakdown series, with the Metric and
- *      Breakdown dropdowns that drive it.
+ *   1. Aggregate time chart of the URL's series by its dimensions, with the
+ *      Metric, Breakdown and Then by dropdowns and the filter chips that
+ *      drive it; their edits go to the parent, whose graph asks afresh.
  *   2. Category time charts — time, count, and average per profile category.
  *   3. Response-time scatter of the individual requests.
  *   4. Aggregate flame graph, drawn by `RequestTrace`, which holds
@@ -15,11 +16,6 @@
  *   5. Aggregate profile breakdown, averaged across the profiled requests.
  *   6. Virtualized recent-requests table with the Time field holding the
  *      buckets the list narrows to, and an "Errors Only" toggle after it.
- *
- * The breakdown series is the one read this view issues for itself, because it
- * is a separate round trip from the `dump_url` payload: `url_breakdown` goes
- * whenever the Breakdown dropdown or the URL changes, and again on a
- * router-tick timer.
  *
  * Footgun: the requests table virtualizes against the modal's scroll container
  * (`.components-modal__content`). Mounted outside a `Modal`, `useVirtualization`
@@ -31,22 +27,15 @@ import {
 	memo,
 	useMemo,
 	useState,
-	useEffect,
 	useCallback,
 } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
-import { formatCommandArgs } from '@newspack-nodes/runtime';
-import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
-import { SERVER } from '../hooks/usePerformanceGraph';
-import { GROUPS, SCOPED_BREAKDOWN_OPTIONS } from '../constants';
+import { FILTER_FIELD_OPTIONS, SCOPED_BREAKDOWN_OPTIONS } from '../constants';
 
-/**
- * How often the breakdown series is re-fetched, in milliseconds.
- *
- * The series aggregates a long retention window, so it moves slowly; five
- * minutes keeps the chart current without a round-trip per router tick.
- */
-const BREAKDOWN_REFRESH_MS = 300000;
+/** The fields a modal chip may name: every chip field but the URL it is. */
+const URL_CHIP_OPTIONS = FILTER_FIELD_OPTIONS.filter(
+	( option ) => 'url' !== option.value
+);
 
 import ResponseTimeChart from '../ResponseTimeChart';
 import RequestTrace from './RequestTrace';
@@ -58,9 +47,13 @@ import { errorStatus } from '../../components/errorStatus';
 import { wholeMs } from './HeadlineStats';
 import SortHeaderButton from './SortHeaderButton';
 import BucketField from './BucketField';
-import { bucketLabel, useBucketSelection } from '../chartSlots';
+import {
+	answerSlots,
+	bucketLabel,
+	chartDims,
+	useBucketSelection,
+} from '../chartSlots';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
-import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 
 /**
  * Request-row height in pixels.
@@ -266,20 +259,25 @@ const RequestRow = memo(
  * that bury a busy URL's errors, so the list, the heading count, the
  * bar-scaling maximum and the response-time scatter all show those errors.
  * The bucket selection the charts and the Time field edit lives upstream on
- * the same terms, and the server answers it the same way.
+ * the same terms, and the server answers it the same way. So does the chart's
+ * question: its dimensions and chips.
  *
- * @param {Object}                                   props                 Component props.
- * @param {Object}                                   props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
- * @param {Array}                                    props.sortedRequests  Recent requests, already sorted by the parent.
- * @param {Object}                                   props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
- * @param {(field: string) => void}                  props.onRequestSort   Receives a field name when a sortable header is clicked.
- * @param {(rid: string, partition: number) => void} props.onSelectRequest Receives a rid AND its partition from a row click or a scatter-plot dot.
- * @param {string}                                   props.urlHash         The URL's 12-char hash, which addresses the `url_breakdown` read below.
- * @param {{errors_only: boolean, bucket: string}}   props.filters         What the header and list narrow to: Errors Only, and the bucket selection's spelling, '' for none. The dashboard owns both, so they survive a trip to a request and back.
- * @param {(field: string, value: *) => void}        props.onFilterChange  Receives one field of `filters` and its new value, or an updater of its held one: the flipped toggle, the Time field's selection, or a chart click's updater.
- * @param {boolean}                                  [props.listing]       Whether the list is being asked afresh under new filters; the rows it holds answer the old ones, so the list alone shows it loading.
- * @param {?string}                                  [props.listError]     Why the last ask for the list was refused, or null; the list keeps what it held.
- * @param {?Object}                                  [props.detailErrors]  Under Errors Only, the `errorSummary()` of the list; null while every request is listed.
+ * @param {Object}                                               props                 Component props.
+ * @param {Object}                                               props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, aggregate_flame and aggregate_profiles.
+ * @param {Array}                                                props.sortedRequests  Recent requests, already sorted by the parent.
+ * @param {Object}                                               props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
+ * @param {(field: string) => void}                              props.onRequestSort   Receives a field name when a sortable header is clicked.
+ * @param {(rid: string, partition: number) => void}             props.onSelectRequest Receives a rid AND its partition from a row click or a scatter-plot dot.
+ * @param {string}                                               props.urlHash         The URL's 12-char hash, which the `?` picker asks about.
+ * @param {{errors_only: boolean, bucket: string}}               props.filters         What the header and list narrow to: Errors Only, and the bucket selection's spelling, '' for none. The dashboard owns both, so they survive a trip to a request and back.
+ * @param {(field: string, value: *) => void}                    props.onFilterChange  Receives one field of `filters` and its new value, or an updater of its held one: the flipped toggle, the Time field's selection, or a chart click's updater.
+ * @param {boolean}                                              [props.listing]       Whether the list is being asked afresh under new filters; the rows it holds answer the old ones, so the list alone shows it loading.
+ * @param {?string}                                              [props.listError]     Why the last ask for the list was refused, or null; the list keeps what it held.
+ * @param {?Object}                                              [props.detailErrors]  Under Errors Only, the `errorSummary()` of the list; null while every request is listed.
+ * @param {?Object}                                              props.chartSlice      The `url-chart:view` slice: its `query` answer, `loading` and `error`.
+ * @param {?Object}                                              props.categoriesSlice The `url-categories:view` slice, likewise.
+ * @param {{breakdown: string, thenBy: string, chips: string[]}} props.chart           The chart's question: its dimensions and chips.
+ * @param {(field: string, value: *) => void}                    props.onChartChange   Receives one field of `chart` and its new value.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {
@@ -294,6 +292,10 @@ export default function UrlDetailView( {
 	listing = false,
 	listError = null,
 	detailErrors = null,
+	chartSlice,
+	categoriesSlice,
+	chart,
+	onChartChange,
 } ) {
 	const listRef = useRef( null );
 	const errorsOnly = filters.errors_only;
@@ -306,14 +308,6 @@ export default function UrlDetailView( {
 		filters.bucket,
 		setBucket
 	);
-
-	// A list the walk cut short reads exactly like a URL with no traffic.
-	const scanNote = urlDetail.scan_stopped_early
-		? __(
-				'The request index scan stopped early, so requests for this URL may be missing.',
-				'newspack-event-logger-nodes'
-		  )
-		: null;
 
 	const { startIndex, endIndex, paddingTop, paddingBottom } =
 		useVirtualization(
@@ -334,80 +328,18 @@ export default function UrlDetailView( {
 			),
 		[ sortedRequests, chartMetric ]
 	);
-	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
-	const [ breakdownData, setBreakdownData ] = useState( null );
-	const [ breakdownSlots, setBreakdownSlots ] = useState( null );
-	const [ breakdownLoading, setBreakdownLoading ] = useState( false );
-	const [ breakdownError, setBreakdownError ] = useState( null );
-	// Once per reply: the modal re-renders on every scroll event.
+	const chartAnswer = chartSlice?.data ?? null;
+	const categoryAnswer = categoriesSlice?.data ?? null;
+	// Once per answer: the modal re-renders on every scroll event.
 	const breakdownRead = useMemo(
-		() => breakdownState( breakdownData ),
-		[ breakdownData ]
+		() => breakdownState( chartAnswer, chartDims( chart ) ),
+		[ chartAnswer, chart ]
 	);
-
-	/**
-	 * `url_breakdown` for one dimension; `onDone` is the chart's only series
-	 * source. `run` takes the command's token array, so `loadBreakdown` below
-	 * is what the rest of the component calls.
-	 *
-	 * A READ in the substrate's sense: idempotent, and keyed on a subject the
-	 * operator changes by flipping the dropdown. Sent as a write, three fast
-	 * flips would be three commands answered in any order, so the chart could
-	 * draw one dimension's data under another's label, and a dropped reply
-	 * would leave "Loading…" standing forever, because a write never re-asks.
-	 * Retried, the newest pick supersedes. Asking `dump_url` for the series
-	 * instead would drag a full request-index walk the chart keeps nothing of.
-	 */
-	const { run: fetchBreakdown } = useCommandOnce( {
-		group: GROUPS.url,
-		ci: SERVER,
-		command: 'url_breakdown',
-		scope: 'url-breakdown',
-		retry: true,
-		// Subject is the PAIR, not the hash: a superseded reply fills nothing.
-		subjectOf: ( args ) => args.join( ' ' ),
-		onDone: ( { result, error } ) => {
-			setBreakdownError( error );
-			setBreakdownData( result?.breakdown_time_series ?? null );
-			setBreakdownSlots( result?.slots ?? null );
-			setBreakdownLoading( false );
-		},
-	} );
-
-	/**
-	 * Ask for one breakdown dimension, and mark the panel loading until it
-	 * lands.
-	 *
-	 * @param {string} breakdown Dimension to break the series down by.
-	 */
-	const loadBreakdown = useCallback(
-		( breakdown ) => {
-			setBreakdownLoading( true );
-			fetchBreakdown( formatCommandArgs( [ urlHash ], { breakdown } ) );
-		},
-		[ fetchBreakdown, urlHash ]
+	const axis = useMemo( () => answerSlots( chartAnswer ), [ chartAnswer ] );
+	const categoryAxis = useMemo(
+		() => answerSlots( categoryAnswer ),
+		[ categoryAnswer ]
 	);
-
-	// Clear on a SWITCH only: old numbers under the new label would read true.
-	useEffect( () => {
-		setBreakdownData( null );
-		loadBreakdown( chartBreakdown );
-	}, [ chartBreakdown, loadBreakdown ] );
-
-	/**
-	 * Re-ask for the dimension currently on screen, on the router tick.
-	 *
-	 * The tick passes no arguments, so the callback has to close over the
-	 * dropdown's value rather than be handed it.
-	 */
-	const reloadBreakdown = useCallback( () => {
-		loadBreakdown( chartBreakdown );
-	}, [ chartBreakdown, loadBreakdown ] );
-	useRouterTick( {
-		name: 'url-breakdown-refresh:timer',
-		onTick: reloadBreakdown,
-		intervalMs: BREAKDOWN_REFRESH_MS,
-	} );
 
 	/**
 	 * The direction a column's header draws: the sort's own on the sorted
@@ -430,15 +362,22 @@ export default function UrlDetailView( {
 			{ /* Always mounted: a gate here can strand the operator. */ }
 			<BreakdownControls
 				breakdownRead={ breakdownRead }
-				slots={ breakdownSlots }
+				slots={ axis }
 				storageKey="event-logger-url-detail-chart-aggregate"
 				metric={ chartMetric }
 				setMetric={ setChartMetric }
-				breakdown={ chartBreakdown }
-				setBreakdown={ setChartBreakdown }
+				breakdown={ chart.breakdown }
+				setBreakdown={ ( value ) =>
+					onChartChange( 'breakdown', value )
+				}
+				thenBy={ chart.thenBy }
+				setThenBy={ ( value ) => onChartChange( 'thenBy', value ) }
 				breakdownOptions={ SCOPED_BREAKDOWN_OPTIONS }
-				loading={ breakdownLoading }
-				error={ breakdownError }
+				chips={ chart.chips }
+				setChips={ ( chips ) => onChartChange( 'chips', chips ) }
+				chipOptions={ URL_CHIP_OPTIONS }
+				loading={ !! chartSlice?.loading }
+				error={ chartSlice?.error ?? null }
 				onSlotClick={ pickBucket }
 				onSlotRange={ pickRange }
 				selectedBuckets={ selectedBuckets }
@@ -446,8 +385,8 @@ export default function UrlDetailView( {
 
 			<CategoryTimeChart
 				storageKey="event-logger-url-detail-chart-category"
-				data={ urlDetail?.category_time_series }
-				slots={ urlDetail?.slots ?? null }
+				data={ categoryAnswer }
+				slots={ categoryAxis }
 				onSlotClick={ pickBucket }
 				onSlotRange={ pickRange }
 				selectedBuckets={ selectedBuckets }
@@ -469,7 +408,6 @@ export default function UrlDetailView( {
 								'Aggregate Flame Graph',
 								'newspack-event-logger-nodes'
 							) }
-							lastModified={ urlDetail.last_modified }
 						/>
 					</div>
 				) }
@@ -511,7 +449,7 @@ export default function UrlDetailView( {
 					</h3>
 					<BucketField
 						value={ filters.bucket }
-						slots={ urlDetail?.slots ?? null }
+						slots={ axis }
 						onChange={ setBucket }
 					/>
 					<button
@@ -602,8 +540,7 @@ export default function UrlDetailView( {
 										'Loading requests…',
 										'newspack-event-logger-nodes'
 								  )
-								: scanNote ||
-								  __(
+								: __(
 										'No requests to display',
 										'newspack-event-logger-nodes'
 								  ) }
@@ -624,9 +561,6 @@ export default function UrlDetailView( {
 						</>
 					) }
 				</div>
-				{ scanNote && ! listing && sortedRequests.length > 0 && (
-					<p className="newspack-nodes-status">{ scanNote }</p>
-				) }
 			</div>
 		</div>
 	);

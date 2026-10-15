@@ -1,7 +1,7 @@
 /**
  * Tests for the chart axis — one five-minute slot per bucket key the reply
  * names, oldest first, the window the reply's and never the browser clock's —
- * and for the one decoder every chart reads the name-table wire through.
+ * and for the one decoder every chart reads a `query` answer's rows through.
  */
 
 import * as React from 'react';
@@ -13,10 +13,12 @@ import {
 	bucketSpelling,
 	bucketsOf,
 	buildChartSlots,
-	CAT_FIELDS,
-	decodeNameTable,
-	DIM_FIELDS,
+	answerSlots,
+	chartDims,
+	decodeRows,
+	filterValue,
 	hasRows,
+	valueName,
 	runsOf,
 	runSpan,
 	useBucketSelection,
@@ -24,7 +26,7 @@ import {
 	useSlotClick,
 	useSlotRange,
 } from '../chartSlots';
-import { nameTable, slotsEndingAt } from '../../test-helpers/chartWire';
+import { rowsWire, slotsEndingAt } from '../../test-helpers/chartWire';
 import { act, cleanupMounts, renderHook } from '../../test-helpers/renderHook';
 
 /**
@@ -65,118 +67,181 @@ describe( 'buildChartSlots', () => {
 	} );
 } );
 
-describe( 'decodeNameTable', () => {
-	it( 'holds each dimensional row under named fields, by bucket and name index', () => {
-		const decoded = decodeNameTable(
-			nameTable( {
-				'2026-09-29-14-35': {
-					'kea-ua/7': [ 41, 820, 3, 41 ],
-					'weka-ua/9': [ 43, 4300, 4, 37 ],
-				},
-			} ),
-			DIM_FIELDS
+describe( 'decodeRows', () => {
+	it( 'decodes query rows into one series per dimension tuple', () => {
+		const wire = {
+			columns: [
+				'bucket',
+				'status_class',
+				'server',
+				'count',
+				'sum_ms',
+				'timed',
+			],
+			rows: [
+				[ '2026-10-15-07-15', 5, 'kea.example', 862, 0, 0 ],
+				[ '2026-10-15-07-15', 2, 'kea.example', 31, 4120.5, 31 ],
+			],
+		};
+		const out = decodeRows(
+			wire,
+			[ 'status_class', 'server' ],
+			[ 'count', 'sum_ms', 'timed' ]
+		);
+		expect( out.names ).toEqual( [
+			'5xx · kea.example',
+			'2xx · kea.example',
+		] );
+		expect(
+			out.byBucket[ '2026-10-15-07-15' ][ '5xx · kea.example' ]
+		).toEqual( { count: 862, sum_ms: 0, timed: 0 } );
+	} );
+
+	it( 'names each tuple once, in the order the answer ranked it', () => {
+		const out = decodeRows(
+			rowsWire(
+				[ 'bucket', 'category', 'ms', 'calls' ],
+				[
+					[ '2026-10-15-07-10', 'sql', 812.25, 40 ],
+					[ '2026-10-15-07-15', 'sql', 90.5, 7 ],
+					[ '2026-10-15-07-15', 'init', 33, 2 ],
+				]
+			),
+			[ 'category' ],
+			[ 'ms', 'calls' ]
 		);
 
-		expect( decoded.names ).toEqual( [ 'kea-ua/7', 'weka-ua/9' ] );
-		expect( decoded.byBucket[ '2026-09-29-14-35' ][ 1 ] ).toEqual( {
-			count: 43,
-			sumMs: 4300,
-			sumPeakMb: 4,
-			timed: 37,
+		expect( out.names ).toEqual( [ 'sql', 'init' ] );
+		expect( out.byBucket[ '2026-10-15-07-10' ] ).toEqual( {
+			sql: { ms: 812.25, calls: 40 },
+		} );
+		expect( out.byBucket[ '2026-10-15-07-15' ].init ).toEqual( {
+			ms: 33,
+			calls: 2,
 		} );
 	} );
 
-	it( 'names a category row as the category chart reads it', () => {
-		const decoded = decodeNameTable(
-			nameTable( {
-				'2026-09-29-14-35': { memcache: [ 8123, 419, 37 ] },
-			} ),
-			CAT_FIELDS
+	it( 'reads a status class the server could not read as Unknown', () => {
+		const out = decodeRows(
+			rowsWire(
+				[ 'bucket', 'status_class', 'count' ],
+				[ [ '2026-10-15-07-15', 'Unknown', 9 ] ]
+			),
+			[ 'status_class' ],
+			[ 'count' ]
 		);
 
-		expect( decoded.byBucket[ '2026-09-29-14-35' ][ 0 ] ).toEqual( {
-			t: 8123,
-			c: 419,
-			n: 37,
-		} );
+		expect( out.names ).toEqual( [ 'Unknown' ] );
 	} );
 
-	it( "reads PHP's empty map, a JSON list, as no buckets", () => {
-		const decoded = decodeNameTable(
-			{ names: [], buckets: [] },
-			DIM_FIELDS
+	it( 'answers no series for an answer holding no rows', () => {
+		const out = decodeRows(
+			rowsWire( [ 'bucket', 'server', 'count' ], [] ),
+			[ 'server' ],
+			[ 'count' ]
 		);
 
-		expect( decoded ).not.toBeNull();
-		expect( hasRows( decoded ) ).toBe( false );
+		expect( out ).toEqual( { names: [], byBucket: {} } );
+		expect( hasRows( out ) ).toBe( false );
 	} );
 
 	it.each( [
-		[ 'no name table', { buckets: {} } ],
-		[ 'no buckets', { names: [ 'kea-ua/7' ] } ],
-		[ 'a null bucket map', { names: [], buckets: null } ],
+		[ 'no columns', { rows: [] } ],
+		[ 'no rows', { columns: [ 'bucket', 'server', 'count' ] } ],
+		[ 'no bucket column', rowsWire( [ 'server', 'count' ], [] ) ],
+		[ 'no column for a dimension', rowsWire( [ 'bucket', 'count' ], [] ) ],
+		[ 'no column for a measure', rowsWire( [ 'bucket', 'server' ], [] ) ],
 		[
-			'a bucket map that is a non-empty list',
-			{ names: [ 'kea-ua/7' ], buckets: [ [ [ 0, 41, 820, 3, 41 ] ] ] },
+			'a row of the wrong width',
+			rowsWire(
+				[ 'bucket', 'server', 'count' ],
+				[ [ '2026-10-15-07-15', 'kea.example' ] ]
+			),
 		],
 		[
-			'a bucket that is not a list',
-			{ names: [ 'kea-ua/7' ], buckets: { '2026-09-29-14-35': {} } },
+			'a measure that is no number',
+			rowsWire(
+				[ 'bucket', 'server', 'count' ],
+				[ [ '2026-10-15-07-15', 'kea.example', '41' ] ]
+			),
 		],
 		[
-			'a row missing a field',
-			{
-				names: [ 'kea-ua/7' ],
-				buckets: { '2026-09-29-14-35': [ [ 0, 41, 820, 3 ] ] },
-			},
+			'a bucket that is no key',
+			rowsWire(
+				[ 'bucket', 'server', 'count' ],
+				[ [ 5967, 'kea.example', 41 ] ]
+			),
 		],
-		[
-			'a row naming no name',
-			{
-				names: [ 'kea-ua/7' ],
-				buckets: { '2026-09-29-14-35': [ [ 1, 41, 820, 3, 41 ] ] },
-			},
-		],
-		[
-			'a field that is no number',
-			{
-				names: [ 'kea-ua/7' ],
-				buckets: { '2026-09-29-14-35': [ [ 0, '41', 820, 3, 41 ] ] },
-			},
-		],
-		[
-			'a name that is no string',
-			{
-				names: [ 7 ],
-				buckets: { '2026-09-29-14-35': [ [ 0, 41, 820, 3, 41 ] ] },
-			},
-		],
-	] )( 'refuses a reply with %s', ( _, wire ) => {
-		expect( decodeNameTable( wire, DIM_FIELDS ) ).toBeNull();
+	] )( 'refuses an answer with %s', ( _, wire ) => {
+		expect( decodeRows( wire, [ 'server' ], [ 'count' ] ) ).toBeNull();
 	} );
 } );
 
 describe( 'hasRows', () => {
-	it( 'answers true only when some bucket holds a row', () => {
+	it( 'answers true only when a series was decoded', () => {
 		expect( hasRows( null ) ).toBe( false );
+		expect( hasRows( { names: [], byBucket: {} } ) ).toBe( false );
 		expect(
 			hasRows(
-				decodeNameTable(
-					{ names: [], buckets: { '2026-09-29-14-35': [] } },
-					DIM_FIELDS
-				)
-			)
-		).toBe( false );
-		expect(
-			hasRows(
-				decodeNameTable(
-					nameTable( {
-						'2026-09-29-14-35': { '5xx': [ 7, 917, 2, 7 ] },
-					} ),
-					DIM_FIELDS
+				decodeRows(
+					rowsWire(
+						[ 'bucket', 'status_class', 'count' ],
+						[ [ '2026-09-29-14-35', 5, 7 ] ]
+					),
+					[ 'status_class' ],
+					[ 'count' ]
 				)
 			)
 		).toBe( true );
+	} );
+} );
+
+describe( 'chartDims', () => {
+	it( 'charts both dimensions the panel names', () => {
+		expect( chartDims( { breakdown: 'ja4', thenBy: 'country' } ) ).toEqual(
+			[ 'ja4', 'country' ]
+		);
+	} );
+
+	it( 'charts one where the second is none or repeats the first', () => {
+		expect( chartDims( { breakdown: 'method', thenBy: '' } ) ).toEqual( [
+			'method',
+		] );
+		expect(
+			chartDims( { breakdown: 'method', thenBy: 'method' } )
+		).toEqual( [ 'method' ] );
+	} );
+} );
+
+describe( 'valueName and filterValue', () => {
+	it( 'names a status class as its class, from the answer or a chip', () => {
+		expect( valueName( 'status_class', 4 ) ).toBe( '4xx' );
+		expect( valueName( 'status_class', '4' ) ).toBe( '4xx' );
+		expect( valueName( 'status_class', 'Unknown' ) ).toBe( 'Unknown' );
+		expect( valueName( 'method', 'PURGE' ) ).toBe( 'PURGE' );
+	} );
+
+	it( 'reads a typed class back as the answer spells it', () => {
+		expect( filterValue( 'status_class', '4XX' ) ).toBe( '4' );
+		expect( filterValue( 'status', '4xx' ) ).toBe( '4xx' );
+	} );
+} );
+
+describe( 'answerSlots', () => {
+	it( "draws the buckets an answer's echoed selection names, newest first", () => {
+		expect(
+			answerSlots( {
+				filters: { bucket: '2026-10-15-07-05..2026-10-15-07-15' },
+			} )
+		).toEqual( [
+			'2026-10-15-07-15',
+			'2026-10-15-07-10',
+			'2026-10-15-07-05',
+		] );
+	} );
+
+	it( 'draws no axis before an answer arrives', () => {
+		expect( answerSlots( null ) ).toBeNull();
 	} );
 } );
 

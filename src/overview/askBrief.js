@@ -445,7 +445,7 @@ function bodyLines( brief ) {
 							? 'workers included'
 							: '',
 					],
-					// Null is not zero; pre-split rows cannot answer this.
+					// No totals print no line: a zero would read as idle.
 					[
 						'traffic',
 						brief.stats
@@ -469,9 +469,9 @@ function bodyLines( brief ) {
 									) } avg`,
 									`${ num(
 										brief.stats.requests_per_second
-									) }/s recent`,
+									) }/s`,
 							  ].join( ', ' )
-							: 'no per-server totals — these rows are pre-split',
+							: '',
 					],
 					[
 						'peak memory',
@@ -544,26 +544,10 @@ function bodyLines( brief ) {
 							)
 							.join( ', ' ),
 					],
-					// An empty list is empty of this window, not of the URL.
-					[
-						'requests since',
-						brief.requests_capped
-							? ''
-							: isoTime( brief.requests_window_start ),
-					],
 					[
 						'requests',
 						brief.requests_capped
-							? `the newest the list holds, since ${ isoTime(
-									brief.requests_window_start
-							  ) }; older ones may be unlisted`
-							: '',
-					],
-					// Its own pair; concatenated it is a bare parenthetical.
-					[
-						'scan',
-						brief.scan_stopped_early
-							? 'stopped early — this list is partial'
+							? 'the newest the list holds; older ones are unlisted'
 							: '',
 					],
 				] ),

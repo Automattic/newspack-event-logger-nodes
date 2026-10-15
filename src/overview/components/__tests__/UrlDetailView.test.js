@@ -6,9 +6,9 @@
  *   - "Errors Only" toggle asks its owner, and labels the server's list
  *   - clicking a request row fires onSelectRequest
  *   - aggregate flame / breakdown / category time series sections
- *     mount when their data is present.
- *   - fetchUrlBreakdown is called with the urlHash + initial breakdown
- *     on first render
+ *     mount when their data is present, each chart drawn from the answer
+ *     its owner's graph asked
+ *   - the chart's selects and chips hand their edits to the owner
  */
 
 // Mock useVirtualization: no modal ancestor in tests → real hook crashes.
@@ -39,7 +39,7 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 	__esModule: true,
 	default: ( props ) => {
 		const {
-			breakdown,
+			dims,
 			series,
 			slots,
 			onSlotClick,
@@ -47,10 +47,11 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 			selectedBuckets,
 		} = props;
 		globalThis.__aggregateStorageKey = props.storageKey;
+		globalThis.__aggregateSlots = slots;
 		globalThis.__aggregateSlotClick = onSlotClick;
 		globalThis.__aggregateSlotRange = onSlotRange;
 		globalThis.__aggregateSelected = selectedBuckets;
-		return `AGGREGATE[breakdown=${ breakdown },series=${
+		return `AGGREGATE[dims=${ dims.join( '+' ) },series=${
 			series ? 'set' : 'none'
 		}] keys:${ ( series?.names ?? [] ).join( ',' ) } slots:${
 			slots?.[ 0 ] ?? 'none'
@@ -60,8 +61,11 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
 	default: ( props ) => {
-		const { slots, onSlotClick, onSlotRange, selectedBuckets } = props;
+		const { data, slots, onSlotClick, onSlotRange, selectedBuckets } =
+			props;
 		globalThis.__categoryStorageKey = props.storageKey;
+		globalThis.__categorySlots = slots;
+		globalThis.__categoryData = data;
 		globalThis.__categorySlotClick = onSlotClick;
 		globalThis.__categorySlotRange = onSlotRange;
 		globalThis.__categorySelected = selectedBuckets;
@@ -70,15 +74,37 @@ jest.mock( '../../CategoryTimeChart', () => ( {
 } ) );
 
 import * as React from 'react';
-import { Core, FROM, VALUE } from '@newspack-nodes/runtime';
-import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import UrlDetailView from '../UrlDetailView';
-import {
-	renderComponent,
-	waitFor,
-	act,
-} from '../../../test-helpers/renderHook';
-import { nameTable, slotsEndingAt } from '../../../test-helpers/chartWire';
+import { NO_DETAIL_CHART } from '../../hooks/usePerformanceGraph';
+import { SERIES_MEASURES } from '../../constants';
+import { renderComponent, act } from '../../../test-helpers/renderHook';
+import { rowsWire } from '../../../test-helpers/chartWire';
+
+/**
+ * A view slice holding a `query` answer, as `useNodeField` hands one over.
+ *
+ * @param {?Object} data   The answer, or null before one.
+ * @param {Object}  [more] Status fields, as `loading` or `error`.
+ * @return {Object} The slice.
+ */
+const sliceOf = ( data, more = {} ) => ( {
+	data,
+	loading: false,
+	error: null,
+	...more,
+} );
+
+/**
+ * The URL chart's answer by status class, over the given selection.
+ *
+ * @param {Array[]} rows   Its rows: `[ bucket, class, ...SERIES_MEASURES ]`.
+ * @param {string}  bucket The selection it echoes.
+ * @return {Object} The answer.
+ */
+const classAnswer = ( rows, bucket = '2026-09-28-14-40..2026-09-29-14-35' ) =>
+	rowsWire( [ 'bucket', 'status_class', ...SERIES_MEASURES ], rows, {
+		filters: { filter: {}, bucket, search: '' },
+	} );
 
 const baseUrlDetail = {
 	stats: { avg_ms: 100 },
@@ -114,18 +140,10 @@ const REQUESTS = [
 	},
 ];
 
-// The view holds its own `url_breakdown` read, so every render mounts a
-// graph and needs a wire — not just the test that asserts what it sends.
-let wire;
-
 beforeEach( () => {
 	globalThis.__aggregateStorageKey = undefined;
 	globalThis.__categoryStorageKey = undefined;
-	Core.reset();
-	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
-	wire = installFakeCommandWire( () => ( {
-		breakdown_time_series: { names: [], buckets: {} },
-	} ) );
+	globalThis.__categoryData = undefined;
 } );
 
 function mount( overrides = {} ) {
@@ -138,6 +156,10 @@ function mount( overrides = {} ) {
 		urlHash: 'deadbeef',
 		filters: { errors_only: false, bucket: '' },
 		onFilterChange: jest.fn(),
+		chartSlice: sliceOf( null ),
+		categoriesSlice: sliceOf( null ),
+		chart: NO_DETAIL_CHART,
+		onChartChange: jest.fn(),
 		...overrides,
 	};
 	return {
@@ -186,7 +208,7 @@ describe( 'UrlDetailView', () => {
 		const [ , breakdown ] = container.querySelectorAll( 'select' );
 		const values = Array.from( breakdown.options ).map( ( o ) => o.value );
 		expect( values ).not.toContain( 'server' );
-		expect( values ).toContain( 'status' );
+		expect( values ).toContain( 'status_class' );
 		unmount();
 	} );
 
@@ -547,17 +569,18 @@ describe( 'UrlDetailView', () => {
 	it( 'holds its selection in a Time field between the heading and Errors Only', () => {
 		const onFilterChange = jest.fn();
 		const { container, unmount } = mount( {
-			urlDetail: {
-				...baseUrlDetail,
-				slots: slotsEndingAt( '2026-10-04-14-00', 12 ),
-			},
+			chartSlice: sliceOf(
+				classAnswer( [], '2026-10-04-13-05..2026-10-04-14-00' )
+			),
 			filters: {
 				errors_only: false,
 				bucket: '2026-10-04-13-30,2026-10-04-13-40',
 			},
 			onFilterChange,
 		} );
-		const field = container.querySelector( '.event-logger-tag-container' );
+		const field = container.querySelector(
+			'.event-logger-table--requests .event-logger-tag-container'
+		);
 		expect(
 			Array.from(
 				field.parentElement.children,
@@ -694,8 +717,6 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 'never charts a series carried by the dump_url payload', () => {
-		// `dump_url` sends no series; a view that would draw one anyway is
-		// a server change away from the first paint nobody asked for.
 		const { container, unmount } = mount( {
 			urlDetail: { ...baseUrlDetail, stats: { time_series: { a: 1 } } },
 		} );
@@ -703,149 +724,131 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'charts the breakdown reply it asked for', async () => {
-		wire = installFakeCommandWire( () => ( {
-			breakdown_time_series: nameTable( {
-				'2026-09-29-14-35': { '5xx': [ 7, 70, 3, 7 ] },
-			} ),
-		} ) );
-		const { container, unmount } = mount();
-		await waitFor(
-			() =>
-				expect( container.textContent ).toContain(
-					'AGGREGATE[breakdown=status,series=set]'
-				),
-			{ timeout: 6000 }
+	it( 'charts the answer its owner asked by its dimensions', () => {
+		const { container, unmount } = mount( {
+			chartSlice: sliceOf(
+				classAnswer( [ [ '2026-09-29-14-35', 5, 7, 70, 3, 7 ] ] )
+			),
+		} );
+		expect( container.textContent ).toContain(
+			'AGGREGATE[dims=status_class,series=set] keys:5xx'
 		);
 		unmount();
-	}, 20000 );
+	} );
 
-	it( 'draws each chart on the slots its own reply named', async () => {
-		wire = installFakeCommandWire( () => ( {
-			breakdown_time_series: nameTable( {
-				'2026-09-29-14-35': { '5xx': [ 7, 70, 3, 7 ] },
-			} ),
-			slots: slotsEndingAt( '2026-09-29-14-40' ),
-		} ) );
+	it( 'draws each chart on the buckets its own answer read', () => {
 		const { container, unmount } = mount( {
-			urlDetail: {
-				...baseUrlDetail,
-				category_time_series: { hooks: [] },
-				slots: slotsEndingAt( '2026-09-29-14-35' ),
-			},
+			chartSlice: sliceOf(
+				classAnswer( [], '2026-09-29-14-30..2026-09-29-14-40' )
+			),
+			categoriesSlice: sliceOf(
+				classAnswer( [], '2026-09-29-14-25..2026-09-29-14-35' )
+			),
 		} );
-		await waitFor(
-			() =>
-				expect( container.textContent ).toContain(
-					'slots:2026-09-29-14-40 '
-				),
-			{ timeout: 6000 }
-		);
+		expect( container.textContent ).toContain( 'slots:2026-09-29-14-40 ' );
 		expect( container.textContent ).toContain(
 			'CATEGORY slots:2026-09-29-14-35'
 		);
 		unmount();
-	}, 20000 );
+	} );
 
-	it( 'drops the held series the moment the dimension changes', async () => {
-		// Otherwise the status series is drawn under a dropdown reading JA4
-		// for the round trip it takes the new dimension to arrive — plausible
-		// numbers under the wrong question, which is worse than a blank.
-		wire = installFakeCommandWire( () => ( {
-			breakdown_time_series: nameTable( {
-				'2026-09-29-14-35': { '5xx': [ 7, 70, 3, 7 ] },
-			} ),
-		} ) );
-		const { container, unmount } = mount( { urlHash: '7f3c19ab52d0' } );
-		await waitFor(
-			() =>
-				expect( container.textContent ).toContain(
-					'AGGREGATE[breakdown=status,series=set]'
-				),
-			{ timeout: 6000 }
+	it( 'draws no series under dimensions its answer was not asked by', () => {
+		// The answer in hand is the status classes'; the dropdown reads JA4.
+		const { container, unmount } = mount( {
+			chart: { breakdown: 'ja4', thenBy: '', chips: [] },
+			chartSlice: sliceOf(
+				classAnswer( [ [ '2026-09-29-14-35', 5, 7, 70, 3, 7 ] ] )
+			),
+		} );
+		expect( container.textContent ).toContain(
+			'AGGREGATE[dims=ja4,series=none]'
 		);
-		const [ , breakdown ] = container.querySelectorAll( 'select' );
+		expect( container.textContent ).toContain( 'Loading…' );
+		unmount();
+	} );
+
+	it( "keeps each chart's slots across a re-render with the same answers", () => {
+		const { props, rerender, unmount } = mount( {
+			chartSlice: sliceOf( classAnswer( [] ) ),
+			categoriesSlice: sliceOf(
+				classAnswer( [], '2026-09-29-13-05..2026-09-29-13-15' )
+			),
+		} );
+		const [ aggregate, category ] = [
+			globalThis.__aggregateSlots,
+			globalThis.__categorySlots,
+		];
+
+		rerender(
+			React.createElement( UrlDetailView, { ...props, listing: true } )
+		);
+
+		expect( globalThis.__aggregateSlots ).toBe( aggregate );
+		expect( globalThis.__categorySlots ).toBe( category );
+		unmount();
+	} );
+
+	it( 'charts Method alone after Then by Method, then Breakdown Method', () => {
+		const answer = rowsWire(
+			[ 'bucket', 'method', ...SERIES_MEASURES ],
+			[ [ '2026-09-29-14-35', 'PURGE', 3, 30, 1, 3 ] ]
+		);
+		const { container, unmount } = mount( {
+			chart: { breakdown: 'method', thenBy: 'method', chips: [] },
+			chartSlice: sliceOf( answer ),
+		} );
+		expect( container.textContent ).toContain(
+			'AGGREGATE[dims=method,series=set] keys:PURGE'
+		);
+		unmount();
+	} );
+
+	it( 'hands its owner each edit of the chart question', () => {
+		const onChartChange = jest.fn();
+		const { container, unmount } = mount( {
+			chart: {
+				breakdown: 'status_class',
+				thenBy: '',
+				chips: [ 'method=PUT' ],
+			},
+			onChartChange,
+		} );
+		const [ , breakdown, thenBy ] = container.querySelectorAll( 'select' );
 		selectOption( breakdown, 'ja4' );
-		expect( container.textContent ).toContain(
-			'AGGREGATE[breakdown=ja4,series=none]'
-		);
+		selectOption( thenBy, 'country' );
+		act( () => {
+			container
+				.querySelector( 'button[aria-label="Remove Method = PUT"]' )
+				.click();
+		} );
+		expect(
+			onChartChange.mock.calls.map( ( c ) => c.slice( 0, 2 ) )
+		).toEqual( [
+			[ 'breakdown', 'ja4' ],
+			[ 'thenBy', 'country' ],
+			[ 'chips', [] ],
+		] );
 		unmount();
-	}, 20000 );
+	} );
 
-	it( 'answers the dimension it asked about, never the superseded one', async () => {
-		// Two reads about one URL are ONE subject unless the dimension
-		// addresses them apart. Undifferentiated, the status answer retires
-		// the User Agent ask it does not answer: status series under a User
-		// Agent label, and the User Agent reply dropped for good after it.
-		const deferred = new Map();
-		const dimOf = ( message ) =>
-			( message[ VALUE ]?.arguments ?? [] )
-				.find( ( token ) => token.startsWith( '--breakdown=' ) )
-				?.slice( '--breakdown='.length );
-		const askFor = ( dim ) => {
-			if ( ! deferred.has( dim ) ) {
-				let settle;
-				const reply = new Promise( ( r ) => {
-					settle = r;
-				} );
-				deferred.set( dim, { reply, settle } );
-			}
-			return deferred.get( dim ).reply;
-		};
-		// A re-ask for a dimension answers with the same held promise, so the
-		// retry cadence cannot smuggle in an answer the test did not release.
-		wire = installFakeCommandWire( ( message ) =>
-			askFor( dimOf( message ) )
+	it( 'offers no URL chip: the modal is already one URL', () => {
+		const { container, unmount } = mount();
+		const box = container.querySelector( 'input[aria-label="Filter"]' );
+		const list = container.querySelector(
+			`datalist[id="${ box.getAttribute( 'list' ) }"]`
 		);
-		const flush = async () => {
-			await act( async () => {
-				for ( let i = 0; i < 8; i++ ) {
-					await Promise.resolve();
-				}
-			} );
-		};
-
-		const { container, unmount } = mount( { urlHash: '3b9a77c1de40' } );
-		await waitFor( () => expect( deferred.has( 'status' ) ).toBe( true ), {
-			timeout: 6000,
-		} );
-		const [ , breakdown ] = container.querySelectorAll( 'select' );
-		selectOption( breakdown, 'ua' );
-		await waitFor( () => expect( deferred.has( 'ua' ) ).toBe( true ), {
-			timeout: 6000,
-		} );
-
-		// The superseded status answer lands while User Agent is outstanding.
-		deferred.get( 'status' ).settle( {
-			breakdown_time_series: nameTable( {
-				'2026-09-29-14-35': { '5xx': [ 7, 70, 3, 7 ] },
-			} ),
-		} );
-		await flush();
-		expect( container.textContent ).toContain(
-			'AGGREGATE[breakdown=ua,series=none]'
+		const offered = Array.from(
+			list.querySelectorAll( 'option' ),
+			( option ) => option.value
 		);
-
-		deferred.get( 'ua' ).settle( {
-			breakdown_time_series: nameTable( {
-				'2026-09-29-14-35': { 'curl/8.4': [ 3, 30, 3, 3 ] },
-			} ),
-		} );
-		await waitFor(
-			() => expect( container.textContent ).toContain( 'series=set' ),
-			{ timeout: 6000 }
-		);
-		expect( container.textContent ).toContain(
-			'AGGREGATE[breakdown=ua,series=set] keys:curl/8.4'
-		);
+		expect( offered ).toContain( 'ja4=' );
+		expect( offered ).not.toContain( 'url=' );
 		unmount();
-	}, 20000 );
+	} );
 
 	it( 'keeps its charts, flame and profile on a filter flip, marking the list alone', async () => {
 		const urlDetail = {
 			...baseUrlDetail,
-			slots: slotsEndingAt( '2026-10-04-14-00', 12 ),
-			category_time_series: { names: [], buckets: {} },
 			requests: REQUESTS,
 			aggregate_flame: { children: [ { name: 'heron' } ] },
 			aggregate_profiles: {
@@ -864,6 +867,10 @@ describe( 'UrlDetailView', () => {
 			filters: { errors_only: false, bucket: '' },
 			onFilterChange: jest.fn(),
 			listing: false,
+			chartSlice: sliceOf( classAnswer( [] ) ),
+			categoriesSlice: sliceOf( classAnswer( [] ) ),
+			chart: NO_DETAIL_CHART,
+			onChartChange: jest.fn(),
 		};
 		const { container, rerender, unmount } = renderComponent(
 			React.createElement( UrlDetailView, props )
@@ -1012,55 +1019,12 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'hands the category series to CategoryTimeChart', () => {
-		const { container, unmount } = mount( {
-			urlDetail: {
-				...baseUrlDetail,
-				category_time_series: { hooks: [] },
-			},
-		} );
-		expect( container.textContent ).toContain( 'CATEGORY' );
+	it( 'hands the category answer to CategoryTimeChart', () => {
+		const answer = classAnswer( [] );
+		const { unmount } = mount( { categoriesSlice: sliceOf( answer ) } );
+		expect( globalThis.__categoryData ).toBe( answer );
 		unmount();
 	} );
-
-	// The breakdown series is this view's own read, so what it sends is
-	// asserted on the wire rather than through an injected fetcher.
-	it( 'asks url_breakdown for the initial breakdown on mount', async () => {
-		// It keeps only the series, so it must not ask the verb that walks
-		// every partition's index to build a request list it discards.
-		const { unmount } = mount();
-		await waitFor(
-			() =>
-				expect(
-					wire.batches
-						.flat()
-						.filter( ( m ) => 'url_breakdown' === m[ VALUE ]?.name )
-						.length
-				).toBeGreaterThan( 0 ),
-			{ timeout: 6000 }
-		);
-		const [ msg ] = wire.batches
-			.flat()
-			.filter( ( m ) => 'url_breakdown' === m[ VALUE ]?.name );
-		expect( msg[ VALUE ].arguments ).toEqual( [
-			'deadbeef',
-			'--breakdown=status',
-		] );
-		// The read's scope is `url-breakdown`; its refresh tick is a subject
-		// of its own, so the two never collide on `:timer`.
-		expect( msg[ FROM ] ).toMatch( /^url-breakdown:in\// );
-		const readTimer = Core.node( 'url-breakdown:timer' );
-		const refreshTimer = Core.node( 'url-breakdown-refresh:timer' );
-		expect( readTimer ).toBeTruthy();
-		expect( refreshTimer ).toBeTruthy();
-		expect( refreshTimer ).not.toBe( readTimer );
-		expect(
-			wire.batches
-				.flat()
-				.filter( ( m ) => 'dump_url' === m[ VALUE ]?.name )
-		).toHaveLength( 0 );
-		unmount();
-	}, 20000 );
 
 	it( 'shows "No requests" when sortedRequests is empty', () => {
 		const { container, unmount } = mount( { sortedRequests: [] } );
@@ -1068,74 +1032,38 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'says the scan stopped rather than that the URL has no requests', () => {
+	it( 'keeps its dropdowns and says so when the breakdown is refused', () => {
 		const { container, unmount } = mount( {
-			urlDetail: { ...baseUrlDetail, scan_stopped_early: true },
-			sortedRequests: [],
+			chartSlice: sliceOf( null, {
+				error: 'unknown requests field plumage',
+			} ),
 		} );
-		expect( container.textContent ).toContain( 'stopped early' );
-		expect( container.textContent ).not.toContain(
-			'No requests to display'
+		expect( container.textContent ).toContain(
+			'unknown requests field plumage'
 		);
+		expect( dropdownLabels( container ) ).toEqual( [
+			'Metric',
+			'Breakdown',
+			'Then by',
+		] );
 		unmount();
 	} );
 
-	it( 'keeps its dropdowns and says so when the breakdown is refused', async () => {
-		wire = installFakeCommandWire(
-			() => new Error( 'index scan budget spent' )
+	it( 'keeps its dropdowns when the dimension has no rows to chart', () => {
+		const onChartChange = jest.fn();
+		const { container, unmount } = mount( {
+			chartSlice: sliceOf( classAnswer( [] ) ),
+			onChartChange,
+		} );
+		expect( container.textContent ).toContain(
+			'No Status Class data in this window.'
 		);
-		const { container, unmount } = mount( { urlHash: '7f3c19ab52d0' } );
-		await waitFor(
-			() =>
-				expect( container.textContent ).toContain(
-					'index scan budget spent'
-				),
-			{ timeout: 6000 }
-		);
-		expect( dropdownLabels( container ) ).toEqual( [
-			'Metric',
-			'Breakdown',
-		] );
-		unmount();
-	}, 20000 );
-
-	it( 'keeps its dropdowns when the dimension has no rows to chart', async () => {
-		wire = installFakeCommandWire( () => ( {
-			breakdown_time_series: { names: [], buckets: {} },
-		} ) );
-		const { container, unmount } = mount( { urlHash: '7f3c19ab52d0' } );
-		await waitFor(
-			() => expect( container.textContent ).not.toContain( 'Loading…' ),
-			{ timeout: 6000 }
-		);
-		expect( dropdownLabels( container ) ).toEqual( [
-			'Metric',
-			'Breakdown',
-		] );
-
-		// The dropdowns are the only way out, so they have to still work.
 		const [ , breakdown ] = container.querySelectorAll( 'select' );
 		selectOption( breakdown, 'ja4' );
-		await waitFor(
-			() =>
-				expect(
-					wire.batches
-						.flat()
-						.some( ( m ) =>
-							m[ VALUE ]?.arguments?.includes( '--breakdown=ja4' )
-						)
-				).toBe( true ),
-			{ timeout: 6000 }
-		);
-		unmount();
-	}, 20000 );
-
-	it( 'notes a list the scan cut short even with rows in hand', () => {
-		const { container, unmount } = mount( {
-			urlDetail: { ...baseUrlDetail, scan_stopped_early: true },
-		} );
-		expect( container.textContent ).toContain( 'Recent Requests (3)' );
-		expect( container.textContent ).toContain( 'stopped early' );
+		expect( onChartChange.mock.calls[ 0 ].slice( 0, 2 ) ).toEqual( [
+			'breakdown',
+			'ja4',
+		] );
 		unmount();
 	} );
 } );

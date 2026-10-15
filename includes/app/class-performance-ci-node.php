@@ -1686,20 +1686,25 @@ class Performance_CI_Node extends Service_CI_Node {
 			$by_id['bucket'] = \array_map( Bucket::of_key( ... ), $by_id['bucket'] );
 		}
 		$search = Core::as_string( $args['search'] );
-		$answer = Stats_Query::run(
-			[
-				'source'  => Core::as_string( $args['source'] ),
-				'group'   => \array_values( \array_map( Core::as_string( ... ), Core::arr( $args['group'] ) ) ),
-				'filter'  => $by_id,
-				'measure' => \array_values( \array_map( Core::as_string( ... ), Core::arr( $args['measure'] ) ) ),
-				'buckets' => $buckets,
-				'sort'    => Core::as_string( $args['sort'] ),
-				'order'   => Core::as_string( $args['order'] ),
-				'limit'   => Core::as_int( $args['limit'] ),
-				'offset'  => Core::as_int( $args['offset'] ),
-				'search'  => $search,
-			]
-		);
+		$spec   = [
+			'source'  => Core::as_string( $args['source'] ),
+			'group'   => \array_values( \array_map( Core::as_string( ... ), Core::arr( $args['group'] ) ) ),
+			'filter'  => $by_id,
+			'measure' => \array_values( \array_map( Core::as_string( ... ), Core::arr( $args['measure'] ) ) ),
+			'buckets' => $buckets,
+			'sort'    => Core::as_string( $args['sort'] ),
+			'order'   => Core::as_string( $args['order'] ),
+			'search'  => $search,
+		];
+		foreach ( [ 'limit', 'offset', 'top' ] as $name ) {
+			if ( null !== $args[ $name ] ) {
+				$spec[ $name ] = Core::as_int( $args[ $name ] );
+			}
+		}
+		if ( null !== $args['top_by'] ) {
+			$spec['top_by'] = Core::as_string( $args['top_by'] );
+		}
+		$answer = Stats_Query::run( $spec );
 		$at = \array_search( 'bucket', $answer['columns'], true );
 		if ( false !== $at ) {
 			foreach ( $answer['rows'] as $i => $row ) {
@@ -1827,7 +1832,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'query',
 					'capability'  => Capabilities::READ,
-					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ source, table, columns, rows, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows when the stats file will not open. Worker requests count unless filtered `worker=0`.',
+					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ source, table, columns, rows, groups, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows when the stats file will not open. Worker requests count unless filtered `worker=0`. Under `top` the rows are every time row of the `top` tuples of the non-time groups `top_by` ranks highest, in rank order, and `groups` counts the tuples; with no `top`, `groups` is null.',
 					'args'        => [
 						[ 'name' => 'source', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],
@@ -1837,8 +1842,10 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'search', 'type' => 'string', 'required' => false, 'default' => '' ],
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => '' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'asc' ],
-						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => Stats_Query::MAX_LIMIT ],
-						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
+						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'description' => 'Most rows, up to `Stats_Query::MAX_LIMIT`, which is what an absent limit answers; refused under `top`.' ],
+						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'description' => 'Rows to skip, none when absent; refused under `top`.' ],
+						[ 'name' => 'top', 'type' => 'int', 'required' => false, 'description' => 'Rank the tuples of the non-time groups and answer the time rows of this many, at most `Stats_Query::MAX_TOP`; the group needs a time field and a non-time field.' ],
+						[ 'name' => 'top_by', 'type' => 'string', 'required' => false, 'description' => 'The measure `top` ranks by, summed over the selection, highest first, ties by the tuple\'s values: one that adds across buckets — for `requests` `count`, `timed`, `sum_ms`, `sum_peak_mb`, `errors`, `count_2xx`, `count_3xx`, `count_4xx` or `count_5xx`, for `timings` `ms`, `calls` or `requests`.' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				return self::answer_query( $args, self::now() );

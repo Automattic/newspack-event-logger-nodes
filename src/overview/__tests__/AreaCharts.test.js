@@ -10,7 +10,12 @@ import { MARGIN } from '@newspack-nodes/shared/hooks/useTimeChart';
 import AggregateTimeChart from '../AggregateTimeChart';
 import CategoryTimeChart from '../CategoryTimeChart';
 import { renderComponent, act } from '../../test-helpers/renderHook';
-import { dimTable, slotsEndingAt } from '../../test-helpers/chartWire';
+import {
+	dimSeries,
+	seriesWire,
+	slotsEndingAt,
+} from '../../test-helpers/chartWire';
+import { CATEGORY_MEASURES } from '../constants';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
@@ -98,7 +103,7 @@ describe( 'area chart frame', () => {
 		);
 
 	it( 'legends the aggregate beside the plot, one whole label per series', () => {
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: {
 				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36':
 					[ 137, 4213, 91, 137 ],
@@ -109,7 +114,7 @@ describe( 'area chart frame', () => {
 			aggregateChart( {
 				series,
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 
@@ -133,7 +138,7 @@ describe( 'area chart frame', () => {
 	} );
 
 	it( 'a picked series is drawn alone, and the axis rescales to it', () => {
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: {
 				'2xx': [ 47, 5900, 3, 47 ],
 				'4xx': [ 3, 300, 3, 3 ],
@@ -143,7 +148,7 @@ describe( 'area chart frame', () => {
 			aggregateChart( {
 				series,
 				metric: 'volume',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 		expect( areas( container ) ).toHaveLength( 2 );
@@ -168,7 +173,7 @@ describe( 'area chart frame', () => {
 
 	it( "a picked series takes its own axis unit, not the full list's", () => {
 		// A slow bot beside a 44ms series: full max 12s, picked max 44ms.
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: {
 				'SlowBot/1.0': [ 1, 12000, 3, 1 ],
 				'curl/8.7.1': [ 2, 88, 3, 2 ],
@@ -178,7 +183,7 @@ describe( 'area chart frame', () => {
 			aggregateChart( {
 				series,
 				metric: 'avg',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		act( () => {
@@ -192,15 +197,9 @@ describe( 'area chart frame', () => {
 	} );
 
 	it( 'legends the category chart the same way', () => {
-		const data = {
-			names: [ 'db', 'http' ],
-			buckets: {
-				[ bucketKeyNow() ]: [
-					[ 0, 2711, 43, 43 ],
-					[ 1, 900, 9, 9 ],
-				],
-			},
-		};
+		const data = seriesWire( 'category', CATEGORY_MEASURES, {
+			[ bucketKeyNow() ]: { db: [ 2711, 43 ], http: [ 900, 9 ] },
+		} );
 		const { container, unmount } = renderComponent(
 			categoryChart( {
 				data,
@@ -213,7 +212,7 @@ describe( 'area chart frame', () => {
 	} );
 
 	it( 'overlays by default, and stacks a second series on top of the first on the toggle', () => {
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: {
 				'2xx': [ 47, 5900, 3, 47 ],
 				'4xx': [ 14, 1400, 3, 14 ],
@@ -223,7 +222,7 @@ describe( 'area chart frame', () => {
 			aggregateChart( {
 				series,
 				metric: 'cumulative',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 
@@ -245,14 +244,14 @@ describe( 'area chart frame', () => {
 	} );
 
 	it( 'ticks a request-volume axis in whole requests', () => {
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 3, 51, 3, 3 ] },
 		} );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 
@@ -263,10 +262,9 @@ describe( 'area chart frame', () => {
 	} );
 
 	it( 'labels a few-millisecond category average without repeating', () => {
-		const data = {
-			names: [ 'render' ],
-			buckets: { [ bucketKeyNow() ]: [ [ 0, 6, 2, 2 ] ] },
-		};
+		const data = seriesWire( 'category', CATEGORY_MEASURES, {
+			[ bucketKeyNow() ]: { render: [ 6, 2 ] },
+		} );
 		const { container, unmount } = renderComponent(
 			categoryChart( {
 				data,
@@ -288,14 +286,14 @@ describe( 'area chart frame', () => {
 
 describe( 'chart frame', () => {
 	it( 'still renders both axes and the rotated Y title', () => {
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 61, 7300, 3, 61 ] },
 		} );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		const label = container.querySelector( 'svg text.y-label' );

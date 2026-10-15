@@ -229,7 +229,7 @@ describe( 'Inflight', () => {
 				{
 					rid: 'r-long',
 					url: '/x',
-					state: 'Performance_CI url_breakdown command',
+					state: 'Performance_CI query command',
 					what: 'x',
 				},
 				{
@@ -246,8 +246,8 @@ describe( 'Inflight', () => {
 			[
 				...container.querySelectorAll( '.event-logger-state-badge' ),
 			].find( ( el ) => label === el.textContent )?.title;
-		expect( titleOf( 'Performance_CI url_breakdown command' ) ).toBe(
-			'Performance_CI url_breakdown command'
+		expect( titleOf( 'Performance_CI query command' ) ).toBe(
+			'Performance_CI query command'
 		);
 		expect( titleOf( 'template' ) ).toBe( 'include template' );
 	} );

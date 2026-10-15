@@ -61,9 +61,9 @@ describe( 'registration', () => {
 		for ( const type of [
 			'OverviewView',
 			'UrlsView',
+			'QueryView',
 			'UrlDetailView',
 			'RequestDetailView',
-			'UrlDetailMerge',
 		] ) {
 			expect( CommandInterpreterNode.includeNodes[ type ] ).toBe(
 				views[ type ]
@@ -71,10 +71,18 @@ describe( 'registration', () => {
 		}
 	} );
 
+	test( 'declares no merge: each answer replaces the slice whole', () => {
+		expect( views ).not.toHaveProperty( 'UrlDetailMerge' );
+		expect( CommandInterpreterNode.includeNodes ).not.toHaveProperty(
+			'UrlDetailMerge'
+		);
+	} );
+
 	test( 'each view carries its own palette description', () => {
 		const described = [
 			'OverviewView',
 			'UrlsView',
+			'QueryView',
 			'UrlDetailView',
 			'RequestDetailView',
 		].map( ( t ) => views[ t ].nodeSchema().description );
@@ -86,6 +94,7 @@ describe( 'registration', () => {
 describe( 'the data slices', () => {
 	test.each( [
 		[ 'OverviewView', 'overview:view', 'overview' ],
+		[ 'QueryView', 'chart:view', 'query' ],
 		[ 'UrlDetailView', 'url-detail:view', 'dump_url' ],
 		[ 'RequestDetailView', 'request-detail:view', 'dump_request' ],
 	] )(
@@ -148,9 +157,6 @@ describe( 'UrlsView — the envelope slice', () => {
 			rows: null,
 			slowest: [],
 			filters: null,
-			ranked: false,
-			provisional: false,
-			as_of: 0,
 			loading: false,
 			error: null,
 		} );
@@ -159,9 +165,7 @@ describe( 'UrlsView — the envelope slice', () => {
 			reply( 'urls', {
 				data: [ { url: '/a' } ],
 				totals: { urls: 7331, requests: 90210 },
-				// One more row than URLs: the folded row is sliceable but is
-				// not a unique URL, and the pager slices.
-				rows: 7332,
+				rows: 7331,
 				slowest: [ { url: '/slow', avg_ms: 2600 } ],
 				filters: { server: 'edge-01', search: '', errors_only: false },
 				limit: 20,
@@ -172,18 +176,15 @@ describe( 'UrlsView — the envelope slice', () => {
 		expect( v.view ).toEqual( {
 			data: [ { url: '/a' } ],
 			totals: { urls: 7331, requests: 90210 },
-			rows: 7332,
+			rows: 7331,
 			slowest: [ { url: '/slow', avg_ms: 2600 } ],
 			filters: { server: 'edge-01', search: '', errors_only: false },
-			ranked: false,
-			provisional: false,
-			as_of: 0,
 			loading: false,
 			error: null,
 		} );
 	} );
 
-	test( 'carries ranked, provisional and as_of off the reply, and no estimate flag', () => {
+	test( 'carries nothing but its slice, whatever else a reply holds', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
 		v.fill(
 			reply( 'urls', {
@@ -193,32 +194,20 @@ describe( 'UrlsView — the envelope slice', () => {
 				slowest: [],
 				filters: null,
 				ranked: true,
-				estimated: true,
 				provisional: true,
 				as_of: 1758500000,
 			} )
 		);
 
-		expect( v.view.ranked ).toBe( true );
-		expect( v.view ).not.toHaveProperty( 'estimated' );
-		expect( v.view.provisional ).toBe( true );
-		expect( v.view.as_of ).toBe( 1758500000 );
-	} );
-
-	test( 'defaults ranked and as_of when the reply carries neither', () => {
-		const v = makeView( 'UrlsView', 'urls:view' );
-		v.fill(
-			reply( 'urls', {
-				data: [ { url: '/a' } ],
-				totals: { urls: 7331 },
-				rows: 7331,
-				slowest: [],
-				filters: null,
-			} )
-		);
-
-		expect( v.view.ranked ).toBe( false );
-		expect( v.view.as_of ).toBe( 0 );
+		expect( Object.keys( v.view ).sort() ).toEqual( [
+			'data',
+			'error',
+			'filters',
+			'loading',
+			'rows',
+			'slowest',
+			'totals',
+		] );
 	} );
 
 	test( 'a malformed envelope publishes an empty table rather than throwing', () => {

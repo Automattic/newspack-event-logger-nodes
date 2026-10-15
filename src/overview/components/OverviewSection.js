@@ -3,14 +3,15 @@
  *
  * The top card of the Performance Dashboard: the Ask trigger, request-ID /
  * pattern search, the refresh-interval picker, the headline stat grid, the
- * aggregate time chart with its metric / breakdown / server selectors, the
- * three category charts, and the global — or, under a server filter,
- * per-server — time breakdown.
+ * aggregate time chart with its metric / breakdown / server selectors and
+ * filter chips, the three category charts, and the global — or, under a
+ * server filter, per-server — time breakdown.
  *
  * The component is presentational. Every value and every setter arrives from
  * `PerformanceDashboard`, which reads the per-slice view nodes and owns all
- * fetching; nothing here talks to the command graph. Rendering short-circuits
- * to null until the `overview:view` slice carries data.
+ * fetching; nothing here talks to the command graph. Each chart draws over
+ * the buckets its own answer read. Rendering short-circuits to null until the
+ * `overview:view` slice carries data.
  */
 
 import { useMemo } from '@wordpress/element';
@@ -26,9 +27,12 @@ import {
 import {
 	DASHBOARD_REFRESH_OPTIONS,
 	CHART_BREAKDOWN_OPTIONS,
+	FILTER_FIELD_OPTIONS,
 	SCOPED_BREAKDOWN_OPTIONS,
 } from '../constants';
 import CategoryTimeChart from '../CategoryTimeChart';
+import { breakdownState } from '../AggregateTimeChart';
+import { answerSlots, chartDims } from '../chartSlots';
 import { ProfileWithCaption } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
 import { AskButton } from './AskPanel';
@@ -40,10 +44,8 @@ import HeadlineStats from './HeadlineStats';
  * Overview Section component.
  *
  * @param {Object}                                              props                        Component props.
- * @param {Object|null}                                         props.overview               Overview slice payload; it supplies `global_leaderboard` and gates the card, so null renders nothing.
+ * @param {Object|null}                                         props.overview               Overview slice payload; it supplies the `leaderboard`, whose `avg_ms` — the selected server's, or the site's — the Time Breakdown divides by, and gates the card, so null renders nothing.
  * @param {Object|null}                                         props.urlTotals              Headline numbers for the URL set the filters selected; null until the first reply.
- * @param {boolean}                                             props.urlsProvisional        Whether `urlTotals` is short of an hour or record the writer has yet to fold or rank, or of an index read that went unanswered.
- * @param {?number}                                             props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's; null where none was timed.
  * @param {string}                                              props.serverFilter           Selected server name, or '' for all servers; it also captions the Time Breakdown.
  * @param {(value: string) => void}                             props.setServerFilter        Server filter setter.
  * @param {string[]|null}                                       props.serverNames            Server names seen in the breakdown data; null until the first reply lands. Fewer than two withholds the Server select, which would offer no choice, unless a filter is applied: the select then lists it, so it can be cleared.
@@ -60,11 +62,15 @@ import HeadlineStats from './HeadlineStats';
  * @param {(value: string) => void}                             props.setRefreshInterval     Refresh interval setter.
  * @param {string}                                              props.chartMetric            Aggregate chart metric: 'volume', 'avg', 'cumulative' or 'memory'.
  * @param {(value: string) => void}                             props.setChartMetric         Chart metric setter.
- * @param {string}                                              props.chartBreakdown         Aggregate chart breakdown dimension, already resolved by the caller against `canBreakDownByServer`.
- * @param {(value: string) => void}                             props.setChartBreakdown      Breakdown dimension setter.
- * @param {boolean}                                             props.canBreakDownByServer   Whether the page can chart the server axis: no server filter, and the server list either unknown or holding two or more names. A filter would split one server against itself, and withholding the axis before the first reply lands would strand the `server` default on `status` for the session.
- * @param {Object}                                              props.breakdownRead          The `breakdownState()` read of the selected dimension's reply, `{ state, series }`.
- * @param {Object|null}                                         props.categoryData           Category time series, or null.
+ * @param {string}                                              props.chartBreakdown         Aggregate chart's first dimension, already resolved by the caller against `canBreakDownByServer`.
+ * @param {(value: string) => void}                             props.setChartBreakdown      First dimension setter.
+ * @param {string}                                              props.chartThenBy            Its second dimension; '' for none.
+ * @param {(value: string) => void}                             props.setChartThenBy         Second dimension setter.
+ * @param {string[]}                                            props.chartChips             Its filter chips, each `field=value`.
+ * @param {(chips: string[]) => void}                           props.setChartChips          Chip setter.
+ * @param {boolean}                                             props.canBreakDownByServer   Whether the page can chart the server axis: no server filter, and the server list either unknown or holding two or more names. A filter would split one server against itself, and withholding the axis before the first reply lands would strand the `server` default on `status_class` for the session.
+ * @param {Object|null}                                         props.chartSlice             The `chart:view` slice: its `query` answer, `loading` and `error`.
+ * @param {Object|null}                                         props.categoriesSlice        The `categories:view` slice, likewise.
  * @param {(key: string, click: {additive: boolean}) => void}   props.onSlotClick            Edits the URL table's selection with the bucket key a click on either chart lands on, and `{ additive }`.
  * @param {(keys: string[], drag: {additive: boolean}) => void} props.onSlotRange            Edits the URL table's selection with the bucket keys a drag on either chart spans, and `{ additive }`.
  * @param {string[]}                                            props.selectedBuckets        The URL table's selected bucket keys, which both charts shade.
@@ -75,8 +81,6 @@ import HeadlineStats from './HeadlineStats';
 export default function OverviewSection( {
 	overview,
 	urlTotals,
-	urlsProvisional,
-	breakdownAvgMs,
 	serverFilter,
 	setServerFilter,
 	serverNames,
@@ -95,9 +99,13 @@ export default function OverviewSection( {
 	setChartMetric,
 	chartBreakdown,
 	setChartBreakdown,
+	chartThenBy,
+	setChartThenBy,
+	chartChips,
+	setChartChips,
 	canBreakDownByServer,
-	breakdownRead,
-	categoryData,
+	chartSlice,
+	categoriesSlice,
 	onSlotClick,
 	onSlotRange,
 	selectedBuckets,
@@ -127,6 +135,27 @@ export default function OverviewSection( {
 	const breakdownOptions = canBreakDownByServer
 		? CHART_BREAKDOWN_OPTIONS
 		: SCOPED_BREAKDOWN_OPTIONS;
+
+	// Once per answer: the chart and the line under it read the same decode.
+	const chartAnswer = chartSlice?.data ?? null;
+	const breakdownRead = useMemo(
+		() =>
+			breakdownState(
+				chartAnswer,
+				chartDims( { breakdown: chartBreakdown, thenBy: chartThenBy } )
+			),
+		[ chartAnswer, chartBreakdown, chartThenBy ]
+	);
+	const categoryAnswer = categoriesSlice?.data ?? null;
+	// Once per answer: a fresh axis would redraw each chart on every keystroke.
+	const chartAxis = useMemo(
+		() => answerSlots( chartAnswer ),
+		[ chartAnswer ]
+	);
+	const categoryAxis = useMemo(
+		() => answerSlots( categoryAnswer ),
+		[ categoryAnswer ]
+	);
 
 	if ( ! overview ) {
 		return null;
@@ -277,10 +306,7 @@ export default function OverviewSection( {
 					) }
 				<UnparseableLinesNotice count={ searchUnparseableLines } />
 				<CardBody>
-					<HeadlineStats
-						totals={ urlTotals }
-						provisional={ urlsProvisional }
-					/>
+					<HeadlineStats totals={ urlTotals } />
 
 					{ /* Unconditional: the Metric, Breakdown and Server
 					     selectors are the only way out of a dimension with
@@ -288,13 +314,20 @@ export default function OverviewSection( {
 					     nothing it is. */ }
 					<BreakdownControls
 						breakdownRead={ breakdownRead }
-						slots={ overview.slots ?? null }
+						slots={ chartAxis }
 						storageKey="event-logger-overview-chart-aggregate"
 						metric={ chartMetric }
 						setMetric={ setChartMetric }
 						breakdown={ chartBreakdown }
 						setBreakdown={ setChartBreakdown }
+						thenBy={ chartThenBy }
+						setThenBy={ setChartThenBy }
 						breakdownOptions={ breakdownOptions }
+						chips={ chartChips }
+						setChips={ setChartChips }
+						chipOptions={ FILTER_FIELD_OPTIONS }
+						loading={ !! chartSlice?.loading }
+						error={ chartSlice?.error ?? null }
 						serverOptions={ serverOptions }
 						serverFilter={ serverFilter }
 						setServerFilter={ setServerFilter }
@@ -305,21 +338,21 @@ export default function OverviewSection( {
 
 					<CategoryTimeChart
 						storageKey="event-logger-overview-chart-category"
-						data={ categoryData }
-						slots={ overview.slots ?? null }
+						data={ categoryAnswer }
+						slots={ categoryAxis }
 						onSlotClick={ onSlotClick }
 						onSlotRange={ onSlotRange }
 						selectedBuckets={ selectedBuckets }
 					/>
 
-					{ overview.global_leaderboard?.count > 0 && (
+					{ overview.leaderboard?.count > 0 && (
 						<ProfileWithCaption
-							profiles={ overview.global_leaderboard.categories }
-							totalMs={ breakdownAvgMs }
+							profiles={ overview.leaderboard.categories }
+							totalMs={ overview.leaderboard.avg_ms }
 							totalProfiledTime={
-								overview.global_leaderboard.total_time
+								overview.leaderboard.total_time
 							}
-							count={ overview.global_leaderboard.count }
+							count={ overview.leaderboard.count }
 							heading={
 								serverFilter
 									? sprintf(
