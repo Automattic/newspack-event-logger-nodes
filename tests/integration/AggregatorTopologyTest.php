@@ -93,6 +93,8 @@ class AggregatorTopologyTest extends TestCase {
 		$group = Core::node( 'spokes' );
 		$this->assertInstanceOf( Vault_Group_Node::class, $group );
 		$dump = $group->dump_config();
+		$this->assertStringContainsString( "command_node spokes:config add_source firehose.p{partition} remote-job-rewrite\n", $dump );
+		$this->assertStringContainsString( "command_node spokes:config add_source sources:php php-errors:partition\n", $dump );
 		$this->assertStringContainsString( "command_node spokes:config assume_clean_shutdown true\n", $dump );
 		$this->assertStringContainsString( "command_node spokes:config set_multi_writer true\n", $dump );
 	}
