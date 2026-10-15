@@ -447,6 +447,7 @@ final class StatsQueryTest extends TestCase {
 				'table'   => 'requests',
 				'columns' => [ 'bucket', 'count', 'max_ms' ],
 				'rows'    => [ [ Bucket::key( $now - 6 ), 1, 100 ], [ Bucket::key( $now - 5 ), 1, 100 ] ],
+				'available' => true,
 				'filters' => [
 					'filter' => [ 'status_class' => [ '2', '5' ] ],
 					'bucket' => $selection,
@@ -637,6 +638,7 @@ final class StatsQueryTest extends TestCase {
 
 		$this->assertSame( [ 'count' ], $r['columns'] );
 		$this->assertSame( [], $r['rows'] );
+		$this->assertTrue( $r['available'], 'no file written yet is no stats, not a stats file that will not open' );
 	}
 
 	public function test_a_partition_with_no_file_beside_one_with_rows_answers_their_rows(): void {
@@ -670,7 +672,56 @@ final class StatsQueryTest extends TestCase {
 
 		$this->assertSame( [], $first['rows'] );
 		$this->assertSame( [], $second['rows'] );
+		$this->assertFalse( $first['available'] );
 		$lines = \array_values( \array_filter( \array_slice( Core::$recent_log, $logged ), static fn ( string $line ): bool => \str_contains( $line, 'performance: stats rows did not open' ) ) );
 		$this->assertCount( 1, $lines );
+	}
+
+	public function test_newest_requests_lists_every_partitions_rows_newest_first_up_to_the_limit(): void {
+		$now = Bucket::id( self::NOW );
+		$url = 'https://seed.example/hihi-3318/';
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-hihi-a', 'bucket' => $now - 6, 'finished_at' => ( $now - 6 ) * 300 + 4.5, 'started_at' => ( $now - 6 ) * 300 - 23, 'segment' => 2, 'offset' => 8817, 'length' => 733, 'status' => 302, 'method' => 'POST', 'ms' => 61.25, 'peak_mb' => 17.5 ], partition: 2 );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-hihi-b', 'bucket' => $now, 'finished_at' => $now * 300 + 9.5, 'status' => null, 'error' => 'T', 'ms' => null, 'peak_mb' => 40.25 ] );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-hihi-c', 'bucket' => $now - 2, 'finished_at' => ( $now - 2 ) * 300 + 1.5 ], partition: 3 );
+		$this->seed_request( [ 'url' => 'https://seed.example/other/', 'rid' => 'rid-other', 'bucket' => $now ] );
+
+		$rows = Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( $url ) ] ], $this->last_day(), 2 );
+
+		$this->assertSame(
+			[
+				[ 'rid' => 'rid-hihi-b', 'started_at' => $now * 300 - 2, 'finished_at' => $now * 300 + 9.5, 'partition' => 0, 'segment' => null, 'offset' => null, 'length' => null, 'status' => null, 'method' => 'GET', 'error' => 'T', 'ms' => null, 'peak_mb' => 40.25 ],
+				[ 'rid' => 'rid-hihi-c', 'started_at' => ( $now - 2 ) * 300 - 2, 'finished_at' => ( $now - 2 ) * 300 + 1.5, 'partition' => 3, 'segment' => null, 'offset' => null, 'length' => null, 'status' => 200, 'method' => 'GET', 'error' => null, 'ms' => 100.0, 'peak_mb' => 24.0 ],
+			],
+			$rows
+		);
+		$all = Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( $url ) ] ], $this->last_day(), 500 );
+		$this->assertSame( [ 'rid' => 'rid-hihi-a', 'started_at' => ( $now - 6 ) * 300 - 23, 'finished_at' => ( $now - 6 ) * 300 + 4.5, 'partition' => 2, 'segment' => 2, 'offset' => 8817, 'length' => 733, 'status' => 302, 'method' => 'POST', 'error' => null, 'ms' => 61.25, 'peak_mb' => 17.5 ], $all[2] );
+	}
+
+	public function test_newest_requests_reads_only_its_buckets_and_filters(): void {
+		$now = Bucket::id( self::NOW );
+		$this->seed_request( [ 'rid' => 'rid-pipit-old', 'bucket' => $now - 40, 'error' => 'F' ] );
+		$this->seed_request( [ 'rid' => 'rid-pipit-in', 'bucket' => $now - 3, 'error' => 'F' ] );
+		$this->seed_request( [ 'rid' => 'rid-pipit-clean', 'bucket' => $now - 3 ] );
+		$this->seed_request( [ 'rid' => 'rid-pipit-elsewhere', 'bucket' => $now - 3, 'error' => 'T', 'server' => 'ruru.example' ] );
+
+		$rows = Stats_Query::newest_requests( [ 'server' => [ 'seed.example' ], 'error' => Flame_Builder_Node::ERROR_KINDS ], [ [ $now - 5, $now ] ], 500 );
+
+		$this->assertSame( [ 'rid-pipit-in' ], \array_column( $rows, 'rid' ) );
+	}
+
+	public function test_newest_requests_refuses_a_field_the_vocabulary_lacks(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'category' );
+
+		Stats_Query::newest_requests( [ 'category' => [ 'sql' ] ], $this->last_day(), 500 );
+	}
+
+	public function test_newest_requests_from_a_file_that_will_not_open_lists_none(): void {
+		$this->seed_request();
+		\update_option( 'newspack_nodes_topologies', [] );
+		\Newspack_Event_Logger_Nodes\Config::reset();
+
+		$this->assertSame( [], Stats_Query::newest_requests( [], $this->last_day(), 500 ) );
 	}
 }

@@ -199,14 +199,15 @@ class Ask_Assembler {
 	 * @param string                 $url     The URL the aggregate is of.
 	 * @param Rule|null              $rule    The rule an edit would land on.
 	 * @param string                 $context The `url:` descriptor, which `fetch` addresses the brief again by.
+	 * @param string                 $server  Server the tree is of; '' is every server.
 	 * @return array<string,mixed>|null Null when the tree holds no such span.
 	 */
-	public static function for_url_span( array $flame, string $name, string $url, ?Rule $rule, string $context ): ?array {
+	public static function for_url_span( array $flame, string $name, string $url, ?Rule $rule, string $context, string $server ): ?array {
 		$brief = self::span_brief( $flame, $name, Log_Manager::redact_url( $url ), self::rule_shape( $rule ), $context );
 		if ( null === $brief ) {
 			return null;
 		}
-		return self::without_counts( $brief ) + [ 'scope' => self::aggregate_scope( Core::num_int( $flame['count'] ?? 0 ) ) ];
+		return self::without_counts( $brief ) + [ 'scope' => self::aggregate_scope( Core::num_int( $flame['count'] ?? 0 ), $server ) ];
 	}
 
 	/**
@@ -548,44 +549,43 @@ class Ask_Assembler {
 	/**
 	 * One URL: its stats and its worst recent requests — plus, when nothing
 	 * governs it, the cold-start finding that says which instrumentation to
-	 * switch on. The dimensional breakdown is `dump_url`'s to return; a
-	 * brief names that verb rather than carrying an unbounded series.
+	 * switch on. A dimensional breakdown is `query`'s to answer; a brief
+	 * carries no unbounded series.
 	 *
-	 * The requests are drawn from a WINDOW, and both facts about that walk are
-	 * required arguments: how it ended, and what it was of. A narrower number
-	 * that does not say so reads as the site's.
+	 * The requests are the newest `dump_url` lists, and `$requests_capped`
+	 * says when they are the newest only.
 	 *
 	 * The filters are the `url:` brief's share of the page's: under
-	 * `errors_only` the brief is of the errors the walk listed, so its `stats`
+	 * `errors_only` the brief is of the errors `dump_url` lists, so its `stats`
 	 * keep only the URL's exact `errors`, and `error_summary()` of the list
 	 * stands in for the whole URL's count and means, which describe other
-	 * traffic. Under a `bucket` it is of a selection of stored buckets:
-	 * `$stats` sum their slots, zero where the URL has none, and `$requests`
-	 * are the requests completing in them. Its pointer fetches under both.
+	 * traffic. Under a `bucket` it is of a selection of buckets: `$stats`
+	 * and `$requests` are of the requests completing in them, zero where
+	 * the URL has none. Its pointer fetches under both.
 	 *
 	 * The worst requests rank by duration, and a null one — no sample taken,
 	 * as `dump_url`'s rows carry it (decision 24) — ranks after every number.
 	 *
-	 * @param array<array-key,mixed>            $stats             A URL index row.
-	 * @param array<int,array<array-key,mixed>> $requests          Recent requests for that URL.
-	 * @param Rule|null                         $rule              The governing rule, or null.
-	 * @param string                            $server            Server the numbers are of; '' is site-wide.
-	 * @param bool                              $scan_stopped_early Whether the walk behind `$requests` ran out of budget.
-	 * @param int                               $requests_window_start Unix time the window those requests were drawn from opens.
-	 * @param Url_Filters                       $filters           The url filters in force.
+	 * @param array<array-key,mixed>            $stats    A `dump_url` stats block.
+	 * @param array<int,array<array-key,mixed>> $requests Recent requests for that URL.
+	 * @param bool                              $requests_capped Whether they are fewer than the stats count.
+	 * @param Rule|null                         $rule     The governing rule, or null.
+	 * @param string                            $server   Server the numbers are of; '' is site-wide.
+	 * @param Url_Filters                       $filters  The url filters in force.
 	 * @return array<string,mixed>
 	 */
-	public static function for_url( array $stats, array $requests, ?Rule $rule, string $server, bool $scan_stopped_early, int $requests_window_start, array $filters ): array {
+	public static function for_url( array $stats, array $requests, bool $requests_capped, ?Rule $rule, string $server, array $filters ): array {
 		$errors_only = $filters['errors_only'];
 		$bucket      = $filters['bucket'];
 		$summary     = $errors_only ? [ 'error_summary' => self::error_summary( $requests ) ] : [];
 		// A measured duration is positive, so -1 ranks every null last.
 		\usort( $requests, static fn ( array $a, array $b ): int => ( $b['duration_ms'] ?? -1 ) <=> ( $a['duration_ms'] ?? -1 ) );
 		$hash = Core::as_string( $stats['hash'] ?? '' );
+		$url  = Core::as_string( $stats['url'] ?? '' );
 
 		return [
 			'subject'            => 'url',
-			'url'                => Log_Manager::redact_url( Core::as_string( $stats['url'] ?? '' ) ),
+			'url'                => Log_Manager::redact_url( $url ),
 			'hash'               => $hash,
 			// What these numbers are OF; the pointer below carries it too.
 			'server'             => $server,
@@ -604,14 +604,11 @@ class Ask_Assembler {
 				self::worst_request_shape( ... ),
 				\array_slice( $requests, 0, self::WORST_REQUESTS )
 			),
-			// The WALK, not the five-row slice above it, which always cuts.
-			'scan_stopped_early' => $scan_stopped_early,
-			// What the walk is OF: an empty list is empty of this window only.
-			'requests_window_start' => $requests_window_start,
-			// A full list is the window's newest requests, not all of them.
-			'requests_capped'    => \count( $requests ) >= Performance_CI_Node::RECENT_REQUEST_LIMIT,
+			// A capped list is the window's newest requests, not all of them.
+			'requests_capped'    => $requests_capped,
 			'rule'               => self::rule_shape( $rule ),
-			'findings'           => Findings::for_url( $stats, $rule ),
+			// A URL no stats row named proposes no rule for it.
+			'findings'           => '' === $url ? [] : Findings::for_url( $stats, $rule ),
 			'fetch'              => self::fetch(
 				'dump_url',
 				[
@@ -783,16 +780,17 @@ class Ask_Assembler {
 	 * captions "Average breakdown across N requests" — answered from that
 	 * aggregate rather than the site-wide board, which describes every URL.
 	 *
-	 * @param array<array-key,mixed> $profiles The aggregate profile as `Stats_Store::url_stats()` serves it: `count`, the requests it folds, and `categories`, each `{ time, count, samples }` with the stored sums already divided by that count.
+	 * @param array<array-key,mixed> $profiles The URL's profile as `dump_url`'s `aggregate_profiles` carries it: `count`, the profiled requests it folds, and `categories`, each `{ time, count, samples }` with the summed timings already divided by that count.
 	 * @param string                 $name     The category clicked.
 	 * @param string                 $url      The URL the aggregate is of.
+	 * @param string                 $server   Server the profile is of; '' is every server.
 	 * @return array<string,mixed>|null Null when the aggregate holds no such category.
 	 */
-	public static function for_url_category( array $profiles, string $name, string $url ): ?array {
+	public static function for_url_category( array $profiles, string $name, string $url, string $server ): ?array {
 		return self::category_brief(
 			Core::arr( $profiles['categories'] ?? null ),
 			$name,
-			self::aggregate_scope( Core::num_int( $profiles['count'] ?? 0 ) ),
+			self::aggregate_scope( Core::num_int( $profiles['count'] ?? 0 ), $server ),
 			null,
 			[ 'url' => Log_Manager::redact_url( $url ) ]
 		);
@@ -800,13 +798,13 @@ class Ask_Assembler {
 
 	/**
 	 * What an aggregate's numbers are OF, worded once for both subjects: a
-	 * mean, not a sum, and over every server, because the per-URL aggregate
-	 * keeps no per-server split for a filter to narrow.
+	 * mean, not a sum, over every server or the one it was asked for.
 	 *
-	 * @param int $samples Requests folded into the aggregate.
+	 * @param int    $samples Requests folded into the aggregate.
+	 * @param string $server  Server the aggregate is of; '' is every server.
 	 */
-	private static function aggregate_scope( int $samples ): string {
-		return "mean per request over {$samples} requests, every server";
+	private static function aggregate_scope( int $samples, string $server ): string {
+		return "mean per request over {$samples} requests" . ( '' === $server ? ', every server' : " on {$server}" );
 	}
 
 	/**

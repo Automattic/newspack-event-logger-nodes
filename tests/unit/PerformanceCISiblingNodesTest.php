@@ -5,7 +5,7 @@
  * Rule 2 of the make_node plan: a utility Partition created INSIDE a node as
  * internal plumbing must be NAMED, have its `patron()` set (so dump_metadata
  * hides it from the canvas), and (Rule 4) be SUNK into the
- * `_command_interpreter` when one is in scope. The six scratch Partitions the
+ * `_command_interpreter` when one is in scope. The scratch Partitions the
  * performance verbs build over `requests.log` / `flames.log` are such siblings —
  * these tests pin that contract.
  *

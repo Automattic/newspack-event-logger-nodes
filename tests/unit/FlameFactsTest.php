@@ -26,7 +26,7 @@ final class FlameFactsTest extends TestCase {
 		$opened = \array_merge( ...$this->facts( "SELECT name FROM sqlite_master WHERE type = 'table'" ) );
 
 		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'urls_fts' ], $opened ) ) );
-		$this->assertSame( [ [ Flame_Facts_Row_Schema::version() ] ], $this->facts( 'PRAGMA user_version' ) );
+		$this->assertSame( [ [ 3 ] ], $this->facts( 'PRAGMA user_version' ) );
 	}
 
 	public function test_one_request_writes_its_row_and_rollups(): void {
@@ -87,11 +87,24 @@ final class FlameFactsTest extends TestCase {
 		$fb->flush();
 
 		$this->assertSame(
-			[ [ Bucket::id( self::tick() - 70 ), (float) ( self::tick() - 70 ), 5, null, null, null, null, null, 't13d1516h2', 'bot@kea.example', 'T', 0.0 ] ],
-			$this->facts( 'SELECT bucket, finished_at, partition, segment, status, country, ua_id, ms, ja4, from_header, error, peak_mb FROM requests', '5' )
+			[ [ Bucket::id( self::tick() - 70 ), (float) ( self::tick() - 70 ), self::tick() - 100, 5, null, null, null, null, null, 't13d1516h2', 'bot@kea.example', 'T', 0.0 ] ],
+			$this->facts( 'SELECT bucket, finished_at, started_at, partition, segment, status, country, ua_id, ms, ja4, from_header, error, peak_mb FROM requests', '5' ),
+			'a timeout keeps the start its record carries, though its duration is no sample'
 		);
 		$this->assertSame( [ [ 0, '', 1, 0, 0.0, 0.0, 1 ] ], $this->facts( 'SELECT status_class, country, count, timed, sum_ms, max_ms, errors FROM requests_hourly', '5' ), 'a timeout is counted, untimed, and an error' );
 		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM agents', '5' ) );
+	}
+
+	/**
+	 * A completion past the tick that brought the record is clamped to it;
+	 * the start is the record's own.
+	 */
+	public function test_a_clamped_row_keeps_its_records_own_start(): void {
+		$fb = $this->armed_flame_builder();
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-6614', 'timestamp' => self::tick() - 17, 'duration_ms' => 58_400.0 ] ), '' );
+		$fb->flush();
+
+		$this->assertSame( [ [ (float) self::tick(), self::tick() - 17, 58_400.0 ] ], $this->facts( 'SELECT finished_at, started_at, ms FROM requests' ) );
 	}
 
 	/**

@@ -147,13 +147,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private const INDEX_LINE_BYTES = 68;
 
 	/**
-	 * Keys per batch a reader's page reads by key. Bounds the held set: one
-	 * chunk is at most one shard's worth of rows. Raise only against a
-	 * measured peak.
-	 */
-	public const WRITE_BATCH_KEYS = 500;
-
-	/**
 	 * Auto-tune decisions accrued since the last emit: the key `Auto_Tuner_Node`
 	 * dispatches on => rule id => {name => true}. Keying by the emit key is what
 	 * makes a fourth decision kind one key here and one case there.
@@ -453,7 +446,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$timed     = self::timing_counts( $duration, $error );
 		$worker    = empty( $request['is_worker'] ) ? 0 : 1;
 		$now       = (int) Core::$now;
-		$finished  = \min( $now, self::completed_at( Core::num_int( $request['timestamp'] ?? $now, $now ), $duration ) );
+		$started   = Core::num_int( $request['timestamp'] ?? $now, $now );
+		$finished  = \min( $now, self::completed_at( $started, $duration ) );
 		$bucket    = Bucket::id( $finished );
 		$status    = \is_numeric( $request['status_code'] ?? null ) ? (int) $request['status_code'] : null;
 		$method    = Core::str( $request['request_method'] );
@@ -487,6 +481,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					$rid,
 					$bucket,
 					(float) $finished,
+					$started,
 					$partition,
 					$place['segment'] ?? null,
 					$place['offset'] ?? null,
@@ -537,9 +532,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * The second a request completed at, which files its row in a bucket:
-	 * its start plus its duration rounded to the second. The `dump_url`
-	 * walk places a request in a bucket by this too. Only the builder clamps
-	 * it to the tick that brought the record, which no reader can know.
+	 * its start plus its duration rounded to the second. The builder clamps
+	 * it to the tick that brought the record.
 	 *
 	 * @param int   $started     The record's start, in unix seconds.
 	 * @param float $duration_ms The record's duration.
@@ -1098,17 +1092,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	public static function index_column( string $field ): array {
 		return self::INDEX_COLUMNS[ $field ] ?? [];
-	}
-
-	/**
-	 * No time at all on a flame line — it is rid, url_hash and a position, and
-	 * offset 44 is `segment`. A walk over this index cannot bound itself by
-	 * time, and its caller keeps the time budget as its only bound.
-	 *
-	 * @return array{} Always empty.
-	 */
-	public static function index_completion_columns(): array {
-		return [];
 	}
 
 	/**

@@ -95,6 +95,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'rid'         => 'TEXT NOT NULL',
 					'bucket'      => 'INTEGER NOT NULL',
 					'finished_at' => 'REAL NOT NULL',
+					'started_at'  => 'INTEGER NOT NULL',
 					'partition'   => 'INTEGER NOT NULL',
 					'segment'     => 'INTEGER',
 					'offset'      => 'INTEGER',
@@ -197,6 +198,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 2;
+		return 3;
 	}
 }
