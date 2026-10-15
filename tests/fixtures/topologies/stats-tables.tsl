@@ -1,0 +1,6 @@
+# The keyed stats Tables the performance readers mount, declared for the
+# reader suites beside each shipped graph that holds a flame builder.
+
+make_node Table flame-stats:aggregate evlog:p{partition} <eln:stats_ttl> sqlite
+make_node Table flame-stats:url evlog:p{partition} <eln:stats_url_ttl> sqlite
+make_node Table flame-stats:url-fine evlog:p{partition} <eln:stats_url_fine_ttl> sqlite

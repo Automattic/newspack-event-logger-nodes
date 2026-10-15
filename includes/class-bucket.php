@@ -145,7 +145,6 @@ final class Bucket {
 	/**
 	 * The hour an epoch falls in.
 	 *
-	 * @api
 	 * @param int $epoch Unix timestamp.
 	 */
 	public static function hour( int $epoch ): int {

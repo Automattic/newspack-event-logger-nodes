@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: the flame builder writes request rows to a `flame-facts` Row_Table in place of the three keyed `flame-stats:*` Tables.** `Flame_Facts_Row_Schema` declares six tables in one SQLite file per partition: `requests` (one row per completed request, seven days), the `urls` and `agents` it names by id, `timings` and `timings_site` (per bucket, category and entry, 25 hours) and `requests_hourly` (seven days). Each request's rollups are `then` ops of its `requests` row, so a replay of records already written adds nothing. The builder writes one `ROWS` batch every 5 seconds, at every checkpoint, and once 1,000 requests or 20,000 ops are buffered, whichever comes first, replacing the 200-URL drain; a batch names each URL and user agent once; a refused or unanswered write raises a plain `Worker_Should_Stop` and keeps the batch, so the Consumer neither dead-letters nor commits past it. The checkpoint carries only the crumb. `flame-builder.tsl` declares `make_node Row_Table flame-facts Flame_Facts` and names it with `set_facts_target`; `set_aggregate_target`, `set_url_target`, `set_url_fine_target`, `configure_stats` and `set_is_hub` are gone, and `GET_STATS` answers `buffered_requests` and `buffered_rows` in place of `stats_count`, `pending_url_count`, `intern_count`, `pending_buckets` and `is_hub`. The significant-event signal is a category's average per call over the non-worker requests buffered since the last write. The `performance` verbs still read the old Tables, so the dashboards show no stats until they read the rows.
+- **A completed-request record with no `rid` is refused** at the flame builder's intake, before its flame is forwarded or its rows buffered, so the Consumer dead-letters it as it does a URL naming no host.
+- **Uninstall deletes the `flame-facts` Row_Table's files** (`flame-facts.p{N}.sqlite` and its WAL files) beside the stats Tables'.
+
+### Fixed
+
+- **Auto-tune disables a noisy custom event as a custom event.** The flame builder's noisy check now asks the governing rule's `custom_events`, so `disable_custom_events` fires and removes the event from that list; it never fired in production, because the set it read was filled only by tests, and every noisy category went to `disable_hooks`.
+
 ## [0.133.0] - 2026-10-14
 
 ### Changed

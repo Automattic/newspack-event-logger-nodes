@@ -52,7 +52,7 @@ class DashboardReadTest extends TestCase {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => self::PARTITIONS, 'min_lifetime' => 86400 ] );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = true;
-		$this->activate_shipped( 'performance', self::PARTITIONS );
+		$this->activate_shipped_with_stats_tables( 'performance', self::PARTITIONS );
 		$at          = self::tick() - self::tick() % 3600 + self::INTO_HOUR;
 		Core::$clock = static fn (): float => (float) $at;
 		Core::right_now();

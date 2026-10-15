@@ -10,9 +10,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-if ( ! \defined( 'ABSPATH' ) ) {
-	exit;
-}
+\defined( 'ABSPATH' ) || exit;
 
 /**
  * Every logged URL carries its host, so a hostless one is refused rather than
