@@ -93,20 +93,11 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// answer their requests through, and CLI::worker_id(), which spells a
 	// spawned worker's row; below it each call fatals. It is also
 	// newspack_nodes/worker_identified, naming the worker a spawn became.
-	// 2.73.0 is Table_Client, Bootstrap::mount_table() and the SQLite Table
-	// arm the stats live on; below it the builder and the dashboards fatal.
-	// It is also the TTL and backend arguments flame-builder.tsl gives each
-	// Table, which check-substrate-floor.sh cannot see, since it reads PHP
-	// calls and not topologies. 2.74.0 is Table_Unavailable, the typed
-	// refusal of a Table whose backend cannot open on this host, and the
-	// public Durable_Arm::serializer(), the rule a durable Table stores by.
-	// 2.75.0 is the read-only mount the performance verbs read through: it
-	// lives for the rest of the request, opens only a file its worker wrote,
-	// and refuses a process running as root; below it a dashboard poll
-	// creates the worker's file, and ADR-23 wants the mount removed.
-	// 2.76.0 is SADD and SMEMBERS on a durable Table and Table_Client's
-	// add_members() and members(), which the search index files and reads
-	// its words through; below it the flush and every search fatal.
+	// 2.73.0 is Table_Client, which the flame builder writes its rows
+	// through; below it the builder fatals. 2.74.0 is Table_Unavailable,
+	// the typed refusal of a Table whose backend cannot open on this host,
+	// and the public Durable_Arm::serializer(), the rule a durable Table
+	// stores by.
 	// 2.77.0 is Command_Interpreter_Node::dispatch() binding each verb's
 	// declared args and handing the handler them by name; below it every
 	// handler here reads a raw token list as named args and binds nothing.
@@ -117,8 +108,6 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// the topology fails to load.
 	// 2.93.0 is the skin's --wp-components-color-* tokens on the
 	// newspack-nodes-ui handle; below it a tag token's × vanishes on dark.
-	// 2.94.0 is Table_Client::all_members() and SSCAN, which read a bucket
-	// set of any size; below it every bucket selection fatals.
 	// 2.97.0 is Rate_Limit, which meters the MCP door; below it that fatals.
 	// 2.98.0 is the data-ask-picked paint on the newspack-nodes-ui handle;
 	// below it an Ask pick shows no mark, so nothing says what is selected.
