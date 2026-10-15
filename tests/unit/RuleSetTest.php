@@ -16,7 +16,7 @@ use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Table_Node;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
-use PHPUnit\Framework\Attributes\DataProviderExternal;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class RuleSetTest extends TestCase {
 
@@ -644,9 +644,33 @@ final class RuleSetTest extends TestCase {
 		$this->assertSame( '/tarot/', $rules[0]->pattern );
 	}
 
+	/**
+	 * Every serializer a size estimate is kept for, one data set each.
+	 *
+	 * @return array<string,array{0: string}>
+	 */
+	public static function serializers(): array {
+		return [
+			'php'      => [ Rule_Set::SERIALIZER_PHP ],
+			'igbinary' => [ Rule_Set::SERIALIZER_IGBINARY ],
+		];
+	}
+
+	/**
+	 * Install a fresh in-memory handle configured with `$serializer`, the one
+	 * every size estimate then assumes; igbinary skips where it is not loaded.
+	 */
+	private static function estimate_for( string $serializer ): void {
+		if ( Rule_Set::SERIALIZER_IGBINARY === $serializer && ! \function_exists( 'igbinary_serialize' ) ) {
+			self::markTestSkipped( 'igbinary is not loaded' );
+		}
+		Core::$memd = new InMemoryMemcached();
+		Core::$memd->setOption( \Memcached::OPT_SERIALIZER, Rule_Set::SERIALIZER_IGBINARY === $serializer ? \Memcached::SERIALIZER_IGBINARY : \Memcached::SERIALIZER_PHP );
+	}
+
 	/** The widest hook list the item budget admits, by `$serializer`'s estimate. */
 	private static function widest_hooks( string $serializer, int $extra = 0 ): array {
-		\Newspack_Event_Logger_Nodes\Tests\TestCase::estimate_for( $serializer );
+		self::estimate_for( $serializer );
 		$name  = 200;
 		$count = \intdiv( Rule_Set::ITEM_BUDGET, ( Rule_Set::SERIALIZER_IGBINARY === $serializer ? 8 : 20 ) + $name ) + $extra;
 		$hooks = [];
@@ -661,7 +685,7 @@ final class RuleSetTest extends TestCase {
 		$this->assertSame( 900000, Rule_Set::ITEM_BUDGET );
 	}
 
-	#[DataProviderExternal( \Newspack_Event_Logger_Nodes\Tests\TestCase::class, 'serializers' )]
+	#[DataProvider( 'serializers' )]
 	public function test_the_widest_hook_list_the_budget_admits_is_cached_within_it( string $serializer ): void {
 		$hooks = self::widest_hooks( $serializer );
 
@@ -675,7 +699,7 @@ final class RuleSetTest extends TestCase {
 		$this->assertLessThanOrEqual( Rule_Set::ITEM_BUDGET, $bytes );
 	}
 
-	#[DataProviderExternal( \Newspack_Event_Logger_Nodes\Tests\TestCase::class, 'serializers' )]
+	#[DataProvider( 'serializers' )]
 	public function test_a_hook_list_past_the_budget_is_refused_before_anything_is_written( string $serializer ): void {
 		$hooks = self::widest_hooks( $serializer, 1 );
 

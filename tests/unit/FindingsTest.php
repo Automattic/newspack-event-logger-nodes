@@ -2569,7 +2569,7 @@ class FindingsTest extends TestCase {
 			[
 				'name'     => 'Performance_CI urls command',
 				'value'    => 372.0,
-				'children' => [ [ 'name' => Flame_Tree::URL_FOLD, 'value' => 41.0, 'children' => [] ] ],
+				'children' => [ [ 'name' => Flame_Tree::SQL_STATE, 'value' => 41.0, 'children' => [] ] ],
 			],
 		];
 
@@ -2587,28 +2587,9 @@ class FindingsTest extends TestCase {
 		$this->assertStringNotContainsString( 'custom event', $found['detail'] );
 	}
 
-	/** The URL read's steps are leaves the platform times; no rule edit reaches inside. */
-	public function test_a_dominant_url_read_step_proposes_nothing(): void {
-		foreach ( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD ] as $step ) {
-			$record = $this->healthy_record();
-			$record['flame']['children'] = [
-				[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
-				[ 'name' => $step, 'value' => 372.0, 'children' => [] ],
-			];
-
-			$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
-
-			$this->assertNotNull( $found, $step );
-			$this->assertSame( 'none', $found['proposal']['action'], $step );
-			$this->assertStringContainsString( 'Performance_CI_Node', $found['proposal']['why'], $step );
-			$this->assertStringNotContainsString( 'command', $found['proposal']['why'], $step );
-			$this->assertStringNotContainsString( 'custom event', $found['detail'], $step );
-		}
-	}
-
 	/** The builders' own upkeep spans are told whatever the rule; no edit reaches them. */
 	public function test_a_dominant_upkeep_span_proposes_nothing(): void {
-		foreach ( [ Flame_Tree::STATS_FOLD, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT ] as $step ) {
+		foreach ( [ Flame_Tree::REQUESTS_RESTORE, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT ] as $step ) {
 			$record = $this->healthy_record();
 			$record['flame']['children'] = [
 				[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],

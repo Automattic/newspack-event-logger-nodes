@@ -693,8 +693,8 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	public function test_a_url_category_brief_answers_from_the_urls_own_aggregate(): void {
-		// Rows arrive display-shaped: `Stats_Store::url_stats()` has already
-		// divided the stored sums by the request count.
+		// Rows arrive display-shaped: `leaderboard_of()` has already divided
+		// the stored sums by the request count.
 		$brief = Ask_Assembler::for_url_category(
 			[
 				'count'      => 17,

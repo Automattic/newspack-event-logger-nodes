@@ -7,10 +7,10 @@
  * declares functions, not classes, so the classmap autoloader never maps it and
  * it costs nothing at runtime.
  *
- * Two sweeps: every option row the plugin wrote, and the three stats Tables'
- * SQLite files. The rest of the on-disk state — logs, locks, offsets, IPC —
- * lives under the substrate's base directory, and the `newspack-nodes`
- * uninstall removes that tree, which leaves `tables/` behind.
+ * Two sweeps: every option row the plugin wrote, and the flame-facts
+ * Row_Table's SQLite files. The rest of the on-disk state — logs, locks,
+ * offsets, IPC — lives under the substrate's base directory, and the
+ * `newspack-nodes` uninstall removes that tree, which leaves `tables/` behind.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -57,10 +57,9 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
 }
 
 /**
- * Delete the stats Tables' and the flame-facts Row_Table's SQLite files:
- * each partition's file, and the WAL
- * files SQLite keeps beside it, named by the substrate's `Table_Node::file()`
- * across every partition a fleet can run.
+ * Delete the flame-facts Row_Table's SQLite files: each partition's file,
+ * and the WAL files SQLite keeps beside it, named by the substrate's
+ * `Table_Node::file()` across every partition a fleet can run.
  *
  * Only under a base directory this install configured. The schema default
  * is the one every unconfigured install on a host shares, and so are the
@@ -78,14 +77,12 @@ function delete_stats_tables(): int {
 		return 0;
 	}
 	$deleted = 0;
-	foreach ( [ ...Stats_Store::TABLES, Flame_Facts_Row_Schema::TABLE ] as $table ) {
-		for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
-			$file = \Newspack_Nodes\Table_Node::file( $table, $partition );
-			foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
-				// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.
-				if ( \is_file( $path ) && \unlink( $path ) ) {
-					++$deleted;
-				}
+	for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
+		$file = \Newspack_Nodes\Table_Node::file( Flame_Facts_Row_Schema::TABLE, $partition );
+		foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
+			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.
+			if ( \is_file( $path ) && \unlink( $path ) ) {
+				++$deleted;
 			}
 		}
 	}

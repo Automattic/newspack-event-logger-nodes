@@ -190,7 +190,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 		 * beneath the configured colours; the rule editor's picker does not.
 		 */
 		public function test_dashboards_color_platform_spans_beneath_the_configured_colors(): void {
-			\add_filter( 'newspack_event_logger_nodes_custom_colors', static fn ( array $colors ): array => [ 'url fold' => '#7A1F3D' ] + $colors );
+			\add_filter( 'newspack_event_logger_nodes_custom_colors', static fn ( array $colors ): array => [ 'stats sweep' => '#7A1F3D' ] + $colors );
 			$_GET = [ 'page' => 'event-logger-overview' ];
 			try {
 				$this->dispatch( 'nodes_page_event-logger-overview' );
@@ -199,15 +199,15 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			}
 
 			$colors = $this->window_json( 'newspack-nodes-overview', 'eventLoggerCustomColors' );
-			$this->assertSame( '#7A1F3D', $colors['url fold'] ?? null, 'a configured colour wins' );
+			$this->assertSame( '#7A1F3D', $colors['stats sweep'] ?? null, 'a configured colour wins' );
 			$categories = \Newspack_Event_Logger_Nodes\Hook_Categorizer::get_base_config()['_colors'];
 			$this->assertSame(
-				[ $categories['Event Logger Page Cache'], $categories['Event Logger Cache'], $categories['Event Logger'], $categories['Event Logger'] ],
-				[ $colors['url page cache'] ?? null, $colors['url header cache'] ?? null, $colors['url rank lists'] ?? null, $colors['stats probe'] ?? null ]
+				[ $categories['Event Logger'], $categories['Event Logger'] ],
+				[ $colors['stats writes'] ?? null, $colors['requests expire'] ?? null ]
 			);
 			$picker = $this->window_json( 'newspack-nodes-overview', 'newspackNodesCustomColors' );
-			$this->assertArrayNotHasKey( 'url page cache', $picker, 'the picker offers only the operator\'s events' );
-			$this->assertSame( '#7A1F3D', $picker['url fold'] ?? null );
+			$this->assertArrayNotHasKey( 'stats writes', $picker, 'the picker offers only the operator\'s events' );
+			$this->assertSame( '#7A1F3D', $picker['stats sweep'] ?? null );
 		}
 
 		/**

@@ -194,7 +194,7 @@ trait Narration {
 
 	/**
 	 * A narration `m`: the head, then each counter, zeros left out but for
-	 * `$kept` — `12 flushes · 120 writes · 3 refused urlrank_s`.
+	 * `$kept` — `12 flushes · 3480 requests`.
 	 *
 	 * @param string                       $head   What the line says first; '' for nothing.
 	 * @param array<string,int|float|bool> $counts Counter => value; a true one is told by name.

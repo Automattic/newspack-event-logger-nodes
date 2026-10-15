@@ -10,8 +10,8 @@
  * run here, so this requires it and the cleanup routines by hand. They
  * delete every option row named for the `newspack_event_logger_nodes_`
  * prefix on every site — the ruleset's non-autoloaded `rule_hooks_*` rows
- * among them — and the stats Tables' SQLite files. The substrate's uninstall
- * owns the rest of the on-disk runtime tree.
+ * among them — and the flame-facts Row_Table's SQLite files. The
+ * substrate's uninstall owns the rest of the on-disk runtime tree.
  *
  * @package Newspack_Event_Logger_Nodes
  */

@@ -817,7 +817,7 @@ class Ask_Assembler {
 	 * @return array<string,mixed>|null Null when the board holds no such row.
 	 */
 	public static function for_category( array $categories, string $name, string $server = '' ): ?array {
-		// Stats_Store hands these over as per-request means: time and count.
+		// `leaderboard_of()` hands these over as per-request means.
 		$scope = '' === $server ? 'recent window' : "recent window on {$server}";
 		return self::category_brief( $categories, $name, $scope );
 	}

@@ -494,25 +494,15 @@ class FlameTreeTest extends TestCase {
 
 	/** Every platform span, spelled out, so a dropped or added row fails here. */
 	private const PLATFORM_SPANS = [
-		'url page cache', 'url header cache', 'url fold', 'url rank lists',
-		'stats writes', 'stats rank close', 'stats probe', 'stats fold', 'stats re-rank', 'stats sweep',
+		'stats writes', 'stats sweep',
 		'requests writes', 'requests checkpoint', 'requests restore', 'requests expire',
 	];
 
 	/**
-	 * Nested pairs, derived from the code: `Performance_CI_Node` builds the URL
-	 * page inside `read_through_page( URL_PAGE_CACHE )`, whose build folds
-	 * (`URL_FOLD`) and reads the header through `URL_HEADER_CACHE`, which folds
-	 * too; `Flame_Builder_Node::shutdown_sweep()` spans `STATS_SWEEP` around a
-	 * flush, which spans a rank close, folds and re-ranks and tells the writes.
+	 * Nested pairs, derived from the code: `Flame_Builder_Node::shutdown_sweep()`
+	 * spans `STATS_SWEEP` around a flush, which tells the writes.
 	 */
 	private const NESTED_PAIRS = [
-		[ 'url page cache', 'url header cache' ],
-		[ 'url page cache', 'url fold' ],
-		[ 'url header cache', 'url fold' ],
-		[ 'stats sweep', 'stats rank close' ],
-		[ 'stats sweep', 'stats fold' ],
-		[ 'stats sweep', 'stats re-rank' ],
 		[ 'stats sweep', 'stats writes' ],
 	];
 
@@ -591,17 +581,13 @@ class FlameTreeTest extends TestCase {
 	/** Every platform category ships in the JSON, and the builders' own carry a description and no pattern. */
 	public function test_every_platform_category_ships_in_hook_categories_json(): void {
 		$base = Hook_Categorizer::get_base_config();
-		foreach ( [ 'Event Logger', 'Event Logger Page Cache', 'Event Logger Cache', 'Event Logger Fold', 'Event Logger Shutdown' ] as $category ) {
+		foreach ( [ 'Event Logger', 'Event Logger Shutdown' ] as $category ) {
 			$this->assertArrayHasKey( $category, $base['_colors'] );
 			$this->assertNotEmpty( $base['_descriptions'][ $category ] ?? '', "{$category} is described" );
 			$this->assertArrayNotHasKey( $category, $base['_patterns'], "{$category} claims no hook" );
 			$this->assertCount( 1, \array_keys( $base['_colors'], $base['_colors'][ $category ], true ), "{$category}'s colour is no other category's" );
 		}
 		$colors = Flame_Tree::platform_colors();
-		$this->assertSame( $base['_colors']['Event Logger Page Cache'], $colors['url page cache'] );
-		$this->assertSame( $base['_colors']['Event Logger Fold'], $colors['url fold'] );
-		$this->assertSame( $base['_colors']['Event Logger'], $colors['url rank lists'] );
-		$this->assertSame( $base['_colors']['Event Logger Cache'], $colors['url header cache'] );
 		$this->assertSame( $base['_colors']['Event Logger Shutdown'], $colors['stats sweep'] );
 		$this->assertSame( $base['_colors']['Event Logger'], $colors['stats writes'] );
 	}
@@ -625,14 +611,14 @@ class FlameTreeTest extends TestCase {
 
 	/** An operator recolouring a category recolours its spans; a custom colour of the span's own name still wins. */
 	public function test_a_user_recolour_reaches_the_span_and_a_custom_colour_overrides_it(): void {
-		\update_option( Hook_Categorizer::OPTION_NAME, [ 'colors' => [ 'Event Logger Page Cache' => '#123ABC' ] ] );
+		\update_option( Hook_Categorizer::OPTION_NAME, [ 'colors' => [ 'Event Logger Shutdown' => '#123ABC' ] ] );
 		Hook_Categorizer::clear_cache();
-		$custom = static fn ( array $colors ): array => [ Flame_Tree::URL_HEADER_CACHE => '#ABC123' ] + $colors;
+		$custom = static fn ( array $colors ): array => [ Flame_Tree::STATS_WRITES => '#ABC123' ] + $colors;
 		\add_filter( 'newspack_event_logger_nodes_custom_colors', $custom );
 		try {
-			$this->assertSame( '#123ABC', Flame_Tree::platform_colors()[ Flame_Tree::URL_PAGE_CACHE ] );
-			$this->assertSame( '#123ABC', Config::span_colors()[ Flame_Tree::URL_PAGE_CACHE ] );
-			$this->assertSame( '#ABC123', Config::span_colors()[ Flame_Tree::URL_HEADER_CACHE ], 'the custom colour wins' );
+			$this->assertSame( '#123ABC', Flame_Tree::platform_colors()[ Flame_Tree::STATS_SWEEP ] );
+			$this->assertSame( '#123ABC', Config::span_colors()[ Flame_Tree::STATS_SWEEP ] );
+			$this->assertSame( '#ABC123', Config::span_colors()[ Flame_Tree::STATS_WRITES ], 'the custom colour wins' );
 		} finally {
 			\delete_option( Hook_Categorizer::OPTION_NAME );
 			Hook_Categorizer::clear_cache();
@@ -650,7 +636,7 @@ class FlameTreeTest extends TestCase {
 		\update_option(
 			Hook_Categorizer::OPTION_NAME,
 			[
-				'colors'    => [ 'Lifecycle' => '#0A1B2C', 'Event Logger Page Cache' => '#2C1B0A' ],
+				'colors'    => [ 'Lifecycle' => '#0A1B2C', 'Event Logger Shutdown' => '#2C1B0A' ],
 				'patterns'  => [ 'Lifecycle' => [ '^operator_only_' ] ],
 				'overrides' => [ 'some_hook' => 'Lifecycle' ],
 			]
@@ -661,8 +647,8 @@ class FlameTreeTest extends TestCase {
 			$published = \json_decode( $m[1], true );
 			$this->assertSame( [ '_colors', '_patterns' ], \array_keys( $published ), 'only what the browser reads' );
 			$this->assertSame( '#0A1B2C', $published['_colors']['Lifecycle'], 'the hook colour source' );
-			$this->assertSame( '#2C1B0A', $published['_colors']['Event Logger Page Cache'] );
-			$this->assertSame( $published['_colors']['Event Logger Page Cache'], Flame_Tree::platform_colors()[ Flame_Tree::URL_PAGE_CACHE ] );
+			$this->assertSame( '#2C1B0A', $published['_colors']['Event Logger Shutdown'] );
+			$this->assertSame( $published['_colors']['Event Logger Shutdown'], Flame_Tree::platform_colors()[ Flame_Tree::STATS_SWEEP ] );
 			$this->assertSame( Hook_Categorizer::get_base_config()['_patterns'], $published['_patterns'], 'base patterns only' );
 			$this->assertStringNotContainsString( 'operator_only_', $m[1] );
 		} finally {
@@ -679,14 +665,14 @@ class FlameTreeTest extends TestCase {
 	 */
 	public function test_a_platform_span_without_a_category_colour_is_skipped_not_thrown(): void {
 		$without = $this->base_colors();
-		unset( $without['Event Logger Cache'] );
+		unset( $without['Event Logger Shutdown'] );
 		Hook_Categorizer::$read_file = static fn ( string $path ): string => (string) \wp_json_encode( [ '_colors' => $without, '_patterns' => [] ] );
 		Hook_Categorizer::clear_cache();
 		try {
 			$colors = Flame_Tree::platform_colors();
-			$this->assertArrayNotHasKey( Flame_Tree::URL_HEADER_CACHE, $colors );
+			$this->assertArrayNotHasKey( Flame_Tree::STATS_SWEEP, $colors );
 			$this->assertSame( $without['Event Logger'], $colors[ Flame_Tree::STATS_WRITES ] );
-			$this->assertArrayNotHasKey( Flame_Tree::URL_HEADER_CACHE, Config::span_colors() );
+			$this->assertArrayNotHasKey( Flame_Tree::STATS_SWEEP, Config::span_colors() );
 		} finally {
 			Hook_Categorizer::$read_file = null;
 			Hook_Categorizer::clear_cache();
@@ -705,22 +691,12 @@ class FlameTreeTest extends TestCase {
 		}
 	}
 
-	/** The builders' own upkeep spans — never their point lines, nor a reader's. */
+	/** The builders' own upkeep spans — never their point lines, a verb or a hook. */
 	public function test_platform_span_kind_names_the_builders_upkeep(): void {
-		foreach ( [ Flame_Tree::STATS_FOLD . ' (complete)', Flame_Tree::STATS_RE_RANK, Flame_Tree::STATS_RANK_CLOSE, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE ] as $span ) {
+		foreach ( [ Flame_Tree::STATS_SWEEP . ' (complete)', Flame_Tree::STATS_SWEEP . ': 3', Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE ] as $span ) {
 			$this->assertSame( 'upkeep', Flame_Tree::platform_span_kind( $span ), $span );
 		}
-		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::STATS_PROBE, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats folds' ] as $span ) {
-			$this->assertNull( Flame_Tree::platform_span_kind( $span ), $span );
-		}
-	}
-
-	/** The URL read's three steps are its spans — never its point events, nor a verb. */
-	public function test_platform_span_kind_names_the_url_reads_three_steps(): void {
-		foreach ( [ Flame_Tree::URL_PAGE_CACHE, Flame_Tree::URL_HEADER_CACHE, Flame_Tree::URL_FOLD . ': 3' ] as $span ) {
-			$this->assertSame( 'url_read', Flame_Tree::platform_span_kind( $span ), $span );
-		}
-		foreach ( [ Flame_Tree::URL_RANK_LISTS, 'Discovery_CI get command', 'url folds', 'wp_loaded hook', 'sql' ] as $span ) {
+		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats sweeps', 'Discovery_CI get command', 'wp_loaded hook', 'sql' ] as $span ) {
 			$this->assertNull( Flame_Tree::platform_span_kind( $span ), $span );
 		}
 	}
@@ -731,16 +707,13 @@ class FlameTreeTest extends TestCase {
 		$this->assertSame( 'Image_CDN::filter_the_content @999999', Flame_Tree::listener_name( 'Image_CDN::filter_the_content', 999999 ) );
 	}
 
-	/** What a node costs a prune before its name, distinct from every real estimate. */
-	private const NODE_BYTES = 97;
-
-	/** What `prune_lightest()` estimates a tree costs: each node's overhead and name. */
-	private static function tree_bytes( array $node ): int {
-		$bytes = self::NODE_BYTES + \strlen( $node['name'] );
+	/** How many nodes a tree holds, its root included. */
+	private static function tree_nodes( array $node ): int {
+		$nodes = 1;
 		foreach ( $node['children'] as $child ) {
-			$bytes += self::tree_bytes( $child );
+			$nodes += self::tree_nodes( $child );
 		}
-		return $bytes;
+		return $nodes;
 	}
 
 	/** An aggregate node as the merge leaves one. */
@@ -748,30 +721,36 @@ class FlameTreeTest extends TestCase {
 		return [ 'name' => $name, 'sum_value' => $sum, 'ts' => self::NOW, 'children' => $children ];
 	}
 
-	public function test_a_prune_drops_the_lightest_leaves_first_and_keeps_the_root(): void {
-		$light = self::agg( 'light parent', 7.0, [ self::agg( 'light a', 3.0 ), self::agg( 'light b', 4.0 ) ] );
-		$root  = self::agg(
+	/** Seven nodes: the root, a light subtree of three, a heavy one of three. */
+	private static function seven_node_tree(): array {
+		return self::agg(
 			'aggregate',
 			900.0,
-			[ $light, self::agg( 'heavy parent', 800.0, [ self::agg( 'heavy a', 500.0 ), self::agg( 'heavy b', 300.0 ) ] ) ]
+			[
+				self::agg( 'light parent', 7.0, [ self::agg( 'light a', 3.0 ), self::agg( 'light b', 4.0 ) ] ),
+				self::agg( 'heavy parent', 800.0, [ self::agg( 'heavy a', 500.0 ), self::agg( 'heavy b', 300.0 ) ] ),
+			]
 		);
-		// One byte short of room for everything but the light subtree.
-		$budget = self::tree_bytes( $root ) - self::tree_bytes( $light ) - 1;
+	}
 
-		$root = Flame_Tree::prune_lightest( $root, $budget, self::NODE_BYTES );
+	public function test_a_prune_drops_the_lightest_leaves_first_and_keeps_the_root(): void {
+		$root = Flame_Tree::prune_lightest( self::seven_node_tree(), 3 );
 
-		$this->assertLessThanOrEqual( $budget, self::tree_bytes( $root ) );
+		$this->assertSame( 3, self::tree_nodes( $root ) );
 		$this->assertSame( 'aggregate', $root['name'] );
 		$this->assertSame( [ 'heavy parent' ], \array_column( $root['children'], 'name' ), 'the light subtree went whole' );
 		$this->assertSame( [ 'heavy a' ], \array_column( $root['children'][0]['children'], 'name' ), 'then the lighter heavy leaf' );
 		$this->assertSame( [ 0 ], \array_keys( $root['children'][0]['children'] ), 'the survivors are a list again' );
 	}
 
-	public function test_a_prune_takes_a_bared_parent_as_a_leaf_in_its_turn(): void {
-		$root   = self::agg( 'aggregate', 10.0, [ self::agg( 'parent', 1.0, [ self::agg( 'child', 1.0 ) ] ), self::agg( 'heavy', 9.0 ) ] );
-		$budget = self::NODE_BYTES * 2 + \strlen( 'aggregate' ) + \strlen( 'heavy' );
+	public function test_a_tree_within_the_cap_comes_back_whole(): void {
+		$this->assertSame( self::seven_node_tree(), Flame_Tree::prune_lightest( self::seven_node_tree(), 7 ) );
+	}
 
-		$root = Flame_Tree::prune_lightest( $root, $budget, self::NODE_BYTES );
+	public function test_a_prune_takes_a_bared_parent_as_a_leaf_in_its_turn(): void {
+		$root = self::agg( 'aggregate', 10.0, [ self::agg( 'parent', 1.0, [ self::agg( 'child', 1.0 ) ] ), self::agg( 'heavy', 9.0 ) ] );
+
+		$root = Flame_Tree::prune_lightest( $root, 2 );
 
 		$this->assertSame( [ 'heavy' ], \array_column( $root['children'], 'name' ) );
 	}

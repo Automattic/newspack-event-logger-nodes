@@ -201,12 +201,8 @@ class Findings {
 			'why'    => '%s is a plugin file\'s load: the cost is that plugin\'s bootstrap, and nothing a rule can switch on runs inside it.',
 		],
 		'command'          => [
-			'detail' => 'This is one command verb\'s handler: its time is that verb\'s, and the SQL, HTTP, hook and URL-read spans it ran nest inside it.',
+			'detail' => 'This is one command verb\'s handler: its time is that verb\'s, and the SQL, HTTP and hook spans it ran nest inside it.',
 			'why'    => '%s is a command verb, timed whatever the rule says; the time is inside that verb, so read its children — no rule edit reaches the handler itself.',
-		],
-		'url_read'         => [
-			'detail' => 'The event logger times this step of the URL read itself, whatever the rule says, so no rule edit reaches inside it.',
-			'why'    => '%s is a step of `Performance_CI_Node`\'s URL read, whose `(complete)` line says whether its cache hit or how many rows it folded. Look there — nothing a rule can switch on runs inside it.',
 		],
 		'upkeep'           => [
 			'detail' => 'This is a builder\'s own work, told whatever the rule says, so no rule edit reaches inside it.',
@@ -223,7 +219,7 @@ class Findings {
 	 * a custom event's names the work — the function, include or macro — a
 	 * hook's the caller `App\Core::origin_frame()` finds under `trace_hooks`,
 	 * and a transport's the code that ran the query or the call. A listener's
-	 * is empty, and the command, URL-read, upkeep and plugin spans write none.
+	 * is empty, and the command, upkeep and plugin spans write none.
 	 *
 	 * @var list<string>
 	 */
@@ -1113,19 +1109,18 @@ class Findings {
 	}
 
 	/**
-	 * The eight kinds of span the flame carries, classified once so every
+	 * The seven kinds of span the flame carries, classified once so every
 	 * caller reaches the same `SPAN_ADVICE` row. A custom event has no
 	 * listeners, and prose crediting it with any sends the reader hunting a
 	 * callback that does not exist. A query or HTTP span is the logger's own,
 	 * a plugin span is one plugin file's load, a command span is the frame of
-	 * one verb, a URL-read span is one step inside such a verb, and an upkeep
-	 * span is a builder's own work; the last three are logged whatever
-	 * the rule says, and calling any of these a custom event proposes a rule
-	 * edit that changes nothing. A hook is known by its BASE name: with hook
-	 * tracing on, the frame carries the caller too.
+	 * one verb, and an upkeep span is a builder's own work; the last three
+	 * are logged whatever the rule says, and calling any of these a custom
+	 * event proposes a rule edit that changes nothing. A hook is known by its
+	 * BASE name: with hook tracing on, the frame carries the caller too.
 	 *
 	 * @param string $base The span's base name, per `Flame_Tree::base_name()`.
-	 * @return 'transport'|'plugin'|'command'|'url_read'|'upkeep'|'hook'|'listener'|'custom'
+	 * @return 'transport'|'plugin'|'command'|'upkeep'|'hook'|'listener'|'custom'
 	 */
 	private static function span_kind( string $base ): string {
 		if ( Flame_Tree::is_transport_span( $base ) ) {

@@ -48,68 +48,36 @@ Those rows, plus where each producer applies the redactor (with no query test of
 
 Two stores with deliberately opposite behavior:
 
-- **`Stats_Store`**, and anything reading stats for a dashboard: every method returns `null` / `[]` / `false` when a Table does not answer, and never throws. A verb whose Table backend cannot open answers no stats: `Performance_CI_Node::stats_stores()` catches `\Newspack_Nodes\Table_Unavailable` and nothing broader, so dashboards display "no data" rather than erroring. Any other mount failure, a Table two topologies declare differently among them, fails the verb loud, and a diff widening that catch hides it.
+- **`App\Stats_Query`**, and anything reading stats for a dashboard: a read whose `flame-facts` files will not open catches `\Newspack_Nodes\Table_Unavailable` and nothing broader, logs `performance: stats rows did not open` once a window, and answers no rows with `available` false, so dashboards display "no data" rather than erroring. Any other failure fails the verb loud, and a diff widening that catch hides it.
 - **The SSE slot pool**: fail CLOSED. A backend outage means new connections get HTTP 429, because the pool IS the rate limit. `SSE_Slot_Pool` is a substrate class (`newspack-nodes/includes/class-sse-slot-pool.php`); the ELN-side gate is to leave its invariant alone.
 
 Code that throws from the stats path, or swallows errors in the slot path, has them inverted, and a diff unifying the two into one error-handling style breaks whichever half it converts.
 
 ### 4. Cached state goes through the substrate's `Table_Node`
 
-The flame builder's stats live in three SQLite Tables `flame-builder.tsl` declares — `flame-stats:aggregate`, `flame-stats:url` and `flame-stats:url-fine`, each `evlog:p{partition}` — and `Stats_Store` reaches them by message alone, through the `Table_Client` its owner built: `MGET`, `MSET` and `RM`, one ask per Table a batch spans. The builder's `fill()` hands a Table's reply to `accepts()` before anything else, so a reply is never folded as a record; a CI does the same, and mounts the Tables a verb reads through `Bootstrap::mount_table()`, where they stay for the rest of the request; a diff that tracks mounts to remove them is bookkeeping ADR-23 no longer asks for. `Rule_Set` reaches its pointer-tier hooks the other way, through `Table_Node::table( TABLE_HOOKS, TABLE_TTL )`, an `auto` Table on the shared cache tier, and so does the `urls` verb's page cache.
+The flame builder's stats live in the `flame-facts` Row_Table `flame-builder.tsl` declares, one SQLite file per partition. The builder writes it by message alone, one `ROWS` batch per flush through the `Table_Client` its owner built, and its `fill()` hands a Table's reply to `accepts()` before anything else, so a reply is never folded as a record. `App\Stats_Query` reads every partition's file read-only, in one connection, through `Row_Table_Node::read()`. `Rule_Set` reaches its pointer-tier hooks the other way, through `Table_Node::table( TABLE_HOOKS, TABLE_TTL )`, an `auto` Table on the shared cache tier.
 
-Push back on a diff that opens a SQLite file or a PDO handle of its own, calls a `Cache_Backend` arm for stats, builds a `Table_Node` for a stats namespace outside the topology, hardcodes a server list, constructs a second `\Memcached`, adds a cache constructor parameter, or type-hints a cache interface. There is no `Cache_Interface` and no `Memcached_Cache` to inject.
+Push back on a diff that opens a SQLite file or a PDO handle of its own, calls a `Cache_Backend` arm for stats, builds a stats Table outside the topology, hardcodes a server list, constructs a second `\Memcached`, adds a cache constructor parameter, or type-hints a cache interface. There is no `Cache_Interface` and no `Memcached_Cache` to inject.
 
 The cross-worker auto-tune lock in `Flame_Builder_Node::apply_auto_tune()` is an `add()` on `Cache_Backend::shared_first()`, memcached else APCu, so it engages on an APCu-only host; with neither it fires unlocked, single-process. A diff reaching for `Core::$memd` there reintroduces the memcached-only lock.
 
 ### 5. Flushing is the substrate's one button
 
-`Cache_Backend::rotate_salt()` moves the install scope for every Newspack plugin's memcached and APCu keys at once; a durable Table's key carries no salt, so the SQLite stats rows stay, and deactivating the topology and running `wp nodes gc --force` is what deletes them. `Stats_Store` keeps no salt of its own, and there is no `flush_all()`. `wp nodes memcache flush` and the admin's "Flush Caches" button are the two callers.
+`Cache_Backend::rotate_salt()` moves the install scope for every Newspack plugin's memcached and APCu keys at once; a Row_Table's rows carry no salt, so the SQLite stats rows stay, and deactivating the topology and running `wp nodes gc --force` is what deletes them. There is no `flush_all()`. `wp nodes memcache flush` and the admin's "Flush Caches" button are the two callers.
 
 The scope is memoized per process, so a live worker keeps writing the OLD prefix until it respawns. `rotate_salt()` itself therefore asks every live worker to restart, on every rotation, the first seed included; `wp nodes memcache flush` fails when the salt did not move and warns, beside its success line, when the restart did not land, and a worker whose restart did not land keeps the old scope until its next spawn. A diff that adds a restart of its own after a rotation duplicates the substrate's, and one that catches the flush's failure hides a salt that never moved.
 
 **The rotation IS the schema migration.** Nothing compensates for skipping it: no reader or writer carries a shape probe, a version key component or a row-level legacy test, and nothing survives the rotation to need one. Each of those is a second migration mechanism to maintain against every future row shape, so reject one.
 
-### 6. Stats value caps
+### 6. Sums, not means — and nothing measured reads a flame `value`
 
-Per-namespace caps bound every stored value: `ITEM_BUDGET` derives from memcache's 1MB item limit, and a slotted chart hour, which SQLite stores at any size, takes its count caps per slot (decision 35):
+The rollups store raw sums: `timings` and `timings_site` fold `ms`, `calls` and `requests` by `sum`, and `requests_hourly` folds `count`, `timed`, `sum_ms`, `sum_peak_mb` and `errors` by `sum`. A fold across buckets and partitions is therefore exact addition, and `App\Stats_Query` divides at read time. A diff introducing running-mean storage reopens the EMA-clamp bug raw sums exist to prevent. Aggregator code MUST sum.
 
-| Constant | Value | Scope |
-|---|---|---|
-| `Stats_Store::MAX_CAT_VALUES` | 50 | Distinct categories per chart slot |
-| `Stats_Store::MAX_DIM_VALUES` | 20 | Distinct values per dimension slot, site or server, on every axis but `server` |
-| `Stats_Store::MAX_URL_DIM_VALUES` | 10 | Distinct values per URL dimension slot |
-| `Stats_Store::MAX_LB_CATEGORIES` | 200 | Categories per leaderboard hour or URL profile |
-| `Stats_Store::ITEM_BUDGET` | 900000 | Bytes any stored value but a slotted chart hour may take, by its producer's estimate |
-
-**Every value is capped BEFORE it is written (decision 30).** A slotted chart hour takes its count caps per slot and no byte cap. Every other producer estimates its value from `Stats_Store::overhead()` — a fixed cost per stored part for the configured serializer — plus the `strlen()` of its strings, and caps it to `ITEM_BUDGET`: a URL shard by bytes alone (`cap_url_rows()`), a leaderboard by `MAX_LB_CATEGORIES` and bytes, the `url` blob by a leaderboard cap on its profiles and a lightest-leaf prune of its tree, and a rule's hook list by refusal at `Rule_Set::save()`. A diff that finds a size from a refused write, relies on compression, or serializes a value on the flush path to measure it is the regression to look for; a new namespace needs its cap and a case in `tests/unit/ItemBudgetTest.php`.
-
-**Per-server data has the server in the KEY, and a value carries nothing its key implies** (decision 30). The URL index, its ranked lists and its token index all key by `server_key`; the row holds its path and not its host. A diff that packs several servers into one value, or stores a site-wide list beside the per-server ones, reopens decision 14. The servers present come from the `urlsrv` index; a walk that enumerates servers any other way misses worker-only servers.
-
-The `server` axis takes no cap, and neither does `urlsrv`: every server is filed under its own name, the URL's host, because a cap that binds drops a spoke out of the picker AND out of every scoped read. A diff that caps it, or folds a server into `Other`, reintroduces an overflow server the picker cannot scope to.
-
-Every cap FOLDS its tail rather than dropping it, ranked by traffic, so totals stay exact. The four bucket caps run through `cap_bucket()` into one synthetic `Stats_Store::OTHER_KEY` (`'Other'`); only the category cap passes a reserved row, holding the `total` pseudo-category clear of the ranking and restoring it after. The URL-index byte cap runs through `cap_url_rows()` into TWO overflow rows, `Stats_Store::other_key( $worker )` minting `OTHER_KEY` or `OTHER_WORKER_KEY`, because one row cannot answer a filter about a mixed set.
-
-Raise a cap only against the value size it implies, and never remove the `Other` fold: every cap here exists so no write finds a value's size by refusal, and a slotted hour's count caps are all that bound it.
-
-### 7. Sums, not means — and nothing measured reads a flame `value`
-
-The leaderboard stores `count` and `sum_req_time` (`LB_SUMS`), its per-category entries `samples`, `sum_time` and `sum_count` (`LB_CAT_SUMS`), and a URL row `count`, `timed_count`, `sum_ms`, `sum_peak_mb` and the four status-class counts. Every one of them is a raw sum, so cross-bucket and cross-partition merge is exact addition. The display layer divides at read time. A diff introducing running-mean storage reopens the EMA-clamp bug raw sums exist to prevent. Aggregator code MUST sum.
-
-The same rule bans a stored percentile: a percentile does not merge, so a fold over N buckets cannot produce the window's. `min_ms` and `max_ms` stay because they fold from `duration_ms` exactly.
+The same rule bans a stored percentile: a percentile does not merge, so a fold over N buckets cannot produce the window's. `requests_hourly`'s `max_ms` stays because it folds by `max` exactly.
 
 **A stat times the request; a flame value is a rendering artifact.** `Flame_Tree::cover_children()`, `Flame_Fold::flatten()` and `Flame_Builder_Node::fill()` all RAISE a node's `value` so a parent covers its positioned children — correct for drawing, wrong for counting. Every stat therefore reads `$request['duration_ms']`. A diff computing an aggregate off a flame `value` reproduces the defect where a 356-second request reached `avg_ms` as 725 seconds.
 
-### 8. A stored URL row is positional
-
-The URL index row is a plain array read through `Stats_Store::ROW_*` — `ROW_COUNT` 0 through `ROW_PATH` 14 — because `serialize()` writes every key name into every row and this is the one namespace whose rows are counted in tens of thousands. **A bare integer literal is forbidden**; the constants are what buy back the readability the shape spends.
-
-Three invariants a diff must keep:
-
-- **The nine fields that ADD come first, in `ROW_SUMS` order**, so one map describes the row's summed half. A tenth summed field appended past index 8 falsifies that; `StatsStoreTest` pins the key sets.
-- **`Performance_CI_Node::fold_index_row()` is the one storage/display boundary.** Above it the row is positional; below it the display row is named because it crosses the wire as JSON. A second copy of the translation is how the table and the modal come to disagree about one URL.
-- **`ROW_PATH` is the row's one string, and `row_path()` is its one spelling.** It drops the scheme and host only for an https URL under the row's own server, and cuts to `MAX_PATH_BYTES` (1,024). A merge keeps whichever side's path is non-empty; an overflow row's is `''`. A diff writing a host into the row, or reading the host back out of it, breaks decision 30's second rule.
-
-### 9. No operator hub toggle
+### 7. No operator hub toggle
 
 There is no `enable_workers` and no `enable_aggregator`; `tests/unit/RetiredConfigKeysTest.php` guards both names. A site is a hub when an active topology declares `var is_hub = 1` in its own top-level frontmatter, as the stock `hub` and `aggregator` do; `hub-control` adds the settings and discovery fan-out. Fresh installs are spokes or standalone.
 
@@ -117,15 +85,15 @@ Settings fan-out is the substrate `Settings_Sync_Node` graph in the `hub-control
 
 Push back on any diff introducing a hub flag — an `enable_aggregator` / `enable_workers` check, a `Hub::is_active()` helper, a polarity check around the fan-out — and on code deciding hub-ness from a topology's or a log's name. What a node reads is defined in TSL alone, and the hub's own TSL already declares what it is.
 
-### 10. The substrate floor is a version, not a presence check
+### 8. The substrate floor is a version, not a presence check
 
-The deferred bootstrap on `plugins_loaded` priority 11 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.110.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
+The deferred bootstrap on `plugins_loaded` priority 11 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.111.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
 
 A diff calling a newer substrate API must raise the floor. `scripts/check-substrate-floor.sh` audits the declared floor against every substrate API PHPStan resolves this plugin as calling, and `lint-docs.sh` rule 6 holds the prose to the loader — **a floor set too LOW is worse than none**, because the handshake passes and the plugin fatals later. Don't lower priority 11.
 
 The floor and the release pin are different numbers: the floor says what the plugin refuses to run against, `release.yml`'s `ref:` says what CI builds against.
 
-### 11. Don't reimplement what lives in the substrate
+### 9. Don't reimplement what lives in the substrate
 
 Each of these lives in the substrate and has no compatibility alias here. Call the substrate class:
 
@@ -141,37 +109,37 @@ Each of these lives in the substrate and has no compatibility alias here. Call t
 
 Push back on a diff that adds a `Server_Registry`, an `aggregator_servers` option, a `Remote_Manager` job handler, numeric server ids, an ELN `Stream_Merger_Node`, or a second `Job_Worker_Node`.
 
-### 12. Application Node subclasses resolve by namespace prefix
+### 10. Application Node subclasses resolve by namespace prefix
 
 The plugin's main file registers the top-level node-class prefix through `\Newspack_Nodes\Topology_Registry::register_plugin( 'Newspack_Event_Logger_Nodes\\', …/topologies )`; `Command_Interpreter_Node::register_namespace` covers only the `App\` service-CI sub-namespace. `make_node Flame_Builder` then resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` by prefix, with no per-class registration to keep in sync.
 
 A new node subclass inherits that registration free if it lives under `Newspack_Event_Logger_Nodes\` (or `App\`) and a `composer dump-autoload -o` runs. Otherwise a `.tsl` `make_node Foo foo` cannot resolve the class.
 
-### 13. No `class_exists()` guards for in-plugin classes
+### 11. No `class_exists()` guards for in-plugin classes
 
 `newspack-event-logger-nodes.php` requires `vendor/autoload.php` at file scope, and that composer classmap resolves every class under `includes/` on demand, so a guard around an in-plugin class can only ever be true. Push back when a diff adds one as "defensive". A class that really is missing means a stale classmap, which `composer dump-autoload -o` fixes.
 
 Cross-deploy-unit guards stay, because the other side can be absent. The loader and `Config` guard the substrate's `Bootstrap`, `Config` and `Config_Utils`; `Current_Request_Overlay` guards the substrate's `\Newspack_Nodes\Admin\Admin`; `mu-plugins/00-newspack-profiler.php` guards `Log_Manager`, because it ships as a separate asset; and WP-CLI registration guards on `defined( 'WP_CLI' )`. Ask "is this class guaranteed loaded by our own bootstrap?" If yes, drop the guard.
 
-### 14. Injection seams for blocking work
+### 12. Injection seams for blocking work
 
 CLI commands and other blocking-work classes take a seam instead of calling `STDIN` / `microtime` / `sleep` inline — and the seam differs by method rather than being a uniform "resource plus cap" pair. `Reqgrep_Command::process_stdin( $stream = null )` takes only the I/O resource, defaulting to `STDIN` and draining a `Stdin_Node` to EOF with no cap; `Reqgrep_Command::follow_mode( int $max_iterations = \PHP_INT_MAX )` takes only an iteration cap. Production uses the defaults; tests pass `php://memory` streams and small caps to drive loops deterministically.
 
 Flag a new blocking command that bakes the stream in with no injection seam and no iteration cap. It is hard to test, and the fix costs one parameter.
 
-### 15. Type flags
+### 13. Type flags
 
 Inherited from the substrate: array VALUE → `TM_STRUCT`, string VALUE → `TM_BYTESTREAM`. A consumer reading array VALUE gates on `TM_STRUCT`. Mixing them makes a consumer's own gate drop its own data.
 
 `Log_Manager`, `Request_Builder_Node` (`emit_request` / `emit_entry` / `emit_compact_summary`), `Flame_Builder_Node` and `Job_Intake` all use `TM_STRUCT`. Hub fan-in is the substrate `Remote_Source_Node`, which forwards the remote envelope's TYPE; `Remote_Job_Rewrite_Node` reads array VALUE, gated on it being an array, and forwards in place. A TM_INFO VALUE stays a flat `KEY VALUE` string, and only the command envelope is a token array.
 
-### 16. Index formatters receive the unpacked message array
+### 14. Index formatters receive the unpacked message array
 
 Two named formatters are registered because TSL has no closures: `request-index` → `Request_Builder_Node::format_index_entry` and `flame-index` → `Flame_Builder_Node::format_index_entry`. Both take `( array $message, array $position ): ?string` and read `$message[ Message::VALUE ]` directly.
 
 Push back on a `json_decode` inside a formatter, or a `string $line` / by-ref `$data` signature. The substrate passes the unpacked array, so a decode there operates on the wrong type. A new index leg needs a `Formatters::register()` call in the bootstrap, not an inline callable in the `.tsl`.
 
-### 17. Per-URL logging ruleset — one write path, pattern-hash ids, empty means empty
+### 15. Per-URL logging ruleset — one write path, pattern-hash ids, empty means empty
 
 Logging is governed per URL by a **ruleset**: an ordered list of `Rule`s, each a URL pattern with a `log` or `skip` action and — for `log` rules — its own hooks, custom events, significant events, auto-tune thresholds and diagnostic knobs. `Log_Manager` resolves ONE governing rule per request through `Rule_Matcher`. Gates:
 
@@ -183,7 +151,7 @@ Logging is governed per URL by a **ruleset**: an ordered list of `Rule`s, each a
 - **Discovery stages hooks, it does not write rules.** `Discovery_Collector_Node` stages spoke-reported names into the non-autoloaded `discovered_hooks` and `discovered_events` options, surfaced in the editor's picker; it never writes a rule. Three callers do, and every one goes through `save()`: the `rules` `save` / `upsert` / `delete` verbs, `Auto_Tuner_Node`, and `Rule_Set::apply_synced()` on the settings-sync receive path. A diff having discovery union-merge into a `/` rule and save the ruleset breaks "empty means empty".
 - **`upsert` drops by id OR by pattern, then appends under the pattern-derived id.** `Rules_CI_Node::upsert` removes the entry whose `id` matches the incoming rule's — an edit that renames the pattern carries its OLD id, so the stale entry goes with it — and the entry whose pattern matches, which is the id-less "Log this URL" add. Collapsing that to pattern-only orphans every renamed rule.
 
-### 18. Per-rule diagnostic knobs, and what each costs
+### 16. Per-rule diagnostic knobs, and what each costs
 
 Five flags on `Rule` gate instrumentation, every one off unless the rule sets it, and their prices differ:
 
@@ -199,17 +167,17 @@ Four invariants a diff must keep. **The HTTP pair is deliberately unbalanced**: 
 
 A span is named for its CALLER, never for its host or its table. Both pairs set `l` from `origin_frame( true )`, which climbs past EVERY frame of the class that applied the filter, at `TRANSPORT_ORIGIN_DEPTH` (16) against the `ORIGIN_DEPTH` (8) a hook's own origin takes, because `wpdb::get_row()` reaches the `query` filter through `wpdb::query()` and a fixed skip would land inside `wpdb`. They climb whatever `trace_callers` says, and that budget reaches a transport span as well as a hook — keyed on the statement shape or the URL — so `l` names one frame on every call while `caller` carries the chain on the first few. A diff coupling the climb to the budget leaves every traced rule's spans reading `wpdb->query` and `WP_Http->request`. And a field nothing renders does not exist: `LogEntriesTable` renders `m`, the origin frame `l` and `caller`, so a new traced field needs its own reader there.
 
-### 19. Hook-instrumentation invariants
+### 17. Hook-instrumentation invariants
 
 `App\Core::wrap_callbacks()` skips any callback declaring a by-reference parameter (`callback_has_ref_param()`), so wrapping never breaks a by-reference WordPress filter. It also registers a sacrificial `hook_spacer` at `SPACER_PRIORITY` (`PHP_INT_MAX - 2`) so `hook_complete` at `PHP_INT_MAX - 1` still fires when a callback removes itself mid-run and shifts WP's pointer past it, and treats everything at or above the spacer priority as its own. A diff that wraps a by-ref callback breaks the filter it wrapped; one that removes the spacer loses the `(complete)` on every hook whose callback unhooks itself, leaving that span open for the rest of the record.
 
-### 20. A hook-category pattern is untrusted input
+### 18. A hook-category pattern is untrusted input
 
 `Hook_Categorizer` merges `hook_categories.json` with the `newspack_event_logger_nodes_hook_customizations` option, so a pattern can arrive from the database. `categorize()` therefore treats every one as hostile: it skips a pattern over `MAX_PATTERN_LENGTH` (100), skips and logs one carrying a nested quantifier, skips one PCRE refuses to compile, wraps each in an `\x01` delimiter so no pattern can inject its own, and drops `pcre.backtrack_limit` to 10000 for the scan, restoring it in a `finally` that survives a throw. Strip any of the five and an operator-supplied pattern becomes a ReDoS on every request that categorizes a hook.
 
 `is_internal()` is the other half. `App\Core::bind_current_scope()` calls it before binding `hook_start` / `hook_complete`, because instrumenting our own hooks answers no "where is time going" question and binding one of the substrate's filters can loop through `Config::load_config()` while `Log_Manager` is still booting.
 
-### 21. A sequence-break marker is missing detail, not idle time
+### 19. A sequence-break marker is missing detail, not idle time
 
 `entries (lost)` and `entries (aggregated)` stand in for entries `Request_Builder_Node` removed — discarded on overflow, or merged by the fold. It mints them, so it owns the vocabulary as `Request_Builder_Node::SEQUENCE_BREAK_KEYS`; consumers reference that constant rather than spelling the keywords again, and the JS keeps a deliberate copy because it is a separate deploy unit.
 
@@ -217,7 +185,7 @@ A span is named for its CALLER, never for its host or its table. Both pairs set 
 
 **The fold keeps the CLOSE of any span its head left open.** After the `FOLD_KEEP_HEAD` (10)-th row, `fold_request()` marks the frames still open on the fold's own stack (`Flame_Fold::mark_open_frames()`), and `Flame_Fold::add()` reports when a `(complete)`, an `(orphaned)` one included, matches a marked frame; the builder marks that row kept. One stack does the matching, so a re-opened same-name span keeps its own close and a nested pair keeps both. The tail holds rows in arrival order and evicts only unkept ones past `FOLD_KEEP_TAIL` (10), so a kept close stays where it arrived, beside the rows logged inside its span. A span opened in the head frames every row after it, so its close is structure rather than detail, and the fold knows exactly which frames it left open — unlike `is_kept()`, which refuses to guess and honours the producer's own `keep` mark. The request's own frame is exempt: `process (complete)` is the last row to arrive, so the tail always holds it. A folded envelope never folds again.
 
-### 22. Settings go through `Settings_Schema`
+### 20. Settings go through `Settings_Schema`
 
 Settings live in ONE declarative `Settings_Schema` (`includes/class-settings-schema.php`), one `Field` per setting, from which the Config overlay keys, the admin register-and-render loop, and worker-restart classification (`restart_for()`) all derive. Seven application keys are declared there with their defaults: three rendered checkboxes (`enable_logging`, `log_memory`, `flush_every_line`) and four overlay-only (`rules`, `hook_start_priority`, `custom_colors`, `recommended_log_events`). `allowed_users` is the substrate's key: the admin surface inherits it through `Capabilities::can( MANAGE )`.
 
@@ -229,15 +197,15 @@ A diff adding a setting adds a `Field` with its `restart:` key, never a parallel
 
 **Config reads fail loud.** `Config::value()` throws on a key the substrate registry does not declare. Never `?? default` a key you depend on; a renamed key should throw at the boundary.
 
-**A `.tsl` reads config through `<eln:KEY>`**, resolved by `Config::resolve_eln_token()`; substrate keys keep `<config:KEY>`. It owns exactly four names — `is_hub`, and the stats Tables' `stats_ttl`, `stats_url_ttl` and `stats_url_fine_ttl`, each DERIVED from `Config::stats_retention_seconds()` rather than stored. Null is the resolver's "not mine", and `Core::resolve_config_token()` reads it as unresolvable: a topology argument reaching for a fifth name becomes `''` with a rate-limited warning, and a `node_schema` argument DEFAULT reaching for one throws, since that path resolves strict. Neither hands the node a null — add the key to the resolver's own list.
+**A `.tsl` reads config through `<eln:KEY>`**, resolved by `Config::resolve_eln_token()`; substrate keys keep `<config:KEY>`. It owns exactly one name, `is_hub`. Null is the resolver's "not mine", and `Core::resolve_config_token()` reads it as unresolvable: a topology argument reaching for a second name becomes `''` with a rate-limited warning, and a `node_schema` argument DEFAULT reaching for one throws, since that path resolves strict. Neither hands the node a null — add the key to the resolver's own list.
 
-### 23. Schema field names, and the palette category
+### 21. Schema field names, and the palette category
 
 `node_schema()` uses `'arguments'` for positional constructor args and `'commands'` for verb declarations. A diff reading or writing `'ctor'` or `'verbs'` is a stale port.
 
 Every node also declares a `'category'`. The substrate's `Classes_CI_Node` refuses an empty one and a `'hidden'` flag from the class catalog, and the console palette also leaves out `'Service'`, `'Remote'` and `'Hidden'`, which the Inspector still reads. The three service CIs take `'Service'`; `Auto_Tuner_Node` and `Request_Flight_Node` take `'Hidden'`, because neither is composed by hand — `Flame_Builder_Node` builds the auto-tuner as its patroned sibling, and the request builder builds the flight node, a `Timer_Node`, the same way; both open from their builder's "…" rather than the canvas, and since a Timer builds no `:config`, the flight's two knobs (`set_inflight_target`, `set_inflight_delta`) sit on the patron's `:config` interpreter. Giving either a listed category offers an operator a node they cannot usefully place.
 
-### 24. Option names carry the prefix; the hook seams are a fixed set
+### 22. Option names carry the prefix; the hook seams are a fixed set
 
 Uninstall selects BY PREFIX. `includes/uninstall-cleanup.php` deletes every `newspack_event_logger_nodes_` option row and its two transient stubs, on every site of a multisite, which is what carries the ruleset's non-autoloaded `rule_hooks_*` rows off with it. An option stored under any other name survives a delete.
 
@@ -258,7 +226,7 @@ The plugin fires three extension points — `newspack_event_logger_nodes/setting
 
 Preserve each `accepted_args` exactly when re-registering one: inflating it hands arguments to callbacks never written to receive them.
 
-### 25. Topologies compose the substrate's stock four
+### 23. Topologies compose the substrate's stock four
 
 Eleven `.tsl` files ship in `topologies/`, and a topology's name is its filename — there is no `name:` frontmatter to write. Five are primitives (`request-builder`, `flame-builder`, `job-router`, `job-feed`, `aggregator`) and six compose them (`performance`, `job-hub`, `job-spoke`, `complete`, `hub-control`, `hub`). Four substrate stock topologies arrive by `include`, and the primitives pull two: `topic-probe` into `request-builder`, `flame-builder` and `aggregator`, and `job-intake` into `job-router` and `job-feed`. The composites pull the other two — `job-worker` into `job-hub` and `job-spoke`, and `settings-sync` into `hub-control`. Four gates:
 
@@ -267,22 +235,20 @@ Eleven `.tsl` files ship in `topologies/`, and a topology's name is its filename
 - **`job-router` and `job-feed` each `include job-intake`**, so both write `jobs:partition`. The substrate's conflict gate refuses activating the stock `job-intake` alongside either; that stock topology is the substrate-only subset, never a companion.
 - **`aggregator` names no spoke.** Its `spokes` `Vault_Group` builds one `Remote_Source` per member of Vault group `spoke`, gives each its sources by `add_source` lines recorded on the group, with `set_multi_writer true` and reader roots scoped by `<topology>`; a spoke joins by a Vault edit. A diff hardcoding spokes into the file turns a per-deployment fleet into a shipped constant. A source meant to read in every worker names `{partition}`; a source naming none reads on worker p0 alone, and a topology writing `<partition>` fails to load.
 
-### 26. A snapshot node's `fill()` brackets the deferred clean stop
+### 24. A snapshot node's `fill()` brackets the deferred clean stop
 
 `Request_Builder_Node` and `Flame_Builder_Node` both `use \Newspack_Nodes\Deferred_Clean_Stop` and forward downstream through `guarded()` — into a sink, into the stats flush, into a Partition that writes the record to disk before it honours a cooperative stop. A diff touching either `fill()` keeps its whole body inside `deferring()`, and so does one touching `Request_Builder_Node::fire()` or `Flame_Builder_Node::shutdown_sweep()`. The bracket is per message by construction, and it raises what it held only once the message is finished: a bare stop as clean, anything carrying or beside a failure as a plain stop, which the reader REPLAYS. So both replays must stay idempotent — `Request_Builder_Node` drops a line it already counted by sequence number, and `Flame_Builder_Node` skips accumulating the record whose crumb its restored checkpoint carries as `counted`. A forward outside the bracket, or a new accumulator that bypasses the `counted` test, double-counts that replay and logs `duplicate message: expected #N, got #N-1`. The trait is the substrate's and `nodes-review` gates it there, but these two nodes are the application's, so this checklist is the one that sees the diff.
 
-### 27. Nothing repairs a stats loss, and no reader reads a closed hour's buckets
+### 25. Nothing repairs a stats loss
 
-The stats Tables evict nothing before their TTL (decision 34), so no mechanism exists to put a lost key back, and a diff must keep it that way along with the rules below:
+The `flame-facts` rows go only when their `retain` window passes (decision 34), so no mechanism exists to put a lost row back, and a diff must keep it that way along with the rules below:
 
-- **No repair machinery.** A diff that adds a second copy of a stats key, a sweep, a probe that touches lists to find losses, a held frame, or a read that falls back to another store is the machinery decision 34 deleted. A key a reply lacks is one no flush wrote, or one whose TTL passed.
-- **The checkpoint carries the crumb alone.** `save_state()` runs `write_pending()`, the durable half of `flush()`, before the Consumer commits its cursor, and returns `[ 'counted' => <crumb> ]`; `restore_state()` takes back that crumb and nothing else (decision 31). A diff that carries `pending` or any accumulator in the checkpoint double-counts on the replay, and one that runs the auto-tune emit inside `save_state()` lets a throwing emit keep the cursor from committing.
-- **The search index is one set of members per six-hour bucket per server per word, added blind at most once an hour and read by exact key.** `persist_url_tokens()` files `urltoken:{bucket}:{server_key}:{word}` from `Stats_Store::token_sets_of()` through `Stats_Store::add_url_tokens()`, one `SADD` per `WRITE_BATCH_KEYS` sets, and `search_candidates()` reads the term in `Stats_Store::search_groups()`, longest words first and `SEARCH_WORDS_READ` to a group, one `SMEMBERS` per store per group over every bucket of the window (`token_buckets()`), `URL_SEARCH_MAX` members a set, a set holding more answering `null` and a word's buckets past it together narrowing nothing, and the next group only when every word of the last is over the limit in some store. The once-an-hour rule rides the `url` blob's `filed` stamp, so a diff that decides it from worker memory refiles every URL on each recycle. A diff that reads a set before adding to it pays back the whole-set rewrite the members removed; one that reads a word by prefix reopens the design decision 28 defers; and one that lifts the word cap lets a caller's term multiply a read of up to 5,000 members a set a server.
-- **The fine tier is the current hour.** `Stats_Store::read_plan()` splits the window on the clock hour, and an hour missing its key is SHORT until the builder folds it again, never answered from its buckets. A diff calling `buckets_in_hour()` to read a closed hour's `urls` buckets is the fallback decision 17 retired; `lookup_slots()` calling it to lay out a chart hour's slots is decision 35. An older hour's hole is a short answer, cached (decision 3); only the hour just closed, whose fold the writer may still owe in the current hour's first bucket, makes a header, ranked page or fold `provisional` (`lagging()`, `unfolded()`). A diff that marks a fold provisional for an older hole makes every poll fold again. A hole is a FOLDED hour missing its list or record: an hour holding no index, or one a server of it has no DONE marker for, is owed (`Stats_Store::url_rank_window()` and `url_headers()` name it in `$waiting`), so the header and the ranked page add nothing for it and say `provisional` without folding (decision 28). A diff that sends an owed hour to the fold puts the 26 to 42-second walk on every poll of a replay.
+- **No repair machinery.** A diff that adds a second copy of a stats row, a sweep, a probe to find losses, a held frame, or a read that falls back to another store is the machinery decision 34 deleted. A row a reply lacks is one no flush wrote, or one whose window passed.
+- **The checkpoint carries the crumb alone.** `save_state()` runs `write_rows()`, the durable half of `flush()`, before the Consumer commits its cursor, and returns `[ 'counted' => <crumb> ]`; `restore_state()` takes back that crumb and nothing else (decision 31). A diff that carries `pending` or any accumulator in the checkpoint double-counts on the replay, and one that runs the auto-tune emit inside `save_state()` lets a throwing emit keep the cursor from committing.
 
-### 28. Which clock, and what a late stamp does
+### 26. Which clock, and what a late stamp does
 
-- **Buckets key on UTC.** `Stats_Store::bucket_key()` formats with `gmdate()`, so DST never yields a 23- or 25-hour day and a bucket key never repeats. A diff that buckets through `date()`, `wp_date()` or a site timezone splits one instant across two keys twice a year.
+- **Buckets key on UTC.** `Bucket::key()` formats with `gmdate()`, so DST never yields a 23- or 25-hour day and a bucket key never repeats. A diff that buckets through `date()`, `wp_date()` or a site timezone splits one instant across two keys twice a year.
 - **Durations are monotonic.** `Log_Manager`'s spans and `wp nodes ruleset-bench` measure with `hrtime()`. A duration taken from `microtime()` or `Core::$now` goes negative or doubles when the wall clock steps.
 - **The hub files a stamp where it happened, never in the future.** `Flame_Builder_Node::fill()` clamps a record's completion stamp to its own `now` — a spoke's skewed clock or a bogus duration cannot file a future bucket readers never reach (decision 19) — files a late record under its own stamp rather than the arrival, and `hour_tier_intents()` merges a write into an hour it already folded into the coarse key the readers take. A backlog lands where it happened. A diff that files by arrival time, or drops a late record because its hour closed, loses exactly the backlog decision 19 keeps.
 
@@ -341,7 +307,7 @@ Ten more CIs are substrate-owned, mounted on the same hook by `newspack_nodes_mo
 - Every test gets one second — `phpunit.xml` sets no `defaultTimeLimit` — and `failOnRisky="true"` makes a breach fail the run rather than warn. Refuse a `#[Medium]` or `#[Large]` added to fit a test that waits in real time: the test pins a clock instead: `Core::$now`, the tick every reader here dates from, and `Core::$clock` or `Event_Framework::$sleep` in the substrate. No class in the suite declares a size.
 - Coverage lands under `${TEST_TMP:-${TMPDIR:-/tmp}}/newspack-event-logger-nodes-coverage/` after `tests/run-coverage.sh`. `pre-push` holds every `includes/` class to 90% statement coverage (`scripts/coverage-gate.py`) and every `src/` file to 90% (`scripts/coverage-gate-js.mjs`), so a new class arrives with its tests or the push fails.
 - Fixtures use `Message::TM_STRUCT` for array-VALUE messages. `TM_BYTESTREAM` in a fixture carrying an array VALUE is a stale test.
-- Tests needing a cache backend assign the substrate's in-memory `\Memcached` double (`../newspack-nodes/tests/Helpers/InMemoryMemcached.php`) to `Core::$memd` in `setUp`. There is no cache interface to inject, and nothing should type-hint one. Stats tests build their store through `TestCase::stats_store()`, which writes real SQLite Tables in the test's base directory and reads them through a reader's own mount.
+- Tests needing a cache backend assign the substrate's in-memory `\Memcached` double (`../newspack-nodes/tests/Helpers/InMemoryMemcached.php`) to `Core::$memd` in `setUp`. There is no cache interface to inject, and nothing should type-hint one. Stats tests seed `flame-facts` rows through the `FactsSeeder` trait, which writes a real Row_Table through `ROWS` as a flush does, or arm a builder through `TestCase::armed_flame_builder()`.
 - A new Service CI verb needs a happy-path test, a role test asserting `dispatch()` refuses a caller below the declared role, and a fail-soft test where the handler's Table cannot open or refuses a read. Rate-limit tests belong to the substrate.
 - Seed test values **distinct from every default and fallback**. A test seeded with the default still passes when the change is ignored, so it proves nothing.
 
@@ -363,9 +329,6 @@ Reproduce a finding against these before writing it up by hand — and never dis
 
 ## Common review nits that aren't bugs
 
-- The many-namespace stats schema looks redundant at a glance. It is deliberate: different access patterns want different keys, and one `MGET` per Table across a whole namespace is what holds dashboard latency down.
-- `hourly_h` is not an hourly sum. Like every chart namespace, its hour key holds twelve five-minute slots (decision 35).
-- The URL index stores at TWO resolutions and the coarse one is derived. `urls_h` is folded from `urls` on the writer's flush path, and an hour with no coarse key is short until the flame builder folds it again; no reader reads a closed hour's fine buckets.
 - Application classes register with the substrate's CommandInterpreter. One interpreter serves both plugins, and the `App\` namespace registration is what admits them.
 
 ## Related Skills

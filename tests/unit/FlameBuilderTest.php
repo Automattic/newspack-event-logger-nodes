@@ -513,29 +513,6 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ [ 1 ] ], $this->facts( 'SELECT count FROM requests_hourly' ), 'the hourly rollup landed with it' );
 	}
 
-	public function test_two_partitions_running_flames_merge_as_one_builder_would_hold_them(): void {
-		$p0 = [ 'name' => 'aggregate', 'sum_value' => 610.0, 'count' => 4, 'children' => [
-			[ 'name' => 'init hook', 'sum_value' => 200.0, 'ts' => 1790004000, 'children' => [] ],
-			[ 'name' => 'cron hook', 'sum_value' => 70.0, 'ts' => 1790000300, 'children' => [] ],
-		] ];
-		$p1 = [ 'name' => 'aggregate', 'sum_value' => 390.0, 'count' => 3, 'children' => [
-			[ 'name' => 'init hook', 'sum_value' => 50.0, 'ts' => 1790003100, 'children' => [
-				[ 'name' => 'wp_head hook', 'sum_value' => 20.0, 'ts' => 1790003100, 'children' => [] ],
-			] ],
-		] ];
-
-		$merged = Flame_Builder_Node::merge_url_flames( $p0, $p1 );
-
-		$this->assertSame( 7, $merged['count'] );
-		$this->assertEqualsWithDelta( 1000.0, $merged['sum_value'], 1e-6 );
-		$init = $merged['children'][0];
-		$this->assertSame( 'init hook', $init['name'] );
-		$this->assertEqualsWithDelta( 250.0, $init['sum_value'], 1e-6 );
-		$this->assertSame( 1790004000, $init['ts'], 'the newer stamp' );
-		$this->assertEqualsWithDelta( 20.0, $init['children'][0]['sum_value'], 1e-6 );
-		$this->assertSame( [ 'init hook' ], \array_column( $merged['children'], 'name' ), 'a node an hour behind the newest stamp expires' );
-	}
-
 	/**
 	 * Records a request line always fills in, broken one field at a time.
 	 *
@@ -646,25 +623,6 @@ class FlameBuilderTest extends TestCase {
 			'timings' => $this->facts( "SELECT category, entry, listener, ms, calls, requests FROM timings WHERE server = '{$host}' ORDER BY category, entry" ),
 			'hourly'  => $this->facts( "SELECT count, timed, sum_ms, max_ms, errors FROM requests_hourly WHERE server = '{$host}'" ),
 		];
-	}
-
-	/**
-	 * A URL's running flame counts every request and sums only the timed
-	 * ones' durations and trees; its display form divides by the count.
-	 */
-	public function test_a_urls_running_flame_folds_timed_requests_and_displays_their_mean(): void {
-		$tree  = [ 'children' => [ [ 'name' => 'init hook', 'value' => 30.0, 'children' => [] ] ] ];
-		$flame = Flame_Builder_Node::empty_url_flame();
-		$flame = Flame_Builder_Node::fold_url_flame( $flame, $tree, 120.0, true, 1790004000 );
-		$flame = Flame_Builder_Node::fold_url_flame( $flame, $tree, 9000.0, false, 1790004005 );
-		$flame = Flame_Builder_Node::fold_url_flame( $flame, $tree, 80.0, true, 1790004010 );
-
-		$this->assertSame( 3, $flame['count'] );
-		$this->assertEqualsWithDelta( 200.0, $flame['sum_value'], 1e-9, 'the untimed request adds no duration' );
-		[ $raw, $display ] = Flame_Builder_Node::url_flame_for_display( $flame );
-		$this->assertSame( 3, $raw['count'] );
-		$this->assertSame( 'aggregate', $display['name'] );
-		$this->assertEqualsWithDelta( 20.0, $display['children'][0]['value'], 1e-9, 'two timed trees over three requests' );
 	}
 
 	/** A record whose `entries` are no list still forwards a flame, with no children. */
