@@ -20,7 +20,7 @@ The vocabulary here is the substrate's. Its [documentation map](https://github.c
 | PHP | 8.2 |
 | `newspack-nodes` | 2.111.0, installed and active |
 | A cache backend | Memcached, or APCu |
-| `pdo_sqlite` | On every host running the flame builder |
+| `pdo_sqlite`, with FTS5 | On every host running the flame builder |
 
 The substrate's [`Cache_Backend`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-cache-backend.php) prefers the shared `Memcached` handle `Bootstrap` builds from `memcache_servers` and falls back to APCu. Either one alone brings the runtime up. With neither, the substrate cannot claim a command's single-use nonce, so verification fails closed and no dashboard verb answers. The statistics need neither: they live in the `flame-facts` Row_Table, one SQLite file per partition under the substrate's base directory, `{base}/tables/flame-facts.p{N}.sqlite`, which [`flame-builder.tsl`](topologies/flame-builder.tsl) declares. Without `pdo_sqlite` the `flame-builder`, `performance` and `complete` topologies refuse to load, naming the Table that cannot open, and the dashboards answer no statistics.
 
@@ -93,7 +93,7 @@ A dashboard reaches the server two ways, both of them the substrate's: a TM_COMM
 
 | Surface | Service CI verbs | Live data | Source |
 |---------|------------------|-----------|--------|
-| **Performance** (Event Logger → Performance) | [`performance`](docs/API.md#performance--the-omnibus-dashboard-ci)`.{overview, urls, dump_url, url_breakdown, search_requests, dump_request, grep_requests, ask, list_hooks}`, [`rules.{dump, upsert, delete}`](docs/API.md#rules--per-url-logging-ruleset-crud) | — | [`Request_Builder_Node`](includes/class-request-builder-node.php) + [`Flame_Builder_Node`](includes/class-flame-builder-node.php) + [`Stats_Query`](includes/app/class-stats-query.php) + [`Reqgrep_Core`](includes/class-reqgrep-core.php), over the `requests` partition index |
+| **Performance** (Event Logger → Performance) | [`performance`](docs/API.md#performance--the-omnibus-dashboard-ci)`.{overview, urls, query, dump_url, search_requests, dump_request, grep_requests, ask, list_hooks}`, [`rules.{dump, upsert, delete}`](docs/API.md#rules--per-url-logging-ruleset-crud) | — | [`Request_Builder_Node`](includes/class-request-builder-node.php) + [`Flame_Builder_Node`](includes/class-flame-builder-node.php) + [`Stats_Query`](includes/app/class-stats-query.php) + [`Reqgrep_Core`](includes/class-reqgrep-core.php), over the `requests` partition index |
 | **Gyroscope** (Event Logger → Gyroscope) | — | `subscribe=gyroscope.*` | [`Request_Flight_Node`](includes/class-request-flight-node.php) in-flight snapshots plus the `completed:tee` fan-out |
 | **Request Log** (Event Logger → Request Log) | substrate [`raw-logs.{list_logs, dump_log, read_message}`](docs/API.md#substrate-verbs-the-dashboards-use) | `subscribe=completed.*` | `completed.p0`, the finished requests `completed:tee` fans out |
 | **Errors** (Event Logger → Errors) | substrate `raw-logs.{list_logs, dump_log, read_message}` | `subscribe=errors.*` | `errors.p0`, written by `Request_Builder_Node`: its own error and warning records, and the `stderr` lines [`Diagnostics_Bridge`](includes/class-diagnostics-bridge.php) carries in from the substrate |
@@ -119,7 +119,7 @@ wp nodes ruleset-bench         # measures the ruleset's two hook-storage tiers, 
 
 ## MCP
 
-[MCP](https://modelcontextprotocol.io/) re-serves ten of the service-CI verbs as [JSON-RPC](https://www.jsonrpc.org/specification) tools, so an agent can read the performance data and edit the ruleset without a dashboard. It adds no verbs of its own: `tools/call` mounts the same request graph `/command` mounts and dispatches through the same interpreter.
+[MCP](https://modelcontextprotocol.io/) re-serves eleven of the service-CI verbs as [JSON-RPC](https://www.jsonrpc.org/specification) tools, so an agent can read the performance data and edit the ruleset without a dashboard. It adds no verbs of its own: `tools/call` mounts the same request graph `/command` mounts and dispatches through the same interpreter.
 
 ```
 POST /wp-json/newspack-event-logger-nodes/v1/mcp

@@ -83,7 +83,7 @@ dump flame-facts                           # the stats Row_Table: its schema wor
 command_node flame-builder:config \
     set_facts_target flame-facts           # a verb at <cwd>/<path>, cwd unchanged (aliases: command, cmd)
 request request-builder GET_STATS          # in-flight depth (alias of request_node)
-request flame-builder GET_STATS            # stats accumulator + pending buckets
+request flame-builder GET_STATS            # buffered requests and row ops
 cmd request-builder:config purge           # drop every in-flight request, reporting the count
 cd request-builder:config                  # send later verbs TO that interpreter; `cd /` resets
 ```
@@ -95,7 +95,7 @@ Valid `ls` flags are `-a`, `-c`, `-l`, `-s` and `-t`, combinable as `-alst`. The
 | Verb | Node | Reply |
 |---|---|---|
 | `GET_STATS` | `request-builder` | `{ pending_count, oldest_rid, oldest_age_s, sample, line_counter }` |
-| `GET_STATS` | `flame-builder` | `{ stats_count, pending_url_count, intern_count, pending_buckets, last_flush_age_s, auto_tune_pending_count, is_hub, significant_events_count, narration }` |
+| `GET_STATS` | `flame-builder` | `{ buffered_requests, buffered_rows, last_flush_age_s, auto_tune_pending_count, significant_events_count, narration }` |
 
 A `line_counter` of 0 on a busy site means the firehose Consumer is reading nothing. A climbing `oldest_age_s` means requests are stranding in flight — `Request_Builder_Node` evicts them 720 to 1080 seconds after their last line (three buckets rotating every 360 seconds, and the 720-second floor is what clears a worker's 595-second spawn request by two minutes) and writes them out with `error_status='T'`.
 
@@ -201,16 +201,17 @@ Clients reconnecting every few seconds mean the slot lease is expiring. The brow
 
 ## Querying the stored record: the MCP endpoint
 
-This plugin registers exactly one REST route of its own: `POST /wp-json/newspack-event-logger-nodes/v1/mcp`, a JSON-RPC MCP server (`PROTOCOL_VERSION 2025-06-18`) wrapping ten verbs that already exist — seven `performance` reads plus `rules.dump`, `rules.upsert` and `rules.delete`. It is the fastest way to interrogate one record without a browser.
+This plugin registers exactly one REST route of its own: `POST /wp-json/newspack-event-logger-nodes/v1/mcp`, a JSON-RPC MCP server (`PROTOCOL_VERSION 2025-06-18`) wrapping eleven verbs that already exist — eight `performance` reads plus `rules.dump`, `rules.upsert` and `rules.delete`. It is the fastest way to interrogate one record without a browser.
 
 | Tool | Verb | Answers |
 |---|---|---|
 | `grep_requests` | `performance.grep_requests` | Pattern-search recent firehose traffic; a bounded summary per match (`rid`, `url`, `method`, `ts`, `match_count`, `first_match_excerpt`) |
 | `search_requests` | `performance.search_requests` | Locate one rid across every partition |
 | `dump_request` | `performance.dump_request` | Full request plus flame data for a rid; the `partition` argument is a hint, not a filter — every partition is searched either way |
-| `dump_url` | `performance.dump_url` | One URL's stats, its 500 newest requests across partitions, the aggregate flame summed over partitions |
+| `dump_url` | `performance.dump_url` | One URL's stats, its 500 newest requests across partitions, the aggregate flame rebuilt from their stored flames |
+| `performance_query` | `performance.query` | Any group, filter and measure `Stats_Query` names, over the request or timing rows; a top-N by window functions |
 | `performance_urls` | `performance.urls` | The URL table: every URL-set fact under the filters it applied |
-| `performance_overview` | `performance.overview` | Site totals and breakdowns the URL index cannot answer |
+| `performance_overview` | `performance.overview` | Site totals, the servers seen and the 25-hour category leaderboard |
 | `performance_ask` | `performance.ask` | `Findings` for one picker descriptor — `overview:`, `url:`, `request:`, `span:`, `entry:` or `category:` |
 | `dump_rules` / `rules_upsert` / `rules_delete` | `rules.*` | The per-URL logging ruleset |
 
@@ -270,9 +271,9 @@ The request builder narrates on the same record, through the same `Narration` tr
 
 **Dashboard 429s immediately.** Service-CI verbs carry no throttle of their own, but `/command` does: `HTTP_In_Node::RATE_LIMIT_BURST` is 30 POSTs per `RATE_LIMIT_WINDOW_S` (1 second) per user, metered by the substrate's `Rate_Limit` and tunable through the `newspack_nodes/command_rate_limit` filter. A 429 on a `/command` POST is that budget, not a per-CI limit. With neither memcached nor APCu answering, `/command` admits and logs `Rate_Limit: /command rate limit unavailable` once a window, so the dashboards keep working unmetered; a 429 on `/messages/stream` is the SSE slot pool.
 
-**The time axis is the reply's, never the page's.** Each `overview`, `dump_url` and `url_breakdown` reply names its `slots`, the 288 five-minute buckets ending at the current one, and `buildChartSlots()` draws exactly those keys, so a browser clock off by a minute moves nothing. A chart with no series drawn before its first reply is a reply that has not named its slots yet.
+**The time axis is the answer's, never the page's.** Each chart draws the buckets its `query` answer echoes in `filters.bucket` (`answerSlots()`), the last 288 five-minute buckets ending at the current one unless a selection names others, so a browser clock off by a minute moves nothing. A chart with no series drawn before its first answer is an answer that has not arrived yet.
 
-**The URL modal's "The request index scan stopped early" banner will not clear.** `UrlDetailMergeNode` treats `scan_stopped_early` as a property of the accumulated request list rather than of the latest reply: `_merge()` forces the flag back ON whenever the retained payload carries it and never forces it off, because a walk that ran out of budget, or a partition holding more than `RECENT_REQUEST_LIMIT` matches, left rows missing from the accumulation and a later complete walk does not put them back. A URL busy enough to put 500 requests in one partition inside the window carries the note from its first read. Only the `clear` control drops the note, with the list it described, and `usePerformanceGraph` sends one when the modal closes and when the server scope changes — so reopening the modal is the fix. The flag `docs/API.md` describes is the server's, per single `dump_url` call, and says nothing about this accumulation.
+**A chart says "No … data in this window." while traffic flows.** Read the `query` answer's `available`: false means the stats files did not open, and the worker or request logged `performance: stats rows did not open` with the reason — `pdo_sqlite` missing, no active topology declaring `flame-facts`, or a file SQLite cannot attach. True with no rows means the rows hold nothing for that question; ask `GET_STATS` on `flame-builder` whether its buffer is writing, and `dump flame-facts` for the Row_Table's counters.
 
 **`reqgrep --recent` shows nothing but the firehose is being written.** Three possibilities. First, `Log_Manager` never started: `enable_logging` is off, or the process is root (`posix_geteuid() === 0` returns before the matcher is even built, because root-owned segment files the web user could never append to are worse than no logs). Second, the firehose path doesn't match — check `Newspack_Event_Logger_Nodes\Config::get_logs_directory()`. Third, no ruleset rule matches the URL: `Log_Manager` resolves one governing rule per request through `Rule_Matcher`, and no match — or a `skip` rule — writes nothing. **Empty means empty**: an absent ruleset logs nothing, because there is no implicit `/` log-all baseline. Read it through the `rules` CI `dump` verb or `wp option get newspack_event_logger_nodes_rules`. The shipped default seeds a `/` log rule alone; the substrate's own endpoints and `/wp-cron.php` log as worker traffic.
 

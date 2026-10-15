@@ -6,6 +6,91 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.111.0, and each site rebuilds its
+  stats.** The stats move from the three keyed `flame-stats:*` Tables to the
+  `flame-facts` Row_Table, which `flame-builder.tsl` declares with
+  `make_node Row_Table flame-facts Flame_Facts`; below 2.111.0 the plugin
+  stays dormant. Release the substrate first, then this plugin, then rebuild
+  on each site:
+
+  ```bash
+  wp nodes stop && wp nodes deactivate performance && wp nodes gc --force && wp nodes memcache flush && wp nodes activate performance && wp nodes start
+  ```
+
+  On a site running `complete`, or another topology that includes
+  `flame-builder`, name that topology in place of `performance`.
+  `gc --force` deletes the old `flame-stats:*` files, which nothing declares
+  once this release loads, and the reactivated readers rebuild the rows from
+  the retained firehose. Every host running the flame builder needs
+  `pdo_sqlite` with FTS5. Every fleet runs at most 8 partitions, down from
+  16, because the substrate's `Spawn_Coordinator::MAX_PARTITIONS` clamps
+  every topology, so one stats reader's attachments stay under SQLite's ten;
+  a site configured for 9 to 16 partitions runs 8 and loses the workers for
+  `p8` and above.
+
+- **A copy of `flame-builder.tsl` takes the Row_Table.** Replace its three
+  `make_node Table flame-stats:…` lines with `make_node Row_Table flame-facts
+  Flame_Facts`, and its `set_aggregate_target`, `set_url_target`,
+  `set_url_fine_target`, `configure_stats` and `set_is_hub` lines with
+  `command_node flame-builder:config set_facts_target flame-facts`. The
+  `<eln:stats_ttl>`, `<eln:stats_url_ttl>` and `<eln:stats_url_fine_ttl>`
+  tokens are gone; `<eln:>` resolves `is_hub` alone. A flame builder's
+  `GET_STATS` answers `buffered_requests` and `buffered_rows` in place of
+  `stats_count`, `pending_url_count`, `intern_count`, `pending_buckets` and
+  `is_hub`.
+
+- **`overview` answers `{ totals, slots, servers, leaderboard }`.** `totals`
+  carries `requests`, `timed`, `avg_ms`, `avg_peak_mb`, `errors` and `urls`
+  over the chart's 288 buckets; `leaderboard` keeps its display shape. The
+  `breakdown` and `categories` arguments are refused, and `total_requests`,
+  `global_avg_ms`, `global_avg_peak_mb`, `global_leaderboard`, `breakdowns`
+  and `category_time_series` are gone: ask `query` for a chart series.
+
+- **`urls` answers `{ data, rows, totals, slowest, filters, limit, offset }`.**
+  `provisional`, `estimated`, `ranked` and `as_of` are gone, and so are the
+  `Other` rows marked `aggregate`. Every count is exact and every mean
+  request-weighted, `totals.urls` and `rows` count distinct URLs, and
+  `requests_per_second` divides by the seconds the selected buckets have run.
+
+- **`dump_url` answers `{ stats, requests, requests_capped, aggregate_flame,
+  aggregate_profiles }`.** The `breakdown`, `categories` and `after`
+  arguments are refused, and `scan_stopped_early`, `requests_window_start`,
+  `positions`, `last_modified`, `slots`, `breakdown_time_series` and
+  `category_time_series` are gone. Each listed request carries its `partition`,
+  `segment`, `offset` and `length`, and its `timestamp` is its start. A caller
+  tailing the list with `--after` re-asks it whole instead.
+
+- **`url_breakdown` is gone.** Ask `query` grouped by `bucket` and the
+  dimension, filtered `url=<hash>`, for the four sums `url_breakdown`
+  carried, which are the dashboard's `SERIES_MEASURES`:
+
+  ```
+  query requests bucket status_class --filter=url=<hash> --measure=count --measure=sum_ms --measure=sum_peak_mb --measure=timed --top=20 --top_by=count
+  ```
+
+  `--top` keeps every bucket of the 20 busiest values. Without it the answer
+  stops at 1,000 rows, ordered by its groups, so a dimension with many values
+  loses its newest buckets without a word. The MCP tool `performance_query`
+  fronts `query`; an MCP client counting tools sees eleven.
+
+- **The dashboard's breakdown names are the query fields.** A link carrying
+  `?breakdown=status` now breaks down by exact status code; the status
+  classes are `?breakdown=status_class`.
+
+- **Removed PHP:** `Stats_Store`, `Url_Sketch`,
+  `Config::stats_retention_seconds()`, `Config::MIN_RETENTION_SECONDS`,
+  `Flame_Builder_Node::merge_url_flames()`,
+  `Flame_Builder_Node::index_completion_columns()` and `WRITE_BATCH_KEYS`,
+  `Request_Builder_Node::index_completion_columns()` and
+  `index_position_columns()`, and the `Flame_Tree` span names
+  `URL_PAGE_CACHE`, `URL_HEADER_CACHE`, `URL_FOLD`, `URL_RANK_LISTS`,
+  `STATS_RANK_CLOSE`, `STATS_PROBE`, `STATS_FOLD` and `STATS_RE_RANK`. A
+  reader of the stats asks `App\Stats_Query::run()` instead.
+  `Ask_Assembler::for_url()` takes `( $stats, $requests, $requests_capped,
+  $rule, $server, $filters )`, and `for_url_span()` and `for_url_category()`
+  each take the server last. `Flame_Tree::prune_lightest( $root, $max_nodes )`
+  takes a node count.
+
 - **This release needs newspack-nodes 2.110.0, which takes a broker's
   sources by `add_source`.** `aggregator.tsl` now builds its `spokes` group
   with `make_node Vault_Group spokes Remote_Source spoke <offsets root>
