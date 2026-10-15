@@ -50,7 +50,7 @@ final class FlameFactsTest extends TestCase {
 		);
 		$fb->flush();
 
-		$this->assertSame( [ [ 'rid-3301', 503, 'NZ', 842.5, 61.0, 81, 4096, 300, 0, 'GET', null ] ], $this->facts( 'SELECT rid, status, country, ms, peak_mb, segment, "offset", length, worker, method, error FROM requests' ), 'a record with no error files none' );
+		$this->assertSame( [ [ 'rid-3301', 503, 'NZ', 842.5, 61.0, 81, 4096, 300, 0, 'GET', null, 1 ] ], $this->facts( 'SELECT rid, status, country, ms, peak_mb, segment, "offset", length, worker, method, error, profiled FROM requests' ), 'a record with no error files none; its timing rows mark it profiled' );
 		$this->assertSame( [ [ Log_Manager::url_hash( $url ), 'kea.example', '/egret-6617/' ] ], $this->facts( 'SELECT hash, server, path FROM urls' ) );
 		$this->assertSame( [ [ 'Takahe/4.2' ] ], $this->facts( 'SELECT ua FROM agents' ) );
 		$this->assertSame( [ [ 1 ] ], $this->facts( 'SELECT count(*) FROM requests r JOIN urls u ON u.id = r.url_id JOIN agents a ON a.id = r.ua_id' ), 'the row names its URL and agent by id' );
@@ -186,9 +186,19 @@ final class FlameFactsTest extends TestCase {
 		$this->fill_request_at( $fb, $this->completed_request( [ 'url' => 'https://kea.example/moa', 'error_status' => 'A', 'duration_ms' => 5_000.0, 'profiles' => [ 'sql' => [ 'time' => 4.0, 'count' => 1, 'entries' => [] ] ] ] ), '' );
 		$fb->flush();
 
-		$this->assertSame( [ [ null ] ], $this->facts( 'SELECT ms FROM requests' ) );
+		$this->assertSame( [ [ null, 0 ] ], $this->facts( 'SELECT ms, profiled FROM requests' ), 'a profile on an untimed request profiles nothing' );
 		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM timings' ) );
 		$this->assertSame( [ [ 1, 0, 0 ] ], $this->facts( 'SELECT count, timed, errors FROM requests_hourly' ), 'an abort is no error' );
+	}
+
+	/** A timed request whose profile files no timing row is no profiled request. */
+	public function test_a_timed_request_with_no_timing_rows_is_not_profiled(): void {
+		$fb = $this->armed_flame_builder();
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-hoiho-1', 'url' => 'https://kea.example/hoiho', 'duration_ms' => 73.5, 'profiles' => [] ] ), '' );
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-hoiho-2', 'url' => 'https://kea.example/hoiho', 'duration_ms' => 81.5, 'profiles' => [ 'sql' => 'nine ms' ] ] ), '' );
+		$fb->flush();
+
+		$this->assertSame( [ [ 'rid-hoiho-1', 73.5, 0 ], [ 'rid-hoiho-2', 81.5, 0 ] ], $this->facts( 'SELECT rid, ms, profiled FROM requests ORDER BY rid' ) );
 	}
 
 	/**

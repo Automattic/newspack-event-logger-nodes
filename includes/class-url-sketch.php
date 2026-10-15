@@ -18,7 +18,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * A distinct count of url_hashes in `2^PRECISION` one-byte registers, stored
  * as the raw deflate of the binary string of those bytes. That one form is
  * what every reader and writer holds: the registers are inflated inside a
- * union or an estimate and never leave it. A small set's registers are
+ * union and never leave it. A small set's registers are
  * nearly all empty, so its sketch is a few hundred bytes where the registers
  * are 16 KiB, and a dense one about 7.5 KiB.
  */
@@ -106,29 +106,6 @@ final class Url_Sketch {
 	 */
 	private static function stored( string $registers ): string {
 		return (string) \gzdeflate( $registers, 1 );
-	}
-
-	/**
-	 * How many distinct hashes a sketch holds, estimated.
-	 *
-	 * @param string $sketch A sketch.
-	 */
-	public static function estimate( string $sketch ): int {
-		$m     = self::BYTES;
-		$sum   = 0.0;
-		$zeros = 0;
-		foreach ( \count_chars( self::registers( $sketch ), 1 ) as $rank => $registers ) {
-			$sum += $registers * 2 ** -$rank;
-			if ( 0 === $rank ) {
-				$zeros = $registers;
-			}
-		}
-		$estimate = 0.7213 / ( 1 + 1.079 / $m ) * $m * $m / $sum;
-		// Linear counting is the better estimate while registers stand empty.
-		if ( $estimate <= 2.5 * $m && $zeros > 0 ) {
-			$estimate = $m * \log( $m / $zeros );
-		}
-		return (int) \round( $estimate );
 	}
 
 	/**

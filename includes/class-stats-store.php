@@ -1968,17 +1968,8 @@ class Stats_Store {
 	}
 
 	/**
-	 * Convert summed leaderboard data to the display shape expected by the frontend.
-	 *
-	 *  - 'time'    = sum_time  / total_count — avg exclusive cat time per request.
-	 *  - 'count'   = sum_count / total_count — avg invocation count per request.
-	 *  - entries   are per-appearance averages (sum / samples).
-	 *
-	 * Over no profiled request each mean is null, as `mean()` answers.
-	 *
-	 * An entry whose sample count is zero is dropped rather than divided. Past a
-	 * hundred entries a category keeps only its fifty slowest, ranked by average
-	 * exclusive time, so one pathological category cannot flood a payload.
+	 * Summed leaderboard data in the display shape; see
+	 * `Performance_CI_Node::leaderboard_of()`.
 	 *
 	 * @param int                 $total_count  Total profiled requests.
 	 * @param float               $sum_req_time Sum of per-request $req_time values.
@@ -1986,55 +1977,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Display-shaped leaderboard data.
 	 */
 	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
-		$display_cats = [];
-		foreach ( $sums as $cat => $data ) {
-			$data      = Core::arr( $data );
-			$samples   = Core::num_int( $data['samples'] ?? null );
-			$sum_time  = Core::num_float( $data['sum_time'] ?? null );
-			$sum_count = Core::num_float( $data['sum_count'] ?? null );
-
-			$entries_out = [];
-			$entries     = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
-			foreach ( $entries as $name => $entry ) {
-				$entry     = Core::arr( $entry );
-				$e_samples = Core::num_int( $entry[2] ?? null );
-				if ( $e_samples > 0 ) {
-					$entries_out[ $name ] = [
-						Core::num_float( $entry[0] ?? null ) / $e_samples,
-						Core::num_float( $entry[1] ?? null ) / $e_samples,
-						$e_samples,
-					];
-				}
-			}
-
-			if ( \count( $entries_out ) > 100 ) {
-				\uasort( $entries_out, fn( $a, $b ) => $b[0] <=> $a[0] );
-				$entries_out = \array_slice( $entries_out, 0, 50, true );
-			}
-
-			$display_cats[ $cat ] = [
-				'time'    => self::mean( $sum_time, $total_count ),
-				'count'   => self::mean( $sum_count, $total_count ),
-				'samples' => $samples,
-				'entries' => $entries_out,
-			];
-		}
-
-		return [
-			'count'      => $total_count,
-			'total_time' => self::mean( $sum_req_time, $total_count ),
-			'categories' => $display_cats,
-		];
-	}
-
-	/**
-	 * A mean over the things that HAVE a value; see `Ask_Assembler::mean()`.
-	 *
-	 * @param float $sum Summed values.
-	 * @param int   $n   How many contributed one.
-	 */
-	public static function mean( float $sum, int $n ): ?float {
-		return Ask_Assembler::mean( $sum, $n );
+		return \Newspack_Event_Logger_Nodes\App\Performance_CI_Node::leaderboard_of( $sums, $total_count, $sum_req_time );
 	}
 
 	/**
@@ -2923,6 +2866,16 @@ class Stats_Store {
 		}
 		// An all-digit token is an INT key; every reader promises a string.
 		return \array_map( 'strval', \array_keys( $out ) );
+	}
+
+	/**
+	 * A mean over the things that HAVE a value; see `Ask_Assembler::mean()`.
+	 *
+	 * @param float $sum Summed values.
+	 * @param int   $n   How many contributed one.
+	 */
+	public static function mean( float $sum, int $n ): ?float {
+		return Ask_Assembler::mean( $sum, $n );
 	}
 
 	/**

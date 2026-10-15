@@ -175,6 +175,30 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 3, 2, 120.0, 60.0, 80.0, 40.0, 60.0, 20.0, 30.0, 2, 2, (float) self::NOW - 20.25 ] ], $r['rows'], 'an abort is no error, and the URL seen twice in two partitions counts once' );
 	}
 
+	public function test_status_class_counts_and_worker_measure_each_group(): void {
+		foreach ( [ 201, 204, 404, 503, 599, null, 700 ] as $i => $status ) {
+			$this->seed_request( [ 'server' => 'kea.example', 'status' => $status ], partition: $i % 4 );
+		}
+		$this->seed_request( [ 'server' => 'kea.example', 'status' => 302, 'worker' => 1 ], partition: 2 );
+		$this->seed_request( [ 'server' => 'egret.example', 'status' => 200 ], partition: 1 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'worker' ], 'sort' => 'server', 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( 'requests', $r['table'] );
+		$this->assertSame(
+			[ [ 'egret.example', 1, 1, 0, 0, 0, 0 ], [ 'kea.example', 8, 2, 1, 1, 2, 1 ] ],
+			$r['rows'],
+			'a missing status and one past the bounds count in no class'
+		);
+	}
+
+	public function test_a_name_both_grouped_and_measured_is_refused(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'worker names both a group and a measure' );
+
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'worker' ], 'measure' => [ 'worker' ], 'buckets' => $this->last_day() ] ) );
+	}
+
 	public function test_an_untimed_group_answers_null_means_in_either_table(): void {
 		$hour = Bucket::hour( self::NOW );
 		$this->seed_request( [ 'ms' => null, 'error' => 'T' ] );
@@ -206,11 +230,39 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( $expected, $r['rows'], 'url_id 1 is egret in partition 0 and tui in partition 3; rows order by hash' );
 	}
 
-	public function test_a_url_name_is_no_sort(): void {
+	public function test_a_url_name_sort_orders_by_the_displayed_url(): void {
+		$urls = [ 'https://kea.example/weka/', 'https://kea.example/aaa-tui/', 'http://egret.example/moa' ];
+		foreach ( $urls as $i => $url ) {
+			$this->seed_request( [ 'url' => $url, 'server' => \parse_url( $url, \PHP_URL_HOST ) ], partition: $i );
+		}
+		$by_hash = $urls;
+		\usort( $by_hash, static fn ( string $a, string $b ): int => Log_Manager::url_hash( $a ) <=> Log_Manager::url_hash( $b ) );
+		$named = [ 'http://egret.example/moa', 'https://kea.example/aaa-tui/', 'https://kea.example/weka/' ];
+		$this->assertNotSame( $named, $by_hash, 'the fixture is void unless hash order differs from name order' );
+
+		$asc  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'url_name', 'order' => 'asc', 'buckets' => $this->last_day() ] ) );
+		$desc = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'url_name', 'order' => 'desc', 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( $named, \array_column( $asc['rows'], 1 ) );
+		$this->assertSame( \array_reverse( $named ), \array_column( $desc['rows'], 1 ) );
+	}
+
+	public function test_a_url_name_sort_needs_a_url_group(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'url_name' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'url_name', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'url_name', 'buckets' => $this->last_day() ] ) );
+	}
+
+	public function test_profiled_groups_and_filters_requests(): void {
+		$this->seed_request( [ 'profiled' => 1, 'ms' => 61.5 ] );
+		$this->seed_request( [ 'profiled' => 1, 'ms' => 38.5 ], partition: 2 );
+		$this->seed_request( [ 'profiled' => 0, 'ms' => 900.0 ] );
+		$spec = self::spec( [ 'source' => 'requests', 'group' => [ 'profiled' ], 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_hours() ] );
+
+		$this->assertSame( 'requests', Stats_Query::table_for( $spec ), 'the hourly rollup keeps no profiled' );
+		$this->assertSame( [ [ 0, 1, 900.0 ], [ 1, 2, 100.0 ] ], Stats_Query::run( $spec )['rows'] );
+		$this->assertSame( [ [ 2 ] ], Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'profiled' => [ '1' ] ], 'buckets' => $this->last_day() ] ) )['rows'] );
 	}
 
 	public function test_a_url_filter_takes_its_hash(): void {
@@ -339,6 +391,16 @@ final class StatsQueryTest extends TestCase {
 		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'count', 'order' => 'desc', 'limit' => 2, 'offset' => 1, 'buckets' => $this->last_day() ] ) );
 
 		$this->assertSame( [ [ 'd.example', 3 ], [ 'c.example', 2 ] ], $r['rows'] );
+	}
+
+	public function test_a_sorted_measure_ranks_null_last_in_either_order(): void {
+		$this->seed_request( [ 'server' => 'kea.example', 'ms' => 40.0 ] );
+		$this->seed_request( [ 'server' => 'egret.example', 'ms' => null, 'error' => 'T' ], partition: 1 );
+		$this->seed_request( [ 'server' => 'weka.example', 'ms' => 90.0 ], partition: 2 );
+		$spec = self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'avg_ms' ], 'sort' => 'avg_ms', 'buckets' => $this->last_day() ] );
+
+		$this->assertSame( [ 'kea.example', 'weka.example', 'egret.example' ], \array_column( Stats_Query::run( $spec + [ 'order' => 'asc' ] )['rows'], 0 ) );
+		$this->assertSame( [ 'weka.example', 'kea.example', 'egret.example' ], \array_column( Stats_Query::run( $spec + [ 'order' => 'desc' ] )['rows'], 0 ) );
 	}
 
 	public function test_with_no_sort_rows_order_by_their_groups(): void {

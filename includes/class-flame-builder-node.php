@@ -473,7 +473,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		];
 		$profiles = $timed ? Core::arr( $request['profiles'] ?? null ) : [];
 		$url_id   = [ Flame_Facts_Row_Schema::position( 'timings', 'url_id' ) => $url_at ];
-		foreach ( $this->profile_rows( $profiles, $request, $url, 1 === $worker ) as [ $category, $entry, $listener, $time, $calls ] ) {
+		$timings  = $this->profile_rows( $profiles, $request, $url, 1 === $worker );
+		foreach ( $timings as [ $category, $entry, $listener, $time, $calls ] ) {
 			$then[] = [ 'add', 'timings', [ $bucket, $server, null, $category, $entry, $listener, $time, $calls, 1 ], [], $url_id ];
 			$then[] = [ 'add', 'timings_site', [ $bucket, $server, $worker, $category, $entry, $listener, $time, $calls, 1 ] ];
 		}
@@ -499,6 +500,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					self::named( $request['ja4_hash'] ?? null ),
 					self::named( $request['http_from'] ?? null ),
 					$worker,
+					[] === $timings ? 0 : 1,
 					\in_array( $error, Request_Builder_Node::ERROR_STATUSES, true ) ? $error : null,
 					$timed ? $duration : null,
 					$peak,

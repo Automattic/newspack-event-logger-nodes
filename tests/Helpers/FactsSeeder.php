@@ -65,6 +65,7 @@ trait FactsSeeder {
 				'ja4'         => null,
 				'from_header' => null,
 				'worker'      => 0,
+				'profiled'    => 0,
 				'error'       => null,
 				'ms'          => 100.0,
 				'peak_mb'     => 24.0,
@@ -101,9 +102,22 @@ trait FactsSeeder {
 	 * @param int                 $partition The partition file it lands in.
 	 */
 	protected function seed_site_timing( array $over = [], int $partition = 0 ): void {
-		$server = Core::as_string( $over['server'] ?? self::$seed_server );
-		$row    = self::facts_row( 'timings_site', $over + self::timing_defaults( $server ) + [ 'worker' => 0 ] );
-		$this->write_facts( $partition, [ [ 'add', 'timings_site', $row ] ] );
+		$this->seed_site_timings( [ $over ], $partition );
+	}
+
+	/**
+	 * Many `timings_site` rows in one batch.
+	 *
+	 * @param list<array<string,mixed>> $rows      Each row's columns by name.
+	 * @param int                       $partition The partition file they land in.
+	 */
+	protected function seed_site_timings( array $rows, int $partition = 0 ): void {
+		$ops = [];
+		foreach ( $rows as $over ) {
+			$server = Core::as_string( $over['server'] ?? self::$seed_server );
+			$ops[]  = [ 'add', 'timings_site', self::facts_row( 'timings_site', $over + self::timing_defaults( $server ) + [ 'worker' => 0 ] ) ];
+		}
+		$this->write_facts( $partition, $ops );
 	}
 
 	/**

@@ -167,14 +167,14 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( '`error_summary`', $ask_errors );
 		$this->assertStringContainsString( 'ranks after every measured one', $tools['performance_ask']['description'], 'it says how worst requests rank' );
 		$overview = $tools['performance_overview'];
-		$this->assertStringContainsString( '`slots`', $overview['description'] );
-		$this->assertStringContainsString( '`avg_ms`', $overview['description'] );
-		$this->assertStringContainsString( '`global_avg_ms` and the leaderboard\'s `avg_ms` are null', $overview['description'] );
-		$this->assertStringNotContainsString( 'span', $overview['description'] );
-		$this->assertStringNotContainsString( 'aggregate time series', $overview['description'] );
-		$breakdown = $overview['inputSchema']['properties']['breakdown']['description'];
-		$this->assertStringContainsString( '[ nameIndex, count, sumMs, sumPeakMb, timed ]', $breakdown );
-		$this->assertStringNotContainsString( 'triple', $breakdown );
+		foreach ( [ '`slots`', '`totals`', '`servers`', '`leaderboard`', '`avg_ms`', '`total_time`' ] as $named ) {
+			$this->assertStringContainsString( $named, $overview['description'], $named );
+		}
+		$this->assertStringContainsString( 'Means are null where nothing was measured', $overview['description'] );
+		$this->assertStringContainsString( 'performance_query', $overview['description'], 'it says where the chart series went' );
+		$this->assertSame( [ 'server' ], \array_keys( $overview['inputSchema']['properties'] ) );
+		$this->assertStringContainsString( 'exact', $tools['performance_urls']['description'], 'it says its URL count is exact' );
+		$this->assertStringNotContainsString( 'estimate', $tools['performance_urls']['description'] );
 	}
 
 	public function test_a_tune_scope_is_offered_the_ruleset(): void {
@@ -273,6 +273,7 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( 'one value', $properties['filter']['description'] );
 		$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30', $properties['bucket']['description'] );
 		$this->assertStringContainsString( 'unless filtered `worker=0`', $tool['description'], 'it says worker traffic counts' );
+		$this->assertStringContainsString( 'sort by `url_name`', $tool['description'], 'it says a URL group sorts by its name' );
 		foreach ( Stats_Query::FIELDS as $source => $fields ) {
 			foreach ( [ ...$fields, ...Stats_Query::MEASURES[ $source ] ] as $word ) {
 				$this->assertStringContainsString( "`{$word}`", $tool['description'], "{$source}: {$word}" );
@@ -463,7 +464,7 @@ class McpControllerTest extends TestCase {
 			\trim( \substr( $text, \strlen( '<site-data>' ), -\strlen( '</site-data>' ) ) ),
 			true
 		);
-		$this->assertArrayHasKey( 'total_requests', $decoded );
+		$this->assertSame( [ 'totals', 'slots', 'servers', 'leaderboard' ], \array_keys( $decoded ) );
 	}
 
 	/**

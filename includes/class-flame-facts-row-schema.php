@@ -108,6 +108,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'ja4'         => 'TEXT',
 					'from_header' => 'TEXT',
 					'worker'      => 'INTEGER NOT NULL',
+					'profiled'    => 'INTEGER NOT NULL',
 					'error'       => 'TEXT',
 					'ms'          => 'REAL',
 					'peak_mb'     => 'REAL NOT NULL',
@@ -196,6 +197,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 1;
+		return 2;
 	}
 }
