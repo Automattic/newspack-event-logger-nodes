@@ -69,7 +69,7 @@ function FilterChips( { chips, onChange, options } ) {
 		) }`;
 	};
 	return (
-		<div className="event-logger-tag-container horizontal">
+		<div className="event-logger-tag-container horizontal event-logger-chip-filter">
 			<TokenInput
 				tokens={ chips.map( label ) }
 				onRemove={ ( index ) =>
@@ -106,8 +106,8 @@ function FilterChips( { chips, onChange, options } ) {
 
 /**
  * Draws a Server select where the caller offers one, then Metric, Breakdown
- * and Then by, the filter chips, the chart, and one line naming what the
- * chart has instead of a series.
+ * and Then by, with the filter chips filling the rest of their row, then the
+ * chart, and one line naming what the chart has instead of a series.
  *
  * What differs between the Overview card and the URL modal arrives as a prop —
  * the Server select on one side, the in-flight flag and the refusal on the
@@ -192,6 +192,7 @@ export default function BreakdownControls( {
 	return (
 		<div className="event-logger-aggregate-chart">
 			<div
+				className="event-logger-chart-controls"
 				style={ {
 					display: 'flex',
 					gap: '16px',
@@ -254,12 +255,12 @@ export default function BreakdownControls( {
 						{ __( 'Loading…', 'newspack-event-logger-nodes' ) }
 					</span>
 				) }
+				<FilterChips
+					chips={ chips }
+					onChange={ setChips }
+					options={ chipOptions }
+				/>
 			</div>
-			<FilterChips
-				chips={ chips }
-				onChange={ setChips }
-				options={ chipOptions }
-			/>
 			<AggregateTimeChart
 				series={ breakdownRead.series }
 				slots={ slots }

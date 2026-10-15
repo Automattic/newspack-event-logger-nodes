@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Performance chart's filter box sits on the select row and takes the rest of it.** It follows Then by and grows to fill the line, at least 18em, instead of a narrow box on a row of its own. The Loading pill stays beside the selects.
+- **The breakdown chart keeps one expanded state across every metric.** Expanding it under Avg Response Time keeps it expanded under Request Volume, Cumulative and Peak Memory; the stack choice is shared the same way between the two metrics that stack.
+
 ## [0.134.0] - 2026-10-15
 
 ### Added

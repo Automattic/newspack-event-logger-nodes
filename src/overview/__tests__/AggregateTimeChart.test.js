@@ -184,8 +184,8 @@ describe( 'AggregateTimeChart', () => {
 		}
 	} );
 
-	it( 'keeps each metric’s corner choices under <storageKey>:<metric>', () => {
-		window.localStorage.setItem( 'test:aggregate:avg:expanded', '1' );
+	it( 'keeps one expanded state across every metric, under <storageKey>', () => {
+		window.localStorage.setItem( 'test:aggregate:expanded', '1' );
 		const series = dimSeries( {
 			[ bucketKeyNow() ]: { '5xx': [ 7, 917, 3, 7 ] },
 		} );
@@ -203,7 +203,8 @@ describe( 'AggregateTimeChart', () => {
 			return expanded;
 		};
 		expect( expandedAt( 'avg' ) ).toBe( 'true' );
-		expect( expandedAt( 'volume' ) ).toBe( 'false' );
+		expect( expandedAt( 'memory' ) ).toBe( 'true' );
+		expect( expandedAt( 'volume' ) ).toBe( 'true' );
 	} );
 
 	it( 'returns null when the breakdown is null', () => {
