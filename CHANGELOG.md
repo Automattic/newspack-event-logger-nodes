@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.134.2] - 2026-10-15
+
+### Fixed
+
+- **The Request Log and Error Log hold still while scrolled into history.** The bundle is built against newspack-nodes 2.111.2, whose shared log list applies the scroll that new lines owe the reader on the same commit that shifts the rows, and turns a glide into scroll at once when the reader scrolls away. A burst of lines no longer pushes the view down a paint and snaps it back.
+
 ## [0.134.1] - 2026-10-15
 
 ### Changed
