@@ -7,7 +7,7 @@
  * server-side jobs that bundle needs: it contributes the bundle descriptor to
  * the substrate's `newspack_nodes/station_tab_bundles` filter (which loads it
  * on the station), enqueues it directly on the admin pages that mount
- * `<DebugOverlay>` themselves, and injects THIS request's id, partition and
+ * `<DebugOverlay>` themselves, and injects THIS request's id and
  * dashboard deep link into a JS global the tab reads. ELN owns all of it
  * because ELN owns the request lifecycle — `Log_Manager` is what mints the id.
  *
@@ -115,7 +115,7 @@ class Current_Request_Overlay {
 	}
 
 	/**
-	 * Inject this request's id, partition, and performance-dashboard URL into the
+	 * Inject this request's id and performance-dashboard URL into the
 	 * tab's global — but only once the handle is actually enqueued on this page,
 	 * by either path (the substrate's filter on the station, ours everywhere else).
 	 * A page that never loaded the bundle gets no global and no inline script.
@@ -137,7 +137,7 @@ class Current_Request_Overlay {
 		$log      = Log_Manager::instance();
 		$rid      = $log->get_request_id();
 		$perf_url = \admin_url( 'admin.php?page=event-logger-overview' );
-		$js       = self::inline_data_js( $rid, $log->get_partition(), $perf_url );
+		$js       = self::inline_data_js( $rid, $perf_url );
 		if ( ! \in_array( self::current_page(), self::OVERLAY_PAGES, true ) ) {
 			$js .= Config::span_palette_js();
 		}
@@ -161,16 +161,14 @@ class Current_Request_Overlay {
 	 * render time. The `Object.assign` merge preserves any sibling key another
 	 * ELN bundle already put on that global.
 	 *
-	 * @param string $rid       Current request id (empty when unlogged).
-	 * @param int    $partition The partition this request's lines hash to (dump_request needs it).
-	 * @param string $perf_url  Performance-dashboard base URL for the deep link.
+	 * @param string $rid      Current request id (empty when unlogged).
+	 * @param string $perf_url Performance-dashboard base URL for the deep link.
 	 * @return string Inline JS.
 	 */
-	public static function inline_data_js( string $rid, int $partition, string $perf_url ): string {
+	public static function inline_data_js( string $rid, string $perf_url ): string {
 		$data = [
-			'rid'       => $rid,
-			'partition' => $partition,
-			'perfUrl'   => $perf_url,
+			'rid'     => $rid,
+			'perfUrl' => $perf_url,
 		];
 		return 'window.NewspackEventLoggerNodes=Object.assign(window.NewspackEventLoggerNodes||{},{currentRequest:'
 			. \wp_json_encode( $data )

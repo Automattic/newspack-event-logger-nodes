@@ -53,28 +53,24 @@ global.ResizeObserver = class {
 const REQUESTS = [
 	{
 		rid: 'req-charlie',
-		partition: 5,
 		timestamp: 1755001200,
 		duration_ms: 68,
 		status_code: 404,
 	},
 	{
 		rid: 'req-alpha',
-		partition: 3,
 		timestamp: 1755000000,
 		duration_ms: 137,
 		status_code: 200,
 	},
 	{
 		rid: 'req-delta',
-		partition: 7,
 		timestamp: 1755001800,
 		duration_ms: 954,
 		status_code: 503,
 	},
 	{
 		rid: 'req-bravo',
-		partition: 3,
 		timestamp: 1755000600,
 		duration_ms: 421,
 		status_code: 301,
@@ -87,10 +83,10 @@ const REQUESTS = [
 
 // The four plottable seeds, ascending by time — the order the dots must take.
 const PLOTTED = [
-	{ ts: 1755000000, ms: 137, status: 200, rid: 'req-alpha', partition: 3 },
-	{ ts: 1755000600, ms: 421, status: 301, rid: 'req-bravo', partition: 3 },
-	{ ts: 1755001200, ms: 68, status: 404, rid: 'req-charlie', partition: 5 },
-	{ ts: 1755001800, ms: 954, status: 503, rid: 'req-delta', partition: 7 },
+	{ ts: 1755000000, ms: 137, status: 200, rid: 'req-alpha' },
+	{ ts: 1755000600, ms: 421, status: 301, rid: 'req-bravo' },
+	{ ts: 1755001200, ms: 68, status: 404, rid: 'req-charlie' },
+	{ ts: 1755001800, ms: 954, status: 503, rid: 'req-delta' },
 ];
 
 const T_MIN = PLOTTED[ 0 ].ts * 1000;
@@ -230,7 +226,6 @@ describe( 'ResponseTimeChart', () => {
 		const { container, unmount } = mountChart( [
 			{
 				rid: 'req-golf',
-				partition: 2,
 				timestamp: 1755003000,
 				duration_ms: 76,
 			},
@@ -342,7 +337,6 @@ describe( 'ResponseTimeChart', () => {
 			...REQUESTS,
 			{
 				rid: 'req-timeout',
-				partition: 2,
 				timestamp: 1755000300,
 				duration_ms: null,
 				status_code: 0,
@@ -350,7 +344,6 @@ describe( 'ResponseTimeChart', () => {
 			},
 			{
 				rid: 'req-abort',
-				partition: 1,
 				timestamp: 1755000900,
 				duration_ms: null,
 				status_code: 0,
@@ -427,7 +420,6 @@ describe( 'ResponseTimeChart', () => {
 		const { container, unmount } = mountChart( [
 			{
 				rid: 'req-hotel',
-				partition: 1,
 				timestamp: 1755003600,
 				duration_ms: 43,
 				status_code: 601,
@@ -470,7 +462,7 @@ describe( 'ResponseTimeChart', () => {
 			);
 		} );
 
-		expect( onClick ).toHaveBeenCalledWith( 'req-charlie', 5 );
+		expect( onClick ).toHaveBeenCalledWith( 'req-charlie' );
 		expect( onClick ).toHaveBeenCalledTimes( 1 );
 		unmount();
 	} );
@@ -481,7 +473,6 @@ describe( 'ResponseTimeChart', () => {
 			[
 				{
 					rid: '',
-					partition: 9,
 					timestamp: 1755004200,
 					duration_ms: 88,
 					status_code: 200,
@@ -535,7 +526,7 @@ describe( 'ResponseTimeChart', () => {
 			);
 		} );
 		expect( first ).not.toHaveBeenCalled();
-		expect( second ).toHaveBeenCalledWith( 'req-delta', 7 );
+		expect( second ).toHaveBeenCalledWith( 'req-delta' );
 		unmount();
 	} );
 

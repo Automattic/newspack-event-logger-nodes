@@ -1,7 +1,7 @@
 <?php
 /**
- * FactsSeeder: rows in the `flame-facts` Row_Table, written as the flame
- * builder writes them.
+ * FactsSeeder: rows in the Row_Table the active topologies declare with the
+ * Flame_Facts schema, written as the flame builder writes them.
  *
  * Each seeder sends one `ROWS` batch through a real `Row_Table` bound to the
  * partition it names, so a seed passes the same write contract a flush does:
@@ -18,6 +18,7 @@ use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Url_Parts;
+use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Row_Table_Node;
@@ -218,7 +219,7 @@ trait FactsSeeder {
 		Core::$var['partition'] = (string) $partition;
 		try {
 			$table = new Row_Table_Node();
-			$table->name( Flame_Facts_Row_Schema::TABLE );
+			$table->name( Bootstrap::row_table( Flame_Facts_Row_Schema::class )['name'] );
 			$table->arguments( [ 'Flame_Facts' ] );
 		} finally {
 			Core::$var['partition'] = $bound;
@@ -237,9 +238,9 @@ trait FactsSeeder {
 		} finally {
 			$table->remove_node();
 		}
-		$reply = $sink->captured[0] ?? throw new \LogicException( 'flame-facts answered no ROWS' );
+		$reply = $sink->captured[0] ?? throw new \LogicException( 'the facts table answered no ROWS' );
 		if ( 0 !== ( Core::num_int( $reply[ Message::TYPE ] ) & Message::TM_ERROR ) ) {
-			throw new \LogicException( 'flame-facts refused ROWS: ' . Core::as_string( $reply[ Message::VALUE ] ) );
+			throw new \LogicException( 'the facts table refused ROWS: ' . Core::as_string( $reply[ Message::VALUE ] ) );
 		}
 	}
 }

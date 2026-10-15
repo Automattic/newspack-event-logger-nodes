@@ -30,10 +30,13 @@
  *    POSTs per user per window, so a polling dashboard is bounded upstream.
  *  - Stats reads fail soft, as `Stats_Query` and the dashboards' "no data"
  *    state do.
- *  - Stats come from the flame builder's `flame-facts` rows alone.
- *  - Disk scans: a URL's flame rebuild and `grep_requests` stop after
- *    MAX_SCAN_S of walking. A rid lookup walks unbudgeted, so a rid it does
- *    not find is not there.
+ *  - Stats come from the flame builder's Flame_Facts rows alone.
+ *  - Disk reads: a request is found by its row, its record read at the
+ *    place the row names, and flames located by rid through
+ *    `Partition_Node::locate_by()`, which stops once it holds every rid or
+ *    reaches a segment closed before they finished (`index_mtimes()`).
+ *    The flame lookups and `grep_requests` stop after MAX_SCAN_S of reading,
+ *    and a cut flame lookup answers `flame_cut` true.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -48,7 +51,6 @@ use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
-use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Bootstrap;
@@ -76,41 +78,33 @@ use Newspack_Nodes\Service_CI_Node;
  *
  * The static helpers below fall into three families:
  *   - fact readers, which answer `overview`, `urls`, `dump_url` and `query`
- *     as `Stats_Query` specs over every partition's `flame-facts` rows;
+ *     as `Stats_Query` specs over every partition's Flame_Facts rows;
  *   - disk walkers, which construct throwaway Partition/Consumer nodes over
  *     the DECLARED node dirs and remove them again;
  *   - `set` sanitizers, which bound the values arriving from the hub.
  *
  * @phpstan-import-type Url_Filters from Ask_Assembler
+ * @phpstan-type Context_Entry array{type:string, id:string, descriptor:string}
  */
 class Performance_CI_Node extends Service_CI_Node {
 
 	/**
-	 * Seconds one budgeted walk may spend reading — .idx lines, or the
-	 * firehose lines `grep_requests` groups. Two walks take it:
-	 * `url_flame()` over the flame index, whose lines carry no time to
-	 * compare, and `run_grep_requests()`, whose `recent` window can hold more
-	 * than a reply has time to group. A rid lookup takes no budget: it reads
-	 * until it finds the rid or runs out of index, so its not-found is
-	 * definite.
-	 *
-	 * Time, not a line count, because partitions are walked one after another:
-	 * a count sized to one host's traffic ends a busier hub's walk inside its
-	 * first partitions, and every request hashed to the rest is unreachable
-	 * from its URL. An index miss is one `substr` + `trim`, with the clock read
-	 * once per SCAN_CLOCK_STRIDE lines, so a window of millions of index lines
-	 * costs well under a second, and the cap binds only a walk that has
-	 * genuinely run long; a grep line is dearer, grouped whole. Peak memory
-	 * stays ONE segment's index. A walk that spends it says so; see
-	 * `scan_index_entries()`.
+	 * Seconds one budgeted walk may spend reading: the flame index a URL's
+	 * rebuild or a request's flame lookup reads back to the segment closed
+	 * before its requests finished, which on a busy partition holds more
+	 * than a reply has time for, and the firehose lines `run_grep_requests()`
+	 * groups, whose `recent` window can hold more than that too. Time,
+	 * not a line count, because partitions are read one after another: a
+	 * count sized to one host's traffic ends a busier hub's read inside its
+	 * first partitions. A walk that spends it says so: a null flame, or
+	 * `truncated`.
 	 */
 	public const MAX_SCAN_S = 10;
 
 	/**
-	 * Lines a walk reads between two looks at the clock — index lines, or the
-	 * firehose lines `grep_requests` reads. A clock read costs as much as an
-	 * index miss, and one per hundred lines keeps it off the walk's cost, far
-	 * below anything a 10-second budget can notice.
+	 * Lines a budgeted walk reads between two looks at the clock, which keeps
+	 * the clock off the walk's cost, far below anything a 10-second budget
+	 * can notice.
 	 */
 	private const SCAN_CLOCK_STRIDE = 100;
 
@@ -119,17 +113,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * so raising one raises both. The rest is a pointer to `performance_urls`.
 	 */
 	private const OVERVIEW_BRIEF_URLS = Ask_Assembler::TOP_SPANS;
-
-	/**
-	 * What an `on_hit` callback tells the scan to do next.
-	 *
-	 * The distinction that matters is the middle one: a partition's log is
-	 * independent of its siblings', so a reader that has seen enough of THIS
-	 * one has learned nothing about the next. Ending the fan-out there drops
-	 * every later partition's entries silently — which is the whole reason a
-	 * plain `stop` is not enough.
-	 */
-	private const SCAN_STOP_PARTITION = 'partition';
 
 	/**
 	 * TSL node names the disk-walking verbs resolve their partitions through.
@@ -275,35 +258,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return $out;
-	}
-
-	/**
-	 * Locate a single request index entry by rid and return the search shape
-	 * `{rid, partition, url_hash}` — enough for the dashboard to then ask for
-	 * `dump_request`; the request body is not read here. Its own partition is
-	 * tried first, and the walk takes no budget, so null is a definite miss.
-	 *
-	 * @param string $rid Request id to match.
-	 * @return array<string,mixed>|null Search shape, or null when unmatched.
-	 */
-	private static function find_request_index_entry( string $rid ): ?array {
-		$result = null;
-		self::scan_index_entries(
-			self::search_order( $rid, self::NODE_REQUESTS ),
-			'requests',
-			'rid',
-			$rid,
-			static function ( array $entry, int $partition ) use ( &$result, $rid ): bool {
-				$result = [
-					'rid'       => $rid,
-					'partition' => $partition,
-					'url_hash'  => \trim( Core::as_string( $entry['url_hash'] ?? '' ) ),
-				];
-				return false;
-			},
-			null
-		);
-		return $result;
 	}
 
 	/**
@@ -519,6 +473,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function assemble_ask( string $descriptor, array $context, string $server, array $filters, int $now ): array {
 		$target = Ask_Assembler::parse_descriptor( $descriptor )
 			?? throw new \RuntimeException( \esc_html( "unknown descriptor: {$descriptor}" ) );
+		$chain  = [];
+		foreach ( $context as $container ) {
+			$chain[] = ( Ask_Assembler::parse_descriptor( $container )
+				?? throw new \RuntimeException( \esc_html( "unknown descriptor: {$container}" ) ) ) + [ 'descriptor' => $container ];
+		}
 
 		switch ( $target['type'] ) {
 			case 'overview':
@@ -526,13 +485,13 @@ class Performance_CI_Node extends Service_CI_Node {
 			case 'url':
 				return self::ask_url( $target['id'], $server, $filters, $now );
 			case 'request':
-				return self::ask_request( $target['id'], self::descriptor_partition( $target ), $context, $server );
+				return self::ask_request( $target['id'], $chain, $server );
 			case 'span':
-				return self::ask_span( $target['id'], $context, $server, $now );
+				return self::ask_span( $target['id'], $chain, $server, $now );
 			case 'entry':
-				return self::ask_entry( $target['id'], $context );
+				return self::ask_entry( $target['id'], $chain );
 			case 'category':
-				return self::ask_category( $target['id'], $context, $server, $now );
+				return self::ask_category( $target['id'], $chain, $server, $now );
 		}
 		throw new \RuntimeException( \esc_html( 'unknown descriptor: ' . $target['type'] ) );
 	}
@@ -574,7 +533,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$filters['bucket'] = $detail['bucket'];
 		return Ask_Assembler::for_url(
 			$detail['stats'],
-			$detail['requests'],
+			self::url_requests( $detail['listed'] ),
 			$detail['requests_capped'],
 			// Stats that did not open name no URL for a rule to match.
 			'' === $detail['stats']['url'] ? null : Rule_Set::load()->for_url( $detail['stats']['url'] ),
@@ -587,15 +546,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The `request:` brief. Picked inside the URL modal, the chain names the
 	 * URL too, and the brief carries a pointer to it.
 	 *
-	 * @param string       $rid       Request id the descriptor names.
-	 * @param int          $partition Partition its qualifier names, searched first.
-	 * @param list<string> $context   Container descriptors, outermost last.
-	 * @param string       $server    Server the modal is scoped to; rides the URL pointer.
+	 * @param string       $rid     Request id the descriptor names.
+	 * @param list<Context_Entry> $context The parsed containers, outermost last.
+	 * @param string       $server  Server the modal is scoped to; rides the URL pointer.
 	 * @return array<string,mixed>
-	 * @throws \RuntimeException When the rid resolves nowhere.
+	 * @throws \RuntimeException When no row names the rid, or the rows did not open.
 	 */
-	private static function ask_request( string $rid, int $partition, array $context, string $server ): array {
-		$record = self::load_request( $rid, $partition );
+	private static function ask_request( string $rid, array $context, string $server ): array {
+		$record = self::load_request( $rid );
 		return Ask_Assembler::for_request( $record, self::rule_for_record( $record ), self::descriptor_of( $context, 'url' ), $server );
 	}
 
@@ -607,7 +565,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * modal is scoped to.
 	 *
 	 * @param string       $name    Span name the descriptor carries.
-	 * @param list<string> $context Container descriptors, outermost last.
+	 * @param list<Context_Entry> $context The parsed containers, outermost last.
 	 * @param string       $server  Server the URL modal is scoped to; '' is every server.
 	 * @param int          $now     The reply's clock.
 	 * @return array<string,mixed>
@@ -618,22 +576,20 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null !== $record ) {
 			$brief = Ask_Assembler::for_span( $record, $name, self::rule_for_record( $record ), self::descriptor_of( $context, 'request' ) );
 			if ( null === $brief ) {
-				throw new \RuntimeException( \esc_html( "no span '{$name}' in this request" ) );
+				$cut = true === $record['flame_cut'] ? ': its flame lookup ran out of time' : '';
+				throw new \RuntimeException( \esc_html( "no span '{$name}' in this request{$cut}" ) );
 			}
 			return $brief;
 		}
-		$url = self::url_in_context( $context );
+		$url = self::context_entry( $context, 'url' );
 		if ( null === $url ) {
 			throw new \RuntimeException( \esc_html( 'a span needs its request or its URL for context' ) );
 		}
-		$detail = self::url_detail( $url['hash'], $server, false, '', $now );
+		$detail = self::url_detail( $url['id'], $server, false, '', $now );
 		if ( ! $detail['available'] ) {
-			throw self::stats_outage( $url['hash'] );
+			throw self::stats_outage( "no aggregate for URL {$url['id']}" );
 		}
-		$flame = self::url_flame( $url['hash'], $detail['requests'], $now );
-		if ( null === $flame ) {
-			throw new \RuntimeException( \esc_html( "no aggregate for URL {$url['hash']}: its flame rebuild ran out of time" ) );
-		}
+		$flame = self::url_flame( $detail['listed'] ) ?? throw new \RuntimeException( \esc_html( "no aggregate for URL {$url['id']}: its flame rebuild ran out of time" ) );
 		$named = $detail['stats']['url'];
 		$brief = Ask_Assembler::for_url_span( $flame, $name, $named, Rule_Set::load()->for_url( $named ), $url['descriptor'], $server );
 		if ( null === $brief ) {
@@ -643,9 +599,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One URL over a selection's buckets, or the chart's: its stats and its
-	 * newest requests, worker traffic counted, as `dump_url` answers them,
-	 * and whether the list holds fewer than the stats count. Under
+	 * One URL over a selection's buckets, or the chart's: its stats and the
+	 * rows of its newest requests, worker traffic counted, which
+	 * `url_requests()` shapes as `dump_url` lists them and `url_flame()` reads
+	 * each request's partition off, and whether the list holds fewer than the
+	 * stats count. Under
 	 * `errors_only` the list holds its timeouts and fatals alone and is
 	 * capped against its errors; the stats stay the whole URL's. A stats
 	 * file that will not open answers zero stats and no list, `available`
@@ -656,14 +614,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param bool   $errors_only List only the requests that errored.
 	 * @param string $spelling    A `Bucket::selection()` spelling; '' for the chart's.
 	 * @param int    $now         The reply's clock.
-	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, requests_per_second:float|int}, requests: list<array<string,mixed>>, requests_capped: bool, bucket: string, available: bool}
+	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, requests_per_second:float|int}, listed: list<array<string,mixed>>, requests_capped: bool, bucket: string, available: bool}
 	 * @throws \RuntimeException When no request row names the hash.
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
 	 */
 	private static function url_detail( string $hash, string $server, bool $errors_only, string $spelling, int $now ): array {
-		$buckets  = self::window( $spelling, $now );
-		$filter   = self::scope( $server, true ) + [ 'url' => [ $hash ] ];
-		$answer   = Stats_Query::run(
+		$buckets = self::window( $spelling, $now );
+		$filter  = self::scope( $server, true ) + [ 'url' => [ $hash ] ];
+		$answer  = Stats_Query::run(
 			[
 				'source'  => 'requests',
 				'group'   => [ 'url' ],
@@ -672,12 +630,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				'buckets' => $buckets,
 			]
 		);
-		$stats    = self::url_stats( $hash, $answer, $filter, $buckets, $now );
-		$requests = $answer['available'] ? self::url_requests( $filter + self::errors_filter( $errors_only ), $buckets ) : [];
+		$stats  = self::url_stats( $hash, $answer, $filter, $buckets, $now );
+		$listed = $answer['available'] ? Stats_Query::newest_requests( $filter + self::errors_filter( $errors_only ), $buckets, self::RECENT_REQUEST_LIMIT ) : [];
 		return [
 			'stats'           => $stats,
-			'requests'        => $requests,
-			'requests_capped' => \count( $requests ) < Core::num_int( $errors_only ? $stats['errors'] : $stats['count'] ),
+			'listed'          => $listed,
+			'requests_capped' => \count( $listed ) < Core::num_int( $errors_only ? $stats['errors'] : $stats['count'] ),
 			'bucket'          => '' === $spelling ? '' : Bucket::spelling( $buckets ),
 			'available'       => $answer['available'],
 		];
@@ -726,16 +684,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The newest RECENT_REQUEST_LIMIT requests `$filter` selects over
-	 * `$buckets`, newest first, each with the log position its record sits
-	 * at. A row's `duration_ms` is null where no sample was taken (decision
-	 * 24), and its `timestamp` is the second its record says it started.
+	 * The listed requests as `dump_url` answers them, each named by its rid
+	 * alone, which is all `dump_request` is asked with. A row's
+	 * `duration_ms` is null where no sample was taken (decision 24), and its
+	 * `timestamp` is the second its record says it started.
 	 *
-	 * @param array<string,list<scalar>> $filter  Requests fields to the values each matches.
-	 * @param list<array{0:int,1:int}>   $buckets The buckets read.
+	 * @param list<array<string,mixed>> $listed The rows `Stats_Query::newest_requests()` listed.
 	 * @return list<array<string,mixed>>
 	 */
-	private static function url_requests( array $filter, array $buckets ): array {
+	private static function url_requests( array $listed ): array {
 		return \array_map(
 			static fn ( array $row ): array => [
 				'rid'          => $row['rid'],
@@ -746,12 +703,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				'peak_mb'      => $row['peak_mb'],
 				'method'       => $row['method'],
 				'error_status' => $row['error'] ?? '-',
-				'segment'      => $row['segment'],
-				'offset'       => $row['offset'],
-				'length'       => $row['length'],
-				'partition'    => $row['partition'],
 			],
-			Stats_Query::newest_requests( $filter, $buckets, self::RECENT_REQUEST_LIMIT )
+			$listed
 		);
 	}
 
@@ -779,7 +732,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The `entry:` brief.
 	 *
 	 * @param string       $index   Entry position within the request, as sent.
-	 * @param list<string> $context Container descriptors, outermost last.
+	 * @param list<Context_Entry> $context The parsed containers, outermost last.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException With no request context, or an absent entry.
 	 */
@@ -802,7 +755,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * A URL with no profile answers from the scoped leaderboard.
 	 *
 	 * @param string       $name    Category name the descriptor carries.
-	 * @param list<string> $context Container descriptors, outermost last.
+	 * @param list<Context_Entry> $context The parsed containers, outermost last.
 	 * @param string       $server  Server the URL's profile and the leaderboard
 	 *                              fallback answer for; '' is every server.
 	 * @param int          $now     The reply's clock, read once at its entry.
@@ -821,14 +774,14 @@ class Performance_CI_Node extends Service_CI_Node {
 				return $brief;
 			}
 		}
-		$url = self::url_in_context( $context );
+		$url = self::context_entry( $context, 'url' );
 		if ( null !== $url ) {
 			$scope = self::scope( $server, true );
-			$named = self::url_name( $url['hash'], $scope + [ 'url' => [ $url['hash'] ] ], $now );
+			$named = self::url_name( $url['id'], $scope + [ 'url' => [ $url['id'] ] ], $now );
 			if ( '' === $named ) {
-				throw self::stats_outage( $url['hash'] );
+				throw self::stats_outage( "no aggregate for URL {$url['id']}" );
 			}
-			$profile = self::url_profile( $url['hash'], $scope, $now );
+			$profile = self::url_profile( $url['id'], $scope, $now );
 			$brief   = null === $profile ? null : Ask_Assembler::for_url_category( $profile, $name, $named, $server );
 			if ( null !== $brief ) {
 				return $brief;
@@ -872,16 +825,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The refusal a URL's span or category brief answers when the stats
-	 * rows did not open: an outage, never an absent span or category.
-	 *
-	 * @param string $hash 12-char URL hash.
-	 */
-	private static function stats_outage( string $hash ): \RuntimeException {
-		return new \RuntimeException( \esc_html( "no aggregate for URL {$hash}: the stats rows did not open" ) );
-	}
-
-	/**
 	 * A URL's category profile over the 25 hours the timings keep, in the
 	 * leaderboard's shape, or null over no profiled request.
 	 *
@@ -896,44 +839,28 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `url:` descriptor a context chain carries, and its hash — for a
-	 * span or a category picked inside the URL modal, where the chain names
-	 * the URL and no request — or null when it names none.
-	 *
-	 * @param list<string> $context Container descriptors.
-	 * @return array{descriptor:string, hash:string}|null
-	 */
-	private static function url_in_context( array $context ): ?array {
-		$descriptor = self::descriptor_of( $context, 'url' );
-		$parsed     = Ask_Assembler::parse_descriptor( $descriptor );
-		return null === $parsed ? null : [ 'descriptor' => $descriptor, 'hash' => $parsed['id'] ];
-	}
-
-	/**
 	 * A URL's aggregate flame, folded from the flames its listed requests
 	 * stored, in the display shape: the empty tree over no stored flame.
 	 *
-	 * One walk of the flame index by URL, under MAX_SCAN_S, each hit
+	 * Each partition its listed requests sit in is asked once for their
+	 * rids' flames, no further back than the oldest one's `finished_at`,
+	 * since a flame lands in the partition its request did, and each is
 	 * folded as the builder folds it, its timing counted where its duration
-	 * is. A flame lands in the partition its request did, so the walk visits
-	 * only the partitions its listed requests sit in and leaves each once it
-	 * holds them all. A walk the deadline cuts short answers null, because a
-	 * partial fold would read as the URL's whole flame and be kept. A stored
-	 * flame has lost the suffixes that hold a request's same-named siblings
-	 * apart, so those merge into one node here.
+	 * is. The lookups share MAX_SCAN_S, and one it cuts answers null, because
+	 * a partial fold would read as the URL's whole flame. A
+	 * stored flame has lost the suffixes that hold a request's same-named
+	 * siblings apart, so those merge into one node here.
 	 *
-	 * @param string                    $hash     12-char URL hash.
-	 * @param list<array<string,mixed>> $requests The requests `url_requests()` lists.
-	 * @param int                       $now      The reply's clock.
+	 * @param list<array<string,mixed>> $listed The listed rows, as `url_detail()` keeps them.
 	 * @return array<array-key,mixed>|null
 	 */
-	private static function url_flame( string $hash, array $requests, int $now ): ?array {
-		$listed  = [];
-		$missing = [];
-		foreach ( $requests as $request ) {
-			$listed[ Core::as_string( $request['rid'] ) ] = $request;
-			$partition                                    = Core::num_int( $request['partition'] );
-			$missing[ $partition ]                        = ( $missing[ $partition ] ?? 0 ) + 1;
+	private static function url_flame( array $listed ): ?array {
+		$durations = [];
+		$since     = [];
+		foreach ( $listed as $row ) {
+			$partition                                                 = Core::num_int( $row['partition'] );
+			$durations[ $partition ][ Core::as_string( $row['rid'] ) ] = $row['ms'];
+			$since[ $partition ]                                       = \min( $since[ $partition ] ?? \INF, Core::num_float( $row['finished_at'] ) );
 		}
 		$flame = [
 			'name'      => 'aggregate',
@@ -941,44 +868,18 @@ class Performance_CI_Node extends Service_CI_Node {
 			'count'     => 0,
 			'children'  => [],
 		];
-		if ( [] !== $listed ) {
-			$cut = self::scan_index_entries(
-				\array_intersect_key( Bootstrap::node_dirs( self::NODE_FLAMES ), $missing ),
-				'flames',
-				'url_hash',
-				$hash,
-				static function ( array $entry, int $partition, int $segment, Partition_Node $node ) use ( &$listed, &$missing, &$flame, $now ): string|bool|null {
-					$rid     = \trim( Core::as_string( $entry['rid'] ?? '' ) );
-					$request = $listed[ $rid ] ?? null;
-					if ( null === $request ) {
-						return null;
-					}
-					$message = $node->read_message_at(
-						Core::as_int( $entry['segment'] ?? 0 ),
-						Core::as_int( $entry['offset'] ?? 0 ),
-						Core::as_int( $entry['length'] ?? 0 )
-					);
-					$tree    = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
-					if ( \is_array( $tree ) ) {
-						$ms    = $request['duration_ms'];
-						$flame = self::fold_flame( $flame, $tree, Core::num_float( $ms ), null !== $ms, $now );
-					}
-					unset( $listed[ $rid ] );
-					--$missing[ $partition ];
-					if ( [] === $listed ) {
-						return false;
-					}
-					return 0 >= $missing[ $partition ] ? self::SCAN_STOP_PARTITION : null;
-				},
-				self::scan_deadline()
-			);
-			if ( $cut ) {
+		$deadline = self::scan_deadline();
+		foreach ( $durations as $partition => $by_rid ) {
+			$flames = self::stored_flames( $partition, \array_map( 'strval', \array_keys( $by_rid ) ), $since[ $partition ], $deadline );
+			if ( null === $flames ) {
 				return null;
 			}
+			foreach ( $flames as $rid => $tree ) {
+				$ms    = $by_rid[ $rid ];
+				$flame = self::fold_flame( $flame, $tree, Core::num_float( $ms ), null !== $ms );
+			}
 		}
-		return 0 === Core::num_int( $flame['count'] ?? 0 )
-			? self::EMPTY_FLAME
-			: self::display_flame( $flame );
+		return 0 === Core::num_int( $flame['count'] ) ? self::EMPTY_FLAME : self::display_flame( $flame );
 	}
 
 	/**
@@ -990,14 +891,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<array-key,mixed> $flame_data    One request's tree.
 	 * @param float                  $duration_ms   That request's duration.
 	 * @param bool                   $record_timing Whether its duration was measured.
-	 * @param int                    $stamp         Stamp for the merged nodes, whose hour back is the expiry cutoff.
 	 * @return array<array-key,mixed>
 	 */
-	private static function fold_flame( array $flame, array $flame_data, float $duration_ms, bool $record_timing, int $stamp ): array {
+	private static function fold_flame( array $flame, array $flame_data, float $duration_ms, bool $record_timing ): array {
 		$flame['count'] = Core::num_int( $flame['count'] ?? null ) + 1;
 		if ( $record_timing ) {
 			$flame['sum_value'] = Core::num_float( $flame['sum_value'] ?? null ) + $duration_ms;
-			$flame['children']  = Flame_Tree::merge_flame_children_incremental( Core::arr( $flame['children'] ?? null ), Core::arr( $flame_data['children'] ?? null ), $stamp );
+			$flame['children']  = Flame_Tree::merge_flame_children_incremental( Core::arr( $flame['children'] ?? null ), Core::arr( $flame_data['children'] ?? null ) );
 		}
 		return $flame;
 	}
@@ -1019,7 +919,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The request record named by the first `request:` descriptor in a context
 	 * chain.
 	 *
-	 * @param list<string> $context Container descriptors.
+	 * @param list<Context_Entry> $context The parsed containers.
 	 * @param string       $subject What was clicked, for the refusal text.
 	 * @return array<array-key,mixed>
 	 * @throws \RuntimeException When the chain carries no request.
@@ -1037,34 +937,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * from `request_from_context()` because a category is answerable either
 	 * way, and only a span or an entry is not.
 	 *
-	 * @param list<string> $context Container descriptors.
+	 * @param list<Context_Entry> $context The parsed containers.
 	 * @return array<array-key,mixed>|null
 	 */
 	private static function request_in_context( array $context ): ?array {
-		foreach ( $context as $descriptor ) {
-			$parsed = Ask_Assembler::parse_descriptor( Core::as_string( $descriptor ) );
-			if ( null !== $parsed && 'request' === $parsed['type'] ) {
-				return self::load_request( $parsed['id'], self::descriptor_partition( $parsed ) );
-			}
-		}
-		return null;
-	}
-
-	/**
-	 * The partition a `request:` descriptor names, read through the
-	 * substrate's refusing decimal parse: a cast would read `abc` as p0 and
-	 * `-3` as p-3, and the record would be found under a partition nobody
-	 * named.
-	 *
-	 * @param array{type:string,id:string,qualifier:string} $parsed What `Ask_Assembler::parse_descriptor()` returned.
-	 * @throws \RuntimeException When the qualifier is no canonical non-negative decimal.
-	 */
-	private static function descriptor_partition( array $parsed ): int {
-		$partition = Core::canonical_decimal( $parsed['qualifier'] );
-		if ( null === $partition ) {
-			throw new \RuntimeException( \esc_html( "invalid partition in request:{$parsed['id']}:{$parsed['qualifier']}" ) );
-		}
-		return $partition;
+		$request = self::context_entry( $context, 'request' );
+		return null === $request ? null : self::load_request( $request['id'] );
 	}
 
 	/**
@@ -1072,180 +950,212 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `fetch` pointer has to name what an agent would ASK, which is the
 	 * descriptor as the picker wrote it — not the record it resolves to.
 	 *
-	 * @param list<string> $context Container descriptors.
+	 * @param list<Context_Entry> $context The parsed containers.
 	 * @param string       $type    Descriptor type to look for.
 	 * @return string The descriptor, or '' when the chain names none.
 	 */
 	private static function descriptor_of( array $context, string $type ): string {
-		foreach ( $context as $descriptor ) {
-			$text   = Core::as_string( $descriptor );
-			$parsed = Ask_Assembler::parse_descriptor( $text );
-			if ( null !== $parsed && $type === $parsed['type'] ) {
-				return $text;
-			}
-		}
-		return '';
+		return self::context_entry( $context, $type )['descriptor'] ?? '';
 	}
 
 	/**
-	 * One request record by rid, searching its hashed partition first.
+	 * The first container of a given type in a context chain — for a span or
+	 * a category picked inside the URL modal, the `url:` the chain names
+	 * beside no request — or null when it names none.
 	 *
-	 * @param string $rid       Request id to load.
-	 * @param int    $partition Caller's hint, searched ahead of the hashed order.
-	 * @return array<array-key,mixed>
-	 * @throws \RuntimeException When the rid resolves nowhere.
+	 * @param list<Context_Entry> $context The parsed containers.
+	 * @param string              $type    Descriptor type to look for.
+	 * @return Context_Entry|null
 	 */
-	private static function load_request( string $rid, int $partition ): array {
-		$order = self::search_order( $rid, self::NODE_REQUESTS );
-		// `+` lifts the caller's partition to the front; the rest keep order.
-		if ( isset( $order[ $partition ] ) ) {
-			$order = [ $partition => $order[ $partition ] ] + $order;
+	private static function context_entry( array $context, string $type ): ?array {
+		foreach ( $context as $entry ) {
+			if ( $type === $entry['type'] ) {
+				return $entry;
+			}
 		}
-		$record = self::find_request( $order, $rid );
-		if ( null === $record ) {
-			throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
+		return null;
+	}
+
+	/**
+	 * One request record by rid, read once at the place its `requests` row
+	 * names, with its flame merged in as `flame_data`, the row's URL hash as
+	 * `url_hash`, and `flame_cut` true when MAX_SCAN_S ended the flame lookup
+	 * first. The flame builder on partition N writes flames.pN and the row
+	 * naming requests.pN, so the flame is located on the row's partition
+	 * alone, no further back than the row's `finished_at`; a miss there means
+	 * none was stored, and leaves the body intact. No row means no request,
+	 * whether retention took it or the builder has not written it yet, and a
+	 * place holding another request's record, keyed by its rid, means the
+	 * same; rows that did not open are an outage, refused as one.
+	 *
+	 * @param string $rid Request id to load.
+	 * @return array<array-key,mixed>
+	 * @throws \RuntimeException When the rows did not open, no row names the rid, or its place holds no record of it.
+	 */
+	private static function load_request( string $rid ): array {
+		$row       = self::row_of( $rid );
+		$partition = Core::num_int( $row['partition'] );
+		$dir       = Bootstrap::node_dirs( self::NODE_REQUESTS )[ $partition ] ?? null;
+		$message   = null === $row['segment'] || null === $dir ? null : self::on_partition(
+			'requests',
+			$partition,
+			$dir,
+			static fn ( Partition_Node $node ): ?array => $node->read_message_at( Core::as_int( $row['segment'] ), Core::as_int( $row['offset'] ), Core::as_int( $row['length'] ) )
+		);
+		$record    = $message[ Message::VALUE ] ?? null;
+		if ( ! \is_array( $record ) || $rid !== ( $message[ Message::KEY ] ?? null ) ) {
+			throw self::not_found( $rid );
+		}
+		$record['url_hash'] = $row['url'];
+		$flames             = self::stored_flames( $partition, [ $rid ], Core::num_float( $row['finished_at'] ), self::scan_deadline() );
+		$record['flame_cut'] = null === $flames;
+		if ( isset( $flames[ $rid ] ) ) {
+			$record['flame_data'] = $flames[ $rid ];
 		}
 		return $record;
 	}
+	/**
+	 * The `requests` row a rid keys, as `Stats_Query::request_row()` reads it.
+	 *
+	 * @param string $rid Request id.
+	 * @return array<string,mixed>
+	 * @throws \RuntimeException When the rows did not open, or none names the rid.
+	 */
+	private static function row_of( string $rid ): array {
+		$found = Stats_Query::request_row( $rid );
+		if ( ! $found['available'] ) {
+			throw self::stats_outage( "no request {$rid}" );
+		}
+		return $found['row'] ?? throw self::not_found( $rid );
+	}
 
 	/**
-	 * The full request body for a rid, from the first of `$dirs` holding it,
-	 * with its flame merged in as `flame_data`. The flame builder on partition
-	 * N folds every record of requests.pN into flames.pN, so the flame sits on
-	 * the request's hashed partition, read first. A miss means the builder has
-	 * not reached the record yet, and leaves the body otherwise intact.
+	 * The refusal a brief or a request answers when the stats rows did not
+	 * open: an outage, never an absent span, category or request.
 	 *
-	 * @param array<int,string> $dirs Partition index => dir, in search order.
-	 * @param string            $rid  Request id to match.
-	 * @return array<array-key,mixed>|null Decoded request body (keys come from the JSON envelope).
+	 * @param string $what What could not be answered.
 	 */
-	private static function find_request( array $dirs, string $rid ): ?array {
-		$found = self::first_record( $dirs, 'requests', $rid );
-		if ( null === $found ) {
+	private static function stats_outage( string $what ): \RuntimeException {
+		return new \RuntimeException( \esc_html( "{$what}: the stats rows did not open" ) );
+	}
+
+	/**
+	 * The refusal a request no row names answers.
+	 *
+	 * @param string $rid Request id.
+	 */
+	private static function not_found( string $rid ): \RuntimeException {
+		return new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
+	}
+
+	/**
+	 * The flames stored on one partition for `$rids`, by rid: one
+	 * `locate_by()` over its flame index, newest first, then one
+	 * `read_many()`. A rid with no stored flame is absent. The walk ends once
+	 * it holds every rid, or at the first segment whose index took its last
+	 * line before `$since`: the builder appends a request's flame no earlier
+	 * than the tick its row's `finished_at` is clamped to, on this host's
+	 * clock, so no older segment holds one. `$deadline` bounds the rest, and
+	 * a walk it cuts answers null rather than the part it read.
+	 *
+	 * @param int          $partition The flames partition.
+	 * @param list<string> $rids      Request ids.
+	 * @param float        $since     The earliest `finished_at` among them.
+	 * @param float        $deadline  A `scan_deadline()` the walk stops by.
+	 * @return array<string,array<array-key,mixed>>|null Each flame tree, by rid; null when the deadline cut the walk.
+	 * @throws \RuntimeException When the flame index formatter is not registered.
+	 */
+	private static function stored_flames( int $partition, array $rids, float $since, float $deadline ): ?array {
+		self::require_index_formatter( 'flame-index' );
+		$dir = Bootstrap::node_dirs( self::NODE_FLAMES )[ $partition ] ?? null;
+		if ( null === $dir ) {
+			return [];
+		}
+		$clock    = self::scan_clock();
+		$messages = self::on_partition(
+			'flames',
+			$partition,
+			$dir,
+			static function ( Partition_Node $node ) use ( $rids, $since, $deadline, $clock ): ?array {
+				$closed = \array_filter( $node->index_mtimes(), static fn ( int $mtime ): bool => $mtime < $since );
+				$lines  = 0;
+				$found  = $node->locate_by(
+					static function ( string $line, int $segment ) use ( $closed, $deadline, $clock, &$lines ): array|bool|null {
+						if ( isset( $closed[ $segment ] ) ) {
+							return true;
+						}
+						if ( 0 === ++$lines % self::SCAN_CLOCK_STRIDE && $clock() > $deadline ) {
+							return false;
+						}
+						return self::locate_flame( $line );
+					},
+					$rids
+				);
+				return null === $found ? null : $node->read_many( $found );
+			}
+		);
+		if ( null === $messages ) {
 			return null;
 		}
-		[ $entry, $record ] = $found;
-		$record['url_hash'] = \trim( Core::as_string( $entry['url_hash'] ?? '' ) );
-		$flame              = self::first_record( self::search_order( $rid, self::NODE_FLAMES ), 'flames', $rid );
-		if ( null !== $flame ) {
-			$record['flame_data'] = $flame[1];
-		}
-		return $record;
-	}
-
-	/**
-	 * The first STORED record whose index entry matches, paired with that entry.
-	 * One seek, never a log walk: the entry carries segment, offset and length.
-	 * The walk takes no budget, so null means no index holds the rid.
-	 *
-	 * @param array<int,string> $dirs Partition index => dir, in search order.
-	 * @param string            $log  Log basename ('requests' | 'flames').
-	 * @param string            $rid  Request id the entry must carry.
-	 * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}|null Entry + decoded record.
-	 */
-	private static function first_record( array $dirs, string $log, string $rid ): ?array {
-		$found = null;
-		self::scan_index_entries(
-			$dirs,
-			$log,
-			'rid',
-			$rid,
-			static function ( array $entry, int $partition, int $segment, Partition_Node $node ) use ( &$found ): ?bool {
-				$message = $node->read_message_at(
-					Core::as_int( $entry['segment'] ?? 0 ),
-					Core::as_int( $entry['offset'] ?? 0 ),
-					Core::as_int( $entry['length'] ?? 0 )
-				);
-				$record = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
-				if ( \is_array( $record ) ) {
-					$found = [ $entry, $record ];
-				}
-				return null === $found ? null : false;
-			},
-			null
-		);
-		return $found;
-	}
-
-	/**
-	 * Fan a bounded index scan across a set of partition dirs, newest entry
-	 * first, handing every entry whose `$field` equals `$match` to `$on_hit`.
-	 *
-	 * The one boundary MAX_SCAN_S lives at: a caller passing a deadline has
-	 * it span the whole fan-out, and the scan ends everywhere the moment it
-	 * is spent or `$on_hit` returns false. A null deadline walks unbudgeted,
-	 * as a rid lookup does; the parameter has no default, so every caller
-	 * says which it is. Each scratch Partition is built, named, formatted and
-	 * removed here, so a caller carries nothing but its predicate.
-	 *
-	 * The two endings are NOT the same answer, so they are told apart: a caller
-	 * satisfied by `$on_hit` holds the whole truth, while a caller whose budget
-	 * ran out holds however much of it the walk reached.
-	 *
-	 * Misses dominate any walk that spends its budget, so a miss costs ONE
-	 * `substr` + `trim` against the field's fixed column — the offsets coming
-	 * from the writer that laid the line out. The parse, and the check that
-	 * settles the match, run only behind that filter.
-	 *
-	 * @param array<int,string> $dirs   Partition index => dir, in scan order.
-	 * @param string            $log    Log basename ('requests' | 'flames').
-	 * @param string            $field  Index-entry field the match compares.
-	 * @param string            $match  Value that field must equal, trimmed.
-	 * @param callable(array<array-key,mixed>, int, int, Partition_Node): (self::SCAN_STOP_PARTITION|bool|null) $on_hit
-	 *        Return false to end the whole fan-out, `SCAN_STOP_PARTITION` to
-	 *        finish this partition and carry on with the next, null to continue.
-	 * @param float|null        $deadline A `scan_deadline()`; null walks with no budget.
-	 * @return bool True when the time budget ended the scan.
-	 */
-	private static function scan_index_entries( array $dirs, string $log, string $field, string $match, callable $on_hit, ?float $deadline ): bool {
-		// Both halves of ONE format: never read an index we didn't write.
-		[ $formatter, $parse, $column ] = 'flames' === $log
-			? [ 'flame-index', Flame_Builder_Node::parse_flame_index( ... ), Flame_Builder_Node::index_column( $field ) ]
-			: [ 'request-index', Request_Builder_Node::parse_request_index( ... ), Request_Builder_Node::index_column( $field ) ];
-		$clock = self::scan_clock();
-		$spent = false;
-		$lines = 0;
-		foreach ( $dirs as $p => $dir ) {
-			$stopped = false;
-			$node    = new Partition_Node();
-			self::name_scratch_partition( $node, $log, $p );
-			$node->arguments( [ $dir ] );
-			// Read-only; the NAME still proves its writer is in the graph.
-			if ( null === \Newspack_Nodes\Formatters::resolve( $formatter ) ) {
-				$node->remove_node();
-				throw new \RuntimeException( \esc_html( "index formatter not registered: {$formatter}" ) );
+		$flames = [];
+		foreach ( $messages as $rid => $message ) {
+			$tree = $message[ Message::VALUE ] ?? null;
+			if ( \is_array( $tree ) ) {
+				$flames[ (string) $rid ] = $tree;
 			}
-			$node->scan_index(
-				static function ( string $line, int $segment ) use ( &$spent, &$stopped, &$lines, $clock, $deadline, $node, $p, $field, $match, $column, $parse, $on_hit ): ?bool {
-					if ( null !== $deadline && 0 === ++$lines % self::SCAN_CLOCK_STRIDE && $clock() > $deadline ) {
-						$spent   = true;
-						$stopped = true;
-						return false;
-					}
-					// One slice per MISS; the parse runs only on a hit.
-					if ( [] !== $column && \trim( \substr( $line, $column[0], $column[1] ) ) !== $match ) {
-						return null;
-					}
-					$entry = $parse( $line );
-					if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry[ $field ] ?? '' ) ) !== $match ) {
-						return null;
-					}
-					$outcome = $on_hit( $entry, $p, $segment, $node );
-					// Done with this log, not with the fan-out.
-					if ( self::SCAN_STOP_PARTITION === $outcome ) {
-						return false;
-					}
-					$stopped = false === $outcome;
-					return $stopped ? false : null;
-				},
-				true
-			);
+		}
+		return $flames;
+	}
+
+	/**
+	 * Refuse to read an index whose formatter this process never registered:
+	 * the writer and the reader are halves of one format.
+	 *
+	 * @param string $formatter The index formatter's name.
+	 * @throws \RuntimeException When it is not registered.
+	 */
+	private static function require_index_formatter( string $formatter ): void {
+		if ( null === \Newspack_Nodes\Formatters::resolve( $formatter ) ) {
+			throw new \RuntimeException( \esc_html( "index formatter not registered: {$formatter}" ) );
+		}
+	}
+
+	/**
+	 * What `$read` answers over a scratch Partition on one partition's dir,
+	 * removed afterwards whatever `$read` does.
+	 *
+	 * @template T
+	 * @param string                     $log       Log basename ('requests' | 'flames').
+	 * @param int                        $partition Partition index.
+	 * @param string                     $dir       Its declared dir.
+	 * @param \Closure(Partition_Node): T $read      The read.
+	 * @return T
+	 */
+	private static function on_partition( string $log, int $partition, string $dir, \Closure $read ): mixed {
+		$node = new Partition_Node();
+		self::name_scratch_partition( $node, $log, $partition );
+		$node->arguments( [ $dir ] );
+		try {
+			return $read( $node );
+		} finally {
 			$node->remove_node();
-			if ( $stopped ) {
-				return $spent;
-			}
 		}
-		return false;
+	}
+
+	/**
+	 * A flame index line as `locate_by()` reads it: the rid it keys, and its
+	 * record's offset and length; null for a line that is no index entry.
+	 *
+	 * @param string $line Index line.
+	 * @return array{key: string, offset: int, length: int}|null
+	 */
+	private static function locate_flame( string $line ): ?array {
+		$entry = Flame_Builder_Node::parse_flame_index( $line );
+		return null === $entry ? null : [
+			'key'    => $entry['rid'],
+			'offset' => $entry['offset'],
+			'length' => $entry['length'],
+		];
 	}
 
 	/**
@@ -1286,30 +1196,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === $partition->sink() && null !== $ci ) {
 			$partition->sink( $ci );
 		}
-	}
-
-	/**
-	 * A node's partitions to search for `$rid`, its own partition first.
-	 *
-	 * A rid rides the same hash the whole way: the firehose Topic routes it by
-	 * KEY, the worker on that partition consumes it, Request_Builder writes it
-	 * to the request partition of the SAME index, and the flame builder there
-	 * folds it into the flame partition of that index. So the hash names the
-	 * partition outright and the rest of the fan-out is a fallback — needed
-	 * because the guess uses the reader's partition count, which lags the
-	 * writer's across a re-partition.
-	 *
-	 * @param string $rid  Request id whose hash names the first partition.
-	 * @param string $node The partition node, requests or flames.
-	 * @return array<int,string> Partition index => dir, hashed partition first.
-	 */
-	private static function search_order( string $rid, string $node ): array {
-		$dirs = Bootstrap::node_dirs( $node );
-		$hit  = Partition_Node::hash_to_partition( $rid, \max( 1, \count( $dirs ) ) );
-		if ( ! isset( $dirs[ $hit ] ) ) {
-			return $dirs;
-		}
-		return [ $hit => $dirs[ $hit ] ] + $dirs;
 	}
 
 	/**
@@ -1854,7 +1740,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
-					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last 288 buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start and log position, `requests_capped` true when the list holds fewer requests than the stats count (than its errors under `errors_only`), the aggregate flame rebuilt from their stored flames, and `aggregate_profiles`, its 25-hour category profile, null over no profiled request. `server` scopes the stats, the list and the profile. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured. Series come from `query` filtered to the URL.',
+					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last 288 buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count (than its errors under `errors_only`), the aggregate flame rebuilt from their stored flames, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its 25-hour category profile, null over no profiled request. `server` scopes the stats, the list and the profile. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured. Series come from `query` filtered to the URL.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
@@ -1875,12 +1761,15 @@ class Performance_CI_Node extends Service_CI_Node {
 				$spelling    = Core::as_string( $args['bucket'] );
 				$now         = self::now();
 				$detail      = self::url_detail( $hash, $server, $errors_only, $spelling, $now );
+				// A narrowed list's flame would not be the URL's.
+				$rebuilt = $detail['available'] && ! $errors_only && '' === $spelling;
+				$flame   = $rebuilt ? self::url_flame( $detail['listed'] ) : null;
 				return [
 					'stats'              => $detail['stats'],
-					'requests'           => $detail['requests'],
+					'requests'           => self::url_requests( $detail['listed'] ),
 					'requests_capped'    => $detail['requests_capped'],
-					// A narrowed list's flame would not be the URL's.
-					'aggregate_flame'    => $detail['available'] && ! $errors_only && '' === $spelling ? self::url_flame( $hash, $detail['requests'], $now ) : null,
+					'aggregate_flame'    => $flame,
+					'flame_cut'          => $rebuilt && null === $flame,
 					'aggregate_profiles' => self::url_profile( $hash, self::scope( $server, true ), $now ),
 				];
 					},
@@ -1888,17 +1777,16 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'search_requests',
 					'capability'  => Capabilities::READ,
-					'description' => 'Locate a request by rid across partitions.',
+					'description' => 'Locate a request by rid: {rid, url_hash} from its request row.',
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$rid   = Core::as_string( $args['rid'] );
-				$found = self::find_request_index_entry( $rid );
-				if ( null === $found ) {
-					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
-				}
-				return $found;
+				$rid = Core::as_string( $args['rid'] );
+				return [
+					'rid'      => $rid,
+					'url_hash' => self::row_of( $rid )['url'],
+				];
 					},
 				],
 				[
@@ -1923,26 +1811,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_request',
 					'capability'  => Capabilities::READ,
-					'description' => 'Full request + flame data for a rid; --partition hints where to look first.',
+					'description' => 'Full request + flame data for a rid, read at the place its request row names, with `flame_cut` true when MAX_SCAN_S ended the flame lookup before it found `flame_data`; no row, aged past seven days or not yet written, is not found.',
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
-						[ 'name' => 'partition', 'type' => 'int', 'required' => false, 'default' => 0 ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$rid       = Core::as_string( $args['rid'] );
-				$partition = Core::as_int( $args['partition'] );
-
-				$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
-				// No declared set: unfindable rid, not a bad partition.
-				if ( [] === $dirs ) {
-					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
-				}
-				if ( ! isset( $dirs[ $partition ] ) ) {
-					throw new \RuntimeException( 'invalid partition' );
-				}
-
-				// A hint, as in `ask`: that partition first, then the rest.
-				$result = self::load_request( $rid, $partition );
+				$result = self::load_request( Core::as_string( $args['rid'] ) );
 				// Findings ride the record; no model is involved in them.
 				$rule               = self::rule_for_record( $result );
 				$result['findings'] = Findings::for_request( $result, $rule );

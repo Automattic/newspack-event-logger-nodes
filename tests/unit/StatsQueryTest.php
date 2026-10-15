@@ -712,7 +712,7 @@ final class StatsQueryTest extends TestCase {
 	/** Only a store that will not open fails soft; a broken read raises. */
 	public function test_a_read_that_fails_once_open_propagates(): void {
 		$this->seed_request();
-		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( Flame_Facts_Row_Schema::TABLE, 0 ) ) )->exec( 'ALTER TABLE requests RENAME TO requests_moved' );
+		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( self::FACTS_TABLE, 0 ) ) )->exec( 'ALTER TABLE requests RENAME TO requests_moved' );
 
 		$this->expectException( \PDOException::class );
 		$this->expectExceptionMessage( 'requests' );
@@ -852,6 +852,41 @@ final class StatsQueryTest extends TestCase {
 		$this->assertCount( 1, $lines );
 	}
 
+	/** The reader names no table: it reads whichever one its topology declares. */
+	public function test_the_rows_are_read_from_the_flame_facts_table_the_topology_declares(): void {
+		$this->activate_written( 'kea-ledger-4471', "var num_partitions = 2\nmake_node Row_Table kea-facts-4471 Flame_Facts\n" );
+		$this->seed_request( [ 'server' => 'kea.example' ], partition: 1 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertFileExists( \Newspack_Nodes\Table_Node::file( 'kea-facts-4471', 1 ) );
+		$this->assertTrue( $r['available'] );
+		$this->assertSame( [ [ 'kea.example', 1 ] ], $r['rows'] );
+	}
+
+	public function test_two_flame_facts_tables_are_refused_naming_both(): void {
+		$this->activate_written( 'kea-twin-4471', "make_node Row_Table kea-left-4471 Flame_Facts\nmake_node Row_Table kea-right-4471 Flame_Facts\n" );
+
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'the active topologies declare 2 Row_Tables of schema Flame_Facts: kea-left-4471, kea-right-4471' );
+
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
+	}
+
+	/**
+	 * Activate one topology written here, alone.
+	 *
+	 * @param string $name Its name.
+	 * @param string $tsl  Its body.
+	 */
+	private function activate_written( string $name, string $tsl ): void {
+		$this->stock_topology_dir( 'stats-query-topology-' );
+		$this->write_tsl( $name, $tsl );
+		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ $name ];
+		\Newspack_Event_Logger_Nodes\Config::reset();
+	}
+
 	public function test_newest_requests_lists_every_partitions_rows_newest_first_up_to_the_limit(): void {
 		$now = Bucket::id( self::NOW );
 		$url = 'https://seed.example/hihi-3318/';
@@ -864,13 +899,64 @@ final class StatsQueryTest extends TestCase {
 
 		$this->assertSame(
 			[
-				[ 'rid' => 'rid-hihi-b', 'started_at' => $now * 300 - 2, 'finished_at' => $now * 300 + 9.5, 'partition' => 0, 'segment' => null, 'offset' => null, 'length' => null, 'status' => null, 'method' => 'GET', 'error' => 'T', 'ms' => null, 'peak_mb' => 40.25 ],
-				[ 'rid' => 'rid-hihi-c', 'started_at' => ( $now - 2 ) * 300 - 2, 'finished_at' => ( $now - 2 ) * 300 + 1.5, 'partition' => 3, 'segment' => null, 'offset' => null, 'length' => null, 'status' => 200, 'method' => 'GET', 'error' => null, 'ms' => 100.0, 'peak_mb' => 24.0 ],
+				[ 'rid' => 'rid-hihi-b', 'url' => Log_Manager::url_hash( $url ), 'started_at' => $now * 300 - 2, 'finished_at' => $now * 300 + 9.5, 'partition' => 0, 'segment' => null, 'offset' => null, 'length' => null, 'status' => null, 'method' => 'GET', 'error' => 'T', 'ms' => null, 'peak_mb' => 40.25 ],
+				[ 'rid' => 'rid-hihi-c', 'url' => Log_Manager::url_hash( $url ), 'started_at' => ( $now - 2 ) * 300 - 2, 'finished_at' => ( $now - 2 ) * 300 + 1.5, 'partition' => 3, 'segment' => null, 'offset' => null, 'length' => null, 'status' => 200, 'method' => 'GET', 'error' => null, 'ms' => 100.0, 'peak_mb' => 24.0 ],
 			],
 			$rows
 		);
 		$all = Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( $url ) ] ], $this->last_day(), 500 );
-		$this->assertSame( [ 'rid' => 'rid-hihi-a', 'started_at' => ( $now - 6 ) * 300 - 23, 'finished_at' => ( $now - 6 ) * 300 + 4.5, 'partition' => 2, 'segment' => 2, 'offset' => 8817, 'length' => 733, 'status' => 302, 'method' => 'POST', 'error' => null, 'ms' => 61.25, 'peak_mb' => 17.5 ], $all[2] );
+		$this->assertSame( [ 'rid' => 'rid-hihi-a', 'url' => Log_Manager::url_hash( $url ), 'started_at' => ( $now - 6 ) * 300 - 23, 'finished_at' => ( $now - 6 ) * 300 + 4.5, 'partition' => 2, 'segment' => 2, 'offset' => 8817, 'length' => 733, 'status' => 302, 'method' => 'POST', 'error' => null, 'ms' => 61.25, 'peak_mb' => 17.5 ], $all[2] );
+	}
+
+	public function test_a_rids_row_is_read_from_whichever_partition_holds_it(): void {
+		$now = Bucket::id( self::NOW );
+		$url = 'https://seed.example/ruru-6630/';
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-ruru-6630', 'bucket' => $now - 2015, 'segment' => 4, 'offset' => 5120, 'length' => 377, 'ms' => 88.25 ], partition: 3 );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-ruru-other' ] );
+
+		$found = Stats_Query::request_row( 'rid-ruru-6630' );
+		$row   = $found['row'];
+
+		$this->assertTrue( $found['available'] );
+		$this->assertSame( [ 'rid-ruru-6630', Log_Manager::url_hash( $url ), 3, 4, 5120, 377, 88.25 ], [ $row['rid'], $row['url'], $row['partition'], $row['segment'], $row['offset'], $row['length'], $row['ms'] ] );
+	}
+
+	/** A keyed lookup reads every bucket a row still holds; it invents no window. */
+	public function test_a_rids_row_is_found_whatever_its_bucket(): void {
+		$this->seed_request( [ 'rid' => 'rid-ruru-aged', 'bucket' => Bucket::id( self::NOW ) - 2500 ] );
+
+		$this->assertSame( 'rid-ruru-aged', Stats_Query::request_row( 'rid-ruru-aged' )['row']['rid'] ?? null );
+		$this->assertSame( [ 'available' => true, 'row' => null ], Stats_Query::request_row( 'rid-ruru-never' ) );
+	}
+
+	/** An outage is not an absence: the caller can tell them apart. */
+	public function test_a_rids_row_from_a_file_that_will_not_open_is_unavailable(): void {
+		$this->seed_request( [ 'rid' => 'rid-ruru-dark' ] );
+		\update_option( 'newspack_nodes_topologies', [] );
+		\Newspack_Event_Logger_Nodes\Config::reset();
+
+		$this->assertSame( [ 'available' => false, 'row' => null ], Stats_Query::request_row( 'rid-ruru-dark' ) );
+	}
+
+	/** A rid filters; it groups nothing and ranks nothing. */
+	public function test_a_rid_filters_but_is_no_group(): void {
+		$this->seed_request( [ 'rid' => 'rid-ruru-6631', 'server' => 'kea.example' ] );
+		$this->seed_request( [ 'rid' => 'rid-ruru-6632', 'server' => 'kea.example' ] );
+
+		$listed = Stats_Query::newest_requests( [ 'rid' => [ 'rid-ruru-6632' ] ], $this->last_day(), 5 );
+
+		$this->assertSame( [ 'rid-ruru-6632' ], \array_column( $listed, 'rid' ) );
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'unknown requests field rid' );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'rid' ], 'buckets' => $this->last_day() ] ) );
+	}
+
+	/** Only a keyed lookup goes without a bucket range. */
+	public function test_an_empty_bucket_selection_without_a_rid_is_refused(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'bucket' );
+
+		Stats_Query::newest_requests( [ 'server' => [ 'kea.example' ] ], [], 5 );
 	}
 
 	public function test_newest_requests_reads_only_its_buckets_and_filters(): void {

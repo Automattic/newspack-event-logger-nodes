@@ -149,7 +149,7 @@ const RULES_DELETE = 'rules:delete';
 
 // The graph control callbacks usePerformanceGraph hands back.
 const mockGraph = { handleUrlParamsChange: jest.fn() };
-// Records what the dashboard hands the graph — the partition rides here.
+// Records what the dashboard hands the graph.
 let mockGraphOpts = null;
 // Every render's ask, oldest first, so a test can read the FIRST fetch.
 const mockGraphCalls = [];
@@ -1347,7 +1347,6 @@ describe( 'PerformanceDashboard', () => {
 		const ERRORS = [
 			{
 				rid: 'f4tal',
-				partition: 2,
 				timestamp: 1741000456,
 				duration_ms: 2417,
 				status_code: 500,
@@ -1356,7 +1355,6 @@ describe( 'PerformanceDashboard', () => {
 			},
 			{
 				rid: 't1meout',
-				partition: 0,
 				timestamp: 1741000123,
 				duration_ms: null,
 				status_code: 0,
@@ -1898,10 +1896,8 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'carries the partition with a selected request, not just the rid', async () => {
-		// The partition travels WITH the selection from every entry point. Any
-		// caller that hands over only a rid leaves the detail unable to fetch,
-		// and reconstructing it downstream is what this refactor removed.
+	it( 'hands the graph a selected request by its rid alone', async () => {
+		// The request's row names its partition, so no caller supplies one.
 		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
@@ -1916,11 +1912,13 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {} );
 
 		await act( async () => {
-			globalThis.__urlDetailProps.onSelectRequest( 'r1', 7 );
+			globalThis.__urlDetailProps.onSelectRequest( 'rid-kokako-41' );
 		} );
 
-		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'r1' );
-		expect( mockGraphOpts.requestPartition ).toBe( 7 );
+		expect( mockNavState.selectRequest ).toHaveBeenCalledWith(
+			'rid-kokako-41'
+		);
+		expect( mockGraphOpts ).not.toHaveProperty( 'requestPartition' );
 		unmount();
 	} );
 
@@ -1982,14 +1980,14 @@ describe( 'PerformanceDashboard', () => {
 			requestDetail: {
 				data: null,
 				loading: false,
-				error: 'Could not determine the partition for this request',
+				error: 'Request not found: rid=r1',
 			},
 		} );
 
 		const { container, unmount } = mountDash();
 		await act( async () => {} );
 
-		expect( container.textContent ).toMatch( /partition for this request/ );
+		expect( container.textContent ).toMatch( /Request not found: rid=r1/ );
 		unmount();
 	} );
 
@@ -2005,7 +2003,6 @@ describe( 'PerformanceDashboard', () => {
 							rid: 'r1',
 							timestamp: 1700000000,
 							duration_ms: 100,
-							partition: 0,
 						},
 					],
 				},
@@ -2108,9 +2105,9 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	// A ?request= deep link asks on its OWN node, and its reply carries the
-	// partition — the whole reason the rid outranks the ?url= hash.
-	it( 'a ?request= deep link selects the URL, the request and the partition', async () => {
+	// A ?request= deep link asks on its OWN node, and its reply names the
+	// rid's URL, which is why the rid outranks the ?url= hash.
+	it( 'a ?request= deep link selects the URL and the request', async () => {
 		mockNavState.deepLink = { requestId: 'rid-deep', urlHash: null };
 		mockView = loadedView( {
 			urls: {
@@ -2125,7 +2122,7 @@ describe( 'PerformanceDashboard', () => {
 		expect( sentTo( DEEP_REQUEST ) ).toContainEqual( [ 'rid-deep' ] );
 
 		answerCommand( DEEP_REQUEST, {
-			result: { url_hash: 'h-known', partition: 2 },
+			result: { rid: 'rid-deep', url_hash: 'h-known' },
 			args: [ 'rid-deep' ],
 		} );
 		expect( mockNavState.selectUrl ).toHaveBeenCalledWith(
@@ -2693,7 +2690,7 @@ describe( 'PerformanceDashboard', () => {
 		await flushEffects();
 		// A brief answers a pick; the request view is mocked, so plant one.
 		const request = document.createElement( 'div' );
-		request.setAttribute( 'data-ask', 'request:r1:3' );
+		request.setAttribute( 'data-ask', 'request:r1' );
 		document.body.appendChild( request );
 		act( () => container.querySelector( '[data-ask-trigger]' ).click() );
 		act( () => {
@@ -2705,7 +2702,7 @@ describe( 'PerformanceDashboard', () => {
 			);
 		} );
 		request.remove();
-		expect( sentTo( 'ask' ).at( -1 )[ 0 ] ).toBe( 'request:r1:3' );
+		expect( sentTo( 'ask' ).at( -1 )[ 0 ] ).toBe( 'request:r1' );
 		answerCommand( 'ask', {
 			result: { subject: 'request', url: '/foo', findings: [] },
 			args: sentTo( 'ask' ).at( -1 ),

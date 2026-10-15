@@ -10,8 +10,8 @@
  * Traffic runs both ways. Inbound, the query params seed the selection — on
  * mount and again on every Back/Forward, because the address bar IS the link.
  * Only the server can answer for a `?url=` hash outside the loaded page of the
- * catalog, or for a `?request=`, whose rid alone carries the partition, so the
- * owner supplies the resolvers. Outbound, every later selection change pushes a
+ * catalog, or for a `?request=`, whose rid names its URL, so the owner
+ * supplies the resolvers. Outbound, every later selection change pushes a
  * history entry — every one the OPERATOR makes, that is. A selection the address
  * bar itself dictated is not written back, and the suppression is armed by the
  * same comparison that decides whether the selection moves at all, so the flush
@@ -176,10 +176,8 @@ export default function useUrlNavigation( urls ) {
 		isAddressBarNavigation.current = urlObj !== selectedUrlRef.current;
 		setSelectedUrl( urlObj );
 		// @longform The hash is answered, so it stops being an intent. The RID
-		// beside it stays REPORTED: it alone carries the partition, and a
-		// request selected without one makes the detail modal render "Could
-		// not determine the partition for this request" until the answer
-		// lands. The caller selects it WITH the partition.
+		// beside it stays REPORTED: the caller resolves it, which answers the
+		// URL it was made on, and selects the two together.
 		setInitialUrlHash( null );
 	}, [ urls, initialUrlHash ] );
 
@@ -217,10 +215,8 @@ export default function useUrlNavigation( urls ) {
 
 	// @longform Browser back/forward re-enters through the deep-link path a
 	// fresh load takes: the address bar is the link, so the rid is REPORTED
-	// and the hash is answered from the loaded page where it can be.
-	// Selecting the rid here instead leaves it without the partition it alone
-	// carries, and Forward renders "Could not determine the partition for
-	// this request" on a request a reload of the same URL opens fine.
+	// and the hash is answered from the loaded page where it can be, so
+	// Forward opens a request exactly as a reload of the same URL does.
 	useEffect( () => {
 		const handlePopState = () => {
 			const urlHash = getQueryParam( 'url' );

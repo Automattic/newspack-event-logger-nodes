@@ -7,8 +7,8 @@
  * declares functions, not classes, so the classmap autoloader never maps it and
  * it costs nothing at runtime.
  *
- * Two sweeps: every option row the plugin wrote, and the flame-facts
- * Row_Table's SQLite files. The rest of the on-disk state — logs, locks,
+ * Two sweeps: every option row the plugin wrote, and the SQLite files of the
+ * Row_Table its topologies declare with the Flame_Facts schema. The rest of the on-disk state — logs, locks,
  * offsets, IPC — lives under the substrate's base directory, and the
  * `newspack-nodes` uninstall removes that tree, which leaves `tables/` behind.
  *
@@ -57,18 +57,27 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
 }
 
 /**
- * Delete the flame-facts Row_Table's SQLite files: each partition's file,
- * and the WAL files SQLite keeps beside it, named by the substrate's
- * `Table_Node::file()` across every partition a fleet can run.
+ * Delete the SQLite files of every Row_Table the plugin's own topologies
+ * declare with the Flame_Facts schema: each partition's file, and the WAL
+ * files SQLite keeps beside it, named by the substrate's `Table_Node::file()`
+ * across every partition a fleet can run. The plugin is inactive here, so
+ * its node namespace is registered by hand, and its topologies are read
+ * inside `Topology_Registry::with_stock_dir()`: each name its dir holds
+ * resolves to the copy shipped there, never another dir's or an operator's
+ * user-dir copy, and the dir is registered no longer once the read ends.
+ * Another plugin's topologies are never read: a broken one cannot block this
+ * uninstall, and a table it declares with this schema is its own to clean
+ * up. A broken topology this plugin ships fails the uninstall loud.
  *
  * Only under a base directory this install configured. The schema default
  * is the one every unconfigured install on a host shares, and so are the
  * files under it, as the substrate's own uninstall holds. Nothing to do
  * where the substrate is not loaded, since only it can name the files.
  *
+ * @param string $topologies_dir The plugin's shipped `.tsl` files.
  * @return int Files deleted.
  */
-function delete_stats_tables(): int {
+function delete_stats_tables( string $topologies_dir ): int {
 	if ( ! \class_exists( '\Newspack_Nodes\Table_Node' ) ) {
 		return 0;
 	}
@@ -76,13 +85,29 @@ function delete_stats_tables(): int {
 	if ( '' === $base || \Newspack_Nodes\Settings_Schema::get()->defaults()['base_directory'] === $base ) {
 		return 0;
 	}
+	\Newspack_Nodes\Command_Interpreter_Node::register_namespace( __NAMESPACE__ . '\\' );
+	$dir    = \rtrim( $topologies_dir, '/' );
+	$tables = \Newspack_Nodes\Topology_Registry::with_stock_dir(
+		$dir,
+		static function () use ( $dir ): array {
+			$shipped = [];
+			foreach ( \Newspack_Nodes\Topology_Registry::describe() as $name => $sources ) {
+				if ( $dir === \dirname( $sources['stock'][0] ?? '' ) ) {
+					$shipped[] = $name;
+				}
+			}
+			return \Newspack_Nodes\Bootstrap::row_tables_of( Flame_Facts_Row_Schema::class, ...$shipped );
+		}
+	);
 	$deleted = 0;
-	for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
-		$file = \Newspack_Nodes\Table_Node::file( Flame_Facts_Row_Schema::TABLE, $partition );
-		foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
-			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.
-			if ( \is_file( $path ) && \unlink( $path ) ) {
-				++$deleted;
+	foreach ( $tables as $table ) {
+		for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
+			$file = \Newspack_Nodes\Table_Node::file( $table, $partition );
+			foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
+				// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.
+				if ( \is_file( $path ) && \unlink( $path ) ) {
+					++$deleted;
+				}
 			}
 		}
 	}

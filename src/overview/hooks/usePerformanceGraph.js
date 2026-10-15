@@ -333,15 +333,6 @@ const isValidRequestId = ( r ) =>
 	'string' === typeof r && /^[a-zA-Z0-9_-]+$/.test( r );
 
 /**
- * Whether a partition index is well-formed enough to send. The server rejects
- * one no partition directory holds, so this guards the token's shape alone.
- *
- * @param {*} p The candidate index.
- * @return {boolean} Whether it is a non-negative integer.
- */
-const isValidPartition = ( p ) => Number.isInteger( p ) && p >= 0;
-
-/**
  * The `overview` args: the server the totals and the leaderboard scope to.
  *
  * @param {string} serverFilter Server scope; '' means every server.
@@ -410,46 +401,43 @@ function urlsArgs( { urlParams, serverFilter } ) {
  * chart refs at FIRE time, so a change rides the next tick without
  * re-wiring the graph.
  *
- * @param {Object}   [opts]                  Live dashboard state.
- * @param {string}   [opts.serverFilter]     Server scope; '' means every
- *                                           server.
- * @param {string}   [opts.chartBreakdown]   The chart's first dimension.
- * @param {string}   [opts.chartThenBy]      Its second dimension; '' for none.
- * @param {string[]} [opts.chartChips]       Its filter chips, each
- *                                           `field=value`. A change re-asks,
- *                                           so hold one array per value.
- * @param {boolean}  [opts.askActive]        The `?` picker is armed, which
- *                                           holds the poll exactly as an open
- *                                           modal does: the reader is aiming
- *                                           at a row, and a repaint moves it.
- * @param {string}   [opts.refreshInterval]  Poll cadence in ms, as a STRING —
- *                                           `SelectControl` compares its
- *                                           option values as strings. A value
- *                                           `parseInt` cannot read takes
- *                                           `DEFAULT_REFRESH_INTERVAL_MS`; the
- *                                           dropdown's floor of 1000 fires on
- *                                           every router tick, and anything
- *                                           below it throws in
- *                                           `useBatchedPoll`, where only a
- *                                           Timer riding the router sits
- *                                           inside the batch bracket.
- * @param {?number}  [opts.requestPartition] Partition of the selected request,
- *                                           supplied WITH the selection; null
- *                                           is reported, never reconstructed.
- * @param {?Object}  [opts.selectedUrl]      `{ hash, url }` of the open URL
- *                                           detail modal; null closes and
- *                                           clears its slices.
- * @param {Object}   [opts.detailFilters]    The modal's `{ errors_only,
- *                                           bucket }`: its URL's errors alone,
- *                                           and the bucket selection its
- *                                           header and list narrow to. A
- *                                           change re-asks, so hold one object
- *                                           per value.
- * @param {Object}   [opts.detailChart]      The modal chart's `{ breakdown,
- *                                           thenBy, chips }`, held the same
- *                                           way.
- * @param {?string}  [opts.selectedRequest]  Rid of the open request detail
- *                                           modal; null closes and clears it.
+ * @param {Object}   [opts]                 Live dashboard state.
+ * @param {string}   [opts.serverFilter]    Server scope; '' means every
+ *                                          server.
+ * @param {string}   [opts.chartBreakdown]  The chart's first dimension.
+ * @param {string}   [opts.chartThenBy]     Its second dimension; '' for none.
+ * @param {string[]} [opts.chartChips]      Its filter chips, each
+ *                                          `field=value`. A change re-asks,
+ *                                          so hold one array per value.
+ * @param {boolean}  [opts.askActive]       The `?` picker is armed, which
+ *                                          holds the poll exactly as an open
+ *                                          modal does: the reader is aiming
+ *                                          at a row, and a repaint moves it.
+ * @param {string}   [opts.refreshInterval] Poll cadence in ms, as a STRING —
+ *                                          `SelectControl` compares its
+ *                                          option values as strings. A value
+ *                                          `parseInt` cannot read takes
+ *                                          `DEFAULT_REFRESH_INTERVAL_MS`; the
+ *                                          dropdown's floor of 1000 fires on
+ *                                          every router tick, and anything
+ *                                          below it throws in
+ *                                          `useBatchedPoll`, where only a
+ *                                          Timer riding the router sits
+ *                                          inside the batch bracket.
+ * @param {?Object}  [opts.selectedUrl]     `{ hash, url }` of the open URL
+ *                                          detail modal; null closes and
+ *                                          clears its slices.
+ * @param {Object}   [opts.detailFilters]   The modal's `{ errors_only,
+ *                                          bucket }`: its URL's errors alone,
+ *                                          and the bucket selection its
+ *                                          header and list narrow to. A
+ *                                          change re-asks, so hold one object
+ *                                          per value.
+ * @param {Object}   [opts.detailChart]     The modal chart's `{ breakdown,
+ *                                          thenBy, chips }`, held the same
+ *                                          way.
+ * @param {?string}  [opts.selectedRequest] Rid of the open request detail
+ *                                          modal; null closes and clears it.
  * @return {{ handleUrlParamsChange: (params: Object) => void }} The URL table's params
  *         callback, and nothing else.
  */
@@ -461,7 +449,6 @@ export function usePerformanceGraph( opts = {} ) {
 		chartChips = NO_CHIPS,
 		refreshInterval = String( DEFAULT_REFRESH_INTERVAL_MS ),
 		askActive = false,
-		requestPartition = null,
 		selectedUrl = null,
 		selectedRequest = null,
 		detailFilters = NO_DETAIL_FILTERS,
@@ -849,36 +836,14 @@ export function usePerformanceGraph( opts = {} ) {
 			} );
 			return;
 		}
-		// @longform The partition arrives WITH the selection — the deep-link
-		// resolver and a clicked row both supply it. Reconstructing it here
-		// from a page of RECENT requests answers nothing for an older rid and
-		// returns before even the loading state, leaving the modal to render
-		// neither section.
-		const partition = requestPartition;
-		if (
-			partition === undefined ||
-			partition === null ||
-			! isValidPartition( partition )
-		) {
-			sendControl( REQUESTDETAIL_VIEW, {
-				action: 'error',
-				error: 'Could not determine the partition for this request',
-			} );
-			return;
-		}
 		// The held record answers the old rid, not the one now loading.
 		sendControl( REQUESTDETAIL_VIEW, { action: 'clear' } );
 		sendControl( REQUESTDETAIL_VIEW, { action: 'loading' } );
-		const options = {};
-		// 0 is the verb's default, and the option is a hint, not a filter.
-		if ( partition ) {
-			options.partition = partition;
-		}
 		// Supersedes the ask about the request the operator left.
 		Core.node( REQUESTDETAIL_FETCHER )?.askNow(
-			formatCommandArgs( [ selectedRequest ], options )
+			formatCommandArgs( [ selectedRequest ] )
 		);
-	}, [ selectedRequest, requestPartition, sendControl ] );
+	}, [ selectedRequest, sendControl ] );
 
 	/**
 	 * Fetch the page of the URL table these params describe. Params matching

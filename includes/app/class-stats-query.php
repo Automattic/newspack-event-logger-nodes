@@ -1,7 +1,7 @@
 <?php
 /**
  * Stats_Query: the fixed vocabulary every performance reader asks the
- * `flame-facts` rows in.
+ * Flame_Facts rows in.
  *
  * A spec names a source, the fields to group and filter by, the measures to
  * answer and the buckets to read. `table_for()` picks the cheapest table that
@@ -57,11 +57,17 @@ final class Stats_Query {
 		'timings'  => [ 'ms', 'calls', 'requests', 'avg_ms', 'avg_calls' ],
 	];
 
+	/** Fields a source filters by and never groups: a key, not a dimension. */
+	private const KEYS = [
+		'requests' => [ 'rid' ],
+		'timings'  => [],
+	];
+
 	/** Most rows one answer holds. */
 	public const MAX_LIMIT = 1000;
 
 	/** The columns each row `newest_requests()` lists carries, in order. */
-	public const LISTED = [ 'rid', 'started_at', 'finished_at', 'partition', 'segment', 'offset', 'length', 'status', 'method', 'error', 'ms', 'peak_mb' ];
+	public const LISTED = [ 'rid', 'url', 'started_at', 'finished_at', 'partition', 'segment', 'offset', 'length', 'status', 'method', 'error', 'ms', 'peak_mb' ];
 
 	/** The farthest row a page may start at. */
 	public const MAX_OFFSET = 10000;
@@ -151,6 +157,7 @@ final class Stats_Query {
 				'worker'       => 't.worker',
 				'profiled'     => 't.profiled',
 				'error'        => "COALESCE( t.error, '-' )",
+				'rid'          => 't.rid',
 			],
 			'joins'    => [
 				'url' => self::URL_JOIN,
@@ -492,6 +499,38 @@ final class Stats_Query {
 	 * @throws \InvalidArgumentException Naming a field, a bucket range or a limit it refuses.
 	 */
 	public static function newest_requests( array $filter, array $buckets, int $limit ): array {
+		return self::listed( $filter, $buckets, $limit ) ?? [];
+	}
+
+	/**
+	 * The `requests` row a rid keys, every bucket read, as `newest_requests()`
+	 * lists it: `row` null where none names it, and `available` false, `row`
+	 * null, where the stats file will not open, so an outage is never read
+	 * as an absence.
+	 *
+	 * @param string $rid Request id.
+	 * @return array{available: bool, row: array<string,mixed>|null}
+	 */
+	public static function request_row( string $rid ): array {
+		$rows = self::listed( [ 'rid' => [ $rid ] ], [], 1 );
+		return [
+			'available' => null !== $rows,
+			'row'       => $rows[0] ?? null,
+		];
+	}
+
+	/**
+	 * The `LISTED` columns of the `requests` rows `$filter` selects over
+	 * `$buckets`, newest `finished_at` first, at most `$limit`; null where the
+	 * stats file will not open.
+	 *
+	 * @param array<string,list<scalar|null>> $filter  Requests fields to the values each matches.
+	 * @param list<array{0:int,1:int}>        $buckets The bucket ranges to read; none for a key.
+	 * @param int                             $limit   Most rows listed.
+	 * @return list<array<string,mixed>>|null
+	 * @throws \InvalidArgumentException Naming what `checked()` refuses.
+	 */
+	private static function listed( array $filter, array $buckets, int $limit ): ?array {
 		$spec = self::checked(
 			[
 				'source'  => 'requests',
@@ -507,7 +546,7 @@ final class Stats_Query {
 				return $reader->rows( "SELECT {$listed} FROM {$from} ORDER BY m_finished_at DESC, m_rid LIMIT ?", [ ...$binds, $spec['limit'] ] );
 			}
 		);
-		return \array_map( static fn ( array $row ): array => \array_combine( self::LISTED, $row ), $rows ?? [] );
+		return null === $rows ? null : \array_map( static fn ( array $row ): array => \array_combine( self::LISTED, $row ), $rows );
 	}
 
 	/**
@@ -545,7 +584,7 @@ final class Stats_Query {
 			$where[] = "{$column} BETWEEN ? AND ?";
 			\array_push( $binds, \intdiv( $first, $per ), \intdiv( $last + 1, $per ) - 1 );
 		}
-		$clauses = [ '( ' . \implode( ' OR ', $where ) . ' )' ];
+		$clauses = [] === $where ? [] : [ '( ' . \implode( ' OR ', $where ) . ' )' ];
 		foreach ( $spec['filter'] as $field => $values ) {
 			$clauses[] = Core::as_string( $expr[ $field ] ) . ' IN ( ' . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
 			\array_push( $binds, ...$values );
@@ -583,17 +622,20 @@ final class Stats_Query {
 	}
 
 	/**
-	 * What `$read` answers over every attached partition, none when no
-	 * partition has written a file. A fleet whose stats file will not open
-	 * says so once a window and answers null (decision 3).
+	 * What `$read` answers over every attached partition of the Row_Table
+	 * the active topologies declare with the Flame_Facts schema, none when no
+	 * partition has written a file. A fleet whose stats file will not open,
+	 * or that declares no such table, says so once a window and answers null
+	 * (decision 3); one declaring two is refused.
 	 *
 	 * @param \Closure(Row_Reader, non-empty-list<string>): list<list<mixed>> $read The read, over the reader and its aliases.
 	 * @return list<list<mixed>>|null
+	 * @throws \RuntimeException When the active topologies declare two such tables.
 	 */
 	private static function read( \Closure $read ): ?array {
 		try {
 			return Row_Table_Node::read(
-				Flame_Facts_Row_Schema::TABLE,
+				Flame_Facts_Row_Schema::class,
 				static function ( Row_Reader $reader ) use ( $read ): array {
 					$aliases = $reader->aliases();
 					return [] === $aliases ? [] : $read( $reader, $aliases );
@@ -622,9 +664,15 @@ final class Stats_Query {
 		foreach ( Core::arr( $spec['filter'] ?? null ) as $field => $values ) {
 			$filter[ (string) $field ] = \array_values( \array_map( static fn ( mixed $value ): mixed => self::bindable( (string) $field, $value ), Core::arr( $values ) ) );
 		}
-		foreach ( [ ...$group, ...\array_keys( $filter ) ] as $field ) {
+		foreach ( $group as $field ) {
 			if ( ! \in_array( $field, $fields, true ) ) {
 				throw new \InvalidArgumentException( \esc_html( "unknown {$source} field {$field}: one of " . \implode( ', ', $fields ) ) );
+			}
+		}
+		$filters = [ ...$fields, ...self::KEYS[ $source ] ];
+		foreach ( \array_keys( $filter ) as $field ) {
+			if ( ! \in_array( $field, $filters, true ) ) {
+				throw new \InvalidArgumentException( \esc_html( "unknown {$source} field {$field}: one of " . \implode( ', ', $filters ) ) );
 			}
 		}
 		$measure = \array_values( \array_map( Core::as_string( ... ), Core::arr( $spec['measure'] ?? null ) ) );
@@ -647,8 +695,8 @@ final class Stats_Query {
 		];
 		$checked['match']                     = '' === $checked['search'] ? '' : self::match( $checked['search'] );
 		[ $checked['top'], $checked['top_by'] ] = self::top( $spec, $source, $group );
-		if ( [] === $checked['buckets'] ) {
-			throw new \InvalidArgumentException( 'a query names at least one bucket range' );
+		if ( [] === $checked['buckets'] && [] === \array_intersect_key( $filter, \array_flip( self::KEYS[ $source ] ) ) ) {
+			throw new \InvalidArgumentException( 'a query names at least one bucket range, or a key to look up' );
 		}
 		foreach ( \array_diff_assoc( $group, \array_unique( $group ) ) as $name ) {
 			throw new \InvalidArgumentException( \esc_html( "{$name} is grouped twice" ) );

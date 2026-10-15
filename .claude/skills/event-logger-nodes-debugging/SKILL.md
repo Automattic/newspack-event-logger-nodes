@@ -206,8 +206,8 @@ This plugin registers exactly one REST route of its own: `POST /wp-json/newspack
 | Tool | Verb | Answers |
 |---|---|---|
 | `grep_requests` | `performance.grep_requests` | Pattern-search recent firehose traffic; a bounded summary per match (`rid`, `url`, `method`, `ts`, `match_count`, `first_match_excerpt`) |
-| `search_requests` | `performance.search_requests` | Locate one rid across every partition |
-| `dump_request` | `performance.dump_request` | Full request plus flame data for a rid; the `partition` argument is a hint, not a filter — every partition is searched either way |
+| `search_requests` | `performance.search_requests` | Locate one rid by its request row: `{ rid, url_hash }` |
+| `dump_request` | `performance.dump_request` | Full request plus flame data for a rid, read at the place its request row names; a rid no row names is not found |
 | `dump_url` | `performance.dump_url` | One URL's stats, its 500 newest requests across partitions, the aggregate flame rebuilt from their stored flames |
 | `performance_query` | `performance.query` | Any group, filter and measure `Stats_Query` names, over the request or timing rows; a top-N by window functions |
 | `performance_urls` | `performance.urls` | The URL table: every URL-set fact under the filters it applied |
@@ -319,8 +319,8 @@ Both span pairs name their CALLER, never the host or the table, because one host
 # climb and old segments are reaped, so read the newest rather than `0.log`.
 tail -c 800 "$(ls -t {base_dir}/logs/firehose.p0/*.log | head -1)"
 
-# Request_Builder output. Assembled requests, with a sibling `<segment_id>.idx`
-# next to each `<segment_id>.log` (the `request-index` formatter).
+# Request_Builder output. Assembled requests, one per line; each request's
+# row in the stats file names the segment, offset and length of its record.
 ls -la {base_dir}/logs/requests.p0/
 
 # Its three side channels: fleet alerts, error/warning/stderr lines, and the

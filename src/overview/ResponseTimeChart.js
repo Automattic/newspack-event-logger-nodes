@@ -44,8 +44,8 @@ const CHART_HEIGHT = 250;
  * data arrives, so mounting it empty is fine.
  *
  * @param {Object}   props                Component props.
- * @param {Array}    props.requests       Request index entries: { rid, partition, timestamp (seconds), duration_ms, status_code, error_status }.
- * @param {Function} props.onRequestClick Called with the clicked dot's rid and partition.
+ * @param {Array}    props.requests       Request rows: { rid, timestamp (seconds), duration_ms, status_code, error_status }.
+ * @param {Function} props.onRequestClick Called with the clicked dot's rid.
  * @return {import('react').ReactElement|null} The chart, or null without data.
  */
 export default function ResponseTimeChart( { requests, onRequestClick } ) {
@@ -65,7 +65,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 	 * Timestamps arrive in seconds and become `Date` objects for the time
 	 * scale.
 	 *
-	 * @type {Array<{time: Date, duration: number, rid: string, partition: number, status: number, klass: string}>}
+	 * @type {Array<{time: Date, duration: number, rid: string, status: number, klass: string}>}
 	 */
 	const allPoints = useMemo( () => {
 		if ( ! requests || requests.length === 0 ) {
@@ -77,7 +77,6 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				time: new Date( r.timestamp * 1000 ),
 				duration: r.duration_ms,
 				rid: r.rid,
-				partition: r.partition,
 				status: r.status_code || 0,
 				klass: getStatusCategory( r.status_code || 0 ),
 			} ) )
@@ -216,7 +215,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				} )
 				.on( 'click', ( _, d ) => {
 					if ( onRequestClickRef.current && d.rid ) {
-						onRequestClickRef.current( d.rid, d.partition );
+						onRequestClickRef.current( d.rid );
 					}
 				} )
 				.append( 'title' )

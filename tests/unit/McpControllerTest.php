@@ -165,9 +165,11 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( '`requests_capped`', $tools['dump_url']['description'], 'it says when the list holds the newest only' );
 		$this->assertStringContainsString( '`aggregate_profiles`', $tools['dump_url']['description'], 'it names the URL\'s profile' );
 		$this->assertStringContainsString( 'performance_query', $tools['dump_url']['description'], 'it points the series at the query tool' );
-		foreach ( [ 'scan_stopped_early', 'requests_window_start', 'index walk' ] as $gone ) {
+		foreach ( [ 'scan_stopped_early', 'requests_window_start', 'index walk', 'log position' ] as $gone ) {
 			$this->assertStringNotContainsString( $gone, \json_encode( $tools['dump_url'] ), "the list is a query, so {$gone} is no part of it" );
 		}
+		$this->assertStringContainsString( 'null with `flame_cut` true when the walk ran out of time', $tools['dump_url']['description'], 'only the flame walk is timed' );
+		$this->assertStringContainsString( '`flame_cut` true means the flame lookup ran out of time', $tools['dump_request']['description'] );
 		$ask_errors = $tools['performance_ask']['inputSchema']['properties']['errors_only']['description'];
 		$this->assertStringContainsString( '`url:`', $ask_errors, 'errors_only narrows a url: brief too' );
 		$this->assertStringContainsString( '`error_summary`', $ask_errors );
@@ -249,7 +251,7 @@ class McpControllerTest extends TestCase {
 		$this->assertSame( 'integer', $urls['limit']['type'] );
 		$this->assertSame( 'boolean', $urls['errors_only']['type'] );
 		$this->assertSame( 'string', $urls['sort']['type'] );
-		$this->assertSame( 'integer', $tools['dump_request']['inputSchema']['properties']['partition']['type'] );
+		$this->assertSame( [ 'rid' ], \array_keys( $tools['dump_request']['inputSchema']['properties'] ) );
 	}
 
 	/** Requiredness lives in the verb declaration, never in a description. */
@@ -592,13 +594,19 @@ class McpControllerTest extends TestCase {
 	}
 
 	public function test_the_two_rid_lookups_promise_a_definite_answer(): void {
-		// Both walk every index line, so a miss is a definite not-found.
+		// One walks every index line, the other reads the rid's row.
 		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
 
 		foreach ( [ 'search_requests', 'dump_request' ] as $tool ) {
 			$this->assertStringNotContainsString( 'budget', $tools[ $tool ]['summary'], $tool );
 			$this->assertStringContainsString( 'not found', $tools[ $tool ]['summary'], $tool );
 		}
+		$this->assertStringContainsString( 'seven days', $tools['dump_request']['summary'], 'it says a request outlives its row' );
+		$this->assertStringContainsString( '`request:<rid>`', $tools['performance_ask']['summary'], 'a request is named by its rid alone' );
+		$this->assertStringNotContainsString( '<partition>', $tools['performance_ask']['summary'] );
+		$this->assertStringNotContainsString( 'index', $tools['dump_request']['summary'] );
+		$this->assertStringContainsString( '{rid, url_hash}', $tools['search_requests']['summary'], 'search names a request by its row' );
+		$this->assertStringNotContainsString( 'index', $tools['search_requests']['summary'] );
 	}
 
 	/** The one guard a new fleet-fronting route must not quietly omit. */
@@ -810,11 +818,11 @@ class McpControllerTest extends TestCase {
 		$tokens = new \ReflectionMethod( MCP_Controller::class, 'tokens' );
 
 		$this->assertSame(
-			[ '--partition=3', '--descriptor=span:wp_loaded hook', '--limit=7', '--context=request:abc123' ],
+			[ '--server=kea.example', '--descriptor=span:wp_loaded hook', '--limit=7', '--context=request:abc123' ],
 			$tokens->invoke(
 				null,
 				[
-					'partition'  => 3,
+					'server'     => 'kea.example',
 					'descriptor' => 'span:wp_loaded hook',
 					'limit'      => 7,
 					'context'    => 'request:abc123',
@@ -829,12 +837,12 @@ class McpControllerTest extends TestCase {
 		$tokens = new \ReflectionMethod( MCP_Controller::class, 'tokens' );
 
 		$this->assertSame(
-			[ '--descriptor=span:wp_loaded', '--context=request:kea4471:2', '--context=url:c0ffee4471ab' ],
+			[ '--descriptor=span:wp_loaded', '--context=request:kea4471', '--context=url:c0ffee4471ab' ],
 			$tokens->invoke(
 				null,
 				[
 					'descriptor' => 'span:wp_loaded',
-					'context'    => [ 'request:kea4471:2', 'url:c0ffee4471ab' ],
+					'context'    => [ 'request:kea4471', 'url:c0ffee4471ab' ],
 				]
 			)
 		);
@@ -846,7 +854,7 @@ class McpControllerTest extends TestCase {
 
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'context' );
-		$tokens->invoke( null, [ 'context' => [ 'kea' => 'request:kea4471:2' ] ] );
+		$tokens->invoke( null, [ 'context' => [ 'kea' => 'request:kea4471' ] ] );
 	}
 
 	/** An argument the verb does not declare answers a tool error, by name. */

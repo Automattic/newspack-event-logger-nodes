@@ -119,13 +119,6 @@ final class Flame_Tree {
 	/** Keyword an opening span logs: `<label> (start)`. Capture 1 is the base name. */
 	const PATTERN_START = '/^(.+?) \(start\)$/';
 
-	/**
-	 * Expire anything on a per-URL aggregate not seen within this window —
-	 * merged flame children here, profile categories in `Flame_Builder_Node`.
-	 * They are one window, so this class owns it and the builder reads it.
-	 */
-	public const AGGREGATE_EXPIRY_SEC = 3600;
-
 	/** Recursion ceiling for the tree walks; deeper subtrees are left alone. */
 	private const MAX_RECURSION_DEPTH = 50;
 
@@ -451,7 +444,6 @@ final class Flame_Tree {
 			self::cover_children( $node );
 		}
 
-		unset( $node['ts'] );
 		unset( $node['sum_value'] );
 		unset( $node['seen_count'] );
 	}
@@ -804,21 +796,18 @@ final class Flame_Tree {
 	 * aggregate's, and adds that sum where a request's node adds its `value`.
 	 *
 	 * Node `name` is the merge key, which is why build_flame_data numbers
-	 * duplicate siblings first. `ts` records when a node was last touched —
-	 * `$now_ts`, since per-request trees carry no timestamp of their own, and
-	 * never moves back for an older record — and anything older than
-	 * AGGREGATE_EXPIRY_SEC is dropped. An incoming node's `message` and `t` never reach the aggregate, which has merged many
-	 * requests and so has no single position: a merged node holds `name`,
-	 * `sum_value`, `ts` and `children`, nothing else. Finalize divides by the
-	 * aggregate's own request count, so no per-node tally is kept.
+	 * duplicate siblings first. An incoming node's `message` and `t` never
+	 * reach the aggregate, which has merged many requests and so has no single
+	 * position: a merged node holds `name`, `sum_value` and `children`,
+	 * nothing else. Finalize divides by the aggregate's own request count, so
+	 * no per-node tally is kept.
 	 *
 	 * @param array<array-key,mixed> $existing Existing aggregate children (list).
 	 * @param array<array-key,mixed> $incoming Incoming per-request children (list).
-	 * @param int                    $now_ts   Timestamp for un-stamped nodes and the expiry cutoff.
 	 * @param int                    $depth    Current recursion depth.
 	 * @return array<int,mixed> Merged aggregate children, re-indexed as a list.
 	 */
-	public static function merge_flame_children_incremental( array $existing, array $incoming, int $now_ts, int $depth = 0 ): array {
+	public static function merge_flame_children_incremental( array $existing, array $incoming, int $depth = 0 ): array {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
 			return \array_values( $existing );
 		}
@@ -838,18 +827,14 @@ final class Flame_Tree {
 				continue;
 			}
 			$name           = \is_string( $child['name'] ?? null ) ? $child['name'] : 'unknown';
-			$child_ts       = \is_numeric( $child['ts'] ?? null ) ? (int) $child['ts'] : $now_ts;
 			$incoming_value = Core::num_float( $child['sum_value'] ?? $child['value'] ?? null );
 			if ( ! isset( $indexed[ $name ] ) ) {
 				$indexed[ $name ] = [
 					'name'      => $name,
 					'sum_value' => $incoming_value,
-					'ts'        => $child_ts,
 					'children'  => [],
 				];
 			} else {
-				$seen_ts                       = $indexed[ $name ]['ts'] ?? null;
-				$indexed[ $name ]['ts']        = \is_numeric( $seen_ts ) ? \max( (int) $seen_ts, $child_ts ) : $child_ts;
 				$indexed[ $name ]['sum_value'] = Core::num_float( $indexed[ $name ]['sum_value'] ?? null ) + $incoming_value;
 			}
 
@@ -859,17 +844,8 @@ final class Flame_Tree {
 				$indexed[ $name ]['children'] = self::merge_flame_children_incremental(
 					\array_values( Core::arr( $indexed_children ) ),
 					\array_values( $child_children ),
-					$now_ts,
 					$depth + 1
 				);
-			}
-		}
-
-		// Drop anything not seen within AGGREGATE_EXPIRY_SEC.
-		$cutoff = $now_ts - self::AGGREGATE_EXPIRY_SEC;
-		foreach ( $indexed as $name => $child ) {
-			if ( ( $child['ts'] ?? 0 ) < $cutoff ) {
-				unset( $indexed[ $name ] );
 			}
 		}
 

@@ -29,7 +29,7 @@
 <div class="b node" id="fhc" style="left:196px;top:0;width:176px"><div class="t">firehose:consumer</div><div class="s">multi-writer; snapshots request-builder into its offsetlog</div></div>
 <div class="b node" id="tee" style="left:418px;top:0;width:150px"><div class="t">firehose:tee</div><div class="s">complete adds it; performance and job-hub alone wire the consumer straight</div></div>
 <div class="b node" id="rb" style="left:614px;top:0;width:176px"><div class="t">request-builder</div><div class="s">Request_Builder_Node 100 3: assembles one record per rid, validates <span class="mono">n</span>, evicts a record 400–600 s after its last line, folds under entry pressure. Its hidden Request_Flight sibling ships one in-flight row per request each tick.</div></div>
-<div class="b out" id="req" style="left:836px;top:0;width:216px"><div class="t">requests.pN</div><div class="s">one document per request; request-index</div></div>
+<div class="b out" id="req" style="left:836px;top:0;width:216px"><div class="t">requests.pN</div><div class="s">one document per request</div></div>
 <div class="b out" id="err" style="left:836px;top:66px;width:216px"><div class="t">errors.p0</div><div class="s">error, warning, stderr, *(error), *(warning)</div></div>
 <div class="b out" id="al" style="left:836px;top:132px;width:216px"><div class="t">alerts.p0</div><div class="s">alert entries</div></div>
 <div class="b out" id="ct" style="left:836px;top:186px;width:216px"><div class="t">completed:tee</div><div class="s">compact summary → completed.p0 and gyroscope.p0; in-flight rows → gyroscope.p0</div></div>

@@ -5,8 +5,9 @@
  * The row tables the flame builder writes and every performance reader
  * queries: one `requests` row per completed request, the `urls` and
  * `agents` it names by id, its per-category `timings` per URL and per site,
- * and its `requests_hourly` rollup. `flame-builder.tsl` declares them as
- * `make_node Row_Table flame-facts Flame_Facts`.
+ * and its `requests_hourly` rollup. A topology declares them as
+ * `make_node Row_Table <name> Flame_Facts`, and a reader finds that name
+ * through `Bootstrap::row_table()`.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -23,9 +24,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * an absent country as '', and readers spell both `Unknown`.
  */
 final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
-
-	/** The Row_Table the topologies declare with this schema. */
-	public const TABLE = 'flame-facts';
 
 	/** Five-minute buckets a `requests` row lives: seven days. */
 	public const REQUESTS_BUCKETS = 2016;

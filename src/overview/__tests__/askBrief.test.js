@@ -935,7 +935,7 @@ test( 'a brief carries the tool call that fetches it again', () => {
 					tool: 'performance_ask',
 					arguments: {
 						descriptor: 'span:wp_loaded hook',
-						context: 'request:c6x0zgr:3',
+						context: 'request:c6x0zgr',
 					},
 				},
 			],
@@ -945,7 +945,7 @@ test( 'a brief carries the tool call that fetches it again', () => {
 	);
 
 	expect( md ).toContain(
-		'performance_ask descriptor="span:wp_loaded hook" context="request:c6x0zgr:3"'
+		'performance_ask descriptor="span:wp_loaded hook" context="request:c6x0zgr"'
 	);
 	expect( md ).toContain(
 		'https://example.test/wp-json/newspack-event-logger-nodes/v1/mcp'

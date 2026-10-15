@@ -37,25 +37,22 @@ function num( value, fallback = 0 ) {
  * on all three, because a narrowed number that does not say what narrowed it
  * reads as the site's.
  *
- * @param {Object}  [state]                  The dashboard's current selection.
- * @param {?Object} [state.urlTotals]        Totals for the URL set the filters selected.
- * @param {?Array}  [state.urlSlowest]       The slowest URLs of that same set.
- * @param {?Object} [state.urlFilters]       The filters both are of.
- * @param {?Object} [state.selectedUrl]      The selected URL row.
- * @param {?Object} [state.urlDetail]        Its detail payload.
- * @param {?Object} [state.detailErrors]     Under the modal's Errors Only,
- *                                           the `errorSummary()` of the list
- *                                           on screen. Null otherwise.
- * @param {?Object} [state.detailFilters]    The modal's `{ errors_only,
- *                                           bucket }`; its bucket selection
- *                                           is what the header and list
- *                                           narrow to, '' for the whole
- *                                           window.
- * @param {?string} [state.selectedRequest]  The selected request id.
- * @param {?number} [state.requestPartition] Its partition. Absent reads as 0,
- *                                           the `dump_request` verb's own
- *                                           default.
- * @param {?Object} [state.requestDetail]    Its detail payload.
+ * @param {Object}  [state]                 The dashboard's current selection.
+ * @param {?Object} [state.urlTotals]       Totals for the URL set the filters selected.
+ * @param {?Array}  [state.urlSlowest]      The slowest URLs of that same set.
+ * @param {?Object} [state.urlFilters]      The filters both are of.
+ * @param {?Object} [state.selectedUrl]     The selected URL row.
+ * @param {?Object} [state.urlDetail]       Its detail payload.
+ * @param {?Object} [state.detailErrors]    Under the modal's Errors Only,
+ *                                          the `errorSummary()` of the list
+ *                                          on screen. Null otherwise.
+ * @param {?Object} [state.detailFilters]   The modal's `{ errors_only,
+ *                                          bucket }`; its bucket selection
+ *                                          is what the header and list
+ *                                          narrow to, '' for the whole
+ *                                          window.
+ * @param {?string} [state.selectedRequest] The selected request id.
+ * @param {?Object} [state.requestDetail]   Its detail payload.
  * @return {Object} The facts block, discriminated by `surface`.
  */
 export function pageFacts( {
@@ -67,7 +64,6 @@ export function pageFacts( {
 	detailErrors,
 	detailFilters,
 	selectedRequest,
-	requestPartition,
 	requestDetail,
 } = {} ) {
 	// What the numbers are OF: the verb's echo, absent until it answers.
@@ -77,7 +73,7 @@ export function pageFacts( {
 		return {
 			surface: 'request',
 			filters,
-			request: { rid: selectedRequest, partition: requestPartition ?? 0 },
+			request: { rid: selectedRequest },
 			url: selectedUrl
 				? { hash: selectedUrl.hash, url: selectedUrl.url }
 				: null,

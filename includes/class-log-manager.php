@@ -1168,16 +1168,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Get the partition the current request's firehose lines hash to — the
-	 * `requests.p{N}` a reader needs to locate this request.
-	 *
-	 * @return int
-	 */
-	public function get_partition(): int {
-		return $this->partition_idx;
-	}
-
-	/**
 	 * Refresh firehose segment state from disk.
 	 *
 	 * Call after a subprocess that may have written to or rotated the firehose,

@@ -209,8 +209,9 @@ class TopologyShapeTest extends TestCase {
 	/**
 	 * `cmd {partition}:config with_index <name>` resolves the name through the
 	 * substrate's Formatters registry. An unregistered name leaves the partition
-	 * with no index at all — writes still land, but every index-driven read
-	 * (request search, flame lookup) then scans nothing and reports not-found.
+	 * with no index at all — writes still land, but the flame lookup then
+	 * scans nothing and reports not-found. The flame index is the one any
+	 * reader reads, so it is the one any topology writes.
 	 */
 	public function test_every_with_index_name_resolves_to_a_registered_formatter(): void {
 		$referenced = [];
@@ -221,7 +222,7 @@ class TopologyShapeTest extends TestCase {
 				}
 			}
 		}
-		$this->assertNotEmpty( $referenced, 'no with_index cmds — a rename silently disabled this guard' );
+		$this->assertSame( [ 'flame-index' ], \array_keys( $referenced ), 'an index no reader reads is written for nothing' );
 		foreach ( $referenced as $formatter => $topology ) {
 			$this->assertNotNull(
 				\Newspack_Nodes\Formatters::resolve( $formatter ),
@@ -439,14 +440,14 @@ class TopologyShapeTest extends TestCase {
 		$this->activate_shipped( 'performance', 3 );
 		$this->assertSame(
 			[
-				'schema' => 'Flame_Facts',
-				'files'  => [
+				'name'  => 'flame-facts',
+				'files' => [
 					0 => \Newspack_Nodes\Table_Node::file( 'flame-facts', 0 ),
 					1 => \Newspack_Nodes\Table_Node::file( 'flame-facts', 1 ),
 					2 => \Newspack_Nodes\Table_Node::file( 'flame-facts', 2 ),
 				],
 			],
-			\Newspack_Nodes\Bootstrap::row_table_files( 'flame-facts' )
+			\Newspack_Nodes\Bootstrap::row_table( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::class )
 		);
 	}
 }

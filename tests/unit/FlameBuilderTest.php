@@ -85,7 +85,7 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame(
 			[ [ 'rid-kereru-41', 41.0 ] ],
-			\Newspack_Nodes\Row_Table_Node::read( 'flame-facts', static fn ( \Newspack_Nodes\Row_Reader $r ): array => $r->rows( 'SELECT rid, ms FROM p0.requests', [] ) )
+			\Newspack_Nodes\Row_Table_Node::read( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::class, static fn ( \Newspack_Nodes\Row_Reader $r ): array => $r->rows( 'SELECT rid, ms FROM p0.requests', [] ) )
 		);
 	}
 
@@ -690,14 +690,12 @@ class FlameBuilderTest extends TestCase {
 			'name'      => 'root',
 			'sum_value' => 5.0,
 			'seen_count' => 1,
-			'ts'        => 12345,
 			'count'     => 1,
 			'children'  => [],
 		];
 		Flame_Tree::finalize_flame_node( $node, 1 );
 		$this->assertArrayNotHasKey( 'sum_value', $node );
 		$this->assertArrayNotHasKey( 'seen_count', $node );
-		$this->assertArrayNotHasKey( 'ts', $node );
 	}
 
 	public function test_flame_builder_constructs_sibling_interpreter(): void {
@@ -1812,31 +1810,6 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 5, $parsed['segment'] );
 		$this->assertSame( 1024, $parsed['offset'] );
 		$this->assertSame( 100, $parsed['length'] );
-	}
-
-	/**
-	 * The scan pre-filters on a raw column before parsing, so the offsets it
-	 * slices with have to come from the writer that laid the line out.
-	 */
-	public function test_index_column_locates_the_matchable_fields_the_writer_wrote(): void {
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_STRUCT;
-		$message[ Message::VALUE ] = [ 'rid' => 'qq4-flame-rid-8e02', 'url_hash' => 'c0ffee5eeded' ];
-		$line = (string) Flame_Builder_Node::format_index_entry(
-			$message,
-			[ 'segment' => 7, 'offset' => 4096, 'length' => 55 ]
-		);
-
-		[ $rid_offset, $rid_length ]   = Flame_Builder_Node::index_column( 'rid' );
-		[ $hash_offset, $hash_length ] = Flame_Builder_Node::index_column( 'url_hash' );
-
-		$this->assertSame( 'qq4-flame-rid-8e02', \trim( \substr( $line, $rid_offset, $rid_length ) ) );
-		$this->assertSame( 'c0ffee5eeded', \trim( \substr( $line, $hash_offset, $hash_length ) ) );
-	}
-
-	public function test_index_column_offers_no_column_for_a_zero_padded_field(): void {
-		// `segment` is zero-padded, so its column never equals its parsed int.
-		$this->assertSame( [], Flame_Builder_Node::index_column( 'segment' ) );
 	}
 
 	public function test_format_index_entry_returns_null_when_rid_missing(): void {

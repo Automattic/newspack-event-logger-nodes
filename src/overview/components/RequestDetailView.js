@@ -22,7 +22,7 @@ import { __ } from '@wordpress/i18n';
 
 import RequestSummary from '../../components/RequestSummary';
 import RequestProfile from '../RequestProfile';
-import RequestTrace from './RequestTrace';
+import RequestTrace, { FlameCutNote } from './RequestTrace';
 import LogEntriesTable from './LogEntriesTable';
 import FindingList from './FindingList';
 import { errorStatus } from '../../components/errorStatus';
@@ -35,7 +35,8 @@ const SECTION_STYLE = { marginBottom: '20px' };
  * `dump_request` reads back: `request_url`, `request_method`, `timestamp` (seconds),
  * `duration_ms`, `peak_mb`, `status_code`, `profiles`, `error_status` and
  * `folded`, plus the `findings` `dump_request` computes for it — absent when
- * no detector ran, which is not the same answer as an empty list.
+ * no detector ran, which is not the same answer as an empty list — and
+ * `flame_cut`, true when the flame lookup ran out of time.
  *
  * `Request_Builder_Node` stamps `error_status` as one character — `-` for a
  * clean request, and one of the shared `ERROR_STATUSES` codes for anything
@@ -50,7 +51,6 @@ const SECTION_STYLE = { marginBottom: '20px' };
  * @param {Array}   props.indentedEntries Log entries from computeIndentedEntries().
  * @param {number}  props.realEntryCount  Count of real (non-placeholder) log entries.
  * @param {string}  [props.rid]           Request id, so the picker can scope what is inside.
- * @param {number}  [props.partition]     Partition the record was read from, riding the `request:` descriptor as the brief's first place to look; the rid's own hash names it too, so an absent one costs a fallback rather than the answer.
  * @return {import('react').ReactElement} Request detail view.
  */
 export default function RequestDetailView( {
@@ -59,7 +59,6 @@ export default function RequestDetailView( {
 	indentedEntries,
 	realEntryCount,
 	rid,
-	partition,
 } ) {
 	const revealRef = useRef( null );
 	const status = errorStatus( requestDetail.error_status );
@@ -86,9 +85,7 @@ export default function RequestDetailView( {
 		// The picker chain: DOM nesting says which request this belongs to.
 		<div
 			className="event-logger-request-detail"
-			data-ask={
-				rid ? `request:${ rid }:${ partition ?? 0 }` : undefined
-			}
+			data-ask={ rid ? `request:${ rid }` : undefined }
 		>
 			<div className="event-logger-request-info" style={ SECTION_STYLE }>
 				<RequestSummary
@@ -137,6 +134,8 @@ export default function RequestDetailView( {
 					/>
 				</div>
 			) }
+
+			{ ! hasFlame && requestDetail.flame_cut && <FlameCutNote /> }
 
 			{ /* Profile Breakdown */ }
 			{ hasProfiles && (

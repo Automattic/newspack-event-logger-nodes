@@ -13,7 +13,7 @@
  *
  * What it does own is the UI state the graph's fetchers read at fire time: the
  * server filter, the chart metric, dimensions and chips, the refresh cadence,
- * the partition a located request was found in, the search box and its results,
+ * the search box and its results,
  * the request-table sort, the bucket selections that narrow the URL table
  * and the URL modal, the URL modal chart's question, and the inline "Log this
  * URL" rule editor. The server filter, metric, both dimensions and the table
@@ -271,7 +271,6 @@ export default function PerformanceDashboard( {
 
 	const [ searchQuery, setSearchQuery ] = useState( '' );
 	const [ searchAnswer, setSearchAnswer ] = useState( NO_SEARCH_ANSWER );
-	const [ requestPartition, setRequestPartition ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = usePersistedChoice(
 		'event-logger-refresh-interval',
 		DASHBOARD_REFRESH_OPTIONS,
@@ -365,20 +364,12 @@ export default function PerformanceDashboard( {
 		chartThenBy: activeThenBy,
 		chartChips,
 		refreshInterval,
-		requestPartition,
 		selectedUrl,
 		selectedRequest,
 		detailFilters,
 		detailChart,
 		askActive: ask.active,
 	} );
-
-	// Reset the search-sourced partition when leaving request detail.
-	useEffect( () => {
-		if ( ! selectedRequest ) {
-			setRequestPartition( null );
-		}
-	}, [ selectedRequest ] );
 
 	// Where the URL detail was scrolled to, restored when the request closes.
 	const urlDetailScrollRef = useRef( 0 );
@@ -387,12 +378,10 @@ export default function PerformanceDashboard( {
 	 * Open one of the URL's requests inside the modal, or return to the URL
 	 * detail.
 	 *
-	 * @param {?string} rid         The request id to open, or null to go back.
-	 * @param {number}  [partition] The partition the rid was located in. Omit it
-	 *                              to keep the partition already selected.
+	 * @param {?string} rid The request id to open, or null to go back.
 	 */
 	const selectRequest = useCallback(
-		( rid, partition ) => {
+		( rid ) => {
 			if ( rid ) {
 				// Entering request detail — save current scroll position.
 				const modalContent = document.querySelector(
@@ -401,10 +390,6 @@ export default function PerformanceDashboard( {
 				if ( modalContent ) {
 					urlDetailScrollRef.current = modalContent.scrollTop;
 				}
-			}
-			// The partition rides WITH the selection, never recovered later.
-			if ( undefined !== partition ) {
-				setRequestPartition( partition );
 			}
 			baseSelectRequest( rid );
 		},
@@ -474,8 +459,7 @@ export default function PerformanceDashboard( {
 	 * title fill in when `lookupUrl` answers.
 	 *
 	 * @param {string} rid  The request id that was found.
-	 * @param {Object} data The `search_requests` reply, carrying `url_hash` and
-	 *                      `partition`.
+	 * @param {Object} data The `search_requests` reply, carrying `url_hash`.
 	 */
 	const applyFoundRequest = useCallback(
 		( rid, data ) => {
@@ -488,7 +472,6 @@ export default function PerformanceDashboard( {
 			// "URL not found" for a URL plainly on screen. The navigation
 			// wins, and the select resets so nothing is hidden.
 			setServerFilter( '' );
-			setRequestPartition( data.partition );
 			selectUrlNow(
 				known ?? { hash: data.url_hash, url: UNKNOWN_URL() }
 			);
@@ -504,14 +487,13 @@ export default function PerformanceDashboard( {
 	 * Whether a `search_requests` reply located the request.
 	 *
 	 * @param {?Object} data The reply payload.
-	 * @return {boolean} True when it carries both a URL hash and a partition.
+	 * @return {boolean} True when it carries the URL hash.
 	 */
-	const found = ( data ) =>
-		data && data.url_hash && undefined !== data.partition;
+	const found = ( data ) => Boolean( data?.url_hash );
 
 	/**
 	 * Resolve a `?request=` deep link. Only the server can answer for a rid,
-	 * whose partition nothing on the page knows.
+	 * whose URL nothing on the page knows.
 	 *
 	 * A RETRIED read: an undelivered send is asked again while the link still
 	 * stands, and a not-found is an answer that ends it.
@@ -567,7 +549,7 @@ export default function PerformanceDashboard( {
 	const deepLinkRef = useRef( deepLink );
 	deepLinkRef.current = deepLink;
 
-	// The rid answers the hash AND the partition; `?url=` is the fallback.
+	// The rid answers its URL's hash; `?url=` is the fallback.
 	useEffect( () => {
 		if ( deepLink.requestId ) {
 			askDeepLinkRequest( formatCommandArgs( [ deepLink.requestId ] ) );
@@ -620,7 +602,7 @@ export default function PerformanceDashboard( {
 	/**
 	 * Run the exact-id search: from the box, from a `?search=` link, or from
 	 * a pattern-search row, which carries the rid alone, while the URL hash
-	 * and partition the modal needs come only from `search_requests`. The last
+	 * the modal needs comes only from `search_requests`. The last
 	 * answer clears, so a stale error or list never sits under it in flight.
 	 *
 	 * @param {string} rid The request id to look up.
@@ -975,7 +957,6 @@ export default function PerformanceDashboard( {
 							detailErrors,
 							detailFilters,
 							selectedRequest,
-							requestPartition,
 							requestDetail,
 						} )
 					),
@@ -1212,7 +1193,6 @@ export default function PerformanceDashboard( {
 							indentedEntries={ indentedEntries }
 							realEntryCount={ realEntryCount }
 							rid={ selectedRequest }
-							partition={ requestPartition }
 						/>
 					) }
 

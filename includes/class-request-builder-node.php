@@ -33,11 +33,6 @@
  * `purge_cache()`'s `requests expire`. Narration read back off the firehose,
  * this builder's or a sibling's, is folded like any line but never counted.
  *
- * The two static index helpers, `format_index_entry()` and
- * `parse_request_index()`, are a matched pair — a fixed-width companion-index
- * line writer and its reader. The writer is registered as the `request-index`
- * formatter, and the `performance` CI's lookup verbs read through both.
- *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -109,49 +104,21 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 	/**
 	 * Every non-nominal terminal marker: fatal, timed out, aborted, incomplete.
-	 * The index writer, its reader and the `process (complete)` validator all
-	 * read this one list, because three parallel copies is how a status becomes
-	 * writable but unreadable.
+	 * The `process (complete)` validator and the flame builder's row both
+	 * read this one list, so a status the builder writes is one a reader names.
 	 */
 	public const ERROR_STATUSES = [ 'F', 'T', 'A', 'I' ];
 
 	/**
-	 * The one label every method outside `METHOD_CODES` indexes and aggregates
-	 * under. A request line accepts any method token, so naming each would let
-	 * a visitor mint index codes and stats keys at will. It is the stats'
+	 * The one label every method outside `METHODS` aggregates under. A request
+	 * line accepts any method token, so naming each would let a visitor mint
+	 * stats keys at will. It is the stats'
 	 * overflow key, so the method axis's cap folds into the same row.
 	 */
 	public const METHOD_OTHER = 'Other';
 
-	/**
-	 * The index line's 1-char method column, written here and read back through
-	 * `array_flip()`, and the bounded method vocabulary `method_label()` maps
-	 * every request onto. Two hand-kept tables is how a method added to one
-	 * side decodes as a bare letter on the other.
-	 */
-	private const METHOD_CODES = [
-		'GET'              => 'G',
-		'POST'             => 'P',
-		'HEAD'             => 'H',
-		'DELETE'           => 'D',
-		'PUT'              => 'U',
-		'PATCH'            => 'A',
-		'OPTIONS'          => 'O',
-		'CLI'              => 'C',
-		self::METHOD_OTHER => 'X',
-	];
-
-	/**
-	 * Where each RAW-COMPARABLE field sits on an index line, `[offset, length]`.
-	 *
-	 * Only columns whose trimmed bytes equal the parsed value belong here: a
-	 * scan pre-filters on them and parses only on a hit, so a zero-padded or
-	 * coded column would answer a question it cannot answer.
-	 */
-	private const INDEX_COLUMNS = [
-		'rid'      => [ 0, 32 ],
-		'url_hash' => [ 32, 12 ],
-	];
+	/** The bounded method vocabulary `method_label()` maps every request onto. */
+	private const METHODS = [ 'GET', 'POST', 'HEAD', 'DELETE', 'PUT', 'PATCH', 'OPTIONS', 'CLI' ];
 
 	/**
 	 * The keywords a request builder's narration is written under. Folded as
@@ -207,9 +174,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * over budget would otherwise re-scan on every single entry.
 	 */
 	private const PRESSURE_CHECK_STRIDE = 1000;
-
-	/** The one width `format_index_entry()` writes and `parse_request_index()` reads. */
-	private const INDEX_LINE_BYTES = 97;
 
 	/** Max distinct labels tracked per profiled state (bounds runaway memory). */
 	private const MAX_PROFILE_ENTRY_LABELS = 1000;
@@ -1709,56 +1673,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Parse one fixed-width index line written by format_index_entry().
-	 *
-	 * Columns: rid(32) url_hash(12) timestamp(10) duration_ms(8) status_code(3)
-	 * segment(6) offset(10) length(8) peak_mb(6) method(1) error_status(1) —
-	 * one width, the one `format_index_entry()` writes. A line of any other
-	 * length is a truncated, half-written or run-together record, and is
-	 * refused.
-	 *
-	 * @param string $line Index line.
-	 * @return array<string,mixed>|null Parsed entry, or null when malformed.
-	 */
-	public static function parse_request_index( string $line ): ?array {
-		$line = \rtrim( $line, "\n" );
-		if ( self::INDEX_LINE_BYTES !== \strlen( $line ) ) {
-			return null;
-		}
-		$entry = [
-			'rid'         => \trim( \substr( $line, 0, 32 ) ),
-			'url_hash'    => \trim( \substr( $line, 32, 12 ) ),
-			'timestamp'   => (int) \substr( $line, 44, 10 ),
-			'duration_ms' => (int) \substr( $line, 54, 8 ),
-			'status_code' => (int) \substr( $line, 62, 3 ),
-			'segment'     => (int) \substr( $line, 65, 6 ),
-			'offset'      => (int) \substr( $line, 71, 10 ),
-			'length'      => (int) \substr( $line, 81, 8 ),
-			'peak_mb'     => (int) \substr( $line, 89, 6 ),
-			'method'      => self::method_names()[ \substr( $line, 95, 1 ) ] ?? \substr( $line, 95, 1 ),
-		];
-		$status = \substr( $line, 96, 1 );
-		if ( \in_array( $status, self::ERROR_STATUSES, true ) ) {
-			$entry['error_status'] = $status;
-		}
-		return $entry;
-	}
-
-	/**
-	 * `METHOD_CODES` inverted, memoized.
-	 *
-	 * @return array<string,string>
-	 */
-	private static function method_names(): array {
-		/** @var array<string,string> $names */
-		static $names = [];
-		if ( [] === $names ) {
-			$names = \array_flip( self::METHOD_CODES );
-		}
-		return $names;
-	}
-
-	/**
 	 * Read a curated environment_v3 field as a string ('' when absent or non-string).
 	 *
 	 * @param array<string,mixed> $env Curated env map from the environment_v3 entry.
@@ -1793,84 +1707,23 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Format index entry callback for Partition::with_index().
-	 *
-	 * Registered as the `request-index` formatter; `parse_request_index()` is
-	 * the reader for the lines this writes. The layout is fixed-width and
-	 * append-only, `INDEX_LINE_BYTES` wide, so the reader slices each field by
-	 * constant offset and refuses any other length. Change a width and every
-	 * existing `.idx` on disk decodes as garbage.
-	 *
-	 * Two cases skip indexing, both by the substrate's null-or-'' contract: a
-	 * record with no URL, and a position too large for its column — an offset,
-	 * length, or segment that would overflow its width is dropped rather than
-	 * written truncated, which would decode as a valid but wrong seek.
-	 *
-	 * @param array<int,mixed>  $message  The unpacked message array; VALUE is index 6.
-	 * @param array<string,int> $position Position array.
-	 * @return string|null Index entry or null.
-	 */
-	public static function format_index_entry( array $message, array $position ): ?string {
-		$value = $message[ Message::VALUE ] ?? null;
-		if ( ! \is_array( $value ) || empty( $value['url'] ) ) {
-			return null;
-		}
-		// Decoded request envelope: string-keyed map, mixed-by-design values.
-		/** @var array<string,mixed> $value */
-		$request = (object) $value;
-
-		$rid          = Core::str( $request->rid ?? '' );
-		$url          = Core::str( $request->url ?? '' );
-		$url_hash     = Log_Manager::url_hash( $url );
-		$timestamp    = Core::as_int( $request->timestamp ?? Core::$now );
-		$duration_ms  = Core::as_int( $request->duration_ms ?? 0 );
-		$status_code  = Core::as_int( $request->status_code ?? 0 );
-		$peak_mb      = Core::as_float( $request->peak_mb ?? 0 );
-		$error_status = Core::str( $request->error_status ?? '-', '-' );
-		$segment      = $position['segment'];
-		$offset       = $position['offset'];
-		$length       = $position['length'];
-
-		if ( $offset > 9999999999 || $length > 99999999 || $segment > 999999 ) {
-			return '';
-		}
-
-		// peak_mb: 6 chars, integer MB zero-padded (max 999999 MB).
-		$peak_mb_int = \min( (int) \round( $peak_mb ), 999999 );
-
-		$method = self::METHOD_CODES[ self::method_label( $request->request_method ?? null ) ];
-
-		return \str_pad( \substr( $rid, 0, 32 ), 32 )
-			. \str_pad( \substr( $url_hash, 0, 12 ), 12 )
-			. \str_pad( (string) $timestamp, 10, '0', STR_PAD_LEFT )
-			. \str_pad( (string) \min( $duration_ms, 99999999 ), 8, '0', STR_PAD_LEFT )
-			. \str_pad( (string) \min( $status_code, 999 ), 3, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $segment, 6, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $offset, 10, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $length, 8, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $peak_mb_int, 6, '0', STR_PAD_LEFT )
-			. $method
-			. $error_status;
-	}
-
-	/**
-	 * A request's method in the bounded vocabulary the index and the stats
-	 * axes share: a `METHOD_CODES` method as itself, anything else as
-	 * `METHOD_OTHER`. The record keeps the real method.
+	 * A request's method in the bounded vocabulary the stats axes share: a
+	 * `METHODS` method as itself, anything else as `METHOD_OTHER`. The record
+	 * keeps the real method.
 	 *
 	 * The request line sets a record's url and method together, and only a
-	 * url-ful record is indexed or aggregated, so a missing method is a
-	 * broken record, not an unknown one.
+	 * url-ful record is aggregated, so a missing method is a broken record,
+	 * not an unknown one.
 	 *
 	 * @param mixed $method The record's `request_method`.
-	 * @return string A `METHOD_CODES` key.
+	 * @return string A `METHODS` method or `METHOD_OTHER`.
 	 * @throws \InvalidArgumentException When the record carries no method.
 	 */
 	public static function method_label( mixed $method ): string {
 		if ( ! \is_string( $method ) || '' === $method ) {
 			throw new \InvalidArgumentException( 'request record carries no method' );
 		}
-		return isset( self::METHOD_CODES[ $method ] ) ? $method : self::METHOD_OTHER;
+		return \in_array( $method, self::METHODS, true ) ? $method : self::METHOD_OTHER;
 	}
 
 	/**
@@ -1906,21 +1759,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			'sample'        => $samples,
 			'line_counter'  => $this->line_counter,
 		];
-	}
-
-	/**
-	 * Where a raw-comparable field sits on the line this class writes.
-	 *
-	 * The scan that reads these lines compares ONE column before parsing, and
-	 * the offsets it slices with have to come from the writer that laid the
-	 * line out. A field with no such column answers `[]`, and its caller falls
-	 * back to the parse.
-	 *
-	 * @param string $field Index-entry field name.
-	 * @return array{0:int,1:int}|array{} Offset and length, or [] when none.
-	 */
-	public static function index_column( string $field ): array {
-		return self::INDEX_COLUMNS[ $field ] ?? [];
 	}
 
 	/**

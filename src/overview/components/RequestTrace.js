@@ -78,3 +78,21 @@ export default function RequestTrace( {
 		</div>
 	);
 }
+
+/**
+ * What the trace section shows in its place when `dump_request` or
+ * `dump_url` answers `flame_cut`: the flame lookup ran out of its time
+ * budget, which says nothing of whether a flame was recorded.
+ *
+ * @return {import('react').ReactElement} The note.
+ */
+export function FlameCutNote() {
+	return (
+		<p className="newspack-nodes-banner is-info">
+			{ __(
+				'The flame lookup ran out of time, so no trace is shown here; that does not mean none was recorded.',
+				'newspack-event-logger-nodes'
+			) }
+		</p>
+	);
+}

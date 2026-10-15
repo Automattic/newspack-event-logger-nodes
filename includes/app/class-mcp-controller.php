@@ -71,10 +71,10 @@ class MCP_Controller {
 	 * Calls one session may make per RATE_LIMIT_WINDOW_S.
 	 *
 	 * MCP does not go through `/command`, so the substrate's per-user cap does
-	 * not bound it — and the tools behind it are not cheap: `grep_requests` and
-	 * the rid lookups walk every partition's index for up to MAX_SCAN_S,
-	 * `dump_url` walks a URL's flame index, and `overview` and `ask`
-	 * rebuild the leaderboard from the stats rows. A looping agent, or a leaked
+	 * not bound it — and the tools behind it are not cheap: `grep_requests`
+	 * reads the firehose and `dump_url` locates its requests' flames, each for
+	 * up to MAX_SCAN_S, and `overview` and `ask` rebuild the leaderboard from
+	 * the stats rows. A looping agent, or a leaked
 	 * bearer, would otherwise hold an unmetered amplification path. Generous
 	 * enough that a conversational agent never grazes it.
 	 */
@@ -116,7 +116,7 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'class'   => Performance_CI_Node::class,
 			'verb'    => 'dump_url',
-			'summary' => 'One URL from its stored request rows, worker traffic counted. `stats` covers the last 288 five-minute buckets or a selection: `count`, `stats.errors` (its exact count of timeouts and fatals, which the list cap never shortens), request-weighted means, `last_updated` and `requests_per_second`; `stats.avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured. `requests` lists its newest 500 by completion, `finished_at`, each with its start, `timestamp`, its log position and a null `duration_ms` where none was measured: a timeout\'s eviction wait, an abort\'s stop, a zero. `requests_capped` true means the list holds fewer requests than `stats.count`, or under `errors_only` than `stats.errors`: the newest 500 only. A stats file that will not open answers zero stats, an empty list and a null flame and profile. `aggregate_flame` is folded from those requests\' stored flames, null when the walk ran out of time; `aggregate_profiles` is its category profile over the 25 hours timings are kept, null over no profiled request. Breakdowns and chart series come from performance_query with `filter` `url=<hash>`.',
+			'summary' => 'One URL from its stored request rows, worker traffic counted. `stats` covers the last 288 five-minute buckets or a selection: `count`, `stats.errors` (its exact count of timeouts and fatals, which the list cap never shortens), request-weighted means, `last_updated` and `requests_per_second`; `stats.avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured. `requests` lists its newest 500 by completion, `finished_at`, each with its start, `timestamp`, and a null `duration_ms` where none was measured: a timeout\'s eviction wait, an abort\'s stop, a zero. `requests_capped` true means the list holds fewer requests than `stats.count`, or under `errors_only` than `stats.errors`: the newest 500 only. A stats file that will not open answers zero stats, an empty list and a null flame and profile. `aggregate_flame` is folded from those requests\' stored flames, and is null with `flame_cut` true when the walk ran out of time; `aggregate_profiles` is its category profile over the 25 hours timings are kept, null over no profiled request. Breakdowns and chart series come from performance_query with `filter` `url=<hash>`.',
 			'args'    => [ 'hash' => 'The 12-char URL hash.', 'server' => 'Optional server name; scopes the stats, the list and the profile the way performance_urls scopes the row.', 'errors_only' => 'Lists only the timeouts and fatals, reaching past the clean requests that bury them in the full list: the newest 500 of them. The stats stay the whole URL\'s. An abort or a gap in the log is no error. No flame is rebuilt from them: `aggregate_flame` is null.', 'bucket' => 'A selection of five-minute buckets, as performance_urls takes it: comma-separated runs of `Y-m-d-H-i` UTC keys, each one bucket or `start..end` inclusive (`2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30`), at most 288 buckets. `stats` and the list become the requests completing inside any of them. A URL with no traffic in the selection answers zero `count` and `errors`, null means, `min_ms` and `max_ms`, and an empty list; `URL not found` means no request row in the week the rows keep names the hash. No flame is rebuilt from a selection: `aggregate_flame` is null.' ],
 		],
 		'performance_query'        => [
@@ -130,15 +130,15 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'class'   => Performance_CI_Node::class,
 			'verb'    => 'search_requests',
-			'summary' => 'Locate a request by id; returns {rid, partition, url_hash}. The walk reads every index line it needs, so a `Request not found` error is definite: no partition holds that rid.',
+			'summary' => 'Locate a request by id; returns {rid, url_hash} from its request row. A `Request not found` error means no row names that rid: the request is older than the rows keep, or finished in the last few seconds and is not written yet.',
 			'args'    => [ 'rid' => 'The request id.' ],
 		],
 		'dump_request'             => [
 			'node'    => 'performance',
 			'class'   => Performance_CI_Node::class,
 			'verb'    => 'dump_request',
-			'summary' => 'One request in full, with its flame data and computed findings. The walk reads every index line it needs, so a `Request not found` error is definite: no partition holds that rid.',
-			'args'    => [ 'rid' => 'The request id.', 'partition' => 'Optional: the partition to search first. Every partition is searched either way.' ],
+			'summary' => 'One request in full, with its flame data and computed findings, read where its request row says it sits. `flame_cut` true means the flame lookup ran out of time before it found `flame_data`, so its absence says nothing of whether the request was profiled; ask again. A `Request not found` error means no row of the last seven days names that rid: the request is older, or finished in the last few seconds and is not written yet.',
+			'args'    => [ 'rid' => 'The request id.' ],
 		],
 		'grep_requests'            => [
 			'node'    => 'performance',
@@ -151,7 +151,7 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'class'   => Performance_CI_Node::class,
 			'verb'    => 'ask',
-			'summary' => 'The brief for one thing: `overview:site` (the dashboard as scoped), `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<i>` (an entry\'s `i`, its position in the request) or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument; a span or a category given a `url:` descriptor instead answers from that URL\'s aggregate. A `url:` brief\'s worst requests rank by measured duration: a timeout or an abort, whose duration is a wait and not a timing, and a duration of 0, ranks after every measured one with a null `duration_ms`. Where no timed request reached a URL, its `max_ms` is null, in a `url:` brief\'s `stats` and its finding\'s `metric` and on an `overview:` brief\'s URL rows, as its `avg_ms` is.',
+			'summary' => 'The brief for one thing: `overview:site` (the dashboard as scoped), `url:<hash>`, `request:<rid>`, `span:<name>`, `entry:<i>` (an entry\'s `i`, its position in the request) or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument; a span or a category given a `url:` descriptor instead answers from that URL\'s aggregate. A `url:` brief\'s worst requests rank by measured duration: a timeout or an abort, whose duration is a wait and not a timing, and a duration of 0, ranks after every measured one with a null `duration_ms`. Where no timed request reached a URL, its `max_ms` is null, in a `url:` brief\'s `stats` and its finding\'s `metric` and on an `overview:` brief\'s URL rows, as its `avg_ms` is.',
 			'args'    => [ 'descriptor' => 'What to ask about.', 'context' => 'The containing descriptor, if any.', 'search' => 'The search an `overview:` brief answers under: whole words from the search index, matched and refused as performance_urls matches and refuses them; ignored by every other descriptor.','include_workers' => 'Worker traffic an `overview:` brief counts; excluded by default, as performance_urls excludes it.', 'errors_only' => 'Narrows an `overview:` brief to the timeouts and fatals alone, as performance_urls narrows it, and counts them. Narrows a `url:` brief to the timeouts and fatals dump_url lists under errors_only: `stats` then carries only the URL\'s exact `errors`, and `error_summary` summarizes the errors listed (timeouts, fatals, the measured fatals\' mean and max, peak memory, the first and last start, the status codes) in place of the whole URL\'s count and means.', 'server' => 'Optional server name; scopes an overview: brief, a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate on that server, or every server\'s without one.', 'bucket' => 'A selection of five-minute buckets, as performance_urls takes it: comma-separated runs of `Y-m-d-H-i` UTC keys, each one bucket or `start..end` inclusive (`2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30`), at most 288 buckets. Narrows an `overview:` brief as performance_urls narrows it, and a `url:` brief as dump_url does, to the selected buckets\' numbers and the requests completing inside them; either brief carries the canonical spelling. Ignored, and never refused, by every other descriptor.' ],
 		],
 		'dump_rules'               => [

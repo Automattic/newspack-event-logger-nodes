@@ -176,25 +176,12 @@ class FlameTreeTest extends TestCase {
 		// Merged siblings span many requests, so no single offset is true of them.
 		$merged = Flame_Tree::merge_flame_children_incremental(
 			[],
-			[ [ 'name' => 'db', 'value' => 5, 't' => 250.5 ] ],
-			self::NOW
+			[ [ 'name' => 'db', 'value' => 5, 't' => 250.5 ] ]
 		);
-		$this->assertArrayNotHasKey( 't', $merged[0] );
-		$this->assertSame( self::NOW, $merged[0]['ts'] );
+		$this->assertSame( [ 'name' => 'db', 'sum_value' => 5.0, 'children' => [] ], $merged[0] );
 	}
 
 	// ----- build_flame_data -----
-
-	public function test_the_expiry_window_has_exactly_one_owner(): void {
-		// Flame nodes and the profile categories of the same aggregate must age
-		// out on one clock; two private copies could only be held equal by hand.
-		$this->assertSame( 3600, Flame_Tree::AGGREGATE_EXPIRY_SEC );
-		$this->assertFalse(
-			( new \ReflectionClass( \Newspack_Event_Logger_Nodes\Flame_Builder_Node::class ) )
-				->hasConstant( 'AGGREGATE_EXPIRY_SEC' ),
-			'Flame_Builder_Node must read the window, not keep a copy of it'
-		);
-	}
 
 	public function test_an_unclosed_span_still_covers_its_completed_children(): void {
 		// The request died before `render (complete)` was logged, but the two
@@ -347,12 +334,12 @@ class FlameTreeTest extends TestCase {
 	// ----- merge_flame_children_incremental -----
 
 	public function test_merge_adds_new_children_and_sums_existing(): void {
-		$existing = [ [ 'name' => 'db', 'sum_value' => 10.0, 'ts' => self::NOW, 'children' => [] ] ];
+		$existing = [ [ 'name' => 'db', 'sum_value' => 10.0, 'children' => [] ] ];
 		$incoming = [
-			[ 'name' => 'db', 'value' => 5, 'ts' => self::NOW ],
-			[ 'name' => 'cache', 'value' => 3, 'ts' => self::NOW ],
+			[ 'name' => 'db', 'value' => 5 ],
+			[ 'name' => 'cache', 'value' => 3 ],
 		];
-		$merged = Flame_Tree::merge_flame_children_incremental( $existing, $incoming, self::NOW );
+		$merged = Flame_Tree::merge_flame_children_incremental( $existing, $incoming );
 		$by     = [];
 		foreach ( $merged as $c ) {
 			$by[ $c['name'] ] = $c;
@@ -363,35 +350,23 @@ class FlameTreeTest extends TestCase {
 		$this->assertArrayNotHasKey( 'seen_count', $by['db'] );
 	}
 
-	public function test_merge_keeps_the_newest_ts_when_an_older_record_arrives(): void {
-		$live     = self::NOW + 913;
-		$lagging  = $live - 7200;
-		$existing = [ [ 'name' => 'db', 'sum_value' => 10.0, 'ts' => $live, 'children' => [ [ 'name' => 'q', 'sum_value' => 2.0, 'ts' => $live, 'children' => [] ] ] ] ];
-		$incoming = [ [ 'name' => 'db', 'value' => 5, 'children' => [ [ 'name' => 'q', 'value' => 1 ] ] ] ];
-		$merged   = Flame_Tree::merge_flame_children_incremental( $existing, $incoming, $lagging );
-		$this->assertSame( 15.0, $merged[0]['sum_value'] );
-		$this->assertSame( $live, $merged[0]['ts'] );
-		$this->assertSame( $live, $merged[0]['children'][0]['ts'] );
-		// A live record touching neither node keeps both at its cutoff.
-		$kept = Flame_Tree::merge_flame_children_incremental( $merged, [], $live + 60 );
-		$this->assertSame( 'db', $kept[0]['name'] );
-	}
-
 	public function test_merge_recurses_into_children(): void {
-		$incoming = [ [ 'name' => 'a', 'value' => 1, 'ts' => self::NOW, 'children' => [ [ 'name' => 'a1', 'value' => 1, 'ts' => self::NOW ] ] ] ];
-		$merged   = Flame_Tree::merge_flame_children_incremental( [], $incoming, self::NOW );
+		$incoming = [ [ 'name' => 'a', 'value' => 1, 'children' => [ [ 'name' => 'a1', 'value' => 1 ] ] ] ];
+		$merged   = Flame_Tree::merge_flame_children_incremental( [], $incoming );
 		$this->assertSame( 'a1', $merged[0]['children'][0]['name'] );
 	}
 
-	public function test_merge_expires_entries_older_than_an_hour(): void {
-		$existing = [ [ 'name' => 'stale', 'sum_value' => 1.0, 'seen_count' => 1, 'ts' => self::NOW - 4000, 'children' => [] ] ];
-		$merged   = Flame_Tree::merge_flame_children_incremental( $existing, [], self::NOW );
-		$this->assertSame( [], $merged );
+	public function test_merge_keeps_every_node_whatever_its_age(): void {
+		// The flame is rebuilt per answer, so nothing it holds can go stale.
+		$existing = [ [ 'name' => 'kea-quiet-5501', 'sum_value' => 17.25, 'children' => [] ] ];
+		$merged   = Flame_Tree::merge_flame_children_incremental( $existing, [ [ 'name' => 'moa-loud-5501', 'value' => 2 ] ] );
+		$this->assertSame( [ 'kea-quiet-5501', 'moa-loud-5501' ], \array_column( $merged, 'name' ) );
+		$this->assertSame( 17.25, $merged[0]['sum_value'] );
 	}
 
 	public function test_merge_stops_at_max_depth(): void {
-		$incoming = [ $this->nested_chain( 55, static fn ( int $d ) => [ 'name' => "d{$d}", 'value' => 1, 'ts' => self::NOW, 'children' => [] ] ) ];
-		$merged   = Flame_Tree::merge_flame_children_incremental( [], $incoming, self::NOW );
+		$incoming = [ $this->nested_chain( 55, static fn ( int $d ) => [ 'name' => "d{$d}", 'value' => 1, 'children' => [] ] ) ];
+		$merged   = Flame_Tree::merge_flame_children_incremental( [], $incoming );
 		$this->assertSame( 'd0', $merged[0]['name'] ); // bails past depth 50 without error.
 	}
 
@@ -718,7 +693,7 @@ class FlameTreeTest extends TestCase {
 
 	/** An aggregate node as the merge leaves one. */
 	private static function agg( string $name, float $sum, array $children = [] ): array {
-		return [ 'name' => $name, 'sum_value' => $sum, 'ts' => self::NOW, 'children' => $children ];
+		return [ 'name' => $name, 'sum_value' => $sum, 'children' => $children ];
 	}
 
 	/** Seven nodes: the root, a light subtree of three, a heavy one of three. */

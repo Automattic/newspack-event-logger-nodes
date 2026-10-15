@@ -81,15 +81,21 @@ class AskAssemblerTest extends TestCase {
 		);
 	}
 
-	public function test_a_descriptor_parses_into_type_id_and_qualifier(): void {
+	public function test_a_descriptor_parses_into_type_and_id(): void {
 		$this->assertSame(
-			[ 'type' => 'request', 'id' => 'c6x0zgr', 'qualifier' => '3' ],
-			Ask_Assembler::parse_descriptor( 'request:c6x0zgr:3' )
+			[ 'type' => 'request', 'id' => 'c6x0zgr' ],
+			Ask_Assembler::parse_descriptor( 'request:c6x0zgr' )
 		);
 		$this->assertSame(
-			[ 'type' => 'url', 'id' => '25ecf5606840', 'qualifier' => '' ],
+			[ 'type' => 'url', 'id' => '25ecf5606840' ],
 			Ask_Assembler::parse_descriptor( 'url:25ecf5606840' )
 		);
+	}
+
+	/** A request is named by its rid alone; a partition after it is refused. */
+	public function test_a_request_descriptor_naming_a_partition_is_refused(): void {
+		$this->assertNull( Ask_Assembler::parse_descriptor( 'request:c6x0zgr:3' ) );
+		$this->assertNull( Ask_Assembler::parse_descriptor( 'request:kea-4471:' ) );
 	}
 
 	public function test_an_unparseable_descriptor_is_refused(): void {
@@ -99,19 +105,15 @@ class AskAssemblerTest extends TestCase {
 		$this->assertNull( Ask_Assembler::parse_descriptor( 'request::3' ), 'a request needs its id' );
 	}
 
-	/** Only `request` carries a qualifier; every other id keeps its colons. */
+	/** Every id but a request's keeps its colons. */
 	public function test_a_descriptor_id_keeps_its_colons(): void {
 		$this->assertSame(
-			[ 'type' => 'span', 'id' => 'sql: SELECT wp_posts', 'qualifier' => '' ],
+			[ 'type' => 'span', 'id' => 'sql: SELECT wp_posts' ],
 			Ask_Assembler::parse_descriptor( 'span:sql: SELECT wp_posts' )
 		);
 		$this->assertSame(
-			[ 'type' => 'span', 'id' => '{closure}:kea-7741.php:12 @10', 'qualifier' => '' ],
+			[ 'type' => 'span', 'id' => '{closure}:kea-7741.php:12 @10' ],
 			Ask_Assembler::parse_descriptor( 'span:{closure}:kea-7741.php:12 @10' )
-		);
-		$this->assertSame(
-			[ 'type' => 'request', 'id' => 'abc123', 'qualifier' => '3' ],
-			Ask_Assembler::parse_descriptor( 'request:abc123:3' )
 		);
 	}
 
@@ -567,7 +569,7 @@ class AskAssemblerTest extends TestCase {
 		);
 
 		$this->assertSame(
-			[ 'rid', 'partition', 'duration_ms', 'status_code', 'error_status' ],
+			[ 'rid', 'duration_ms', 'status_code', 'error_status' ],
 			\array_keys( $brief['worst_requests'][0] )
 		);
 	}
@@ -807,11 +809,11 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	public function test_a_span_brief_says_how_an_agent_fetches_it_again(): void {
-		$brief = Ask_Assembler::for_span( $this->record(), 'wp_loaded', $this->rule(), 'request:c6x0zgr:3' );
+		$brief = Ask_Assembler::for_span( $this->record(), 'wp_loaded', $this->rule(), 'request:c6x0zgr' );
 
 		$this->assertSame( 'performance_ask', $brief['fetch'][0]['tool'] );
 		$this->assertSame(
-			[ 'descriptor' => 'span:wp_loaded', 'context' => 'request:c6x0zgr:3' ],
+			[ 'descriptor' => 'span:wp_loaded', 'context' => 'request:c6x0zgr' ],
 			$brief['fetch'][0]['arguments']
 		);
 	}

@@ -45,14 +45,13 @@ class CurrentRequestOverlayTest extends TestCase {
 	public function test_inline_data_js_sets_a_distinct_global_with_rid_and_perf_url(): void {
 		$js = Current_Request_Overlay::inline_data_js(
 			'abc123',
-			2,
 			'http://example.test/wp-admin/admin.php?page=event-logger-overview'
 		);
 
 		$this->assertStringContainsString( 'NewspackEventLoggerNodes', $js );
 		$this->assertStringContainsString( 'currentRequest', $js );
 		$this->assertStringContainsString( '"rid":"abc123"', $js );
-		$this->assertStringContainsString( '"partition":2', $js );
+		$this->assertStringNotContainsString( 'partition', $js, 'the request\'s row names its partition' );
 		$this->assertStringContainsString(
 			'event-logger-overview',
 			$js
@@ -90,7 +89,7 @@ class CurrentRequestOverlayTest extends TestCase {
 	}
 
 	public function test_inline_data_js_with_no_rid_still_emits_a_safe_global(): void {
-		$js = Current_Request_Overlay::inline_data_js( '', 0, '' );
+		$js = Current_Request_Overlay::inline_data_js( '', '' );
 
 		$this->assertStringContainsString( 'NewspackEventLoggerNodes', $js );
 		$this->assertStringContainsString( '"rid":""', $js );
