@@ -141,7 +141,7 @@ class BucketTest extends TestCase {
 	 */
 	#[DataProvider( 'canonical_selections' )]
 	public function test_a_canonical_selection_round_trips( string $spelling, array $keys ): void {
-		$ranges = Bucket::selection( $spelling, self::now() );
+		$ranges = Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION );
 
 		$this->assertSame( $keys, self::keys_of( $ranges ) );
 		$this->assertSame( $spelling, Bucket::spelling( $ranges ) );
@@ -155,7 +155,7 @@ class BucketTest extends TestCase {
 	 */
 	#[DataProvider( 'loose_selections' )]
 	public function test_a_loose_selection_normalizes( string $spelling, array $keys ): void {
-		$this->assertSame( $keys, self::keys_of( Bucket::selection( $spelling, self::now() ) ) );
+		$this->assertSame( $keys, self::keys_of( Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION ) ) );
 	}
 
 	/** A selection is ranges of bucket ids, adjacent and overlapping runs merged. */
@@ -165,9 +165,9 @@ class BucketTest extends TestCase {
 
 		$this->assertSame(
 			[ [ $first, $first + 3 ], [ $apart, $apart ] ],
-			Bucket::selection( '2026-10-05-18-30,2026-10-05-16-55..2026-10-05-17-10,2026-10-05-17-00', self::now() )
+			Bucket::selection( '2026-10-05-18-30,2026-10-05-16-55..2026-10-05-17-10,2026-10-05-17-00', self::now(), Bucket::MAX_SELECTION )
 		);
-		$this->assertSame( [], Bucket::selection( '', self::now() ) );
+		$this->assertSame( [], Bucket::selection( '', self::now(), Bucket::MAX_SELECTION ) );
 	}
 
 	/**
@@ -179,7 +179,7 @@ class BucketTest extends TestCase {
 	#[DataProvider( 'refused_selections' )]
 	public function test_a_malformed_selection_is_refused( string $spelling ): void {
 		$this->expectException( \InvalidArgumentException::class );
-		Bucket::selection( $spelling, self::now() );
+		Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION );
 	}
 
 	/** A refusal names the piece of the spelling it could not read. */
@@ -190,7 +190,7 @@ class BucketTest extends TestCase {
 			'2026-10-05-17-10..2026-10-05-16-55' => 'bucket run 2026-10-05-17-10..2026-10-05-16-55 ends before it starts',
 		] as $spelling => $message ) {
 			try {
-				Bucket::selection( $spelling, self::now() );
+				Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION );
 				$this->fail( "{$spelling} parsed" );
 			} catch ( \InvalidArgumentException $e ) {
 				$this->assertSame( $message, $e->getMessage() );
@@ -202,10 +202,10 @@ class BucketTest extends TestCase {
 	public function test_a_bucket_after_the_clock_is_refused(): void {
 		$now = \gmmktime( 9, 12, 41, 10, 5, 2026 );
 
-		$this->assertSame( [ [ Bucket::id( $now ), Bucket::id( $now ) ] ], Bucket::selection( '2026-10-05-09-10', $now ) );
+		$this->assertSame( [ [ Bucket::id( $now ), Bucket::id( $now ) ] ], Bucket::selection( '2026-10-05-09-10', $now, Bucket::MAX_SELECTION ) );
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'bucket 2026-10-05-09-15 is in the future' );
-		Bucket::selection( '2026-10-05-09-10..2026-10-05-09-15', $now );
+		Bucket::selection( '2026-10-05-09-10..2026-10-05-09-15', $now, Bucket::MAX_SELECTION );
 	}
 
 	/**
@@ -217,10 +217,10 @@ class BucketTest extends TestCase {
 		$first = \gmmktime( 6, 40, 0, 10, 3, 2026 );
 		$last  = Bucket::key( Bucket::id( $first ) + 287 );
 
-		$this->assertSame( [ [ Bucket::id( $first ), Bucket::id( $first ) + 287 ] ], Bucket::selection( "2026-10-03-06-40..{$last}", self::now() ) );
+		$this->assertSame( [ [ Bucket::id( $first ), Bucket::id( $first ) + 287 ] ], Bucket::selection( "2026-10-03-06-40..{$last}", self::now(), Bucket::MAX_SELECTION ) );
 		foreach ( [ '2026-10-03-06-35..' . $last, "2026-10-03-06-40..{$last},2026-10-05-23-55", '2026-10-03-06-40..2026-10-05-23-55,2026-10-05-23-55..2026-10-05-23-55' ] as $over ) {
 			try {
-				Bucket::selection( $over, \PHP_INT_MAX );
+				Bucket::selection( $over, \PHP_INT_MAX, Bucket::MAX_SELECTION );
 				$this->fail( "{$over} parsed" );
 			} catch ( \InvalidArgumentException $e ) {
 				$this->assertSame( 'bucket selection holds more than 288 buckets', $e->getMessage() );
@@ -232,7 +232,7 @@ class BucketTest extends TestCase {
 	public function test_a_century_long_run_is_refused_without_being_walked(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'bucket selection holds more than 288 buckets' );
-		Bucket::selection( '2026-10-03-06-40..2126-10-03-06-40', \PHP_INT_MAX );
+		Bucket::selection( '2026-10-03-06-40..2126-10-03-06-40', \PHP_INT_MAX, Bucket::MAX_SELECTION );
 	}
 
 	/** The limit is the one the shared fixture names, which JS holds to. */

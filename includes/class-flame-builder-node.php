@@ -149,14 +149,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** Unix time of the last write that held a folded record: `idle_since()`. */
 	private float $worked_at = 0.0;
 
-	/**
-	 * The crumb (`Message::ID`) of the last record buffered, the whole of the
-	 * checkpoint's carry. A plain stop leaves the reader's cursor ON that
-	 * record, so a successor restoring this can tell its replay from new work
-	 * and count it once (decision 31). '' matches nothing.
-	 */
-	private string $counted = '';
-
 	/** @var Rule_Set|null Lazily-loaded per-worker ruleset (thresholds are per-rule). */
 	private ?Rule_Set $rule_set = null;
 
@@ -328,14 +320,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		);
 
 		$this->store_flame( $rid, $url_hash, $flame_data );
-		// A replay of a counted record re-forwards only its flame.
-		$crumb = Core::str( $message[ Message::ID ] );
-		if ( '' === $crumb || $crumb !== $this->counted ) {
-			$this->buffer_request( $request, $rid, $crumb, $url, $url_hash, $server );
-			$this->counted = $crumb;
-			if ( $this->buffered >= self::BUFFERED_REQUESTS_LIMIT || $this->ops >= self::BUFFERED_OPS_LIMIT ) {
-				$this->write_rows();
-			}
+		// A replayed record's row is ignored by its rid, its rollups with it.
+		$this->buffer_request( $request, $rid, Core::str( $message[ Message::ID ] ), $url, $url_hash, $server );
+		if ( $this->buffered >= self::BUFFERED_REQUESTS_LIMIT || $this->ops >= self::BUFFERED_OPS_LIMIT ) {
+			$this->write_rows();
 		}
 	}
 
@@ -647,23 +635,21 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Write the buffer, then hand the Consumer the crumb to co-commit with
-	 * its cursor.
-	 *
-	 * The crumb says which record under the cursor is already counted
-	 * (decision 31). Only the durable half of a flush runs here: an auto-tune
-	 * emit that throws would keep the cursor from committing, so its
-	 * decisions wait for the tick. A write that fails raises, and the cursor
+	 * Write the buffer before the Consumer commits its cursor, carrying
+	 * nothing: a record the cursor replays is counted once by its
+	 * `requests` row's rid (decision 31). Only the durable half of a flush
+	 * runs here: an auto-tune emit that throws would keep the cursor from
+	 * committing, so its decisions wait for the tick. A write that fails raises, and the cursor
 	 * commits nothing past the records it held. In crawl mode the Consumer
 	 * checkpoints every message, so this runs per message until
 	 * `CHECKPOINT_INTERVAL_S` of crash-free progress ends the crawl.
 	 *
 	 * @api Used by substrate.
-	 * @return array{counted: string}
+	 * @return array{}
 	 */
 	public function save_state(): array {
 		$this->write_rows();
-		return [ 'counted' => $this->counted ];
+		return [];
 	}
 
 	/**
@@ -872,21 +858,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$this->require_sink()->fill( $message );
 	}
 
-	/** @param string $table The Row_Table the rows are written to. */
+	/**
+	 * The `set_facts_target` verb's entry point, which the declared setter
+	 * calls by name.
+	 *
+	 * @param string $table The Row_Table the rows are written to.
+	 */
 	public function set_facts_target( string $table ): void {
 		$this->facts_target = $table;
-	}
-
-	/**
-	 * Take back the crumb, so the record a plain stop left the cursor on is
-	 * replayed without being counted again. A carry without one reads as the
-	 * start state a fresh process has.
-	 *
-	 * @api Used by substrate.
-	 * @param array<string,mixed> $saved A prior `save_state()`.
-	 */
-	public function restore_state( array $saved ): void {
-		$this->counted = Core::str( $saved['counted'] ?? null );
 	}
 
 	/**

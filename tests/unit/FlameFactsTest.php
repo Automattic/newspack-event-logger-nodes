@@ -244,7 +244,7 @@ final class FlameFactsTest extends TestCase {
 		} catch ( \InvalidArgumentException $e ) {
 			$this->assertStringContainsString( 'no rid', $e->getMessage() );
 		}
-		$this->assertSame( [ 'counted' => '' ], $fb->save_state(), 'nothing buffered, the crumb not counted' );
+		$this->assertSame( [], $fb->save_state(), 'the checkpoint carries nothing' );
 		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM urls' ) );
 	}
 
@@ -302,22 +302,12 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( [ [ 2 ] ], $this->facts( 'SELECT count(*) FROM requests' ), 'the tick at the interval writes the rest' );
 	}
 
-	public function test_the_checkpoint_carries_only_the_crumb(): void {
+	public function test_the_checkpoint_writes_the_rows_and_carries_nothing(): void {
 		$fb = $this->armed_flame_builder();
 		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-pipipi' ] ), '9:7731:212' );
 
-		$this->assertSame( [ 'counted' => '9:7731:212' ], $fb->save_state() );
+		$this->assertSame( [], $fb->save_state() );
 		$this->assertSame( [ [ 'rid-pipipi' ] ], $this->facts( 'SELECT rid FROM requests' ), 'the checkpoint wrote what it passed' );
-	}
-
-	public function test_a_restore_takes_the_crumb_back_and_counts_the_replay_once(): void {
-		$fb = $this->armed_flame_builder();
-		$fb->restore_state( [ 'counted' => '9:7731:212' ] );
-		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-kokako-1', 'duration_ms' => 61.0 ] ), '9:7731:212' );
-		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-kokako-2', 'duration_ms' => 37.0 ] ), '9:7943:180' );
-		$fb->flush();
-
-		$this->assertSame( [ [ 'rid-kokako-2' ] ], $this->facts( 'SELECT rid FROM requests' ), 'the replay is not counted; the next record is' );
 	}
 
 	/**

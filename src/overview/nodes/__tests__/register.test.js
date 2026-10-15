@@ -149,6 +149,25 @@ describe( 'the data slices', () => {
 } );
 
 describe( 'UrlsView — the envelope slice', () => {
+	test( 'an outage reply publishes no totals, never zeroes', () => {
+		const v = makeView( 'UrlsView', 'urls:view' );
+
+		v.fill(
+			reply( 'urls', {
+				data: [],
+				rows: 0,
+				totals: null,
+				slowest: [],
+				filters: { server: '', search: '' },
+				limit: 50,
+				offset: 0,
+				available: false,
+			} )
+		);
+
+		expect( v.view.totals ).toBeNull();
+	} );
+
 	test( 'unwraps data and totals, dropping limit and offset', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
 		expect( v.view ).toEqual( {

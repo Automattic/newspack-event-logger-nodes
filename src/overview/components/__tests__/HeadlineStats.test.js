@@ -81,6 +81,19 @@ describe( 'HeadlineStats', () => {
 		unmount();
 	} );
 
+	it( 'shows a dash for every stat while no totals stand', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( HeadlineStats, { totals: null } )
+		);
+
+		const values = [
+			...container.querySelectorAll( '.newspack-nodes-stat-value' ),
+		].map( ( node ) => node.textContent );
+		expect( values.length ).toBeGreaterThan( 0 );
+		expect( values.every( ( value ) => '—' === value ) ).toBe( true );
+		unmount();
+	} );
+
 	it( 'says the window is the last 24 hours, the current five minutes so far', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( HeadlineStats, { totals: null } )

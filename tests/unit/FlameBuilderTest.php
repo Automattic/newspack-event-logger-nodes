@@ -277,11 +277,11 @@ class FlameBuilderTest extends TestCase {
 	/**
 	 * A record whose flame forward stopped carrying a failure is replayed —
 	 * the stop is plain — but its rows were already buffered, written by the
-	 * sweep and checkpointed. The successor restores that checkpoint, so it
-	 * must count the replayed record once, while still re-forwarding its
-	 * flame, which never landed.
+	 * sweep and checkpointed. Its `requests` row names its rid, so the
+	 * successor's replay inserts nothing and adds no rollup, while its flame,
+	 * which never landed, is forwarded again.
 	 */
-	public function test_a_replayed_record_the_restored_state_counted_is_not_counted_again(): void {
+	public function test_a_replayed_record_is_counted_once_by_its_rid(): void {
 		$this->set_rule();
 		$first = $this->builder_sending_to(
 			new class() extends \Newspack_Nodes\Node {
@@ -302,12 +302,11 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotNull( $thrown );
 		$this->assertFalse( \Newspack_Nodes\Worker_Should_Stop::is_clean( $thrown ), 'the reader must replay it' );
 		$first->shutdown_sweep();
-		$checkpoint = $first->save_state();
+		$this->assertSame( [], $first->save_state(), 'the checkpoint carries nothing' );
 		$first->remove_node();
 
 		[ $successor, $flames ] = $this->capturing_builder();
 		$successor->connect_node( 'flames:partition' );
-		$successor->restore_state( $checkpoint );
 		$this->fill_request_at( $successor, $record, '7:30412:988' );
 		$this->fill_request_at( $successor, $this->completed_request( [ 'rid' => 'rid-heron-2', 'url' => 'https://example.com/heron', 'duration_ms' => 23.0 ] ), '7:31400:991' );
 		$successor->flush();
@@ -546,7 +545,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$this->assertSame( [], $flames->captured, 'nothing is forwarded' );
 		$this->assertSame( 0, $this->get_stats( $fb )['buffered_requests'], 'nothing is buffered' );
-		$this->assertSame( '', $fb->save_state()['counted'], 'the crumb is not counted' );
+		$this->assertSame( [], $fb->save_state(), 'the checkpoint carries nothing' );
 
 		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-kea-7731', 'url' => 'https://kea-7713.test/kea-7731', 'duration_ms' => 29.0, 'timestamp' => self::tick() ] ), '7:200:42' );
 		$this->assertContains( 'flames:partition', \array_column( $flames->captured, Message::TO ), 'the next record forwards its flame' );
@@ -726,7 +725,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->connect_node( 'flames:partition' );
-		$fb->set_facts_target( 'facts-kea-4472' );
+		$this->read_private( $fb, 'interpreter' )->dispatch( 'set_facts_target', [ 'facts-kea-4472' ] );
 
 		$this->assertContains( 'facts-kea-4472', $fb->display_targets() );
 	}
@@ -958,9 +957,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A checkpoint writes the rows and hands back the crumb even when every
-	 * auto-tune emit throws: the decisions wait for the tick, and the cursor
-	 * still commits, so the successor counts nothing twice.
+	 * A checkpoint writes the rows even when every auto-tune emit throws: the
+	 * decisions wait for the tick, and the cursor still commits.
 	 */
 	public function test_a_checkpoint_commits_past_an_auto_tune_emit_that_always_throws(): void {
 		$this->set_rule( [ 'auto_disable_threshold' => 57 ] );
@@ -976,7 +974,7 @@ class FlameBuilderTest extends TestCase {
 			$this->fill_request_at( $fb, $this->completed_request( [ 'duration_ms' => 211.0, 'profiles' => $noisy ] ), $crumb );
 		}
 
-		$this->assertSame( [ 'counted' => '3:300:43' ], $fb->save_state() );
+		$this->assertSame( [], $fb->save_state() );
 		$this->assertSame( [ [ 3 ] ], $this->facts( 'SELECT count FROM requests_hourly' ), 'the rows are written' );
 		$this->expectExceptionMessage( 'auto-tuner refused the rewrite' );
 		$fb->flush();
@@ -985,8 +983,8 @@ class FlameBuilderTest extends TestCase {
 	/**
 	 * A plain stop leaves the cursor ON the record whose flame forward failed.
 	 * With no sweep before it, the checkpoint alone must write every record
-	 * the cursor passed and name the one it sits on, so the successor's replay
-	 * counts each record exactly once: none dropped, none twice.
+	 * the cursor passed, so the successor's replay counts each record exactly
+	 * once by its rid: none dropped, none twice.
 	 */
 	public function test_a_plain_stops_checkpoint_replays_neither_dropping_nor_double_counting(): void {
 		$this->set_rule();
@@ -1008,16 +1006,13 @@ class FlameBuilderTest extends TestCase {
 		} catch ( \Newspack_Nodes\Worker_Should_Stop $e ) {
 			$this->assertFalse( \Newspack_Nodes\Worker_Should_Stop::is_clean( $e ), 'the reader replays the record' );
 		}
-		// As the offsetlog stores it: the carry is plain JSON.
-		$checkpoint = \json_decode( (string) \wp_json_encode( $first->save_state() ), true );
+		$this->assertSame( [], $first->save_state() );
 		$first->remove_node();
 
-		$this->assertSame( [ 'counted' => '3:200:42' ], $checkpoint );
 		$this->assertSame( [ [ 2 ] ], $this->facts( 'SELECT count(*) FROM requests' ), 'both records are written before the cursor commits' );
 
 		[ $successor, $flames ] = $this->capturing_builder();
 		$successor->connect_node( 'flames:partition' );
-		$successor->restore_state( $checkpoint );
 		$this->fill_request_at( $successor, $stopped, '3:200:42' );
 		$this->fill_request_at( $successor, $this->completed_request( [ 'rid' => 'rid-kea-43', 'url' => 'https://example.com/kea-43', 'duration_ms' => 777.0 ] ), '3:300:43' );
 		$successor->flush();
@@ -1662,7 +1657,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_save_state_with_nothing_buffered_writes_nothing(): void {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
-		$this->assertSame( [ 'counted' => '' ], $fb->save_state() );
+		$this->assertSame( [], $fb->save_state() );
 	}
 
 	public function test_disable_uses_the_stamped_rules_threshold(): void {

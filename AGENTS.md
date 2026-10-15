@@ -101,7 +101,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 28 | The writer ranks each bucket and indexes each name, and the page reads those rather than the index — superseded by decision 36 |
 | 29 | Every reader dates from the tick, and a reply reads it once |
 | 30 | Every memcache value is one server's, carries nothing its key implies, and fits one item — superseded by decision 34 |
-| 31 | A snapshot node's replay is idempotent by the last folded crumb |
+| 31 | A snapshot node's replay counts each record once |
 | 32 | A builder tells its upkeep on its own worker record, and every narration write is a guarded forward |
 | 33 | No dashboard reads the mirror; the flame builder sweeps it back into memcache — superseded by decision 34 |
 | 34 | Stats live in SQLite Tables, and nothing repairs a loss |

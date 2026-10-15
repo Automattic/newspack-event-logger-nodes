@@ -83,7 +83,16 @@ abstract class TestCase extends RuntimeTestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->arguments( [] );
-		$fb->set_facts_target( self::FACTS_TABLE );
+		// As a worker loading flame-builder.tsl names it: no user is current.
+		$user = $GLOBALS['_current_user_id'] ?? null;
+		unset( $GLOBALS['_current_user_id'] );
+		try {
+			\Newspack_Nodes\Core::node( 'fb:config' )->dispatch( 'set_facts_target', [ self::FACTS_TABLE ] );
+		} finally {
+			if ( null !== $user ) {
+				$GLOBALS['_current_user_id'] = $user;
+			}
+		}
 		$fb->sink( VerbHarness::request_graph() );
 		return $fb;
 	}
