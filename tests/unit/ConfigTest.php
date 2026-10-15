@@ -121,34 +121,6 @@ class ConfigTest extends TestCase {
 		$this->assertSame( 42423, $config['hook_start_priority'] );
 	}
 
-	// ── stats_retention_seconds: ONE derivation of the retention window ─────
-
-	/**
-	 * The retention window is the substrate's `min_lifetime`. 5711 is distinct
-	 * from that key's default (43200), from `lifetime`'s (86400) and from the
-	 * floor (3600), so only the real value can produce it.
-	 */
-	public function test_stats_retention_seconds_reads_the_configured_window(): void {
-		$override_path = $this->temp_dir . '/retention-5711.php';
-		\file_put_contents( $override_path, "<?php return [ 'min_lifetime' => 5711 ];\n" );
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
-		Config::reset();
-
-		$this->assertSame( 5711, Config::stats_retention_seconds() );
-	}
-
-	public function test_stats_retention_seconds_floors_at_the_shortest_window(): void {
-		// A legal `min_lifetime` of 0 means "keep nothing extra", which is
-		// neither a usable Table TTL nor a drawable time axis.
-		$override_path = $this->temp_dir . '/retention-97.php';
-		\file_put_contents( $override_path, "<?php return [ 'min_lifetime' => 97 ];\n" );
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
-		Config::reset();
-
-		$this->assertSame( 3600, Config::MIN_RETENTION_SECONDS );
-		$this->assertSame( Config::MIN_RETENTION_SECONDS, Config::stats_retention_seconds() );
-	}
-
 	/**
 	 * `allowed_users` belongs to the substrate, so its option row governs here
 	 * too. This plugin declares no Field for the key and no gate of its own —

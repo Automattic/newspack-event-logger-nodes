@@ -66,7 +66,7 @@ class PerformanceCITest extends TestCase {
 		// declaration, so the tests need one active. One worker keeps every
 		// existing partition-0 assertion true. AFTER the $wp_filter reset above
 		// — it registers the catalog filter.
-		$this->activate_shipped_with_stats_tables( 'performance', 1 );
+		$this->activate_shipped( 'performance', 1 );
 		// A reply reads the current hour in buckets: pin one well inside it.
 		$at          = (int) \microtime( true ) - (int) \microtime( true ) % Bucket::HOUR_SECONDS + self::INTO_HOUR;
 		Core::$clock = static fn (): float => (float) $at;
@@ -191,7 +191,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_the_overview_names_its_288_slots(): void {
 		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 21600 ] );
-		$this->activate_shipped_with_stats_tables( 'performance', 1 );
+		$this->activate_shipped( 'performance', 1 );
 		Core::$now = (float) \gmmktime( 14, 37, 11, 9, 29, 2026 );
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
@@ -522,7 +522,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_a_rebuild_reads_only_the_partitions_its_requests_are_in(): void {
 		// Flames partition like the requests they came from; p0 holds none.
-		$this->activate_shipped_with_stats_tables( 'performance', 2 );
+		$this->activate_shipped( 'performance', 2 );
 		$url  = 'https://example.com/cold-in-p1';
 		$hash = Log_Manager::url_hash( $url );
 		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-cold-p1-5530981', 'ms' => 70.0 ], 1 );
@@ -569,7 +569,7 @@ class PerformanceCITest extends TestCase {
 	public function test_search_requests_spans_the_topologys_own_worker_count(): void {
 		// Global num_partitions stays 1; performance runs 4. A rid living in p2 is
 		// invisible to a reader that loops to the global.
-		$this->activate_shipped_with_stats_tables( 'performance', 4 );
+		$this->activate_shipped( 'performance', 4 );
 		$rid = $this->write_request(
 			[
 				'rid'            => 'rid-high-partition-000000000001',
@@ -592,7 +592,7 @@ class PerformanceCITest extends TestCase {
 	public function test_search_requests_tries_the_rids_own_partition_first(): void {
 		// This rid hashes to 3 of 4. Seeded in BOTH 3 and 0, an ascending scan
 		// returns 0 — only hash-first returns 3.
-		$this->activate_shipped_with_stats_tables( 'performance', 4 );
+		$this->activate_shipped( 'performance', 4 );
 		$body = [
 			'rid'            => 'rid-hash-order-0000000000000001',
 			'url'            => 'https://example.com/hashed',
@@ -885,7 +885,7 @@ class PerformanceCITest extends TestCase {
 		// Seeded in p2 of 4, and the rid hashes to p3, so neither the default
 		// nor the hash-first partition holds it: only a full walk finds it,
 		// which is what `search_requests` already does with the same rid.
-		$this->activate_shipped_with_stats_tables( 'performance', 4 );
+		$this->activate_shipped( 'performance', 4 );
 		$body = [
 			'rid'            => 'rid-detail-cross-partition-0001',
 			'url'            => 'https://example.com/elsewhere',
@@ -1210,7 +1210,7 @@ class PerformanceCITest extends TestCase {
 	 * rid's flame sits on its request's hashed partition, which is read first.
 	 */
 	public function test_the_flame_lookup_reads_the_hashed_partition_first(): void {
-		$this->activate_shipped_with_stats_tables( 'performance', 4 );
+		$this->activate_shipped( 'performance', 4 );
 		$count = \count( Bootstrap::node_dirs( 'requests:partition' ) );
 		$this->assertSame( 4, $count );
 		$this->assertSame( $count, \count( Bootstrap::node_dirs( 'flames:partition' ) ) );
@@ -1977,7 +1977,7 @@ class PerformanceCITest extends TestCase {
 	 * whichever one it is wired into, so a flame for a p0 request can land in p2.
 	 */
 	public function test_dump_request_merges_a_flame_written_to_another_partition(): void {
-		$this->activate_shipped_with_stats_tables( 'performance', 3 );
+		$this->activate_shipped( 'performance', 3 );
 		$rid = $this->write_request( [
 			'rid'            => 'rid-flame-elsewhere-00000000001',
 			'url'            => 'https://example.com/flame-in-p2',
@@ -2071,19 +2071,19 @@ class PerformanceCITest extends TestCase {
 
 	// -------------------------------------------------------------------------
 	// A five-minute bucket: `--bucket` narrows `urls`, `dump_url` and `ask` to
-	// one slot the charts draw, however far behind the URL window it falls.
+	// one slot of the 288 the charts draw.
 	// -------------------------------------------------------------------------
 
 	/** The bucket the tests narrow to: slot 7 of its hour. */
 	private const BUCKET = '2026-10-04-13-35';
 
 	/**
-	 * Pin the reply at 2026-10-05 09:12 UTC under a 12-hour window, so BUCKET
-	 * is about 20 hours back: charted, and outside the URL window.
+	 * Pin the reply at 2026-10-05 09:12 UTC, so BUCKET is about 20 hours
+	 * back, inside the 288 buckets a chart draws.
 	 */
 	private function at_the_bucket_clock(): void {
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 43200 ] );
-		$this->activate_shipped_with_stats_tables( 'performance', 1 );
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1 ] );
+		$this->activate_shipped( 'performance', 1 );
 		Core::$now = (float) \gmmktime( 9, 12, 0, 10, 5, 2026 );
 	}
 
@@ -2219,6 +2219,84 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( Bucket::key( $latest ), $reply['slots'][0], 'newest first' );
 		$this->assertSame( Bucket::key( $latest - 287 ), $reply['slots'][287] );
 		$this->assertSame( [ 'totals', 'slots', 'servers', 'leaderboard' ], \array_keys( $reply ) );
+	}
+
+	public function test_a_leaderboard_of_no_profiled_request_has_no_means(): void {
+		$board = Performance_CI_Node::leaderboard_of( [ 'wpdb' => [ 'sum_time' => 9.0, 'sum_count' => 4.0, 'samples' => 3 ] ], 0, 0.0 );
+
+		$this->assertNull( $board['total_time'] );
+		$this->assertNull( $board['categories']['wpdb']['time'] );
+		$this->assertNull( $board['categories']['wpdb']['count'] );
+		$this->assertEqualsWithDelta( 9.0, Performance_CI_Node::leaderboard_of( [], 3, 27.0 )['total_time'], 1e-9 );
+	}
+
+	public function test_a_leaderboard_turns_running_sums_into_means(): void {
+		$sums  = [
+			'wpdb' => [
+				'samples'   => 4,
+				'sum_time'  => 1.6,
+				'sum_count' => 16,
+				'entries'   => [ 'SELECT' => [ 1.2, 12, 4 ] ],
+			],
+		];
+		$board = Performance_CI_Node::leaderboard_of( $sums, 4, 4.0 );
+
+		$this->assertSame( 4, $board['count'] );
+		$this->assertEqualsWithDelta( 1.0, $board['total_time'], 1e-9 );
+		// A category's means divide by the profiled requests: 1.6 / 4.
+		$this->assertEqualsWithDelta( 0.4, $board['categories']['wpdb']['time'], 1e-9 );
+		$this->assertEqualsWithDelta( 4.0, $board['categories']['wpdb']['count'], 1e-9 );
+		// An entry's means divide by its own samples: 1.2 / 4 and 12 / 4.
+		$this->assertEqualsWithDelta( 0.3, $board['categories']['wpdb']['entries']['SELECT'][0], 1e-9 );
+		$this->assertEqualsWithDelta( 3.0, $board['categories']['wpdb']['entries']['SELECT'][1], 1e-9 );
+	}
+
+	public function test_a_leaderboard_drops_an_entry_with_no_samples(): void {
+		$sums  = [
+			'wpdb' => [
+				'samples'   => 2,
+				'sum_time'  => '1.0',
+				'sum_count' => null,
+				'entries'   => [
+					'ZERO' => [ 5.0, 5.0, 0 ],
+					'NAN'  => [ 'x', 'y', 3 ],
+				],
+			],
+		];
+		$board = Performance_CI_Node::leaderboard_of( $sums, 2, 2.0 );
+
+		$this->assertEqualsWithDelta( 0.5, $board['categories']['wpdb']['time'], 1e-9 );
+		$this->assertEqualsWithDelta( 0.0, $board['categories']['wpdb']['count'], 1e-9 );
+		$this->assertArrayNotHasKey( 'ZERO', $board['categories']['wpdb']['entries'] );
+		$this->assertEqualsWithDelta( 0.0, $board['categories']['wpdb']['entries']['NAN'][0], 1e-9 );
+		$this->assertSame( 3, $board['categories']['wpdb']['entries']['NAN'][2] );
+	}
+
+	/** Past a hundred entries a category keeps its fifty slowest by mean time. */
+	public function test_a_leaderboard_trims_a_crowded_category_to_its_slowest_entries(): void {
+		$entries = [];
+		for ( $i = 1; $i <= 101; $i++ ) {
+			$entries[ "SELECT kea_{$i}" ] = [ 7.0 * $i, 1, 7 ];
+		}
+		$board = Performance_CI_Node::leaderboard_of( [ 'wpdb' => [ 'samples' => 7, 'sum_time' => 70.0, 'sum_count' => 707, 'entries' => $entries ] ], 7, 77.0 );
+
+		$kept = $board['categories']['wpdb']['entries'];
+		$this->assertCount( 50, $kept );
+		$this->assertSame( 'SELECT kea_101', \array_key_first( $kept ), 'slowest first' );
+		$this->assertSame( 'SELECT kea_52', \array_key_last( $kept ) );
+		$this->assertEqualsWithDelta( 101.0, $kept['SELECT kea_101'][0], 1e-9 );
+	}
+
+	/** A hundred entries is no crowd: every one stays, in its own order. */
+	public function test_a_leaderboard_keeps_a_category_at_the_trim_bound_whole(): void {
+		$entries = [];
+		for ( $i = 1; $i <= 100; $i++ ) {
+			$entries[ "SELECT moa_{$i}" ] = [ 3.0 * $i, 1, 3 ];
+		}
+		$board = Performance_CI_Node::leaderboard_of( [ 'wpdb' => [ 'samples' => 3, 'sum_time' => 30.0, 'sum_count' => 300, 'entries' => $entries ] ], 3, 33.0 );
+
+		$this->assertCount( 100, $board['categories']['wpdb']['entries'] );
+		$this->assertSame( 'SELECT moa_1', \array_key_first( $board['categories']['wpdb']['entries'] ) );
 	}
 
 	public function test_overview_leaderboard_excludes_listener_time_from_total_time(): void {
@@ -2602,7 +2680,7 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_dump_url_lists_the_newest_requests_with_their_log_position(): void {
-		$this->activate_shipped_with_stats_tables( 'performance', 2 );
+		$this->activate_shipped( 'performance', 2 );
 		$url    = 'https://seed.example/takahe-5512/';
 		$latest = self::latest();
 		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-takahe-old', 'bucket' => $latest - 4, 'finished_at' => ( $latest - 4 ) * 300 + 7.5, 'started_at' => ( $latest - 4 ) * 300 - 31, 'segment' => 3, 'offset' => 7104, 'length' => 911, 'ms' => 2412.5, 'peak_mb' => 31.25, 'status' => 201, 'method' => 'POST' ] );
@@ -2767,12 +2845,56 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * An untimed request counts toward the means but adds neither its
+	 * duration nor its tree: (120.5 + 80.5) / 3, and two 30.5 spans over 3.
+	 */
+	public function test_dump_url_flame_counts_an_untimed_request_but_not_its_tree(): void {
+		$url  = 'https://seed.example/toutouwai-5512/';
+		$hash = self::hash_of( $url );
+		foreach ( [ [ 'rid-toutouwai-a', 120.5 ], [ 'rid-toutouwai-b', null ], [ 'rid-toutouwai-c', 80.5 ] ] as [ $rid, $ms ] ) {
+			$this->seed_request( [ 'url' => $url, 'rid' => $rid, 'ms' => $ms ] + ( null === $ms ? [ 'error' => 'T' ] : [] ) );
+			$this->write_flame( [
+				'rid'      => $rid,
+				'url_hash' => $hash,
+				'name'     => 'request',
+				'value'    => $ms ?? 9000.5,
+				'children' => [ [ 'name' => 'init', 'value' => 30.5, 'children' => [] ] ],
+			] );
+		}
+
+		$flame = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash )['aggregate_flame'];
+
+		$this->assertEqualsWithDelta( 67.0, $flame['value'], 1e-9 );
+		$this->assertEqualsWithDelta( 61.0 / 3, $flame['children'][0]['value'], 1e-9 );
+	}
+
+	/**
+	 * A URL's flame displays at most 1,730 nodes, its root included, its
+	 * lightest leaves dropped first: of 2,000 children, the 1,729 heaviest.
+	 */
+	public function test_dump_url_flame_is_pruned_to_its_node_cap(): void {
+		$url      = 'https://seed.example/kokako-2000/';
+		$hash     = self::hash_of( $url );
+		$children = [];
+		for ( $i = 1; $i <= 2000; $i++ ) {
+			$children[] = [ 'name' => "kokako {$i}", 'value' => 0.5 * $i, 'children' => [] ];
+		}
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-kokako-2000', 'ms' => 4410.5 ] );
+		$this->write_flame( [ 'rid' => 'rid-kokako-2000', 'url_hash' => $hash, 'name' => 'request', 'value' => 4410.5, 'children' => $children ] );
+
+		$flame = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash )['aggregate_flame'];
+
+		$this->assertCount( 1729, $flame['children'] );
+		$this->assertSame( [ 'kokako 272', 'kokako 2000' ], [ $flame['children'][0]['name'], \end( $flame['children'] )['name'] ] );
+	}
+
+	/**
 	 * Each partition's walk ends once it holds its listed requests' flames,
 	 * and a flame of the URL whose request is not listed, or a line that only
 	 * carries the URL's column, folds nothing.
 	 */
 	public function test_a_flame_rebuild_folds_only_its_listed_requests_flames(): void {
-		$this->activate_shipped_with_stats_tables( 'performance', 2 );
+		$this->activate_shipped( 'performance', 2 );
 		$url  = 'https://seed.example/tauhou-two-77/';
 		$hash = self::hash_of( $url );
 		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-tauhou-p0', 'ms' => 30.5 ] );

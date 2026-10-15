@@ -154,7 +154,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 		 */
 		public function test_inline_data_carries_the_dashboards_span_colours(): void {
 			$GLOBALS['_wp_test_enqueued_handles'][ self::HANDLE ] = true;
-			\add_filter( 'newspack_event_logger_nodes_custom_colors', static fn ( array $colors ): array => [ 'url fold' => '#7A1F3D' ] + $colors );
+			\add_filter( 'newspack_event_logger_nodes_custom_colors', static fn ( array $colors ): array => [ 'stats sweep' => '#7A1F3D' ] + $colors );
 
 			Current_Request_Overlay::enqueue_inline_data();
 
@@ -165,7 +165,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 				\Newspack_Event_Logger_Nodes\Config::get_custom_colors() + \Newspack_Event_Logger_Nodes\Flame_Tree::platform_colors(),
 				\json_decode( $m[1], true )
 			);
-			$this->assertSame( '#7A1F3D', \json_decode( $m[1], true )['url fold'], 'a configured colour wins' );
+			$this->assertSame( '#7A1F3D', \json_decode( $m[1], true )['stats sweep'], 'a configured colour wins' );
 		}
 
 		/**

@@ -4,9 +4,9 @@
  *
  * The substrate resolves `<ns:key>` tokens via per-namespace resolvers
  * (Core::register_config_namespace / resolve_config_token). This plugin
- * registers an `eln` namespace for its app-specific tokens: is_hub, which an
- * active topology declares in its own frontmatter, and the stats Table TTLs.
- * Keys it does not own resolve to ''.
+ * registers an `eln` namespace for its one app-specific token, is_hub, which
+ * an active topology declares in its own frontmatter. Keys it does not own
+ * resolve to ''.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -164,14 +164,5 @@ class ElnConfigTokenTest extends TestCase {
 		$this->activate_user_topologies( $dir, [ 'numbat-ledger' ] );
 
 		$this->assertSame( '0', Core::resolve_config_token( 'eln', 'is_hub', true ) );
-	}
-
-	// --- the stats Tables' TTLs ---------------------------------------------
-
-	public function test_the_stats_table_ttls_derive_from_the_retention_window(): void {
-		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 259200 ] );
-		$this->assertSame( [ '259200', '10800', '7200' ], [ Config::resolve_eln_token( 'stats_ttl' ), Config::resolve_eln_token( 'stats_url_ttl' ), Config::resolve_eln_token( 'stats_url_fine_ttl' ) ] );
-		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 5400 ] );
-		$this->assertSame( [ '90000', '3600', '5400' ], [ Config::resolve_eln_token( 'stats_ttl' ), Config::resolve_eln_token( 'stats_url_ttl' ), Config::resolve_eln_token( 'stats_url_fine_ttl' ) ], 'the aggregate Table outlives the 25 hours a chart reads' );
 	}
 }

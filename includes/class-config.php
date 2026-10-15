@@ -45,9 +45,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Config {
 
-	/** Shortest retention window the stats Tables work with, in seconds. */
-	public const MIN_RETENTION_SECONDS = 3600;
-
 	/** Staging option: custom-event names spokes reported to the hub; read by the admin UI. */
 	public const OPTION_DISCOVERED_EVENTS = 'newspack_event_logger_nodes_discovered_events';
 
@@ -175,52 +172,6 @@ class Config {
 	}
 
 	/**
-	 * `<eln:KEY>` topology-token resolver: each key this plugin owns and its
-	 * derivation. The plugin's `register_config_namespace` call and
-	 * `tests/bootstrap.php` both route through here, so the two resolve alike.
-	 *
-	 * Returns null for keys this plugin doesn't own; substrate keys are
-	 * addressed under the `<config:KEY>` namespace instead. Null is not a
-	 * value — `Core::resolve_config_token()` treats it as unresolvable and
-	 * throws in strict mode (schema-arg defaults) or warns and yields '' in
-	 * non-strict mode. A bool surfaces as '1' / '0', which a `bool` arg binds,
-	 * and any other scalar as its string; a non-scalar is unresolvable too, so
-	 * an array-valued key must be flattened to a scalar here.
-	 *
-	 * @param string $key Token key after the `eln:` prefix.
-	 * @return mixed Resolved value, or null when `eln` does not own $key.
-	 */
-	public static function resolve_eln_token( string $key ) {
-		// Derived, never constants: a widened stats window widens each.
-		return match ( $key ) {
-			'is_hub'             => self::declares_hub(),
-			'stats_ttl'          => (string) Stats_Store::aggregate_ttl( self::stats_retention_seconds() ),
-			'stats_url_ttl'      => (string) self::stats_url_ttl(),
-			'stats_url_fine_ttl' => (string) Stats_Store::fine_ttl( self::stats_retention_seconds() ),
-			default              => null,
-		};
-	}
-
-	/** The per-URL blob's lifetime: a twenty-fourth of the window, floored at an hour. */
-	private static function stats_url_ttl(): int {
-		return \max( Bucket::HOUR_SECONDS, \intdiv( self::stats_retention_seconds(), 24 ) );
-	}
-
-	/**
-	 * THE retention window every stats consumer sizes itself by — the stats
-	 * Tables' TTLs and the dashboards' time axis both come from here.
-	 *
-	 * It is the substrate's `min_lifetime`, floored: a legal `min_lifetime` of 0
-	 * ("keep nothing extra") is neither a usable TTL nor a drawable axis.
-	 *
-	 * @api
-	 * @return int Retention window in seconds, at least `MIN_RETENTION_SECONDS`.
-	 */
-	public static function stats_retention_seconds(): int {
-		return \max( self::MIN_RETENTION_SECONDS, Core::num_int( self::value( 'min_lifetime' ) ) );
-	}
-
-	/**
 	 * Fail-loud single-key read over THIS plugin's merged config, validated
 	 * against the shared substrate registry: an undeclared key throws instead of
 	 * limping on a `?? default`. A declared key resolves off the merged config
@@ -284,6 +235,29 @@ class Config {
 		self::$config = $config;
 
 		return $config;
+	}
+
+	/**
+	 * `<eln:KEY>` topology-token resolver: each key this plugin owns and its
+	 * derivation. The plugin's `register_config_namespace` call and
+	 * `tests/bootstrap.php` both route through here, so the two resolve alike.
+	 *
+	 * Returns null for keys this plugin doesn't own; substrate keys are
+	 * addressed under the `<config:KEY>` namespace instead. Null is not a
+	 * value — `Core::resolve_config_token()` treats it as unresolvable and
+	 * throws in strict mode (schema-arg defaults) or warns and yields '' in
+	 * non-strict mode. A bool surfaces as '1' / '0', which a `bool` arg binds,
+	 * and any other scalar as its string; a non-scalar is unresolvable too, so
+	 * an array-valued key must be flattened to a scalar here.
+	 *
+	 * @param string $key Token key after the `eln:` prefix.
+	 * @return mixed Resolved value, or null when `eln` does not own $key.
+	 */
+	public static function resolve_eln_token( string $key ) {
+		return match ( $key ) {
+			'is_hub' => self::declares_hub(),
+			default  => null,
+		};
 	}
 
 	/**

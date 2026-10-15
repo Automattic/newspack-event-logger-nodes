@@ -48,38 +48,11 @@ final class Flame_Tree {
 	/** What `Diagnostics_Bridge` appends to `<class> <verb>` to name a verb's span. */
 	public const COMMAND_SUFFIX = ' command';
 
-	/** `Performance_CI_Node`'s page cache around one `urls` page. */
-	public const URL_PAGE_CACHE = 'url page cache';
-
-	/** `Performance_CI_Node`'s cache of the fold's header for the ranked pages. */
-	public const URL_HEADER_CACHE = 'url header cache';
-
-	/** `Performance_CI_Node`'s walk of the whole URL index. */
-	public const URL_FOLD = 'url fold';
-
-	/** `Performance_CI_Node`'s point event: whether the ranked lists served. */
-	public const URL_RANK_LISTS = 'url rank lists';
-
 	/**
 	 * The flame builder's routine writes, one summary a
 	 * `Narration::ROLLUP_EVERY_S`.
 	 */
 	public const STATS_WRITES = 'stats writes';
-
-	/** The flame builder's span ranking a bucket that has closed. */
-	public const STATS_RANK_CLOSE = 'stats rank close';
-
-	/**
-	 * The flame builder's point event as its roll-up reads again the hours a
-	 * late write unfolded.
-	 */
-	public const STATS_PROBE = 'stats probe';
-
-	/** The flame builder's span folding one hour missing a derived key. */
-	public const STATS_FOLD = 'stats fold';
-
-	/** The flame builder's span re-ranking one stale hour from its rows. */
-	public const STATS_RE_RANK = 'stats re-rank';
 
 	/** The flame builder's span for its clean stop. */
 	public const STATS_SWEEP = 'stats sweep';
@@ -100,31 +73,19 @@ final class Flame_Tree {
 	 * Every name above: its hook category (a key of `hook_categories.json`
 	 * `_colors`, so an operator recolouring a category recolours its spans),
 	 * and the `Findings` kind of a span no rule edit reaches inside —
-	 * `url_read` for a step of the URL read, `upkeep` for a builder's own work
-	 * — or null for a point event.
+	 * `upkeep`, a builder's own work — or null for a point event.
 	 *
-	 * The three URL-read spans nest, so each has a category of its own: the
-	 * page cache Event Logger Page Cache, the header cache Event Logger Cache
-	 * and the fold Event Logger Fold. The builders' own spans and the
-	 * ranked-lists point event take Event Logger, except the flame builder's
+	 * The builders' own spans take Event Logger, except the flame builder's
 	 * sweep: it runs a flush and so holds every other flush span, so it takes
-	 * Event Logger Shutdown. All are this plugin's own categories, described
+	 * Event Logger Shutdown. Both are this plugin's own categories, described
 	 * and pattern-free like `Other`, so no third-party hook category's colour
 	 * moves a platform span.
 	 *
-	 * @var array<string,array{0: string, 1: 'url_read'|'upkeep'|null}>
+	 * @var array<string,array{0: string, 1: 'upkeep'|null}>
 	 */
 	private const PLATFORM = [
-		self::URL_PAGE_CACHE      => [ 'Event Logger Page Cache', 'url_read' ],
-		self::URL_HEADER_CACHE    => [ 'Event Logger Cache', 'url_read' ],
-		self::URL_FOLD            => [ 'Event Logger Fold', 'url_read' ],
-		self::URL_RANK_LISTS      => [ 'Event Logger', null ],
 		self::STATS_WRITES        => [ 'Event Logger', null ],
-		self::STATS_PROBE         => [ 'Event Logger', null ],
-		self::STATS_RANK_CLOSE    => [ 'Event Logger', 'upkeep' ],
 		self::STATS_SWEEP         => [ 'Event Logger Shutdown', 'upkeep' ],
-		self::STATS_FOLD          => [ 'Event Logger', 'upkeep' ],
-		self::STATS_RE_RANK       => [ 'Event Logger', 'upkeep' ],
 		self::REQUESTS_WRITES     => [ 'Event Logger', null ],
 		self::REQUESTS_CHECKPOINT => [ 'Event Logger', 'upkeep' ],
 		self::REQUESTS_RESTORE    => [ 'Event Logger', 'upkeep' ],
@@ -633,11 +594,11 @@ final class Flame_Tree {
 
 	/**
 	 * The `Findings` kind of one of the platform's own spans, told whatever
-	 * the rule says, so no rule edit reaches inside it: `url_read` or
-	 * `upkeep`. Null for anything else, a point event's name included.
+	 * the rule says, so no rule edit reaches inside it: `upkeep`. Null for
+	 * anything else, a point event's name included.
 	 *
 	 * @param string $span A span name, as the flame carries it.
-	 * @return 'url_read'|'upkeep'|null
+	 * @return 'upkeep'|null
 	 */
 	public static function platform_span_kind( string $span ): ?string {
 		return self::PLATFORM[ self::base_name( $span ) ][1] ?? null;
@@ -699,36 +660,35 @@ final class Flame_Tree {
 
 	/**
 	 * An aggregate tree without its lightest leaves, dropped one at a time
-	 * until its estimated bytes fit `$budget`. A leaf's weight is its
+	 * until it holds `$max_nodes`, its root included. A leaf's weight is its
 	 * `sum_value`; a parent left bare joins the queue as a leaf, so the
-	 * heaviest paths are the last to go. The root stays whatever the budget.
+	 * heaviest paths are the last to go. The root stays whatever the cap.
 	 *
-	 * @param array<array-key,mixed> $root       Aggregate root.
-	 * @param int                    $budget     Bytes the tree may take.
-	 * @param int                    $node_bytes What one node costs before its name.
+	 * @param array<array-key,mixed> $root      Aggregate root.
+	 * @param int                    $max_nodes Nodes the tree may keep.
 	 * @return array<array-key,mixed>
 	 */
-	public static function prune_lightest( array $root, int $budget, int $node_bytes ): array {
+	public static function prune_lightest( array $root, int $max_nodes ): array {
 		$nodes = [];
-		self::index_nodes( $root, -1, $node_bytes, $nodes );
-		$over = \array_sum( \array_column( $nodes, 2 ) ) - $budget;
+		self::index_nodes( $root, -1, $nodes );
+		$over = \count( $nodes ) - $max_nodes;
 		if ( $over <= 0 ) {
 			return $root;
 		}
 		/** @var \SplMinHeap<array{0: float, 1: int}> $lightest */
 		$lightest = new \SplMinHeap();
-		foreach ( $nodes as $id => [ , $weight, , $children ] ) {
+		foreach ( $nodes as $id => [ , $weight, $children ] ) {
 			if ( 0 < $id && 0 === $children ) {
 				$lightest->insert( [ $weight, $id ] );
 			}
 		}
-		$left    = \array_column( $nodes, 3 );
+		$left    = \array_column( $nodes, 2 );
 		$dropped = [];
 		while ( $over > 0 && ! $lightest->isEmpty() ) {
 			$id             = $lightest->extract()[1];
 			$dropped[ $id ] = true;
-			$over          -= $nodes[ $id ][2];
-			$parent         = $nodes[ $id ][0];
+			--$over;
+			$parent = $nodes[ $id ][0];
 			if ( 0 < $parent && 0 === --$left[ $parent ] ) {
 				$lightest->insert( [ $nodes[ $parent ][1], $parent ] );
 			}
@@ -763,25 +723,23 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * Every node of a tree in pre-order, as `[ parent, weight, own bytes,
-	 * children ]`, its id its position.
+	 * Every node of a tree in pre-order, as `[ parent, weight, children ]`,
+	 * its id its position.
 	 *
-	 * @param array<array-key,mixed>                        $node       The subtree.
-	 * @param int                                           $parent     Its parent's id; -1 for the root.
-	 * @param int                                           $node_bytes What one node costs before its name.
-	 * @param list<array{0: int, 1: float, 2: int, 3: int}> $nodes      Collected, by reference.
+	 * @param array<array-key,mixed>                 $node   The subtree.
+	 * @param int                                    $parent Its parent's id; -1 for the root.
+	 * @param list<array{0: int, 1: float, 2: int}> $nodes  Collected, by reference.
 	 */
-	private static function index_nodes( array $node, int $parent, int $node_bytes, array &$nodes ): void {
+	private static function index_nodes( array $node, int $parent, array &$nodes ): void {
 		$id       = \count( $nodes );
 		$children = \array_filter( Core::arr( $node['children'] ?? null ), 'is_array' );
 		$nodes[]  = [
 			$parent,
 			Core::num_float( $node['sum_value'] ?? null ),
-			$node_bytes + \strlen( Core::str( $node['name'] ?? '' ) ),
 			\count( $children ),
 		];
 		foreach ( $children as $child ) {
-			self::index_nodes( $child, $id, $node_bytes, $nodes );
+			self::index_nodes( $child, $id, $nodes );
 		}
 	}
 

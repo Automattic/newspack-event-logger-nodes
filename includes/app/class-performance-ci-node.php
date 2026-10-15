@@ -185,6 +185,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** The aggregate flame of a URL with no requests to fold. */
 	private const EMPTY_FLAME = [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
 
+	/** Nodes a URL's flame displays, its root included; the lightest go first. */
+	private const MAX_URL_FLAME_NODES = 1730;
+
 	/** Deepest nesting `set` accepts in an array option; deeper is rejected. */
 	private const SETTINGS_ARRAY_DEPTH = 5;
 
@@ -932,7 +935,12 @@ class Performance_CI_Node extends Service_CI_Node {
 			$partition                                    = Core::num_int( $request['partition'] );
 			$missing[ $partition ]                        = ( $missing[ $partition ] ?? 0 ) + 1;
 		}
-		$flame = Flame_Builder_Node::empty_url_flame();
+		$flame = [
+			'name'      => 'aggregate',
+			'sum_value' => 0.0,
+			'count'     => 0,
+			'children'  => [],
+		];
 		if ( [] !== $listed ) {
 			$cut = self::scan_index_entries(
 				\array_intersect_key( Bootstrap::node_dirs( self::NODE_FLAMES ), $missing ),
@@ -953,7 +961,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					$tree    = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
 					if ( \is_array( $tree ) ) {
 						$ms    = $request['duration_ms'];
-						$flame = Flame_Builder_Node::fold_url_flame( $flame, $tree, Core::num_float( $ms ), null !== $ms, $now );
+						$flame = self::fold_flame( $flame, $tree, Core::num_float( $ms ), null !== $ms, $now );
 					}
 					unset( $listed[ $rid ] );
 					--$missing[ $partition ];
@@ -970,7 +978,41 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		return 0 === Core::num_int( $flame['count'] ?? 0 )
 			? self::EMPTY_FLAME
-			: Flame_Builder_Node::url_flame_for_display( $flame )[1];
+			: self::display_flame( $flame );
+	}
+
+	/**
+	 * Fold one request's flame into a URL's running one: one more request,
+	 * and, when its timing counts, its duration and its tree. Sums, never
+	 * means; `display_flame()` divides.
+	 *
+	 * @param array<array-key,mixed> $flame         The running flame, un-finalized.
+	 * @param array<array-key,mixed> $flame_data    One request's tree.
+	 * @param float                  $duration_ms   That request's duration.
+	 * @param bool                   $record_timing Whether its duration was measured.
+	 * @param int                    $stamp         Stamp for the merged nodes, whose hour back is the expiry cutoff.
+	 * @return array<array-key,mixed>
+	 */
+	private static function fold_flame( array $flame, array $flame_data, float $duration_ms, bool $record_timing, int $stamp ): array {
+		$flame['count'] = Core::num_int( $flame['count'] ?? null ) + 1;
+		if ( $record_timing ) {
+			$flame['sum_value'] = Core::num_float( $flame['sum_value'] ?? null ) + $duration_ms;
+			$flame['children']  = Flame_Tree::merge_flame_children_incremental( Core::arr( $flame['children'] ?? null ), Core::arr( $flame_data['children'] ?? null ), $stamp );
+		}
+		return $flame;
+	}
+
+	/**
+	 * A URL's running flame pruned to `MAX_URL_FLAME_NODES` and finalized to
+	 * per-request means.
+	 *
+	 * @param array<array-key,mixed> $flame The running flame, un-finalized.
+	 * @return array<array-key,mixed>
+	 */
+	private static function display_flame( array $flame ): array {
+		$display = Flame_Tree::prune_lightest( $flame, self::MAX_URL_FLAME_NODES );
+		Flame_Tree::finalize_flame_node( $display, Core::num_int( $flame['count'] ?? 0 ) );
+		return $display;
 	}
 
 	/**

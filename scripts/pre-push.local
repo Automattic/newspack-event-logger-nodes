@@ -2,12 +2,6 @@
 # newspack-event-logger-nodes' constants and gates, sourced by scripts/pre-push.
 
 push_gates() {
-	# Every Stats_Store NS_* constant has a guide row, and every row a constant.
-	script_gate lint-eln-docs.sh \
-		"lint-eln-docs (Stats_Store namespace vs guide table)" \
-		"lint-eln-docs failed — namespace docs drifted (see above)" \
-		"lint-eln-docs clean"
-
 	# Log_Manager and Gyrobase::Log write one line; only dndocker sees both.
 	local parity="${DNDOCKER}/tools/check-firehose-parity.py"
 	if [[ -f "$parity" ]] && command -v python3 >/dev/null 2>&1; then

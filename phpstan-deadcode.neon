@@ -34,11 +34,3 @@ parameters:
         -
             identifier: shipmonk.deadMethod
             message: '#::set_(completed_target|errors_target|alerts_target|inflight_delta|facts_target)$#'
-        # Stats_Store's write half has no production caller: the flame builder
-        # writes rows. The performance readers' suites seed it through that half.
-        -
-            identifier: shipmonk.deadMethod
-            path: includes/class-stats-store.php
-        -
-            identifier: shipmonk.deadConstant
-            path: includes/class-stats-store.php
