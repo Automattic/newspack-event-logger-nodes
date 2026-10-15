@@ -172,10 +172,12 @@ describe( 'useErrorLogGraph — exospine + page link wiring', () => {
 		);
 	} );
 
-	test( "the error log adds its glob's pair to the page link", async () => {
+	test( 'the error log adds its glob as a source on the page link', async () => {
 		renderHook( () => useErrorLogGraph() );
 		await act( async () => {} );
-		expect( Core.node( LINK ).pairs ).toEqual( [ `errors.*=${ TEE }` ] );
+		expect( Core.node( LINK ).sources ).toEqual( [
+			{ stamp: 'errors.*', target: TEE },
+		] );
 	} );
 
 	test( 'does not mount the retired error-log:route / error-log:transform nodes', async () => {
@@ -195,7 +197,10 @@ describe( 'useErrorLogGraph — exospine + page link wiring', () => {
 		expect( tee.constructor.name ).toBe( 'TeeNode' );
 		expect( tee.sink ).toBe( interpreter );
 		// The link routes this graph's frames to the Tee, which fans to the view.
-		expect( Core.node( LINK ).pairs ).toContain( `errors.*=${ TEE }` );
+		expect( Core.node( LINK ).sources ).toContainEqual( {
+			stamp: 'errors.*',
+			target: TEE,
+		} );
 		expect( tee.target ).toEqual( [ VIEW ] );
 	} );
 
