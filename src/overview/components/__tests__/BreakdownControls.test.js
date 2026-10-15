@@ -44,6 +44,7 @@ import {
 } from '../../constants';
 import { act, renderComponent } from '../../../test-helpers/renderHook';
 import { rowsWire, slotsEndingAt } from '../../../test-helpers/chartWire';
+import { compileLocal, resolveCascade } from '../../../test-helpers/cascade';
 
 /**
  * A `query` answer for the chart: one row per bucket and value of `dim`.
@@ -435,6 +436,37 @@ describe( 'BreakdownControls', () => {
 	} );
 
 	describe( 'filter chips', () => {
+		it( 'lays the filter box on the row with the selects', () => {
+			const { container, unmount } = mountBreakdown( {
+				chips: [ 'country=Kiribati' ],
+			} );
+			const row = container.querySelector(
+				'.event-logger-chart-controls'
+			);
+			expect( row ).not.toBeNull();
+			expect( row.querySelector( 'select' ) ).not.toBeNull();
+			expect(
+				row.querySelector( 'input[aria-label="Filter"]' )
+			).not.toBeNull();
+			expect( row.textContent ).toContain( 'Country = Kiribati' );
+			unmount();
+		} );
+
+		it( 'grows the filter box into what the selects leave of the row', () => {
+			const { container, unmount } = mountBreakdown();
+			const sheets = [
+				compileLocal( 'settings/styles/tag-input.scss' ),
+				compileLocal( 'overview/styles/base.scss' ),
+			];
+			const box = container.querySelector( '.event-logger-chip-filter' );
+			const input = box.querySelector( 'input' );
+			expect( resolveCascade( box, sheets ).flex ).toBe( '1 1 22em' );
+			expect( resolveCascade( input, sheets )[ 'min-width' ] ).toBe(
+				'14em'
+			);
+			unmount();
+		} );
+
 		it( 'shows each chip as its field and value', () => {
 			const { container, unmount } = mountBreakdown( {
 				chips: [ 'status_class=5', 'country=Unknown' ],

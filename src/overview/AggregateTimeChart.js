@@ -187,7 +187,7 @@ export function breakdownState( answer, dims ) {
  * @param {Object}                                                    props                 Component props.
  * @param {Object|null}                                               props.series          The dimensions' series, as `breakdownState()` decoded it.
  * @param {string[]|null}                                             props.slots           The bucket keys the reply drew, newest first.
- * @param {string}                                                    props.storageKey      Untranslated placement name; the chart takes `<storageKey>:<metric>`, see AreaTimeChart.
+ * @param {string}                                                    props.storageKey      Untranslated placement name, one for every metric, so the expanded state and the stack hold across a metric change; see AreaTimeChart.
  * @param {string}                                                    [props.metric]        'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
  * @param {string[]}                                                  props.dims            The dimensions `series` was asked by; a status class alone takes the status palette.
  * @param {boolean}                                                   [props.partial]       Whether the answer ranked more series than it holds, so a stacked total is of the shown ones alone.
@@ -275,11 +275,9 @@ export default function AggregateTimeChart( {
 
 	const titleSuffix = serverFilter ? ` — ${ serverFilter }` : '';
 
-	// Keyed on the metric, so each metric remounts onto its own stored choices.
 	return (
 		<AreaTimeChart
-			key={ metric }
-			storageKey={ `${ storageKey }:${ metric }` }
+			storageKey={ storageKey }
 			stackable={ STACKABLE_METRICS.includes( metric ) }
 			className="event-logger-aggregate-time-chart"
 			series={ chartState.lines }

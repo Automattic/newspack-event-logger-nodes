@@ -20,6 +20,17 @@
 	margin-top: 20px;
 }
 
+// The chart's filter box shares the select row and takes what it leaves.
+.event-logger-chip-filter {
+	flex: 1 1 22em;
+	min-width: 18em;
+
+	> input {
+		flex: 1 1 14em;
+		min-width: 14em;
+	}
+}
+
 // The `?` picker's brief. Findings first, the raw payload behind a disclosure —
 // a picker click is not consent to send, so the operator sees what leaves.
 
