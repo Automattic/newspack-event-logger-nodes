@@ -22,6 +22,7 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Config_System\Restart_Planner;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Durable_Arm;
 use Newspack_Nodes\Table_Node;
 
 /**
@@ -48,6 +49,33 @@ final class Rule_Set {
 	public const OPTION_HOOKS_PREFIX = 'newspack_event_logger_nodes_rule_hooks_';
 	/** The autoloaded option holding the whole rule list. */
 	public const OPTION_RULES        = 'newspack_event_logger_nodes_rules';
+
+	/**
+	 * Bytes a hook list may take, uncompressed: under memcached's
+	 * 1,048,576-byte item, less a margin for the key and the framing,
+	 * because the warm mirror rides memcached through an `auto` Table and
+	 * nothing guarantees production compresses. `fitting_hooks()` caps to it,
+	 * against an estimate for the serializer `Durable_Arm::serializer()`
+	 * names; a refused set is never how a size is found.
+	 */
+	public const ITEM_BUDGET = 900000;
+
+	/** PHP's own `serialize()`: the larger, and what a handle-less estimate assumes. */
+	public const SERIALIZER_PHP = 'php';
+
+	/** igbinary: what a stored value takes where the memcached handle uses it. */
+	public const SERIALIZER_IGBINARY = 'igbinary';
+
+	/**
+	 * Bytes one hook name's framing costs in a stored hook list, before the
+	 * name's own bytes, under each serializer. Measured with twelve-digit
+	 * counts and no string repeated, which igbinary would store once; the
+	 * rest is margin.
+	 */
+	private const HOOK_OVERHEADS = [
+		self::SERIALIZER_PHP      => 20,
+		self::SERIALIZER_IGBINARY => 8,
+	];
 
 	/** @var Rule[] The list in persisted form; `save()` re-tiers it in place. */
 	private array $rules;
@@ -281,13 +309,23 @@ final class Rule_Set {
 	 * @throws \InvalidArgumentException When the list would not fit.
 	 */
 	private static function fitting_hooks( Rule $rule, array $hooks ): array {
-		$bytes = \count( $hooks ) * Stats_Store::overhead( 'hook' ) + \array_sum( \array_map( 'strlen', $hooks ) );
-		if ( $bytes > Stats_Store::ITEM_BUDGET ) {
+		$bytes = \count( $hooks ) * self::hook_overhead() + \array_sum( \array_map( 'strlen', $hooks ) );
+		if ( $bytes > self::ITEM_BUDGET ) {
 			throw new \InvalidArgumentException(
 				\sprintf( 'rule %s names %d hooks, past what one cache item holds', $rule->pattern, \count( $hooks ) )
 			);
 		}
 		return $hooks;
+	}
+
+	/**
+	 * What one hook name's framing costs in a stored hook list before its
+	 * own bytes, under the serializer a cache item is stored with.
+	 *
+	 * @return int Bytes of framing.
+	 */
+	private static function hook_overhead(): int {
+		return self::HOOK_OVERHEADS[ Durable_Arm::serializer() ];
 	}
 
 	/**
@@ -566,7 +604,7 @@ final class Rule_Set {
 	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public function for_url( string $url ): ?Rule {
-		return $this->matcher()->match( Stats_Store::path_of( $url ) );
+		return $this->matcher()->match( Url_Parts::path_of( $url ) );
 	}
 
 	/** A matcher over these rules; Rule_Matcher owns the specificity order. */

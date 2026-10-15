@@ -1420,4 +1420,17 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( [ 'abort1', 'fatal1', 'clean1', 'tout1', 'zero1' ], \array_column( $brief['worst_requests'], 'rid' ) );
 		$this->assertSame( [ 41000.0, 2417.0, 300.0, null, null ], \array_column( $brief['worst_requests'], 'duration_ms' ) );
 	}
+
+	/** A mean over the things that HAVE a value; the mean of none is null, never 0. */
+	public function test_a_mean_over_no_requests_is_null(): void {
+		$this->assertNull( Ask_Assembler::mean( 12.5, 0 ) );
+		$this->assertEqualsWithDelta( 3.125, Ask_Assembler::mean( 12.5, 4 ), 1e-9 );
+	}
+
+	/** A figure nobody measured stays null; a measured one is the number. */
+	public function test_a_measured_figure_is_the_number_or_null(): void {
+		$this->assertNull( Ask_Assembler::measured_figure( null ) );
+		$this->assertSame( 0.0, Ask_Assembler::measured_figure( 0 ) );
+		$this->assertSame( 41.5, Ask_Assembler::measured_figure( '41.5' ) );
+	}
 }

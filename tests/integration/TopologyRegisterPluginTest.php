@@ -147,6 +147,6 @@ class TopologyRegisterPluginTest extends TestCase {
 		$this->assertSame( $name, $entry['topology'] );
 		// num_partitions defaults to the (clamped) substrate option; always >= 1.
 		$this->assertGreaterThanOrEqual( 1, $entry['num_partitions'] );
-		$this->assertLessThanOrEqual( 16, $entry['num_partitions'] );
+		$this->assertLessThanOrEqual( \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS, $entry['num_partitions'] );
 	}
 }

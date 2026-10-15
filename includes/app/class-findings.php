@@ -28,7 +28,7 @@ use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
-use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Core;
 // Both plugins have a `Core`; the hook instrumentation is THIS plugin's.
 use Newspack_Event_Logger_Nodes\App\Core as Hooks;
@@ -1947,8 +1947,8 @@ class Findings {
 		}
 		$metric = [
 			'count'       => Core::num_int( $stats['count'] ?? 0 ),
-			'avg_ms'      => Stats_Store::measured_figure( $stats['avg_ms'] ?? null ),
-			'max_ms'      => Stats_Store::measured_figure( $stats['max_ms'] ?? null ),
+			'avg_ms'      => Ask_Assembler::measured_figure( $stats['avg_ms'] ?? null ),
+			'max_ms'      => Ask_Assembler::measured_figure( $stats['max_ms'] ?? null ),
 			'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 		];
 		return [ self::insufficient( $url, $rule, $metric, 'url stats' ) ];
@@ -1976,7 +1976,7 @@ class Findings {
 					null,
 					'No rule governs this URL, so nothing about it is logged at all.',
 					'Delete the rule, or set its action to skip, once the question is answered.',
-					[ 'pattern' => Stats_Store::path_of( $url ), 'hooks' => self::LIFECYCLE_BRACKET ]
+					[ 'pattern' => Url_Parts::path_of( $url ), 'hooks' => self::LIFECYCLE_BRACKET ]
 				),
 			],
 			$hookless      => [

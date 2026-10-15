@@ -121,7 +121,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * a visitor mint index codes and stats keys at will. It is the stats'
 	 * overflow key, so the method axis's cap folds into the same row.
 	 */
-	public const METHOD_OTHER = Stats_Store::OTHER_KEY;
+	public const METHOD_OTHER = 'Other';
 
 	/**
 	 * The index line's 1-char method column, written here and read back through
