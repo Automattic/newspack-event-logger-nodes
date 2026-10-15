@@ -248,7 +248,7 @@ reader a grace window and costs nothing but that when wrong. Per-line transforms
 browser, inside each dashboard's view node (`RequestLogViewNode`, `GyroscopeViewNode`,
 `PerfErrorsViewNode`); the browser consumes the stream through `_stream:sse-in`
 (`SseInNode`), owned by the page's one `RemoteLink`, `_stream`, which every stream graph on
-the page rides by adding pairs, and which hands each record to its stamp's Tee,
+the page rides by adding sources, and which hands each record to its stamp's Tee,
 `_stream:<stamp>`.
 
 ## Worker spawn

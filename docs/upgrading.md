@@ -6,6 +6,19 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.110.0, which takes a broker's
+  sources by `add_source`.** `aggregator.tsl` now builds its `spokes` group
+  with `make_node Vault_Group spokes Remote_Source spoke <offsets root>
+  <deadletter root>` and gives it each source as a line of its own,
+  `command_node spokes:config add_source firehose.p{partition}
+  remote-job-rewrite` and `command_node spokes:config add_source sources:php
+  php-errors:partition`, where the `make_node` line carried them as
+  `<source>=<target>` pairs. A copy of that topology, or a hand-written
+  broker, takes the same rewrite: move each pair to an `add_source <source>
+  <target>` line. The bundled stream hooks hand the page link
+  `addSource( stamp, target )` calls. An older substrate refuses both, so the
+  plugin stays dormant below 2.110.0. Deploy the substrate first.
+
 - **This release needs newspack-nodes 2.109.0, which spells a log stamp with
   `:` and a broker pair with `=`.** `aggregator.tsl` now writes
   `firehose.p{partition}=remote-job-rewrite sources:php=php-errors:partition`

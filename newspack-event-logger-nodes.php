@@ -133,12 +133,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// 2.106.0 is dump_metadata -o, which the bundled topology console asks
 	// for an owner's sidecars; an older substrate answers it with nothing.
 	// 2.107.0 is dl_remove, which the bundled Triage view sends.
-	// 2.109.0 is the colon stamp and the `=` pair aggregator.tsl writes.
+	// 2.109.0 is the colon stamp aggregator.tsl writes.
+	// 2.110.0 is the add_source verb aggregator.tsl sends and the page link's
+	// addSource() and removeSource(), which the bundled stream hooks call.
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.109.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.110.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The hub's `aggregator` topology gives its brokers their sources by `add_source`.** The `spokes` `Vault_Group` line carries no pairs; two `command_node spokes:config add_source` lines name `firehose.p{partition}` into `remote-job-rewrite` and `sources:php` into `php-errors:partition`. The bundled stream hooks hand the page link `addSource( stamp, target )` calls in place of `<sub>=<tee>` pairs. The substrate floor rises to 2.110.0.
+
 ## [0.132.2] - 2026-10-14
 
 ### Changed
