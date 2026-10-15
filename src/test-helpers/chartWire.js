@@ -1,8 +1,9 @@
 /**
- * Chart reply fixtures in the wire shapes the `performance` CI answers.
+ * Chart reply fixtures in the shapes the `performance` CI's `query` answers.
  */
 
-import { decodeNameTable, DIM_FIELDS } from '../overview/chartSlots';
+import { decodeRows } from '../overview/chartSlots';
+import { SERIES_MEASURES } from '../overview/constants';
 
 /**
  * Milliseconds one five-minute slot spans.
@@ -31,35 +32,63 @@ export const slotsEndingAt = ( last, count = 288 ) => {
 };
 
 /**
- * A `{ bucket: { name: sums } }` series in the name-table wire,
- * `{ names, buckets: { bucket: [ [ nameIndex, ...sums ] ] } }`.
+ * A `query` answer holding `rows` under `columns`, over the selection it
+ * echoes; the last 288 buckets ending at 2026-09-29 14:35 UTC by default.
  *
- * @param {Object<string,Object<string,number[]>>} series Bucket => name => sums.
- * @return {{names: string[], buckets: Object<string,Array<number[]>>}} The wire.
+ * @param {string[]} columns The answer's columns, groups then measures.
+ * @param {Array[]}  rows    Its rows, each positional in `columns` order.
+ * @param {Object}   [extra] Fields to set over the defaults, such as `groups`.
+ * @return {Object} The answer as the `query` verb sends it.
  */
-export const nameTable = ( series ) => {
-	const names = [];
-	/** @type {Object<string,Array<number[]>>} */
-	const buckets = {};
-	Object.entries( series ).forEach( ( [ bucket, entries ] ) => {
-		buckets[ bucket ] = Object.entries( entries ).map(
-			( [ name, sums ] ) => {
-				if ( ! names.includes( name ) ) {
-					names.push( name );
-				}
-				return [ names.indexOf( name ), ...sums ];
-			}
-		);
-	} );
-	return { names, buckets };
-};
+export const rowsWire = ( columns, rows, extra = {} ) => ( {
+	source: 'requests',
+	table: 'requests',
+	columns,
+	rows,
+	groups: null,
+	available: true,
+	filters: {
+		filter: {},
+		bucket: '2026-09-28-14-40..2026-09-29-14-35',
+		search: '',
+	},
+	...extra,
+} );
 
 /**
- * A `{ bucket: { name: sums } }` dimensional series decoded as a chart takes
- * it: through the wire, then `decodeNameTable()`.
+ * A `{ bucket: { name: measures } }` series as a `query` answer grouped by
+ * `bucket` and one dimension, each name a value of it.
  *
- * @param {Object<string,Object<string,number[]>>} series Bucket => name => `DIM_SUMS`.
- * @return {ReturnType<typeof decodeNameTable>} The decoded table.
+ * @param {string}                                 dim      The dimension's column.
+ * @param {string[]}                               measures The measures each row carries.
+ * @param {Object<string,Object<string,number[]>>} series   Bucket => name => values in `measures` order.
+ * @param {Object}                                 [extra]  Answer fields to set, as `groups`.
+ * @return {Object} The answer.
  */
-export const dimTable = ( series ) =>
-	decodeNameTable( nameTable( series ), DIM_FIELDS );
+export const seriesWire = ( dim, measures, series, extra = {} ) =>
+	rowsWire(
+		[ 'bucket', dim, ...measures ],
+		Object.entries( series ).flatMap( ( [ bucket, names ] ) =>
+			Object.entries( names ).map( ( [ name, values ] ) => [
+				bucket,
+				name,
+				...values,
+			] )
+		),
+		extra
+	);
+
+/**
+ * A `{ bucket: { name: [ count, sum_ms, sum_peak_mb, timed ] } }` series
+ * decoded as the aggregate chart takes it: through the answer, then
+ * `decodeRows()`.
+ *
+ * @param {Object<string,Object<string,number[]>>} series Bucket => name => `SERIES_MEASURES`.
+ * @return {ReturnType<typeof decodeRows>} The decoded series.
+ */
+export const dimSeries = ( series ) =>
+	decodeRows(
+		seriesWire( 'series', SERIES_MEASURES, series ),
+		[ 'series' ],
+		SERIES_MEASURES
+	);

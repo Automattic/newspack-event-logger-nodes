@@ -1,4 +1,6 @@
-import { headlineStats } from '../HeadlineStats';
+import * as React from 'react';
+import HeadlineStats, { headlineStats } from '../HeadlineStats';
+import { renderComponent } from '../../../test-helpers/renderHook';
 
 describe( 'headlineStats', () => {
 	it( 'shows a mean nobody measured as a dash, beside the measured ones', () => {
@@ -49,5 +51,48 @@ describe( 'headlineStats', () => {
 			[ 'fatal avg', '2417ms' ],
 			[ 'fatal max', '—' ],
 		] );
+	} );
+} );
+
+describe( 'HeadlineStats', () => {
+	it( 'shows no provisional banner', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( HeadlineStats, {
+				totals: { urls: 7331, requests: 90210, avg_ms: 212.6 },
+				provisional: true,
+			} )
+		);
+
+		expect(
+			container.querySelector( '.newspack-nodes-banner' )
+		).toBeNull();
+		expect( container.textContent ).not.toContain( 'Provisional' );
+		unmount();
+	} );
+
+	it( 'counts the unique URLs exactly, as the reply does', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( HeadlineStats, {
+				totals: { urls: 7331, requests: 90210 },
+			} )
+		);
+
+		expect( container.textContent ).toContain( '7,331Unique URLs' );
+		unmount();
+	} );
+
+	it( 'says the window is the last 24 hours, the current five minutes so far', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( HeadlineStats, { totals: null } )
+		);
+
+		expect(
+			container
+				.querySelector( '.event-logger-overview-stats' )
+				.getAttribute( 'title' )
+		).toBe(
+			'The last 24 hours in five-minute buckets, the current one so far.'
+		);
+		unmount();
 	} );
 } );

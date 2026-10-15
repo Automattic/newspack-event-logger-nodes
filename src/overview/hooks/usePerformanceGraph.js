@@ -1,7 +1,7 @@
 /**
  * usePerformanceGraph — the Performance Dashboard's data layer, expressed as a
  * node graph on the substrate batched-poll toolkit (`useBatchedPoll` +
- * `addSliceFetcher`). This hook owns the dashboard's four slices;
+ * `addSliceFetcher`). This hook owns the dashboard's slices;
  * `PerformanceDashboard` reads each one back through `useNodeField` rather than
  * fetching it.
  *
@@ -10,52 +10,53 @@
  * owns the lock and flush around a tick, and that is what puts one tick into
  * one POST:
  *
- *   performance:timer (Timer) → performance:tee (Tee) → overview:fetch, urls:fetch (Fetchers)
- *                                       → overview:shell/_http/performance
- *   overview:in (Tee) → overview:in:current (Current) → overview:view (OverviewView)
- *   urls:in     (Tee) → urls:in:current (Current) → urls:view (UrlsView)
+ *   performance:timer (Timer) → performance:tee (Tee)
+ *     → overview:fetch, urls:fetch, chart:fetch, categories:fetch (Fetchers)
+ *     → overview:shell/_http/performance
+ *   <slice>:in (Tee) → <slice>:in:current (Current) → <slice>:view
  *
- * Each Fetcher carries an `argsFn` fire-time getter that reads the CURRENT React
- * UI state, so a filter, sort, or page change rides the very next tick without
- * re-wiring the graph. A `serverFilter` or `chartBreakdown` change asks both
- * afresh, superseding the asks in flight, and fires the batched tick at once
- * rather than waiting out the cadence.
+ * `overview` and `urls` answer the headline and the table; `chart` and
+ * `categories` each ask `query` for one chart's series, the top `CHART_TOP`
+ * tuples by request count or by milliseconds, so a chart is bounded however
+ * many values its dimensions hold. Each Fetcher carries an `argsFn` fire-time
+ * getter that reads the CURRENT React UI state, so a filter, sort, or page
+ * change rides the very next tick without re-wiring the graph. A
+ * `serverFilter` change asks all four afresh, superseding the asks in flight,
+ * and fires the batched tick at once rather than waiting out the cadence; a
+ * chart dimension or chip change asks the chart alone.
  *
- * ON-DEMAND slices. Opening a modal fetches; neither slice hangs off `performance:timer`,
- * and the overview/urls poll pauses while either modal is open:
+ * ON-DEMAND slices. Opening a modal fetches; neither modal hangs off
+ * `performance:timer`, and the overview poll pauses while either is open:
  *
- *   url-detail:in (Tee) → url-detail:in:current (Current)
- *                       → url-detail:transform (UrlDetailMerge) → url-detail:view (UrlDetailView)
- *   url-detail:timer (Timer) → url-detail:fetch (Fetcher) → url:shell/_http/performance
- *   request-detail:in (Tee) → request-detail:in:current (Current) → request-detail:view (RequestDetailView)
- *   request-detail:timer (Timer) → request-detail:fetch (Fetcher) → request:shell/_http/performance
+ *   url-detail:timer (Timer) → url-detail:tee (Tee)
+ *     → url-detail:fetch (dump_url), url-chart:fetch, url-categories:fetch
+ *     → url:shell/_http/performance
+ *   request-detail:timer (Timer) → request-detail:fetch → request:shell/_http/performance
  *
- * The dump_url reply rides through `UrlDetailMergeNode` on the gate → view
- * edge: it merges each reply into the last one (dedup by rid, newest completion
- * first, 500 rows) and DROPS a reply carrying no request it lacks under an
- * unchanged `last_modified`, so an auto-refresh tick never re-renders the modal
- * for nothing. Opening the modal, rescoping it, flipping Errors Only or editing
- * its buckets asks through that same Fetcher with `askNow()`, superseding every
- * older ask, exactly as a `urls` sort change does — never by minting at the
- * receiver beside it. Every slice's `Current` gate, the substrate's, drops the answer
- * to a superseded question before it reaches the merge or a view, and sends
- * a refusal to the view itself. `url-detail:timer` is armed only while URL
- * detail is the visible modal and the tab is visible, and polls at once each
- * time it is armed from stopped (`armTimer()`). A request selection
- * asks `dump_request` through `request-detail:fetch` the same way, so the
- * late answer about the request the operator left never lands.
+ * Every `url-detail:timer` tick asks `dump_url` and the URL's two charts
+ * again, and each answer replaces its slice whole. Opening the modal or
+ * rescoping it asks all three through `askNow()`, superseding every older
+ * ask; flipping Errors Only or editing its buckets asks the list alone, since
+ * the charts describe every request to the URL; a modal chart's dimension or
+ * chip change asks that chart alone. Every slice's `Current` gate, the
+ * substrate's, drops the answer to a superseded question before it reaches a
+ * view, and sends a refusal to the view itself. `url-detail:timer` is armed
+ * only while URL detail is the visible modal and the tab is visible, and
+ * polls at once each time it is armed from stopped (`armTimer()`). A request
+ * selection asks `dump_request` through `request-detail:fetch` the same way,
+ * so the late answer about the request the operator left never lands.
  *
  * ON-DEMAND verbs are NOT here. The deep-link reads, the search box, the rules
- * writes, the grep and the chart's breakdown each live beside the state their
- * reply sets — in `PerformanceDashboard` or in `UrlDetailView` — because a
- * command held one layer above the state it feeds has to hand its answer back
- * down, and that hand-back is what a correlation table is made of.
+ * writes and the grep each live beside the state their reply sets, in
+ * `PerformanceDashboard`, because a command held one layer above the state it
+ * feeds has to hand its answer back down, and that hand-back is what a
+ * correlation table is made of.
  *
  * This hook returns `handleUrlParamsChange` and nothing else; data reaches
  * React through each slice's own `useNodeField( '<slice>:view', 'view' )`.
  */
 
-import { useCallback, useEffect, useRef } from '@wordpress/element';
+import { useCallback, useEffect, useMemo, useRef } from '@wordpress/element';
 import {
 	Core,
 	formatCommandArgs,
@@ -68,10 +69,18 @@ import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher'
 import { armTimer } from '@newspack-nodes/shared/helpers/armTimer';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { views } from '../nodes/register';
+import { chartDims } from '../chartSlots';
+import { useOnChange } from './useOnChange';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
-import { GROUPS } from '../constants';
+import {
+	CATEGORY_MEASURES,
+	CHART_TOP,
+	GROUPS,
+	SERIES_MEASURES,
+} from '../constants';
 
 /** @typedef {import('@newspack-nodes/runtime').TimerNode} TimerNode */
+/** @typedef {typeof import('@newspack-nodes/runtime').Node} NodeClass */
 
 /**
  * The server CI mount that owns every verb this dashboard sends.
@@ -102,28 +111,44 @@ const DEFAULT_REFRESH_INTERVAL_MS = 15000;
  */
 export const GREP_RESULT_LIMIT = 20;
 
-/** View node for the polled `overview` slice. */
-const OVERVIEW_VIEW = 'overview:view';
-/** Reply-address Tee for `overview`, and its Fetcher's FROM. */
-const OVERVIEW_RECV = 'overview:in';
-/** Fetcher turning each `performance:tee` tick into one `overview` command. */
-const OVERVIEW_FETCHER = 'overview:fetch';
-/** View node for the polled `urls` slice. */
-const URLS_VIEW = 'urls:view';
-/** Reply-address Tee for `urls`, and its Fetcher's FROM. */
-const URLS_RECV = 'urls:in';
-/** Fetcher turning each `performance:tee` tick into one `urls` command. */
-const URLS_FETCHER = 'urls:fetch';
+/**
+ * One slice as `addSliceFetcher` takes it, less its tick and its egress: its
+ * node names, each `<subject>:<role>`, the origin its view takes controls
+ * from — its own name — and the verb its question asks.
+ *
+ * @param {string}          subject   The slice, as `chart`.
+ * @param {string}          command   The verb it sends.
+ * @param {NodeClass}       viewClass Its view's class.
+ * @param {() => ?string[]} argsFn    Its question, read at fire time.
+ * @return {{fetcher: string, receiver: string, view: string, controlFrom: string, command: string, viewClass: NodeClass, argsFn: () => ?string[]}} The slice.
+ */
+const slice = ( subject, command, viewClass, argsFn ) => ( {
+	fetcher: `${ subject }:fetch`,
+	receiver: `${ subject }:in`,
+	view: `${ subject }:view`,
+	controlFrom: `${ subject }:view`,
+	command,
+	viewClass,
+	argsFn,
+} );
+
+/** No filter chips: one array, so an unset chip list never re-asks. */
+export const NO_CHIPS = [];
+
+/** The overview chart's slice: the site's series by its dimensions. */
+const CHART = 'chart';
+/** The overview category chart's slice. */
+const CATEGORIES = 'categories';
 /** View node for the on-demand URL detail modal. */
 const URLDETAIL_VIEW = 'url-detail:view';
-/** Reply-address Tee for `dump_url`, and its Fetcher's FROM. */
-const URLDETAIL_RECV = 'url-detail:in';
-/** Merge transform on the `url-detail:in` to `url-detail:view` edge. */
-const URLDETAIL_TRANSFORM = 'url-detail:transform';
-/** The URL detail slice's OWN Timer, armed only while that modal is visible. */
+/** The URL modal's OWN Timer, armed only while that modal is visible. */
 const URLDETAIL_TIMER = 'url-detail:timer';
-/** Fetcher the URL detail auto-refresh tick fans to. */
-const URLDETAIL_FETCHER = 'url-detail:fetch';
+/** The Tee the URL modal's Timer fans to its three Fetchers through. */
+const URLDETAIL_TEE = 'url-detail:tee';
+/** The URL modal chart's slice: the URL's series by its dimensions. */
+const URL_CHART = 'url-chart';
+/** The URL modal's category chart's slice. */
+const URL_CATEGORIES = 'url-categories';
 /** View node for the on-demand request detail modal. */
 const REQUESTDETAIL_VIEW = 'request-detail:view';
 /** Reply-address Tee for `dump_request`, and its Fetcher's FROM. */
@@ -145,38 +170,136 @@ const REQUESTDETAIL_TICK_MS = 1000;
 export const NO_DETAIL_FILTERS = { errors_only: false, bucket: '' };
 
 /**
- * `dump_url` args for the open modal. The auto-refresh tick and the
- * selection fetch share this, so both ask for the same payload shape and the
- * merge node compares like with like.
+ * The URL modal chart's question until someone changes it: its status
+ * classes, no second dimension and no chip. The hook's default, and what
+ * the dashboard opens a URL with.
+ */
+export const NO_DETAIL_CHART = {
+	breakdown: 'status_class',
+	thenBy: '',
+	chips: NO_CHIPS,
+};
+
+/**
+ * The `--filter=` values a chart asks under: its scope's, unless a chip names
+ * the same field, then its chips'. A chip on `worker` therefore replaces the
+ * Overview's `worker=0` rather than widening it.
  *
- * `categories` is always on: it is what adds the `category_time_series` the
- * modal's `CategoryTimeChart` draws.
+ * @param {Object<string,string[]>} scope Field => the values the scope asks.
+ * @param {string[]}                chips The chips, each `field=value`.
+ * @return {string[]} Each filter as `field=value`.
+ */
+const filtersOf = ( scope, chips ) => {
+	const chipped = new Set(
+		chips.map( ( chip ) => chip.slice( 0, chip.indexOf( '=' ) ) )
+	);
+	return [
+		...Object.entries( scope )
+			.filter( ( [ field ] ) => ! chipped.has( field ) )
+			.flatMap( ( [ field, values ] ) =>
+				values.map( ( value ) => `${ field }=${ value }` )
+			),
+		...chips,
+	];
+};
+
+/**
+ * A chart's `query` tokens: its source, the bucket axis and its dimensions
+ * as the group, each filter and measure as its own token, and the top
+ * `CHART_TOP` tuples by `topBy`.
  *
- * The server rides along for the same reason it rides on `urls`: this modal
- * opens from a row that filter scoped, and the two have to answer alike.
- *
- * `after` is the browser's cursor, and only the refresh tick carries one: the
- * open and rescope asks clear the merge first, so there is nothing held and
- * the whole window is what they want.
- *
- * Named rather than positional, like its two siblings: only `hash` reaches the
- * positional token array, and a defaulted `after` in the third slot is how a
- * caller comes to pass the next argument in the wrong one.
- *
- * @param {Object}      arg              Named arguments.
- * @param {string}      arg.hash         The URL hash.
- * @param {string}      arg.serverFilter Server scope; '' means every server.
- * @param {Object}      arg.filters      The modal's `{ errors_only, bucket }`:
- *                                       the URL's errors alone, and the
- *                                       spelling of the bucket selection
- *                                       the header and list narrow to, ''
- *                                       for none.
- * @param {Object|null} [arg.after]      Partition => `{ segment, offset }`;
- *                                       null asks for the whole window.
+ * @param {string}   source   `requests` or `timings`.
+ * @param {string[]} dims     The non-time fields it groups by.
+ * @param {string[]} filters  Each filter as `field=value`.
+ * @param {string[]} measures What each row measures.
+ * @param {string}   topBy    The measure the tuples rank by.
  * @return {string[]} The command token array.
  */
-function urlDetailArgs( { hash, serverFilter, filters, after = null } ) {
-	const options = { categories: true };
+const queryArgs = ( source, dims, filters, measures, topBy ) => [
+	...formatCommandArgs( [ source, 'bucket', ...dims ], {
+		top: CHART_TOP,
+		top_by: topBy,
+	} ),
+	...filters.map( ( filter ) => `--filter=${ filter }` ),
+	...measures.map( ( measure ) => `--measure=${ measure }` ),
+];
+
+/**
+ * A request chart's question: its dimensions' series by request count.
+ *
+ * @param {Object}                  chart           The chart's state.
+ * @param {string}                  chart.breakdown Its first dimension.
+ * @param {string}                  chart.thenBy    Its second; '' for none.
+ * @param {string[]}                chart.chips     Its chips.
+ * @param {Object<string,string[]>} scope           The filters its scope asks.
+ * @return {string[]} The command token array.
+ */
+const seriesArgs = ( chart, scope ) =>
+	queryArgs(
+		'requests',
+		chartDims( chart ),
+		filtersOf( scope, chart.chips ),
+		SERIES_MEASURES,
+		'count'
+	);
+
+/**
+ * A category chart's question: each category's own total row by bucket —
+ * the row whose `entry` is empty — the dearest first.
+ *
+ * @param {Object<string,string[]>} scope The filters its scope asks.
+ * @return {string[]} The command token array.
+ */
+const categoryArgs = ( scope ) =>
+	queryArgs(
+		'timings',
+		[ 'category' ],
+		filtersOf( { ...scope, entry: [ '' ] }, NO_CHIPS ),
+		CATEGORY_MEASURES,
+		'ms'
+	);
+
+/**
+ * The scope a site chart asks under: no worker request, and the server's
+ * alone under a server filter.
+ *
+ * @param {string} serverFilter Server scope; '' means every server.
+ * @return {Object<string,string[]>} Field => values.
+ */
+const siteScope = ( serverFilter ) => ( {
+	worker: [ '0' ],
+	...( serverFilter ? { server: [ serverFilter ] } : {} ),
+} );
+
+/**
+ * The scope a URL chart asks under: the URL, worker traffic counted as
+ * `dump_url` counts it, and the server's alone under a server filter.
+ *
+ * @param {string} hash         The URL hash.
+ * @param {string} serverFilter Server scope; '' means every server.
+ * @return {Object<string,string[]>} Field => values.
+ */
+const urlScope = ( hash, serverFilter ) => ( {
+	url: [ hash ],
+	...( serverFilter ? { server: [ serverFilter ] } : {} ),
+} );
+
+/**
+ * `dump_url` args for the open modal: the hash, the server filter its row was
+ * scoped by, and the modal's own narrowing. The open ask and every refresh
+ * tick send the same question.
+ *
+ * @param {Object} arg              Named arguments.
+ * @param {string} arg.hash         The URL hash.
+ * @param {string} arg.serverFilter Server scope; '' means every server.
+ * @param {Object} arg.filters      The modal's `{ errors_only, bucket }`: the
+ *                                  URL's errors alone, and the spelling of the
+ *                                  bucket selection the header and list
+ *                                  narrow to, '' for none.
+ * @return {string[]} The command token array.
+ */
+function urlDetailArgs( { hash, serverFilter, filters } ) {
+	const options = {};
 	if ( serverFilter ) {
 		options.server = serverFilter;
 	}
@@ -185,9 +308,6 @@ function urlDetailArgs( { hash, serverFilter, filters, after = null } ) {
 	}
 	if ( filters.bucket ) {
 		options.bucket = filters.bucket;
-	}
-	if ( after ) {
-		options.after = JSON.stringify( after );
 	}
 	return formatCommandArgs( [ hash ], options );
 }
@@ -222,43 +342,13 @@ const isValidRequestId = ( r ) =>
 const isValidPartition = ( p ) => Number.isInteger( p ) && p >= 0;
 
 /**
- * The dimension list `overview` asks for: always `server`, since the page's
- * server filter is built from that breakdown, plus the chart's active
- * dimension. A chart already showing `server` asks for that one alone.
+ * The `overview` args: the server the totals and the leaderboard scope to.
  *
- * @param {string} currentBreakdown The chart's active dimension.
- * @return {string[]} Deduped dimension names.
- */
-const breakdownsFor = ( currentBreakdown ) => {
-	const set = new Set( [ 'server' ] );
-	if ( currentBreakdown ) {
-		set.add( currentBreakdown );
-	}
-	return Array.from( set );
-};
-
-/**
- * Build the `overview` args from live UI state.
- *
- * `categories` is always on: it is what adds the `category_time_series` the
- * overview card's `CategoryTimeChart` draws.
- *
- * @param {Object} ui                UI state, read at fire time.
- * @param {string} ui.serverFilter   Server scope; '' means every server.
- * @param {string} ui.chartBreakdown The chart's active dimension.
+ * @param {string} serverFilter Server scope; '' means every server.
  * @return {string[]} The command token array.
  */
-function overviewArgs( { serverFilter, chartBreakdown } ) {
-	const options = { categories: true };
-	if ( serverFilter ) {
-		options.server = serverFilter;
-	}
-	const dims = breakdownsFor( chartBreakdown );
-	if ( dims.length > 0 ) {
-		options.breakdown = dims.join( ',' );
-	}
-	return formatCommandArgs( [], options );
-}
+const overviewArgs = ( serverFilter ) =>
+	formatCommandArgs( [], serverFilter ? { server: serverFilter } : {} );
 
 /**
  * Build the `urls` args from the table's own controls and the page's server
@@ -317,59 +407,68 @@ function urlsArgs( { urlParams, serverFilter } ) {
  * disarm the on-demand slices.
  *
  * Every option is live UI state. The Fetchers read the filter, sort and
- * breakdown refs at FIRE time, so a change rides the next tick without
+ * chart refs at FIRE time, so a change rides the next tick without
  * re-wiring the graph.
  *
- * @param {Object}  [opts]                  Live dashboard state.
- * @param {string}  [opts.serverFilter]     Server scope; '' means every
- *                                          server.
- * @param {string}  [opts.chartBreakdown]   The chart's active dimension.
- * @param {boolean} [opts.askActive]        The `?` picker is armed, which holds
- *                                          the poll exactly as an open modal
- *                                          does: the reader is aiming at a row,
- *                                          and a repaint moves it.
- * @param {string}  [opts.refreshInterval]  Poll cadence in ms, as a STRING —
- *                                          `SelectControl` compares its option
- *                                          values as strings. A value
- *                                          `parseInt` cannot read takes
- *                                          `DEFAULT_REFRESH_INTERVAL_MS`; the
- *                                          dropdown's floor of 1000 fires on
- *                                          every router tick, and anything
- *                                          below it throws in
- *                                          `useBatchedPoll`, where only a
- *                                          Timer riding the router sits
- *                                          inside the batch bracket.
- * @param {?number} [opts.requestPartition] Partition of the selected request,
- *                                          supplied WITH the selection; null
- *                                          is reported, never reconstructed.
- * @param {?Object} [opts.selectedUrl]      `{ hash, url }` of the open URL
- *                                          detail modal; null closes and
- *                                          clears the slice.
- * @param {Object}  [opts.detailFilters]    The modal's `{ errors_only,
- *                                          bucket }`: its URL's errors alone,
- *                                          which the server walks past the
- *                                          clean requests to find, and the
- *                                          bucket selection its header and
- *                                          list narrow to. A change re-asks, so
- *                                          hold one object per value.
- * @param {?string} [opts.selectedRequest]  Rid of the open request detail
- *                                          modal; null closes and clears it.
+ * @param {Object}   [opts]                  Live dashboard state.
+ * @param {string}   [opts.serverFilter]     Server scope; '' means every
+ *                                           server.
+ * @param {string}   [opts.chartBreakdown]   The chart's first dimension.
+ * @param {string}   [opts.chartThenBy]      Its second dimension; '' for none.
+ * @param {string[]} [opts.chartChips]       Its filter chips, each
+ *                                           `field=value`. A change re-asks,
+ *                                           so hold one array per value.
+ * @param {boolean}  [opts.askActive]        The `?` picker is armed, which
+ *                                           holds the poll exactly as an open
+ *                                           modal does: the reader is aiming
+ *                                           at a row, and a repaint moves it.
+ * @param {string}   [opts.refreshInterval]  Poll cadence in ms, as a STRING —
+ *                                           `SelectControl` compares its
+ *                                           option values as strings. A value
+ *                                           `parseInt` cannot read takes
+ *                                           `DEFAULT_REFRESH_INTERVAL_MS`; the
+ *                                           dropdown's floor of 1000 fires on
+ *                                           every router tick, and anything
+ *                                           below it throws in
+ *                                           `useBatchedPoll`, where only a
+ *                                           Timer riding the router sits
+ *                                           inside the batch bracket.
+ * @param {?number}  [opts.requestPartition] Partition of the selected request,
+ *                                           supplied WITH the selection; null
+ *                                           is reported, never reconstructed.
+ * @param {?Object}  [opts.selectedUrl]      `{ hash, url }` of the open URL
+ *                                           detail modal; null closes and
+ *                                           clears its slices.
+ * @param {Object}   [opts.detailFilters]    The modal's `{ errors_only,
+ *                                           bucket }`: its URL's errors alone,
+ *                                           and the bucket selection its
+ *                                           header and list narrow to. A
+ *                                           change re-asks, so hold one object
+ *                                           per value.
+ * @param {Object}   [opts.detailChart]      The modal chart's `{ breakdown,
+ *                                           thenBy, chips }`, held the same
+ *                                           way.
+ * @param {?string}  [opts.selectedRequest]  Rid of the open request detail
+ *                                           modal; null closes and clears it.
  * @return {{ handleUrlParamsChange: (params: Object) => void }} The URL table's params
  *         callback, and nothing else.
  */
 export function usePerformanceGraph( opts = {} ) {
 	const {
 		serverFilter = '',
-		chartBreakdown = 'status',
+		chartBreakdown = 'status_class',
+		chartThenBy = '',
+		chartChips = NO_CHIPS,
 		refreshInterval = String( DEFAULT_REFRESH_INTERVAL_MS ),
 		askActive = false,
 		requestPartition = null,
 		selectedUrl = null,
 		selectedRequest = null,
 		detailFilters = NO_DETAIL_FILTERS,
+		detailChart = NO_DETAIL_CHART,
 	} = opts;
 
-	// The whole opts object, for the dump_url getter's fire-time selection.
+	// The whole opts object, for the modal getters' fire-time selection.
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
@@ -393,8 +492,14 @@ export function usePerformanceGraph( opts = {} ) {
 	serverFilterRef.current = serverFilter;
 	const detailFiltersRef = useRef( detailFilters );
 	detailFiltersRef.current = detailFilters;
-	const chartBreakdownRef = useRef( chartBreakdown );
-	chartBreakdownRef.current = chartBreakdown;
+	const detailChartRef = useRef( detailChart );
+	detailChartRef.current = detailChart;
+	const chartRef = useRef( null );
+	chartRef.current = {
+		breakdown: chartBreakdown,
+		thenBy: chartThenBy,
+		chips: chartChips,
+	};
 	// Search-debounce handle; the build's cleanup clears it on teardown.
 	const urlFetchTimerRef = useRef( null );
 
@@ -404,11 +509,7 @@ export function usePerformanceGraph( opts = {} ) {
 
 	/** The overview question the page asks now. */
 	const overviewNow = useCallback(
-		() =>
-			overviewArgs( {
-				serverFilter: serverFilterRef.current,
-				chartBreakdown: chartBreakdownRef.current,
-			} ),
+		() => overviewArgs( serverFilterRef.current ),
 		[]
 	);
 	/** The URL-table question the page asks now. */
@@ -420,74 +521,135 @@ export function usePerformanceGraph( opts = {} ) {
 			} ),
 		[]
 	);
+	/** The chart question the page asks now. */
+	const chartNow = useCallback(
+		() =>
+			seriesArgs(
+				chartRef.current,
+				siteScope( serverFilterRef.current )
+			),
+		[]
+	);
+	/** The category-chart question the page asks now. */
+	const categoriesNow = useCallback(
+		() => categoryArgs( siteScope( serverFilterRef.current ) ),
+		[]
+	);
+	/**
+	 * A question about the open URL, or null with none to ask about, which
+	 * sends nothing at all.
+	 *
+	 * @param {(hash: string) => string[]} ask The question, given the hash.
+	 * @return {() => ?string[]} The fire-time getter.
+	 */
+	const aboutUrl = useCallback(
+		( ask ) => () => {
+			const hash = optsRef.current.selectedUrl?.hash;
+			return isValidHash( hash ) ? ask( hash ) : null;
+		},
+		[]
+	);
+	const urlDetailNow = useMemo(
+		() =>
+			aboutUrl( ( hash ) =>
+				urlDetailArgs( {
+					hash,
+					serverFilter: serverFilterRef.current,
+					filters: detailFiltersRef.current,
+				} )
+			),
+		[ aboutUrl ]
+	);
+	const urlChartNow = useMemo(
+		() =>
+			aboutUrl( ( hash ) =>
+				seriesArgs(
+					detailChartRef.current,
+					urlScope( hash, serverFilterRef.current )
+				)
+			),
+		[ aboutUrl ]
+	);
+	const urlCategoriesNow = useMemo(
+		() =>
+			aboutUrl( ( hash ) =>
+				categoryArgs( urlScope( hash, serverFilterRef.current ) )
+			),
+		[ aboutUrl ]
+	);
+
+	// @longform The slices each tick source fans to, which the build, the
+	// pokes and the clears all read, so a slice is named in one place.
+	const pageSlices = useMemo(
+		() => ( {
+			overview: slice(
+				'overview',
+				'overview',
+				views.OverviewView,
+				overviewNow
+			),
+			urls: slice( 'urls', 'urls', views.UrlsView, urlsNow ),
+			chart: slice( CHART, 'query', views.QueryView, chartNow ),
+			categories: slice(
+				CATEGORIES,
+				'query',
+				views.QueryView,
+				categoriesNow
+			),
+		} ),
+		[ overviewNow, urlsNow, chartNow, categoriesNow ]
+	);
+	const urlSlices = useMemo(
+		() => ( {
+			detail: slice(
+				'url-detail',
+				'dump_url',
+				views.UrlDetailView,
+				urlDetailNow
+			),
+			chart: slice( URL_CHART, 'query', views.QueryView, urlChartNow ),
+			categories: slice(
+				URL_CATEGORIES,
+				'query',
+				views.QueryView,
+				urlCategoriesNow
+			),
+		} ),
+		[ urlDetailNow, urlChartNow, urlCategoriesNow ]
+	);
 
 	// Poll cadence (ms); an unparseable setting takes the declared default.
 	const intervalMs =
 		parseInt( refreshInterval, 10 ) || DEFAULT_REFRESH_INTERVAL_MS;
 
-	// The graph: overview and urls poll; the two detail views are on demand.
+	// The graph: the page's four slices poll; the modal slices are on demand.
 	const { pollNow } = useBatchedPoll( {
 		build: ( { interpreter, tee } ) => {
-			addSliceFetcher( interpreter, {
-				fetcher: OVERVIEW_FETCHER,
-				receiver: OVERVIEW_RECV,
-				command: 'overview',
-				view: OVERVIEW_VIEW,
-				viewClass: views.OverviewView,
-				controlFrom: OVERVIEW_VIEW,
-				tee,
-				target: OVERVIEW_TARGET,
-				argsFn: overviewNow,
-			} );
-			addSliceFetcher( interpreter, {
-				fetcher: URLS_FETCHER,
-				receiver: URLS_RECV,
-				command: 'urls',
-				view: URLS_VIEW,
-				viewClass: views.UrlsView,
-				controlFrom: URLS_VIEW,
-				tee,
-				target: OVERVIEW_TARGET,
-				argsFn: urlsNow,
-			} );
+			for ( const each of Object.values( pageSlices ) ) {
+				addSliceFetcher( interpreter, {
+					...each,
+					tee,
+					target: OVERVIEW_TARGET,
+				} );
+			}
 
-			// @longform On-demand dump_url: an ordinary slice, on its OWN
-			// Timer rather than the shared tick — the modal arms it by
-			// selection. The merge rides the transform slot, so it lands on
-			// the receiver→view edge. A Timer is born armed at the Router's
+			// @longform The URL modal's three slices ride their OWN Timer
+			// rather than the shared tick — the modal arms it by selection —
+			// fanned through a Tee. A Timer is born armed at the Router's
 			// cadence, so it starts stopped and the arm effect owns it.
 			const urlDetailTimer = /** @type {TimerNode} */ (
 				interpreter.makeNode( 'Timer', URLDETAIL_TIMER )
 			);
 			urlDetailTimer.stopTimer();
-			addSliceFetcher( interpreter, {
-				fetcher: URLDETAIL_FETCHER,
-				receiver: URLDETAIL_RECV,
-				command: 'dump_url',
-				view: URLDETAIL_VIEW,
-				viewClass: views.UrlDetailView,
-				controlFrom: URLDETAIL_VIEW,
-				tee: urlDetailTimer,
-				target: egressPath( GROUPS.url, SERVER ),
-				transform: {
-					name: URLDETAIL_TRANSFORM,
-					nodeClass: views.UrlDetailMerge,
-					controlFrom: URLDETAIL_TRANSFORM,
-				},
-				// No hash, nothing to ask: a null return sends nothing at all.
-				argsFn: () => {
-					const hash = optsRef.current.selectedUrl?.hash;
-					if ( ! isValidHash( hash ) ) {
-						return null;
-					}
-					return urlDetailArgs( {
-						hash,
-						serverFilter: serverFilterRef.current,
-						filters: detailFiltersRef.current,
-						after: Core.node( URLDETAIL_TRANSFORM ).cursor(),
-					} );
-				},
-			} );
+			const urlTee = interpreter.makeNode( 'Tee', URLDETAIL_TEE );
+			urlDetailTimer.connectNode( URLDETAIL_TEE );
+			for ( const each of Object.values( urlSlices ) ) {
+				addSliceFetcher( interpreter, {
+					...each,
+					tee: urlTee,
+					target: egressPath( GROUPS.url, SERVER ),
+				} );
+			}
 
 			// @longform On-demand dump_request: a selection asks through
 			// `askNow()`, and the slice's own Timer sends what that could not
@@ -517,9 +679,9 @@ export function usePerformanceGraph( opts = {} ) {
 		},
 		timerName: 'performance:timer',
 		teeName: 'performance:tee',
-		// @longform Suspend the offscreen overview/urls poll while a detail
-		// modal is open, and while the `?` picker is armed: a page repainting
-		// under a stationary pointer swaps the row being aimed at.
+		// @longform Suspend the offscreen overview poll while a detail modal
+		// is open, and while the `?` picker is armed: a page repainting under
+		// a stationary pointer swaps the row being aimed at.
 		paused: !! ( selectedUrl || selectedRequest || askActive ),
 		intervalMs,
 	} );
@@ -542,54 +704,62 @@ export function usePerformanceGraph( opts = {} ) {
 	}, [] );
 
 	/**
-	 * Show both polled slices as loading and ask both questions afresh,
-	 * superseding the asks in flight, so the gate drops their late answers;
-	 * then fire the batched tick, which sends both in one POST. A held poll
-	 * keeps them parked until its release pokes again.
+	 * Show slices as loading and ask each its question afresh, superseding
+	 * the asks in flight so the gates drop their late answers; then fire the
+	 * batched tick, which sends them in one POST. A held poll keeps them
+	 * parked until its release pokes again.
 	 */
-	const pokeOverviewUrls = useCallback( () => {
-		sendControl( OVERVIEW_VIEW, { action: 'loading' } );
-		sendControl( URLS_VIEW, { action: 'loading' } );
-		Core.node( OVERVIEW_FETCHER )?.send( overviewNow(), null, true );
-		Core.node( URLS_FETCHER )?.send( urlsNow(), null, true );
-		pollNow();
-	}, [ sendControl, pollNow, overviewNow, urlsNow ] );
-
-	// Re-poke the polled slices on a filter or breakdown change, not on mount.
-	const firstFilterRun = useRef( true );
-	useEffect( () => {
-		if ( firstFilterRun.current ) {
-			firstFilterRun.current = false;
-			return;
+	const pokePage = useCallback( () => {
+		for ( const { view, fetcher, argsFn } of Object.values( pageSlices ) ) {
+			sendControl( view, { action: 'loading' } );
+			Core.node( fetcher )?.send( argsFn(), null, true );
 		}
-		pokeOverviewUrls();
-	}, [ serverFilter, chartBreakdown, pokeOverviewUrls ] );
+		pollNow();
+	}, [ sendControl, pollNow, pageSlices ] );
+
+	/**
+	 * Ask one slice its question now, alone, superseding every older ask,
+	 * and show it loading meanwhile.
+	 *
+	 * @param {{view: string, fetcher: string, argsFn: () => ?string[]}} one The slice.
+	 */
+	const ask = useCallback(
+		( { view, fetcher, argsFn } ) => {
+			sendControl( view, { action: 'loading' } );
+			Core.node( fetcher )?.askNow( argsFn() );
+		},
+		[ sendControl ]
+	);
+
+	// A new server is a new page; a new chart question asks the chart alone.
+	useOnChange( pokePage, [ serverFilter ] );
+	useOnChange(
+		() => ask( pageSlices.chart ),
+		[ chartBreakdown, chartThenBy, chartChips ]
+	);
 
 	// Every hold leaves the page stale, so each refreshes on release.
 	const wasHeld = useRef( false );
 	useEffect( () => {
 		const held = !! ( selectedUrl || selectedRequest || askActive );
 		if ( wasHeld.current && ! held && isPageVisible ) {
-			pokeOverviewUrls();
+			pokePage();
 		}
 		wasHeld.current = held;
-	}, [
-		selectedUrl,
-		selectedRequest,
-		askActive,
-		isPageVisible,
-		pokeOverviewUrls,
-	] );
+	}, [ selectedUrl, selectedRequest, askActive, isPageVisible, pokePage ] );
 
-	// The URL and server the modal's list was last asked under.
+	// The URL and server the modal's slices were last asked under.
 	const detailScopeRef = useRef( null );
 
-	// dump_url on open, and afresh on a change of scope, Errors Only or bucket.
+	// All three on open and on a rescope; the list alone on a filter flip.
 	useEffect( () => {
+		const clear = () =>
+			Object.values( urlSlices ).forEach( ( { view } ) =>
+				sendControl( view, { action: 'clear' } )
+			);
 		if ( ! selectedUrl ) {
 			detailScopeRef.current = null;
-			sendControl( URLDETAIL_VIEW, { action: 'clear' } );
-			sendControl( URLDETAIL_TRANSFORM, { action: 'clear' } );
+			clear();
 			return;
 		}
 		if ( ! isValidHash( selectedUrl.hash ) ) {
@@ -599,32 +769,34 @@ export function usePerformanceGraph( opts = {} ) {
 			} );
 			return;
 		}
-		const ask = urlDetailArgs( {
-			hash: selectedUrl.hash,
-			serverFilter,
-			filters: detailFilters,
-		} );
 		const scope = JSON.stringify( [ selectedUrl.hash, serverFilter ] );
-		const relist = scope === detailScopeRef.current;
+		const rescoped = scope !== detailScopeRef.current;
 		detailScopeRef.current = scope;
-		// A flip keeps the whole-URL slice up; the list waits under `loading`.
-		if ( ! relist ) {
-			sendControl( URLDETAIL_VIEW, { action: 'clear' } );
+		if ( ! rescoped ) {
+			// A flip keeps the whole-URL slice up; the list waits loading.
+			ask( urlSlices.detail );
+			return;
 		}
-		sendControl( URLDETAIL_VIEW, { action: 'loading' } );
-		// @longform The merge node drops a reply holding no request it lacks
-		// under the stamp it holds, and both read the same under every scope.
-		// Uncleared, a rescoped reply is discarded and the modal keeps the
-		// previous server's numbers; its cursor would skip the full read. An
-		// Errors Only or bucket flip keeps the URL, so it relists and keeps
-		// the flame.
-		sendControl( URLDETAIL_TRANSFORM, {
-			action: relist ? 'relist' : 'clear',
-		} );
-		Core.node( URLDETAIL_FETCHER )?.askNow( ask );
-	}, [ selectedUrl, serverFilter, detailFilters, sendControl ] );
+		// Another URL's numbers must not stand under this one's title.
+		clear();
+		Object.values( urlSlices ).forEach( ask );
+	}, [
+		selectedUrl,
+		serverFilter,
+		detailFilters,
+		sendControl,
+		ask,
+		urlSlices,
+	] );
 
-	// @longform Arm dump_url's Timer only while URL detail is the visible
+	// A new question of the modal chart asks that chart alone.
+	useOnChange( () => {
+		if ( isValidHash( optsRef.current.selectedUrl?.hash ) ) {
+			ask( urlSlices.chart );
+		}
+	}, [ detailChart ] );
+
+	// @longform Arm the URL modal's Timer only while URL detail is the visible
 	// view. No cleanup stops it: a re-arm from stopped polls at once, so a
 	// cadence change must re-arm the armed Timer; teardown removes the node.
 	// A rebuild hands it a fresh, stopped Timer, hence the generation dep.
@@ -744,8 +916,7 @@ export function usePerformanceGraph( opts = {} ) {
 			}
 			// `urls:in:current` drops the answer to every ask this supersedes.
 			const doFetch = () => {
-				sendControl( URLS_VIEW, { action: 'loading' } );
-				Core.node( URLS_FETCHER )?.askNow( urlsNow() );
+				ask( pageSlices.urls );
 			};
 			if ( searchChanged ) {
 				urlFetchTimerRef.current = setTimeout( doFetch, 300 );
@@ -753,7 +924,7 @@ export function usePerformanceGraph( opts = {} ) {
 				doFetch();
 			}
 		},
-		[ sendControl, urlsNow ]
+		[ ask, pageSlices ]
 	);
 
 	return { handleUrlParamsChange };

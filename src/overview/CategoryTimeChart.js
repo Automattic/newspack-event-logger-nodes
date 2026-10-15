@@ -1,19 +1,18 @@
 /**
  * The Performance dashboard's profile-category panel.
  *
- * D3 area charts of profile-category timings over the last 24 hours, from the
- * `category_time_series` payload the `performance` CI merges out of
- * `Stats_Store`'s slotted category hours — site-wide (or per-server) on the
+ * D3 area charts of profile-category timings over the last 24 hours, from a
+ * `query` answer over the timing rows grouped by `bucket` and `category`,
+ * the top categories by milliseconds — site-wide (or per-server) on the
  * overview, per-URL in the URL detail view. `AggregateTimeChart` plots
  * request-level metrics on the same `AreaTimeChart` frame; this one breaks the
  * window down by profile category.
  *
- * The payload is `{ names, buckets }`: each bucket holds one positional row per
- * category, `[ nameIndex, t, c, n ]` — `t` milliseconds of wall time, `c`
- * events fired, `n` requests the category appeared in. The panel reads `t` and
- * `c`, and one payload answers three questions, so it draws all three — "time"
- * (seconds of category time per second of clock), "count" (events per second)
- * and "average" (milliseconds per event).
+ * Each row carries `CATEGORY_MEASURES`: `ms` of wall time and the `calls`
+ * fired. One answer answers three questions, so the panel draws all three —
+ * "time" (seconds of category time per second of clock), "count" (events per
+ * second) and "average" (milliseconds per event). Where the answer ranked
+ * more categories than it holds, a line says how many it draws.
  *
  * Areas overlay rather than stack, and the tooltip carries no total row,
  * because category times overlap: a callback's time counts inside its hook's,
@@ -28,13 +27,14 @@ import { compactFixed } from '@newspack-nodes/shared/utils/formatters';
 import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
 import {
 	buildChartSlots,
-	CAT_FIELDS,
-	decodeNameTable,
+	decodeRows,
 	hasRows,
+	topNote,
 	useSelectedSlots,
 	useSlotClick,
 	useSlotRange,
 } from './chartSlots';
+import { CATEGORY_MEASURES } from './constants';
 
 /**
  * Height of one chart frame, in pixels. Three of them stack in one panel, so
@@ -113,13 +113,10 @@ const formatYValue = ( val, mode ) => {
  * Rank categories by their whole-window total, then sample each across it.
  *
  * The rank fixes palette index and legend order, and it runs over the mode's
- * own field — `c` for "count", `t` otherwise — so "average" ranks by total
- * time rather than by the mean it plots, and one slow outlier cannot take the
- * top band. That also makes the "count" ranking its own, so a category may
- * wear a different color there than in the other two views.
- *
- * The `total` pseudo-category is dropped: it carries the request's own wall
- * time rather than any category's, so as a band it would swamp every other one.
+ * own field — `calls` for "count", `ms` otherwise — so "average" ranks by
+ * total time rather than by the mean it plots, and one slow outlier cannot
+ * take the top band. That also makes the "count" ranking its own, so a
+ * category may wear a different color there than in the other two views.
  *
  * Every series gets a point in every slot, zero where the bucket holds nothing
  * (null for the average, which is then a gap),
@@ -127,29 +124,24 @@ const formatYValue = ( val, mode ) => {
  * reads the rest by that index. A slot is five minutes of the 288 the reply
  * drew (`buildChartSlots()`), and both rates divide by the seconds it spans.
  *
- * @param {{names: string[], byBucket: Object}}                decoded The category series, through `decodeNameTable()`.
+ * @param {{names: string[], byBucket: Object}}                decoded The category series, through `decodeRows()`.
  * @param {string}                                             mode    One of 'time', 'count', or 'average'.
  * @param {Array<{date:Date,bucketKey:string,seconds:number}>} axis    The axis, from the reply's slots.
  * @return {Array<{label:string,values:Array<{date:Date,value:?number}>}>} Series in rank order.
  */
 const buildSeries = ( { names, byBucket }, mode, axis ) => {
-	const totals = {};
+	const totals = Object.fromEntries( names.map( ( name ) => [ name, 0 ] ) );
 	Object.values( byBucket ).forEach( ( row ) => {
-		Object.entries( row ).forEach( ( [ index, { t, c } ] ) => {
-			if ( 'total' !== names[ index ] ) {
-				totals[ index ] =
-					( totals[ index ] || 0 ) + ( mode === 'count' ? c : t );
-			}
+		Object.entries( row ).forEach( ( [ name, { ms, calls } ] ) => {
+			totals[ name ] += mode === 'count' ? calls : ms;
 		} );
 	} );
-	const ranked = Object.keys( totals ).sort(
-		( a, b ) => totals[ b ] - totals[ a ]
-	);
+	const ranked = [ ...names ].sort( ( a, b ) => totals[ b ] - totals[ a ] );
 
-	return ranked.map( ( index ) => ( {
-		label: names[ index ],
+	return ranked.map( ( name ) => ( {
+		label: name,
 		values: axis.map( ( slot ) => {
-			const stats = byBucket[ slot.bucketKey ]?.[ index ];
+			const stats = byBucket[ slot.bucketKey ]?.[ name ];
 			if ( ! stats ) {
 				// A mean over no calls is unmeasured; a rate of none is 0.
 				return {
@@ -157,14 +149,14 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
 					value: mode === 'average' ? null : 0,
 				};
 			}
-			const { t, c } = stats;
+			const { ms, calls } = stats;
 			let value;
 			if ( mode === 'average' ) {
-				value = c > 0 ? t / c : null;
+				value = calls > 0 ? ms / calls : null;
 			} else if ( mode === 'time' ) {
-				value = t / 1000 / slot.seconds;
+				value = ms / 1000 / slot.seconds;
 			} else {
-				value = c / slot.seconds;
+				value = calls / slot.seconds;
 			}
 			return { date: slot.date, value };
 		} ),
@@ -180,13 +172,13 @@ const buildSeries = ( { names, byBucket }, mode, axis ) => {
  * one of them changes.
  *
  * @param {Object}                                                    props                 Component props.
- * @param {Object|null}                                               props.data            Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
- * @param {string[]|null}                                             props.slots           The bucket keys the reply drew, newest first.
+ * @param {Object|null}                                               props.data            The `query` answer grouped by `bucket` and `category` over `CATEGORY_MEASURES`, or null before one.
+ * @param {string[]|null}                                             props.slots           The bucket keys the answer read, newest first.
  * @param {string}                                                    props.storageKey      Untranslated placement name; each view takes `<storageKey>:<mode>`, see AreaTimeChart.
  * @param {(bucketKey: string, click: {additive: boolean}) => void}   [props.onSlotClick]   Receives the bucket key of a slot clicked in any of the three charts, and whether cmd or ctrl was held; without it a click does nothing.
  * @param {(bucketKeys: string[], drag: {additive: boolean}) => void} [props.onSlotRange]   Receives the bucket keys a drag spans in any of the three charts, ascending, and whether cmd or ctrl was held; without it a drag does nothing.
  * @param {string[]}                                                  props.selectedBuckets The selected bucket keys, shaded on every view.
- * @return {import('react').ReactElement[]|null} One chart per view, or null when data is empty.
+ * @return {import('react').ReactElement|null} One chart per view and the top line, or null when data is empty.
  */
 export default function CategoryTimeChart( {
 	data,
@@ -201,7 +193,7 @@ export default function CategoryTimeChart( {
 	}
 	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
 	const decoded = useMemo(
-		() => decodeNameTable( data, CAT_FIELDS ),
+		() => data && decodeRows( data, [ 'category' ], CATEGORY_MEASURES ),
 		[ data ]
 	);
 	const series = useMemo(
@@ -236,20 +228,26 @@ export default function CategoryTimeChart( {
 		return null;
 	}
 
-	return CATEGORY_VIEWS.map( ( { mode, title, yLabel }, index ) => (
-		<AreaTimeChart
-			key={ mode }
-			storageKey={ `${ storageKey }:${ mode }` }
-			series={ series[ index ] }
-			colorAt={ colorAt }
-			yFormatFor={ yFormatsFor[ index ] }
-			yLabel={ yLabel }
-			title={ title }
-			height={ CHART_HEIGHT }
-			stackable={ false }
-			onSlotClick={ slotClick }
-			onSlotRange={ slotRange }
-			selectedSlots={ selectedSlots }
-		/>
-	) );
+	const top = topNote( decoded, data.groups );
+	return (
+		<>
+			{ CATEGORY_VIEWS.map( ( { mode, title, yLabel }, index ) => (
+				<AreaTimeChart
+					key={ mode }
+					storageKey={ `${ storageKey }:${ mode }` }
+					series={ series[ index ] }
+					colorAt={ colorAt }
+					yFormatFor={ yFormatsFor[ index ] }
+					yLabel={ yLabel }
+					title={ title }
+					height={ CHART_HEIGHT }
+					stackable={ false }
+					onSlotClick={ slotClick }
+					onSlotRange={ slotRange }
+					selectedSlots={ selectedSlots }
+				/>
+			) ) }
+			{ top && <p className="newspack-nodes-status">{ top }</p> }
+		</>
+	);
 }

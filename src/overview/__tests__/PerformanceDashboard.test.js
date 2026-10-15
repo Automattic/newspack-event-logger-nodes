@@ -31,7 +31,11 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 		const sliceByNode = {
 			'overview:view': 'overview',
 			'urls:view': 'urls',
+			'chart:view': 'chart',
+			'categories:view': 'categories',
 			'url-detail:view': 'urlDetail',
+			'url-chart:view': 'urlChart',
+			'url-categories:view': 'urlCategories',
 			'request-detail:view': 'requestDetail',
 		};
 		const key = sliceByNode[ nodeName ];
@@ -156,6 +160,8 @@ jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	RULES_CI: 'rules',
 	GREP_RESULT_LIMIT: 20,
 	NO_DETAIL_FILTERS: { errors_only: false, bucket: '' },
+	NO_CHIPS: [],
+	NO_DETAIL_CHART: { breakdown: 'status_class', thenBy: '', chips: [] },
 	usePerformanceGraph: ( opts ) => {
 		mockGraphOpts = opts;
 		mockGraphCalls.push( opts );
@@ -316,10 +322,8 @@ jest.mock( '@wordpress/components', () => ( {
 import * as React from 'react';
 import { DEFAULT_CHART_BREAKDOWN } from '../constants';
 import PerformanceDashboard from '../PerformanceDashboard';
-import { breakdownState } from '../AggregateTimeChart';
-import * as chartSlots from '../chartSlots';
 import { renderComponent, act } from '../../test-helpers/renderHook';
-import { nameTable, slotsEndingAt } from '../../test-helpers/chartWire';
+import { rowsWire, slotsEndingAt } from '../../test-helpers/chartWire';
 
 /**
  * Flush React's async passive effects inside `act` so state updates settle
@@ -334,23 +338,25 @@ async function flushEffects( ms = 60 ) {
 }
 
 /**
- * A dimension the reply carried with nothing in the window.
+ * An `overview` answer naming `servers`, busiest first.
+ *
+ * @param {string[]} servers The servers with non-worker traffic.
+ * @param {Object}   [more]  Fields to set, as `leaderboard`.
+ * @return {Object} The answer.
  */
-const NO_SERIES = { names: [], buckets: {} };
-
-/**
- * The newest bucket every server fixture here writes.
- */
-const [ NOW ] = slotsEndingAt( '2026-09-29-14-35', 1 );
+const overviewOf = ( servers, more = {} ) => ( {
+	totals: { requests: 100 },
+	slots: slotsEndingAt( '2026-09-29-14-35' ),
+	servers,
+	leaderboard: { count: 0, total_time: null, avg_ms: null, categories: [] },
+	...more,
+} );
 
 // A fully-populated, "loaded" view model (lastRefresh stamped).
 function loadedView( overrides = {} ) {
 	return {
 		overview: {
-			data: {
-				total_requests: 100,
-				breakdowns: { server: NO_SERIES, status: NO_SERIES },
-			},
+			data: overviewOf( [] ),
 			loading: false,
 			error: null,
 		},
@@ -363,28 +369,19 @@ function loadedView( overrides = {} ) {
 }
 
 /**
- * A loaded view whose overview reply carries `bucket` as its server axis.
+ * A loaded view whose overview answer names `servers`.
  *
- * @param {Object} bucket The `server` dimension's wire table.
+ * @param {string[]} servers The servers, busiest first.
  * @return {Object} The view model.
  */
-const serverView = ( bucket ) =>
+const serverView = ( servers ) =>
 	loadedView( {
-		overview: {
-			data: {
-				total_requests: 100,
-				breakdowns: { server: bucket, status: NO_SERIES },
-			},
-			loading: false,
-			error: null,
-		},
+		overview: { data: overviewOf( servers ), loading: false, error: null },
 	} );
 
-// A hub's two servers, and a site reporting one.
-const hub = nameTable( {
-	[ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ], 'edge-02': [ 4, 40, 3, 4 ] },
-} );
-const single = nameTable( { [ NOW ]: { 'edge-01': [ 9, 90, 3, 9 ] } } );
+// A hub's two servers, busiest first, and a site reporting one.
+const hub = [ 'edge-02', 'edge-01' ];
+const single = [ 'edge-01' ];
 
 const dashboard = () =>
 	React.createElement( PerformanceDashboard, { onError: jest.fn() } );
@@ -468,7 +465,7 @@ describe( 'PerformanceDashboard', () => {
 		expect(
 			container.querySelector( '[data-testid="url-table"]' )
 		).toBeTruthy();
-		expect( globalThis.__overviewProps.overview.total_requests ).toBe(
+		expect( globalThis.__overviewProps.overview.totals.requests ).toBe(
 			100
 		);
 		unmount();
@@ -491,7 +488,7 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'forwards the urls slice ranked flag and server clock to UrlTable', async () => {
+	it( 'hands UrlTable no ranking flag and no server clock', async () => {
 		mockView = loadedView( {
 			urls: {
 				data: [],
@@ -504,8 +501,97 @@ describe( 'PerformanceDashboard', () => {
 		} );
 		const { unmount } = mountDash();
 		await flushEffects();
-		expect( globalThis.__urlTableProps.ranked ).toBe( true );
-		expect( globalThis.__urlTableProps.now ).toBe( 1758500000 );
+		expect( globalThis.__urlTableProps ).not.toHaveProperty( 'ranked' );
+		expect( globalThis.__urlTableProps ).not.toHaveProperty( 'now' );
+		unmount();
+	} );
+
+	it( "hands the graph the chart's second dimension and chips from the panel", async () => {
+		mockView = serverView( hub );
+		const { unmount } = mountDash();
+		await flushEffects();
+
+		act( () => globalThis.__overviewProps.setChartThenBy( 'country' ) );
+		act( () =>
+			globalThis.__overviewProps.setChartChips( [ 'method=PURGE' ] )
+		);
+		await flushEffects();
+
+		expect( mockGraphOpts.chartThenBy ).toBe( 'country' );
+		expect( mockGraphOpts.chartChips ).toEqual( [ 'method=PURGE' ] );
+		expect( globalThis.__overviewProps.chartThenBy ).toBe( 'country' );
+		expect( globalThis.__overviewProps.chartChips ).toEqual( [
+			'method=PURGE',
+		] );
+		unmount();
+	} );
+
+	it( 'asks no server axis it cannot chart, and leaves a repeat to the graph', async () => {
+		mockView = serverView( single );
+		const { unmount } = mountDash();
+		await flushEffects();
+
+		act( () => globalThis.__overviewProps.setChartThenBy( 'server' ) );
+		await flushEffects();
+		expect( mockGraphOpts.chartThenBy ).toBe( '' );
+
+		act( () =>
+			globalThis.__overviewProps.setChartThenBy( 'status_class' )
+		);
+		await flushEffects();
+		expect( mockGraphOpts.chartBreakdown ).toBe( 'status_class' );
+		expect( mockGraphOpts.chartThenBy ).toBe( 'status_class' );
+		unmount();
+	} );
+
+	it( 'hands the URL modal its chart slices and its chart question, and resets it on close', async () => {
+		mockNavState.selectedUrl = { hash: 'beef7743', url: '/huia' };
+		const urlChart = {
+			data: rowsWire( [ 'bucket', 'method', 'count' ], [] ),
+			loading: false,
+			error: null,
+		};
+		const urlCategories = { data: null, loading: true, error: null };
+		mockView = loadedView( {
+			urlDetail: {
+				data: { stats: {}, requests: [] },
+				loading: false,
+				error: null,
+			},
+			urlChart,
+			urlCategories,
+		} );
+		const { unmount } = mountDash();
+		await flushEffects();
+
+		expect( globalThis.__urlDetailProps.chartSlice ).toBe( urlChart );
+		expect( globalThis.__urlDetailProps.categoriesSlice ).toBe(
+			urlCategories
+		);
+		expect( mockGraphOpts.detailChart ).toEqual( {
+			breakdown: 'status_class',
+			thenBy: '',
+			chips: [],
+		} );
+
+		act( () =>
+			globalThis.__urlDetailProps.onChartChange( 'breakdown', 'ja4' )
+		);
+		await flushEffects();
+		expect( mockGraphOpts.detailChart.breakdown ).toBe( 'ja4' );
+		expect( globalThis.__urlDetailProps.chart.breakdown ).toBe( 'ja4' );
+
+		// The same value hands the graph the same object, so it asks nothing.
+		const held = mockGraphOpts.detailChart;
+		act( () =>
+			globalThis.__urlDetailProps.onChartChange( 'breakdown', 'ja4' )
+		);
+		await flushEffects();
+		expect( mockGraphOpts.detailChart ).toBe( held );
+
+		act( () => globalThis.__modalOnRequestClose() );
+		await flushEffects();
+		expect( mockGraphOpts.detailChart.breakdown ).toBe( 'status_class' );
 		unmount();
 	} );
 
@@ -591,13 +677,13 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 
-		it( 'falls back to Status Codes when one server reports', async () => {
+		it( 'falls back to Status Class when one server reports', async () => {
 			mockView = serverView( single );
 			const { unmount } = mountDash();
 			await flushEffects();
 
 			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'status'
+				'status_class'
 			);
 			unmount();
 		} );
@@ -615,7 +701,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			await flushEffects();
 			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'status'
+				'status_class'
 			);
 
 			// The scoped reply still names every server: the axis is site-wide.
@@ -647,9 +733,9 @@ describe( 'PerformanceDashboard', () => {
 			await flushEffects();
 
 			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'status'
+				'status_class'
 			);
-			expect( mockGraphOpts.chartBreakdown ).toBe( 'status' );
+			expect( mockGraphOpts.chartBreakdown ).toBe( 'status_class' );
 			unmount();
 		} );
 
@@ -661,7 +747,7 @@ describe( 'PerformanceDashboard', () => {
 			const { rerender, unmount } = mountDash();
 			await flushEffects();
 			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
-				'status'
+				'status_class'
 			);
 
 			mockView = serverView( hub );
@@ -787,10 +873,7 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 
-		it.each( [
-			[ 'a reply the decoder refuses', 'not a name table' ],
-			[ 'a window with no traffic', NO_SERIES ],
-		] )( 'keeps a chosen server through %s', async ( _label, server ) => {
+		it( 'keeps a chosen server through a window with no traffic', async () => {
 			mockView = serverView( hub );
 			const { rerender, unmount } = mountDash();
 			await flushEffects();
@@ -798,7 +881,7 @@ describe( 'PerformanceDashboard', () => {
 				globalThis.__overviewProps.setServerFilter( 'edge-01' )
 			);
 
-			mockView = serverView( server );
+			mockView = serverView( [] );
 			rerender( dashboard() );
 			await flushEffects();
 
@@ -891,72 +974,29 @@ describe( 'PerformanceDashboard', () => {
 		} );
 	} );
 
-	it( 'reads the server breakdown once, and charts that same read', async () => {
-		const server = nameTable( {
-			[ NOW ]: {
-				'edge-01': [ 41, 820, 3, 41 ],
-				'edge-02': [ 43, 4300, 4, 43 ],
-			},
-		} );
-		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 84,
-					breakdowns: { server, status: NO_SERIES },
-				},
-				loading: false,
-				error: null,
-			},
-		} );
-		const decode = jest.spyOn( chartSlots, 'decodeNameTable' );
+	it( "names the servers the overview answers, sorted, and hands the panel the charts' slices", async () => {
+		const chart = {
+			data: rowsWire( [ 'bucket', 'server', 'count' ], [] ),
+			loading: true,
+			error: null,
+		};
+		const categories = {
+			data: rowsWire( [ 'bucket', 'category', 'ms' ], [] ),
+			loading: false,
+			error: 'unknown timings field plumage',
+		};
+		mockView = loadedView( { chart, categories, ...serverView( hub ) } );
+		mockView.chart = chart;
+		mockView.categories = categories;
 		const { unmount } = mountDash();
 		await flushEffects();
-		expect( globalThis.__overviewProps.chartBreakdown ).toBe( 'server' );
-		expect(
-			decode.mock.calls.filter( ( [ wire ] ) => server === wire )
-		).toHaveLength( 1 );
-		expect( globalThis.__overviewProps.breakdownRead.series.names ).toEqual(
-			[ 'edge-01', 'edge-02' ]
-		);
-		decode.mockRestore();
-		unmount();
-	} );
 
-	it( 'derives categoryData / breakdownData / serverNames from the overview slice', async () => {
-		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 100,
-					category_time_series: { x: {} },
-					breakdowns: {
-						server: nameTable( {
-							[ NOW ]: {
-								'edge-01': [ 10, 100, 3, 10 ],
-								'edge-02': [ 4, 40, 3, 4 ],
-							},
-						} ),
-						status: nameTable( {
-							[ NOW ]: { '2xx': [ 10, 100, 3, 10 ] },
-						} ),
-					},
-				},
-				loading: false,
-				error: null,
-			},
-		} );
-		const { unmount } = mountDash();
-		await flushEffects();
-		// categoryData truthy.
-		expect( globalThis.__overviewProps.categoryData ).toBeTruthy();
-		// Whatever the default dim is, the chart reads THAT slice — naming it
-		// here rather than a literal keeps the test honest if the default moves.
-		expect( globalThis.__overviewProps.breakdownRead ).toEqual(
-			breakdownState(
-				mockView.overview.data.breakdowns[ DEFAULT_CHART_BREAKDOWN ]
-			)
-		);
-		// serverNames extracted from the server breakdown.
-		expect( globalThis.__overviewProps.serverNames ).toContain( 'edge-01' );
+		expect( globalThis.__overviewProps.serverNames ).toEqual( [
+			'edge-01',
+			'edge-02',
+		] );
+		expect( globalThis.__overviewProps.chartSlice ).toBe( chart );
+		expect( globalThis.__overviewProps.categoriesSlice ).toBe( categories );
 		unmount();
 	} );
 
@@ -969,15 +1009,7 @@ describe( 'PerformanceDashboard', () => {
 		act( () => {
 			globalThis.__overviewProps.setServerFilter( 'edge-01' );
 		} );
-		mockView = serverView(
-			nameTable( {
-				[ NOW ]: {
-					'edge-01': [ 10, 100, 3, 10 ],
-					'edge-02': [ 5, 50, 3, 5 ],
-					'edge-03': [ 2, 20, 3, 2 ],
-				},
-			} )
-		);
+		mockView = serverView( [ 'edge-03', 'edge-01', 'edge-02' ] );
 		rerender( dashboard() );
 		await flushEffects();
 
@@ -995,15 +1027,6 @@ describe( 'PerformanceDashboard', () => {
 		// for one set — the one the table lists. Assembling them from separate
 		// namespaces is what put `0 Unique URLs` beside 33,049 requests.
 		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 33049,
-					total_urls: 412,
-					breakdowns: { server: NO_SERIES, status: NO_SERIES },
-				},
-				loading: false,
-				error: null,
-			},
 			urls: {
 				data: [],
 				totals: {
@@ -1030,24 +1053,8 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'offers every name the server axis carries, each one a host', () => {
-		// Every server is filed under its own name, so no name is withheld.
-		const serverBuckets = {
-			[ NOW ]: { 'edge-01': [ 5, 50, 3, 5 ], Other: [ 9, 90, 3, 9 ] },
-		};
-		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 100,
-					breakdowns: {
-						server: nameTable( serverBuckets ),
-						status: NO_SERIES,
-					},
-				},
-				loading: false,
-				error: null,
-			},
-		} );
+	it( 'offers every server the overview names, each one a host', () => {
+		mockView = serverView( [ 'edge-01', 'Other' ] );
 		const { unmount } = mountDash();
 
 		expect( globalThis.__overviewProps.serverNames ).toEqual( [
@@ -1057,91 +1064,13 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( "divides the Time Breakdown by the leaderboard's own average", async () => {
-		// The categories are the board's, over its 25 hour keys, so the
-		// divisor is the board's avg_ms: not the charts' 91 over 288 slots,
-		// nor a server row summed off the breakdown.
-		const serverBuckets = {};
-		slotsEndingAt( '2026-09-29-14-35', 20 ).forEach( ( bucket ) => {
-			serverBuckets[ bucket ] = {
-				'edge-01': [ 11, 1430, 99, 11 ],
-				'edge-02': [ 37, 3700, 259, 37 ],
-			};
-		} );
+	it( 'names no server before an overview answers', () => {
 		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 2000,
-					global_avg_ms: 91,
-					global_leaderboard: {
-						count: 780,
-						avg_ms: 73.5,
-						categories: {},
-					},
-					breakdowns: {
-						server: nameTable( serverBuckets ),
-						status: NO_SERIES,
-					},
-				},
-				loading: false,
-				error: null,
-			},
+			overview: { data: null, loading: true, error: null },
 		} );
 		const { unmount } = mountDash();
-		await flushEffects();
-		expect( globalThis.__overviewProps.breakdownAvgMs ).toBe( 73.5 );
 
-		act( () => {
-			globalThis.__overviewProps.setServerFilter( 'edge-02' );
-		} );
-		await flushEffects();
-		expect( globalThis.__overviewProps.breakdownAvgMs ).toBe( 73.5 );
-		unmount();
-	} );
-
-	it( 'hands the Time Breakdown no divisor when no request on the board was timed', async () => {
-		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 2000,
-					global_avg_ms: null,
-					global_leaderboard: {
-						count: 780,
-						avg_ms: null,
-						categories: {},
-					},
-					breakdowns: { server: NO_SERIES, status: NO_SERIES },
-				},
-				loading: false,
-				error: null,
-			},
-		} );
-		const { unmount } = mountDash();
-		await flushEffects();
-		expect( globalThis.__overviewProps.breakdownAvgMs ).toBeNull();
-		unmount();
-	} );
-
-	it( 'reads a malformed server breakdown as naming no server', async () => {
-		// A row one field short: a reply the decoder refuses whole.
-		const malformed = {
-			names: [ 'edge-01', 'edge-02' ],
-			buckets: { [ NOW ]: [ [ 1, 37, 3700, 259 ] ] },
-		};
-		mockView = loadedView( {
-			overview: {
-				data: {
-					total_requests: 2000,
-					global_avg_ms: 91,
-					breakdowns: { server: malformed, status: NO_SERIES },
-				},
-				loading: false,
-				error: null,
-			},
-		} );
-		const { unmount } = mountDash();
-		await flushEffects();
-		expect( globalThis.__overviewProps.serverNames ).toEqual( [] );
+		expect( globalThis.__overviewProps.serverNames ).toBeNull();
 		unmount();
 	} );
 
@@ -1155,7 +1084,6 @@ describe( 'PerformanceDashboard', () => {
 		mockView = loadedView( {
 			urlDetail: {
 				data: {
-					last_modified: 1,
 					stats: { requests_per_second: 3.75 },
 					requests: [],
 				},
@@ -1200,7 +1128,6 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.selectedUrl = { hash: 'h9', url: '/heron' };
 		mockNavState.selectedRequest = null;
 		const held = {
-			last_modified: 3,
 			stats: { errors: 7, avg_ms: 431, requests_per_second: 2.5 },
 			requests: [ { rid: 'r-held', status_code: 200 } ],
 		};
@@ -1266,7 +1193,6 @@ describe( 'PerformanceDashboard', () => {
 		mockView = loadedView( {
 			urlDetail: {
 				data: {
-					last_modified: 1,
 					stats: {
 						avg_ms: 50,
 						avg_peak_mb: 4,
@@ -1351,7 +1277,7 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
 			urlDetail: {
-				data: { last_modified: 1, stats, requests: [] },
+				data: { stats, requests: [] },
 				loading: false,
 				error: null,
 			},
@@ -1386,7 +1312,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 			urlDetail: {
-				data: { last_modified: 1, stats: {}, requests: [] },
+				data: { stats: {}, requests: [] },
 				loading: false,
 				error: null,
 			},
@@ -1457,7 +1383,6 @@ describe( 'PerformanceDashboard', () => {
 				},
 				urlDetail: {
 					data: {
-						last_modified: 1,
 						stats: {
 							errors: 29,
 							avg_ms: 812,
@@ -1585,7 +1510,6 @@ describe( 'PerformanceDashboard', () => {
 			mockView = loadedView( {
 				urlDetail: {
 					data: {
-						last_modified: 1,
 						stats: {},
 						requests: [
 							{
@@ -1651,7 +1575,7 @@ describe( 'PerformanceDashboard', () => {
 					error: null,
 				},
 				urlDetail: {
-					data: { last_modified: 1, stats: {}, requests: [] },
+					data: { stats: {}, requests: [] },
 					loading: false,
 					error: null,
 				},
@@ -1948,7 +1872,7 @@ describe( 'PerformanceDashboard', () => {
 				error: null,
 			},
 			urlDetail: {
-				data: { last_modified: 1, stats: {}, requests: [] },
+				data: { stats: {}, requests: [] },
 				loading: false,
 				error: null,
 			},
@@ -1982,7 +1906,7 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
 			urlDetail: {
-				data: { last_modified: 1, stats: {}, requests: [] },
+				data: { stats: {}, requests: [] },
 				loading: false,
 				error: null,
 			},
@@ -2032,7 +1956,7 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.selectedRequest = 'r1';
 		mockView = loadedView( {
 			urlDetail: {
-				data: { last_modified: 1, stats: {}, requests: [] },
+				data: { stats: {}, requests: [] },
 				loading: false,
 				error: null,
 			},
@@ -2051,7 +1975,7 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.selectedRequest = 'r1';
 		mockView = loadedView( {
 			urlDetail: {
-				data: { last_modified: 1, stats: {}, requests: [] },
+				data: { stats: {}, requests: [] },
 				loading: false,
 				error: null,
 			},
@@ -2075,7 +1999,6 @@ describe( 'PerformanceDashboard', () => {
 		mockView = loadedView( {
 			urlDetail: {
 				data: {
-					last_modified: 1,
 					stats: { avg_ms: 50 },
 					requests: [
 						{
@@ -2651,7 +2574,6 @@ describe( 'PerformanceDashboard', () => {
 		mockView = loadedView( {
 			urlDetail: {
 				data: {
-					last_modified: 1,
 					stats: {},
 					requests: [
 						{ rid: 'r1', timestamp: 1, duration_ms: 100 },
@@ -2686,7 +2608,6 @@ describe( 'PerformanceDashboard', () => {
 		mockView = loadedView( {
 			urlDetail: {
 				data: {
-					last_modified: 1,
 					stats: { avg_ms: 50 },
 					requests: [],
 				},
@@ -2715,7 +2636,6 @@ describe( 'PerformanceDashboard', () => {
 		mockView = loadedView( {
 			urlDetail: {
 				data: {
-					last_modified: 1,
 					stats: { avg_ms: 50 },
 					requests: [],
 				},
@@ -2757,7 +2677,6 @@ describe( 'PerformanceDashboard', () => {
 		mockView = loadedView( {
 			urlDetail: {
 				data: {
-					last_modified: 1,
 					stats: { avg_ms: 50 },
 					requests: [],
 				},
@@ -2809,7 +2728,6 @@ describe( 'PerformanceDashboard', () => {
 		mockView = loadedView( {
 			urlDetail: {
 				data: {
-					last_modified: 1,
 					stats: { avg_ms: 50 },
 					requests: [],
 				},
@@ -2841,7 +2759,6 @@ describe( 'PerformanceDashboard', () => {
 			return loadedView( {
 				urlDetail: {
 					data: {
-						last_modified: 1,
 						stats: { avg_ms: 50 },
 						requests: [],
 					},
@@ -2902,7 +2819,6 @@ describe( 'PerformanceDashboard', () => {
 			mockView = loadedView( {
 				urlDetail: {
 					data: {
-						last_modified: 1,
 						stats: { avg_ms: 50 },
 						requests: [],
 					},

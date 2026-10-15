@@ -73,14 +73,10 @@ describe( 'RequestTrace', () => {
 			React.createElement( RequestTrace, {
 				flameData,
 				title: 'Aggregate Flame Graph',
-				lastModified: 1771234567,
 			} )
 		);
 		expect( container.textContent ).toContain( 'Aggregate Flame Graph' );
 		expect( container.textContent ).not.toContain( 'Request Trace' );
-		expect( global.__requestTraceFlameProps.lastModified ).toBe(
-			1771234567
-		);
 		unmount();
 	} );
 

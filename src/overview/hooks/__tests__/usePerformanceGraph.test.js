@@ -3,15 +3,16 @@
  * substrate batched-poll toolkit (useBatchedPoll + addSliceFetcher), D1b.
  *
  * The graph:
- *   performance:timer (Timer) → performance:tee (Tee) → overview:fetch, urls:fetch (Fetchers,
- *     each with an argsFn getter reading current React UI state) → overview:shell/_http/performance
- *   overview:in (Tee) → overview:view (OverviewView)
- *   urls:in     (Tee) → urls:view     (UrlsView)
- *   url-detail:transform (UrlDetailMerge) → url-detail:view (UrlDetailView)   [on-demand]
- *   request-detail:view (RequestDetailView)                             [on-demand]
+ *   performance:timer (Timer) → performance:tee (Tee) → overview, urls, chart
+ *     and categories Fetchers (each with an argsFn getter reading current React
+ *     UI state) → overview:shell/_http/performance
+ *   <slice>:in (Tee) → <slice>:in:current → <slice>:view
+ *   url-detail:timer → url-detail:tee → url-detail, url-chart, url-categories  [on-demand]
+ *   request-detail:view (RequestDetailView)                                    [on-demand]
  *
- * overview + urls are POLLED (on the Timer, live args via the getters);
- * dump_url and dump_request are ON-DEMAND (modal-open → fetch). The verbs a
+ * overview, urls and the two charts are POLLED (on the Timer, live args via
+ * the getters); the URL modal's three slices and dump_request are ON-DEMAND
+ * (modal-open → fetch). The verbs a
  * click drives are NOT here — they live beside the state their replies set, and
  * are covered where they live.
  */
@@ -150,16 +151,20 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		for ( const name of [
 			'overview:view',
 			'urls:view',
+			'chart:view',
+			'categories:view',
 			'url-detail:view',
+			'url-chart:view',
+			'url-categories:view',
 			'request-detail:view',
 		] ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
-		// The urlDetail merge transform sits on the receiver→view edge.
-		expect( Core.node( 'url-detail:transform' ) ).toBeTruthy();
-		// …and the receiver fans back to the Fetcher, which settles the ask.
+		// No transform: each answer reaches its view whole.
+		expect( Core.node( 'url-detail:transform' ) ).toBeNull();
+		// The receiver fans back to the Fetcher, which settles the ask.
 		// Without it the refresh asks once and never again: the outbox holds
 		// an ask that nothing answers until the fail-open window.
 		expect( Core.node( 'url-detail:in' ).target ).toEqual( [
@@ -168,7 +173,13 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		] );
 		// Every slice gates its edge on the Fetcher's outbox.
 		expect( Core.node( 'url-detail:in:current' ).target ).toEqual( [
-			'url-detail:transform',
+			'url-detail:view',
+		] );
+		// The modal's Timer fans to its three Fetchers through one Tee.
+		expect( Core.node( 'url-detail:tee' ).target ).toEqual( [
+			'url-detail:fetch',
+			'url-chart:fetch',
+			'url-categories:fetch',
 		] );
 		expect( Core.node( 'urls:in' ).target ).toEqual( [
 			'urls:in:current',
@@ -211,7 +222,7 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		// Emptying the map is what that looks like from in here.
 		const saved = {};
 		for ( const name of [
-			'UrlDetailMerge',
+			'QueryView',
 			'UrlDetailView',
 			'RequestDetailView',
 		] ) {
@@ -221,7 +232,7 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		try {
 			installWire();
 			renderHook( () => usePerformanceGraph() );
-			expect( Core.node( 'url-detail:transform' ) ).toBeTruthy();
+			expect( Core.node( 'chart:view' ) ).toBeTruthy();
 			expect( Core.node( 'url-detail:view' ) ).toBeTruthy();
 			expect( Core.node( 'request-detail:view' ) ).toBeTruthy();
 		} finally {
@@ -280,11 +291,11 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 	} );
 
 	test( 'an overview reply lands in the overview:view slice', async () => {
-		installWire( { overview: { total_requests: 7 } } );
+		installWire( { overview: { totals: { requests: 7 } } } );
 		renderHook( () => usePerformanceGraph() );
 		await act( async () => {} );
 		const view = Core.node( 'overview:view' );
-		expect( view.view.data ).toEqual( { total_requests: 7 } );
+		expect( view.view.data ).toEqual( { totals: { requests: 7 } } );
 	} );
 
 	test( 'a urls reply lands in the urls:view slice (data + totals)', async () => {
@@ -305,9 +316,6 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 			rows: 0,
 			slowest: [],
 			filters: null,
-			ranked: false,
-			provisional: false,
-			as_of: 0,
 			loading: false,
 			error: null,
 		} );
@@ -325,14 +333,14 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 			}
 			if ( 'web7' === option( m[ VALUE ].arguments, 'server' ) ) {
 				return 'overview' === name
-					? { total_requests: 7317 }
+					? { totals: { requests: 7317 } }
 					: { data: [ { hash: 'beef7317' } ], totals: { urls: 1 } };
 			}
 			return new Promise( ( resolve ) =>
 				held.push( () =>
 					resolve(
 						'overview' === name
-							? { total_requests: 4471 }
+							? { totals: { requests: 4471 } }
 							: {
 									data: [ { hash: 'dead4471' } ],
 									totals: { urls: 1 },
@@ -355,7 +363,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		} );
 
 		expect( Core.node( 'overview:view' ).view.data ).toEqual( {
-			total_requests: 7317,
+			totals: { requests: 7317 },
 		} );
 		expect( Core.node( 'urls:view' ).view.data ).toEqual( [
 			{ hash: 'beef7317' },
@@ -485,7 +493,7 @@ describe( 'usePerformanceGraph — refresh interval wiring', () => {
 describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 	test( 'selecting a URL fires dump_url with the hash, routes the reply to url-detail:view', async () => {
 		const wire = installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -499,7 +507,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( 'abc' );
 		const view = Core.node( 'url-detail:view' );
 		expect( view.view.data ).toEqual( {
-			last_modified: 1,
+			stats: {},
 			requests: [],
 		} );
 	} );
@@ -883,9 +891,9 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 		).toBeUndefined();
 	} );
 
-	test( 'asks dump_url for the modal selection, relisting on a change', async () => {
+	test( 'asks dump_url for the modal selection, and again on a change', async () => {
 		const wire = installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { refreshInterval: '0' },
@@ -906,15 +914,6 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 			'2026-10-04-13-35'
 		);
 
-		const controls = [];
-		const merge = Core.node( 'url-detail:transform' );
-		const fill = merge.fill.bind( merge );
-		merge.fill = ( m ) => {
-			if ( m[ VALUE ]?.action ) {
-				controls.push( m[ VALUE ] );
-			}
-			fill( m );
-		};
 		wire.batches.length = 0;
 		await act( async () => {
 			rerender( {
@@ -928,7 +927,6 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 		} );
 		const moved = findVerb( wire.batches, 'dump_url' );
 		expect( option( moved[ VALUE ].arguments, 'bucket' ) ).toBe( RUNS );
-		expect( controls ).toEqual( [ { action: 'relist' } ] );
 
 		wire.batches.length = 0;
 		await act( async () => {
@@ -942,7 +940,7 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 describe( 'usePerformanceGraph — timer suspension on modal open / tab visibility', () => {
 	test( 'pauses performance:timer while a URL detail is open, re-arms when it closes', async () => {
 		installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -965,7 +963,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 	test( 'dump_url auto-refresh rides a url-detail:timer + url-detail:fetch Fetcher (a router tick re-fires dump_url with the hash)', async () => {
 		const wire = installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { refreshInterval: '0' },
@@ -991,65 +989,10 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( 'abc' );
 	} );
 
-	/**
-	 * The refresh tick carries the browser's cursor — the newest log position
-	 * it holds per partition — so each partition's reverse scan stops at known
-	 * ground instead of re-reading the whole retained window. The OPEN fetch
-	 * must not: the merge is cleared first, so nothing is held and the full
-	 * window is wanted.
-	 */
-	test( 'the refresh tick sends --after from the merge, the open fetch does not', async () => {
-		const wire = installWire( {
-			dump_url: {
-				last_modified: 1,
-				positions: {
-					2: { segment: 5, offset: 8192 },
-					3: { segment: 1, offset: 612 },
-				},
-				requests: [
-					{
-						rid: 'a',
-						timestamp: 1787000900,
-						partition: 2,
-						segment: 5,
-						offset: 4096,
-					},
-				],
-			},
-		} );
-		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { refreshInterval: '0' },
-		} );
-		await act( async () => {} );
-		await act( async () => {
-			rerender( {
-				refreshInterval: '0',
-				selectedUrl: { hash: 'abc' },
-			} );
-		} );
-
-		// The open fetch reads the whole window.
-		const opened = findVerb( wire.batches, 'dump_url' );
-		expect( option( opened[ VALUE ].arguments, 'after' ) ).toBeUndefined();
-
-		// The reply is now retained, so the next tick asks only for what is new.
-		wire.batches.length = 0;
-		await act( async () => {
-			refreshTick();
-		} );
-		const refreshed = findVerb( wire.batches, 'dump_url' );
-		expect(
-			JSON.parse( option( refreshed[ VALUE ].arguments, 'after' ) )
-		).toEqual( {
-			2: { segment: 5, offset: 8192 },
-			3: { segment: 1, offset: 612 },
-		} );
-	} );
-
 	// The arguments ARE the question, so the ask needs no subject to name it.
 	test( 'the open fetch asks through url-detail:fetch, addressed bare', async () => {
 		const wire = installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { refreshInterval: '0' },
@@ -1068,43 +1011,6 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		expect( Core.node( 'url-detail:fetch' ).outbox ).toEqual( [] );
 	} );
 
-	test( "a refresh tick's reply reaches the view", async () => {
-		let replies = 0;
-		installFakeCommandWire( ( m ) =>
-			'dump_url' === m[ VALUE ]?.name
-				? {
-						last_modified: 1,
-						positions: { 4: { segment: 2, offset: 913 } },
-						requests: [
-							{
-								rid: `kahu-${ ++replies }`,
-								timestamp: 1787000000 + replies,
-							},
-						],
-				  }
-				: null
-		);
-		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { refreshInterval: '0' },
-		} );
-		await act( async () => {} );
-		await act( async () => {
-			rerender( {
-				refreshInterval: '0',
-				selectedUrl: { hash: 'f00d7731' },
-			} );
-		} );
-		await act( async () => {
-			refreshTick();
-		} );
-
-		expect(
-			Core.node( 'url-detail:view' ).view.data.requests.map(
-				( r ) => r.rid
-			)
-		).toEqual( [ 'kahu-2', 'kahu-1' ] );
-	} );
-
 	test( 'a reply to the ask an Errors Only flip superseded never lands', async () => {
 		const held = [];
 		installFakeCommandWire( ( m ) => {
@@ -1119,7 +1025,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 				return new Promise( ( resolve ) => held.push( resolve ) );
 			}
 			return {
-				last_modified: 1,
+				stats: {},
 				requests: [
 					{ rid: 'tout-1', timestamp: 1787000300, error_status: 'T' },
 				],
@@ -1145,7 +1051,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			held.forEach( ( resolve ) =>
 				resolve( {
-					last_modified: 1,
+					stats: {},
 					requests: [ { rid: 'clean-1', timestamp: 1787000900 } ],
 				} )
 			);
@@ -1158,7 +1064,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		).toEqual( [ 'tout-1' ] );
 	} );
 
-	// A refusal of the modal's ask goes to its view, around the merge.
+	// A refusal of the modal's ask goes to its view.
 	test( 'a NOT_AVAILABLE bounce for the open modal shows on its view', async () => {
 		installFakeCommandWire( ( m ) =>
 			'dump_url' === m[ VALUE ]?.name ? undefined : null
@@ -1188,7 +1094,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 	test( 'stops the url-detail:timer when a request detail opens, re-arms when it closes', async () => {
 		installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 			dump_request: { rid: 'r1' },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
@@ -1249,7 +1155,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 	test( 'closing the last detail modal immediately re-fetches overview + urls (performance:timer was paused)', async () => {
 		const wire = installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -1271,7 +1177,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 	test( 'a hidden tab stops the url-detail:timer; returning to visible re-arms it', async () => {
 		installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -1292,7 +1198,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 	// A minute's cadence: no grid boundary falls inside the test.
 	test( 'a hidden URL modal shown again asks dump_url at once', async () => {
 		const wire = installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const props = {
 			refreshInterval: '60000',
@@ -1318,7 +1224,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 	test( 'Reset Graph with the URL modal open re-arms its Timer at the interval, not every tick', async () => {
 		const wire = installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const props = {
 			refreshInterval: '60000',
@@ -1347,7 +1253,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 	test( 'a cadence change while the URL modal is open asks no extra dump_url', async () => {
 		const wire = installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { refreshInterval: '60000' },
@@ -1371,7 +1277,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 	test( 'closing the URL modal stops the url-detail:timer', async () => {
 		installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -1422,36 +1328,28 @@ function renderGraph( props = {} ) {
 }
 
 describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
-	test( 'asks about the dimensions the page reads, and no filler', async () => {
-		// The server answers about exactly the dimensions it was asked for,
-		// whatever the count, so a dimension nothing reads is a memcache walk
-		// per poll for a series no chart draws.
+	test( 'asks overview for its server alone: the series ride query', async () => {
 		const wire = installWire();
 		renderHook( () =>
 			usePerformanceGraph( {
-				chartBreakdown: '',
+				serverFilter: 'ruru.example',
+				chartBreakdown: 'ja4',
 			} )
 		);
 		await act( async () => {} );
 		const overview = findVerb( wire.batches, 'overview' );
-		expect( option( overview[ VALUE ].arguments, 'breakdown' ) ).toBe(
-			'server'
-		);
+		expect( overview[ VALUE ].arguments ).toEqual( [
+			'--server=ruru.example',
+		] );
 	} );
 
 	/**
 	 * A busy URL's newest requests bury its errors, so "Errors Only" is the
-	 * server's question: the walk then passes the clean requests to reach
-	 * them. Turning it on starts the list again, so the ask carries no cursor,
-	 * and every refresh after it keeps asking for errors.
+	 * server's question, and every refresh after it keeps asking for errors.
 	 */
-	test( 'Errors Only asks dump_url for errors, from a cleared list', async () => {
+	test( 'Errors Only asks dump_url for errors, keeping the slice up meanwhile', async () => {
 		const wire = installWire( {
-			dump_url: {
-				last_modified: 1,
-				positions: { 1: { segment: 4, offset: 7319 } },
-				requests: [],
-			},
+			dump_url: { stats: { count: 4471 }, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { refreshInterval: '0' },
@@ -1466,8 +1364,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		const opened = findVerb( wire.batches, 'dump_url' );
 		expect( opened[ VALUE ].arguments ).not.toContain( '--errors_only' );
 
-		// The flip restarts the list under the new ask, keeping the flame, and
-		// the view keeps its slice on screen, marked loading, until it lands.
+		// The view keeps its slice on screen, marked loading, until it lands.
 		const recordControls = ( name ) => {
 			const seen = [];
 			const node = Core.node( name );
@@ -1480,7 +1377,6 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 			};
 			return seen;
 		};
-		const controls = recordControls( 'url-detail:transform' );
 		const viewControls = recordControls( 'url-detail:view' );
 		wire.batches.length = 0;
 		await act( async () => {
@@ -1492,13 +1388,8 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		} );
 		const asked = findVerb( wire.batches, 'dump_url' );
 		expect( asked[ VALUE ].arguments ).toContain( '--errors_only' );
-		expect( option( asked[ VALUE ].arguments, 'after' ) ).toBeUndefined();
-		expect( controls ).toEqual( [ { action: 'relist' } ] );
+		// Loading, never cleared: the whole URL's header stays up meanwhile.
 		expect( viewControls ).toEqual( [ { action: 'loading' } ] );
-		expect( Core.node( 'url-detail:view' ).view ).toMatchObject( {
-			data: { last_modified: 1 },
-			loading: true,
-		} );
 
 		wire.batches.length = 0;
 		await act( async () => {
@@ -1513,7 +1404,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		// the same question — otherwise one click puts the site's average under
 		// that row's count.
 		const wire = installWire( {
-			dump_url: { last_modified: 1, requests: [] },
+			dump_url: { stats: {}, requests: [] },
 		} );
 		renderHook( () =>
 			usePerformanceGraph( {
@@ -1689,8 +1580,11 @@ describe( 'usePerformanceGraph — control origins', () => {
 		for ( const name of [
 			'overview:view',
 			'urls:view',
+			'chart:view',
+			'categories:view',
 			'url-detail:view',
-			'url-detail:transform',
+			'url-chart:view',
+			'url-categories:view',
 			'request-detail:view',
 		] ) {
 			expect( Core.node( name ).controlFrom ).toBe( name );
@@ -1709,7 +1603,7 @@ describe( 'usePerformanceGraph — control origins', () => {
 		const landed = newMessage();
 		landed[ VALUE ] = {
 			name: 'dump_url',
-			payload: { last_modified: 9, requests: [ { rid: 'a' } ] },
+			payload: { stats: {}, requests: [ { rid: 'a' } ] },
 		};
 		view.fill( landed );
 		expect( view.view.data ).not.toBeNull();
@@ -1717,5 +1611,340 @@ describe( 'usePerformanceGraph — control origins', () => {
 		selectedUrl = null;
 		act( () => rerender() );
 		expect( view.view.data ).toBeNull();
+	} );
+} );
+
+/**
+ * The newest `query` a receiver asked, by the FROM its answer routes back to.
+ *
+ * @param {Array[]} batches Every POST body the wire saw.
+ * @param {string}  from    The receiver, as `chart:in`.
+ * @return {?Array} The message, or null when it asked none.
+ */
+const queryFrom = ( batches, from ) =>
+	batches
+		.flat()
+		.filter( ( m ) => 'query' === m[ VALUE ]?.name && from === m[ FROM ] )
+		.at( -1 ) ?? null;
+
+/**
+ * Every value a command's tokens carry for a repeated `--<name>=`.
+ *
+ * @param {string[]} tokens The command's argument tokens.
+ * @param {string}   name   The arg's name.
+ * @return {string[]} Its values, in order.
+ */
+const options = ( tokens, name ) =>
+	tokens
+		.filter( ( token ) => token.startsWith( `--${ name }=` ) )
+		.map( ( token ) => token.slice( name.length + 3 ) );
+
+/**
+ * The positional tokens of a command: its source and its group.
+ *
+ * @param {string[]} tokens The command's argument tokens.
+ * @return {string[]} Every token that is no option.
+ */
+const positional = ( tokens ) =>
+	tokens.filter( ( token ) => ! token.startsWith( '--' ) );
+
+describe( 'usePerformanceGraph — chart questions', () => {
+	test( 'asks query for the chart and no longer sends after', async () => {
+		const wire = installWire( {
+			dump_url: { stats: {}, requests: [ { rid: 'tui-4' } ] },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0', chartBreakdown: 'country' },
+		} );
+		await act( async () => {} );
+
+		const chart = queryFrom( wire.batches, 'chart:in' );
+		expect( positional( chart[ VALUE ].arguments ) ).toEqual( [
+			'requests',
+			'bucket',
+			'country',
+		] );
+		expect( options( chart[ VALUE ].arguments, 'measure' ) ).toEqual( [
+			'count',
+			'sum_ms',
+			'sum_peak_mb',
+			'timed',
+		] );
+		expect( options( chart[ VALUE ].arguments, 'filter' ) ).toEqual( [
+			'worker=0',
+		] );
+		expect( option( chart[ VALUE ].arguments, 'top' ) ).toBe( '20' );
+		expect( option( chart[ VALUE ].arguments, 'top_by' ) ).toBe( 'count' );
+
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				chartBreakdown: 'country',
+				selectedUrl: { hash: 'f00d9921' },
+			} );
+		} );
+		wire.batches.length = 0;
+		await act( async () => {
+			refreshTick();
+		} );
+		const refreshed = findVerb( wire.batches, 'dump_url' );
+		expect( refreshed[ VALUE ].arguments ).toEqual( [ 'f00d9921' ] );
+	} );
+
+	test( 'asks the chart by both dimensions and its chips, a chip replacing the worker scope', async () => {
+		const wire = installWire();
+		renderHook( () =>
+			usePerformanceGraph( {
+				serverFilter: 'kea.example',
+				chartBreakdown: 'status_class',
+				chartThenBy: 'method',
+				chartChips: [ 'worker=1', 'country=NZ' ],
+			} )
+		);
+		await act( async () => {} );
+
+		const chart = queryFrom( wire.batches, 'chart:in' );
+		expect( positional( chart[ VALUE ].arguments ) ).toEqual( [
+			'requests',
+			'bucket',
+			'status_class',
+			'method',
+		] );
+		expect( options( chart[ VALUE ].arguments, 'filter' ) ).toEqual( [
+			'server=kea.example',
+			'worker=1',
+			'country=NZ',
+		] );
+	} );
+
+	test( 'asks one dimension where Then by repeats Breakdown, on the page and in the modal', async () => {
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		renderHook( () =>
+			usePerformanceGraph( {
+				refreshInterval: '60000',
+				chartBreakdown: 'ja4',
+				chartThenBy: 'ja4',
+				selectedUrl: { hash: 'beef7743' },
+				detailChart: {
+					breakdown: 'method',
+					thenBy: 'method',
+					chips: [],
+				},
+			} )
+		);
+		await act( async () => {} );
+
+		expect(
+			positional(
+				queryFrom( wire.batches, 'chart:in' )[ VALUE ].arguments
+			)
+		).toEqual( [ 'requests', 'bucket', 'ja4' ] );
+		expect(
+			positional(
+				queryFrom( wire.batches, 'url-chart:in' )[ VALUE ].arguments
+			)
+		).toEqual( [ 'requests', 'bucket', 'method' ] );
+	} );
+
+	test( 'asks the category chart for the top categories by milliseconds', async () => {
+		const wire = installWire();
+		renderHook( () =>
+			usePerformanceGraph( { serverFilter: 'egret.example' } )
+		);
+		await act( async () => {} );
+
+		const cats = queryFrom( wire.batches, 'categories:in' );
+		expect( positional( cats[ VALUE ].arguments ) ).toEqual( [
+			'timings',
+			'bucket',
+			'category',
+		] );
+		expect( options( cats[ VALUE ].arguments, 'filter' ) ).toEqual( [
+			'worker=0',
+			'server=egret.example',
+			'entry=',
+		] );
+		expect( options( cats[ VALUE ].arguments, 'measure' ) ).toEqual( [
+			'ms',
+			'calls',
+		] );
+		expect( option( cats[ VALUE ].arguments, 'top_by' ) ).toBe( 'ms' );
+		expect( option( cats[ VALUE ].arguments, 'top' ) ).toBe( '20' );
+	} );
+
+	test( 'lands each chart answer in its own view', async () => {
+		const answer = {
+			source: 'requests',
+			table: 'requests',
+			columns: [ 'bucket', 'server', 'count' ],
+			rows: [ [ '2026-10-15-07-15', 'weka.example', 81 ] ],
+			groups: 3,
+			available: true,
+			filters: { filter: {}, bucket: '', search: '' },
+		};
+		installWire( { query: answer } );
+		renderHook( () => usePerformanceGraph() );
+		await act( async () => {} );
+
+		expect( Core.node( 'chart:view' ).view.data ).toEqual( answer );
+		expect( Core.node( 'categories:view' ).view.data ).toEqual( answer );
+	} );
+
+	test( 'a dimension or chip change asks the chart afresh, and nothing else', async () => {
+		const wire = installWire();
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { chartBreakdown: 'ua', chartChips: [] },
+		} );
+		await act( async () => {} );
+		wire.batches.length = 0;
+
+		await act( async () => {
+			rerender( { chartBreakdown: 'ja4', chartChips: [] } );
+		} );
+		expect(
+			positional(
+				queryFrom( wire.batches, 'chart:in' )[ VALUE ].arguments
+			)
+		).toEqual( [ 'requests', 'bucket', 'ja4' ] );
+		expect( findVerb( wire.batches, 'overview' ) ).toBeNull();
+		expect( queryFrom( wire.batches, 'categories:in' ) ).toBeNull();
+
+		wire.batches.length = 0;
+		await act( async () => {
+			rerender( { chartBreakdown: 'ja4', chartChips: [ 'method=PUT' ] } );
+		} );
+		expect(
+			options(
+				queryFrom( wire.batches, 'chart:in' )[ VALUE ].arguments,
+				'filter'
+			)
+		).toEqual( [ 'worker=0', 'method=PUT' ] );
+	} );
+
+	test( 'opening a URL asks its stats and its two charts, each tick again, worker traffic counted', async () => {
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		wire.batches.length = 0;
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				serverFilter: 'kea.example',
+				selectedUrl: { hash: 'beef7743' },
+				detailChart: {
+					breakdown: 'method',
+					thenBy: 'country',
+					chips: [ 'status_class=4' ],
+				},
+			} );
+		} );
+
+		const chart = queryFrom( wire.batches, 'url-chart:in' );
+		expect( positional( chart[ VALUE ].arguments ) ).toEqual( [
+			'requests',
+			'bucket',
+			'method',
+			'country',
+		] );
+		expect( options( chart[ VALUE ].arguments, 'filter' ) ).toEqual( [
+			'url=beef7743',
+			'server=kea.example',
+			'status_class=4',
+		] );
+		expect( option( chart[ VALUE ].arguments, 'top' ) ).toBe( '20' );
+		const cats = queryFrom( wire.batches, 'url-categories:in' );
+		expect( options( cats[ VALUE ].arguments, 'filter' ) ).toEqual( [
+			'url=beef7743',
+			'server=kea.example',
+			'entry=',
+		] );
+
+		wire.batches.length = 0;
+		await act( async () => {
+			refreshTick();
+		} );
+		expect( findVerb( wire.batches, 'dump_url' ) ).toBeTruthy();
+		expect( queryFrom( wire.batches, 'url-chart:in' ) ).toBeTruthy();
+		expect( queryFrom( wire.batches, 'url-categories:in' ) ).toBeTruthy();
+	} );
+
+	test( "a modal chart's dimension change asks that chart alone", async () => {
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		const selectedUrl = { hash: 'beef7743' };
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {
+				refreshInterval: '60000',
+				selectedUrl,
+				detailChart: { breakdown: 'method', thenBy: '', chips: [] },
+			},
+		} );
+		await act( async () => {} );
+		wire.batches.length = 0;
+
+		await act( async () => {
+			rerender( {
+				refreshInterval: '60000',
+				selectedUrl,
+				detailChart: { breakdown: 'ja4', thenBy: '', chips: [] },
+			} );
+		} );
+
+		expect(
+			positional(
+				queryFrom( wire.batches, 'url-chart:in' )[ VALUE ].arguments
+			)
+		).toEqual( [ 'requests', 'bucket', 'ja4' ] );
+		expect( findVerb( wire.batches, 'dump_url' ) ).toBeNull();
+		expect( queryFrom( wire.batches, 'url-categories:in' ) ).toBeNull();
+	} );
+
+	test( 'an Errors Only or bucket flip asks the list, never the charts, which describe every request', async () => {
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		const selectedUrl = { hash: 'beef7743' };
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '60000', selectedUrl },
+		} );
+		await act( async () => {} );
+		wire.batches.length = 0;
+
+		await act( async () => {
+			rerender( {
+				refreshInterval: '60000',
+				selectedUrl,
+				detailFilters: { errors_only: true, bucket: '' },
+			} );
+		} );
+
+		expect( findVerb( wire.batches, 'dump_url' ) ).toBeTruthy();
+		expect( queryFrom( wire.batches, 'url-chart:in' ) ).toBeNull();
+		expect( queryFrom( wire.batches, 'url-categories:in' ) ).toBeNull();
+	} );
+
+	test( 'each dump_url answer replaces the list whole', async () => {
+		let replies = 0;
+		installFakeCommandWire( ( m ) =>
+			'dump_url' === m[ VALUE ]?.name
+				? { stats: {}, requests: [ { rid: `kahu-${ ++replies }` } ] }
+				: null
+		);
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'f00d7731' },
+			} );
+		} );
+		await act( async () => {
+			refreshTick();
+		} );
+
+		expect( Core.node( 'url-detail:view' ).view.data.requests ).toEqual( [
+			{ rid: 'kahu-2' },
+		] );
 	} );
 } );

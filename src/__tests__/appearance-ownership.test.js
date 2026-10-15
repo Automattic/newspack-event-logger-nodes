@@ -152,6 +152,8 @@ const INLINE_APPEARANCE_PROPERTY =
 	/\b(?:appearance|background(?:[A-Z]\w*)?|border(?:[A-Z]\w*)?|boxShadow|color|cursor|filter|fontFamily|fontWeight|opacity|outline|textDecoration|textTransform|letterSpacing)\s*:/;
 const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 	[ 'overview/UrlTable.js', [ /linear-gradient\(to right/ ] ],
+	// A `query` answer's echoed `filters.filter`: field values, not a style.
+	[ 'test-helpers/chartWire.js', [ /filter: \{\},/ ] ],
 	[ 'overview/components/UrlDetailView.js', [ /linear-gradient\(to right/ ] ],
 	// A legend item's `color` is series data handed to `ChartLegend`, the
 	// swatch the shared role paints from — not a style prop.

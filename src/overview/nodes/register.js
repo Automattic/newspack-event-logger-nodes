@@ -1,39 +1,34 @@
 /**
- * The Performance Dashboard's node classes, declared once for two consumers.
+ * The Performance Dashboard's view classes, declared once for two consumers.
  *
  * `usePerformanceGraph` imports `views` and hands `makeNode` the CLASS, because
  * the name table is a static per bundle and another bundle's interpreter cannot
  * resolve a name registered here. `src/overview/index.js` imports the module
- * for its side effect alone: `registerSliceViews` and `registerNodeClasses`
- * merge these classes into `CommandInterpreterNode.includeNodes`, which is what
- * lets the debug overlay's console resolve `make_node <Type>` and `help <Type>`
- * by name.
+ * for its side effect alone: `registerSliceViews` merges these classes into
+ * `CommandInterpreterNode.includeNodes`, which is what lets the debug
+ * overlay's console resolve `make_node <Type>` and `help <Type>` by name.
  *
- * `usePerformanceGraph` builds one node per class:
+ * `usePerformanceGraph` builds:
  *   - `OverviewView` → `overview:view` and `UrlsView` → `urls:view`, the two
  *     slices `addSliceFetcher` polls off the shared tick;
+ *   - `QueryView` → `chart:view`, `categories:view`, `url-chart:view` and
+ *     `url-categories:view`, one per chart, each holding one `query` answer;
  *   - `UrlDetailView` → `url-detail:view` and `RequestDetailView` →
- *     `request-detail:view`, the two on-demand modal slices;
- *   - `UrlDetailMerge` → `url-detail:transform`, the incremental-merge transform on
- *     the `url-detail:in` Tee → `url-detail:view` edge.
+ *     `request-detail:view`, the two on-demand modal slices.
  *
  * The `performance` CI verbs answer PHP arrays rather than JSON strings, so a
  * payload reaches `parse` already decoded and no declaration sets `json`.
  *
- * The graph drives every node here through its own `controlFrom`, never by
- * payload shape. The polled pair takes `loading` when a filter change pokes
- * the tick; the modal slices take `loading`, `clear` and `error` as a
- * selection opens, closes or fails validation; and the merge takes `clear`, so
- * a reopened modal's reply is not discarded as a duplicate, and `relist` when
- * Errors Only flips.
+ * The graph drives every view here through its own `controlFrom`, never by
+ * payload shape: `loading` when a filter or a dimension change asks afresh,
+ * and `clear` and `error` as a modal opens, closes or fails validation.
  *
  * No class here decides whether a reply is still wanted: the substrate's
  * `Current` gate on each slice's receiver edge passes only the answer to an
- * ask its Fetcher still holds, and sends a refusal to the view itself.
+ * ask its Fetcher still holds, and sends a refusal to the view itself. Each
+ * answer replaces its slice whole.
  */
-import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import { registerSliceViews } from '@newspack-nodes/shared/nodes/slice-view-node';
-import { UrlDetailMergeNode } from './url-detail-merge-node';
 
 /**
  * A slice whose payload IS its data, plus the status fields the graph drives.
@@ -54,97 +49,71 @@ const dataSlice = ( description ) => ( {
 	parse: ( payload ) => ( undefined === payload ? null : { data: payload } ),
 } );
 
-/** The node classes `usePerformanceGraph` hands `makeNode`. */
-export const views = {
-	...registerSliceViews( {
-		/** `overview:view` — the always-on overview slice, polled. */
-		OverviewView: dataSlice(
-			'Owns the always-on overview slice for its React widget.'
-		),
+/** The view classes `usePerformanceGraph` hands `makeNode`. */
+export const views = registerSliceViews( {
+	/** `overview:view` — the always-on overview slice, polled. */
+	OverviewView: dataSlice(
+		'Owns the always-on overview slice for its React widget.'
+	),
 
-		/**
-		 * `urls:view` — the always-on URL leaderboard.
-		 *
-		 * The `urls` verb answers an envelope, `{ data, rows, totals, slowest,
-		 * filters, ranked, as_of, limit, offset }`, so the payload is not the
-		 * slice. `rows` counts every row the filters left and is what
-		 * `<UrlTable>` paginates on, while `totals.urls` counts only the
-		 * distinct URLs among them: the two synthetic overflow rows are
-		 * sliceable but each stands for many URLs, so the pager takes `rows`
-		 * and the header takes `totals`. `slowest` is the same set ranked by
-		 * `avg_ms` for the facts block, and `limit` / `offset` are dropped
-		 * because the fetcher's own args produced them. `filters` says what
-		 * the totals are OF, echoed by the verb rather than read back off the
-		 * client, so it describes the data in hand and not what was typed
-		 * since. `ranked`, `provisional` and `as_of` ride straight off the
-		 * reply, never derived: `ranked` says whether the server answered
-		 * from its per-bucket ranked lists, `provisional` whether those
-		 * totals are short of an hour or record the writer has yet to fold
-		 * or rank, or of an index read that went unanswered, and `as_of` is
-		 * the server clock the page's rows were current at, which
-		 * `<UrlTable>` ages every row against.
-		 *
-		 * A malformed envelope publishes an empty table rather than throwing,
-		 * and no totals rather than zeroes: a zero here reads as a measurement.
-		 * `rows` starts null for the same reason, so the pager clamps a linked
-		 * page only once a reply has counted the set.
-		 */
-		UrlsView: {
-			description: 'Owns the URL leaderboard slice for its React widget.',
-			empty: {
-				data: [],
-				totals: null,
-				rows: null,
-				slowest: [],
-				filters: null,
-				ranked: false,
-				provisional: false,
-				as_of: 0,
-				loading: false,
-				error: null,
-			},
-			parse: ( payload ) =>
-				undefined === payload
-					? null
-					: {
-							data: ( payload && payload.data ) || [],
-							totals: ( payload && payload.totals ) || null,
-							rows: ( payload && payload.rows ) || 0,
-							slowest: ( payload && payload.slowest ) || [],
-							filters: ( payload && payload.filters ) || null,
-							ranked: ( payload && payload.ranked ) || false,
-							provisional:
-								( payload && payload.provisional ) || false,
-							as_of: ( payload && payload.as_of ) || 0,
-					  },
+	/**
+	 * `urls:view` — the always-on URL leaderboard.
+	 *
+	 * The `urls` verb answers an envelope, `{ data, rows, totals, slowest,
+	 * filters, limit, offset }`, so the payload is not the slice. `rows`
+	 * counts the URLs the filters left, which `<UrlTable>` paginates on, and
+	 * `totals` is the same set's headline numbers. `slowest` is the set ranked
+	 * by `avg_ms` for the facts block, and `limit` / `offset` are dropped
+	 * because the fetcher's own args produced them. `filters` says what the
+	 * totals are OF, echoed by the verb rather than read back off the client,
+	 * so it describes the data in hand and not what was typed since.
+	 *
+	 * A malformed envelope publishes an empty table rather than throwing,
+	 * and no totals rather than zeroes: a zero here reads as a measurement.
+	 * `rows` starts null for the same reason, so the pager clamps a linked
+	 * page only once a reply has counted the set.
+	 */
+	UrlsView: {
+		description: 'Owns the URL leaderboard slice for its React widget.',
+		empty: {
+			data: [],
+			totals: null,
+			rows: null,
+			slowest: [],
+			filters: null,
+			loading: false,
+			error: null,
 		},
+		parse: ( payload ) =>
+			undefined === payload
+				? null
+				: {
+						data: ( payload && payload.data ) || [],
+						totals: ( payload && payload.totals ) || null,
+						rows: ( payload && payload.rows ) || 0,
+						slowest: ( payload && payload.slowest ) || [],
+						filters: ( payload && payload.filters ) || null,
+				  },
+	},
 
-		/**
-		 * `url-detail:view` — the on-demand URL modal slice.
-		 *
-		 * Replies land here already merged: the graph runs `url-detail:in` (Tee)
-		 * → `url-detail:transform` → this node, and the merge node owns the
-		 * incremental request-list merge, the news-or-drop dedup and the
-		 * 500-request cap.
-		 */
-		UrlDetailView: dataSlice(
-			'Owns the on-demand URL-detail slice for its React widget.'
-		),
+	/**
+	 * A chart's `query` answer: its columns and rows, the tuples its top
+	 * ranked among, whether the stats rows opened, and the selection it read.
+	 */
+	QueryView: dataSlice(
+		"Owns one chart's query answer for its React widget."
+	),
 
-		/**
-		 * `request-detail:view` — one selected request: its record, flame data
-		 * and findings.
-		 */
-		RequestDetailView: dataSlice(
-			'Owns the on-demand request-detail slice for its React widget.'
-		),
-	} ),
-	...CommandInterpreterNode.registerNodeClasses( {
-		/**
-		 * The one node here that is not a slice view: it forwards a merged
-		 * message rather than publishing a slice, and it holds the retained
-		 * payload `usePerformanceGraph` reads the `after` cursor off.
-		 */
-		UrlDetailMerge: UrlDetailMergeNode,
-	} ),
-};
+	/** `url-detail:view` — the on-demand URL modal slice, asked afresh each tick. */
+	UrlDetailView: dataSlice(
+		'Owns the on-demand URL-detail slice for its React widget.'
+	),
+
+	/**
+	 * `request-detail:view` — one selected request: its record, flame data
+	 * and findings.
+	 */
+	RequestDetailView: dataSlice(
+		'Owns the on-demand request-detail slice for its React widget.'
+	),
+} );

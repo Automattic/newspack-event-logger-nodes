@@ -195,7 +195,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1234567890,
 			} )
 		);
 		// onClick was registered with d3-flame-graph.
@@ -210,7 +209,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 				onRevealEntry: onReveal,
 			} )
 		);
@@ -264,7 +262,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 				onRevealEntry: onReveal,
 			} )
 		);
@@ -291,7 +288,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		const stamps = () =>
@@ -316,7 +312,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		expect( () => flamegraphState.onClick( null ) ).not.toThrow();
@@ -333,7 +328,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		chain.text.mockClear();
@@ -359,7 +353,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		chain.text.mockClear();
@@ -385,7 +378,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		chain.text.mockClear();
@@ -411,7 +403,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		// Taller than the space above the cursor: flipping runs it off the top,
@@ -440,7 +431,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		const tooltip = flamegraphState.tooltip;
@@ -485,7 +475,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		Object.defineProperty( window, 'event', {
@@ -526,7 +515,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		const root = {
@@ -541,7 +529,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		expect(
@@ -571,7 +558,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		const orphan = {
@@ -584,22 +570,15 @@ describe( 'FlameGraph', () => {
 		unmount();
 	} );
 
-	it( 'updates the chart when lastModified changes', () => {
+	it( 'updates the chart in place when an answer brings a new tree', () => {
 		const { rerender, unmount } = renderComponent(
-			React.createElement( FlameGraph, {
-				data: SAMPLE_DATA,
-				lastModified: 1,
-			} )
+			React.createElement( FlameGraph, { data: SAMPLE_DATA } )
 		);
-		// Rerender with same data but new lastModified.
-		expect( () =>
-			rerender(
-				React.createElement( FlameGraph, {
-					data: SAMPLE_DATA,
-					lastModified: 2,
-				} )
-			)
-		).not.toThrow();
+		flamegraphState.chart.update.mockClear();
+		rerender(
+			React.createElement( FlameGraph, { data: { ...SAMPLE_DATA } } )
+		);
+		expect( flamegraphState.chart.update ).toHaveBeenCalledTimes( 1 );
 		unmount();
 	} );
 
@@ -607,7 +586,6 @@ describe( 'FlameGraph', () => {
 		const { rerender, unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		const child = {
@@ -628,10 +606,7 @@ describe( 'FlameGraph', () => {
 				: d3Mock
 		);
 		rerender(
-			React.createElement( FlameGraph, {
-				data: SAMPLE_DATA,
-				lastModified: 2,
-			} )
+			React.createElement( FlameGraph, { data: { ...SAMPLE_DATA } } )
 		);
 		expect( flamegraphState.chart.zoomTo ).toHaveBeenCalledWith(
 			expect.objectContaining( { data: { name: 'db' } } )
@@ -640,22 +615,13 @@ describe( 'FlameGraph', () => {
 		unmount();
 	} );
 
-	it( 'skips chart update when lastModified is unchanged', () => {
+	it( 'leaves the chart alone when a render brings the same tree', () => {
 		const { rerender, unmount } = renderComponent(
-			React.createElement( FlameGraph, {
-				data: SAMPLE_DATA,
-				lastModified: 7,
-			} )
+			React.createElement( FlameGraph, { data: SAMPLE_DATA } )
 		);
-		// Rerender with identical lastModified — no update path.
-		expect( () =>
-			rerender(
-				React.createElement( FlameGraph, {
-					data: SAMPLE_DATA,
-					lastModified: 7,
-				} )
-			)
-		).not.toThrow();
+		flamegraphState.chart.update.mockClear();
+		rerender( React.createElement( FlameGraph, { data: SAMPLE_DATA } ) );
+		expect( flamegraphState.chart.update ).not.toHaveBeenCalled();
 		unmount();
 	} );
 
@@ -666,7 +632,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		const stamps = () =>
@@ -697,7 +662,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		const container = document.querySelector( '.event-logger-flame-graph' );
@@ -723,7 +687,6 @@ describe( 'FlameGraph', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {
 				data: SAMPLE_DATA,
-				lastModified: 1,
 			} )
 		);
 		const container = document.querySelector( '.event-logger-flame-graph' );

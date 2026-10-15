@@ -59,7 +59,7 @@ const STATS = {
 		format: wholeMs,
 	},
 	requests_per_second: {
-		label: __( 'Req/s (recent)', 'newspack-event-logger-nodes' ),
+		label: __( 'Req/s', 'newspack-event-logger-nodes' ),
 		short: __( 'req/s', 'newspack-event-logger-nodes' ),
 		format: ( n ) => n.toFixed( 2 ),
 	},
@@ -102,50 +102,35 @@ export function headlineStats( totals, keys ) {
 /**
  * The headline numbers for a URL set, as the `urls` verb totals it. They
  * describe the set the filters selected, the same set the table below lists,
- * so they come from one payload rather than from whichever namespace happens
- * to hold each figure.
+ * so they come from one payload rather than from whichever source happens
+ * to hold each figure. Every count is exact, the unique URLs among them.
  *
  * @param {Object}      props
- * @param {Object|null} props.totals      The `urls` reply's totals; null until it answers.
- * @param {boolean}     props.provisional The reply's `provisional`: the totals are short of an hour or record the writer has yet to fold or rank, or of an index read that went unanswered.
+ * @param {Object|null} props.totals The `urls` reply's totals; null until it answers.
  * @return {import('react').ReactElement} The stats grid.
  */
-export default function HeadlineStats( { totals, provisional } ) {
+export default function HeadlineStats( { totals } ) {
 	return (
-		<>
-			<div
-				className="newspack-nodes-stats-grid event-logger-overview-stats"
-				title={ __(
-					'The current hour so far and the whole hours before it: the window starts on the hour.',
-					'newspack-event-logger-nodes'
-				) }
-			>
-				{ headlineStats( totals, [
-					'urls',
-					'requests',
-					'errors',
-					'avg_ms',
-					'requests_per_second',
-					'avg_peak_mb',
-				] ).map( ( { key, label, value } ) => (
-					<div className="newspack-nodes-stat" key={ key }>
-						<span className="newspack-nodes-stat-value">
-							{ value }
-						</span>
-						<span className="newspack-nodes-stat-label">
-							{ label }
-						</span>
-					</div>
-				) ) }
-			</div>
-			{ provisional && (
-				<p className="newspack-nodes-banner is-info" role="status">
-					{ __(
-						'Provisional: some hours or records are not yet folded or ranked, or a read went unanswered, so these totals may run short.',
-						'newspack-event-logger-nodes'
-					) }
-				</p>
+		<div
+			className="newspack-nodes-stats-grid event-logger-overview-stats"
+			title={ __(
+				'The last 24 hours in five-minute buckets, the current one so far.',
+				'newspack-event-logger-nodes'
 			) }
-		</>
+		>
+			{ headlineStats( totals, [
+				'urls',
+				'requests',
+				'errors',
+				'avg_ms',
+				'requests_per_second',
+				'avg_peak_mb',
+			] ).map( ( { key, label, value } ) => (
+				<div className="newspack-nodes-stat" key={ key }>
+					<span className="newspack-nodes-stat-value">{ value }</span>
+					<span className="newspack-nodes-stat-label">{ label }</span>
+				</div>
+			) ) }
+		</div>
 	);
 }

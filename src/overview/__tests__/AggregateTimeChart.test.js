@@ -106,10 +106,11 @@ import * as React from 'react';
 import * as d3 from 'd3';
 import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
 import {
-	dimTable,
-	nameTable,
+	dimSeries,
+	rowsWire,
 	slotsEndingAt,
 } from '../../test-helpers/chartWire';
+import { SERIES_MEASURES } from '../constants';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
@@ -124,6 +125,7 @@ const aggregateChart = ( props ) =>
 	React.createElement( AggregateTimeChart, {
 		storageKey: 'test:aggregate',
 		slots: SLOTS,
+		dims: [ 'series' ],
 		...props,
 	} );
 
@@ -184,7 +186,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'keeps each metric’s corner choices under <storageKey>:<metric>', () => {
 		window.localStorage.setItem( 'test:aggregate:avg:expanded', '1' );
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: { '5xx': [ 7, 917, 3, 7 ] },
 		} );
 		const expandedAt = ( metric ) => {
@@ -217,7 +219,7 @@ describe( 'AggregateTimeChart', () => {
 	it( 'returns null when the breakdown is empty', () => {
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
-				series: dimTable( {} ),
+				series: dimSeries( {} ),
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
@@ -228,7 +230,7 @@ describe( 'AggregateTimeChart', () => {
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				slots: null,
-				series: dimTable( {
+				series: dimSeries( {
 					[ bucketKeyNow() ]: { GET: [ 37, 740, 3, 37 ] },
 				} ),
 			} )
@@ -239,12 +241,12 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'draws the breakdown series it is handed', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( { [ bk ]: { '5xx': [ 7, 917, 3, 7 ] } } );
+		const series = dimSeries( { [ bk ]: { '5xx': [ 7, 917, 3, 7 ] } } );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'avg',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 		expect( container.textContent ).toContain( 'Avg Response Time' );
@@ -258,11 +260,11 @@ describe( 'AggregateTimeChart', () => {
 	it( 'titles the chart the last 24 hours', () => {
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
-				series: dimTable( {
+				series: dimSeries( {
 					[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
 				} ),
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		expect( container.textContent ).toContain(
@@ -272,7 +274,7 @@ describe( 'AggregateTimeChart', () => {
 	} );
 
 	it( 'plots the oldest slot and the newest at their own five minutes', () => {
-		const series = dimTable( {
+		const series = dimSeries( {
 			'2026-09-28-14-40': { 'kea-ua/7': [ 43, 4300, 4, 43 ] },
 			[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
 		} );
@@ -280,7 +282,7 @@ describe( 'AggregateTimeChart', () => {
 			aggregateChart( {
 				series,
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		const valueAt = ( index ) =>
@@ -296,11 +298,11 @@ describe( 'AggregateTimeChart', () => {
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				slots: slotsEndingAt( '2026-09-29-14-35', 12 ),
-				series: dimTable( {
+				series: dimSeries( {
 					[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
 				} ),
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		expect( container.textContent ).toContain(
@@ -314,11 +316,11 @@ describe( 'AggregateTimeChart', () => {
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				slots: slotsEndingAt( '2026-09-29-14-35', 20 ),
-				series: dimTable( {
+				series: dimSeries( {
 					[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
 				} ),
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		expect( container.textContent ).toContain(
@@ -331,11 +333,11 @@ describe( 'AggregateTimeChart', () => {
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				slots: slotsEndingAt( '2026-09-29-14-35', 144 ),
-				series: dimTable( {
+				series: dimSeries( {
 					[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
 				} ),
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		expect( container.textContent ).toContain(
@@ -344,51 +346,101 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'reads a malformed reply as the empty state and draws nothing', () => {
+	it( 'reads a malformed answer as the empty state and draws nothing', () => {
 		const bk = bucketKeyNow();
-		// A row one field short: a reply the decoder refuses whole.
-		const malformed = {
-			names: [ 'kea-ua/7' ],
-			buckets: { [ bk ]: [ [ 0, 41, 820, 3 ] ] },
-		};
-		const { state, series } = breakdownState( malformed );
+		// A measure that is no number: an answer the decoder refuses whole.
+		const malformed = rowsWire(
+			[ 'bucket', 'ua', ...SERIES_MEASURES ],
+			[ [ bk, 'kea-ua/7', 41, 820, 'three', 41 ] ]
+		);
+		const { state, series } = breakdownState( malformed, [ 'ua' ] );
 		expect( state ).toBe( 'empty' );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
 		unmount();
 	} );
 
-	it( 'reads the name-table wire for its state', () => {
+	it( 'reads the query answer for its state, its series and its groups', () => {
 		const bk = bucketKeyNow();
-		const stateOf = ( wire ) => breakdownState( wire ).state;
+		const answer = ( rows, extra ) =>
+			rowsWire( [ 'bucket', 'ua', ...SERIES_MEASURES ], rows, extra );
+		const stateOf = ( wire ) => breakdownState( wire, [ 'ua' ] ).state;
 		expect( stateOf( null ) ).toBe( 'pending' );
-		expect( stateOf( { names: [], buckets: {} } ) ).toBe( 'empty' );
-		expect( stateOf( { names: [], buckets: { [ bk ]: [] } } ) ).toBe(
-			'empty'
-		);
-		const wire = nameTable( {
-			[ bk ]: { 'curl/8.7.1': [ 313, 3130, 3, 313 ] },
-		} );
-		expect( breakdownState( wire ) ).toEqual( {
+		expect( stateOf( answer( [] ) ) ).toBe( 'empty' );
+		expect( stateOf( answer( [], { available: false } ) ) ).toBe( 'empty' );
+		expect(
+			breakdownState(
+				answer( [ [ bk, 'curl/8.7.1', 313, 3130, 3, 313 ] ], {
+					groups: 57,
+				} ),
+				[ 'ua' ]
+			)
+		).toEqual( {
 			state: 'series',
-			series: dimTable( {
-				[ bk ]: { 'curl/8.7.1': [ 313, 3130, 3, 313 ] },
-			} ),
+			series: {
+				names: [ 'curl/8.7.1' ],
+				byBucket: {
+					[ bk ]: {
+						'curl/8.7.1': {
+							count: 313,
+							sum_ms: 3130,
+							sum_peak_mb: 3,
+							timed: 313,
+						},
+					},
+				},
+			},
+			groups: 57,
 		} );
 	} );
 
-	it( 'hands down no table while the dimension is pending', () => {
-		expect( breakdownState( null ).series ).toBeNull();
+	it( 'reads an answer asked by other dimensions as still pending', () => {
+		const answer = rowsWire(
+			[ 'bucket', 'ua', 'server', ...SERIES_MEASURES ],
+			[ [ bucketKeyNow(), 'kea-ua/7', 'weka.example', 4, 40, 1, 4 ] ]
+		);
+
+		expect( breakdownState( answer, [ 'ua' ] ) ).toEqual( {
+			state: 'pending',
+			series: null,
+			groups: null,
+		} );
+		expect( breakdownState( answer, [ 'ua', 'server' ] ).state ).toBe(
+			'series'
+		);
+	} );
+
+	it( 'hands down no series while the dimension is pending', () => {
+		expect( breakdownState( null, [ 'ua' ] ).series ).toBeNull();
+	} );
+
+	it( 'draws a status class breakdown with each series named by its class', () => {
+		const series = breakdownState(
+			rowsWire(
+				[ 'bucket', 'status_class', ...SERIES_MEASURES ],
+				[ [ bucketKeyNow(), 5, 9, 90, 3, 9 ] ]
+			),
+			[ 'status_class' ]
+		).series;
+		const { unmount } = renderComponent(
+			aggregateChart( {
+				series,
+				metric: 'volume',
+				dims: [ 'status_class' ],
+			} )
+		);
+		expect( series.names ).toEqual( [ '5xx' ] );
+		unmount();
 	} );
 
 	it( 'titles a summed axis with the five minutes each point stands for', () => {
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: { GET: [ 37, 740, 3, 37 ] },
 		} );
 		for ( const [ metric, title ] of [
@@ -399,7 +451,7 @@ describe( 'AggregateTimeChart', () => {
 				aggregateChart( {
 					series,
 					metric,
-					breakdown: 'method',
+					dims: [ 'method' ],
 				} )
 			);
 			expect( d3Mock.text ).toHaveBeenCalledWith( title );
@@ -412,14 +464,14 @@ describe( 'AggregateTimeChart', () => {
 		// summed peak MB — and it crosses the wire in that shape, so this is
 		// the only place the indexes are read.
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: { '5xx': [ 4, 1000, 12, 4 ] },
 		} );
 		const { unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'avg',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 		const values = getFormatEntry()( lastSlotIndex() ).map(
@@ -431,14 +483,14 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'averages over the timed requests alone', () => {
 		// Three requests, two timed at 40 and 60ms: the timeout is no sample.
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: { 'kea-ua/7': [ 3, 100, 3, 2 ] },
 		} );
 		const { unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'avg',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		const values = getFormatEntry()( lastSlotIndex() ).map(
@@ -454,14 +506,14 @@ describe( 'AggregateTimeChart', () => {
 		// cumulative axis has used it all along — so the avg axis reads the same
 		// way rather than pinning itself to the smallest unit.
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: { slow: [ 1, 140000, 3, 1 ] },
 		} );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'avg',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 
@@ -477,12 +529,12 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'still reads a fast response-time axis in milliseconds', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( { [ bk ]: { fast: [ 4, 1000, 3, 4 ] } } );
+		const series = dimSeries( { [ bk ]: { fast: [ 4, 1000, 3, 4 ] } } );
 		const { unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'avg',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 
@@ -504,7 +556,7 @@ describe( 'AggregateTimeChart', () => {
 				data: { [ bk ]: { count: 313, sum_ms: 4711 } },
 				series: null,
 				metric: 'avg',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
@@ -518,9 +570,9 @@ describe( 'AggregateTimeChart', () => {
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				data: { [ bk ]: { count: 313, sum_ms: 4711 } },
-				series: dimTable( { [ bk ]: {} } ),
+				series: dimSeries( { [ bk ]: {} } ),
 				metric: 'avg',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
@@ -529,14 +581,14 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renders the tooltip frame in volume mode', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: { 'curl/8.7.1': [ 50, 500, 10, 50 ] },
 		} );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'volume',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		expect( container.textContent ).toContain( 'Request Volume' );
@@ -555,14 +607,14 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'titles the memory metric from its own dimension', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: { 'curl/8.7.1': [ 50, 500, 10, 50 ] },
 		} );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'memory',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		expect( container.textContent ).toContain( 'Avg Peak Memory' );
@@ -573,7 +625,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renders with breakdownData (status) → cumulative overlaid area', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: {
 				'2xx': [ 80, 800, 3, 80 ],
 				'4xx': [ 20, 200, 3, 20 ],
@@ -583,7 +635,7 @@ describe( 'AggregateTimeChart', () => {
 			aggregateChart( {
 				series,
 				metric: 'cumulative',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 		expect( container.textContent ).toContain( 'Cumulative' );
@@ -592,7 +644,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renders with breakdownData (status) in volume mode', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: {
 				'2xx': [ 80, 800, 3, 80 ],
 				'5xx': [ 20, 200, 3, 20 ],
@@ -602,7 +654,7 @@ describe( 'AggregateTimeChart', () => {
 			aggregateChart( {
 				series,
 				metric: 'volume',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 		const formatEntry = getFormatEntry();
@@ -614,7 +666,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renders with breakdownData (method) line chart in avg mode', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: {
 				GET: [ 80, 8000, 3, 80 ],
 				POST: [ 20, 4000, 3, 20 ],
@@ -624,7 +676,7 @@ describe( 'AggregateTimeChart', () => {
 			aggregateChart( {
 				series,
 				metric: 'avg',
-				breakdown: 'method',
+				dims: [ 'method' ],
 			} )
 		);
 		const formatEntry = getFormatEntry();
@@ -634,7 +686,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renders memory line chart with breakdownData', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: {
 				A: [ 5, 500, 50, 5 ],
 				B: [ 0, 0, 0, 0 ], // hits the zero-count branch
@@ -644,7 +696,7 @@ describe( 'AggregateTimeChart', () => {
 			aggregateChart( {
 				series,
 				metric: 'memory',
-				breakdown: 'server',
+				dims: [ 'server' ],
 			} )
 		);
 		const values = getFormatEntry()( lastSlotIndex() ).map(
@@ -657,7 +709,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'serverFilter suffixes the title', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( { [ bk ]: { '5xx': [ 1, 10, 3, 1 ] } } );
+		const series = dimSeries( { [ bk ]: { '5xx': [ 1, 10, 3, 1 ] } } );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
@@ -672,7 +724,7 @@ describe( 'AggregateTimeChart', () => {
 	it( 'formatSeconds covers all five magnitude branches', () => {
 		// cumulative mode drives every formatSeconds branch via saFmt.
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: {
 				zero: [ 0, 0, 3, 0 ], // → 0s
 				sub: [ 1, 500, 3, 1 ], // → 500ms
@@ -686,7 +738,7 @@ describe( 'AggregateTimeChart', () => {
 			aggregateChart( {
 				series,
 				metric: 'cumulative',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 		// Overlaid by default: no total row until the reader stacks.
@@ -703,14 +755,14 @@ describe( 'AggregateTimeChart', () => {
 
 	it( "the tooltip total stays the bucket's whole total under a pick", () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: { '2xx': [ 47, 470, 3, 47 ], '5xx': [ 453, 4530, 3, 453 ] },
 		} );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'volume',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 		stack( container );
@@ -733,14 +785,14 @@ describe( 'AggregateTimeChart', () => {
 		// A 45s bucket total, a picked series at 600ms: the axis reads ms,
 		// the total is still 45s, not 45000ms.
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: { minor: [ 1, 600, 3, 1 ], major: [ 1, 44400, 3, 1 ] },
 		} );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric: 'cumulative',
-				breakdown: 'ua',
+				dims: [ 'ua' ],
 			} )
 		);
 		stack( container );
@@ -761,10 +813,10 @@ describe( 'AggregateTimeChart', () => {
 	it( 'a stack picked under one metric does not carry into the next', () => {
 		// A stack of request counts is a total; a stack of means is not.
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: { '2xx': [ 47, 470, 3, 47 ], '5xx': [ 453, 4530, 3, 453 ] },
 		} );
-		const props = { series, breakdown: 'status' };
+		const props = { series, dims: [ 'status_class' ] };
 		const { container, rerender, unmount } = renderComponent(
 			aggregateChart( {
 				...props,
@@ -797,14 +849,14 @@ describe( 'AggregateTimeChart', () => {
 		[ 'memory', false ],
 	] )( 'offers the stack toggle under %s: %s', ( metric, offered ) => {
 		// A stack of counts or sums is a total; a stack of means is not.
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bucketKeyNow() ]: { '2xx': [ 47, 470, 3, 47 ] },
 		} );
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series,
 				metric,
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 		expect(
@@ -815,7 +867,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'tags the y-axis title with the themable y-label class', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ bk ]: { '5xx': [ 50, 500, 3, 50 ] },
 		} );
 		const { unmount } = renderComponent(
@@ -833,7 +885,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renderFn no-ops on null container', () => {
 		const bk = bucketKeyNow();
-		const series = dimTable( { [ bk ]: { '5xx': [ 1, 1, 3, 1 ] } } );
+		const series = dimSeries( { [ bk ]: { '5xx': [ 1, 1, 3, 1 ] } } );
 		const { unmount } = renderComponent(
 			aggregateChart( {
 				series,
@@ -861,7 +913,7 @@ describe( 'AggregateTimeChart', () => {
 		'plots %s with slot 41 measured: %s, slot 43 measured: %s',
 		( metric, timedOutMeasured, emptyMeasured ) => {
 			const at = ( index ) => SLOTS[ SLOTS.length - 1 - index ];
-			const series = dimTable( {
+			const series = dimSeries( {
 				[ at( 40 ) ]: { 'edge-kea': [ 6, 900, 24, 3 ] },
 				[ at( 41 ) ]: { 'edge-kea': [ 7, 0, 0, 0 ] },
 				[ at( 42 ) ]: { 'edge-kea': [ 2, 500, 10, 2 ] },
@@ -870,7 +922,7 @@ describe( 'AggregateTimeChart', () => {
 				aggregateChart( {
 					series,
 					metric,
-					breakdown: 'server',
+					dims: [ 'server' ],
 				} )
 			);
 			const [ band ] = d3Mock.datum.mock.calls.map(
@@ -887,7 +939,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'draws a memory slot with no requests as a gap, never as 0 MB', () => {
 		const at = ( index ) => SLOTS[ SLOTS.length - 1 - index ];
-		const series = dimTable( {
+		const series = dimSeries( {
 			[ at( 38 ) ]: { '2xx': [ 2, 500, 96, 2 ] },
 			[ at( 40 ) ]: {
 				'5xx': [ 3, 900, 231, 3 ],
@@ -899,7 +951,7 @@ describe( 'AggregateTimeChart', () => {
 			aggregateChart( {
 				series,
 				metric: 'memory',
-				breakdown: 'status',
+				dims: [ 'status_class' ],
 			} )
 		);
 		const bands = d3Mock.datum.mock.calls.map( ( call ) => call[ 0 ] );

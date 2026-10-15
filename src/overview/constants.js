@@ -3,12 +3,14 @@
  * commands travel.
  *
  * `PerformanceDashboard` reads the refresh cadences and the breakdown default,
- * `OverviewSection` the refresh cadences and the breakdown dimensions, and
- * `BreakdownControls` the metrics and the dimensions; the Gyroscope in-flight
- * view keeps its own list in `src/gyroscope/constants.js`. Each entry is a
- * `SelectControl` option, so the `value` is the token the rest of the dashboard
- * — and, for breakdowns, the server — matches on. The metric and dimension
- * labels are translated; the refresh cadences' unit abbreviations are not.
+ * `OverviewSection` the refresh cadences and the breakdown dimensions,
+ * `BreakdownControls` the metrics, the dimensions and the chip fields, and
+ * `usePerformanceGraph` the series count every chart asks for; the Gyroscope
+ * in-flight view keeps its own list in `src/gyroscope/constants.js`. Each
+ * option is a `SelectControl` option, so the `value` is the token the rest of
+ * the dashboard — and, for fields, the server — matches on. The metric and
+ * field labels are translated; the refresh cadences' unit abbreviations are
+ * not.
  */
 
 import { __ } from '@wordpress/i18n';
@@ -38,11 +40,10 @@ export const DASHBOARD_REFRESH_OPTIONS = [
 /**
  * Metric choices for the aggregate time chart's "Metric" dropdown.
  *
- * Every metric reads the same three per-bucket totals — `c`, `s` and `m`, the
- * request count, the summed milliseconds and the summed peak megabytes — and
- * the `value` decides how `AggregateTimeChart` reduces them: `volume` plots the
- * count, `avg` the mean millisecond, `cumulative` the summed seconds, `memory`
- * the mean megabyte.
+ * Every metric reads the same per-bucket sums, `SERIES_MEASURES`, and the
+ * `value` decides how `AggregateTimeChart` reduces them: `volume` plots the
+ * count, `avg` the mean millisecond of the timed requests, `cumulative` the
+ * summed seconds, `memory` the mean megabyte.
  *
  * `PerformanceDashboard` and `UrlDetailView` each seed their own state with
  * `'volume'`. The list order sets no default.
@@ -67,12 +68,92 @@ export const CHART_METRIC_OPTIONS = [
 ];
 
 /**
- * Dimension choices for the aggregate time chart's "Breakdown" dropdown.
+ * The `requests` fields `Stats_Query::FIELDS` declares past its time fields
+ * (`Stats_Query::TIME_FIELDS`, which every chart already draws as its axis),
+ * in its order; a jest test holds this list to the PHP by reading it. `kind`
+ * says where a field is offered: `series` in the breakdown selects and the
+ * filter chips, `filter` in the chips alone.
  *
- * Every `value` is a server-side dimension key, so this list must stay in step
- * with `Performance_CI_Node::DIMENSIONS` (which rejects anything else) and with
- * `Flame_Builder_Node::DIM_FIELDS` (which decides what gets accumulated in the
- * first place). A value in only one of the three yields an empty breakdown.
+ * `worker` is a chip, never a series: the Overview charts ask `worker=0`
+ * unless a chip names the workers, so a series by it would draw one line.
+ * `url` is a chip by hash; the URL modal is the place to chart one URL.
+ *
+ * @type {Array<{value: string, label: string, kind: 'series'|'filter'}>}
+ */
+const REQUEST_FIELDS = [
+	{
+		value: 'server',
+		label: __( 'Server', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+	{
+		value: 'url',
+		label: __( 'URL Hash', 'newspack-event-logger-nodes' ),
+		kind: 'filter',
+	},
+	{
+		value: 'status',
+		label: __( 'Status Code', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+	{
+		value: 'status_class',
+		label: __( 'Status Class', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+	{
+		value: 'method',
+		label: __( 'Method', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+	{
+		value: 'country',
+		label: __( 'Country', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+	{
+		value: 'ua',
+		label: __( 'User Agent', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+	{
+		value: 'ja4',
+		label: __( 'JA4 Hash', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+	{
+		value: 'from',
+		label: __( 'From', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+	{
+		value: 'worker',
+		label: __( 'Worker', 'newspack-event-logger-nodes' ),
+		kind: 'filter',
+	},
+	{
+		value: 'profiled',
+		label: __( 'Profiled', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+	{
+		value: 'error',
+		label: __( 'Error', 'newspack-event-logger-nodes' ),
+		kind: 'series',
+	},
+];
+
+/**
+ * A field as a `SelectControl` option.
+ *
+ * @param {{value: string, label: string}} field A `REQUEST_FIELDS` entry.
+ * @return {{label: string, value: string}} The option.
+ */
+const asOption = ( { value, label } ) => ( { label, value } );
+
+/**
+ * Dimension choices for the aggregate time chart's two breakdown selects:
+ * every `series` field.
  *
  * Each caller hands `BreakdownControls` the list it offers. `OverviewSection`
  * offers this one while `canBreakDownByServer` holds and
@@ -82,43 +163,51 @@ export const CHART_METRIC_OPTIONS = [
  * same flag, so a list that has not landed yet keeps the default. The URL
  * modal offers the scoped list always.
  */
-export const CHART_BREAKDOWN_OPTIONS = [
-	{ label: __( 'Server', 'newspack-event-logger-nodes' ), value: 'server' },
-	{
-		label: __( 'Status Codes', 'newspack-event-logger-nodes' ),
-		value: 'status',
-	},
-	{ label: __( 'Method', 'newspack-event-logger-nodes' ), value: 'method' },
-	{
-		label: __( 'Country', 'newspack-event-logger-nodes' ),
-		value: 'country',
-	},
-	{ label: __( 'From', 'newspack-event-logger-nodes' ), value: 'from' },
-	{ label: __( 'User Agent', 'newspack-event-logger-nodes' ), value: 'ua' },
-	{ label: __( 'JA4 Hash', 'newspack-event-logger-nodes' ), value: 'ja4' },
-];
+export const CHART_BREAKDOWN_OPTIONS = REQUEST_FIELDS.filter(
+	( field ) => 'series' === field.kind
+).map( asOption );
 
 /**
  * The dimensions that still split INSIDE one server's scope: the list above
  * minus `server`. The server is a URL's host, so a chart already scoped
  * to one server — a server filter, or one URL, whose hash is over the whole
- * URL and therefore its host — would draw one line under that axis. The
- * per-server aggregate skips the axis on the same reasoning.
+ * URL and therefore its host — would draw one line under that axis.
  */
 export const SCOPED_BREAKDOWN_OPTIONS = CHART_BREAKDOWN_OPTIONS.filter(
 	( option ) => option.value !== 'server'
 );
 
+/** The fields a filter chip may name: every one. */
+export const FILTER_FIELD_OPTIONS = REQUEST_FIELDS.map( asOption );
+
 /**
  * What the aggregate chart breaks down by until someone chooses otherwise.
  *
  * `PerformanceDashboard` seeds its `chartBreakdown` state with this and
- * resolves `server` to `status` whenever `canBreakDownByServer` is false. That
- * fallback is DERIVED, never written back over the state, so a hub whose second
- * server reports late gets the axis back rather than staying on `status` for
- * the session.
+ * resolves `server` to `status_class` whenever `canBreakDownByServer` is
+ * false. That fallback is DERIVED, never written back over the state, so a
+ * hub whose second server reports late gets the axis back rather than
+ * staying on `status_class` for the session.
  */
 export const DEFAULT_CHART_BREAKDOWN = 'server';
+
+/**
+ * The series a chart asks `query` for, ranked by `top_by`:
+ * `Stats_Query::MAX_TOP`, the most a top answer holds.
+ */
+export const CHART_TOP = 20;
+
+/**
+ * What the aggregate chart asks `query` to measure per bucket and series:
+ * every metric reduces these four (`AggregateTimeChart`'s `slotValue()`).
+ */
+export const SERIES_MEASURES = [ 'count', 'sum_ms', 'sum_peak_mb', 'timed' ];
+
+/**
+ * What the category charts ask `query` to measure per bucket and category:
+ * its milliseconds and calls, which the three views read.
+ */
+export const CATEGORY_MEASURES = [ 'ms', 'calls' ];
 
 /**
  * The groups this plugin's commands travel, each through its own

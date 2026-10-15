@@ -24,10 +24,11 @@ import AggregateTimeChart from '../AggregateTimeChart';
 import CategoryTimeChart from '../CategoryTimeChart';
 import { renderComponent } from '../../test-helpers/renderHook';
 import {
-	dimTable,
-	nameTable,
+	dimSeries,
+	seriesWire,
 	slotsEndingAt,
 } from '../../test-helpers/chartWire';
+import { CATEGORY_MEASURES } from '../constants';
 
 // Four slots, newest first, as the reply names them.
 const SLOTS = slotsEndingAt( '2026-10-04-13-35', 4 );
@@ -37,6 +38,7 @@ const aggregateChart = ( props ) =>
 	React.createElement( AggregateTimeChart, {
 		storageKey: 'test:aggregate',
 		slots: SLOTS,
+		dims: [ 'status_class' ],
 		...props,
 	} );
 
@@ -55,7 +57,7 @@ beforeEach( () => {
 } );
 
 describe( 'AggregateTimeChart onSlotClick', () => {
-	const series = dimTable( {
+	const series = dimSeries( {
 		'2026-10-04-13-30': { '5xx': [ 7, 70, 3, 7 ] },
 	} );
 
@@ -117,9 +119,31 @@ describe( 'AggregateTimeChart onSlotClick', () => {
 	} );
 } );
 
+describe( 'AggregateTimeChart stacked total', () => {
+	const series = dimSeries( {
+		'2026-10-04-13-30': { '5xx': [ 7, 70, 3, 7 ], '2xx': [ 2, 20, 1, 2 ] },
+	} );
+
+	it( 'names the stack total of the shown series where the top leaves some out', () => {
+		const { unmount } = renderComponent(
+			aggregateChart( { series, partial: true } )
+		);
+		expect( charts().at( -1 ).totalLabel ).toBe( 'Total of shown' );
+		unmount();
+	} );
+
+	it( 'names it the total where every series is shown', () => {
+		const { unmount } = renderComponent(
+			aggregateChart( { series, partial: false } )
+		);
+		expect( charts().at( -1 ).totalLabel ).toBe( 'Total' );
+		unmount();
+	} );
+} );
+
 describe( 'CategoryTimeChart onSlotClick', () => {
-	const data = nameTable( {
-		'2026-10-04-13-25': { plugins: [ 120, 9, 3 ] },
+	const data = seriesWire( 'category', CATEGORY_MEASURES, {
+		'2026-10-04-13-25': { plugins: [ 120, 9 ] },
 	} );
 
 	it( 'hands every view the same slot-to-bucket mapping', () => {

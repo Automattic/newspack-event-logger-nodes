@@ -192,6 +192,13 @@ final class StatsQueryTest extends TestCase {
 		);
 	}
 
+	public function test_a_field_grouped_twice_is_refused_naming_it(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'method' );
+
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'method', 'method' ], 'buckets' => $this->last_day() ] ) );
+	}
+
 	public function test_a_name_both_grouped_and_measured_is_refused(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'worker names both a group and a measure' );
@@ -421,6 +428,145 @@ final class StatsQueryTest extends TestCase {
 		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'status' => [ '301', '404' ], 'worker' => [ '0', '1' ] ], 'buckets' => $this->last_day() ] ) );
 
 		$this->assertSame( [ [ 2 ] ], $r['rows'] );
+		$this->assertNull( $r['groups'], 'no top, no tuple count' );
+	}
+
+	/**
+	 * Under `top` the tuples rank by `top_by` over the whole selection, not
+	 * by `count`, and every time row of the top ones answers, rank order
+	 * first; `groups` counts every tuple the selection holds.
+	 */
+	public function test_top_answers_every_bucket_of_the_tuples_top_by_ranks_highest(): void {
+		$now = Bucket::id( self::NOW );
+		$this->seed_requests( [ [ 'server' => 'kea.example', 'bucket' => $now - 2, 'ms' => 10.0 ], [ 'server' => 'kea.example', 'bucket' => $now - 2, 'ms' => 10.0 ] ] );
+		$this->seed_request( [ 'server' => 'kea.example', 'bucket' => $now - 1, 'ms' => 10.0 ], partition: 1 );
+		$this->seed_request( [ 'server' => 'egret.example', 'bucket' => $now - 1, 'ms' => 900.0 ], partition: 3 );
+		$this->seed_request( [ 'server' => 'tui.example', 'bucket' => $now - 2, 'ms' => 200.0 ], partition: 2 );
+		$this->seed_request( [ 'server' => 'tui.example', 'bucket' => $now - 1, 'ms' => 200.0 ] );
+		$this->seed_request( [ 'server' => 'weka.example', 'bucket' => $now - 1, 'ms' => 50.0 ], partition: 1 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'top' => 2, 'top_by' => 'sum_ms', 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ 'bucket', 'server', 'count' ], $r['columns'] );
+		$this->assertSame( [ [ $now - 1, 'egret.example', 1 ], [ $now - 2, 'tui.example', 1 ], [ $now - 1, 'tui.example', 1 ] ], $r['rows'] );
+		$this->assertSame( 4, $r['groups'] );
+	}
+
+	public function test_a_top_tie_breaks_on_the_group_values(): void {
+		$this->seed_request( [ 'server' => 'ruru.example', 'ms' => 50.0 ] );
+		$this->seed_request( [ 'server' => 'hihi.example', 'ms' => 50.0 ], partition: 3 );
+		$this->seed_request( [ 'server' => 'kaka.example', 'ms' => 10.0 ], partition: 2 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server', 'bucket' ], 'measure' => [ 'sum_ms' ], 'top' => 1, 'top_by' => 'sum_ms', 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ 'hihi.example', Bucket::id( self::NOW ), 50.0 ] ], $r['rows'] );
+		$this->assertSame( 3, $r['groups'] );
+	}
+
+	/** A tuple filed by several partitions is one group, ranked whole. */
+	public function test_top_counts_a_tuple_across_partitions_once(): void {
+		$hour = Bucket::hour( self::NOW );
+		$this->seed_request( [ 'server' => 'kea.example', 'method' => 'GET' ] );
+		$this->seed_request( [ 'server' => 'kea.example', 'method' => 'GET' ], partition: 3 );
+		$this->seed_request( [ 'server' => 'kea.example', 'method' => 'POST' ], partition: 1 );
+		$this->seed_request( [ 'server' => 'tui.example', 'method' => 'GET' ], partition: 2 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'hour', 'server', 'method' ], 'top' => 5, 'top_by' => 'count', 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ $hour, 'kea.example', 'GET', 2 ], [ $hour, 'kea.example', 'POST', 1 ], [ $hour, 'tui.example', 'GET', 1 ] ], $r['rows'] );
+		$this->assertSame( 3, $r['groups'] );
+	}
+
+	/**
+	 * A tuple's rank is the sum of its buckets' `top_by`, so only a measure
+	 * that adds across buckets ranks: a mean, a percentile, an extreme, a
+	 * distinct count or a latest stamp would rank by a figure no tuple has.
+	 */
+	public function test_top_by_a_measure_that_adds_across_buckets_alone(): void {
+		foreach ( [ 'requests' => [ 'avg_ms', 'p50_ms', 'p95_ms', 'urls', 'max_ms', 'min_ms', 'max_peak_mb', 'avg_peak_mb', 'last_seen', 'worker' ], 'timings' => [ 'avg_ms', 'avg_calls' ] ] as $source => $measures ) {
+			foreach ( $measures as $measure ) {
+				try {
+					Stats_Query::run( self::spec( [ 'source' => $source, 'group' => [ 'bucket', 'server' ], 'measure' => [ 'requests' === $source ? 'count' : 'ms' ], 'top' => 3, 'top_by' => $measure, 'buckets' => $this->last_day() ] ) );
+					$this->fail( "refused: {$source} {$measure}" );
+				} catch ( \InvalidArgumentException $e ) {
+					$this->assertStringContainsString( "top_by {$measure}", $e->getMessage() );
+					$this->assertStringContainsString( 'adds across buckets', $e->getMessage() );
+				}
+			}
+		}
+	}
+
+	public function test_top_by_ranks_by_the_sum_over_the_selection_of_an_additive_measure(): void {
+		$now = Bucket::id( self::NOW );
+		$this->seed_request( [ 'server' => 'kea.example', 'bucket' => $now - 3, 'error' => 'T', 'ms' => null ] );
+		$this->seed_request( [ 'server' => 'kea.example', 'bucket' => $now - 1, 'error' => 'F' ], partition: 2 );
+		$this->seed_request( [ 'server' => 'tui.example', 'bucket' => $now - 2, 'error' => 'T', 'ms' => null ], partition: 1 );
+		foreach ( [ 0, 1, 3 ] as $partition ) {
+			$this->seed_request( [ 'server' => 'weka.example', 'bucket' => $now - 2 ], partition: $partition );
+		}
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'measure' => [ 'count', 'errors' ], 'top' => 1, 'top_by' => 'errors', 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ $now - 3, 'kea.example', 1, 1 ], [ $now - 1, 'kea.example', 1, 1 ] ], $r['rows'], 'two errors over two buckets outrank one, and three clean requests' );
+		$this->assertSame( 3, $r['groups'] );
+	}
+
+	public function test_top_over_no_rows_counts_no_groups(): void {
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'top' => 3, 'top_by' => 'count', 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [], $r['rows'] );
+		$this->assertSame( 0, $r['groups'] );
+	}
+
+	public function test_top_keeps_the_rollup_and_the_site_timings(): void {
+		$hour = Bucket::hour( self::NOW );
+		$this->seed_hourly( [ 'hour' => $hour - 1, 'status_class' => 5, 'count' => 9 ] );
+		$this->seed_hourly( [ 'hour' => $hour - 1, 'status_class' => 2, 'count' => 4 ], partition: 3 );
+		$this->seed_hourly( [ 'hour' => $hour - 2, 'status_class' => 3, 'count' => 2 ], partition: 1 );
+		$this->seed_site_timing( [ 'category' => 'sql', 'ms' => 40.0 ] );
+		$this->seed_site_timing( [ 'category' => 'init', 'ms' => 90.0 ], partition: 2 );
+		$hourly  = self::spec( [ 'source' => 'requests', 'group' => [ 'hour', 'status_class' ], 'top' => 2, 'top_by' => 'count', 'buckets' => $this->last_hours() ] );
+		$timings = self::spec( [ 'source' => 'timings', 'group' => [ 'bucket', 'category' ], 'measure' => [ 'ms' ], 'top' => 1, 'top_by' => 'ms', 'buckets' => $this->last_day() ] );
+
+		$by_hour = Stats_Query::run( $hourly );
+		$by_cat  = Stats_Query::run( $timings );
+
+		$this->assertSame( 'requests_hourly', $by_hour['table'] );
+		$this->assertSame( [ [ $hour - 1, 5, 9 ], [ $hour - 1, 2, 4 ] ], $by_hour['rows'] );
+		$this->assertSame( 3, $by_hour['groups'] );
+		$this->assertSame( 'timings_site', $by_cat['table'] );
+		$this->assertSame( [ [ Bucket::id( self::NOW ), 'init', 90.0 ] ], $by_cat['rows'] );
+	}
+
+	/** A `top_by` the rollup does not keep reads the request rows. */
+	public function test_a_top_by_the_rollup_lacks_reads_requests(): void {
+		$this->assertSame( 'requests', Stats_Query::table_for( self::spec( [ 'source' => 'requests', 'group' => [ 'hour', 'server' ], 'top' => 2, 'top_by' => 'p95_ms', 'buckets' => $this->last_hours() ] ) ) );
+	}
+
+	public function test_a_top_spec_is_refused_where_it_cannot_rank(): void {
+		$base = [ 'source' => 'requests', 'buckets' => $this->last_day(), 'top_by' => 'count', 'top' => 2, 'group' => [ 'bucket', 'server' ] ];
+		foreach (
+			[
+				[ [ 'group' => [ 'server' ] ], 'a time field' ],
+				[ [ 'group' => [ 'bucket', 'hour' ] ], 'a non-time field' ],
+				[ [ 'limit' => 5 ], 'limit' ],
+				[ [ 'offset' => 0 ], 'offset' ],
+				[ [ 'sort' => 'count' ], 'sort' ],
+				[ [ 'top' => 21 ], 'top 21' ],
+				[ [ 'top' => 0 ], 'top 0' ],
+				[ [ 'top_by' => 'calls' ], 'calls' ],
+				[ [ 'top_by' => null ], 'top_by' ],
+				[ [ 'top' => null ], 'top_by count' ],
+			] as [ $over, $needle ]
+		) {
+			try {
+				Stats_Query::run( \array_filter( self::spec( $over + $base ), static fn ( mixed $value ): bool => null !== $value ) );
+				$this->fail( "refused: {$needle}" );
+			} catch ( \InvalidArgumentException $e ) {
+				$this->assertStringContainsString( $needle, $e->getMessage() );
+			}
+		}
+		$this->assertSame( 20, Stats_Query::MAX_TOP );
 	}
 
 	/**
@@ -447,6 +593,7 @@ final class StatsQueryTest extends TestCase {
 				'table'   => 'requests',
 				'columns' => [ 'bucket', 'count', 'max_ms' ],
 				'rows'    => [ [ Bucket::key( $now - 6 ), 1, 100 ], [ Bucket::key( $now - 5 ), 1, 100 ] ],
+				'groups'  => null,
 				'available' => true,
 				'filters' => [
 					'filter' => [ 'status_class' => [ '2', '5' ] ],
@@ -479,6 +626,34 @@ final class StatsQueryTest extends TestCase {
 
 		$this->assertSame( [ [ 'kea.example', 2 ], [ 'tui.example', 1 ] ], $reply['rows'] );
 		$this->assertSame( 'seed', $reply['filters']['search'] );
+	}
+
+	public function test_the_query_verb_ranks_under_top_and_answers_groups(): void {
+		$now = Bucket::id( self::NOW );
+		$this->seed_request( [ 'server' => 'kea.example', 'bucket' => $now - 3, 'ms' => 5.0 ] );
+		$this->seed_request( [ 'server' => 'kea.example', 'bucket' => $now - 3, 'ms' => 5.0 ], partition: 3 );
+		$this->seed_request( [ 'server' => 'pukeko.example', 'bucket' => $now - 4, 'ms' => 640.0 ], partition: 1 );
+
+		$reply = self::query( 'requests', 'bucket', 'server', '--measure=count', '--top=1', '--top_by=sum_ms' );
+
+		$this->assertSame( [ [ Bucket::key( $now - 4 ), 'pukeko.example', 1 ] ], $reply['rows'] );
+		$this->assertSame( 2, $reply['groups'] );
+	}
+
+	public function test_the_query_verb_names_the_measures_top_ranks_by(): void {
+		$query = \array_values( \array_filter( Performance_CI_Node::node_schema()['commands'], static fn ( array $verb ): bool => 'query' === $verb['name'] ) )[0];
+		$top_by = \array_values( \array_filter( $query['args'], static fn ( array $arg ): bool => 'top_by' === $arg['name'] ) )[0];
+
+		foreach ( [ 'count', 'timed', 'sum_ms', 'sum_peak_mb', 'errors', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'ms', 'calls', 'requests' ] as $additive ) {
+			$this->assertStringContainsString( "`{$additive}`", $top_by['description'], $additive );
+		}
+	}
+
+	public function test_the_query_verb_refuses_top_with_a_limit(): void {
+		$reply = self::query( 'requests', 'bucket', 'server', '--measure=count', '--top=3', '--top_by=count', '--limit=40' );
+
+		$this->assertIsString( $reply );
+		$this->assertStringContainsString( 'limit', $reply );
 	}
 
 	public function test_a_bucket_filter_takes_keys(): void {

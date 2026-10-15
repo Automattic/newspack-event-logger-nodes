@@ -2,18 +2,21 @@
  * What the Performance charts read off a `performance` reply: the time axis
  * and the series drawn over it.
  *
- * The axis is the reply's `slots`: one five-minute slot per bucket key,
- * `YYYY-MM-DD-HH-MM`, 288 of them ending at the bucket the reply read the
- * clock in. Every slot carries the seconds it spans. Nothing here reads a
- * clock: the reply said which slots it drew, and the axis is those.
+ * The axis is the buckets a reply read — the `overview` reply's `slots`, or a
+ * `query` answer's echoed selection through `answerSlots()`: one five-minute
+ * slot per bucket key, `YYYY-MM-DD-HH-MM`, 288 of them ending at the bucket
+ * the reply read the clock in. Every slot carries the seconds it spans.
+ * Nothing here reads a clock: the reply said which buckets it read, and the
+ * axis is those.
  *
- * A series is a name table, `{ names, buckets: { bucket: [ [ nameIndex,
- * ...fields ] ] } }` (decision 18 at the wire). `decodeNameTable()` is the
- * one reader of that shape: it checks it once and hands every row back under
- * named fields, so no chart indexes a row by number.
+ * A series is a `query` answer grouped by `bucket` and the dimensions it
+ * breaks down by, one positional row per bucket and tuple. `decodeRows()` is
+ * the one reader of that shape: it checks it once and hands every row back
+ * under its measures' names, so no chart indexes a row by number.
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
+import { __, sprintf } from '@wordpress/i18n';
 import {
 	BUCKET_MS,
 	BUCKET_SECONDS,
@@ -31,7 +34,7 @@ const keyStart = ( key ) => {
 };
 
 /**
- * Buckets a selection may hold: the chart's 288, `MAX_READ_BUCKETS` in PHP.
+ * Buckets a selection may hold: the chart's 288, `Bucket::MAX_SELECTION`.
  *
  * @type {number}
  */
@@ -47,9 +50,8 @@ const keyAt = ( ms ) =>
 	new Date( ms ).toISOString().slice( 0, 16 ).replace( /[T:]/g, '-' );
 
 /**
- * Where one piece of a spelling opens: the twin of
- * `Stats_Store::selected_start()`, so a key passes only when it is the key of
- * its own first instant.
+ * Where one piece of a spelling opens: the twin of `Bucket::of_key()`, so a
+ * key passes only when it is the key of its own first instant.
  *
  * @param {string} key A piece of a spelling.
  * @return {?number} The bucket's first instant, in milliseconds; null for a
@@ -65,8 +67,7 @@ const selectedStart = ( key ) => {
 
 /**
  * The bucket keys a selection's spelling names, ascending, each once: the
- * twin of `Stats_Store::bucket_selection()`, selecting nothing where that
- * one refuses.
+ * twin of `Bucket::selection()`, selecting nothing where that one refuses.
  *
  * A spelling is comma-separated runs, each `start` or `start..end` over
  * bucket keys; `bucketSpelling()` writes the canonical one. '' selects
@@ -202,8 +203,7 @@ export const runSpan = ( run ) => {
 
 /**
  * A selection's canonical spelling: its keys as runs, each adjacent pair
- * merged, a lone bucket spelled alone. The twin of
- * `Stats_Store::bucket_spelling()`.
+ * merged, a lone bucket spelled alone. The twin of `Bucket::spelling()`.
  *
  * @param {string[]} keys Bucket keys, ascending, each once.
  * @return {string} The spelling; '' for none.
@@ -376,89 +376,151 @@ export const useSelectedSlots = ( axis, selectedBuckets ) =>
 	}, [ axis, selectedBuckets ] );
 
 /**
- * A dimensional row's fields, in wire order: `DIM_SUMS` — requests, the
- * timed ones' summed milliseconds, summed peak MB, and the timed requests,
- * which an average divides by (decision 24).
+ * How a field's value reads in a series name where the answer's own spelling
+ * would not, and how a typed one reads back: a status class as `5xx`.
  *
- * @type {string[]}
+ * @type {Object<string,{name: (value: *) => string, read: (typed: string) => string}>}
  */
-export const DIM_FIELDS = [ 'count', 'sumMs', 'sumPeakMb', 'timed' ];
-
-/**
- * A category row's fields, in wire order: the `CAT_SUMS` triple — `t`
- * milliseconds of wall time, `c` events fired, `n` requests it appeared in.
- *
- * @type {string[]}
- */
-export const CAT_FIELDS = [ 't', 'c', 'n' ];
-
-/**
- * True when a reply's bucket map has the shape a name table promises. PHP
- * encodes an EMPTY map as a JSON list, so `[]` is a bucket map with nothing
- * in it, and any other list is not a bucket map at all.
- *
- * @param {*} buckets The reply's `buckets`.
- * @return {boolean} True for an object, or an empty list.
- */
-const isBucketMap = ( buckets ) =>
-	Array.isArray( buckets )
-		? 0 === buckets.length
-		: null !== buckets && 'object' === typeof buckets;
-
-/**
- * Decode a name-table series into rows under named fields, checking the
- * shape once. A reply that breaks it anywhere is refused whole, so a caller
- * draws its empty state rather than a series with holes it cannot see.
- *
- * @param {*}        wire   The reply's series.
- * @param {string[]} fields The row's field names, in wire order.
- * @return {{names: string[], byBucket: Object<string,Object<number,Object<string,number>>>, rows: number}|null}
- * `byBucket[ bucket ][ nameIndex ]` is one row's fields by name, and `rows`
- * counts them; null for a malformed reply.
- */
-export const decodeNameTable = ( wire, fields ) => {
-	const names = wire?.names;
-	if (
-		! Array.isArray( names ) ||
-		! names.every( ( name ) => 'string' === typeof name ) ||
-		! isBucketMap( wire.buckets )
-	) {
-		return null;
-	}
-	const width = fields.length + 1;
-	/** @type {Object<string,Object<number,Object<string,number>>>} */
-	const byBucket = {};
-	let rows = 0;
-	for ( const [ bucket, list ] of Object.entries( wire.buckets ) ) {
-		if ( ! Array.isArray( list ) ) {
-			return null;
-		}
-		/** @type {Object<number,Object<string,number>>} */
-		const row = {};
-		for ( const values of list ) {
-			if (
-				! Array.isArray( values ) ||
-				width !== values.length ||
-				! values.every( Number.isFinite ) ||
-				undefined === names[ values[ 0 ] ]
-			) {
-				return null;
-			}
-			row[ values[ 0 ] ] = Object.fromEntries(
-				fields.map( ( field, at ) => [ field, values[ at + 1 ] ] )
-			);
-			rows++;
-		}
-		byBucket[ bucket ] = row;
-	}
-	return { names, byBucket, rows };
+const SPELLINGS = {
+	status_class: {
+		name: ( value ) =>
+			/^\d$/.test( String( value ) ) ? `${ value }xx` : String( value ),
+		read: ( typed ) => typed.replace( /^(\d)xx$/i, '$1' ),
+	},
 };
 
 /**
- * True when a decoded series holds a row to draw. Buckets alone are not
- * content: a bucket with no rows has nothing to plot.
+ * A field's value as a series name or a chip spells it: a status class as
+ * `5xx`, anything else as it is.
  *
- * @param {{rows: number}|null} decoded A `decodeNameTable()` result.
- * @return {boolean} True when at least one bucket holds a row.
+ * @param {string} field The field it is a value of.
+ * @param {*}      value The value, as an answer or a chip holds it.
+ * @return {string} Its name.
  */
-export const hasRows = ( decoded ) => null !== decoded && decoded.rows > 0;
+export const valueName = ( field, value ) =>
+	( SPELLINGS[ field ]?.name ?? String )( value );
+
+/**
+ * A typed filter value as the answer spells it, so `status_class=5xx`
+ * filters what a `5xx` series names.
+ *
+ * @param {string} field The field it filters.
+ * @param {string} typed The value as typed.
+ * @return {string} The value as `query` matches it.
+ */
+export const filterValue = ( field, typed ) =>
+	SPELLINGS[ field ]?.read( typed ) ?? typed;
+
+/**
+ * One row's series name: its dimensions' values, ` · `-joined.
+ *
+ * @param {Array}    row  The answer's row.
+ * @param {string[]} dims The dimensions, in name order.
+ * @param {number[]} at   Each dimension's column.
+ * @return {string} The name.
+ */
+const seriesName = ( row, dims, at ) =>
+	dims.map( ( dim, i ) => valueName( dim, row[ at[ i ] ] ) ).join( ' · ' );
+
+/**
+ * The dimensions a chart breaks down by: its first, and its second where one
+ * is chosen and differs from the first.
+ *
+ * @param {{breakdown: string, thenBy: string}} chart The chart's dimensions.
+ * @return {string[]} One or two field names.
+ */
+export const chartDims = ( { breakdown, thenBy } ) =>
+	thenBy && thenBy !== breakdown ? [ breakdown, thenBy ] : [ breakdown ];
+
+/**
+ * Decode a `query` answer grouped by `bucket` and `dims` into one series per
+ * tuple of `dims`, checking the shape once. An answer that breaks it anywhere
+ * is refused whole, so a caller draws its empty state rather than a series
+ * with holes it cannot see.
+ *
+ * @param {*}        answer   The `query` answer: `{ columns, rows }`.
+ * @param {string[]} dims     The non-time fields it groups by.
+ * @param {string[]} measures The measures each series reads.
+ * @return {{names: string[], byBucket: Object<string,Object<string,Object<string,number>>>}|null}
+ * `names` in the order the answer ranked them, and `byBucket[ bucket ][ name ]`
+ * one row's measures by name; null for a malformed answer.
+ */
+export const decodeRows = ( answer, dims, measures ) => {
+	const columns = answer?.columns;
+	if ( ! Array.isArray( columns ) || ! Array.isArray( answer.rows ) ) {
+		return null;
+	}
+	const bucketAt = columns.indexOf( 'bucket' );
+	const dimAt = dims.map( ( dim ) => columns.indexOf( dim ) );
+	const measureAt = measures.map( ( measure ) => columns.indexOf( measure ) );
+	if ( [ bucketAt, ...dimAt, ...measureAt ].includes( -1 ) ) {
+		return null;
+	}
+	const names = [];
+	/** @type {Object<string,Object<string,Object<string,number>>>} */
+	const byBucket = {};
+	for ( const row of answer.rows ) {
+		if (
+			! Array.isArray( row ) ||
+			columns.length !== row.length ||
+			! /^\d{4}(-\d{2}){4}$/.test( row[ bucketAt ] ) ||
+			! measureAt.every( ( at ) => Number.isFinite( row[ at ] ) )
+		) {
+			return null;
+		}
+		const name = seriesName( row, dims, dimAt );
+		if ( ! names.includes( name ) ) {
+			names.push( name );
+		}
+		byBucket[ row[ bucketAt ] ] = {
+			...byBucket[ row[ bucketAt ] ],
+			[ name ]: Object.fromEntries(
+				measures.map( ( measure, i ) => [
+					measure,
+					row[ measureAt[ i ] ],
+				] )
+			),
+		};
+	}
+	return { names, byBucket };
+};
+
+/**
+ * True when a decoded answer holds a series to draw.
+ *
+ * @param {{names: string[]}|null} decoded A `decodeRows()` result.
+ * @return {boolean} True when it names at least one series.
+ */
+export const hasRows = ( decoded ) =>
+	null !== decoded && decoded.names.length > 0;
+
+/**
+ * The buckets a `query` answer read, as its echoed selection names them:
+ * the axis its series are drawn over.
+ *
+ * @param {?{filters: {bucket: string}}} answer A `query` answer, or null.
+ * @return {string[]|null} Bucket keys, newest first; null before an answer.
+ */
+export const answerSlots = ( answer ) =>
+	answer ? bucketsOf( answer.filters.bucket ).reverse() : null;
+
+/**
+ * The line under a chart whose answer ranked more series than it holds.
+ *
+ * @param {{names: string[]}|null} decoded The chart's decoded answer.
+ * @param {?number}                groups  The tuples its selection holds.
+ * @return {?string} `Showing the top 20 of 41 series.`; null when every
+ * series is drawn.
+ */
+export const topNote = ( decoded, groups ) =>
+	hasRows( decoded ) && groups > decoded.names.length
+		? sprintf(
+				// translators: 1: series drawn, 2: series the window holds.
+				__(
+					'Showing the top %1$d of %2$d series.',
+					'newspack-event-logger-nodes'
+				),
+				decoded.names.length,
+				groups
+		  )
+		: null;
