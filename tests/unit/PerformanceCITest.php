@@ -256,6 +256,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayHasKey( 'offset', $result );
 		$this->assertSame( [], $result['data'] );
 		$this->assertSame( 0, $result['rows'] );
+		$this->assertTrue( $result['available'] );
 	}
 
 	public function test_urls_verb_default_limit_is_50(): void {
@@ -2157,7 +2158,8 @@ class PerformanceCITest extends TestCase {
 		$this->assertCount( 288, $reply['slots'] );
 		$this->assertSame( Bucket::key( $latest ), $reply['slots'][0], 'newest first' );
 		$this->assertSame( Bucket::key( $latest - 287 ), $reply['slots'][287] );
-		$this->assertSame( [ 'totals', 'slots', 'servers', 'leaderboard' ], \array_keys( $reply ) );
+		$this->assertSame( [ 'totals', 'slots', 'servers', 'leaderboard', 'available' ], \array_keys( $reply ) );
+		$this->assertTrue( $reply['available'] );
 	}
 
 	public function test_a_leaderboard_of_no_profiled_request_has_no_means(): void {
@@ -2307,6 +2309,10 @@ class PerformanceCITest extends TestCase {
 		$this->assertCount( 1, $lines );
 	}
 
+	/**
+	 * The picker lists every server with traffic in the chart's window, a
+	 * server that serves only cron or job requests among them.
+	 */
 	public function test_overview_servers_lists_each_server_by_count(): void {
 		foreach ( [ 'kea.example' => 3, 'egret.example' => 1, 'weka.example' => 2 ] as $server => $n ) {
 			for ( $i = 0; $i < $n; $i++ ) {
@@ -2319,7 +2325,7 @@ class PerformanceCITest extends TestCase {
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', '--server=egret.example' );
 
-		$this->assertSame( [ 'kea.example', 'weka.example', 'egret.example' ], $reply['servers'], 'a server filter leaves the list whole' );
+		$this->assertSame( [ 'cron.example', 'kea.example', 'weka.example', 'egret.example' ], $reply['servers'], 'a worker-only server is listed, and a server filter leaves the list whole' );
 		$this->assertSame( 1, $reply['totals']['requests'], 'and scopes the totals' );
 	}
 
@@ -2387,7 +2393,7 @@ class PerformanceCITest extends TestCase {
 			],
 			$reply['data'][0]
 		);
-		$this->assertSame( [ 'data', 'rows', 'totals', 'slowest', 'filters', 'limit', 'offset' ], \array_keys( $reply ) );
+		$this->assertSame( [ 'data', 'rows', 'totals', 'slowest', 'filters', 'limit', 'offset', 'available' ], \array_keys( $reply ) );
 	}
 
 	public function test_urls_sorts_by_avg_ms_request_weighted(): void {
@@ -2571,12 +2577,14 @@ class PerformanceCITest extends TestCase {
 		VerbHarness::reset();
 		$urls = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
-		$this->assertSame( [ 'requests' => 0, 'timed' => 0, 'avg_ms' => null, 'avg_peak_mb' => null, 'errors' => 0, 'urls' => 0 ], $overview['totals'] );
+		$this->assertNull( $overview['totals'], 'no totals, never zeroes' );
+		$this->assertFalse( $overview['available'] );
 		$this->assertSame( [], $overview['servers'] );
 		$this->assertSame( [ 'count' => 0, 'total_time' => null, 'avg_ms' => null, 'categories' => [] ], $overview['leaderboard'] );
 		$this->assertSame( [], $urls['data'] );
 		$this->assertSame( 0, $urls['rows'] );
-		$this->assertSame( [ 'urls' => 0, 'requests' => 0, 'avg_ms' => null, 'avg_peak_mb' => null, 'requests_per_second' => 0 ], $urls['totals'], 'a whole rate crosses the wire as an integer' );
+		$this->assertNull( $urls['totals'], 'no totals, never zeroes' );
+		$this->assertFalse( $urls['available'] );
 		$this->assertNotEmpty(
 			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: stats rows did not open' ) ),
 			'the reader says so'
@@ -2980,14 +2988,6 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsString( $reply );
 		$this->assertStringContainsString( 'URL not found: deadbeefcafe', $reply );
-	}
-
-	public function test_url_breakdown_is_no_verb(): void {
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_breakdown', 'a4471ab0c0de --breakdown=method' );
-
-		$this->assertIsString( $reply );
-		$this->assertStringContainsString( 'unknown command: url_breakdown', $reply );
-		$this->assertArrayNotHasKey( 'url_breakdown', self::verbs_by_name() );
 	}
 
 	public function test_dump_url_declares_its_hash_server_errors_only_and_bucket(): void {

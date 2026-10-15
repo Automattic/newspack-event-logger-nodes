@@ -104,6 +104,44 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 'AU', 'Kakapo/2.0', 't13d1517h2', 'bot@kea.example', '-', 1 ], [ 'Unknown', 'Unknown', 'Unknown', 'Unknown', 'T', 1 ] ], $named['rows'] );
 	}
 
+	/**
+	 * A second page of the same groups, in its own order, rides the one
+	 * statement: `also` answers it beside `rows`.
+	 */
+	public function test_a_second_order_of_the_same_groups_answers_as_also(): void {
+		foreach ( [ [ 'kea', 3, 20.5 ], [ 'tui', 2, 90.5 ], [ 'weka', 1, 55.5 ] ] as [ $name, $count, $ms ] ) {
+			for ( $i = 0; $i < $count; $i++ ) {
+				$this->seed_request( [ 'url' => "https://seed.example/{$name}-6640/", 'ms' => $ms ], partition: $i );
+			}
+		}
+		$hash = static fn ( string $name ): string => Log_Manager::url_hash( "https://seed.example/{$name}-6640/" );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'measure' => [ 'count', 'avg_ms' ], 'buckets' => $this->last_day(), 'sort' => 'count', 'order' => 'desc', 'limit' => 2, 'also' => [ 'sort' => 'avg_ms', 'order' => 'desc', 'limit' => 1 ] ] ) );
+
+		$this->assertSame( [ $hash( 'kea' ), $hash( 'tui' ) ], \array_column( $r['rows'], 0 ) );
+		$this->assertSame( [ [ $hash( 'tui' ), 'https://seed.example/tui-6640/', 2, 90.5 ] ], $r['also'] );
+	}
+
+	/** An `also` the groups cannot answer, or one beside a top, is refused. */
+	public function test_an_also_is_refused_where_it_cannot_page(): void {
+		$base = [ 'source' => 'requests', 'group' => [ 'url' ], 'buckets' => $this->last_day() ];
+		foreach (
+			[
+				[ [ 'also' => [ 'sort' => 'p95_ms', 'limit' => 3 ] ], 'unknown also sort p95_ms' ],
+				[ [ 'also' => [ 'sort' => 'count', 'order' => 'sideways' ] ], 'unknown also order sideways' ],
+				[ [ 'also' => [ 'sort' => 'count', 'limit' => 1001 ] ], 'also limit 1001' ],
+				[ [ 'group' => [ 'bucket', 'url' ], 'top' => 2, 'top_by' => 'count', 'also' => [ 'sort' => 'count' ] ], 'top takes no also' ],
+			] as [ $over, $needle ]
+		) {
+			try {
+				Stats_Query::run( self::spec( $over + $base ) );
+				$this->fail( "refused: {$needle}" );
+			} catch ( \InvalidArgumentException $e ) {
+				$this->assertStringContainsString( $needle, $e->getMessage() );
+			}
+		}
+	}
+
 	public function test_hourly_fields_read_requests_hourly(): void {
 		$hour = Bucket::hour( self::NOW );
 		$this->seed_hourly( [ 'hour' => $hour - 2, 'country' => '', 'count' => 7, 'timed' => 7, 'sum_ms' => 70.0, 'status_class' => 0 ] );
@@ -575,6 +613,45 @@ final class StatsQueryTest extends TestCase {
 	 */
 	private static function query( string ...$tokens ): mixed {
 		return VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', $tokens );
+	}
+
+	/**
+	 * `query` reaches back as far as its source keeps rows: a week of
+	 * `requests`, 2,016 buckets, answered from the hourly rollup.
+	 */
+	public function test_a_query_selects_the_whole_week_its_source_keeps(): void {
+		$hour = Bucket::hour( self::NOW );
+		$this->seed_hourly( [ 'hour' => $hour - 72, 'count' => 13 ] );
+		$this->seed_hourly( [ 'hour' => $hour - 1, 'count' => 4 ], partition: 3 );
+		$this->seed_hourly( [ 'hour' => $hour - 169, 'count' => 900 ] );
+		$week = Bucket::key( ( $hour - 168 ) * 12 ) . '..' . Bucket::key( $hour * 12 - 1 );
+
+		$reply = self::query( 'requests', 'day', '--measure=count', "--bucket={$week}", '--sort=day' );
+
+		$this->assertSame( 'requests_hourly', $reply['table'] );
+		$this->assertSame( [ [ intdiv( $hour - 72, 24 ), 13 ], [ intdiv( $hour - 1, 24 ), 4 ] ], $reply['rows'] );
+		$this->assertSame( $week, $reply['filters']['bucket'] );
+	}
+
+	/** A selection past what its source keeps is refused, naming that bound. */
+	public function test_a_query_past_its_sources_retention_is_refused(): void {
+		$latest = Bucket::id( self::NOW );
+		foreach ( [ [ 'requests', 2016 ], [ 'timings', 300 ] ] as [ $source, $kept ] ) {
+			$over = Bucket::key( $latest - $kept ) . '..' . Bucket::key( $latest );
+
+			$reply = self::query( $source, '--measure=' . ( 'requests' === $source ? 'count' : 'ms' ), "--bucket={$over}" );
+
+			$this->assertSame( "bucket selection holds more than {$kept} buckets", \trim( Core::as_string( $reply ) ), $source );
+		}
+	}
+
+	/** The URL table keeps the chart's 288 whatever the sources keep. */
+	public function test_the_url_table_keeps_the_charts_selection(): void {
+		$latest = Bucket::id( self::NOW );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--bucket=' . Bucket::key( $latest - 288 ) . '..' . Bucket::key( $latest ) ] );
+
+		$this->assertSame( 'bucket selection holds more than 288 buckets', \trim( Core::as_string( $reply ) ) );
 	}
 
 	public function test_the_query_verb_spells_buckets_as_keys_and_echoes_its_filters(): void {

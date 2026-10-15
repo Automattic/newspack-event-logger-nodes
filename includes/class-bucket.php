@@ -27,7 +27,7 @@ final class Bucket {
 	/** Seconds an hour spans. */
 	public const HOUR_SECONDS = 3600;
 
-	/** Most buckets a selection names. */
+	/** Most buckets a chart's selection names: the 288 it draws. */
 	public const MAX_SELECTION = 288;
 
 	/**
@@ -42,12 +42,13 @@ final class Bucket {
 	 *
 	 * @param string $spelling A selection's spelling.
 	 * @param int    $now      The clock; a bucket after the one it falls in holds no rows.
+	 * @param int    $max      Most buckets it may name: `MAX_SELECTION` for a chart, a source's retention for a query.
 	 * @return list<array{0:int,1:int}> First and last bucket id of each run.
 	 * @throws \InvalidArgumentException On a piece that is no five-minute key, a run
 	 *                                   ending before it starts, a bucket after
-	 *                                   `$now`'s, or more than `MAX_SELECTION` buckets.
+	 *                                   `$now`'s, or more than `$max` buckets.
 	 */
-	public static function selection( string $spelling, int $now ): array {
+	public static function selection( string $spelling, int $now, int $max ): array {
 		if ( '' === $spelling ) {
 			return [];
 		}
@@ -67,8 +68,8 @@ final class Bucket {
 		}
 		$ranges = self::merged( $runs );
 		$count  = \array_sum( \array_map( static fn ( array $range ): int => $range[1] - $range[0] + 1, $ranges ) );
-		if ( $count > self::MAX_SELECTION ) {
-			throw new \InvalidArgumentException( 'bucket selection holds more than ' . self::MAX_SELECTION . ' buckets' );
+		if ( $count > $max ) {
+			throw new \InvalidArgumentException( "bucket selection holds more than {$max} buckets" );
 		}
 		return $ranges;
 	}

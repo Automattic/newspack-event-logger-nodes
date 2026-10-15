@@ -39,9 +39,11 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * non-time fields rank by the sum over their time rows of `top_by`, a measure
  * that adds across buckets, highest first and ties by their values, and every
  * time row of the top ones answers, in rank order, with `groups` the tuples
- * the selection holds.
+ * the selection holds. Under `also`, a second page of the same groups in
+ * an order of its own answers beside the first, from the one statement.
  *
- * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string}
+ * @phpstan-type Also array{sort:string, order:string, limit:int}
+ * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string, also:?Also}
  */
 final class Stats_Query {
 
@@ -61,6 +63,12 @@ final class Stats_Query {
 	private const KEYS = [
 		'requests' => [ 'rid' ],
 		'timings'  => [],
+	];
+
+	/** Buckets each source's rows reach back: the most a selection over it names. */
+	private const RETENTION = [
+		'requests' => Flame_Facts_Row_Schema::REQUESTS_BUCKETS,
+		'timings'  => Flame_Facts_Row_Schema::TIMINGS_BUCKETS,
 	];
 
 	/** Most rows one answer holds. */
@@ -268,12 +276,13 @@ final class Stats_Query {
 	/**
 	 * Answer a spec over every partition's rows. A fleet whose stats file
 	 * will not open says so once a window and answers no rows, `available`
-	 * false (decision 3).
+	 * false (decision 3). A spec naming `also` answers that page as `also`,
+	 * read from the same grouped rows as `rows`, so the union is scanned once.
 	 *
 	 * @param array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>,
 	 *              buckets:list<array{0:int,1:int}>, sort?:string, order?:string, limit?:int, offset?:int, search?:string,
-	 *              top?:int, top_by?:string} $spec
-	 * @return array{source:string, table:string, columns:list<string>, rows:list<list<mixed>>, groups:?int, available:bool}
+	 *              top?:int, top_by?:string, also?:Also} $spec
+	 * @return array{source:string, table:string, columns:list<string>, rows:list<list<mixed>>, groups:?int, available:bool, also?:list<list<mixed>>}
 	 * @throws \InvalidArgumentException naming an unknown source, field, measure
 	 *                                   or sort, a field the table read lacks,
 	 *                                   or a `top` it cannot rank.
@@ -295,14 +304,21 @@ final class Stats_Query {
 			$groups = [] === $rows ? 0 : Core::num_int( \array_slice( $rows[0], -1 )[0] ?? null );
 			$rows   = \array_map( static fn ( array $row ): array => \array_slice( $row, 0, -1 ), $rows );
 		}
+		$pages = [ $rows ?? [], [] ];
+		if ( null !== $spec['also'] ) {
+			$pages = [ [], [] ];
+			foreach ( $rows ?? [] as $row ) {
+				$pages[ Core::num_int( $row[ \count( $row ) - 1 ] ) ][] = \array_slice( $row, 0, -2 );
+			}
+		}
 		return [
 			'source'    => $spec['source'],
 			'table'     => $table,
 			'columns'   => self::columns( $spec ),
-			'rows'      => $rows ?? [],
+			'rows'      => $pages[0],
 			'groups'    => $groups,
 			'available' => null !== $rows,
-		];
+		] + ( null === $spec['also'] ? [] : [ 'also' => $pages[1] ] );
 	}
 
 	/**
@@ -409,14 +425,42 @@ final class Stats_Query {
 		if ( null !== $spec['top'] ) {
 			return [ self::ranked( $grouped, $columns, $groups, $keys ), [ ...$binds, $spec['top'] ] ];
 		}
-		$order = $groups;
-		if ( '' !== $spec['sort'] ) {
-			$sorted    = $sorts[ $spec['sort'] ] ?? throw new \LogicException( \esc_html( "sort {$spec['sort']} names no group or measure" ) );
-			$direction = ' ' . \strtoupper( $spec['order'] ) . ' NULLS LAST';
-			\array_unshift( $order, ...\array_map( static fn ( string $column ): string => $column . $direction, $sorted ) );
+		$order_by = static function ( string $sort, string $order ) use ( $groups, $sorts ): string {
+			$columns = $groups;
+			if ( '' !== $sort ) {
+				$sorted    = $sorts[ $sort ] ?? throw new \LogicException( \esc_html( "sort {$sort} names no group or measure" ) );
+				$direction = ' ' . \strtoupper( $order ) . ' NULLS LAST';
+				\array_unshift( $columns, ...\array_map( static fn ( string $column ): string => $column . $direction, $sorted ) );
+			}
+			return [] === $columns ? '' : ' ORDER BY ' . \implode( ', ', $columns );
+		};
+		$page = $order_by( $spec['sort'], $spec['order'] );
+		if ( null === $spec['also'] ) {
+			return [ "{$grouped}{$page} LIMIT ? OFFSET ?", [ ...$binds, $spec['limit'], $spec['offset'] ] ];
 		}
-		$sql = $grouped . ( [] === $order ? '' : ' ORDER BY ' . \implode( ', ', $order ) ) . ' LIMIT ? OFFSET ?';
-		return [ $sql, [ ...$binds, $spec['limit'], $spec['offset'] ] ];
+		return [
+			self::paged_twice( $grouped, $columns, $page, $order_by( $spec['also']['sort'], $spec['also']['order'] ) ),
+			[ ...$binds, $spec['offset'], $spec['offset'] + $spec['limit'], $spec['also']['limit'] ],
+		];
+	}
+
+	/**
+	 * Two pages of one grouped SELECT, read once: the grouped rows held as a
+	 * CTE, each page numbered in its own order and cut to its bounds, every
+	 * row carrying its number and its page, 0 or 1, last. Binds the first
+	 * page's offset and end, then the second's size.
+	 *
+	 * @param string       $grouped The grouped SELECT.
+	 * @param list<string> $columns The answer's columns, as it names them.
+	 * @param string       $first   The first page's ORDER BY clause, or ''.
+	 * @param string       $second  The second's.
+	 */
+	private static function paged_twice( string $grouped, array $columns, string $first, string $second ): string {
+		$listed = \implode( ', ', $columns );
+		return "WITH g AS MATERIALIZED ( {$grouped} ) "
+			. "SELECT {$listed}, r, 0 AS q FROM ( SELECT *, ROW_NUMBER() OVER ({$first} ) AS r FROM g ) WHERE r > ? AND r <= ? "
+			. "UNION ALL SELECT {$listed}, r, 1 AS q FROM ( SELECT *, ROW_NUMBER() OVER ({$second} ) AS r FROM g ) WHERE r <= ? "
+			. 'ORDER BY q, r';
 	}
 
 	/**
@@ -658,7 +702,7 @@ final class Stats_Query {
 	 */
 	private static function checked( array $spec ): array {
 		$source = Core::as_string( $spec['source'] ?? null );
-		$fields = self::FIELDS[ $source ] ?? throw new \InvalidArgumentException( \esc_html( "unknown source {$source}: one of " . \implode( ', ', \array_keys( self::FIELDS ) ) ) );
+		$fields = self::FIELDS[ $source ] ?? throw self::unknown_source( $source );
 		$group  = \array_values( \array_map( Core::as_string( ... ), Core::arr( $spec['group'] ?? null ) ) );
 		$filter = [];
 		foreach ( Core::arr( $spec['filter'] ?? null ) as $field => $values ) {
@@ -695,6 +739,7 @@ final class Stats_Query {
 		];
 		$checked['match']                     = '' === $checked['search'] ? '' : self::match( $checked['search'] );
 		[ $checked['top'], $checked['top_by'] ] = self::top( $spec, $source, $group );
+		$checked['also']                      = null;
 		if ( [] === $checked['buckets'] && [] === \array_intersect_key( $filter, \array_flip( self::KEYS[ $source ] ) ) ) {
 			throw new \InvalidArgumentException( 'a query names at least one bucket range, or a key to look up' );
 		}
@@ -717,7 +762,46 @@ final class Stats_Query {
 		if ( $checked['offset'] < 0 || $checked['offset'] > self::MAX_OFFSET ) {
 			throw new \InvalidArgumentException( \esc_html( "offset {$checked['offset']} is outside 0.." . self::MAX_OFFSET ) );
 		}
+		$checked['also'] = self::also( $spec, $sortable, null !== $checked['top'] );
 		return $checked;
+	}
+
+	/**
+	 * A spec's `also`, checked: a sort among the groups and measures, an
+	 * order and a page size, refused beside a `top`, whose rows come in rank
+	 * order. No `also` answers null.
+	 *
+	 * @param array<string,mixed> $spec     As `run()` takes it.
+	 * @param list<string>        $sortable What the spec may sort by.
+	 * @param bool                $top      Whether it names a top.
+	 * @return Also|null
+	 * @throws \InvalidArgumentException Naming what it refuses.
+	 */
+	private static function also( array $spec, array $sortable, bool $top ): ?array {
+		if ( null === ( $spec['also'] ?? null ) ) {
+			return null;
+		}
+		if ( $top ) {
+			throw new \InvalidArgumentException( 'top takes no also: its rows come in rank order' );
+		}
+		$also  = Core::arr( $spec['also'] );
+		$sort  = Core::as_string( $also['sort'] ?? '' );
+		$order = Core::as_string( $also['order'] ?? 'asc' );
+		$limit = Core::as_int( $also['limit'] ?? self::MAX_LIMIT );
+		if ( ! \in_array( $sort, $sortable, true ) ) {
+			throw new \InvalidArgumentException( \esc_html( "unknown also sort {$sort}: one of the groups and measures, " . \implode( ', ', $sortable ) ) );
+		}
+		if ( 'asc' !== $order && 'desc' !== $order ) {
+			throw new \InvalidArgumentException( \esc_html( "unknown also order {$order}: asc or desc" ) );
+		}
+		if ( $limit < 1 || $limit > self::MAX_LIMIT ) {
+			throw new \InvalidArgumentException( \esc_html( "also limit {$limit} is outside 1.." . self::MAX_LIMIT ) );
+		}
+		return [
+			'sort'  => $sort,
+			'order' => $order,
+			'limit' => $limit,
+		];
 	}
 
 	/**
@@ -780,6 +864,26 @@ final class Stats_Query {
 			return Core::canonical_decimal( $value ) ?? $value;
 		}
 		return \is_scalar( $value ) ? $value : null;
+	}
+
+	/**
+	 * The most buckets a selection over `$source` may name: as many as its
+	 * rows reach back, a week of `requests` and 25 hours of `timings`.
+	 *
+	 * @param string $source A source of `FIELDS`.
+	 * @throws \InvalidArgumentException On a source the vocabulary lacks.
+	 */
+	public static function retention( string $source ): int {
+		return self::RETENTION[ $source ] ?? throw self::unknown_source( $source );
+	}
+
+	/**
+	 * The refusal a source the vocabulary lacks answers.
+	 *
+	 * @param string $source The source asked for.
+	 */
+	private static function unknown_source( string $source ): \InvalidArgumentException {
+		return new \InvalidArgumentException( \esc_html( "unknown source {$source}: one of " . \implode( ', ', \array_keys( self::FIELDS ) ) ) );
 	}
 
 	/**

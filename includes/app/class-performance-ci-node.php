@@ -619,7 +619,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
 	 */
 	private static function url_detail( string $hash, string $server, bool $errors_only, string $spelling, int $now ): array {
-		$buckets = self::window( $spelling, $now );
+		$buckets = self::window( $spelling, $now, Bucket::MAX_SELECTION );
 		$filter  = self::scope( $server, true ) + [ 'url' => [ $hash ] ];
 		$answer  = Stats_Query::run(
 			[
@@ -1201,32 +1201,32 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The `overview` verb's answer over the chart's 288 buckets: the
 	 * non-worker requests' totals, their exact distinct URLs, every server
-	 * that served one, busiest first, and the leaderboard. A server scopes
-	 * the totals and the leaderboard; `servers` stays whole, so a scoped
-	 * dashboard can still name the rest.
+	 * with traffic there, worker traffic counted, busiest first, and the
+	 * leaderboard. A server scopes the totals and the leaderboard; `servers`
+	 * stays whole, so a scoped dashboard can still name the rest. Stats that
+	 * will not open answer `available` false and null totals, never zeroes.
 	 *
 	 * @param string $server Server to scope to; '' is every server.
 	 * @param int    $now    The reply's clock.
-	 * @return array{totals: array<string,mixed>, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>}
+	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, available: bool}
 	 */
 	private static function answer_overview( string $server, int $now ): array {
 		$chart   = Bucket::last( self::CHART_BUCKETS, $now );
-		$totals  = self::measures(
-			Stats_Query::run(
-				[
-					'source'  => 'requests',
-					'group'   => [],
-					'filter'  => self::scope( $server, false ),
-					'measure' => [ 'count', 'timed', 'avg_ms', 'avg_peak_mb', 'errors', 'urls' ],
-					'buckets' => $chart,
-				]
-			)
+		$answer  = Stats_Query::run(
+			[
+				'source'  => 'requests',
+				'group'   => [],
+				'filter'  => self::scope( $server, false ),
+				'measure' => [ 'count', 'timed', 'avg_ms', 'avg_peak_mb', 'errors', 'urls' ],
+				'buckets' => $chart,
+			]
 		);
+		$totals  = self::measures( $answer );
 		$servers = Stats_Query::run(
 			[
 				'source'  => 'requests',
 				'group'   => [ 'server' ],
-				'filter'  => self::scope( '', false ),
+				'filter'  => self::scope( '', true ),
 				'measure' => [ 'count' ],
 				'buckets' => $chart,
 				'sort'    => 'count',
@@ -1234,17 +1234,18 @@ class Performance_CI_Node extends Service_CI_Node {
 			]
 		);
 		return [
-			'totals'      => [
+			'totals'      => $answer['available'] ? [
 				'requests'    => Core::num_int( $totals['count'] ),
 				'timed'       => Core::num_int( $totals['timed'] ),
 				'avg_ms'      => Ask_Assembler::measured_figure( $totals['avg_ms'] ),
 				'avg_peak_mb' => Ask_Assembler::measured_figure( $totals['avg_peak_mb'] ),
 				'errors'      => Core::num_int( $totals['errors'] ),
 				'urls'        => Core::num_int( $totals['urls'] ),
-			],
+			] : null,
 			'slots'       => \array_map( Bucket::key( ... ), \range( $chart[0][1], $chart[0][0] ) ),
 			'servers'     => \array_column( $servers['rows'], 0 ),
 			'leaderboard' => self::site_leaderboard( $server, $now ),
+			'available'   => $answer['available'],
 		];
 	}
 
@@ -1420,11 +1421,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int         $offset  Page offset, inside `Stats_Query`'s bounds.
 	 * @param int         $limit   Page size, inside `Stats_Query`'s bounds.
 	 * @param int         $now     The reply's clock.
-	 * @return array{data: list<array<string,mixed>>, rows: int, totals: array<string,mixed>, slowest: list<array<string,mixed>>, filters: array<string,mixed>, limit: int, offset: int}
+	 * @return array{data: list<array<string,mixed>>, rows: int, totals: array<string,mixed>|null, slowest: list<array<string,mixed>>, filters: array<string,mixed>, limit: int, offset: int, available: bool}
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses or a search with no word.
 	 */
 	private static function url_page( string $server, array $filters, string $sort, string $order, int $offset, int $limit, int $now ): array {
-		$buckets = self::window( $filters['bucket'], $now );
+		$buckets = self::window( $filters['bucket'], $now, Bucket::MAX_SELECTION );
 		$filter  = self::scope( $server, $filters['include_workers'] ) + self::errors_filter( $filters['errors_only'] );
 		$base    = [
 			'source'  => 'requests',
@@ -1432,22 +1433,35 @@ class Performance_CI_Node extends Service_CI_Node {
 			'buckets' => $buckets,
 			'search'  => $filters['search'],
 		];
-		$totals  = self::measures( Stats_Query::run( $base + [ 'group' => [], 'measure' => [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ] ] ) );
-		$rows    = [ 'group' => [ 'url' ], 'measure' => self::URL_MEASURES ] + $base;
-		$page    = Stats_Query::run( $rows + [ 'sort' => self::URL_SORTS[ $sort ], 'order' => $order, 'limit' => $limit, 'offset' => $offset ] );
-		$slowest = Stats_Query::run( $rows + [ 'sort' => 'avg_ms', 'order' => 'desc', 'limit' => self::SLOWEST_ROWS ] );
+		$answer  = Stats_Query::run( $base + [ 'group' => [], 'measure' => [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ] ] );
+		$totals  = self::measures( $answer );
+		$page    = Stats_Query::run(
+			[
+				'group'   => [ 'url' ],
+				'measure' => self::URL_MEASURES,
+				'sort'    => self::URL_SORTS[ $sort ],
+				'order'   => $order,
+				'limit'   => $limit,
+				'offset'  => $offset,
+				'also'    => [
+					'sort'  => 'avg_ms',
+					'order' => 'desc',
+					'limit' => self::SLOWEST_ROWS,
+				],
+			] + $base
+		);
 		$count   = Core::num_int( $totals['count'] );
 		return [
 			'data'    => self::url_rows( $page ),
 			'rows'    => Core::num_int( $totals['urls'] ),
-			'totals'  => [
+			'totals'  => $answer['available'] ? [
 				'urls'                => Core::num_int( $totals['urls'] ),
 				'requests'            => $count,
 				'avg_ms'              => Ask_Assembler::measured_figure( $totals['avg_ms'] ),
 				'avg_peak_mb'         => Ask_Assembler::measured_figure( $totals['avg_peak_mb'] ),
 				'requests_per_second' => $count / self::elapsed_seconds( $buckets, $now ),
-			] + ( $filters['errors_only'] ? [ 'errors' => Core::num_int( $totals['errors'] ) ] : [] ),
-			'slowest' => self::url_rows( $slowest ),
+			] + ( $filters['errors_only'] ? [ 'errors' => Core::num_int( $totals['errors'] ) ] : [] ) : null,
+			'slowest' => self::url_rows( [ 'columns' => $page['columns'], 'rows' => $page['also'] ?? throw new \LogicException( 'a spec naming also answers it' ) ] ),
 			'filters' => [
 				'server'          => $server,
 				'search'          => $filters['search'],
@@ -1457,6 +1471,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			],
 			'limit'   => $limit,
 			'offset'  => $offset,
+			'available' => $answer['available'],
 		];
 	}
 
@@ -1557,7 +1572,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function answer_query( array $args, int $now ): array {
 		$spelling = Core::as_string( $args['bucket'] );
-		$buckets  = self::window( $spelling, $now );
+		$buckets  = self::window( $spelling, $now, Stats_Query::retention( Core::as_string( $args['source'] ) ) );
 		$filter   = [];
 		foreach ( Core::arr( $args['filter'] ) as $token ) {
 			$token = Core::as_string( $token );
@@ -1612,11 +1627,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string $spelling A `Bucket::selection()` spelling; '' for the chart's.
 	 * @param int    $now      The reply's clock.
+	 * @param int    $max      Most buckets the spelling may name.
 	 * @return list<array{0:int,1:int}>
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
 	 */
-	private static function window( string $spelling, int $now ): array {
-		return '' === $spelling ? Bucket::last( self::CHART_BUCKETS, $now ) : Bucket::selection( $spelling, $now );
+	private static function window( string $spelling, int $now, int $max ): array {
+		return '' === $spelling ? Bucket::last( self::CHART_BUCKETS, $now ) : Bucket::selection( $spelling, $now, $max );
 	}
 
 	/**
@@ -1672,7 +1688,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'overview',
 					'capability'  => Capabilities::READ,
-					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, the servers seen, busiest first, and the 25-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`.',
+					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 25-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null.',
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
@@ -1683,7 +1699,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order.',
+					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
@@ -1724,7 +1740,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],
 						[ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values; a bucket by its key.' ],
 						[ 'name' => 'measure', 'type' => 'string', 'required' => false, 'variadic' => true ],
-						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection as `Bucket::selection()` reads one; empty is the last 288 buckets.' ],
+						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection as `Bucket::selection()` reads one, at most as many buckets as the source keeps, `Stats_Query::retention()`: 2,016 for `requests`, 300 for `timings`; empty is the last 288 buckets.' ],
 						[ 'name' => 'search', 'type' => 'string', 'required' => false, 'default' => '' ],
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => '' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'asc' ],

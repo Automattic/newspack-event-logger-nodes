@@ -483,7 +483,7 @@ class McpControllerTest extends TestCase {
 			\trim( \substr( $text, \strlen( '<site-data>' ), -\strlen( '</site-data>' ) ) ),
 			true
 		);
-		$this->assertSame( [ 'totals', 'slots', 'servers', 'leaderboard' ], \array_keys( $decoded ) );
+		$this->assertSame( [ 'totals', 'slots', 'servers', 'leaderboard', 'available' ], \array_keys( $decoded ) );
 	}
 
 	/**
@@ -566,6 +566,7 @@ class McpControllerTest extends TestCase {
 			$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30', $tools[ $tool ]['args']['bucket'], $tool );
 			$this->assertStringContainsString( '288', $tools[ $tool ]['args']['bucket'], $tool );
 		}
+		$this->assertStringContainsString( '2,016 (seven days) for `requests` and 300 (25 hours) for `timings`', $tools['performance_query']['args']['bucket'], 'a query reaches its source\'s retention' );
 	}
 
 	public function test_a_json_false_reaches_the_verb_as_false(): void {
