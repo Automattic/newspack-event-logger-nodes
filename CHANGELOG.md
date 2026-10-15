@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.134.1] - 2026-10-15
+
 ### Changed
 
 - **The Performance chart's filter box sits on the select row and takes the rest of it.** It follows Then by and grows to fill the line, at least 18em, instead of a narrow box on a row of its own. The Loading pill stays beside the selects.
