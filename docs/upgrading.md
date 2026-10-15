@@ -17,7 +17,12 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   broker, takes the same rewrite: move each pair to an `add_source <source>
   <target>` line. The bundled stream hooks hand the page link
   `addSource( stamp, target )` calls. An older substrate refuses both, so the
-  plugin stays dormant below 2.110.0. Deploy the substrate first.
+  plugin stays dormant below 2.110.0. Deploy the two together: deploying
+  the substrate first is not enough this time, because the previous release
+  (0.132.x, floor 2.109.0) passes 2.110.0's handshake and then breaks on
+  it — its `aggregator.tsl` still carries pairs, which the substrate reads
+  as unreadable, so the hub stops pulling its spokes, and its bundled stream
+  hooks call `addPairs()`, which the page's `_stream` link no longer has.
 
 - **This release needs newspack-nodes 2.109.0, which spells a log stamp with
   `:` and a broker pair with `=`.** `aggregator.tsl` now writes
