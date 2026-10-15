@@ -103,7 +103,7 @@ class VerbRoleDeclarationsTest extends TestCase {
 		$this->assertInstanceOf( Performance_CI_Node::class, $performance );
 		$payload = $performance->dispatch( 'overview' );
 		$this->assertIsArray( $payload );
-		$this->assertArrayHasKey( 'total_requests', $payload );
+		$this->assertArrayHasKey( 'totals', $payload );
 
 		$rules = \Newspack_Nodes\Core::node( 'rules' );
 		$this->assertInstanceOf( Rules_CI_Node::class, $rules );

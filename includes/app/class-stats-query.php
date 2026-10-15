@@ -34,6 +34,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * status outside the builder's status bounds; a request with no error answers
  * `-`, the record's own spelling. A filter matches what a group answers,
  * `Unknown` included. Worker requests count unless a filter leaves them out.
+ * A sort ranks a null last in either order, and a `url` group also sorts by
+ * its `url_name`, server then path.
  *
  * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string}
  */
@@ -41,13 +43,13 @@ final class Stats_Query {
 
 	/** Group/filter fields per source; each maps to a SQL expression over the source's columns. */
 	public const FIELDS = [
-		'requests' => [ 'bucket', 'hour', 'day', 'server', 'url', 'status', 'status_class', 'method', 'country', 'ua', 'ja4', 'from', 'worker', 'error' ],
+		'requests' => [ 'bucket', 'hour', 'day', 'server', 'url', 'status', 'status_class', 'method', 'country', 'ua', 'ja4', 'from', 'worker', 'profiled', 'error' ],
 		'timings'  => [ 'bucket', 'hour', 'server', 'url', 'worker', 'category', 'entry', 'listener' ],
 	];
 
 	/** What each source measures over the rows a spec selects. */
 	public const MEASURES = [
-		'requests' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'min_ms', 'p50_ms', 'p95_ms', 'sum_peak_mb', 'avg_peak_mb', 'max_peak_mb', 'errors', 'urls', 'last_seen' ],
+		'requests' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'min_ms', 'p50_ms', 'p95_ms', 'sum_peak_mb', 'avg_peak_mb', 'max_peak_mb', 'errors', 'urls', 'last_seen', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'worker' ],
 		'timings'  => [ 'ms', 'calls', 'requests', 'avg_ms', 'avg_calls' ],
 	];
 
@@ -58,7 +60,7 @@ final class Stats_Query {
 	public const MAX_OFFSET = 10000;
 
 	/** Fields holding integers, so a filter's digits bind as one. */
-	private const INTEGER_FIELDS = [ 'bucket', 'hour', 'day', 'status', 'status_class', 'worker', 'listener' ];
+	private const INTEGER_FIELDS = [ 'bucket', 'hour', 'day', 'status', 'status_class', 'worker', 'profiled', 'listener' ];
 
 	/** The fields `requests_hourly` answers exactly. */
 	private const HOURLY_FIELDS = [ 'hour', 'day', 'server', 'status_class', 'method', 'worker', 'country' ];
@@ -128,6 +130,7 @@ final class Stats_Query {
 				'ja4'          => "COALESCE( t.ja4, '" . self::UNKNOWN . "' )",
 				'from'         => "COALESCE( t.from_header, '" . self::UNKNOWN . "' )",
 				'worker'       => 't.worker',
+				'profiled'     => 't.profiled',
 				'error'        => "COALESCE( t.error, '-' )",
 			],
 			'joins'    => [
@@ -140,6 +143,8 @@ final class Stats_Query {
 				'error'       => 't.error',
 				'finished_at' => 't.finished_at',
 				'url'         => 'u.hash',
+				'class'       => 'CASE WHEN ' . self::KNOWN_STATUS . ' THEN t.status / 100 END',
+				'worker'      => 't.worker',
 			],
 			'measures' => [
 				'count'       => [ 'COUNT( * )', [] ],
@@ -156,6 +161,11 @@ final class Stats_Query {
 				'errors'      => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END )', [ 'error' ] ],
 				'urls'        => [ 'COUNT( DISTINCT m_url )', [ 'url' ] ],
 				'last_seen'   => [ 'MAX( m_finished_at )', [ 'finished_at' ] ],
+				'count_2xx'   => [ 'COUNT( CASE WHEN m_class = 2 THEN 1 END )', [ 'class' ] ],
+				'count_3xx'   => [ 'COUNT( CASE WHEN m_class = 3 THEN 1 END )', [ 'class' ] ],
+				'count_4xx'   => [ 'COUNT( CASE WHEN m_class = 4 THEN 1 END )', [ 'class' ] ],
+				'count_5xx'   => [ 'COUNT( CASE WHEN m_class = 5 THEN 1 END )', [ 'class' ] ],
+				'worker'      => [ 'MAX( m_worker )', [ 'worker' ] ],
 			],
 		],
 		'requests_hourly' => [
@@ -315,11 +325,12 @@ final class Stats_Query {
 		$select = [];
 		$sorts  = [];
 		foreach ( $spec['group'] as $i => $field ) {
-			$groups[]         = "f{$i}";
-			$select[]         = "f{$i}";
-			$sorts[ $field ] = "f{$i}";
+			$groups[]        = "f{$i}";
+			$select[]        = "f{$i}";
+			$sorts[ $field ] = [ "f{$i}" ];
 			if ( 'url' === $field ) {
 				\array_push( $select, "MIN( s{$i} )", "MIN( n{$i} )" );
+				$sorts['url_name'] = [ "MIN( s{$i} )", "MIN( n{$i} )" ];
 			}
 		}
 		if ( [] !== \array_intersect( $spec['measure'], self::RANKED ) ) {
@@ -329,12 +340,13 @@ final class Stats_Query {
 		$kinds = "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'";
 		foreach ( $spec['measure'] as $j => $name ) {
 			$select[]       = \str_replace( '{error_kinds}', $kinds, $def['measures'][ $name ][0] ) . " AS v{$j}";
-			$sorts[ $name ] = "v{$j}";
+			$sorts[ $name ] = [ "v{$j}" ];
 		}
 		$order = $groups;
 		if ( '' !== $spec['sort'] ) {
-			$sorted = $sorts[ $spec['sort'] ] ?? throw new \LogicException( \esc_html( "sort {$spec['sort']} names no group or measure" ) );
-			\array_unshift( $order, "{$sorted} " . \strtoupper( $spec['order'] ) );
+			$sorted    = $sorts[ $spec['sort'] ] ?? throw new \LogicException( \esc_html( "sort {$spec['sort']} names no group or measure" ) );
+			$direction = ' ' . \strtoupper( $spec['order'] ) . ' NULLS LAST';
+			\array_unshift( $order, ...\array_map( static fn ( string $column ): string => $column . $direction, $sorted ) );
 		}
 		$sql = 'SELECT ' . \implode( ', ', $select ) . " FROM {$from}"
 			. ( [] === $groups ? '' : ' GROUP BY ' . \implode( ', ', $groups ) )
@@ -488,7 +500,10 @@ final class Stats_Query {
 		if ( [] === $checked['buckets'] ) {
 			throw new \InvalidArgumentException( 'a query names at least one bucket range' );
 		}
-		$sortable = [ ...$group, ...$measure ];
+		foreach ( \array_intersect( $measure, $group ) as $name ) {
+			throw new \InvalidArgumentException( \esc_html( "{$name} names both a group and a measure" ) );
+		}
+		$sortable = [ ...$group, ...( \in_array( 'url', $group, true ) ? [ 'url_name' ] : [] ), ...$measure ];
 		if ( '' !== $checked['sort'] && ! \in_array( $checked['sort'], $sortable, true ) ) {
 			throw new \InvalidArgumentException( \esc_html( "unknown sort {$checked['sort']}: one of the groups and measures, " . \implode( ', ', $sortable ) ) );
 		}

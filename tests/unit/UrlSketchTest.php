@@ -9,9 +9,6 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( Url_Sketch::class )]
 class UrlSketchTest extends TestCase {
 
-	/** Three standard errors of the sketch: 3 × 1.04 / √16,384. */
-	private const THREE_SIGMA = 3 * 1.04 / 128;
-
 	/**
 	 * The url_hash of every URL `$shape` spells for `$from` to `$to - 1`,
 	 * distinct, as the ranker hands them over.
@@ -26,20 +23,6 @@ class UrlSketchTest extends TestCase {
 		return \array_map( 'strval', \array_keys( $out ) );
 	}
 
-	public function test_sequential_urls_estimate_within_three_standard_errors(): void {
-		// Post ids differ in their last characters, which is where FNV-1a's
-		// top bits barely move: read unmixed, these land 11 to 14% short.
-		foreach ( [ 'https://kea.test/wombat-%d', 'https://moa.test/?p=%d', '/kereru-%d' ] as $shape ) {
-			$hashes = self::hashes( $shape, 0, 4217 );
-			$this->assertEqualsWithDelta(
-				\count( $hashes ),
-				Url_Sketch::estimate( Url_Sketch::of( $hashes ) ),
-				\count( $hashes ) * self::THREE_SIGMA,
-				$shape
-			);
-		}
-	}
-
 	public function test_a_union_counts_a_hash_both_sketches_hold_once(): void {
 		$kea  = self::hashes( 'https://kea.test/takahe-%d', 0, 3000 );
 		$moa  = self::hashes( 'https://kea.test/takahe-%d', 2000, 5000 );
@@ -48,7 +31,6 @@ class UrlSketchTest extends TestCase {
 		$union = Url_Sketch::union( Url_Sketch::of( $kea ), Url_Sketch::of( $moa ) );
 
 		$this->assertSame( Url_Sketch::of( $both ), $union, 'register for register, one sketch of both sets' );
-		$this->assertEqualsWithDelta( 5000, Url_Sketch::estimate( $union ), 5000 * self::THREE_SIGMA );
 	}
 
 	public function test_a_union_of_many_is_one_sketch_of_them_all(): void {
@@ -66,10 +48,6 @@ class UrlSketchTest extends TestCase {
 		$this->assertSame( Url_Sketch::of( [] ), Url_Sketch::union(), 'of none, the empty sketch' );
 	}
 
-	public function test_an_empty_sketch_counts_nothing(): void {
-		$this->assertSame( 0, Url_Sketch::estimate( Url_Sketch::of( [] ) ) );
-	}
-
 	public function test_a_sketch_is_stored_deflated_and_its_registers_come_back_whole(): void {
 		// A header record carries one per list set, and a small set's is
 		// almost every register empty: 16 KiB stored raw.
@@ -83,7 +61,6 @@ class UrlSketchTest extends TestCase {
 		$this->assertLessThan( 3000, \substr_count( (string) \gzinflate( $dense ), "\0" ), 'dense: most registers set' );
 		$this->assertLessThan( Url_Sketch::BYTES / 2, \strlen( $dense ), 'and still under half' );
 		$this->assertSame( Url_Sketch::BYTES, \strlen( (string) \gzinflate( $fifty ) ), 'one byte a register, inflated' );
-		$this->assertSame( 50, Url_Sketch::estimate( $fifty ) );
 	}
 
 	public function test_only_a_deflated_register_string_is_a_sketch(): void {

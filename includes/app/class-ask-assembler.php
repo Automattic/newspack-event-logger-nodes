@@ -892,8 +892,8 @@ class Ask_Assembler {
 	 * A page carrying no `totals` leaves the brief's null rather than zeros,
 	 * which would read as an idle site.
 	 *
-	 * @param array<string,mixed> $page    A `urls` reply: its totals, whether its URL count is estimated and whether they are provisional, and its data.
-	 * @param array<string,mixed> $board   A `build_leaderboard()` reply.
+	 * @param array<string,mixed> $page    A `urls` reply: its totals and its data.
+	 * @param array<string,mixed> $board   A `leaderboard_of()`-shaped board.
 	 * @param string              $server  Server the page is scoped to; '' is every server.
 	 * @param Url_Filters         $filters The url filters in force.
 	 * @return array<string,mixed>
@@ -919,13 +919,9 @@ class Ask_Assembler {
 				'requests'            => Core::num_int( $totals['requests'] ?? 0 ),
 				'avg_ms'              => self::measured_figure( $totals['avg_ms'] ?? null ),
 				'avg_peak_mb'         => self::measured_figure( $totals['avg_peak_mb'] ?? null ),
-				// This hour's closed buckets, or the last hour until :05.
+				// The window's requests over its elapsed seconds.
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
 			] + self::errors_of( $totals ),
-			// Whether `stats.urls` is a sketch's estimate.
-			'estimated'   => true === $page['estimated'],
-			// Short of what the writer owes, or of an unanswered read.
-			'provisional' => true === $page['provisional'],
 			'urls'       => \array_map(
 				self::overview_url_shape( ... ),
 				\array_slice( $rows, 0, self::TOP_SPANS )
@@ -1005,22 +1001,14 @@ class Ask_Assembler {
 	 * One URL row as the overview brief carries it: its hash, so an agent can
 	 * widen to `url:<hash>`, and the three numbers the table sorts on.
 	 *
-	 * The per-shard overflow row carries NO hash. Its key is not a url_hash,
-	 * `dump_url` cannot answer for it, and it sorts high enough by count to
-	 * reach this list — so it is named for what it is, as the table names it,
-	 * rather than offered as a `url:<hash>` that answers `URL not found`.
-	 *
 	 * @param mixed $row A `urls` data row.
 	 * @return array<string,mixed>
 	 */
 	private static function overview_url_shape( mixed $row ): array {
-		$row       = Core::arr( $row );
-		$aggregate = ! empty( $row['aggregate'] );
+		$row = Core::arr( $row );
 		return [
-			...( $aggregate ? [] : [ 'hash' => Core::as_string( $row['hash'] ?? '' ) ] ),
-			'url'    => $aggregate
-				? 'traffic from URLs beyond the per-shard cap'
-				: Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
+			'hash'   => Core::as_string( $row['hash'] ?? '' ),
+			'url'    => Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
 			'count'  => Core::num_int( $row['count'] ?? 0 ),
 			'avg_ms' => self::measured_figure( $row['avg_ms'] ?? null ),
 			'max_ms' => self::measured_figure( $row['max_ms'] ?? null ),

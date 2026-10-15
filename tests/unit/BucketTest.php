@@ -25,6 +25,11 @@ class BucketTest extends TestCase {
 		$this->assertSame( 3600, Bucket::HOUR_SECONDS );
 	}
 
+	public function test_the_last_n_buckets_are_one_range_ending_at_the_clock_s(): void {
+		$this->assertSame( [ [ 5973188, 5973194 ] ], Bucket::last( 7, 1791958200 + 137 ) );
+		$this->assertSame( [ [ 5973195, 5973195 ] ], Bucket::last( 1, 1791958200 + 300 ) );
+	}
+
 	public function test_a_bucket_is_spelled_as_its_utc_key(): void {
 		$this->assertSame( '2026-10-14-06-10', Bucket::key( Bucket::id( 1791958200 ) ) );
 		// 12:47 UTC belongs to the 12:45 bucket.

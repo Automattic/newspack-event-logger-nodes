@@ -109,6 +109,19 @@ final class Bucket {
 	}
 
 	/**
+	 * The `$n` buckets ending with the one `$now` falls in, as the one
+	 * range a selection answers.
+	 *
+	 * @param int $n   How many buckets.
+	 * @param int $now The clock.
+	 * @return list<array{0:int,1:int}>
+	 */
+	public static function last( int $n, int $now ): array {
+		$latest = self::id( $now );
+		return [ [ $latest - $n + 1, $latest ] ];
+	}
+
+	/**
 	 * The bucket an epoch falls in.
 	 *
 	 * @param int $epoch Unix timestamp.
