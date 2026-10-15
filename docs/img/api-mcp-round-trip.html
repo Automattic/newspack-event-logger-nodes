@@ -66,7 +66,7 @@
 <div class="panel" data-arrow="2,3" data-cap="tools/call" data-span="1,3">
   <header><span class="n">4</span>The call becomes a command</header>
   <div class="body">
-    <div class="chip danger">A name absent from the ten tools, OR a role the session cannot spend: <span class="mono">-32601 Unknown tool: &lt;name&gt;</span>. A typo and a permission refusal get one answer; <span class="mono">tools/list</span> is what tells them apart.</div>
+    <div class="chip danger">A name absent from the eleven tools, OR a role the session cannot spend: <span class="mono">-32601 Unknown tool: &lt;name&gt;</span>. A typo and a permission refusal get one answer; <span class="mono">tools/list</span> is what tells them apart.</div>
     <div class="chip">The named arguments become a flat token list: every scalar key becomes <span class="mono">--key=value</span> through <span class="mono">Command_Args::format()</span>, in the order the agent gave it, and the verb binds each by name against the args it declares.</div>
     <div class="chip"><span class="mono">$node-&gt;dispatch( verb, tokens )</span> on the CI the tool names. The verb's own capability gate and handler run exactly as they do for <span class="mono">/command</span>; the MCP layer adds no verb.</div>
   </div>
@@ -82,9 +82,9 @@
     <h3>What a session sees: the ceiling only subtracts</h3>
     <p>A tool is offered and callable only when the session's scope covers its role AND the minting user holds that capability. A manage-scoped session minted by a user who can do nothing still does nothing.</p>
     <div class="roster">
-      <div class="col read"><b>read scope: eight tools</b>performance_overview, performance_urls, dump_url, search_requests, dump_request, grep_requests, performance_ask, dump_rules</div>
+      <div class="col read"><b>read scope: nine tools</b>performance_overview, performance_urls, dump_url, performance_query, search_requests, dump_request, grep_requests, performance_ask, dump_rules</div>
       <div class="col tune"><b>tune scope: two more</b>rules_upsert, rules_delete</div>
-      <div class="col none"><b>no tool: /command only</b>performance.url_breakdown, list_hooks, set; rules.save, reset; discovery.get</div>
+      <div class="col none"><b>no tool: /command only</b>performance.list_hooks, set; rules.save, reset; discovery.get</div>
     </div>
   </div>
   <div class="callout" style="flex:0 0 270px">

@@ -71,12 +71,12 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 
 | # | Decision |
 |---|----------|
-| 1 | Namespaced memcache schema |
+| 1 | Namespaced memcache schema — superseded by decision 34 |
 | 2 | Sums, not means |
-| 3 | Stats fail soft |
+| 3 | Stats reads fail soft; a stats write raises |
 | 4 | Settings fan-out is a node graph; no consumer means a silent no-op |
-| 5 | A stats schema change is migrated by reclaiming the stats Tables, and by nothing in this code |
-| 6 | `get_multi` batching is essential |
+| 5 | A stats schema change is a version bump and a rebuild, and nothing in this code migrates |
+| 6 | `get_multi` batching is essential — superseded by decision 36 |
 | 7 | Job_Intake for >4KB jobs, the firehose for ≤4KB |
 | 8 | A spoke's job is re-keyed `remote_job` when the hub pulls it |
 | 9 | A request's partition is its id, hashed by the substrate |
@@ -87,9 +87,9 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 14 | A server scope the key cannot carry rides inside the value, and is applied as a PROJECTION — superseded by decision 30 |
 | 15 | The `urls` verb owns every URL-set fact; `overview` owns the site |
 | 16 | The breakdown panel is always mounted, and says which kind of nothing it has |
-| 17 | The URL index is stored at TWO resolutions, and the coarse one is DERIVED |
-| 18 | A stored value may be POSITIONAL, and then its indexes are named constants |
-| 19 | A request is filed in the bucket it FINISHED in, and a write into a folded hour reaches its fine bucket and the hour key |
+| 17 | The URL index is stored at TWO resolutions, and the coarse one is DERIVED — superseded by decision 36 |
+| 18 | A stored value may be POSITIONAL, and then its indexes are named constants — superseded by decision 34 |
+| 19 | A request is filed in the bucket it FINISHED in |
 | 20 | Outbound HTTP is timed as a span, and a short-circuited request opens nothing |
 | 21 | The fold keeps the CLOSE of any span the kept head left open |
 | 22 | Query spans are the same pair as decision 20, but PER-RULE |
@@ -98,14 +98,15 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 25 | Read tools and TUNE-scoped write tools share one MCP session, and every tool result is fenced |
 | 26 | A merged transport node keeps the statements it ran |
 | 27 | The platform's requests to itself are worker traffic, named by path |
-| 28 | The writer ranks each bucket and indexes each name, and the page reads those rather than the index |
+| 28 | The writer ranks each bucket and indexes each name, and the page reads those rather than the index — superseded by decision 36 |
 | 29 | Every reader dates from the tick, and a reply reads it once |
-| 30 | Every memcache value is one server's, carries nothing its key implies, and fits one item |
+| 30 | Every memcache value is one server's, carries nothing its key implies, and fits one item — superseded by decision 34 |
 | 31 | A snapshot node's replay is idempotent by the last folded crumb |
 | 32 | A builder tells its upkeep on its own worker record, and every narration write is a guarded forward |
 | 33 | No dashboard reads the mirror; the flame builder sweeps it back into memcache — superseded by decision 34 |
 | 34 | Stats live in SQLite Tables, and nothing repairs a loss |
-| 35 | A chart hour is one key holding its twelve five-minute slots |
+| 35 | A chart hour is one key holding its twelve five-minute slots — superseded by decision 36 |
+| 36 | The query vocabulary is fixed; no SQL from outside; a picker chooses the rollup |
 
 ## Layout
 
@@ -123,7 +124,8 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/class-{job-router,remote-job-rewrite,discovery-collector}-node.php` | Job normalization onto jobs.log, the hub's `job` → `remote_job` rewrite, the hub's discovery fan-out |
 | `includes/class-{flame-tree,flame-fold,quiet}.php` | Flame algorithms, and the quiet rule on which both builders leave their stream clocks for the wall |
 | `includes/class-{diagnostics-bridge,hook-categorizer,reqgrep-core,current-request-overlay}.php`, `trait-narration.php` | Verb spans and the stderr seam, hook categories, the reqgrep engine, the station's Request tab, builder narration |
-| `includes/app/` | `App\Core` (hook, HTTP and query instrumentation), the three service CIs, `Findings`, `Ask_Assembler`, `MCP_Controller` |
+| `includes/app/` | `App\Core` (hook, HTTP and query instrumentation), the three service CIs, `Stats_Query` (the fixed query vocabulary every performance reader asks the rows in), `Findings`, `Ask_Assembler`, `MCP_Controller` |
+| `includes/class-{flame-facts-row-schema,bucket,url-parts}.php` | The six stats tables the `flame-facts` Row_Table holds; the five-minute bucket, the hour and the selection grammar; a URL's server and paths |
 | `includes/admin/`, `includes/cli/` | The settings page, which hosts the rules editor; `wp nodes reqgrep` and `wp nodes ruleset-bench` |
 | `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix and the `flame-facts` Row_Table's files; `uninstall.php` requires it and the Composer autoloader by hand because the main file does not run on DELETE |
 | `topologies/` | Eleven `.tsl` graphs, named by filename: five primitives and six compositions |
@@ -143,8 +145,8 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 - **There is no operator hub toggle** (`enable_workers` and `enable_aggregator` are gone, and `RetiredConfigKeysTest` guards them). A hub declares itself in TSL: `<eln:is_hub>` is `1` when an active topology's top-level frontmatter carries `var is_hub = 1`, as the stock `hub` and `aggregator` do. That declaration is part of the hub's topology, not an operator setting, and nothing else counts — not a topology's name, not the logs its readers pull. Any value but `1` or `0` fails loud, naming the topology. Frontmatter is read from the top-level file only, so a custom topology that includes `hub` or `aggregator` declares the var itself. Settings fan-out is ungated: without `hub-control` active and at least one Vault entry in group `spoke`, a recorded settings event is tailed and dropped.
 - **Both request bounds FOLD.** `entry_budget` caps the entries in flight and `max_entries_per_request` caps one envelope; both are `Request_Builder_Node` arguments, not config keys. Never build a cap that merely stops appending and sets a flag — it loses every entry past it.
 - **Firehose writes stay under PIPE_BUF.** `Log_Manager::message()` fits the whole entry to `MAX_DATA_SIZE` (3840) by trimming `m`, and never renames the category `k`: `Flame_Tree::PATTERN_START` opens a span on it. Shape a large value at the producer or split it; a large job goes through `Job_Intake` (decision 7). The architecture guide's "PIPE_BUF and truncation" section carries the full algorithm.
-- **Reach the cache through `Cache_Backend`; never build your own.** `Cache_Backend::shared_first()` is memcached, else APCu, and null with neither. Tests assign the substrate's `InMemoryMemcached` double to `Core::$memd`, since no cache interface exists to inject. Rotating the salt orphans every memcached and APCu key but not the SQLite stats rows, whose keys carry no salt (deactivating the topology and running `wp nodes gc --force` deletes them), and `Cache_Backend::rotate_salt()` itself asks every live worker to restart, because each memoizes the install scope at boot.
-- **Stats fail soft, SSE slots fail closed. Don't unify them.** Dashboards show "no data" when a stats Table cannot open or answer; SSE connections get a 429, because the slot pool IS the rate limit.
+- **Reach the cache through `Cache_Backend`; never build your own.** `Cache_Backend::shared_first()` is memcached, else APCu, and null with neither. Tests assign the substrate's `InMemoryMemcached` double to `Core::$memd`, since no cache interface exists to inject. Rotating the salt orphans every memcached and APCu key but not the SQLite stats rows, which carry no salt (deactivating the topology and running `wp nodes gc --force` deletes them), and `Cache_Backend::rotate_salt()` itself asks every live worker to restart, because each memoizes the install scope at boot.
+- **Stats reads fail soft, stats writes raise, SSE slots fail closed. Don't unify them.** A reader whose stats file will not open answers no rows with `available` false, and the dashboards show "no data"; a row batch that fails raises `Worker_Should_Stop` and the successor replays it; SSE connections get a 429, because the slot pool IS the rate limit.
 - **Application Node classes resolve by namespace prefix.** `make_node Flame_Builder` resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node`; a new node needs only the class under that namespace and `composer dump-autoload -o`.
 - **Command and constructor `arguments` are a token array** (`list<string>`), never a space-joined string. The substrate binds a verb's tokens against the `args` its schema declares before the handler runs, so a handler reads `$args['<name>']`, typed and defaulted, and parses nothing; each arg arrives by position or as `--name=value`. Declare what the callers send: the dashboards build args with `formatCommandArgs(...)`, the MCP door names every arg, and an undeclared option is refused.
 - **Type flags**: an array VALUE takes `TM_STRUCT`, a string VALUE `TM_BYTESTREAM`. Consumers reading an array VALUE gate on `TM_STRUCT`.
@@ -164,7 +166,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 
 - `docs/README.md` — the documentation map
 - `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, stats schema
-- `docs/architecture-decisions.md` — the 35 decisions
+- `docs/architecture-decisions.md` — the 36 decisions
 - `docs/security-model.md` — what the logger captures and what crosses to the hub
 - `docs/API.md` — the MCP route, every service-CI verb, the WP-CLI verbs, the PHP API and the hooks
 - `README.md` — requirements, quick start, configuration, dashboards

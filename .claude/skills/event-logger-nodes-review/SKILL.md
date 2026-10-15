@@ -44,14 +44,15 @@ Those rows, plus where each producer applies the redactor (with no query test of
 
 **Cap AFTER redaction.** Reversing the two would let a truncation expose the tail of a secret the redaction covered. A diff editing either side alone ships two producers writing different lines.
 
-### 3. Stats fail soft, SSE slots fail closed
+### 3. Stats reads fail soft, stats writes raise, SSE slots fail closed
 
-Two stores with deliberately opposite behavior:
+Three paths with deliberately different behavior (decision 3):
 
 - **`App\Stats_Query`**, and anything reading stats for a dashboard: a read whose `flame-facts` files will not open catches `\Newspack_Nodes\Table_Unavailable` and nothing broader, logs `performance: stats rows did not open` once a window, and answers no rows with `available` false, so dashboards display "no data" rather than erroring. Any other failure fails the verb loud, and a diff widening that catch hides it.
+- **The flame builder's write** raises: a `ROWS` batch the Row_Table refuses or leaves unanswered, or any other failure in `write_rows()`, becomes a plain `Worker_Should_Stop` carrying the cause, and the buffer stays, so the Consumer commits nothing past it and the successor replays the batch. A diff that logs and drops a failed batch loses those requests for good.
 - **The SSE slot pool**: fail CLOSED. A backend outage means new connections get HTTP 429, because the pool IS the rate limit. `SSE_Slot_Pool` is a substrate class (`newspack-nodes/includes/class-sse-slot-pool.php`); the ELN-side gate is to leave its invariant alone.
 
-Code that throws from the stats path, or swallows errors in the slot path, has them inverted, and a diff unifying the two into one error-handling style breaks whichever half it converts.
+Code that throws from a stats read, swallows a failed stats write, or swallows errors in the slot path, has them inverted, and a diff unifying the two into one error-handling style breaks whichever half it converts.
 
 ### 4. Cached state goes through the substrate's `Table_Node`
 
@@ -250,7 +251,7 @@ The `flame-facts` rows go only when their `retain` window passes (decision 34), 
 
 - **Buckets key on UTC.** `Bucket::key()` formats with `gmdate()`, so DST never yields a 23- or 25-hour day and a bucket key never repeats. A diff that buckets through `date()`, `wp_date()` or a site timezone splits one instant across two keys twice a year.
 - **Durations are monotonic.** `Log_Manager`'s spans and `wp nodes ruleset-bench` measure with `hrtime()`. A duration taken from `microtime()` or `Core::$now` goes negative or doubles when the wall clock steps.
-- **The hub files a stamp where it happened, never in the future.** `Flame_Builder_Node::fill()` clamps a record's completion stamp to its own `now` — a spoke's skewed clock or a bogus duration cannot file a future bucket readers never reach (decision 19) — files a late record under its own stamp rather than the arrival, and `hour_tier_intents()` merges a write into an hour it already folded into the coarse key the readers take. A backlog lands where it happened. A diff that files by arrival time, or drops a late record because its hour closed, loses exactly the backlog decision 19 keeps.
+- **The hub files a stamp where it happened, never in the future.** `Flame_Builder_Node::fill()` clamps a record's completion stamp to its own `now` — a spoke's skewed clock or a bogus duration cannot file a future bucket readers never reach (decision 19) — and files a late record under its own stamp rather than the arrival, into its bucket's rows like any other, since nothing folds a closed bucket. A backlog lands where it happened. A diff that files by arrival time, or drops a late record because its bucket closed, loses exactly the backlog decision 19 keeps.
 
 ## Service CI specifics
 
@@ -258,11 +259,11 @@ Every dashboard endpoint is a verb on an `App\*_CI_Node` service CI, mounted on 
 
 | CI | Verbs |
 |---|---|
-| `performance` | `overview`, `urls`, `dump_url`, `url_breakdown`, `search_requests`, `grep_requests`, `dump_request`, `ask`, `list_hooks`, `set` |
+| `performance` | `overview`, `urls`, `query`, `dump_url`, `search_requests`, `grep_requests`, `dump_request`, `ask`, `list_hooks`, `set` |
 | `rules` | `dump`, `save`, `upsert`, `delete`, `reset` |
 | `discovery` | `get` |
 
-Ten more CIs are substrate-owned, mounted on the same hook by `newspack_nodes_mount_substrate_cis()`: `classes`, `layouts`, `topologies`, `raw-logs`, `vault`, `aggregator`, `settings`, `status`, `sessions` and `workers`. Spoke credentials answer on `vault`, the hook inventory on `performance.list_hooks`, and the site-wide totals — `total_requests` and the two averages, off the `hourly` namespace — on `performance.overview`. The substrate's command protocol dispatches at `POST /wp-json/newspack-nodes/v1/command`, with SSE at `GET /wp-json/newspack-nodes/v1/messages/stream`.
+Ten more CIs are substrate-owned, mounted on the same hook by `newspack_nodes_mount_substrate_cis()`: `classes`, `layouts`, `topologies`, `raw-logs`, `vault`, `aggregator`, `settings`, `status`, `sessions` and `workers`. Spoke credentials answer on `vault`, the hook inventory on `performance.list_hooks`, and the site-wide totals — the non-worker requests, their timed and memory means, errors and distinct URLs over the chart's 288 buckets — on `performance.overview`. The substrate's command protocol dispatches at `POST /wp-json/newspack-nodes/v1/command`, with SSE at `GET /wp-json/newspack-nodes/v1/messages/stream`.
 
 - **Verb declaration**: in `node_schema()['commands']` — `name`, `capability`, `description`, `args` (per-arg `name` / `type` / `required` / optional `default`), and an inline `handler` closure. Flag an arg that carries a credential: the verb span logs it verbatim except an option the verb declares `'secret' => true`, whose value it masks, and credentials belong in the Vault, never in a verb here. There is no `permission_callback` field.
 - **The capability gate is the `capability` key, and nothing else.** `dispatch()` refuses a caller below the declared role (ADR-26) — `READ` for every read verb, `rules dump` and `discovery get` included; `TUNE` for the four ruleset writes and `performance set`. **No handler re-gates itself**: a hard-coded check would silently outrank its own declaration. An undeclared verb defaults to MANAGE, so leaving one off makes a hub hold an administrator credential on every spoke just to pull logs. `tests/unit/VerbRoleDeclarationsTest.php` pins every verb's role.
@@ -274,7 +275,7 @@ Ten more CIs are substrate-owned, mounted on the same hook by `newspack_nodes_mo
 
 ### The MCP surface
 
-`POST /wp-json/newspack-event-logger-nodes/v1/mcp` is a JSON-RPC MCP server wrapping verbs that already exist — ten tools, each one verb, every argument named, replies JSON-encoded inside a `<site-data>` fence.
+`POST /wp-json/newspack-event-logger-nodes/v1/mcp` is a JSON-RPC MCP server wrapping verbs that already exist — eleven tools, each one verb, every argument named, replies JSON-encoded inside a `<site-data>` fence.
 
 - **The scope is a ceiling, never a grant.** A `Bearer <handle>.<secret>` names a live session; the controller becomes that session's minting user and installs `Capabilities::$session_scope`, so a manage-scoped session minted by someone who can do nothing still does nothing. `Bootstrap::fleet_gate()` runs first.
 - **`tools/list` offers only what the scope covers**, and `Findings::caveat()` — the measurement caveat — rides EVERY tool description, not just the first read. A new tool that drops the caveat hands a model a number it will over-read.
@@ -288,9 +289,9 @@ Ten more CIs are substrate-owned, mounted on the same hook by `newspack_nodes_mo
 - **A view node is a slice.** `registerSliceViews` maps each `make_node` name onto a `sliceView()` declaration — the `empty` model, an optional `parse`, an optional `json` for a verb answering a JSON string, and an optional `description`. The graph drives `loading` / `clear` / `error` through each node's own `controlFrom`, never by payload shape. A reply carrying no payload keeps the slice already on screen, so a verb that answers nothing never blanks an open modal.
 - **Never throw from `fill()`.** A React tree has nothing to catch it. `SliceViewNode` already coerces a TM_ERROR envelope — a bare string VALUE included — through the substrate's `errorMessage()` into the slice's `error`, so a second coercion in a view node re-implements code that already ran.
 - **Hand `makeNode` the CLASS, never the name.** `CommandInterpreterNode.includeNodes` is a per-bundle static, so another bundle's interpreter cannot resolve a name registered here.
-- **Preserve prior data on a partial reply.** `UrlDetailMergeNode` dedups by rid and drops a reply only when it carries no request the node lacks AND its `last_modified` is unchanged — the stamp is the flame builders' flush, a stage apart from the request list, so it never gates the rows alone; `UrlsView` list-replaces the whole rows array. A diff that wholesale-replaces the model on every reply clobbers sibling slices and breaks drilldown. `MERGED_REQUEST_LIMIT` (500) caps that accumulation and must equal `Performance_CI_Node::RECENT_REQUEST_LIMIT`, so the merge retains no more rows than one reply could carry — nothing holds the two in step at build or test time, so a diff moving the PHP constant moves this one with it.
+- **Each answer replaces its slice whole.** The `urls`, `dump_url` and `query` answers each replace their slice: nothing merges across ticks, and no cursor tails a list. The `Current` gate on each slice's receiver edge drops the answer to a superseded ask. A diff that merges a new answer into the last one keeps rows the server no longer holds, and one that wholesale-replaces a sibling slice's model clobbers it.
 - **No dead REPL mounts on a production dashboard.** The `_output` / `_completion` / `_uptime` / `_cwd` set serves the console tree; copy-pasted elsewhere it adds nodes competing for `_router` traffic and colliding with the debug overlay's REPL.
-- **Distinguish "no data yet" from "no data".** `breakdownState( breakdownData )` returns `{ state, series }`, the state `pending`, `empty` or `series`, and only `series` draws. A gate that can unmount the controls traps the operator, because those dropdowns are the only way out of a dimension with no rows.
+- **Distinguish "no data yet" from "no data".** `breakdownState( answer, dims )` returns `{ state, series, groups }`, the state `pending`, `empty` or `series`, and only `series` draws; an answer whose columns are not the ones the selected dimensions ask for is `pending`. A gate that can unmount the controls traps the operator, because those dropdowns are the only way out of a dimension with no rows.
 - **`@wordpress/element` for React, `@wordpress/api-fetch` for REST**, both externalised to the `wp.*` globals and pinned to the `wp-7.0` dist tag. Never bump one to close an advisory.
 - **The build is esbuild**, `scripts/build.mjs` over the substrate's build kit; `npm run build` emits `build/{tree}`. Every alias resolves through `alias-map.cjs` off the single `NEWSPACK_NODES_SRC` env var.
 - **Shared hooks and utils import from `@newspack-nodes/shared/*`.** There is no local `src/shared/`, and a tree importing from another dashboard tree rather than the shared alias is a layering smell. Shared SCSS is one `src/styles/base.scss` forwarding the substrate's tokens and mixins.

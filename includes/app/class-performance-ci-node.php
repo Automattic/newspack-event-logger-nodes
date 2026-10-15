@@ -1832,7 +1832,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'query',
 					'capability'  => Capabilities::READ,
-					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ source, table, columns, rows, groups, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows when the stats file will not open. Worker requests count unless filtered `worker=0`. Under `top` the rows are every time row of the `top` tuples of the non-time groups `top_by` ranks highest, in rank order, and `groups` counts the tuples; with no `top`, `groups` is null.',
+					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ source, table, columns, rows, groups, available, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows and `available`, false when the stats file will not open. Worker requests count unless filtered `worker=0`. Under `top` the rows are every time row of the `top` tuples of the non-time groups `top_by` ranks highest, in rank order, and `groups` counts the tuples; with no `top`, `groups` is null.',
 					'args'        => [
 						[ 'name' => 'source', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],

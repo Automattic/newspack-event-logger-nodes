@@ -20,11 +20,11 @@ The charts always cover the last 24 hours, in five-minute steps, labelled in you
 
 ### 2. Find the slow URL
 
-The table **URLs by Request Count** lists every URL the site served in the retention window, 12 hours unless the site sets another, busiest first, 100 to a page.
+The table **URLs by Request Count** lists every URL the site served in the last 24 hours, busiest first, 100 to a page.
 
 | Column | What it means |
 |---|---|
-| **Reqs** | Requests in the window. Under **Errors Only** the column reads **Errors** and counts those instead. |
+| **Reqs** | Requests in the last 24 hours, or in the buckets you chose. Under **Errors Only** the column reads **Errors** and counts those instead. |
 | **URL** | The path. The shaded bar compares the row with the rest of the page. |
 | **2xx 3xx 4xx 5xx** | The share of the URL's requests in each status class, as a percent. |
 | **Avg**, **Min**, **Max** | Response time in milliseconds: mean, fastest, slowest. A dash means no request to the URL was timed. |
@@ -36,11 +36,10 @@ To find the culprit:
 - **Sort by Avg** for a URL that is slow every time. **Sort by Max** for one that is slow now and then.
 - **A URL the report names:** type a word from its path into **Search by whole URL word…**. Each word you type must be a whole word of the path, two characters or more: `sports` finds `/blog/sports-news` and `sport` does not. A word in nearly every URL narrows nothing, and a search made only of such words is refused; add a rarer word.
 - **A time the report names:** convert it to your own time zone, then click that moment on any chart; cmd-click (ctrl-click) adds or removes another five-minute bucket. Or type it in your local time into the **Time** field beside **Errors Only**, as `16:55`, `4:55 PM` where your clock is 12-hour, or a range such as `16:55-17:30`. The table narrows to the buckets you chose, shaded on the charts and shown in the field as local spans such as `6:35–6:40 AM`, each with its own × to remove it.
-- **Errors Only** keeps the URLs that had a timeout or a fatal error, and counts only their traffic in the five-minute buckets where they had one. A 5xx is a response, not an error here, and neither is an aborted request.
+- **Errors Only** keeps the URLs that had a timeout or a fatal error, and counts those requests alone. A 5xx is a response, not an error here, and neither is an aborted request.
 - Cron, WP-CLI and job traffic is hidden until you press **Include Workers**.
-- The row **traffic from URLs beyond the per-shard cap** is many quiet URLs folded together, not one URL. It cannot be opened.
 
-Under the table, the note **"Ranked per bucket; Avg and Mem are means of bucket averages"** means the page was built from each five-minute bucket's own ranking. A page hit rarely but slowly then ranks by how slow it is, not by how rarely. Sorts by URL, Max and Last seen are exact; the others can differ slightly from the URL's own figures, so open the URL before you quote a number. The table runs up to about two minutes behind live traffic.
+Every count and average in the table is exact, and Avg and Mem are means over the URL's requests. The URL's own window counts its worker traffic, which the table hides until **Include Workers**, so a URL that cron or a job also reaches can read higher there than on its row.
 
 ### 3. Open the URL
 
@@ -58,11 +57,9 @@ Click the row. The header gives its request rate, average time and memory. Below
 
 A **T** or **A** request has no measured duration. Its Duration reads `—`, it has no dot on the chart, and it sorts last either way.
 
-**Errors Only** here keeps the timeouts (**T**) and fatals (**F**), reaching back past the newest 500 requests to find older ones. The header then counts errors, timeouts and fatals, and the fatals' average and slowest time. The charts, the flame graph and the profile still describe every request to the URL, and a note above the list says so.
+**Errors Only** here lists the newest 500 timeouts (**T**) and fatals (**F**), past the clean requests that would bury them. The header then counts errors, timeouts and fatals, and the fatals' average and slowest time. The charts, the flame graph and the profile still describe every request to the URL, and a note above the list says so.
 
 This window has its own **Time** field, between the list's heading and **Errors Only**. A chart click or a typed time narrows the header and the list to those five-minute buckets, as it does the table.
-
-If the note "The request index scan stopped early, so requests for this URL may be missing." appears, the search ran out of time before it reached the start of the window, so an empty or short list does not mean the URL was idle.
 
 ### 4. Name the cause
 
@@ -147,10 +144,10 @@ The connection needs a custom `Authorization` header. Claude Code takes one; cla
 
 | Scope | Tools |
 |---|---|
-| read | `performance_overview` and `performance_urls` (the page and its URL table), `dump_url` and `dump_request` (one URL, one request with its findings), `search_requests` and `grep_requests` (find a request by id or by text), `performance_ask` (the same briefs as the panel), `dump_rules` (the logging rules) |
+| read | `performance_overview` and `performance_urls` (the page and its URL table), `dump_url` and `dump_request` (one URL, one request with its findings), `search_requests` and `grep_requests` (find a request by id or by text), `performance_query` (any count, average or top list the request and timing rows can answer, broken down and filtered by their fields), `performance_ask` (the same briefs as the panel), `dump_rules` (the logging rules) |
 | tune | the above, plus `rules_upsert` and `rules_delete` (change or remove a logging rule) |
 
-`performance_urls`, `dump_url` and `performance_ask` also take five-minute buckets in UTC, so Claude can look at the moment a publisher reported. A session sees only its scope's tools, and makes at most 20 calls per 10 seconds. Every answer reaches Claude marked as site data, not instructions, because visitors wrote parts of it: a URL or a user agent can say anything.
+`performance_urls`, `dump_url`, `performance_query` and `performance_ask` also take five-minute buckets in UTC, so Claude can look at the moment a publisher reported. A session sees only its scope's tools, and makes at most 20 calls per 10 seconds. Every answer reaches Claude marked as site data, not instructions, because visitors wrote parts of it: a URL or a user agent can say anything.
 
 When you are done, revoke the session under **Sessions** rather than waiting for it to expire.
 
@@ -158,4 +155,4 @@ When you are done, revoke the session under **Sessions** rather than waiting for
 
 - **Anything the rule does not time.** Step 5 is how you widen it.
 - **Anything below PHP**: the web server, the edge cache, the network before WordPress starts. A request that is fast here but slow for the reader is slow somewhere this dashboard cannot see.
-- **Anything older than the retention window**, 12 hours by default, or than 24 hours on the charts.
+- **Anything older than seven days**, or than 25 hours for the time by category. The charts and the table show the last 24 hours unless you choose older buckets.
