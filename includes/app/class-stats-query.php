@@ -56,6 +56,9 @@ final class Stats_Query {
 	/** Most rows one answer holds. */
 	public const MAX_LIMIT = 1000;
 
+	/** The columns each row `newest_requests()` lists carries, in order. */
+	public const LISTED = [ 'rid', 'started_at', 'finished_at', 'partition', 'segment', 'offset', 'length', 'status', 'method', 'error', 'ms', 'peak_mb' ];
+
 	/** The farthest row a page may start at. */
 	public const MAX_OFFSET = 10000;
 
@@ -142,9 +145,17 @@ final class Stats_Query {
 				'peak_mb'     => 't.peak_mb',
 				'error'       => 't.error',
 				'finished_at' => 't.finished_at',
+				'started_at'  => 't.started_at',
 				'url'         => 'u.hash',
 				'class'       => 'CASE WHEN ' . self::KNOWN_STATUS . ' THEN t.status / 100 END',
 				'worker'      => 't.worker',
+				'rid'         => 't.rid',
+				'partition'   => 't."partition"',
+				'segment'     => 't.segment',
+				'offset'      => 't."offset"',
+				'length'      => 't.length',
+				'status'      => 't.status',
+				'method'      => 't.method',
 			],
 			'measures' => [
 				'count'       => [ 'COUNT( * )', [] ],
@@ -233,52 +244,65 @@ final class Stats_Query {
 
 	/**
 	 * Answer a spec over every partition's rows. A fleet whose stats file
-	 * will not open says so once a window and answers no rows (decision 3).
+	 * will not open says so once a window and answers no rows, `available`
+	 * false (decision 3).
 	 *
 	 * @param array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>,
 	 *              buckets:list<array{0:int,1:int}>, sort?:string, order?:string, limit?:int, offset?:int, search?:string} $spec
-	 * @return array{source:string, table:string, columns:list<string>, rows:list<list<mixed>>}
+	 * @return array{source:string, table:string, columns:list<string>, rows:list<list<mixed>>, available:bool}
 	 * @throws \InvalidArgumentException naming an unknown source, field, measure
 	 *                                   or sort, or a field the table read lacks.
 	 */
 	public static function run( array $spec ): array {
-		$spec  = self::checked( $spec );
+		$spec = self::checked( $spec );
+		if ( [] === $spec['measure'] ) {
+			throw new \InvalidArgumentException( 'a query names at least one measure' );
+		}
 		$table = self::table_for( $spec );
 		foreach ( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] as $field ) {
 			if ( ! isset( self::TABLES[ $table ]['fields'][ $field ] ) ) {
 				throw new \InvalidArgumentException( \esc_html( "a {$spec['source']} query naming these fields reads {$table}, which holds no {$field}" ) );
 			}
 		}
-		$columns = self::columns( $spec );
-		try {
-			$rows = Row_Table_Node::read( Flame_Facts_Row_Schema::TABLE, static fn ( Row_Reader $reader ): array => self::rows( $reader, $spec, $table ) );
-		} catch ( Table_Unavailable $e ) {
-			Core::print_less_often( 'performance: stats rows did not open', ' — ' . $e->getMessage() );
-			$rows = [];
-		}
+		$rows = self::read( static fn ( Row_Reader $reader, array $aliases ): array => self::rows( $reader, $aliases, $spec, $table ) );
 		return [
-			'source'  => $spec['source'],
-			'table'   => $table,
-			'columns' => $columns,
-			'rows'    => $rows,
+			'source'    => $spec['source'],
+			'table'     => $table,
+			'columns'   => self::columns( $spec ),
+			'rows'      => $rows ?? [],
+			'available' => null !== $rows,
 		];
 	}
 
 	/**
-	 * The spec's rows across the attached partitions, each `url` group's
-	 * server and path joined into its `url_name`; none when no partition
-	 * has written a file.
+	 * The answer's columns: each group field, a `url` followed by its
+	 * `url_name`, then each measure.
 	 *
-	 * @param Row_Reader $reader The attached files.
-	 * @param Spec       $spec   The checked spec.
-	 * @param string     $table  The table answering it.
+	 * @param array{group:list<string>, measure:list<string>} $spec
+	 * @return list<string>
+	 */
+	private static function columns( array $spec ): array {
+		$columns = [];
+		foreach ( $spec['group'] as $field ) {
+			$columns[] = $field;
+			if ( 'url' === $field ) {
+				$columns[] = 'url_name';
+			}
+		}
+		return [ ...$columns, ...$spec['measure'] ];
+	}
+
+	/**
+	 * The spec's rows across the attached partitions, each `url` group's
+	 * server and path joined into its `url_name`.
+	 *
+	 * @param Row_Reader             $reader  The attached files.
+	 * @param non-empty-list<string> $aliases Their aliases.
+	 * @param Spec                   $spec    The checked spec.
+	 * @param string                 $table   The table answering it.
 	 * @return list<list<mixed>>
 	 */
-	private static function rows( Row_Reader $reader, array $spec, string $table ): array {
-		$aliases = $reader->aliases();
-		if ( [] === $aliases ) {
-			return [];
-		}
+	private static function rows( Row_Reader $reader, array $aliases, array $spec, string $table ): array {
 		[ $sql, $binds ] = self::statement( $spec, $table, $aliases );
 		$rows            = $reader->rows( $sql, $binds );
 		if ( ! \in_array( 'url', $spec['group'], true ) ) {
@@ -303,9 +327,9 @@ final class Stats_Query {
 	 * One statement answering the spec over `$aliases`, and its binds in
 	 * the order its placeholders appear.
 	 *
-	 * @param Spec         $spec    The checked spec.
-	 * @param string       $table   The table answering it.
-	 * @param list<string> $aliases The attached partitions.
+	 * @param Spec                   $spec    The checked spec.
+	 * @param string                 $table   The table answering it.
+	 * @param non-empty-list<string> $aliases The attached partitions.
 	 * @return array{0:string, 1:list<scalar|null>}
 	 */
 	private static function statement( array $spec, string $table, array $aliases ): array {
@@ -317,9 +341,7 @@ final class Stats_Query {
 		}
 		$inputs = \array_values( \array_unique( $inputs ) );
 
-		[ $arm, $arm_binds ] = self::arm( $spec, $table, $fields, $inputs );
-		$from                = '( ' . \implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => \sprintf( $arm, $alias ), $aliases ) ) . ' )';
-		$binds               = \array_merge( ...\array_fill( 0, \count( $aliases ), $arm_binds ) );
+		[ $from, $binds ] = self::union( self::arm( $spec, $table, $fields, $inputs ), $aliases );
 
 		$groups = [];
 		$select = [];
@@ -353,6 +375,60 @@ final class Stats_Query {
 			. ( [] === $order ? '' : ' ORDER BY ' . \implode( ', ', $order ) )
 			. ' LIMIT ? OFFSET ?';
 		return [ $sql, [ ...$binds, $spec['limit'], $spec['offset'] ] ];
+	}
+
+	/**
+	 * The table that answers $spec exactly at least cost: timings_site | timings | requests_hourly | requests.
+	 *
+	 * A timings spec reads `timings_site` unless a URL is grouped, filtered
+	 * or searched; a requests spec reads `requests_hourly` when every field
+	 * and measure it names is one the rollup keeps and every bucket range
+	 * covers whole hours.
+	 *
+	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string} $spec
+	 */
+	public static function table_for( array $spec ): string {
+		$named  = [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ];
+		$by_url = \in_array( 'url', $named, true ) || '' !== ( $spec['search'] ?? '' );
+		if ( 'timings' === $spec['source'] ) {
+			return $by_url ? 'timings' : 'timings_site';
+		}
+		$hourly = ! $by_url
+			&& [] === \array_diff( $named, self::HOURLY_FIELDS )
+			&& [] === \array_diff( $spec['measure'], self::HOURLY_MEASURES )
+			&& [] === \array_filter( $spec['buckets'], static fn ( array $range ): bool => 0 !== $range[0] % self::BUCKETS_PER_HOUR || 0 !== ( $range[1] + 1 ) % self::BUCKETS_PER_HOUR );
+		return $hourly ? 'requests_hourly' : 'requests';
+	}
+
+	/**
+	 * The newest `requests` rows `$filter` selects over `$buckets`, by
+	 * `finished_at`, at most `$limit` of them, each keyed by `LISTED`: one
+	 * fixed statement, the union of every partition's arm, every value bound.
+	 * A stats file that will not open lists none.
+	 *
+	 * @param array<string,list<scalar|null>> $filter  Requests fields to the values each matches.
+	 * @param list<array{0:int,1:int}>        $buckets The bucket ranges to read.
+	 * @param int                             $limit   Most rows listed, up to `MAX_LIMIT`.
+	 * @return list<array<string,mixed>>
+	 * @throws \InvalidArgumentException Naming a field, a bucket range or a limit it refuses.
+	 */
+	public static function newest_requests( array $filter, array $buckets, int $limit ): array {
+		$spec = self::checked(
+			[
+				'source'  => 'requests',
+				'filter'  => $filter,
+				'buckets' => $buckets,
+				'limit'   => $limit,
+			]
+		);
+		$rows = self::read(
+			static function ( Row_Reader $reader, array $aliases ) use ( $spec ): array {
+				[ $from, $binds ] = self::union( self::arm( $spec, 'requests', \array_keys( $spec['filter'] ), self::LISTED ), $aliases );
+				$listed           = \implode( ', ', \array_map( static fn ( string $column ): string => "m_{$column}", self::LISTED ) );
+				return $reader->rows( "SELECT {$listed} FROM {$from} ORDER BY m_finished_at DESC, m_rid LIMIT ?", [ ...$binds, $spec['limit'] ] );
+			}
+		);
+		return \array_map( static fn ( array $row ): array => \array_combine( self::LISTED, $row ), $rows ?? [] );
 	}
 
 	/**
@@ -413,44 +489,41 @@ final class Stats_Query {
 	}
 
 	/**
-	 * The answer's columns: each group field, a `url` followed by its
-	 * `url_name`, then each measure.
+	 * One arm over every alias: the `UNION ALL` of its copies, and its
+	 * binds once per copy.
 	 *
-	 * @param array{group:list<string>, measure:list<string>} $spec
-	 * @return list<string>
+	 * @param array{0:string, 1:list<scalar|null>} $arm     An arm and its binds, its alias a `%1$s` placeholder.
+	 * @param non-empty-list<string>               $aliases The attached partitions.
+	 * @return array{0:string, 1:list<scalar|null>}
 	 */
-	private static function columns( array $spec ): array {
-		$columns = [];
-		foreach ( $spec['group'] as $field ) {
-			$columns[] = $field;
-			if ( 'url' === $field ) {
-				$columns[] = 'url_name';
-			}
-		}
-		return [ ...$columns, ...$spec['measure'] ];
+	private static function union( array $arm, array $aliases ): array {
+		return [
+			'( ' . \implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => \sprintf( $arm[0], $alias ), $aliases ) ) . ' )',
+			\array_merge( ...\array_fill( 0, \count( $aliases ), $arm[1] ) ),
+		];
 	}
 
 	/**
-	 * The table that answers $spec exactly at least cost: timings_site | timings | requests_hourly | requests.
+	 * What `$read` answers over every attached partition, none when no
+	 * partition has written a file. A fleet whose stats file will not open
+	 * says so once a window and answers null (decision 3).
 	 *
-	 * A timings spec reads `timings_site` unless a URL is grouped, filtered
-	 * or searched; a requests spec reads `requests_hourly` when every field
-	 * and measure it names is one the rollup keeps and every bucket range
-	 * covers whole hours.
-	 *
-	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string} $spec
+	 * @param \Closure(Row_Reader, non-empty-list<string>): list<list<mixed>> $read The read, over the reader and its aliases.
+	 * @return list<list<mixed>>|null
 	 */
-	public static function table_for( array $spec ): string {
-		$named  = [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ];
-		$by_url = \in_array( 'url', $named, true ) || '' !== ( $spec['search'] ?? '' );
-		if ( 'timings' === $spec['source'] ) {
-			return $by_url ? 'timings' : 'timings_site';
+	private static function read( \Closure $read ): ?array {
+		try {
+			return Row_Table_Node::read(
+				Flame_Facts_Row_Schema::TABLE,
+				static function ( Row_Reader $reader ) use ( $read ): array {
+					$aliases = $reader->aliases();
+					return [] === $aliases ? [] : $read( $reader, $aliases );
+				}
+			);
+		} catch ( Table_Unavailable $e ) {
+			Core::print_less_often( 'performance: stats rows did not open', ' — ' . $e->getMessage() );
+			return null;
 		}
-		$hourly = ! $by_url
-			&& [] === \array_diff( $named, self::HOURLY_FIELDS )
-			&& [] === \array_diff( $spec['measure'], self::HOURLY_MEASURES )
-			&& [] === \array_filter( $spec['buckets'], static fn ( array $range ): bool => 0 !== $range[0] % self::BUCKETS_PER_HOUR || 0 !== ( $range[1] + 1 ) % self::BUCKETS_PER_HOUR );
-		return $hourly ? 'requests_hourly' : 'requests';
 	}
 
 	/**
@@ -476,9 +549,6 @@ final class Stats_Query {
 			}
 		}
 		$measure = \array_values( \array_map( Core::as_string( ... ), Core::arr( $spec['measure'] ?? null ) ) );
-		if ( [] === $measure ) {
-			throw new \InvalidArgumentException( 'a query names at least one measure' );
-		}
 		foreach ( $measure as $name ) {
 			if ( ! \in_array( $name, self::MEASURES[ $source ], true ) ) {
 				throw new \InvalidArgumentException( \esc_html( "unknown {$source} measure {$name}: one of " . \implode( ', ', self::MEASURES[ $source ] ) ) );

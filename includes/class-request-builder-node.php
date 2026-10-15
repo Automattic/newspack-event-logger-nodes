@@ -154,23 +154,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	];
 
 	/**
-	 * The two columns a line's COMPLETION is read from: the zero-padded start
-	 * time, and the duration in milliseconds that closes it.
-	 *
-	 * Their own table, not INDEX_COLUMNS rows: zero padding is what makes the
-	 * raw bytes sort the way the numbers do, and that is a different property
-	 * from the equality the pre-filter columns promise.
-	 */
-	private const COMPLETION_COLUMNS = [ [ 44, 10 ], [ 54, 8 ] ];
-
-	/**
-	 * The two columns a line's record POSITION is read from: its segment, then
-	 * its byte offset in that segment. One partition's writer appends them in
-	 * order, so they grow down the index whatever time the line carries.
-	 */
-	private const POSITION_COLUMNS = [ [ 65, 6 ], [ 71, 10 ] ];
-
-	/**
 	 * The keywords a request builder's narration is written under. Folded as
 	 * any line is, but no traffic: counted, a builder reading its own record
 	 * back, or two builders each reading the other's, tell for ever.
@@ -1938,32 +1921,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 */
 	public static function index_column( string $field ): array {
 		return self::INDEX_COLUMNS[ $field ] ?? [];
-	}
-
-	/**
-	 * Where a line's COMPLETION is read from, for a walk that bounds itself by
-	 * time rather than by a match: the start column, then the duration column
-	 * in milliseconds. A format carrying no time answers `[]`, and its caller
-	 * keeps the time budget as its only bound.
-	 *
-	 * Completion, not start: this class appends a line when the request ENDS,
-	 * so start is the one time on the line a walk cannot order itself by — a
-	 * request that ran for hours carries one from outside any recent window.
-	 *
-	 * @return array{0:array{0:int,1:int},1:array{0:int,1:int}} Start, then duration.
-	 */
-	public static function index_completion_columns(): array {
-		return self::COMPLETION_COLUMNS;
-	}
-
-	/**
-	 * Where a line's record position is read from, for a walk that stops at a
-	 * position it was handed: the segment column, then the offset column.
-	 *
-	 * @return array{0:array{0:int,1:int},1:array{0:int,1:int}} Segment, then offset.
-	 */
-	public static function index_position_columns(): array {
-		return self::POSITION_COLUMNS;
 	}
 
 	/**

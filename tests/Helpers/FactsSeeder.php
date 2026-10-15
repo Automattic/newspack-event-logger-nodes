@@ -40,44 +40,58 @@ trait FactsSeeder {
 	 * @param int                 $partition The partition file it lands in.
 	 */
 	protected function seed_request( array $over = [], int $partition = 0 ): void {
-		$now    = (int) Core::$now;
-		$server = Core::as_string( $over['server'] ?? self::$seed_server );
-		$url    = Core::as_string( $over['url'] ?? "https://{$server}/seed-path/" );
-		$ua     = $over['ua'] ?? null;
-		unset( $over['url'], $over['ua'] );
-		$bucket = Core::as_int( $over['bucket'] ?? Bucket::id( $now ) );
-		$row    = self::facts_row(
-			'requests',
-			$over + [
-				'rid'         => 'rid-seed-' . ( ++$this->seeded_requests ),
-				'bucket'      => $bucket,
-				'finished_at' => (float) ( $bucket * Bucket::SECONDS ),
-				'partition'   => $partition,
-				'segment'     => null,
-				'offset'      => null,
-				'length'      => null,
-				'server'      => $server,
-				'url_id'      => null,
-				'status'      => 200,
-				'method'      => 'GET',
-				'country'     => null,
-				'ua_id'       => null,
-				'ja4'         => null,
-				'from_header' => null,
-				'worker'      => 0,
-				'profiled'    => 0,
-				'error'       => null,
-				'ms'          => 100.0,
-				'peak_mb'     => 24.0,
-			]
-		);
-		$batch = [ self::url_op( $url, $server ) ];
-		$ids   = [ Flame_Facts_Row_Schema::position( 'requests', 'url_id' ) => 0 ];
-		if ( null !== $ua ) {
-			$batch[] = [ 'ignore', 'agents', [ null, $ua ] ];
-			$ids[ Flame_Facts_Row_Schema::position( 'requests', 'ua_id' ) ] = 1;
+		$this->seed_requests( [ $over ], $partition );
+	}
+
+	/**
+	 * Many `requests` rows in one batch, each as `seed_request()` takes it.
+	 *
+	 * @param list<array<string,mixed>> $rows      Each row's columns by name.
+	 * @param int                       $partition The partition file they land in.
+	 */
+	protected function seed_requests( array $rows, int $partition = 0 ): void {
+		$now   = (int) Core::$now;
+		$batch = [];
+		foreach ( $rows as $over ) {
+			$server = Core::as_string( $over['server'] ?? self::$seed_server );
+			$url    = Core::as_string( $over['url'] ?? "https://{$server}/seed-path/" );
+			$ua     = $over['ua'] ?? null;
+			unset( $over['url'], $over['ua'] );
+			$bucket = Core::as_int( $over['bucket'] ?? Bucket::id( $now ) );
+			$row    = self::facts_row(
+				'requests',
+				$over + [
+					'rid'         => 'rid-seed-' . ( ++$this->seeded_requests ),
+					'bucket'      => $bucket,
+					'finished_at' => (float) ( $bucket * Bucket::SECONDS ),
+					'started_at'  => $bucket * Bucket::SECONDS - 2,
+					'partition'   => $partition,
+					'segment'     => null,
+					'offset'      => null,
+					'length'      => null,
+					'server'      => $server,
+					'url_id'      => null,
+					'status'      => 200,
+					'method'      => 'GET',
+					'country'     => null,
+					'ua_id'       => null,
+					'ja4'         => null,
+					'from_header' => null,
+					'worker'      => 0,
+					'profiled'    => 0,
+					'error'       => null,
+					'ms'          => 100.0,
+					'peak_mb'     => 24.0,
+				]
+			);
+			$ids     = [ Flame_Facts_Row_Schema::position( 'requests', 'url_id' ) => \count( $batch ) ];
+			$batch[] = self::url_op( $url, $server );
+			if ( null !== $ua ) {
+				$ids[ Flame_Facts_Row_Schema::position( 'requests', 'ua_id' ) ] = \count( $batch );
+				$batch[] = [ 'ignore', 'agents', [ null, $ua ] ];
+			}
+			$batch[] = [ 'ignore', 'requests', $row, [], $ids ];
 		}
-		$batch[] = [ 'ignore', 'requests', $row, [], $ids ];
 		$this->write_facts( $partition, $batch );
 	}
 

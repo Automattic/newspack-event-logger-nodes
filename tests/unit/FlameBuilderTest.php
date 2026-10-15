@@ -1876,13 +1876,6 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 'c0ffee5eeded', \trim( \substr( $line, $hash_offset, $hash_length ) ) );
 	}
 
-	public function test_the_flame_index_carries_no_completion_columns(): void {
-		// The flame line is rid(32) url_hash(12) segment(6) offset(10) length(8):
-		// no timestamp anywhere, so a retention bound cannot read one off it and
-		// offset 44 is `segment`, not a time.
-		$this->assertSame( [], Flame_Builder_Node::index_completion_columns() );
-	}
-
 	public function test_index_column_offers_no_column_for_a_zero_padded_field(): void {
 		// `segment` is zero-padded, so its column never equals its parsed int.
 		$this->assertSame( [], Flame_Builder_Node::index_column( 'segment' ) );

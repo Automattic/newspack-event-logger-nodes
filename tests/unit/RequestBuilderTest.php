@@ -1720,35 +1720,6 @@ class RequestBuilderTest extends TestCase {
 		$this->assertGreaterThan( 595, $rotation * ( Request_Builder_Node::DEFAULT_NUM_BUCKETS - 1 ) );
 	}
 
-	/**
-	 * The retention bound compares a line's COMPLETION in place, so both of the
-	 * columns that make one come from the writer too — and the zero padding is
-	 * what makes the raw bytes sort in the order the numbers do.
-	 */
-	public function test_index_completion_columns_locate_the_zero_padded_start_and_duration(): void {
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_STRUCT;
-		$message[ Message::VALUE ] = [
-			'rid'            => 'zz9-timecol-rid-4d17',
-			'url'            => '/timecol/9928',
-			'timestamp'      => 1_433_557_799,
-			'duration_ms'    => 6512,
-			'status_code'    => 203,
-			'peak_mb'        => 41,
-			'request_method' => 'PUT',
-		];
-		$line = (string) Request_Builder_Node::format_index_entry(
-			$message,
-			[ 'segment' => 3, 'offset' => 512, 'length' => 88 ]
-		);
-
-		[ [ $start_at, $start_len ], [ $dur_at, $dur_len ] ] = Request_Builder_Node::index_completion_columns();
-
-		$this->assertSame( 10, $start_len, 'a 10-digit column is what keeps the padding sortable' );
-		$this->assertSame( 1_433_557_799, (int) \substr( $line, $start_at, $start_len ) );
-		$this->assertSame( 6512, (int) \substr( $line, $dur_at, $dur_len ), 'the milliseconds that close the start time' );
-	}
-
 	public function test_index_column_offers_no_column_for_a_field_the_raw_line_encodes(): void {
 		// `method` is a 1-char code and `timestamp` is zero-padded, so neither
 		// column equals its parsed value; a scan on those must still parse.

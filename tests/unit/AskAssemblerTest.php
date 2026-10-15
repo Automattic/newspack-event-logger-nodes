@@ -68,10 +68,9 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_url(
 			[ 'url' => 'https://example.test/a', 'hash' => 'cccccccccccc', 'count' => 2, 'avg_ms' => 130.0 ],
 			[],
+			false,
 			null,
 			'alpha.example',
-			false,
-			1_741_000_800,
 			self::FILTERS
 		);
 
@@ -365,7 +364,7 @@ class AskAssemblerTest extends TestCase {
 			[ 'rid' => 'c', 'duration_ms' => 1400, 'status_code' => 200, 'partition' => 0 ],
 		];
 
-		$brief = Ask_Assembler::for_url( $stats, $requests, $this->rule(), '', false, 1_741_000_800, self::FILTERS );
+		$brief = Ask_Assembler::for_url( $stats, $requests, false, $this->rule(), '', self::FILTERS );
 
 		$this->assertSame( 'url', $brief['subject'] );
 		$this->assertStringContainsString( '[REDACTED]', $brief['url'] );
@@ -374,85 +373,23 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 'a1b2c3d4e5f6', $brief['rule']['id'] );
 	}
 
-	public function test_a_url_brief_says_when_the_request_scan_stopped_short(): void {
-		// The worst-five are drawn from whatever the index walk reached, so a
-		// brief quoting them without that caveat sounds like the whole record.
-		// Seven requests: the list is ALWAYS cut to five, and the flag is
-		// about the walk behind it, so a completed scan still reads false.
-		$stats    = [ 'url' => 'https://example.test/slow', 'hash' => 'e9e9e9e9e9e9', 'count' => 7, 'avg_ms' => 511.0 ];
-		$requests = [];
-		foreach ( \range( 1, 7 ) as $n ) {
-			$requests[] = [ 'rid' => "r{$n}", 'duration_ms' => 100.0 * $n, 'status_code' => 200, 'partition' => 0 ];
-		}
-
-		$complete = Ask_Assembler::for_url( $stats, $requests, null, 'delta.example', false, 1_741_000_800, self::FILTERS );
-		$stopped  = Ask_Assembler::for_url( $stats, [], null, 'delta.example', true, 1_741_000_800, self::FILTERS );
-
-		$this->assertCount( Ask_Assembler::WORST_REQUESTS, $complete['worst_requests'] );
-		$this->assertFalse( $complete['scan_stopped_early'] );
-		$this->assertTrue( $stopped['scan_stopped_early'] );
-		$this->assertArrayNotHasKey( 'worst_requests_truncated', $complete );
-	}
-
 	/**
-	 * A list at the cap is the newest RECENT_REQUEST_LIMIT, not the window, so
-	 * the brief says so rather than reading "every request since".
+	 * A list holding fewer requests than the stats count is the newest only,
+	 * as the URL detail decided, and the brief says so rather than reading
+	 * "every request since".
 	 */
 	public function test_a_url_brief_says_when_its_list_holds_the_newest_only(): void {
-		$limit = Performance_CI_Node::RECENT_REQUEST_LIMIT;
-		$row   = static fn ( int $n ): array => [ 'rid' => "kahu{$n}", 'duration_ms' => 40 + $n, 'status_code' => 200, 'partition' => 2 ];
-		$brief = static fn ( int $listed ): array => Ask_Assembler::for_url(
+		$brief = static fn ( bool $capped ): array => Ask_Assembler::for_url(
 			[ 'url' => 'https://example.test/kahu', 'hash' => 'c4c4c4c4c4c4', 'count' => 9133 ],
-			\array_map( $row, \range( 1, $listed ) ),
+			[ [ 'rid' => 'kahu1', 'duration_ms' => 41.5, 'status_code' => 200, 'partition' => 2 ] ],
+			$capped,
 			null,
 			'iota.example',
-			false,
-			1_741_000_800,
 			self::FILTERS
 		);
 
-		$this->assertTrue( $brief( $limit )['requests_capped'] );
-		$this->assertFalse( $brief( $limit - 1 )['requests_capped'] );
-	}
-
-	public function test_a_url_brief_names_the_window_its_requests_were_drawn_from(): void {
-		// An empty list reads two ways — no traffic, or no traffic since the
-		// window opened — and only the reply itself can tell them apart.
-		$brief = Ask_Assembler::for_url(
-			[ 'url' => 'https://example.test/quiet', 'hash' => 'b7b7b7b7b7b7', 'count' => 0 ],
-			[],
-			null,
-			'zeta.example',
-			false,
-			1_741_000_800,
-			self::FILTERS
-		);
-
-		$this->assertSame( 1_741_000_800, $brief['requests_window_start'] );
-	}
-
-	public function test_a_url_brief_cannot_be_built_without_naming_that_window(): void {
-		// Same reason the scan's ending is required: a narrower number that
-		// does not say so reads as the site's.
-		$this->expectException( \ArgumentCountError::class );
-		Ask_Assembler::for_url(
-			[ 'url' => 'https://example.test/quiet', 'hash' => 'd0d0d0d0d0d0', 'count' => 3 ],
-			[],
-			null,
-			'eta.example',
-			false
-		);
-	}
-
-	public function test_a_url_brief_cannot_be_built_without_stating_how_its_scan_ended(): void {
-		// A completeness claim nobody made is the one answer that reassures.
-		$this->expectException( \ArgumentCountError::class );
-		Ask_Assembler::for_url(
-			[ 'url' => 'https://example.test/quiet', 'hash' => 'd0d0d0d0d0d0', 'count' => 3 ],
-			[],
-			null,
-			'epsilon.example'
-		);
+		$this->assertTrue( $brief( true )['requests_capped'] );
+		$this->assertFalse( $brief( false )['requests_capped'] );
 	}
 
 	/**
@@ -591,10 +528,9 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => '25ecf5606840', 'url' => '/calendar', 'count' => 12 ],
 			[],
+			false,
 			$this->rule(),
 			'',
-			false,
-			1_741_000_800,
 			self::FILTERS
 		);
 
@@ -624,10 +560,9 @@ class AskAssemblerTest extends TestCase {
 					'length'       => 91551,
 				],
 			],
+			false,
 			$this->rule(),
 			'',
-			false,
-			1_741_000_800,
 			self::FILTERS
 		);
 
@@ -719,7 +654,7 @@ class AskAssemblerTest extends TestCase {
 		// The URL modal's aggregate flame is not a request: every value is a
 		// per-request mean, the brief says so, and its pointer re-asks under
 		// the URL.
-		$brief = Ask_Assembler::for_url_span( $this->aggregate_flame(), 'wp_loaded', 'https://example.test/a?token=hunter2', $this->rule(), 'url:cccccccccccc' );
+		$brief = Ask_Assembler::for_url_span( $this->aggregate_flame(), 'wp_loaded', 'https://example.test/a?token=hunter2', $this->rule(), 'url:cccccccccccc', '' );
 
 		$this->assertNotNull( $brief );
 		$this->assertSame( 'span', $brief['subject'] );
@@ -732,14 +667,23 @@ class AskAssemblerTest extends TestCase {
 			[ [ 'tool' => 'performance_ask', 'arguments' => [ 'descriptor' => 'span:wp_loaded', 'context' => 'url:cccccccccccc' ] ] ],
 			$brief['fetch']
 		);
-		$this->assertNull( Ask_Assembler::for_url_span( $this->aggregate_flame(), 'no_such_span', '/a', null, 'url:cccccccccccc' ) );
+		$this->assertNull( Ask_Assembler::for_url_span( $this->aggregate_flame(), 'no_such_span', '/a', null, 'url:cccccccccccc', '' ) );
+	}
+
+	/** A URL's span and category briefs under a server name it in their scope. */
+	public function test_a_url_aggregate_brief_names_the_server_it_is_of(): void {
+		$span     = Ask_Assembler::for_url_span( $this->aggregate_flame(), 'wp_loaded', '/a', null, 'url:cccccccccccc', 'ruru.example' );
+		$category = Ask_Assembler::for_url_category( [ 'count' => 23, 'categories' => [ 'render' => [ 'time' => 6.5, 'count' => 1.0, 'samples' => 23 ] ] ], 'render', '/a', 'ruru.example' );
+
+		$this->assertSame( 'mean per request over 17 requests on ruru.example', $span['scope'] );
+		$this->assertSame( 'mean per request over 23 requests on ruru.example', $category['scope'] );
 	}
 
 	public function test_a_url_span_brief_carries_no_call_count_the_aggregate_never_recorded(): void {
 		// An aggregate node folds many requests and keeps no call count, so a
 		// `count` here would be invented: the request flavour's default of one
 		// call is a fact about one request and a fiction about seventeen.
-		$brief = Ask_Assembler::for_url_span( $this->aggregate_flame(), 'wp_loaded', '/a', null, 'url:cccccccccccc' );
+		$brief = Ask_Assembler::for_url_span( $this->aggregate_flame(), 'wp_loaded', '/a', null, 'url:cccccccccccc', '' );
 
 		$this->assertArrayNotHasKey( 'count', $brief );
 		foreach ( [ ...$brief['siblings'], ...$brief['subtree'] ] as $row ) {
@@ -760,7 +704,8 @@ class AskAssemblerTest extends TestCase {
 				],
 			],
 			'render',
-			'https://example.test/a?token=hunter2'
+			'https://example.test/a?token=hunter2',
+			''
 		);
 
 		$this->assertNotNull( $brief );
@@ -770,7 +715,7 @@ class AskAssemblerTest extends TestCase {
 		$this->assertEquals( 0.75, $brief['share'] );
 		$this->assertSame( 'sql', $brief['others'][0]['name'] );
 		$this->assertStringNotContainsString( 'hunter2', $brief['url'] );
-		$this->assertNull( Ask_Assembler::for_url_category( [ 'count' => 17, 'categories' => [ 'sql' => [ 'time' => 1.0, 'count' => 1.0 ] ] ], 'render', '/a' ) );
+		$this->assertNull( Ask_Assembler::for_url_category( [ 'count' => 17, 'categories' => [ 'sql' => [ 'time' => 1.0, 'count' => 1.0 ] ] ], 'render', '/a', '' ) );
 	}
 
 	public function test_a_request_brief_points_at_the_url_it_was_asked_under(): void {
@@ -781,7 +726,7 @@ class AskAssemblerTest extends TestCase {
 
 		$this->assertSame( 'dump_request', $brief['fetch'][0]['tool'] );
 		$this->assertSame( [ 'tool' => 'dump_url', 'arguments' => [ 'hash' => 'cccccccccccc', 'server' => 'alpha.example' ] ], $brief['fetch'][1] );
-		$this->assertSame( [ 'hash' => 'cccccccccccc' ], Ask_Assembler::for_request( $this->record(), null, 'url:cccccccccccc' )['fetch'][1]['arguments'] );
+		$this->assertSame( [ 'hash' => 'cccccccccccc' ], Ask_Assembler::for_request( $this->record(), null, 'url:cccccccccccc', '' )['fetch'][1]['arguments'] );
 		$this->assertCount( 1, Ask_Assembler::for_request( $this->record(), null )['fetch'] );
 	}
 
@@ -792,7 +737,8 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_url_category(
 			[ 'count' => 17, 'categories' => [ 'render' => [ 'time' => 60.0, 'count' => 2.0, 'samples' => 12 ] ] ],
 			'render',
-			'/a'
+			'/a',
+			''
 		);
 
 		$this->assertSame( 12, $brief['samples'] );
@@ -813,7 +759,8 @@ class AskAssemblerTest extends TestCase {
 				],
 			],
 			'hooks',
-			'/a'
+			'/a',
+			''
 		);
 
 		$this->assertEqualsWithDelta( 0.75, $brief['share'], 1e-6 );
@@ -833,9 +780,9 @@ class AskAssemblerTest extends TestCase {
 			],
 		];
 
-		$this->assertNull( Ask_Assembler::for_url_category( $board, 'hooks @10', '/a' ) );
+		$this->assertNull( Ask_Assembler::for_url_category( $board, 'hooks @10', '/a', '' ) );
 		$this->assertNull( Ask_Assembler::for_category( $board['categories'], 'init @-10' ) );
-		$brief = Ask_Assembler::for_url_category( $board, 'hooks', '/a' );
+		$brief = Ask_Assembler::for_url_category( $board, 'hooks', '/a', '' );
 		$this->assertEqualsWithDelta( 0.75, $brief['share'], 1e-6 );
 		$this->assertSame( [ 'render' ], \array_column( $brief['others'], 'name' ) );
 	}
@@ -851,7 +798,7 @@ class AskAssemblerTest extends TestCase {
 			],
 		];
 
-		$brief = Ask_Assembler::for_url_span( $flame, 'query', '/a', null, 'url:cccccccccccc' );
+		$brief = Ask_Assembler::for_url_span( $flame, 'query', '/a', null, 'url:cccccccccccc', '' );
 
 		$this->assertSame( 'process', $brief['parent'] );
 		$this->assertEquals( 9.0, $brief['elsewhere']['ms'] );
@@ -873,10 +820,9 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => 'ff00', 'url' => 'https://example.test/uncovered', 'count' => 12, 'avg_ms' => 4000.0 ],
 			[],
+			false,
 			null,
 			'',
-			false,
-			1_741_000_800,
 			self::FILTERS
 		);
 
@@ -1252,10 +1198,9 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5, 'errors' => 37 ],
 			$requests,
+			false,
 			$this->rule(),
 			'kiwi.example',
-			false,
-			1_741_000_800,
 			[ 'errors_only' => true ] + self::FILTERS
 		);
 
@@ -1274,10 +1219,9 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 4210, 'timed_count' => 4173, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5, 'errors' => 37 ],
 			[],
+			false,
 			$this->rule(),
 			'kiwi.example',
-			false,
-			1_741_000_800,
 			self::FILTERS
 		);
 
@@ -1301,10 +1245,9 @@ class AskAssemblerTest extends TestCase {
 		$brief = static fn ( ?float $max ): mixed => Ask_Assembler::for_url(
 			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 6, 'avg_ms' => 41.7, 'max_ms' => $max ],
 			[],
+			false,
 			null,
 			'',
-			false,
-			1_741_000_800,
 			self::FILTERS
 		)['stats']['max_ms'];
 
@@ -1316,10 +1259,9 @@ class AskAssemblerTest extends TestCase {
 		Ask_Assembler::for_url(
 			[ 'url' => 'https://example.test/quiet', 'hash' => 'd0d0d0d0d0d0', 'count' => 3 ],
 			[],
+			false,
 			null,
 			'theta.example',
-			false,
-			1_741_000_800
 		);
 	}
 
@@ -1328,10 +1270,9 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 7, 'avg_ms' => 70.0, 'max_ms' => 133.0, 'max_peak_mb' => 3.5, 'errors' => 1 ],
 			[],
+			false,
 			$this->rule(),
 			'kiwi.example',
-			false,
-			1_791_207_300,
 			[ 'errors_only' => true, 'bucket' => '2026-10-04-13-35' ] + self::FILTERS
 		);
 
@@ -1371,10 +1312,9 @@ class AskAssemblerTest extends TestCase {
 				[ 'rid' => 'clean1', 'duration_ms' => 300, 'status_code' => 200, 'error_status' => null, 'partition' => 3 ],
 				[ 'rid' => 'zero1', 'duration_ms' => null, 'status_code' => 500, 'error_status' => 'F', 'partition' => 0 ],
 			],
+			false,
 			null,
 			'',
-			false,
-			1_741_000_800,
 			[ 'errors_only' => true ] + self::FILTERS
 		);
 

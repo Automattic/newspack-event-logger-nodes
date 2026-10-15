@@ -162,6 +162,12 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( 'null `duration_ms`', $tools['dump_url']['description'], 'it says an unmeasured duration is null' );
 		$this->assertStringContainsString( '`finished_at`', $tools['dump_url']['description'], 'it names the order the list keeps' );
 		$this->assertStringContainsString( '`stats.avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null', $tools['dump_url']['description'], 'it names each stat null unmeasured' );
+		$this->assertStringContainsString( '`requests_capped`', $tools['dump_url']['description'], 'it says when the list holds the newest only' );
+		$this->assertStringContainsString( '`aggregate_profiles`', $tools['dump_url']['description'], 'it names the URL\'s profile' );
+		$this->assertStringContainsString( 'performance_query', $tools['dump_url']['description'], 'it points the series at the query tool' );
+		foreach ( [ 'scan_stopped_early', 'requests_window_start', 'index walk' ] as $gone ) {
+			$this->assertStringNotContainsString( $gone, \json_encode( $tools['dump_url'] ), "the list is a query, so {$gone} is no part of it" );
+		}
 		$ask_errors = $tools['performance_ask']['inputSchema']['properties']['errors_only']['description'];
 		$this->assertStringContainsString( '`url:`', $ask_errors, 'errors_only narrows a url: brief too' );
 		$this->assertStringContainsString( '`error_summary`', $ask_errors );
@@ -881,14 +887,14 @@ class McpControllerTest extends TestCase {
 					'jsonrpc' => '2.0',
 					'id'      => 8,
 					'method'  => 'tools/call',
-					'params'  => [ 'name' => 'dump_url', 'arguments' => [ 'hash' => 'ffffffff' ] ],
+					'params'  => [ 'name' => 'dump_url', 'arguments' => [ 'hash' => 'not-a-hash' ] ],
 				],
 				$bearer
 			)
 		);
 
 		$this->assertTrue( $reply['result']['isError'] );
-		$this->assertStringContainsString( 'URL not found', $reply['result']['content'][0]['text'] );
+		$this->assertStringContainsString( 'invalid hash format', $reply['result']['content'][0]['text'] );
 	}
 
 	/** A refusal's escaped quotes reach the agent as plain text. */
