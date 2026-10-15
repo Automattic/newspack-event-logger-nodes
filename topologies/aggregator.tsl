@@ -13,18 +13,18 @@
 # the Vault on reload — a spoke is added or dropped by editing group
 # membership, never by hand-editing this file. Each Remote_Source is a broker
 # holding ONE connection to its spoke, which carries both of the spoke's
-# streams the pairs name, `firehose.p{partition}` and `sources:php` (the
-# spoke's PHP error log); each stream is read by its own Remote_Consumer,
-# published as `spokes:<id>:<stamp>`, with its own cursor under
-# `<topology>.{id}/`. Never hand-wire a second Remote_Source for a spoke
+# streams its `add_source` lines name, `firehose.p{partition}` and
+# `sources:php` (the spoke's PHP error log); each stream is read by its own
+# Remote_Consumer, published as `spokes:<id>:<stamp>`, with its own cursor
+# under `<topology>.{id}/`. Never hand-wire a second Remote_Source for a spoke
 # already in the group beside it: two readers pulling the same spoke stream
 # under independent cursors double-ingest every entry.
 #
-# Each pair names where its stream's lines go, which is also the declaration
-# of where a spoke's lines may go: a firehose record carries no TO of its own,
-# and a reader refuses any line a spoke addressed rather than letting it name
-# a node in this worker's graph — the refusal consumes the line, and the
-# cursor advances past it.
+# Each `add_source` line names a spoke log and the node its lines go to,
+# which is also the declaration of where a spoke's lines may go: a firehose
+# record carries no TO of its own, and a reader refuses any line a spoke
+# addressed rather than letting it name a node in this worker's graph — the
+# refusal consumes the line, and the cursor advances past it.
 #
 # `php-errors.p0` collects every spoke's PHP error log and the hub's own,
 # which `php-errors:tail` follows. A line from the hub's own log opens its FROM
@@ -80,7 +80,9 @@ var on_demand_idle = 0
 
 include topic-probe
 
-make_node Vault_Group spokes Remote_Source spoke <config:offsets_dir>/<topology>.{id} <config:deadletter_dir>/<topology>.{id} firehose.p{partition}=remote-job-rewrite sources:php=php-errors:partition
+make_node Vault_Group spokes Remote_Source spoke <config:offsets_dir>/<topology>.{id} <config:deadletter_dir>/<topology>.{id}
+command_node spokes:config add_source firehose.p{partition} remote-job-rewrite
+command_node spokes:config add_source sources:php php-errors:partition
 make_node Remote_Job_Rewrite remote-job-rewrite
 make_node Topic     firehose:topic       <config:logs_dir>/firehose.p{partition}
 make_node File_Tail php-errors:tail      sources:php <config:offsets_dir>/<topology>.php-errors.tail <config:deadletter_dir>/<topology>.php-errors.tail
