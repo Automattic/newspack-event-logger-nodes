@@ -8,7 +8,7 @@ wp-admin → **Event Logger** → **Performance**. The menu needs the logger's *
 
 On a **hub**, the dashboard collects many publishers' sites. Each site is one **server**, named by its host.
 
-The address bar carries what you are looking at: the server, the chart's metric and breakdown, the table's search, sort, filters, time and page. Copy the link, and a colleague opens the same view.
+The address bar carries what you are looking at: the server, the chart's metric, breakdown, Then by and filter chips, the table's search, sort, filters, time and page. Copy the link, and a colleague opens the same view.
 
 ## From a report to a cause
 

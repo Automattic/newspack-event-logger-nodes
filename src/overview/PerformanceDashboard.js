@@ -16,10 +16,10 @@
  * the search box and its results,
  * the request-table sort, the bucket selections that narrow the URL table
  * and the URL modal, the URL modal chart's question, and the inline "Log this
- * URL" rule editor. The server filter, metric, both dimensions and the table
- * selection also live in the address bar, as `?server=`, `?metric=`,
- * `?breakdown=`, `?then=` and `?bucket=`, so a shared link opens the same
- * view. The
+ * URL" rule editor. The server filter, metric, both dimensions, the chart's
+ * chips and the table selection also live in the address bar, as `?server=`,
+ * `?metric=`, `?breakdown=`, `?then=`, one `?chip=` per chip and `?bucket=`,
+ * so a shared link opens the same view. The
  * component also runs every command whose reply sets that state: the `?url=`
  * and `?request=` deep-link resolvers, the title lookup for a hash the loaded
  * catalog page does not carry, the search box's exact-rid lookup and its
@@ -56,6 +56,7 @@ import {
 	CHART_METRIC_OPTIONS,
 	CHART_BREAKDOWN_OPTIONS,
 	DEFAULT_CHART_BREAKDOWN,
+	FILTER_FIELD_OPTIONS,
 	GROUPS,
 } from './constants';
 import {
@@ -70,11 +71,13 @@ import {
 import useUrlNavigation from './hooks/useUrlNavigation';
 import {
 	useQueryParamChoice,
+	useQueryParamList,
 	useQueryParamState,
 } from '@newspack-nodes/shared/hooks/useQueryParamState';
 import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import OverviewSection from './components/OverviewSection';
+import { chipRefusal } from './components/BreakdownControls';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
 import AskPanel, { AskButton, useAsk } from './components/AskPanel';
@@ -162,6 +165,19 @@ const CHART_BREAKDOWNS = CHART_BREAKDOWN_OPTIONS.map(
 	( option ) => option.value
 );
 const CHART_THEN_BYS = [ '', ...CHART_BREAKDOWNS ];
+
+/**
+ * The linked `?chip=` values the chip editor would take; the rest drop.
+ *
+ * @param {string[]} raw Every `?chip=` value, each `field=value`.
+ * @return {string[]} The chips kept, or `NO_CHIPS` for none.
+ */
+const restoreChips = ( raw ) => {
+	const kept = raw.filter(
+		( chip ) => null === chipRefusal( chip, FILTER_FIELD_OPTIONS )
+	);
+	return kept.length ? kept : NO_CHIPS;
+};
 
 /**
  * The dashboard's one component: the overview card, the URL table, and the
@@ -257,7 +273,11 @@ export default function PerformanceDashboard( {
 		CHART_THEN_BYS,
 		''
 	);
-	const [ chartChips, setChartChips ] = useState( NO_CHIPS );
+	const [ chartChips, setChartChips ] = useQueryParamList(
+		'chip',
+		restoreChips,
+		( chips ) => chips
+	);
 	// The URL modal chart's question, which survives a trip to a request.
 	const [ detailChart, setDetailChart ] = useState( NO_DETAIL_CHART );
 	// Same value, same object: the graph re-asks the chart on a new one.

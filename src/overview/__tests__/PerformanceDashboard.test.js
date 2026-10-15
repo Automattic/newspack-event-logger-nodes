@@ -911,6 +911,106 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 
+		describe( 'the chart chips', () => {
+			const UA = 'ua=Mozilla/5.0 (X11, Linux)';
+			const chips = () =>
+				new URLSearchParams( window.location.search ).getAll( 'chip' );
+
+			it( 'opens on the chips a link names, dropping one the editor refuses', async () => {
+				linkTo(
+					[
+						'chip=status_class%3D5xx',
+						'chip=referrer%3Dt.co',
+						`chip=${ encodeURIComponent( UA ) }`,
+						'chip=country%3D',
+						'url=h1',
+					].join( '&' )
+				);
+				mockView = serverView( hub );
+				const { unmount } = mountDash();
+				await flushEffects();
+
+				expect( mockGraphCalls[ 0 ].chartChips ).toEqual( [
+					'status_class=5xx',
+					UA,
+				] );
+				expect( globalThis.__overviewProps.chartChips ).toEqual( [
+					'status_class=5xx',
+					UA,
+				] );
+				expect( chips() ).toEqual( [ 'status_class=5xx', UA ] );
+				expect( param( 'url' ) ).toBe( 'h1' );
+				unmount();
+			} );
+
+			it( 'writes each chip as its own key, and the last removal drops them', async () => {
+				linkTo( 'url=h1' );
+				mockView = serverView( hub );
+				const { unmount } = mountDash();
+				await flushEffects();
+
+				act( () =>
+					globalThis.__overviewProps.setChartChips( [
+						'status_class=5xx',
+						UA,
+					] )
+				);
+				expect( chips() ).toEqual( [ 'status_class=5xx', UA ] );
+				expect( mockGraphOpts.chartChips ).toEqual( [
+					'status_class=5xx',
+					UA,
+				] );
+
+				act( () => globalThis.__overviewProps.setChartChips( [] ) );
+				expect( window.location.search ).toBe( '?page=perf&url=h1' );
+				expect( pushSpy ).not.toHaveBeenCalled();
+				unmount();
+			} );
+
+			it( 'puts the live chips back over an entry Back restored', async () => {
+				mockView = serverView( hub );
+				const { unmount } = mountDash();
+				await flushEffects();
+				act( () => globalThis.__overviewProps.setChartChips( [ UA ] ) );
+
+				linkTo( 'chip=method%3DPURGE&url=h1' );
+				act( () => {
+					window.dispatchEvent( new PopStateEvent( 'popstate' ) );
+				} );
+
+				expect( mockGraphOpts.chartChips ).toEqual( [ UA ] );
+				expect( chips() ).toEqual( [ UA ] );
+				expect( param( 'url' ) ).toBe( 'h1' );
+				unmount();
+			} );
+
+			it( 'leaves the URL modal chips off the bar', async () => {
+				mockNavState.selectedUrl = { hash: 'beef7743', url: '/huia' };
+				mockView = loadedView( {
+					urlDetail: {
+						data: { stats: {}, requests: [] },
+						loading: false,
+						error: null,
+					},
+				} );
+				const { unmount } = mountDash();
+				await flushEffects();
+
+				act( () =>
+					globalThis.__urlDetailProps.onChartChange( 'chips', [
+						'method=PURGE',
+					] )
+				);
+				await flushEffects();
+
+				expect( mockGraphOpts.detailChart.chips ).toEqual( [
+					'method=PURGE',
+				] );
+				expect( chips() ).toEqual( [] );
+				unmount();
+			} );
+		} );
+
 		it( 'writes a server pick, and All Servers drops it', async () => {
 			linkTo( 'url=h1' );
 			mockView = serverView( hub );
