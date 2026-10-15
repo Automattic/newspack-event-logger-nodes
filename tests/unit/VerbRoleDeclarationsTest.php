@@ -35,6 +35,7 @@ class VerbRoleDeclarationsTest extends TestCase {
 				[
 					'overview'         => $read,
 					'urls'             => $read,
+					'query'            => $read,
 					'dump_url'       => $read,
 					'search_requests'   => $read,
 					'grep_requests'     => $read,

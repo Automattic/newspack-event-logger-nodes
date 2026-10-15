@@ -3,6 +3,9 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\App\MCP_Controller;
+use Newspack_Event_Logger_Nodes\App\Stats_Query;
+use Newspack_Event_Logger_Nodes\Bucket;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Capabilities;
@@ -20,6 +23,8 @@ use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
  */
 #[CoversClass( MCP_Controller::class )]
 class McpControllerTest extends TestCase {
+
+	use FactsSeeder;
 
 	private ?\Memcached $prev_memd = null;
 
@@ -246,6 +251,68 @@ class McpControllerTest extends TestCase {
 				$this->assertStringNotContainsString( '(required)', $schema['description'], "{$name} --{$arg}" );
 			}
 		}
+	}
+
+	/**
+	 * The ad-hoc query takes its spec as flat args, the lists as arrays, and
+	 * its summary names the whole vocabulary an agent may ask in.
+	 */
+	public function test_performance_query_is_listed_with_its_args(): void {
+		$tool = $this->tune_tools()['performance_query'];
+
+		$properties = $tool['inputSchema']['properties'];
+		$this->assertSame( [ 'source' ], $tool['inputSchema']['required'] );
+		foreach ( [ 'group', 'filter', 'measure' ] as $list ) {
+			$this->assertSame( [ 'type' => 'array', 'items' => [ 'type' => 'string' ] ], \array_intersect_key( $properties[ $list ], [ 'type' => 1, 'items' => 1 ] ), $list );
+		}
+		foreach ( [ 'source', 'bucket', 'search', 'sort', 'order' ] as $string ) {
+			$this->assertSame( 'string', $properties[ $string ]['type'], $string );
+		}
+		$this->assertSame( 'integer', $properties['limit']['type'] );
+		$this->assertSame( 'integer', $properties['offset']['type'] );
+		$this->assertStringContainsString( 'one value', $properties['filter']['description'] );
+		$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30', $properties['bucket']['description'] );
+		$this->assertStringContainsString( 'unless filtered `worker=0`', $tool['description'], 'it says worker traffic counts' );
+		foreach ( Stats_Query::FIELDS as $source => $fields ) {
+			foreach ( [ ...$fields, ...Stats_Query::MEASURES[ $source ] ] as $word ) {
+				$this->assertStringContainsString( "`{$word}`", $tool['description'], "{$source}: {$word}" );
+			}
+		}
+	}
+
+	public function test_performance_query_answers_columns_and_rows(): void {
+		$now         = 1_790_003_000;
+		Core::$clock = static fn (): float => (float) $now;
+		Core::right_now();
+		$this->activate_shipped( 'flame-builder', 2 );
+		$this->seed_request( [ 'server' => 'kea.example', 'status' => 503 ] );
+		$this->seed_request( [ 'server' => 'kea.example', 'status' => 504 ], partition: 1 );
+		$this->seed_request( [ 'server' => 'egret.example', 'status' => 200 ], partition: 1 );
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$reply = $controller->dispatch(
+			$this->request(
+				[
+					'jsonrpc' => '2.0',
+					'id'      => 61,
+					'method'  => 'tools/call',
+					'params'  => [
+						'name'      => 'performance_query',
+						'arguments' => [ 'source' => 'requests', 'group' => [ 'server', 'status' ], 'filter' => [ 'status_class=5' ], 'measure' => [ 'count' ] ],
+					],
+				],
+				$bearer
+			)
+		);
+
+		$this->assertArrayNotHasKey( 'error', $reply );
+		$text    = $reply['result']['content'][0]['text'];
+		$decoded = \json_decode( \trim( \substr( $text, \strlen( '<site-data>' ), -\strlen( '</site-data>' ) ) ), true );
+		$this->assertSame( [ 'server', 'status', 'count' ], $decoded['columns'] );
+		$this->assertSame( [ [ 'kea.example', 503, 1 ], [ 'kea.example', 504, 1 ] ], $decoded['rows'] );
+		$this->assertSame( Bucket::key( Bucket::id( $now ) - 287 ) . '..' . Bucket::key( Bucket::id( $now ) ), $decoded['filters']['bucket'] );
 	}
 
 	/**

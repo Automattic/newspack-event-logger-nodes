@@ -90,4 +90,26 @@ final class Url_Parts {
 		}
 		return \mb_strcut( $path, 0, self::MAX_PATH_BYTES - \strlen( '…' ), 'UTF-8' ) . '…';
 	}
+
+	/**
+	 * The URL a `row_path()` was cut from, given the server it was cut
+	 * against: the inverse `row_path()` answers to, and the one place the
+	 * join is spelled. A whole URL, or no path, comes back as it is, with
+	 * or without a server; a server-relative path with none is refused
+	 * rather than joined into `https:///…`.
+	 *
+	 * @param string $server The server the path was cut against; '' where the
+	 *                       path is already a whole URL, as on a site list.
+	 * @param string $path   The stored path.
+	 * @throws \InvalidArgumentException When a server-relative path has no server.
+	 */
+	public static function join_url( string $server, string $path ): string {
+		if ( ! \str_starts_with( $path, '/' ) ) {
+			return $path;
+		}
+		if ( '' === $server ) {
+			throw new \InvalidArgumentException( "Url_Parts: no server to join '{$path}' to" );
+		}
+		return "https://{$server}{$path}";
+	}
 }

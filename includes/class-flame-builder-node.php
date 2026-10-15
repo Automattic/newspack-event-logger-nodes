@@ -80,6 +80,20 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public const UNTIMED_STATUSES = [ 'T', 'A' ];
 
 	/**
+	 * The error statuses that count as errors: a timeout and a fatal. An
+	 * abort is the logger's own worker stopping and a gap is missing detail.
+	 *
+	 * @var list<string>
+	 */
+	public const ERROR_KINDS = [ 'T', 'F' ];
+
+	/** The lowest status code a status class is read from. */
+	public const STATUS_MIN = 100;
+
+	/** The highest status code a status class is read from. */
+	public const STATUS_MAX = 599;
+
+	/**
 	 * Requests the buffer holds before the record reaching the count writes
 	 * it, whatever the tick: a replay folds far faster than the tick, so the
 	 * count is what bounds a batch and what commits a replay as it goes.
@@ -544,24 +558,24 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * The status class an hourly row keys on: the code's hundreds digit for
-	 * 100-599, else 0, the key's spelling of an absent class.
+	 * The status class an hourly row keys on: the code's hundreds digit from
+	 * STATUS_MIN to STATUS_MAX, else 0, the key's spelling of an absent class.
 	 *
 	 * @param int|null $status The record's status code, null when absent.
 	 */
 	private static function status_class( ?int $status ): int {
-		return null !== $status && $status >= 100 && $status < 600 ? \intdiv( $status, 100 ) : 0;
+		return null !== $status && $status >= self::STATUS_MIN && $status <= self::STATUS_MAX ? \intdiv( $status, 100 ) : 0;
 	}
 
 	/**
-	 * Whether a request is an error: it timed out or fataled, whatever status
-	 * it answered, and whether or not its duration times it. An abort is the
-	 * logger's own worker stopping and a gap is missing detail, so neither is.
+	 * Whether a request is an error: its status is one of ERROR_KINDS,
+	 * whatever status code it answered, and whether or not its duration
+	 * times it.
 	 *
 	 * @param mixed $error_status The record's error status, `-` when none.
 	 */
 	public static function error_counts( mixed $error_status ): bool {
-		return \in_array( $error_status, [ 'T', 'F' ], true );
+		return \in_array( $error_status, self::ERROR_KINDS, true );
 	}
 
 	/**

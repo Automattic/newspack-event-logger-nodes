@@ -548,7 +548,7 @@ class Stats_Store {
 	 * fourteen numbers `ROW_COUNT`..`ROW_WORKER` and never `ROW_PATH`, and on
 	 * the `url` lists alone the URL it ranked by: its `ROW_PATH` on a
 	 * server's list, which the server's name joins to the whole URL
-	 * (`join_url()`), and the whole URL itself on the site's.
+	 * (`Url_Parts::join_url()`), and the whole URL itself on the site's.
 	 */
 	public const RANK_HASH = 0;
 	public const RANK_ROW  = 1;
@@ -2111,7 +2111,7 @@ class Stats_Store {
 			$server = $stored[0] ?? null;
 			$path   = $stored[1] ?? null;
 			if ( isset( $map[ $key ] ) && self::is_url_name( $server, $path ) ) {
-				$out[ $map[ $key ] ] = [ 'server' => $server, 'url' => self::join_url( $server, $path ) ];
+				$out[ $map[ $key ] ] = [ 'server' => $server, 'url' => Url_Parts::join_url( $server, $path ) ];
 			}
 		}
 		return $out;
@@ -2602,7 +2602,7 @@ class Stats_Store {
 	 * @return array<array-key,mixed>
 	 */
 	private static function row_with_url( array $row, string $server ): array {
-		$row[ self::ROW_PATH ] = self::join_url( $server, Core::str( $row[ self::ROW_PATH ] ?? '' ) );
+		$row[ self::ROW_PATH ] = Url_Parts::join_url( $server, Core::str( $row[ self::ROW_PATH ] ?? '' ) );
 		return $row;
 	}
 
@@ -2748,7 +2748,7 @@ class Stats_Store {
 	 * measured, in step, for `rank_cut()` to order either way. An untimed row
 	 * measured no duration, so it ranks last on the `TIMED_SORTS` in both
 	 * orders, where the fold orders it. `url` ranks the whole URL
-	 * (`join_url()`) on every list, so a server's cut is its top-N by URL and
+	 * (`Url_Parts::join_url()`) on every list, so a server's cut is its top-N by URL and
 	 * the site's union of them is exact; a row with no path ranks on no `url`
 	 * sort.
 	 *
@@ -2793,30 +2793,8 @@ class Stats_Store {
 			'max_ms'       => Core::num_float( $row[ self::ROW_MAX_MS ] ?? null ),
 			'avg_peak_mb'  => Core::num_float( $row[ self::ROW_SUM_PEAK_MB ] ?? null ) / \max( 1, Core::num_int( $row[ self::ROW_COUNT ] ?? null ) ),
 			'last_updated' => Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ),
-			default        => self::join_url( $server, Core::str( $row[ self::ROW_PATH ] ?? '' ) ),
+			default        => Url_Parts::join_url( $server, Core::str( $row[ self::ROW_PATH ] ?? '' ) ),
 		};
-	}
-
-	/**
-	 * The URL a `row_path()` was cut from, given the server it was cut
-	 * against: the inverse `row_path()` answers to, and the one place the
-	 * join is spelled. A whole URL, or no path, comes back as it is, with
-	 * or without a server; a server-relative path with none is refused
-	 * rather than joined into `https:///…`.
-	 *
-	 * @param string $server The server the path was cut against; '' where the
-	 *                       path is already a whole URL, as on a site list.
-	 * @param string $path   The stored path.
-	 * @throws \InvalidArgumentException When a server-relative path has no server.
-	 */
-	public static function join_url( string $server, string $path ): string {
-		if ( ! \str_starts_with( $path, '/' ) ) {
-			return $path;
-		}
-		if ( '' === $server ) {
-			throw new \InvalidArgumentException( "Stats_Store: no server to join '{$path}' to" );
-		}
-		return "https://{$server}{$path}";
 	}
 
 	/**

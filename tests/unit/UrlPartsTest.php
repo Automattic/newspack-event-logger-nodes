@@ -63,4 +63,17 @@ class UrlPartsTest extends TestCase {
 		$this->assertSame( 'wren.test', Url_Parts::server_of( 'http://wren.test?q=3' ) );
 		$this->assertSame( 'kea.test', Url_Parts::server_of( 'https://kea.test' ) );
 	}
+
+	public function test_a_row_path_joins_back_to_its_url(): void {
+		$this->assertSame( 'https://kea.test/kakapo-4417?q=9', Url_Parts::join_url( 'kea.test', '/kakapo-4417?q=9' ) );
+		$this->assertSame( 'http://kea.test/kakapo-4417', Url_Parts::join_url( 'kea.test', 'http://kea.test/kakapo-4417' ), 'a whole URL comes back as it is' );
+		$this->assertSame( 'https://moa.test/weka-1308', Url_Parts::join_url( '', 'https://moa.test/weka-1308' ) );
+	}
+
+	public function test_a_server_relative_path_with_no_server_is_refused(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( '/takahe-9' );
+
+		Url_Parts::join_url( '', '/takahe-9' );
+	}
 }

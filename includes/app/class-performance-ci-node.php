@@ -10,6 +10,8 @@
  *   - url_breakdown — the URL-detail modal's dimension chart, which polls
  *     one series while the modal is open and wants none of the index walk
  *     `dump_url` pays for.
+ *   - query — one question over the stats rows in `Stats_Query`'s
+ *     vocabulary, which MCP's `performance_query` fronts.
  *   - ask — one descriptor chain's brief for the `?` picker
  *     (`src/overview/components/AskPanel.js`).
  *   - list_hooks — the Settings page's hook-catalog tree.
@@ -42,6 +44,7 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
+use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
@@ -52,6 +55,7 @@ use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Url_Sketch;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Capabilities;
@@ -3124,7 +3128,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		);
 		// What a `url` sort orders, until `resolve_urls()` names the row.
 		if ( '' === $entry['url'] ) {
-			$entry['url'] = Stats_Store::join_url( $server, Core::str( $stat_arr[ Stats_Store::ROW_PATH ] ?? '' ) );
+			$entry['url'] = Url_Parts::join_url( $server, Core::str( $stat_arr[ Stats_Store::ROW_PATH ] ?? '' ) );
 		}
 		return $entry;
 	}
@@ -3482,6 +3486,65 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The `query` verb's answer: its tokens as a `Stats_Query` spec, each
+	 * filter token one value and a field's tokens ORed, the bucket column
+	 * spelled as keys, and what the rows are OF.
+	 *
+	 * @param array<array-key,mixed> $args The bound verb args.
+	 * @param int                    $now  The reply's clock.
+	 * @return array<string,mixed>
+	 * @throws \InvalidArgumentException On a bucket selection `Bucket::selection()`
+	 *                                   refuses, a filter that is no
+	 *                                   `field=value`, or a spec `run()` refuses.
+	 */
+	private static function answer_query( array $args, int $now ): array {
+		$spelling = Core::as_string( $args['bucket'] );
+		$latest   = Bucket::id( $now );
+		$buckets  = '' === $spelling ? [ [ $latest - Bucket::MAX_SELECTION + 1, $latest ] ] : Bucket::selection( $spelling, $now );
+		$filter   = [];
+		foreach ( Core::arr( $args['filter'] ) as $token ) {
+			$token = Core::as_string( $token );
+			$parts = \explode( '=', $token, 2 );
+			if ( 2 !== \count( $parts ) ) {
+				throw new \InvalidArgumentException( \esc_html( "filter {$token} is no field=value" ) );
+			}
+			$filter[ $parts[0] ][] = $parts[1];
+		}
+		$by_id = $filter;
+		if ( isset( $by_id['bucket'] ) ) {
+			$by_id['bucket'] = \array_map( Bucket::of_key( ... ), $by_id['bucket'] );
+		}
+		$search = Core::as_string( $args['search'] );
+		$answer = Stats_Query::run(
+			[
+				'source'  => Core::as_string( $args['source'] ),
+				'group'   => \array_values( \array_map( Core::as_string( ... ), Core::arr( $args['group'] ) ) ),
+				'filter'  => $by_id,
+				'measure' => \array_values( \array_map( Core::as_string( ... ), Core::arr( $args['measure'] ) ) ),
+				'buckets' => $buckets,
+				'sort'    => Core::as_string( $args['sort'] ),
+				'order'   => Core::as_string( $args['order'] ),
+				'limit'   => Core::as_int( $args['limit'] ),
+				'offset'  => Core::as_int( $args['offset'] ),
+				'search'  => $search,
+			]
+		);
+		$at = \array_search( 'bucket', $answer['columns'], true );
+		if ( false !== $at ) {
+			foreach ( $answer['rows'] as $i => $row ) {
+				$answer['rows'][ $i ][ $at ] = Bucket::key( Core::as_int( $row[ $at ] ) );
+			}
+		}
+		return $answer + [
+			'filters' => [
+				'filter' => $filter,
+				'bucket' => Bucket::spelling( $buckets ),
+				'search' => $search,
+			],
+		];
+	}
+
+	/**
 	 * Decode a synced array-option value. Settings_Sync_Node::scalarize()
 	 * JSON-encodes arrays unconditionally, so the wire form is always JSON. A
 	 * non-JSON value is a contract violation, refused before anything is
@@ -3643,6 +3706,26 @@ class Performance_CI_Node extends Service_CI_Node {
 					'limit'   => $limit,
 					'offset'  => $offset,
 				];
+					},
+				],
+				[
+					'name'        => 'query',
+					'capability'  => Capabilities::READ,
+					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ source, table, columns, rows, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows when the stats file will not open. Worker requests count unless filtered `worker=0`.',
+					'args'        => [
+						[ 'name' => 'source', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],
+						[ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values; a bucket by its key.' ],
+						[ 'name' => 'measure', 'type' => 'string', 'required' => false, 'variadic' => true ],
+						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection as `Bucket::selection()` reads one; empty is the last 288 buckets.' ],
+						[ 'name' => 'search', 'type' => 'string', 'required' => false, 'default' => '' ],
+						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => '' ],
+						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'asc' ],
+						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => Stats_Query::MAX_LIMIT ],
+						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
+				return self::answer_query( $args, self::now() );
 					},
 				],
 				[

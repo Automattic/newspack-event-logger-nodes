@@ -607,6 +607,7 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 \Newspack_Nodes\Core::right_now();
 
 require_once __DIR__ . '/Helpers/TestCase.php';
+require_once __DIR__ . '/Helpers/FactsSeeder.php';
 require_once __DIR__ . '/Helpers/StatsAskerNode.php';
 require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';
