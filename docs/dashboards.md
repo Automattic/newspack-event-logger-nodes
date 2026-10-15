@@ -16,6 +16,8 @@ Every dashboard is a React page in wp-admin, and none runs a fetch loop. Each is
 
 The map in [the Event Logger](the-event-logger.md#assembling-a-request) draws which partition each one reads. Two shapes of reading follow from the table. Performance and Settings ask verbs on the page's tick and draw the reply. Gyroscope, Request Log and Errors subscribe to a partition, and their rows are read off the view node each frame rather than becoming React state, so a busy stream never re-renders React per message.
 
+Performance keeps its view in the address bar, so a shared link opens the same view: `?server=`, `?metric=`, `?breakdown=`, `?then=`, one `?chip=field=value` per Overview filter chip, `?bucket=` for the table's time selection, and `?url=` and `?request=` for the open URL and request. A chip is its own key, so a value holding a comma, such as a user agent, survives. A linked value the controls would not offer is dropped on read, a chip by the rule its editor applies to a typed one: a field the chip box offers and a value that is not empty. The filters are state, not navigation: Back and Forward keep them as they stand and walk only the `?url=` and `?request=` views. The URL modal's own chart chips are not in the address bar.
+
 `performance.list_hooks` answers two dashboards because one editor serves both: "Log this URL" on Performance opens the same rule editor, and the same hook picker beneath it, that the Settings ruleset table opens.
 
 ## The current-request overlay

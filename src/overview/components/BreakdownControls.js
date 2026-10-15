@@ -18,14 +18,15 @@ import TokenInput from '../../components/TokenInput';
 import '../../settings/styles/tag-input.scss';
 
 /**
- * Why a typed chip is refused, or null for one it takes: a chip is
- * `field=value`, the field one `options` offers and the value not empty.
+ * Why a chip is refused, or null for one it takes: a chip is `field=value`,
+ * the field one `options` offers and the value not empty. The page judges a
+ * linked `?chip=` by it too, so the editor and the address bar take one set.
  *
  * @param {string}                                draft   The trimmed draft.
  * @param {Array<{label: string, value: string}>} options The chip fields.
  * @return {?string} The refusal.
  */
-const chipRefusal = ( draft, options ) => {
+export const chipRefusal = ( draft, options ) => {
 	const cut = draft.indexOf( '=' );
 	if ( cut < 1 || cut === draft.length - 1 ) {
 		return __(
