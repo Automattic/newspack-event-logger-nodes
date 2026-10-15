@@ -70,8 +70,8 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
-	/** The document canvas lays the stats Tables out below the builder only along these edges. */
-	public function test_the_dashboard_graphs_draw_the_flame_builders_tables(): void {
+	/** The document canvas lays the Row_Table out below the builder only along this edge. */
+	public function test_the_dashboard_graphs_draw_the_flame_builders_row_table(): void {
 		\Newspack_Nodes\Topology_Registry::reset();
 		\Newspack_Nodes\Topology_Registry::register_plugin(
 			'Newspack_Event_Logger_Nodes\\',
@@ -83,9 +83,7 @@ class TopologyShapeTest extends TestCase {
 
 		foreach ( [ 'complete', 'performance', 'flame-builder' ] as $topology ) {
 			$edges = \Newspack_Nodes\Topology_Analyzer::graph_for( $topology )['edges'];
-			foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::TABLES as $table ) {
-				$this->assertContains( [ 'flame-builder', $table ], $edges, "$topology: flame-builder draws no edge to $table" );
-			}
+			$this->assertContains( [ 'flame-builder', 'flame-facts' ], $edges, "$topology: flame-builder draws no edge to flame-facts" );
 		}
 	}
 
@@ -134,19 +132,16 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
-	/** Every Flame_Builder names its three stats Tables before configure_stats builds a store over them. */
-	public function test_flame_builder_topologies_name_every_stats_table_before_configuring_stats(): void {
+	/** Every Flame_Builder writes to a Row_Table its topology declares, by set_facts_target. */
+	public function test_flame_builder_topologies_name_their_row_table(): void {
 		foreach ( $this->topology_files() as $path ) {
 			$name = \basename( $path );
 			$topo = $this->parse_topology( $path );
 			foreach ( $this->nodes_of_type( $topo['nodes'], 'Flame_Builder' ) as $fb ) {
-				$configure = $this->first_cmd_index( $topo['cmds'], $fb, 'configure_stats' );
-				$this->assertNotNull( $configure, "$name: flame-builder '$fb' never runs configure_stats" );
-				foreach ( [ 'set_aggregate_target', 'set_url_target', 'set_url_fine_target' ] as $verb ) {
-					$named = $this->first_cmd_index( $topo['cmds'], $fb, $verb );
-					$this->assertNotNull( $named, "$name: flame-builder '$fb' missing $verb" );
-					$this->assertLessThan( $configure, $named, "$name: flame-builder '$fb' runs $verb after configure_stats" );
-				}
+				$named = $this->first_cmd_index( $topo['cmds'], $fb, 'set_facts_target' );
+				$this->assertNotNull( $named, "$name: flame-builder '$fb' never runs set_facts_target" );
+				$table = $topo['cmds'][ $named ]['args'][0] ?? '';
+				$this->assertSame( 'Row_Table', $topo['nodes'][ $table ] ?? null, "$name: flame-builder '$fb' writes to '$table', which is no Row_Table" );
 			}
 		}
 	}
@@ -168,7 +163,7 @@ class TopologyShapeTest extends TestCase {
 
 	/** Wiring verbs whose first arg names another node must reference a declared node (token/number args excluded). */
 	public function test_wiring_target_args_reference_declared_nodes(): void {
-		$node_ref_verbs = [ 'set_completed_target', 'set_errors_target', 'set_inflight_target', 'set_aggregate_target', 'set_url_target', 'set_url_fine_target', 'add_snapshot_node' ];
+		$node_ref_verbs = [ 'set_completed_target', 'set_errors_target', 'set_inflight_target', 'set_facts_target', 'add_snapshot_node' ];
 		foreach ( $this->topology_files() as $path ) {
 			$name = \basename( $path );
 			$topo = $this->parse_topology( $path );
@@ -438,18 +433,20 @@ class TopologyShapeTest extends TestCase {
 		return false;
 	}
 
-	/** The three stats Tables resolve per partition from the shipped graph, each on SQLite at its own TTL. */
-	public function test_the_flame_builder_declares_its_stats_tables_on_sqlite(): void {
-		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 5400 ] );
-		$this->activate_shipped( 'performance', 2 );
-		$table = static fn ( int $p, int $ttl ): array => [ 'namespace' => "evlog:p{$p}", 'ttl' => $ttl, 'backend' => 'sqlite' ];
+	/** The Row_Table resolves one Flame_Facts file per partition from the shipped graph. */
+	public function test_the_flame_builder_declares_its_row_table_per_partition(): void {
+		$this->use_base_dir( $this->make_temp_dir() );
+		$this->activate_shipped( 'performance', 3 );
 		$this->assertSame(
 			[
-				'flame-stats:aggregate' => [ $table( 0, 90000 ), $table( 1, 90000 ) ],
-				'flame-stats:url'       => [ $table( 0, 3600 ), $table( 1, 3600 ) ],
-				'flame-stats:url-fine'  => [ $table( 0, 5400 ), $table( 1, 5400 ) ],
+				'schema' => 'Flame_Facts',
+				'files'  => [
+					0 => \Newspack_Nodes\Table_Node::file( 'flame-facts', 0 ),
+					1 => \Newspack_Nodes\Table_Node::file( 'flame-facts', 1 ),
+					2 => \Newspack_Nodes\Table_Node::file( 'flame-facts', 2 ),
+				],
 			],
-			\Newspack_Nodes\Bootstrap::node_tables( 'flame-stats:aggregate', 'flame-stats:url', 'flame-stats:url-fine' )
+			\Newspack_Nodes\Bootstrap::row_table_files( 'flame-facts' )
 		);
 	}
 }

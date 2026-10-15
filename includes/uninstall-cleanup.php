@@ -57,7 +57,8 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
 }
 
 /**
- * Delete the stats Tables' SQLite files: each partition's file, and the WAL
+ * Delete the stats Tables' and the flame-facts Row_Table's SQLite files:
+ * each partition's file, and the WAL
  * files SQLite keeps beside it, named by the substrate's `Table_Node::file()`
  * across every partition a fleet can run.
  *
@@ -66,10 +67,9 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
  * files under it, as the substrate's own uninstall holds. Nothing to do
  * where the substrate is not loaded, since only it can name the files.
  *
- * @param list<string> $tables The stats Tables, `Stats_Store::TABLES`.
  * @return int Files deleted.
  */
-function delete_stats_tables( array $tables ): int {
+function delete_stats_tables(): int {
 	if ( ! \class_exists( '\Newspack_Nodes\Table_Node' ) ) {
 		return 0;
 	}
@@ -78,7 +78,7 @@ function delete_stats_tables( array $tables ): int {
 		return 0;
 	}
 	$deleted = 0;
-	foreach ( $tables as $table ) {
+	foreach ( [ ...Stats_Store::TABLES, Flame_Facts_Row_Schema::TABLE ] as $table ) {
 		for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
 			$file = \Newspack_Nodes\Table_Node::file( $table, $partition );
 			foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {

@@ -1,11 +1,9 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
-use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Job_Router_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
-use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
@@ -92,15 +90,10 @@ class FullPipelineTest extends TestCase {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'request-builder' );
 
-		$store      = $this->stats_store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->name( 'flame-builder' );
-		$fb->set_stats_store( $store );
-		$rb->sink( $fb );
-
 		$flame_capture = new Capture_Sink_Node();
-		$fb->sink( $flame_capture );
+		$fb            = $this->builder_sending_to( $flame_capture );
 		$fb->connect_node( 'flames:partition' );
+		$rb->sink( $fb );
 
 		// Job pipeline: JobRouter (pure forwarder) → JobWorker (executor).
 		// Production has a jobs.log Partition between them; the test wires
@@ -145,11 +138,8 @@ class FullPipelineTest extends TestCase {
 		$this->assertNotEmpty( $process['children'] );
 		$this->assertSame( 'init', $process['children'][0]['name'] );
 
-		// 3. FlameBuilder.flush() writes URL aggregate to memcache.
+		// 3. FlameBuilder.flush() writes the request's row, naming its URL.
 		$fb->flush();
-		$url_hash = Log_Manager::url_hash( 'https://kea-7713.test/x' );
-		$stats    = $store->url_aggregate( $url_hash );
-		$this->assertNotNull( $stats, 'flush should write per-URL aggregate' );
-		$this->assertSame( 1, $stats['flame_raw']['count'] );
+		$this->assertSame( [ [ 'r1', Log_Manager::url_hash( 'https://kea-7713.test/x' ) ] ], $this->facts( 'SELECT r.rid, u.hash FROM requests r JOIN urls u ON u.id = r.url_id' ) );
 	}
 }

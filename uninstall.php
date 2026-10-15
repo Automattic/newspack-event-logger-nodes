@@ -24,4 +24,4 @@ require __DIR__ . '/vendor/autoload.php';
 require __DIR__ . '/includes/uninstall-cleanup.php';
 
 \Newspack_Event_Logger_Nodes\uninstall_cleanup( 'newspack_event_logger_nodes_' );
-\Newspack_Event_Logger_Nodes\delete_stats_tables( \Newspack_Event_Logger_Nodes\Stats_Store::TABLES );
+\Newspack_Event_Logger_Nodes\delete_stats_tables();

@@ -26,6 +26,9 @@ abstract class TestCase extends RuntimeTestCase {
 		return ( \getenv( 'NEWSPACK_TEST_BASE_DIR' ) ?: throw new \LogicException( 'NEWSPACK_TEST_BASE_DIR is unset; tests/bootstrap.php sets it' ) ) . '-logging';
 	}
 
+	/** The fixture topology declaring the keyed stats Tables. */
+	private const STATS_TABLES = 'stats-tables';
+
 	/** @var array<string,true> Directories a harness stats Table file was opened in. */
 	private array $stats_table_dirs = [];
 
@@ -121,6 +124,127 @@ abstract class TestCase extends RuntimeTestCase {
 	protected function shift_tick( int $seconds ): void {
 		\Newspack_Nodes\Core::$clock = static fn (): float => \microtime( true ) + $seconds;
 		\Newspack_Nodes\Core::right_now();
+	}
+
+	/**
+	 * A builder `fb` armed as `flame-builder.tsl` arms one, its partition
+	 * bound to `$partition`, writing that partition of a real `flame-facts`
+	 * Row_Table through the request graph, on the Router of that graph.
+	 *
+	 * @param string $partition The partition the worker is bound to.
+	 */
+	protected function armed_flame_builder( string $partition = '0' ): Flame_Builder_Node {
+		\Newspack_Nodes\Core::$var['partition'] = $partition;
+		if ( null === \Newspack_Nodes\Core::node( \Newspack_Nodes\Node_Names::ROUTER ) ) {
+			$router = new \Newspack_Nodes\Router_Node();
+			$router->name( \Newspack_Nodes\Node_Names::ROUTER );
+		}
+		if ( ! \Newspack_Nodes\Core::node( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE ) instanceof \Newspack_Nodes\Row_Table_Node ) {
+			$table = new \Newspack_Nodes\Row_Table_Node();
+			$table->name( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE );
+			$table->arguments( [ 'Flame_Facts' ] );
+			$table->sink( VerbHarness::request_graph() );
+		}
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->arguments( [] );
+		$fb->set_facts_target( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE );
+		$fb->sink( VerbHarness::request_graph() );
+		return $fb;
+	}
+
+	/**
+	 * An armed builder whose sink sends its ROWS requests on into the request
+	 * graph, where they are answered, and every other message it sends — a
+	 * flame, an auto-tune emit, a GET_STATS reply — to `$other`.
+	 */
+	protected function builder_sending_to( \Newspack_Nodes\Node $other ): Flame_Builder_Node {
+		$fb = $this->armed_flame_builder();
+		$fb->sink(
+			new class( $other ) extends \Newspack_Nodes\Node {
+				public function __construct( private \Newspack_Nodes\Node $other ) {
+					parent::__construct();
+				}
+
+				public function fill( array $message ): void {
+					if ( 0 !== ( \Newspack_Nodes\Core::num_int( $message[ \Newspack_Nodes\Message::TYPE ] ) & \Newspack_Nodes\Message::TM_REQUEST ) ) {
+						VerbHarness::request_graph()->fill( $message );
+						return;
+					}
+					$this->other->fill( $message );
+				}
+			}
+		);
+		return $fb;
+	}
+
+	/**
+	 * Rows a statement reads from partition `$partition` of the `flame-facts`
+	 * file, each as a list.
+	 *
+	 * @param string $sql       The statement.
+	 * @param string $partition The partition's file.
+	 * @return list<list<mixed>>
+	 */
+	protected function facts( string $sql, string $partition = '0' ): array {
+		$pdo = new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE, (int) $partition ) );
+		return \array_map( 'array_values', $pdo->query( $sql )->fetchAll( \PDO::FETCH_NUM ) );
+	}
+
+	/** Make every write to the `flame-facts` file's `requests` table fail, until `mend_facts()`. */
+	protected function break_facts(): void {
+		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE, 0 ) ) )->exec( 'ALTER TABLE requests RENAME TO requests_broken' );
+	}
+
+	/** Undo `break_facts()`, rows intact. */
+	protected function mend_facts(): void {
+		( new \PDO( 'sqlite:' . \Newspack_Nodes\Table_Node::file( \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::TABLE, 0 ) ) )->exec( 'ALTER TABLE requests_broken RENAME TO requests' );
+	}
+
+	/** Advance the tick by $seconds, then fire the Router's TIMER. */
+	protected function tick_router( int $seconds ): void {
+		\Newspack_Nodes\Core::$now += $seconds;
+		\Newspack_Nodes\Core::node( \Newspack_Nodes\Node_Names::ROUTER )->fire_cb();
+	}
+
+	/**
+	 * A completed request as the request builder writes one: production
+	 * shaped, overridden only where a test asserts.
+	 *
+	 * @param array<string,mixed> $overrides Fields the test names.
+	 * @return array<string,mixed>
+	 */
+	protected function completed_request( array $overrides = [] ): array {
+		return \array_replace(
+			[
+				'rid'            => 'r' . \uniqid(),
+				'url'            => 'https://example.com/post/123',
+				'rule_id'        => 'r',
+				'duration_ms'    => 100.0,
+				'status_code'    => 200,
+				'error_status'   => '-',
+				'peak_mb'        => 32.0,
+				'request_method' => 'GET',
+				'country_code'   => 'US',
+				'http_from'      => '',
+				'user_agent'     => 'curl/7.85',
+				'ja4_hash'       => '',
+				'is_worker'      => false,
+				'timestamp'      => self::tick(),
+				'entries'        => [],
+				'profiles'       => [],
+			],
+			$overrides
+		);
+	}
+
+	/** Fill a record as a Consumer delivers it, its crumb in ID. */
+	protected function fill_request_at( Flame_Builder_Node $fb, array $request, string $crumb ): void {
+		$message                                   = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_STRUCT;
+		$message[ \Newspack_Nodes\Message::ID ]    = $crumb;
+		$message[ \Newspack_Nodes\Message::VALUE ] = $request;
+		$fb->fill( $message );
 	}
 
 	/**
@@ -416,39 +540,59 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param int    $num_partitions Worker count the catalog entry declares.
 	 */
 	protected function activate_shipped( string $name, int $num_partitions ): void {
+		$this->activate_topologies( [ $name ], $num_partitions );
+	}
+
+	/**
+	 * Activate one SHIPPED topology with the `stats-tables` fixture beside it,
+	 * which declares the keyed stats Tables the performance readers mount.
+	 *
+	 * @param string $name           Topology name, as its `.tsl` file is named.
+	 * @param int    $num_partitions Worker count both catalog entries declare.
+	 */
+	protected function activate_shipped_with_stats_tables( string $name, int $num_partitions ): void {
+		$this->activate_topologies( [ $name, self::STATS_TABLES ], $num_partitions );
+	}
+
+	/**
+	 * Activate exactly `$names`, the shipped topologies and the test fixtures
+	 * resolvable, each across `$num_partitions` workers.
+	 *
+	 * @param list<string> $names          Topology names, as their `.tsl` files are named.
+	 * @param int          $num_partitions Worker count each catalog entry declares.
+	 */
+	private function activate_topologies( array $names, int $num_partitions ): void {
 		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
 		\Newspack_Nodes\Topology_Registry::register_stock_dir( \dirname( __DIR__, 2 ) . '/topologies' );
 		\Newspack_Nodes\Topology_Registry::register_builtin_dir( \dirname( __DIR__, 3 ) . '/newspack-nodes/topologies' );
+		\Newspack_Nodes\Topology_Registry::register_builtin_dir( \dirname( __DIR__ ) . '/fixtures/topologies' );
 		\add_filter(
 			'newspack_nodes/topologies',
-			static function ( array $topologies ) use ( $name, $num_partitions ): array {
-				$topologies[ $name ] = [ 'topology' => $name, 'num_partitions' => $num_partitions, 'stale_timeout' => 60 ];
+			static function ( array $topologies ) use ( $names, $num_partitions ): array {
+				foreach ( $names as $active ) {
+					$topologies[ $active ] = [ 'topology' => $active, 'num_partitions' => $num_partitions, 'stale_timeout' => 60 ];
+				}
 				return $topologies;
 			}
 		);
-		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ $name ];
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = $names;
 		\Newspack_Event_Logger_Nodes\Config::reset();
 	}
 
 	/**
-	 * A Stats_Store over this test's SQLite stats Tables, as the flame builder
-	 * holds its own: each Table declared by an active topology, resolved
-	 * through `Bootstrap::node_tables()`, written by a Table node in this
-	 * process and asked by message. With no topology declaring partition
-	 * `$partition`, the shipped `flame-builder` is activated to declare it.
+	 * A Stats_Store over this test's SQLite stats Tables: each Table declared
+	 * by an active topology, resolved through `Bootstrap::node_tables()`,
+	 * written by a Table node in this process and asked by message through
+	 * the harness asker, which every store of a test shares and a registry
+	 * reset rebuilds. With no topology declaring partition `$partition`, the
+	 * shipped `flame-builder` and the `stats-tables` fixture are activated to
+	 * declare it.
 	 *
-	 * The store asks through `$asker`'s own client, as `configure_stats`
-	 * wires one: the builder is named when it has no name and sunk into the
-	 * request graph when it has no sink, so its replies reach its `fill()`.
-	 * Without one, every store of a test shares the harness asker, rebuilt
-	 * when a registry reset dropped it.
-	 *
-	 * @param int                     $partition    Flame-builder partition.
-	 * @param int                     $max_lifespan Retention window, in seconds.
-	 * @param Flame_Builder_Node|null $asker        The builder asking, or the harness.
+	 * @param int $partition    Partition of the stats Tables.
+	 * @param int $max_lifespan Retention window, in seconds.
 	 */
-	protected function stats_store( int $partition = 0, int $max_lifespan = 86400, ?Flame_Builder_Node $asker = null ): Stats_Store {
-		return new Stats_Store( ...$this->stats_store_args( $partition, $max_lifespan, $asker ) );
+	protected function stats_store( int $partition = 0, int $max_lifespan = 86400 ): Stats_Store {
+		return new Stats_Store( ...$this->stats_store_args( $partition, $max_lifespan ) );
 	}
 
 	/**
@@ -483,7 +627,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 *
 	 * @return array{0: int, 1: \Newspack_Nodes\Table_Client, 2: array<string,string>}
 	 */
-	protected function stats_store_args( int $partition = 0, int $max_lifespan = 86400, ?Flame_Builder_Node $asker = null ): array {
+	protected function stats_store_args( int $partition = 0, int $max_lifespan = 86400 ): array {
 		$names = [];
 		// Every declared partition's worker has run, or a reader cannot mount.
 		foreach ( $this->stats_table_specs( $partition ) as $table => $partitions ) {
@@ -494,17 +638,7 @@ abstract class TestCase extends RuntimeTestCase {
 				}
 			}
 		}
-		if ( null === $asker ) {
-			return [ $max_lifespan, $this->stats_asker()->client, $names ];
-		}
-		if ( '' === $asker->name() ) {
-			$asker->name( 'flame-builder-' . \spl_object_id( $asker ) );
-		}
-		if ( null === $asker->sink() ) {
-			$asker->sink( VerbHarness::ask_recorder() );
-		}
-		// The builder's own asker, as `configure_stats` hands it to its store.
-		return [ $max_lifespan, ( new \ReflectionProperty( $asker, 'client' ) )->getValue( $asker ), $names ];
+		return [ $max_lifespan, $this->stats_asker()->client, $names ];
 	}
 
 	/** The harness asker, sinking through the request graph's recorder. */
@@ -530,10 +664,10 @@ abstract class TestCase extends RuntimeTestCase {
 		$declared = \Newspack_Nodes\Bootstrap::node_tables( ...Stats_Store::TABLES );
 		if ( ! isset( $declared[ Stats_Store::TABLE_AGGREGATE ][ $partition ] ) ) {
 			$active = $GLOBALS['_wp_options']['newspack_nodes_topologies'] ?? [];
-			if ( [] !== $active && [ 'flame-builder' ] !== $active ) {
+			if ( [] !== $active && [ 'flame-builder', self::STATS_TABLES ] !== $active ) {
 				throw new \LogicException( "the active topologies declare no partition {$partition} of the stats Tables" );
 			}
-			$this->activate_shipped( 'flame-builder', $partition + 1 );
+			$this->activate_shipped_with_stats_tables( 'flame-builder', $partition + 1 );
 			$declared = \Newspack_Nodes\Bootstrap::node_tables( ...Stats_Store::TABLES );
 		}
 		return $declared;
