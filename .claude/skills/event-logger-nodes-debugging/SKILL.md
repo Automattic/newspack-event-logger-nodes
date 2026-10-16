@@ -111,7 +111,7 @@ Scripted pivot sessions (`echo cmd | wp nodes cli performance.p0`) drain cleanly
 
 ## Stats schema
 
-The stats live in one Row_Table, `flame-facts`, which `flame-builder.tsl` declares with the `Flame_Facts` schema: one SQLite file per flame-builder partition at `{base_dir}/tables/flame-facts.p{N}.sqlite`, its six tables declared by `Flame_Facts_Row_Schema`. Partition N's builder is its file's only writer, one `ROWS` batch a flush through its `Table_Client`. `App\Stats_Query` attaches every partition's file read-only into one connection and answers from a fixed vocabulary of fields and measures, binding every value, so no SQL text enters from outside. Rows go only when their `retain` window passes, so a row a reply lacks is one no flush wrote, or one whose window passed.
+The stats live in one Row_Table, `flame-facts`, which `flame-builder.tsl` declares with the `Flame_Facts` schema: one SQLite file per flame-builder partition at `{base_dir}/tables/flame-facts.p{N}.sqlite`, its nine tables declared by `Flame_Facts_Row_Schema`. Partition N's builder is its file's only writer, one `ROWS` batch a flush through its `Table_Client`. `App\Stats_Query` attaches every partition's file read-only into one connection and answers from a fixed vocabulary of fields and measures, binding every value, so no SQL text enters from outside. Rows go only when their `retain` window passes, so a row a reply lacks is one no flush wrote, or one whose window passed.
 
 | Table | One row per | Kept |
 |---|---|---|

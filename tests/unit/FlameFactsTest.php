@@ -6,7 +6,10 @@ use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Row_Reader;
+use Newspack_Nodes\Row_Table_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Worker_Should_Stop;
 
@@ -19,14 +22,46 @@ use Newspack_Nodes\Worker_Should_Stop;
 #[CoversClass( Flame_Facts_Row_Schema::class )]
 #[CoversClass( Flame_Builder_Node::class )]
 final class FlameFactsTest extends TestCase {
+	use FactsSeeder;
 
 	public function test_a_row_table_opens_every_declared_table_at_the_schema_version(): void {
 		$this->armed_flame_builder();
 
 		$opened = \array_merge( ...$this->facts( "SELECT name FROM sqlite_master WHERE type = 'table'" ) );
 
-		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'urls_fts' ], $opened ) ) );
-		$this->assertSame( [ [ 3 ] ], $this->facts( 'PRAGMA user_version' ) );
+		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_watermark', 'window_expiry', 'urls_fts' ], $opened ) ) );
+		$this->assertSame( [ [ 4 ] ], $this->facts( 'PRAGMA user_version' ) );
+	}
+
+	public function test_v4_declares_the_window_its_watermark_its_expiries_and_the_covering_index(): void {
+		$tables = Flame_Facts_Row_Schema::tables();
+
+		$this->assertSame( 4, Flame_Facts_Row_Schema::version() );
+		$this->assertSame( [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ], $tables['requests']['indexes']['requests_cover'] );
+		$this->assertSame( [ 'category', 'entry', 'listener', 'worker', 'ms', 'calls', 'requests', 'last_bucket' ], \array_keys( $tables['category_window']['columns'] ) );
+		$this->assertSame( [ 'category', 'entry', 'worker' ], $tables['category_window']['key'] );
+		$this->assertSame( [ 'ms' => 'sum', 'calls' => 'sum', 'requests' => 'sum', 'last_bucket' => 'max' ], $tables['category_window']['add'] );
+		$this->assertSame( [ 'last_bucket', Flame_Facts_Row_Schema::TIMINGS_BUCKETS, Bucket::SECONDS ], $tables['category_window']['retain'] );
+		$this->assertSame( [ 'name' ], $tables['window_watermark']['key'] );
+		$this->assertSame( [ 'bucket' => 'max' ], $tables['window_watermark']['add'] );
+		$this->assertSame( [ 'bucket' ], $tables['window_expiry']['key'] );
+		$this->assertSame( 288, Flame_Facts_Row_Schema::WINDOW_BUCKETS );
+		$this->assertArrayNotHasKey( 'requests_bucket', $tables['requests']['indexes'] );
+	}
+
+	public function test_a_window_row_folds_its_sums_and_keeps_its_latest_bucket(): void {
+		$this->activate_shipped( 'flame-builder', 1 );
+		$this->write_facts(
+			0,
+			[
+				[ 'add', 'category_window', [ 'hook:kea_init', '', 0, 0, 17.5, 3, 1, 5_966_101 ] ],
+				[ 'add', 'category_window', [ 'hook:kea_init', '', 0, 0, 4.25, 2, 1, 5_966_099 ] ],
+			]
+		);
+
+		$rows = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT ms, calls, requests, last_bucket FROM p0.category_window', [] ) );
+
+		$this->assertSame( [ [ 21.75, 5, 2, 5_966_101 ] ], $rows );
 	}
 
 	public function test_one_request_writes_its_row_and_rollups(): void {
@@ -244,7 +279,7 @@ final class FlameFactsTest extends TestCase {
 		} catch ( \InvalidArgumentException $e ) {
 			$this->assertStringContainsString( 'no rid', $e->getMessage() );
 		}
-		$this->assertSame( [], $fb->save_state(), 'the checkpoint carries nothing' );
+		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state(), 'the checkpoint carries the watermark alone' );
 		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM urls' ) );
 	}
 
@@ -259,8 +294,8 @@ final class FlameFactsTest extends TestCase {
 		for ( $e = 0; $e < 37; $e++ ) {
 			$entries[ "SELECT kakariki {$e}" ] = [ 0.5, 1 ];
 		}
-		// Its URL, its request, its hour, and a category row and 37 entry rows twice.
-		$per  = 3 + 2 * 38;
+		// Its URL, its request, its hour, and a category row and 37 entry rows thrice.
+		$per  = 3 + 3 * 38;
 		$need = (int) \ceil( Flame_Builder_Node::BUFFERED_OPS_LIMIT / $per );
 		$fill = fn ( int $i ) => $this->fill_request_at( $fb, $this->completed_request( [ 'rid' => "rid-kakariki-{$i}", 'url' => "https://kea.example/kakariki-{$i}", 'user_agent' => '', 'profiles' => [ 'sql' => [ 'time' => 18.5, 'count' => 37, 'entries' => $entries ] ] ] ), '' );
 		for ( $i = 1; $i < $need; $i++ ) {
@@ -302,11 +337,11 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( [ [ 2 ] ], $this->facts( 'SELECT count(*) FROM requests' ), 'the tick at the interval writes the rest' );
 	}
 
-	public function test_the_checkpoint_writes_the_rows_and_carries_nothing(): void {
+	public function test_the_checkpoint_writes_the_rows_and_carries_the_watermark(): void {
 		$fb = $this->armed_flame_builder();
 		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-pipipi' ] ), '9:7731:212' );
 
-		$this->assertSame( [], $fb->save_state() );
+		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state() );
 		$this->assertSame( [ [ 'rid-pipipi' ] ], $this->facts( 'SELECT rid FROM requests' ), 'the checkpoint wrote what it passed' );
 	}
 

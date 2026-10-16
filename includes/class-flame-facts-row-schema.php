@@ -9,6 +9,11 @@
  * `make_node Row_Table <name> Flame_Facts`, and a reader finds that name
  * through `Bootstrap::row_table()`.
  *
+ * `category_window` holds each category's and entry's sums over the last
+ * `WINDOW_BUCKETS`, `window_watermark` the last bucket the window has
+ * expired, and `window_expiry` one row per bucket expired, so a replayed
+ * expiry subtracts nothing twice.
+ *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -34,6 +39,12 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	/** Hours a `requests_hourly` row lives: seven days. */
 	public const HOURLY_HOURS = 168;
 
+	/** Five-minute buckets the category window spans: the chart's 24 hours. */
+	public const WINDOW_BUCKETS = 288;
+
+	/** The watermark row the category window keeps. */
+	public const WINDOW = 'category_window';
+
 	/** @var array<string,array<string,int>> Each table's column positions, read once. */
 	private static array $positions = [];
 
@@ -51,7 +62,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	}
 
 	/**
-	 * The six row tables, each column in row order.
+	 * The nine row tables, each column in row order.
 	 *
 	 * @api Read by the Row_Table that opens the file.
 	 * @return array<string, array{
@@ -114,9 +125,9 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				],
 				'key'     => [ 'rid' ],
 				'indexes' => [
-					'requests_bucket' => [ 'bucket' ],
 					'requests_url'    => [ 'url_id', 'bucket' ],
 					'requests_ua'     => [ 'ua_id' ],
+					'requests_cover'  => [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ],
 				],
 				'retain'  => [ 'bucket', self::REQUESTS_BUCKETS, Bucket::SECONDS ],
 			],
@@ -161,6 +172,42 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				],
 				'retain'  => [ 'bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
 			],
+			'category_window'  => [
+				'columns' => [
+					'category'    => 'TEXT NOT NULL',
+					'entry'       => 'TEXT NOT NULL',
+					'listener'    => 'INTEGER NOT NULL',
+					'worker'      => 'INTEGER NOT NULL',
+					'ms'          => 'REAL NOT NULL',
+					'calls'       => 'INTEGER NOT NULL',
+					'requests'    => 'INTEGER NOT NULL',
+					'last_bucket' => 'INTEGER NOT NULL',
+				],
+				'key'     => [ 'category', 'entry', 'worker' ],
+				'add'     => [
+					'ms'          => 'sum',
+					'calls'       => 'sum',
+					'requests'    => 'sum',
+					'last_bucket' => 'max',
+				],
+				'indexes' => [ 'category_window_last' => [ 'last_bucket' ] ],
+				'retain'  => [ 'last_bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
+			],
+			'window_watermark' => [
+				'columns' => [
+					'name'   => 'TEXT NOT NULL',
+					'bucket' => 'INTEGER NOT NULL',
+				],
+				'key'     => [ 'name' ],
+				'add'     => [ 'bucket' => 'max' ],
+				'indexes' => [ 'window_watermark_bucket' => [ 'bucket' ] ],
+				'retain'  => [ 'bucket', self::REQUESTS_BUCKETS, Bucket::SECONDS ],
+			],
+			'window_expiry'    => [
+				'columns' => [ 'bucket' => 'INTEGER NOT NULL' ],
+				'key'     => [ 'bucket' ],
+				'retain'  => [ 'bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
+			],
 			'requests_hourly' => [
 				'columns' => [
 					'hour'         => 'INTEGER NOT NULL',
@@ -196,6 +243,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 3;
+		return 4;
 	}
 }

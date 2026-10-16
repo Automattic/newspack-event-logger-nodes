@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The flame builder keeps `category_window`: each category's and entry's sums over the last 288 buckets, moved as each request lands and as each bucket leaves, its watermark carried in the offsetlog across restarts.**
+
+### Changed
+
+- **Flame_Facts schema 4: a covering `requests_cover` index and the `category_window` the flame builder maintains.** The window, its `window_watermark` and its `window_expiry` are three new tables, nine in all. A v3 file is discarded at open; run the rebuild.
+
 ## [0.134.2] - 2026-10-15
 
 ### Fixed

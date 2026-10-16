@@ -64,6 +64,16 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
+	 * A builder constructed bare, as no topology arms one, its window current
+	 * so a fold reads no Row_Table.
+	 */
+	private function unarmed_builder(): Flame_Builder_Node {
+		$fb = new Flame_Builder_Node();
+		$fb->restore_state( [ 'window_through' => self::current_window_through() ] );
+		return $fb;
+	}
+
+	/**
 	 * The builder `flame-builder.tsl` makes writes, in its own graph, to the
 	 * Row_Table that file declares, which `Row_Table_Node::read()` then
 	 * reads across the fleet's files.
@@ -135,20 +145,20 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_constructor_initializes_empty(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$this->assertSame( 0, $this->get_stats( $fb )['buffered_requests'] );
 	}
 
 	public function test_a_builder_with_nothing_pending_is_idle_since_its_last_flush(): void {
 		Core::$now = 1790000123.0;
-		$fb        = new Flame_Builder_Node();
+		$fb        = $this->unarmed_builder();
 		$this->assertSame( 1790000123.0, $fb->idle_since() );
 	}
 
 	/** A buffered record not yet written lives in this process alone. */
 	public function test_a_builder_holding_a_buffered_record_is_busy(): void {
 		Core::$now = 1790000417.0;
-		$fb        = new Flame_Builder_Node();
+		$fb        = $this->unarmed_builder();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://example.com/kakapo-3391', 'timestamp' => 1790000417 ] ) );
 		$this->assertNull( $fb->idle_since() );
 	}
@@ -160,7 +170,7 @@ class FlameBuilderTest extends TestCase {
 		// owned auto-tuner sibling is patron-linked, so the GUI
 		// hides it via dump_metadata's filter — no extra edge
 		// surfaces from target().
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$fb->connect_node( 'flames:partition' );
 
@@ -168,7 +178,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flame_builder_owns_auto_tuner_sibling(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 
 		// Auto-tuner registered under {patron}:auto-tuner with patron link.
@@ -178,7 +188,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flame_builder_remove_node_cascades_auto_tuner(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$this->assertNotNull( \Newspack_Nodes\Core::node( 'fb:auto-tuner' ) );
 		$fb->remove_node();
@@ -186,7 +196,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_rename_cascades_auto_tuner_and_drops_old_name(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$fb->name( 'fb2' );
 
@@ -198,14 +208,14 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_name_null_throws(): void {
 		// A named node is committed until remove_node(); name(null) throws.
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$this->expectException( \RuntimeException::class );
 		$fb->name( null );
 	}
 
 	public function test_name_empty_string_throws(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$this->expectException( \RuntimeException::class );
 		$fb->name( '' );
@@ -213,7 +223,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_remove_node_unregisters_auto_tuner(): void {
 		// remove_node() (not name(null)) tears down the owned auto-tuner sibling.
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Auto_Tuner_Node::class, \Newspack_Nodes\Core::node( 'fb:auto-tuner' ) );
 
@@ -223,7 +233,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_zero_name_yields_zero_auto_tuner_sibling(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( '0' );
 
 		$at = \Newspack_Nodes\Core::node( '0:auto-tuner' );
@@ -234,13 +244,13 @@ class FlameBuilderTest extends TestCase {
 		$squatter = new \Newspack_Event_Logger_Nodes\Auto_Tuner_Node();
 		$squatter->name( 'fb:auto-tuner' );
 
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$this->expectException( \RuntimeException::class );
 		$fb->name( 'fb' );
 	}
 
 	public function test_non_array_value_skipped(): void {
-		$fb                        = new Flame_Builder_Node();
+		$fb                        = $this->unarmed_builder();
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_STRUCT;
 		$message[ Message::VALUE ] = 'not-an-array';
@@ -254,7 +264,7 @@ class FlameBuilderTest extends TestCase {
 		// rows — its recoverable state — and re-raise as CLEAN, so the Consumer commits
 		// past the line instead of replaying it.
 		$this->set_rule();
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$fb->connect_node( 'flames:partition' ); // non-empty target so store_flame forwards.
 		$fb->sink( new class extends \Newspack_Nodes\Node {
@@ -302,7 +312,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotNull( $thrown );
 		$this->assertFalse( \Newspack_Nodes\Worker_Should_Stop::is_clean( $thrown ), 'the reader must replay it' );
 		$first->shutdown_sweep();
-		$this->assertSame( [], $first->save_state(), 'the checkpoint carries nothing' );
+		$this->assertSame( [ 'window_through' => self::current_window_through() ], $first->save_state(), 'the checkpoint carries the watermark alone' );
 		$first->remove_node();
 
 		[ $successor, $flames ] = $this->capturing_builder();
@@ -400,7 +410,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_non_bytestream_message_skipped(): void {
-		$fb                        = new Flame_Builder_Node();
+		$fb                        = $this->unarmed_builder();
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_INFO;
 		$message[ Message::VALUE ] = $this->completed_request();
@@ -409,7 +419,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flame_tree_built_from_entries_with_lifo_matching(): void {
-		$fb      = new Flame_Builder_Node();
+		$fb      = $this->unarmed_builder();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -445,7 +455,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_orphaned_complete_event_ignored(): void {
-		$fb      = new Flame_Builder_Node();
+		$fb      = $this->unarmed_builder();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -468,7 +478,7 @@ class FlameBuilderTest extends TestCase {
 		// Two `init (start)` siblings under the root. They get \x00N suffixes
 		// during merge for unambiguous tracking, then suffixes get stripped
 		// before storage / display.
-		$fb      = new Flame_Builder_Node();
+		$fb      = $this->unarmed_builder();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -545,7 +555,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$this->assertSame( [], $flames->captured, 'nothing is forwarded' );
 		$this->assertSame( 0, $this->get_stats( $fb )['buffered_requests'], 'nothing is buffered' );
-		$this->assertSame( [], $fb->save_state(), 'the checkpoint carries nothing' );
+		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state(), 'the checkpoint carries the watermark alone' );
 
 		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-kea-7731', 'url' => 'https://kea-7713.test/kea-7731', 'duration_ms' => 29.0, 'timestamp' => self::tick() ] ), '7:200:42' );
 		$this->assertContains( 'flames:partition', \array_column( $flames->captured, Message::TO ), 'the next record forwards its flame' );
@@ -655,7 +665,7 @@ class FlameBuilderTest extends TestCase {
 	 * its flush stops the worker, saying so, and keeps the rows.
 	 */
 	public function test_a_flush_with_no_row_table_named_stops_the_worker(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$fb->sink( new Capture_Sink_Node() );
 		$this->fill_request( $fb, $this->completed_request( [ 'rid' => 'rid-moho-7' ] ) );
@@ -674,7 +684,7 @@ class FlameBuilderTest extends TestCase {
 
 	/** A flush with nothing buffered asks no Row_Table, named or not. */
 	public function test_a_flush_with_nothing_buffered_asks_nothing(): void {
-		$fb      = new Flame_Builder_Node();
+		$fb      = $this->unarmed_builder();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -698,7 +708,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flame_builder_constructs_sibling_interpreter(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$this->assertNotNull( $this->read_private( $fb, 'interpreter' ) );
 		$this->assertSame( 'fb:config', $this->read_private( $fb, 'interpreter' )->name() );
@@ -707,14 +717,14 @@ class FlameBuilderTest extends TestCase {
 	public function test_the_facts_target_verb_round_trips(): void {
 		// What a dump owes is REPLAY, not a literal: the argument it emits has
 		// to come back through the same verb as the same state.
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$this->assertSame( "ok\n", $this->read_private( $fb, 'interpreter' )->dispatch( 'set_facts_target', [ 'facts-kea-4471' ] ) );
 		$dump = $fb->dump_config();
 		$this->assertMatchesRegularExpression( '/command_node fb:config set_facts_target (\S+)/', $dump );
 
 		\preg_match( '/command_node fb:config set_facts_target (\S+)/', $dump, $m );
-		$replayed = new Flame_Builder_Node();
+		$replayed = $this->unarmed_builder();
 		$replayed->name( 'fb2' );
 		$this->read_private( $replayed, 'interpreter' )->dispatch( 'set_facts_target', [ $m[1] ] );
 		$this->assertSame( 'facts-kea-4471', $this->read_private( $replayed, 'facts_target' ), 'the dumped argument replays' );
@@ -722,7 +732,7 @@ class FlameBuilderTest extends TestCase {
 
 	/** The Row_Table the verb named is drawn as an edge the builder writes along. */
 	public function test_the_facts_target_is_a_display_target(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$fb->connect_node( 'flames:partition' );
 		$this->read_private( $fb, 'interpreter' )->dispatch( 'set_facts_target', [ 'facts-kea-4472' ] );
@@ -835,7 +845,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_arguments_read_back_what_they_were_given(): void {
 		$router = new \Newspack_Nodes\Router_Node();
 		$router->name( \Newspack_Nodes\Node_Names::ROUTER );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 
 		$fb->arguments( [ 'petrel-4434', 'skua-4435' ] );
@@ -847,7 +857,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_arguments_arm_the_flush_on_the_tick_router(): void {
 		$router = new \Newspack_Nodes\Router_Node();
 		$router->name( \Newspack_Nodes\Node_Names::ROUTER );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 
 		$fb->arguments( [] );
@@ -859,7 +869,7 @@ class FlameBuilderTest extends TestCase {
 	/** A noisy category the governing rule logs as a custom event is disabled as one; any other is a hook. */
 	public function test_the_rules_custom_events_dispatch_to_disable_custom_events(): void {
 		$this->set_rule( [ 'auto_disable_threshold' => 50, 'custom_events' => [ 'mything', 'other' ] ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -880,7 +890,7 @@ class FlameBuilderTest extends TestCase {
 		// An event already declared significant on the governing rule is not
 		// re-flagged when its avg-time detection would otherwise promote it.
 		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05, 'significant_events' => [ 'wpdb' ] ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -897,7 +907,7 @@ class FlameBuilderTest extends TestCase {
 	/** A custom event's name is proposed whole; only the ` hook` suffix is a suffix. */
 	public function test_a_multi_word_custom_event_is_proposed_whole(): void {
 		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -912,7 +922,7 @@ class FlameBuilderTest extends TestCase {
 	/** Only a one-token slug is a plugin load; a custom event ending in "plugin" is the application's. */
 	public function test_a_multi_word_custom_event_ending_in_plugin_is_still_promoted(): void {
 		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -927,7 +937,7 @@ class FlameBuilderTest extends TestCase {
 	/** The candidate is the application's own name, whatever it is called. */
 	public function test_a_custom_event_named_total_is_proposed_under_its_own_name(): void {
 		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -942,7 +952,7 @@ class FlameBuilderTest extends TestCase {
 	/** The noisy path names a custom event whole too, so the applier can find it. */
 	public function test_a_noisy_multi_word_custom_event_is_disabled_whole(): void {
 		$this->set_rule( [ 'auto_disable_threshold' => 50, 'custom_events' => [ 'render page' ] ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -974,7 +984,7 @@ class FlameBuilderTest extends TestCase {
 			$this->fill_request_at( $fb, $this->completed_request( [ 'duration_ms' => 211.0, 'profiles' => $noisy ] ), $crumb );
 		}
 
-		$this->assertSame( [], $fb->save_state() );
+		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state() );
 		$this->assertSame( [ [ 3 ] ], $this->facts( 'SELECT count FROM requests_hourly' ), 'the rows are written' );
 		$this->expectExceptionMessage( 'auto-tuner refused the rewrite' );
 		$fb->flush();
@@ -1006,7 +1016,7 @@ class FlameBuilderTest extends TestCase {
 		} catch ( \Newspack_Nodes\Worker_Should_Stop $e ) {
 			$this->assertFalse( \Newspack_Nodes\Worker_Should_Stop::is_clean( $e ), 'the reader replays the record' );
 		}
-		$this->assertSame( [], $first->save_state() );
+		$this->assertSame( [ 'window_through' => self::current_window_through() ], $first->save_state() );
 		$first->remove_node();
 
 		$this->assertSame( [ [ 2 ] ], $this->facts( 'SELECT count(*) FROM requests' ), 'both records are written before the cursor commits' );
@@ -1025,7 +1035,7 @@ class FlameBuilderTest extends TestCase {
 		// A low per-rule time threshold promotes both seeded hooks so
 		// significant_events_count (now summed across the per-rule cache) is 2.
 		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
-		$fb      = new Flame_Builder_Node();
+		$fb      = $this->unarmed_builder();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -1068,7 +1078,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_an_unknown_request_verb_is_refused_on_the_error_plane(): void {
-		$fb                        = new Flame_Builder_Node();
+		$fb                        = $this->unarmed_builder();
 		$capture                   = new Capture_Sink_Node();
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_REQUEST;
@@ -1087,7 +1097,7 @@ class FlameBuilderTest extends TestCase {
 
 	/** Any message carrying TM_REQUEST is answered once and never folded as data. */
 	public function test_a_request_is_answered_and_never_folded_whatever_else_it_flags(): void {
-		$fb                        = new Flame_Builder_Node();
+		$fb                        = $this->unarmed_builder();
 		$capture                   = new Capture_Sink_Node();
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_RESPONSE;
@@ -1383,7 +1393,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_an_unlogged_worker_runs_the_work_bare(): void {
 		// No record, no span: the work runs, its line is never described.
-		$fb    = new Flame_Builder_Node();
+		$fb    = $this->unarmed_builder();
 		$tally = new \ReflectionProperty( $fb, 'tally' );
 		$tally->setValue( $fb, [ Flame_Tree::STATS_SWEEP => [ 'ranked' => 4 ] ] );
 		$described = false;
@@ -1415,7 +1425,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_an_unlogged_worker_builds_no_narration(): void {
 		// With no started record the line is never built; its counters reset.
-		$fb    = new Flame_Builder_Node();
+		$fb    = $this->unarmed_builder();
 		$tally = new \ReflectionProperty( $fb, 'tally' );
 		$tally->setValue( $fb, [ Flame_Tree::STATS_WRITES => [ 'flushes' => 3 ] ] );
 		$built = false;
@@ -1448,7 +1458,7 @@ class FlameBuilderTest extends TestCase {
 
 	/** The catalog's `reply_shape` names every key `GET_STATS` answers with. */
 	public function test_get_stats_reply_shape_names_every_key_it_carries(): void {
-		$fb   = new Flame_Builder_Node();
+		$fb   = $this->unarmed_builder();
 		$verb = \array_column( Flame_Builder_Node::node_schema()['requests'], null, 'name' )['GET_STATS'];
 		\preg_match_all( '/\w+/', $verb['reply_shape'], $named );
 
@@ -1456,7 +1466,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_label_and_message_attached_to_flame_nodes(): void {
-		$fb      = new Flame_Builder_Node();
+		$fb      = $this->unarmed_builder();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -1484,7 +1494,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_label_equal_to_message_skips_message_field(): void {
 		// If label and message are identical, message shouldn't be added.
-		$fb      = new Flame_Builder_Node();
+		$fb      = $this->unarmed_builder();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -1516,7 +1526,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_plugin_suffix_categories_skipped_from_auto_tune(): void {
 		// Categories ending with " plugin" are not eligible for auto-tune.
 		$this->set_rule( [ 'auto_disable_threshold' => 100, 'auto_protect_time_threshold' => 0.05 ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -1581,7 +1591,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_get_stats_auto_tune_count_reflects_queue(): void {
 		$this->set_rule( [ 'auto_disable_threshold' => 100, 'auto_protect_time_threshold' => 0.05 ] );
-		$fb      = new Flame_Builder_Node();
+		$fb      = $this->unarmed_builder();
 		$capture = new Capture_Sink_Node();
 		$fb->name( 'fb' );
 		$fb->sink( $capture );
@@ -1633,7 +1643,7 @@ class FlameBuilderTest extends TestCase {
 		// make_node auto-sinks FlameBuilder into _command_interpreter; the
 		// overridden sink() setter must propagate that sink to the owned
 		// auto-tuner sibling so it routes like any other sibling (Rule 2c).
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 
 		$capture = new Capture_Sink_Node();
@@ -1647,7 +1657,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_sink_getter_returns_own_sink(): void {
 		// The sink() override must still behave as a plain getter when called
 		// with no argument (don't accidentally return the sibling's sink).
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
 		$capture = new Capture_Sink_Node();
 		$fb->sink( $capture );
@@ -1655,16 +1665,16 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_save_state_with_nothing_buffered_writes_nothing(): void {
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
-		$this->assertSame( [], $fb->save_state() );
+		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state() );
 	}
 
 	public function test_disable_uses_the_stamped_rules_threshold(): void {
 		// The governing rule's threshold — resolved by the request's stamped
 		// rule_id — decides, and the proposal is keyed under that rule id.
 		$this->set_rule( [ 'id' => 'loud', 'pattern' => '/loud/', 'auto_disable_threshold' => 100 ] );
-		$fb  = new Flame_Builder_Node();
+		$fb  = $this->unarmed_builder();
 		$req = $this->completed_request( [
 			'rule_id'  => 'loud',
 			'url'      => 'https://example.com/loud/x',
@@ -1687,7 +1697,7 @@ class FlameBuilderTest extends TestCase {
 	#[DataProvider( 'unresolved_stamps' )]
 	public function test_an_unstamped_request_matches_its_rule_by_path( string $stamp ): void {
 		$this->set_rule( [ 'id' => 'zephyr', 'pattern' => '/zephyr-9271/', 'auto_disable_threshold' => 100 ] );
-		$fb  = new Flame_Builder_Node();
+		$fb  = $this->unarmed_builder();
 		$req = $this->completed_request( [
 			'rule_id'  => $stamp,
 			'url'      => 'https://kea-7713.test/zephyr-9271/x',
@@ -1701,7 +1711,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_no_stamped_rule_applies_no_auto_tune(): void {
 		// Stale stamped id + a url that matches no rule ⇒ null rule ⇒ no tuning.
 		$this->set_rule( [ 'id' => 'quiet', 'pattern' => '/q/' ] );
-		$fb  = new Flame_Builder_Node();
+		$fb  = $this->unarmed_builder();
 		$req = $this->completed_request( [
 			'rule_id'  => 'ghost',
 			'url'      => 'https://example.com/unmatched',
@@ -1715,7 +1725,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_noisy_hook_detection_threshold_zero_disables_check(): void {
 		// With threshold 0, no hook ever gets proposed.
 		$this->set_rule( [ 'auto_disable_threshold' => 0 ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -1729,7 +1739,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_noisy_hook_detection_proposes_when_count_exceeds_threshold(): void {
 		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -1746,7 +1756,7 @@ class FlameBuilderTest extends TestCase {
 		// Auto-disable is a global signal: worker traffic feeds only its own
 		// per-URL row, never the plugin-wide hooks_to_disable decision.
 		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'is_worker' => true,
@@ -1761,7 +1771,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_callback_categories_skipped_from_auto_tune(): void {
 		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		$req = $this->completed_request( [
 			'profiles' => [
@@ -1776,7 +1786,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_significant_event_detection_picks_up_slow_avg(): void {
 		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] ); // 50ms threshold
-		$fb = new Flame_Builder_Node();
+		$fb = $this->unarmed_builder();
 
 		// avg_per_call = sum_time / sum_count = 0.4/2 = 0.2 ≥ 0.05 → significant.
 		$req = $this->completed_request( [
