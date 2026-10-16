@@ -35,6 +35,13 @@ final class Overview_Prefetch {
 	/** The Table the job writes: `{base}/tables/flame-facts.job.p0.sqlite`. */
 	public const TABLE = 'flame-facts.job';
 
+	/** The Table's spec, which the writer builds and the reader mounts. */
+	private const SPEC = [
+		'namespace' => self::TABLE,
+		'backend'   => 'sqlite',
+		'partition' => 0,
+	];
+
 	/** The job handler, queued once an interval by `Overview_Prefetch_Tick_Node`. */
 	public const HANDLER = 'eln_overview_prefetch';
 
@@ -56,7 +63,7 @@ final class Overview_Prefetch {
 		if ( $interval < 1 || ! isset( $parameters['queued_at'] ) ) {
 			throw new \InvalidArgumentException( 'overview prefetch: a job names its queued_at and an interval of at least 1' );
 		}
-		if ( 0 !== ( Core::bound_partition() ?? 0 ) ) {
+		if ( ! Core::owns( '', Core::bound_partition() ) ) {
 			return;
 		}
 		$now = (int) Core::right_now();
@@ -107,7 +114,7 @@ final class Overview_Prefetch {
 		if ( $table instanceof Table_Node ) {
 			return $table;
 		}
-		$table = Table_Node::table( self::TABLE, $ttl, 'sqlite' );
+		$table = Table_Node::table( self::SPEC['namespace'], $ttl, self::SPEC['backend'] );
 		$table->name( self::TABLE );
 		return $table;
 	}
@@ -123,12 +130,12 @@ final class Overview_Prefetch {
 	 * @throws \RuntimeException With no request graph to mount into.
 	 */
 	public static function lookup( string $verb, array $args ): ?array {
-		$stem = Table_Node::stem( self::TABLE, 0 );
+		$stem = Table_Node::stem( self::TABLE, self::SPEC['partition'] );
 		try {
 			$table = Core::node( $stem );
 			if ( ! $table instanceof Table_Node ) {
 				$ci    = Core::node( Node_Names::COMMAND_INTERPRETER ) ?? throw new \RuntimeException( 'overview prefetch: no request graph to mount into' );
-				$table = Table_Node::mount( self::TABLE, 0, [ 'namespace' => self::TABLE, 'ttl' => 1, 'backend' => 'sqlite' ], $ci );
+				$table = Table_Node::mount( self::TABLE, self::SPEC['partition'], [ 'namespace' => self::SPEC['namespace'], 'ttl' => 1, 'backend' => self::SPEC['backend'] ], $ci );
 			}
 			$answer = $table->lookup( self::key( $verb, $args ) );
 		} catch ( Table_Unavailable $e ) {

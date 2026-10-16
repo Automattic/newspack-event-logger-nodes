@@ -67,8 +67,8 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 	 * @api Driven by the substrate Timer (fire_cb).
 	 */
 	protected function fire(): void {
-		// The line names no partition: the name carries no token.
-		if ( ! Core::owns( $this->name, Core::bound_partition() ) ) {
+		// The line names no partition, so the source it asks about is empty.
+		if ( ! Core::owns( '', Core::bound_partition() ) ) {
 			return;
 		}
 		$parameters = [
