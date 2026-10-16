@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The `flame-facts.job` Table and `Overview_Prefetch::lookup()`, `writer()` and `TABLE`.** The snapshot replaces them, and the `urls` question leaves `stored-answers.json`. Nothing writes `tables/flame-facts.job.p0.sqlite` any longer, so the substrate's sweep deletes it once it has been quiet an hour; uninstall deletes the snapshot and any build a crashed job left beside it.
 - **"Showing the top N of M series."** under the request chart and the category charts. The request chart's total still counts only the series it draws.
 
+### Fixed
+
+- **A question that answers live is asked once, not once a poll.** The Overview's stats slices and the URL window's re-asked an unanswered question after the substrate's 15 s, while each poll's POST goes out without waiting for the last, so a URL page answering live in 33 s on eln, a search or a chipped page, ran about three identical scans. They wait 130 s, past a 120 s gateway; a POST that fails still settles as an error, and the next poll asks again. `dump_request` keeps the default.
+
 ## [0.135.0] - 2026-10-15
 
 ### Added
