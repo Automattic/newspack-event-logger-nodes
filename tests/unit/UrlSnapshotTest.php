@@ -1,0 +1,478 @@
+<?php
+/**
+ * UrlSnapshotTest: the URL snapshot the overview-prefetch job publishes.
+ *
+ * @package Newspack_Event_Logger_Nodes
+ */
+
+namespace Newspack_Event_Logger_Nodes\Tests\Unit;
+
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
+use Newspack_Event_Logger_Nodes\App\Stats_Query;
+use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
+use Newspack_Event_Logger_Nodes\Bucket;
+use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
+use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Row_Reader;
+use Newspack_Nodes\Row_Table_Node;
+use Newspack_Nodes\Sqlite_Arm;
+use Newspack_Nodes\Table_Unavailable;
+
+/**
+ * One file holds every URL of the window, its totals and the stored
+ * answers; a page read off it is the page `Stats_Query` answers live.
+ */
+#[CoversClass( Url_Snapshot::class )]
+#[CoversClass( Stats_Query::class )]
+final class UrlSnapshotTest extends TestCase {
+
+	use FactsSeeder;
+
+	private const NOW = 1_790_011_903;
+
+	/** The second server the parity traffic files under. */
+	private const KAKA = 'kaka-2207.example';
+
+	protected function setUp(): void {
+		parent::setUp();
+		Core::$clock = static fn (): float => (float) self::NOW;
+		Core::right_now();
+		$this->activate_shipped( 'flame-builder', 4 );
+	}
+
+	protected function tearDown(): void {
+		Core::$clock = null;
+		parent::tearDown();
+	}
+
+	/**
+	 * A request in the window, `$age` buckets back, finishing `$second`
+	 * seconds into its bucket.
+	 *
+	 * @param string              $path   The URL's path on its server.
+	 * @param int                 $age    Buckets before the tick's.
+	 * @param int                 $second Seconds into the bucket.
+	 * @param array<string,mixed> $over   Columns by name.
+	 * @return array<string,mixed>
+	 */
+	private static function request( string $path, int $age, int $second, array $over ): array {
+		$server = Core::as_string( $over['server'] ?? self::$seed_server );
+		$bucket = Bucket::id( self::NOW ) - $age;
+		return $over + [
+			'url'         => "https://{$server}{$path}",
+			'bucket'      => $bucket,
+			'finished_at' => (float) ( $bucket * Bucket::SECONDS + $second ),
+		];
+	}
+
+	/**
+	 * Traffic spread over partitions 0, 1 and 3, so every URL's numbers
+	 * merge across partitions: two servers, a worker URL, two untimed URLs,
+	 * URLs tied on count, a timeout and a fatal, statuses from 2xx to 5xx,
+	 * every peak and finish distinct, and one request past the window.
+	 */
+	private function seed_parity_traffic(): void {
+		$kaka = [ 'server' => self::KAKA ];
+		$this->seed_requests(
+			[
+				self::request( '/tui-4410/', 3, 11, [ 'ms' => 40.5, 'peak_mb' => 31.5, 'status' => 200 ] ),
+				self::request( '/pukeko-8821/', 7, 12, [ 'ms' => 250.5, 'peak_mb' => 41.25, 'status' => 404 ] ),
+				self::request( '/hoiho-6612/', 9, 13, [ 'ms' => null, 'peak_mb' => 17.75, 'status' => 200 ] ),
+				self::request( '/jobs/kereru-1190', 2, 14, [ 'ms' => 75.5, 'peak_mb' => 52.5, 'status' => 200, 'worker' => 1 ] ),
+				self::request( '/kokako-5530/', 4, 15, $kaka + [ 'ms' => 140.5, 'peak_mb' => 61.25, 'status' => 201 ] ),
+				self::request( '/takahe-9045/', 6, 16, $kaka + [ 'ms' => 77.25, 'peak_mb' => 28.75, 'status' => 200 ] ),
+				self::request( '/tui-4410/', 300, 17, [ 'ms' => 9000.5, 'peak_mb' => 99.5, 'status' => 200 ] ),
+			],
+			0
+		);
+		$this->seed_requests(
+			[
+				self::request( '/tui-4410/', 5, 21, [ 'ms' => 60.25, 'peak_mb' => 33.25, 'status' => 302 ] ),
+				self::request( '/weta-3307/', 1, 22, [ 'ms' => 500.5, 'peak_mb' => 71.5, 'status' => 500, 'error' => 'F' ] ),
+				self::request( '/hoiho-6612/', 11, 23, [ 'ms' => null, 'peak_mb' => 19.25, 'status' => 200 ] ),
+				self::request( '/kokako-5530/', 8, 24, $kaka + [ 'ms' => 20.5, 'peak_mb' => 26.5, 'status' => 301 ] ),
+			],
+			1
+		);
+		$this->seed_requests(
+			[
+				self::request( '/tui-4410/', 10, 31, [ 'ms' => 12.75, 'peak_mb' => 35.75, 'status' => 200 ] ),
+				self::request( '/pukeko-8821/', 12, 32, [ 'ms' => 90.0, 'peak_mb' => 44.5, 'status' => 0, 'error' => 'T' ] ),
+				self::request( '/weta-3307/', 13, 33, [ 'ms' => null, 'peak_mb' => 38.25, 'status' => 503 ] ),
+				self::request( '/jobs/kereru-1190', 14, 34, [ 'ms' => 81.25, 'peak_mb' => 57.75, 'status' => 200, 'worker' => 1 ] ),
+				self::request( '/takahe-9045/', 15, 35, $kaka + [ 'ms' => 66.5, 'peak_mb' => 22.25, 'status' => 410 ] ),
+				self::request( '/ruru-5182/', 16, 36, [ 'ms' => null, 'peak_mb' => 47.25, 'status' => 204 ] ),
+			],
+			3
+		);
+	}
+
+	/**
+	 * The live answer to the question a snapshot page answers.
+	 *
+	 * @param string              $server  '' for every server.
+	 * @param bool                $workers Whether worker URLs count.
+	 * @param array<string,mixed> $over    The rest of the spec.
+	 * @return array<string,mixed>
+	 */
+	private static function live( string $server, bool $workers, array $over ): array {
+		return Stats_Query::run(
+			$over + [
+				'source'  => 'requests',
+				'filter'  => ( $workers ? [] : [ 'worker' => [ 0 ] ] ) + ( '' === $server ? [] : [ 'server' => [ $server ] ] ),
+				'buckets' => Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, self::NOW ),
+			]
+		);
+	}
+
+	/**
+	 * Assert a published snapshot's page is the live page, and answer it.
+	 *
+	 * @return list<list<mixed>> The page's rows.
+	 */
+	private function assert_page_is_live( string $sort, string $order, string $server, bool $workers, int $offset, int $limit ): array {
+		$this->seed_parity_traffic();
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$this->assertFileExists( Url_Snapshot::path() );
+		$snapshot = Url_Snapshot::open( self::NOW );
+		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
+
+		$live = self::live(
+			$server,
+			$workers,
+			[
+				'group'   => [ 'url' ],
+				'measure' => Performance_CI_Node::URL_MEASURES,
+				'sort'    => $sort,
+				'order'   => $order,
+				'limit'   => $limit,
+				'offset'  => $offset,
+				'also'    => [
+					'sort'  => 'avg_ms',
+					'order' => 'desc',
+					'limit' => Performance_CI_Node::SLOWEST_ROWS,
+				],
+			]
+		);
+		$page = $snapshot->page( $server, $workers, $sort, $order, $offset, $limit );
+
+		$this->assertNotSame( [], $live['rows'], 'the question pages real rows' );
+		$this->assertSame( $live['columns'], $page['columns'] );
+		$this->assertSame( $live['rows'], $page['rows'] );
+		$this->assertSame( $live['also'], $page['also'] );
+		$this->assertTrue( $page['available'] );
+		return $page['rows'];
+	}
+
+	/** Every sort, both orders, every server, both views: the snapshot page is the live page. */
+	#[DataProvider( 'questions' )]
+	public function test_a_snapshot_page_is_the_live_page( string $sort, string $order, string $server, bool $workers ): void {
+		$this->assert_page_is_live( $sort, $order, $server, $workers, 1, 3 );
+	}
+
+	/** A nullable sort's tail page ranks its tied nulls as the live page does. */
+	#[DataProvider( 'tails' )]
+	public function test_a_tail_page_ranks_tied_nulls_as_the_live_page( string $sort, string $order, bool $workers ): void {
+		$rows   = $this->assert_page_is_live( $sort, $order, '', $workers, 4, 10 );
+		$column = \array_search( $sort, [ 'url', 'url_name', ...Performance_CI_Node::URL_MEASURES ], true );
+
+		$this->assertSame( [ null, null ], \array_slice( \array_column( $rows, (int) $column ), -2 ), 'two tied nulls close the page' );
+	}
+
+	/**
+	 * Each nullable sort, both orders, both views, every server.
+	 *
+	 * @return array<string,array{0:string,1:string,2:bool}>
+	 */
+	public static function tails(): array {
+		$cases = [];
+		foreach ( [ 'avg_ms', 'min_ms', 'max_ms' ] as $sort ) {
+			foreach ( [ 'asc', 'desc' ] as $order ) {
+				foreach ( [ false, true ] as $workers ) {
+					$cases[ "{$sort} {$order} " . ( $workers ? 'workers' : 'no workers' ) ] = [ $sort, $order, $workers ];
+				}
+			}
+		}
+		return $cases;
+	}
+
+	/** Every site-wide page, the slowest ten included, reads off an index. */
+	#[DataProvider( 'site_pages' )]
+	public function test_a_site_wide_page_sorts_off_an_index( string $sort, string $order, bool $workers ): void {
+		$this->seed_parity_traffic();
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$this->assertFileExists( Url_Snapshot::path() );
+		[ $sql, $binds ] = ( new \ReflectionMethod( Url_Snapshot::class, 'listing' ) )->invoke( null, '', $workers, $sort, $order );
+
+		$plan = \implode( "\n", \array_column( Sqlite_Arm::open_snapshot( Url_Snapshot::path() )->rows( "EXPLAIN QUERY PLAN {$sql} LIMIT ? OFFSET ?", [ ...$binds, 3, 1 ] ), 3 ) );
+
+		$this->assertStringNotContainsString( 'USE TEMP B-TREE FOR ORDER BY', $plan );
+		$this->assertMatchesRegularExpression( '/INDEX urls_/', $plan );
+	}
+
+	/**
+	 * Each sort, both orders, both views.
+	 *
+	 * @return array<string,array{0:string,1:string,2:bool}>
+	 */
+	public static function site_pages(): array {
+		$cases = [];
+		foreach ( Performance_CI_Node::URL_SORTS as $sort ) {
+			foreach ( [ 'asc', 'desc' ] as $order ) {
+				foreach ( [ false, true ] as $workers ) {
+					$cases[ "{$sort} {$order} " . ( $workers ? 'workers' : 'no workers' ) ] = [ $sort, $order, $workers ];
+				}
+			}
+		}
+		return $cases;
+	}
+
+	/**
+	 * Each sort a `urls` page takes, both orders, both servers and both views.
+	 *
+	 * @return array<string,array{0:string,1:string,2:string,3:bool}>
+	 */
+	public static function questions(): array {
+		$cases = [];
+		foreach ( [ 'count', 'url_name', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_seen' ] as $sort ) {
+			foreach ( [ 'asc', 'desc' ] as $order ) {
+				foreach ( [ '', self::KAKA ] as $server ) {
+					foreach ( [ false, true ] as $workers ) {
+						$cases[ "{$sort} {$order} '{$server}' " . ( $workers ? 'workers' : 'no workers' ) ] = [ $sort, $order, $server, $workers ];
+					}
+				}
+			}
+		}
+		return $cases;
+	}
+
+	/** The sorts a page takes are `urls`' sorts. */
+	public function test_the_parity_sorts_are_the_urls_verbs_sorts(): void {
+		$this->assertSame(
+			[ 'count', 'url_name', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_seen' ],
+			\array_values( Performance_CI_Node::URL_SORTS )
+		);
+	}
+
+	public function test_snapshot_totals_are_the_live_totals(): void {
+		$this->seed_parity_traffic();
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$snapshot = Url_Snapshot::open( self::NOW );
+		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
+
+		foreach ( [ '', self::KAKA, 'absent-4471.example' ] as $server ) {
+			foreach ( [ false, true ] as $workers ) {
+				$live   = self::live( $server, $workers, [ 'group' => [], 'measure' => [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ] ] );
+				$totals = $snapshot->totals( $server, $workers );
+				$label  = "'{$server}' " . ( $workers ? 'workers' : 'no workers' );
+
+				$this->assertSame( $live['columns'], $totals['columns'], $label );
+				$this->assertSame( $live['rows'], $totals['rows'], $label );
+				$this->assertTrue( $totals['available'], $label );
+			}
+		}
+		$this->assertSame( [ [ 0, null, null, 0, 0 ] ], $snapshot->totals( 'absent-4471.example', true )['rows'], 'a server with no URLs answers zeroes' );
+	}
+
+	public function test_a_published_snapshot_answers_its_stored_answers(): void {
+		$this->seed_request();
+		$stored = [
+			'available' => true,
+			'rows'      => [ [ 9 ] ],
+		];
+		Url_Snapshot::publish( self::NOW, 240, [ 'query:6f1e' => $stored ] );
+		$this->assertFileExists( Url_Snapshot::path() );
+
+		$snapshot = Url_Snapshot::open( self::NOW );
+
+		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
+		$this->assertSame( $stored, $snapshot->answer( 'query:6f1e' ) );
+		$this->assertNull( $snapshot->answer( 'query:absent' ) );
+		$this->assertSame( self::NOW, $snapshot->as_of() );
+	}
+
+	public function test_a_snapshot_past_its_expiry_does_not_open(): void {
+		$this->seed_request();
+		Url_Snapshot::publish( self::NOW, 240, [] );
+
+		$this->assertNull( Url_Snapshot::open( self::NOW + 240 ) );
+		$this->assertInstanceOf( Url_Snapshot::class, Url_Snapshot::open( self::NOW + 239 ) );
+	}
+
+	public function test_no_snapshot_does_not_open(): void {
+		$this->assertFileDoesNotExist( Url_Snapshot::path() );
+		$this->assertNull( Url_Snapshot::open( self::NOW ) );
+	}
+
+	public function test_a_file_that_is_no_database_does_not_open(): void {
+		$this->seed_request();
+		\file_put_contents( Url_Snapshot::path(), 'kiwi-9931' );
+
+		$this->assertNull( Url_Snapshot::open( self::NOW ) );
+	}
+
+	public function test_a_fleet_declaring_no_facts_table_refuses_to_publish(): void {
+		$this->activate_shipped( 'job-router', 1 );
+
+		$this->expectException( Table_Unavailable::class );
+		Url_Snapshot::publish( self::NOW, 240, [] );
+	}
+
+	public function test_a_build_that_throws_leaves_no_file(): void {
+		$this->seed_request( self::request( '/tui-4410/', 3, 11, [ 'ms' => 40.5 ] ) );
+
+		try {
+			Url_Snapshot::publish( self::NOW, 240, [ 'query:3c9a' => [ 'mean' => \NAN ] ] );
+			$this->fail( 'an answer that will not encode publishes nothing' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertStringContainsString( 'query:3c9a will not encode', $e->getMessage() );
+		}
+
+		$this->assertSame( [], \glob( \dirname( Url_Snapshot::path() ) . '/flame-facts.job.*' ) ?: [] );
+	}
+
+	public function test_no_partition_file_publishes_nothing(): void {
+		$this->assertDirectoryDoesNotExist( \dirname( Url_Snapshot::path() ) );
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$this->assertFileDoesNotExist( Url_Snapshot::path() );
+		$this->assertDirectoryDoesNotExist( \dirname( Url_Snapshot::path() ), 'publishing nothing makes no directory' );
+
+		\mkdir( \dirname( Url_Snapshot::path() ), 0777, true );
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$this->assertFileDoesNotExist( Url_Snapshot::path() );
+
+		$this->assertFileDoesNotExist( Url_Snapshot::path() );
+		$this->assertSame( [], \glob( \dirname( Url_Snapshot::path() ) . '/flame-facts.job.*.sqlite' ) ?: [] );
+	}
+
+	/** An empty window is still a snapshot: no URLs, zero totals. */
+	public function test_a_window_with_no_requests_publishes_an_empty_snapshot(): void {
+		$this->seed_request( self::request( '/tui-4410/', 400, 41, [ 'ms' => 12.5 ] ) );
+
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$this->assertFileExists( Url_Snapshot::path() );
+		$snapshot = Url_Snapshot::open( self::NOW );
+
+		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
+		$this->assertSame( [], $snapshot->page( '', true, 'count', 'desc', 0, 50 )['rows'] );
+		$this->assertSame( [ [ 0, null, null, 0, 0 ] ], $snapshot->totals( '', true )['rows'] );
+	}
+
+	public function test_a_publish_leaves_no_build_file_and_replaces_the_last(): void {
+		$this->seed_request( self::request( '/tui-4410/', 3, 11, [ 'ms' => 40.5 ] ) );
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$this->assertFileExists( Url_Snapshot::path() );
+		$this->seed_request( self::request( '/moa-6638/', 1, 51, [ 'ms' => 18.5 ] ), 1 );
+
+		Url_Snapshot::publish( self::NOW + 120, 240, [] );
+		$this->assertFileExists( Url_Snapshot::path() );
+		$snapshot = Url_Snapshot::open( self::NOW + 120 );
+
+		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
+		$this->assertSame( self::NOW + 120, $snapshot->as_of() );
+		$this->assertSame(
+			[ 'https://seed.example/moa-6638/', 'https://seed.example/tui-4410/' ],
+			\array_column( $snapshot->page( '', false, 'url_name', 'asc', 0, 50 )['rows'], 1 )
+		);
+		$this->assertSame( [], \glob( \dirname( Url_Snapshot::path() ) . '/flame-facts.job.*.sqlite' ) ?: [] );
+	}
+
+	/** A page takes the bounds a live page takes. */
+	#[DataProvider( 'out_of_bounds' )]
+	public function test_a_page_refuses_a_bound_the_live_page_refuses( int $offset, int $limit ): void {
+		$this->seed_request();
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$snapshot = Url_Snapshot::open( self::NOW );
+		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
+
+		$this->expectException( \InvalidArgumentException::class );
+		$snapshot->page( '', false, 'count', 'desc', $offset, $limit );
+	}
+
+	/**
+	 * An offset and a limit just past each bound.
+	 *
+	 * @return array<string,array{0:int,1:int}>
+	 */
+	public static function out_of_bounds(): array {
+		return [
+			'no rows'         => [ 0, 0 ],
+			'every row'       => [ 0, -1 ],
+			'too many rows'   => [ 0, Stats_Query::MAX_LIMIT + 1 ],
+			'before the start' => [ -1, 50 ],
+			'too far'         => [ Stats_Query::MAX_OFFSET + 1, 50 ],
+		];
+	}
+
+	public function test_a_page_refuses_a_sort_urls_does_not_take(): void {
+		$this->seed_request();
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$snapshot = Url_Snapshot::open( self::NOW );
+		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
+
+		$this->expectException( \InvalidArgumentException::class );
+		$snapshot->page( '', false, 'sum_ms', 'desc', 0, 50 );
+	}
+
+	/**
+	 * A spec `into()` refuses, and the refusal it names.
+	 *
+	 * @param array<string,mixed> $over The spec's top or also.
+	 */
+	#[DataProvider( 'paged_specs' )]
+	public function test_into_refuses_a_top_or_an_also( array $over ): void {
+		$this->seed_request();
+
+		$this->expectExceptionMessage( 'into stores whole groups: no top and no also' );
+		$this->into( $over + [ 'group' => [ 'url' ] ] );
+	}
+
+	/**
+	 * A top and an also.
+	 *
+	 * @return array<string,array{0:array<string,mixed>}>
+	 */
+	public static function paged_specs(): array {
+		return [
+			'also' => [ [ 'also' => [ 'sort' => 'count', 'order' => 'desc', 'limit' => 5 ] ] ],
+			'top'  => [
+				[
+					'group'  => [ 'bucket', 'url' ],
+					'top'    => 3,
+					'top_by' => 'count',
+				],
+			],
+		];
+	}
+
+	public function test_into_refuses_a_build_attaching_no_partition(): void {
+		\mkdir( \dirname( Url_Snapshot::path() ), 0777, true );
+
+		$this->expectException( \LogicException::class );
+		$this->expectExceptionMessage( 'into reads at least one partition' );
+		$this->into( [ 'group' => [ 'url' ] ] );
+	}
+
+	/**
+	 * Run `Stats_Query::into()` for a `requests` count spec in a scratch build.
+	 *
+	 * @param array<string,mixed> $over The spec's group and paging.
+	 */
+	private function into( array $over ): void {
+		$spec = $over + [
+			'source'  => 'requests',
+			'filter'  => [],
+			'measure' => [ 'count' ],
+			'buckets' => Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, self::NOW ),
+		];
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			\dirname( Url_Snapshot::path() ) . '/into-scratch.sqlite',
+			static fn ( Row_Reader $db ) => Stats_Query::into( $db, 'urls', $spec )
+		);
+	}
+}

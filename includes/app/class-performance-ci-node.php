@@ -140,10 +140,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const GREP_HISTORY_NUM_BUCKETS = 10;
 
 	/** Slowest rows the `urls` reply carries for the Ask brief's examples. */
-	private const SLOWEST_ROWS = 10;
+	public const SLOWEST_ROWS = 10;
 
 	/** Each `urls` sort, as the `Stats_Query` sort a `url` group answers it by. */
-	private const URL_SORTS = [
+	public const URL_SORTS = [
 		'count'        => 'count',
 		'url'          => 'url_name',
 		'avg_ms'       => 'avg_ms',
@@ -154,7 +154,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	];
 
 	/** What a `urls` row measures. */
-	private const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
+	public const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
 
 	/** Buckets the dashboard's charts draw: 24 hours, newest first. */
 	private const CHART_BUCKETS = Flame_Facts_Row_Schema::WINDOW_BUCKETS;
@@ -1199,15 +1199,57 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The answer to `overview`, `urls` or `query` for bound arguments: the
-	 * one the overview-prefetch job stored, else the live one.
+	 * The answer to `overview`, `urls` or `query` for bound arguments: off
+	 * the URL snapshot the overview-prefetch job published, where it answers
+	 * them, else the live one. A snapshot that opens but will not read says
+	 * so once a window and answers live.
 	 *
 	 * @param string                 $verb `overview`, `urls` or `query`.
 	 * @param array<array-key,mixed> $args Its bound arguments.
 	 * @return array<array-key,mixed>
+	 * @throws \InvalidArgumentException As `answer_live()`.
 	 */
 	private static function answered( string $verb, array $args ): array {
-		return Overview_Prefetch::lookup( $verb, $args ) ?? self::answer_live( $verb, $args, self::now() );
+		$now      = self::now();
+		$snapshot = Url_Snapshot::open( $now );
+		try {
+			$stored = null === $snapshot ? null : match ( $verb ) {
+				'urls'  => self::stored_urls( $snapshot, $args ),
+				default => $snapshot->answer( Overview_Prefetch::key( $verb, $args ) ),
+			};
+		} catch ( \PDOException $e ) {
+			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
+			$stored = null;
+		}
+		return $stored ?? self::answer_live( $verb, $args, $now );
+	}
+
+	/**
+	 * The `urls` answer off the snapshot, dated when the job built it, or
+	 * null for a question it cannot answer: a search, a bucket selection or
+	 * errors only.
+	 *
+	 * @param Url_Snapshot           $snapshot The published snapshot.
+	 * @param array<array-key,mixed> $args     The bound verb args.
+	 * @return array<string,mixed>|null
+	 */
+	private static function stored_urls( Url_Snapshot $snapshot, array $args ): ?array {
+		[ $server, $filters, $sort, $order, $offset, $limit ] = self::url_question( $args );
+		if ( '' !== $filters['search'] || '' !== $filters['bucket'] || $filters['errors_only'] ) {
+			return null;
+		}
+		$now     = $snapshot->as_of();
+		$workers = $filters['include_workers'];
+		return [ 'as_of' => $now ] + self::url_reply(
+			$server,
+			$filters,
+			$snapshot->totals( $server, $workers ),
+			$snapshot->page( $server, $workers, self::URL_SORTS[ $sort ], $order, $offset, $limit ),
+			self::window( '', $now, Bucket::MAX_SELECTION ),
+			$offset,
+			$limit,
+			$now
+		);
 	}
 
 	/**
@@ -1439,9 +1481,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `urls` verb's answer to its bound arguments: an unknown sort reads
-	 * as `count`, any order but `asc` as `desc`, and the page and its offset
-	 * clamp inside `Stats_Query`'s bounds.
+	 * The `urls` verb's answer to its bound arguments.
 	 *
 	 * @param array<array-key,mixed> $args The bound verb args.
 	 * @param int                    $now  The reply's clock.
@@ -1449,9 +1489,21 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \InvalidArgumentException As `url_page()`.
 	 */
 	private static function answer_urls( array $args, int $now ): array {
+		return self::url_page( ...self::url_question( $args ), now: $now );
+	}
+
+	/**
+	 * The `urls` question bound arguments ask, as `url_page()` takes it: an
+	 * unknown sort reads as `count`, any order but `asc` as `desc`, and the
+	 * page and its offset clamp inside `Stats_Query`'s bounds.
+	 *
+	 * @param array<array-key,mixed> $args The bound verb args.
+	 * @return array{0:string, 1:Url_Filters, 2:string, 3:string, 4:int, 5:int}
+	 */
+	private static function url_question( array $args ): array {
 		$sort  = Core::as_string( $args['sort'] );
 		$order = Core::as_string( $args['order'] );
-		return self::url_page(
+		return [
 			Core::as_string( $args['server'] ),
 			[
 				'search'          => \trim( Core::as_string( $args['search'] ) ),
@@ -1464,17 +1516,14 @@ class Performance_CI_Node extends Service_CI_Node {
 			'asc' === $order ? 'asc' : 'desc',
 			\min( Stats_Query::MAX_OFFSET, \max( 0, Core::as_int( $args['offset'] ) ) ),
 			\min( Stats_Query::MAX_LIMIT, \max( 1, Core::as_int( $args['limit'] ) ) ),
-			$now
-		);
+		];
 	}
 
 	/**
 	 * One page of the URL set the filters leave, over the last 288 buckets
-	 * or the selected ones: its rows, its exact totals and its slowest ten,
-	 * every mean request-weighted. `rows` is the exact count of URLs
-	 * matching, the pager's. Worker traffic is left out unless asked for,
-	 * and errors-only keeps the timeouts and fatals, whose count the totals
-	 * then carry.
+	 * or the selected ones, read live: its totals and its page with the
+	 * slowest ten beside it, shaped by `url_reply()`. Worker traffic is left
+	 * out unless asked for, and errors-only keeps the timeouts and fatals.
 	 *
 	 * @param string      $server  Server to scope to; '' is every server.
 	 * @param Url_Filters $filters The url filters in force.
@@ -1496,7 +1545,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			'search'  => $filters['search'],
 		];
 		$answer  = Stats_Query::run( $base + [ 'group' => [], 'measure' => [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ] ] );
-		$totals  = self::measures( $answer );
 		$page    = Stats_Query::run(
 			[
 				'group'   => [ 'url' ],
@@ -1512,7 +1560,28 @@ class Performance_CI_Node extends Service_CI_Node {
 				],
 			] + $base
 		);
-		$count   = Core::num_int( $totals['count'] );
+		return self::url_reply( $server, $filters, $answer, $page, $buckets, $offset, $limit, $now );
+	}
+
+	/**
+	 * The `urls` reply a page and its totals make, live or off the snapshot:
+	 * its rows, its exact totals and its slowest ten, every mean
+	 * request-weighted. `rows` is the exact count of URLs matching, the
+	 * pager's, and errors-only's totals carry the errors counted.
+	 *
+	 * @param string                                                                     $server  Server scoped to; '' is every server.
+	 * @param Url_Filters                                                                $filters The url filters in force.
+	 * @param array{columns: list<string>, rows: list<list<mixed>>, available: bool}     $answer  The totals: count, avg_ms, avg_peak_mb, urls and errors, ungrouped.
+	 * @param array{columns: list<string>, rows: list<list<mixed>>, also?: list<list<mixed>>} $page The `url`-grouped page over `URL_MEASURES`, the slowest as `also`.
+	 * @param list<array{0:int,1:int}>                                                   $buckets The buckets read.
+	 * @param int                                                                        $offset  Page offset.
+	 * @param int                                                                        $limit   Page size.
+	 * @param int                                                                        $now     The reply's clock.
+	 * @return array{data: list<array<string,mixed>>, rows: int, totals: array<string,mixed>|null, slowest: list<array<string,mixed>>, filters: array<string,mixed>, limit: int, offset: int, available: bool}
+	 */
+	private static function url_reply( string $server, array $filters, array $answer, array $page, array $buckets, int $offset, int $limit, int $now ): array {
+		$totals = self::measures( $answer );
+		$count  = Core::num_int( $totals['count'] );
 		return [
 			'data'    => self::url_rows( $page ),
 			'rows'    => Core::num_int( $totals['urls'] ),
@@ -1759,7 +1828,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question with no search, bucket or errors_only is answered from the overview-prefetch job\'s URL snapshot, at most two intervals old; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],

@@ -1,6 +1,5 @@
 {
 	"overview": { "verb": "overview", "tokens": [] },
-	"urls": { "verb": "urls", "tokens": [ "--sort=count", "--order=desc", "--limit=100" ] },
 	"chart_by_server": { "verb": "query", "tokens": [ "requests", "bucket", "server", "--top=20", "--top_by=count", "--filter=worker=0", "--measure=count", "--measure=sum_ms", "--measure=sum_peak_mb", "--measure=timed" ] },
 	"chart_by_status_class": { "verb": "query", "tokens": [ "requests", "bucket", "status_class", "--top=20", "--top_by=count", "--filter=worker=0", "--measure=count", "--measure=sum_ms", "--measure=sum_peak_mb", "--measure=timed" ] },
 	"categories": { "verb": "query", "tokens": [ "timings", "bucket", "category", "--top=20", "--top_by=ms", "--filter=worker=0", "--filter=entry=", "--measure=ms", "--measure=calls" ] }
