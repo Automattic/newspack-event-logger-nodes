@@ -94,7 +94,14 @@ abstract class TestCase extends RuntimeTestCase {
 			}
 		}
 		$fb->sink( VerbHarness::request_graph() );
+		// A current window: no topology declares this Table, so none is read.
+		$fb->restore_state( [ 'window_through' => self::current_window_through() ] );
 		return $fb;
+	}
+
+	/** The watermark a window expired through the current tick holds. */
+	protected static function current_window_through(): int {
+		return \Newspack_Event_Logger_Nodes\Bucket::id( (int) \Newspack_Nodes\Core::$now ) - \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::WINDOW_BUCKETS;
 	}
 
 	/**

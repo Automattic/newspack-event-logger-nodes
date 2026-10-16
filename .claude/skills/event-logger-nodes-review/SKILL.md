@@ -245,7 +245,7 @@ Eleven `.tsl` files ship in `topologies/`, and a topology's name is its filename
 The `flame-facts` rows go only when their `retain` window passes (decision 34), so no mechanism exists to put a lost row back, and a diff must keep it that way along with the rules below:
 
 - **No repair machinery.** A diff that adds a second copy of a stats row, a sweep, a probe to find losses, a held frame, or a read that falls back to another store is the machinery decision 34 deleted. A row a reply lacks is one no flush wrote, or one whose window passed.
-- **The checkpoint carries nothing.** `save_state()` runs `write_rows()`, the durable half of `flush()`, before the Consumer commits its cursor, and returns `[]`; the replay is counted once by the `requests` row's rid (decision 31). A diff that carries `pending` or any accumulator in the checkpoint double-counts on the replay, and one that runs the auto-tune emit inside `save_state()` lets a throwing emit keep the cursor from committing.
+- **The checkpoint carries the window's watermark alone.** `save_state()` runs `write_rows()`, the durable half of `flush()`, before the Consumer commits its cursor, and returns `[ 'window_through' => W ]`, the category window's watermark, or `[]` while none is known; `restore_state()` takes it back. The replay is counted once by the `requests` row's rid (decision 31), and a replayed expiry once by its `window_expiry` row. A diff that carries `pending` or any other accumulator in the checkpoint double-counts on the replay, and one that runs the auto-tune emit inside `save_state()` lets a throwing emit keep the cursor from committing.
 
 ### 26. Which clock, and what a late stamp does
 

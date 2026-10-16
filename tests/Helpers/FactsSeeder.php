@@ -214,7 +214,7 @@ trait FactsSeeder {
 	 * @param int                     $partition The partition file.
 	 * @param list<array<int,mixed>> $batch     The ops.
 	 */
-	private function write_facts( int $partition, array $batch ): void {
+	protected function write_facts( int $partition, array $batch ): void {
 		$bound                  = Core::$var['partition'] ?? null;
 		Core::$var['partition'] = (string) $partition;
 		try {
@@ -242,5 +242,15 @@ trait FactsSeeder {
 		if ( 0 !== ( Core::num_int( $reply[ Message::TYPE ] ) & Message::TM_ERROR ) ) {
 			throw new \LogicException( 'the facts table refused ROWS: ' . Core::as_string( $reply[ Message::VALUE ] ) );
 		}
+	}
+
+	/**
+	 * The path of partition `$partition`'s file of the Row_Table the active
+	 * topologies declare with the Flame_Facts schema.
+	 *
+	 * @param int $partition The partition.
+	 */
+	protected function facts_file( int $partition ): string {
+		return Bootstrap::row_table( Flame_Facts_Row_Schema::class )['files'][ $partition ];
 	}
 }
