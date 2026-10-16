@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The site leaderboard spans the chart's 24 hours, and a day's category question reads the category window: 873 rows on eln against 590,000.**
 - **Flame_Facts schema 4: a covering `requests_cover` index and the `category_window` the flame builder maintains.** The window, its `window_watermark` and its `window_expiry` are three new tables, nine in all. A v3 file is discarded at open; run the rebuild.
 - **Each partition groups its own stats rows before the union merges them, whenever every measure a query names composes.** On eln's data the bucket chart drops from about 400 ms to about 130 ms and the URL top 200 from about 1.8 s to about 1.3 s. The full URL page, whose URLs are mostly unique, gains nothing. A percentile or a distinct count still reads every partition's rows whole.
 

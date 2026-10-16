@@ -52,6 +52,55 @@ final class StatsQueryTest extends TestCase {
 		return [ [ ( $hour - 23 ) * 12, $hour * 12 + 11 ] ];
 	}
 
+	/** A day's timings spec over fields the window holds reads the window. */
+	public function test_a_days_category_ranking_reads_the_window_when_every_watermark_stands_at_its_start(): void {
+		$day = $this->last_day();
+		foreach ( [ 0, 2 ] as $p ) {
+			$this->write_facts( $p, [
+				[ 'add', 'window_watermark', [ Flame_Facts_Row_Schema::WINDOW, $day[0][0] - 1 ] ],
+				[ 'add', 'category_window', [ 'hook:ruru_init', '', 0, 0, 21.5 + $p, 3, 2, $day[0][1] ] ],
+				[ 'add', 'category_window', [ 'hook:gone_init', '', 0, 0, 500.0, 1, 1, $day[0][0] - 1 ] ],
+				[ 'add', 'category_window', [ 'hook:zeroed_init', '', 0, 0, 0.0, 0, 0, $day[0][1] ] ],
+			] );
+		}
+
+		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ], 'entry' => [ '' ] ], 'measure' => [ 'ms', 'calls' ], 'buckets' => $day, 'sort' => 'ms', 'order' => 'desc' ] );
+
+		$this->assertSame( 'category_window', $r['table'] );
+		$this->assertSame( [ [ 'hook:ruru_init', 45.0, 6 ] ], $r['rows'], 'a row whose last bucket left the window, or that an expiry zeroed, reads as gone' );
+	}
+
+	public function test_a_lagging_watermark_reads_timings_site(): void {
+		$day = $this->last_day();
+		$this->write_facts( 0, [ [ 'add', 'window_watermark', [ Flame_Facts_Row_Schema::WINDOW, $day[0][0] - 1 ] ] ] );
+		$this->write_facts( 1, [ [ 'add', 'window_watermark', [ Flame_Facts_Row_Schema::WINDOW, $day[0][0] - 2 ] ] ] );
+		$this->seed_site_timing( [ 'category' => 'hook:ruru_init', 'ms' => 13.5 ], partition: 1 );
+
+		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] );
+
+		$this->assertSame( 'timings_site', $r['table'] );
+		$this->assertSame( [ [ 'hook:ruru_init', 13.5 ] ], $r['rows'] );
+	}
+
+	public function test_a_partition_with_no_watermark_row_reads_timings_site(): void {
+		$day = $this->last_day();
+		$this->write_facts( 0, [ [ 'add', 'window_watermark', [ Flame_Facts_Row_Schema::WINDOW, $day[0][0] - 1 ] ] ] );
+		$this->seed_site_timing( [ 'category' => 'hook:ruru_init', 'ms' => 17.5 ], partition: 1 );
+
+		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] );
+
+		$this->assertSame( 'timings_site', $r['table'] );
+		$this->assertSame( [ [ 'hook:ruru_init', 17.5 ] ], $r['rows'] );
+	}
+
+	public function test_a_server_scoped_or_shorter_ranking_never_reads_the_window(): void {
+		$day = $this->last_day();
+		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] ) );
+		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [], 'measure' => [ 'ms' ], 'buckets' => [ [ $day[0][0] + 1, $day[0][1] ] ] ] ) );
+		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'bucket', 'category' ], 'filter' => [], 'measure' => [ 'ms' ], 'buckets' => $day ] ) );
+		$this->assertSame( 'category_window', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category', 'entry' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] ) );
+	}
+
 	private static function spec( array $over ): array {
 		return $over + [ 'group' => [], 'filter' => [], 'measure' => [ 'count' ] ];
 	}
@@ -395,7 +444,7 @@ final class StatsQueryTest extends TestCase {
 		$site   = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
 
 		$this->assertSame( 'timings', Stats_Query::table_for( $by_url ) );
-		$this->assertSame( 'timings_site', Stats_Query::table_for( $site ) );
+		$this->assertSame( 'category_window', Stats_Query::table_for( $site ) );
 		$this->assertSame( [ [ 'sql', 42.5, 6, 2, 21.25, 3.0 ] ], Stats_Query::run( $by_url )['rows'] );
 		$this->assertSame( [ [ 'sql', 9999.0 ] ], Stats_Query::run( $site )['rows'] );
 	}
