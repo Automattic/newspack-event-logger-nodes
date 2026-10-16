@@ -88,7 +88,7 @@ import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
 
 import UrlTable from './UrlTable';
-import { useBucketSelection } from './chartSlots';
+import { activeChart, useBucketSelection } from './chartSlots';
 
 /**
  * The stand-in title for a URL whose hash is selected but whose name has not
@@ -317,22 +317,17 @@ export default function PerformanceDashboard( {
 	const requestDetail = requestDetailSlice?.data ?? null;
 	urlsRef.current = urls;
 
-	// @longform One server draws a single bar, and a server filter draws that
-	// server against itself, so neither can chart this axis. Derived rather
-	// than written back: a reply carrying one server before its sibling
-	// reports would otherwise strand the choice for the session. `null` is a
-	// reply not yet landed, which is neither. The selector shows this derived
-	// value while the state keeps the operator's own choice, so a fallback is
-	// undone by the axis returning rather than by them choosing again.
-	const canBreakDownByServer =
-		! serverFilter && ( serverNames === null || serverNames.length >= 2 );
-	const activeBreakdown =
-		'server' === chartBreakdown && ! canBreakDownByServer
-			? 'status_class'
-			: chartBreakdown;
-	// The second dimension falls away on the same terms.
-	const activeThenBy =
-		'server' === chartThenBy && ! canBreakDownByServer ? '' : chartThenBy;
+	// The selector shows the derived axes; the state keeps the choice made.
+	const {
+		breakdown: activeBreakdown,
+		thenBy: activeThenBy,
+		canBreakDownByServer,
+	} = activeChart( {
+		breakdown: chartBreakdown,
+		thenBy: chartThenBy,
+		serverFilter,
+		serverNames,
+	} );
 
 	const {
 		selectedUrl,

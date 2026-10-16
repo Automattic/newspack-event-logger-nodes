@@ -782,6 +782,7 @@ final class StatsQueryTest extends TestCase {
 
 		$this->assertSame(
 			[
+				'as_of'   => self::NOW,
 				'source'  => 'requests',
 				'table'   => 'requests',
 				'columns' => [ 'bucket', 'count', 'max_ms' ],

@@ -164,6 +164,12 @@ function newspack_event_logger_nodes_boot(): void {
 	\add_filter( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'begin_job_context_filter' ], 10, 4 );
 	\add_action( 'newspack_nodes/job_worker/after_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'end_job_context' ], 10, 3 );
 
+	// The job that stores the Overview's default answers (decision 37).
+	\add_filter(
+		'newspack_nodes/job_handlers',
+		static fn ( mixed $handlers ): array => [ \Newspack_Event_Logger_Nodes\App\Overview_Prefetch::HANDLER => [ \Newspack_Event_Logger_Nodes\App\Overview_Prefetch::class, 'run' ] ] + \Newspack_Nodes\Core::arr( $handlers )
+	);
+
 	// A spawn request learns which worker it became after it began logging.
 	\add_action( 'newspack_nodes/worker_identified', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'identify_worker' ], 10, 2 );
 

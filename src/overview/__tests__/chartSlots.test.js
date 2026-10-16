@@ -8,6 +8,7 @@ import * as React from 'react';
 import fs from 'fs';
 import path from 'path';
 import {
+	activeChart,
 	bucketLabel,
 	bucketSpan,
 	bucketSpelling,
@@ -210,6 +211,68 @@ describe( 'chartDims', () => {
 		expect(
 			chartDims( { breakdown: 'method', thenBy: 'method' } )
 		).toEqual( [ 'method' ] );
+	} );
+} );
+
+describe( 'activeChart', () => {
+	const chosen = { breakdown: 'server', thenBy: 'server' };
+
+	it( 'keeps a server axis while two servers answer and none is filtered', () => {
+		expect(
+			activeChart( {
+				...chosen,
+				serverFilter: '',
+				serverNames: [ 'kea.example', 'tui.example' ],
+			} )
+		).toEqual( {
+			breakdown: 'server',
+			thenBy: 'server',
+			canBreakDownByServer: true,
+		} );
+	} );
+
+	it( 'keeps it before any server has answered', () => {
+		expect(
+			activeChart( { ...chosen, serverFilter: '', serverNames: null } )
+				.canBreakDownByServer
+		).toBe( true );
+	} );
+
+	it( 'falls back to status classes and drops a second server axis', () => {
+		const fallen = {
+			breakdown: 'status_class',
+			thenBy: '',
+			canBreakDownByServer: false,
+		};
+		expect(
+			activeChart( {
+				...chosen,
+				serverFilter: '',
+				serverNames: [ 'kea.example' ],
+			} )
+		).toEqual( fallen );
+		expect(
+			activeChart( {
+				...chosen,
+				serverFilter: 'kea.example',
+				serverNames: [ 'kea.example', 'tui.example' ],
+			} )
+		).toEqual( fallen );
+	} );
+
+	it( 'leaves any other axis alone', () => {
+		expect(
+			activeChart( {
+				breakdown: 'method',
+				thenBy: 'country',
+				serverFilter: '',
+				serverNames: [ 'kea.example' ],
+			} )
+		).toEqual( {
+			breakdown: 'method',
+			thenBy: 'country',
+			canBreakDownByServer: false,
+		} );
 	} );
 } );
 

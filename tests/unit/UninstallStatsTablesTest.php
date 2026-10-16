@@ -10,6 +10,7 @@ declare( strict_types = 1 );
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use Newspack_Event_Logger_Nodes\App\Overview_Prefetch;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Spawn_Coordinator;
 use Newspack_Nodes\Table_Node;
@@ -43,6 +44,20 @@ final class UninstallStatsTablesTest extends TestCase {
 		foreach ( $kept as $file ) {
 			$this->assertFileExists( $file, 'another Table\'s file stands' );
 		}
+	}
+
+	public function test_uninstall_deletes_the_overview_prefetch_file(): void {
+		$this->use_base_dir( $this->make_temp_dir( 'uninstall-stats-job-' ) );
+		$file   = Table_Node::file( Overview_Prefetch::TABLE, 0 );
+		$doomed = [ $file, "{$file}-wal", "{$file}-shm" ];
+		$kept   = [ Table_Node::file( Overview_Prefetch::TABLE, 1 ) ];
+		self::write( ...$doomed, ...$kept );
+
+		$this->assertSame( 3, \Newspack_Event_Logger_Nodes\delete_stats_tables( NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' ) );
+		foreach ( $doomed as $doomed_file ) {
+			$this->assertFileDoesNotExist( $doomed_file );
+		}
+		$this->assertFileExists( $kept[0], 'the job writes partition 0 alone' );
 	}
 
 	public function test_uninstall_finds_the_facts_table_by_schema_whatever_its_name(): void {

@@ -164,6 +164,24 @@ const REQUESTDETAIL_TIMER = 'request-detail:timer';
 const REQUESTDETAIL_TICK_MS = 1000;
 
 /**
+ * The URL table's controls until someone moves one: the busiest URLs
+ * first, from the first page, unfiltered. The hook's default, and the
+ * question the overview-prefetch job answers.
+ *
+ * @testonly Exported for the stored-answers parity test, which holds
+ * `includes/app/stored-answers.json` to it; the hook reads it in place.
+ */
+export const DEFAULT_URL_PARAMS = {
+	search: '',
+	sort: 'count',
+	order: 'desc',
+	offset: 0,
+	errorsOnly: false,
+	includeWorkers: false,
+	bucket: '',
+};
+
+/**
  * The URL modal's filters while nothing narrows it: every request, over the
  * whole window. The hook's default, and what the dashboard resets to.
  */
@@ -227,6 +245,9 @@ const queryArgs = ( source, dims, filters, measures, topBy ) => [
 /**
  * A request chart's question: its dimensions' series by request count.
  *
+ * @testonly Exported for the stored-answers parity test, which holds
+ * `includes/app/stored-answers.json` to it; the hook reads it in place.
+ *
  * @param {Object}                  chart           The chart's state.
  * @param {string}                  chart.breakdown Its first dimension.
  * @param {string}                  chart.thenBy    Its second; '' for none.
@@ -234,7 +255,7 @@ const queryArgs = ( source, dims, filters, measures, topBy ) => [
  * @param {Object<string,string[]>} scope           The filters its scope asks.
  * @return {string[]} The command token array.
  */
-const seriesArgs = ( chart, scope ) =>
+export const seriesArgs = ( chart, scope ) =>
 	queryArgs(
 		'requests',
 		chartDims( chart ),
@@ -247,10 +268,13 @@ const seriesArgs = ( chart, scope ) =>
  * A category chart's question: each category's own total row by bucket —
  * the row whose `entry` is empty — the dearest first.
  *
+ * @testonly Exported for the stored-answers parity test, which holds
+ * `includes/app/stored-answers.json` to it; the hook reads it in place.
+ *
  * @param {Object<string,string[]>} scope The filters its scope asks.
  * @return {string[]} The command token array.
  */
-const categoryArgs = ( scope ) =>
+export const categoryArgs = ( scope ) =>
 	queryArgs(
 		'timings',
 		[ 'category' ],
@@ -263,10 +287,13 @@ const categoryArgs = ( scope ) =>
  * The scope a site chart asks under: no worker request, and the server's
  * alone under a server filter.
  *
+ * @testonly Exported for the stored-answers parity test, which holds
+ * `includes/app/stored-answers.json` to it; the hook reads it in place.
+ *
  * @param {string} serverFilter Server scope; '' means every server.
  * @return {Object<string,string[]>} Field => values.
  */
-const siteScope = ( serverFilter ) => ( {
+export const siteScope = ( serverFilter ) => ( {
 	worker: [ '0' ],
 	...( serverFilter ? { server: [ serverFilter ] } : {} ),
 } );
@@ -335,10 +362,13 @@ const isValidRequestId = ( r ) =>
 /**
  * The `overview` args: the server the totals and the leaderboard scope to.
  *
+ * @testonly Exported for the stored-answers parity test, which holds
+ * `includes/app/stored-answers.json` to it; the hook reads it in place.
+ *
  * @param {string} serverFilter Server scope; '' means every server.
  * @return {string[]} The command token array.
  */
-const overviewArgs = ( serverFilter ) =>
+export const overviewArgs = ( serverFilter ) =>
 	formatCommandArgs( [], serverFilter ? { server: serverFilter } : {} );
 
 /**
@@ -356,13 +386,16 @@ const overviewArgs = ( serverFilter ) =>
  * every average on the page. `bucket` narrows to a selection of five-minute
  * buckets, by its spelling, each row then carrying their summed numbers.
  *
+ * @testonly Exported for the stored-answers parity test, which holds
+ * `includes/app/stored-answers.json` to it; the hook reads it in place.
+ *
  * @param {Object} arg              Named arguments.
  * @param {Object} arg.urlParams    The table's live search, sort, page and
  *                                  filter state.
  * @param {string} arg.serverFilter Server scope; '' means every server.
  * @return {string[]} The command token array.
  */
-function urlsArgs( { urlParams, serverFilter } ) {
+export function urlsArgs( { urlParams, serverFilter } ) {
 	const options = {};
 	if ( urlParams.sort ) {
 		options.sort = urlParams.sort;
@@ -460,15 +493,7 @@ export function usePerformanceGraph( opts = {} ) {
 	optsRef.current = opts;
 
 	// Live UI state read at fire time by the getters and on-demand fetches.
-	const urlParamsRef = useRef( {
-		search: '',
-		sort: 'count',
-		order: 'desc',
-		offset: 0,
-		errorsOnly: false,
-		includeWorkers: false,
-		bucket: '',
-	} );
+	const urlParamsRef = useRef( DEFAULT_URL_PARAMS );
 	const serverFilterRef = useRef( serverFilter );
 	// @longform A new server is a new set, asked from its first page by the
 	// filter poke below. The table's own report of offset 0 then matches and

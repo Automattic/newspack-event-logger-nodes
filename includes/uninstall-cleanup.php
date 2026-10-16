@@ -60,7 +60,8 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
  * Delete the SQLite files of every Row_Table the plugin's own topologies
  * declare with the Flame_Facts schema: each partition's file, and the WAL
  * files SQLite keeps beside it, named by the substrate's `Table_Node::file()`
- * across every partition a fleet can run. The plugin is inactive here, so
+ * across every partition a fleet can run; and those of `flame-facts.job`,
+ * the overview-prefetch job's partition-0 Table (decision 37). The plugin is inactive here, so
  * its node namespace is registered by hand, and its topologies are read
  * inside `Topology_Registry::with_stock_dir()`: each name its dir holds
  * resolves to the copy shipped there, never another dir's or an operator's
@@ -99,15 +100,18 @@ function delete_stats_tables( string $topologies_dir ): int {
 			return \Newspack_Nodes\Bootstrap::row_tables_of( Flame_Facts_Row_Schema::class, ...$shipped );
 		}
 	);
-	$deleted = 0;
+	$files = [ \Newspack_Nodes\Table_Node::file( App\Overview_Prefetch::TABLE, 0 ) ];
 	foreach ( $tables as $table ) {
 		for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
-			$file = \Newspack_Nodes\Table_Node::file( $table, $partition );
-			foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
-				// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.
-				if ( \is_file( $path ) && \unlink( $path ) ) {
-					++$deleted;
-				}
+			$files[] = \Newspack_Nodes\Table_Node::file( $table, $partition );
+		}
+	}
+	$deleted = 0;
+	foreach ( $files as $file ) {
+		foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
+			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.
+			if ( \is_file( $path ) && \unlink( $path ) ) {
+				++$deleted;
 			}
 		}
 	}
