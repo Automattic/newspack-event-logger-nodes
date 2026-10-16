@@ -29,7 +29,6 @@ import {
 	buildChartSlots,
 	decodeRows,
 	hasRows,
-	topNote,
 	useSelectedSlots,
 	useSlotClick,
 	useSlotRange,
@@ -228,7 +227,6 @@ export default function CategoryTimeChart( {
 		return null;
 	}
 
-	const top = topNote( decoded, data.groups );
 	return (
 		<>
 			{ CATEGORY_VIEWS.map( ( { mode, title, yLabel }, index ) => (
@@ -247,7 +245,6 @@ export default function CategoryTimeChart( {
 					selectedSlots={ selectedSlots }
 				/>
 			) ) }
-			{ top && <p className="newspack-nodes-status">{ top }</p> }
 		</>
 	);
 }

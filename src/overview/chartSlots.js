@@ -16,7 +16,6 @@
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
-import { __, sprintf } from '@wordpress/i18n';
 import {
 	BUCKET_MS,
 	BUCKET_SECONDS,
@@ -538,22 +537,11 @@ export const answerSlots = ( answer ) =>
 	answer ? bucketsOf( answer.filters.bucket ).reverse() : null;
 
 /**
- * The line under a chart whose answer ranked more series than it holds.
+ * Whether a chart's answer ranked more series than it holds.
  *
  * @param {{names: string[]}|null} decoded The chart's decoded answer.
  * @param {?number}                groups  The tuples its selection holds.
- * @return {?string} `Showing the top 20 of 41 series.`; null when every
- * series is drawn.
+ * @return {boolean} True when the top left some series out.
  */
-export const topNote = ( decoded, groups ) =>
-	hasRows( decoded ) && groups > decoded.names.length
-		? sprintf(
-				// translators: 1: series drawn, 2: series the window holds.
-				__(
-					'Showing the top %1$d of %2$d series.',
-					'newspack-event-logger-nodes'
-				),
-				decoded.names.length,
-				groups
-		  )
-		: null;
+export const leavesSeriesOut = ( decoded, groups ) =>
+	hasRows( decoded ) && groups > decoded.names.length;

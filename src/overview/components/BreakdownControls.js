@@ -13,7 +13,12 @@ import { SelectControl } from '@wordpress/components';
 
 import { CHART_METRIC_OPTIONS } from '../constants';
 import AggregateTimeChart from '../AggregateTimeChart';
-import { chartDims, filterValue, topNote, valueName } from '../chartSlots';
+import {
+	chartDims,
+	filterValue,
+	leavesSeriesOut,
+	valueName,
+} from '../chartSlots';
 import TokenInput from '../../components/TokenInput';
 import '../../settings/styles/tag-input.scss';
 
@@ -188,7 +193,6 @@ export default function BreakdownControls( {
 					?.label ?? dim
 		)
 		.join( ' × ' );
-	const top = topNote( breakdownRead.series, breakdownRead.groups );
 	return (
 		<div className="event-logger-aggregate-chart">
 			<div
@@ -261,18 +265,6 @@ export default function BreakdownControls( {
 					options={ chipOptions }
 				/>
 			</div>
-			<AggregateTimeChart
-				series={ breakdownRead.series }
-				slots={ slots }
-				storageKey={ storageKey }
-				metric={ metric }
-				dims={ dims }
-				partial={ null !== top }
-				serverFilter={ serverFilter }
-				onSlotClick={ onSlotClick }
-				onSlotRange={ onSlotRange }
-				selectedBuckets={ selectedBuckets }
-			/>
 			{ error && (
 				<p className="newspack-nodes-status is-error">{ error }</p>
 			) }
@@ -288,8 +280,22 @@ export default function BreakdownControls( {
 					) }
 				</p>
 			) }
-			{ top && <p className="newspack-nodes-status">{ top }</p> }
 			{ note && <p className="newspack-nodes-status">{ note }</p> }
+			<AggregateTimeChart
+				series={ breakdownRead.series }
+				slots={ slots }
+				storageKey={ storageKey }
+				metric={ metric }
+				dims={ dims }
+				partial={ leavesSeriesOut(
+					breakdownRead.series,
+					breakdownRead.groups
+				) }
+				serverFilter={ serverFilter }
+				onSlotClick={ onSlotClick }
+				onSlotRange={ onSlotRange }
+				selectedBuckets={ selectedBuckets }
+			/>
 		</div>
 	);
 }

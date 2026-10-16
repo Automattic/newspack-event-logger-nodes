@@ -473,21 +473,6 @@ describe( 'CategoryTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'says how many categories it leaves out', () => {
-		const { container, unmount } = renderComponent(
-			categoryChart( {
-				data: cats(
-					{ [ bucketKeyNow() ]: { sql: [ 90, 3 ], init: [ 40, 2 ] } },
-					{ groups: 63 }
-				),
-			} )
-		);
-		expect( container.textContent ).toContain(
-			'Showing the top 2 of 63 series.'
-		);
-		unmount();
-	} );
-
 	it( 'draws a category named total as a category like any other', () => {
 		const { unmount } = renderComponent(
 			categoryChart( {
