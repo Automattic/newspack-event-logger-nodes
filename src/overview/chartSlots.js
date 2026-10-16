@@ -376,7 +376,8 @@ export const useSelectedSlots = ( axis, selectedBuckets ) =>
 
 /**
  * How a field's value reads in a series name where the answer's own spelling
- * would not, and how a typed one reads back: a status class as `5xx`.
+ * would not, and how a typed one reads back: a status class as `5xx`, and
+ * the class of a request that answered no status as `Unknown` in any case.
  *
  * @type {Object<string,{name: (value: *) => string, read: (typed: string) => string}>}
  */
@@ -384,7 +385,10 @@ const SPELLINGS = {
 	status_class: {
 		name: ( value ) =>
 			/^\d$/.test( String( value ) ) ? `${ value }xx` : String( value ),
-		read: ( typed ) => typed.replace( /^(\d)xx$/i, '$1' ),
+		read: ( typed ) =>
+			typed
+				.replace( /^(\d)xx$/i, '$1' )
+				.replace( /^unknown$/i, 'Unknown' ),
 	},
 };
 

@@ -1,7 +1,7 @@
 /**
  * The Time field: the five-minute buckets a list is narrowed to. The URL table
- * and the URL modal each hold one ahead of their Errors Only toggle; each
- * edits its own selection, which a chart click edits too.
+ * and the URL modal each hold one; each edits its own selection, which a
+ * chart click edits too.
  *
  * The field speaks the viewer's local time, as the charts' axis and tooltips
  * do; the bucket keys it edits stay UTC. A token is a run of adjacent

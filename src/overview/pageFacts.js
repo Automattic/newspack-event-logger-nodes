@@ -37,22 +37,21 @@ function num( value, fallback = 0 ) {
  * on all three, because a narrowed number that does not say what narrowed it
  * reads as the site's.
  *
- * @param {Object}  [state]                 The dashboard's current selection.
- * @param {?Object} [state.urlTotals]       Totals for the URL set the filters selected.
- * @param {?Array}  [state.urlSlowest]      The slowest URLs of that same set.
- * @param {?Object} [state.urlFilters]      The filters both are of.
- * @param {?Object} [state.selectedUrl]     The selected URL row.
- * @param {?Object} [state.urlDetail]       Its detail payload.
- * @param {?Object} [state.detailErrors]    Under the modal's Errors Only,
- *                                          the `errorSummary()` of the list
- *                                          on screen. Null otherwise.
- * @param {?Object} [state.detailFilters]   The modal's `{ errors_only,
- *                                          bucket }`; its bucket selection
- *                                          is what the header and list
- *                                          narrow to, '' for the whole
- *                                          window.
- * @param {?string} [state.selectedRequest] The selected request id.
- * @param {?Object} [state.requestDetail]   Its detail payload.
+ * @param {Object}   [state]                 The dashboard's current selection.
+ * @param {?Object}  [state.urlTotals]       Totals for the URL set the filters selected.
+ * @param {?Array}   [state.urlSlowest]      The slowest URLs of that same set.
+ * @param {?Object}  [state.urlFilters]      The filters both are of.
+ * @param {?Object}  [state.selectedUrl]     The selected URL row.
+ * @param {?Object}  [state.urlDetail]       Its detail payload.
+ * @param {string[]} [state.detailChips]     The modal chart's chips, each
+ *                                           `field=value`, which narrow its
+ *                                           header and list as well.
+ * @param {?Object}  [state.detailFilters]   The modal's `{ bucket }`: the
+ *                                           bucket selection its header and
+ *                                           list narrow to, '' for the whole
+ *                                           window.
+ * @param {?string}  [state.selectedRequest] The selected request id.
+ * @param {?Object}  [state.requestDetail]   Its detail payload.
  * @return {Object} The facts block, discriminated by `surface`.
  */
 export function pageFacts( {
@@ -61,7 +60,7 @@ export function pageFacts( {
 	urlFilters,
 	selectedUrl,
 	urlDetail,
-	detailErrors,
+	detailChips = [],
 	detailFilters,
 	selectedRequest,
 	requestDetail,
@@ -86,23 +85,21 @@ export function pageFacts( {
 
 	if ( selectedUrl ) {
 		const stats = urlDetail?.stats ?? {};
-		// Shaped as the url: brief is; errors only, the rest is other traffic.
+		// Shaped as the url: brief is.
 		return {
 			surface: 'url',
 			filters,
 			url: { hash: selectedUrl.hash, url: selectedUrl.url },
-			errors_only: !! detailErrors,
+			filter: detailChips,
 			bucket: detailFilters?.bucket,
-			stats: detailErrors
-				? { errors: num( stats.errors, null ) }
-				: {
-						count: num( stats.count ),
-						// Null where nothing timed reached the URL: unmeasured.
-						avg_ms: num( stats.avg_ms, null ),
-						max_ms: num( stats.max_ms, null ),
-						max_peak_mb: num( stats.max_peak_mb ),
-				  },
-			...( detailErrors ? { error_summary: detailErrors } : {} ),
+			stats: {
+				count: num( stats.count ),
+				errors: num( stats.errors ),
+				// Null where nothing timed reached the URL: unmeasured.
+				avg_ms: num( stats.avg_ms, null ),
+				max_ms: num( stats.max_ms, null ),
+				max_peak_mb: num( stats.max_peak_mb ),
+			},
 		};
 	}
 
@@ -116,6 +113,7 @@ export function pageFacts( {
 		totals: {
 			urls: num( urlTotals?.urls, null ),
 			requests: num( urlTotals?.requests, null ),
+			errors: num( urlTotals?.errors, null ),
 			avg_ms: num( urlTotals?.avg_ms, null ),
 			avg_peak_mb: num( urlTotals?.avg_peak_mb, null ),
 		},

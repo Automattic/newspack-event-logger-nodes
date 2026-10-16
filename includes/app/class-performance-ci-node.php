@@ -156,6 +156,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** What a `urls` row measures. */
 	public const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
 
+	/** The `filter` arg `query`, `urls`, `dump_url` and `ask` each declare. */
+	private const FILTER_ARG = [ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values; a bucket by its key.' ];
+
 	/** Buckets the dashboard's charts draw: 24 hours, newest first. */
 	private const CHART_BUCKETS = Flame_Facts_Row_Schema::WINDOW_BUCKETS;
 
@@ -464,7 +467,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string              $descriptor The target.
 	 * @param list<string>        $context    Its containers, outermost last.
 	 * @param string              $server     Reporting server the brief answers for; '' is every server.
-	 * @param Url_Filters         $filters    The url filters in force, which `overview:` reads whole and `url:` reads for `errors_only` and `bucket`, the list the URL modal holds: every other descriptor names one thing, and a filtered view of one thing is the same thing, so only those two read the selection, or refuse it, and carry its canonical spelling.
+	 * @param Url_Filters         $filters    The url filters in force, which `overview:` reads whole and `url:` reads for `filter` and `bucket`, the list the URL modal holds: every other descriptor names one thing, and a filtered view of one thing is the same thing, so only those two read the selection, or refuse it, and carry its canonical spelling.
 	 * @param int                 $now        The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException On an unknown descriptor, a missing context, or an absent subject.
@@ -518,7 +521,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The `url:` brief — stats, worst recent requests, and the cold-start
 	 * finding when nothing governs it, of the requests `dump_url` reads
-	 * under the same server, `errors_only` and `bucket`.
+	 * under the same server, `filter` and `bucket`.
 	 *
 	 * @param string      $hash    12-char URL hash the descriptor names.
 	 * @param string      $server  Server the brief answers for; '' is every server.
@@ -529,7 +532,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
 	 */
 	private static function ask_url( string $hash, string $server, array $filters, int $now ): array {
-		$detail            = self::url_detail( $hash, $server, $filters['errors_only'], $filters['bucket'], $now );
+		$detail            = self::url_detail( $hash, $server, $filters['filter'], $filters['bucket'], $now );
 		$filters['bucket'] = $detail['bucket'];
 		return Ask_Assembler::for_url(
 			$detail['stats'],
@@ -585,7 +588,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === $url ) {
 			throw new \RuntimeException( \esc_html( 'a span needs its request or its URL for context' ) );
 		}
-		$detail = self::url_detail( $url['id'], $server, false, '', $now );
+		$detail = self::url_detail( $url['id'], $server, [], '', $now );
 		if ( ! $detail['available'] ) {
 			throw self::stats_outage( "no aggregate for URL {$url['id']}" );
 		}
@@ -603,24 +606,22 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * rows of its newest requests, worker traffic counted, which
 	 * `url_requests()` shapes as `dump_url` lists them and `url_flame()` reads
 	 * each request's partition off, and whether the list holds fewer than the
-	 * stats count. Under
-	 * `errors_only` the list holds its timeouts and fatals alone and is
-	 * capped against its errors; the stats stay the whole URL's. A stats
-	 * file that will not open answers zero stats and no list, `available`
-	 * false (decision 3).
+	 * stats count. A filter narrows the stats and the list together, and a
+	 * filter on `worker` replaces the scope's. A stats file that will not
+	 * open answers zero stats and no list, `available` false (decision 3).
 	 *
-	 * @param string $hash        12-char URL hash.
-	 * @param string $server      Server to scope to; '' is every server.
-	 * @param bool   $errors_only List only the requests that errored.
-	 * @param string $spelling    A `Bucket::selection()` spelling; '' for the chart's.
-	 * @param int    $now         The reply's clock.
+	 * @param string       $hash     12-char URL hash.
+	 * @param string       $server   Server to scope to; '' is every server.
+	 * @param list<string> $tokens   `field=value` filter tokens.
+	 * @param string       $spelling A `Bucket::selection()` spelling; '' for the chart's.
+	 * @param int          $now      The reply's clock.
 	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, requests_per_second:float|int}, listed: list<array<string,mixed>>, requests_capped: bool, bucket: string, available: bool}
 	 * @throws \RuntimeException When no request row names the hash.
-	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
+	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, or a filter `url_filter_of()` refuses.
 	 */
-	private static function url_detail( string $hash, string $server, bool $errors_only, string $spelling, int $now ): array {
+	private static function url_detail( string $hash, string $server, array $tokens, string $spelling, int $now ): array {
 		$buckets = self::window( $spelling, $now, Bucket::MAX_SELECTION );
-		$filter  = self::scope( $server, true ) + [ 'url' => [ $hash ] ];
+		$filter  = [ 'url' => [ $hash ] ] + self::url_filter_of( $tokens ) + self::scope( $server, true );
 		$answer  = Stats_Query::run(
 			[
 				'source'  => 'requests',
@@ -631,11 +632,11 @@ class Performance_CI_Node extends Service_CI_Node {
 			]
 		);
 		$stats  = self::url_stats( $hash, $answer, $filter, $buckets, $now );
-		$listed = $answer['available'] ? Stats_Query::newest_requests( $filter + self::errors_filter( $errors_only ), $buckets, self::RECENT_REQUEST_LIMIT ) : [];
+		$listed = $answer['available'] ? Stats_Query::newest_requests( $filter, $buckets, self::RECENT_REQUEST_LIMIT ) : [];
 		return [
 			'stats'           => $stats,
 			'listed'          => $listed,
-			'requests_capped' => \count( $listed ) < Core::num_int( $errors_only ? $stats['errors'] : $stats['count'] ),
+			'requests_capped' => \count( $listed ) < Core::num_int( $stats['count'] ),
 			'bucket'          => '' === $spelling ? '' : Bucket::spelling( $buckets ),
 			'available'       => $answer['available'],
 		];
@@ -1227,7 +1228,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The `urls` answer off the snapshot, dated when the job built it, or
 	 * null for a question it cannot answer: a search, a bucket selection or
-	 * errors only.
+	 * a filter.
 	 *
 	 * @param Url_Snapshot           $snapshot The published snapshot.
 	 * @param array<array-key,mixed> $args     The bound verb args.
@@ -1235,7 +1236,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function stored_urls( Url_Snapshot $snapshot, array $args ): ?array {
 		[ $server, $filters, $sort, $order, $offset, $limit ] = self::url_question( $args );
-		if ( '' !== $filters['search'] || '' !== $filters['bucket'] || $filters['errors_only'] ) {
+		if ( '' !== $filters['search'] || '' !== $filters['bucket'] || [] !== $filters['filter'] ) {
 			return null;
 		}
 		$now     = $snapshot->as_of();
@@ -1393,7 +1394,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return [
 			'count'      => $board['count'],
 			'total_time' => $board['total_time'],
-			'avg_ms'     => Ask_Assembler::mean( $ms, $timed ),
+			'avg_ms'     => self::mean( $ms, $timed ),
 			'categories' => $board['categories'],
 		];
 	}
@@ -1439,9 +1440,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *  - `count` = sum_count / count — mean calls per request.
 	 *  - entries are per-appearance means (sum / samples).
 	 *
-	 * Over no profiled request each mean is null, as `Ask_Assembler::mean()`
-	 * answers. An entry whose sample count is zero is dropped rather than
-	 * divided. Past `ENTRY_TRIM_ABOVE` entries a category keeps only its
+	 * Over no profiled request each mean is null, as `mean()` answers. An
+	 * entry whose sample count is zero is dropped rather than divided. Past `ENTRY_TRIM_ABOVE` entries a category keeps only its
 	 * `ENTRY_TRIM_TO` slowest, ranked by average exclusive time, so one pathological
 	 * category cannot flood a payload.
 	 *
@@ -1467,17 +1467,29 @@ class Performance_CI_Node extends Service_CI_Node {
 				$entries = \array_slice( $entries, 0, self::ENTRY_TRIM_TO, true );
 			}
 			$categories[ $category ] = [
-				'time'    => Ask_Assembler::mean( Core::num_float( $data['sum_time'] ?? null ), $count ),
-				'count'   => Ask_Assembler::mean( Core::num_float( $data['sum_count'] ?? null ), $count ),
+				'time'    => self::mean( Core::num_float( $data['sum_time'] ?? null ), $count ),
+				'count'   => self::mean( Core::num_float( $data['sum_count'] ?? null ), $count ),
 				'samples' => Core::num_int( $data['samples'] ?? null ),
 				'entries' => $entries,
 			];
 		}
 		return [
 			'count'      => $count,
-			'total_time' => Ask_Assembler::mean( $sum_req_time, $count ),
+			'total_time' => self::mean( $sum_req_time, $count ),
 			'categories' => $categories,
 		];
+	}
+
+	/**
+	 * A mean over the things that HAVE a value. Dividing by every request
+	 * instead would understate it by the unmeasured fraction, and the mean
+	 * of none is null: not measured, never 0.
+	 *
+	 * @param float $sum Summed values.
+	 * @param int   $n   How many contributed one.
+	 */
+	private static function mean( float $sum, int $n ): ?float {
+		return $n > 0 ? $sum / $n : null;
 	}
 
 	/**
@@ -1507,7 +1519,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			Core::as_string( $args['server'] ),
 			[
 				'search'          => \trim( Core::as_string( $args['search'] ) ),
-				'errors_only'     => true === $args['errors_only'],
+				'filter'          => self::tokens_of( $args['filter'] ),
 				// Opts IN: the default EXCLUDES. See decision 15.
 				'include_workers' => true === $args['include_workers'],
 				'bucket'          => Core::as_string( $args['bucket'] ),
@@ -1523,7 +1535,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * One page of the URL set the filters leave, over the last 288 buckets
 	 * or the selected ones, read live: its totals and its page with the
 	 * slowest ten beside it, shaped by `url_reply()`. Worker traffic is left
-	 * out unless asked for, and errors-only keeps the timeouts and fatals.
+	 * out unless asked for. A filter narrows the rows, the totals and the
+	 * slowest ten together, and a filter on `worker` replaces the scope's.
 	 *
 	 * @param string      $server  Server to scope to; '' is every server.
 	 * @param Url_Filters $filters The url filters in force.
@@ -1533,11 +1546,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int         $limit   Page size, inside `Stats_Query`'s bounds.
 	 * @param int         $now     The reply's clock.
 	 * @return array{data: list<array<string,mixed>>, rows: int, totals: array<string,mixed>|null, slowest: list<array<string,mixed>>, filters: array<string,mixed>, limit: int, offset: int, available: bool}
-	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses or a search with no word.
+	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, a filter `url_filter_of()` refuses or a search with no word.
 	 */
 	private static function url_page( string $server, array $filters, string $sort, string $order, int $offset, int $limit, int $now ): array {
 		$buckets = self::window( $filters['bucket'], $now, Bucket::MAX_SELECTION );
-		$filter  = self::scope( $server, $filters['include_workers'] ) + self::errors_filter( $filters['errors_only'] );
+		$filter  = self::url_filter_of( $filters['filter'] ) + self::scope( $server, $filters['include_workers'] );
 		$base    = [
 			'source'  => 'requests',
 			'filter'  => $filter,
@@ -1567,7 +1580,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The `urls` reply a page and its totals make, live or off the snapshot:
 	 * its rows, its exact totals and its slowest ten, every mean
 	 * request-weighted. `rows` is the exact count of URLs matching, the
-	 * pager's, and errors-only's totals carry the errors counted.
+	 * pager's, and the totals carry the errors counted.
 	 *
 	 * @param string                                                                     $server  Server scoped to; '' is every server.
 	 * @param Url_Filters                                                                $filters The url filters in force.
@@ -1591,12 +1604,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				'avg_ms'              => Ask_Assembler::measured_figure( $totals['avg_ms'] ),
 				'avg_peak_mb'         => Ask_Assembler::measured_figure( $totals['avg_peak_mb'] ),
 				'requests_per_second' => $count / self::elapsed_seconds( $buckets, $now ),
-			] + ( $filters['errors_only'] ? [ 'errors' => Core::num_int( $totals['errors'] ) ] : [] ) : null,
+				'errors'              => Core::num_int( $totals['errors'] ),
+			] : null,
 			'slowest' => self::url_rows( [ 'columns' => $page['columns'], 'rows' => $page['also'] ?? throw new \LogicException( 'a spec naming also answers it' ) ] ),
 			'filters' => [
 				'server'          => $server,
 				'search'          => $filters['search'],
-				'errors_only'     => $filters['errors_only'],
+				'filter'          => $filters['filter'],
 				'include_workers' => $filters['include_workers'],
 				'bucket'          => '' === $filters['bucket'] ? '' : Bucket::spelling( $buckets ),
 			],
@@ -1615,16 +1629,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function scope( string $server, bool $workers ): array {
 		return ( $workers ? [] : [ 'worker' => [ 0 ] ] ) + ( '' === $server ? [] : [ 'server' => [ $server ] ] );
-	}
-
-	/**
-	 * The filter `errors_only` adds: the timeouts and fatals alone.
-	 *
-	 * @param bool $errors_only Whether only errors are read.
-	 * @return array<string,list<string>>
-	 */
-	private static function errors_filter( bool $errors_only ): array {
-		return $errors_only ? [ 'error' => Flame_Builder_Node::ERROR_KINDS ] : [];
 	}
 
 	/**
@@ -1704,25 +1708,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function answer_query( array $args, int $now ): array {
 		$spelling = Core::as_string( $args['bucket'] );
 		$buckets  = self::window( $spelling, $now, Stats_Query::retention( Core::as_string( $args['source'] ) ) );
-		$filter   = [];
-		foreach ( Core::arr( $args['filter'] ) as $token ) {
-			$token = Core::as_string( $token );
-			$parts = \explode( '=', $token, 2 );
-			if ( 2 !== \count( $parts ) ) {
-				throw new \InvalidArgumentException( \esc_html( "filter {$token} is no field=value" ) );
-			}
-			$filter[ $parts[0] ][] = $parts[1];
-		}
-		$by_id = $filter;
-		if ( isset( $by_id['bucket'] ) ) {
-			$by_id['bucket'] = \array_map( Bucket::of_key( ... ), $by_id['bucket'] );
-		}
-		$search = Core::as_string( $args['search'] );
-		$spec   = [
+		$filter   = self::filter_of( self::tokens_of( $args['filter'] ) );
+		$search   = Core::as_string( $args['search'] );
+		$spec     = [
 			'source'  => Core::as_string( $args['source'] ),
-			'group'   => \array_values( \array_map( Core::as_string( ... ), Core::arr( $args['group'] ) ) ),
-			'filter'  => $by_id,
-			'measure' => \array_values( \array_map( Core::as_string( ... ), Core::arr( $args['measure'] ) ) ),
+			'group'   => self::tokens_of( $args['group'] ),
+			'filter'  => self::by_id( $filter ),
+			'measure' => self::tokens_of( $args['measure'] ),
 			'buckets' => $buckets,
 			'sort'    => Core::as_string( $args['sort'] ),
 			'order'   => Core::as_string( $args['order'] ),
@@ -1750,6 +1742,67 @@ class Performance_CI_Node extends Service_CI_Node {
 				'search' => $search,
 			],
 		];
+	}
+
+	/**
+	 * A variadic arg's tokens as strings.
+	 *
+	 * @param mixed $arg The bound arg, null when absent.
+	 * @return list<string>
+	 */
+	private static function tokens_of( mixed $arg ): array {
+		return \array_values( \array_map( Core::as_string( ... ), Core::arr( $arg ) ) );
+	}
+
+	/**
+	 * The filter `urls`, `dump_url` and `ask` bind, as `Stats_Query` binds
+	 * it. `--server` owns the server, so a token naming one is refused.
+	 *
+	 * @param list<string> $tokens The filter tokens.
+	 * @return array<string,list<scalar>>
+	 * @throws \InvalidArgumentException On a token `filter_of()` or `by_id()` refuses, or one naming `server`.
+	 */
+	private static function url_filter_of( array $tokens ): array {
+		$filter = self::filter_of( $tokens );
+		if ( isset( $filter['server'] ) ) {
+			$token = 'server=' . $filter['server'][0];
+			throw new \InvalidArgumentException( \esc_html( "filter {$token} is --server's: name the server with --server" ) );
+		}
+		return self::by_id( $filter );
+	}
+
+	/**
+	 * `field=value` tokens as a filter, each token one value and a field's
+	 * tokens ORed: the one parse `query`, `urls`, `dump_url` and `ask` share.
+	 *
+	 * @param list<string> $tokens The filter tokens.
+	 * @return array<string,list<string>>
+	 * @throws \InvalidArgumentException On a token that is no `field=value`.
+	 */
+	private static function filter_of( array $tokens ): array {
+		$filter = [];
+		foreach ( $tokens as $token ) {
+			$parts = \explode( '=', $token, 2 );
+			if ( 2 !== \count( $parts ) ) {
+				throw new \InvalidArgumentException( \esc_html( "filter {$token} is no field=value" ) );
+			}
+			$filter[ $parts[0] ][] = $parts[1];
+		}
+		return $filter;
+	}
+
+	/**
+	 * A filter as `Stats_Query` binds it: each bucket key as its id.
+	 *
+	 * @param array<string,list<string>> $filter A `filter_of()` filter.
+	 * @return array<string,list<scalar>>
+	 * @throws \InvalidArgumentException On a bucket key `Bucket::of_key()` refuses.
+	 */
+	private static function by_id( array $filter ): array {
+		if ( isset( $filter['bucket'] ) ) {
+			$filter['bucket'] = \array_map( Bucket::of_key( ... ), $filter['bucket'] );
+		}
+		return $filter;
 	}
 
 	/**
@@ -1828,7 +1881,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question with no search, bucket or errors_only is answered from the overview-prefetch job\'s URL snapshot, at most two intervals old; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question with no search, bucket or filter is answered from the overview-prefetch job\'s URL snapshot, at most two intervals old; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
@@ -1836,7 +1889,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false ],
+						self::FILTER_ARG,
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end` inclusive, at most 288 buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last 288. `filters.bucket` echoes the canonical spelling.' ],
 					],
@@ -1849,7 +1902,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'source', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],
-						[ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values; a bucket by its key.' ],
+						self::FILTER_ARG,
 						[ 'name' => 'measure', 'type' => 'string', 'required' => false, 'variadic' => true ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection as `Bucket::selection()` reads one, at most as many buckets as the source keeps, `Stats_Query::retention()`: 2,016 for `requests`, 300 for `timings`; empty is the last 288 buckets.' ],
 						[ 'name' => 'search', 'type' => 'string', 'required' => false, 'default' => '' ],
@@ -1865,11 +1918,11 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
-					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last 288 buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count (than its errors under `errors_only`), the aggregate flame rebuilt from their stored flames, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its 25-hour category profile, null over no profiled request. `server` scopes the stats, the list and the profile. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured. Series come from `query` filtered to the URL.',
+					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last 288 buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from their stored flames when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its 25-hour category profile, null over no profiled request. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured. Series come from `query` filtered to the URL.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false, 'description' => 'Lists only the timeouts and fatals, the newest RECENT_REQUEST_LIMIT of them, and rebuilds no flame from them; the stats stay the whole URL\'s.' ],
+						self::FILTER_ARG,
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets, as `urls` takes it: the stats and the list become the requests completing in them, zero where the URL has none, and no flame is rebuilt from the list. A selection `urls` refuses is refused.' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
@@ -1881,13 +1934,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				// server's, so this answers for the same server — otherwise one
 				// click puts a site-wide average under a scoped count, on two
 				// surfaces too far apart to compare.
-				$server      = Core::as_string( $args['server'] );
-				$errors_only = true === $args['errors_only'];
-				$spelling    = Core::as_string( $args['bucket'] );
-				$now         = self::now();
-				$detail      = self::url_detail( $hash, $server, $errors_only, $spelling, $now );
+				$server   = Core::as_string( $args['server'] );
+				$tokens   = self::tokens_of( $args['filter'] );
+				$spelling = Core::as_string( $args['bucket'] );
+				$now      = self::now();
+				$detail   = self::url_detail( $hash, $server, $tokens, $spelling, $now );
 				// A narrowed list's flame would not be the URL's.
-				$rebuilt = $detail['available'] && ! $errors_only && '' === $spelling;
+				$rebuilt = $detail['available'] && [] === $tokens && '' === $spelling;
 				$flame   = $rebuilt ? self::url_flame( $detail['listed'] ) : null;
 				return [
 					'stats'              => $detail['stats'],
@@ -1952,7 +2005,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'ask',
 					'capability'  => Capabilities::READ,
-					'description' => 'Assemble the brief for one picker descriptor: `ask <descriptor> [<context-descriptor>…]`, outermost context last. `errors_only` narrows an `overview:` and a `url:` brief to errors, and `bucket` to a selection of stored buckets.',
+					'description' => 'Assemble the brief for one picker descriptor: `ask <descriptor> [<context-descriptor>…]`, outermost context last. `filter` narrows an `overview:` and a `url:` brief as `urls` and `dump_url` narrow them, and `bucket` to a selection of stored buckets.',
 					'args'        => [
 						[ 'name' => 'descriptor', 'type' => 'string', 'required' => true ],
 						// The trailing descriptors, or `--context=` repeated.
@@ -1960,18 +2013,18 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						// Overview briefs read all four; URL briefs two.
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false, 'description' => 'Narrows an `overview:` brief as `urls` narrows it, and a `url:` brief to the timeouts and fatals the URL modal lists under Errors Only: their exact count and their summary in place of the whole URL\'s stats.' ],
+						self::FILTER_ARG,
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'Narrows an `overview:` brief to a selection of buckets as `urls` narrows it, and a `url:` brief as `dump_url` does, to the requests completing inside them, the brief carrying the canonical spelling. Every other descriptor ignores it, and neither checks nor refuses it.' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				return self::assemble_ask(
 					Core::as_string( $args['descriptor'] ),
-					\array_values( \array_map( Core::as_string( ... ), Core::arr( $args['context'] ) ) ),
+					self::tokens_of( $args['context'] ),
 					Core::as_string( $args['server'] ),
 					[
 						'search'          => Core::as_string( $args['search'] ),
-						'errors_only'     => true === $args['errors_only'],
+						'filter'          => self::tokens_of( $args['filter'] ),
 						'include_workers' => true === $args['include_workers'],
 						'bucket'          => Core::as_string( $args['bucket'] ),
 					],

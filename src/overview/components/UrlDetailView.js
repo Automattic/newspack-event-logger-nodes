@@ -8,14 +8,15 @@
  *
  *   1. Aggregate time chart of the URL's series by its dimensions, with the
  *      Metric, Breakdown and Then by dropdowns and the filter chips that
- *      drive it; their edits go to the parent, whose graph asks afresh.
+ *      drive it, the chips narrowing the header and the list too; their
+ *      edits go to the parent, whose graph asks afresh.
  *   2. Category time charts — time, count, and average per profile category.
  *   3. Response-time scatter of the individual requests.
  *   4. Aggregate flame graph, drawn by `RequestTrace`, which holds
  *      d3-flame-graph behind `lazy()` so the sections above it paint first.
  *   5. Aggregate profile breakdown, averaged across the profiled requests.
  *   6. Virtualized recent-requests table with the Time field holding the
- *      buckets the list narrows to, and an "Errors Only" toggle after it.
+ *      buckets the list narrows to.
  *
  * Footgun: the requests table virtualizes against the modal's scroll container
  * (`.components-modal__content`). Mounted outside a `Modal`, `useVirtualization`
@@ -32,7 +33,10 @@ import {
 import { __, sprintf } from '@wordpress/i18n';
 import { FILTER_FIELD_OPTIONS, SCOPED_BREAKDOWN_OPTIONS } from '../constants';
 
-/** The fields a modal chip may name: every chip field but the URL it is. */
+/**
+ * The fields a modal chip may name: every chip field but the URL it is, and,
+ * as `FILTER_FIELD_OPTIONS` already leaves out, the server.
+ */
 const URL_CHIP_OPTIONS = FILTER_FIELD_OPTIONS.filter(
 	( option ) => 'url' !== option.value
 );
@@ -80,90 +84,40 @@ const barValue = ( req, metric ) => {
 };
 
 /**
- * One status code and its count, as the errors line names it.
+ * The banner over a narrowed modal: what its chips and its bucket narrow, and
+ * what still describes every request to the URL. The chips narrow the chart
+ * they sit over, the header and the list; the bucket the header and the list
+ * alone. No flame graph is drawn from a narrowed list.
  *
- * @param {[string, number]} entry `[ code, count ]`.
- * @return {string} The pair; code 0 is a request that answered nothing.
- */
-const codeCount = ( [ code, count ] ) =>
-	`${
-		'0' === code ? __( 'no status', 'newspack-event-logger-nodes' ) : code
-	} \u00d7${ count }`;
-
-/**
- * The one line under an errors-only list: how many of the URL's exact errors
- * it holds, when the first and the last of them started, and what they
- * answered.
- *
- * @param {Object}  props
- * @param {?number} props.total   The URL's exact error count, `stats.errors`.
- * @param {Object}  props.summary The `errorSummary()` of the list.
- * @return {import('react').ReactElement} The line.
- */
-function ErrorsLine( { total, summary } ) {
-	const parts = [
-		sprintf(
-			// translators: 1: errors listed, 2: the URL's errors in the window.
-			__( '%1$d of %2$s errors listed', 'newspack-event-logger-nodes' ),
-			summary.listed,
-			'number' === typeof total ? String( total ) : '—'
-		),
-	];
-	if ( summary.first_at ) {
-		parts.push(
-			sprintf(
-				// translators: %s: when the earliest listed error started.
-				__( 'first %s', 'newspack-event-logger-nodes' ),
-				new Date( summary.first_at * 1000 ).toLocaleString()
-			),
-			sprintf(
-				// translators: %s: when the latest listed error started.
-				__( 'last %s', 'newspack-event-logger-nodes' ),
-				new Date( summary.last_at * 1000 ).toLocaleString()
-			)
-		);
-	}
-	const codes = Object.entries( summary.status_codes ?? {} );
-	if ( codes.length ) {
-		parts.push( codes.map( codeCount ).join( ', ' ) );
-	}
-	return <p className="newspack-nodes-status">{ parts.join( ' · ' ) }</p>;
-}
-
-/**
- * The banner over a narrowed modal: what still describes every request to
- * the URL, and what the header and list hold instead.
- *
- * @param {Object}  filters             The modal's filters.
- * @param {boolean} filters.errors_only Whether the list holds the URL's errors alone.
- * @param {string}  filters.bucket      The bucket selection the list narrows to; '' for none.
+ * @param {string}   bucket The bucket selection the list narrows to; '' for none.
+ * @param {string[]} chips  The chart's chips, each `field=value`.
  * @return {?string} The note, or null while nothing is narrowed.
  */
-const narrowedNote = ( { errors_only: errorsOnly, bucket } ) => {
-	if ( bucket ) {
-		const span = bucketLabel( bucket );
-		return errorsOnly
+const narrowedNote = ( bucket, chips ) => {
+	const span = bucket ? bucketLabel( bucket ) : '';
+	if ( chips.length ) {
+		return span
 			? sprintf(
 					// translators: %s: the bucket's local span, e.g. 7:05–7:10 AM.
 					__(
-						'The charts, the flame graph and the profile describe every request to this URL; the header and the list below hold its errors in %s.',
+						'The filters narrow the chart beneath them, the header and the list, which hold %s; the category charts and the profile describe every request to this URL.',
 						'newspack-event-logger-nodes'
 					),
 					span
 			  )
-			: sprintf(
-					// translators: %s: the bucket's local span, e.g. 7:05–7:10 AM.
-					__(
-						'The charts, the flame graph and the profile describe every request to this URL; the header and the list below hold %s.',
-						'newspack-event-logger-nodes'
-					),
-					span
+			: __(
+					'The filters narrow the chart beneath them, the header and the list; the category charts and the profile describe every request to this URL.',
+					'newspack-event-logger-nodes'
 			  );
 	}
-	return errorsOnly
-		? __(
-				'The charts, the flame graph and the profile describe every request to this URL; the list below holds its errors.',
-				'newspack-event-logger-nodes'
+	return span
+		? sprintf(
+				// translators: %s: the bucket's local span, e.g. 7:05–7:10 AM.
+				__(
+					'The charts and the profile describe every request to this URL; the header and the list below hold %s.',
+					'newspack-event-logger-nodes'
+				),
+				span
 		  )
 		: null;
 };
@@ -254,13 +208,12 @@ const RequestRow = memo(
  * URL Detail View component.
  *
  * Sorting lives upstream: the parent sorts and hands back `sortedRequests`,
- * and `requestSort` only tells the headers which arrow to draw. "Errors Only"
- * lives upstream too: the server answers it, walking past the clean requests
- * that bury a busy URL's errors, so the list, the heading count, the
- * bar-scaling maximum and the response-time scatter all show those errors.
- * The bucket selection the charts and the Time field edit lives upstream on
- * the same terms, and the server answers it the same way. So does the chart's
- * question: its dimensions and chips.
+ * and `requestSort` only tells the headers which arrow to draw. The chart's
+ * question lives upstream too, its dimensions and its chips, and the server
+ * answers the chips over the header and the list as well as the chart, so
+ * `Status Class = 5xx` lists the URL's 5xx responses past the clean ones
+ * that bury them. The bucket selection the charts and the Time field edit
+ * lives upstream on the same terms, and the server answers it the same way.
  *
  * @param {Object}                                               props                 Component props.
  * @param {Object}                                               props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, aggregate_flame, flame_cut and aggregate_profiles.
@@ -269,14 +222,13 @@ const RequestRow = memo(
  * @param {(field: string) => void}                              props.onRequestSort   Receives a field name when a sortable header is clicked.
  * @param {(rid: string) => void}                                props.onSelectRequest Receives a rid from a row click or a scatter-plot dot.
  * @param {string}                                               props.urlHash         The URL's 12-char hash, which the `?` picker asks about.
- * @param {{errors_only: boolean, bucket: string}}               props.filters         What the header and list narrow to: Errors Only, and the bucket selection's spelling, '' for none. The dashboard owns both, so they survive a trip to a request and back.
- * @param {(field: string, value: *) => void}                    props.onFilterChange  Receives one field of `filters` and its new value, or an updater of its held one: the flipped toggle, the Time field's selection, or a chart click's updater.
+ * @param {{bucket: string}}                                     props.filters         The bucket selection's spelling the header and list narrow to, '' for none. The dashboard owns it, so it survives a trip to a request and back.
+ * @param {(field: string, value: *) => void}                    props.onFilterChange  Receives one field of `filters` and its new value, or an updater of its held one: the Time field's selection, or a chart click's updater.
  * @param {boolean}                                              [props.listing]       Whether the list is being asked afresh under new filters; the rows it holds answer the old ones, so the list alone shows it loading.
  * @param {?string}                                              [props.listError]     Why the last ask for the list was refused, or null; the list keeps what it held.
- * @param {?Object}                                              [props.detailErrors]  Under Errors Only, the `errorSummary()` of the list; null while every request is listed.
  * @param {?Object}                                              props.chartSlice      The `url-chart:view` slice: its `query` answer, `loading` and `error`.
  * @param {?Object}                                              props.categoriesSlice The `url-categories:view` slice, likewise.
- * @param {{breakdown: string, thenBy: string, chips: string[]}} props.chart           The chart's question: its dimensions and chips.
+ * @param {{breakdown: string, thenBy: string, chips: string[]}} props.chart           The chart's question: its dimensions and chips, the chips narrowing the header and list too.
  * @param {(field: string, value: *) => void}                    props.onChartChange   Receives one field of `chart` and its new value.
  * @return {import('react').ReactElement} Rendered component.
  */
@@ -291,15 +243,13 @@ export default function UrlDetailView( {
 	onFilterChange,
 	listing = false,
 	listError = null,
-	detailErrors = null,
 	chartSlice,
 	categoriesSlice,
 	chart,
 	onChartChange,
 } ) {
 	const listRef = useRef( null );
-	const errorsOnly = filters.errors_only;
-	const note = narrowedNote( filters );
+	const note = narrowedNote( filters.bucket, chart.chips );
 	const setBucket = useCallback(
 		( update ) => onFilterChange( 'bucket', update ),
 		[ onFilterChange ]
@@ -454,23 +404,6 @@ export default function UrlDetailView( {
 						slots={ axis }
 						onChange={ setBucket }
 					/>
-					<button
-						type="button"
-						className={ errorsOnly ? 'button is-active' : 'button' }
-						onClick={ () =>
-							onFilterChange( 'errors_only', ! errorsOnly )
-						}
-					>
-						{ errorsOnly
-							? __(
-									'Showing Errors',
-									'newspack-event-logger-nodes'
-							  )
-							: __(
-									'Errors Only',
-									'newspack-event-logger-nodes'
-							  ) }
-					</button>
 				</div>
 				{ listError && (
 					<p className="newspack-nodes-status is-error">
@@ -483,12 +416,6 @@ export default function UrlDetailView( {
 							listError
 						) }
 					</p>
-				) }
-				{ detailErrors && (
-					<ErrorsLine
-						total={ urlDetail.stats?.errors }
-						summary={ detailErrors }
-					/>
 				) }
 
 				{ /* Outside listRef, so it is never a virtualized row. */ }

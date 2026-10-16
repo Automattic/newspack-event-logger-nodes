@@ -154,6 +154,10 @@ const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 	[ 'overview/UrlTable.js', [ /linear-gradient\(to right/ ] ],
 	// A `query` answer's echoed `filters.filter`: field values, not a style.
 	[ 'test-helpers/chartWire.js', [ /filter: \{\},/ ] ],
+	// @longform The `filter` tokens a URL modal's chips ask `ask` and the
+	// facts block under, as the `url:` brief names them: not a style.
+	[ 'overview/PerformanceDashboard.js', [ /filter: detailChart\.chips,/ ] ],
+	[ 'overview/pageFacts.js', [ /filter: detailChips,/ ] ],
 	[ 'overview/components/UrlDetailView.js', [ /linear-gradient\(to right/ ] ],
 	// A legend item's `color` is series data handed to `ChartLegend`, the
 	// swatch the shared role paints from — not a style prop.

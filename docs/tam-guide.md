@@ -24,7 +24,7 @@ The table **URLs by Request Count** lists every URL the site served in the last 
 
 | Column | What it means |
 |---|---|
-| **Reqs** | Requests in the last 24 hours, or in the buckets you chose. Under **Errors Only** the column reads **Errors** and counts those instead. |
+| **Reqs** | Requests in the last 24 hours, or in the buckets you chose, that the chart's filter chips keep. |
 | **URL** | The path. The shaded bar compares the row with the rest of the page. |
 | **2xx 3xx 4xx 5xx** | The share of the URL's requests in each status class, as a percent. |
 | **Avg**, **Min**, **Max** | Response time in milliseconds: mean, fastest, slowest. A dash means no request to the URL was timed. |
@@ -35,15 +35,15 @@ To find the culprit:
 
 - **Sort by Avg** for a URL that is slow every time. **Sort by Max** for one that is slow now and then.
 - **A URL the report names:** type a word from its path into **Search by whole URL word…**. Each word you type must be a whole word of the path, two characters or more: `sports` finds `/blog/sports-news` and `sport` does not. A word in nearly every URL narrows nothing, and a search made only of such words is refused; add a rarer word.
-- **A time the report names:** convert it to your own time zone, then click that moment on any chart; cmd-click (ctrl-click) adds or removes another five-minute bucket. Or type it in your local time into the **Time** field beside **Errors Only**, as `16:55`, `4:55 PM` where your clock is 12-hour, or a range such as `16:55-17:30`. The table narrows to the buckets you chose, shaded on the charts and shown in the field as local spans such as `6:35–6:40 AM`, each with its own × to remove it.
-- **Errors Only** keeps the URLs that had a timeout or a fatal error, and counts those requests alone. A 5xx is a response, not an error here, and neither is an aborted request.
+- **A time the report names:** convert it to your own time zone, then click that moment on any chart; cmd-click (ctrl-click) adds or removes another five-minute bucket. Or type it in your local time into the **Time** field beside the search box, as `16:55`, `4:55 PM` where your clock is 12-hour, or a range such as `16:55-17:30`. The table narrows to the buckets you chose, shaded on the charts and shown in the field as local spans such as `6:35–6:40 AM`, each with its own × to remove it.
+- **Errors:** add a filter chip in the **Filter** box above the chart. Type `status_class=5xx` for **Status Class = 5xx**, the 5xx responses, most fatal errors among them, or `status_class=unknown` for **Status Class = Unknown**, the requests that answered no status, which is what a timeout is. The chips narrow the table and the headline stats above it as well as the chart, so every count then describes those requests alone; a fatal that still answered 200 shows under neither, and `error=F` keeps the fatals and `error=T` the timeouts exactly. **Total Errors** in the headline stats counts the timeouts and fatals among the requests shown. A chip on the server is refused: the **Server** selector chooses the site.
 - Cron, WP-CLI and job traffic is hidden until you press **Include Workers**.
 
 Every count and average in the table is exact, and Avg and Mem are means over the URL's requests. The URL's own window counts its worker traffic, which the table hides until **Include Workers**, so a URL that cron or a job also reaches can read higher there than on its row.
 
 ### 3. Open the URL
 
-Click the row. The header gives its request rate, average time and memory. Below, **Recent Requests** lists up to 500 of its requests, newest first:
+Click the row. The header gives its request rate, errors, average time and memory. Below, **Recent Requests** lists up to 500 of its requests, newest first:
 
 - **Sort by Duration** to put the slowest first, or click a dot in **Response Times (Recent Requests)**.
 - **Status** shows the HTTP code, or a letter when the request never finished normally:
@@ -57,9 +57,9 @@ Click the row. The header gives its request rate, average time and memory. Below
 
 A **T** or **A** request has no measured duration. Its Duration reads `—`, it has no dot on the chart, and it sorts last either way.
 
-**Errors Only** here lists the newest 500 timeouts (**T**) and fatals (**F**), past the clean requests that would bury them. The header then counts errors, timeouts and fatals, and the fatals' average and slowest time. The charts, the flame graph and the profile still describe every request to the URL, and a note above the list says so.
+A URL opened from the table starts with the table's filter chips. Its chart's chips narrow the header and the list as well as that chart, so **Status Class = 5xx** lists the URL's newest 500 5xx responses, past the clean requests that would bury them. Add or remove a chip here and the page's own chips stay as they were. The category charts and the profile still describe every request to the URL, no flame graph is drawn from a narrowed list, and a note above the chart says what is narrowed.
 
-This window has its own **Time** field, between the list's heading and **Errors Only**. A chart click or a typed time narrows the header and the list to those five-minute buckets, as it does the table.
+This window has its own **Time** field, beside the list's heading. A chart click or a typed time narrows the header and the list to those five-minute buckets, as it does the table.
 
 ### 4. Name the cause
 
@@ -79,7 +79,7 @@ Open a slow request by clicking its row. Under its summary, **Findings** lists w
 
 A request under 50 ms, and one that timed out or was aborted, gets no "holds", "fired" or "Loading" finding.
 
-"Nothing stands out in the numbers here" means no finding fired. Try a slower request, or a request from **Errors Only**.
+"Nothing stands out in the numbers here" means no finding fired. Try a slower request, or one listed under **Status Class = 5xx** or **Status Class = Unknown**.
 
 ### 5. When nothing is measured
 
@@ -94,7 +94,7 @@ Saving a rule needs the **tune** capability. Without it, send the operator the f
 
 ## Sending the brief to an assistant
 
-The Ask panel also builds a **brief**: a plain-text summary of whatever you clicked, with its numbers, its rule and its findings. Press **Ask AI**, then click what you want to ask about: a URL row or the open URL's window, a request, a flame-graph bar, a profile row, a log line, or the page's background for the whole site. Cmd-click (Ctrl-click) adds more things to one brief, and Escape cancels. A brief picked under **Errors Only** or a **Time** selection says so.
+The Ask panel also builds a **brief**: a plain-text summary of whatever you clicked, with its numbers, its rule and its findings. Press **Ask AI**, then click what you want to ask about: a URL row or the open URL's window, a request, a flame-graph bar, a profile row, a log line, or the page's background for the whole site. Cmd-click (Ctrl-click) adds more things to one brief, and Escape cancels. A brief picked under a filter chip or a **Time** selection says so.
 
 - **Copy brief** puts it on your clipboard, to paste into any assistant or ticket.
 - **Ask Claude** copies the brief and opens a new claude.ai conversation. A short brief rides in the link itself; a long one does not fit, so the conversation asks you to paste it.

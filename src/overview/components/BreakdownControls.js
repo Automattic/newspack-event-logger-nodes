@@ -53,9 +53,24 @@ export const chipRefusal = ( draft, options ) => {
 };
 
 /**
- * The filter chips: each a `field=value` the chart's question matches, shown
- * as `Field = value` — a status class as `5xx` — and the box a typed one is
- * added through.
+ * A chip as the answer spells its value, so a typed or linked
+ * `status_class=5xx` filters what a `5xx` series names. The editor commits
+ * through it and the page restores a linked `?chip=` through it, so the two
+ * spell one chip one way.
+ *
+ * @param {string} draft A chip `chipRefusal()` takes, `field=value`.
+ * @return {string} The chip, `field=value` with the value as `query` matches it.
+ */
+export const chipOf = ( draft ) => {
+	const cut = draft.indexOf( '=' );
+	const field = draft.slice( 0, cut );
+	return `${ field }=${ filterValue( field, draft.slice( cut + 1 ) ) }`;
+};
+
+/**
+ * The filter chips: each a `field=value` the chart's question matches, and
+ * the URL table's or the URL modal's list with it, shown as `Field = value` —
+ * a status class as `5xx` — and the box a typed one is added through.
  *
  * @param {Object}                                props          Component props.
  * @param {string[]}                              props.chips    The chips, each `field=value` as `query` takes a filter.
@@ -83,17 +98,9 @@ function FilterChips( { chips, onChange, options } ) {
 				value=""
 				validate={ ( draft ) => chipRefusal( draft, options ) }
 				refuseWhileTyping={ false }
-				onCommit={ ( draft ) => {
-					const cut = draft.indexOf( '=' );
-					const field = draft.slice( 0, cut );
-					onChange( [
-						...chips,
-						`${ field }=${ filterValue(
-							field,
-							draft.slice( cut + 1 )
-						) }`,
-					] );
-				} }
+				onCommit={ ( draft ) =>
+					onChange( [ ...chips, chipOf( draft ) ] )
+				}
 				commitOnBlur={ false }
 				suggestions={ options.map( ( option ) => ( {
 					value: `${ option.value }=`,

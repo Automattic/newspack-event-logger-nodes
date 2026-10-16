@@ -163,8 +163,8 @@ test( 'a pick sends the innermost descriptor chain to the ask verb', () => {
 } );
 
 // The page's own brief answers for the page as it is READ: the same server and
-// the same url filters. Sent site-wide under a filter, it would quote numbers
-// the reader cannot see, which is the one thing a brief must never do.
+// the same url filters, each chip its own `--filter=`. Sent site-wide under a
+// filter, it would quote numbers the reader cannot see.
 test( 'a pick carries the scope the page is showing', () => {
 	// Two different servers: the live pick and the one the visible rows were
 	// fetched under. A brief must quote the set on screen, so the echo wins.
@@ -173,7 +173,7 @@ test( 'a pick carries the scope the page is showing', () => {
 		urlFilters: {
 			server: 'alpha.example',
 			search: 'wp-admin',
-			errors_only: false,
+			filter: [ 'status_class=5', 'country=Kiribati' ],
 			include_workers: true,
 			bucket: '2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10',
 		},
@@ -203,6 +203,8 @@ test( 'a pick carries the scope the page is showing', () => {
 				include_workers: '1',
 				bucket: '2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10',
 			},
+			'--filter=status_class=5',
+			'--filter=country=Kiribati',
 		],
 	] );
 } );
@@ -218,7 +220,7 @@ test( 'the panel makes no finding claim for a brief that ran no detector', () =>
 		result: {
 			subject: 'overview',
 			scope: 'every server',
-			stats: { requests: 7 },
+			stats: { urls: 1, requests: 7, errors: 0 },
 			caveat: 'c',
 		},
 	} );

@@ -66,7 +66,7 @@ import HeadlineStats from './HeadlineStats';
  * @param {(value: string) => void}                             props.setChartBreakdown      First dimension setter.
  * @param {string}                                              props.chartThenBy            Its second dimension; '' for none.
  * @param {(value: string) => void}                             props.setChartThenBy         Second dimension setter.
- * @param {string[]}                                            props.chartChips             Its filter chips, each `field=value`.
+ * @param {string[]}                                            props.chartChips             Its filter chips, each `field=value`, which narrow the URL table and the headline stats too.
  * @param {(chips: string[]) => void}                           props.setChartChips          Chip setter.
  * @param {boolean}                                             props.canBreakDownByServer   Whether the page can chart the server axis: no server filter, and the server list either unknown or holding two or more names. A filter would split one server against itself, and withholding the axis before the first reply lands would strand the `server` default on `status_class` for the session.
  * @param {Object|null}                                         props.chartSlice             The `chart:view` slice: its `query` answer, `loading` and `error`.

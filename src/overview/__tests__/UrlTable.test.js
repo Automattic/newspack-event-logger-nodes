@@ -163,8 +163,7 @@ describe( 'UrlTable', () => {
 
 	it( 'asks for worker traffic only when the toggle is on', () => {
 		// Workers are out of every site-wide aggregate, so the table hides them
-		// by default and the header it feeds agrees. The toggle opts IN — the
-		// mirror of Errors, which opts in to narrow.
+		// by default and the header it feeds agrees. The toggle opts IN.
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( { onParamsChange } );
 		const toggle = button( container, ( t ) => t.includes( 'Workers' ) );
@@ -415,51 +414,14 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( '"Errors Only" asks the server, so the footer total matches the rows', () => {
-		// Filtering only here left the footer reading the server's UNFILTERED
-		// count — "1-100 of 5,000" printed above three visible rows.
-		const onParamsChange = jest.fn();
-		const { container, unmount } = mount( { onParamsChange } );
-		const btn = button( container, ( t ) => 'Errors Only' === t );
-		act( () => {
-			btn.click();
-		} );
-		expect( onParamsChange ).toHaveBeenLastCalledWith(
-			expect.objectContaining( { errorsOnly: true } )
+	it( 'offers no Errors Only toggle: a Status Class chip on the chart narrows the table', () => {
+		const { container, unmount } = mount();
+		const labels = Array.from( container.querySelectorAll( 'button' ) ).map(
+			( b ) => b.textContent
 		);
-		unmount();
-	} );
-
-	it( 'heads an errors-only page "Errors" and keeps shares of all traffic', () => {
-		// Its 2 errors ride beside its 100 requests; shares divide the 100.
-		const { container, unmount } = mount( {
-			errorCounts: true,
-			urls: [
-				{
-					hash: 'e1',
-					url: '/erring',
-					count: 100,
-					errors: 2,
-					count_2xx: 80,
-					count_4xx: 18,
-					avg_ms: 40,
-				},
-			],
-			totalUrls: 1,
-		} );
-		const header = container.querySelector(
-			'.event-logger-table__header [data-field="count"]'
-		);
-		expect( header.textContent ).toContain( 'Errors' );
-		expect(
-			container.querySelector(
-				'.event-logger-table__row [data-field="count"]'
-			).textContent
-		).toBe( '2' );
-		const cell = container.querySelector(
-			'.event-logger-table__row [data-field="count_2xx"]'
-		);
-		expect( cell.textContent ).toBe( '80%' );
+		expect( labels ).not.toContain( 'Errors Only' );
+		expect( labels ).not.toContain( 'Showing Errors' );
+		expect( labels ).toContain( 'Include Workers' );
 		unmount();
 	} );
 
@@ -539,7 +501,6 @@ describe( 'UrlTable', () => {
 			sort: 'count',
 			order: 'desc',
 			offset: 0,
-			errorsOnly: false,
 			includeWorkers: false,
 			bucket: '',
 		} );
@@ -601,7 +562,6 @@ describe( 'UrlTable', () => {
 	const click = ( label ) => ( container ) =>
 		act( () => button( container, ( t ) => label === t ).click() );
 	it.each( [
-		[ 'Errors Only', click( 'Errors Only' ), { errorsOnly: true } ],
 		[
 			'Include Workers',
 			click( 'Include Workers' ),
@@ -623,6 +583,11 @@ describe( 'UrlTable', () => {
 		[
 			'a server',
 			( _container, update ) => update( { server: 'edge-04' } ),
+			{},
+		],
+		[
+			'a chip',
+			( _container, update ) => update( { chips: [ 'country=Niue' ] } ),
 			{},
 		],
 	] )(
@@ -722,10 +687,10 @@ describe( 'UrlTable', () => {
 		const { container, unmount } = mount( {
 			urls: [],
 			totalUrls: 0,
-			error: 'unknown option --errors_onli',
+			error: 'filter kakapo is no field=value',
 		} );
 		expect( container.textContent ).toContain(
-			'Could not load URLs: unknown option --errors_onli'
+			'Could not load URLs: filter kakapo is no field=value'
 		);
 		expect( container.textContent ).not.toContain( 'No URLs to display' );
 		unmount();
@@ -878,31 +843,6 @@ describe( 'UrlTable', () => {
 		}
 	);
 
-	it( 'scales the volume bar by errors on an errors-only page', () => {
-		// Busiest by requests and busiest by errors are different rows here.
-		const { container, unmount } = mount( {
-			urls: [
-				{ ...URLS[ 0 ], hash: 'busy', count: 1000, errors: 2 },
-				{ ...URLS[ 1 ], hash: 'failing', count: 10, errors: 40 },
-			],
-			totalUrls: 2,
-			metric: 'volume',
-			errorCounts: true,
-		} );
-		const widths = Array.from(
-			container.querySelectorAll(
-				'.event-logger-table__list [data-field="url"]'
-			)
-		).map( ( cell ) =>
-			Number(
-				/(\d+(?:\.\d+)?)%/.exec( cell.getAttribute( 'style' ) )[ 1 ]
-			)
-		);
-
-		expect( widths ).toEqual( [ 5, 100 ] );
-		unmount();
-	} );
-
 	it( 'renders a dash for the Avg, Min and Max of a URL no timed request reached', () => {
 		const { container, unmount } = mount( {
 			urls: [
@@ -1038,7 +978,7 @@ describe( 'the address bar', () => {
 			`/wp-admin/admin.php?page=perf&${ query }`
 		);
 
-	it( 'opens on the sort, search and toggles a link names', () => {
+	it( 'opens on the sort, search and toggle a link names, and reads no ?errors=', () => {
 		linkTo( 'sort=avg_ms&order=asc&q=wp-cron&errors=1&workers=1' );
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( { onParamsChange } );
@@ -1048,7 +988,6 @@ describe( 'the address bar', () => {
 			sort: 'avg_ms',
 			order: 'asc',
 			offset: 0,
-			errorsOnly: true,
 			includeWorkers: true,
 			bucket: '',
 		} );
@@ -1058,7 +997,7 @@ describe( 'the address bar', () => {
 		);
 		expect(
 			button( container, ( t ) => 'Showing Errors' === t )
-		).toBeTruthy();
+		).toBeFalsy();
 		expect(
 			button( container, ( t ) => 'Showing Workers' === t )
 		).toBeTruthy();
@@ -1067,7 +1006,7 @@ describe( 'the address bar', () => {
 
 	it( 'ignores a sort the table cannot ask for and an unknown order', () => {
 		// count_2xx is a real field, but a status share, not a sort key.
-		linkTo( 'sort=count_2xx&order=sideways&errors=yes' );
+		linkTo( 'sort=count_2xx&order=sideways' );
 		const onParamsChange = jest.fn();
 		const { unmount } = mount( { onParamsChange } );
 
@@ -1075,12 +1014,10 @@ describe( 'the address bar', () => {
 			expect.objectContaining( {
 				sort: 'count',
 				order: 'desc',
-				errorsOnly: false,
 			} )
 		);
 		expect( param( 'sort' ) ).toBeNull();
 		expect( param( 'order' ) ).toBeNull();
-		expect( param( 'errors' ) ).toBeNull();
 		unmount();
 	} );
 
@@ -1099,9 +1036,6 @@ describe( 'the address bar', () => {
 		type( container, 'feed' );
 		expect( param( 'q' ) ).toBe( 'feed' );
 
-		act( () => button( container, ( t ) => 'Errors Only' === t ).click() );
-		expect( param( 'errors' ) ).toBe( '1' );
-
 		act( () =>
 			button( container, ( t ) => 'Include Workers' === t ).click()
 		);
@@ -1115,14 +1049,11 @@ describe( 'the address bar', () => {
 	} );
 
 	it( 'drops each param as it returns to the default', () => {
-		linkTo( 'sort=min_ms&order=asc&q=feed&errors=1&workers=1' );
+		linkTo( 'sort=min_ms&order=asc&q=feed&workers=1' );
 		const { container, unmount } = mount();
 
 		act( () => button( container, ( t ) => /^Reqs/.test( t ) ).click() );
 		type( container, '' );
-		act( () =>
-			button( container, ( t ) => 'Showing Errors' === t ).click()
-		);
 		act( () =>
 			button( container, ( t ) => 'Showing Workers' === t ).click()
 		);
@@ -1160,7 +1091,7 @@ describe( 'the address bar', () => {
 	} );
 
 	it( 'opens a link naming a page, its filters and a bucket on that page', () => {
-		linkTo( 'paged=4&q=feed&sort=max_ms&order=asc&errors=1&workers=1' );
+		linkTo( 'paged=4&q=feed&sort=max_ms&order=asc&workers=1' );
 		const onParamsChange = jest.fn();
 		const { unmount } = mount( {
 			onParamsChange,

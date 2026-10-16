@@ -147,17 +147,21 @@ class McpControllerTest extends TestCase {
 			$this->assertStringContainsString( 'whole word', $search, $tool );
 			$this->assertStringNotContainsString( 'ubstring', $search, $tool );
 		}
-		$errors = $tools['performance_urls']['inputSchema']['properties']['errors_only']['description'];
-		$this->assertStringContainsString( 'counts toward `count` and `errors`', $errors, 'a timeout counts, untimed' );
-		$this->assertStringNotContainsString( 'ranks at 0', $errors );
+		foreach ( [ 'performance_urls', 'dump_url', 'performance_ask' ] as $tool ) {
+			$this->assertArrayNotHasKey( 'errors_only', $tools[ $tool ]['inputSchema']['properties'], $tool );
+			$filter = $tools[ $tool ]['inputSchema']['properties']['filter']['description'];
+			$this->assertStringContainsString( '`status_class=5`', $filter, "{$tool}: the 5xx responses" );
+			$this->assertStringContainsString( '`status_class=Unknown`', $filter, "{$tool}: the requests that answered no status" );
+			$this->assertStringContainsString( 'CLI or cron runs', $filter, "{$tool}: no status is not only a timeout" );
+			$this->assertStringContainsString( 'most fatals among them', $filter, "{$tool}: a fatal after headers keeps its status" );
+			$this->assertStringContainsString( '`error=T` and `error=F`', $filter, "{$tool}: the exact successor of errors_only" );
+			$this->assertStringContainsString( 'A filter cannot name `server`, which `server` owns.', $filter, "{$tool}: the server is the select's" );
+		}
 		$this->assertStringContainsString( 'its `avg_ms`, `min_ms` and `max_ms` are null', $tools['performance_urls']['description'], 'it names each row stat null untimed' );
 		$this->assertStringContainsString( 'ranks last on those three sorts', $tools['performance_urls']['description'], 'it says where an untimed row ranks' );
 		$url_bucket = $tools['dump_url']['inputSchema']['properties']['bucket']['description'];
 		$this->assertStringContainsString( 'null means, `min_ms` and `max_ms`', $url_bucket, 'an idle bucket has no extremes' );
 		$this->assertStringContainsString( '`max_ms` is null', $tools['performance_ask']['description'], 'it says an untimed URL has no max' );
-		$url_errors = $tools['dump_url']['inputSchema']['properties']['errors_only']['description'];
-		$this->assertStringContainsString( 'timeouts and fatals', $url_errors );
-		$this->assertStringContainsString( 'past', $url_errors, 'it says the list reaches past the newest 500' );
 		$this->assertStringContainsString( '`stats.errors`', $tools['dump_url']['description'], 'it names the exact error count' );
 		$this->assertStringContainsString( 'null `duration_ms`', $tools['dump_url']['description'], 'it says an unmeasured duration is null' );
 		$this->assertStringContainsString( '`finished_at`', $tools['dump_url']['description'], 'it names the order the list keeps' );
@@ -170,11 +174,8 @@ class McpControllerTest extends TestCase {
 		}
 		$this->assertStringContainsString( 'null with `flame_cut` true when the walk ran out of time', $tools['dump_url']['description'], 'only the flame walk is timed' );
 		$this->assertStringContainsString( '`flame_cut` true means the flame lookup ran out of time', $tools['dump_request']['description'] );
-		$ask_errors = $tools['performance_ask']['inputSchema']['properties']['errors_only']['description'];
-		$this->assertStringContainsString( '`url:`', $ask_errors, 'errors_only narrows a url: brief too' );
-		$this->assertStringContainsString( '`error_summary`', $ask_errors );
-		$this->assertStringContainsString( 'to the timeouts and fatals alone', $ask_errors, 'an overview: brief keeps the errors, not their buckets' );
-		$this->assertStringNotContainsString( 'buckets in which', $ask_errors );
+		$this->assertStringContainsString( '`url:`', $tools['performance_ask']['inputSchema']['properties']['filter']['description'], 'a filter narrows a url: brief too' );
+		$this->assertStringNotContainsString( 'error_summary', \json_encode( $tools['performance_ask'] ) );
 		$this->assertStringContainsString( 'ranks after every measured one', $tools['performance_ask']['description'], 'it says how worst requests rank' );
 		$overview = $tools['performance_overview'];
 		foreach ( [ '`slots`', '`totals`', '`servers`', '`leaderboard`', '`avg_ms`', '`total_time`' ] as $named ) {
@@ -249,7 +250,11 @@ class McpControllerTest extends TestCase {
 
 		$urls = $tools['performance_urls']['inputSchema']['properties'];
 		$this->assertSame( 'integer', $urls['limit']['type'] );
-		$this->assertSame( 'boolean', $urls['errors_only']['type'] );
+		foreach ( [ 'performance_urls', 'dump_url', 'performance_ask' ] as $tool ) {
+			$filter = $tools[ $tool ]['inputSchema']['properties']['filter'];
+			$query  = $tools['performance_query']['inputSchema']['properties']['filter'];
+			$this->assertSame( [ $query['type'], $query['items'] ], [ $filter['type'], $filter['items'] ], "{$tool} types filter as performance_query does" );
+		}
 		$this->assertSame( 'string', $urls['sort']['type'] );
 		$this->assertSame( [ 'rid' ], \array_keys( $tools['dump_request']['inputSchema']['properties'] ) );
 	}

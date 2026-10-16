@@ -104,13 +104,14 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 		scope: 'alpha.example',
 		filters: {
 			search: 'wp-admin',
-			errors_only: false,
+			filter: [ 'status_class=5', 'country=Kiribati' ],
 			include_workers: true,
 			bucket: '2026-10-04-13-35',
 		},
 		stats: {
 			urls: 137,
 			requests: 4210,
+			errors: 23,
 			avg_ms: 812.5,
 			avg_peak_mb: 44.25,
 			requests_per_second: 0.83,
@@ -135,9 +136,12 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 	expect( md ).toContain( 'wp-admin' );
 	expect( md ).toContain( 'workers included' );
 	expect( md ).toContain(
+		'**filter:** <site-data>status_class=5, country=Kiribati</site-data>'
+	);
+	expect( md ).toContain(
 		'**bucket:** 2026-10-04-13-35 (6:35–6:40 AM America/Los_Angeles)'
 	);
-	expect( md ).toContain( '4,210 requests' );
+	expect( md ).toContain( '23 errors, 4,210 requests' );
 	expect( md ).toContain( '137 urls' );
 	// `num()` gives a sub-1 value three decimals, as it does everywhere else.
 	expect( md ).toContain( '0.830/s' );
@@ -151,15 +155,15 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 	expect( md ).not.toContain( '\u00d70.075' );
 } );
 
-test( 'an errors-only brief counts the errors before the traffic', () => {
+test( 'an overview brief counts the errors before the traffic', () => {
 	const md = briefToMarkdown( {
 		subject: 'overview',
 		scope: 'every server',
-		filters: { errors_only: true },
+		filters: { filter: [] },
 		stats: {
 			urls: 2,
 			requests: 6150,
-			errors: 7,
+			errors: 41,
 			avg_ms: 800,
 			requests_per_second: 0.5,
 		},
@@ -168,7 +172,7 @@ test( 'an errors-only brief counts the errors before the traffic', () => {
 				hash: '0e11a5c3b2d9',
 				url: '/erring',
 				count: 6100,
-				errors: 6,
+				errors: 38,
 				avg_ms: 790,
 				max_ms: 3100,
 			},
@@ -177,8 +181,9 @@ test( 'an errors-only brief counts the errors before the traffic', () => {
 		caveat: 'c',
 	} );
 
-	expect( md ).toContain( '7 errors, 6,150 requests' );
-	expect( md ).toContain( '6 errors in 6100×' );
+	expect( md ).toContain( '41 errors, 6,150 requests' );
+	expect( md ).toContain( '38 errors in 6100×' );
+	expect( md ).not.toContain( '**filter:**' );
 } );
 
 // A brief carrying no totals prints no traffic line: 0 would read as idle.
@@ -208,6 +213,7 @@ test( 'an overview brief shows an unmeasured mean as a dash with no unit', () =>
 		stats: {
 			urls: 3,
 			requests: 29,
+			errors: 2,
 			avg_ms: null,
 			requests_per_second: 0.41,
 		},
@@ -243,7 +249,7 @@ test( 'an overview brief with no server says it is the whole fleet', () => {
 		server: '',
 		scope: 'every server',
 		filters: {},
-		stats: { requests: 7, avg_ms: 10 },
+		stats: { urls: 1, requests: 7, errors: 0, avg_ms: 10 },
 		urls: [],
 		categories: [],
 		caveat: 'c',
@@ -356,26 +362,13 @@ test( 'a URL brief over its whole window names no bucket', () => {
 	expect( md ).not.toContain( '**bucket:**' );
 } );
 
-test( 'an errors-only URL brief renders the errors and their summary, not the whole URL', () => {
+test( 'a URL brief names the filter it was narrowed by, beside its stats', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',
 		url: '/kea',
-		errors_only: true,
-		stats: { errors: 29 },
-		error_summary: {
-			listed: 3,
-			timeouts: 1,
-			fatals: 2,
-			fatal_avg_ms: 2417.25,
-			fatal_max_ms: 3300,
-			avg_peak_mb: 64.5,
-			max_peak_mb: 91,
-			first_at: 1741000123,
-			last_at: 1741000456,
-			status_codes: { 0: 1, 500: 2 },
-		},
+		filter: [ 'status_class=Unknown', 'method=POST' ],
+		stats: { count: 6, errors: 5, avg_ms: 30000.5, max_peak_mb: 12 },
 		worst_requests: [
-			{ rid: 'f4tal', duration_ms: 3300, status_code: 500 },
 			{ rid: 't1meout', duration_ms: null, status_code: 0 },
 		],
 		rule: null,
@@ -383,45 +376,13 @@ test( 'an errors-only URL brief renders the errors and their summary, not the wh
 		caveat: 'c',
 	} );
 
-	expect( md ).toContain( '**errors only:** yes' );
-	expect( md ).toContain( '**errors:** 29' );
-	expect( md ).toContain( '**listed:** 3 — 1 timeouts, 2 fatals' );
-	expect( md ).toContain( '**fatal duration:** 2417.3ms avg, 3300ms max' );
-	expect( md ).toContain( '**peak memory:** 64.5MB avg, 91MB max' );
-	expect( md ).toContain( '**first error:** 2025-03-03T11:08:43Z' );
-	expect( md ).toContain( '**last error:** 2025-03-03T11:14:16Z' );
-	expect( md ).toContain( '**status codes:** no status ×1, 500 ×2' );
-	expect( md ).toContain( '**worst recent:** f4tal 3300ms 500, t1meout — 0' );
-	expect( md ).not.toContain( '**count:**' );
-	expect( md ).not.toContain( '**avg_ms:**' );
-} );
-
-test( 'an errors-only URL brief with no measured fatal leaves fatal duration out', () => {
-	const md = briefToMarkdown( {
-		subject: 'url',
-		url: '/moa',
-		errors_only: true,
-		stats: { errors: 2 },
-		error_summary: {
-			listed: 2,
-			timeouts: 2,
-			fatals: 0,
-			fatal_avg_ms: null,
-			fatal_max_ms: null,
-			avg_peak_mb: 7.5,
-			max_peak_mb: 9,
-			first_at: 1741007000,
-			last_at: 1741007777,
-			status_codes: { 0: 2 },
-		},
-		worst_requests: [],
-		rule: null,
-		findings: [],
-		caveat: 'c',
-	} );
-
-	expect( md ).not.toContain( 'fatal duration' );
-	expect( md ).toContain( '**listed:** 2 — 2 timeouts, 0 fatals' );
+	expect( md ).toContain(
+		'**filter:** <site-data>status_class=Unknown, method=POST</site-data>'
+	);
+	expect( md ).toContain( '**count:** 6' );
+	expect( md ).toContain( '**errors:** 5' );
+	expect( md ).toContain( '**avg_ms:** 30000.5' );
+	expect( md ).toContain( '**worst recent:** t1meout — 0' );
 } );
 
 test( 'a URL brief names its worst recent requests and no scan', () => {

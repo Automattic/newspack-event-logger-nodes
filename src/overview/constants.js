@@ -70,9 +70,10 @@ export const CHART_METRIC_OPTIONS = [
 /**
  * The `requests` fields `Stats_Query::FIELDS` declares past its time fields
  * (`Stats_Query::TIME_FIELDS`, which every chart already draws as its axis),
- * in its order; a jest test holds this list to the PHP by reading it. `kind`
- * says where a field is offered: `series` in the breakdown selects and the
- * filter chips, `filter` in the chips alone.
+ * in its order; a jest test holds `server` and the chip fields, in order, to
+ * the PHP by reading it. `kind` says where a field is offered: `series` in
+ * the breakdown selects and, `server` aside, the filter chips; `filter` in
+ * the chips alone.
  *
  * `worker` is a chip, never a series: the Overview charts ask `worker=0`
  * unless a chip names the workers, so a series by it would draw one line.
@@ -177,8 +178,15 @@ export const SCOPED_BREAKDOWN_OPTIONS = CHART_BREAKDOWN_OPTIONS.filter(
 	( option ) => option.value !== 'server'
 );
 
-/** The fields a filter chip may name: every one. */
-export const FILTER_FIELD_OPTIONS = REQUEST_FIELDS.map( asOption );
+/**
+ * The fields a filter chip may name: every one but `server`. The Server
+ * select is the one place a server is chosen, and the `urls`, `dump_url` and
+ * `ask` verbs refuse a `server=` filter as `--server`'s, so a chip on it
+ * would refuse the table the chart's chips ride.
+ */
+export const FILTER_FIELD_OPTIONS = REQUEST_FIELDS.filter(
+	( field ) => 'server' !== field.value
+).map( asOption );
 
 /**
  * What the aggregate chart breaks down by until someone chooses otherwise.

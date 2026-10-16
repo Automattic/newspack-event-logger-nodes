@@ -19,7 +19,13 @@ test( 'with nothing selected it carries the totals the panel is rendering', () =
 	// numbers. Handing the brief a site-wide total beside a filtered panel is
 	// how the two came to contradict each other on the same screen.
 	const facts = pageFacts( {
-		urlTotals: { urls: 313, requests: 9001, avg_ms: 70, avg_peak_mb: 3.3 },
+		urlTotals: {
+			urls: 313,
+			requests: 9001,
+			errors: 23,
+			avg_ms: 70,
+			avg_peak_mb: 3.3,
+		},
 		urlSlowest: SLOWEST,
 	} );
 
@@ -27,6 +33,7 @@ test( 'with nothing selected it carries the totals the panel is rendering', () =
 	expect( facts.totals ).toEqual( {
 		urls: 313,
 		requests: 9001,
+		errors: 23,
 		avg_ms: 70,
 		avg_peak_mb: 3.3,
 	} );
@@ -53,51 +60,60 @@ test( 'a selected URL nothing timed reached carries max_ms as unmeasured, not 0'
 	const facts = pageFacts( {
 		selectedUrl: { hash: 'moa', url: '/moa' },
 		urlDetail: {
-			stats: { count: 3, avg_ms: null, max_ms: null, max_peak_mb: 2.5 },
+			stats: {
+				count: 3,
+				errors: 1,
+				avg_ms: null,
+				max_ms: null,
+				max_peak_mb: 2.5,
+			},
 		},
 	} );
 
 	expect( facts.stats ).toEqual( {
 		count: 3,
+		errors: 1,
 		avg_ms: null,
 		max_ms: null,
 		max_peak_mb: 2.5,
 	} );
 } );
 
-test( 'an errors-only URL briefs its exact errors and the summary of the list, as the url: brief does', () => {
-	const summary = { listed: 2, timeouts: 1, fatals: 1, fatal_avg_ms: 2417 };
+test( 'a URL names the chips its header and list were narrowed by, beside its stats', () => {
 	const facts = pageFacts( {
 		selectedUrl: { hash: 'kea', url: '/kea' },
-		urlDetail: { stats: { count: 4210, avg_ms: 812, errors: 29 } },
-		detailErrors: summary,
+		urlDetail: {
+			stats: {
+				count: 4210,
+				avg_ms: 812,
+				max_ms: 3100,
+				max_peak_mb: 64.5,
+				errors: 29,
+			},
+		},
+		detailChips: [ 'status_class=5', 'country=Kiribati' ],
 	} );
 
 	expect( facts.surface ).toBe( 'url' );
-	expect( facts.errors_only ).toBe( true );
-	expect( facts.stats ).toEqual( { errors: 29 } );
-	expect( facts.error_summary ).toBe( summary );
-} );
-
-test( 'an errors-only URL whose count has not answered carries it as absent', () => {
-	const facts = pageFacts( {
-		selectedUrl: { hash: 'kea', url: '/kea' },
-		urlDetail: { stats: {} },
-		detailErrors: { listed: 0 },
+	expect( facts.filter ).toEqual( [ 'status_class=5', 'country=Kiribati' ] );
+	expect( facts.stats ).toEqual( {
+		count: 4210,
+		errors: 29,
+		avg_ms: 812,
+		max_ms: 3100,
+		max_peak_mb: 64.5,
 	} );
-
-	expect( facts.stats.errors ).toBeNull();
-} );
-
-test( 'a URL listing every request says so and carries no error summary', () => {
-	const facts = pageFacts( {
-		selectedUrl: { hash: 'kea', url: '/kea' },
-		urlDetail: { stats: { count: 4210, avg_ms: 812, errors: 29 } },
-	} );
-
-	expect( facts.errors_only ).toBe( false );
-	expect( facts.stats.count ).toBe( 4210 );
+	expect( facts ).not.toHaveProperty( 'errors_only' );
 	expect( facts ).not.toHaveProperty( 'error_summary' );
+} );
+
+test( 'a URL no chip narrows names an empty filter', () => {
+	const facts = pageFacts( {
+		selectedUrl: { hash: 'kea', url: '/kea' },
+		urlDetail: { stats: { count: 4210 } },
+	} );
+
+	expect( facts.filter ).toEqual( [] );
 } );
 
 test( "a URL names the modal's own selection, beside the table's filters", () => {
@@ -106,7 +122,6 @@ test( "a URL names the modal's own selection, beside the table's filters", () =>
 		selectedUrl: { hash: 'kea', url: '/kea' },
 		urlDetail: { stats: { count: 17, avg_ms: 240, max_ms: 910 } },
 		detailFilters: {
-			errors_only: false,
 			bucket: '2026-10-04-13-40..2026-10-04-13-50',
 		},
 	} );
@@ -120,7 +135,7 @@ test( 'a URL listing its whole window names no bucket', () => {
 	const facts = pageFacts( {
 		selectedUrl: { hash: 'kea', url: '/kea' },
 		urlDetail: { stats: { count: 4210 } },
-		detailFilters: { errors_only: false, bucket: '' },
+		detailFilters: { bucket: '' },
 	} );
 
 	expect( facts.bucket ).toBe( '' );
@@ -190,7 +205,7 @@ test( 'every surface names what it is scoped to', () => {
 		urlFilters: {
 			server: 'edge-01',
 			search: '',
-			errors_only: false,
+			filter: [],
 			include_workers: false,
 		},
 	} );
@@ -199,7 +214,7 @@ test( 'every surface names what it is scoped to', () => {
 	expect( facts.filters ).toEqual( {
 		server: 'edge-01',
 		search: '',
-		errors_only: false,
+		filter: [],
 		include_workers: false,
 	} );
 } );
@@ -225,7 +240,7 @@ test( 'it names what the totals are scoped to', () => {
 		urlFilters: {
 			server: 'edge-01',
 			search: '/wp-json',
-			errors_only: false,
+			filter: [],
 			include_workers: false,
 		},
 	} );
@@ -233,7 +248,7 @@ test( 'it names what the totals are scoped to', () => {
 	expect( facts.filters ).toEqual( {
 		server: 'edge-01',
 		search: '/wp-json',
-		errors_only: false,
+		filter: [],
 		include_workers: false,
 	} );
 } );
@@ -248,6 +263,7 @@ test( 'nothing loaded yet reads as absent, not as zero traffic', () => {
 	expect( facts.totals ).toEqual( {
 		urls: null,
 		requests: null,
+		errors: null,
 		avg_ms: null,
 		avg_peak_mb: null,
 	} );
@@ -298,7 +314,7 @@ test( 'every filter the reply echoes reaches the facts, include_workers first', 
 		urlFilters: {
 			server: 'edge-07',
 			search: '/wp-json',
-			errors_only: false,
+			filter: [],
 			include_workers: true,
 			bucket: '2026-10-04-13-35',
 		},
@@ -307,7 +323,7 @@ test( 'every filter the reply echoes reaches the facts, include_workers first', 
 	expect( facts.filters ).toStrictEqual( {
 		server: 'edge-07',
 		search: '/wp-json',
-		errors_only: false,
+		filter: [],
 		include_workers: true,
 		bucket: '2026-10-04-13-35',
 	} );

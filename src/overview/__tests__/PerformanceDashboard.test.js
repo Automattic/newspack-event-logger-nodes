@@ -159,7 +159,7 @@ jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	SERVER: 'performance',
 	RULES_CI: 'rules',
 	GREP_RESULT_LIMIT: 20,
-	NO_DETAIL_FILTERS: { errors_only: false, bucket: '' },
+	NO_DETAIL_FILTERS: { bucket: '' },
 	NO_CHIPS: [],
 	NO_DETAIL_CHART: { breakdown: 'status_class', thenBy: '', chips: [] },
 	usePerformanceGraph: ( opts ) => {
@@ -916,12 +916,14 @@ describe( 'PerformanceDashboard', () => {
 			const chips = () =>
 				new URLSearchParams( window.location.search ).getAll( 'chip' );
 
-			it( 'opens on the chips a link names, dropping one the editor refuses', async () => {
+			it( 'opens on the chips a link names as the editor spells them, dropping one it refuses and a Server chip', async () => {
 				linkTo(
 					[
 						'chip=status_class%3D5xx',
 						'chip=referrer%3Dt.co',
+						'chip=server%3Dkea.example',
 						`chip=${ encodeURIComponent( UA ) }`,
+						'chip=status_class%3Dunknown',
 						'chip=country%3D',
 						'url=h1',
 					].join( '&' )
@@ -930,15 +932,16 @@ describe( 'PerformanceDashboard', () => {
 				const { unmount } = mountDash();
 				await flushEffects();
 
-				expect( mockGraphCalls[ 0 ].chartChips ).toEqual( [
-					'status_class=5xx',
+				const spelled = [
+					'status_class=5',
 					UA,
-				] );
-				expect( globalThis.__overviewProps.chartChips ).toEqual( [
-					'status_class=5xx',
-					UA,
-				] );
-				expect( chips() ).toEqual( [ 'status_class=5xx', UA ] );
+					'status_class=Unknown',
+				];
+				expect( mockGraphCalls[ 0 ].chartChips ).toEqual( spelled );
+				expect( globalThis.__overviewProps.chartChips ).toEqual(
+					spelled
+				);
+				expect( chips() ).toEqual( spelled );
 				expect( param( 'url' ) ).toBe( 'h1' );
 				unmount();
 			} );
@@ -1224,7 +1227,7 @@ describe( 'PerformanceDashboard', () => {
 		}
 	);
 
-	it( 'keeps the URL modal mounted while a filter flip relists it', async () => {
+	it( 'keeps the URL modal mounted while a chip change relists it', async () => {
 		mockNavState.selectedUrl = { hash: 'h9', url: '/heron' };
 		mockNavState.selectedRequest = null;
 		const held = {
@@ -1244,9 +1247,14 @@ describe( 'PerformanceDashboard', () => {
 			urlDetail: { data: held, loading: true, error: null },
 		} );
 		await act( async () => {
-			globalThis.__urlDetailProps.onFilterChange( 'errors_only', true );
+			globalThis.__urlDetailProps.onChartChange( 'chips', [
+				'status_class=5',
+			] );
 		} );
 
+		expect( mockGraphOpts.detailChart.chips ).toEqual( [
+			'status_class=5',
+		] );
 		expect( container.querySelector( '[data-testid="url-detail"]' ) ).toBe(
 			view
 		);
@@ -1255,8 +1263,6 @@ describe( 'PerformanceDashboard', () => {
 		);
 		expect( container.textContent ).not.toContain( 'Loading URL' );
 		expect( globalThis.__urlDetailProps.listing ).toBe( true );
-		// The held list answers the old ask, so it is not summed as errors.
-		expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
 		expect( stats.textContent ).toContain( '431ms' );
 
 		mockView = loadedView( {
@@ -1318,7 +1324,7 @@ describe( 'PerformanceDashboard', () => {
 				'.event-logger-header-stats > .newspack-nodes-stat'
 			)
 		);
-		expect( headerStats ).toHaveLength( 3 );
+		expect( headerStats ).toHaveLength( 4 );
 		for ( const stat of headerStats ) {
 			expect(
 				stat.querySelector( '.newspack-nodes-stat-value' )
@@ -1340,11 +1346,13 @@ describe( 'PerformanceDashboard', () => {
 			'renders each header stat as its own text, unit and label',
 			{
 				requests_per_second: 7.125,
+				errors: 1207,
 				avg_ms: 412.6,
 				avg_peak_mb: 26.45,
 			},
 			[
 				[ '7.13', 'req/s' ],
+				[ '1,207', 'errors' ],
 				[ '413ms', 'avg' ],
 				[ '26.4MB', 'mem' ],
 			],
@@ -1357,6 +1365,7 @@ describe( 'PerformanceDashboard', () => {
 			},
 			[
 				[ '3.75', 'req/s' ],
+				[ '—', 'errors' ],
 				[ '—', 'avg' ],
 			],
 		],
@@ -1364,11 +1373,13 @@ describe( 'PerformanceDashboard', () => {
 			'drops the memory stat when nothing measured a peak',
 			{
 				requests_per_second: 2.5,
+				errors: 0,
 				avg_ms: 77,
 				avg_peak_mb: 0,
 			},
 			[
 				[ '2.50', 'req/s' ],
+				[ '0', 'errors' ],
 				[ '77ms', 'avg' ],
 			],
 		],
@@ -1401,93 +1412,80 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'carries the errors-only echo to the table and the URL it opens', async () => {
-		mockNavState.selectedUrl = { hash: 'h9', url: '/erring' };
+	it( "heads the URL modal with the URL's errors beside its rate", async () => {
+		mockNavState.selectedUrl = { hash: 'h7', url: '/kea' };
 		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
-			urls: {
-				data: [],
-				filters: { errors_only: true },
-				loading: false,
-				error: null,
-			},
 			urlDetail: {
-				data: { stats: {}, requests: [] },
+				data: {
+					stats: {
+						errors: 29,
+						avg_ms: 812,
+						requests_per_second: 3.75,
+					},
+					requests: [],
+				},
 				loading: false,
 				error: null,
 			},
 		} );
+		const { container, unmount } = mountDash();
+		await flushEffects();
+		const header = container.querySelector(
+			'.event-logger-header-stats'
+		).textContent;
 
-		const { unmount } = mountDash();
-		await act( async () => {} );
-		// Opened the way a click opens it, through the table.
-		await act( async () => {
-			globalThis.__urlTableProps.onSelect( {
-				hash: 'h9',
-				url: '/erring',
-			} );
-		} );
-
-		expect( globalThis.__urlDetailProps.detailErrors ).not.toBeNull();
-		// The server finds the errors, past the clean requests that bury them.
-		expect( mockGraphOpts.detailFilters.errors_only ).toBe( true );
-		// The same echo tells the table its rows carry error counts.
-		expect( globalThis.__urlTableProps.errorCounts ).toBe( true );
-
-		// The page holds the modal's choice, so a request and back keeps it.
-		await act( async () => {
-			globalThis.__urlDetailProps.onFilterChange( 'errors_only', false );
-		} );
-		expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
-		expect( mockGraphOpts.detailFilters.errors_only ).toBe( false );
+		expect( header ).toContain( '29errors' );
+		expect( header ).toContain( '812ms' );
+		expect( header ).toContain( '3.75' );
+		expect( header ).not.toContain( 'timeouts' );
+		expect( header ).not.toContain( 'fatal' );
 		unmount();
 	} );
 
-	describe( 'a URL modal under Errors Only', () => {
-		const ERRORS = [
-			{
-				rid: 'f4tal',
-				timestamp: 1741000456,
-				duration_ms: 2417,
-				status_code: 500,
-				peak_mb: 91,
-				error_status: 'F',
-			},
-			{
-				rid: 't1meout',
-				timestamp: 1741000123,
-				duration_ms: null,
-				status_code: 0,
-				peak_mb: 37,
-				error_status: 'T',
-			},
-		];
+	it( 'hands UrlTable the Overview chips', async () => {
+		window.history.replaceState(
+			null,
+			'',
+			'/wp-admin/admin.php?page=perf&chip=status_class%3D5'
+		);
+		mockView = loadedView();
+		const { unmount } = mountDash();
+		await flushEffects();
 
+		expect( globalThis.__urlTableProps.chips ).toEqual( [
+			'status_class=5',
+		] );
+		unmount();
+	} );
+
+	describe( 'the chips carry into the URL modal', () => {
 		/**
-		 * Open `/kea` and flip its modal to Errors Only.
+		 * Open `/kea` from a table its chips narrowed, as a row click does.
 		 *
-		 * @param {Object} urlFilters The table's echoed filters.
+		 * @param {string[]} echoed The `filter` tokens the rows were fetched
+		 *                          under.
 		 * @return {Promise<Object>} The mount.
 		 */
-		const openErrorsOnly = async ( urlFilters = {} ) => {
+		const openFromChippedTable = async ( echoed ) => {
+			window.history.replaceState(
+				null,
+				'',
+				`/wp-admin/admin.php?page=perf&${ echoed
+					.map( ( chip ) => `chip=${ encodeURIComponent( chip ) }` )
+					.join( '&' ) }`
+			);
 			mockNavState.selectedUrl = { hash: 'h7', url: '/kea' };
 			mockNavState.selectedRequest = null;
 			mockView = loadedView( {
 				urls: {
 					data: [],
-					filters: urlFilters,
+					filters: { filter: echoed, bucket: '' },
 					loading: false,
 					error: null,
 				},
 				urlDetail: {
-					data: {
-						stats: {
-							errors: 29,
-							avg_ms: 812,
-							requests_per_second: 3.75,
-						},
-						requests: ERRORS,
-					},
+					data: { stats: { errors: 4 }, requests: [] },
 					loading: false,
 					error: null,
 				},
@@ -1495,63 +1493,80 @@ describe( 'PerformanceDashboard', () => {
 			const mount = mountDash();
 			await flushEffects();
 			await act( async () => {
-				globalThis.__urlDetailProps.onFilterChange(
-					'errors_only',
-					true
-				);
+				globalThis.__urlTableProps.onSelect( {
+					hash: 'h7',
+					url: '/kea',
+				} );
 			} );
 			return mount;
 		};
 
-		it( 'heads the modal with the exact errors and the summary of the list', async () => {
-			const { container } = await openErrorsOnly();
-			const header = container.querySelector(
-				'.event-logger-header-stats'
-			).textContent;
+		it( 'opens the detail with the chips its rows were fetched under', async () => {
+			await openFromChippedTable( [
+				'status_class=5',
+				'country=Kiribati',
+			] );
 
-			expect( header ).toContain( '29errors' );
-			expect( header ).toContain( '1timeouts' );
-			expect( header ).toContain( '1fatals' );
-			expect( header ).toContain( '2417msfatal avg' );
-			expect( header ).toContain( '2417msfatal max' );
-			expect( header ).toContain( '64.0MBmem' );
-			expect( header ).not.toContain( '812ms' );
-			expect( header ).not.toContain( '3.75' );
+			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+				'status_class=5',
+				'country=Kiribati',
+			] );
+			expect( globalThis.__urlDetailProps.chart.chips ).toEqual( [
+				'status_class=5',
+				'country=Kiribati',
+			] );
 		} );
 
-		it( 'hands the list and the facts block the exact count and the summary', async () => {
-			const { container } = await openErrorsOnly();
+		it( 'leaves a URL chip behind, since the detail is one URL', async () => {
+			await openFromChippedTable( [ 'url=feed1234', 'method=POST' ] );
 
-			expect( globalThis.__urlDetailProps.detailErrors ).toMatchObject( {
-				listed: 2,
-				timeouts: 1,
-				fatals: 1,
+			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+				'method=POST',
+			] );
+		} );
+
+		it( "removing a chip in the detail leaves the Overview's alone", async () => {
+			await openFromChippedTable( [
+				'status_class=5',
+				'country=Kiribati',
+			] );
+			await act( async () => {
+				globalThis.__urlDetailProps.onChartChange( 'chips', [
+					'country=Kiribati',
+				] );
 			} );
+
+			expect( mockGraphOpts.detailChart.chips ).toEqual( [
+				'country=Kiribati',
+			] );
+			expect( mockGraphOpts.chartChips ).toEqual( [
+				'status_class=5',
+				'country=Kiribati',
+			] );
+			expect( globalThis.__overviewProps.chartChips ).toEqual( [
+				'status_class=5',
+				'country=Kiribati',
+			] );
 			expect(
-				globalThis.__urlDetailProps.detailErrors.total
-			).toBeUndefined();
+				new URLSearchParams( window.location.search ).getAll( 'chip' )
+			).toEqual( [ 'status_class=5', 'country=Kiribati' ] );
+		} );
+
+		it( 'hands the facts block the detail chips, and no errors-only flag', async () => {
+			const { container } = await openFromChippedTable( [
+				'status_class=Unknown',
+			] );
 			const facts = JSON.parse(
 				container.querySelector( '#newspack-nodes-page-facts' )
 					.textContent
 			);
+
 			expect( facts ).toMatchObject( {
 				surface: 'url',
-				errors_only: true,
-				stats: { errors: 29 },
-				error_summary: { listed: 2, fatal_max_ms: 2417 },
+				filter: [ 'status_class=Unknown' ],
 			} );
-		} );
-
-		it( 'hands the list no summary when every request is listed', async () => {
-			await openErrorsOnly();
-			await act( async () => {
-				globalThis.__urlDetailProps.onFilterChange(
-					'errors_only',
-					false
-				);
-			} );
-
-			expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
+			expect( facts ).not.toHaveProperty( 'errors_only' );
+			expect( facts ).not.toHaveProperty( 'error_summary' );
 		} );
 
 		/**
@@ -1575,26 +1590,18 @@ describe( 'PerformanceDashboard', () => {
 			target.remove();
 		};
 
-		it( "asks under the modal's Errors Only, not the table's", async () => {
-			await openErrorsOnly( { errors_only: false } );
-			await pickUrl();
-
-			expect( sentTo( 'ask' ).at( -1 ) ).toContain( '--errors_only=1' );
-		} );
-
-		it( 'asks for every request once the modal lists them all, whatever the table shows', async () => {
-			await openErrorsOnly( { errors_only: true } );
+		it( "asks a url: brief under the detail's chips, not the table's", async () => {
+			await openFromChippedTable( [ 'method=POST' ] );
 			await act( async () => {
-				globalThis.__urlDetailProps.onFilterChange(
-					'errors_only',
-					false
-				);
+				globalThis.__urlDetailProps.onChartChange( 'chips', [
+					'status_class=Unknown',
+				] );
 			} );
 			await pickUrl();
 
-			expect( sentTo( 'ask' ).at( -1 ) ).not.toContain(
-				'--errors_only=1'
-			);
+			const asked = sentTo( 'ask' ).at( -1 );
+			expect( asked ).toContain( '--filter=status_class=Unknown' );
+			expect( asked ).not.toContain( '--filter=method=POST' );
 		} );
 	} );
 
@@ -1897,7 +1904,6 @@ describe( 'PerformanceDashboard', () => {
 			await openFromBucketedTable();
 			const held = mockGraphOpts.detailFilters;
 			expect( held ).toEqual( {
-				errors_only: false,
 				bucket: '2026-10-04-13-35',
 			} );
 
@@ -1957,7 +1963,7 @@ describe( 'PerformanceDashboard', () => {
 		} );
 	} );
 
-	it( 'opens a URL reached any other way with every request listed', async () => {
+	it( 'opens a URL reached any other way with no chip', async () => {
 		// Only the table narrows a URL; closing forgets that, so a deep link
 		// or a request search cannot open on a list hiding what it sought.
 		mockNavState.selectedUrl = { hash: 'h9', url: '/erring' };
@@ -1965,7 +1971,7 @@ describe( 'PerformanceDashboard', () => {
 		mockView = loadedView( {
 			urls: {
 				data: [],
-				filters: { errors_only: true },
+				filters: { filter: [ 'status_class=5' ], bucket: '' },
 				loading: false,
 				error: null,
 			},
@@ -1992,7 +1998,8 @@ describe( 'PerformanceDashboard', () => {
 			rerender( dashboard() );
 		} );
 
-		expect( globalThis.__urlDetailProps.detailErrors ).toBeNull();
+		expect( mockGraphOpts.detailChart.chips ).toEqual( [] );
+		expect( globalThis.__urlDetailProps.chart.chips ).toEqual( [] );
 		unmount();
 	} );
 
