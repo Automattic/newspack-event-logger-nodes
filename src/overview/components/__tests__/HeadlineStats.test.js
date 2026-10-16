@@ -22,7 +22,7 @@ describe( 'headlineStats', () => {
 		).toBe( '61ms' );
 	} );
 
-	it( 'shows an error count of zero wherever the reply carries one', () => {
+	it( 'shows an error count of zero, and one not yet answered as absent', () => {
 		expect( headlineStats( { errors: 0 }, [ 'errors' ] ) ).toEqual( [
 			{
 				key: 'errors',
@@ -31,26 +31,11 @@ describe( 'headlineStats', () => {
 				value: '0',
 			},
 		] );
-		expect( headlineStats( { requests: 41 }, [ 'errors' ] ) ).toEqual( [] );
-	} );
-
-	it( 'formats the error summary under its short labels', () => {
-		const shown = headlineStats(
-			{
-				timeouts: 1207,
-				fatals: 3,
-				fatal_avg_ms: 2417.4,
-				fatal_max_ms: null,
-			},
-			[ 'timeouts', 'fatals', 'fatal_avg_ms', 'fatal_max_ms' ]
-		);
-
-		expect( shown.map( ( s ) => [ s.short, s.value ] ) ).toEqual( [
-			[ 'timeouts', '1,207' ],
-			[ 'fatals', '3' ],
-			[ 'fatal avg', '2417ms' ],
-			[ 'fatal max', '—' ],
-		] );
+		expect(
+			headlineStats( { requests: 41 }, [ 'errors' ] ).map(
+				( stat ) => stat.value
+			)
+		).toEqual( [ '—' ] );
 	} );
 } );
 

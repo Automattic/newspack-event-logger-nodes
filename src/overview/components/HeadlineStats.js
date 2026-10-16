@@ -30,28 +30,6 @@ const STATS = {
 		label: __( 'Total Errors', 'newspack-event-logger-nodes' ),
 		short: __( 'errors', 'newspack-event-logger-nodes' ),
 		format: formatGroupedCount,
-		// Only an errors-only reply counts them, and zero is a count.
-		shown: ( n ) => 'number' === typeof n,
-	},
-	timeouts: {
-		label: __( 'Timeouts', 'newspack-event-logger-nodes' ),
-		short: __( 'timeouts', 'newspack-event-logger-nodes' ),
-		format: formatGroupedCount,
-	},
-	fatals: {
-		label: __( 'Fatals', 'newspack-event-logger-nodes' ),
-		short: __( 'fatals', 'newspack-event-logger-nodes' ),
-		format: formatGroupedCount,
-	},
-	fatal_avg_ms: {
-		label: __( 'Avg Fatal Duration', 'newspack-event-logger-nodes' ),
-		short: __( 'fatal avg', 'newspack-event-logger-nodes' ),
-		format: wholeMs,
-	},
-	fatal_max_ms: {
-		label: __( 'Max Fatal Duration', 'newspack-event-logger-nodes' ),
-		short: __( 'fatal max', 'newspack-event-logger-nodes' ),
-		format: wholeMs,
 	},
 	avg_ms: {
 		label: __( 'Avg Response', 'newspack-event-logger-nodes' ),

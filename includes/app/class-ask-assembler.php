@@ -45,7 +45,7 @@ use Newspack_Nodes\Core;
  * the board. `Performance_CI_Node` turns that null into the message the picker
  * shows, so no shaper here decides how a miss reads.
  *
- * @phpstan-type Url_Filters array{search: string, errors_only: bool, include_workers: bool, bucket: string}
+ * @phpstan-type Url_Filters array{search: string, filter: list<string>, include_workers: bool, bucket: string}
  */
 class Ask_Assembler {
 
@@ -550,13 +550,11 @@ class Ask_Assembler {
 	 * The requests are the newest `dump_url` lists, and `$requests_capped`
 	 * says when they are the newest only.
 	 *
-	 * The filters are the `url:` brief's share of the page's: under
-	 * `errors_only` the brief is of the errors `dump_url` lists, so its `stats`
-	 * keep only the URL's exact `errors`, and `error_summary()` of the list
-	 * stands in for the whole URL's count and means, which describe other
-	 * traffic. Under a `bucket` it is of a selection of buckets: `$stats`
-	 * and `$requests` are of the requests completing in them, zero where
-	 * the URL has none. Its pointer fetches under both.
+	 * The filters are the `url:` brief's share of the page's: under a
+	 * `filter` the brief is of the requests it leaves, and under a `bucket`
+	 * of the requests completing in the selected buckets, zero where the URL
+	 * has none. `$stats` and `$requests` are already narrowed to both, and
+	 * its pointer fetches under both.
 	 *
 	 * The worst requests rank by duration, and a null one — no sample taken,
 	 * as `dump_url`'s rows carry it (decision 24) — ranks after every number.
@@ -570,9 +568,8 @@ class Ask_Assembler {
 	 * @return array<string,mixed>
 	 */
 	public static function for_url( array $stats, array $requests, bool $requests_capped, ?Rule $rule, string $server, array $filters ): array {
-		$errors_only = $filters['errors_only'];
-		$bucket      = $filters['bucket'];
-		$summary     = $errors_only ? [ 'error_summary' => self::error_summary( $requests ) ] : [];
+		$filter = $filters['filter'];
+		$bucket = $filters['bucket'];
 		// A measured duration is positive, so -1 ranks every null last.
 		\usort( $requests, static fn ( array $a, array $b ): int => ( $b['duration_ms'] ?? -1 ) <=> ( $a['duration_ms'] ?? -1 ) );
 		$hash = Core::as_string( $stats['hash'] ?? '' );
@@ -584,17 +581,15 @@ class Ask_Assembler {
 			'hash'               => $hash,
 			// What these numbers are OF; the pointer below carries it too.
 			'server'             => $server,
-			'errors_only'        => $errors_only,
+			'filter'             => $filter,
 			'bucket'             => $bucket,
-			'stats'              => $errors_only
-				? [ 'errors' => Core::num_int( $stats['errors'] ?? null ) ]
-				: [
-					'count'       => Core::num_int( $stats['count'] ?? 0 ),
-					'avg_ms'      => self::measured_figure( $stats['avg_ms'] ?? null ),
-					'max_ms'      => self::measured_figure( $stats['max_ms'] ?? null ),
-					'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
-				],
-			...$summary,
+			'stats'              => [
+				'count'       => Core::num_int( $stats['count'] ?? 0 ),
+				'errors'      => Core::num_int( $stats['errors'] ),
+				'avg_ms'      => self::measured_figure( $stats['avg_ms'] ?? null ),
+				'max_ms'      => self::measured_figure( $stats['max_ms'] ?? null ),
+				'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
+			],
 			'worst_requests'     => \array_map(
 				self::worst_request_shape( ... ),
 				\array_slice( $requests, 0, self::WORST_REQUESTS )
@@ -607,10 +602,10 @@ class Ask_Assembler {
 			'fetch'              => self::fetch(
 				'dump_url',
 				[
-					'hash'        => $hash,
-					'server'      => $server,
-					'errors_only' => $errors_only ? '1' : '',
-					'bucket'      => $bucket,
+					'hash'   => $hash,
+					'server' => $server,
+					'filter' => $filter,
+					'bucket' => $bucket,
 				]
 			),
 			'caveat'             => Findings::caveat(),
@@ -668,66 +663,6 @@ class Ask_Assembler {
 			'status_code'  => Core::num_int( $request['status_code'] ?? 0 ),
 			'error_status' => Core::as_string( $request['error_status'] ?? '' ),
 		];
-	}
-
-	/**
-	 * What a list of `dump_url` request rows holds, error by error: how many
-	 * timed out and how many fataled, how long the measured fatals took, the
-	 * peak memory over every row, when the first and the last started, and
-	 * the status codes they answered. The JS `errorSummary()` is its twin, and
-	 * both read the case list in `tests/fixtures/error-summary.json`.
-	 *
-	 * @param array<int,array<array-key,mixed>> $requests The rows.
-	 * @return array{listed:int,timeouts:int,fatals:int,fatal_avg_ms:?float,fatal_max_ms:?float,avg_peak_mb:?float,max_peak_mb:?float,first_at:?int,last_at:?int,status_codes:\stdClass}
-	 */
-	public static function error_summary( array $requests ): array {
-		$timeouts = 0;
-		$fatals   = 0;
-		$fatal_ms = [];
-		$peaks    = [];
-		$starts   = [];
-		$codes    = [];
-		foreach ( $requests as $r ) {
-			$status    = $r['error_status'] ?? '-';
-			$timeouts += 'T' === $status ? 1 : 0;
-			if ( 'F' === $status ) {
-				++$fatals;
-				if ( null !== ( $r['duration_ms'] ?? null ) ) {
-					$fatal_ms[] = Core::num_float( $r['duration_ms'] );
-				}
-			}
-			$peaks[]        = Core::num_float( $r['peak_mb'] ?? null );
-			$starts[]       = Core::num_int( $r['timestamp'] ?? null );
-			$code           = Core::num_int( $r['status_code'] ?? null );
-			$codes[ $code ] = ( $codes[ $code ] ?? 0 ) + 1;
-		}
-		\ksort( $codes );
-
-		return [
-			'listed'       => \count( $requests ),
-			'timeouts'     => $timeouts,
-			'fatals'       => $fatals,
-			'fatal_avg_ms' => self::mean( \array_sum( $fatal_ms ), \count( $fatal_ms ) ),
-			'fatal_max_ms' => [] === $fatal_ms ? null : \max( $fatal_ms ),
-			'avg_peak_mb'  => self::mean( \array_sum( $peaks ), \count( $peaks ) ),
-			'max_peak_mb'  => [] === $peaks ? null : \max( $peaks ),
-			'first_at'     => [] === $starts ? null : \min( $starts ),
-			'last_at'      => [] === $starts ? null : \max( $starts ),
-			// An object even when keyed 0..n, which would encode as a list.
-			'status_codes' => (object) $codes,
-		];
-	}
-
-	/**
-	 * A mean over the things that HAVE a value. Dividing by every request
-	 * instead would understate it by the unmeasured fraction, and the mean
-	 * of none is null: not measured, never 0.
-	 *
-	 * @param float $sum Summed values.
-	 * @param int   $n   How many contributed one.
-	 */
-	public static function mean( float $sum, int $n ): ?float {
-		return $n > 0 ? $sum / $n : null;
 	}
 
 	/**
@@ -901,7 +836,7 @@ class Ask_Assembler {
 			'scope'      => '' === $server ? 'every server' : $server,
 			'filters'    => [
 				'search'          => $filters['search'],
-				'errors_only'     => $filters['errors_only'],
+				'filter'          => $filters['filter'],
 				'include_workers' => $filters['include_workers'],
 				'bucket'          => $filters['bucket'],
 			],
@@ -913,7 +848,8 @@ class Ask_Assembler {
 				'avg_peak_mb'         => self::measured_figure( $totals['avg_peak_mb'] ?? null ),
 				// The window's requests over its elapsed seconds.
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
-			] + self::errors_of( $totals ),
+				'errors'              => Core::num_int( $totals['errors'] ),
+			],
 			'urls'       => \array_map(
 				self::overview_url_shape( ... ),
 				\array_slice( $rows, 0, self::TOP_SPANS )
@@ -925,7 +861,7 @@ class Ask_Assembler {
 					[
 						'server'          => $server,
 						'search'          => $filters['search'],
-						'errors_only'     => $filters['errors_only'] ? '1' : '',
+						'filter'          => $filters['filter'],
 						'include_workers' => $filters['include_workers'] ? '1' : '',
 						'bucket'          => $filters['bucket'],
 					]
@@ -940,15 +876,15 @@ class Ask_Assembler {
 	 * How an agent fetches this thing again, as an MCP tool call. What a brief
 	 * trims stays reachable: the pointer is the address of the rest.
 	 *
-	 * @param string               $tool      The MCP tool name.
-	 * @param array<string,string> $arguments Its named arguments, absent ones dropped.
+	 * @param string                            $tool      The MCP tool name.
+	 * @param array<string,string|list<string>> $arguments Its named arguments, absent ones dropped.
 	 * @return list<array<string,mixed>>
 	 */
 	private static function fetch( string $tool, array $arguments ): array {
 		return [
 			[
 				'tool'      => $tool,
-				'arguments' => \array_filter( $arguments, static fn ( string $v ): bool => '' !== $v ),
+				'arguments' => \array_filter( $arguments, static fn ( string|array $v ): bool => '' !== $v && [] !== $v ),
 			],
 		];
 	}
@@ -1004,18 +940,8 @@ class Ask_Assembler {
 			'count'  => Core::num_int( $row['count'] ?? 0 ),
 			'avg_ms' => self::measured_figure( $row['avg_ms'] ?? null ),
 			'max_ms' => self::measured_figure( $row['max_ms'] ?? null ),
-		] + self::errors_of( $row );
-	}
-
-	/**
-	 * The `errors` an errors-only `urls` reply carries on a row or its totals,
-	 * or nothing: every other reply counts none.
-	 *
-	 * @param array<array-key,mixed> $counted A `urls` row or its totals.
-	 * @return array{errors?:int}
-	 */
-	private static function errors_of( array $counted ): array {
-		return isset( $counted['errors'] ) ? [ 'errors' => Core::num_int( $counted['errors'] ) ] : [];
+			'errors' => Core::num_int( $row['errors'] ),
+		];
 	}
 
 	/**

@@ -399,7 +399,6 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 			search: '',
 			sort: 'count',
 			order: 'desc',
-			errorsOnly: false,
 			includeWorkers: false,
 			bucket: '',
 		};
@@ -819,35 +818,320 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 		unmount();
 		jest.useRealTimers();
 	} );
+} );
 
-	test( 'refetches when only errorsOnly changes', async () => {
-		// The early-return compared search/sort/order/offset only, so toggling
-		// the errors filter — which changes nothing else — returned before
-		// sending anything. The button flipped to "Showing Errors" and the
-		// table kept showing every URL.
+describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
+	const urlsSent = ( wire ) =>
+		wire.batches.flat().filter( ( m ) => m[ VALUE ]?.name === 'urls' );
+
+	test( "the Overview chips ride the urls question, one --filter each, spelled as the chart's", async () => {
 		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
+		renderHook( () =>
+			usePerformanceGraph( {
+				chartChips: [ 'status_class=5', 'country=Kiribati' ],
+			} )
 		);
 		await act( async () => {} );
-		const base = { search: '', sort: 'count', order: 'desc', offset: 0 };
-		api.handleUrlParamsChange( base );
-		const before = countVerbs( wire.batches, 'urls' );
 
-		api.handleUrlParamsChange( { ...base, errorsOnly: true } );
+		const urls = findVerb( wire.batches, 'urls' );
+		expect( options( urls[ VALUE ].arguments, 'filter' ) ).toEqual( [
+			'status_class=5',
+			'country=Kiribati',
+		] );
+		expect(
+			options(
+				queryFrom( wire.batches, 'chart:in' )[ VALUE ].arguments,
+				'filter'
+			).slice( 1 )
+		).toEqual( options( urls[ VALUE ].arguments, 'filter' ) );
+	} );
 
-		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
-		const sent = wire.batches
-			.flat()
-			.filter( ( m ) => m[ VALUE ]?.name === 'urls' );
-		expect( sent[ sent.length - 1 ][ VALUE ].arguments ).toContain(
-			'--errors_only=1'
+	test( 'no chip sends no --filter, so the default question stays the stored one', async () => {
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
+		renderHook( () => usePerformanceGraph() );
+		await act( async () => {} );
+
+		expect(
+			options(
+				findVerb( wire.batches, 'urls' )[ VALUE ].arguments,
+				'filter'
+			)
+		).toEqual( [] );
+	} );
+
+	test( 'a chip change asks urls afresh from its first page, and the chart beside it', async () => {
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
+		const { rerender, getApi } = renderGraph( { chartChips: [] } );
+		await act( async () => {} );
+		const base = { search: '', sort: 'avg_ms', order: 'asc', offset: 400 };
+		await act( async () => {
+			getApi().handleUrlParamsChange( base );
+		} );
+		wire.batches.length = 0;
+
+		await act( async () => {
+			rerender( { chartChips: [ 'method=PATCH' ] } );
+		} );
+
+		const asked = urlsSent( wire );
+		expect( asked ).toHaveLength( 1 );
+		expect( options( asked[ 0 ][ VALUE ].arguments, 'filter' ) ).toEqual( [
+			'method=PATCH',
+		] );
+		expect(
+			option( asked[ 0 ][ VALUE ].arguments, 'offset' )
+		).toBeUndefined();
+		expect( option( asked[ 0 ][ VALUE ].arguments, 'sort' ) ).toBe(
+			'avg_ms'
 		);
+		expect(
+			options(
+				queryFrom( wire.batches, 'chart:in' )[ VALUE ].arguments,
+				'filter'
+			)
+		).toEqual( [ 'worker=0', 'method=PATCH' ] );
+
+		// The table's own report of its first page then asks nothing more.
+		await act( async () => {
+			getApi().handleUrlParamsChange( { ...base, offset: 0 } );
+		} );
+		expect( urlsSent( wire ) ).toHaveLength( 1 );
+	} );
+
+	test( 'a dimension change asks the chart alone, never urls', async () => {
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
+		const chips = [ 'country=Tuvalu' ];
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { chartBreakdown: 'ua', chartChips: chips },
+		} );
+		await act( async () => {} );
+		wire.batches.length = 0;
+
+		await act( async () => {
+			rerender( { chartBreakdown: 'ja4', chartChips: chips } );
+		} );
+
+		expect( queryFrom( wire.batches, 'chart:in' ) ).toBeTruthy();
+		expect( urlsSent( wire ) ).toEqual( [] );
+	} );
+
+	test( 'the detail chips ride dump_url, its refresh, and its chart', async () => {
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'beef5512' },
+				detailChart: {
+					breakdown: 'method',
+					thenBy: '',
+					chips: [ 'status_class=5', 'country=Kiribati' ],
+				},
+			} );
+		} );
+
+		const opened = findVerb( wire.batches, 'dump_url' );
+		expect( positional( opened[ VALUE ].arguments ) ).toEqual( [
+			'beef5512',
+		] );
+		expect( options( opened[ VALUE ].arguments, 'filter' ) ).toEqual( [
+			'status_class=5',
+			'country=Kiribati',
+		] );
+
+		wire.batches.length = 0;
+		await act( async () => {
+			refreshTick();
+		} );
+		expect(
+			options(
+				findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments,
+				'filter'
+			)
+		).toEqual( [ 'status_class=5', 'country=Kiribati' ] );
+	} );
+
+	test( 'opening a URL with its chart question asks each slice once', async () => {
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '60000' },
+		} );
+		await act( async () => {} );
+		wire.batches.length = 0;
+
+		// The commit an open makes: a selection and a fresh chart question.
+		await act( async () => {
+			rerender( {
+				refreshInterval: '60000',
+				selectedUrl: { hash: 'beef6631' },
+				detailChart: {
+					breakdown: 'status_class',
+					thenBy: '',
+					chips: [ 'country=Kiribati' ],
+				},
+			} );
+		} );
+
+		const from = ( receiver ) =>
+			wire.batches
+				.flat()
+				.filter(
+					( m ) =>
+						'query' === m[ VALUE ]?.name && receiver === m[ FROM ]
+				);
+		expect( from( 'url-chart:in' ) ).toHaveLength( 1 );
+		expect( from( 'url-categories:in' ) ).toHaveLength( 1 );
+		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 1 );
+	} );
+
+	test( 'a bucket change asks the list alone, and a dimension change the chart alone', async () => {
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		const selectedUrl = { hash: 'beef6631' };
+		const chips = [ 'country=Kiribati' ];
+		const chartOf = ( breakdown ) => ( { breakdown, thenBy: '', chips } );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {
+				refreshInterval: '60000',
+				selectedUrl,
+				detailChart: chartOf( 'method' ),
+			},
+		} );
+		await act( async () => {} );
+		wire.batches.length = 0;
+
+		await act( async () => {
+			rerender( {
+				refreshInterval: '60000',
+				selectedUrl,
+				detailChart: chartOf( 'method' ),
+				detailFilters: { bucket: '2026-10-04-13-35' },
+			} );
+		} );
+		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 1 );
+		expect( queryFrom( wire.batches, 'url-chart:in' ) ).toBeNull();
+
+		wire.batches.length = 0;
+		await act( async () => {
+			rerender( {
+				refreshInterval: '60000',
+				selectedUrl,
+				detailChart: chartOf( 'ua' ),
+				detailFilters: { bucket: '2026-10-04-13-35' },
+			} );
+		} );
+		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 0 );
+		expect(
+			positional(
+				queryFrom( wire.batches, 'url-chart:in' )[ VALUE ].arguments
+			)
+		).toEqual( [ 'requests', 'bucket', 'ua' ] );
+	} );
+
+	test( 'a detail chip change asks dump_url and the URL chart, keeping the list up, and not the categories', async () => {
+		const wire = installWire( {
+			dump_url: { stats: { count: 5512 }, requests: [] },
+		} );
+		const selectedUrl = { hash: 'beef5512' };
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {
+				refreshInterval: '60000',
+				selectedUrl,
+				detailChart: { breakdown: 'method', thenBy: '', chips: [] },
+			},
+		} );
+		await act( async () => {} );
+		const seen = [];
+		const view = Core.node( 'url-detail:view' );
+		const fill = view.fill.bind( view );
+		view.fill = ( m ) => {
+			if ( m[ VALUE ]?.action ) {
+				seen.push( m[ VALUE ] );
+			}
+			fill( m );
+		};
+		wire.batches.length = 0;
+
+		await act( async () => {
+			rerender( {
+				refreshInterval: '60000',
+				selectedUrl,
+				detailChart: {
+					breakdown: 'method',
+					thenBy: '',
+					chips: [ 'status_class=Unknown' ],
+				},
+			} );
+		} );
+
+		expect(
+			options(
+				findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments,
+				'filter'
+			)
+		).toEqual( [ 'status_class=Unknown' ] );
+		expect(
+			options(
+				queryFrom( wire.batches, 'url-chart:in' )[ VALUE ].arguments,
+				'filter'
+			)
+		).toEqual( [ 'url=beef5512', 'status_class=Unknown' ] );
+		expect( queryFrom( wire.batches, 'url-categories:in' ) ).toBeNull();
+		// Loading, never cleared: the header stays up until the answer lands.
+		expect( seen ).toEqual( [ { action: 'loading' } ] );
+	} );
+
+	test( 'a reply to the dump_url ask a chip change superseded never lands', async () => {
+		const held = [];
+		installFakeCommandWire( ( m ) => {
+			if ( 'dump_url' !== m[ VALUE ]?.name ) {
+				return null;
+			}
+			if ( ! options( m[ VALUE ].arguments, 'filter' ).length ) {
+				return new Promise( ( resolve ) => held.push( resolve ) );
+			}
+			return {
+				stats: {},
+				requests: [ { rid: 'kotare-504', timestamp: 1787000300 } ],
+			};
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'f00d7731' },
+			} );
+		} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'f00d7731' },
+				detailChart: {
+					breakdown: 'status_class',
+					thenBy: '',
+					chips: [ 'status_class=5' ],
+				},
+			} );
+		} );
+		await act( async () => {
+			held.forEach( ( resolve ) =>
+				resolve( {
+					stats: {},
+					requests: [ { rid: 'clean-1', timestamp: 1787000900 } ],
+				} )
+			);
+		} );
+
+		expect(
+			Core.node( 'url-detail:view' ).view.data.requests.map(
+				( r ) => r.rid
+			)
+		).toEqual( [ 'kotare-504' ] );
 	} );
 } );
 
@@ -904,7 +1188,6 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 				refreshInterval: '0',
 				selectedUrl: { hash: 'beef4471' },
 				detailFilters: {
-					errors_only: false,
 					bucket: '2026-10-04-13-35',
 				},
 			} );
@@ -920,7 +1203,6 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 				refreshInterval: '0',
 				selectedUrl: { hash: 'beef4471' },
 				detailFilters: {
-					errors_only: false,
 					bucket: RUNS,
 				},
 			} );
@@ -1009,59 +1291,6 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		expect( opened[ FROM ] ).toBe( 'url-detail:in' );
 		// Answered, so nothing stands and the next tick mints the refresh.
 		expect( Core.node( 'url-detail:fetch' ).outbox ).toEqual( [] );
-	} );
-
-	test( 'a reply to the ask an Errors Only flip superseded never lands', async () => {
-		const held = [];
-		installFakeCommandWire( ( m ) => {
-			if ( 'dump_url' !== m[ VALUE ]?.name ) {
-				return null;
-			}
-			if (
-				! m[ VALUE ].arguments.some( ( t ) =>
-					t.startsWith( '--errors_only' )
-				)
-			) {
-				return new Promise( ( resolve ) => held.push( resolve ) );
-			}
-			return {
-				stats: {},
-				requests: [
-					{ rid: 'tout-1', timestamp: 1787000300, error_status: 'T' },
-				],
-			};
-		} );
-		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { refreshInterval: '0' },
-		} );
-		await act( async () => {} );
-		await act( async () => {
-			rerender( {
-				refreshInterval: '0',
-				selectedUrl: { hash: 'f00d7731' },
-			} );
-		} );
-		await act( async () => {
-			rerender( {
-				refreshInterval: '0',
-				selectedUrl: { hash: 'f00d7731' },
-				detailFilters: { errors_only: true, bucket: '' },
-			} );
-		} );
-		await act( async () => {
-			held.forEach( ( resolve ) =>
-				resolve( {
-					stats: {},
-					requests: [ { rid: 'clean-1', timestamp: 1787000900 } ],
-				} )
-			);
-		} );
-
-		expect(
-			Core.node( 'url-detail:view' ).view.data.requests.map(
-				( r ) => r.rid
-			)
-		).toEqual( [ 'tout-1' ] );
 	} );
 
 	// A refusal of the modal's ask goes to its view.
@@ -1342,62 +1571,6 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		] );
 	} );
 
-	/**
-	 * A busy URL's newest requests bury its errors, so "Errors Only" is the
-	 * server's question, and every refresh after it keeps asking for errors.
-	 */
-	test( 'Errors Only asks dump_url for errors, keeping the slice up meanwhile', async () => {
-		const wire = installWire( {
-			dump_url: { stats: { count: 4471 }, requests: [] },
-		} );
-		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { refreshInterval: '0' },
-		} );
-		await act( async () => {} );
-		await act( async () => {
-			rerender( {
-				refreshInterval: '0',
-				selectedUrl: { hash: 'beef4471' },
-			} );
-		} );
-		const opened = findVerb( wire.batches, 'dump_url' );
-		expect( opened[ VALUE ].arguments ).not.toContain( '--errors_only' );
-
-		// The view keeps its slice on screen, marked loading, until it lands.
-		const recordControls = ( name ) => {
-			const seen = [];
-			const node = Core.node( name );
-			const fill = node.fill.bind( node );
-			node.fill = ( m ) => {
-				if ( m[ VALUE ]?.action ) {
-					seen.push( m[ VALUE ] );
-				}
-				fill( m );
-			};
-			return seen;
-		};
-		const viewControls = recordControls( 'url-detail:view' );
-		wire.batches.length = 0;
-		await act( async () => {
-			rerender( {
-				refreshInterval: '0',
-				selectedUrl: { hash: 'beef4471' },
-				detailFilters: { errors_only: true, bucket: '' },
-			} );
-		} );
-		const asked = findVerb( wire.batches, 'dump_url' );
-		expect( asked[ VALUE ].arguments ).toContain( '--errors_only' );
-		// Loading, never cleared: the whole URL's header stays up meanwhile.
-		expect( viewControls ).toEqual( [ { action: 'loading' } ] );
-
-		wire.batches.length = 0;
-		await act( async () => {
-			refreshTick();
-		} );
-		const refreshed = findVerb( wire.batches, 'dump_url' );
-		expect( refreshed[ VALUE ].arguments ).toContain( '--errors_only' );
-	} );
-
 	test( 'the selected server is emitted in the dump_url args', async () => {
 		// The modal opens from a row the server filter scoped, so it has to ask
 		// the same question — otherwise one click puts the site's average under
@@ -1466,7 +1639,6 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 				sort: 'count',
 				order: 'desc',
 				offset: 0,
-				errorsOnly: false,
 				includeWorkers: false,
 				bucket: '',
 			} );
@@ -1837,11 +2009,16 @@ describe( 'usePerformanceGraph — chart questions', () => {
 	test( "a modal chart's dimension change asks that chart alone", async () => {
 		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
 		const selectedUrl = { hash: 'beef7743' };
+		// A fresh array each render: the modal compares the chips by value.
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {
 				refreshInterval: '60000',
 				selectedUrl,
-				detailChart: { breakdown: 'method', thenBy: '', chips: [] },
+				detailChart: {
+					breakdown: 'method',
+					thenBy: '',
+					chips: [ 'country=Tonga' ],
+				},
 			},
 		} );
 		await act( async () => {} );
@@ -1851,7 +2028,11 @@ describe( 'usePerformanceGraph — chart questions', () => {
 			rerender( {
 				refreshInterval: '60000',
 				selectedUrl,
-				detailChart: { breakdown: 'ja4', thenBy: '', chips: [] },
+				detailChart: {
+					breakdown: 'ja4',
+					thenBy: '',
+					chips: [ 'country=Tonga' ],
+				},
 			} );
 		} );
 
@@ -1864,7 +2045,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		expect( queryFrom( wire.batches, 'url-categories:in' ) ).toBeNull();
 	} );
 
-	test( 'an Errors Only or bucket flip asks the list, never the charts, which describe every request', async () => {
+	test( 'a bucket flip asks the list, never the charts, which describe every request', async () => {
 		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
 		const selectedUrl = { hash: 'beef7743' };
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
@@ -1877,7 +2058,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 			rerender( {
 				refreshInterval: '60000',
 				selectedUrl,
-				detailFilters: { errors_only: true, bucket: '' },
+				detailFilters: { bucket: '2026-10-04-13-35' },
 			} );
 		} );
 

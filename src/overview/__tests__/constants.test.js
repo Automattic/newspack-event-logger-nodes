@@ -66,15 +66,22 @@ const phpFields = ( source ) => {
 };
 
 describe( "Stats_Query::FIELDS['requests']", () => {
-	it( 'is its time fields, then every field a chip may name, in order', () => {
+	it( 'is its time fields, the server the select owns, then every field a chip may name, in order', () => {
 		expect( [
 			...phpList( 'TIME_FIELDS' ),
+			'server',
 			...FILTER_FIELD_OPTIONS.map( ( option ) => option.value ),
 		] ).toEqual( phpFields( 'requests' ) );
+		expect( CHART_BREAKDOWN_OPTIONS.map( ( o ) => o.value ) ).toContain(
+			'server'
+		);
 	} );
 
 	it( 'labels every field a select or a chip offers', () => {
-		for ( const option of FILTER_FIELD_OPTIONS ) {
+		for ( const option of [
+			...CHART_BREAKDOWN_OPTIONS,
+			...FILTER_FIELD_OPTIONS,
+		] ) {
 			expect( typeof option.label ).toBe( 'string' );
 		}
 	} );
@@ -103,8 +110,10 @@ describe( 'the lists drawn from it', () => {
 
 		expect( values ).not.toContain( 'worker' );
 		expect(
-			values.every( ( value ) =>
-				FILTER_FIELD_OPTIONS.some( ( o ) => o.value === value )
+			values.every(
+				( value ) =>
+					'server' === value ||
+					FILTER_FIELD_OPTIONS.some( ( o ) => o.value === value )
 			)
 		).toBe( true );
 	} );

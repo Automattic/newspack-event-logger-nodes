@@ -186,7 +186,7 @@ describe( 'UrlsView — the envelope slice', () => {
 				totals: { urls: 7331, requests: 90210 },
 				rows: 7331,
 				slowest: [ { url: '/slow', avg_ms: 2600 } ],
-				filters: { server: 'edge-01', search: '', errors_only: false },
+				filters: { server: 'edge-01', search: '', filter: [] },
 				limit: 20,
 				offset: 0,
 			} )
@@ -197,7 +197,7 @@ describe( 'UrlsView — the envelope slice', () => {
 			totals: { urls: 7331, requests: 90210 },
 			rows: 7331,
 			slowest: [ { url: '/slow', avg_ms: 2600 } ],
-			filters: { server: 'edge-01', search: '', errors_only: false },
+			filters: { server: 'edge-01', search: '', filter: [] },
 			loading: false,
 			error: null,
 		} );

@@ -59,12 +59,14 @@ import { GROUPS } from '../constants';
  *                                          '' is every server.
  * @param {?Object}  [options.urlFilters]   The url filters the server echoed,
  *                                          which the `overview:` brief answers
- *                                          for: a page brief quoting numbers
- *                                          the reader cannot see describes a
- *                                          different site than the one on
- *                                          screen. Every other descriptor
- *                                          names one thing, and a filtered
- *                                          view of one thing is that thing.
+ *                                          for, or under an open URL modal
+ *                                          its own chips and bucket, which
+ *                                          the `url:` brief answers for: a
+ *                                          brief quoting numbers the reader
+ *                                          cannot see describes a different
+ *                                          site than the one on screen. Each
+ *                                          `filter` token goes out as its own
+ *                                          `--filter=`.
  * @return {{active: boolean, start: Function, cancel: Function, briefs: Object[], open: boolean, close: Function}}
  *   The mode and what it gathered: `start` and `cancel` arm and disarm the
  *   picker, `briefs` holds one assembled reply per standing pick, in pick order,
@@ -131,21 +133,24 @@ export function useAsk( {
 			// before the first reply. A server read live beside the echoed
 			// filters names a server the table is not showing yet.
 			const server = urlFilters?.server ?? serverFilter;
-			ask(
-				formatCommandArgs( descriptors, {
+			ask( [
+				...formatCommandArgs( descriptors, {
 					...( server ? { server } : {} ),
 					...( urlFilters?.search
 						? { search: urlFilters.search }
 						: {} ),
-					...( urlFilters?.errors_only ? { errors_only: '1' } : {} ),
 					...( urlFilters?.include_workers
 						? { include_workers: '1' }
 						: {} ),
 					...( urlFilters?.bucket
 						? { bucket: urlFilters.bucket }
 						: {} ),
-				} )
-			);
+				} ),
+				// One token a chip: the verb takes `--filter` repeated.
+				...( urlFilters?.filter ?? [] ).map(
+					( filter ) => `--filter=${ filter }`
+				),
+			] );
 		},
 		[ ask, serverFilter, urlFilters ]
 	);

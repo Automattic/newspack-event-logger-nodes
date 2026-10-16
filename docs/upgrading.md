@@ -6,6 +6,22 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **`urls`, `dump_url`, `ask` and their MCP tools refuse `errors_only`.**
+  Each takes `--filter=field=value` in its place, repeatable and spelled as
+  `query` spells it. `--filter=error=T --filter=error=F` keeps exactly the
+  timeouts and fatals `errors_only` kept; `--filter=status_class=5` keeps
+  the 5xx responses, most fatals among them, and
+  `--filter=status_class=Unknown` the requests that answered no status:
+  timeouts, and CLI or cron runs where workers count. A filter narrows
+  `dump_url`'s stats as well as its list, so its `requests_capped` counts
+  against the narrowed `stats.count`. A filter cannot name `server`, which
+  `--server` owns: a `server=` token is refused, so name the server with
+  `--server`. `query` keeps `server=`. `urls` and `ask` echo `filter` (the
+  tokens) where they echoed `errors_only`. Every `urls` reply's `totals`
+  carries `errors`, and so do an `overview:` brief's `stats` and URL rows.
+  `ask` answers no `error_summary`: a `url:` brief always carries the count
+  and the means of the requests its filter leaves.
+
 - **This release needs newspack-nodes 2.111.0, and each site rebuilds its
   stats.** The stats move from the three keyed `flame-stats:*` Tables to the
   `flame-facts` Row_Table, which `flame-builder.tsl` declares with
@@ -58,7 +74,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `positions`, `last_modified`, `slots`, `breakdown_time_series` and
   `category_time_series` are gone. A listed request's `timestamp` is its
   start. A caller tailing the list with `--after` re-asks it whole instead.
-  `aggregate_flame` is null under `errors_only` or a selection, and when
+  `aggregate_flame` is null under a filter or a selection, and when
   `MAX_SCAN_S` cut the rebuild, which alone answers `flame_cut` true.
 
 - **`dump_request` reads a request through its row.** A rid no request row

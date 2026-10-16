@@ -17,7 +17,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 class AskAssemblerTest extends TestCase {
 
 	/** The URL filters of an unfiltered page, as the `ask` verb hands them on. */
-	private const FILTERS = [ 'search' => '', 'errors_only' => false, 'include_workers' => false, 'bucket' => '' ];
+	private const FILTERS = [ 'search' => '', 'filter' => [], 'include_workers' => false, 'bucket' => '' ];
 
 	/** The URL a record's request fetched, as the builder stores it: query kept, redacted at log time. */
 	private const REQUEST_URL = 'https://example.test/calendar/today?view=week&token=[REDACTED]';
@@ -66,7 +66,7 @@ class AskAssemblerTest extends TestCase {
 		// answers site-wide for the same hash, and nothing in the brief says
 		// which of the two contradicting sets it was looking at.
 		$brief = Ask_Assembler::for_url(
-			[ 'url' => 'https://example.test/a', 'hash' => 'cccccccccccc', 'count' => 2, 'avg_ms' => 130.0 ],
+			[ 'url' => 'https://example.test/a', 'hash' => 'cccccccccccc', 'count' => 2, 'errors' => 1, 'avg_ms' => 130.0 ],
 			[],
 			false,
 			null,
@@ -357,8 +357,8 @@ class AskAssemblerTest extends TestCase {
 			'hash'   => '25ecf5606840',
 			'url'    => '/calendar/today?token=hunter2seekrit',
 			'count'  => 4210,
+			'errors' => 64,
 			'avg_ms' => 812.0,
-			
 		];
 		$requests = [
 			[ 'rid' => 'a', 'duration_ms' => 300, 'status_code' => 200, 'partition' => 0 ],
@@ -382,7 +382,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_a_url_brief_says_when_its_list_holds_the_newest_only(): void {
 		$brief = static fn ( bool $capped ): array => Ask_Assembler::for_url(
-			[ 'url' => 'https://example.test/kahu', 'hash' => 'c4c4c4c4c4c4', 'count' => 9133 ],
+			[ 'url' => 'https://example.test/kahu', 'hash' => 'c4c4c4c4c4c4', 'count' => 9133, 'errors' => 12 ],
 			[ [ 'rid' => 'kahu1', 'duration_ms' => 41.5, 'status_code' => 200, 'partition' => 2 ] ],
 			$capped,
 			null,
@@ -528,7 +528,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_a_url_brief_leaves_the_time_series_to_the_verb_that_owns_it(): void {
 		$brief = Ask_Assembler::for_url(
-			[ 'hash' => '25ecf5606840', 'url' => '/calendar', 'count' => 12 ],
+			[ 'hash' => '25ecf5606840', 'url' => '/calendar', 'count' => 12, 'errors' => 3 ],
 			[],
 			false,
 			$this->rule(),
@@ -549,7 +549,7 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_worst_requests_name_themselves_without_their_storage_coordinates(): void {
 		$brief = Ask_Assembler::for_url(
-			[ 'hash' => 'ff00', 'url' => '/calendar', 'count' => 2 ],
+			[ 'hash' => 'ff00', 'url' => '/calendar', 'count' => 2, 'errors' => 0 ],
 			[
 				[
 					'rid'          => 'w0rst1',
@@ -820,7 +820,7 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_a_url_with_no_rule_says_so_and_gets_the_cold_start_finding(): void {
 		$brief = Ask_Assembler::for_url(
-			[ 'hash' => 'ff00', 'url' => 'https://example.test/uncovered', 'count' => 12, 'avg_ms' => 4000.0 ],
+			[ 'hash' => 'ff00', 'url' => 'https://example.test/uncovered', 'count' => 12, 'errors' => 4, 'avg_ms' => 4000.0 ],
 			[],
 			false,
 			null,
@@ -920,10 +920,11 @@ class AskAssemblerTest extends TestCase {
 					'avg_ms'              => 812.5,
 					'avg_peak_mb'         => 44.25,
 					'requests_per_second' => 0.83,
+					'errors'              => 23,
 				],
 				'data'      => [
-					[ 'hash' => '5efdf8a72d74', 'url' => 'https://example.com/slow', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4 ],
-					[ 'hash' => 'aaaaaaaaaaaa', 'url' => 'https://example.com/fast', 'count' => 4000, 'avg_ms' => 40.0, 'max_ms' => 120.0 ],
+					[ 'hash' => '5efdf8a72d74', 'url' => 'https://example.com/slow', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4, 'errors' => 7 ],
+					[ 'hash' => 'aaaaaaaaaaaa', 'url' => 'https://example.com/fast', 'count' => 4000, 'avg_ms' => 40.0, 'max_ms' => 120.0, 'errors' => 0 ],
 				],
 			],
 			[
@@ -945,6 +946,8 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 812.5, $brief['stats']['avg_ms'] );
 		$this->assertSame( 0.83, $brief['stats']['requests_per_second'] );
 		$this->assertSame( 44.25, $brief['stats']['avg_peak_mb'] );
+		$this->assertSame( 23, $brief['stats']['errors'], 'errors counted beside the traffic' );
+		$this->assertSame( [ 7, 0 ], \array_column( $brief['urls'], 'errors' ) );
 		$this->assertSame(
 			[ '5efdf8a72d74', 'aaaaaaaaaaaa' ],
 			\array_column( $brief['urls'], 'hash' ),
@@ -964,31 +967,15 @@ class AskAssemblerTest extends TestCase {
 	 * Every filter in force rides the pointer. One left behind widens the
 	 * fetch to a set the brief never described.
 	 */
-	public function test_an_errors_only_brief_counts_errors_beside_traffic(): void {
-		$brief = Ask_Assembler::for_overview(
-			[
-				'totals'    => [ 'urls' => 2, 'requests' => 6150, 'errors' => 7 ],
-				'data'      => [ [ 'hash' => '0e11a5c3b2d9', 'url' => 'https://example.com/erring', 'count' => 6100, 'errors' => 6 ] ],
-			],
-			[ 'categories' => [] ],
-			'',
-			[ 'errors_only' => true ] + self::FILTERS
-		);
-
-		$this->assertSame( 7, $brief['stats']['errors'] );
-		$this->assertSame( 6150, $brief['stats']['requests'] );
-		$this->assertSame( 6, $brief['urls'][0]['errors'] );
-		$this->assertSame( 6100, $brief['urls'][0]['count'] );
-	}
-
 	public function test_an_overview_pointer_carries_every_filter_in_force(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'requests' => 4210 ], 'data' => [] ],
+			[ 'totals' => [ 'requests' => 4210, 'errors' => 0 ], 'data' => [] ],
 			[ 'categories' => [] ],
 			'spoke-07',
-			[ 'search' => 'checkout', 'errors_only' => true, 'include_workers' => true ] + self::FILTERS
+			[ 'search' => 'checkout', 'filter' => [ 'status_class=5', 'method=POST' ], 'include_workers' => true ] + self::FILTERS
 		);
 
+		$this->assertSame( [ 'status_class=5', 'method=POST' ], $brief['filters']['filter'] );
 		$urls = null;
 		foreach ( $brief['fetch'] as $pointer ) {
 			if ( 'performance_urls' === $pointer['tool'] ) {
@@ -1000,7 +987,7 @@ class AskAssemblerTest extends TestCase {
 			[
 				'server'          => 'spoke-07',
 				'search'          => 'checkout',
-				'errors_only'     => '1',
+				'filter'          => [ 'status_class=5', 'method=POST' ],
 				'include_workers' => '1',
 			],
 			$urls
@@ -1025,7 +1012,7 @@ class AskAssemblerTest extends TestCase {
 
 	/** Every count a brief quotes is exact, so it carries no flag saying otherwise. */
 	public function test_an_overview_brief_carries_no_estimate_or_provisional_flag(): void {
-		$brief = Ask_Assembler::for_overview( [ 'totals' => [ 'urls' => 4217, 'requests' => 9001 ], 'data' => [] ], [ 'categories' => [] ], '', self::FILTERS );
+		$brief = Ask_Assembler::for_overview( [ 'totals' => [ 'urls' => 4217, 'requests' => 9001, 'errors' => 0 ], 'data' => [] ], [ 'categories' => [] ], '', self::FILTERS );
 
 		$this->assertSame( 4217, $brief['stats']['urls'] );
 		$this->assertArrayNotHasKey( 'estimated', $brief );
@@ -1035,7 +1022,7 @@ class AskAssemblerTest extends TestCase {
 	/** No server filter is the fleet, and the brief says so rather than ''. */
 	public function test_an_overview_brief_with_no_server_answers_for_the_fleet(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'requests' => 7 ], 'data' => [] ],
+			[ 'totals' => [ 'requests' => 7, 'errors' => 0 ], 'data' => [] ],
 			[ 'categories' => [] ],
 			'',
 			self::FILTERS
@@ -1162,61 +1149,7 @@ class AskAssemblerTest extends TestCase {
 		$this->assertArrayNotHasKey( 'span', Ask_Assembler::for_entry( $this->query_span_record(), 8 ) );
 	}
 
-	/**
-	 * `tests/fixtures/error-summary.json` is the case list, and the JS
-	 * `errorSummary()` reads it too, so the URL modal's header and the brief
-	 * summarize one list the same way. Compared as the wire carries it.
-	 *
-	 * @param list<array<string,mixed>> $requests Request rows.
-	 * @param array<string,mixed>       $expected The summary.
-	 */
-	#[DataProvider( 'error_summary_provider' )]
-	public function test_error_summary_matches_the_shared_case_list( array $requests, array $expected ): void {
-		$wire = static fn ( mixed $value ): mixed => \json_decode( (string) \wp_json_encode( $value ), true );
-
-		$this->assertSame( $wire( $expected ), $wire( Ask_Assembler::error_summary( $requests ) ) );
-	}
-
-	/**
-	 * @return array<string,array{list<array<string,mixed>>,array<string,mixed>}>
-	 */
-	public static function error_summary_provider(): array {
-		$cases = \json_decode( (string) \file_get_contents( __DIR__ . '/../fixtures/error-summary.json' ), true );
-		\assert( \is_array( $cases ) );
-		$out = [];
-		foreach ( $cases as $case ) {
-			$out[ (string) $case['name'] ] = [ $case['requests'], $case['expected'] ];
-		}
-		return $out;
-	}
-
-	/** An errors-only brief is of the errors listed, never the URL's whole traffic. */
-	public function test_an_errors_only_url_brief_carries_the_exact_count_and_the_summary_in_place_of_whole_url_stats(): void {
-		$requests = [
-			[ 'rid' => 'kea4410', 'partition' => 2, 'timestamp' => 1741000456, 'duration_ms' => 2417, 'status_code' => 500, 'peak_mb' => 91, 'error_status' => 'F' ],
-			[ 'rid' => 'kea4411', 'partition' => 0, 'timestamp' => 1741000123, 'duration_ms' => 864000, 'status_code' => 0, 'peak_mb' => 37, 'error_status' => 'T' ],
-		];
-
-		$brief = Ask_Assembler::for_url(
-			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5, 'errors' => 37 ],
-			$requests,
-			false,
-			$this->rule(),
-			'kiwi.example',
-			[ 'errors_only' => true ] + self::FILTERS
-		);
-
-		$this->assertTrue( $brief['errors_only'] );
-		$this->assertSame( [ 'errors' => 37 ], $brief['stats'] );
-		$this->assertEquals( Ask_Assembler::error_summary( $requests ), $brief['error_summary'] );
-		$this->assertSame( 1, $brief['error_summary']['timeouts'] );
-		$this->assertSame(
-			[ 'hash' => '5e5e5e5e5e5e', 'server' => 'kiwi.example', 'errors_only' => '1' ],
-			$brief['fetch'][0]['arguments']
-		);
-	}
-
-	/** The full list keeps the URL's whole stats, and summarizes no errors. */
+	/** An unfiltered brief keeps the URL's whole stats, its errors among them. */
 	public function test_a_full_url_brief_keeps_the_whole_url_stats(): void {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 4210, 'timed_count' => 4173, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5, 'errors' => 37 ],
@@ -1227,12 +1160,11 @@ class AskAssemblerTest extends TestCase {
 			self::FILTERS
 		);
 
-		$this->assertFalse( $brief['errors_only'] );
+		$this->assertSame( [], $brief['filter'] );
 		$this->assertSame(
-			[ 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5 ],
+			[ 'count' => 4210, 'errors' => 37, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5 ],
 			$brief['stats']
 		);
-		$this->assertArrayNotHasKey( 'error_summary', $brief );
 		$this->assertSame(
 			[ 'hash' => '5e5e5e5e5e5e', 'server' => 'kiwi.example' ],
 			$brief['fetch'][0]['arguments']
@@ -1245,7 +1177,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_a_url_brief_carries_its_rows_max_ms_null_or_measured(): void {
 		$brief = static fn ( ?float $max ): mixed => Ask_Assembler::for_url(
-			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 6, 'avg_ms' => 41.7, 'max_ms' => $max ],
+			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 6, 'errors' => 2, 'avg_ms' => 41.7, 'max_ms' => $max ],
 			[],
 			false,
 			null,
@@ -1267,7 +1199,7 @@ class AskAssemblerTest extends TestCase {
 		);
 	}
 
-	/** A bucketed brief names its bucket, and its pointer fetches that bucket. */
+	/** A bucketed, filtered brief names both, and its pointer fetches both. */
 	public function test_a_bucketed_url_brief_names_its_bucket_and_re_fetches_it(): void {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 7, 'avg_ms' => 70.0, 'max_ms' => 133.0, 'max_peak_mb' => 3.5, 'errors' => 1 ],
@@ -1275,12 +1207,13 @@ class AskAssemblerTest extends TestCase {
 			false,
 			$this->rule(),
 			'kiwi.example',
-			[ 'errors_only' => true, 'bucket' => '2026-10-04-13-35' ] + self::FILTERS
+			[ 'filter' => [ 'status_class=5' ], 'bucket' => '2026-10-04-13-35' ] + self::FILTERS
 		);
 
 		$this->assertSame( '2026-10-04-13-35', $brief['bucket'] );
+		$this->assertSame( [ 'status_class=5' ], $brief['filter'] );
 		$this->assertSame(
-			[ 'hash' => '5e5e5e5e5e5e', 'server' => 'kiwi.example', 'errors_only' => '1', 'bucket' => '2026-10-04-13-35' ],
+			[ 'hash' => '5e5e5e5e5e5e', 'server' => 'kiwi.example', 'filter' => [ 'status_class=5' ], 'bucket' => '2026-10-04-13-35' ],
 			$brief['fetch'][0]['arguments']
 		);
 	}
@@ -1288,10 +1221,10 @@ class AskAssemblerTest extends TestCase {
 	/** An overview brief's bucket rides its filters and its `performance_urls` pointer. */
 	public function test_a_bucketed_overview_brief_names_its_bucket_and_re_fetches_it(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'urls' => 2, 'requests' => 18 ], 'data' => [] ],
+			[ 'totals' => [ 'urls' => 2, 'requests' => 18, 'errors' => 0 ], 'data' => [] ],
 			[ 'categories' => [] ],
 			'kiwi.example',
-			[ 'search' => '', 'errors_only' => false, 'include_workers' => false, 'bucket' => '2026-10-04-13-35' ]
+			[ 'search' => '', 'filter' => [], 'include_workers' => false, 'bucket' => '2026-10-04-13-35' ]
 		);
 
 		$this->assertSame( '2026-10-04-13-35', $brief['filters']['bucket'] );
@@ -1306,7 +1239,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_worst_requests_rank_a_null_duration_after_every_number(): void {
 		$brief = Ask_Assembler::for_url(
-			[ 'hash' => 'a7a7a7a7a7a7', 'url' => 'https://example.test/tui', 'count' => 5 ],
+			[ 'hash' => 'a7a7a7a7a7a7', 'url' => 'https://example.test/tui', 'count' => 5, 'errors' => 2 ],
 			[
 				[ 'rid' => 'tout1', 'duration_ms' => null, 'status_code' => 0, 'error_status' => 'T', 'partition' => 1 ],
 				[ 'rid' => 'fatal1', 'duration_ms' => 2417, 'status_code' => 500, 'error_status' => 'F', 'partition' => 2 ],
@@ -1317,17 +1250,11 @@ class AskAssemblerTest extends TestCase {
 			false,
 			null,
 			'',
-			[ 'errors_only' => true ] + self::FILTERS
+			[ 'filter' => [ 'status_class=5' ] ] + self::FILTERS
 		);
 
 		$this->assertSame( [ 'abort1', 'fatal1', 'clean1', 'tout1', 'zero1' ], \array_column( $brief['worst_requests'], 'rid' ) );
 		$this->assertSame( [ 41000.0, 2417.0, 300.0, null, null ], \array_column( $brief['worst_requests'], 'duration_ms' ) );
-	}
-
-	/** A mean over the things that HAVE a value; the mean of none is null, never 0. */
-	public function test_a_mean_over_no_requests_is_null(): void {
-		$this->assertNull( Ask_Assembler::mean( 12.5, 0 ) );
-		$this->assertEqualsWithDelta( 3.125, Ask_Assembler::mean( 12.5, 4 ), 1e-9 );
 	}
 
 	/** A figure nobody measured stays null; a measured one is the number. */

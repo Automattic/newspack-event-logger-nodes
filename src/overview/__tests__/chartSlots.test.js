@@ -288,6 +288,12 @@ describe( 'valueName and filterValue', () => {
 		expect( filterValue( 'status_class', '4XX' ) ).toBe( '4' );
 		expect( filterValue( 'status', '4xx' ) ).toBe( '4xx' );
 	} );
+
+	it( 'reads a typed unknown class back as the answer spells it, whatever its case', () => {
+		expect( filterValue( 'status_class', 'unknown' ) ).toBe( 'Unknown' );
+		expect( filterValue( 'status_class', 'UNKNOWN' ) ).toBe( 'Unknown' );
+		expect( filterValue( 'country', 'unknown' ) ).toBe( 'unknown' );
+	} );
 } );
 
 describe( 'answerSlots', () => {

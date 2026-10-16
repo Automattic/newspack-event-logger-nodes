@@ -3,19 +3,20 @@
  *
  * The server owns the set. `PerformanceDashboard` polls the `performance` CI's
  * `urls` verb and this table draws the page it is handed, in the order it
- * arrives: the search box, the sort headers, the two filter toggles and the
- * pager are local state that only reports itself upward through
+ * arrives: the search box, the sort headers, the Include Workers toggle and
+ * the pager are local state that only reports itself upward through
  * `onParamsChange`. Re-applying any of it here makes the footer's total
  * describe a different population than the rows, and `localeCompare` re-orders
  * a page the server already cut with PHP's byte-order `<=>`, so rows skip and
  * repeat across pages.
  *
  * All of it also lives in the address bar — `?sort=`, `?order=`, `?q=`,
- * `?errors=`, `?workers=` and `?paged=` — so a shared link opens on the same
- * view. The page is `?paged=`, WordPress's own name, because `?page=` names
- * the admin screen. It owns neither the server filter nor the bucket
- * selection its Time field and the charts above edit: the dashboard holds
- * both and hands them in.
+ * `?workers=` and `?paged=` — so a shared link opens on the same view. The
+ * page is `?paged=`, WordPress's own name, because `?page=` names the admin
+ * screen. It owns neither the server filter, nor the chart's chips, nor the
+ * bucket selection its Time field and the charts above edit: the dashboard
+ * holds all three, and the table reads them only to start a new set on its
+ * first page.
  *
  * Rows virtualize against window scroll, and each row's URL cell carries a
  * background bar scaling the active chart metric against the page's p95.
@@ -107,24 +108,20 @@ const pct = ( part, total ) => {
  * numeric cell. `status` is an unsortable HTTP-class heading over a `pct()`
  * share, `code` the sortable URL heading over the bar-backed `<code>` cell.
  * `render` overrides the default `formatNum( url[ field ], 'ms' )`, and
- * `width` is the column's grid track. `errorsLabel` heads the column instead
- * of `label` on an errors-only page, whose count column shows `errors`.
+ * `width` is the column's grid track.
  *
  * A `status` column's `status` is a representative code, not a count of that
  * one status: the shared `.entry-status[data-status^="2"]` rules colour the
  * cell by the first digit, so any 2xx code paints the 2xx column.
  *
- * @type {Array<{field: string, width: string, label: string, errorsLabel?: string, kind: string, status?: string, render?: Function}>}
+ * @type {Array<{field: string, width: string, label: string, kind: string, status?: string, render?: Function}>}
  */
 const COLUMNS = [
 	{
 		field: 'count',
-		// Fits "Errors" and its caret in every monospace skin's face (63px).
 		width: '66px',
 		label: __( 'Reqs', 'newspack-event-logger-nodes' ),
-		errorsLabel: __( 'Errors', 'newspack-event-logger-nodes' ),
-		render: ( url, formatNum, errorCounts ) =>
-			formatNum( errorCounts ? url.errors : url.count ),
+		render: ( url, formatNum ) => formatNum( url.count ),
 	},
 	{
 		field: 'url',
@@ -252,18 +249,17 @@ const cellClass = ( col ) =>
  * the class count over the row's total, which a single field lookup cannot
  * express.
  *
- * @param {Object}   col         Column declaration from COLUMNS.
- * @param {Object}   url         One row of the `urls` reply.
- * @param {Function} formatNum   Number formatter, from the table.
- * @param {boolean}  errorCounts Whether the count cell shows the row's `errors`.
+ * @param {Object}   col       Column declaration from COLUMNS.
+ * @param {Object}   url       One row of the `urls` reply.
+ * @param {Function} formatNum Number formatter, from the table.
  * @return {string|import('react').ReactElement} Cell content.
  */
-const renderCell = ( col, url, formatNum, errorCounts ) => {
+const renderCell = ( col, url, formatNum ) => {
 	if ( 'status' === col.kind ) {
 		return pct( url[ col.field ], url.count );
 	}
 	return col.render
-		? col.render( url, formatNum, errorCounts )
+		? col.render( url, formatNum )
 		: formatNum( url[ col.field ], 'ms' );
 };
 
@@ -298,19 +294,18 @@ const emptyText = ( error, loading, searchTerm ) => {
 /**
  * The row field a URL cell's bar measures, the one the table scales by too.
  *
- * `volume` bars what the count column shows — `errors` on an errors-only
- * page — `memory` the peak, and the two time metrics `avg_ms`.
+ * `volume` bars the request count, `memory` the peak, and the two time
+ * metrics `avg_ms`.
  *
- * @param {string}  metric      The chart metric the bars follow.
- * @param {boolean} errorCounts Whether the count column shows `errors`.
+ * @param {string} metric The chart metric the bars follow.
  * @return {string} The row field.
  */
-const barFieldFor = ( metric, errorCounts ) => {
+const barFieldFor = ( metric ) => {
 	if ( 'memory' === metric ) {
 		return 'avg_peak_mb';
 	}
 	if ( 'volume' === metric ) {
-		return errorCounts ? 'errors' : 'count';
+		return 'count';
 	}
 	return 'avg_ms';
 };
@@ -326,14 +321,13 @@ const UrlRow = memo(
 	 * The row is a button carrying the `?` picker's `url:` descriptor, so a
 	 * picker click asks about this URL rather than the page.
 	 *
-	 * @param {Object}                       props             Component props.
-	 * @param {Object}                       props.url         One row of the `urls` reply.
-	 * @param {boolean}                      props.isSelected  Whether the detail modal is open on this row.
-	 * @param {(url: Object) => void}        props.onSelect    Receives the row on click or Enter/Space.
-	 * @param {(n: number, s?: string) => *} props.formatNum   Number formatter, from the table.
-	 * @param {number}                       props.maxAvg      The page's p95 of the measured bar metric; 0 draws no bar.
-	 * @param {string}                       props.barField    The row field the bar measures, from `barFieldFor()`.
-	 * @param {boolean}                      props.errorCounts Whether the count cell shows the row's `errors`.
+	 * @param {Object}                       props            Component props.
+	 * @param {Object}                       props.url        One row of the `urls` reply.
+	 * @param {boolean}                      props.isSelected Whether the detail modal is open on this row.
+	 * @param {(url: Object) => void}        props.onSelect   Receives the row on click or Enter/Space.
+	 * @param {(n: number, s?: string) => *} props.formatNum  Number formatter, from the table.
+	 * @param {number}                       props.maxAvg     The page's p95 of the measured bar metric; 0 draws no bar.
+	 * @param {string}                       props.barField   The row field the bar measures, from `barFieldFor()`.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function UrlRow( {
@@ -343,7 +337,6 @@ const UrlRow = memo(
 		formatNum,
 		maxAvg,
 		barField,
-		errorCounts,
 	} ) {
 		// A URL no timed request reached is unmeasured, and draws no bar.
 		const barValue = url[ barField ];
@@ -384,7 +377,7 @@ const UrlRow = memo(
 						className={ cellClass( col ) }
 						style={ 'code' === col.kind ? barStyle : undefined }
 					>
-						{ renderCell( col, url, formatNum, errorCounts ) }
+						{ renderCell( col, url, formatNum ) }
 					</div>
 				) ) }
 			</div>
@@ -400,14 +393,14 @@ const UrlRow = memo(
  * @param {Array<Object>}              props.urls             The page of rows the `urls` verb returned.
  * @param {?Object}                    props.selectedUrl      The row the detail modal is open on, or null.
  * @param {(url: Object) => void}      props.onSelect         Receives a row on click or Enter/Space, and is forwarded to each row.
- * @param {(params: Object) => void}   props.onParamsChange   Receives `search`, `sort`, `order`, `offset`, `errorsOnly`, `includeWorkers` and `bucket` whenever one of them changes.
+ * @param {(params: Object) => void}   props.onParamsChange   Receives `search`, `sort`, `order`, `offset`, `includeWorkers` and `bucket` whenever one of them changes.
  * @param {string}                     [props.bucket]         The spelling of the bucket selection the dashboard narrowed the table to; '' for none.
  * @param {string[]|null}              [props.slots]          The charted bucket keys, newest first, which the Time field resolves a typed time against.
  * @param {string}                     [props.server]         The server the dashboard scoped the table to; '' for every server.
+ * @param {string[]}                   [props.chips]          The chart's chips, which narrow the table's set server-side; a change starts the new set on page 1.
  * @param {(spelling: string) => void} [props.onBucketChange] Receives the selection the Time field leaves.
  * @param {?number}                    [props.totalUrls]      The URLs the server's filters left, which the pager pages over. Null until a reply has counted them.
  * @param {string}                     [props.metric]         Chart metric the row bars scale.
- * @param {boolean}                    [props.errorCounts]    Whether the reply was built under "Errors Only", so the count column shows each row's `errors`.
  * @param {?string}                    [props.error]          The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
  * @param {boolean}                    [props.loading]        Whether a page is asked for and not yet answered.
  * @return {import('react').ReactElement} Rendered component.
@@ -420,10 +413,10 @@ export default function UrlTable( {
 	bucket = '',
 	slots = null,
 	server = '',
+	chips = [],
 	onBucketChange,
 	totalUrls = null,
 	metric = 'volume',
-	errorCounts = false,
 	error = null,
 	loading = false,
 } ) {
@@ -443,8 +436,7 @@ export default function UrlTable( {
 		( raw ) => raw ?? '',
 		String
 	);
-	const [ errorsOnly, setErrorsOnly ] = useQueryParamFlag( 'errors' );
-	// Opts IN, where Errors opts in to narrow; workers are out by default.
+	// Opts IN: workers are out by default.
 	const [ includeWorkers, setIncludeWorkers ] =
 		useQueryParamFlag( 'workers' );
 	const [ currentPage, setCurrentPage ] = useQueryParamState(
@@ -457,10 +449,10 @@ export default function UrlTable( {
 		searchTerm,
 		sortField,
 		sortOrder,
-		errorsOnly,
 		includeWorkers,
 		bucket,
 		server,
+		chips,
 	] );
 	const [ pagedFilters, setPagedFilters ] = useState( filters );
 	if ( pagedFilters !== filters ) {
@@ -533,7 +525,6 @@ export default function UrlTable( {
 			sort: sortField,
 			order: sortOrder,
 			offset,
-			errorsOnly,
 			includeWorkers,
 			bucket,
 		} );
@@ -543,7 +534,6 @@ export default function UrlTable( {
 		sortOrder,
 		page,
 		offset,
-		errorsOnly,
 		includeWorkers,
 		bucket,
 		onParamsChange,
@@ -551,7 +541,7 @@ export default function UrlTable( {
 
 	const filteredUrls = urls;
 
-	const barField = barFieldFor( metric, errorCounts );
+	const barField = barFieldFor( metric );
 	// Bar-background max uses p95 so outliers don't blow out the scale.
 	const maxAvg = useMemo( () => {
 		const values = filteredUrls
@@ -622,15 +612,6 @@ export default function UrlTable( {
 				/>
 				<button
 					type="button"
-					className={ errorsOnly ? 'button is-active' : 'button' }
-					onClick={ () => setErrorsOnly( ! errorsOnly ) }
-				>
-					{ errorsOnly
-						? __( 'Showing Errors', 'newspack-event-logger-nodes' )
-						: __( 'Errors Only', 'newspack-event-logger-nodes' ) }
-				</button>
-				<button
-					type="button"
 					className={ includeWorkers ? 'button is-active' : 'button' }
 					onClick={ () => setIncludeWorkers( ! includeWorkers ) }
 				>
@@ -664,11 +645,7 @@ export default function UrlTable( {
 							<SortHeaderButton
 								key={ col.field }
 								field={ col.field }
-								label={
-									errorCounts && col.errorsLabel
-										? col.errorsLabel
-										: col.label
-								}
+								label={ col.label }
 								dir={
 									sortField === col.field ? sortOrder : null
 								}
@@ -704,7 +681,6 @@ export default function UrlTable( {
 								formatNum={ formatNum }
 								maxAvg={ maxAvg }
 								barField={ barField }
-								errorCounts={ errorCounts }
 							/>
 						) )
 					) }

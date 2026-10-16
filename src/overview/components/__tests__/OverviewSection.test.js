@@ -375,19 +375,24 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
-	it( 'shows an errors-only total beside the traffic it came from', () => {
+	it( 'shows Total Errors on every page, zero included', () => {
 		const { container, unmount } = mount(
 			{},
-			{ urlTotals: { ...baseTotals, errors: 3 } }
+			{ urlTotals: { ...baseTotals, errors: 0 } }
 		);
-		expect( container.textContent ).toContain( 'Total Errors' );
-		expect( container.textContent ).toContain( 'Total Requests' );
+		const stat = Array.from(
+			container.querySelectorAll( '.newspack-nodes-stat' )
+		).find( ( el ) => el.textContent.includes( 'Total Errors' ) );
+		expect( stat.textContent ).toBe( '0Total Errors' );
 		unmount();
 	} );
 
-	it( 'shows no error total where the reply counts none', () => {
+	it( 'holds Total Errors as a dash until the reply counts it', () => {
 		const { container, unmount } = mount( {} );
-		expect( container.textContent ).not.toContain( 'Total Errors' );
+		const stat = Array.from(
+			container.querySelectorAll( '.newspack-nodes-stat' )
+		).find( ( el ) => el.textContent.includes( 'Total Errors' ) );
+		expect( stat.textContent ).toBe( '—Total Errors' );
 		unmount();
 	} );
 

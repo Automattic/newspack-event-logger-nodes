@@ -23,7 +23,8 @@
  * change rides the very next tick without re-wiring the graph. A
  * `serverFilter` change asks all four afresh, superseding the asks in flight,
  * and fires the batched tick at once rather than waiting out the cadence; a
- * chart dimension or chip change asks the chart alone.
+ * chart dimension change asks the chart alone, and a chip change the chart
+ * and `urls`, whose rows and header the chips narrow too.
  *
  * ON-DEMAND slices. Opening a modal fetches; neither modal hangs off
  * `performance:timer`, and the overview poll pauses while either is open:
@@ -36,9 +37,10 @@
  * Every `url-detail:timer` tick asks `dump_url` and the URL's two charts
  * again, and each answer replaces its slice whole. Opening the modal or
  * rescoping it asks all three through `askNow()`, superseding every older
- * ask; flipping Errors Only or editing its buckets asks the list alone, since
- * the charts describe every request to the URL; a modal chart's dimension or
- * chip change asks that chart alone. Every slice's `Current` gate, the
+ * ask; editing its buckets asks the list alone, since the charts describe
+ * every request to the URL; a modal chart's dimension change asks that chart
+ * alone, and its chip change that chart and `dump_url`, whose header and list
+ * the chips narrow too. Every slice's `Current` gate, the
  * substrate's, drops the answer to a superseded question before it reaches a
  * view, and sends a refusal to the view itself. `url-detail:timer` is armed
  * only while URL detail is the visible modal and the tab is visible, and
@@ -173,16 +175,15 @@ const DEFAULT_URL_PARAMS = {
 	sort: 'count',
 	order: 'desc',
 	offset: 0,
-	errorsOnly: false,
 	includeWorkers: false,
 	bucket: '',
 };
 
 /**
- * The URL modal's filters while nothing narrows it: every request, over the
- * whole window. The hook's default, and what the dashboard resets to.
+ * The URL modal's bucket selection while nothing narrows it: the whole
+ * window. The hook's default, and what the dashboard resets to.
  */
-export const NO_DETAIL_FILTERS = { errors_only: false, bucket: '' };
+export const NO_DETAIL_FILTERS = { bucket: '' };
 
 /**
  * The URL modal chart's question until someone changes it: its status
@@ -235,9 +236,19 @@ const queryArgs = ( source, dims, filters, measures, topBy ) => [
 		top: CHART_TOP,
 		top_by: topBy,
 	} ),
-	...filters.map( ( filter ) => `--filter=${ filter }` ),
+	...filterTokens( filters ),
 	...measures.map( ( measure ) => `--measure=${ measure }` ),
 ];
+
+/**
+ * One `--filter=` token for each filter, since the verbs take the option
+ * repeated where `formatCommandArgs()` would join a list on commas.
+ *
+ * @param {string[]} filters Each filter as `field=value`.
+ * @return {string[]} The tokens.
+ */
+const filterTokens = ( filters ) =>
+	filters.map( ( filter ) => `--filter=${ filter }` );
 
 /**
  * A request chart's question: its dimensions' series by request count.
@@ -304,27 +315,29 @@ const urlScope = ( hash, serverFilter ) => ( {
  * scoped by, and the modal's own narrowing. The open ask and every refresh
  * tick send the same question.
  *
- * @param {Object} arg              Named arguments.
- * @param {string} arg.hash         The URL hash.
- * @param {string} arg.serverFilter Server scope; '' means every server.
- * @param {Object} arg.filters      The modal's `{ errors_only, bucket }`: the
- *                                  URL's errors alone, and the spelling of the
- *                                  bucket selection the header and list
- *                                  narrow to, '' for none.
+ * @param {Object}   arg              Named arguments.
+ * @param {string}   arg.hash         The URL hash.
+ * @param {string}   arg.serverFilter Server scope; '' means every server.
+ * @param {Object}   arg.filters      The modal's `{ bucket }`: the spelling of
+ *                                    the bucket selection the header and list
+ *                                    narrow to, '' for none.
+ * @param {string[]} arg.chips        The modal chart's chips, each
+ *                                    `field=value`, which narrow the header
+ *                                    and list as they narrow its chart.
  * @return {string[]} The command token array.
  */
-function urlDetailArgs( { hash, serverFilter, filters } ) {
+function urlDetailArgs( { hash, serverFilter, filters, chips } ) {
 	const options = {};
 	if ( serverFilter ) {
 		options.server = serverFilter;
 	}
-	if ( filters.errors_only ) {
-		options.errors_only = true;
-	}
 	if ( filters.bucket ) {
 		options.bucket = filters.bucket;
 	}
-	return formatCommandArgs( [ hash ], options );
+	return [
+		...formatCommandArgs( [ hash ], options ),
+		...filterTokens( chips ),
+	];
 }
 
 /**
@@ -365,19 +378,23 @@ const overviewArgs = ( serverFilter ) =>
  * from its own `URLS_PER_PAGE`; the two numbers are one page size, split across
  * two files.
  *
- * Two options opt IN in opposite directions: `errors_only` narrows a set the
- * verb otherwise returns whole, while `include_workers` widens one the verb
- * excludes by default, because a long-running job would otherwise dominate
- * every average on the page. `bucket` narrows to a selection of five-minute
- * buckets, by its spelling, each row then carrying their summed numbers.
+ * `include_workers` widens a set the verb excludes by default, because a
+ * long-running job would otherwise dominate every average on the page.
+ * `bucket` narrows to a selection of five-minute buckets, by its spelling,
+ * each row then carrying their summed numbers. The chart's chips narrow it
+ * too, one `--filter=` each, so the table and its header describe the
+ * traffic the chart draws; no chip sends no filter, which keeps the default
+ * question the one the overview-prefetch job answers.
  *
- * @param {Object} arg              Named arguments.
- * @param {Object} arg.urlParams    The table's live search, sort, page and
- *                                  filter state.
- * @param {string} arg.serverFilter Server scope; '' means every server.
+ * @param {Object}   arg              Named arguments.
+ * @param {Object}   arg.urlParams    The table's live search, sort, page and
+ *                                    filter state.
+ * @param {string}   arg.serverFilter Server scope; '' means every server.
+ * @param {string[]} arg.chips        The Overview chart's chips, each
+ *                                    `field=value`.
  * @return {string[]} The command token array.
  */
-function urlsArgs( { urlParams, serverFilter } ) {
+function urlsArgs( { urlParams, serverFilter, chips } ) {
 	const options = {};
 	if ( urlParams.sort ) {
 		options.sort = urlParams.sort;
@@ -395,16 +412,13 @@ function urlsArgs( { urlParams, serverFilter } ) {
 	if ( serverFilter ) {
 		options.server = serverFilter;
 	}
-	if ( urlParams.errorsOnly ) {
-		options.errors_only = '1';
-	}
 	if ( urlParams.includeWorkers ) {
 		options.include_workers = '1';
 	}
 	if ( urlParams.bucket ) {
 		options.bucket = urlParams.bucket;
 	}
-	return formatCommandArgs( [], options );
+	return [ ...formatCommandArgs( [], options ), ...filterTokens( chips ) ];
 }
 
 /**
@@ -422,8 +436,9 @@ function urlsArgs( { urlParams, serverFilter } ) {
  * @param {string}   [opts.chartBreakdown]  The chart's first dimension.
  * @param {string}   [opts.chartThenBy]     Its second dimension; '' for none.
  * @param {string[]} [opts.chartChips]      Its filter chips, each
- *                                          `field=value`. A change re-asks,
- *                                          so hold one array per value.
+ *                                          `field=value`, which narrow the
+ *                                          URL table too. A change re-asks
+ *                                          both, so hold one array per value.
  * @param {boolean}  [opts.askActive]       The `?` picker is armed, which
  *                                          holds the poll exactly as an open
  *                                          modal does: the reader is aiming
@@ -442,15 +457,15 @@ function urlsArgs( { urlParams, serverFilter } ) {
  * @param {?Object}  [opts.selectedUrl]     `{ hash, url }` of the open URL
  *                                          detail modal; null closes and
  *                                          clears its slices.
- * @param {Object}   [opts.detailFilters]   The modal's `{ errors_only,
- *                                          bucket }`: its URL's errors alone,
- *                                          and the bucket selection its
- *                                          header and list narrow to. A
- *                                          change re-asks, so hold one object
- *                                          per value.
+ * @param {Object}   [opts.detailFilters]   The modal's `{ bucket }`: the
+ *                                          bucket selection its header and
+ *                                          list narrow to.
  * @param {Object}   [opts.detailChart]     The modal chart's `{ breakdown,
- *                                          thenBy, chips }`, held the same
- *                                          way.
+ *                                          thenBy, chips }`; its chips narrow
+ *                                          the header and list as well. The
+ *                                          modal re-asks a slice when a value
+ *                                          its question reads changes, so a
+ *                                          fresh object asks nothing.
  * @param {?string}  [opts.selectedRequest] Rid of the open request detail
  *                                          modal; null closes and clears it.
  * @return {{ handleUrlParamsChange: (params: Object) => void }} The URL table's params
@@ -477,13 +492,18 @@ export function usePerformanceGraph( opts = {} ) {
 	// Live UI state read at fire time by the getters and on-demand fetches.
 	const urlParamsRef = useRef( DEFAULT_URL_PARAMS );
 	const serverFilterRef = useRef( serverFilter );
-	// @longform A new server is a new set, asked from its first page by the
-	// filter poke below. The table's own report of offset 0 then matches and
-	// asks nothing, so the change puts one urls ask on the wire, not two.
-	if ( serverFilterRef.current !== serverFilter ) {
+	const chipsRef = useRef( chartChips );
+	// @longform A new server or chip set is a new set, asked from its first
+	// page by the pokes below. The table's own report of offset 0 then
+	// matches and asks nothing, so the change puts one urls ask on the wire.
+	if (
+		serverFilterRef.current !== serverFilter ||
+		chipsRef.current !== chartChips
+	) {
 		urlParamsRef.current = { ...urlParamsRef.current, offset: 0 };
 	}
 	serverFilterRef.current = serverFilter;
+	chipsRef.current = chartChips;
 	const detailFiltersRef = useRef( detailFilters );
 	detailFiltersRef.current = detailFilters;
 	const detailChartRef = useRef( detailChart );
@@ -512,6 +532,7 @@ export function usePerformanceGraph( opts = {} ) {
 			urlsArgs( {
 				urlParams: urlParamsRef.current,
 				serverFilter: serverFilterRef.current,
+				chips: chipsRef.current,
 			} ),
 		[]
 	);
@@ -550,6 +571,7 @@ export function usePerformanceGraph( opts = {} ) {
 					hash,
 					serverFilter: serverFilterRef.current,
 					filters: detailFiltersRef.current,
+					chips: detailChartRef.current.chips,
 				} )
 			),
 		[ aboutUrl ]
@@ -725,12 +747,14 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendControl ]
 	);
 
-	// A new server is a new page; a new chart question asks the chart alone.
+	// @longform A new server is a new page; a new chart question asks the
+	// chart, and new chips the table they narrow too.
 	useOnChange( pokePage, [ serverFilter ] );
 	useOnChange(
 		() => ask( pageSlices.chart ),
 		[ chartBreakdown, chartThenBy, chartChips ]
 	);
+	useOnChange( () => ask( pageSlices.urls ), [ chartChips ] );
 
 	// Every hold leaves the page stale, so each refreshes on release.
 	const wasHeld = useRef( false );
@@ -742,17 +766,22 @@ export function usePerformanceGraph( opts = {} ) {
 		wasHeld.current = held;
 	}, [ selectedUrl, selectedRequest, askActive, isPageVisible, pokePage ] );
 
-	// The URL and server the modal's slices were last asked under.
-	const detailScopeRef = useRef( null );
+	// The question each modal slice was last asked, by the parts that move it.
+	const detailAskedRef = useRef( null );
 
-	// All three on open and on a rescope; the list alone on a filter flip.
+	// @longform All three on open and on a rescope; else each slice whose own
+	// question moved: the chips move the list and the chart, the bucket the
+	// list alone, the dimensions the chart alone.
+	const { breakdown: detailBreakdown, thenBy: detailThenBy } = detailChart;
+	const detailChips = detailChart.chips;
+	const detailBucket = detailFilters.bucket;
 	useEffect( () => {
 		const clear = () =>
 			Object.values( urlSlices ).forEach( ( { view } ) =>
 				sendControl( view, { action: 'clear' } )
 			);
 		if ( ! selectedUrl ) {
-			detailScopeRef.current = null;
+			detailAskedRef.current = null;
 			clear();
 			return;
 		}
@@ -763,32 +792,39 @@ export function usePerformanceGraph( opts = {} ) {
 			} );
 			return;
 		}
-		const scope = JSON.stringify( [ selectedUrl.hash, serverFilter ] );
-		const rescoped = scope !== detailScopeRef.current;
-		detailScopeRef.current = scope;
-		if ( ! rescoped ) {
-			// A flip keeps the whole-URL slice up; the list waits loading.
-			ask( urlSlices.detail );
+		const asked = {
+			scope: JSON.stringify( [ selectedUrl.hash, serverFilter ] ),
+			bucket: detailBucket,
+			chips: JSON.stringify( detailChips ),
+			dims: JSON.stringify( [ detailBreakdown, detailThenBy ] ),
+		};
+		const prev = detailAskedRef.current;
+		detailAskedRef.current = asked;
+		if ( ! prev || prev.scope !== asked.scope ) {
+			// Another URL's numbers must not stand under this one's title.
+			clear();
+			Object.values( urlSlices ).forEach( ask );
 			return;
 		}
-		// Another URL's numbers must not stand under this one's title.
-		clear();
-		Object.values( urlSlices ).forEach( ask );
+		const chipsMoved = prev.chips !== asked.chips;
+		if ( chipsMoved || prev.bucket !== asked.bucket ) {
+			// The whole-URL slices stay up; the list waits loading.
+			ask( urlSlices.detail );
+		}
+		if ( chipsMoved || prev.dims !== asked.dims ) {
+			ask( urlSlices.chart );
+		}
 	}, [
 		selectedUrl,
 		serverFilter,
-		detailFilters,
+		detailBucket,
+		detailChips,
+		detailBreakdown,
+		detailThenBy,
 		sendControl,
 		ask,
 		urlSlices,
 	] );
-
-	// A new question of the modal chart asks that chart alone.
-	useOnChange( () => {
-		if ( isValidHash( optsRef.current.selectedUrl?.hash ) ) {
-			ask( urlSlices.chart );
-		}
-	}, [ detailChart ] );
 
 	// @longform Arm the URL modal's Timer only while URL detail is the visible
 	// view. No cleanup stops it: a re-arm from stopped polls at once, so a
@@ -863,7 +899,6 @@ export function usePerformanceGraph( opts = {} ) {
 	 * @param {string}  params.sort           Sort field.
 	 * @param {string}  params.order          Sort direction.
 	 * @param {number}  params.offset         First row of the page.
-	 * @param {boolean} params.errorsOnly     Narrow to erroring URLs.
 	 * @param {boolean} params.includeWorkers Include worker traffic.
 	 * @param {string}  params.bucket         Bucket selection's spelling; '' for none.
 	 */
@@ -875,7 +910,6 @@ export function usePerformanceGraph( opts = {} ) {
 				prev.sort === params.sort &&
 				prev.order === params.order &&
 				prev.offset === params.offset &&
-				!! prev.errorsOnly === !! params.errorsOnly &&
 				!! prev.includeWorkers === !! params.includeWorkers &&
 				prev.bucket === params.bucket
 			) {

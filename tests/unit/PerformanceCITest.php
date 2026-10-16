@@ -482,14 +482,14 @@ class PerformanceCITest extends TestCase {
 			new Performance_CI_Node(),
 			'performance',
 			'urls',
-			'--server=alpha.example --search=/reviews/ --errors_only'
+			'--server=alpha.example --search=/reviews/ --filter=method=POST'
 		);
 
 		$this->assertSame(
 			[
 				'server'          => 'alpha.example',
 				'search'          => '/reviews/',
-				'errors_only'     => true,
+				'filter'          => [ 'method=POST' ],
 				'include_workers' => false,
 				'bucket'          => '',
 			],
@@ -1838,27 +1838,27 @@ class PerformanceCITest extends TestCase {
 		// `ask <descriptor> [<context-descriptor>…]`: every positional after
 		// the first binds to `context`, so the page's scope rides by name.
 		$args = self::args_by_name( 'ask' );
-		$this->assertSame( [ 'descriptor', 'context', 'server', 'search', 'errors_only', 'include_workers', 'bucket' ], \array_keys( $args ) );
+		$this->assertSame( [ 'descriptor', 'context', 'server', 'search', 'filter', 'include_workers', 'bucket' ], \array_keys( $args ) );
 		$this->assertTrue( $args['descriptor']['required'] );
 		$this->assertTrue( $args['context']['variadic'] );
-		$this->assertFalse( $args['errors_only']['default'] );
+		$this->assertSame( self::args_by_name( 'query' )['filter'], $args['filter'], 'declared as query declares it' );
 		$this->assertFalse( $args['include_workers']['default'] );
 	}
 
 	public function test_urls_verb_declares_sort_paging_filter_args(): void {
-		// urls reads sort/order/limit/offset/search/server/errors_only and
+		// urls reads sort/order/limit/offset/search/server/filter and
 		// include_workers — all optional. `include_workers` opts IN because its
-		// default EXCLUDES, unlike `errors_only`, which opts in to narrow.
+		// default EXCLUDES.
 		$args = self::args_by_name( 'urls' );
 		$this->assertSame(
-			[ 'sort', 'order', 'limit', 'offset', 'search', 'server', 'errors_only', 'include_workers', 'bucket' ],
+			[ 'sort', 'order', 'limit', 'offset', 'search', 'server', 'filter', 'include_workers', 'bucket' ],
 			\array_keys( $args )
 		);
 		$this->assertSame( 'string', $args['bucket']['type'] );
 		$this->assertSame( '', $args['bucket']['default'] );
 		$this->assertSame( 'bool', $args['include_workers']['type'] );
 		$this->assertFalse( $args['include_workers']['default'] );
-		$this->assertSame( 'bool', $args['errors_only']['type'] );
+		$this->assertSame( self::args_by_name( 'query' )['filter'], $args['filter'], 'declared as query declares it' );
 		$this->assertSame( 'string', $args['sort']['type'] );
 		$this->assertSame( 'string', $args['order']['type'] );
 		$this->assertSame( 'int', $args['limit']['type'] );
@@ -2378,7 +2378,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 150.25, $reply['totals']['avg_ms'] );
 		$this->assertSame( 25.25, $reply['totals']['avg_peak_mb'] );
 		$this->assertEqualsWithDelta( 4 / ( 287 * 300 + self::tick() % 300 ), $reply['totals']['requests_per_second'], 1e-9, 'over the window\'s elapsed seconds' );
-		$this->assertArrayNotHasKey( 'errors', $reply['totals'], 'only an errors-only reply counts them' );
+		$this->assertSame( 1, $reply['totals']['errors'], 'every reply counts its timeouts and fatals' );
 		$this->assertSame(
 			[
 				'hash'         => self::hash_of( $kakapo ),
@@ -2505,21 +2505,124 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'holds no word', $reply );
 	}
 
-	public function test_urls_errors_only_keeps_urls_with_timeouts_or_fatals(): void {
-		$this->seed_request( [ 'url' => 'https://seed.example/a/', 'error' => 'T', 'ms' => null ] );
-		$this->seed_request( [ 'url' => 'https://seed.example/a/', 'ms' => 30.0 ] );
-		$this->seed_request( [ 'url' => 'https://seed.example/b/', 'error' => 'F', 'ms' => 900.5, 'status' => 500 ] );
-		$this->seed_request( [ 'url' => 'https://seed.example/c/', 'error' => 'A', 'ms' => null ] );
-		$this->seed_request( [ 'url' => 'https://seed.example/c/', 'status' => 502, 'ms' => 75.0 ] );
+	public function test_urls_filter_narrows_rows_totals_and_the_slowest_ten(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/huia-503/', 'status' => 503, 'ms' => 120.5 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/huia-503/', 'status' => 503, 'ms' => 140.5 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/huia-503/', 'status' => 503, 'ms' => 160.5 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/kahu-200/', 'ms' => 9000.5 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/kahu-200/', 'ms' => 9100.5 ] );
 
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--errors_only --sort=url --order=asc' );
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=status_class=5' );
 
-		$rows = self::rows_by_url( $reply );
-		$this->assertSame( [ 'https://seed.example/a/', 'https://seed.example/b/' ], \array_keys( $rows ), 'an abort and a 5xx are no errors' );
-		$this->assertSame( [ 1, 1, 0, null ], [ $rows['https://seed.example/a/']['count'], $rows['https://seed.example/a/']['errors'], $rows['https://seed.example/a/']['timed_count'], $rows['https://seed.example/a/']['avg_ms'] ] );
-		$this->assertSame( 900.5, $rows['https://seed.example/b/']['avg_ms'] );
-		$this->assertSame( [ 'urls' => 2, 'requests' => 2, 'avg_ms' => 900.5, 'errors' => 2 ], \array_intersect_key( $reply['totals'], [ 'urls' => 1, 'requests' => 1, 'avg_ms' => 1, 'errors' => 1 ] ) );
-		$this->assertTrue( $reply['filters']['errors_only'] );
+		$this->assertSame( [ 'https://seed.example/huia-503/' ], \array_column( $reply['data'], 'url' ) );
+		$this->assertSame( [ 1, 3, 1 ], [ $reply['totals']['urls'], $reply['totals']['requests'], $reply['rows'] ] );
+		$this->assertSame( [ 'https://seed.example/huia-503/' ], \array_column( $reply['slowest'], 'url' ), 'the slowest ten are the filtered set\'s' );
+		$this->assertSame( [ 'status_class=5' ], $reply['filters']['filter'] );
+		$this->assertSame( 0, $reply['totals']['errors'], 'every reply counts its errors' );
+	}
+
+	public function test_urls_filter_on_worker_replaces_the_include_workers_scope(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/w?pukeko', 'ms' => 4400.5, 'worker' => 1 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/tauhou/', 'ms' => 12.5 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=worker=1' );
+
+		$this->assertSame( [ 'https://seed.example/w?pukeko' ], \array_column( $reply['data'], 'url' ) );
+		$this->assertFalse( $reply['filters']['include_workers'] );
+	}
+
+	public function test_urls_two_filters_on_one_field_match_either(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/ruru-503/', 'status' => 503 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/ruru-404/', 'status' => 404 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/ruru-200/', 'status' => 200 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=status_class=5 --filter=status_class=4 --sort=url --order=asc' );
+
+		$this->assertSame( [ 'https://seed.example/ruru-404/', 'https://seed.example/ruru-503/' ], \array_column( $reply['data'], 'url' ) );
+		$this->assertSame( 2, $reply['totals']['requests'] );
+	}
+
+	public function test_urls_bucket_filter_takes_a_key(): void {
+		$latest = self::latest();
+		$this->seed_request( [ 'url' => 'https://seed.example/kakariki-in/', 'bucket' => $latest - 6 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/kakariki-out/', 'bucket' => $latest - 2 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=bucket=' . Bucket::key( $latest - 6 ) );
+
+		$this->assertSame( [ 'https://seed.example/kakariki-in/' ], \array_column( $reply['data'], 'url' ) );
+	}
+
+	public function test_urls_refuses_a_filter_with_no_field(): void {
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=kakapo' );
+
+		$this->assertIsString( $reply );
+		$this->assertStringContainsString( 'filter kakapo is no field=value', $reply );
+	}
+
+	/**
+	 * `--server` owns the server: a filter naming one is refused, with or
+	 * without `--server` beside it.
+	 *
+	 * @return array<string,array{0:string,1:string}>
+	 */
+	public static function server_filter_refusals(): array {
+		$hash = Log_Manager::url_hash( 'https://kahu-9.example/hoiho/' );
+		return [
+			'urls'                    => [ 'urls', '--filter=server=kahu-9.example' ],
+			'urls beside --server'    => [ 'urls', '--server=kahu-9.example --filter=server=kahu-9.example' ],
+			'dump_url'                => [ 'dump_url', $hash . ' --filter=server=kahu-9.example' ],
+			'dump_url beside --server' => [ 'dump_url', $hash . ' --server=ruru-4.example --filter=server=kahu-9.example' ],
+			'ask overview:'           => [ 'ask', 'overview:site --filter=server=kahu-9.example' ],
+			'ask url:'                => [ 'ask', 'url:' . $hash . ' --server=kahu-9.example --filter=server=kahu-9.example' ],
+		];
+	}
+
+	#[DataProvider( 'server_filter_refusals' )]
+	public function test_a_filter_naming_server_is_refused_for_server( string $verb, string $tokens ): void {
+		$this->seed_request( [ 'server' => 'kahu-9.example', 'url' => 'https://kahu-9.example/hoiho/' ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, $tokens );
+
+		$this->assertIsString( $reply );
+		$this->assertStringContainsString( "filter server=kahu-9.example is --server's: name the server with --server", $reply );
+	}
+
+	public function test_query_keeps_a_server_filter(): void {
+		$this->seed_request( [ 'server' => 'kahu-9.example', 'url' => 'https://kahu-9.example/hoiho/' ] );
+		$this->seed_request( [ 'server' => 'ruru-4.example', 'url' => 'https://ruru-4.example/hoiho/' ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', 'requests --measure=count --filter=server=kahu-9.example' );
+
+		$this->assertSame( [ [ 1 ] ], $reply['rows'] );
+	}
+
+	public function test_urls_refuses_errors_only(): void {
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--errors_only' );
+
+		$this->assertIsString( $reply );
+		$this->assertStringContainsString( 'unknown option --errors_only', $reply );
+	}
+
+	public function test_urls_error_filters_keep_exactly_the_timeouts_and_fatals(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/piopio-t/', 'error' => 'T', 'status' => 0, 'ms' => null ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/piopio-f/', 'error' => 'F', 'status' => 200, 'ms' => 61.5 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/piopio-a/', 'error' => 'A', 'status' => 0, 'ms' => null ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/piopio-503/', 'status' => 503, 'ms' => 41.5 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=error=T --filter=error=F --sort=url --order=asc' );
+
+		$this->assertSame( [ 'https://seed.example/piopio-f/', 'https://seed.example/piopio-t/' ], \array_column( $reply['data'], 'url' ), 'an abort and a 5xx are no errors; a fatal after headers is one' );
+		$this->assertSame( [ 2, 2 ], [ $reply['totals']['requests'], $reply['totals']['errors'] ] );
+	}
+
+	public function test_status_class_unknown_finds_a_timeout(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/titi-timeout/', 'error' => 'T', 'status' => 0, 'ms' => null ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/titi-ok/', 'ms' => 30.5 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=status_class=Unknown' );
+
+		$this->assertSame( [ 'https://seed.example/titi-timeout/' ], \array_column( $reply['data'], 'url' ) );
+		$this->assertSame( 1, $reply['totals']['errors'] );
 	}
 
 	public function test_urls_include_workers_false_drops_worker_urls(): void {
@@ -2549,7 +2652,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 1, 0, 1 ], [ $reply['data'][0]['count'], $reply['data'][0]['count_2xx'], $reply['data'][0]['count_4xx'] ] );
 		$this->assertSame( 1, $reply['totals']['requests'] );
 		$this->assertSame(
-			[ 'server' => 'alpha.example', 'search' => '', 'errors_only' => false, 'include_workers' => false, 'bucket' => '' ],
+			[ 'server' => 'alpha.example', 'search' => '', 'filter' => [], 'include_workers' => false, 'bucket' => '' ],
 			$reply['filters']
 		);
 	}
@@ -2666,14 +2769,15 @@ class PerformanceCITest extends TestCase {
 		$this->assertFalse( $reply['requests_capped'], 'the list holds every request the stats count' );
 	}
 
-	public function test_an_errors_only_list_is_capped_against_the_urls_errors(): void {
-		$url = 'https://seed.example/kokako-errors/';
-		$this->seed_requests( \array_fill( 0, Performance_CI_Node::RECENT_REQUEST_LIMIT + 1, [ 'url' => $url, 'error' => 'F', 'ms' => 61.5 ] ) );
+	public function test_a_filtered_list_is_capped_against_its_filtered_count(): void {
+		$url = 'https://seed.example/kokako-filtered/';
+		$this->seed_requests( \array_fill( 0, Performance_CI_Node::RECENT_REQUEST_LIMIT, [ 'url' => $url, 'status' => 503 ] ) );
 		$this->seed_requests( \array_fill( 0, 40, [ 'url' => $url ] ) );
 
-		$errors = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) . ' --errors_only' );
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) . ' --filter=status_class=5' );
 
-		$this->assertTrue( $errors['requests_capped'], 'five hundred of its 501 errors' );
+		$this->assertSame( Performance_CI_Node::RECENT_REQUEST_LIMIT, $reply['stats']['count'] );
+		$this->assertFalse( $reply['requests_capped'], 'the list holds all 500 the filtered stats count' );
 	}
 
 	public function test_dump_url_caps_its_list_at_the_newest_five_hundred(): void {
@@ -2693,20 +2797,20 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 501, $reply['stats']['count'], 'the stats count every request the list leaves out' );
 	}
 
-	public function test_dump_url_errors_only_lists_timeouts_and_fatals(): void {
+	public function test_dump_url_filter_narrows_stats_and_list_and_rebuilds_no_flame(): void {
 		$url    = 'https://seed.example/tieke-208/';
 		$latest = self::latest();
-		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-tieke-t', 'error' => 'T', 'ms' => null, 'finished_at' => $latest * 300 + 4.5 ] );
-		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-tieke-f', 'error' => 'F', 'ms' => 900.5, 'status' => 500, 'finished_at' => $latest * 300 + 2.5 ] );
-		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-tieke-a', 'error' => 'A', 'ms' => null, 'finished_at' => $latest * 300 + 3.5 ] );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-tieke-503', 'status' => 503, 'ms' => 900.5, 'finished_at' => $latest * 300 + 2.5 ] );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-tieke-404', 'status' => 404, 'ms' => 30.5, 'finished_at' => $latest * 300 + 3.5 ] );
 		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-tieke-ok', 'ms' => 40.5, 'finished_at' => $latest * 300 + 5.5 ] );
 
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) . ' --errors_only' );
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) . ' --filter=status_class=5' );
 
-		$this->assertSame( [ 'rid-tieke-t', 'rid-tieke-f' ], \array_column( $reply['requests'], 'rid' ), 'an abort is no error' );
-		$this->assertSame( [ 4, 2 ], [ $reply['stats']['count'], $reply['stats']['errors'] ], 'the stats stay the whole URL\'s' );
-		$this->assertFalse( $reply['requests_capped'], 'both of its errors are listed' );
-		$this->assertNull( $reply['aggregate_flame'], 'no flame is rebuilt from a list of errors' );
+		$this->assertSame( [ 'rid-tieke-503' ], \array_column( $reply['requests'], 'rid' ) );
+		$this->assertSame( [ 1, 900.5 ], [ $reply['stats']['count'], $reply['stats']['avg_ms'] ], 'the stats are the filtered requests\'' );
+		$this->assertFalse( $reply['requests_capped'] );
+		$this->assertNull( $reply['aggregate_flame'], 'no flame is rebuilt from a filtered list' );
+		$this->assertFalse( $reply['flame_cut'] );
 	}
 
 	public function test_dump_url_bucket_selection_narrows_its_stats_and_list(): void {
@@ -2999,24 +3103,25 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'URL not found: deadbeefcafe', $reply );
 	}
 
-	public function test_dump_url_declares_its_hash_server_errors_only_and_bucket(): void {
+	public function test_dump_url_declares_its_hash_server_filter_and_bucket(): void {
 		$args = self::args_by_name( 'dump_url' );
 
-		$this->assertSame( [ 'hash', 'server', 'errors_only', 'bucket' ], \array_keys( $args ) );
+		$this->assertSame( [ 'hash', 'server', 'filter', 'bucket' ], \array_keys( $args ) );
 		$this->assertTrue( $args['hash']['required'] );
-		$this->assertSame( [ 'string', 'bool', 'string' ], [ $args['server']['type'], $args['errors_only']['type'], $args['bucket']['type'] ] );
+		$this->assertSame( self::args_by_name( 'query' )['filter'], $args['filter'], 'declared as query declares it' );
+		$this->assertSame( [ 'string', 'string' ], [ $args['server']['type'], $args['bucket']['type'] ] );
 	}
 
 	public function test_ask_url_brief_reads_the_facts(): void {
 		$url = 'https://seed.example/kotuku-410/';
 		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-kotuku-a', 'ms' => 300.5 ] );
-		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-kotuku-b', 'ms' => 2900.5, 'status' => 500, 'peak_mb' => 77.5 ] );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-kotuku-b', 'ms' => 2900.5, 'status' => 500, 'peak_mb' => 77.5, 'error' => 'F' ] );
 		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-kotuku-c', 'ms' => 1400.5 ] );
 
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $url ) . ' --server=seed.example' );
 
 		$this->assertSame( $url, $brief['url'] );
-		$this->assertSame( [ 'count' => 3, 'avg_ms' => 1533.8333333333333, 'max_ms' => 2900.5, 'max_peak_mb' => 77.5 ], $brief['stats'] );
+		$this->assertSame( [ 'count' => 3, 'errors' => 1, 'avg_ms' => 1533.8333333333333, 'max_ms' => 2900.5, 'max_peak_mb' => 77.5 ], $brief['stats'] );
 		$this->assertSame( [ 'rid-kotuku-b', 'rid-kotuku-c', 'rid-kotuku-a' ], \array_column( $brief['worst_requests'], 'rid' ) );
 		$this->assertFalse( $brief['requests_capped'] );
 		$this->assertArrayNotHasKey( 'scan_stopped_early', $brief );
@@ -3024,16 +3129,23 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'hash' => self::hash_of( $url ), 'server' => 'seed.example' ], $brief['fetch'][0]['arguments'] );
 	}
 
-	public function test_an_errors_only_url_brief_summarizes_its_errors(): void {
+	public function test_ask_overview_and_url_briefs_carry_the_filter(): void {
 		$url = 'https://seed.example/korimako-5/';
-		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-korimako-t', 'error' => 'T', 'ms' => null, 'status' => 504 ] );
-		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-korimako-ok', 'ms' => 20.5 ] );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-korimako-503', 'status' => 503, 'ms' => 610.5, 'peak_mb' => 44.5 ] );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-korimako-ok', 'ms' => 20.5, 'peak_mb' => 88.5 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/hihi-ok/', 'ms' => 25.5 ] );
 
-		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $url ) . ' --errors_only' );
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --filter=status_class=5' );
+		VerbHarness::reset();
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $url ) . ' --filter=status_class=5' );
 
-		$this->assertSame( [ 'errors' => 1 ], $brief['stats'] );
-		$this->assertSame( [ 1, 1, 0 ], [ $brief['error_summary']['listed'], $brief['error_summary']['timeouts'], $brief['error_summary']['fatals'] ] );
-		$this->assertSame( [ 'rid-korimako-t' ], \array_column( $brief['worst_requests'], 'rid' ) );
+		$this->assertSame( [ 'status_class=5' ], $overview['filters']['filter'] );
+		$this->assertSame( [ 1, 1 ], [ $overview['stats']['urls'], $overview['stats']['requests'] ] );
+		$this->assertSame( [ 'status_class=5' ], $overview['fetch'][0]['arguments']['filter'] );
+		$this->assertSame( [ 'status_class=5' ], $brief['filter'] );
+		$this->assertSame( [ 'count' => 1, 'errors' => 0, 'avg_ms' => 610.5, 'max_ms' => 610.5, 'max_peak_mb' => 44.5 ], $brief['stats'] );
+		$this->assertSame( [ 'rid-korimako-503' ], \array_column( $brief['worst_requests'], 'rid' ) );
+		$this->assertSame( [ 'hash' => self::hash_of( $url ), 'filter' => [ 'status_class=5' ] ], $brief['fetch'][0]['arguments'] );
 	}
 
 	public function test_a_url_brief_carries_its_selections_spelling(): void {
@@ -3138,7 +3250,7 @@ class PerformanceCITest extends TestCase {
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $url ) );
 
 		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : '' );
-		$this->assertSame( [ 'count' => 0, 'avg_ms' => null, 'max_ms' => null, 'max_peak_mb' => 0 ], $brief['stats'] );
+		$this->assertSame( [ 'count' => 0, 'errors' => 0, 'avg_ms' => null, 'max_ms' => null, 'max_peak_mb' => 0 ], $brief['stats'] );
 		$this->assertSame( [], $brief['worst_requests'] );
 		$this->assertFalse( $brief['requests_capped'] );
 	}

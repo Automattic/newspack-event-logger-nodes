@@ -148,7 +148,7 @@ final class OverviewPrefetchTest extends TestCase {
 		return [
 			'a search'           => [ [ '--search=moa' ] ],
 			'a bucket selection' => [ [ '--bucket=' . Bucket::key( Bucket::id( self::NOW ) ) ] ],
-			'errors only'        => [ [ '--errors_only' ] ],
+			'a filter'           => [ [ '--filter=status_class=5' ] ],
 		];
 	}
 

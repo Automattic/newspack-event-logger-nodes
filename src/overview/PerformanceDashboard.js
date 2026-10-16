@@ -77,12 +77,11 @@ import {
 import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import OverviewSection from './components/OverviewSection';
-import { chipRefusal } from './components/BreakdownControls';
+import { chipOf, chipRefusal } from './components/BreakdownControls';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
 import AskPanel, { AskButton, useAsk } from './components/AskPanel';
 import { headlineStats } from './components/HeadlineStats';
-import { errorSummary } from '../components/errorStatus';
 import { pageFacts, factsJson } from './pageFacts';
 import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
@@ -133,14 +132,11 @@ const compareRequests = ( a, b, { field, dir } ) => {
 	return ( aVal > bVal ? 1 : -1 ) * ( 'asc' === dir ? 1 : -1 );
 };
 
-/** The URL modal header's stats over every request, and over its errors. */
-const URL_HEADER_STATS = [ 'requests_per_second', 'avg_ms', 'avg_peak_mb' ];
-const ERRORS_HEADER_STATS = [
+/** The URL modal header's stats, over what its chips and bucket keep. */
+const URL_HEADER_STATS = [
+	'requests_per_second',
 	'errors',
-	'timeouts',
-	'fatals',
-	'fatal_avg_ms',
-	'fatal_max_ms',
+	'avg_ms',
 	'avg_peak_mb',
 ];
 
@@ -167,15 +163,19 @@ const CHART_BREAKDOWNS = CHART_BREAKDOWN_OPTIONS.map(
 const CHART_THEN_BYS = [ '', ...CHART_BREAKDOWNS ];
 
 /**
- * The linked `?chip=` values the chip editor would take; the rest drop.
+ * The linked `?chip=` values the chip editor would take, spelled as it
+ * commits them; the rest drop, a `server=` among them, since the Server
+ * select owns the server.
  *
  * @param {string[]} raw Every `?chip=` value, each `field=value`.
  * @return {string[]} The chips kept, or `NO_CHIPS` for none.
  */
 const restoreChips = ( raw ) => {
-	const kept = raw.filter(
-		( chip ) => null === chipRefusal( chip, FILTER_FIELD_OPTIONS )
-	);
+	const kept = raw
+		.filter(
+			( chip ) => null === chipRefusal( chip, FILTER_FIELD_OPTIONS )
+		)
+		.map( chipOf );
 	return kept.length ? kept : NO_CHIPS;
 };
 
@@ -362,13 +362,19 @@ export default function PerformanceDashboard( {
 	// about what is selected NOW, as `dump_url` is. The page's own brief is
 	// about the rows on screen, so it takes the echoed `urlFilters` — the
 	// filters those rows were fetched under — and the live pick only until
-	// the first reply. An open URL modal lists under its own Errors Only and
+	// the first reply. An open URL modal lists under its own chips and
 	// bucket, so a brief asked there narrows as its list does. Above the
 	// graph, which holds its poll while armed.
 	const askFilters = useMemo(
 		() =>
-			selectedUrl ? { ...urlFilters, ...detailFilters } : urlFilters,
-		[ selectedUrl, urlFilters, detailFilters ]
+			selectedUrl
+				? {
+						...urlFilters,
+						...detailFilters,
+						filter: detailChart.chips,
+				  }
+				: urlFilters,
+		[ selectedUrl, urlFilters, detailFilters, detailChart.chips ]
 	);
 	const ask = useAsk( { onError, serverFilter, urlFilters: askFilters } );
 
@@ -413,17 +419,23 @@ export default function PerformanceDashboard( {
 
 	/**
 	 * Open a URL's modal, leaving behind whatever request was open inside the
-	 * previous one.
+	 * previous one. A URL picked from a narrowed table opens narrowed the same
+	 * way: on the bucket and the chips its rows were fetched under, the echo
+	 * rather than the live pick, less a `url=` chip, since the modal is one
+	 * URL and a chip on another would chart that one instead.
 	 *
 	 * @param {Object} url The `{hash, url}` catalog entry to open.
 	 */
-	// A URL picked from a narrowed table opens narrowed the same way.
 	const openUrl = useCallback(
 		( url ) => {
 			selectRequest( null );
-			setDetailFilters( {
-				errors_only: !! urlFilters?.errors_only,
-				bucket: urlFilters?.bucket ?? '',
+			setDetailFilters( { bucket: urlFilters?.bucket ?? '' } );
+			const chips = ( urlFilters?.filter ?? [] ).filter(
+				( chip ) => ! chip.startsWith( 'url=' )
+			);
+			setDetailChart( {
+				...NO_DETAIL_CHART,
+				chips: chips.length ? chips : NO_CHIPS,
 			} );
 			selectUrlNow( url );
 		},
@@ -744,21 +756,8 @@ export default function PerformanceDashboard( {
 		return sorted;
 	}, [ urlDetail?.requests, requestSort ] );
 
-	/**
-	 * Under the modal's Errors Only, the `errorSummary()` of the errors
-	 * listed, which the header, the list and the facts block take beside the
-	 * exact `stats.errors` in place of the whole URL's numbers, which describe
-	 * other traffic. Null while every request is listed, and while the list
-	 * is asked afresh, because the rows held then answer the old filters.
-	 */
+	// The list is asked afresh, so the rows it holds answer the old filters.
 	const detailListing = !! urlDetailSlice?.loading;
-	const detailErrors = useMemo(
-		() =>
-			detailFilters.errors_only && urlDetail && ! detailListing
-				? errorSummary( urlDetail.requests ?? [] )
-				: null,
-		[ detailFilters.errors_only, urlDetail, detailListing ]
-	);
 
 	// `Flame_Builder_Node` builds the tree; nothing here derives one.
 	const requestFlameData = requestDetail?.flame_data ?? null;
@@ -969,7 +968,7 @@ export default function PerformanceDashboard( {
 							urlFilters,
 							selectedUrl,
 							urlDetail,
-							detailErrors,
+							detailChips: detailChart.chips,
 							detailFilters,
 							selectedRequest,
 							requestDetail,
@@ -1038,8 +1037,8 @@ export default function PerformanceDashboard( {
 								server={ serverFilter }
 								onBucketChange={ setTableBucket }
 								totalUrls={ urlsSlice?.rows }
+								chips={ chartChips }
 								metric={ chartMetric }
-								errorCounts={ !! urlFilters?.errors_only }
 								error={ urlsSlice?.error ?? null }
 								loading={ !! urlsSlice?.loading }
 							/>
@@ -1099,13 +1098,8 @@ export default function PerformanceDashboard( {
 								{ urlDetail && (
 									<div className="event-logger-header-stats newspack-nodes-stats-grid">
 										{ headlineStats(
-											{
-												...urlDetail.stats,
-												...detailErrors,
-											},
-											detailErrors
-												? ERRORS_HEADER_STATS
-												: URL_HEADER_STATS
+											urlDetail.stats,
+											URL_HEADER_STATS
 										).map( ( { key, short, value } ) => (
 											<span
 												key={ key }
@@ -1192,7 +1186,6 @@ export default function PerformanceDashboard( {
 							onFilterChange={ setDetailFilter }
 							listing={ detailListing }
 							listError={ urlDetailSlice.error }
-							detailErrors={ detailErrors }
 							chartSlice={ urlChartSlice }
 							categoriesSlice={ urlCategoriesSlice }
 							chart={ detailChart }

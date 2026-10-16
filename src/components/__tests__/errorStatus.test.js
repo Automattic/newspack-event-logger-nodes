@@ -7,7 +7,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { ERROR_STATUSES, errorStatus, errorSummary } from '../errorStatus';
+import * as errorStatusModule from '../errorStatus';
+import { ERROR_STATUSES, errorStatus } from '../errorStatus';
 
 const PLUGIN_ROOT = path.join( __dirname, '..', '..', '..' );
 
@@ -63,17 +64,9 @@ describe( 'errorStatus', () => {
 	} );
 } );
 
-describe( 'errorSummary', () => {
-	// @longform The case list Ask_Assembler::error_summary() also reads, so the
-	// header and the brief cannot summarize one list two ways.
-	const cases = JSON.parse(
-		fs.readFileSync(
-			path.join( PLUGIN_ROOT, 'tests', 'fixtures', 'error-summary.json' ),
-			'utf8'
-		)
-	);
-
-	it.each( cases.map( ( c ) => [ c.name, c ] ) )( '%s', ( name, c ) => {
-		expect( errorSummary( c.requests ) ).toEqual( c.expected );
-	} );
+it( 'exports the marker table and its lookup, and nothing that summarizes a list', () => {
+	expect( Object.keys( errorStatusModule ).sort() ).toEqual( [
+		'ERROR_STATUSES',
+		'errorStatus',
+	] );
 } );

@@ -3,7 +3,7 @@
  * Tests for UrlDetailView — heavy child components mocked at the
  * module boundary. We exercise:
  *   - sortable column headers fire onRequestSort
- *   - "Errors Only" toggle asks its owner, and labels the server's list
+ *   - no "Errors Only" toggle; the chart's chips narrow the header and list
  *   - clicking a request row fires onSelectRequest
  *   - aggregate flame / breakdown / category time series sections
  *     mount when their data is present, each chart drawn from the answer
@@ -153,7 +153,7 @@ function mount( overrides = {} ) {
 		onRequestSort: jest.fn(),
 		onSelectRequest: jest.fn(),
 		urlHash: 'deadbeef',
-		filters: { errors_only: false, bucket: '' },
+		filters: { bucket: '' },
 		onFilterChange: jest.fn(),
 		chartSlice: sliceOf( null ),
 		categoriesSlice: sliceOf( null ),
@@ -387,43 +387,14 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'asks its owner to flip "Errors Only" on click', () => {
-		const onFilterChange = jest.fn();
-		const { container, unmount } = mount( { onFilterChange } );
-		const button = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Errors Only' );
-		act( () => {
-			button.click();
-		} );
-		expect( onFilterChange ).toHaveBeenCalledWith( 'errors_only', true );
-		unmount();
-	} );
-
-	it( 'lists the errors the server answered while "Errors Only" is on', () => {
-		// The server narrows the list; the view draws what it is handed.
-		const fatal = {
-			rid: 'fatal-6620',
-			timestamp: 1748960777,
-			method: 'GET',
-			duration_ms: 1540,
-			peak_mb: 3,
-			status_code: 500,
-			error_status: 'F',
-		};
-		const { container, unmount } = mount( {
-			urlDetail: { ...baseUrlDetail, stats: { errors: 7 } },
-			filters: { errors_only: true, bucket: '' },
-			detailErrors: { listed: 2, status_codes: { 500: 2 } },
-			sortedRequests: [
-				fatal,
-				{ ...fatal, rid: 'timeout-6621', error_status: 'T' },
-			],
-		} );
-		expect( container.textContent ).toContain( 'Recent Requests (2)' );
-		expect( container.textContent ).toContain( 'Showing Errors' );
-		expect( container.textContent ).toContain( 'fatal-6620' );
-		expect( container.textContent ).toContain( 'timeout-6621' );
+	it( 'offers no Errors Only toggle', () => {
+		const { container, unmount } = mount();
+		const labels = Array.from(
+			container.querySelectorAll( 'button' ),
+			( b ) => b.textContent
+		);
+		expect( labels ).not.toContain( 'Errors Only' );
+		expect( labels ).not.toContain( 'Showing Errors' );
 		unmount();
 	} );
 
@@ -465,52 +436,30 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'under Errors Only, lines the list up against the exact count, its span and its status codes', () => {
-		const first = new Date( 1748960301 * 1000 ).toLocaleString();
-		const last = new Date( 1748960388 * 1000 ).toLocaleString();
-		const { container, unmount } = mount( {
-			urlDetail: { ...baseUrlDetail, stats: { errors: 29 } },
-			filters: { errors_only: true, bucket: '' },
-			detailErrors: {
-				listed: 3,
-				timeouts: 1,
-				fatals: 2,
-				first_at: 1748960301,
-				last_at: 1748960388,
-				status_codes: { 0: 1, 500: 2 },
-			},
-		} );
-
-		expect( container.textContent ).toContain( '3 of 29 errors listed' );
-		expect( container.textContent ).toContain( `first ${ first }` );
-		expect( container.textContent ).toContain( `last ${ last }` );
-		expect( container.textContent ).toContain( 'no status ×1, 500 ×2' );
-		unmount();
-	} );
-
-	it( 'notes under Errors Only that the charts describe every request while the list holds errors', () => {
+	it( 'notes under chips that they narrow the chart, the header and the list, and nothing else', () => {
 		const note = 'describe every request to this URL';
-		const errors = mount( {
-			urlDetail: { ...baseUrlDetail, stats: { errors: 0 } },
-			filters: { errors_only: true, bucket: '' },
-			detailErrors: { listed: 0, status_codes: {} },
+		const chipped = mount( {
+			chart: { ...NO_DETAIL_CHART, chips: [ 'status_class=5' ] },
 		} );
-		expect( errors.container.textContent ).toContain( note );
-		expect( errors.container.textContent ).toContain(
-			'0 of 0 errors listed'
+		const banner = chipped.container.querySelector( '[role="status"]' );
+		expect( banner.textContent ).toContain(
+			'The filters narrow the chart beneath them, the header and the list'
 		);
-		errors.unmount();
+		expect( banner.textContent ).toContain( note );
+		expect( chipped.container.textContent ).not.toContain(
+			'errors listed'
+		);
+		chipped.unmount();
 
 		const all = mount();
 		expect( all.container.textContent ).not.toContain( note );
-		expect( all.container.textContent ).not.toContain( 'errors listed' );
 		all.unmount();
 	} );
 
 	it( 'replaces its selection on a plain chart click, and toggles on an additive one', () => {
 		const onFilterChange = jest.fn();
 		const { unmount } = mount( {
-			filters: { errors_only: false, bucket: '2026-10-04-13-35' },
+			filters: { bucket: '2026-10-04-13-35' },
 			onFilterChange,
 		} );
 		globalThis.__aggregateSlotClick( '2026-10-04-13-50', {
@@ -539,7 +488,7 @@ describe( 'UrlDetailView', () => {
 	it( 'replaces its selection on a plain chart drag, and adds the span on an additive one', () => {
 		const onFilterChange = jest.fn();
 		const { unmount } = mount( {
-			filters: { errors_only: false, bucket: '2026-10-04-13-35' },
+			filters: { bucket: '2026-10-04-13-35' },
 			onFilterChange,
 		} );
 		globalThis.__aggregateSlotRange(
@@ -576,7 +525,6 @@ describe( 'UrlDetailView', () => {
 	it( "shades the modal's own selection on both charts", () => {
 		const { unmount } = mount( {
 			filters: {
-				errors_only: false,
 				bucket: '2026-10-04-13-30..2026-10-04-13-35',
 			},
 		} );
@@ -590,14 +538,13 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'holds its selection in a Time field between the heading and Errors Only', () => {
+	it( 'holds its selection in a Time field after the heading', () => {
 		const onFilterChange = jest.fn();
 		const { container, unmount } = mount( {
 			chartSlice: sliceOf(
 				classAnswer( [], '2026-10-04-13-05..2026-10-04-14-00' )
 			),
 			filters: {
-				errors_only: false,
 				bucket: '2026-10-04-13-30,2026-10-04-13-40',
 			},
 			onFilterChange,
@@ -610,9 +557,8 @@ describe( 'UrlDetailView', () => {
 				field.parentElement.children,
 				( child ) => child.tagName
 			)
-		).toEqual( [ 'H3', 'DIV', 'BUTTON' ] );
+		).toEqual( [ 'H3', 'DIV' ] );
 		expect( field.previousElementSibling.tagName ).toBe( 'H3' );
-		expect( field.nextElementSibling.textContent ).toBe( 'Errors Only' );
 		expect( field.querySelectorAll( 'datalist option' ) ).toHaveLength(
 			12
 		);
@@ -628,23 +574,23 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'notes under a bucket that the charts and flame cover every request', () => {
+	it( 'notes under a bucket that the charts and profile cover every request', () => {
 		const note = 'describe every request to this URL';
 		const bucketed = mount( {
-			filters: { errors_only: false, bucket: '2026-10-04-13-35' },
+			filters: { bucket: '2026-10-04-13-35' },
 		} );
 		const banner = bucketed.container.querySelector( '[role="status"]' );
 		expect( banner.textContent ).toContain( note );
 		expect( banner.textContent ).toContain( '6:35–6:40 AM' );
+		expect( banner.textContent ).not.toContain( 'flame' );
 		bucketed.unmount();
 
 		const both = mount( {
-			filters: { errors_only: true, bucket: '2026-10-04-13-35' },
-			urlDetail: { ...baseUrlDetail, stats: { errors: 2 } },
-			detailErrors: { listed: 2, status_codes: {} },
+			filters: { bucket: '2026-10-04-13-35' },
+			chart: { ...NO_DETAIL_CHART, chips: [ 'country=Kiribati' ] },
 		} );
 		const bothBanner = both.container.querySelector( '[role="status"]' );
-		expect( bothBanner.textContent ).toContain( 'errors' );
+		expect( bothBanner.textContent ).toContain( 'The filters narrow' );
 		expect( bothBanner.textContent ).toContain( '6:35–6:40 AM' );
 		both.unmount();
 	} );
@@ -855,7 +801,7 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'offers no URL chip: the modal is already one URL', () => {
+	it( 'offers no URL chip, since the modal is one URL, and no Server chip, since the select owns it', () => {
 		const { container, unmount } = mount();
 		const box = container.querySelector( 'input[aria-label="Filter"]' );
 		const list = container.querySelector(
@@ -866,11 +812,13 @@ describe( 'UrlDetailView', () => {
 			( option ) => option.value
 		);
 		expect( offered ).toContain( 'ja4=' );
+		expect( offered ).toContain( 'status_class=' );
 		expect( offered ).not.toContain( 'url=' );
+		expect( offered ).not.toContain( 'server=' );
 		unmount();
 	} );
 
-	it( 'keeps its charts, flame and profile on a filter flip, marking the list alone', async () => {
+	it( 'keeps its charts, flame and profile on a bucket flip, marking the list alone', async () => {
 		const urlDetail = {
 			...baseUrlDetail,
 			requests: REQUESTS,
@@ -888,7 +836,7 @@ describe( 'UrlDetailView', () => {
 			onRequestSort: jest.fn(),
 			onSelectRequest: jest.fn(),
 			urlHash: 'deadbeef',
-			filters: { errors_only: false, bucket: '' },
+			filters: { bucket: '' },
 			onFilterChange: jest.fn(),
 			listing: false,
 			chartSlice: sliceOf( classAnswer( [] ) ),
@@ -931,7 +879,7 @@ describe( 'UrlDetailView', () => {
 		rerender(
 			React.createElement( UrlDetailView, {
 				...props,
-				filters: { errors_only: true, bucket: '' },
+				filters: { bucket: '2026-10-04-13-35' },
 				listing: true,
 			} )
 		);
@@ -950,7 +898,7 @@ describe( 'UrlDetailView', () => {
 				...props,
 				urlDetail: { ...urlDetail, requests: [ fatal ] },
 				sortedRequests: [ fatal ],
-				filters: { errors_only: true, bucket: '' },
+				filters: { bucket: '2026-10-04-13-35' },
 				listing: false,
 			} )
 		);
