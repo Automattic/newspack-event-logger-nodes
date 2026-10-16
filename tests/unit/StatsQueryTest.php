@@ -275,6 +275,73 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( $expected, $r['rows'], 'url_id 1 is egret in partition 0 and tui in partition 3; rows order by hash' );
 	}
 
+	/**
+	 * Each partition groups its own rows, and the outer statement merges the
+	 * partials: the answer is the row-level one, from far fewer rows.
+	 */
+	public function test_a_url_page_merges_per_partition_partials_into_the_row_level_answer(): void {
+		foreach ( [ [ 0, 40.5, 200 ], [ 1, 80.5, 503 ], [ 3, 20.0, 200 ], [ 3, 60.5, 404 ] ] as $i => [ $partition, $ms, $status ] ) {
+			$this->seed_request( [ 'url' => 'https://seed.example/kokako-7712/', 'ms' => $ms, 'status' => $status, 'peak_mb' => 2.5 + $i ], partition: $partition );
+		}
+		$this->seed_request( [ 'url' => 'https://seed.example/hihi-7712/', 'ms' => 11.5 ], partition: 2 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'measure' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'max_peak_mb', 'count_5xx', 'count_4xx' ], 'buckets' => $this->last_day(), 'sort' => 'count', 'order' => 'desc' ] ) );
+
+		$this->assertSame( [ Log_Manager::url_hash( 'https://seed.example/kokako-7712/' ), 'https://seed.example/kokako-7712/', 4, 4, 201.5, 50.375, 20.0, 80.5, 4.0, 5.5, 1, 1 ], $r['rows'][0] );
+		$this->assertSame( 11.5, $r['rows'][1][5] );
+	}
+
+	/** A percentile or a distinct count reads every partition's rows whole. */
+	public function test_a_spec_with_a_percentile_keeps_the_row_level_union(): void {
+		foreach ( [ 10.0, 20.0, 30.0, 40.0 ] as $i => $ms ) {
+			$this->seed_request( [ 'ms' => $ms ], partition: $i );
+		}
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'count', 'p95_ms', 'urls' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ 4, 40.0, 1 ] ], $r['rows'] );
+	}
+
+	/** The rollup's max and its timed-weighted mean fold across partitions. */
+	public function test_an_hourly_max_and_mean_fold_across_partitions(): void {
+		$hour = Bucket::hour( self::NOW );
+		$this->seed_hourly( [ 'hour' => $hour, 'count' => 3, 'timed' => 0, 'sum_ms' => 0.0, 'max_ms' => 0.0 ] );
+		$this->seed_hourly( [ 'hour' => $hour, 'count' => 2, 'timed' => 2, 'sum_ms' => 90.0, 'max_ms' => 61.5 ], partition: 2 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'count', 'max_ms', 'avg_ms' ], 'buckets' => $this->last_hours() ] ) );
+
+		$this->assertSame( 'requests_hourly', $r['table'] );
+		$this->assertSame( [ [ 5, 61.5, 45.0 ] ], $r['rows'] );
+	}
+
+	/** A group spanning partitions sums, counts and takes the latest across them. */
+	public function test_a_group_spanning_partitions_folds_every_request_measure(): void {
+		$this->seed_request( [ 'server' => 'kaka.example', 'status' => 302, 'peak_mb' => 3.5, 'finished_at' => self::NOW - 40.5 ] );
+		$this->seed_request( [ 'server' => 'kaka.example', 'status' => 301, 'peak_mb' => 6.25, 'finished_at' => self::NOW - 10.25, 'worker' => 1 ], partition: 1 );
+		$this->seed_request( [ 'server' => 'kaka.example', 'status' => 204, 'peak_mb' => 1.0, 'finished_at' => self::NOW - 70.0 ], partition: 3 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'sum_peak_mb', 'last_seen', 'count_2xx', 'count_3xx', 'worker' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ 'kaka.example', 10.75, (float) self::NOW - 10.25, 1, 2, 1 ] ], $r['rows'] );
+	}
+
+	/** Either timings table sums a category's partitions before it averages. */
+	public function test_timings_fold_a_category_across_partitions(): void {
+		foreach ( [ [ 0, 12.5, 3 ], [ 2, 7.5, 5 ] ] as [ $partition, $ms, $calls ] ) {
+			$row = [ 'category' => 'ruru-category', 'ms' => $ms, 'calls' => $calls, 'requests' => 2 ];
+			$this->seed_site_timing( $row, partition: $partition );
+			$this->seed_timing( $row + [ 'url' => 'https://seed.example/ruru-7712/' ], partition: $partition );
+		}
+		$measure = [ 'ms', 'calls', 'requests', 'avg_ms', 'avg_calls' ];
+
+		$site   = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'measure' => $measure, 'buckets' => $this->last_day() ] ) );
+		$by_url = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'url', 'category' ], 'measure' => $measure, 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( 'timings_site', $site['table'] );
+		$this->assertSame( [ [ 'ruru-category', 20.0, 8, 4, 5.0, 2.0 ] ], $site['rows'] );
+		$this->assertSame( [ [ Log_Manager::url_hash( 'https://seed.example/ruru-7712/' ), 'https://seed.example/ruru-7712/', 'ruru-category', 20.0, 8, 4, 5.0, 2.0 ] ], $by_url['rows'] );
+	}
+
 	public function test_a_url_name_sort_orders_by_the_displayed_url(): void {
 		$urls = [ 'https://kea.example/weka/', 'https://kea.example/aaa-tui/', 'http://egret.example/moa' ];
 		foreach ( $urls as $i => $url ) {

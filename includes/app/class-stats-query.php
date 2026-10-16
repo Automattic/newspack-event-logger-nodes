@@ -8,8 +8,10 @@
  * answers it exactly, and `run()` builds one statement over every
  * partition's file: a `UNION ALL` of one arm per attached alias, each joining
  * its own `urls` and `agents` before the union, since their ids are
- * partition-local. Field and measure names reach the SQL only through this
- * class's tables; every value binds.
+ * partition-local. When every measure the spec names composes, each arm
+ * groups its own rows and the union merges those partials; a percentile or a
+ * distinct count reads every arm's rows whole. Field and measure names reach
+ * the SQL only through this class's tables; every value binds.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -43,6 +45,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * an order of its own answers beside the first, from the one statement.
  *
  * @phpstan-type Also array{sort:string, order:string, limit:int}
+ * @phpstan-type Measured array{measures:array<string,array{0:string,1:list<string>,2:?string,3:list<string>}>}
  * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string, also:?Also}
  */
 final class Stats_Query {
@@ -124,11 +127,11 @@ final class Stats_Query {
 
 	/** The timings measures, over either timings table's arm inputs. */
 	private const TIMING_MEASURES = [
-		'ms'        => [ 'TOTAL( m_ms )', [ 'ms' ] ],
-		'calls'     => [ 'COALESCE( SUM( m_calls ), 0 )', [ 'calls' ] ],
-		'requests'  => [ 'COALESCE( SUM( m_requests ), 0 )', [ 'requests' ] ],
-		'avg_ms'    => [ 'SUM( m_ms ) / NULLIF( SUM( m_requests ), 0 )', [ 'ms', 'requests' ] ],
-		'avg_calls' => [ 'CAST( SUM( m_calls ) AS REAL ) / NULLIF( SUM( m_requests ), 0 )', [ 'calls', 'requests' ] ],
+		'ms'        => [ 'TOTAL( m_ms )', [ 'ms' ], 'TOTAL( q_ms )', [ 'ms' ] ],
+		'calls'     => [ 'COALESCE( SUM( m_calls ), 0 )', [ 'calls' ], 'COALESCE( SUM( q_calls ), 0 )', [ 'calls' ] ],
+		'requests'  => [ 'COALESCE( SUM( m_requests ), 0 )', [ 'requests' ], 'COALESCE( SUM( q_requests ), 0 )', [ 'requests' ] ],
+		'avg_ms'    => [ 'SUM( m_ms ) / NULLIF( SUM( m_requests ), 0 )', [ 'ms', 'requests' ], 'SUM( q_ms ) / NULLIF( SUM( q_requests ), 0 )', [ 'ms', 'requests' ] ],
+		'avg_calls' => [ 'CAST( SUM( m_calls ) AS REAL ) / NULLIF( SUM( m_requests ), 0 )', [ 'calls', 'requests' ], 'CAST( SUM( q_calls ) AS REAL ) / NULLIF( SUM( q_requests ), 0 )', [ 'calls', 'requests' ] ],
 	];
 
 	/** The timing inputs either timings table's arm projects. */
@@ -144,7 +147,9 @@ final class Stats_Query {
 	 * holds; each field's expression; the join a field or input needs, by
 	 * name; each input an arm projects as `m_<name>`; and each measure's
 	 * aggregate over those inputs, with the inputs it reads, its
-	 * `{error_kinds}` the builder's `ERROR_KINDS`.
+	 * `{error_kinds}` the builder's `ERROR_KINDS`, then its fold over the
+	 * per-partition partials `q_<name>`, null where none composes, with the
+	 * measures whose partials that fold reads.
 	 */
 	private const TABLES = [
 		'requests'        => [
@@ -189,25 +194,25 @@ final class Stats_Query {
 				'method'      => 't.method',
 			],
 			'measures' => [
-				'count'       => [ 'COUNT( * )', [] ],
-				'timed'       => [ 'COUNT( m_ms )', [ 'ms' ] ],
-				'sum_ms'      => [ 'TOTAL( m_ms )', [ 'ms' ] ],
-				'avg_ms'      => [ 'AVG( m_ms )', [ 'ms' ] ],
-				'max_ms'      => [ 'MAX( m_ms )', [ 'ms' ] ],
-				'min_ms'      => [ 'MIN( m_ms )', [ 'ms' ] ],
-				'p50_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 50 + 99 ) / 100 THEN m_ms END )', [ 'ms' ] ],
-				'p95_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 95 + 99 ) / 100 THEN m_ms END )', [ 'ms' ] ],
-				'sum_peak_mb' => [ 'TOTAL( m_peak_mb )', [ 'peak_mb' ] ],
-				'avg_peak_mb' => [ 'AVG( m_peak_mb )', [ 'peak_mb' ] ],
-				'max_peak_mb' => [ 'MAX( m_peak_mb )', [ 'peak_mb' ] ],
-				'errors'      => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END )', [ 'error' ] ],
-				'urls'        => [ 'COUNT( DISTINCT m_url )', [ 'url' ] ],
-				'last_seen'   => [ 'MAX( m_finished_at )', [ 'finished_at' ] ],
-				'count_2xx'   => [ 'COUNT( CASE WHEN m_class = 2 THEN 1 END )', [ 'class' ] ],
-				'count_3xx'   => [ 'COUNT( CASE WHEN m_class = 3 THEN 1 END )', [ 'class' ] ],
-				'count_4xx'   => [ 'COUNT( CASE WHEN m_class = 4 THEN 1 END )', [ 'class' ] ],
-				'count_5xx'   => [ 'COUNT( CASE WHEN m_class = 5 THEN 1 END )', [ 'class' ] ],
-				'worker'      => [ 'MAX( m_worker )', [ 'worker' ] ],
+				'count'       => [ 'COUNT( * )', [], 'COALESCE( SUM( q_count ), 0 )', [ 'count' ] ],
+				'timed'       => [ 'COUNT( m_ms )', [ 'ms' ], 'COALESCE( SUM( q_timed ), 0 )', [ 'timed' ] ],
+				'sum_ms'      => [ 'TOTAL( m_ms )', [ 'ms' ], 'TOTAL( q_sum_ms )', [ 'sum_ms' ] ],
+				'avg_ms'      => [ 'AVG( m_ms )', [ 'ms' ], 'SUM( q_sum_ms ) / NULLIF( SUM( q_timed ), 0 )', [ 'sum_ms', 'timed' ] ],
+				'max_ms'      => [ 'MAX( m_ms )', [ 'ms' ], 'MAX( q_max_ms )', [ 'max_ms' ] ],
+				'min_ms'      => [ 'MIN( m_ms )', [ 'ms' ], 'MIN( q_min_ms )', [ 'min_ms' ] ],
+				'p50_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 50 + 99 ) / 100 THEN m_ms END )', [ 'ms' ], null, [] ],
+				'p95_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 95 + 99 ) / 100 THEN m_ms END )', [ 'ms' ], null, [] ],
+				'sum_peak_mb' => [ 'TOTAL( m_peak_mb )', [ 'peak_mb' ], 'TOTAL( q_sum_peak_mb )', [ 'sum_peak_mb' ] ],
+				'avg_peak_mb' => [ 'AVG( m_peak_mb )', [ 'peak_mb' ], 'SUM( q_sum_peak_mb ) / NULLIF( SUM( q_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
+				'max_peak_mb' => [ 'MAX( m_peak_mb )', [ 'peak_mb' ], 'MAX( q_max_peak_mb )', [ 'max_peak_mb' ] ],
+				'errors'      => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END )', [ 'error' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
+				'urls'        => [ 'COUNT( DISTINCT m_url )', [ 'url' ], null, [] ],
+				'last_seen'   => [ 'MAX( m_finished_at )', [ 'finished_at' ], 'MAX( q_last_seen )', [ 'last_seen' ] ],
+				'count_2xx'   => [ 'COUNT( CASE WHEN m_class = 2 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_2xx ), 0 )', [ 'count_2xx' ] ],
+				'count_3xx'   => [ 'COUNT( CASE WHEN m_class = 3 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_3xx ), 0 )', [ 'count_3xx' ] ],
+				'count_4xx'   => [ 'COUNT( CASE WHEN m_class = 4 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_4xx ), 0 )', [ 'count_4xx' ] ],
+				'count_5xx'   => [ 'COUNT( CASE WHEN m_class = 5 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_5xx ), 0 )', [ 'count_5xx' ] ],
+				'worker'      => [ 'MAX( m_worker )', [ 'worker' ], 'MAX( q_worker )', [ 'worker' ] ],
 			],
 		],
 		'requests_hourly' => [
@@ -231,14 +236,14 @@ final class Stats_Query {
 				'errors'      => 't.errors',
 			],
 			'measures' => [
-				'count'       => [ 'COALESCE( SUM( m_count ), 0 )', [ 'count' ] ],
-				'timed'       => [ 'COALESCE( SUM( m_timed ), 0 )', [ 'timed' ] ],
-				'sum_ms'      => [ 'TOTAL( m_sum_ms )', [ 'sum_ms' ] ],
-				'avg_ms'      => [ 'SUM( m_sum_ms ) / NULLIF( SUM( m_timed ), 0 )', [ 'sum_ms', 'timed' ] ],
-				'max_ms'      => [ 'CASE WHEN SUM( m_timed ) > 0 THEN MAX( m_max_ms ) END', [ 'max_ms', 'timed' ] ],
-				'sum_peak_mb' => [ 'TOTAL( m_sum_peak_mb )', [ 'sum_peak_mb' ] ],
-				'avg_peak_mb' => [ 'SUM( m_sum_peak_mb ) / NULLIF( SUM( m_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
-				'errors'      => [ 'COALESCE( SUM( m_errors ), 0 )', [ 'errors' ] ],
+				'count'       => [ 'COALESCE( SUM( m_count ), 0 )', [ 'count' ], 'COALESCE( SUM( q_count ), 0 )', [ 'count' ] ],
+				'timed'       => [ 'COALESCE( SUM( m_timed ), 0 )', [ 'timed' ], 'COALESCE( SUM( q_timed ), 0 )', [ 'timed' ] ],
+				'sum_ms'      => [ 'TOTAL( m_sum_ms )', [ 'sum_ms' ], 'TOTAL( q_sum_ms )', [ 'sum_ms' ] ],
+				'avg_ms'      => [ 'SUM( m_sum_ms ) / NULLIF( SUM( m_timed ), 0 )', [ 'sum_ms', 'timed' ], 'SUM( q_sum_ms ) / NULLIF( SUM( q_timed ), 0 )', [ 'sum_ms', 'timed' ] ],
+				'max_ms'      => [ 'CASE WHEN SUM( m_timed ) > 0 THEN MAX( m_max_ms ) END', [ 'max_ms', 'timed' ], 'MAX( q_max_ms )', [ 'max_ms' ] ],
+				'sum_peak_mb' => [ 'TOTAL( m_sum_peak_mb )', [ 'sum_peak_mb' ], 'TOTAL( q_sum_peak_mb )', [ 'sum_peak_mb' ] ],
+				'avg_peak_mb' => [ 'SUM( m_sum_peak_mb ) / NULLIF( SUM( m_count ), 0 )', [ 'sum_peak_mb', 'count' ], 'SUM( q_sum_peak_mb ) / NULLIF( SUM( q_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
+				'errors'      => [ 'COALESCE( SUM( m_errors ), 0 )', [ 'errors' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
 			],
 		],
 		'timings'         => [
@@ -380,16 +385,14 @@ final class Stats_Query {
 	 * @return array{0:string, 1:list<scalar|null>}
 	 */
 	private static function statement( array $spec, string $table, array $aliases ): array {
-		$def    = self::TABLES[ $table ];
-		$fields = \array_values( \array_unique( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] ) );
-		$named  = null === $spec['top'] ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
-		$inputs = [];
-		foreach ( $named as $name ) {
-			\array_push( $inputs, ...$def['measures'][ $name ][1] );
-		}
-		$inputs = \array_values( \array_unique( $inputs ) );
+		$def      = self::TABLES[ $table ];
+		$fields   = \array_values( \array_unique( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] ) );
+		$named    = null === $spec['top'] ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
+		$composes = self::composes( $def, $named );
+		$folded   = $composes ? self::gathered( $def, $named, 3 ) : [];
+		$arm      = self::arm( $spec, $table, $fields, self::gathered( $def, $composes ? $folded : $named, 1 ), $composes );
 
-		[ $from, $binds ] = self::union( self::arm( $spec, $table, $fields, $inputs ), $aliases );
+		[ $from, $binds ] = self::union( $composes ? self::grouped( $arm, $spec, $def, $folded ) : $arm, $aliases );
 
 		$groups  = [];
 		$keys    = [];
@@ -414,12 +417,12 @@ final class Stats_Query {
 			$from = self::with_ranks( $from, $groups );
 		}
 		foreach ( $spec['measure'] as $j => $name ) {
-			$select[]       = self::aggregate( $def, $name ) . " AS v{$j}";
+			$select[]       = self::outer( $def, $name, $composes ) . " AS v{$j}";
 			$columns[]      = "v{$j}";
 			$sorts[ $name ] = [ "v{$j}" ];
 		}
 		if ( null !== $spec['top'] ) {
-			$select[] = self::aggregate( $def, $spec['top_by'] ) . ' AS t';
+			$select[] = self::outer( $def, $spec['top_by'], $composes ) . ' AS t';
 		}
 		$grouped = 'SELECT ' . \implode( ', ', $select ) . " FROM {$from}" . ( [] === $groups ? '' : ' GROUP BY ' . \implode( ', ', $groups ) );
 		if ( null !== $spec['top'] ) {
@@ -484,13 +487,15 @@ final class Stats_Query {
 	}
 
 	/**
-	 * A measure's aggregate over the arm inputs, its error kinds spelled.
+	 * A measure's aggregate in the outer statement: its fold over the
+	 * partitions' partials when the spec composes, else over the arm's rows.
 	 *
-	 * @param array{measures:array<string,array{0:string,1:list<string>}>} $def  The table answering the spec.
-	 * @param string                                                          $name The measure.
+	 * @param Measured $def      The table answering the spec.
+	 * @param string   $name     The measure.
+	 * @param bool     $composes Whether the spec reads partials.
 	 */
-	private static function aggregate( array $def, string $name ): string {
-		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][0] );
+	private static function outer( array $def, string $name, bool $composes ): string {
+		return $composes ? Core::as_string( $def['measures'][ $name ][2] ) : self::aggregate( $def, $name );
 	}
 
 	/**
@@ -504,6 +509,74 @@ final class Stats_Query {
 	private static function with_ranks( string $from, array $groups ): string {
 		$over = [] === $groups ? '' : 'PARTITION BY ' . \implode( ', ', $groups ) . ' ';
 		return "( SELECT *, ROW_NUMBER() OVER ( {$over}ORDER BY m_ms IS NULL, m_ms ) AS m_rank, COUNT( m_ms ) OVER ( {$over}) AS m_ranked FROM {$from} )";
+	}
+
+	/**
+	 * An arm grouped inside its partition: each group field as `f<i>` and each
+	 * folded measure's row aggregate as `q_<name>`. A `url` group, grouped by
+	 * id, joins its partition's `urls` after grouping for its hash, server and
+	 * path.
+	 *
+	 * @param array{0:string, 1:list<scalar|null>} $arm    The arm, its url grouped by id.
+	 * @param Spec                                 $spec   The checked spec.
+	 * @param Measured                             $def    The table answering it.
+	 * @param list<string>                         $folded The measures whose partials it carries.
+	 * @return array{0:string, 1:list<scalar|null>}
+	 */
+	private static function grouped( array $arm, array $spec, array $def, array $folded ): array {
+		$groups   = \array_map( static fn ( int $i ): string => "f{$i}", \array_keys( $spec['group'] ) );
+		$partials = \array_map( static fn ( string $name ): string => "q_{$name}", $folded );
+		$select   = \array_map( static fn ( string $name ): string => self::aggregate( $def, $name ) . " AS q_{$name}", $folded );
+		$sql      = 'SELECT ' . \implode( ', ', [ ...$groups, ...$select ] ) . " FROM ( {$arm[0]} )" . ( [] === $groups ? '' : ' GROUP BY ' . \implode( ', ', $groups ) );
+		$url      = \array_search( 'url', $spec['group'], true );
+		if ( \is_int( $url ) ) {
+			$outer = \array_map( static fn ( string $column ): string => "f{$url}" === $column ? "u.hash AS f{$url}, u.server AS s{$url}, u.path AS n{$url}" : "g.{$column}", [ ...$groups, ...$partials ] );
+			$sql   = 'SELECT ' . \implode( ', ', $outer ) . " FROM ( {$sql} ) AS g JOIN %1\$s.urls AS u ON u.id = g.f{$url}";
+		}
+		return [ $sql, $arm[1] ];
+	}
+
+	/**
+	 * A measure's aggregate over the arm inputs, its error kinds spelled.
+	 *
+	 * @param Measured $def  The table answering the spec.
+	 * @param string   $name The measure.
+	 */
+	private static function aggregate( array $def, string $name ): string {
+		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][0] );
+	}
+
+	/**
+	 * The names one slot of each named measure lists, each once: its arm
+	 * inputs at 1, the measures its fold reads at 3.
+	 *
+	 * @param Measured     $def   The table answering the spec.
+	 * @param list<string> $named The measures.
+	 * @param 1|3          $slot  Its inputs, or its folded measures.
+	 * @return list<string>
+	 */
+	private static function gathered( array $def, array $named, int $slot ): array {
+		$names = [];
+		foreach ( $named as $name ) {
+			\array_push( $names, ...$def['measures'][ $name ][ $slot ] );
+		}
+		return \array_values( \array_unique( $names ) );
+	}
+
+	/**
+	 * Whether every measure a spec names, its top_by included, folds from
+	 * per-partition partials.
+	 *
+	 * @param Measured     $def   The table answering it.
+	 * @param list<string> $named The measures, top_by included.
+	 */
+	private static function composes( array $def, array $named ): bool {
+		foreach ( $named as $name ) {
+			if ( null === $def['measures'][ $name ][2] ) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -596,19 +669,26 @@ final class Stats_Query {
 	/**
 	 * One partition's arm, its alias a `%1$s` placeholder: each group field
 	 * as `f<i>` (a URL's server and path beside it as `s<i>` and `n<i>`), each input as
-	 * `m_<name>`, over the bucket ranges, the filters and the search.
+	 * `m_<name>`, over the bucket ranges, the filters and the search. Grouped
+	 * by id, a URL is its `url_id` alone, and joins `urls` only for a URL
+	 * filter or a search.
 	 *
-	 * @param Spec         $spec   The checked spec.
-	 * @param string       $table  The table answering it.
-	 * @param list<string> $fields Every field the spec groups or filters.
-	 * @param list<string> $inputs Every input its measures read.
+	 * @param Spec         $spec      The checked spec.
+	 * @param string       $table     The table answering it.
+	 * @param list<string> $fields    Every field the spec groups or filters.
+	 * @param list<string> $inputs    Every input its measures read.
+	 * @param bool         $by_url_id Whether a URL group projects its id.
 	 * @return array{0:string, 1:list<scalar|null>}
 	 */
-	private static function arm( array $spec, string $table, array $fields, array $inputs ): array {
+	private static function arm( array $spec, string $table, array $fields, array $inputs, bool $by_url_id = false ): array {
 		$def    = self::TABLES[ $table ];
 		$expr   = $def['fields'];
 		$select = [];
 		foreach ( $spec['group'] as $i => $field ) {
+			if ( 'url' === $field && $by_url_id ) {
+				$select[] = "t.url_id AS f{$i}";
+				continue;
+			}
 			$select[] = Core::as_string( $expr[ $field ] ) . " AS f{$i}";
 			if ( 'url' === $field ) {
 				\array_push( $select, "u.server AS s{$i}", "u.path AS n{$i}" );
@@ -633,7 +713,7 @@ final class Stats_Query {
 			$clauses[] = Core::as_string( $expr[ $field ] ) . ' IN ( ' . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
 			\array_push( $binds, ...$values );
 		}
-		$joined = $fields;
+		$joined = $by_url_id ? [ ...\array_diff( $fields, [ 'url' ] ), ...( isset( $spec['filter']['url'] ) ? [ 'url' ] : [] ) ] : $fields;
 		if ( '' !== $spec['match'] ) {
 			$clauses[] = self::SEARCH;
 			$binds[]   = $spec['match'];
