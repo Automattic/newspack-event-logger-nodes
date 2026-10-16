@@ -57,23 +57,23 @@ final class StatsQueryTest extends TestCase {
 		$day = $this->last_day();
 		foreach ( [ 0, 2 ] as $p ) {
 			$this->write_facts( $p, [
-				[ 'add', 'window_watermark', [ Flame_Facts_Row_Schema::WINDOW, $day[0][0] - 1 ] ],
+				[ 'ignore', 'window_expiry', [ $day[0][0] - 3 ] ],
+				[ 'ignore', 'window_expiry', [ $day[0][0] - 1 ] ],
 				[ 'add', 'category_window', [ 'hook:ruru_init', '', 0, 0, 21.5 + $p, 3, 2, $day[0][1] ] ],
 				[ 'add', 'category_window', [ 'hook:gone_init', '', 0, 0, 500.0, 1, 1, $day[0][0] - 1 ] ],
-				[ 'add', 'category_window', [ 'hook:zeroed_init', '', 0, 0, 0.0, 0, 0, $day[0][1] ] ],
 			] );
 		}
 
 		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ], 'entry' => [ '' ] ], 'measure' => [ 'ms', 'calls' ], 'buckets' => $day, 'sort' => 'ms', 'order' => 'desc' ] );
 
 		$this->assertSame( 'category_window', $r['table'] );
-		$this->assertSame( [ [ 'hook:ruru_init', 45.0, 6 ] ], $r['rows'], 'a row whose last bucket left the window, or that an expiry zeroed, reads as gone' );
+		$this->assertSame( [ [ 'hook:ruru_init', 45.0, 6 ] ], $r['rows'], 'a row whose last bucket left the window reads as gone' );
 	}
 
 	public function test_a_lagging_watermark_reads_timings_site(): void {
 		$day = $this->last_day();
-		$this->write_facts( 0, [ [ 'add', 'window_watermark', [ Flame_Facts_Row_Schema::WINDOW, $day[0][0] - 1 ] ] ] );
-		$this->write_facts( 1, [ [ 'add', 'window_watermark', [ Flame_Facts_Row_Schema::WINDOW, $day[0][0] - 2 ] ] ] );
+		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $day[0][0] - 1 ] ] ] );
+		$this->write_facts( 1, [ [ 'ignore', 'window_expiry', [ $day[0][0] - 2 ] ] ] );
 		$this->seed_site_timing( [ 'category' => 'hook:ruru_init', 'ms' => 13.5 ], partition: 1 );
 
 		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] );
@@ -82,9 +82,9 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 'hook:ruru_init', 13.5 ] ], $r['rows'] );
 	}
 
-	public function test_a_partition_with_no_watermark_row_reads_timings_site(): void {
+	public function test_a_partition_with_no_expiry_row_reads_timings_site(): void {
 		$day = $this->last_day();
-		$this->write_facts( 0, [ [ 'add', 'window_watermark', [ Flame_Facts_Row_Schema::WINDOW, $day[0][0] - 1 ] ] ] );
+		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $day[0][0] - 1 ] ] ] );
 		$this->seed_site_timing( [ 'category' => 'hook:ruru_init', 'ms' => 17.5 ], partition: 1 );
 
 		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] );

@@ -98,9 +98,6 @@ final class Stats_Query {
 	/** Fields holding integers, so a filter's digits bind as one. */
 	private const INTEGER_FIELDS = [ 'bucket', 'hour', 'day', 'status', 'status_class', 'worker', 'profiled', 'listener' ];
 
-	/** The fields the category window holds: no time, no server, no URL. */
-	private const WINDOW_FIELDS = [ 'category', 'entry', 'listener', 'worker' ];
-
 	/** The fields `requests_hourly` answers exactly. */
 	private const HOURLY_FIELDS = [ 'hour', 'day', 'server', 'status_class', 'method', 'worker', 'country' ];
 
@@ -118,6 +115,18 @@ final class Stats_Query {
 
 	/** A status code the builder reads a status class from, as SQL. */
 	private const KNOWN_STATUS = 't.status BETWEEN ' . Flame_Builder_Node::STATUS_MIN . ' AND ' . Flame_Builder_Node::STATUS_MAX;
+
+	/** A measure's aggregate over the arm inputs, in its `measures` tuple. */
+	private const AGGREGATE = 0;
+
+	/** The arm inputs that aggregate reads. */
+	private const INPUTS = 1;
+
+	/** Its fold over the per-partition partials, null where none composes. */
+	private const COMPOSED = 2;
+
+	/** The measures whose partials that fold reads. */
+	private const FOLDS = 3;
 
 	/** The measures reading each group's timed requests ranked by `ms`. */
 	private const RANKED = [ 'p50_ms', 'p95_ms' ];
@@ -288,7 +297,6 @@ final class Stats_Query {
 				'worker'   => 't.worker',
 			],
 			'joins'    => [],
-			'where'    => 't.requests > 0',
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],
@@ -414,8 +422,8 @@ final class Stats_Query {
 		$fields   = \array_values( \array_unique( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] ) );
 		$named    = null === $spec['top'] ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
 		$composes = self::composes( $def, $named );
-		$folded   = $composes ? self::gathered( $def, $named, 3 ) : [];
-		$arm      = self::arm( $spec, $table, $fields, self::gathered( $def, $composes ? $folded : $named, 1 ), $composes );
+		$folded   = $composes ? self::gathered( $def, $named, self::FOLDS ) : [];
+		$arm      = self::arm( $spec, $table, $fields, self::gathered( $def, $composes ? $folded : $named, self::INPUTS ), $composes );
 
 		[ $from, $binds ] = self::union( $composes ? self::grouped( $arm, $spec, $def, $folded ) : $arm, $aliases );
 
@@ -520,7 +528,7 @@ final class Stats_Query {
 	 * @param bool     $composes Whether the spec reads partials.
 	 */
 	private static function outer( array $def, string $name, bool $composes ): string {
-		return $composes ? Core::as_string( $def['measures'][ $name ][2] ) : self::aggregate( $def, $name );
+		return $composes ? Core::as_string( $def['measures'][ $name ][ self::COMPOSED ] ) : self::aggregate( $def, $name );
 	}
 
 	/**
@@ -568,16 +576,16 @@ final class Stats_Query {
 	 * @param string   $name The measure.
 	 */
 	private static function aggregate( array $def, string $name ): string {
-		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][0] );
+		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][ self::AGGREGATE ] );
 	}
 
 	/**
 	 * The names one slot of each named measure lists, each once: its arm
-	 * inputs at 1, the measures its fold reads at 3.
+	 * inputs, or the measures its fold reads.
 	 *
 	 * @param Measured     $def   The table answering the spec.
 	 * @param list<string> $named The measures.
-	 * @param 1|3          $slot  Its inputs, or its folded measures.
+	 * @param self::INPUTS|self::FOLDS $slot Its inputs, or its folded measures.
 	 * @return list<string>
 	 */
 	private static function gathered( array $def, array $named, int $slot ): array {
@@ -597,7 +605,7 @@ final class Stats_Query {
 	 */
 	private static function composes( array $def, array $named ): bool {
 		foreach ( $named as $name ) {
-			if ( null === $def['measures'][ $name ][2] ) {
+			if ( null === $def['measures'][ $name ][ self::COMPOSED ] ) {
 				return false;
 			}
 		}
@@ -606,7 +614,8 @@ final class Stats_Query {
 
 	/**
 	 * Whether every attached partition's category window has expired exactly
-	 * through `$through`, so its live rows are the range after it.
+	 * through `$through`, its newest `window_expiry` bucket, so its live rows
+	 * are the range after it. A partition that has expired none does not hold.
 	 *
 	 * @param Row_Reader             $reader  The attached files.
 	 * @param non-empty-list<string> $aliases Their aliases.
@@ -614,11 +623,10 @@ final class Stats_Query {
 	 */
 	private static function window_holds( Row_Reader $reader, array $aliases, int $through ): bool {
 		$marks = $reader->rows(
-			\implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => "SELECT bucket FROM {$alias}.window_watermark WHERE name = ?", $aliases ) ),
-			\array_fill( 0, \count( $aliases ), Flame_Facts_Row_Schema::WINDOW )
+			\implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => "SELECT MAX( bucket ) FROM {$alias}.window_expiry", $aliases ) ),
+			[]
 		);
-		return \count( $marks ) === \count( $aliases )
-			&& [] === \array_filter( $marks, static fn ( array $mark ): bool => $through !== Core::as_int( $mark[0] ) );
+		return [] === \array_filter( $marks, static fn ( array $mark ): bool => null === $mark[0] || $through !== Core::as_int( $mark[0] ) );
 	}
 
 	/**
@@ -642,7 +650,7 @@ final class Stats_Query {
 				return 'timings';
 			}
 			$day = 1 === \count( $spec['buckets'] ) && Flame_Facts_Row_Schema::WINDOW_BUCKETS === $spec['buckets'][0][1] - $spec['buckets'][0][0] + 1;
-			return $day && [] === \array_diff( $named, self::WINDOW_FIELDS ) ? 'category_window' : 'timings_site';
+			return $day && [] === \array_diff( $named, \array_keys( self::TABLES['category_window']['fields'] ) ) ? 'category_window' : 'timings_site';
 		}
 		$hourly = ! $by_url
 			&& [] === \array_diff( $named, self::HOURLY_FIELDS )
@@ -757,9 +765,6 @@ final class Stats_Query {
 			\array_push( $binds, \intdiv( $first, $per ), \intdiv( $last + 1, $per ) - 1 );
 		}
 		$clauses = [] === $where ? [] : [ '( ' . \implode( ' OR ', $where ) . ' )' ];
-		if ( isset( $def['where'] ) ) {
-			$clauses[] = Core::as_string( $def['where'] );
-		}
 		foreach ( $spec['filter'] as $field => $values ) {
 			$clauses[] = Core::as_string( $expr[ $field ] ) . ' IN ( ' . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
 			\array_push( $binds, ...$values );

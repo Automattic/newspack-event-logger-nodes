@@ -306,6 +306,29 @@ class LogManagerJobContextTest extends TestCase {
 		);
 	}
 
+	/**
+	 * A nested context that brings its own message names that one, and the
+	 * outer job's stands again once it ends.
+	 */
+	public function test_a_nested_context_with_its_own_message_leaves_the_outer_ones_in_force(): void {
+		$this->arrange_logging();
+		Log_Manager::begin_job_context( 'outer_handler', '', [ \Newspack_Nodes\Message::FROM => 'jobs.p1', \Newspack_Nodes\Message::ID => '5:212:71' ] );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'outer' ] );
+		Log_Manager::begin_job_context( 'inner_handler', '', [ \Newspack_Nodes\Message::FROM => 'jobs.p4', \Newspack_Nodes\Message::ID => '9:330:58' ] );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'inner' ] );
+		Log_Manager::end_job_context();
+		Log_Manager::begin_job_context( 'sibling_template' );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'sibling' ] );
+		Log_Manager::end_job_context();
+		Log_Manager::end_job_context();
+
+		$this->assertSame(
+			[ '5:212:71', '9:330:58', '5:212:71' ],
+			\array_column( \array_column( self::entries_of( self::firehose_entries( self::test_dir() ), 'message' ), 'm' ), 'ID' ),
+			'the render after the inner job names the outer job\'s record'
+		);
+	}
+
 	/** A job that finished keeps the ordinary completion line. */
 	public function test_a_completed_job_still_logs_process_complete(): void {
 		$this->arrange_logging();
@@ -370,8 +393,8 @@ class LogManagerJobContextTest extends TestCase {
 		$this->assertCount( 1, self::entries_of( self::firehose_entries( self::test_dir() ), 'message' ), 'only the job that carried a message names one' );
 	}
 
-	/** A fresh context after reset() names no record a past job carried in. */
-	public function test_reset_forgets_the_job_message(): void {
+	/** A plain request after a job ended names no record that job carried in. */
+	public function test_a_request_after_a_job_names_no_message(): void {
 		$this->arrange_logging();
 		$message                                = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::FROM ] = 'jobs:consumer-7731';

@@ -35,12 +35,11 @@ final class Overview_Prefetch {
 	/** The Table the job writes: `{base}/tables/flame-facts.job.p0.sqlite`. */
 	public const TABLE = 'flame-facts.job';
 
-	/** The Table's spec, which the writer builds and the reader mounts. */
-	private const SPEC = [
-		'namespace' => self::TABLE,
-		'backend'   => 'sqlite',
-		'partition' => 0,
-	];
+	/** The Table's backend, which the writer builds and the reader mounts. */
+	private const BACKEND = 'sqlite';
+
+	/** The Table's one partition, partition 0's JobWorker its writer. */
+	private const PARTITION = 0;
 
 	/** The job handler, queued once an interval by `Overview_Prefetch_Tick_Node`. */
 	public const HANDLER = 'eln_overview_prefetch';
@@ -114,7 +113,7 @@ final class Overview_Prefetch {
 		if ( $table instanceof Table_Node ) {
 			return $table;
 		}
-		$table = Table_Node::table( self::SPEC['namespace'], $ttl, self::SPEC['backend'] );
+		$table = Table_Node::table( self::TABLE, $ttl, self::BACKEND );
 		$table->name( self::TABLE );
 		return $table;
 	}
@@ -130,12 +129,12 @@ final class Overview_Prefetch {
 	 * @throws \RuntimeException With no request graph to mount into.
 	 */
 	public static function lookup( string $verb, array $args ): ?array {
-		$stem = Table_Node::stem( self::TABLE, self::SPEC['partition'] );
+		$stem = Table_Node::stem( self::TABLE, self::PARTITION );
 		try {
 			$table = Core::node( $stem );
 			if ( ! $table instanceof Table_Node ) {
 				$ci    = Core::node( Node_Names::COMMAND_INTERPRETER ) ?? throw new \RuntimeException( 'overview prefetch: no request graph to mount into' );
-				$table = Table_Node::mount( self::TABLE, self::SPEC['partition'], [ 'namespace' => self::SPEC['namespace'], 'ttl' => 1, 'backend' => self::SPEC['backend'] ], $ci );
+				$table = Table_Node::mount( self::TABLE, self::PARTITION, [ 'namespace' => self::TABLE, 'ttl' => 1, 'backend' => self::BACKEND ], $ci );
 			}
 			$answer = $table->lookup( self::key( $verb, $args ) );
 		} catch ( Table_Unavailable $e ) {

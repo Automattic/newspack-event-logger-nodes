@@ -13,14 +13,14 @@ use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
-use Newspack_Nodes\Table_Unavailable;
 use Newspack_Nodes\Topology_Loader;
 use Newspack_Nodes\Worker_Should_Stop;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
 
 /**
  * The category window equals timings_site summed over the last 288 buckets,
- * across adds, expiries, replays and restarts, with no start reading the file.
+ * across adds, expiries, replays and restarts; its watermark is the newest
+ * bucket `window_expiry` holds, which a builder reads once.
  */
 #[CoversClass( Flame_Builder_Node::class )]
 final class CategoryWindowTest extends TestCase {
@@ -51,6 +51,25 @@ final class CategoryWindowTest extends TestCase {
 		return $fb;
 	}
 
+	/**
+	 * A second builder over the first one's file, as a respawned worker
+	 * runs: the first gone, the graph and its Row_Table kept.
+	 */
+	private function restarted( Flame_Builder_Node $fb ): Flame_Builder_Node {
+		$sink = $fb->sink();
+		$fb->remove_node();
+		$next = new Flame_Builder_Node();
+		$next->name( 'flame-builder' );
+		$next->set_facts_target( self::FACTS_TABLE );
+		$next->sink( $sink );
+		return $next;
+	}
+
+	/** Mark `$bucket` expired in partition 0's file, so it is the watermark. */
+	private function seed_watermark( int $bucket ): void {
+		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $bucket ] ] ] );
+	}
+
 	/** One timed request whose profile spends `$ms` in `$category`. */
 	private function fold( Flame_Builder_Node $fb, string $rid, string $category, float $ms, int $finished ): void {
 		$this->fill_request_at(
@@ -69,7 +88,7 @@ final class CategoryWindowTest extends TestCase {
 
 	/** The window's live rows as category => [ ms, calls, requests ]. */
 	private function window(): array {
-		$w = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT bucket FROM p0.window_watermark WHERE name = ?', [ Flame_Facts_Row_Schema::WINDOW ] ) );
+		$w = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT MAX( bucket ) FROM p0.window_expiry', [] ) );
 		$rows = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT category, ms, calls, requests FROM p0.category_window WHERE last_bucket > ? AND requests > 0 AND entry = ? ORDER BY category', [ $w[0][0], '' ] ) );
 		$out = [];
 		foreach ( $rows as [ $category, $ms, $calls, $requests ] ) {
@@ -91,20 +110,20 @@ final class CategoryWindowTest extends TestCase {
 		$this->assertSame( [ 'hook:kaka_init' => [ 12.5, 2, 1 ] ], $this->window() );
 	}
 
-	public function test_a_bucket_leaving_the_window_is_subtracted_once_even_when_replayed(): void {
+	public function test_a_bucket_leaving_the_window_is_subtracted_once_across_a_restarts_replay(): void {
 		$fb    = $this->builder();
 		$first = self::NOW - ( Flame_Facts_Row_Schema::WINDOW_BUCKETS - 1 ) * Bucket::SECONDS;
 		$this->fold( $fb, 'rid-kaka-2', 'hook:kaka_init', 12.5, $first );
 		$fb->flush();
-		$state = $fb->save_state();
 
 		Core::$now += Bucket::SECONDS;
 		$fb->flush();
-		$fb->restore_state( $state );
-		$fb->flush();
+		$next = $this->restarted( $fb );
+		$this->fold( $next, 'rid-kaka-2', 'hook:kaka_init', 12.5, $first );
+		$next->flush();
 
 		$this->assertSame( [], $this->window() );
-		$this->assertSame( [ [ 0.0, 0, 0 ] ], $this->raw_window(), 'a restored watermark behind the file subtracts nothing twice' );
+		$this->assertSame( [ [ 0.0, 0, 0 ] ], $this->raw_window(), 'the replay neither adds nor subtracts twice' );
 	}
 
 	public function test_an_idle_tick_expires_the_bucket_leaving_the_window(): void {
@@ -156,72 +175,76 @@ final class CategoryWindowTest extends TestCase {
 		$this->assertSame( [ 'hook:kaka_init' => [ 12.5, 2, 1 ], 'hook:tui_init' => [ 35.75, 7, 3 ] ], $this->window(), 'the stale row reads as gone, the bucket outside the window adds nothing' );
 	}
 
-	public function test_a_start_with_state_reads_no_file_before_its_first_fold(): void {
+	public function test_a_fresh_builder_resumes_at_the_files_watermark_with_one_read(): void {
+		$this->seed_stale_window_row();
+		$this->seed_watermark( Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::WINDOW_BUCKETS );
 		$fb = $this->builder();
-		$fb->restore_state( [ 'window_through' => Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::WINDOW_BUCKETS ] );
+		$this->fold( $fb, 'rid-kaka-6', 'hook:kaka_init', 12.5, self::NOW );
+		$fb->flush();
 		\chmod( $this->facts_file( 0 ), 0000 );
 		try {
-			$this->fold( $fb, 'rid-kaka-6', 'hook:kaka_init', 12.5, self::NOW );
+			$this->fold( $fb, 'rid-kaka-7', 'hook:kaka_init', 3.5, self::NOW );
+			$fb->flush();
 		} finally {
 			\chmod( $this->facts_file( 0 ), 0644 );
 		}
-		$this->assertTrue( true, 'no read was asked of the unreadable file' );
+
+		$this->assertSame( [ 'hook:kaka_init' => [ 16.0, 4, 2 ], 'hook:stale_init' => [ 999.0, 9, 9 ] ], $this->window(), 'no rebuild negated the row timings_site does not hold, and no read followed the first' );
 	}
 
-	public function test_save_state_carries_the_watermark(): void {
+	public function test_save_state_writes_the_buffer_and_carries_nothing(): void {
 		$fb = $this->builder();
 		$this->fold( $fb, 'rid-kaka-7', 'hook:kaka_init', 12.5, self::NOW );
 
-		$this->assertSame( [ 'window_through' => Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::WINDOW_BUCKETS ], $fb->save_state() );
+		$this->assertSame( [], $fb->save_state() );
+		$this->assertSame( [ 'hook:kaka_init' => [ 12.5, 2, 1 ] ], $this->window() );
 	}
 
-	public function test_a_restored_watermark_behind_the_files_resyncs_before_its_next_fold(): void {
+	public function test_a_record_in_a_bucket_the_file_expired_adds_nothing_after_a_restart(): void {
 		$fb = $this->builder();
 		$this->fold( $fb, 'rid-kaka-9', 'hook:kaka_init', 12.5, self::NOW );
 		$fb->flush();
-		$state = $fb->save_state();
 		Core::$now += Bucket::SECONDS;
 		$fb->flush();
 
-		$fb->restore_state( $state );
-		$this->fold( $fb, 'rid-kaka-10', 'hook:kaka_init', 7.0, self::NOW - ( Flame_Facts_Row_Schema::WINDOW_BUCKETS - 1 ) * Bucket::SECONDS );
-		$fb->flush();
+		$next = $this->restarted( $fb );
+		$this->fold( $next, 'rid-kaka-10', 'hook:kaka_init', 7.0, self::NOW - ( Flame_Facts_Row_Schema::WINDOW_BUCKETS - 1 ) * Bucket::SECONDS );
+		$next->flush();
 
 		$this->assertSame( [ 'hook:kaka_init' => [ 12.5, 2, 1 ] ], $this->window(), 'a record in a bucket the file already expired adds nothing' );
 	}
 
-	public function test_a_rebuild_marks_the_buckets_it_left_out_expired(): void {
+	public function test_a_rebuild_marks_its_watermark_so_a_restart_rebuilds_nothing(): void {
 		$bucket = Bucket::id( self::NOW );
 		$this->write_facts(
 			0,
 			[
 				[ 'add', 'timings_site', [ $bucket - 287, 'seed.example', 0, 'hook:tui_init', '', 0, 30.5, 4, 2 ] ],
 				[ 'add', 'timings_site', [ $bucket - 288, 'seed.example', 0, 'hook:tui_init', '', 0, 6.0, 1, 1 ] ],
-				[ 'add', 'timings_site', [ $bucket - 289, 'seed.example', 0, 'hook:tui_init', '', 0, 5.0, 1, 1 ] ],
 			]
 		);
 		$fb = $this->builder();
 		$fb->flush();
+		// A sum the window does not hold, which only a second rebuild would add.
+		self::rows_into( Core::node( self::FACTS_TABLE ), [ [ 'add', 'timings_site', [ $bucket - 287, 'tui.example', 0, 'hook:tui_init', '', 0, 4.0, 1, 1 ] ] ] );
 
-		$fb->restore_state( [ 'window_through' => $bucket - 290 ] );
-		$fb->flush();
+		$this->restarted( $fb )->flush();
 
-		$this->assertSame( [ 'hook:tui_init' => [ 30.5, 4, 2 ] ], $this->window(), 'the expiry subtracts nothing the rebuild left out' );
+		$this->assertSame( [ 'hook:tui_init' => [ 30.5, 4, 2 ] ], $this->window(), 'the restart resumed at the rebuild\'s marks' );
 	}
 
 	public function test_a_watermark_301_buckets_back_rebuilds(): void {
 		$this->seed_stale_window_row();
-		$fb = $this->builder();
-		$fb->restore_state( [ 'window_through' => Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::TIMINGS_BUCKETS - 1 ] );
-		$fb->flush();
+		$this->seed_watermark( Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::TIMINGS_BUCKETS - 1 );
+		$this->builder()->flush();
 
 		$this->assertSame( [], $this->window(), 'the rebuild negates the row timings_site does not hold' );
 	}
 
 	public function test_a_watermark_300_buckets_back_subtracts_per_bucket(): void {
 		$this->seed_stale_window_row();
+		$this->seed_watermark( Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::TIMINGS_BUCKETS );
 		$fb = $this->builder();
-		$fb->restore_state( [ 'window_through' => Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::TIMINGS_BUCKETS ] );
 		$fb->flush();
 
 		$this->assertSame( [ 'hook:stale_init' => [ 999.0, 9, 9 ] ], $this->window(), 'the expiry touches only the buckets leaving' );
@@ -243,7 +266,7 @@ final class CategoryWindowTest extends TestCase {
 		}
 
 		$this->assertFalse( null === $thrown || Worker_Should_Stop::is_clean( $thrown ), 'a plain stop, so the reader replays' );
-		$this->assertInstanceOf( Table_Unavailable::class, $thrown->getPrevious(), 'the expiry\'s read failed, not the write' );
+		$this->assertInstanceOf( \PDOException::class, $thrown->getPrevious(), 'the expiry\'s read failed, not the write' );
 		$this->assertSame( [ [ 1 ] ], $this->request_count(), 'the buffer was written before the expiry failed' );
 		$this->assertNull( $fb->idle_since(), 'the buffer is kept' );
 
@@ -274,6 +297,7 @@ final class CategoryWindowTest extends TestCase {
 
 		$this->assertFalse( null === $thrown || Worker_Should_Stop::is_clean( $thrown ), 'a plain stop, so the reader replays' );
 		$this->assertStringContainsString( 'stats window failed', $thrown->getMessage() );
+		$this->assertStringContainsString( 'set_facts_target', (string) $thrown->getPrevious()?->getMessage(), 'no Row_Table was named to read the watermark from' );
 		$this->assertNotNull( $fb->idle_since(), 'nothing is buffered' );
 	}
 
@@ -281,7 +305,6 @@ final class CategoryWindowTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb-kaka' );
 		$fb->sink( new Capture_Sink_Node() );
-		$fb->restore_state( [ 'window_through' => Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::WINDOW_BUCKETS - 1 ] );
 
 		$thrown = null;
 		try {

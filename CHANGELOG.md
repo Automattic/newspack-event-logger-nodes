@@ -11,17 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`flame-builder.tsl` queues the overview-prefetch job once a minute from partition 0, to the firehose and `jobfeed.p0`, so standalone sites, spokes and hubs each run it on their own JobWorker.**
 - **The overview-prefetch JobWorker job answers the Overview's five default questions, the request chart by both of its default breakdowns among them, into `flame-facts.job`; the verbs serve those answers for two intervals and answer anything else live, every answer dated by `as_of`.**
-- **The flame builder keeps `category_window`: each category's and entry's sums over the last 288 buckets, moved as each request lands and as each bucket leaves, its watermark carried in the offsetlog across restarts.**
+- **The flame builder keeps `category_window`: each category's and entry's sums over the last 288 buckets, moved as each request lands and as each bucket leaves, its watermark the newest `window_expiry` bucket in its own file.**
 
 ### Changed
 
 - **The site leaderboard spans the chart's 24 hours, and a day's category question reads the category window: 873 rows on eln against 590,000.**
-- **Flame_Facts schema 4: a covering `requests_cover` index and the `category_window` the flame builder maintains.** The window, its `window_watermark` and its `window_expiry` are three new tables, nine in all. A v3 file is discarded at open; run the rebuild.
+- **Flame_Facts schema 4: a covering `requests_cover` index and the `category_window` the flame builder maintains.** The window and its `window_expiry` are two new tables, eight in all. A v3 file is discarded at open; run the rebuild.
 - **Each partition groups its own stats rows before the union merges them, whenever every measure a query names composes.** On eln's data the bucket chart drops from about 400 ms to about 130 ms and the URL top 200 from about 1.8 s to about 1.3 s. The full URL page, whose URLs are mostly unique, gains nothing. A percentile or a distinct count still reads every partition's rows whole.
 
 ### Fixed
 
 - **A job context opened after another job's has ended no longer names that job's message as its cause.** The borrowed contexts of the overview-prefetch tick and the cron runners carried the previous job's `message` entry.
+- **A nested job context that brings its own message gives the outer job's back when it ends.** The render that followed it named the inner job's record as its cause.
 
 ## [0.134.2] - 2026-10-15
 

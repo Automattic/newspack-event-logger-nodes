@@ -64,12 +64,13 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A builder constructed bare, as no topology arms one, its window current
-	 * so a fold reads no Row_Table.
+	 * A builder constructed bare, as no topology arms one, naming the facts
+	 * table whose file holds a current window, so a fold rebuilds nothing.
 	 */
 	private function unarmed_builder(): Flame_Builder_Node {
+		$this->current_window_facts();
 		$fb = new Flame_Builder_Node();
-		$fb->restore_state( [ 'window_through' => self::current_window_through() ] );
+		$fb->set_facts_target( self::FACTS_TABLE );
 		return $fb;
 	}
 
@@ -312,7 +313,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotNull( $thrown );
 		$this->assertFalse( \Newspack_Nodes\Worker_Should_Stop::is_clean( $thrown ), 'the reader must replay it' );
 		$first->shutdown_sweep();
-		$this->assertSame( [ 'window_through' => self::current_window_through() ], $first->save_state(), 'the checkpoint carries the watermark alone' );
+		$this->assertSame( [], $first->save_state(), 'the checkpoint carries nothing' );
 		$first->remove_node();
 
 		[ $successor, $flames ] = $this->capturing_builder();
@@ -555,7 +556,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$this->assertSame( [], $flames->captured, 'nothing is forwarded' );
 		$this->assertSame( 0, $this->get_stats( $fb )['buffered_requests'], 'nothing is buffered' );
-		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state(), 'the checkpoint carries the watermark alone' );
+		$this->assertSame( [], $fb->save_state(), 'the checkpoint carries nothing' );
 
 		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-kea-7731', 'url' => 'https://kea-7713.test/kea-7731', 'duration_ms' => 29.0, 'timestamp' => self::tick() ] ), '7:200:42' );
 		$this->assertContains( 'flames:partition', \array_column( $flames->captured, Message::TO ), 'the next record forwards its flame' );
@@ -658,28 +659,6 @@ class FlameBuilderTest extends TestCase {
 		];
 		Flame_Tree::finalize_flame_node( $node, 1 );
 		$this->assertEqualsWithDelta( 6.0, $node['value'], 1e-6 );
-	}
-
-	/**
-	 * A builder no verb named a Row_Table for cannot write what it buffered:
-	 * its flush stops the worker, saying so, and keeps the rows.
-	 */
-	public function test_a_flush_with_no_row_table_named_stops_the_worker(): void {
-		$fb = $this->unarmed_builder();
-		$fb->name( 'fb' );
-		$fb->sink( new Capture_Sink_Node() );
-		$this->fill_request( $fb, $this->completed_request( [ 'rid' => 'rid-moho-7' ] ) );
-
-		$thrown = null;
-		try {
-			$fb->flush();
-		} catch ( \Newspack_Nodes\Worker_Should_Stop $e ) {
-			$thrown = $e;
-		}
-
-		$this->assertFalse( null === $thrown || \Newspack_Nodes\Worker_Should_Stop::is_clean( $thrown ), 'a plain stop' );
-		$this->assertStringContainsString( 'set_facts_target', (string) $thrown->getPrevious()?->getMessage() );
-		$this->assertSame( 1, $this->get_stats( $fb )['buffered_requests'], 'the rows wait for the successor\'s replay' );
 	}
 
 	/** A flush with nothing buffered asks no Row_Table, named or not. */
@@ -984,7 +963,7 @@ class FlameBuilderTest extends TestCase {
 			$this->fill_request_at( $fb, $this->completed_request( [ 'duration_ms' => 211.0, 'profiles' => $noisy ] ), $crumb );
 		}
 
-		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state() );
+		$this->assertSame( [], $fb->save_state(), 'the checkpoint carries nothing' );
 		$this->assertSame( [ [ 3 ] ], $this->facts( 'SELECT count FROM requests_hourly' ), 'the rows are written' );
 		$this->expectExceptionMessage( 'auto-tuner refused the rewrite' );
 		$fb->flush();
@@ -1016,7 +995,7 @@ class FlameBuilderTest extends TestCase {
 		} catch ( \Newspack_Nodes\Worker_Should_Stop $e ) {
 			$this->assertFalse( \Newspack_Nodes\Worker_Should_Stop::is_clean( $e ), 'the reader replays the record' );
 		}
-		$this->assertSame( [ 'window_through' => self::current_window_through() ], $first->save_state() );
+		$this->assertSame( [], $first->save_state(), 'the checkpoint carries nothing' );
 		$first->remove_node();
 
 		$this->assertSame( [ [ 2 ] ], $this->facts( 'SELECT count(*) FROM requests' ), 'both records are written before the cursor commits' );
@@ -1667,7 +1646,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_save_state_with_nothing_buffered_writes_nothing(): void {
 		$fb = $this->unarmed_builder();
 		$fb->name( 'fb' );
-		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state() );
+		$this->assertSame( [], $fb->save_state(), 'the checkpoint carries nothing' );
 	}
 
 	public function test_disable_uses_the_stamped_rules_threshold(): void {

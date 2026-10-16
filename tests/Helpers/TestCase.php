@@ -74,12 +74,7 @@ abstract class TestCase extends RuntimeTestCase {
 			$router = new \Newspack_Nodes\Router_Node();
 			$router->name( \Newspack_Nodes\Node_Names::ROUTER );
 		}
-		if ( ! \Newspack_Nodes\Core::node( self::FACTS_TABLE ) instanceof \Newspack_Nodes\Row_Table_Node ) {
-			$table = new \Newspack_Nodes\Row_Table_Node();
-			$table->name( self::FACTS_TABLE );
-			$table->arguments( [ 'Flame_Facts' ] );
-			$table->sink( VerbHarness::request_graph() );
-		}
+		$this->current_window_facts();
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
 		$fb->arguments( [] );
@@ -94,14 +89,63 @@ abstract class TestCase extends RuntimeTestCase {
 			}
 		}
 		$fb->sink( VerbHarness::request_graph() );
-		// A current window: no topology declares this Table, so none is read.
-		$fb->restore_state( [ 'window_through' => self::current_window_through() ] );
 		return $fb;
+	}
+
+	/**
+	 * The `flame-facts` Row_Table, answering the request graph, its bound
+	 * partition's file holding a window expired through the current tick, so
+	 * a builder's first fold reads that watermark and rebuilds nothing.
+	 */
+	protected function current_window_facts(): \Newspack_Nodes\Row_Table_Node {
+		$table = \Newspack_Nodes\Core::node( self::FACTS_TABLE );
+		if ( ! $table instanceof \Newspack_Nodes\Row_Table_Node ) {
+			$table = new \Newspack_Nodes\Row_Table_Node();
+			$table->name( self::FACTS_TABLE );
+			$table->arguments( [ 'Flame_Facts' ] );
+			// Mounting the graph logs a user in; the caller's stands instead.
+			$user = $GLOBALS['_current_user_id'] ?? null;
+			$table->sink( VerbHarness::request_graph() );
+			unset( $GLOBALS['_current_user_id'] );
+			if ( null !== $user ) {
+				$GLOBALS['_current_user_id'] = $user;
+			}
+		}
+		self::rows_into( $table, [ [ 'ignore', 'window_expiry', [ self::current_window_through() ] ] ] );
+		return $table;
 	}
 
 	/** The watermark a window expired through the current tick holds. */
 	protected static function current_window_through(): int {
 		return \Newspack_Event_Logger_Nodes\Bucket::id( (int) \Newspack_Nodes\Core::$now ) - \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::WINDOW_BUCKETS;
+	}
+
+	/**
+	 * Send one ROWS batch straight to a Row_Table, catching its reply here
+	 * rather than on the table's sink, and fail on a refusal.
+	 *
+	 * @param \Newspack_Nodes\Row_Table_Node $table The table.
+	 * @param list<array<int,mixed>>        $batch The ops.
+	 */
+	protected static function rows_into( \Newspack_Nodes\Row_Table_Node $table, array $batch ): void {
+		$sink    = $table->sink();
+		$capture = new \Newspack_Nodes\Tests\Capture_Sink_Node();
+		$table->sink( $capture );
+		$request                                   = \Newspack_Nodes\Message::new_message();
+		$request[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_REQUEST | \Newspack_Nodes\Message::TM_STRUCT;
+		$request[ \Newspack_Nodes\Message::FROM ]  = 'facts-seeder';
+		$request[ \Newspack_Nodes\Message::VALUE ] = [ 'ROWS' => $batch ];
+		try {
+			$table->fill( $request );
+		} finally {
+			if ( null !== $sink ) {
+				$table->sink( $sink );
+			}
+		}
+		$reply = $capture->captured[0] ?? throw new \LogicException( 'the facts table answered no ROWS' );
+		if ( 0 !== ( \Newspack_Nodes\Core::num_int( $reply[ \Newspack_Nodes\Message::TYPE ] ) & \Newspack_Nodes\Message::TM_ERROR ) ) {
+			throw new \LogicException( 'the facts table refused ROWS: ' . \Newspack_Nodes\Core::as_string( $reply[ \Newspack_Nodes\Message::VALUE ] ) );
+		}
 	}
 
 	/**

@@ -21,10 +21,10 @@
  * The builder also keeps `category_window`, each category's and entry's
  * sums over the last `WINDOW_BUCKETS`: a request adds its timings when its
  * bucket is newer than the window's watermark, and every write subtracts
- * each bucket that left the window, once per `window_expiry` row. With no
- * watermark known, or one older than `timings_site` holds, the window is
- * rebuilt from `timings_site`. The watermark rides the builder's snapshot
- * state, so a restart reads no file for it.
+ * each bucket that left the window, once per `window_expiry` row. The
+ * watermark is the newest bucket `window_expiry` holds, read once, before
+ * the first fold. With none, or one older than `timings_site` holds, the
+ * window is rebuilt from `timings_site`.
  *
  * One side channel hangs off that pipeline: the request's governing `Rule`
  * drives auto-tune. Hooks that fire too often, custom events to disable, and
@@ -49,10 +49,10 @@ use Newspack_Nodes\Core;
 use Newspack_Nodes\Idle_Reporter;
 use Newspack_Nodes\Log_Position;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Row_Reader;
-use Newspack_Nodes\Row_Table_Node;
 use Newspack_Nodes\Shutdown_Sweeper;
+use Newspack_Nodes\Sqlite_Arm;
 use Newspack_Nodes\Table_Client;
+use Newspack_Nodes\Table_Node;
 use Newspack_Nodes\Timer_Node;
 use Newspack_Nodes\Worker_Should_Stop;
 
@@ -200,11 +200,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private array $category_sums = [];
 
-	/** The last bucket the category window has expired; null until known. */
+	/** The last bucket the category window has expired; null until read. */
 	private ?int $window_through = null;
-
-	/** Whether this process has expired the window before its first fold. */
-	private bool $window_synced = false;
 
 	/**
 	 * Seed the flush clock, build the Table asker, and publish the owned
@@ -269,7 +266,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		}
 		++$this->counter;
 		$type = Core::num_int( $message[ Message::TYPE ] );
-		if ( ! $this->window_synced && 0 !== ( $type & Message::TM_STRUCT ) && 0 === ( $type & Message::TM_REQUEST ) ) {
+		if ( null === $this->window_through && 0 !== ( $type & Message::TM_STRUCT ) && 0 === ( $type & Message::TM_REQUEST ) ) {
 			$this->sync_window();
 		}
 		$this->deferring( fn () => $this->fold_record( $message ) );
@@ -472,7 +469,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$then[] = [ 'add', 'timings', [ $bucket, $server, null, $category, $entry, $listener, $time, $calls, 1 ], [], $url_id ];
 			$then[] = [ 'add', 'timings_site', [ $bucket, $server, $worker, $category, $entry, $listener, $time, $calls, 1 ] ];
 			if ( $windowed ) {
-				$then[] = [ 'add', 'category_window', [ $category, $entry, $listener, $worker, $time, $calls, 1, $bucket ] ];
+				$then[] = self::window_op( [ $category, $entry, $listener, $worker, $time, $calls, 1 ], 1, $bucket );
 			}
 		}
 		$this->ops += \count( $then );
@@ -663,23 +660,22 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Write the buffer and expire the window before the Consumer commits its
-	 * cursor, and carry the watermark: the offsetlog holds it across restarts,
-	 * so no start reads the file for it. A record the cursor replays is counted
-	 * once by its `requests` row's rid (decision 31), and an expiry it replays
-	 * once by its `window_expiry` row. Only the durable half of a flush runs
-	 * here: an auto-tune emit that throws would keep the cursor from
-	 * committing, so its decisions wait for the tick. A write that fails
+	 * cursor; the checkpoint carries nothing. A record the cursor replays is
+	 * counted once by its `requests` row's rid (decision 31), and an expiry
+	 * it replays once by its `window_expiry` row. Only the durable half of a
+	 * flush runs here: an auto-tune emit that throws would keep the cursor
+	 * from committing, so its decisions wait for the tick. A write that fails
 	 * raises, and the cursor commits nothing past the records it held. In
 	 * crawl mode the Consumer checkpoints every message, so this runs per
 	 * message until `CHECKPOINT_INTERVAL_S` of crash-free progress ends the
 	 * crawl.
 	 *
 	 * @api Used by substrate.
-	 * @return array{window_through?:int}
+	 * @return array{}
 	 */
 	public function save_state(): array {
 		$this->write_rows();
-		return null === $this->window_through ? [] : [ 'window_through' => $this->window_through ];
+		return [];
 	}
 
 	/**
@@ -766,8 +762,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Expire the window before the first fold, so the gate reads a watermark
-	 * no newer bucket has passed.
+	 * Read the watermark and expire the window before the first fold, so the
+	 * gate reads one no newer bucket has passed.
 	 *
 	 * @throws Worker_Should_Stop Carrying whatever failed, so the record replays.
 	 */
@@ -777,28 +773,33 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		} catch ( \Throwable $e ) {
 			throw Worker_Should_Stop::combine( [ new Worker_Should_Stop( 'stats window failed' ), $e ] );
 		}
-		$this->window_synced = true;
 	}
 
 	/**
 	 * Move the window to end at the current bucket: subtract each bucket that
-	 * left it, or rebuild it from `timings_site` when no watermark is known or
-	 * `timings_site` may no longer hold the gap. One ROWS batch, its watermark
-	 * last; a refusal raises and the watermark stays.
+	 * left it, or rebuild it from `timings_site` when the file holds no
+	 * watermark or `timings_site` may no longer hold the gap. One ROWS batch,
+	 * whose `window_expiry` rows carry the new watermark; a refusal raises
+	 * and the watermark stays.
 	 */
 	private function expire_window(): void {
-		$now     = Bucket::id( (int) Core::$now );
-		$through = $now - Flame_Facts_Row_Schema::WINDOW_BUCKETS;
+		$now                    = Bucket::id( (int) Core::$now );
+		$through                = $now - Flame_Facts_Row_Schema::WINDOW_BUCKETS;
+		$this->window_through ??= $this->watermark();
 		if ( null !== $this->window_through && $this->window_through >= $through ) {
 			return;
 		}
-		$table   = $this->facts_table();
-		$batch   = null === $this->window_through || $this->window_through < $now - Flame_Facts_Row_Schema::TIMINGS_BUCKETS
+		$batch = null === $this->window_through || $this->window_through < $now - Flame_Facts_Row_Schema::TIMINGS_BUCKETS
 			? $this->window_rebuild( $through, $now )
 			: $this->window_expiries( $this->window_through + 1, $through );
-		$batch[] = [ 'add', 'window_watermark', [ Flame_Facts_Row_Schema::WINDOW, $through ] ];
-		$this->client->write_rows( $table, $batch );
+		$this->client->write_rows( $this->facts_table(), $batch );
 		$this->window_through = $through;
+	}
+
+	/** The newest bucket this partition's file has expired; null for none. */
+	private function watermark(): ?int {
+		$newest = $this->own_rows( 'SELECT MAX( bucket ) FROM %s.window_expiry', [] )[0][0] ?? null;
+		return null === $newest ? null : Core::as_int( $newest );
 	}
 
 	/**
@@ -815,9 +816,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			[ $first, $last ]
 		);
 		$then = \array_fill_keys( \range( $first, $last ), [] );
-		foreach ( $sums as [ $bucket, $category, $entry, $listener, $worker, $ms, $calls, $requests ] ) {
-			$bucket            = Core::as_int( $bucket );
-			$then[ $bucket ][] = [ 'add', 'category_window', [ Core::as_string( $category ), Core::as_string( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), -Core::num_float( $ms ), -Core::as_int( $calls ), -Core::as_int( $requests ), $bucket ] ];
+		foreach ( $sums as $row ) {
+			$bucket            = Core::as_int( $row[0] );
+			$then[ $bucket ][] = self::window_op( \array_slice( $row, 1 ), -1, $bucket );
 		}
 		$batch = [];
 		foreach ( $then as $bucket => $negations ) {
@@ -830,8 +831,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * Every window row negated, then `timings_site` summed over the buckets
 	 * after `$through` through `$now`: the window rebuilt exactly, whatever it
 	 * held and whatever retention purged first. Each bucket `timings_site`
-	 * still holds at or before `$through` is marked expired, so a watermark
-	 * restored behind the rebuild subtracts none of them.
+	 * still holds at or before `$through` is marked expired, the last of them
+	 * the watermark.
 	 *
 	 * @param int $through The bucket the rebuilt window starts after.
 	 * @param int $now     The current bucket.
@@ -839,20 +840,51 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private function window_rebuild( int $through, int $now ): array {
 		$batch = [];
-		foreach ( $this->own_rows( 'SELECT category, entry, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window', [] ) as [ $category, $entry, $listener, $worker, $ms, $calls, $requests, $last ] ) {
-			$batch[] = [ 'add', 'category_window', [ Core::as_string( $category ), Core::as_string( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), -Core::num_float( $ms ), -Core::as_int( $calls ), -Core::as_int( $requests ), Core::as_int( $last ) ] ];
+		foreach ( $this->own_rows( 'SELECT category, entry, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window', [] ) as $row ) {
+			$batch[] = self::window_op( $row, -1, Core::as_int( $row[7] ) );
 		}
 		$sums = $this->own_rows(
 			'SELECT category, entry, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY category, entry, listener, worker',
 			[ $through + 1, $now ]
 		);
-		foreach ( $sums as [ $category, $entry, $listener, $worker, $ms, $calls, $requests, $last ] ) {
-			$batch[] = [ 'add', 'category_window', [ Core::as_string( $category ), Core::as_string( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), Core::num_float( $ms ), Core::as_int( $calls ), Core::as_int( $requests ), Core::as_int( $last ) ] ];
+		foreach ( $sums as $row ) {
+			$batch[] = self::window_op( $row, 1, Core::as_int( $row[7] ) );
 		}
 		foreach ( \range( $now - Flame_Facts_Row_Schema::TIMINGS_BUCKETS + 1, $through ) as $bucket ) {
 			$batch[] = [ 'ignore', 'window_expiry', [ $bucket ] ];
 		}
 		return $batch;
+	}
+
+	/**
+	 * A `category_window` add of one category's and entry's sums, added at
+	 * `$sign` 1 and subtracted at -1, its `last_bucket` `$last`.
+	 *
+	 * @param list<mixed> $sums Category, entry, listener, worker, ms, calls, requests.
+	 * @param int         $sign 1 or -1.
+	 * @param int         $last The bucket the row last moved in.
+	 * @return Row_Op
+	 */
+	private static function window_op( array $sums, int $sign, int $last ): array {
+		[ $category, $entry, $listener, $worker, $ms, $calls, $requests ] = $sums;
+		return [ 'add', 'category_window', [ Core::as_string( $category ), Core::as_string( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), $sign * Core::num_float( $ms ), $sign * Core::as_int( $calls ), $sign * Core::as_int( $requests ), $last ] ];
+	}
+
+	/**
+	 * Rows of a statement over this partition's file of the Row_Table
+	 * `set_facts_target` named, its alias the `%s`; none before the file
+	 * exists.
+	 *
+	 * @param string            $sql   The statement.
+	 * @param list<scalar|null> $binds Its binds.
+	 * @return list<list<mixed>>
+	 * @throws \LogicException When no partition is bound, or no table named.
+	 * @throws \PDOException When the file will not open.
+	 */
+	private function own_rows( string $sql, array $binds ): array {
+		$partition = Core::bound_partition() ?? throw new \LogicException( 'Flame_Builder: no partition is bound, so no window can be read' );
+		$reader    = Sqlite_Arm::open_rows( [ $partition => Table_Node::file( $this->facts_table(), $partition ) ], Flame_Facts_Row_Schema::version() );
+		return [] === $reader->aliases() ? [] : $reader->rows( \sprintf( $sql, "p{$partition}" ), $binds );
 	}
 
 	/**
@@ -862,23 +894,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private function facts_table(): string {
 		return '' === $this->facts_target ? throw new \LogicException( 'Flame_Builder: no Row_Table named by set_facts_target' ) : $this->facts_target;
-	}
-
-	/**
-	 * Rows of a statement over this partition's file alone, its alias the
-	 * `%s`; none before the file exists.
-	 *
-	 * @param string            $sql   The statement.
-	 * @param list<scalar|null> $binds Its binds.
-	 * @return list<list<mixed>>
-	 * @throws \LogicException When no partition is bound.
-	 */
-	private function own_rows( string $sql, array $binds ): array {
-		$alias = 'p' . ( Core::bound_partition() ?? throw new \LogicException( 'Flame_Builder: no partition is bound, so no window can be read' ) );
-		return Row_Table_Node::read(
-			Flame_Facts_Row_Schema::class,
-			static fn ( Row_Reader $reader ): array => \in_array( $alias, $reader->aliases(), true ) ? $reader->rows( \sprintf( $sql, $alias ), $binds ) : []
-		);
 	}
 
 	/**
@@ -1005,19 +1020,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			'items'   => $items,
 		];
 		$this->require_sink()->fill( $message );
-	}
-
-	/**
-	 * Take the watermark the Consumer's last commit carried, and expire the
-	 * window again before the next fold, since a seek may restore one behind
-	 * the file's.
-	 *
-	 * @api Used by substrate.
-	 * @param array<array-key,mixed> $state What `save_state()` returned.
-	 */
-	public function restore_state( array $state ): void {
-		$this->window_through = isset( $state['window_through'] ) ? Core::as_int( $state['window_through'] ) : null;
-		$this->window_synced  = false;
 	}
 
 	/**

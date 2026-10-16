@@ -20,9 +20,7 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Message;
 use Newspack_Nodes\Row_Table_Node;
-use Newspack_Nodes\Tests\Capture_Sink_Node;
 
 trait FactsSeeder {
 
@@ -227,20 +225,10 @@ trait FactsSeeder {
 				unset( Core::$var['partition'] );
 			}
 		}
-		$sink = new Capture_Sink_Node();
-		$table->sink( $sink );
-		$request                   = Message::new_message();
-		$request[ Message::TYPE ]  = Message::TM_REQUEST | Message::TM_STRUCT;
-		$request[ Message::FROM ]  = 'facts-seeder';
-		$request[ Message::VALUE ] = [ 'ROWS' => $batch ];
 		try {
-			$table->fill( $request );
+			self::rows_into( $table, $batch );
 		} finally {
 			$table->remove_node();
-		}
-		$reply = $sink->captured[0] ?? throw new \LogicException( 'the facts table answered no ROWS' );
-		if ( 0 !== ( Core::num_int( $reply[ Message::TYPE ] ) & Message::TM_ERROR ) ) {
-			throw new \LogicException( 'the facts table refused ROWS: ' . Core::as_string( $reply[ Message::VALUE ] ) );
 		}
 	}
 
