@@ -201,6 +201,23 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		}
 	} );
 
+	test( 'waits out a slow live answer before asking a stats slice again', () => {
+		installWire();
+		renderHook( () => usePerformanceGraph() );
+		for ( const fetcher of [
+			'overview:fetch',
+			'urls:fetch',
+			'chart:fetch',
+			'categories:fetch',
+			'url-detail:fetch',
+			'url-chart:fetch',
+			'url-categories:fetch',
+		] ) {
+			expect( Core.node( fetcher ).retry_after_s ).toBe( 130 );
+		}
+		expect( Core.node( 'request-detail:fetch' ).retry_after_s ).toBe( 15 );
+	} );
+
 	test( "routes each slice through its family's Tap, all three declared by the poll", () => {
 		installWire();
 		renderHook( () => usePerformanceGraph() );

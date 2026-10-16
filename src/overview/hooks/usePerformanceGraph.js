@@ -108,6 +108,14 @@ const OVERVIEW_TARGET = egressPath( GROUPS.overview, SERVER );
 const DEFAULT_REFRESH_INTERVAL_MS = 15000;
 
 /**
+ * Seconds a stats slice waits on an unanswered ask before asking again: past
+ * a 120 s gateway, so a question answering live in tens of seconds, a search
+ * or a chipped page, runs once rather than once a poll. A POST that fails
+ * settles as an error, and the next poll asks then.
+ */
+const STATS_RETRY_AFTER_S = 130;
+
+/**
  * Matched-request cap `PerformanceDashboard` sends with `grep_requests`. It
  * matches the verb's own default, and the server clamps anything larger to 50.
  */
@@ -647,6 +655,7 @@ export function usePerformanceGraph( opts = {} ) {
 					tee,
 					target: OVERVIEW_TARGET,
 				} );
+				Core.node( each.fetcher ).retry_after_s = STATS_RETRY_AFTER_S;
 			}
 
 			// @longform The URL modal's three slices ride their OWN Timer
@@ -665,6 +674,7 @@ export function usePerformanceGraph( opts = {} ) {
 					tee: urlTee,
 					target: egressPath( GROUPS.url, SERVER ),
 				} );
+				Core.node( each.fetcher ).retry_after_s = STATS_RETRY_AFTER_S;
 			}
 
 			// @longform On-demand dump_request: a selection asks through
