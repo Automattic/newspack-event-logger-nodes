@@ -3,13 +3,13 @@
  * Overview_Prefetch: the Overview's default answers, computed once an interval
  * by a JobWorker job and served by the verbs until they expire.
  *
- * Each `eln_overview_prefetch` job is queued to partition 0's job log, so one
- * JobWorker runs each job in turn and is the one writer of `flame-facts.job`,
- * a SQLite Table it builds outside a topology and names into its own graph,
- * whose Router tick then purges and checkpoints it. Each answer lives two
- * intervals. A verb asked the same bound arguments serves the stored answer,
- * mounting the file read-only; any other question, an expired answer, or no
- * file yet is answered live (decision 37).
+ * `Overview_Prefetch_Tick_Node` queues each `eln_overview_prefetch` job, and
+ * only partition 0's JobWorker runs it, so that one worker is the writer of
+ * `flame-facts.job`, a SQLite Table it builds outside a topology and names
+ * into its own graph, whose Router tick then purges and checkpoints it. Each
+ * answer lives two intervals. A verb asked the same bound arguments serves
+ * the stored answer, mounting the file read-only; any other question, an
+ * expired answer, or no file yet is answered live (decision 37).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -35,14 +35,14 @@ final class Overview_Prefetch {
 	/** The Table the job writes: `{base}/tables/flame-facts.job.p0.sqlite`. */
 	public const TABLE = 'flame-facts.job';
 
-	/** The job handler, queued to partition 0 once an interval. */
+	/** The job handler, queued once an interval by `Overview_Prefetch_Tick_Node`. */
 	public const HANDLER = 'eln_overview_prefetch';
 
 	/**
 	 * The job: answer every question live and store each available answer for
-	 * two intervals. A job its successor has overtaken stores nothing, and an
-	 * answer the stats could not open for is never stored, so the verb asks
-	 * again live.
+	 * two intervals. A worker bound to a partition other than 0 declines, as
+	 * does a job its successor has overtaken. An answer the stats could not
+	 * open for is never stored, so the verb asks again live.
 	 *
 	 * @api The `eln_overview_prefetch` job handler.
 	 * @param string              $id         Unused; the job names none.
@@ -55,6 +55,9 @@ final class Overview_Prefetch {
 		$interval = Core::num_int( $parameters['interval'] ?? null );
 		if ( $interval < 1 || ! isset( $parameters['queued_at'] ) ) {
 			throw new \InvalidArgumentException( 'overview prefetch: a job names its queued_at and an interval of at least 1' );
+		}
+		if ( 0 !== ( Core::bound_partition() ?? 0 ) ) {
+			return;
 		}
 		$now = (int) Core::right_now();
 		if ( $now - Core::num_int( $parameters['queued_at'] ) >= $interval ) {

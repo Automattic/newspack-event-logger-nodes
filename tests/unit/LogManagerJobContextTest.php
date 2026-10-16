@@ -354,6 +354,22 @@ class LogManagerJobContextTest extends TestCase {
 		$this->assertNotSame( [], self::entries_of( $entries, 'process (complete)' ) );
 	}
 
+	/** A context opened after a job ended names no record that job carried in. */
+	public function test_a_context_after_a_job_names_no_message(): void {
+		$this->arrange_logging();
+		$message                                  = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::FROM ] = 'jobs:consumer-6613';
+		Log_Manager::begin_job_context( 'kea_handler', '', $message );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'kea 6613' ] );
+		Log_Manager::end_job_context( 'kea_handler', '', [ 'status' => 'ok', 'message' => '', 'items_ok' => 1, 'items_err' => 0 ] );
+
+		Log_Manager::begin_job_context( 'borrowed' );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'weka 6613' ] );
+		Log_Manager::end_job_context();
+
+		$this->assertCount( 1, self::entries_of( self::firehose_entries( self::test_dir() ), 'message' ), 'only the job that carried a message names one' );
+	}
+
 	/** A fresh context after reset() names no record a past job carried in. */
 	public function test_reset_forgets_the_job_message(): void {
 		$this->arrange_logging();

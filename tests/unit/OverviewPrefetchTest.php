@@ -125,6 +125,15 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 0 ) );
 	}
 
+	public function test_a_worker_bound_to_another_partition_stores_nothing(): void {
+		Core::$var['partition'] = '3';
+
+		$this->run_job();
+
+		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 0 ) );
+		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 3 ) );
+	}
+
 	public function test_every_question_is_stored_under_its_bound_arguments(): void {
 		$this->run_job();
 		VerbHarness::request_graph();

@@ -219,10 +219,9 @@ class Log_Manager {
 	 *
 	 * Deliberately NOT stacked. A nested context — evTemplate rendering inside
 	 * a job — passes none and inherits this one, which is what makes the
-	 * causing record reachable from the innermost trace. The next job
-	 * overwrites it rather than exit clearing it, and every job in a worker
-	 * enters through before_job, so there is nothing for it to go stale
-	 * against.
+	 * causing record reachable from the innermost trace. A context entered
+	 * with a message replaces it, and the outermost `end_job_context()`
+	 * clears it, so a later context names no job that has ended.
 	 *
 	 * @var array<int,mixed>
 	 */
@@ -812,6 +811,10 @@ class Log_Manager {
 			if ( ! empty( self::$job_server_stack ) ) {
 				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
 				$_SERVER = \array_pop( self::$job_server_stack );
+			}
+			// Nested contexts inherit it; the outermost job takes it out.
+			if ( [] === self::$job_server_stack ) {
+				self::$job_message = [];
 			}
 			\do_action( 'newspack_event_logger_nodes_scope_changed' );
 		}
