@@ -1250,15 +1250,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The non-worker leaderboard over the 25 hours the timings keep, scoped
-	 * to `$server` when one is named.
+	 * The non-worker leaderboard over the chart's 24 hours, scoped to `$server`
+	 * when one is named.
 	 *
 	 * @param string $server Server to scope to; '' is every server.
 	 * @param int    $now    The reply's clock.
 	 * @return array{count:int, total_time:?float, avg_ms:?float, categories:array<array-key,mixed>}
 	 */
 	private static function site_leaderboard( string $server, int $now ): array {
-		return self::leaderboard( self::scope( $server, false ), Bucket::last( Flame_Facts_Row_Schema::TIMINGS_BUCKETS, $now ) );
+		return self::leaderboard( self::scope( $server, false ), Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, $now ) );
 	}
 
 	/**
@@ -1688,7 +1688,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'overview',
 					'capability'  => Capabilities::READ,
-					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 25-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null.',
+					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null.',
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],

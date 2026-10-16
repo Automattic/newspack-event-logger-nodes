@@ -2240,6 +2240,15 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'SELECT moa_1', \array_key_first( $board['categories']['wpdb']['entries'] ) );
 	}
 
+	public function test_overview_leaderboard_spans_the_charts_288_buckets(): void {
+		$this->seed_site_timing( [ 'category' => 'sql', 'bucket' => self::latest() - 290, 'ms' => 4000.0, 'calls' => 40, 'requests' => 4 ] );
+		$this->seed_site_timing( [ 'category' => 'init hook @10', 'bucket' => self::latest() - 10, 'ms' => 31.5, 'calls' => 3, 'requests' => 3 ] );
+
+		$board = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' )['leaderboard'];
+
+		$this->assertSame( [ 'init hook @10' ], \array_keys( $board['categories'] ) );
+	}
+
 	public function test_overview_leaderboard_excludes_listener_time_from_total_time(): void {
 		$this->seed_site_timing( [ 'category' => 'sql', 'ms' => 402.0, 'calls' => 18, 'requests' => 3 ] );
 		$this->seed_site_timing( [ 'category' => 'sql', 'entry' => 'SELECT kea', 'ms' => 181.0, 'calls' => 5, 'requests' => 2 ] );

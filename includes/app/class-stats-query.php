@@ -98,6 +98,9 @@ final class Stats_Query {
 	/** Fields holding integers, so a filter's digits bind as one. */
 	private const INTEGER_FIELDS = [ 'bucket', 'hour', 'day', 'status', 'status_class', 'worker', 'profiled', 'listener' ];
 
+	/** The fields the category window holds: no time, no server, no URL. */
+	private const WINDOW_FIELDS = [ 'category', 'entry', 'listener', 'worker' ];
+
 	/** The fields `requests_hourly` answers exactly. */
 	private const HOURLY_FIELDS = [ 'hour', 'day', 'server', 'status_class', 'method', 'worker', 'country' ];
 
@@ -276,6 +279,19 @@ final class Stats_Query {
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],
+		'category_window' => [
+			'range'    => [ 't.last_bucket', 1 ],
+			'fields'   => [
+				'category' => 't.category',
+				'entry'    => 't.entry',
+				'listener' => 't.listener',
+				'worker'   => 't.worker',
+			],
+			'joins'    => [],
+			'where'    => 't.requests > 0',
+			'inputs'   => self::TIMING_INPUTS,
+			'measures' => self::TIMING_MEASURES,
+		],
 	];
 
 	/**
@@ -303,7 +319,16 @@ final class Stats_Query {
 				throw new \InvalidArgumentException( \esc_html( "a {$spec['source']} query naming these fields reads {$table}, which holds no {$field}" ) );
 			}
 		}
-		$rows   = self::read( static fn ( Row_Reader $reader, array $aliases ): array => self::rows( $reader, $aliases, $spec, $table ) );
+		$read   = $table;
+		$rows   = self::read(
+			static function ( Row_Reader $reader, array $aliases ) use ( $spec, &$read ): array {
+				// Sets the table run() reports.
+				if ( 'category_window' === $read && ! self::window_holds( $reader, $aliases, $spec['buckets'][0][0] - 1 ) ) {
+					$read = 'timings_site';
+				}
+				return self::rows( $reader, $aliases, $spec, $read );
+			}
+		);
 		$groups = null;
 		if ( null !== $spec['top'] && null !== $rows ) {
 			$groups = [] === $rows ? 0 : Core::num_int( \array_slice( $rows[0], -1 )[0] ?? null );
@@ -318,7 +343,7 @@ final class Stats_Query {
 		}
 		return [
 			'source'    => $spec['source'],
-			'table'     => $table,
+			'table'     => $read,
 			'columns'   => self::columns( $spec ),
 			'rows'      => $pages[0],
 			'groups'    => $groups,
@@ -580,10 +605,29 @@ final class Stats_Query {
 	}
 
 	/**
-	 * The table that answers $spec exactly at least cost: timings_site | timings | requests_hourly | requests.
+	 * Whether every attached partition's category window has expired exactly
+	 * through `$through`, so its live rows are the range after it.
 	 *
-	 * A timings spec reads `timings_site` unless a URL is grouped, filtered
-	 * or searched; a requests spec reads `requests_hourly` when every field
+	 * @param Row_Reader             $reader  The attached files.
+	 * @param non-empty-list<string> $aliases Their aliases.
+	 * @param int                    $through The bucket before the range.
+	 */
+	private static function window_holds( Row_Reader $reader, array $aliases, int $through ): bool {
+		$marks = $reader->rows(
+			\implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => "SELECT bucket FROM {$alias}.window_watermark WHERE name = ?", $aliases ) ),
+			\array_fill( 0, \count( $aliases ), Flame_Facts_Row_Schema::WINDOW )
+		);
+		return \count( $marks ) === \count( $aliases )
+			&& [] === \array_filter( $marks, static fn ( array $mark ): bool => $through !== Core::as_int( $mark[0] ) );
+	}
+
+	/**
+	 * The table that answers $spec exactly at least cost: category_window | timings_site | timings | requests_hourly | requests.
+	 *
+	 * A timings spec over exactly `WINDOW_BUCKETS` buckets, naming only the
+	 * window's fields, reads `category_window`. Any other reads
+	 * `timings_site` unless a URL is grouped, filtered or searched; a
+	 * requests spec reads `requests_hourly` when every field
 	 * and measure it names is one the rollup keeps and every bucket range
 	 * covers whole hours, its `top_by` among them.
 	 *
@@ -594,7 +638,11 @@ final class Stats_Query {
 		$measures = '' === ( $spec['top_by'] ?? '' ) ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
 		$by_url = \in_array( 'url', $named, true ) || '' !== ( $spec['search'] ?? '' );
 		if ( 'timings' === $spec['source'] ) {
-			return $by_url ? 'timings' : 'timings_site';
+			if ( $by_url ) {
+				return 'timings';
+			}
+			$day = 1 === \count( $spec['buckets'] ) && Flame_Facts_Row_Schema::WINDOW_BUCKETS === $spec['buckets'][0][1] - $spec['buckets'][0][0] + 1;
+			return $day && [] === \array_diff( $named, self::WINDOW_FIELDS ) ? 'category_window' : 'timings_site';
 		}
 		$hourly = ! $by_url
 			&& [] === \array_diff( $named, self::HOURLY_FIELDS )
@@ -709,6 +757,9 @@ final class Stats_Query {
 			\array_push( $binds, \intdiv( $first, $per ), \intdiv( $last + 1, $per ) - 1 );
 		}
 		$clauses = [] === $where ? [] : [ '( ' . \implode( ' OR ', $where ) . ' )' ];
+		if ( isset( $def['where'] ) ) {
+			$clauses[] = Core::as_string( $def['where'] );
+		}
 		foreach ( $spec['filter'] as $field => $values ) {
 			$clauses[] = Core::as_string( $expr[ $field ] ) . ' IN ( ' . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
 			\array_push( $binds, ...$values );
