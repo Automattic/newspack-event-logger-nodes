@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The overview-prefetch JobWorker job answers the Overview's five default questions, the request chart by both of its default breakdowns among them, into `flame-facts.job`; the verbs serve those answers for two intervals and answer anything else live, every answer dated by `as_of`.**
 - **The flame builder keeps `category_window`: each category's and entry's sums over the last 288 buckets, moved as each request lands and as each bucket leaves, its watermark carried in the offsetlog across restarts.**
 
 ### Changed

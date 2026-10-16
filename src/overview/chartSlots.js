@@ -423,6 +423,39 @@ const seriesName = ( row, dims, at ) =>
 	dims.map( ( dim, i ) => valueName( dim, row[ at[ i ] ] ) ).join( ' · ' );
 
 /**
+ * The axes the aggregate chart draws for the axes chosen. One server draws a
+ * single bar, and a server filter draws that server against itself, so
+ * neither can chart `server`: a first `server` axis falls back to
+ * `status_class` and a second one falls away. The fallback is derived, never
+ * written back over the choice, so a reply carrying one server before its
+ * sibling reports does not strand the choice for the session; `serverNames`
+ * null is a reply not yet landed, which is neither.
+ *
+ * @param {Object}    arg              Named arguments.
+ * @param {string}    arg.breakdown    The chosen first axis.
+ * @param {string}    arg.thenBy       The chosen second axis; '' for none.
+ * @param {string}    arg.serverFilter Server scope; '' means every server.
+ * @param {?string[]} arg.serverNames  The servers the overview names, or
+ *                                     null before it answers.
+ * @return {{breakdown: string, thenBy: string, canBreakDownByServer: boolean}} The axes drawn, and whether `server` is one it can draw.
+ */
+export const activeChart = ( {
+	breakdown,
+	thenBy,
+	serverFilter,
+	serverNames,
+} ) => {
+	const canBreakDownByServer =
+		! serverFilter && ( serverNames === null || serverNames.length >= 2 );
+	const fallsBack = ( axis ) => 'server' === axis && ! canBreakDownByServer;
+	return {
+		breakdown: fallsBack( breakdown ) ? 'status_class' : breakdown,
+		thenBy: fallsBack( thenBy ) ? '' : thenBy,
+		canBreakDownByServer,
+	};
+};
+
+/**
  * The dimensions a chart breaks down by: its first, and its second where one
  * is chosen and differs from the first.
  *

@@ -1199,6 +1199,26 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The live answer to `overview`, `urls` or `query` for bound arguments,
+	 * dated `$now`.
+	 *
+	 * @api Overview_Prefetch, which stores these.
+	 * @param string                 $verb `overview`, `urls` or `query`.
+	 * @param array<array-key,mixed> $args Its bound arguments.
+	 * @param int                    $now  The reply's clock.
+	 * @return array<string,mixed>
+	 * @throws \InvalidArgumentException On a verb no answer is stored for, or what the verb refuses.
+	 */
+	public static function answer_live( string $verb, array $args, int $now ): array {
+		return [ 'as_of' => $now ] + match ( $verb ) {
+			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now ),
+			'urls'     => self::answer_urls( $args, $now ),
+			'query'    => self::answer_query( $args, $now ),
+			default    => throw new \InvalidArgumentException( \esc_html( "no stored answer answers {$verb}" ) ),
+		};
+	}
+
+	/**
 	 * The `overview` verb's answer over the chart's 288 buckets: the
 	 * non-worker requests' totals, their exact distinct URLs, every server
 	 * with traffic there, worker traffic counted, busiest first, and the
@@ -1404,6 +1424,36 @@ class Performance_CI_Node extends Service_CI_Node {
 			'total_time' => Ask_Assembler::mean( $sum_req_time, $count ),
 			'categories' => $categories,
 		];
+	}
+
+	/**
+	 * The `urls` verb's answer to its bound arguments: an unknown sort reads
+	 * as `count`, any order but `asc` as `desc`, and the page and its offset
+	 * clamp inside `Stats_Query`'s bounds.
+	 *
+	 * @param array<array-key,mixed> $args The bound verb args.
+	 * @param int                    $now  The reply's clock.
+	 * @return array<string,mixed>
+	 * @throws \InvalidArgumentException As `url_page()`.
+	 */
+	private static function answer_urls( array $args, int $now ): array {
+		$sort  = Core::as_string( $args['sort'] );
+		$order = Core::as_string( $args['order'] );
+		return self::url_page(
+			Core::as_string( $args['server'] ),
+			[
+				'search'          => \trim( Core::as_string( $args['search'] ) ),
+				'errors_only'     => true === $args['errors_only'],
+				// Opts IN: the default EXCLUDES. See decision 15.
+				'include_workers' => true === $args['include_workers'],
+				'bucket'          => Core::as_string( $args['bucket'] ),
+			],
+			isset( self::URL_SORTS[ $sort ] ) ? $sort : 'count',
+			'asc' === $order ? 'asc' : 'desc',
+			\min( Stats_Query::MAX_OFFSET, \max( 0, Core::as_int( $args['offset'] ) ) ),
+			\min( Stats_Query::MAX_LIMIT, \max( 1, Core::as_int( $args['limit'] ) ) ),
+			$now
+		);
 	}
 
 	/**
@@ -1688,18 +1738,16 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'overview',
 					'capability'  => Capabilities::READ,
-					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null.',
+					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				return self::answer_overview( Core::as_string( $args['server'] ), self::now() );
-					},
+					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => Overview_Prefetch::lookup( 'overview', $args ) ?? self::answer_live( 'overview', $args, self::now() ),
 				],
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order.',
+					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
@@ -1711,30 +1759,12 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end` inclusive, at most 288 buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last 288. `filters.bucket` echoes the canonical spelling.' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				$sort  = Core::as_string( $args['sort'] );
-				$order = Core::as_string( $args['order'] );
-				return self::url_page(
-					Core::as_string( $args['server'] ),
-					[
-						'search'          => \trim( Core::as_string( $args['search'] ) ),
-						'errors_only'     => true === $args['errors_only'],
-						// Opts IN: the default EXCLUDES. See decision 15.
-						'include_workers' => true === $args['include_workers'],
-						'bucket'          => Core::as_string( $args['bucket'] ),
-					],
-					isset( self::URL_SORTS[ $sort ] ) ? $sort : 'count',
-					'asc' === $order ? 'asc' : 'desc',
-					\min( Stats_Query::MAX_OFFSET, \max( 0, Core::as_int( $args['offset'] ) ) ),
-					\min( Stats_Query::MAX_LIMIT, \max( 1, Core::as_int( $args['limit'] ) ) ),
-					self::now()
-				);
-					},
+					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => Overview_Prefetch::lookup( 'urls', $args ) ?? self::answer_live( 'urls', $args, self::now() ),
 				],
 				[
 					'name'        => 'query',
 					'capability'  => Capabilities::READ,
-					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ source, table, columns, rows, groups, available, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows and `available`, false when the stats file will not open. Worker requests count unless filtered `worker=0`. Under `top` the rows are every time row of the `top` tuples of the non-time groups `top_by` ranks highest, in rank order, and `groups` counts the tuples; with no `top`, `groups` is null.',
+					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ as_of, source, table, columns, rows, groups, available, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows and `available`, false when the stats file will not open. Worker requests count unless filtered `worker=0`. Under `top` the rows are every time row of the `top` tuples of the non-time groups `top_by` ranks highest, in rank order, and `groups` counts the tuples; with no `top`, `groups` is null. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'source', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],
@@ -1749,9 +1779,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'top', 'type' => 'int', 'required' => false, 'description' => 'Rank the tuples of the non-time groups and answer the time rows of this many, at most `Stats_Query::MAX_TOP`; the group needs a time field and a non-time field.' ],
 						[ 'name' => 'top_by', 'type' => 'string', 'required' => false, 'description' => 'The measure `top` ranks by, summed over the selection, highest first, ties by the tuple\'s values: one that adds across buckets — for `requests` `count`, `timed`, `sum_ms`, `sum_peak_mb`, `errors`, `count_2xx`, `count_3xx`, `count_4xx` or `count_5xx`, for `timings` `ms`, `calls` or `requests`.' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				return self::answer_query( $args, self::now() );
-					},
+					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => Overview_Prefetch::lookup( 'query', $args ) ?? self::answer_live( 'query', $args, self::now() ),
 				],
 				[
 					'name'        => 'dump_url',

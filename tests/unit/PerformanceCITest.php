@@ -2158,7 +2158,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertCount( 288, $reply['slots'] );
 		$this->assertSame( Bucket::key( $latest ), $reply['slots'][0], 'newest first' );
 		$this->assertSame( Bucket::key( $latest - 287 ), $reply['slots'][287] );
-		$this->assertSame( [ 'totals', 'slots', 'servers', 'leaderboard', 'available' ], \array_keys( $reply ) );
+		$this->assertSame( [ 'as_of', 'totals', 'slots', 'servers', 'leaderboard', 'available' ], \array_keys( $reply ) );
 		$this->assertTrue( $reply['available'] );
 	}
 
@@ -2402,7 +2402,7 @@ class PerformanceCITest extends TestCase {
 			],
 			$reply['data'][0]
 		);
-		$this->assertSame( [ 'data', 'rows', 'totals', 'slowest', 'filters', 'limit', 'offset', 'available' ], \array_keys( $reply ) );
+		$this->assertSame( [ 'as_of', 'data', 'rows', 'totals', 'slowest', 'filters', 'limit', 'offset', 'available' ], \array_keys( $reply ) );
 	}
 
 	public function test_urls_sorts_by_avg_ms_request_weighted(): void {
