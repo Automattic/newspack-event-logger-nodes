@@ -114,14 +114,16 @@ class JobWorkerContextWiringTest extends TestCase {
 	 * writes the message into REQUEST_METHOD and friends.
 	 */
 	public function test_the_job_message_reaches_the_request_context(): void {
-		$jw     = new Job_Worker_Node();
-		$during = null;
+		$jw      = new Job_Worker_Node();
+		$during  = null;
+		$stashed = null;
 		$this->register_job_handler(
 			$jw,
 			'traced',
-			function () use ( &$during ) {
+			function () use ( &$during, &$stashed ) {
 				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- test observation.
-				$during = $_SERVER['REQUEST_METHOD'] ?? '';
+				$during  = $_SERVER['REQUEST_METHOD'] ?? '';
+				$stashed = ( new \ReflectionProperty( Log_Manager::class, 'job_message' ) )->getValue();
 			}
 		);
 
@@ -132,8 +134,8 @@ class JobWorkerContextWiringTest extends TestCase {
 		$jw->fill( $message );
 
 		$this->assertSame( 'POST', $during, 'the message did not land in $_SERVER' );
-
-		$stashed = ( new \ReflectionProperty( Log_Manager::class, 'job_message' ) )->getValue();
-		$this->assertSame( '7:4242:88', $stashed[ Message::ID ] ?? null );
+		$this->assertSame( '7:4242:88', $stashed[ Message::ID ] ?? null, 'the handler runs under the job message' );
+		$after = ( new \ReflectionProperty( Log_Manager::class, 'job_message' ) )->getValue();
+		$this->assertSame( [], $after, 'the finished job leaves no message behind' );
 	}
 }
