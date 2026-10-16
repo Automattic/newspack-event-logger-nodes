@@ -160,6 +160,9 @@ function newspack_event_logger_nodes_boot(): void {
 		[ \Newspack_Event_Logger_Nodes\Config::class, 'reset_local_cache' ]
 	);
 
+	// The prefetch job declines before the context filter opens one for it.
+	\add_filter( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\App\Overview_Prefetch::class, 'admit' ], 5, 4 );
+
 	// Give each substrate job its own /jobs/{handler}/{id} request context.
 	\add_filter( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'begin_job_context_filter' ], 10, 4 );
 	\add_action( 'newspack_nodes/job_worker/after_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'end_job_context' ], 10, 3 );

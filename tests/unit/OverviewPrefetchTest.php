@@ -16,6 +16,8 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Job_Worker_Node;
+use Newspack_Nodes\Message;
 use Newspack_Nodes\Table_Node;
 
 /**
@@ -119,19 +121,71 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( self::NOW, $served['as_of'] );
 	}
 
-	public function test_a_job_its_successor_overtook_stores_nothing(): void {
-		$this->run_job( self::NOW - self::INTERVAL );
-
-		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 0 ) );
+	/**
+	 * Deliver one job through a real worker under the plugin's own hooks.
+	 *
+	 * @param int    $queued_at When the tick queued it.
+	 * @param string $handler   The handler the entry names.
+	 * @return Job_Worker_Node The worker that ran it.
+	 */
+	private function deliver( int $queued_at, string $handler = Overview_Prefetch::HANDLER ): Job_Worker_Node {
+		$jw = new Job_Worker_Node();
+		self::with_deferred_bootstrap(
+			static function () use ( $jw, $queued_at, $handler ): void {
+				$jw->load_handlers_from_filters();
+				$message                   = Message::new_message();
+				$message[ Message::TYPE ]  = Message::TM_STRUCT;
+				$message[ Message::VALUE ] = [
+					'k'          => 'job',
+					'handler'    => $handler,
+					'parameters' => [ 'queued_at' => $queued_at, 'interval' => self::INTERVAL ],
+				];
+				$jw->fill( $message );
+			}
+		);
+		return $jw;
 	}
 
-	public function test_a_worker_bound_to_another_partition_stores_nothing(): void {
+	public function test_a_job_its_successor_overtook_is_declined(): void {
+		$_SERVER['REQUEST_URI'] = '/outer-5529';
+
+		$jw = $this->deliver( self::NOW - self::INTERVAL );
+
+		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 0 ) );
+		$this->assertSame( [], $jw->probe_stats(), 'a declined job records no outcome' );
+		$this->assertSame( '/outer-5529', $_SERVER['REQUEST_URI'], 'a declined job opens no context' );
+	}
+
+	public function test_a_worker_bound_to_another_partition_declines(): void {
 		Core::$var['partition'] = '3';
 
-		$this->run_job();
+		$jw = $this->deliver( self::NOW );
 
 		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 0 ) );
 		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 3 ) );
+		$this->assertSame( [], $jw->probe_stats() );
+	}
+
+	public function test_a_fresh_job_on_partition_zero_runs_and_stores(): void {
+		$jw = $this->deliver( self::NOW - self::INTERVAL + 1 );
+
+		$this->assertFileExists( Table_Node::file( Overview_Prefetch::TABLE, 0 ) );
+		$this->assertCount( 1, $jw->probe_stats() );
+	}
+
+	public function test_admit_passes_any_other_handler_through(): void {
+		$message = Message::new_message();
+
+		$this->assertTrue( Overview_Prefetch::admit( true, 'kea_5530', '', $message ) );
+		$this->assertFalse( Overview_Prefetch::admit( false, 'kea_5530', '', $message ) );
+		$this->assertNull( Overview_Prefetch::admit( null, 'kea_5530', '', $message ) );
+	}
+
+	public function test_admit_keeps_an_earlier_decline(): void {
+		$message                   = Message::new_message();
+		$message[ Message::VALUE ] = [ 'parameters' => [ 'queued_at' => self::NOW, 'interval' => self::INTERVAL ] ];
+
+		$this->assertFalse( Overview_Prefetch::admit( false, Overview_Prefetch::HANDLER, '', $message ) );
 	}
 
 	public function test_every_question_is_stored_under_its_bound_arguments(): void {

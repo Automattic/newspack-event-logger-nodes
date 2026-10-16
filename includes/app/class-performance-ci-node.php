@@ -157,7 +157,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
 
 	/** Buckets the dashboard's charts draw: 24 hours, newest first. */
-	private const CHART_BUCKETS = 288;
+	private const CHART_BUCKETS = Flame_Facts_Row_Schema::WINDOW_BUCKETS;
 
 	/** Entries past which a leaderboard category keeps only its slowest. */
 	private const ENTRY_TRIM_ABOVE = 100;
