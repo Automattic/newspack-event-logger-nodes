@@ -39,6 +39,9 @@ import {
 	__setAuthFetch,
 } from '@newspack-nodes/runtime';
 import { usePerformanceGraph } from '../usePerformanceGraph';
+import storedAnswers from '../../../../includes/app/stored-answers.json';
+import { DEFAULT_CHART_BREAKDOWN } from '../../constants';
+import { activeChart } from '../../chartSlots';
 
 /**
  * The value a command's tokens carry for `--<name>=`, as the server's binder
@@ -1908,4 +1911,57 @@ describe( 'usePerformanceGraph — chart questions', () => {
 			{ rid: 'kahu-2' },
 		] );
 	} );
+} );
+
+describe( 'usePerformanceGraph — the stored answers', () => {
+	/**
+	 * The questions the overview-prefetch job answers are the ones a default
+	 * Overview poll puts on the wire, token for token: the request chart's
+	 * default breakdown resolved as the page resolves it, for a fleet that
+	 * can chart by server and for one that cannot.
+	 */
+	test.each( [
+		[ 'two servers', [ 'kea.example', 'tui.example' ], 'chart_by_server' ],
+		[ 'one server', [ 'kea.example' ], 'chart_by_status_class' ],
+	] )(
+		'a default poll over %s asks what the job stores',
+		async ( _fleet, serverNames, chart ) => {
+			const { breakdown, thenBy } = activeChart( {
+				breakdown: DEFAULT_CHART_BREAKDOWN,
+				thenBy: '',
+				serverFilter: '',
+				serverNames,
+			} );
+			const wire = installWire();
+			renderHook( () =>
+				usePerformanceGraph( {
+					chartBreakdown: breakdown,
+					chartThenBy: thenBy,
+				} )
+			);
+			await act( async () => {} );
+
+			// The two `query` asks differ in their first token, the source.
+			const asked = ( verb, source ) => {
+				const sent = source
+					? wire.batches
+							.flat()
+							.find(
+								( m ) =>
+									verb === m[ VALUE ]?.name &&
+									source === m[ VALUE ].arguments[ 0 ]
+							)
+					: findVerb( wire.batches, verb );
+				return { verb, tokens: sent?.[ VALUE ].arguments };
+			};
+			expect( asked( 'overview' ) ).toEqual( storedAnswers.overview );
+			expect( asked( 'urls' ) ).toEqual( storedAnswers.urls );
+			expect( asked( 'query', 'requests' ) ).toEqual(
+				storedAnswers[ chart ]
+			);
+			expect( asked( 'query', 'timings' ) ).toEqual(
+				storedAnswers.categories
+			);
+		}
+	);
 } );

@@ -2,19 +2,9 @@
 /**
  * Overview Prefetch Tick
  *
- * Queues the overview-prefetch job once an interval from the flame builder's
- * worker, riding the Router's tick (decision 37). A line naming no partition
- * runs once per fleet, so only the copy `Core::owns()` gives the fleet
- * queues. The job travels both ways a small job does (decision 7): a
- * firehose `job` entry, which a hub's `job-router` reads, and `jobfeed.p0`,
- * which a spoke's `job-feed` reads. A spoke runs it from `jobfeed.p0`. A
- * hub's firehose entry lands on whichever `firehose.p{N}` the borrowed
- * context's request id hashes to, and only partition 0's JobWorker runs the
- * job (`Overview_Prefetch::run()` declines elsewhere), so a hub with several
- * partitions runs it on the minutes its entry lands on p0 and its verbs
- * answer live between. A spoke's firehose copy reaches its hub as a
- * `remote_job` no remote handler claims. A site with no job topology runs
- * none, and its verbs answer live.
+ * Queues the overview-prefetch job once an interval, riding the Router's
+ * tick, from the fleet's one copy of the line. Decision 37 says where the
+ * job travels and which worker runs it.
  *
  * @package Newspack_Event_Logger_Nodes
  */

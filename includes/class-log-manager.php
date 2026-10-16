@@ -211,21 +211,14 @@ class Log_Manager {
 	/** @var self|null The active instance; instance() creates it on demand. */
 	private static ?self $instance = null;
 
-	/** @var array<int,array<string,mixed>> LIFO $_SERVER snapshots for begin/end_job_context. */
-	private static array $job_server_stack = [];
-
 	/**
-	 * The job message the innermost job context was entered with.
+	 * LIFO frames of begin/end_job_context: the $_SERVER snapshot to restore,
+	 * and the job message the context runs under, its enclosing job's when it
+	 * brought none.
 	 *
-	 * Deliberately NOT stacked. A nested context — evTemplate rendering inside
-	 * a job — passes none and inherits this one, which is what makes the
-	 * causing record reachable from the innermost trace. A context entered
-	 * with a message replaces it, and the outermost `end_job_context()`
-	 * clears it, so a later context names no job that has ended.
-	 *
-	 * @var array<int,mixed>
+	 * @var list<array{0:array<string,mixed>,1:array<int,mixed>}>
 	 */
-	private static array $job_message = [];
+	private static array $job_stack = [];
 
 	/** @var array<string,mixed> Cached config (loaded once at construction). */
 	private $config = [];
@@ -797,7 +790,7 @@ class Log_Manager {
 		// context was opened. resume() would finish the ENCLOSING context — the
 		// worker's own request — and pop an empty stack. begin_job_context()
 		// pushes its $_SERVER snapshot first: the stack IS the pairing record.
-		if ( [] === self::$job_server_stack ) {
+		if ( [] === self::$job_stack ) {
 			return;
 		}
 		$reported = \func_num_args() >= 3;
@@ -808,13 +801,9 @@ class Log_Manager {
 			self::resume();
 		} finally {
 			// The snapshot IS the pairing record; unpopped it strands jobs.
-			if ( ! empty( self::$job_server_stack ) ) {
+			if ( ! empty( self::$job_stack ) ) {
 				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
-				$_SERVER = \array_pop( self::$job_server_stack );
-			}
-			// Nested contexts inherit it; the outermost job takes it out.
-			if ( [] === self::$job_server_stack ) {
-				self::$job_message = [];
+				$_SERVER = \array_pop( self::$job_stack )[0];
 			}
 			\do_action( 'newspack_event_logger_nodes_scope_changed' );
 		}
@@ -906,15 +895,11 @@ class Log_Manager {
 	 *                                     fresh per-job request identity above.
 	 */
 	public static function begin_job_context( string $handler, string $id = '', array $message = [], array $server = [] ): void {
-		// Before the scope action, which builds the Log_Manager reading it.
-		if ( [] !== $message ) {
-			self::$job_message = $message;
-		}
 		// $_SERVER is string-keyed (superglobal snapshot for restore).
 		/** @var array<string,mixed> $snapshot */
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
-		$snapshot                 = $_SERVER;
-		self::$job_server_stack[] = $snapshot;
+		$snapshot          = $_SERVER;
+		self::$job_stack[] = [ $snapshot, [] === $message ? self::job_message() : $message ];
 
 		// self::suspend() pushes the parent context onto the context stack.
 		self::suspend();
@@ -1120,9 +1105,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * Finish the active instance and drop it, with the job message a past
-	 * context carried in, so the next instance() call resolves a fresh
-	 * context. Call before changing REQUEST_URI to log a different request.
+	 * Finish the active instance and drop it, so the next instance() call
+	 * resolves a fresh context. Call before changing REQUEST_URI to log a
+	 * different request.
 	 *
 	 * @api Used by tests.
 	 */
@@ -1130,8 +1115,7 @@ class Log_Manager {
 		if ( null !== self::$instance ) {
 			self::$instance->finish();
 		}
-		self::$instance    = null;
-		self::$job_message = [];
+		self::$instance = null;
 	}
 
 	/**
@@ -1371,14 +1355,15 @@ class Log_Manager {
 		$this->message( self::REQUEST_LINE, [ 'm' => "{$method} {$origin}{$this->request_url}" ] );
 
 		// The record that caused this request; ID seeks onto the log.
-		if ( [] !== self::$job_message ) {
+		$job_message = self::job_message();
+		if ( [] !== $job_message ) {
 			$this->message(
 				'message',
 				[
 					'm' => [
-						'FROM' => Core::as_string( self::$job_message[ \Newspack_Nodes\Message::FROM ] ?? '', '' ),
-						'ID'   => Core::as_string( self::$job_message[ \Newspack_Nodes\Message::ID ] ?? '', '' ),
-						'KEY'  => Core::as_string( self::$job_message[ \Newspack_Nodes\Message::KEY ] ?? '', '' ),
+						'FROM' => Core::as_string( $job_message[ \Newspack_Nodes\Message::FROM ] ?? '', '' ),
+						'ID'   => Core::as_string( $job_message[ \Newspack_Nodes\Message::ID ] ?? '', '' ),
+						'KEY'  => Core::as_string( $job_message[ \Newspack_Nodes\Message::KEY ] ?? '', '' ),
 					],
 				]
 			);
@@ -1448,6 +1433,15 @@ class Log_Manager {
 	}
 
 	/**
+	 * The job message the innermost job context runs under; none outside one.
+	 *
+	 * @return array<int,mixed>
+	 */
+	private static function job_message(): array {
+		return [] === self::$job_stack ? [] : self::$job_stack[ \count( self::$job_stack ) - 1 ][1];
+	}
+
+	/**
 	 * Name the worker this request runs in, as two entries of its own. The
 	 * substrate's env var wins; a platform request without one is named by
 	 * its path; a page writes neither.
@@ -1467,7 +1461,7 @@ class Log_Manager {
 			return;
 		}
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- is_numeric() validates; (int) sanitizes.
-		$partition = [] === self::$job_server_stack ? $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ?? null : null;
+		$partition = [] === self::$job_stack ? $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ?? null : null;
 		// A value that is not a number names no partition.
 		$this->write_worker( $worker_type, \is_numeric( $partition ) ? (int) $partition : null );
 	}

@@ -1199,6 +1199,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The answer to `overview`, `urls` or `query` for bound arguments: the
+	 * one the overview-prefetch job stored, else the live one.
+	 *
+	 * @param string                 $verb `overview`, `urls` or `query`.
+	 * @param array<array-key,mixed> $args Its bound arguments.
+	 * @return array<array-key,mixed>
+	 */
+	private static function answered( string $verb, array $args ): array {
+		return Overview_Prefetch::lookup( $verb, $args ) ?? self::answer_live( $verb, $args, self::now() );
+	}
+
+	/**
 	 * The live answer to `overview`, `urls` or `query` for bound arguments,
 	 * dated `$now`.
 	 *
@@ -1742,7 +1754,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
-					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => Overview_Prefetch::lookup( 'overview', $args ) ?? self::answer_live( 'overview', $args, self::now() ),
+					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => self::answered( 'overview', $args ),
 				],
 				[
 					'name'        => 'urls',
@@ -1759,7 +1771,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end` inclusive, at most 288 buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last 288. `filters.bucket` echoes the canonical spelling.' ],
 					],
-					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => Overview_Prefetch::lookup( 'urls', $args ) ?? self::answer_live( 'urls', $args, self::now() ),
+					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => self::answered( 'urls', $args ),
 				],
 				[
 					'name'        => 'query',
@@ -1779,7 +1791,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'top', 'type' => 'int', 'required' => false, 'description' => 'Rank the tuples of the non-time groups and answer the time rows of this many, at most `Stats_Query::MAX_TOP`; the group needs a time field and a non-time field.' ],
 						[ 'name' => 'top_by', 'type' => 'string', 'required' => false, 'description' => 'The measure `top` ranks by, summed over the selection, highest first, ties by the tuple\'s values: one that adds across buckets — for `requests` `count`, `timed`, `sum_ms`, `sum_peak_mb`, `errors`, `count_2xx`, `count_3xx`, `count_4xx` or `count_5xx`, for `timings` `ms`, `calls` or `requests`.' ],
 					],
-					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => Overview_Prefetch::lookup( 'query', $args ) ?? self::answer_live( 'query', $args, self::now() ),
+					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => self::answered( 'query', $args ),
 				],
 				[
 					'name'        => 'dump_url',

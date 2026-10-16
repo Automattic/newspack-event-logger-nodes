@@ -29,11 +29,11 @@ final class FlameFactsTest extends TestCase {
 
 		$opened = \array_merge( ...$this->facts( "SELECT name FROM sqlite_master WHERE type = 'table'" ) );
 
-		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_watermark', 'window_expiry', 'urls_fts' ], $opened ) ) );
+		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_expiry', 'urls_fts' ], $opened ) ) );
 		$this->assertSame( [ [ 4 ] ], $this->facts( 'PRAGMA user_version' ) );
 	}
 
-	public function test_v4_declares_the_window_its_watermark_its_expiries_and_the_covering_index(): void {
+	public function test_v4_declares_the_window_its_expiries_and_the_covering_index(): void {
 		$tables = Flame_Facts_Row_Schema::tables();
 
 		$this->assertSame( 4, Flame_Facts_Row_Schema::version() );
@@ -42,8 +42,7 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( [ 'category', 'entry', 'worker' ], $tables['category_window']['key'] );
 		$this->assertSame( [ 'ms' => 'sum', 'calls' => 'sum', 'requests' => 'sum', 'last_bucket' => 'max' ], $tables['category_window']['add'] );
 		$this->assertSame( [ 'last_bucket', Flame_Facts_Row_Schema::TIMINGS_BUCKETS, Bucket::SECONDS ], $tables['category_window']['retain'] );
-		$this->assertSame( [ 'name' ], $tables['window_watermark']['key'] );
-		$this->assertSame( [ 'bucket' => 'max' ], $tables['window_watermark']['add'] );
+		$this->assertArrayNotHasKey( 'window_watermark', $tables, 'the newest expiry is the watermark' );
 		$this->assertSame( [ 'bucket' ], $tables['window_expiry']['key'] );
 		$this->assertSame( 288, Flame_Facts_Row_Schema::WINDOW_BUCKETS );
 		$this->assertArrayNotHasKey( 'requests_bucket', $tables['requests']['indexes'] );
@@ -279,7 +278,7 @@ final class FlameFactsTest extends TestCase {
 		} catch ( \InvalidArgumentException $e ) {
 			$this->assertStringContainsString( 'no rid', $e->getMessage() );
 		}
-		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state(), 'the checkpoint carries the watermark alone' );
+		$this->assertSame( [], $fb->save_state(), 'the checkpoint carries nothing' );
 		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM urls' ) );
 	}
 
@@ -337,11 +336,11 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( [ [ 2 ] ], $this->facts( 'SELECT count(*) FROM requests' ), 'the tick at the interval writes the rest' );
 	}
 
-	public function test_the_checkpoint_writes_the_rows_and_carries_the_watermark(): void {
+	public function test_the_checkpoint_writes_the_rows_and_carries_nothing(): void {
 		$fb = $this->armed_flame_builder();
 		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-pipipi' ] ), '9:7731:212' );
 
-		$this->assertSame( [ 'window_through' => self::current_window_through() ], $fb->save_state() );
+		$this->assertSame( [], $fb->save_state(), 'the checkpoint carries nothing' );
 		$this->assertSame( [ [ 'rid-pipipi' ] ], $this->facts( 'SELECT rid FROM requests' ), 'the checkpoint wrote what it passed' );
 	}
 

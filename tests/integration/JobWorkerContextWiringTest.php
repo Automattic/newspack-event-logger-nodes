@@ -123,7 +123,8 @@ class JobWorkerContextWiringTest extends TestCase {
 			function () use ( &$during, &$stashed ) {
 				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- test observation.
 				$during  = $_SERVER['REQUEST_METHOD'] ?? '';
-				$stashed = ( new \ReflectionProperty( Log_Manager::class, 'job_message' ) )->getValue();
+				$stack   = ( new \ReflectionProperty( Log_Manager::class, 'job_stack' ) )->getValue();
+				$stashed = \end( $stack )[1];
 			}
 		);
 
@@ -135,7 +136,7 @@ class JobWorkerContextWiringTest extends TestCase {
 
 		$this->assertSame( 'POST', $during, 'the message did not land in $_SERVER' );
 		$this->assertSame( '7:4242:88', $stashed[ Message::ID ] ?? null, 'the handler runs under the job message' );
-		$after = ( new \ReflectionProperty( Log_Manager::class, 'job_message' ) )->getValue();
-		$this->assertSame( [], $after, 'the finished job leaves no message behind' );
+		$after = ( new \ReflectionProperty( Log_Manager::class, 'job_stack' ) )->getValue();
+		$this->assertSame( [], $after, 'the finished job leaves no frame, its message with it' );
 	}
 }

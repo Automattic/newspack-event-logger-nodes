@@ -10,9 +10,9 @@
  * through `Bootstrap::row_table()`.
  *
  * `category_window` holds each category's and entry's sums over the last
- * `WINDOW_BUCKETS`, `window_watermark` the last bucket the window has
- * expired, and `window_expiry` one row per bucket expired, so a replayed
- * expiry subtracts nothing twice.
+ * `WINDOW_BUCKETS`, and `window_expiry` one row per bucket expired, so a
+ * replayed expiry subtracts nothing twice; its newest bucket is the
+ * window's watermark.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -42,9 +42,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	/** Five-minute buckets the category window spans: the chart's 24 hours. */
 	public const WINDOW_BUCKETS = 288;
 
-	/** The watermark row the category window keeps. */
-	public const WINDOW = 'category_window';
-
 	/** @var array<string,array<string,int>> Each table's column positions, read once. */
 	private static array $positions = [];
 
@@ -62,7 +59,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	}
 
 	/**
-	 * The nine row tables, each column in row order.
+	 * The eight row tables, each column in row order.
 	 *
 	 * @api Read by the Row_Table that opens the file.
 	 * @return array<string, array{
@@ -192,16 +189,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				],
 				'indexes' => [ 'category_window_last' => [ 'last_bucket' ] ],
 				'retain'  => [ 'last_bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
-			],
-			'window_watermark' => [
-				'columns' => [
-					'name'   => 'TEXT NOT NULL',
-					'bucket' => 'INTEGER NOT NULL',
-				],
-				'key'     => [ 'name' ],
-				'add'     => [ 'bucket' => 'max' ],
-				'indexes' => [ 'window_watermark_bucket' => [ 'bucket' ] ],
-				'retain'  => [ 'bucket', self::REQUESTS_BUCKETS, Bucket::SECONDS ],
 			],
 			'window_expiry'    => [
 				'columns' => [ 'bucket' => 'INTEGER NOT NULL' ],
