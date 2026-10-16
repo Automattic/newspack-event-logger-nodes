@@ -19,6 +19,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Table_Node;
 use Newspack_Nodes\Table_Unavailable;
@@ -46,9 +47,8 @@ final class Overview_Prefetch {
 
 	/**
 	 * The job: answer every question live and store each available answer for
-	 * two intervals. A worker bound to a partition other than 0 declines, as
-	 * does a job its successor has overtaken. An answer the stats could not
-	 * open for is never stored, so the verb asks again live.
+	 * two intervals. An answer the stats could not open for is never stored,
+	 * so the verb asks again live. `admit()` declines a job before it gets here.
 	 *
 	 * @api The `eln_overview_prefetch` job handler.
 	 * @param string              $id         Unused; the job names none.
@@ -62,13 +62,7 @@ final class Overview_Prefetch {
 		if ( $interval < 1 || ! isset( $parameters['queued_at'] ) ) {
 			throw new \InvalidArgumentException( 'overview prefetch: a job names its queued_at and an interval of at least 1' );
 		}
-		if ( ! Core::owns( '', Core::bound_partition() ) ) {
-			return;
-		}
-		$now = (int) Core::right_now();
-		if ( $now - Core::num_int( $parameters['queued_at'] ) >= $interval ) {
-			return;
-		}
+		$now    = (int) Core::right_now();
 		$writer = self::writer( 2 * $interval );
 		$verbs  = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
 		foreach ( self::questions() as $name => [ 'verb' => $verb, 'tokens' => $tokens ] ) {
@@ -152,5 +146,30 @@ final class Overview_Prefetch {
 	 */
 	public static function key( string $verb, array $args ): string {
 		return $verb . ':' . \md5( (string) \wp_json_encode( $args ) );
+	}
+
+	/**
+	 * The `before_job` listener: decline this job on a worker bound to a
+	 * partition other than 0, or once its successor has overtaken it. Any
+	 * other handler, and any earlier decline, passes through.
+	 *
+	 * @api The `newspack_nodes/job_worker/before_job` filter.
+	 * @param mixed            $run     False once a listener declined.
+	 * @param string           $handler The job handler.
+	 * @param string           $id      The job identity.
+	 * @param array<int,mixed> $message The job message; VALUE is the entry.
+	 */
+	public static function admit( mixed $run, string $handler, string $id, array $message ): mixed {
+		unset( $id );
+		if ( self::HANDLER !== $handler || false === $run ) {
+			return $run;
+		}
+		if ( ! Core::owns( '', Core::bound_partition() ) ) {
+			return false;
+		}
+		$entry      = Core::arr( $message[ Message::VALUE ] ?? [] );
+		$parameters = Core::arr( $entry['parameters'] ?? [] );
+		$age        = (int) Core::right_now() - Core::num_int( $parameters['queued_at'] ?? null );
+		return $age >= Core::num_int( $parameters['interval'] ?? null ) ? false : $run;
 	}
 }
