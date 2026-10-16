@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Overview's request chart says what it has to say above the chart.** "No … data in this window", a refused query and the scope note sat between the request chart and the category charts; they now sit under the chart controls, above the chart they describe.
+
+### Removed
+
+- **"Showing the top N of M series."** under the request chart and the category charts. The request chart's total still counts only the series it draws.
+
 ## [0.135.0] - 2026-10-15
 
 ### Added

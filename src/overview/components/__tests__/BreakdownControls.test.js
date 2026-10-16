@@ -156,6 +156,18 @@ const labels = ( container ) =>
 const chipBox = ( container ) =>
 	container.querySelector( 'input[aria-label="Filter"]' );
 
+/**
+ * Whether a message reads before the chart.
+ *
+ * @param {Element} container The panel.
+ * @param {string}  text      The message.
+ * @return {boolean} Whether it precedes the chart's text.
+ */
+const above = ( container, text ) =>
+	container.textContent.indexOf( text ) >= 0 &&
+	container.textContent.indexOf( text ) <
+		container.textContent.indexOf( 'AGGREGATE[' );
+
 describe( 'BreakdownControls', () => {
 	it( 'hands the chart the slots its answer read', () => {
 		const { container, unmount } = mountBreakdown( {
@@ -210,13 +222,13 @@ describe( 'BreakdownControls', () => {
 		unmount();
 	} );
 
-	it( 'names the dimension the answer came back empty for', () => {
+	it( 'names the dimension the answer came back empty for, above the chart', () => {
 		const { container, unmount } = mountBreakdown( {
 			breakdown: 'ua',
 			breakdownData: answer( 'ua', [] ),
 		} );
-		expect( container.textContent ).toContain(
-			'No User Agent data in this window.'
+		expect( above( container, 'No User Agent data in this window.' ) ).toBe(
+			true
 		);
 		expect( labels( container ) ).toEqual( [
 			'Metric',
@@ -268,7 +280,7 @@ describe( 'BreakdownControls', () => {
 		unmount();
 	} );
 
-	it( 'prints the refusal it was handed rather than swallowing it', () => {
+	it( 'prints the refusal it was handed above the chart', () => {
 		const { container, unmount } = mountBreakdown( {
 			breakdownData: null,
 			error: 'unknown requests field plumage',
@@ -277,6 +289,9 @@ describe( 'BreakdownControls', () => {
 			'.newspack-nodes-status.is-error'
 		);
 		expect( shown.textContent ).toBe( 'unknown requests field plumage' );
+		expect( above( container, 'unknown requests field plumage' ) ).toBe(
+			true
+		);
 		expect( container.textContent ).not.toContain( 'Loading…' );
 		unmount();
 	} );
@@ -355,9 +370,12 @@ describe( 'BreakdownControls', () => {
 		expect( container.textContent ).toContain(
 			'AGGREGATE[metric=memory,dims=method,server=edge-77]'
 		);
-		expect( container.textContent ).toContain(
-			'Workers are counted above but not charted here.'
-		);
+		expect(
+			above(
+				container,
+				'Workers are counted above but not charted here.'
+			)
+		).toBe( true );
 		unmount();
 	} );
 
@@ -369,23 +387,6 @@ describe( 'BreakdownControls', () => {
 			'Breakdown',
 			'Then by',
 		] );
-		unmount();
-	} );
-
-	it( 'says how many series the chart leaves out', () => {
-		const { container, unmount } = mountBreakdown( {
-			breakdownData: answer(
-				'method',
-				[
-					[ '2026-09-29-14-35', 'PATCH', 7, 70, 3, 7 ],
-					[ '2026-09-29-14-35', 'PURGE', 2, 20, 1, 2 ],
-				],
-				{ groups: 41 }
-			),
-		} );
-		expect( container.textContent ).toContain(
-			'Showing the top 2 of 41 series.'
-		);
 		unmount();
 	} );
 
@@ -420,18 +421,6 @@ describe( 'BreakdownControls', () => {
 			'AGGREGATE[metric=memory,dims=method,'
 		);
 		expect( container.textContent ).toContain( 'names:1' );
-		unmount();
-	} );
-
-	it( 'says nothing of a top that holds every series', () => {
-		const { container, unmount } = mountBreakdown( {
-			breakdownData: answer(
-				'method',
-				[ [ '2026-09-29-14-35', 'PATCH', 7, 70, 3, 7 ] ],
-				{ groups: 1 }
-			),
-		} );
-		expect( container.textContent ).not.toContain( 'Showing the top' );
 		unmount();
 	} );
 
