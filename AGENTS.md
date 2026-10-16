@@ -10,7 +10,7 @@ Three things live in the substrate and have no alias here — call the substrate
 - **`Job_Worker_Node`**. This plugin keeps only the request-context glue, `Log_Manager::begin/end_job_context`, hooked onto `newspack_nodes/job_worker/{before,after}_job`.
 - **`Job_Intake`** is `\Newspack_Nodes\Job_Intake`. `job-router.tsl` and `job-feed.tsl` each `include job-intake` and add their own router leg, so the substrate's conflict gate refuses co-activating its stock `job-intake` with either.
 
-This plugin builds no cache of its own. Keyed stores use the substrate's `Table_Node`, whose keys are scoped per install. The flame builder's stats live in the `flame-facts` Row_Table `flame-builder.tsl` declares, written by message through `Table_Client` and read through `App\Stats_Query`, which names the Flame_Facts schema and never the table (`Row_Table_Node::read( Flame_Facts_Row_Schema::class, … )`); `flame-facts.job`, built outside a topology by the overview-prefetch job's one worker, holds the Overview's stored answers (decision 37); `Rule_Set`'s large hook lists keep an `auto` `Table_Node::table()`, memcached else APCu. `Flame_Builder_Node::apply_auto_tune()`'s cross-worker lock is an `add()` on `Cache_Backend::shared_first()`, the same tier.
+This plugin builds no cache of its own. Keyed stores use the substrate's `Table_Node`, whose keys are scoped per install. The flame builder's stats live in the `flame-facts` Row_Table `flame-builder.tsl` declares, written by message through `Table_Client` and read through `App\Stats_Query`, which names the Flame_Facts schema and never the table (`Row_Table_Node::read( Flame_Facts_Row_Schema::class, … )`); `App\Url_Snapshot`'s `flame-facts.job.sqlite`, a file the overview-prefetch job builds from those rows and publishes whole by rename, holds the window's URL table and the Overview's stored answers (decision 37); `Rule_Set`'s large hook lists keep an `auto` `Table_Node::table()`, memcached else APCu. `Flame_Builder_Node::apply_auto_tune()`'s cross-worker lock is an `add()` on `Cache_Backend::shared_first()`, the same tier.
 
 ## Plugin Load Order
 
@@ -107,7 +107,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 34 | Stats live in SQLite Tables, and nothing repairs a loss |
 | 35 | A chart hour is one key holding its twelve five-minute slots — superseded by decision 36 |
 | 36 | The query vocabulary is fixed; no SQL from outside; a picker chooses the rollup |
-| 37 | The Overview's default answers are a job's, stored for two intervals |
+| 37 | The Overview reads a job's snapshot for two intervals |
 
 ## Layout
 
@@ -125,10 +125,10 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/class-{job-router,remote-job-rewrite,discovery-collector}-node.php` | Job normalization onto jobs.log, the hub's `job` → `remote_job` rewrite, the hub's discovery fan-out |
 | `includes/class-{flame-tree,flame-fold,quiet}.php` | Flame algorithms, and the quiet rule on which both builders leave their stream clocks for the wall |
 | `includes/class-{diagnostics-bridge,hook-categorizer,reqgrep-core,current-request-overlay}.php`, `trait-narration.php` | Verb spans and the stderr seam, hook categories, the reqgrep engine, the station's Request tab, builder narration |
-| `includes/app/` | `App\Core` (hook, HTTP and query instrumentation), the three service CIs, `Stats_Query` (the fixed query vocabulary every performance reader asks the rows in), `Overview_Prefetch` (the job storing the Overview's default answers), `Findings`, `Ask_Assembler`, `MCP_Controller` |
+| `includes/app/` | `App\Core` (hook, HTTP and query instrumentation), the three service CIs, `Stats_Query` (the fixed query vocabulary every performance reader asks the rows in), `Overview_Prefetch` (the job publishing the URL snapshot), `Url_Snapshot` (that file, built and read), `Findings`, `Ask_Assembler`, `MCP_Controller` |
 | `includes/class-{flame-facts-row-schema,bucket,url-parts}.php` | The eight stats tables the `flame-facts` Row_Table holds; the five-minute bucket, the hour and the selection grammar; a URL's server and paths |
 | `includes/admin/`, `includes/cli/` | The settings page, which hosts the rules editor; `wp nodes reqgrep` and `wp nodes ruleset-bench` |
-| `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix, the files of every Row_Table the shipped topologies declare with the Flame_Facts schema, and the overview-prefetch job's `flame-facts.job`; `uninstall.php` requires it and the Composer autoloader by hand because the main file does not run on DELETE |
+| `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix, the files of every Row_Table the shipped topologies declare with the Flame_Facts schema, and the overview-prefetch job's URL snapshot; `uninstall.php` requires it and the Composer autoloader by hand because the main file does not run on DELETE |
 | `topologies/` | Eleven `.tsl` graphs, named by filename: five primitives and six compositions |
 | `mu-plugins/00-newspack-profiler.php` | The standalone profiler drop-in, shipped as its own release asset |
 | `scripts/` | This plugin's `build.mjs`, `pre-push.local` and `bump-version.sh`; everything else is vendored, `pre-push` included, `render-diagram.sh` (the `docs/img` sheets to PNG) and its `autocrop.py` included |

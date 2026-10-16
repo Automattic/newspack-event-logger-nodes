@@ -7,12 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`App\Url_Snapshot` builds the window's URL table, its totals and the stored answers into one SQLite file, `flame-facts.job.sqlite`, published by rename and read `immutable`.**
+
 ### Changed
 
+- **The Overview's URL table answers every sort, order, server, page and Include Workers setting from a snapshot the overview-prefetch job publishes every two minutes; a search, a bucket selection or Errors Only answers live.** The job builds one SQLite file, `flame-facts.job.sqlite`: every URL of the window, indexed once per sort, the totals per view and server, and the four other default answers (`overview`, the request chart by server and by status class, the category chart). It publishes the file by rename and serves it for two intervals; past that, or with no file, every verb answers live. On eln under newspack-nodes 2.111.3 the URL table's default page took 33 s live, `overview` 18.6 s and the charts 3.6–6.2 s. The snapshot builds in about 35 s into a 311 MB file, and a run with its four answers takes roughly 75 s. A site-wide page then reads in 0.5–1 ms, a page at offset 9,900 in 12–16 ms, and a page of eln's largest server, 335,000 URLs, in 250–330 ms. The tick's default interval, and `flame-builder.tsl`'s, is 120 seconds, from 60.
+- **A sorted Stats_Query breaks ties by every group column in the sort's own direction; a descending sort lists tied rows, URLs and servers alike, by their groups descending.**
 - **The Overview's request chart says what it has to say above the chart.** "No … data in this window", a refused query and the scope note sat between the request chart and the category charts; they now sit under the chart controls, above the chart they describe.
 
 ### Removed
 
+- **The `flame-facts.job` Table and `Overview_Prefetch::lookup()`, `writer()` and `TABLE`.** The snapshot replaces them, and the `urls` question leaves `stored-answers.json`. Nothing writes `tables/flame-facts.job.p0.sqlite` any longer, so the substrate's sweep deletes it once it has been quiet an hour; uninstall deletes the snapshot and any build a crashed job left beside it.
 - **"Showing the top N of M series."** under the request chart and the category charts. The request chart's total still counts only the series it draws.
 
 ## [0.135.0] - 2026-10-15

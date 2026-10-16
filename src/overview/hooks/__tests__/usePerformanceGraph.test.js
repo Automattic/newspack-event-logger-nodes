@@ -1954,8 +1954,13 @@ describe( 'usePerformanceGraph — the stored answers', () => {
 					: findVerb( wire.batches, verb );
 				return { verb, tokens: sent?.[ VALUE ].arguments };
 			};
+			expect( Object.keys( storedAnswers ) ).toEqual( [
+				'overview',
+				'chart_by_server',
+				'chart_by_status_class',
+				'categories',
+			] );
 			expect( asked( 'overview' ) ).toEqual( storedAnswers.overview );
-			expect( asked( 'urls' ) ).toEqual( storedAnswers.urls );
 			expect( asked( 'query', 'requests' ) ).toEqual(
 				storedAnswers[ chart ]
 			);

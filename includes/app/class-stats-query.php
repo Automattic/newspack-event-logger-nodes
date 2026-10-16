@@ -36,8 +36,9 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * status outside the builder's status bounds; a request with no error answers
  * `-`, the record's own spelling. A filter matches what a group answers,
  * `Unknown` included. Worker requests count unless a filter leaves them out.
- * A sort ranks a null last in either order, and a `url` group also sorts by
- * its `url_name`, server then path. Under `top`, the tuples of the group's
+ * A sort ranks a null last in either order and breaks its ties by the groups
+ * in its own direction, and a `url` group also sorts by its `url_name`,
+ * server then path. Under `top`, the tuples of the group's
  * non-time fields rank by the sum over their time rows of `top_by`, a measure
  * that adds across buckets, highest first and ties by their values, and every
  * time row of the top ones answers, in rank order, with `groups` the tuples
@@ -317,23 +318,12 @@ final class Stats_Query {
 	 *                                   or a `top` it cannot rank.
 	 */
 	public static function run( array $spec ): array {
-		$spec = self::checked( $spec );
-		if ( [] === $spec['measure'] ) {
-			throw new \InvalidArgumentException( 'a query names at least one measure' );
-		}
-		$table = self::table_for( $spec );
-		foreach ( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] as $field ) {
-			if ( ! isset( self::TABLES[ $table ]['fields'][ $field ] ) ) {
-				throw new \InvalidArgumentException( \esc_html( "a {$spec['source']} query naming these fields reads {$table}, which holds no {$field}" ) );
-			}
-		}
-		$read   = $table;
+		$spec   = self::checked( $spec );
+		$read   = self::table( $spec );
 		$rows   = self::read(
 			static function ( Row_Reader $reader, array $aliases ) use ( $spec, &$read ): array {
 				// Sets the table run() reports.
-				if ( 'category_window' === $read && ! self::window_holds( $reader, $aliases, $spec['buckets'][0][0] - 1 ) ) {
-					$read = 'timings_site';
-				}
+				$read = self::readable( $reader, $aliases, $spec, $read );
 				return self::rows( $reader, $aliases, $spec, $read );
 			}
 		);
@@ -388,7 +378,7 @@ final class Stats_Query {
 	 * @return list<list<mixed>>
 	 */
 	private static function rows( Row_Reader $reader, array $aliases, array $spec, string $table ): array {
-		[ $sql, $binds ] = self::statement( $spec, $table, $aliases );
+		[ $sql, $binds ] = self::statement( $spec, $table, $aliases, true );
 		$rows            = $reader->rows( $sql, $binds );
 		if ( ! \in_array( 'url', $spec['group'], true ) ) {
 			return $rows;
@@ -409,15 +399,91 @@ final class Stats_Query {
 	}
 
 	/**
+	 * Store every group `run()` would answer for `$spec` over the builder's
+	 * attached partitions as the table `$table` of the file it writes,
+	 * unpaged: each group field under its own name, a `url` group as its
+	 * hash `url` and its `server` and `path`, then each measure under its
+	 * own. An empty window stores an empty table.
+	 *
+	 * @param Row_Reader          $builder The connection building the file.
+	 * @param string              $table   The table to create, of `a-z` and `_`.
+	 * @param array<string,mixed> $spec    As `run()` takes it, with no `top` and no `also`.
+	 * @throws \InvalidArgumentException As `run()`, on a `top` or an `also`,
+	 *                                   or on a table name outside `a-z` and `_`.
+	 * @throws \LogicException When the builder attached no partition.
+	 * @throws \PDOException When SQLite refuses the table.
+	 */
+	public static function into( Row_Reader $builder, string $table, array $spec ): void {
+		if ( 1 !== \preg_match( '/^[a-z_]+$/D', $table ) ) {
+			throw new \InvalidArgumentException( \esc_html( "into names a table of a-z and _, not {$table}" ) );
+		}
+		$spec = self::checked( $spec );
+		if ( null !== $spec['top'] || null !== $spec['also'] ) {
+			throw new \InvalidArgumentException( 'into stores whole groups: no top and no also' );
+		}
+		$aliases = $builder->aliases();
+		if ( [] === $aliases ) {
+			throw new \LogicException( 'into reads at least one partition' );
+		}
+		$read    = self::table( $spec );
+		$columns = [];
+		foreach ( $spec['group'] as $i => $field ) {
+			$columns[ "f{$i}" ] = $field;
+			if ( 'url' === $field ) {
+				$columns[ "w{$i}" ] = 'server';
+				$columns[ "x{$i}" ] = 'path';
+			}
+		}
+		foreach ( $spec['measure'] as $j => $name ) {
+			$columns[ "v{$j}" ] = $name;
+		}
+		[ $sql, $binds ] = self::statement( $spec, self::readable( $builder, $aliases, $spec, $read ), $aliases, false );
+		$projected       = \array_map( static fn ( string $column, string $name ): string => "{$column} AS \"{$name}\"", \array_keys( $columns ), $columns );
+		$builder->rows( "CREATE TABLE {$table} AS SELECT " . \implode( ', ', $projected ) . " FROM ( {$sql} )", $binds );
+	}
+
+	/**
+	 * The table the attached partitions answer `$table`'s question from: the
+	 * category window only while it holds the spec's range, else
+	 * `timings_site`.
+	 *
+	 * @param Row_Reader             $reader  The attached files.
+	 * @param non-empty-list<string> $aliases Their aliases.
+	 * @param Spec                   $spec    The checked spec.
+	 * @param string                 $table   The table `table()` chose.
+	 */
+	private static function readable( Row_Reader $reader, array $aliases, array $spec, string $table ): string {
+		return 'category_window' === $table && ! self::window_holds( $reader, $aliases, $spec['buckets'][0][0] - 1 ) ? 'timings_site' : $table;
+	}
+
+	/**
+	 * Whether every attached partition's category window has expired exactly
+	 * through `$through`, its newest `window_expiry` bucket, so its live rows
+	 * are the range after it. A partition that has expired none does not hold.
+	 *
+	 * @param Row_Reader             $reader  The attached files.
+	 * @param non-empty-list<string> $aliases Their aliases.
+	 * @param int                    $through The bucket before the range.
+	 */
+	private static function window_holds( Row_Reader $reader, array $aliases, int $through ): bool {
+		$marks = $reader->rows(
+			\implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => "SELECT MAX( bucket ) FROM {$alias}.window_expiry", $aliases ) ),
+			[]
+		);
+		return [] === \array_filter( $marks, static fn ( array $mark ): bool => null === $mark[0] || $through !== Core::as_int( $mark[0] ) );
+	}
+
+	/**
 	 * One statement answering the spec over `$aliases`, and its binds in
-	 * the order its placeholders appear.
+	 * the order its placeholders appear: paged, or every group unordered.
 	 *
 	 * @param Spec                   $spec    The checked spec.
 	 * @param string                 $table   The table answering it.
 	 * @param non-empty-list<string> $aliases The attached partitions.
+	 * @param bool                   $paged   Whether to sort and page it.
 	 * @return array{0:string, 1:list<scalar|null>}
 	 */
-	private static function statement( array $spec, string $table, array $aliases ): array {
+	private static function statement( array $spec, string $table, array $aliases, bool $paged ): array {
 		$def      = self::TABLES[ $table ];
 		$fields   = \array_values( \array_unique( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] ) );
 		$named    = null === $spec['top'] ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
@@ -458,6 +524,9 @@ final class Stats_Query {
 			$select[] = self::outer( $def, $spec['top_by'], $composes ) . ' AS t';
 		}
 		$grouped = 'SELECT ' . \implode( ', ', $select ) . " FROM {$from}" . ( [] === $groups ? '' : ' GROUP BY ' . \implode( ', ', $groups ) );
+		if ( ! $paged ) {
+			return [ $grouped, $binds ];
+		}
 		if ( null !== $spec['top'] ) {
 			return [ self::ranked( $grouped, $columns, $groups, $keys ), [ ...$binds, $spec['top'] ] ];
 		}
@@ -465,8 +534,9 @@ final class Stats_Query {
 			$columns = $groups;
 			if ( '' !== $sort ) {
 				$sorted    = $sorts[ $sort ] ?? throw new \LogicException( \esc_html( "sort {$sort} names no group or measure" ) );
-				$direction = ' ' . \strtoupper( $order ) . ' NULLS LAST';
-				\array_unshift( $columns, ...\array_map( static fn ( string $column ): string => $column . $direction, $sorted ) );
+				$direction = ' ' . \strtoupper( $order );
+				$columns   = \array_map( static fn ( string $column ): string => $column . $direction, $groups );
+				\array_unshift( $columns, ...\array_map( static fn ( string $column ): string => $column . $direction . ' NULLS LAST', $sorted ) );
 			}
 			return [] === $columns ? '' : ' ORDER BY ' . \implode( ', ', $columns );
 		};
@@ -613,20 +683,23 @@ final class Stats_Query {
 	}
 
 	/**
-	 * Whether every attached partition's category window has expired exactly
-	 * through `$through`, its newest `window_expiry` bucket, so its live rows
-	 * are the range after it. A partition that has expired none does not hold.
+	 * The table a checked spec reads, refusing a spec naming no measure or a
+	 * field that table lacks.
 	 *
-	 * @param Row_Reader             $reader  The attached files.
-	 * @param non-empty-list<string> $aliases Their aliases.
-	 * @param int                    $through The bucket before the range.
+	 * @param Spec $spec The checked spec.
+	 * @throws \InvalidArgumentException Naming what it refuses.
 	 */
-	private static function window_holds( Row_Reader $reader, array $aliases, int $through ): bool {
-		$marks = $reader->rows(
-			\implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => "SELECT MAX( bucket ) FROM {$alias}.window_expiry", $aliases ) ),
-			[]
-		);
-		return [] === \array_filter( $marks, static fn ( array $mark ): bool => null === $mark[0] || $through !== Core::as_int( $mark[0] ) );
+	private static function table( array $spec ): string {
+		if ( [] === $spec['measure'] ) {
+			throw new \InvalidArgumentException( 'a query names at least one measure' );
+		}
+		$table = self::table_for( $spec );
+		foreach ( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] as $field ) {
+			if ( ! isset( self::TABLES[ $table ]['fields'][ $field ] ) ) {
+				throw new \InvalidArgumentException( \esc_html( "a {$spec['source']} query naming these fields reads {$table}, which holds no {$field}" ) );
+			}
+		}
+		return $table;
 	}
 
 	/**

@@ -564,6 +564,25 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ 'weka.example', 'kea.example', 'egret.example' ], \array_column( Stats_Query::run( $spec + [ 'order' => 'desc' ] )['rows'], 0 ) );
 	}
 
+	/** Rows a sort ties rank by their groups in the sort's own direction. */
+	public function test_a_sorted_url_page_breaks_ties_by_hash_in_the_sorts_direction(): void {
+		$hashes = [];
+		foreach ( [ 'kakapo-3391', 'hihi-7024', 'toroa-1856' ] as $name ) {
+			$url      = "https://seed.example/{$name}/";
+			$hashes[] = Log_Manager::url_hash( $url );
+			$this->seed_requests( \array_fill( 0, 7, [ 'url' => $url ] ), 2 );
+		}
+		\sort( $hashes );
+		$spec = self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'count', 'buckets' => $this->last_day() ] );
+
+		$desc = Stats_Query::run( $spec + [ 'order' => 'desc' ] )['rows'];
+		$asc  = Stats_Query::run( $spec + [ 'order' => 'asc' ] )['rows'];
+
+		$this->assertSame( [ 7, 7, 7 ], \array_column( $desc, 2 ), 'the count ties, so the tie is the whole order' );
+		$this->assertSame( \array_reverse( $hashes ), \array_column( $desc, 0 ) );
+		$this->assertSame( $hashes, \array_column( $asc, 0 ) );
+	}
+
 	public function test_with_no_sort_rows_order_by_their_groups(): void {
 		$this->seed_request( [ 'server' => 'z.example', 'method' => 'GET' ] );
 		$this->seed_request( [ 'server' => 'a.example', 'method' => 'POST' ], partition: 3 );

@@ -8,8 +8,11 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Overview_Prefetch;
+use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
+use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -18,12 +21,12 @@ use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Job_Worker_Node;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Table_Node;
+use Newspack_Nodes\Table_Unavailable;
 
 /**
- * The job stores the four answers a default Overview poll asks; each verb
- * serves its stored answer for the same arguments until it expires, and
- * answers live otherwise.
+ * The job publishes the URL snapshot, with the four other answers a default
+ * Overview poll asks; `urls` serves any page of it and the others their
+ * stored answer until it expires, and every other question answers live.
  */
 #[CoversClass( Overview_Prefetch::class )]
 #[CoversClass( Performance_CI_Node::class )]
@@ -43,7 +46,7 @@ final class OverviewPrefetchTest extends TestCase {
 		Core::$var['partition'] = '0';
 		$GLOBALS['_current_user_can'] = true;
 		$this->use_scratch_config( $this->make_temp_dir( 'overview-prefetch-' ) );
-		$this->activate_shipped( 'flame-builder', 2 );
+		$this->activate_shipped( 'flame-builder', 3 );
 	}
 
 	protected function tearDown(): void {
@@ -70,55 +73,205 @@ final class OverviewPrefetchTest extends TestCase {
 		Overview_Prefetch::run( '', [ 'queued_at' => $queued_at, 'interval' => self::INTERVAL ] );
 	}
 
-	public function test_a_job_stores_the_url_page_the_verb_then_serves(): void {
+	/** Move the clock to `$at`, inside the bucket the job ran in. */
+	private static function clock( int $at ): void {
+		Core::$clock = static fn (): float => (float) $at;
+		Core::right_now();
+	}
+
+	public function test_the_job_publishes_a_snapshot_every_url_page_is_served_from(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5519/', 'ms' => 33.5 ], partition: 1 );
+		$this->seed_request( [ 'url' => 'https://seed.example/kea-5519/', 'ms' => 12.5 ], partition: 2 );
 		$this->run_job();
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5519/', 'ms' => 8.5 ] );
 
-		$served = $this->urls( [ '--limit=100' ] );
+		$served = $this->urls( [ '--sort=avg_ms', '--order=asc', '--limit=1', '--offset=1' ] );
 
-		$this->assertSame( [ 'https://seed.example/takahe-5519/' ], \array_column( $served['data'], 'url' ), 'the stored page, not the live one' );
+		$this->assertSame( [ 'https://seed.example/takahe-5519/' ], \array_column( $served['data'], 'url' ), 'the snapshot, not the live rows' );
+		$this->assertSame( 2, $served['rows'] );
 		$this->assertSame( self::NOW, $served['as_of'] );
 	}
 
-	public function test_an_expired_answer_is_answered_live(): void {
+	public function test_a_served_page_is_the_live_page_of_its_moment(): void {
+		$this->seed_requests(
+			[
+				[ 'url' => 'https://seed.example/takahe-5531/', 'ms' => 33.5, 'peak_mb' => 40.25, 'status' => 503 ],
+				[ 'url' => 'https://kaka-5531.example/kea-5531/', 'server' => 'kaka-5531.example', 'ms' => 12.5, 'peak_mb' => 30.5 ],
+			],
+			partition: 1
+		);
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5531/', 'ms' => 7.25, 'peak_mb' => 20.75 ], partition: 2 );
+		$this->run_job();
+		$tokens = [ '--sort=url', '--order=desc', '--limit=7', '--offset=0' ];
+		$args   = Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['urls']['args'], $tokens );
+		$live   = Performance_CI_Node::answer_live( 'urls', $args, self::NOW );
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5531/', 'ms' => 8.5 ] );
+
+		// The reply crosses the wire as JSON, as a whole float reads back an int.
+		$this->assertSame( \json_decode( (string) \wp_json_encode( $live ), true ), $this->urls( $tokens ) );
+	}
+
+	public function test_a_server_and_include_workers_are_served_from_the_snapshot(): void {
+		$this->seed_requests(
+			[
+				[ 'url' => 'https://kaka-5532.example/takahe-5532/', 'server' => 'kaka-5532.example', 'ms' => 33.5 ],
+				[ 'url' => 'https://seed.example/wp-cron-5532/', 'ms' => 12.5, 'worker' => 1 ],
+				[ 'url' => 'https://seed.example/kea-5532/', 'ms' => 6.5 ],
+			],
+			partition: 2
+		);
+		$this->run_job();
+		$this->seed_request( [ 'url' => 'https://kaka-5532.example/moa-5532/', 'server' => 'kaka-5532.example', 'ms' => 8.5, 'worker' => 1 ] );
+		self::clock( self::NOW + 9 );
+
+		$server  = $this->urls( [ '--server=kaka-5532.example', '--limit=100' ] );
+		$workers = $this->urls( [ '--include_workers', '--sort=url', '--order=asc', '--limit=100' ] );
+
+		$this->assertSame( [ 'https://kaka-5532.example/takahe-5532/' ], \array_column( $server['data'], 'url' ) );
+		$this->assertSame( 'kaka-5532.example', $server['filters']['server'] );
+		$this->assertSame( self::NOW, $server['as_of'] );
+		$this->assertSame(
+			[ 'https://kaka-5532.example/takahe-5532/', 'https://seed.example/kea-5532/', 'https://seed.example/wp-cron-5532/' ],
+			\array_column( $workers['data'], 'url' )
+		);
+		$this->assertTrue( $workers['filters']['include_workers'] );
+		$this->assertSame( self::NOW, $workers['as_of'] );
+	}
+
+	/**
+	 * A question the snapshot cannot answer: its tokens beside the default
+	 * page's.
+	 *
+	 * @return array<string,array{0:list<string>}>
+	 */
+	public static function live_questions(): array {
+		return [
+			'a search'           => [ [ '--search=moa' ] ],
+			'a bucket selection' => [ [ '--bucket=' . Bucket::key( Bucket::id( self::NOW ) ) ] ],
+			'errors only'        => [ [ '--errors_only' ] ],
+		];
+	}
+
+	/**
+	 * @param list<string> $tokens What the question adds.
+	 */
+	#[DataProvider( 'live_questions' )]
+	public function test_a_search_a_bucket_or_a_filter_is_answered_live( array $tokens ): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5533/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5533/', 'ms' => 8.5, 'error' => 'F', 'status' => 500 ] );
+		self::clock( self::NOW + 9 );
+
+		$served = $this->urls( [ '--limit=100', ...$tokens ] );
+
+		$this->assertContains( 'https://seed.example/moa-5533/', \array_column( $served['data'], 'url' ) );
+		$this->assertSame( self::NOW + 9, $served['as_of'] );
+	}
+
+	public function test_a_stale_snapshot_is_answered_live(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5520/', 'ms' => 33.5 ] );
 		$this->run_job();
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5520/', 'ms' => 8.5 ] );
-		Core::$clock = static fn (): float => (float) ( self::NOW + 2 * self::INTERVAL + 1 );
-		Core::right_now();
+		self::clock( self::NOW + 2 * self::INTERVAL );
 
 		$served = $this->urls( [ '--limit=100' ] );
 
 		$this->assertCount( 2, $served['data'] );
-		$this->assertSame( self::NOW + 2 * self::INTERVAL + 1, $served['as_of'] );
+		$this->assertSame( self::NOW + 2 * self::INTERVAL, $served['as_of'] );
 	}
 
-	public function test_an_answer_lives_two_intervals(): void {
+	public function test_a_snapshot_lives_two_intervals(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5523/', 'ms' => 33.5 ] );
 		$this->run_job();
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5523/', 'ms' => 8.5 ] );
-		Core::$clock = static fn (): float => (float) ( self::NOW + 2 * self::INTERVAL - 1 );
-		Core::right_now();
+		self::clock( self::NOW + 2 * self::INTERVAL - 1 );
 
 		$this->assertSame( self::NOW, $this->urls( [ '--limit=100' ] )['as_of'] );
 	}
 
-	public function test_other_arguments_are_answered_live(): void {
-		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5521/', 'ms' => 33.5 ] );
-		$this->run_job();
-		$this->seed_request( [ 'url' => 'https://seed.example/moa-5521/', 'ms' => 8.5 ] );
-
-		$this->assertCount( 2, $this->urls( [ '--limit=100', '--sort=avg_ms' ] )['data'] );
-	}
-
-	public function test_no_job_yet_is_answered_live(): void {
+	public function test_no_snapshot_is_answered_live(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5522/', 'ms' => 8.5 ] );
+		self::clock( self::NOW + 9 );
 
 		$served = $this->urls( [ '--limit=100' ] );
 
-		$this->assertCount( 1, $served['data'] );
-		$this->assertSame( self::NOW, $served['as_of'] );
+		$this->assertSame( [ 'https://seed.example/moa-5522/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertSame( self::NOW + 9, $served['as_of'] );
+		$this->assertFileDoesNotExist( Url_Snapshot::path() );
+	}
+
+	public function test_a_snapshot_that_is_no_database_is_answered_live(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5527/', 'ms' => 8.5 ] );
+		\file_put_contents( Url_Snapshot::path(), 'kea-5527 is no sqlite database' );
+		self::clock( self::NOW + 9 );
+
+		$served = $this->urls( [ '--limit=100' ] );
+
+		$this->assertSame( [ 'https://seed.example/moa-5527/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertSame( self::NOW + 9, $served['as_of'] );
+	}
+
+	public function test_a_snapshot_that_will_not_open_is_answered_live_and_said(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5528/', 'ms' => 8.5 ] );
+		\mkdir( Url_Snapshot::path() );
+
+		$served = $this->urls( [ '--limit=100' ] );
+
+		$this->assertSame( [ 'https://seed.example/moa-5528/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertNotEmpty(
+			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not open' ) ),
+			'the outage is said once'
+		);
+	}
+
+	public function test_a_snapshot_that_opens_but_will_not_read_is_answered_live_and_said(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5537/', 'ms' => 8.5 ] );
+		$db = new \PDO( 'sqlite:' . Url_Snapshot::path() );
+		$db->exec( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )' );
+		$db->exec( 'INSERT INTO meta VALUES ( ' . self::NOW . ', ' . ( self::NOW + 2 * self::INTERVAL ) . ' )' );
+		$db = null;
+		self::clock( self::NOW + 9 );
+
+		$served   = $this->urls( [ '--limit=100' ] );
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+
+		$this->assertSame( [ 'https://seed.example/moa-5537/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertSame( self::NOW + 9, $served['as_of'] );
+		$this->assertSame( self::NOW + 9, \is_array( $overview ) ? $overview['as_of'] : $overview );
+		$this->assertNotEmpty(
+			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not read' ) ),
+			'the outage is said once'
+		);
+	}
+
+	public function test_a_question_the_snapshot_stored_no_answer_for_is_answered_live(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5536/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5536/', 'ms' => 8.5 ] );
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=seed.example' ] );
+		$query    = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', '--measure=count' ] );
+
+		$this->assertIsArray( $overview );
+		$this->assertSame( self::NOW + 9, $overview['as_of'] );
+		$this->assertSame( 2, $overview['totals']['urls'] );
+		$this->assertSame( self::NOW + 9, \is_array( $query ) ? $query['as_of'] : $query );
+	}
+
+	public function test_overview_and_the_charts_are_served_from_the_snapshot(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5534/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5534/', 'ms' => 8.5 ] );
+		self::clock( self::NOW + 9 );
+
+		$questions = Overview_Prefetch::questions();
+		$this->assertSame( [ 'overview', 'chart_by_server', 'chart_by_status_class', 'categories' ], \array_keys( $questions ) );
+		foreach ( $questions as $name => [ 'verb' => $verb, 'tokens' => $tokens ] ) {
+			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, $tokens );
+			$this->assertSame( self::NOW, \is_array( $reply ) ? $reply['as_of'] : $reply, $name );
+		}
+		$this->assertSame( 1, VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] )['totals']['urls'], 'the stored overview counts takahe alone' );
 	}
 
 	/**
@@ -149,27 +302,31 @@ final class OverviewPrefetchTest extends TestCase {
 	public function test_a_job_its_successor_overtook_is_declined(): void {
 		$_SERVER['REQUEST_URI'] = '/outer-5529';
 
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5529/' ] );
+
 		$jw = $this->deliver( self::NOW - self::INTERVAL );
 
-		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 0 ) );
+		$this->assertFileDoesNotExist( Url_Snapshot::path() );
 		$this->assertSame( [], $jw->probe_stats(), 'a declined job records no outcome' );
 		$this->assertSame( '/outer-5529', $_SERVER['REQUEST_URI'], 'a declined job opens no context' );
 	}
 
 	public function test_a_worker_bound_to_another_partition_declines(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5530/' ] );
 		Core::$var['partition'] = '3';
 
 		$jw = $this->deliver( self::NOW );
 
-		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 0 ) );
-		$this->assertFileDoesNotExist( Table_Node::file( Overview_Prefetch::TABLE, 3 ) );
+		$this->assertFileDoesNotExist( Url_Snapshot::path() );
 		$this->assertSame( [], $jw->probe_stats() );
 	}
 
-	public function test_a_fresh_job_on_partition_zero_runs_and_stores(): void {
+	public function test_a_fresh_job_on_partition_zero_runs_and_publishes(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5535/' ] );
+
 		$jw = $this->deliver( self::NOW - self::INTERVAL + 1 );
 
-		$this->assertFileExists( Table_Node::file( Overview_Prefetch::TABLE, 0 ) );
+		$this->assertFileExists( Url_Snapshot::path() );
 		$this->assertCount( 1, $jw->probe_stats() );
 	}
 
@@ -186,18 +343,6 @@ final class OverviewPrefetchTest extends TestCase {
 		$message[ Message::VALUE ] = [ 'parameters' => [ 'queued_at' => self::NOW, 'interval' => self::INTERVAL ] ];
 
 		$this->assertFalse( Overview_Prefetch::admit( false, Overview_Prefetch::HANDLER, '', $message ) );
-	}
-
-	public function test_every_question_is_stored_under_its_bound_arguments(): void {
-		$this->run_job();
-		VerbHarness::request_graph();
-
-		$questions = Overview_Prefetch::questions();
-		$this->assertSame( [ 'overview', 'urls', 'chart_by_server', 'chart_by_status_class', 'categories' ], \array_keys( $questions ) );
-		foreach ( $questions as $name => [ 'verb' => $verb, 'tokens' => $tokens ] ) {
-			$args = Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )[ $verb ]['args'], $tokens );
-			$this->assertSame( self::NOW, Overview_Prefetch::lookup( $verb, $args )['as_of'] ?? null, $name );
-		}
 	}
 
 	public function test_overview_and_query_answer_as_of_live(): void {
@@ -238,41 +383,21 @@ final class OverviewPrefetchTest extends TestCase {
 		Overview_Prefetch::run( '', [ 'interval' => self::INTERVAL ] );
 	}
 
-	public function test_an_answer_the_stats_outage_wrote_is_never_stored(): void {
+	public function test_a_job_whose_stats_will_not_open_publishes_nothing(): void {
 		\update_option( 'newspack_nodes_topologies', [] );
 		\Newspack_Event_Logger_Nodes\Config::reset();
-		$this->run_job();
-		$this->activate_shipped( 'flame-builder', 2 );
+		try {
+			$this->run_job();
+			$this->fail( 'a job whose stats will not open publishes nothing' );
+		} catch ( Table_Unavailable ) {
+			$this->assertFileDoesNotExist( Url_Snapshot::path() );
+		}
+		$this->activate_shipped( 'flame-builder', 3 );
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5526/', 'ms' => 8.5 ] );
 
 		$served = $this->urls( [ '--limit=100' ] );
 
 		$this->assertTrue( $served['available'] );
 		$this->assertSame( [ 'https://seed.example/moa-5526/' ], \array_column( $served['data'], 'url' ), 'answered live, not the stored outage' );
-	}
-
-	public function test_a_file_that_is_no_database_is_answered_live(): void {
-		$file = Table_Node::file( Overview_Prefetch::TABLE, 0 );
-		\mkdir( \dirname( $file ), 0755, true );
-		\file_put_contents( $file, 'kea-5527 is no sqlite database' );
-		$this->seed_request( [ 'url' => 'https://seed.example/moa-5527/', 'ms' => 8.5 ] );
-
-		$served = $this->urls( [ '--limit=100' ] );
-
-		$this->assertSame( [ 'https://seed.example/moa-5527/' ], \array_column( $served['data'], 'url' ) );
-		$this->assertSame( self::NOW, $served['as_of'] );
-	}
-
-	public function test_a_file_that_will_not_open_is_answered_live(): void {
-		\mkdir( Table_Node::file( Overview_Prefetch::TABLE, 0 ), 0755, true );
-		$this->seed_request( [ 'url' => 'https://seed.example/moa-5528/', 'ms' => 8.5 ] );
-
-		$served = $this->urls( [ '--limit=100' ] );
-
-		$this->assertSame( [ 'https://seed.example/moa-5528/' ], \array_column( $served['data'], 'url' ) );
-		$this->assertNotEmpty(
-			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: stored answers did not open' ) ),
-			'the outage is said once'
-		);
 	}
 }

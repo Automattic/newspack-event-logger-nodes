@@ -60,8 +60,9 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
  * Delete the SQLite files of every Row_Table the plugin's own topologies
  * declare with the Flame_Facts schema: each partition's file, and the WAL
  * files SQLite keeps beside it, named by the substrate's `Table_Node::file()`
- * across every partition a fleet can run; and those of `flame-facts.job`,
- * the overview-prefetch job's partition-0 Table (decision 37). The plugin is inactive here, so
+ * across every partition a fleet can run; and the URL snapshot the
+ * overview-prefetch job publishes, with any build a crashed job left beside
+ * it (decision 37). The plugin is inactive here, so
  * its node namespace is registered by hand, and its topologies are read
  * inside `Topology_Registry::with_stock_dir()`: each name its dir holds
  * resolves to the copy shipped there, never another dir's or an operator's
@@ -100,7 +101,7 @@ function delete_stats_tables( string $topologies_dir ): int {
 			return \Newspack_Nodes\Bootstrap::row_tables_of( Flame_Facts_Row_Schema::class, ...$shipped );
 		}
 	);
-	$files = [ \Newspack_Nodes\Table_Node::file( App\Overview_Prefetch::TABLE, 0 ) ];
+	$files = [ App\Url_Snapshot::path(), ...( \glob( \dirname( App\Url_Snapshot::path() ) . '/flame-facts.job.*.sqlite' ) ?: [] ) ];
 	foreach ( $tables as $table ) {
 		for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
 			$files[] = \Newspack_Nodes\Table_Node::file( $table, $partition );

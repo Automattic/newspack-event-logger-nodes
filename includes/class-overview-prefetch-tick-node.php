@@ -25,7 +25,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Overview_Prefetch_Tick_Node extends Timer_Node {
 	/** Seconds between jobs when the line names none. */
-	public const INTERVAL_S = 60;
+	public const INTERVAL_S = 120;
 
 	/** Seconds between jobs. */
 	protected int $interval_s = self::INTERVAL_S;
@@ -96,7 +96,7 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 			'category'     => 'Control',
 			'description'  => 'Queues the overview-prefetch job once an interval, to the firehose and jobfeed.p0, from the fleet\'s one copy of the line.',
 			'arguments'    => [
-				[ 'name' => 'interval_s', 'type' => 'int', 'default' => self::INTERVAL_S, 'description' => 'Seconds between jobs; each answer lives two of them.' ],
+				[ 'name' => 'interval_s', 'type' => 'int', 'default' => self::INTERVAL_S, 'description' => 'Seconds between jobs; each snapshot serves two of them.' ],
 			],
 			'commands'     => [],
 			'accepts_fill' => false,
