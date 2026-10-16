@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.135.0] - 2026-10-15
+
 ### Added
 
 - **`flame-builder.tsl` queues the overview-prefetch job once a minute from partition 0, to the firehose and `jobfeed.p0`, so standalone sites, spokes and hubs each run it on their own JobWorker.**
