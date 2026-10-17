@@ -68,7 +68,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 *   add?: array<string,'sum'|'max'>,
 	 *   indexes?: array<string,list<string>>,
 	 *   retain?: array{0:string,1:int,2:int},
-	 *   retained_by?: array{0:string,1:string,2:string},
+	 *   retained_by?: list<array{0:string,1:string,2:string}>,
 	 *   autoincrement?: string,
 	 *   fts?: list<string>
 	 * }> Each table's declaration, by table name.
@@ -84,7 +84,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				],
 				'key'           => [ 'hash' ],
 				'autoincrement' => 'id',
-				'retained_by'   => [ 'requests', 'url_id', 'id' ],
+				'retained_by'   => [ [ 'requests', 'url_id', 'id' ] ],
 				'fts'           => [ 'path' ],
 			],
 			'agents'          => [
@@ -94,7 +94,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				],
 				'key'           => [ 'ua' ],
 				'autoincrement' => 'id',
-				'retained_by'   => [ 'requests', 'ua_id', 'id' ],
+				'retained_by'   => [ [ 'requests', 'ua_id', 'id' ] ],
 			],
 			'requests'        => [
 				'columns' => [

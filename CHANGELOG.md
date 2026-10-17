@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `Flame_Facts_Row_Schema` declares `urls` and `agents` `retained_by` as one-entry lists, the shape the substrate's Row_Table takes.
+
 ## [0.137.0] - 2026-10-16
 
 ### Added
