@@ -461,16 +461,60 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( [ 'ruru-6206.example', 'kea-6206.example' ], $overview['servers'], 'the scope stays on a server the job never saw' );
 	}
 
+	/** A scoped server with no traffic is no new server: the stored list serves it. */
+	public function test_a_scoped_overview_of_a_server_with_no_traffic_names_the_stored_servers(): void {
+		$this->seed_request( [ 'server' => 'kea-6208.example', 'url' => 'https://kea-6208.example/a/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'server' => 'kaka-6208.example', 'url' => 'https://kaka-6208.example/b/', 'ms' => 12.5 ] );
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=moa-6208.example' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( 0, $overview['totals']['requests'] );
+		$this->assertSame( [ 'kea-6208.example' ], $overview['servers'], 'the stored list, kaka unread' );
+	}
+
+	/** A stored overview naming no servers keeps its own line beside a read failure. */
+	public function test_a_stored_overview_naming_no_servers_is_said_beside_a_read_failure(): void {
+		$this->seed_request( [ 'server' => 'kea-6209.example', 'url' => 'https://kea-6209.example/a/', 'ms' => 8.5 ] );
+		$verbs    = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
+		$overview = Overview_Prefetch::key( 'overview', Command_Args::bind( $verbs['overview']['args'], [] ) );
+		$chart    = Overview_Prefetch::key( 'query', Command_Args::bind( $verbs['query']['args'], Overview_Prefetch::questions()['categories']['tokens'] ) );
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			Url_Snapshot::NAME,
+			static function ( Row_Reader $db ) use ( $overview, $chart ): bool {
+				$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
+				$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? ), ( ?, ? )', [ $overview, '{"as_of":1790007215,"available":true}', $chart, '{"kea-6209": is no json' ] );
+				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
+				return true;
+			}
+		);
+		self::clock( self::NOW + 9 );
+		$said = static fn ( string $text ): array => \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, $text ) );
+
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', Overview_Prefetch::questions()['categories']['tokens'] );
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+
+		$this->assertNotEmpty( $said( 'performance: the URL snapshot did not read' ), 'the read failure is said' );
+		$this->assertNotEmpty( $said( 'the stored overview names no servers' ), 'and so is the overview naming none' );
+	}
+
 	/** A blank server names no server, so the stored overview answers it whole. */
 	public function test_an_overview_with_a_blank_server_is_served_from_the_snapshot(): void {
 		$this->seed_request( [ 'server' => 'kea-6207.example', 'url' => 'https://kea-6207.example/a/', 'ms' => 33.5 ] );
 		$this->run_job();
+		$this->seed_request( [ 'server' => 'kaka-6207.example', 'url' => 'https://kaka-6207.example/b/', 'ms' => 12.5 ] );
 		self::clock( self::NOW + 9 );
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=' ] );
 
 		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
 		$this->assertSame( self::NOW, $overview['as_of'], 'served, dated by the job' );
+		$this->assertSame( 1, $overview['totals']['requests'], 'the stored totals, kaka unread' );
+		$this->assertSame( [ 'kea-6207.example' ], $overview['servers'] );
 	}
 
 	public function test_a_scoped_overview_with_no_snapshot_reads_its_servers_live(): void {
