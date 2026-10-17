@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Stats_Query;
 use Newspack_Event_Logger_Nodes\Bucket;
@@ -12,6 +13,8 @@ use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Row_Reader;
+use Newspack_Nodes\Row_Table_Node;
 
 /**
  * The query vocabulary over the `flame-facts` rows: a spec of source,
@@ -254,6 +257,43 @@ final class StatsQueryTest extends TestCase {
 		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'url!' => [ \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( 'https://seed.example/kokako/' ) ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
 
 		$this->assertSame( [ 900.0 ], \array_column( $r['rows'], 2 ) );
+	}
+
+	/**
+	 * A filter by a looked-up name reads the rows' own window, never the id
+	 * index a lookup row's release seeks, which would walk every row the
+	 * name has, past the window.
+	 *
+	 * @return array<string,array{0:string,1:array<string,list<string>>,2:string}>
+	 */
+	public static function name_filters(): array {
+		return [
+			'server on requests'      => [ 'requests', [ 'server' => [ 'kea.example' ] ], 'requests_server_id' ],
+			'server on timings_site'  => [ 'timings', [ 'server' => [ 'kea.example' ] ], 'timings_site_server_id' ],
+			'category on timings_site' => [ 'timings', [ 'category' => [ 'init hook @10' ] ], 'timings_site_category_id' ],
+			'entry on timings_site'   => [ 'timings', [ 'entry' => [ 'kea_init' ] ], 'timings_site_entry_id' ],
+		];
+	}
+
+	/**
+	 * @param array<string,list<string>> $filter
+	 */
+	#[DataProvider( 'name_filters' )]
+	public function test_a_name_filter_reads_the_window_not_the_lookup_id_index( string $source, array $filter, string $release_index ): void {
+		$this->seed_request( [ 'server' => 'kea.example' ] );
+		$this->seed_site_timing( [ 'server' => 'kea.example', 'category' => 'init hook @10', 'entry' => 'kea_init' ] );
+		$checked = ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, self::spec( [ 'source' => $source, 'filter' => $filter, 'measure' => [ 'requests' === $source ? 'count' : 'ms' ], 'buckets' => $this->last_day() ] ) );
+		$table   = Stats_Query::table_for( $checked );
+
+		$plan = Row_Table_Node::read(
+			Flame_Facts_Row_Schema::class,
+			static function ( Row_Reader $reader ) use ( $checked, $table ): string {
+				[ $sql, $binds ] = ( new \ReflectionMethod( Stats_Query::class, 'statement' ) )->invoke( null, $checked, $table, $reader->aliases(), false );
+				return \implode( "\n", \array_column( $reader->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
+			}
+		);
+
+		$this->assertStringNotContainsString( $release_index, $plan );
 	}
 
 	public function test_a_negated_filter_on_an_unknown_field_is_refused_naming_the_field(): void {

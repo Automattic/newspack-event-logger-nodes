@@ -140,13 +140,18 @@ final class Stats_Query {
 	/** The join a URL's server needs, after `urls`. */
 	private const URL_SERVER_JOIN = 'JOIN %1$s.servers AS us ON us.id = u.server_id';
 
-	/** The join a row's server needs. */
-	private const SERVER_JOIN = 'JOIN %1$s.servers AS sv ON sv.id = t.server_id';
+	/**
+	 * The join a row's server needs. This and `TIMING_JOINS` read the row's
+	 * id through a unary `+`, which keeps SQLite off the index leading it:
+	 * that index serves a lookup row's release, and a read driven through it
+	 * walks every row the name has, past the window the question asks for.
+	 */
+	private const SERVER_JOIN = 'JOIN %1$s.servers AS sv ON sv.id = +t.server_id';
 
 	/** The joins a timing row's category and entry need. */
 	private const TIMING_JOINS = [
-		'category' => 'JOIN %1$s.categories AS c ON c.id = t.category_id',
-		'entry'    => 'JOIN %1$s.entries AS e ON e.id = t.entry_id',
+		'category' => 'JOIN %1$s.categories AS c ON c.id = +t.category_id',
+		'entry'    => 'JOIN %1$s.entries AS e ON e.id = +t.entry_id',
 	];
 
 	/** A search: the arm's URL among those its path index matches. */
