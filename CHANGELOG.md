@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.140.0] - 2026-10-17
+
 ### Changed
 - **Deploying this resets every site's stats.** The stats rows go to schema version 6, whose `requests` table carries `requests_server` (`server_id`, `bucket`, `worker`, `url_id`, `ms`, `status`, `peak_mb`) in place of the single-column `requests_server_id`, so a server-scoped read seeks the server's own rows rather than walking every server's. Nothing migrates a version-5 file: each flame builder discards its file at its next open, and the dashboards refill from new traffic, or from the retained logs after the rebuild in decision 5.
 - A server-scoped Overview takes its server list from the overview-prefetch job's last run instead of reading it live, because no scope changes that list; with none stored, or when the scoped server has traffic the list lacks, worker traffic counted, it is read live as before, and a stored overview naming no servers is said once a window and answered live.
