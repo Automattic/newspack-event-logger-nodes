@@ -27,6 +27,8 @@ namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
@@ -97,6 +99,10 @@ final class Url_Snapshot {
 	 * and an expiry `$ttl` seconds on. A fleet with no partition file yet
 	 * publishes nothing, and a build that throws leaves the last publish.
 	 *
+	 * On a started record the build is a `snapshot build` span closing
+	 * `published` or `no partition file`, each of its steps a span inside;
+	 * the architecture guide says what the build span's own time holds.
+	 *
 	 * @param int                                $now     The job's tick.
 	 * @param int                                $ttl     Seconds the snapshot serves.
 	 * @param array<string,array<string,mixed>> $answers The stored answers by key.
@@ -107,13 +113,17 @@ final class Url_Snapshot {
 	 *                           an answer will not encode.
 	 */
 	public static function publish( int $now, int $ttl, array $answers ): void {
-		Row_Table_Node::build(
-			Flame_Facts_Row_Schema::class,
-			self::NAME,
-			static function ( Row_Reader $db ) use ( $now, $ttl, $answers ): bool {
-				self::fill( $db, $now, $ttl, $answers );
-				return true;
-			}
+		Log_Manager::span(
+			Flame_Tree::SNAPSHOT_BUILD,
+			static fn (): mixed => Row_Table_Node::build(
+				Flame_Facts_Row_Schema::class,
+				self::NAME,
+				static function ( Row_Reader $db ) use ( $now, $ttl, $answers ): bool {
+					self::fill( $db, $now, $ttl, $answers );
+					return true;
+				}
+			),
+			static fn ( mixed $built ): string => false === $built ? 'no partition file' : 'published'
 		);
 	}
 
@@ -127,14 +137,20 @@ final class Url_Snapshot {
 	 * @throws \RuntimeException When an answer will not encode.
 	 */
 	private static function fill( Row_Reader $db, int $now, int $ttl, array $answers ): void {
-		foreach ( self::url_steps( $db, $now ) as [ $sql, $binds ] ) {
-			$db->rows( $sql, $binds );
+		foreach ( self::url_steps( $db, $now ) as $span => $statements ) {
+			self::step( $db, $span, $statements );
 		}
 		foreach ( self::indexes() as $name => $columns ) {
-			$db->rows( "CREATE INDEX urls_{$name} ON urls ( {$columns} )", [] );
+			self::step( $db, Flame_Tree::SNAPSHOT_INDEX, [ [ "CREATE INDEX urls_{$name} ON urls ( {$columns} )", [] ] ], [ 'l' => "urls_{$name}" ] );
 		}
-		$db->rows( self::totals_table(), [] );
-		$db->rows( 'CREATE UNIQUE INDEX totals_scope ON totals ( workers, server_id )', [] );
+		self::step(
+			$db,
+			Flame_Tree::SNAPSHOT_TOTALS,
+			[
+				[ self::totals_table(), [] ],
+				[ 'CREATE UNIQUE INDEX totals_scope ON totals ( workers, server_id )', [] ],
+			]
+		);
 		$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
 		foreach ( $answers as $key => $answer ) {
 			$json = \wp_json_encode( $answer );
@@ -192,15 +208,36 @@ final class Url_Snapshot {
 	}
 
 	/**
-	 * The statements building `servers` and `urls`, and their binds, in the
-	 * order they run: the window's URLs grouped into a scratch table in hash
-	 * order, the servers named by ids in name order, the URLs copied in the
-	 * scratch table's order, so a rowid ranks as the hash, and the scratch
-	 * table dropped ahead of the indexes, which reuse its pages.
+	 * Run one step's statements in order, as a `$span` span.
+	 *
+	 * @param Row_Reader                                $db         The building connection.
+	 * @param string                                    $span       A `Flame_Tree` snapshot step.
+	 * @param list<array{0:string,1:list<scalar|null>}> $statements Each statement and its binds.
+	 * @param array<string,mixed>                       $start      Extra keys for the `(start)` entry.
+	 */
+	private static function step( Row_Reader $db, string $span, array $statements, array $start = [] ): void {
+		Log_Manager::span(
+			$span,
+			static function () use ( $db, $statements ): void {
+				foreach ( $statements as [ $sql, $binds ] ) {
+					$db->rows( $sql, $binds );
+				}
+			},
+			start: $start
+		);
+	}
+
+	/**
+	 * The statements building `servers` and `urls`, and their binds, by the
+	 * step that runs them, in the order they run: the window's URLs grouped
+	 * into a scratch table in hash order; then the servers named by ids in
+	 * name order, the URLs copied in the scratch table's order, so a rowid
+	 * ranks as the hash, and the scratch table dropped ahead of the indexes,
+	 * which reuse its pages.
 	 *
 	 * @param Row_Reader $db  The building connection.
 	 * @param int        $now The job's tick.
-	 * @return list<array{0:string,1:list<scalar|null>}>
+	 * @return array<string,list<array{0:string,1:list<scalar|null>}>>
 	 */
 	private static function url_steps( Row_Reader $db, int $now ): array {
 		$grouped  = [
@@ -211,11 +248,13 @@ final class Url_Snapshot {
 		] + self::GROUPED;
 		$measures = \implode( ', ', \array_map( static fn ( string $name ): string => "g.{$name}", self::GROUPED['measure'] ) );
 		return [
-			Stats_Query::into_statement( $db, 'grouped_urls', $grouped ),
-			[ 'CREATE TABLE servers ( id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE )', [] ],
-			[ 'INSERT INTO servers ( name ) SELECT server FROM grouped_urls GROUP BY server ORDER BY server', [] ],
-			[ "CREATE TABLE urls AS SELECT g.url, s.id AS server_id, g.path, {$measures} FROM grouped_urls AS g JOIN servers AS s ON s.name = g.server ORDER BY g.rowid", [] ],
-			[ 'DROP TABLE grouped_urls', [] ],
+			Flame_Tree::SNAPSHOT_GROUP => [ Stats_Query::into_statement( $db, 'grouped_urls', $grouped ) ],
+			Flame_Tree::SNAPSHOT_COPY  => [
+				[ 'CREATE TABLE servers ( id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE )', [] ],
+				[ 'INSERT INTO servers ( name ) SELECT server FROM grouped_urls GROUP BY server ORDER BY server', [] ],
+				[ "CREATE TABLE urls AS SELECT g.url, s.id AS server_id, g.path, {$measures} FROM grouped_urls AS g JOIN servers AS s ON s.name = g.server ORDER BY g.rowid", [] ],
+				[ 'DROP TABLE grouped_urls', [] ],
+			],
 		];
 	}
 

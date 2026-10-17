@@ -69,17 +69,38 @@ final class Flame_Tree {
 	/** An envelope the request builder let go before it completed, and why. */
 	public const REQUESTS_EXPIRE = 'requests expire';
 
+	/** The overview-prefetch job's span answering one stored question. */
+	public const PREFETCH_ANSWER = 'prefetch answer';
+
+	/** The overview-prefetch job's span building and publishing the snapshot. */
+	public const SNAPSHOT_BUILD = 'snapshot build';
+
+	/** The build's step grouping the window's URLs into a scratch table. */
+	public const SNAPSHOT_GROUP = 'snapshot group';
+
+	/** The build's step naming the servers and copying the URLs. */
+	public const SNAPSHOT_COPY = 'snapshot copy';
+
+	/** The build's step creating one `urls` index. */
+	public const SNAPSHOT_INDEX = 'snapshot index';
+
+	/** The build's step folding the URLs into `totals`. */
+	public const SNAPSHOT_TOTALS = 'snapshot totals';
+
 	/**
 	 * Every name above: its hook category (a key of `hook_categories.json`
 	 * `_colors`, so an operator recolouring a category recolours its spans),
 	 * and the `Findings` kind of a span no rule edit reaches inside —
-	 * `upkeep`, a builder's own work — or null for a point event.
+	 * `upkeep`, the plugin's own work — or null for a point event.
 	 *
-	 * The builders' own spans take Event Logger, except the flame builder's
-	 * sweep: it runs a flush and so holds every other flush span, so it takes
-	 * Event Logger Shutdown. Both are this plugin's own categories, described
-	 * and pattern-free like `Other`, so no third-party hook category's colour
-	 * moves a platform span.
+	 * The builders' and the overview-prefetch job's own spans take Event
+	 * Logger, except the two that hold other platform spans, which take a
+	 * category of their own so the inner frames stand out: the flame
+	 * builder's sweep runs a flush and so holds every other flush span, and
+	 * takes Event Logger Shutdown; the snapshot build holds its steps, and
+	 * takes Event Logger Snapshot. All three are this plugin's own
+	 * categories, described and pattern-free like `Other`, so no third-party
+	 * hook category's colour moves a platform span.
 	 *
 	 * @var array<string,array{0: string, 1: 'upkeep'|null}>
 	 */
@@ -90,6 +111,12 @@ final class Flame_Tree {
 		self::REQUESTS_CHECKPOINT => [ 'Event Logger', 'upkeep' ],
 		self::REQUESTS_RESTORE    => [ 'Event Logger', 'upkeep' ],
 		self::REQUESTS_EXPIRE     => [ 'Event Logger', null ],
+		self::PREFETCH_ANSWER     => [ 'Event Logger', 'upkeep' ],
+		self::SNAPSHOT_BUILD      => [ 'Event Logger Snapshot', 'upkeep' ],
+		self::SNAPSHOT_GROUP      => [ 'Event Logger', 'upkeep' ],
+		self::SNAPSHOT_COPY       => [ 'Event Logger', 'upkeep' ],
+		self::SNAPSHOT_INDEX      => [ 'Event Logger', 'upkeep' ],
+		self::SNAPSHOT_TOTALS     => [ 'Event Logger', 'upkeep' ],
 	];
 
 	/** What `listener_name()` puts between a listener's callable and its priority. */

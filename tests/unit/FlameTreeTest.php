@@ -471,14 +471,20 @@ class FlameTreeTest extends TestCase {
 	private const PLATFORM_SPANS = [
 		'stats writes', 'stats sweep',
 		'requests writes', 'requests checkpoint', 'requests restore', 'requests expire',
+		'prefetch answer', 'snapshot build', 'snapshot group', 'snapshot copy', 'snapshot index', 'snapshot totals',
 	];
 
 	/**
 	 * Nested pairs, derived from the code: `Flame_Builder_Node::shutdown_sweep()`
-	 * spans `STATS_SWEEP` around a flush, which tells the writes.
+	 * spans `STATS_SWEEP` around a flush, which tells the writes, and
+	 * `Url_Snapshot::publish()` spans `SNAPSHOT_BUILD` around its steps.
 	 */
 	private const NESTED_PAIRS = [
 		[ 'stats sweep', 'stats writes' ],
+		[ 'snapshot build', 'snapshot group' ],
+		[ 'snapshot build', 'snapshot copy' ],
+		[ 'snapshot build', 'snapshot index' ],
+		[ 'snapshot build', 'snapshot totals' ],
 	];
 
 	/** The base `hook_categories.json` colours, keyed by category. */
@@ -545,7 +551,7 @@ class FlameTreeTest extends TestCase {
 		return $brightness > (float) $threshold[1] ? $dark[1] : $light[1];
 	}
 
-	public function test_the_platform_names_are_exactly_these_fourteen(): void {
+	public function test_the_platform_names_are_exactly_these(): void {
 		$names = \array_keys( Flame_Tree::platform_colors() );
 		$spans = self::PLATFORM_SPANS;
 		\sort( $names );
@@ -556,7 +562,7 @@ class FlameTreeTest extends TestCase {
 	/** Every platform category ships in the JSON, and the builders' own carry a description and no pattern. */
 	public function test_every_platform_category_ships_in_hook_categories_json(): void {
 		$base = Hook_Categorizer::get_base_config();
-		foreach ( [ 'Event Logger', 'Event Logger Shutdown' ] as $category ) {
+		foreach ( [ 'Event Logger', 'Event Logger Shutdown', 'Event Logger Snapshot' ] as $category ) {
 			$this->assertArrayHasKey( $category, $base['_colors'] );
 			$this->assertNotEmpty( $base['_descriptions'][ $category ] ?? '', "{$category} is described" );
 			$this->assertArrayNotHasKey( $category, $base['_patterns'], "{$category} claims no hook" );
@@ -565,6 +571,9 @@ class FlameTreeTest extends TestCase {
 		$colors = Flame_Tree::platform_colors();
 		$this->assertSame( $base['_colors']['Event Logger Shutdown'], $colors['stats sweep'] );
 		$this->assertSame( $base['_colors']['Event Logger'], $colors['stats writes'] );
+		$this->assertSame( $base['_colors']['Event Logger'], $colors['snapshot index'] );
+		$this->assertSame( $base['_colors']['Event Logger'], $colors['prefetch answer'] );
+		$this->assertSame( $base['_colors']['Event Logger Snapshot'], $colors['snapshot build'] );
 	}
 
 	public function test_every_platform_fill_holds_four_and_a_half_to_one_under_its_flame_label(): void {
@@ -666,9 +675,9 @@ class FlameTreeTest extends TestCase {
 		}
 	}
 
-	/** The builders' own upkeep spans — never their point lines, a verb or a hook. */
+	/** The builders' and the prefetch job's own upkeep spans — never their point lines, a verb or a hook. */
 	public function test_platform_span_kind_names_the_builders_upkeep(): void {
-		foreach ( [ Flame_Tree::STATS_SWEEP . ' (complete)', Flame_Tree::STATS_SWEEP . ': 3', Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE ] as $span ) {
+		foreach ( [ Flame_Tree::STATS_SWEEP . ' (complete)', Flame_Tree::STATS_SWEEP . ': 3', Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE, Flame_Tree::PREFETCH_ANSWER, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_GROUP, Flame_Tree::SNAPSHOT_COPY, Flame_Tree::SNAPSHOT_INDEX . ': urls_server_avg_ms', Flame_Tree::SNAPSHOT_TOTALS ] as $span ) {
 			$this->assertSame( 'upkeep', Flame_Tree::platform_span_kind( $span ), $span );
 		}
 		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats sweeps', 'Discovery_CI get command', 'wp_loaded hook', 'sql' ] as $span ) {

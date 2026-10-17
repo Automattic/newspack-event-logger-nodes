@@ -220,7 +220,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * node's first `overview` or `query`: the node lives as long as the
 	 * request graph that mounted it, so a request reads them once.
 	 *
-	 * @var array<string,array{verb:string,args:array<string,mixed>}>|null
+	 * @var array<string,array{name:string,verb:string,args:array<string,mixed>}>|null
 	 */
 	private ?array $stored = null;
 
@@ -1263,7 +1263,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The overview-prefetch job's questions by stored key, bound as the job
 	 * binds them, read once a node.
 	 *
-	 * @return array<string,array{verb:string,args:array<string,mixed>}>
+	 * @return array<string,array{name:string,verb:string,args:array<string,mixed>}>
 	 * @throws \InvalidArgumentException As `Overview_Prefetch::stored()`.
 	 * @throws \RuntimeException As `Overview_Prefetch::stored()`.
 	 */

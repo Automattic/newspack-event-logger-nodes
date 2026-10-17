@@ -267,6 +267,8 @@ The request builder narrates on the same record, through the same `Narration` tr
 - **`requests restore`**, a span at a respawn: what came back.
 - **`requests expire`**, a point per operator `purge`: `purged` and how many envelopes it dropped.
 
+The overview-prefetch job tells its time on its own record, `/jobs/eln_overview_prefetch`, with plain spans rather than narration: a **`prefetch answer`** per stored question, labelled with its name in `stored-answers.json` (`prefetch answer: chart_by_server`), then a **`snapshot build`** closing `published` or `no partition file`, holding `snapshot group`, `snapshot copy`, one `snapshot index` per `urls` index, labelled with its name, and `snapshot totals`. The architecture guide's table of the job's spans says what the build's own time holds.
+
 ## Common failure modes
 
 **Dashboard 429s immediately.** Service-CI verbs carry no throttle of their own, but `/command` does: `HTTP_In_Node::RATE_LIMIT_BURST` is 30 POSTs per `RATE_LIMIT_WINDOW_S` (1 second) per user, metered by the substrate's `Rate_Limit` and tunable through the `newspack_nodes/command_rate_limit` filter. A 429 on a `/command` POST is that budget, not a per-CI limit. With neither memcached nor APCu answering, `/command` admits and logs `Rate_Limit: /command rate limit unavailable` once a window, so the dashboards keep working unmetered; a 429 on `/messages/stream` is the SSE slot pool.
