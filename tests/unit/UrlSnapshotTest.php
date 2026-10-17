@@ -122,7 +122,7 @@ final class UrlSnapshotTest extends TestCase {
 		return Stats_Query::run(
 			$over + [
 				'source'  => 'requests',
-				'filter'  => ( $workers ? [] : [ 'worker' => [ 0 ] ] ) + ( '' === $server ? [] : [ 'server' => [ $server ] ] ),
+				'filter'  => Performance_CI_Node::scope( $server, $workers ),
 				'buckets' => Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, self::NOW ),
 			]
 		);
@@ -198,40 +198,115 @@ final class UrlSnapshotTest extends TestCase {
 		return $cases;
 	}
 
-	/** Every site-wide page, the slowest ten included, reads off an index. */
-	#[DataProvider( 'site_pages' )]
-	public function test_a_site_wide_page_sorts_off_an_index( string $sort, string $order, bool $workers ): void {
+	/**
+	 * Every page reads its rows in order off the one index its sort and
+	 * scope name: `urls_<sort>` site-wide and `urls_server_<sort>` for a
+	 * server, each `_null` ascending on a nullable sort, and `urls_url_name`
+	 * in both scopes. No page sorts.
+	 */
+	#[DataProvider( 'questions' )]
+	public function test_a_page_reads_its_sort_and_scopes_index( string $sort, string $order, string $server, bool $workers ): void {
 		$this->seed_parity_traffic();
 		Url_Snapshot::publish( self::NOW, 240, [] );
 		$db = Row_Table_Node::open_snapshot( Url_Snapshot::NAME );
 		$this->assertInstanceOf( Row_Reader::class, $db, 'the substrate publishes the snapshot under its name' );
-		[ $sql, $binds ] = ( new \ReflectionMethod( Url_Snapshot::class, 'listing' ) )->invoke( null, '', $workers, $sort, $order );
+		[ $sql, $binds ] = ( new \ReflectionMethod( Url_Snapshot::class, 'listing' ) )->invoke( null, $server, $workers, $sort, $order );
 
 		$plan = \implode( "\n", \array_column( $db->rows( "EXPLAIN QUERY PLAN {$sql} LIMIT ? OFFSET ?", [ ...$binds, 3, 1 ] ), 3 ) );
 
-		$this->assertStringNotContainsString( 'USE TEMP B-TREE FOR ORDER BY', $plan );
-		$this->assertMatchesRegularExpression( '/INDEX urls_/', $plan );
+		$this->assertStringNotContainsString( 'USE TEMP B-TREE', $plan );
+		$this->assertMatchesRegularExpression( '/^(SCAN|SEARCH) urls USING INDEX ' . self::index_of( $sort, $order, $server ) . '( |$)/m', $plan );
 	}
 
 	/**
-	 * Each sort, both orders, both views.
-	 *
-	 * @return array<string,array{0:string,1:string,2:bool}>
+	 * The index a page of `$sort` in `$order` over `$server` reads.
 	 */
-	public static function site_pages(): array {
-		$cases = [];
-		foreach ( Performance_CI_Node::URL_SORTS as $sort ) {
-			foreach ( [ 'asc', 'desc' ] as $order ) {
-				foreach ( [ false, true ] as $workers ) {
-					$cases[ "{$sort} {$order} " . ( $workers ? 'workers' : 'no workers' ) ] = [ $sort, $order, $workers ];
-				}
-			}
+	private static function index_of( string $sort, string $order, string $server ): string {
+		if ( 'url_name' === $sort ) {
+			return 'urls_url_name';
 		}
-		return $cases;
+		$scoped = '' === $server ? 'urls_' : 'urls_server_';
+		return $scoped . $sort . ( 'asc' === $order && \in_array( $sort, [ 'avg_ms', 'min_ms', 'max_ms' ], true ) ? '_null' : '' );
+	}
+
+	/** `urls` takes its rows in hash order, and `servers` its names in name order. */
+	public function test_rowids_rank_urls_by_hash_and_ids_rank_servers_by_name(): void {
+		$this->seed_parity_traffic();
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$db = Row_Table_Node::open_snapshot( Url_Snapshot::NAME );
+		$this->assertInstanceOf( Row_Reader::class, $db );
+
+		$hashes = \array_column( $db->rows( 'SELECT url FROM urls ORDER BY rowid', [] ), 0 );
+		$names  = \array_column( $db->rows( 'SELECT name FROM servers ORDER BY id', [] ), 0 );
+		$ranked = $hashes;
+		\sort( $ranked, \SORT_STRING );
+
+		$this->assertCount( 8, $hashes, 'every URL of the window' );
+		$this->assertSame( $ranked, $hashes );
+		$this->assertSame( [ self::KAKA, self::$seed_server ], $names );
 	}
 
 	/**
-	 * Each sort a `urls` page takes, both orders, both servers and both views.
+	 * A scope the snapshot cannot apply is refused, never ignored.
+	 *
+	 * @param array<string,list<scalar>> $scope A scope filter.
+	 */
+	#[DataProvider( 'unmapped_scopes' )]
+	public function test_a_scope_the_snapshot_cannot_apply_is_refused( array $scope, string $refusal ): void {
+		$this->expectException( \LogicException::class );
+		$this->expectExceptionMessage( $refusal );
+		( new \ReflectionMethod( Url_Snapshot::class, 'where' ) )->invoke( null, $scope );
+	}
+
+	/**
+	 * A field the snapshot maps no column for, and a field naming two values.
+	 *
+	 * @return array<string,array{0:array<string,list<scalar>>,1:string}>
+	 */
+	public static function unmapped_scopes(): array {
+		return [
+			'an unmapped field' => [ [ 'country' => [ 'NZ' ] ], 'the URL snapshot scopes no country' ],
+			'two servers'       => [ [ 'server' => [ self::KAKA, 'tui-6103.example' ] ], 'the URL snapshot scopes one server, not 2' ],
+		];
+	}
+
+	/** Building `urls` sorts nothing: the group emits hash order and the copy keeps it. */
+	public function test_building_urls_sorts_nothing(): void {
+		$this->seed_parity_traffic();
+		$plans = [];
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			'urls-plan-5528',
+			static function ( Row_Reader $db ) use ( &$plans ): bool {
+				foreach ( ( new \ReflectionMethod( Url_Snapshot::class, 'url_steps' ) )->invoke( null, $db, self::NOW ) as [ $sql, $binds ] ) {
+					$plans[ $sql ] = \implode( "\n", \array_column( $db->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
+					$db->rows( $sql, $binds );
+				}
+				return false;
+			}
+		);
+
+		$this->assertCount( 5, $plans, 'the group, the servers, their names, the copy and the drop' );
+		foreach ( $plans as $sql => $plan ) {
+			$this->assertStringNotContainsString( 'USE TEMP B-TREE FOR ORDER BY', $plan, $sql );
+		}
+	}
+
+	/** A server the snapshot does not hold pages no rows. */
+	public function test_an_unknown_server_pages_no_rows(): void {
+		$this->seed_parity_traffic();
+		Url_Snapshot::publish( self::NOW, 240, [] );
+		$snapshot = Url_Snapshot::open( self::NOW );
+		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
+
+		$page = $snapshot->page( 'absent-4471.example', true, 'count', 'desc', 0, 50 );
+
+		$this->assertSame( [], $page['rows'] );
+		$this->assertSame( [], $page['also'] );
+	}
+
+	/**
+	 * Each sort a `urls` page takes, both orders, every scope and both views.
 	 *
 	 * @return array<string,array{0:string,1:string,2:string,3:bool}>
 	 */
@@ -239,7 +314,7 @@ final class UrlSnapshotTest extends TestCase {
 		$cases = [];
 		foreach ( [ 'count', 'url_name', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_seen' ] as $sort ) {
 			foreach ( [ 'asc', 'desc' ] as $order ) {
-				foreach ( [ '', self::KAKA ] as $server ) {
+				foreach ( [ '', self::KAKA, self::$seed_server ] as $server ) {
 					foreach ( [ false, true ] as $workers ) {
 						$cases[ "{$sort} {$order} '{$server}' " . ( $workers ? 'workers' : 'no workers' ) ] = [ $sort, $order, $server, $workers ];
 					}
@@ -263,7 +338,7 @@ final class UrlSnapshotTest extends TestCase {
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
-		foreach ( [ '', self::KAKA, 'absent-4471.example' ] as $server ) {
+		foreach ( [ '', self::KAKA, self::$seed_server, 'absent-4471.example' ] as $server ) {
 			foreach ( [ false, true ] as $workers ) {
 				$live   = self::live( $server, $workers, [ 'group' => [], 'measure' => [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ] ] );
 				$totals = $snapshot->totals( $server, $workers );
@@ -447,7 +522,7 @@ final class UrlSnapshotTest extends TestCase {
 	}
 
 	/**
-	 * A spec `into()` refuses, and the refusal it names.
+	 * A spec `into_statement()` refuses, and the refusal it names.
 	 *
 	 * @param array<string,mixed> $over The spec's top or also.
 	 */
@@ -480,17 +555,44 @@ final class UrlSnapshotTest extends TestCase {
 	public function test_into_refuses_a_builder_attaching_no_partition(): void {
 		$this->expectException( \LogicException::class );
 		$this->expectExceptionMessage( 'into reads at least one partition' );
-		Stats_Query::into( new Row_Reader( new \PDO( 'sqlite::memory:' ), [] ), 'urls', self::count_spec( [ 'group' => [ 'url' ] ] ) );
+		Stats_Query::into_statement( new Row_Reader( new \PDO( 'sqlite::memory:' ), [] ), 'urls', self::count_spec( [ 'group' => [ 'url' ] ] ) );
 	}
 
 	/**
-	 * Run `Stats_Query::into()` for a `requests` count spec in a scratch build.
+	 * `into_statement()` orders the stored groups by a group field alone,
+	 * the order its GROUP BY already emits.
+	 *
+	 * @param array<string,mixed> $over The spec's group and sort.
+	 */
+	#[DataProvider( 'unstorable_sorts' )]
+	public function test_into_refuses_a_sort_naming_no_group_field( array $over ): void {
+		$this->seed_request();
+
+		$this->expectExceptionMessage( 'into orders by a group field' );
+		$this->into( $over );
+	}
+
+	/**
+	 * A sort by a measure and a sort by a URL's name.
+	 *
+	 * @return array<string,array{0:array<string,mixed>}>
+	 */
+	public static function unstorable_sorts(): array {
+		return [
+			'a measure'  => [ [ 'group' => [ 'url' ], 'sort' => 'count' ] ],
+			'a url name' => [ [ 'group' => [ 'url' ], 'sort' => 'url_name' ] ],
+		];
+	}
+
+	/**
+	 * Ask `Stats_Query::into_statement()` for a `requests` count spec in a
+	 * scratch build.
 	 *
 	 * @param array<string,mixed> $over The spec's group and paging.
 	 */
 	private function into( array $over ): void {
 		$spec = self::count_spec( $over );
-		Row_Table_Node::build( Flame_Facts_Row_Schema::class, 'into-scratch-7718', static fn ( Row_Reader $db ) => Stats_Query::into( $db, 'urls', $spec ) );
+		Row_Table_Node::build( Flame_Facts_Row_Schema::class, 'into-scratch-7718', static fn ( Row_Reader $db ) => Stats_Query::into_statement( $db, 'urls', $spec ) );
 	}
 
 	/**
