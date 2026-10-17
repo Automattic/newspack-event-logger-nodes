@@ -22,9 +22,7 @@ export const views = registerSliceViews( {
 	 * Only `dump` replies reach here: every mutation owns its own
 	 * `useCommandOnce` node and its answer lands there. The whole list is
 	 * replaced rather than merged, because `dump` always answers with the
-	 * complete ruleset, so a rule deleted on the server has to disappear. The
-	 * verb answers a live PHP array, so the payload arrives decoded and this
-	 * declaration sets no `json`.
+	 * complete ruleset, so a rule deleted on the server has to disappear.
 	 *
 	 * `loading` starts true because an empty ruleset is a real state rather
 	 * than a missing answer: no rule matching means nothing is logged, and

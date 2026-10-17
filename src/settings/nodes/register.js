@@ -15,8 +15,7 @@ export const views = registerSliceViews( {
 	/**
 	 * `hook-catalog:view` — the registered-hook taxonomy behind the hook picker.
 	 *
-	 * The `performance` CI's `list_hooks` verb answers a PHP array, so
-	 * the payload arrives decoded and this declaration sets no `json`. The
+	 * The `performance` CI's `list_hooks` verb answers a PHP array. The
 	 * picker needs two of its four fields: the category-to-hooks map it lists,
 	 * and the one-liners it prints beside each category name. Those
 	 * descriptions fall back to an empty map because the modal subscripts them
