@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.136.0] - 2026-10-16
+
 ### Changed
 
 - **Requires newspack-nodes 2.112.0.** The overview-prefetch job publishes its URL snapshot through the substrate's `Row_Table_Node::build()` and the verbs read it through `open_snapshot()`; below 2.112.0 the plugin goes dormant behind its admin notice.
