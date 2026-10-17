@@ -356,7 +356,7 @@ final class Stats_Query {
 	 * @param array{group:list<string>, measure:list<string>} $spec
 	 * @return list<string>
 	 */
-	private static function columns( array $spec ): array {
+	public static function columns( array $spec ): array {
 		$columns = [];
 		foreach ( $spec['group'] as $field ) {
 			$columns[] = $field;
@@ -368,8 +368,7 @@ final class Stats_Query {
 	}
 
 	/**
-	 * The spec's rows across the attached partitions, each `url` group's
-	 * server and path joined into its `url_name`.
+	 * The spec's rows across the attached partitions, as `named()` answers.
 	 *
 	 * @param Row_Reader             $reader  The attached files.
 	 * @param non-empty-list<string> $aliases Their aliases.
@@ -379,14 +378,26 @@ final class Stats_Query {
 	 */
 	private static function rows( Row_Reader $reader, array $aliases, array $spec, string $table ): array {
 		[ $sql, $binds ] = self::statement( $spec, $table, $aliases, true );
-		$rows            = $reader->rows( $sql, $binds );
-		if ( ! \in_array( 'url', $spec['group'], true ) ) {
+		return self::named( $spec['group'], $reader->rows( $sql, $binds ) );
+	}
+
+	/**
+	 * Rows read in a statement's or `into()`'s layout as an answer's
+	 * `columns()`: each `url` group's hash, then its server and path joined
+	 * into its `url_name`.
+	 *
+	 * @param list<string>      $group The spec's group fields.
+	 * @param list<list<mixed>> $rows  The rows read.
+	 * @return list<list<mixed>>
+	 */
+	public static function named( array $group, array $rows ): array {
+		if ( ! \in_array( 'url', $group, true ) ) {
 			return $rows;
 		}
 		return \array_map(
-			static function ( array $row ) use ( $spec ): array {
+			static function ( array $row ) use ( $group ): array {
 				$named = [];
-				foreach ( $spec['group'] as $field ) {
+				foreach ( $group as $field ) {
 					$named[] = \array_shift( $row );
 					if ( 'url' === $field ) {
 						$named[] = Url_Parts::join_url( Core::as_string( \array_shift( $row ) ), Core::as_string( \array_shift( $row ) ) );
@@ -956,7 +967,7 @@ final class Stats_Query {
 	private static function checked( array $spec ): array {
 		$source = Core::as_string( $spec['source'] ?? null );
 		$fields = self::FIELDS[ $source ] ?? throw self::unknown_source( $source );
-		$group  = \array_values( \array_map( Core::as_string( ... ), Core::arr( $spec['group'] ?? null ) ) );
+		$group  = self::strings( $spec['group'] ?? null );
 		$filter = [];
 		foreach ( Core::arr( $spec['filter'] ?? null ) as $field => $values ) {
 			$filter[ (string) $field ] = \array_values( \array_map( static fn ( mixed $value ): mixed => self::bindable( (string) $field, $value ), Core::arr( $values ) ) );
@@ -972,7 +983,7 @@ final class Stats_Query {
 				throw new \InvalidArgumentException( \esc_html( "unknown {$source} field {$field}: one of " . \implode( ', ', $filters ) ) );
 			}
 		}
-		$measure = \array_values( \array_map( Core::as_string( ... ), Core::arr( $spec['measure'] ?? null ) ) );
+		$measure = self::strings( $spec['measure'] ?? null );
 		foreach ( $measure as $name ) {
 			if ( ! \in_array( $name, self::MEASURES[ $source ], true ) ) {
 				throw new \InvalidArgumentException( \esc_html( "unknown {$source} measure {$name}: one of " . \implode( ', ', self::MEASURES[ $source ] ) ) );
@@ -1117,6 +1128,17 @@ final class Stats_Query {
 			return Core::canonical_decimal( $value ) ?? $value;
 		}
 		return \is_scalar( $value ) ? $value : null;
+	}
+
+	/**
+	 * A list of names or tokens as strings: a spec's groups and measures, or
+	 * a variadic verb arg, null when absent.
+	 *
+	 * @param mixed $value The list.
+	 * @return list<string>
+	 */
+	public static function strings( mixed $value ): array {
+		return \array_values( \array_map( Core::as_string( ... ), Core::arr( $value ) ) );
 	}
 
 	/**

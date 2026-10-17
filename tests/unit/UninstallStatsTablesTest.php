@@ -103,7 +103,7 @@ final class UninstallStatsTablesTest extends TestCase {
 		$this->assertSame( 0, $deleted );
 		$this->assertTrue( self::snapshot_published(), 'the snapshot stands' );
 		$this->assertNotEmpty(
-			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'uninstall: the URL snapshot did not delete' ) && \str_contains( $line, 'will not delete' ) ),
+			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'uninstall: the URL snapshot did not delete' ) && \str_contains( $line, 'could not unlink' ) ),
 			'the failure is said, naming the substrate\'s refusal'
 		);
 	}

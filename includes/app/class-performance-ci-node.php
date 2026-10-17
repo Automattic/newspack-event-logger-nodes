@@ -153,6 +153,12 @@ class Performance_CI_Node extends Service_CI_Node {
 		'last_updated' => 'last_seen',
 	];
 
+	/** The `urls` args a snapshot page varies; every other stays at its default. */
+	private const SNAPSHOT_VARIES = [ 'server', 'include_workers', 'sort', 'order', 'offset', 'limit' ];
+
+	/** What a `urls` page totals, ungrouped, live and in the snapshot. */
+	public const URL_TOTALS = [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ];
+
 	/** What a `urls` row measures. */
 	public const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
 
@@ -1214,8 +1220,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The answer to `overview`, `urls` or `query` for bound arguments: off
 	 * the URL snapshot the overview-prefetch job published, where it answers
-	 * them, else the live one. A snapshot that opens but will not read says
-	 * so once a window and answers live.
+	 * them, else the live one. A `urls` question the snapshot cannot answer
+	 * never opens it. A snapshot that opens but will not read says so once a
+	 * window and answers live.
 	 *
 	 * @param string                 $verb `overview`, `urls` or `query`.
 	 * @param array<array-key,mixed> $args Its bound arguments.
@@ -1224,7 +1231,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function answered( string $verb, array $args ): array {
 		$now      = self::now();
-		$snapshot = Url_Snapshot::open( $now );
+		$snapshot = 'urls' === $verb && ! self::snapshot_answers( $args ) ? null : Url_Snapshot::open( $now );
 		try {
 			$stored = null === $snapshot ? null : match ( $verb ) {
 				'urls'  => self::stored_urls( $snapshot, $args ),
@@ -1238,19 +1245,33 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `urls` answer off the snapshot, dated when the job built it, or
-	 * null for a question it cannot answer: a search, a bucket selection or
-	 * a filter.
+	 * Whether the snapshot answers a `urls` question: every arg outside
+	 * `SNAPSHOT_VARIES` at the default the binder gives it, so a search, a
+	 * bucket selection, a filter or any arg added later answers live.
+	 *
+	 * @param array<array-key,mixed> $args The bound verb args.
+	 */
+	private static function snapshot_answers( array $args ): bool {
+		$declared = Core::arr( Command_Interpreter_Node::declared_verbs( self::class )['urls']['args'] ?? throw new \LogicException( 'urls declares its args' ) );
+		$defaults = \array_diff_key( Command_Args::bind( $declared, [] ), \array_flip( self::SNAPSHOT_VARIES ) );
+		foreach ( $defaults as $name => $default ) {
+			if ( $args[ $name ] !== $default ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * The `urls` answer off the snapshot, dated when the job built it, to a
+	 * question `snapshot_answers()` admits.
 	 *
 	 * @param Url_Snapshot           $snapshot The published snapshot.
 	 * @param array<array-key,mixed> $args     The bound verb args.
-	 * @return array<string,mixed>|null
+	 * @return array<string,mixed>
 	 */
-	private static function stored_urls( Url_Snapshot $snapshot, array $args ): ?array {
+	private static function stored_urls( Url_Snapshot $snapshot, array $args ): array {
 		[ $server, $filters, $sort, $order, $offset, $limit ] = self::url_question( $args );
-		if ( '' !== $filters['search'] || '' !== $filters['bucket'] || [] !== $filters['filter'] ) {
-			return null;
-		}
 		$now     = $snapshot->as_of();
 		$workers = $filters['include_workers'];
 		return [ 'as_of' => $now ] + self::url_reply(
@@ -1279,7 +1300,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	public static function answer_live( string $verb, array $args, int $now ): array {
 		return [ 'as_of' => $now ] + match ( $verb ) {
 			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now ),
-			'urls'     => self::answer_urls( $args, $now ),
+			'urls'     => self::url_page( ...self::url_question( $args ), now: $now ),
 			'query'    => self::answer_query( $args, $now ),
 			default    => throw new \InvalidArgumentException( \esc_html( "no stored answer answers {$verb}" ) ),
 		};
@@ -1505,18 +1526,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `urls` verb's answer to its bound arguments.
-	 *
-	 * @param array<array-key,mixed> $args The bound verb args.
-	 * @param int                    $now  The reply's clock.
-	 * @return array<string,mixed>
-	 * @throws \InvalidArgumentException As `url_page()`.
-	 */
-	private static function answer_urls( array $args, int $now ): array {
-		return self::url_page( ...self::url_question( $args ), now: $now );
-	}
-
-	/**
 	 * The `urls` question bound arguments ask, as `url_page()` takes it: an
 	 * unknown sort reads as `count`, any order but `asc` as `desc`, and the
 	 * page and its offset clamp inside `Stats_Query`'s bounds.
@@ -1531,7 +1540,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			Core::as_string( $args['server'] ),
 			[
 				'search'          => \trim( Core::as_string( $args['search'] ) ),
-				'filter'          => self::tokens_of( $args['filter'] ),
+				'filter'          => Stats_Query::strings( $args['filter'] ),
 				// Opts IN: the default EXCLUDES. See decision 15.
 				'include_workers' => true === $args['include_workers'],
 				'bucket'          => Core::as_string( $args['bucket'] ),
@@ -1569,7 +1578,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			'buckets' => $buckets,
 			'search'  => $filters['search'],
 		];
-		$answer  = Stats_Query::run( $base + [ 'group' => [], 'measure' => [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ] ] );
+		$answer  = Stats_Query::run( $base + [ 'group' => [], 'measure' => self::URL_TOTALS ] );
 		$page    = Stats_Query::run(
 			[
 				'group'   => [ 'url' ],
@@ -1633,13 +1642,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The filter a server scope and the worker choice name.
+	 * The filter a server scope and the worker choice name, which the URL
+	 * snapshot applies to its URLs as the live reads apply it to requests.
 	 *
 	 * @param string $server  Server to scope to; '' is every server.
 	 * @param bool   $workers Keep worker requests; false leaves them out.
 	 * @return array<string,list<scalar>>
 	 */
-	private static function scope( string $server, bool $workers ): array {
+	public static function scope( string $server, bool $workers ): array {
 		return ( $workers ? [] : [ 'worker' => [ 0 ] ] ) + ( '' === $server ? [] : [ 'server' => [ $server ] ] );
 	}
 
@@ -1720,13 +1730,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function answer_query( array $args, int $now ): array {
 		$spelling = Core::as_string( $args['bucket'] );
 		$buckets  = self::window( $spelling, $now, Stats_Query::retention( Core::as_string( $args['source'] ) ) );
-		$filter   = self::filter_of( self::tokens_of( $args['filter'] ) );
+		$filter   = self::filter_of( Stats_Query::strings( $args['filter'] ) );
 		$search   = Core::as_string( $args['search'] );
 		$spec     = [
 			'source'  => Core::as_string( $args['source'] ),
-			'group'   => self::tokens_of( $args['group'] ),
+			'group'   => Stats_Query::strings( $args['group'] ),
 			'filter'  => self::by_id( $filter ),
-			'measure' => self::tokens_of( $args['measure'] ),
+			'measure' => Stats_Query::strings( $args['measure'] ),
 			'buckets' => $buckets,
 			'sort'    => Core::as_string( $args['sort'] ),
 			'order'   => Core::as_string( $args['order'] ),
@@ -1754,16 +1764,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				'search' => $search,
 			],
 		];
-	}
-
-	/**
-	 * A variadic arg's tokens as strings.
-	 *
-	 * @param mixed $arg The bound arg, null when absent.
-	 * @return list<string>
-	 */
-	private static function tokens_of( mixed $arg ): array {
-		return \array_values( \array_map( Core::as_string( ... ), Core::arr( $arg ) ) );
 	}
 
 	/**
@@ -1897,7 +1897,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question with no search, bucket or filter is answered from the overview-prefetch job\'s URL snapshot, at most two intervals old; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server` and `include_workers` is answered from the overview-prefetch job\'s URL snapshot; any other answers live without opening it, at most two intervals old; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
@@ -1951,7 +1951,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// click puts a site-wide average under a scoped count, on two
 				// surfaces too far apart to compare.
 				$server   = Core::as_string( $args['server'] );
-				$tokens   = self::tokens_of( $args['filter'] );
+				$tokens   = Stats_Query::strings( $args['filter'] );
 				$spelling = Core::as_string( $args['bucket'] );
 				$now      = self::now();
 				$detail   = self::url_detail( $hash, $server, $tokens, $spelling, $now );
@@ -2036,11 +2036,11 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				return self::assemble_ask(
 					Core::as_string( $args['descriptor'] ),
-					self::tokens_of( $args['context'] ),
+					Stats_Query::strings( $args['context'] ),
 					Core::as_string( $args['server'] ),
 					[
 						'search'          => Core::as_string( $args['search'] ),
-						'filter'          => self::tokens_of( $args['filter'] ),
+						'filter'          => Stats_Query::strings( $args['filter'] ),
 						'include_workers' => true === $args['include_workers'],
 						'bucket'          => Core::as_string( $args['bucket'] ),
 					],
