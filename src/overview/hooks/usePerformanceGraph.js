@@ -71,7 +71,7 @@ import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher'
 import { armTimer } from '@newspack-nodes/shared/helpers/armTimer';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { views } from '../nodes/register';
-import { chartDims } from '../chartSlots';
+import { chartDims, filterTokens } from '../chartSlots';
 import { useOnChange } from './useOnChange';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 import {
@@ -249,16 +249,6 @@ const queryArgs = ( source, dims, filters, measures, topBy ) => [
 	...filterTokens( filters ),
 	...measures.map( ( measure ) => `--measure=${ measure }` ),
 ];
-
-/**
- * One `--filter=` token for each filter, since the verbs take the option
- * repeated where `formatCommandArgs()` would join a list on commas.
- *
- * @param {string[]} filters Each filter as `field=value`.
- * @return {string[]} The tokens.
- */
-const filterTokens = ( filters ) =>
-	filters.map( ( filter ) => `--filter=${ filter }` );
 
 /**
  * A request chart's question: its dimensions' series by request count.

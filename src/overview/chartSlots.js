@@ -415,6 +415,26 @@ export const filterValue = ( field, typed ) =>
 	SPELLINGS[ field ]?.read( typed ) ?? typed;
 
 /**
+ * One `--filter=` token for each filter, since the verbs take the option
+ * repeated where `formatCommandArgs()` would join a list on commas.
+ *
+ * @param {string[]} filters Each filter as `field=value`.
+ * @return {string[]} The tokens.
+ */
+export const filterTokens = ( filters ) =>
+	filters.map( ( filter ) => `--filter=${ filter }` );
+
+/**
+ * The chips a one-URL question keeps: every one but a `url=` chip, which
+ * names the URL a table was narrowed to rather than a narrowing of one URL.
+ *
+ * @param {string[]} chips Each chip as `field=value`.
+ * @return {string[]} The chips, less any on `url`.
+ */
+export const withoutUrlChips = ( chips ) =>
+	chips.filter( ( chip ) => ! chip.startsWith( 'url=' ) );
+
+/**
  * One row's series name: its dimensions' values, ` · `-joined.
  *
  * @param {Array}    row  The answer's row.

@@ -216,6 +216,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	];
 
 	/**
+	 * The overview-prefetch job's questions by stored key, read on this
+	 * node's first `overview` or `query`: the node lives as long as the
+	 * request graph that mounted it, so a request reads them once.
+	 *
+	 * @var array<string,array{verb:string,args:array<string,mixed>}>|null
+	 */
+	private ?array $stored = null;
+
+	/**
 	 * Coerce and bounds-check one value for `set`.
 	 *
 	 * Rejection is signalled by null, so a legitimately-null sanitized value is
@@ -649,7 +658,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'buckets' => $buckets,
 			]
 		);
-		$stats  = self::url_stats( $hash, $answer, $filter, $buckets, $now );
+		$stats  = self::url_stats( $hash, $server, $answer, $buckets, $now );
 		$listed = $answer['available'] ? Stats_Query::newest_requests( $filter, $buckets, self::RECENT_REQUEST_LIMIT ) : [];
 		return [
 			'stats'           => $stats,
@@ -664,20 +673,21 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * A URL's stats out of its `url`-grouped `URL_MEASURES` answer, as the
 	 * `urls` row carries them, with its rate over the seconds the buckets
 	 * have run. A URL with no request there answers zero, its means and
-	 * extremes null, named by `url_name()`.
+	 * extremes null, named by `url_name()` on its server alone, so a filter
+	 * matching none of its requests answers zero rather than not-found.
 	 *
 	 * @param string                                                                   $hash    12-char URL hash.
+	 * @param string                                                                   $server  Server the URL is named on; '' is every server.
 	 * @param array{columns: list<string>, rows: list<list<mixed>>, available: bool} $answer  The URL's answer over `$buckets`.
-	 * @param array<string,list<scalar>>                                               $filter  The URL and its scope.
 	 * @param list<array{0:int,1:int}>                                                 $buckets The buckets read.
 	 * @param int                                                                      $now     The reply's clock.
 	 * @return array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, requests_per_second:float|int}
 	 * @throws \RuntimeException When no request row names the hash.
 	 */
-	private static function url_stats( string $hash, array $answer, array $filter, array $buckets, int $now ): array {
+	private static function url_stats( string $hash, string $server, array $answer, array $buckets, int $now ): array {
 		$rows = self::url_rows( $answer );
 		$row  = [] !== $rows ? $rows[0] : [
-			'url'          => $answer['available'] ? self::url_name( $hash, $filter, $now ) : '',
+			'url'          => $answer['available'] ? self::url_name( $hash, $server, $now ) : '',
 			'count'        => 0,
 			'avg_ms'       => null,
 			'min_ms'       => null,
@@ -796,7 +806,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$url = self::context_entry( $context, 'url' );
 		if ( null !== $url ) {
 			$scope = self::scope( $server, true );
-			$named = self::url_name( $url['id'], $scope + [ 'url' => [ $url['id'] ] ], $now );
+			$named = self::url_name( $url['id'], $server, $now );
 			if ( '' === $named ) {
 				throw self::stats_outage( "no aggregate for URL {$url['id']}" );
 			}
@@ -815,21 +825,22 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The URL a request row in the week the rows keep names `$hash` by,
-	 * server and path joined; '' when the stats file will not open, which
-	 * is no stats rather than no URL (decision 3).
+	 * The URL a request row on `$server` in the week the rows keep names
+	 * `$hash` by, server and path joined, worker traffic counted; '' when the
+	 * stats file will not open, which is no stats rather than no URL
+	 * (decision 3). No filter narrows it: a URL exists or it does not.
 	 *
-	 * @param string                     $hash   12-char URL hash.
-	 * @param array<string,list<scalar>> $filter The URL and its scope.
-	 * @param int                        $now    The reply's clock.
+	 * @param string $hash   12-char URL hash.
+	 * @param string $server Server to scope to; '' is every server.
+	 * @param int    $now    The reply's clock.
 	 * @throws \RuntimeException When the rows open and none names it.
 	 */
-	private static function url_name( string $hash, array $filter, int $now ): string {
+	private static function url_name( string $hash, string $server, int $now ): string {
 		$answer = Stats_Query::run(
 			[
 				'source'  => 'requests',
 				'group'   => [ 'url' ],
-				'filter'  => $filter,
+				'filter'  => [ 'url' => [ $hash ] ] + self::scope( $server, true ),
 				'measure' => [ 'count' ],
 				'buckets' => Bucket::last( Flame_Facts_Row_Schema::REQUESTS_BUCKETS, $now ),
 			]
@@ -1220,28 +1231,41 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The answer to `overview`, `urls` or `query` for bound arguments: off
 	 * the URL snapshot the overview-prefetch job published, where it answers
-	 * them, else the live one. A `urls` question the snapshot cannot answer
-	 * never opens it. A snapshot that opens but will not read says so once a
-	 * window and answers live.
+	 * them, else the live one. A `urls` question the snapshot cannot answer,
+	 * and an `overview` or `query` whose key the job never stores, never
+	 * open it. A snapshot that opens but will not read, or a stored answer
+	 * that will not decode, says so once a window and answers live.
 	 *
 	 * @param string                 $verb `overview`, `urls` or `query`.
 	 * @param array<array-key,mixed> $args Its bound arguments.
 	 * @return array<array-key,mixed>
-	 * @throws \InvalidArgumentException As `answer_live()`.
+	 * @throws \InvalidArgumentException As `answer_live()` and `Overview_Prefetch::stored()`.
+	 * @throws \RuntimeException As `Overview_Prefetch::stored()`.
 	 */
-	private static function answered( string $verb, array $args ): array {
+	private function answered( string $verb, array $args ): array {
 		$now      = self::now();
-		$snapshot = 'urls' === $verb && ! self::snapshot_answers( $args ) ? null : Url_Snapshot::open( $now );
+		$key      = 'urls' === $verb ? null : Overview_Prefetch::key( $verb, $args );
+		$served   = null === $key ? self::snapshot_answers( $args ) : isset( $this->stored_questions()[ $key ] );
+		$snapshot = $served ? Url_Snapshot::open( $now ) : null;
 		try {
-			$stored = null === $snapshot ? null : match ( $verb ) {
-				'urls'  => self::stored_urls( $snapshot, $args ),
-				default => $snapshot->answer( Overview_Prefetch::key( $verb, $args ) ),
-			};
-		} catch ( \PDOException $e ) {
+			$stored = null === $snapshot ? null : ( null === $key ? self::stored_urls( $snapshot, $args ) : $snapshot->answer( $key ) );
+		} catch ( \PDOException | \JsonException $e ) {
 			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
 			$stored = null;
 		}
 		return $stored ?? self::answer_live( $verb, $args, $now );
+	}
+
+	/**
+	 * The overview-prefetch job's questions by stored key, bound as the job
+	 * binds them, read once a node.
+	 *
+	 * @return array<string,array{verb:string,args:array<string,mixed>}>
+	 * @throws \InvalidArgumentException As `Overview_Prefetch::stored()`.
+	 * @throws \RuntimeException As `Overview_Prefetch::stored()`.
+	 */
+	private function stored_questions(): array {
+		return $this->stored ??= Overview_Prefetch::stored();
 	}
 
 	/**
@@ -1892,7 +1916,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
-					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => self::answered( 'overview', $args ),
+					'handler'     => static fn ( self $self, array $args, array $envelope = [] ): array => $self->answered( 'overview', $args ),
 				],
 				[
 					'name'        => 'urls',
@@ -1909,7 +1933,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end` inclusive, at most 288 buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last 288. `filters.bucket` echoes the canonical spelling.' ],
 					],
-					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => self::answered( 'urls', $args ),
+					'handler'     => static fn ( self $self, array $args, array $envelope = [] ): array => $self->answered( 'urls', $args ),
 				],
 				[
 					'name'        => 'query',
@@ -1929,7 +1953,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'top', 'type' => 'int', 'required' => false, 'description' => 'Rank the tuples of the non-time groups and answer the time rows of this many, at most `Stats_Query::MAX_TOP`; the group needs a time field and a non-time field.' ],
 						[ 'name' => 'top_by', 'type' => 'string', 'required' => false, 'description' => 'The measure `top` ranks by, summed over the selection, highest first, ties by the tuple\'s values: one that adds across buckets — for `requests` `count`, `timed`, `sum_ms`, `sum_peak_mb`, `errors`, `count_2xx`, `count_3xx`, `count_4xx` or `count_5xx`, for `timings` `ms`, `calls` or `requests`.' ],
 					],
-					'handler'     => static fn ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array => self::answered( 'query', $args ),
+					'handler'     => static fn ( self $self, array $args, array $envelope = [] ): array => $self->answered( 'query', $args ),
 				],
 				[
 					'name'        => 'dump_url',

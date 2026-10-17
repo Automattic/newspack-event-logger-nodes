@@ -273,6 +273,53 @@ final class OverviewPrefetchTest extends TestCase {
 		);
 	}
 
+	public function test_a_stored_answer_that_will_not_decode_is_answered_live_and_said(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5541/', 'ms' => 8.5 ] );
+		$key = Overview_Prefetch::key( 'overview', Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], [] ) );
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			Url_Snapshot::NAME,
+			static function ( Row_Reader $db ) use ( $key ): bool {
+				$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
+				$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, '{"kea-5541": is no json' ] );
+				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
+				return true;
+			}
+		);
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( self::NOW + 9, $overview['as_of'] );
+		$this->assertSame( 1, $overview['totals']['urls'], 'the live rows, moa alone' );
+		$this->assertNotEmpty(
+			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not read' ) ),
+			'the outage is said once'
+		);
+	}
+
+	/**
+	 * An `overview` or `query` question whose key the job never stores is
+	 * decided live before the file is touched: a snapshot that would not
+	 * open says nothing, and the default overview after them says so.
+	 */
+	public function test_an_unstored_overview_or_query_never_opens_the_snapshot(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5542/', 'ms' => 8.5 ] );
+		\mkdir( $this->snapshot_file() );
+		$said = static fn (): array => \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not open' ) );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kaka-5542.example' ] );
+		$query    = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', 'status_class', '--top=20', '--top_by=count', '--filter=status_class=5', '--measure=count' ] );
+
+		$this->assertSame( self::NOW, \is_array( $overview ) ? $overview['as_of'] : $overview );
+		$this->assertSame( self::NOW, \is_array( $query ) ? $query['as_of'] : $query );
+		$this->assertSame( [], $said(), 'neither unstored question opened the file' );
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		$this->assertNotSame( [], $said(), 'the stored question opens it, so the silence above is real' );
+	}
+
 	public function test_a_question_the_snapshot_stored_no_answer_for_is_answered_live(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5536/', 'ms' => 33.5 ] );
 		$this->run_job();
