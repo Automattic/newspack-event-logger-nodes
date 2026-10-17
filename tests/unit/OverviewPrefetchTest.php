@@ -350,6 +350,27 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( 1, VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] )['totals']['urls'], 'the stored overview counts takahe alone' );
 	}
 
+	/** A stored question is keyed as asked, so its filters are spelled as a verb canonicalizes them. */
+	public function test_every_stored_filter_names_its_field_lowercase_and_once(): void {
+		foreach ( Overview_Prefetch::questions() as $name => [ 'tokens' => $tokens ] ) {
+			$filters = \array_values( \array_filter( $tokens, static fn ( string $token ): bool => \str_starts_with( $token, '--filter=' ) ) );
+			$fields  = \array_map( static fn ( string $token ): string => \explode( '=', $token, 3 )[1], $filters );
+			$this->assertSame( \array_map( \strtolower( ... ), $fields ), $fields, $name );
+			$this->assertSame( \array_values( \array_unique( $filters ) ), $filters, $name );
+		}
+	}
+
+	public function test_a_stored_chart_spelled_in_another_case_and_repeated_is_served_from_the_snapshot(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5537/', 'ms' => 33.5 ] );
+		$this->run_job();
+		self::clock( self::NOW + 9 );
+		$tokens = Overview_Prefetch::questions()['chart_by_server']['tokens'];
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ ...\str_replace( '--filter=worker=0', '--filter=Worker=0', $tokens ), '--filter=worker=0' ] );
+
+		$this->assertSame( self::NOW, \is_array( $reply ) ? $reply['as_of'] : $reply );
+	}
+
 	/**
 	 * Deliver one job through a real worker under the plugin's own hooks.
 	 *

@@ -946,6 +946,26 @@ describe( 'PerformanceDashboard', () => {
 				unmount();
 			} );
 
+			it( 'opens on a linked chip whose field is capitalised, and on a repeated chip once', async () => {
+				linkTo(
+					[
+						'chip=Country%3DSG',
+						'chip=country%3DUS',
+						'chip=COUNTRY%3DUS',
+						'url=h1',
+					].join( '&' )
+				);
+				mockView = serverView( hub );
+				const { unmount } = mountDash();
+				await flushEffects();
+
+				expect( mockGraphCalls[ 0 ].chartChips ).toEqual( [
+					'country=SG',
+					'country=US',
+				] );
+				unmount();
+			} );
+
 			it( 'writes each chip as its own key, and the last removal drops them', async () => {
 				linkTo( 'url=h1' );
 				mockView = serverView( hub );

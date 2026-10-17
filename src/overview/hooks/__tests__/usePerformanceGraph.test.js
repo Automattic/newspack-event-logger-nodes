@@ -1870,6 +1870,22 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		] );
 	} );
 
+	test( 'lets a negated worker chip replace the worker scope', async () => {
+		const wire = installWire();
+		renderHook( () =>
+			usePerformanceGraph( {
+				chartBreakdown: 'status_class',
+				chartChips: [ 'worker!=0' ],
+			} )
+		);
+		await act( async () => {} );
+
+		const chart = queryFrom( wire.batches, 'chart:in' );
+		expect( options( chart[ VALUE ].arguments, 'filter' ) ).toEqual( [
+			'worker!=0',
+		] );
+	} );
+
 	test( 'asks one dimension where Then by repeats Breakdown, on the page and in the modal', async () => {
 		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
 		renderHook( () =>

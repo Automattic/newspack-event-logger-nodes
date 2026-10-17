@@ -15,6 +15,7 @@ import { CHART_METRIC_OPTIONS } from '../constants';
 import AggregateTimeChart from '../AggregateTimeChart';
 import {
 	chartDims,
+	chipParts,
 	filterValue,
 	leavesSeriesOut,
 	valueName,
@@ -23,24 +24,25 @@ import TokenInput from '../../components/TokenInput';
 import '../../settings/styles/tag-input.scss';
 
 /**
- * Why a chip is refused, or null for one it takes: a chip is `field=value`,
- * the field one `options` offers and the value not empty. The page judges a
- * linked `?chip=` by it too, so the editor and the address bar take one set.
+ * Why a chip is refused, or null for one it takes: a chip is `field=value`
+ * or `field!=value`, the field one `options` offers in any case and the
+ * value not empty. The page judges a linked `?chip=` by it too, so the
+ * editor and the address bar take one set.
  *
  * @param {string}                                draft   The trimmed draft.
  * @param {Array<{label: string, value: string}>} options The chip fields.
  * @return {?string} The refusal.
  */
 export const chipRefusal = ( draft, options ) => {
-	const cut = draft.indexOf( '=' );
-	if ( cut < 1 || cut === draft.length - 1 ) {
+	const { field, value } = chipParts( draft );
+	if ( '' === field || '' === value ) {
 		return __(
-			'Type a filter as field=value.',
+			'Type a filter as field=value, or field!=value to leave it out.',
 			'newspack-event-logger-nodes'
 		);
 	}
-	const field = draft.slice( 0, cut );
-	return options.some( ( option ) => option.value === field )
+	const known = field.toLowerCase();
+	return options.some( ( option ) => option.value === known )
 		? null
 		: sprintf(
 				// translators: %s: the field name typed.
@@ -53,24 +55,34 @@ export const chipRefusal = ( draft, options ) => {
 };
 
 /**
- * A chip as the answer spells its value, so a typed or linked
- * `status_class=5xx` filters what a `5xx` series names. The editor commits
- * through it and the page restores a linked `?chip=` through it, so the two
- * spell one chip one way.
+ * A chip as the answer spells it, its field lowercase and its value as the
+ * answer names it, so a typed or linked `Status_Class!=5xx` leaves out what
+ * a `5xx` series names. The editor commits through it and the page restores
+ * a linked `?chip=` through it, so the two spell one chip one way.
  *
- * @param {string} draft A chip `chipRefusal()` takes, `field=value`.
- * @return {string} The chip, `field=value` with the value as `query` matches it.
+ * @param {string} draft A chip `chipRefusal()` takes.
+ * @return {string} The chip, its value as `query` matches it.
  */
-export const chipOf = ( draft ) => {
-	const cut = draft.indexOf( '=' );
-	const field = draft.slice( 0, cut );
-	return `${ field }=${ filterValue( field, draft.slice( cut + 1 ) ) }`;
+const chipOf = ( draft ) => {
+	const { field, negated, value } = chipParts( draft );
+	const known = field.toLowerCase();
+	return `${ known }${ negated ? '!' : '' }=${ filterValue( known, value ) }`;
 };
 
 /**
- * The filter chips: each a `field=value` the chart's question matches, and
- * the URL table's or the URL modal's list with it, shown as `Field = value` —
- * a status class as `5xx` — and the box a typed one is added through.
+ * Chips as one list: each spelled as `chipOf()` spells it, and each once,
+ * as the page restores linked chips.
+ *
+ * @param {string[]} drafts Chips `chipRefusal()` takes, each `field=value`.
+ * @return {string[]} The chips, in first-seen order.
+ */
+export const chipsOf = ( drafts ) => [ ...new Set( drafts.map( chipOf ) ) ];
+
+/**
+ * The filter chips: each a `field=value` the chart's question matches, or a
+ * `field!=value` it leaves out, and the URL table's or the URL modal's list
+ * with it, shown as `Field = value` or `Field ≠ value` — a status class as
+ * `5xx` — and the box a typed one is added through.
  *
  * @param {Object}                                props          Component props.
  * @param {string[]}                              props.chips    The chips, each `field=value` as `query` takes a filter.
@@ -80,13 +92,11 @@ export const chipOf = ( draft ) => {
  */
 function FilterChips( { chips, onChange, options } ) {
 	const label = ( chip ) => {
-		const cut = chip.indexOf( '=' );
-		const field = chip.slice( 0, cut );
+		const { field, negated, value } = chipParts( chip );
 		const named = options.find( ( option ) => option.value === field );
-		return `${ named?.label ?? field } = ${ valueName(
-			field,
-			chip.slice( cut + 1 )
-		) }`;
+		return `${ named?.label ?? field } ${
+			negated ? '≠' : '='
+		} ${ valueName( field, value ) }`;
 	};
 	return (
 		<div className="event-logger-tag-container horizontal event-logger-chip-filter">
@@ -98,9 +108,12 @@ function FilterChips( { chips, onChange, options } ) {
 				value=""
 				validate={ ( draft ) => chipRefusal( draft, options ) }
 				refuseWhileTyping={ false }
-				onCommit={ ( draft ) =>
-					onChange( [ ...chips, chipOf( draft ) ] )
-				}
+				onCommit={ ( draft ) => {
+					const chip = chipOf( draft );
+					if ( ! chips.includes( chip ) ) {
+						onChange( [ ...chips, chip ] );
+					}
+				} }
 				commitOnBlur={ false }
 				suggestions={ options.map( ( option ) => ( {
 					value: `${ option.value }=`,

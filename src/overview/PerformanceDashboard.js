@@ -77,7 +77,7 @@ import {
 import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import OverviewSection from './components/OverviewSection';
-import { chipOf, chipRefusal } from './components/BreakdownControls';
+import { chipRefusal, chipsOf } from './components/BreakdownControls';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
 import AskPanel, { AskButton, useAsk } from './components/AskPanel';
@@ -164,18 +164,18 @@ const CHART_THEN_BYS = [ '', ...CHART_BREAKDOWNS ];
 
 /**
  * The linked `?chip=` values the chip editor would take, spelled as it
- * commits them; the rest drop, a `server=` among them, since the Server
- * select owns the server.
+ * commits them and each once; the rest drop, a `server=` among them, since
+ * the Server select owns the server.
  *
  * @param {string[]} raw Every `?chip=` value, each `field=value`.
  * @return {string[]} The chips kept, or `NO_CHIPS` for none.
  */
 const restoreChips = ( raw ) => {
-	const kept = raw
-		.filter(
+	const kept = chipsOf(
+		raw.filter(
 			( chip ) => null === chipRefusal( chip, FILTER_FIELD_OPTIONS )
 		)
-		.map( chipOf );
+	);
 	return kept.length ? kept : NO_CHIPS;
 };
 

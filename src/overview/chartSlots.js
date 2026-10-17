@@ -415,6 +415,23 @@ export const filterValue = ( field, typed ) =>
 	SPELLINGS[ field ]?.read( typed ) ?? typed;
 
 /**
+ * A chip's parts: the field it names, whether it negates, as
+ * `field!=value` does, and its value. A chip with no `=` names no field.
+ *
+ * @param {string} chip A chip, `field=value` or `field!=value`.
+ * @return {{field: string, negated: boolean, value: string}} Its parts.
+ */
+export const chipParts = ( chip ) => {
+	const cut = chip.indexOf( '=' );
+	const negated = cut > 0 && '!' === chip[ cut - 1 ];
+	return {
+		field: cut < 0 ? '' : chip.slice( 0, negated ? cut - 1 : cut ),
+		negated,
+		value: cut < 0 ? '' : chip.slice( cut + 1 ),
+	};
+};
+
+/**
  * One `--filter=` token for each filter, since the verbs take the option
  * repeated where `formatCommandArgs()` would join a list on commas.
  *
@@ -425,14 +442,14 @@ export const filterTokens = ( filters ) =>
 	filters.map( ( filter ) => `--filter=${ filter }` );
 
 /**
- * The chips a one-URL question keeps: every one but a `url=` chip, which
- * names the URL a table was narrowed to rather than a narrowing of one URL.
+ * The chips a one-URL question keeps: every one but a chip on `url`, which
+ * names the URLs a table was narrowed to rather than a narrowing of one URL.
  *
- * @param {string[]} chips Each chip as `field=value`.
+ * @param {string[]} chips Each chip as `field=value` or `field!=value`.
  * @return {string[]} The chips, less any on `url`.
  */
 export const withoutUrlChips = ( chips ) =>
-	chips.filter( ( chip ) => ! chip.startsWith( 'url=' ) );
+	chips.filter( ( chip ) => 'url' !== chipParts( chip ).field );
 
 /**
  * One row's series name: its dimensions' values, ` · `-joined.

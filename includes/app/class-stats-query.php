@@ -35,9 +35,11 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * An absent status, country, agent, JA4 or From answers `Unknown`, as does a
  * status outside the builder's status bounds; a request with no error answers
  * `-`, the record's own spelling. A filter matches what a group answers,
- * `Unknown` included. Worker requests count unless a filter leaves them out.
- * A sort ranks a null last in either order and breaks its ties by the groups
- * in its own direction, and a `url` group also sorts by its `url_name`,
+ * `Unknown` included, and a filter keyed `<field>!` keeps the rows matching
+ * none of its values, ANDed with the field's own. Worker requests count
+ * unless a filter leaves them out. A sort ranks a null last in either order
+ * and breaks its ties by the groups in its own direction, and a `url` group
+ * also sorts by its `url_name`,
  * server then path. Under `top`, the tuples of the group's
  * non-time fields rank by the sum over their time rows of `top_by`, a measure
  * that adds across buckets, highest first and ties by their values, and every
@@ -496,7 +498,7 @@ final class Stats_Query {
 	 */
 	private static function statement( array $spec, string $table, array $aliases, bool $paged ): array {
 		$def      = self::TABLES[ $table ];
-		$fields   = \array_values( \array_unique( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] ) );
+		$fields   = \array_values( \array_unique( [ ...$spec['group'], ...self::filtered( $spec['filter'] ) ] ) );
 		$named    = null === $spec['top'] ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
 		$composes = self::composes( $def, $named );
 		$folded   = $composes ? self::gathered( $def, $named, self::FOLDS ) : [];
@@ -675,7 +677,7 @@ final class Stats_Query {
 			throw new \InvalidArgumentException( 'a query names at least one measure' );
 		}
 		$table = self::table_for( $spec );
-		foreach ( [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ] as $field ) {
+		foreach ( [ ...$spec['group'], ...self::filtered( $spec['filter'] ) ] as $field ) {
 			if ( ! isset( self::TABLES[ $table ]['fields'][ $field ] ) ) {
 				throw new \InvalidArgumentException( \esc_html( "a {$spec['source']} query naming these fields reads {$table}, which holds no {$field}" ) );
 			}
@@ -696,7 +698,7 @@ final class Stats_Query {
 	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string, top_by?:string} $spec
 	 */
 	public static function table_for( array $spec ): string {
-		$named    = [ ...$spec['group'], ...\array_keys( $spec['filter'] ) ];
+		$named    = [ ...$spec['group'], ...self::filtered( $spec['filter'] ) ];
 		$measures = '' === ( $spec['top_by'] ?? '' ) ? $spec['measure'] : [ ...$spec['measure'], $spec['top_by'] ];
 		$by_url = \in_array( 'url', $named, true ) || '' !== ( $spec['search'] ?? '' );
 		if ( 'timings' === $spec['source'] ) {
@@ -842,7 +844,7 @@ final class Stats_Query {
 		);
 		$rows = self::read(
 			static function ( Row_Reader $reader, array $aliases ) use ( $spec ): array {
-				[ $from, $binds ] = self::union( self::arm( $spec, 'requests', \array_keys( $spec['filter'] ), self::LISTED ), $aliases );
+				[ $from, $binds ] = self::union( self::arm( $spec, 'requests', self::filtered( $spec['filter'] ), self::LISTED ), $aliases );
 				$listed           = \implode( ', ', \array_map( static fn ( string $column ): string => "m_{$column}", self::LISTED ) );
 				return $reader->rows( "SELECT {$listed} FROM {$from} ORDER BY m_finished_at DESC, m_rid LIMIT ?", [ ...$binds, $spec['limit'] ] );
 			}
@@ -893,11 +895,13 @@ final class Stats_Query {
 			\array_push( $binds, \intdiv( $first, $per ), \intdiv( $last + 1, $per ) - 1 );
 		}
 		$clauses = [] === $where ? [] : [ '( ' . \implode( ' OR ', $where ) . ' )' ];
-		foreach ( $spec['filter'] as $field => $values ) {
-			$clauses[] = Core::as_string( $expr[ $field ] ) . ' IN ( ' . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
+		foreach ( $spec['filter'] as $key => $values ) {
+			$field     = self::field_of( $key );
+			$in        = $field === $key ? ' IN ( ' : ' NOT IN ( ';
+			$clauses[] = Core::as_string( $expr[ $field ] ) . $in . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
 			\array_push( $binds, ...$values );
 		}
-		$joined = $by_url_id ? [ ...\array_diff( $fields, [ 'url' ] ), ...( isset( $spec['filter']['url'] ) ? [ 'url' ] : [] ) ] : $fields;
+		$joined = $by_url_id ? [ ...\array_diff( $fields, [ 'url' ] ), ...\array_intersect( self::filtered( $spec['filter'] ), [ 'url' ] ) ] : $fields;
 		if ( '' !== $spec['match'] ) {
 			$clauses[] = self::SEARCH;
 			$binds[]   = $spec['match'];
@@ -969,8 +973,9 @@ final class Stats_Query {
 		$fields = self::FIELDS[ $source ] ?? throw self::unknown_source( $source );
 		$group  = self::strings( $spec['group'] ?? null );
 		$filter = [];
-		foreach ( Core::arr( $spec['filter'] ?? null ) as $field => $values ) {
-			$filter[ (string) $field ] = \array_values( \array_map( static fn ( mixed $value ): mixed => self::bindable( (string) $field, $value ), Core::arr( $values ) ) );
+		foreach ( Core::arr( $spec['filter'] ?? null ) as $key => $values ) {
+			$field                   = self::field_of( (string) $key );
+			$filter[ (string) $key ] = \array_values( \array_map( static fn ( mixed $value ): mixed => self::bindable( $field, $value ), Core::arr( $values ) ) );
 		}
 		foreach ( $group as $field ) {
 			if ( ! \in_array( $field, $fields, true ) ) {
@@ -978,7 +983,7 @@ final class Stats_Query {
 			}
 		}
 		$filters = [ ...$fields, ...self::KEYS[ $source ] ];
-		foreach ( \array_keys( $filter ) as $field ) {
+		foreach ( self::filtered( $filter ) as $field ) {
 			if ( ! \in_array( $field, $filters, true ) ) {
 				throw new \InvalidArgumentException( \esc_html( "unknown {$source} field {$field}: one of " . \implode( ', ', $filters ) ) );
 			}
@@ -1113,6 +1118,25 @@ final class Stats_Query {
 			throw new \InvalidArgumentException( 'top takes no sort: its rows come in rank order' );
 		}
 		return [ $top, $top_by ];
+	}
+
+	/**
+	 * The fields a spec's filter names, a key `<field>!` naming its field.
+	 *
+	 * @param array<array-key,mixed> $filter A spec's filter.
+	 * @return list<string>
+	 */
+	public static function filtered( array $filter ): array {
+		return \array_values( \array_unique( \array_map( static fn ( int|string $key ): string => self::field_of( (string) $key ), \array_keys( $filter ) ) ) );
+	}
+
+	/**
+	 * The field a filter key names: itself, or a negated key's field.
+	 *
+	 * @param string $key A filter key, `<field>` or `<field>!`.
+	 */
+	public static function field_of( string $key ): string {
+		return \str_ends_with( $key, '!' ) ? \substr( $key, 0, -1 ) : $key;
 	}
 
 	/**

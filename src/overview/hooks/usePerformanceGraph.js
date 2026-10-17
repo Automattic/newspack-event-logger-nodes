@@ -71,7 +71,7 @@ import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher'
 import { armTimer } from '@newspack-nodes/shared/helpers/armTimer';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { views } from '../nodes/register';
-import { chartDims, filterTokens } from '../chartSlots';
+import { chartDims, chipParts, filterTokens } from '../chartSlots';
 import { useOnChange } from './useOnChange';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 import {
@@ -208,17 +208,15 @@ export const NO_DETAIL_CHART = {
 
 /**
  * The `--filter=` values a chart asks under: its scope's, unless a chip names
- * the same field, then its chips'. A chip on `worker` therefore replaces the
- * Overview's `worker=0` rather than widening it.
+ * the same field, then its chips'. A chip on `worker`, negated or not,
+ * therefore replaces the Overview's `worker=0` rather than widening it.
  *
  * @param {Object<string,string[]>} scope Field => the values the scope asks.
- * @param {string[]}                chips The chips, each `field=value`.
+ * @param {string[]}                chips The chips, each `field=value` or `field!=value`.
  * @return {string[]} Each filter as `field=value`.
  */
 const filtersOf = ( scope, chips ) => {
-	const chipped = new Set(
-		chips.map( ( chip ) => chip.slice( 0, chip.indexOf( '=' ) ) )
-	);
+	const chipped = new Set( chips.map( ( chip ) => chipParts( chip ).field ) );
 	return [
 		...Object.entries( scope )
 			.filter( ( [ field ] ) => ! chipped.has( field ) )
