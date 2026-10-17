@@ -163,8 +163,9 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				],
 				'key'     => [ 'rid' ],
 				'indexes' => [
-					'requests_url'   => [ 'url_id', 'bucket' ],
-					'requests_cover' => [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ],
+					'requests_url'    => [ 'url_id', 'bucket' ],
+					'requests_cover'  => [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ],
+					'requests_server' => [ 'server_id', 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ],
 				],
 				'retain'  => [ 'bucket', self::REQUESTS_BUCKETS, Bucket::SECONDS ],
 			],
@@ -298,6 +299,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 5;
+		return 6;
 	}
 }

@@ -30,14 +30,17 @@ final class FlameFactsTest extends TestCase {
 		$opened = \array_merge( ...$this->facts( "SELECT name FROM sqlite_master WHERE type = 'table'" ) );
 
 		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_expiry', 'urls_fts', 'servers', 'ja4s', 'froms', 'categories', 'entries' ], $opened ) ) );
-		$this->assertSame( [ [ 5 ] ], $this->facts( 'PRAGMA user_version' ) );
+		$this->assertSame( [ [ 6 ] ], $this->facts( 'PRAGMA user_version' ) );
+		$this->assertSame( [ [ 'requests_server' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'requests_server'" ) );
 	}
 
-	public function test_v5_declares_the_window_its_expiries_and_the_covering_index(): void {
+	public function test_v6_declares_the_window_its_expiries_and_both_covering_indexes(): void {
 		$tables = self::derived_tables();
 
-		$this->assertSame( 5, Flame_Facts_Row_Schema::version() );
+		$this->assertSame( 6, Flame_Facts_Row_Schema::version() );
 		$this->assertSame( [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ], $tables['requests']['indexes']['requests_cover'] );
+		$this->assertSame( [ 'server_id', 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ], $tables['requests']['indexes']['requests_server'] );
+		$this->assertArrayNotHasKey( 'requests_server_id', $tables['requests']['indexes'], 'the server-led index serves a server row\'s release' );
 		$this->assertSame( [ 'category_id', 'entry_id', 'listener', 'worker', 'ms', 'calls', 'requests', 'last_bucket' ], \array_keys( $tables['category_window']['columns'] ) );
 		$this->assertSame( [ 'category_id', 'entry_id', 'worker' ], $tables['category_window']['key'] );
 		$this->assertSame( [ 'ms' => 'sum', 'calls' => 'sum', 'requests' => 'sum', 'last_bucket' => 'max' ], $tables['category_window']['add'] );
