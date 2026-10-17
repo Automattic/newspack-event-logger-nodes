@@ -431,27 +431,36 @@ final class Stats_Query {
 	}
 
 	/**
-	 * Store every group `run()` would answer for `$spec` over the builder's
-	 * attached partitions as the table `$table` of the file it writes,
-	 * unpaged: each group field under its own name, a `url` group as its
-	 * hash `url` and its `server` and `path`, then each measure under its
-	 * own. An empty window stores an empty table.
+	 * The statement storing every group `run()` would answer for `$spec`
+	 * over the builder's attached partitions as the table `$table` of the
+	 * file it writes, and its binds, unpaged: each group field under its own
+	 * name, a `url` group as its hash `url` and its `server` and `path`,
+	 * then each measure under its own. A sort naming a group field orders
+	 * the rows by it, as the GROUP BY already emits them, so SQLite sorts
+	 * once; with no sort they come in no order. An empty window stores an
+	 * empty table.
 	 *
 	 * @param Row_Reader          $builder The connection building the file.
 	 * @param string              $table   The table to create, of `a-z` and `_`.
 	 * @param array<string,mixed> $spec    As `run()` takes it, with no `top` and no `also`.
-	 * @throws \InvalidArgumentException As `run()`, on a `top` or an `also`,
-	 *                                   or on a table name outside `a-z` and `_`.
+	 * @return array{0:string, 1:list<scalar|null>}
+	 * @throws \InvalidArgumentException As `run()`, on a `top`, an `also` or
+	 *                                   a sort naming no group field, or on a
+	 *                                   table name outside `a-z` and `_`.
 	 * @throws \LogicException When the builder attached no partition.
-	 * @throws \PDOException When SQLite refuses the table.
+	 * @throws \PDOException When SQLite refuses to read the partitions.
 	 */
-	public static function into( Row_Reader $builder, string $table, array $spec ): void {
+	public static function into_statement( Row_Reader $builder, string $table, array $spec ): array {
 		if ( 1 !== \preg_match( '/^[a-z_]+$/D', $table ) ) {
 			throw new \InvalidArgumentException( \esc_html( "into names a table of a-z and _, not {$table}" ) );
 		}
 		$spec = self::checked( $spec );
 		if ( null !== $spec['top'] || null !== $spec['also'] ) {
 			throw new \InvalidArgumentException( 'into stores whole groups: no top and no also' );
+		}
+		$sorted = '' === $spec['sort'] ? null : \array_search( $spec['sort'], $spec['group'], true );
+		if ( false === $sorted ) {
+			throw new \InvalidArgumentException( \esc_html( "into orders by a group field, not {$spec['sort']}" ) );
 		}
 		$aliases = $builder->aliases();
 		if ( [] === $aliases ) {
@@ -471,7 +480,9 @@ final class Stats_Query {
 		}
 		[ $sql, $binds ] = self::statement( $spec, self::readable( $builder, $aliases, $spec, $read ), $aliases, false );
 		$projected       = \array_map( static fn ( string $column, string $name ): string => "{$column} AS \"{$name}\"", \array_keys( $columns ), $columns );
-		$builder->rows( "CREATE TABLE {$table} AS SELECT " . \implode( ', ', $projected ) . " FROM ( {$sql} )", $binds );
+		// The bare key the GROUP BY names, so SQLite sorts once.
+		$ordered = null === $sorted ? '' : " ORDER BY f{$sorted}" . ( 'desc' === $spec['order'] ? ' DESC' : '' );
+		return [ "CREATE TABLE {$table} AS SELECT " . \implode( ', ', $projected ) . " FROM ( {$sql}{$ordered} )", $binds ];
 	}
 
 	/**

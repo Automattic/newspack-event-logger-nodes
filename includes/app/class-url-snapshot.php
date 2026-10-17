@@ -3,13 +3,19 @@
  * Url_Snapshot: the URL table of the window's buckets, built whole by the
  * overview-prefetch job and read by the verbs until it expires.
  *
- * One SQLite file, `{base}/tables/flame-facts.job.sqlite`, holds a `urls`
- * table of one row per URL, `Stats_Query`'s `url` group over every
- * partition with `Performance_CI_Node::URL_MEASURES`, indexed once per
- * sort the `urls` verb takes; a `totals` table of one row per view and
- * scope; the stored answers by key; and when it was built and expires. The
- * substrate publishes it whole under `NAME` and opens it `immutable`
- * (ADR-35), so no reader sees a half-built file.
+ * One SQLite file, `{base}/tables/flame-facts.job.sqlite`, holds a `servers`
+ * table naming each server by an id assigned in name order; a `urls` table
+ * of one row per URL, `Stats_Query`'s `url` group over every partition
+ * with `Performance_CI_Node::URL_MEASURES`, its server by id and its
+ * rowids assigned in hash order, indexed for each sort the `urls` verb
+ * takes once site-wide and once led by the server, a nullable sort's
+ * null-last ranking taking a second pair; a `totals` table of
+ * one row per view and scope; the stored answers by key; and when it was
+ * built and expires. The substrate publishes it whole under `NAME` and
+ * opens it `immutable` (ADR-35), so no reader sees a half-built file.
+ *
+ * The verbs name a server by its name and a URL by its hash, and a page
+ * answers both; the ids stay inside the file.
  *
  * A worker URL is a property of the URL, so the default view keeps the rows
  * whose `worker` is 0 and Include Workers keeps every row.
@@ -50,17 +56,31 @@ final class Url_Snapshot {
 	/** What a scope with no URLs totals, in `URL_TOTALS` order. */
 	private const NO_TOTALS = [ 0, null, null, 0, 0 ];
 
+	/** The id of the server a `?` names; null for a name `servers` lacks. */
+	private const SERVER_ID = '( SELECT id FROM servers WHERE name = ? )';
+
 	/**
-	 * One `totals` row per view and scope, every server then each: the URLs'
-	 * partials `%1$s` summed once by worker and server, then folded by the
-	 * totals `%2$s`, every one a sum, so the sums compose.
+	 * Each `Performance_CI_Node::scope()` field as the `urls` clause matching
+	 * its one value, bound as given: a server by its id, an equality the
+	 * server-led index seeks, and the worker flag, an integer the column's
+	 * no-affinity value matches only as an integer.
+	 */
+	private const SCOPED = [
+		'worker' => 'worker = ?',
+		'server' => 'server_id = ' . self::SERVER_ID,
+	];
+
+	/**
+	 * One `totals` row per view and scope, every server as id 0 then each:
+	 * the URLs' partials `%1$s` summed once by worker and server, then
+	 * folded by the totals `%2$s`, every one a sum, so the sums compose.
 	 */
 	private const TOTALS_TABLE = 'CREATE TABLE totals AS '
-		. 'WITH g AS ( SELECT u.worker, u.server, %1$s, COUNT( * ) AS q_urls FROM urls AS u GROUP BY u.worker, u.server ), '
+		. 'WITH g AS ( SELECT u.worker, u.server_id, %1$s, COUNT( * ) AS q_urls FROM urls AS u GROUP BY u.worker, u.server_id ), '
 		. 'v ( workers ) AS ( VALUES ( 0 ), ( 1 ) ), '
 		. 'r AS ( SELECT v.workers, g.* FROM v JOIN g ON v.workers = 1 OR g.worker = 0 ) '
-		. "SELECT workers, '' AS server, %2\$s FROM r GROUP BY workers "
-		. 'UNION ALL SELECT workers, server, %2$s FROM r GROUP BY workers, server';
+		. 'SELECT workers, 0 AS server_id, %2$s FROM r GROUP BY workers '
+		. 'UNION ALL SELECT workers, server_id, %2$s FROM r GROUP BY workers, server_id';
 
 	/**
 	 * Hold an opened snapshot.
@@ -107,20 +127,14 @@ final class Url_Snapshot {
 	 * @throws \RuntimeException When an answer will not encode.
 	 */
 	private static function fill( Row_Reader $db, int $now, int $ttl, array $answers ): void {
-		Stats_Query::into(
-			$db,
-			'urls',
-			[
-				'source'  => 'requests',
-				'filter'  => [],
-				'buckets' => Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, $now ),
-			] + self::GROUPED
-		);
+		foreach ( self::url_steps( $db, $now ) as [ $sql, $binds ] ) {
+			$db->rows( $sql, $binds );
+		}
 		foreach ( self::indexes() as $name => $columns ) {
 			$db->rows( "CREATE INDEX urls_{$name} ON urls ( {$columns} )", [] );
 		}
 		$db->rows( self::totals_table(), [] );
-		$db->rows( 'CREATE UNIQUE INDEX totals_scope ON totals ( workers, server )', [] );
+		$db->rows( 'CREATE UNIQUE INDEX totals_scope ON totals ( workers, server_id )', [] );
 		$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
 		foreach ( $answers as $key => $answer ) {
 			$json = \wp_json_encode( $answer );
@@ -156,22 +170,53 @@ final class Url_Snapshot {
 	}
 
 	/**
-	 * The `urls` indexes by name: one per sort, each ending in `url` so a
-	 * backward scan serves the other order, and a second for each nullable
-	 * key ranking its nulls last. `url_name`'s leads with `server`, so it
-	 * also serves a server scope.
+	 * The `urls` indexes by name: per sort its keys for the site-wide page
+	 * and, as `server_<sort>`, `server_id` then its keys for one server's, a
+	 * nullable key adding a `_null` pair ranking its nulls last. Each ends at
+	 * its keys, because the rowid every index carries breaks a tie as the
+	 * hash does, and a backward scan serves the other order. `url_name`'s
+	 * leads with `server_id`, so it serves both scopes.
 	 *
 	 * @return array<string,string>
 	 */
 	private static function indexes(): array {
-		$indexes = [ 'url_name' => 'server, path, url' ];
+		$indexes = [ 'url_name' => 'server_id, path' ];
 		foreach ( \array_diff( Performance_CI_Node::URL_SORTS, [ 'url_name' ] ) as $sort ) {
-			$indexes[ $sort ] = "{$sort}, url";
-			if ( \in_array( $sort, self::NULLABLE, true ) ) {
-				$indexes[ "{$sort}_null" ] = "{$sort} IS NULL, {$sort}, url";
+			$keys = [ $sort => $sort ] + ( \in_array( $sort, self::NULLABLE, true ) ? [ "{$sort}_null" => "{$sort} IS NULL, {$sort}" ] : [] );
+			foreach ( $keys as $name => $columns ) {
+				$indexes[ $name ]            = $columns;
+				$indexes[ "server_{$name}" ] = "server_id, {$columns}";
 			}
 		}
 		return $indexes;
+	}
+
+	/**
+	 * The statements building `servers` and `urls`, and their binds, in the
+	 * order they run: the window's URLs grouped into a scratch table in hash
+	 * order, the servers named by ids in name order, the URLs copied in the
+	 * scratch table's order, so a rowid ranks as the hash, and the scratch
+	 * table dropped ahead of the indexes, which reuse its pages.
+	 *
+	 * @param Row_Reader $db  The building connection.
+	 * @param int        $now The job's tick.
+	 * @return list<array{0:string,1:list<scalar|null>}>
+	 */
+	private static function url_steps( Row_Reader $db, int $now ): array {
+		$grouped  = [
+			'source'  => 'requests',
+			'filter'  => [],
+			'buckets' => Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, $now ),
+			'sort'    => 'url',
+		] + self::GROUPED;
+		$measures = \implode( ', ', \array_map( static fn ( string $name ): string => "g.{$name}", self::GROUPED['measure'] ) );
+		return [
+			Stats_Query::into_statement( $db, 'grouped_urls', $grouped ),
+			[ 'CREATE TABLE servers ( id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE )', [] ],
+			[ 'INSERT INTO servers ( name ) SELECT server FROM grouped_urls GROUP BY server ORDER BY server', [] ],
+			[ "CREATE TABLE urls AS SELECT g.url, s.id AS server_id, g.path, {$measures} FROM grouped_urls AS g JOIN servers AS s ON s.name = g.server ORDER BY g.rowid", [] ],
+			[ 'DROP TABLE grouped_urls', [] ],
+		];
 	}
 
 	/**
@@ -219,12 +264,13 @@ final class Url_Snapshot {
 	 */
 	private static function listing( string $server, bool $workers, string $sort, string $order ): array {
 		[ $where, $binds ] = self::where( Performance_CI_Node::scope( $server, $workers ) );
-		return [ 'SELECT url, server, path, ' . \implode( ', ', self::GROUPED['measure'] ) . " FROM urls{$where} ORDER BY " . self::order( $sort, $order ), $binds ];
+		$named             = 'SELECT url, ( SELECT name FROM servers WHERE servers.id = urls.server_id ) AS server, path, ';
+		return [ $named . \implode( ', ', self::GROUPED['measure'] ) . " FROM urls{$where} ORDER BY " . self::order( $sort, $order ), $binds ];
 	}
 
 	/**
 	 * The ORDER BY a sort and an order name, as `Stats_Query::ranking()`
-	 * ranks a sort, its ties broken by the hash.
+	 * ranks a sort, its ties broken by the rowid, which ranks as the hash.
 	 *
 	 * @param string $sort  One of `Performance_CI_Node::URL_SORTS`' values.
 	 * @param string $order 'asc' or 'desc'.
@@ -237,23 +283,29 @@ final class Url_Snapshot {
 		if ( 'asc' !== $order && 'desc' !== $order ) {
 			throw new \InvalidArgumentException( \esc_html( "unknown order {$order}: asc or desc" ) );
 		}
-		$sorted = 'url_name' === $sort ? [ 'server', 'path' ] : [ $sort ];
-		return Stats_Query::ranking( $sorted, [ 'url' ], $order, \in_array( $sort, self::NULLABLE, true ) );
+		$sorted = 'url_name' === $sort ? [ 'server_id', 'path' ] : [ $sort ];
+		return Stats_Query::ranking( $sorted, [ 'rowid' ], $order, \in_array( $sort, self::NULLABLE, true ) );
 	}
 
 	/**
-	 * The WHERE clause a scope filter names over the `urls` columns of its
-	 * fields, each field matching any of its values, and its binds.
+	 * The WHERE clause a scope filter names over `urls` through `SCOPED`,
+	 * and its binds; a server `servers` lacks keeps no URL.
 	 *
 	 * @param array<string,list<scalar>> $filter A `Performance_CI_Node::scope()` filter.
 	 * @return array{0:string, 1:list<scalar>}
+	 * @throws \LogicException On a field `SCOPED` maps no clause for, or one
+	 *                         naming other than one value, which a scope the
+	 *                         snapshot ignored would leave a page unfiltered.
 	 */
 	private static function where( array $filter ): array {
 		$clauses = [];
 		$binds   = [];
 		foreach ( $filter as $field => $values ) {
-			$clauses[] = "{$field} IN ( " . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
-			\array_push( $binds, ...$values );
+			$clauses[] = self::SCOPED[ $field ] ?? throw new \LogicException( \esc_html( "the URL snapshot scopes no {$field}" ) );
+			if ( 1 !== \count( $values ) ) {
+				throw new \LogicException( \esc_html( "the URL snapshot scopes one {$field}, not " . \count( $values ) ) );
+			}
+			$binds[] = $values[0];
 		}
 		return [ [] === $clauses ? '' : ' WHERE ' . \implode( ' AND ', $clauses ), $binds ];
 	}
@@ -308,9 +360,10 @@ final class Url_Snapshot {
 	 * @return array{columns:list<string>, rows:list<list<mixed>>, available:true}
 	 */
 	public function totals( string $server, bool $workers ): array {
-		$rows = $this->db->rows(
-			'SELECT ' . \implode( ', ', Performance_CI_Node::URL_TOTALS ) . ' FROM totals WHERE workers = ? AND server = ?',
-			[ $workers ? 1 : 0, $server ]
+		$scope = '' === $server ? [ '0', [] ] : [ self::SERVER_ID, [ $server ] ];
+		$rows  = $this->db->rows(
+			'SELECT ' . \implode( ', ', Performance_CI_Node::URL_TOTALS ) . " FROM totals WHERE workers = ? AND server_id = {$scope[0]}",
+			[ $workers ? 1 : 0, ...$scope[1] ]
 		);
 		return [
 			'columns'   => Performance_CI_Node::URL_TOTALS,

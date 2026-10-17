@@ -1671,8 +1671,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The filter a server scope and the worker choice name, which the URL
-	 * snapshot applies to its URLs as the live reads apply it to requests.
+	 * The filter a server scope and the worker choice name, which the live
+	 * reads apply to requests.
 	 *
 	 * @param string $server  Server to scope to; '' is every server.
 	 * @param bool   $workers Keep worker requests; false leaves them out.
