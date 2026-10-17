@@ -39,7 +39,7 @@ To find the culprit:
 - **Errors:** add a filter chip in the **Filter** box above the chart. Type `status_class=5xx` for **Status Class = 5xx**, the 5xx responses, most fatal errors among them, or `status_class=unknown` for **Status Class = Unknown**, the requests that answered no status, which is what a timeout is. The chips narrow the table and the headline stats above it as well as the chart, so every count then describes those requests alone; a fatal that still answered 200 shows under neither, and `error=F` keeps the fatals and `error=T` the timeouts exactly. **Total Errors** in the headline stats counts the timeouts and fatals among the requests shown. A chip on the server is refused: the **Server** selector chooses the site.
 - Cron, WP-CLI and job traffic is hidden until you press **Include Workers**.
 
-Every count and average in the table is exact, and Avg and Mem are means over the URL's requests. The URL's own window counts its worker traffic, which the table hides until **Include Workers**, so a URL that cron or a job also reaches can read higher there than on its row.
+Every count and average in the table is exact, and Avg and Mem are means over the URL's requests. The URL's own window counts its worker traffic, which the table hides until **Include Workers**.
 
 ### 3. Open the URL
 

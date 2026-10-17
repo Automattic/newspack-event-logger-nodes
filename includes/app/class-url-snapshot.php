@@ -8,8 +8,8 @@
  * partition with `Performance_CI_Node::URL_MEASURES`, indexed once per
  * sort the `urls` verb takes; a `totals` table of one row per view and
  * scope; the stored answers by key; and when it was built and expires. The
- * job builds it under its own name and renames it over the last, so no
- * reader sees a half-built file, and a reader opens it `immutable`.
+ * substrate publishes it whole under `NAME` and opens it `immutable`
+ * (ADR-35), so no reader sees a half-built file.
  *
  * A worker URL is a property of the URL, so the default view keeps the rows
  * whose `worker` is 0 and Include Workers keeps every row.
@@ -22,11 +22,10 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Url_Parts;
-use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
-use Newspack_Nodes\Sqlite_Arm;
+use Newspack_Nodes\Table_Unavailable;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -37,14 +36,17 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 final class Url_Snapshot {
 
-	/** The published file, under the base's `tables` directory. */
-	public const FILE = 'flame-facts.job.sqlite';
+	/** The snapshot's name, which the substrate publishes it under. */
+	public const NAME = 'flame-facts.job';
 
 	/** The sorts whose key may be null, which rank a null last either way. */
 	private const NULLABLE = [ 'avg_ms', 'min_ms', 'max_ms' ];
 
 	/** The columns of a `totals()` answer, as `Stats_Query` names them. */
 	private const TOTALS = [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ];
+
+	/** The `TOTALS` a `totals` row folds from its URLs' sums. */
+	private const FOLDED = [ 'count', 'avg_ms', 'avg_peak_mb', 'errors' ];
 
 	/** What a scope with no URLs totals. */
 	private const NO_TOTALS = [ 0, null, null, 0, 0 ];
@@ -68,16 +70,15 @@ final class Url_Snapshot {
 		'max_ms_null'  => 'max_ms IS NULL, max_ms, url',
 	];
 
-	/** One `totals` row per view and scope: every server, then each. */
+	/**
+	 * One `totals` row per view and scope, every server then each, from the
+	 * URLs' partials `%1$s` by the totals `%2$s` folds.
+	 */
 	private const TOTALS_TABLE = 'CREATE TABLE totals AS '
 		. 'WITH v ( workers ) AS ( VALUES ( 0 ), ( 1 ) ), '
-		. 'r AS ( SELECT v.workers, u.* FROM v JOIN urls AS u ON v.workers = 1 OR u.worker = 0 ) '
-		. "SELECT workers, '' AS server, %1\$s FROM r GROUP BY workers "
-		. 'UNION ALL SELECT workers, server, %1$s FROM r GROUP BY workers, server';
-
-	/** The sums a `totals` row holds. */
-	private const SUMS = 'COUNT( * ) AS urls, SUM( count ) AS count, SUM( timed ) AS timed, TOTAL( sum_ms ) AS sum_ms, '
-		. 'TOTAL( sum_peak_mb ) AS sum_peak_mb, SUM( errors ) AS errors';
+		. 'r AS ( SELECT v.workers, u.server, %1$s FROM v JOIN urls AS u ON v.workers = 1 OR u.worker = 0 ) '
+		. "SELECT workers, '' AS server, %2\$s FROM r GROUP BY workers "
+		. 'UNION ALL SELECT workers, server, %2$s FROM r GROUP BY workers, server';
 
 	/**
 	 * Hold an opened snapshot.
@@ -89,10 +90,10 @@ final class Url_Snapshot {
 	}
 
 	/**
-	 * Build the snapshot of the window ending at `$now` beside the published
-	 * one and rename it over it: the URLs, their totals, `$answers` by key,
+	 * Publish the snapshot of the window ending at `$now` through
+	 * `Row_Table_Node::build()`: the URLs, their totals, `$answers` by key,
 	 * and an expiry `$ttl` seconds on. A fleet with no partition file yet
-	 * publishes nothing, and a build that throws leaves no file.
+	 * publishes nothing, and a build that throws leaves the last publish.
 	 *
 	 * @param int                                $now     The job's tick.
 	 * @param int                                $ttl     Seconds the snapshot serves.
@@ -100,38 +101,18 @@ final class Url_Snapshot {
 	 * @throws \Newspack_Nodes\Table_Unavailable As `Row_Table_Node::build()`,
 	 *                                           or when no active topology
 	 *                                           declares a Flame_Facts table.
-	 * @throws \RuntimeException When two do, or the build will not publish.
+	 * @throws \RuntimeException When two do, the build will not publish, or
+	 *                           an answer will not encode.
 	 */
 	public static function publish( int $now, int $ttl, array $answers ): void {
-		$file = self::path();
-		Bootstrap::row_table( Flame_Facts_Row_Schema::class );
-		if ( ! \is_dir( \dirname( $file ) ) ) {
-			// No partition has written its file, so nothing would attach.
-			return;
-		}
-		$build = \dirname( $file ) . "/flame-facts.job.{$now}.sqlite";
-		// A crashed build of the same second.
-		self::remove( $build );
-		try {
-			$built = Row_Table_Node::build(
-				Flame_Facts_Row_Schema::class,
-				$build,
-				static function ( Row_Reader $db ) use ( $now, $ttl, $answers ): bool {
-					if ( [] === $db->aliases() ) {
-						return false;
-					}
-					self::fill( $db, $now, $ttl, $answers );
-					return true;
-				}
-			);
-			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_rename -- the publish is one atomic rename inside this plugin's own tables directory.
-			if ( $built && ! \rename( $build, $file ) ) {
-				throw new \RuntimeException( \esc_html( "overview prefetch: {$build} would not publish" ) );
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			self::NAME,
+			static function ( Row_Reader $db ) use ( $now, $ttl, $answers ): bool {
+				self::fill( $db, $now, $ttl, $answers );
+				return true;
 			}
-		} finally {
-			// Journaling is off, so the build file is all a build leaves.
-			self::remove( $build );
-		}
+		);
 	}
 
 	/**
@@ -158,7 +139,7 @@ final class Url_Snapshot {
 		foreach ( self::INDEXES as $name => $columns ) {
 			$db->rows( "CREATE INDEX urls_{$name} ON urls ( {$columns} )", [] );
 		}
-		$db->rows( \sprintf( self::TOTALS_TABLE, self::SUMS ), [] );
+		$db->rows( self::totals_table(), [] );
 		$db->rows( 'CREATE UNIQUE INDEX totals_scope ON totals ( workers, server )', [] );
 		$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
 		foreach ( $answers as $key => $answer ) {
@@ -173,42 +154,22 @@ final class Url_Snapshot {
 	}
 
 	/**
-	 * Delete `$file` when it is there.
-	 *
-	 * @param string $file A build file.
+	 * The statement creating `totals`: each of `FOLDED` folded from the URLs'
+	 * partials as `Stats_Query` merges a query's partitions, and the URL
+	 * count, one row each.
 	 */
-	private static function remove( string $file ): void {
-		if ( \file_exists( $file ) ) {
-			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- a build file this job wrote.
-			\unlink( $file );
+	private static function totals_table(): string {
+		$partials = [];
+		$totals   = [];
+		foreach ( self::FOLDED as $name ) {
+			[ $fold, $reads ] = Stats_Query::fold( 'requests', $name );
+			$totals[ $name ]  = "{$fold} AS {$name}";
+			foreach ( $reads as $read ) {
+				$partials[ $read ] = "u.{$read} AS q_{$read}";
+			}
 		}
-	}
-
-	/**
-	 * The published snapshot, when one stands that has not expired at `$now`.
-	 * A file that will not open says so once a window.
-	 *
-	 * @param int $now The reply's clock.
-	 */
-	public static function open( int $now ): ?self {
-		$file = self::path();
-		\clearstatcache( true, $file );
-		if ( ! \file_exists( $file ) ) {
-			return null;
-		}
-		try {
-			$db   = Sqlite_Arm::open_snapshot( $file );
-			$meta = $db->rows( 'SELECT as_of, expires FROM meta', [] )[0] ?? throw new \LogicException( 'it holds no meta row' );
-		} catch ( \PDOException | \LogicException $e ) {
-			Core::print_less_often( 'performance: the URL snapshot did not open', ' — ' . $e->getMessage() );
-			return null;
-		}
-		return Core::as_int( $meta[1] ) <= $now ? null : new self( $db, Core::as_int( $meta[0] ) );
-	}
-
-	/** The published file: `{base}/tables/flame-facts.job.sqlite`. */
-	public static function path(): string {
-		return Bootstrap::base_dir() . '/tables/' . self::FILE;
+		$totals['urls'] = 'COUNT( * ) AS urls';
+		return \sprintf( self::TOTALS_TABLE, \implode( ', ', $partials ), \implode( ', ', $totals ) );
 	}
 
 	/**
@@ -275,8 +236,8 @@ final class Url_Snapshot {
 	}
 
 	/**
-	 * The ORDER BY a sort and an order name, its ties broken by the hash in
-	 * the same direction and a nullable key's nulls last either way.
+	 * The ORDER BY a sort and an order name, as `Stats_Query::ranking()`
+	 * ranks a sort, its ties broken by the hash.
 	 *
 	 * @param string $sort  One of `Performance_CI_Node::URL_SORTS`' values.
 	 * @param string $order 'asc' or 'desc'.
@@ -289,14 +250,8 @@ final class Url_Snapshot {
 		if ( 'asc' !== $order && 'desc' !== $order ) {
 			throw new \InvalidArgumentException( \esc_html( "unknown order {$order}: asc or desc" ) );
 		}
-		$direction = \strtoupper( $order );
-		if ( 'url_name' === $sort ) {
-			return "server {$direction}, path {$direction}, url {$direction}";
-		}
-		if ( 'asc' === $order && \in_array( $sort, self::NULLABLE, true ) ) {
-			return "{$sort} IS NULL, {$sort}, url";
-		}
-		return "{$sort} {$direction}, url {$direction}";
+		$sorted = 'url_name' === $sort ? [ 'server', 'path' ] : [ $sort ];
+		return Stats_Query::ranking( $sorted, [ 'url' ], $order, \in_array( $sort, self::NULLABLE, true ) );
 	}
 
 	/**
@@ -314,6 +269,26 @@ final class Url_Snapshot {
 			$binds[]   = $server;
 		}
 		return [ [] === $clauses ? '' : ' WHERE ' . \implode( ' AND ', $clauses ), $binds ];
+	}
+
+	/**
+	 * The published snapshot, when one stands that has not expired at `$now`.
+	 * A file that will not open says so once a window.
+	 *
+	 * @param int $now The reply's clock.
+	 */
+	public static function open( int $now ): ?self {
+		try {
+			$db = Row_Table_Node::open_snapshot( self::NAME );
+			if ( null === $db ) {
+				return null;
+			}
+			$meta = $db->rows( 'SELECT as_of, expires FROM meta', [] )[0] ?? throw new \LogicException( 'it holds no meta row' );
+		} catch ( Table_Unavailable | \PDOException | \LogicException $e ) {
+			Core::print_less_often( 'performance: the URL snapshot did not open', ' — ' . $e->getMessage() );
+			return null;
+		}
+		return Core::as_int( $meta[1] ) <= $now ? null : new self( $db, Core::as_int( $meta[0] ) );
 	}
 
 	/** When the job built the snapshot. */
@@ -343,7 +318,7 @@ final class Url_Snapshot {
 	 */
 	public function totals( string $server, bool $workers ): array {
 		$rows = $this->db->rows(
-			'SELECT count, sum_ms / NULLIF( timed, 0 ), sum_peak_mb / NULLIF( count, 0 ), urls, errors FROM totals WHERE workers = ? AND server = ?',
+			'SELECT ' . \implode( ', ', self::TOTALS ) . ' FROM totals WHERE workers = ? AND server = ?',
 			[ $workers ? 1 : 0, $server ]
 		);
 		return [

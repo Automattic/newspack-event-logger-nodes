@@ -13,6 +13,7 @@ use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Overview_Prefetch;
 use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
 use Newspack_Event_Logger_Nodes\Bucket;
+use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -21,6 +22,8 @@ use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Job_Worker_Node;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Row_Reader;
+use Newspack_Nodes\Row_Table_Node;
 use Newspack_Nodes\Table_Unavailable;
 
 /**
@@ -197,12 +200,12 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$this->assertSame( [ 'https://seed.example/moa-5522/' ], \array_column( $served['data'], 'url' ) );
 		$this->assertSame( self::NOW + 9, $served['as_of'] );
-		$this->assertFileDoesNotExist( Url_Snapshot::path() );
+		$this->assertFalse( self::snapshot_published() );
 	}
 
 	public function test_a_snapshot_that_is_no_database_is_answered_live(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5527/', 'ms' => 8.5 ] );
-		\file_put_contents( Url_Snapshot::path(), 'kea-5527 is no sqlite database' );
+		\file_put_contents( $this->snapshot_file(), 'kea-5527 is no sqlite database' );
 		self::clock( self::NOW + 9 );
 
 		$served = $this->urls( [ '--limit=100' ] );
@@ -213,7 +216,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 	public function test_a_snapshot_that_will_not_open_is_answered_live_and_said(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5528/', 'ms' => 8.5 ] );
-		\mkdir( Url_Snapshot::path() );
+		\mkdir( $this->snapshot_file() );
 
 		$served = $this->urls( [ '--limit=100' ] );
 
@@ -226,10 +229,15 @@ final class OverviewPrefetchTest extends TestCase {
 
 	public function test_a_snapshot_that_opens_but_will_not_read_is_answered_live_and_said(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5537/', 'ms' => 8.5 ] );
-		$db = new \PDO( 'sqlite:' . Url_Snapshot::path() );
-		$db->exec( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )' );
-		$db->exec( 'INSERT INTO meta VALUES ( ' . self::NOW . ', ' . ( self::NOW + 2 * self::INTERVAL ) . ' )' );
-		$db = null;
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			Url_Snapshot::NAME,
+			static function ( Row_Reader $db ): bool {
+				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
+				return true;
+			}
+		);
 		self::clock( self::NOW + 9 );
 
 		$served   = $this->urls( [ '--limit=100' ] );
@@ -306,7 +314,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$jw = $this->deliver( self::NOW - self::INTERVAL );
 
-		$this->assertFileDoesNotExist( Url_Snapshot::path() );
+		$this->assertFalse( self::snapshot_published() );
 		$this->assertSame( [], $jw->probe_stats(), 'a declined job records no outcome' );
 		$this->assertSame( '/outer-5529', $_SERVER['REQUEST_URI'], 'a declined job opens no context' );
 	}
@@ -317,7 +325,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$jw = $this->deliver( self::NOW );
 
-		$this->assertFileDoesNotExist( Url_Snapshot::path() );
+		$this->assertFalse( self::snapshot_published() );
 		$this->assertSame( [], $jw->probe_stats() );
 	}
 
@@ -326,7 +334,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$jw = $this->deliver( self::NOW - self::INTERVAL + 1 );
 
-		$this->assertFileExists( Url_Snapshot::path() );
+		$this->assertTrue( self::snapshot_published() );
 		$this->assertCount( 1, $jw->probe_stats() );
 	}
 
@@ -390,7 +398,7 @@ final class OverviewPrefetchTest extends TestCase {
 			$this->run_job();
 			$this->fail( 'a job whose stats will not open publishes nothing' );
 		} catch ( Table_Unavailable ) {
-			$this->assertFileDoesNotExist( Url_Snapshot::path() );
+			$this->assertFalse( self::snapshot_published() );
 		}
 		$this->activate_shipped( 'flame-builder', 3 );
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5526/', 'ms' => 8.5 ] );

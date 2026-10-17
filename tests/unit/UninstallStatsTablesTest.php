@@ -11,7 +11,11 @@ declare( strict_types = 1 );
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
+use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Row_Table_Node;
 use Newspack_Nodes\Spawn_Coordinator;
 use Newspack_Nodes\Table_Node;
 use Newspack_Nodes\Topology_Registry;
@@ -19,6 +23,8 @@ use Newspack_Nodes\Topology_Registry;
 require_once \dirname( __DIR__, 2 ) . '/includes/uninstall-cleanup.php';
 
 final class UninstallStatsTablesTest extends TestCase {
+
+	use FactsSeeder;
 
 	/** Each case's own dirs leave the registry; the next setUp re-registers. */
 	protected function tearDown(): void {
@@ -46,16 +52,60 @@ final class UninstallStatsTablesTest extends TestCase {
 		}
 	}
 
-	public function test_uninstall_deletes_the_url_snapshot_and_any_build(): void {
+	/**
+	 * Uninstall erases the published URL snapshot and a build in flight,
+	 * both through the substrate, and counts them with the table's files.
+	 */
+	public function test_uninstall_deletes_the_url_snapshot_and_a_build_in_flight(): void {
 		$this->use_base_dir( $this->make_temp_dir( 'uninstall-stats-job-' ) );
-		$build = \dirname( Url_Snapshot::path() ) . '/flame-facts.job.1790007561.sqlite';
-		$kept  = [ Table_Node::file( 'kea-ledger-7714', 0 ) ];
-		self::write( Url_Snapshot::path(), $build, ...$kept );
+		$this->activate_shipped( 'flame-builder', 1 );
+		$this->seed_request( [ 'url' => 'https://seed.example/kea-7561/' ] );
+		$this->assertTrue( Row_Table_Node::build( Flame_Facts_Row_Schema::class, Url_Snapshot::NAME, static fn (): bool => true ) );
+		$this->assertTrue( self::snapshot_published() );
+		$standing = \count( \array_filter( self::partition_files( self::FACTS_TABLE ), \is_file( ... ) ) );
+		$this->assertGreaterThan( 0, $standing, 'the seed wrote the table' );
 
-		$this->assertSame( 2, \Newspack_Event_Logger_Nodes\delete_stats_tables( NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' ) );
-		$this->assertFileDoesNotExist( Url_Snapshot::path() );
-		$this->assertFileDoesNotExist( $build, 'a crashed build goes with it' );
-		$this->assertFileExists( $kept[0], 'another Table\'s file stands' );
+		$deleted = null;
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			Url_Snapshot::NAME,
+			static function () use ( &$deleted ): bool {
+				$deleted = \Newspack_Event_Logger_Nodes\delete_stats_tables( NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' );
+				return false;
+			}
+		);
+
+		$this->assertSame( $standing + 2, $deleted, 'the table\'s files, the snapshot and the build' );
+		$this->assertFalse( self::snapshot_published() );
+		$this->assertSame( [], Row_Table_Node::remove_snapshot( Url_Snapshot::NAME ), 'no publish and no build stands' );
+	}
+
+	/**
+	 * A snapshot that will not delete is said, as a file the unlink loop
+	 * cannot delete is, and the uninstall goes on.
+	 */
+	public function test_uninstall_says_a_snapshot_that_will_not_delete_and_goes_on(): void {
+		$this->use_base_dir( $this->make_temp_dir( 'uninstall-stats-stuck-' ) );
+		$this->activate_shipped( 'flame-builder', 1 );
+		$this->seed_request( [ 'url' => 'https://seed.example/kea-7562/' ] );
+		Row_Table_Node::build( Flame_Facts_Row_Schema::class, Url_Snapshot::NAME, static fn (): bool => true );
+		foreach ( self::partition_files( self::FACTS_TABLE ) as $file ) {
+			\is_file( $file ) && \unlink( $file );
+		}
+		$tables = \dirname( $this->snapshot_file() );
+		\chmod( $tables, 0555 );
+		try {
+			$deleted = \Newspack_Event_Logger_Nodes\delete_stats_tables( NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' );
+		} finally {
+			\chmod( $tables, 0755 );
+		}
+
+		$this->assertSame( 0, $deleted );
+		$this->assertTrue( self::snapshot_published(), 'the snapshot stands' );
+		$this->assertNotEmpty(
+			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'uninstall: the URL snapshot did not delete' ) && \str_contains( $line, 'will not delete' ) ),
+			'the failure is said, naming the substrate\'s refusal'
+		);
 	}
 
 	public function test_uninstall_finds_the_facts_table_by_schema_whatever_its_name(): void {

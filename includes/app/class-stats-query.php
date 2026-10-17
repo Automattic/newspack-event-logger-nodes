@@ -531,14 +531,11 @@ final class Stats_Query {
 			return [ self::ranked( $grouped, $columns, $groups, $keys ), [ ...$binds, $spec['top'] ] ];
 		}
 		$order_by = static function ( string $sort, string $order ) use ( $groups, $sorts ): string {
-			$columns = $groups;
-			if ( '' !== $sort ) {
-				$sorted    = $sorts[ $sort ] ?? throw new \LogicException( \esc_html( "sort {$sort} names no group or measure" ) );
-				$direction = ' ' . \strtoupper( $order );
-				$columns   = \array_map( static fn ( string $column ): string => $column . $direction, $groups );
-				\array_unshift( $columns, ...\array_map( static fn ( string $column ): string => $column . $direction . ' NULLS LAST', $sorted ) );
+			if ( '' === $sort ) {
+				return [] === $groups ? '' : ' ORDER BY ' . \implode( ', ', $groups );
 			}
-			return [] === $columns ? '' : ' ORDER BY ' . \implode( ', ', $columns );
+			$sorted = $sorts[ $sort ] ?? throw new \LogicException( \esc_html( "sort {$sort} names no group or measure" ) );
+			return ' ORDER BY ' . self::ranking( $sorted, $groups, $order, true );
 		};
 		$page = $order_by( $spec['sort'], $spec['order'] );
 		if ( null === $spec['also'] ) {
@@ -570,6 +567,34 @@ final class Stats_Query {
 	}
 
 	/**
+	 * The ORDER BY terms ranking by `$sorted` in `$order`, a null last in
+	 * either order, its ties broken by `$ties` in the same direction: the one
+	 * rule every sort follows. Ascending, a nullable column ranks as
+	 * `k IS NULL, k ASC`, which an index on `( k IS NULL, k, … )` serves.
+	 * Descending, SQLite ranks a null last already, so the bare `k DESC`
+	 * stands, as a column that is never null does in either order.
+	 *
+	 * @param list<string> $sorted   The sort's columns.
+	 * @param list<string> $ties     The columns breaking its ties.
+	 * @param string       $order    'asc' or 'desc'.
+	 * @param bool         $nullable Whether a sorted column may hold a null.
+	 */
+	public static function ranking( array $sorted, array $ties, string $order, bool $nullable ): string {
+		$direction = ' ' . \strtoupper( $order );
+		$terms     = [];
+		foreach ( $sorted as $column ) {
+			if ( $nullable && 'asc' === $order ) {
+				$terms[] = "{$column} IS NULL";
+			}
+			$terms[] = $column . $direction;
+		}
+		foreach ( $ties as $column ) {
+			$terms[] = $column . $direction;
+		}
+		return \implode( ', ', $terms );
+	}
+
+	/**
 	 * A `top` statement over the grouped rows, the union read once: each
 	 * tuple of `$keys` ranked by the sum over its time rows of `t`, highest
 	 * first and ties by the tuple's values, and the rows of the top ones in
@@ -587,18 +612,6 @@ final class Stats_Query {
 		$ranked  = "SELECT *, DENSE_RANK() OVER ( ORDER BY r_t DESC NULLS LAST, {$tuple} ) AS r_pos FROM ( {$summed} )";
 		$counted = "SELECT *, MAX( r_pos ) OVER () AS r_groups FROM ( {$ranked} )";
 		return 'SELECT ' . \implode( ', ', $columns ) . ", r_groups FROM ( {$counted} ) WHERE r_pos <= ? ORDER BY r_pos, " . \implode( ', ', $groups );
-	}
-
-	/**
-	 * A measure's aggregate in the outer statement: its fold over the
-	 * partitions' partials when the spec composes, else over the arm's rows.
-	 *
-	 * @param Measured $def      The table answering the spec.
-	 * @param string   $name     The measure.
-	 * @param bool     $composes Whether the spec reads partials.
-	 */
-	private static function outer( array $def, string $name, bool $composes ): string {
-		return $composes ? Core::as_string( $def['measures'][ $name ][ self::COMPOSED ] ) : self::aggregate( $def, $name );
 	}
 
 	/**
@@ -637,49 +650,6 @@ final class Stats_Query {
 			$sql   = 'SELECT ' . \implode( ', ', $outer ) . " FROM ( {$sql} ) AS g JOIN %1\$s.urls AS u ON u.id = g.f{$url}";
 		}
 		return [ $sql, $arm[1] ];
-	}
-
-	/**
-	 * A measure's aggregate over the arm inputs, its error kinds spelled.
-	 *
-	 * @param Measured $def  The table answering the spec.
-	 * @param string   $name The measure.
-	 */
-	private static function aggregate( array $def, string $name ): string {
-		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][ self::AGGREGATE ] );
-	}
-
-	/**
-	 * The names one slot of each named measure lists, each once: its arm
-	 * inputs, or the measures its fold reads.
-	 *
-	 * @param Measured     $def   The table answering the spec.
-	 * @param list<string> $named The measures.
-	 * @param self::INPUTS|self::FOLDS $slot Its inputs, or its folded measures.
-	 * @return list<string>
-	 */
-	private static function gathered( array $def, array $named, int $slot ): array {
-		$names = [];
-		foreach ( $named as $name ) {
-			\array_push( $names, ...$def['measures'][ $name ][ $slot ] );
-		}
-		return \array_values( \array_unique( $names ) );
-	}
-
-	/**
-	 * Whether every measure a spec names, its top_by included, folds from
-	 * per-partition partials.
-	 *
-	 * @param Measured     $def   The table answering it.
-	 * @param list<string> $named The measures, top_by included.
-	 */
-	private static function composes( array $def, array $named ): bool {
-		foreach ( $named as $name ) {
-			if ( null === $def['measures'][ $name ][ self::COMPOSED ] ) {
-				return false;
-			}
-		}
-		return true;
 	}
 
 	/**
@@ -730,6 +700,80 @@ final class Stats_Query {
 			&& [] === \array_diff( $measures, self::HOURLY_MEASURES )
 			&& [] === \array_filter( $spec['buckets'], static fn ( array $range ): bool => 0 !== $range[0] % self::BUCKETS_PER_HOUR || 0 !== ( $range[1] + 1 ) % self::BUCKETS_PER_HOUR );
 		return $hourly ? 'requests_hourly' : 'requests';
+	}
+
+	/**
+	 * A measure's fold over per-partition partials `q_<name>`, as `run()`
+	 * merges the partitions, and the measures whose partials it reads: the
+	 * one definition a table storing those measures by URL re-derives its
+	 * totals from.
+	 *
+	 * @param string $table A table `run()` reads.
+	 * @param string $name  One of its measures.
+	 * @return array{0:string, 1:list<string>}
+	 * @throws \InvalidArgumentException On a measure the table folds from no partials.
+	 */
+	public static function fold( string $table, string $name ): array {
+		$def = self::TABLES[ $table ] ?? null;
+		if ( null === $def || ! isset( $def['measures'][ $name ] ) || ! self::composes( $def, [ $name ] ) ) {
+			throw new \InvalidArgumentException( \esc_html( "{$table} folds no {$name} from partials" ) );
+		}
+		return [ self::outer( $def, $name, true ), self::gathered( $def, [ $name ], self::FOLDS ) ];
+	}
+
+	/**
+	 * The names one slot of each named measure lists, each once: its arm
+	 * inputs, or the measures its fold reads.
+	 *
+	 * @param Measured     $def   The table answering the spec.
+	 * @param list<string> $named The measures.
+	 * @param self::INPUTS|self::FOLDS $slot Its inputs, or its folded measures.
+	 * @return list<string>
+	 */
+	private static function gathered( array $def, array $named, int $slot ): array {
+		$names = [];
+		foreach ( $named as $name ) {
+			\array_push( $names, ...$def['measures'][ $name ][ $slot ] );
+		}
+		return \array_values( \array_unique( $names ) );
+	}
+
+	/**
+	 * A measure's aggregate in the outer statement: its fold over the
+	 * partitions' partials when the spec composes, else over the arm's rows.
+	 *
+	 * @param Measured $def      The table answering the spec.
+	 * @param string   $name     The measure.
+	 * @param bool     $composes Whether the spec reads partials.
+	 */
+	private static function outer( array $def, string $name, bool $composes ): string {
+		return $composes ? Core::as_string( $def['measures'][ $name ][ self::COMPOSED ] ) : self::aggregate( $def, $name );
+	}
+
+	/**
+	 * A measure's aggregate over the arm inputs, its error kinds spelled.
+	 *
+	 * @param Measured $def  The table answering the spec.
+	 * @param string   $name The measure.
+	 */
+	private static function aggregate( array $def, string $name ): string {
+		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][ self::AGGREGATE ] );
+	}
+
+	/**
+	 * Whether every measure a spec names, its top_by included, folds from
+	 * per-partition partials.
+	 *
+	 * @param Measured     $def   The table answering it.
+	 * @param list<string> $named The measures, top_by included.
+	 */
+	private static function composes( array $def, array $named ): bool {
+		foreach ( $named as $name ) {
+			if ( null === $def['measures'][ $name ][ self::COMPOSED ] ) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**

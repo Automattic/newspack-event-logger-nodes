@@ -1198,4 +1198,48 @@ final class StatsQueryTest extends TestCase {
 
 		$this->assertSame( [], Stats_Query::newest_requests( [], $this->last_day(), 500 ) );
 	}
+	/**
+	 * The ORDER BY a sort takes, over `k` and its tie-break `t`, in each order.
+	 *
+	 * @return array<string,array{0:string,1:list<list<mixed>>}>
+	 */
+	public static function rankings(): array {
+		return [
+			'asc'  => [ 'asc', [ [ 1, 'c' ], [ 2, 'a' ], [ 2, 'b' ], [ null, 'a' ], [ null, 'c' ] ] ],
+			'desc' => [ 'desc', [ [ 2, 'b' ], [ 2, 'a' ], [ 1, 'c' ], [ null, 'c' ], [ null, 'a' ] ] ],
+		];
+	}
+
+	/**
+	 * A sort ranks a null last in either order and breaks its ties in its
+	 * own direction.
+	 *
+	 * @param list<list<mixed>> $expected
+	 */
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'rankings' )]
+	public function test_ranking_puts_a_null_last_and_breaks_ties_in_its_direction( string $order, array $expected ): void {
+		$db = new \PDO( 'sqlite::memory:', null, null, [ \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION ] );
+		$db->exec( "CREATE TABLE r ( k INTEGER, t TEXT ); INSERT INTO r VALUES ( 2, 'b' ), ( NULL, 'a' ), ( 1, 'c' ), ( 2, 'a' ), ( NULL, 'c' )" );
+
+		$rows = $db->query( 'SELECT k, t FROM r ORDER BY ' . Stats_Query::ranking( [ 'k' ], [ 't' ], $order, true ) )->fetchAll( \PDO::FETCH_NUM );
+
+		$this->assertSame( $expected, $rows );
+	}
+
+	public function test_a_fold_merges_partials_as_a_query_merges_partitions(): void {
+		$db = new \PDO( 'sqlite::memory:', null, null, [ \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION ] );
+		$db->exec( 'CREATE TABLE q ( q_sum_ms REAL, q_timed INTEGER, q_sum_peak_mb REAL, q_count INTEGER ); INSERT INTO q VALUES ( 31.5, 2, 12.25, 4 ), ( 9.75, 1, 3.5, 3 )' );
+		[ $avg_ms, $reads ] = Stats_Query::fold( 'requests', 'avg_ms' );
+		[ $avg_peak_mb ]    = Stats_Query::fold( 'requests', 'avg_peak_mb' );
+
+		$this->assertSame( [ 'sum_ms', 'timed' ], $reads );
+		$this->assertSame( [ [ 13.75, 2.25 ] ], $db->query( "SELECT {$avg_ms}, {$avg_peak_mb} FROM q" )->fetchAll( \PDO::FETCH_NUM ) );
+	}
+
+	public function test_a_measure_with_no_fold_is_refused(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'urls' );
+
+		Stats_Query::fold( 'requests', 'urls' );
+	}
 }

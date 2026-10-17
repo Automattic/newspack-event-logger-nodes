@@ -19,7 +19,6 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
-use Newspack_Nodes\Sqlite_Arm;
 use Newspack_Nodes\Table_Unavailable;
 
 /**
@@ -137,7 +136,6 @@ final class UrlSnapshotTest extends TestCase {
 	private function assert_page_is_live( string $sort, string $order, string $server, bool $workers, int $offset, int $limit ): array {
 		$this->seed_parity_traffic();
 		Url_Snapshot::publish( self::NOW, 240, [] );
-		$this->assertFileExists( Url_Snapshot::path() );
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
@@ -205,10 +203,11 @@ final class UrlSnapshotTest extends TestCase {
 	public function test_a_site_wide_page_sorts_off_an_index( string $sort, string $order, bool $workers ): void {
 		$this->seed_parity_traffic();
 		Url_Snapshot::publish( self::NOW, 240, [] );
-		$this->assertFileExists( Url_Snapshot::path() );
+		$db = Row_Table_Node::open_snapshot( Url_Snapshot::NAME );
+		$this->assertInstanceOf( Row_Reader::class, $db, 'the substrate publishes the snapshot under its name' );
 		[ $sql, $binds ] = ( new \ReflectionMethod( Url_Snapshot::class, 'listing' ) )->invoke( null, '', $workers, $sort, $order );
 
-		$plan = \implode( "\n", \array_column( Sqlite_Arm::open_snapshot( Url_Snapshot::path() )->rows( "EXPLAIN QUERY PLAN {$sql} LIMIT ? OFFSET ?", [ ...$binds, 3, 1 ] ), 3 ) );
+		$plan = \implode( "\n", \array_column( $db->rows( "EXPLAIN QUERY PLAN {$sql} LIMIT ? OFFSET ?", [ ...$binds, 3, 1 ] ), 3 ) );
 
 		$this->assertStringNotContainsString( 'USE TEMP B-TREE FOR ORDER BY', $plan );
 		$this->assertMatchesRegularExpression( '/INDEX urls_/', $plan );
@@ -285,7 +284,6 @@ final class UrlSnapshotTest extends TestCase {
 			'rows'      => [ [ 9 ] ],
 		];
 		Url_Snapshot::publish( self::NOW, 240, [ 'query:6f1e' => $stored ] );
-		$this->assertFileExists( Url_Snapshot::path() );
 
 		$snapshot = Url_Snapshot::open( self::NOW );
 
@@ -304,13 +302,46 @@ final class UrlSnapshotTest extends TestCase {
 	}
 
 	public function test_no_snapshot_does_not_open(): void {
-		$this->assertFileDoesNotExist( Url_Snapshot::path() );
+		$this->assertFalse( self::snapshot_published() );
 		$this->assertNull( Url_Snapshot::open( self::NOW ) );
 	}
 
 	public function test_a_file_that_is_no_database_does_not_open(): void {
 		$this->seed_request();
-		\file_put_contents( Url_Snapshot::path(), 'kiwi-9931' );
+		\file_put_contents( $this->snapshot_file(), 'kiwi-9931' );
+
+		$this->assertNull( Url_Snapshot::open( self::NOW ) );
+	}
+
+	/**
+	 * A published file with no meta table, or an empty one, does not open.
+	 *
+	 * @return array<string,array{0:list<string>}>
+	 */
+	public static function meta_less(): array {
+		return [
+			'no meta table' => [ [] ],
+			'no meta row'   => [ [ 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )' ] ],
+		];
+	}
+
+	/**
+	 * @param list<string> $statements What the build writes.
+	 */
+	#[DataProvider( 'meta_less' )]
+	public function test_a_snapshot_with_no_meta_does_not_open( array $statements ): void {
+		$this->seed_request();
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			Url_Snapshot::NAME,
+			static function ( Row_Reader $db ) use ( $statements ): bool {
+				foreach ( $statements as $sql ) {
+					$db->rows( $sql, [] );
+				}
+				return true;
+			}
+		);
+		$this->assertTrue( self::snapshot_published() );
 
 		$this->assertNull( Url_Snapshot::open( self::NOW ) );
 	}
@@ -332,21 +363,21 @@ final class UrlSnapshotTest extends TestCase {
 			$this->assertStringContainsString( 'query:3c9a will not encode', $e->getMessage() );
 		}
 
-		$this->assertSame( [], \glob( \dirname( Url_Snapshot::path() ) . '/flame-facts.job.*' ) ?: [] );
+		$this->assertFalse( self::snapshot_published() );
+		$this->assertSame( [], Row_Table_Node::remove_snapshot( Url_Snapshot::NAME ), 'no publish and no build stands' );
 	}
 
 	public function test_no_partition_file_publishes_nothing(): void {
-		$this->assertDirectoryDoesNotExist( \dirname( Url_Snapshot::path() ) );
+		$tables = \dirname( $this->facts_file( 0 ) );
+		$this->assertDirectoryDoesNotExist( $tables );
 		Url_Snapshot::publish( self::NOW, 240, [] );
-		$this->assertFileDoesNotExist( Url_Snapshot::path() );
-		$this->assertDirectoryDoesNotExist( \dirname( Url_Snapshot::path() ), 'publishing nothing makes no directory' );
+		$this->assertDirectoryDoesNotExist( $tables, 'publishing nothing makes no directory' );
 
-		\mkdir( \dirname( Url_Snapshot::path() ), 0777, true );
+		\mkdir( $tables, 0777, true );
 		Url_Snapshot::publish( self::NOW, 240, [] );
-		$this->assertFileDoesNotExist( Url_Snapshot::path() );
 
-		$this->assertFileDoesNotExist( Url_Snapshot::path() );
-		$this->assertSame( [], \glob( \dirname( Url_Snapshot::path() ) . '/flame-facts.job.*.sqlite' ) ?: [] );
+		$this->assertFalse( self::snapshot_published() );
+		$this->assertSame( [], Row_Table_Node::remove_snapshot( Url_Snapshot::NAME ), 'no publish and no build stands' );
 	}
 
 	/** An empty window is still a snapshot: no URLs, zero totals. */
@@ -354,7 +385,6 @@ final class UrlSnapshotTest extends TestCase {
 		$this->seed_request( self::request( '/tui-4410/', 400, 41, [ 'ms' => 12.5 ] ) );
 
 		Url_Snapshot::publish( self::NOW, 240, [] );
-		$this->assertFileExists( Url_Snapshot::path() );
 		$snapshot = Url_Snapshot::open( self::NOW );
 
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
@@ -365,11 +395,9 @@ final class UrlSnapshotTest extends TestCase {
 	public function test_a_publish_leaves_no_build_file_and_replaces_the_last(): void {
 		$this->seed_request( self::request( '/tui-4410/', 3, 11, [ 'ms' => 40.5 ] ) );
 		Url_Snapshot::publish( self::NOW, 240, [] );
-		$this->assertFileExists( Url_Snapshot::path() );
 		$this->seed_request( self::request( '/moa-6638/', 1, 51, [ 'ms' => 18.5 ] ), 1 );
 
 		Url_Snapshot::publish( self::NOW + 120, 240, [] );
-		$this->assertFileExists( Url_Snapshot::path() );
 		$snapshot = Url_Snapshot::open( self::NOW + 120 );
 
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
@@ -378,7 +406,7 @@ final class UrlSnapshotTest extends TestCase {
 			[ 'https://seed.example/moa-6638/', 'https://seed.example/tui-4410/' ],
 			\array_column( $snapshot->page( '', false, 'url_name', 'asc', 0, 50 )['rows'], 1 )
 		);
-		$this->assertSame( [], \glob( \dirname( Url_Snapshot::path() ) . '/flame-facts.job.*.sqlite' ) ?: [] );
+		$this->assertSame( [ $this->snapshot_file() ], Row_Table_Node::remove_snapshot( Url_Snapshot::NAME ), 'the publish alone stands' );
 	}
 
 	/** A page takes the bounds a live page takes. */
@@ -449,12 +477,10 @@ final class UrlSnapshotTest extends TestCase {
 		];
 	}
 
-	public function test_into_refuses_a_build_attaching_no_partition(): void {
-		\mkdir( \dirname( Url_Snapshot::path() ), 0777, true );
-
+	public function test_into_refuses_a_builder_attaching_no_partition(): void {
 		$this->expectException( \LogicException::class );
 		$this->expectExceptionMessage( 'into reads at least one partition' );
-		$this->into( [ 'group' => [ 'url' ] ] );
+		Stats_Query::into( new Row_Reader( new \PDO( 'sqlite::memory:' ), [] ), 'urls', self::count_spec( [ 'group' => [ 'url' ] ] ) );
 	}
 
 	/**
@@ -463,16 +489,22 @@ final class UrlSnapshotTest extends TestCase {
 	 * @param array<string,mixed> $over The spec's group and paging.
 	 */
 	private function into( array $over ): void {
-		$spec = $over + [
+		$spec = self::count_spec( $over );
+		Row_Table_Node::build( Flame_Facts_Row_Schema::class, 'into-scratch-7718', static fn ( Row_Reader $db ) => Stats_Query::into( $db, 'urls', $spec ) );
+	}
+
+	/**
+	 * A `requests` count spec over the window.
+	 *
+	 * @param array<string,mixed> $over The spec's group and paging.
+	 * @return array<string,mixed>
+	 */
+	private static function count_spec( array $over ): array {
+		return $over + [
 			'source'  => 'requests',
 			'filter'  => [],
 			'measure' => [ 'count' ],
 			'buckets' => Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, self::NOW ),
 		];
-		Row_Table_Node::build(
-			Flame_Facts_Row_Schema::class,
-			\dirname( Url_Snapshot::path() ) . '/into-scratch.sqlite',
-			static fn ( Row_Reader $db ) => Stats_Query::into( $db, 'urls', $spec )
-		);
 	}
 }

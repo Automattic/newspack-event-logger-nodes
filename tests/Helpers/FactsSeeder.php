@@ -14,6 +14,7 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Helpers;
 
+use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Log_Manager;
@@ -240,5 +241,19 @@ trait FactsSeeder {
 	 */
 	protected function facts_file( int $partition ): string {
 		return Bootstrap::row_table( Flame_Facts_Row_Schema::class )['files'][ $partition ];
+	}
+
+	/**
+	 * The file the substrate publishes the URL snapshot at, beside the facts
+	 * table's partition files (ADR-35), for a test planting one that will
+	 * not open there.
+	 */
+	protected function snapshot_file(): string {
+		return \dirname( $this->facts_file( 0 ) ) . '/' . Url_Snapshot::NAME . '.sqlite';
+	}
+
+	/** Whether the substrate holds a published URL snapshot. */
+	protected static function snapshot_published(): bool {
+		return null !== Row_Table_Node::open_snapshot( Url_Snapshot::NAME );
 	}
 }

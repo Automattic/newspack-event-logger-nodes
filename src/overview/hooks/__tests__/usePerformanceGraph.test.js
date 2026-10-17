@@ -201,7 +201,7 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		}
 	} );
 
-	test( 'waits out a slow live answer before asking a stats slice again', () => {
+	test( 'never re-asks a stats slice: an unanswered ask lapses and the next poll asks', () => {
 		installWire();
 		renderHook( () => usePerformanceGraph() );
 		for ( const fetcher of [
@@ -213,7 +213,7 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 			'url-chart:fetch',
 			'url-categories:fetch',
 		] ) {
-			expect( Core.node( fetcher ).retry_after_s ).toBe( 130 );
+			expect( Core.node( fetcher ).retry_after_s ).toBe( 0 );
 		}
 		expect( Core.node( 'request-detail:fetch' ).retry_after_s ).toBe( 15 );
 	} );

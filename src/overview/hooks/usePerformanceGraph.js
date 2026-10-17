@@ -108,12 +108,14 @@ const OVERVIEW_TARGET = egressPath( GROUPS.overview, SERVER );
 const DEFAULT_REFRESH_INTERVAL_MS = 15000;
 
 /**
- * Seconds a stats slice waits on an unanswered ask before asking again: past
- * a 120 s gateway, so a question answering live in tens of seconds, a search
- * or a chipped page, runs once rather than once a poll. A POST that fails
- * settles as an error, and the next poll asks then.
+ * The `retry_after_s` of a stats slice: 0, so an unanswered ask is never sent
+ * again, and a question answering live in tens of seconds, a search or a
+ * chipped page, runs once rather than once a poll. The ask lapses at the
+ * Fetcher's 120 s ask expiry, and the poll that retires it asks again. A POST
+ * that fails settles as an error, since a slice that never re-asks has no ask
+ * to re-arm, and the next poll asks again.
  */
-const STATS_RETRY_AFTER_S = 130;
+const STATS_NO_REASK = 0;
 
 /**
  * Matched-request cap `PerformanceDashboard` sends with `grep_requests`. It
@@ -655,7 +657,7 @@ export function usePerformanceGraph( opts = {} ) {
 					tee,
 					target: OVERVIEW_TARGET,
 				} );
-				Core.node( each.fetcher ).retry_after_s = STATS_RETRY_AFTER_S;
+				Core.node( each.fetcher ).retry_after_s = STATS_NO_REASK;
 			}
 
 			// @longform The URL modal's three slices ride their OWN Timer
@@ -674,7 +676,7 @@ export function usePerformanceGraph( opts = {} ) {
 					tee: urlTee,
 					target: egressPath( GROUPS.url, SERVER ),
 				} );
-				Core.node( each.fetcher ).retry_after_s = STATS_RETRY_AFTER_S;
+				Core.node( each.fetcher ).retry_after_s = STATS_NO_REASK;
 			}
 
 			// @longform On-demand dump_request: a selection asks through
