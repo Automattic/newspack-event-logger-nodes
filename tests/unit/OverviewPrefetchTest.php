@@ -434,7 +434,7 @@ final class OverviewPrefetchTest extends TestCase {
 	public function test_a_scoped_overview_names_the_servers_the_snapshot_stored(): void {
 		$this->seed_request( [ 'server' => 'kea-6201.example', 'url' => 'https://kea-6201.example/a/', 'ms' => 33.5 ] );
 		$this->run_job();
-		$this->seed_request( [ 'server' => 'kea-6201.example', 'url' => 'https://kea-6201.example/b/', 'ms' => 8.5 ] );
+		$this->seed_request( [ 'server' => 'kea-6201.example', 'url' => 'https://kea-6201.example/b/', 'ms' => 8.5, 'profiled' => 1 ] );
 		$this->seed_request( [ 'server' => 'kaka-6201.example', 'url' => 'https://kaka-6201.example/c/', 'ms' => 12.5 ] );
 		self::clock( self::NOW + 9 );
 
@@ -444,6 +444,33 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( self::NOW + 9, $overview['as_of'] );
 		$this->assertSame( 2, $overview['totals']['requests'], 'the totals are live' );
 		$this->assertSame( [ 'kea-6201.example' ], $overview['servers'], 'the servers are the job\'s, before kaka' );
+		$this->assertSame( 1, $overview['leaderboard']['count'], 'the leaderboard is live, the profiled request after the job' );
+	}
+
+	/** A stored list lacking the scoped server is stale for that question. */
+	public function test_a_scoped_overview_of_a_server_the_job_never_saw_reads_its_servers_live(): void {
+		$this->seed_request( [ 'server' => 'kea-6206.example', 'url' => 'https://kea-6206.example/a/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'server' => 'ruru-6206.example', 'url' => 'https://ruru-6206.example/b/', 'ms' => 12.5 ] );
+		$this->seed_request( [ 'server' => 'ruru-6206.example', 'url' => 'https://ruru-6206.example/c/', 'ms' => 4.5 ] );
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=ruru-6206.example' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( [ 'ruru-6206.example', 'kea-6206.example' ], $overview['servers'], 'the scope stays on a server the job never saw' );
+	}
+
+	/** A blank server names no server, so the stored overview answers it whole. */
+	public function test_an_overview_with_a_blank_server_is_served_from_the_snapshot(): void {
+		$this->seed_request( [ 'server' => 'kea-6207.example', 'url' => 'https://kea-6207.example/a/', 'ms' => 33.5 ] );
+		$this->run_job();
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( self::NOW, $overview['as_of'], 'served, dated by the job' );
 	}
 
 	public function test_a_scoped_overview_with_no_snapshot_reads_its_servers_live(): void {
@@ -498,7 +525,24 @@ final class OverviewPrefetchTest extends TestCase {
 		);
 	}
 
-	public function test_a_scoped_overview_whose_stored_overview_names_no_servers_is_refused(): void {
+	/**
+	 * A stored overview naming no servers is a stored answer that will not
+	 * read: said once, and answered live, at any scope.
+	 *
+	 * @return array<string,array{0:list<string>}>
+	 */
+	public static function overview_scopes(): array {
+		return [
+			'unscoped' => [ [] ],
+			'scoped'   => [ [ '--server=kea-6205.example' ] ],
+		];
+	}
+
+	/**
+	 * @param list<string> $tokens
+	 */
+	#[DataProvider( 'overview_scopes' )]
+	public function test_a_stored_overview_naming_no_servers_is_answered_live_and_said( array $tokens ): void {
 		$this->seed_request( [ 'server' => 'kea-6205.example', 'url' => 'https://kea-6205.example/a/', 'ms' => 8.5 ] );
 		$key = Overview_Prefetch::key( 'overview', Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], [] ) );
 		Row_Table_Node::build(
@@ -514,10 +558,15 @@ final class OverviewPrefetchTest extends TestCase {
 		);
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6205.example' ] );
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', $tokens );
 
-		$this->assertIsString( $overview, 'a stored overview with no servers is no empty picker' );
-		$this->assertStringContainsString( 'the stored overview names no servers', $overview );
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( self::NOW + 9, $overview['as_of'], 'answered live' );
+		$this->assertSame( [ 'kea-6205.example' ], $overview['servers'] );
+		$this->assertNotEmpty(
+			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'the stored overview names no servers' ) ),
+			'the outage is said once'
+		);
 	}
 
 	public function test_a_question_the_snapshot_stored_no_answer_for_is_answered_live(): void {
