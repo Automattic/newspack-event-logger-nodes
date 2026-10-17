@@ -2302,13 +2302,19 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'time' => 0.25, 'count' => 7, 'samples' => 3, 'entries' => [] ], $board['categories']['zz-kaka'] );
 	}
 
-	/** The entries read stops at the deepest page a query may start, and says so. */
+	/**
+	 * The entries read stops at the deepest page a query may start, and says
+	 * so. The category row files through the writer; the 11,001 entries past
+	 * the bound are bulk-filled in SQL beside it, ids by join, so the test
+	 * spends its budget on the read it is about.
+	 */
 	public function test_the_entries_read_stops_at_the_offset_bound_and_says_so(): void {
-		$rows = [ [ 'category' => 'heavy', 'ms' => 900000.5, 'calls' => 9, 'requests' => 1 ] ];
-		for ( $i = 0; $i <= Stats_Query::MAX_OFFSET + Stats_Query::MAX_LIMIT; $i++ ) {
-			$rows[] = [ 'category' => 'heavy', 'entry' => "SELECT moa {$i}", 'ms' => 0.5 + $i, 'calls' => 1, 'requests' => 1 ];
-		}
-		$this->seed_site_timings( $rows );
+		$this->seed_site_timings( [ [ 'category' => 'heavy', 'ms' => 900000.5, 'calls' => 9, 'requests' => 1 ] ] );
+		$db   = new \PDO( 'sqlite:' . $this->facts_file( 0 ), null, null, [ \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION ] );
+		$last = Stats_Query::MAX_OFFSET + Stats_Query::MAX_LIMIT;
+		$db->exec( "WITH RECURSIVE n ( i ) AS ( SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < {$last} ) INSERT INTO entries ( name ) SELECT 'SELECT moa ' || i FROM n" );
+		$db->exec( "INSERT INTO timings_site ( bucket, server_id, worker, category_id, entry_id, listener, ms, calls, requests ) SELECT t.bucket, t.server_id, t.worker, t.category_id, e.id, 0, 0.5 + CAST( substr( e.name, 12 ) AS INTEGER ), 1, 1 FROM entries AS e, ( SELECT * FROM timings_site LIMIT 1 ) AS t WHERE e.name LIKE 'SELECT moa %'" );
+		$db     = null;
 		$logged = \count( Core::$recent_log );
 
 		$board = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' )['leaderboard'];

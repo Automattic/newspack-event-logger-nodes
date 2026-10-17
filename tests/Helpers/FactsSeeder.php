@@ -168,16 +168,30 @@ trait FactsSeeder {
 	 */
 	protected static function facts_ops( array $rows ): array {
 		$batch = [];
+		// One lookup op per name per batch, as the builder's `named_at()` files.
+		$at    = [];
+		$named = static function ( string $lookup, string $name, array $row = [ null ], array $ids = [] ) use ( &$batch, &$at ): int {
+			if ( ! isset( $at[ $lookup ][ $name ] ) ) {
+				$at[ $lookup ][ $name ] = \count( $batch );
+				$batch[]                = [ 'ignore', $lookup, [ ...$row, $name ], [], $ids ];
+			}
+			return $at[ $lookup ][ $name ];
+		};
 		foreach ( $rows as [ $verb, $table, $values ] ) {
 			$ids = [];
 			if ( \array_key_exists( 'url', $values ) ) {
 				$url    = Core::as_string( $values['url'] );
 				$server = Core::as_string( $values['server'] );
 				unset( $values['url'] );
-				$batch[]          = [ 'ignore', Flame_Facts_Row_Schema::NAMED_BY['server_id'], [ null, $server ] ];
-				$batch[]          = [ 'ignore', 'urls', [ null, Log_Manager::url_hash( $url ), null, Url_Parts::row_path( $url, $server ) ], [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => \count( $batch ) - 1 ] ];
+				$server_at = $named( Flame_Facts_Row_Schema::NAMED_BY['server_id'], $server );
+				$url_at    = $at['urls'][ $url ] ?? null;
+				if ( null === $url_at ) {
+					$url_at              = \count( $batch );
+					$at['urls'][ $url ] = $url_at;
+					$batch[]            = [ 'ignore', 'urls', [ null, Log_Manager::url_hash( $url ), null, Url_Parts::row_path( $url, $server ) ], [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => $server_at ] ];
+				}
 				$values['url_id'] = null;
-				$ids[ Flame_Facts_Row_Schema::position( $table, 'url_id' ) ] = \count( $batch ) - 1;
+				$ids[ Flame_Facts_Row_Schema::position( $table, 'url_id' ) ] = $url_at;
 			}
 			foreach ( \array_diff_key( Flame_Facts_Row_Schema::NAMED_BY, [ 'url_id' => true ] ) as $column => $lookup ) {
 				$key = \substr( $column, 0, -3 );
@@ -185,8 +199,7 @@ trait FactsSeeder {
 					continue;
 				}
 				if ( null !== $values[ $key ] ) {
-					$ids[ Flame_Facts_Row_Schema::position( $table, $column ) ] = \count( $batch );
-					$batch[] = [ 'ignore', $lookup, [ null, Core::as_string( $values[ $key ] ) ] ];
+					$ids[ Flame_Facts_Row_Schema::position( $table, $column ) ] = $named( $lookup, Core::as_string( $values[ $key ] ) );
 				}
 				unset( $values[ $key ] );
 				$values[ $column ] = null;
