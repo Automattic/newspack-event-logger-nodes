@@ -1231,10 +1231,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The answer to `overview`, `urls` or `query` for bound arguments: off
 	 * the URL snapshot the overview-prefetch job published, where it answers
-	 * them, else the live one, a live `overview` naming the `servers` the
-	 * stored one does. A `urls` question the snapshot cannot answer, and a
-	 * `query` whose key the job never stores, never open it. A snapshot that opens but will not read, or a stored answer
-	 * that will not decode, says so once a window and answers live.
+	 * them, else the live one. An `overview` reads the stored unscoped one,
+	 * which a scoped answer takes only its `servers` from, since no scope
+	 * changes them. A `urls` question the snapshot cannot answer, and a
+	 * `query` whose key the job never stores, never open it. A snapshot that
+	 * opens but will not read, or a stored answer that will not decode, says
+	 * so once a window and answers live.
 	 *
 	 * @param string                 $verb `overview`, `urls` or `query`.
 	 * @param array<array-key,mixed> $args Its bound arguments.
@@ -1247,7 +1249,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			$args['filter'] = self::filter_tokens( $args['filter'] );
 		}
 		$now      = self::now();
-		$key      = 'urls' === $verb ? null : Overview_Prefetch::key( $verb, $args );
+		$scoped   = 'overview' === $verb && null !== $args['server'];
+		$key      = 'urls' === $verb ? null : Overview_Prefetch::key( $verb, $scoped ? [ 'server' => null ] + $args : $args );
 		$served   = null === $key ? self::snapshot_answers( $args ) : isset( $this->stored_questions()[ $key ] );
 		$snapshot = $served ? Url_Snapshot::open( $now ) : null;
 		try {
@@ -1256,32 +1259,10 @@ class Performance_CI_Node extends Service_CI_Node {
 			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
 			$stored = null;
 		}
-		return $stored ?? self::answer_live( $verb, $args, $now, 'overview' === $verb ? $this->stored_servers( $snapshot, $now ) : null );
-	}
-
-	/**
-	 * The `servers` of the snapshot's stored unscoped overview, which no
-	 * scope changes: null with no snapshot, no stored overview, or one that
-	 * will not read, said once a window.
-	 *
-	 * @param Url_Snapshot|null $snapshot The snapshot `answered()` opened, if it opened one.
-	 * @param int               $now      The reply's clock.
-	 * @return list<mixed>|null
-	 * @throws \InvalidArgumentException As `Overview_Prefetch::stored()`.
-	 * @throws \RuntimeException As `Overview_Prefetch::stored()`.
-	 */
-	private function stored_servers( ?Url_Snapshot $snapshot, int $now ): ?array {
-		$key = Overview_Prefetch::key( 'overview', Command_Args::bind( Core::arr( Command_Interpreter_Node::declared_verbs( self::class )['overview']['args'] ?? throw new \LogicException( 'overview declares its args' ) ), [] ) );
-		if ( ! isset( $this->stored_questions()[ $key ] ) ) {
-			return null;
+		if ( $scoped ) {
+			return self::answer_live( $verb, $args, $now, null === $stored ? null : \array_values( Core::arr( $stored['servers'] ?? null ) ) );
 		}
-		try {
-			$answer = ( $snapshot ?? Url_Snapshot::open( $now ) )?->answer( $key );
-		} catch ( \PDOException | \JsonException $e ) {
-			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
-			return null;
-		}
-		return null === $answer ? null : \array_values( Core::arr( $answer['servers'] ?? null ) );
+		return $stored ?? self::answer_live( $verb, $args, $now );
 	}
 
 	/**
