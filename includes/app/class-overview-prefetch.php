@@ -17,6 +17,8 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
+use Newspack_Event_Logger_Nodes\Flame_Tree;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
@@ -35,10 +37,22 @@ final class Overview_Prefetch {
 	public const HANDLER = 'eln_overview_prefetch';
 
 	/**
+	 * file_get_contents seam for `stored-answers.json`. Tests reassign it to
+	 * seed questions the shipped file does not hold, so `stored()` runs its
+	 * own checks over them.
+	 *
+	 * Signature: `function ( string $path ): string|false`.
+	 *
+	 * @var (\Closure(string): (string|false))|null
+	 */
+	public static ?\Closure $read_file = null;
+
+	/**
 	 * The job: answer every question live and publish the available answers
 	 * with the URL snapshot, which serves two intervals. An answer the stats
 	 * could not open for is never stored, so the verb asks again live.
-	 * `admit()` declines a job before it gets here.
+	 * `admit()` declines a job before it gets here. On a started record each
+	 * answer is a `prefetch answer` span labelled with its question's name.
 	 *
 	 * @api The `eln_overview_prefetch` job handler.
 	 * @param string              $id         Unused; the job names none.
@@ -55,8 +69,8 @@ final class Overview_Prefetch {
 		}
 		$now     = (int) Core::right_now();
 		$answers = [];
-		foreach ( self::stored() as $key => [ 'verb' => $verb, 'args' => $args ] ) {
-			$answer = Performance_CI_Node::answer_live( $verb, $args, $now );
+		foreach ( self::stored() as $key => [ 'name' => $name, 'verb' => $verb, 'args' => $args ] ) {
+			$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $args, $now ), start: [ 'l' => $name ] );
 			if ( true === ( $answer['available'] ?? null ) ) {
 				$answers[ $key ] = $answer;
 			}
@@ -65,20 +79,27 @@ final class Overview_Prefetch {
 	}
 
 	/**
-	 * The questions the job answers, each verb and its arguments bound as
-	 * the verb binds them, by the key its answer is stored under.
+	 * The questions the job answers, each its name in `stored-answers.json`
+	 * and its verb and arguments bound as the verb binds them, by the key its
+	 * answer is stored under.
 	 *
-	 * @return array<string,array{verb:string,args:array<string,mixed>}>
+	 * @return array<string,array{name:string,verb:string,args:array<string,mixed>}>
 	 * @throws \InvalidArgumentException On a question naming a verb
 	 *                                   `performance` does not declare.
 	 * @throws \RuntimeException As `questions()`.
+	 * @throws \LogicException On two questions binding to one key, which
+	 *                         would store one answer for both.
 	 */
 	public static function stored(): array {
 		$verbs  = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
 		$stored = [];
-		foreach ( self::questions() as [ 'verb' => $verb, 'tokens' => $tokens ] ) {
-			$args                              = Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ?? throw new \InvalidArgumentException( \esc_html( "overview prefetch: performance declares no {$verb}" ) ) ), $tokens );
-			$stored[ self::key( $verb, $args ) ] = [ 'verb' => $verb, 'args' => $args ];
+		foreach ( self::questions() as $name => [ 'verb' => $verb, 'tokens' => $tokens ] ) {
+			$args = Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ?? throw new \InvalidArgumentException( \esc_html( "overview prefetch: performance declares no {$verb}" ) ) ), $tokens );
+			$key  = self::key( $verb, $args );
+			if ( isset( $stored[ $key ] ) ) {
+				throw new \LogicException( \esc_html( "overview prefetch: {$stored[ $key ]['name']} and {$name} bind to one key" ) );
+			}
+			$stored[ $key ] = [ 'name' => $name, 'verb' => $verb, 'args' => $args ];
 		}
 		return $stored;
 	}
@@ -101,7 +122,8 @@ final class Overview_Prefetch {
 	 * @throws \RuntimeException When the questions file will not read.
 	 */
 	public static function questions(): array {
-		$json = \file_get_contents( __DIR__ . '/stored-answers.json' );
+		$file = self::$read_file ?? static fn ( string $path ): string|false => \file_get_contents( $path ); // phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsUnknown -- Local file.
+		$json = $file( __DIR__ . '/stored-answers.json' );
 		$read = false === $json ? null : \json_decode( $json, true );
 		if ( ! \is_array( $read ) ) {
 			throw new \RuntimeException( 'overview prefetch: stored-answers.json will not read' );

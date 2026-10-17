@@ -648,6 +648,25 @@ class Log_Manager {
 	}
 
 	/**
+	 * Run `$run` as a `$label` span on the started record, or bare when no
+	 * record has started. The `(complete)` `m` is what `$describe` makes of
+	 * the result, `ok` without one, or `outcome()` of a throwable. A caller
+	 * whose label costs work to build asks `started_instance()` itself and
+	 * calls `timed()`.
+	 *
+	 * @template T
+	 * @param string                           $label    The span's name.
+	 * @param \Closure(): T                    $run      The work the span times.
+	 * @param (\Closure(T): (string|int))|null $describe The `(complete)` `m` a returned result gets.
+	 * @param array<string,mixed>              $start    Extra keys for the `(start)` entry.
+	 * @return T What `$run` returned.
+	 */
+	public static function span( string $label, \Closure $run, ?\Closure $describe = null, array $start = [] ): mixed {
+		$lm = self::started_instance();
+		return null === $lm ? $run() : $lm->timed( $label, $run, $describe ?? static fn (): string => 'ok', $start );
+	}
+
+	/**
 	 * Log an error.
 	 *
 	 * @api Used by external plugins.

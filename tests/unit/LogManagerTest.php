@@ -874,6 +874,59 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( 'returned {"rows":4417}', self::last_entry_of( $entries, 'kea 4417 (complete)' )['m'] ?? null );
 	}
 
+	/** On a started record, span() is one timed() span carrying its start keys. */
+	public function test_span_times_the_work_on_a_started_record(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$this->fresh_log_manager();
+
+		$result = Log_Manager::span( 'kea 4471', static fn (): int => 4471, start: [ 'l' => 'kea-4471' ] );
+		Log_Manager::instance()->finish();
+
+		$this->assertSame( 4471, $result );
+		$entries = self::firehose_entries( self::test_dir() );
+		$this->assertSame( 'kea-4471', self::last_entry_of( $entries, 'kea 4471 (start)' )['l'] ?? null );
+		$this->assertSame( 'ok', self::last_entry_of( $entries, 'kea 4471 (complete)' )['m'] ?? null, 'a span with no describe closes ok' );
+	}
+
+	/** Given a describe, span() closes with what it makes of the result. */
+	public function test_span_closes_with_what_describe_makes_of_the_result(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$this->fresh_log_manager();
+
+		Log_Manager::span( 'kea 4473', static fn (): int => 4473, static fn ( int $rows ): string => "{$rows} rows" );
+		Log_Manager::instance()->finish();
+
+		$this->assertSame( '4473 rows', self::last_entry_of( self::firehose_entries( self::test_dir() ), 'kea 4473 (complete)' )['m'] ?? null );
+	}
+
+	/** A throw closes the span with its outcome and propagates unchanged. */
+	public function test_span_closes_a_throw_with_its_outcome(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$this->fresh_log_manager();
+		$thrown = new \DomainException( 'takahe-4474' );
+
+		try {
+			Log_Manager::span( 'kea 4474', static fn (): never => throw $thrown );
+			$this->fail( 'the throw propagates' );
+		} catch ( \DomainException $e ) {
+			$this->assertSame( $thrown, $e );
+		}
+		Log_Manager::instance()->finish();
+
+		$this->assertSame( 'DomainException: takahe-4474', self::last_entry_of( self::firehose_entries( self::test_dir() ), 'kea 4474 (complete)' )['m'] ?? null );
+	}
+
+	/** With no record started, span() runs the work bare and writes nothing. */
+	public function test_span_runs_bare_with_no_started_record(): void {
+		Log_Manager::reset();
+
+		$this->assertSame( 'weka-4472', Log_Manager::span( 'weka 4472', static fn (): string => 'weka-4472' ) );
+		$this->assertNull( Log_Manager::started_instance() );
+	}
+
 	/** A span the producer keeps through a fold keeps both halves, or it severs. */
 	public function test_timed_keeps_the_close_of_a_kept_start(): void {
 		$this->require_config_or_skip();

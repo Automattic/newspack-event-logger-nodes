@@ -13,6 +13,8 @@ use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Overview_Prefetch;
 use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
 use Newspack_Event_Logger_Nodes\Bucket;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
@@ -80,6 +82,88 @@ final class OverviewPrefetchTest extends TestCase {
 	private static function clock( int $at ): void {
 		Core::$clock = static fn (): float => (float) $at;
 		Core::right_now();
+	}
+
+	/**
+	 * Every firehose entry a logged run of the job writes.
+	 *
+	 * @return list<array<string,mixed>>
+	 */
+	private function logged_job(): array {
+		return $this->logged_in(
+			$this->make_temp_dir(),
+			function (): void {
+				$this->seed_request( [ 'url' => 'https://seed.example/kakariki-5543/', 'ms' => 21.5 ] );
+				$this->run_job();
+			}
+		);
+	}
+
+	/** Each stored question is a span on the job's record, labelled as `stored-answers.json` names it, then the build. */
+	public function test_a_logged_job_spans_each_answer_then_the_build(): void {
+		$categories = [];
+		foreach ( [ Flame_Tree::PREFETCH_ANSWER, Flame_Tree::SNAPSHOT_BUILD ] as $span ) {
+			\array_push( $categories, "{$span} (start)", "{$span} (complete)" );
+		}
+		$spans  = \array_map( static fn ( array $entry ): array => [ $entry['k'], $entry['l'] ?? null, $entry['m'] ?? null ], self::entries_of( $this->logged_job(), ...$categories ) );
+		$answer = static fn ( string $l ): array => [ [ 'prefetch answer (start)', $l, null ], [ 'prefetch answer (complete)', null, 'ok' ] ];
+
+		$this->assertSame(
+			[
+				...$answer( 'overview' ),
+				...$answer( 'chart_by_server' ),
+				...$answer( 'chart_by_status_class' ),
+				...$answer( 'categories' ),
+				[ 'snapshot build (start)', null, null ],
+				[ 'snapshot build (complete)', null, 'published' ],
+			],
+			$spans
+		);
+		$this->assertTrue( self::snapshot_published() );
+	}
+
+	/** Folded into a flame, the four answers stay four nodes. */
+	public function test_each_answer_folds_into_its_own_node(): void {
+		$names = self::flame_names( Flame_Tree::build_flame_data( $this->logged_job() ) );
+
+		$this->assertSame(
+			[ 'prefetch answer: overview', 'prefetch answer: chart_by_server', 'prefetch answer: chart_by_status_class', 'prefetch answer: categories' ],
+			\array_values( \array_filter( $names, static fn ( string $name ): bool => \str_starts_with( $name, Flame_Tree::PREFETCH_ANSWER ) ) )
+		);
+	}
+
+	/**
+	 * Every node name under a flame node, depth first.
+	 *
+	 * @param array<array-key,mixed> $node A flame node.
+	 * @return list<string>
+	 */
+	public static function flame_names( array $node ): array {
+		$names = [];
+		foreach ( Core::arr( $node['children'] ?? [] ) as $child ) {
+			$child = Core::arr( $child );
+			\array_push( $names, Core::as_string( $child['name'] ?? '' ), ...self::flame_names( $child ) );
+		}
+		return $names;
+	}
+
+	/** Two stored questions binding to one key would store one answer for both, so the job refuses them. */
+	public function test_two_questions_binding_alike_are_refused(): void {
+		Overview_Prefetch::$read_file = static fn ( string $path ): string => (string) \wp_json_encode(
+			[
+				'kea_5545'  => [ 'verb' => 'overview', 'tokens' => [ '--server=kaka-5545.example' ] ],
+				'weka_5545' => [ 'verb' => 'overview', 'tokens' => [ '--server=kaka-5545.example' ] ],
+			]
+		);
+		try {
+			Overview_Prefetch::stored();
+			$this->fail( 'two questions binding alike are refused' );
+		} catch ( \LogicException $e ) {
+			$this->assertStringContainsString( 'kea_5545', $e->getMessage() );
+			$this->assertStringContainsString( 'weka_5545', $e->getMessage() );
+		} finally {
+			Overview_Prefetch::$read_file = null;
+		}
 	}
 
 	public function test_the_job_publishes_a_snapshot_every_url_page_is_served_from(): void {

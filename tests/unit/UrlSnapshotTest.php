@@ -14,6 +14,7 @@ use Newspack_Event_Logger_Nodes\App\Stats_Query;
 use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
@@ -274,19 +275,23 @@ final class UrlSnapshotTest extends TestCase {
 	public function test_building_urls_sorts_nothing(): void {
 		$this->seed_parity_traffic();
 		$plans = [];
+		$steps = [];
 		Row_Table_Node::build(
 			Flame_Facts_Row_Schema::class,
 			'urls-plan-5528',
-			static function ( Row_Reader $db ) use ( &$plans ): bool {
-				foreach ( ( new \ReflectionMethod( Url_Snapshot::class, 'url_steps' ) )->invoke( null, $db, self::NOW ) as [ $sql, $binds ] ) {
-					$plans[ $sql ] = \implode( "\n", \array_column( $db->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
-					$db->rows( $sql, $binds );
+			static function ( Row_Reader $db ) use ( &$plans, &$steps ): bool {
+				foreach ( ( new \ReflectionMethod( Url_Snapshot::class, 'url_steps' ) )->invoke( null, $db, self::NOW ) as $span => $statements ) {
+					$steps[ $span ] = \count( $statements );
+					foreach ( $statements as [ $sql, $binds ] ) {
+						$plans[ $sql ] = \implode( "\n", \array_column( $db->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
+						$db->rows( $sql, $binds );
+					}
 				}
 				return false;
 			}
 		);
 
-		$this->assertCount( 5, $plans, 'the group, the servers, their names, the copy and the drop' );
+		$this->assertSame( [ Flame_Tree::SNAPSHOT_GROUP => 1, Flame_Tree::SNAPSHOT_COPY => 4 ], $steps, 'the group; the servers, their names, the copy and the drop' );
 		foreach ( $plans as $sql => $plan ) {
 			$this->assertStringNotContainsString( 'USE TEMP B-TREE FOR ORDER BY', $plan, $sql );
 		}
@@ -419,6 +424,102 @@ final class UrlSnapshotTest extends TestCase {
 		$this->assertTrue( self::snapshot_published() );
 
 		$this->assertNull( Url_Snapshot::open( self::NOW ) );
+	}
+
+	/**
+	 * What a publish under a started record writes, and what it threw.
+	 *
+	 * @param array<string,array<string,mixed>> $answers The stored answers.
+	 * @param bool                              $seeded  Whether a partition file holds a request.
+	 * @return array{0:list<array<string,mixed>>, 1:\Throwable|null}
+	 */
+	private function logged_publish( array $answers, bool $seeded = true ): array {
+		$thrown  = null;
+		$entries = $this->logged_in(
+			$this->make_temp_dir(),
+			function () use ( $answers, $seeded, &$thrown ): void {
+				if ( $seeded ) {
+					$this->seed_request( self::request( '/tieke-7716/', 3, 11, [ 'ms' => 40.5 ] ) );
+				}
+				try {
+					Url_Snapshot::publish( self::NOW, 240, $answers );
+				} catch ( \Throwable $e ) {
+					$thrown = $e;
+				}
+			}
+		);
+		return [ $entries, $thrown ];
+	}
+
+	/**
+	 * Each span line among `$entries`, in order, as its category, `l` and `m`.
+	 *
+	 * @param list<array<string,mixed>> $entries Firehose entries.
+	 * @return list<array{0:mixed,1:mixed,2:mixed}>
+	 */
+	private static function spans_of( array $entries ): array {
+		$spans = \array_filter( $entries, static fn ( array $entry ): bool => 1 === \preg_match( '/^snapshot \w+ \((start|complete)\)$/', Core::as_string( $entry['k'] ?? '' ) ) );
+		return \array_values( \array_map( static fn ( array $entry ): array => [ $entry['k'], $entry['l'] ?? null, $entry['m'] ?? null ], $spans ) );
+	}
+
+	/** The index names `indexes()` declares, as the file names them. */
+	private static function index_names(): array {
+		return \array_map( static fn ( string $name ): string => "urls_{$name}", \array_keys( ( new \ReflectionMethod( Url_Snapshot::class, 'indexes' ) )->invoke( null ) ) );
+	}
+
+	/** The build is one span on the job's record, each step a span inside it, each index labelled. */
+	public function test_a_logged_publish_spans_the_build_and_each_step(): void {
+		[ $entries, $thrown ] = $this->logged_publish( [] );
+
+		$step    = static fn ( string $span, ?string $l = null ): array => [ [ "{$span} (start)", $l, null ], [ "{$span} (complete)", null, 'ok' ] ];
+		$indexes = [];
+		foreach ( self::index_names() as $name ) {
+			\array_push( $indexes, ...$step( 'snapshot index', $name ) );
+		}
+		$this->assertNull( $thrown );
+		$this->assertContains( [ 'snapshot index (start)', 'urls_server_avg_ms_null', null ], $indexes );
+		$this->assertSame(
+			[
+				[ 'snapshot build (start)', null, null ],
+				...$step( 'snapshot group' ),
+				...$step( 'snapshot copy' ),
+				...$indexes,
+				...$step( 'snapshot totals' ),
+				[ 'snapshot build (complete)', null, 'published' ],
+			],
+			self::spans_of( $entries )
+		);
+		$this->assertTrue( self::snapshot_published() );
+	}
+
+	/** Folded into a flame, every index stays its own node under the build. */
+	public function test_each_index_folds_into_its_own_node(): void {
+		[ $entries ] = $this->logged_publish( [] );
+		$names       = OverviewPrefetchTest::flame_names( Flame_Tree::build_flame_data( $entries ) );
+
+		$this->assertSame(
+			\array_map( static fn ( string $name ): string => Flame_Tree::SNAPSHOT_INDEX . ": {$name}", self::index_names() ),
+			\array_values( \array_filter( $names, static fn ( string $name ): bool => \str_starts_with( $name, Flame_Tree::SNAPSHOT_INDEX ) ) )
+		);
+	}
+
+	/** A build that throws closes its span with what it threw, and leaves no publish. */
+	public function test_a_logged_build_that_throws_closes_its_span(): void {
+		[ $entries, $thrown ] = $this->logged_publish( [ 'query:7716' => [ 'mean' => \NAN ] ] );
+		$spans                = self::spans_of( $entries );
+
+		$this->assertInstanceOf( \RuntimeException::class, $thrown );
+		$this->assertSame( [ 'snapshot build (start)', null, null ], $spans[0] );
+		$this->assertSame( [ 'snapshot build (complete)', null, 'RuntimeException: overview prefetch: answer query:7716 will not encode' ], $spans[ \count( $spans ) - 1 ] );
+		$this->assertFalse( self::snapshot_published() );
+	}
+
+	/** A build with no partition file to attach says it published nothing. */
+	public function test_a_logged_build_with_no_partition_file_says_so(): void {
+		[ $entries, $thrown ] = $this->logged_publish( [], false );
+
+		$this->assertNull( $thrown );
+		$this->assertSame( [ [ 'snapshot build (start)', null, null ], [ 'snapshot build (complete)', null, 'no partition file' ] ], self::spans_of( $entries ) );
 	}
 
 	public function test_a_fleet_declaring_no_facts_table_refuses_to_publish(): void {

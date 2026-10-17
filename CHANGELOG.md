@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The `eln_overview_prefetch` job's record shows where its time goes.** It held one `process` span and nothing inside; each stored question is now a `prefetch answer` span labelled `l` with its name in `stored-answers.json` (`chart_by_server`), and `Url_Snapshot::publish()` a `snapshot build` span, closing `published` or `no partition file`, that holds `snapshot group`, `snapshot copy`, one `snapshot index` per `urls` index labelled with its name, and `snapshot totals`. The build span's own time is what `Row_Table_Node::build()` does around the steps, the fsync and the rename among it; the architecture guide lists it. All six are `Flame_Tree` platform names of kind `upkeep`, in the Event Logger category, except `snapshot build`, which takes a new Event Logger Snapshot category (`#2F5D7C`) so its steps stand out inside it, so `Findings` proposes no rule edit for them. They go through the new `Log_Manager::span()`, which runs the work bare with no started record and otherwise closes `ok`, what its describe makes of the result, or the throwable's outcome. `Overview_Prefetch::stored()` refuses two questions that bind to one key, naming both.
+
 ## [0.138.0] - 2026-10-17
 
 ### Changed
