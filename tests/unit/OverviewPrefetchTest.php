@@ -22,6 +22,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Job_Worker_Node;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Row_Reader;
@@ -97,6 +98,33 @@ final class OverviewPrefetchTest extends TestCase {
 				$this->run_job();
 			}
 		);
+	}
+
+	/** A stop falling due while the job runs waits for its publish, then raises at the next pump. */
+	public function test_a_stop_due_mid_job_waits_for_the_publish(): void {
+		$stop    = null;
+		$entries = $this->logged_in(
+			$this->make_temp_dir(),
+			function () use ( &$stop ): void {
+				$this->seed_request( [ 'url' => 'https://seed.example/tieke-5561/', 'ms' => 33.5 ] );
+				$at = (float) self::NOW;
+				// Each read moves a second, the pump's interval, so every write checks.
+				Core::$clock = static function () use ( &$at ): float {
+					return $at += 1.0;
+				};
+				$stop = $this->with_stop_due(
+					function (): void {
+						$this->run_job();
+						Event_Framework::instance()->pump();
+					}
+				);
+			}
+		);
+
+		$this->assertNotNull( $stop, 'the stop raised once the job was done' );
+		$this->assertTrue( self::snapshot_published(), 'the build ran to its publish' );
+		$closed = self::entries_of( $entries, Flame_Tree::SNAPSHOT_BUILD . ' (complete)' );
+		$this->assertSame( 'published', $closed[0]['m'] ?? null );
 	}
 
 	/** Each stored question is a span on the job's record, labelled as `stored-answers.json` names it, then the build. */
