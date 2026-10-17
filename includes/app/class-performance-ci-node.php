@@ -1231,9 +1231,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The answer to `overview`, `urls` or `query` for bound arguments: off
 	 * the URL snapshot the overview-prefetch job published, where it answers
-	 * them, else the live one. A `urls` question the snapshot cannot answer,
-	 * and an `overview` or `query` whose key the job never stores, never
-	 * open it. A snapshot that opens but will not read, or a stored answer
+	 * them, else the live one, a live `overview` naming the `servers` the
+	 * stored one does. A `urls` question the snapshot cannot answer, and a
+	 * `query` whose key the job never stores, never open it. A snapshot that opens but will not read, or a stored answer
 	 * that will not decode, says so once a window and answers live.
 	 *
 	 * @param string                 $verb `overview`, `urls` or `query`.
@@ -1256,7 +1256,32 @@ class Performance_CI_Node extends Service_CI_Node {
 			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
 			$stored = null;
 		}
-		return $stored ?? self::answer_live( $verb, $args, $now );
+		return $stored ?? self::answer_live( $verb, $args, $now, 'overview' === $verb ? $this->stored_servers( $snapshot, $now ) : null );
+	}
+
+	/**
+	 * The `servers` of the snapshot's stored unscoped overview, which no
+	 * scope changes: null with no snapshot, no stored overview, or one that
+	 * will not read, said once a window.
+	 *
+	 * @param Url_Snapshot|null $snapshot The snapshot `answered()` opened, if it opened one.
+	 * @param int               $now      The reply's clock.
+	 * @return list<mixed>|null
+	 * @throws \InvalidArgumentException As `Overview_Prefetch::stored()`.
+	 * @throws \RuntimeException As `Overview_Prefetch::stored()`.
+	 */
+	private function stored_servers( ?Url_Snapshot $snapshot, int $now ): ?array {
+		$key = Overview_Prefetch::key( 'overview', Command_Args::bind( Core::arr( Command_Interpreter_Node::declared_verbs( self::class )['overview']['args'] ?? throw new \LogicException( 'overview declares its args' ) ), [] ) );
+		if ( ! isset( $this->stored_questions()[ $key ] ) ) {
+			return null;
+		}
+		try {
+			$answer = ( $snapshot ?? Url_Snapshot::open( $now ) )?->answer( $key );
+		} catch ( \PDOException | \JsonException $e ) {
+			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
+			return null;
+		}
+		return null === $answer ? null : \array_values( Core::arr( $answer['servers'] ?? null ) );
 	}
 
 	/**
@@ -1318,15 +1343,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * dated `$now`.
 	 *
 	 * @api Overview_Prefetch, which stores these.
-	 * @param string                 $verb `overview`, `urls` or `query`.
-	 * @param array<array-key,mixed> $args Its bound arguments.
-	 * @param int                    $now  The reply's clock.
+	 * @param string                 $verb    `overview`, `urls` or `query`.
+	 * @param array<array-key,mixed> $args    Its bound arguments.
+	 * @param int                    $now     The reply's clock.
+	 * @param list<mixed>|null       $servers The overview's `servers`, read live when null.
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException On a verb no answer is stored for, or what the verb refuses.
 	 */
-	public static function answer_live( string $verb, array $args, int $now ): array {
+	public static function answer_live( string $verb, array $args, int $now, ?array $servers = null ): array {
 		return [ 'as_of' => $now ] + match ( $verb ) {
-			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now ),
+			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now, $servers ),
 			'urls'     => self::url_page( ...self::url_question( $args ), now: $now ),
 			'query'    => self::answer_query( $args, $now ),
 			default    => throw new \InvalidArgumentException( \esc_html( "no stored answer answers {$verb}" ) ),
@@ -1338,14 +1364,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * non-worker requests' totals, their exact distinct URLs, every server
 	 * with traffic there, worker traffic counted, busiest first, and the
 	 * leaderboard. A server scopes the totals and the leaderboard; `servers`
-	 * stays whole, so a scoped dashboard can still name the rest. Stats that
-	 * will not open answer `available` false and null totals, never zeroes.
+	 * stays whole, so a scoped dashboard can still name the rest, and comes
+	 * from the caller when it holds the stored list. Stats that will not
+	 * open answer `available` false and null totals, never zeroes.
 	 *
-	 * @param string $server Server to scope to; '' is every server.
-	 * @param int    $now    The reply's clock.
+	 * @param string           $server  Server to scope to; '' is every server.
+	 * @param int              $now     The reply's clock.
+	 * @param list<mixed>|null $servers The stored `servers`; null reads them.
 	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, available: bool}
 	 */
-	private static function answer_overview( string $server, int $now ): array {
+	private static function answer_overview( string $server, int $now, ?array $servers ): array {
 		$chart   = Bucket::last( self::CHART_BUCKETS, $now );
 		$answer  = Stats_Query::run(
 			[
@@ -1356,17 +1384,20 @@ class Performance_CI_Node extends Service_CI_Node {
 				'buckets' => $chart,
 			]
 		);
-		$totals  = self::measures( $answer );
-		$servers = Stats_Query::run(
-			[
-				'source'  => 'requests',
-				'group'   => [ 'server' ],
-				'filter'  => self::scope( '', true ),
-				'measure' => [ 'count' ],
-				'buckets' => $chart,
-				'sort'    => 'count',
-				'order'   => 'desc',
-			]
+		$totals    = self::measures( $answer );
+		$servers ??= \array_column(
+			Stats_Query::run(
+				[
+					'source'  => 'requests',
+					'group'   => [ 'server' ],
+					'filter'  => self::scope( '', true ),
+					'measure' => [ 'count' ],
+					'buckets' => $chart,
+					'sort'    => 'count',
+					'order'   => 'desc',
+				]
+			)['rows'],
+			0
 		);
 		return [
 			'totals'      => $answer['available'] ? [
@@ -1378,7 +1409,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'urls'        => Core::num_int( $totals['urls'] ),
 			] : null,
 			'slots'       => \array_map( Bucket::key( ... ), \range( $chart[0][1], $chart[0][0] ) ),
-			'servers'     => \array_column( $servers['rows'], 0 ),
+			'servers'     => $servers,
 			'leaderboard' => self::site_leaderboard( $server, $now ),
 			'available'   => $answer['available'],
 		];
@@ -1938,7 +1969,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'overview',
 					'capability'  => Capabilities::READ,
-					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; `as_of` dates every answer.',
+					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; a scoped one names the `servers` that run stored, read live where none is stored; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
