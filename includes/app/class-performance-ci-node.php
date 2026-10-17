@@ -163,7 +163,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	public const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
 
 	/** The `filter` arg `query`, `urls`, `dump_url` and `ask` each declare. */
-	private const FILTER_ARG = [ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values. A field another argument owns is refused; `query`, where none does, takes a bucket by its key.' ];
+	private const FILTER_ARG = [ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values, and `field!=value` keeps the rows matching none of their values. A field matches in any case, and a repeated token counts once. A field another argument owns is refused; `query`, where none does, takes a bucket by its key.' ];
 
 	/**
 	 * The fields a URL-set filter may not name, each by the argument owning
@@ -1243,6 +1243,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \RuntimeException As `Overview_Prefetch::stored()`.
 	 */
 	private function answered( string $verb, array $args ): array {
+		if ( \array_key_exists( 'filter', $args ) ) {
+			$args['filter'] = self::filter_tokens( $args['filter'] );
+		}
 		$now      = self::now();
 		$key      = 'urls' === $verb ? null : Overview_Prefetch::key( $verb, $args );
 		$served   = null === $key ? self::snapshot_answers( $args ) : isset( $this->stored_questions()[ $key ] );
@@ -1581,7 +1584,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * or the selected ones, read live: its totals and its page with the
 	 * slowest ten beside it, shaped by `url_reply()`. Worker traffic is left
 	 * out unless asked for. A filter narrows the rows, the totals and the
-	 * slowest ten together, and a filter on `worker` replaces the scope's.
+	 * slowest ten together, and a filter on `worker`, negated or not, replaces
+	 * the scope's.
 	 *
 	 * @param string      $server  Server to scope to; '' is every server.
 	 * @param Url_Filters $filters The url filters in force.
@@ -1595,7 +1599,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function url_page( string $server, array $filters, string $sort, string $order, int $offset, int $limit, int $now ): array {
 		$buckets = self::window( $filters['bucket'], $now, Bucket::MAX_SELECTION );
-		$filter  = self::url_filter_of( $filters['filter'], self::URL_SET_OWNERS ) + self::scope( $server, $filters['include_workers'] );
+		$filter  = self::url_filter_of( $filters['filter'], self::URL_SET_OWNERS );
+		$filter += self::scope( $server, $filters['include_workers'] || \in_array( 'worker', Stats_Query::filtered( $filter ), true ) );
 		$base    = [
 			'source'  => 'requests',
 			'filter'  => $filter,
@@ -1802,20 +1807,39 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function url_filter_of( array $tokens, array $owners ): array {
 		$filter = self::filter_of( $tokens );
-		foreach ( $owners as $field => [ $owner, $names ] ) {
-			if ( isset( $filter[ $field ] ) ) {
-				$token = "{$field}={$filter[ $field ][0]}";
-				throw new \InvalidArgumentException( \esc_html( "filter {$token} is {$owner}'s: name the {$names} with {$owner}" ) );
+		foreach ( $filter as $key => $values ) {
+			if ( isset( $owners[ Stats_Query::field_of( $key ) ] ) ) {
+				[ $owner, $names ] = $owners[ Stats_Query::field_of( $key ) ];
+				throw new \InvalidArgumentException( \esc_html( "filter {$key}={$values[0]} is {$owner}'s: name the {$names} with {$owner}" ) );
 			}
 		}
 		return $filter;
 	}
 
 	/**
-	 * `field=value` tokens as a filter, each token one value and a field's
-	 * tokens ORed: the one parse `query`, `urls`, `dump_url` and `ask` share.
+	 * The `filter` arg's tokens in one spelling, each field lowercase and
+	 * each token once, so a field matches in any case and a repeated token
+	 * counts once: what `query`, `urls`, `dump_url` and `ask` read and echo,
+	 * and what a stored answer's key is taken over.
 	 *
-	 * @param list<string> $tokens The filter tokens.
+	 * @param mixed $arg The bound `filter` arg.
+	 * @return list<string>
+	 */
+	private static function filter_tokens( mixed $arg ): array {
+		$tokens = [];
+		foreach ( Stats_Query::strings( $arg ) as $token ) {
+			$parts    = \explode( '=', $token, 2 );
+			$tokens[] = 2 === \count( $parts ) ? \strtolower( $parts[0] ) . '=' . $parts[1] : $token;
+		}
+		return \array_values( \array_unique( $tokens ) );
+	}
+
+	/**
+	 * `field=value` tokens as a filter, each token one value and a field's
+	 * tokens ORed, and `field!=value` tokens keyed `field!`, their values
+	 * excluded: the one parse `query`, `urls`, `dump_url` and `ask` share.
+	 *
+	 * @param list<string> $tokens The `filter_tokens()` tokens.
 	 * @return array<string,list<string>>
 	 * @throws \InvalidArgumentException On a token that is no `field=value`.
 	 */
@@ -1839,8 +1863,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \InvalidArgumentException On a bucket key `Bucket::of_key()` refuses.
 	 */
 	private static function by_id( array $filter ): array {
-		if ( isset( $filter['bucket'] ) ) {
-			$filter['bucket'] = \array_map( Bucket::of_key( ... ), $filter['bucket'] );
+		foreach ( $filter as $key => $values ) {
+			if ( 'bucket' === Stats_Query::field_of( $key ) ) {
+				$filter[ $key ] = \array_map( Bucket::of_key( ... ), $values );
+			}
 		}
 		return $filter;
 	}
@@ -1975,7 +2001,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// click puts a site-wide average under a scoped count, on two
 				// surfaces too far apart to compare.
 				$server   = Core::as_string( $args['server'] );
-				$tokens   = Stats_Query::strings( $args['filter'] );
+				$tokens   = self::filter_tokens( $args['filter'] );
 				$spelling = Core::as_string( $args['bucket'] );
 				$now      = self::now();
 				$detail   = self::url_detail( $hash, $server, $tokens, $spelling, $now );
@@ -2064,7 +2090,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					Core::as_string( $args['server'] ),
 					[
 						'search'          => Core::as_string( $args['search'] ),
-						'filter'          => Stats_Query::strings( $args['filter'] ),
+						'filter'          => self::filter_tokens( $args['filter'] ),
 						'include_workers' => true === $args['include_workers'],
 						'bucket'          => Core::as_string( $args['bucket'] ),
 					],

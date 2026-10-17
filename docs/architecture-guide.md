@@ -702,7 +702,7 @@ What the columns hold:
 | Key | What it takes |
 |---|---|
 | `group` | fields, in column order |
-| `filter` | each field to the values it matches, any of them, spelled as a group answers them, `Unknown` included |
+| `filter` | each field to the values it matches, any of them, spelled as a group answers them, `Unknown` included; a key `<field>!` holds the values its rows match none of, ANDed with the field's own |
 | `measure` | at least one measure, in column order |
 | `buckets` | inclusive bucket ranges; a verb reads the last 288 when none is selected |
 | `search` | whole words of a URL path, matched through `urls_fts`; quotes, a minus and other punctuation only separate words |

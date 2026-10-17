@@ -479,6 +479,63 @@ describe( 'BreakdownControls', () => {
 			unmount();
 		} );
 
+		it( 'adds a field typed in any case as the field spells it', () => {
+			const { container, props, unmount } = mountBreakdown( {
+				chips: [ 'country=NZ' ],
+			} );
+			const box = chipBox( container );
+			type( box, 'Country=SG' );
+			press( box, 'Enter' );
+			expect( props.setChips ).toHaveBeenCalledWith( [
+				'country=NZ',
+				'country=SG',
+			] );
+			unmount();
+		} );
+
+		it( 'adds a negated chip, its value read as the answer spells it', () => {
+			const { container, props, unmount } = mountBreakdown( {
+				chips: [ 'country!=NZ' ],
+			} );
+			const box = chipBox( container );
+			type( box, 'Status_Class!=5xx' );
+			press( box, 'Enter' );
+			expect( props.setChips ).toHaveBeenCalledWith( [
+				'country!=NZ',
+				'status_class!=5',
+			] );
+			unmount();
+		} );
+
+		it( 'shows a negated chip as its field, not equal to its value', () => {
+			const { container, unmount } = mountBreakdown( {
+				chips: [ 'status_class!=5' ],
+			} );
+			expect( container.textContent ).toContain( 'Status Class ≠ 5xx' );
+			unmount();
+		} );
+
+		it( 'refuses a negated chip with no field', () => {
+			const { container, props, unmount } = mountBreakdown();
+			const box = chipBox( container );
+			type( box, '!=NZ' );
+			press( box, 'Enter' );
+			expect( props.setChips ).not.toHaveBeenCalled();
+			expect( container.textContent ).toContain( 'field!=value' );
+			unmount();
+		} );
+
+		it( 'ignores a chip it already holds', () => {
+			const { container, props, unmount } = mountBreakdown( {
+				chips: [ 'country=US' ],
+			} );
+			const box = chipBox( container );
+			type( box, 'country=US' );
+			press( box, 'Enter' );
+			expect( props.setChips ).not.toHaveBeenCalled();
+			unmount();
+		} );
+
 		it( 'keeps a value holding an equals sign whole', () => {
 			const { container, props, unmount } = mountBreakdown();
 			const box = chipBox( container );

@@ -142,6 +142,49 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 61.0 ] ], $r['rows'] );
 	}
 
+	public function test_a_negated_filter_keeps_every_row_matching_none_of_its_values_unknown_included(): void {
+		$this->seed_request( [ 'country' => null, 'ms' => 61.0 ] );
+		$this->seed_request( [ 'country' => 'NZ', 'ms' => 17.0 ] );
+		$this->seed_request( [ 'country' => 'AU', 'ms' => 4.0 ], partition: 3 );
+		$this->seed_request( [ 'country' => 'SG', 'ms' => 9.0 ] );
+
+		$not_nz  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country!' => [ 'NZ', 'SG' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$known   = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country!' => [ 'Unknown' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$crossed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country' => [ 'NZ', 'AU' ], 'country!' => [ 'AU' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ 65.0 ] ], $not_nz['rows'], 'neither NZ nor SG, an Unknown country kept' );
+		$this->assertSame( [ [ 30.0 ] ], $known['rows'] );
+		$this->assertSame( [ [ 17.0 ] ], $crossed['rows'], 'one of the kept values and none of the negated' );
+	}
+
+	public function test_a_negated_integer_filter_binds_its_digits_and_reads_the_rollup(): void {
+		$hour = Bucket::hour( self::NOW );
+		$this->seed_hourly( [ 'hour' => $hour - 2, 'count' => 7, 'status_class' => 5 ] );
+		$this->seed_hourly( [ 'hour' => $hour - 2, 'country' => 'NZ', 'count' => 5, 'status_class' => 2 ], partition: 3 );
+		$this->seed_hourly( [ 'hour' => $hour - 3, 'count' => 3, 'status_class' => 0 ] );
+		$spec = self::spec( [ 'source' => 'requests', 'filter' => [ 'status_class!' => [ '5' ] ], 'buckets' => $this->last_hours() ] );
+
+		$r = Stats_Query::run( $spec );
+
+		$this->assertSame( 'requests_hourly', $r['table'] );
+		$this->assertSame( [ [ 8 ] ], $r['rows'], 'a 2xx and an Unknown class kept' );
+	}
+
+	public function test_a_negated_url_filter_joins_the_urls_it_leaves_out(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/kokako/', 'ms' => 33.0 ], partition: 3 );
+		$this->seed_request( [ 'url' => 'https://seed.example/hihi/', 'ms' => 900.0 ] );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'url!' => [ \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( 'https://seed.example/kokako/' ) ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ 900.0 ], \array_column( $r['rows'], 2 ) );
+	}
+
+	public function test_a_negated_filter_on_an_unknown_field_is_refused_naming_the_field(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'unknown requests field kakapo:' );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'kakapo!' => [ 'NZ' ] ], 'buckets' => $this->last_day() ] ) );
+	}
+
 	public function test_an_absent_country_agent_ja4_and_from_are_unknown_and_no_error_is_a_dash(): void {
 		$this->seed_request( [ 'error' => 'T', 'ms' => null ] );
 

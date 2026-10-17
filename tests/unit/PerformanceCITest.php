@@ -2573,6 +2573,8 @@ class PerformanceCITest extends TestCase {
 			'dump_url beside --server' => [ 'dump_url', $hash . ' --server=ruru-4.example --filter=server=kahu-9.example' ],
 			'ask overview:'           => [ 'ask', 'overview:site --filter=server=kahu-9.example' ],
 			'ask url:'                => [ 'ask', 'url:' . $hash . ' --server=kahu-9.example --filter=server=kahu-9.example' ],
+			'urls, field capitalised' => [ 'urls', '--filter=Server=kahu-9.example' ],
+			'ask url:, field capitalised' => [ 'ask', 'url:' . $hash . ' --filter=SERVER=kahu-9.example' ],
 		];
 	}
 
@@ -2605,6 +2607,11 @@ class PerformanceCITest extends TestCase {
 			'ask overview: bucket'      => [ 'ask', "overview:site --filter=bucket={$key}", $bucket ],
 			'ask url: bucket'           => [ 'ask', "url:{$hash} --filter=bucket={$key}", $bucket ],
 			'ask url: url'              => [ 'ask', "url:{$hash} --filter=url=0ddba11c4e5f", $url ],
+			'dump_url url capitalised'  => [ 'dump_url', "{$hash} --filter=URL=0ddba11c4e5f", $url ],
+			'urls server negated'       => [ 'urls', '--filter=server!=kahu-9.example', "filter server!=kahu-9.example is --server's: name the server with --server" ],
+			'urls bucket negated'       => [ 'urls', "--filter=bucket!={$key}", "filter bucket!={$key} is --bucket's: name the buckets with --bucket" ],
+			'dump_url url negated'      => [ 'dump_url', "{$hash} --filter=url!=0ddba11c4e5f", "filter url!=0ddba11c4e5f is the hash's: name the URL with the hash" ],
+			'ask overview: server negated' => [ 'ask', 'overview:site --filter=server!=kahu-9.example', "filter server!=kahu-9.example is --server's: name the server with --server" ],
 		];
 	}
 
@@ -2625,6 +2632,78 @@ class PerformanceCITest extends TestCase {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', 'requests --measure=count --filter=server=kahu-9.example' );
 
 		$this->assertSame( [ [ 1 ] ], $reply['rows'] );
+	}
+
+	public function test_a_filter_field_matches_in_any_case_and_a_repeated_token_counts_once(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/tui-sg/', 'country' => 'SG' ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/tui-us/', 'country' => 'US' ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/tui-nz/', 'country' => 'NZ' ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', 'requests --measure=count --filter=Country=SG --filter=country=US --filter=COUNTRY=US' );
+
+		$this->assertSame( [ [ 2 ] ], $reply['rows'] );
+		$this->assertSame( [ 'country' => [ 'SG', 'US' ] ], $reply['filters']['filter'] );
+	}
+
+	public function test_urls_filter_field_matches_in_any_case_and_echoes_each_token_once(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/weka-sg/', 'country' => 'SG' ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/weka-nz/', 'country' => 'NZ' ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=Country=SG --filter=country=SG' );
+
+		$this->assertSame( [ 'https://seed.example/weka-sg/' ], \array_column( $reply['data'], 'url' ) );
+		$this->assertSame( [ 'country=SG' ], $reply['filters']['filter'] );
+	}
+
+	public function test_urls_negated_filter_keeps_the_urls_matching_none_of_its_values(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/toroa-nz/', 'country' => 'NZ' ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/toroa-sg/', 'country' => 'SG' ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/toroa-xx/', 'country' => null ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=Country!=NZ --filter=country!=SG --filter=country!=SG' );
+
+		$this->assertSame( [ 'https://seed.example/toroa-xx/' ], \array_column( $reply['data'], 'url' ) );
+		$this->assertSame( [ 'country!=NZ', 'country!=SG' ], $reply['filters']['filter'] );
+	}
+
+	public function test_urls_negated_worker_filter_replaces_the_include_workers_scope(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/w?kotare', 'worker' => 1 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/kotare/' ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=worker!=0' );
+
+		$this->assertSame( [ 'https://seed.example/w?kotare' ], \array_column( $reply['data'], 'url' ) );
+	}
+
+	public function test_dump_url_negated_filter_narrows_its_stats(): void {
+		$url = 'https://seed.example/kahu-neg/';
+		$this->seed_request( [ 'url' => $url, 'status' => 200 ] );
+		$this->seed_request( [ 'url' => $url, 'status' => 503 ] );
+		$this->seed_request( [ 'url' => $url, 'status' => 404 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) . ' --filter=status_class!=2' );
+
+		$this->assertSame( 2, $reply['stats']['count'] );
+	}
+
+	public function test_query_negated_bucket_filter_takes_a_key(): void {
+		$latest = self::latest();
+		$this->seed_request( [ 'bucket' => $latest - 3 ] );
+		$this->seed_request( [ 'bucket' => $latest - 4 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', 'requests --measure=count --filter=bucket!=' . Bucket::key( $latest - 3 ) );
+
+		$this->assertSame( [ [ 1 ] ], $reply['rows'] );
+	}
+
+	public function test_dump_url_filter_field_matches_in_any_case(): void {
+		$url = 'https://seed.example/kereru/';
+		$this->seed_request( [ 'url' => $url, 'country' => 'SG' ] );
+		$this->seed_request( [ 'url' => $url, 'country' => 'NZ' ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) . ' --filter=Country=SG' );
+
+		$this->assertSame( 1, $reply['stats']['count'] );
 	}
 
 	public function test_urls_refuses_errors_only(): void {

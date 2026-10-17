@@ -16,6 +16,7 @@ import {
 	buildChartSlots,
 	answerSlots,
 	chartDims,
+	chipParts,
 	decodeRows,
 	filterValue,
 	hasRows,
@@ -26,6 +27,7 @@ import {
 	useSelectedSlots,
 	useSlotClick,
 	useSlotRange,
+	withoutUrlChips,
 } from '../chartSlots';
 import { rowsWire, slotsEndingAt } from '../../test-helpers/chartWire';
 import { act, cleanupMounts, renderHook } from '../../test-helpers/renderHook';
@@ -293,6 +295,41 @@ describe( 'valueName and filterValue', () => {
 		expect( filterValue( 'status_class', 'unknown' ) ).toBe( 'Unknown' );
 		expect( filterValue( 'status_class', 'UNKNOWN' ) ).toBe( 'Unknown' );
 		expect( filterValue( 'country', 'unknown' ) ).toBe( 'unknown' );
+	} );
+} );
+
+describe( 'chipParts and withoutUrlChips', () => {
+	it( 'reads a chip as its field, whether it negates, and its value', () => {
+		expect( chipParts( 'country=NZ' ) ).toEqual( {
+			field: 'country',
+			negated: false,
+			value: 'NZ',
+		} );
+		expect( chipParts( 'country!=NZ' ) ).toEqual( {
+			field: 'country',
+			negated: true,
+			value: 'NZ',
+		} );
+		expect( chipParts( 'from=bot!=kea' ) ).toEqual( {
+			field: 'from',
+			negated: false,
+			value: 'bot!=kea',
+		} );
+		expect( chipParts( 'method' ) ).toEqual( {
+			field: '',
+			negated: false,
+			value: '',
+		} );
+	} );
+
+	it( 'drops a url chip from a one-URL question, negated or not', () => {
+		expect(
+			withoutUrlChips( [
+				'url=4be3cc0a1f2e',
+				'url!=0ddba11c4e5f',
+				'country=NZ',
+			] )
+		).toEqual( [ 'country=NZ' ] );
 	} );
 } );
 
