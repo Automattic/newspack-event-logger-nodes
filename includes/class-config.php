@@ -45,9 +45,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Config {
 
-	/** Staging option: custom-event names spokes reported to the hub; read by the admin UI. */
-	public const OPTION_DISCOVERED_EVENTS = 'newspack_event_logger_nodes_discovered_events';
-
 	/** Staging option: hook names spokes reported to the hub; read by the admin UI. */
 	public const OPTION_DISCOVERED_HOOKS = 'newspack_event_logger_nodes_discovered_hooks';
 
@@ -85,18 +82,17 @@ class Config {
 
 	/**
 	 * Fully-qualified option names that must NOT autoload — the single source of
-	 * truth `autoload_for()` answers from. Both are discovery staging options:
-	 * they sit outside `Settings_Schema`, so `load_config()` never reads them,
-	 * and only admin-facing paths do. Their values grow with the fleet (every
-	 * custom event and hook name any spoke reports), so keeping them out of the
+	 * truth `autoload_for()` answers from. The one entry is the discovery
+	 * staging option: it sits outside `Settings_Schema`, so `load_config()`
+	 * never reads it, and only admin-facing paths do. Its value grows with the
+	 * fleet (every hook name any spoke reports), so keeping it out of the
 	 * per-request `alloptions` blob is the right trade — one targeted read from
 	 * the admin beats bloating every frontend request.
 	 *
 	 * @var array<string,bool>
 	 */
 	private static $non_autoloaded_options = [
-		self::OPTION_DISCOVERED_EVENTS => true,
-		self::OPTION_DISCOVERED_HOOKS  => true,
+		self::OPTION_DISCOVERED_HOOKS => true,
 	];
 
 	/**
@@ -134,11 +130,8 @@ class Config {
 	 * The event-name-to-color map the dashboards render their swatches from.
 	 *
 	 * Applies the `newspack_event_logger_nodes_custom_colors` filter lazily, so
-	 * plugins that load after Event Logger can still register their events, then
-	 * folds in the events spokes reported to the hub — offered to the operator,
-	 * not selected — and sorts the map for the picker. Discovery stages a
-	 * reported event as a presence flag (`name => true`), so it carries no color
-	 * of its own and takes the default swatch here.
+	 * plugins that load after Event Logger can still register their events,
+	 * then sorts the map for the picker.
 	 *
 	 * @return array<string,mixed> Event name to color, in case-insensitive
 	 *                            natural key order.
@@ -152,18 +145,6 @@ class Config {
 			// A non-array filter return drops every configured color to [].
 			/** @var array<string,mixed> $colors */
 			$colors = Core::arr( $filtered );
-		}
-
-		if ( \function_exists( 'get_option' ) ) {
-			$discovered = \get_option( self::OPTION_DISCOVERED_EVENTS, [] );
-			if ( \is_array( $discovered ) ) {
-				foreach ( $discovered as $event => $color ) {
-					$event = (string) $event;
-					if ( ! isset( $colors[ $event ] ) ) {
-						$colors[ $event ] = Core::str( $color, '#ffa726' );
-					}
-				}
-			}
 		}
 
 		\ksort( $colors, SORT_NATURAL | SORT_FLAG_CASE );

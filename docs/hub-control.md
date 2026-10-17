@@ -27,7 +27,7 @@ A change to any `newspack_` option on the hub appends its name to a settings log
 
 ## Discovery
 
-[Discovery_Collector](../includes/class-discovery-collector-node.php) runs on the same 300-second cadence, minting one `get` command per spoke, addressed to that spoke's [discovery interpreter](API.md#discovery--spoke-side-hook-and-event-roster). The reply is addressed TO=FROM, so it lands in the collector, which merges each spoke's registered hooks and custom event names into two staging options on the hub, sanitized and capped at 10,000 each. The rule editor's hook picker reads them; nothing here writes a rule.
+[Discovery_Collector](../includes/class-discovery-collector-node.php) runs on the same 300-second cadence, minting one `get` command per spoke, addressed to that spoke's [discovery interpreter](API.md#discovery--spoke-side-hook-roster). The spoke answers with every hook its `$wp_filter` holds a callback on, less the plugin's and the substrate's own, so the hub learns hooks that exist on the publisher's site whether or not a rule names them. The reply is addressed TO=FROM, so it lands in the collector, which merges each spoke's hooks into one staging option on the hub, sanitized and capped at 10,000. The rule editor's hook picker reads it; nothing here writes a rule.
 
 ## Jobs from a spoke
 

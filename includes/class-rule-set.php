@@ -161,15 +161,13 @@ final class Rule_Set {
 	}
 
 	/**
-	 * The union across every LOG rule of the hooks it instruments and the custom
-	 * events it tracks. Feeds Discovery (spoke payload) and Hook_Categorizer
-	 * (browse-modal selected set).
+	 * The union across every LOG rule of the hooks it instruments: the
+	 * picker's selected set, through `Hook_Categorizer::selected_hooks()`.
 	 *
-	 * @return array{hooks: string[], custom_events: string[]}
+	 * @return string[]
 	 */
-	public function instrumented_union(): array {
-		$hooks  = [];
-		$custom = [];
+	public function instrumented_hooks(): array {
+		$hooks = [];
 		foreach ( $this->rules as $rule ) {
 			if ( ! $rule->is_log() ) {
 				continue;
@@ -177,11 +175,8 @@ final class Rule_Set {
 			foreach ( self::hooks_for( $rule ) as $h ) {
 				$hooks[ $h ] = true;
 			}
-			foreach ( $rule->custom_events as $e ) {
-				$custom[ $e ] = true;
-			}
 		}
-		return [ 'hooks' => \array_keys( $hooks ), 'custom_events' => \array_keys( $custom ) ];
+		return \array_keys( $hooks );
 	}
 
 	/**

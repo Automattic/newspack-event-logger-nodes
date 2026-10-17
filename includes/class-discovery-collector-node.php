@@ -13,9 +13,9 @@
  * the group, it forwards to every member and replays to one the Vault builds
  * later.
  *
- * What the replies build is a staging catalog — the `discovered_hooks` and
- * `discovered_events` options the rule editor's hook picker offers. Nothing here
- * writes the ruleset; the editor is the only rules writer.
+ * What the replies build is a staging catalog — the `discovered_hooks` option
+ * the rule editor's hook picker offers. Nothing here writes the ruleset; the
+ * editor is the only rules writer.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -38,7 +38,7 @@ use Newspack_Nodes\Timer_Node;
  * arrives at the node that minted the question, with no correlation id and no
  * pending map to keep.
  *
- * Every name it collects lives in the two staging options, and nothing
+ * Every name it collects lives in the staging option, and nothing
  * accumulates in memory between ticks. A respawned worker therefore keeps the
  * union already staged, and a spoke that misses one sweep costs a cadence
  * rather than a catalog.
@@ -49,8 +49,8 @@ class Discovery_Collector_Node extends Timer_Node {
 	/** Default discovery cadence (seconds), used when the positional interval token is blank or absent. */
 	private const DEFAULT_INTERVAL_SECONDS = 300;
 
-	/** Ceiling on the names one staging option holds, so an untrusted spoke cannot grow the row without bound. */
-	private const MAX_EVENTS = 10000;
+	/** Ceiling on the names the staging option holds, so an untrusted spoke cannot grow the row without bound. */
+	private const MAX_HOOKS = 10000;
 
 	/** Discovery sweep cadence in seconds; positional 0. */
 	protected int $interval_seconds = self::DEFAULT_INTERVAL_SECONDS;
@@ -100,7 +100,8 @@ class Discovery_Collector_Node extends Timer_Node {
 		if ( ! \is_array( $payload ) ) {
 			return;
 		}
-		$this->merge_discovery( $payload );
+		$from = (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', Core::str( $message[ Message::FROM ] ) );
+		$this->merge_discovery( $payload, $from );
 	}
 
 	/**
@@ -124,34 +125,26 @@ class Discovery_Collector_Node extends Timer_Node {
 	}
 
 	/**
-	 * Union-merge a single reply's registered_hooks / custom_events into the
-	 * hub's options: remote-string sanitization and custom-event exclusion.
-	 * The MAX_EVENTS ceiling belongs to stage_discovered(), which is what
-	 * actually writes.
+	 * Union-merge a single reply's registered_hooks into the hub's staging
+	 * option, after remote-string sanitization. The MAX_HOOKS ceiling belongs
+	 * to stage_discovered(), which is what actually writes.
 	 *
 	 * Union-only — a name a spoke stops reporting stays staged until an
 	 * operator clears the option.
 	 *
 	 * @param array<array-key,mixed> $payload One spoke's discovery payload.
+	 * @param string                 $from    The reply's FROM, naming the spoke.
 	 */
-	private function merge_discovery( array $payload ): void {
-		$hooks  = self::sanitized_names( $payload['registered_hooks'] ?? null );
-		$events = self::sanitized_names( $payload['custom_events'] ?? null );
-
-		if ( ! empty( $events ) ) {
-			$this->stage_discovered( Config::OPTION_DISCOVERED_EVENTS, \array_keys( $events ) );
-		}
-		// A custom-event name never stages as a hook; the spoke filters too.
-		$hook_names = \array_keys( \array_diff_key( $hooks, $events ) );
+	private function merge_discovery( array $payload, string $from ): void {
+		$hook_names = \array_keys( self::sanitized_names( $payload['registered_hooks'] ?? null ) );
 		if ( ! empty( $hook_names ) ) {
-			$this->stage_discovered( Config::OPTION_DISCOVERED_HOOKS, $hook_names );
+			$this->stage_discovered( $hook_names, $from );
 		}
 	}
 
 	/**
 	 * A remote name list as a `name => true` set: sanitized, blank-free and
-	 * deduplicated. The set shape is what lets merge_discovery() subtract the
-	 * events from the hooks in one array_diff_key().
+	 * deduplicated.
 	 *
 	 * These are array keys, so a numeric name returns as an int — which is why
 	 * stage_discovered() accepts both.
@@ -173,38 +166,42 @@ class Discovery_Collector_Node extends Timer_Node {
 	}
 
 	/**
-	 * Union $names into a discovered_* staging catalog option — a passive record
-	 * of what spokes report, never the ruleset (the editor is the only rules
-	 * writer). Non-autoloaded; once the option holds MAX_EVENTS names, further
-	 * new ones are dropped. Writes only when something actually changed.
+	 * Union $names into the `discovered_hooks` staging option — a passive
+	 * record of what spokes report, never the ruleset (the editor is the only
+	 * rules writer). Non-autoloaded; once the option holds MAX_HOOKS names,
+	 * further new ones are dropped, and one rate-limited line per spoke says
+	 * how many. Writes only when something actually changed. The stored shape
+	 * is `name => true`, a presence flag.
 	 *
-	 * The stored shape is `name => true`, a presence flag. `Config::get_custom_colors()`
-	 * reads the events option as `event => color` and renders every non-string
-	 * value with its default swatch, so the two shapes coexist.
-	 *
-	 * @param string                $option Fully-qualified staging option name.
-	 * @param array<int,int|string> $names  Names to union in (array_keys output; numeric names coerce to int).
+	 * @param array<int,int|string> $names Names to union in (array_keys output; numeric names coerce to int).
+	 * @param string                $from  The reply's FROM, naming the spoke.
 	 */
-	private function stage_discovered( string $option, array $names ): void {
-		$discovered = \get_option( $option, [] );
+	private function stage_discovered( array $names, string $from ): void {
+		$discovered = \get_option( Config::OPTION_DISCOVERED_HOOKS, [] );
 		if ( ! \is_array( $discovered ) ) {
 			$discovered = [];
 		}
 		$updated = false;
+		$dropped = 0;
 
 		foreach ( $names as $name ) {
-			if ( ! isset( $discovered[ $name ] ) ) {
-				// Cap accumulated names to prevent unbounded option growth.
-				if ( \count( $discovered ) >= self::MAX_EVENTS ) {
-					break;
-				}
-				$discovered[ $name ] = true;
-				$updated             = true;
+			if ( isset( $discovered[ $name ] ) ) {
+				continue;
 			}
+			if ( \count( $discovered ) >= self::MAX_HOOKS ) {
+				++$dropped;
+				continue;
+			}
+			$discovered[ $name ] = true;
+			$updated             = true;
+		}
+
+		if ( $dropped > 0 ) {
+			Core::print_less_often( 'discovery: staging is full at ' . self::MAX_HOOKS . " names; {$from} dropped ", (string) $dropped );
 		}
 
 		if ( $updated ) {
-			\update_option( $option, $discovered, Config::autoload_for( $option ) );
+			\update_option( Config::OPTION_DISCOVERED_HOOKS, $discovered, Config::autoload_for( Config::OPTION_DISCOVERED_HOOKS ) );
 		}
 	}
 
@@ -221,7 +218,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [
 			'category'    => 'Monitor',
-			'description' => 'Periodically fans discovery.get to every spoke and union-merges replies into the hub options.',
+			'description' => 'Periodically fans discovery.get to every spoke and union-merges the hooks they report into the hub\'s discovered_hooks option.',
 			'arguments'   => [
 				[ 'name' => 'interval_seconds', 'type' => 'int', 'default' => self::DEFAULT_INTERVAL_SECONDS, 'description' => 'Interval in seconds between discovery sweeps of the connected spokes (digits only; default 300, floored at 1).' ],
 			],

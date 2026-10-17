@@ -246,8 +246,7 @@ class HookCategorizerTest extends TestCase {
 		$wp_filter = [];
 
 		// Spoke-discovered hooks (staged by Discovery_Collector_Node) surface in
-		// the picker even though they aren't registered locally — symmetric with
-		// discovered_events feeding get_custom_colors().
+		// the picker even though they aren't registered locally.
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_hooks'] = [ 'spoke_only_hook' => true ];
 
 		$hooks = Hook_Categorizer::get_registered_hooks();

@@ -197,39 +197,8 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$this->assertSame( [ 'shutdown', 'wp_loaded' ], $result );
 	}
 
-	public function test_fill_routes_hooks_and_custom_events_to_their_staging_options(): void {
-		$sink = new Capture_Sink_Node();
-		$node = $this->wired_node( $sink );
-
-		$msg = $this->reply( [
-			'registered_hooks' => [ 'init', 'wp_footer' ],
-			'custom_events'    => [ 'my_custom' ],
-		] );
-		$node->fill( $msg );
-
-		$this->assertSame( [ 'init', 'wp_footer' ], \array_keys( $this->discovered_hooks() ) );
-		$events = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] ?? [];
-		$this->assertArrayHasKey( 'my_custom', $events );
-	}
-
-	public function test_fill_keeps_custom_events_out_of_discovered_hooks(): void {
-		$sink = new Capture_Sink_Node();
-		$node = $this->wired_node( $sink );
-
-		// A name reported in BOTH lists stages only as an event — the hub filters
-		// it out of the hook catalog (belt + suspenders with the spoke-side filter).
-		$node->fill( $this->reply( [
-			'registered_hooks' => [ 'init', 'my_custom' ],
-			'custom_events'    => [ 'my_custom' ],
-		] ) );
-
-		$this->assertSame( [ 'init' ], \array_keys( $this->discovered_hooks() ), 'custom event excluded from hooks' );
-		$events = $GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_events'] ?? [];
-		$this->assertArrayHasKey( 'my_custom', $events );
-	}
-
 	public function test_fill_caps_discovered_hooks_at_max(): void {
-		$max_events = ( new \ReflectionClassConstant( Discovery_Collector_Node::class, 'MAX_EVENTS' ) )->getValue();
+		$max_events = ( new \ReflectionClassConstant( Discovery_Collector_Node::class, 'MAX_HOOKS' ) )->getValue();
 		$existing   = [];
 		for ( $i = 0; $i < $max_events; $i++ ) {
 			$existing[ "existing_{$i}" ] = true;
@@ -241,6 +210,32 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$node->fill( $this->reply( [ 'registered_hooks' => [ 'new_one', 'new_two' ] ] ) );
 
 		$this->assertSame( $max_events, \count( $this->discovered_hooks() ), 'cap must hold' );
+	}
+
+	public function test_fill_says_which_spoke_lost_names_to_a_full_catalog(): void {
+		$max_hooks = ( new \ReflectionClassConstant( Discovery_Collector_Node::class, 'MAX_HOOKS' ) )->getValue();
+		$existing  = [];
+		for ( $i = 0; $i < $max_hooks - 1; $i++ ) {
+			$existing[ "existing_{$i}" ] = true;
+		}
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_discovered_hooks'] = $existing;
+		Core::$recent_log_timers = [];
+		Core::$recent_log        = [];
+		$node                    = $this->wired_node( new Capture_Sink_Node() );
+		$reply                   = $this->reply( [ 'registered_hooks' => [ 'existing_3', 'zeta_kept', 'zeta_lost_a', 'zeta_lost_b', 'zeta_lost_c' ] ] );
+		$reply[ Message::FROM ]  = 'spokes:okapi-24/discovery';
+
+		$other                  = $this->reply( [ 'registered_hooks' => [ 'zeta_kea_lost' ] ] );
+		$other[ Message::FROM ] = 'spokes:kea-9/discovery';
+
+		$node->fill( $reply );
+		$node->fill( $other );
+
+		$this->assertArrayHasKey( 'zeta_kept', $this->discovered_hooks() );
+		$said = \array_values( \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'staging is full' ) ) );
+		$this->assertCount( 2, $said, 'one line per spoke in one window' );
+		$this->assertStringContainsString( 'spokes:okapi-24/discovery dropped 3', $said[0] );
+		$this->assertStringContainsString( 'spokes:kea-9/discovery dropped 1', $said[1] );
 	}
 
 	public function test_fill_emits_no_settings_event_for_the_ruleset(): void {
