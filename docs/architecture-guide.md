@@ -687,7 +687,7 @@ The flame builder writes the stats as rows of the `flame-facts` Row_Table ([deci
 
 | Table | Columns | Key, and what a write does | Window |
 |---|---|---|---|
-| `requests` | `rid`, `bucket`, `finished_at`, `started_at`, `partition`, `segment`, `offset`, `length`, `server_id`, `url_id`, `status`, `method`, `country`, `ua_id`, `ja4_id`, `from_id`, `worker`, `profiled`, `error`, `ms`, `peak_mb` | `rid`, inserted or ignored; indexed by `url_id` and `bucket`, by `ua_id`, `server_id`, `ja4_id` and `from_id`, and by the covering `requests_cover` (`bucket`, `worker`, `url_id`, `ms`, `status`, `peak_mb`) | `bucket`, 2,016 buckets (seven days) |
+| `requests` | `rid`, `bucket`, `finished_at`, `started_at`, `partition`, `segment`, `offset`, `length`, `server_id`, `url_id`, `status`, `method`, `country`, `ua_id`, `ja4_id`, `from_id`, `worker`, `profiled`, `error`, `ms`, `peak_mb` | `rid`, inserted or ignored; indexed by `url_id` and `bucket`, by `ua_id`, `ja4_id` and `from_id`, by the covering `requests_cover` (`bucket`, `worker`, `url_id`, `ms`, `status`, `peak_mb`), and by `requests_server` (`server_id`, then the same six), which a server-scoped read seeks and a server row's release reads | `bucket`, 2,016 buckets (seven days) |
 | `urls` | `id`, `hash`, `server_id`, `path` | `hash`, inserted or ignored, `id` assigned; indexed by `server_id`; the FTS5 table `urls_fts` indexes `path` | while a `requests` or `timings` row names it |
 | `agents` | `id`, `name` | `name`, inserted or ignored, `id` assigned | while a `requests` row names it |
 | `servers` | `id`, `name` | `name`, inserted or ignored, `id` assigned | while a `urls`, `requests`, `timings`, `timings_site` or `requests_hourly` row names it |
