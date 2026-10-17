@@ -168,6 +168,8 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( 'null means, `min_ms` and `max_ms`', $url_bucket, 'an idle bucket has no extremes' );
 		$this->assertStringContainsString( '`max_ms` is null', $tools['performance_ask']['description'], 'it says an untimed URL has no max' );
 		$this->assertStringContainsString( '`stats.errors`', $tools['dump_url']['description'], 'it names the exact error count' );
+		$this->assertStringContainsString( 'narrowed by any `filter`', $tools['dump_url']['description'], 'a filter narrows the stats' );
+		$this->assertStringContainsString( 'timeouts and fatals among the requests left', $tools['dump_url']['description'], 'the error count is the narrowed set\'s' );
 		$this->assertStringContainsString( 'null `duration_ms`', $tools['dump_url']['description'], 'it says an unmeasured duration is null' );
 		$this->assertStringContainsString( '`finished_at`', $tools['dump_url']['description'], 'it names the order the list keeps' );
 		$this->assertStringContainsString( '`stats.avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null', $tools['dump_url']['description'], 'it names each stat null unmeasured' );

@@ -2844,6 +2844,21 @@ class PerformanceCITest extends TestCase {
 		$this->assertFalse( $reply['flame_cut'] );
 	}
 
+	/** A filter matching none of a URL's requests narrows it to nothing, never to not-found. */
+	public function test_a_filter_matching_none_of_a_url_answers_zero_not_not_found(): void {
+		$url = 'https://seed.example/hihi-4417/';
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-hihi-ok', 'status' => 200, 'ms' => 41.5 ] );
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-hihi-moved', 'status' => 301, 'ms' => 12.5 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) . ' --filter=status_class=5' );
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $url ) . ' --filter=status_class=5' );
+
+		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'dump_url answered no structure' );
+		$this->assertSame( [ $url, 0, 0 ], [ $reply['stats']['url'], $reply['stats']['count'], $reply['stats']['errors'] ] );
+		$this->assertSame( [], $reply['requests'] );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+	}
+
 	public function test_dump_url_bucket_selection_narrows_its_stats_and_list(): void {
 		$url    = 'https://seed.example/kereru-64/';
 		$latest = self::latest();

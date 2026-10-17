@@ -209,6 +209,37 @@ test( 'a pick carries the scope the page is showing', () => {
 	] );
 } );
 
+// A `url:` brief is one URL, whose hash owns the `url` field, so a `url=` chip
+// narrowing the table it was picked from stays behind; every other chip rides.
+test( 'a url pick leaves a url chip behind and carries the rest', () => {
+	render( {
+		urlFilters: {
+			filter: [
+				'url=9f1c2e7a4b30',
+				'status_class=5',
+				'url=4d8e0b6c2a19',
+			],
+		},
+	} );
+
+	pick( { id: 'other' } );
+	answer( { result: BRIEF }, 'url:/shop-7' );
+	pick();
+
+	expect( sent ).toEqual( [
+		[ 'url:/shop-7', 'overview:site', {}, '--filter=status_class=5' ],
+		[
+			'request:abc123',
+			'span:wp_loaded hook',
+			'overview:site',
+			{},
+			'--filter=url=9f1c2e7a4b30',
+			'--filter=status_class=5',
+			'--filter=url=4d8e0b6c2a19',
+		],
+	] );
+} );
+
 // A brief with an empty `findings` list looked and found nothing. One with no
 // `findings` key at all had no detector run over it — saying "nothing stands
 // out" there is a claim nobody made.

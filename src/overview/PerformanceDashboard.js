@@ -87,7 +87,7 @@ import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
 
 import UrlTable from './UrlTable';
-import { activeChart, useBucketSelection } from './chartSlots';
+import { activeChart, useBucketSelection, withoutUrlChips } from './chartSlots';
 
 /**
  * The stand-in title for a URL whose hash is selected but whose name has not
@@ -430,9 +430,7 @@ export default function PerformanceDashboard( {
 		( url ) => {
 			selectRequest( null );
 			setDetailFilters( { bucket: urlFilters?.bucket ?? '' } );
-			const chips = ( urlFilters?.filter ?? [] ).filter(
-				( chip ) => ! chip.startsWith( 'url=' )
-			);
+			const chips = withoutUrlChips( urlFilters?.filter ?? [] );
 			setDetailChart( {
 				...NO_DETAIL_CHART,
 				chips: chips.length ? chips : NO_CHIPS,

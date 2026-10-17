@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A URL opened under a filter chip that matches none of its requests answers zero, not "URL not found".** `dump_url` and an `ask url:` named the URL through the same filter that narrowed its stats, so a URL with only 2xx responses opened under `Status Class = 5xx` threw instead of answering an empty list; the name is looked up on the server alone, worker traffic counted, as a bucket with no traffic already was.
+- **Asking about a URL picked from a table narrowed by a URL chip assembles its brief.** The `?` picker sent every Overview chip with an `ask url:`, and the verb refuses `url=`, which the descriptor's hash owns; a `url:` pick now leaves a `url=` chip behind, as opening the URL window already did, and carries the rest.
 - **A question that answers live is asked once, not once a poll.** The Overview's stats slices and the URL window's no longer re-ask an unanswered question after the substrate's 15 s (`retry_after_s` 0; `dump_request` keeps the default), which, because each poll's POST goes out without waiting for the last, ran a URL page answering live in 33 s on eln, a search or a chipped page, about three times over; an unanswered ask lapses at the Fetcher's 120 s ask expiry and the poll that retires it asks again, and a POST that fails settles as an error until the next poll asks again.
 
 ## [0.135.0] - 2026-10-15

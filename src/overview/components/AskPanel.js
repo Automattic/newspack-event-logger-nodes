@@ -39,6 +39,7 @@ import { formatCommandArgs, nodesData } from '@newspack-nodes/runtime';
 import { askClaudeUrl, briefToMarkdown, clipboardBrief } from '../askBrief';
 import FindingList from './FindingList';
 import { GROUPS } from '../constants';
+import { filterTokens, withoutUrlChips } from '../chartSlots';
 
 /**
  * The picker's state, held once for the whole dashboard.
@@ -66,7 +67,9 @@ import { GROUPS } from '../constants';
  *                                          cannot see describes a different
  *                                          site than the one on screen. Each
  *                                          `filter` token goes out as its own
- *                                          `--filter=`.
+ *                                          `--filter=`, but a `url=` chip
+ *                                          under a `url:` pick, which names
+ *                                          its URL by hash.
  * @return {{active: boolean, start: Function, cancel: Function, briefs: Object[], open: boolean, close: Function}}
  *   The mode and what it gathered: `start` and `cancel` arm and disarm the
  *   picker, `briefs` holds one assembled reply per standing pick, in pick order,
@@ -133,6 +136,7 @@ export function useAsk( {
 			// before the first reply. A server read live beside the echoed
 			// filters names a server the table is not showing yet.
 			const server = urlFilters?.server ?? serverFilter;
+			const chips = urlFilters?.filter ?? [];
 			ask( [
 				...formatCommandArgs( descriptors, {
 					...( server ? { server } : {} ),
@@ -146,9 +150,11 @@ export function useAsk( {
 						? { bucket: urlFilters.bucket }
 						: {} ),
 				} ),
-				// One token a chip: the verb takes `--filter` repeated.
-				...( urlFilters?.filter ?? [] ).map(
-					( filter ) => `--filter=${ filter }`
+				// A `url:` brief is one URL, whose hash owns the `url` field.
+				...filterTokens(
+					descriptors[ 0 ].startsWith( 'url:' )
+						? withoutUrlChips( chips )
+						: chips
 				),
 			] );
 		},

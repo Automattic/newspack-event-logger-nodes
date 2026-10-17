@@ -54,16 +54,33 @@ final class Overview_Prefetch {
 			throw new \InvalidArgumentException( 'overview prefetch: a job names its queued_at and an interval of at least 1' );
 		}
 		$now     = (int) Core::right_now();
-		$verbs   = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
 		$answers = [];
-		foreach ( self::questions() as [ 'verb' => $verb, 'tokens' => $tokens ] ) {
-			$args   = Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ?? throw new \InvalidArgumentException( \esc_html( "overview prefetch: performance declares no {$verb}" ) ) ), $tokens );
+		foreach ( self::stored() as $key => [ 'verb' => $verb, 'args' => $args ] ) {
 			$answer = Performance_CI_Node::answer_live( $verb, $args, $now );
 			if ( true === ( $answer['available'] ?? null ) ) {
-				$answers[ self::key( $verb, $args ) ] = $answer;
+				$answers[ $key ] = $answer;
 			}
 		}
 		Url_Snapshot::publish( $now, 2 * $interval, $answers );
+	}
+
+	/**
+	 * The questions the job answers, each verb and its arguments bound as
+	 * the verb binds them, by the key its answer is stored under.
+	 *
+	 * @return array<string,array{verb:string,args:array<string,mixed>}>
+	 * @throws \InvalidArgumentException On a question naming a verb
+	 *                                   `performance` does not declare.
+	 * @throws \RuntimeException As `questions()`.
+	 */
+	public static function stored(): array {
+		$verbs  = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
+		$stored = [];
+		foreach ( self::questions() as [ 'verb' => $verb, 'tokens' => $tokens ] ) {
+			$args                              = Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ?? throw new \InvalidArgumentException( \esc_html( "overview prefetch: performance declares no {$verb}" ) ) ), $tokens );
+			$stored[ self::key( $verb, $args ) ] = [ 'verb' => $verb, 'args' => $args ];
+		}
+		return $stored;
 	}
 
 	/**
