@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.136.0\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.137.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-17T01:15:08+00:00\n"
+"POT-Creation-Date: 2026-10-17T03:38:28+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -151,7 +151,7 @@ msgstr ""
 
 #: src/components/LoadingFallback.js:29
 #: src/current-request/CurrentRequestTab.js:154
-#: src/overview/components/BreakdownControls.js:266
+#: src/overview/components/BreakdownControls.js:279
 msgid "Loading…"
 msgstr ""
 
@@ -553,47 +553,47 @@ msgstr ""
 msgid "Copy brief"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:37
-msgid "Type a filter as field=value."
+#: src/overview/components/BreakdownControls.js:39
+msgid "Type a filter as field=value, or field!=value to leave it out."
 msgstr ""
 
 #. translators: %s: the field name typed.
-#: src/overview/components/BreakdownControls.js:47
+#: src/overview/components/BreakdownControls.js:49
 #, js-format
 msgid "No field %s to filter on."
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:109
+#: src/overview/components/BreakdownControls.js:122
 msgid "Filter"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:110
+#: src/overview/components/BreakdownControls.js:123
 msgid "Filter, e.g. status_class=5xx"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:218
+#: src/overview/components/BreakdownControls.js:231
 #: src/overview/constants.js:87
 msgid "Server"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:228
+#: src/overview/components/BreakdownControls.js:241
 msgid "Metric"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:237
+#: src/overview/components/BreakdownControls.js:250
 msgid "Breakdown"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:246
+#: src/overview/components/BreakdownControls.js:259
 msgid "Then by"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:250
+#: src/overview/components/BreakdownControls.js:263
 msgid "None"
 msgstr ""
 
 #. translators: %s: the breakdown dimensions' labels, e.g. User Agent.
-#: src/overview/components/BreakdownControls.js:282
+#: src/overview/components/BreakdownControls.js:295
 #, js-format
 msgid "No %s data in this window."
 msgstr ""
