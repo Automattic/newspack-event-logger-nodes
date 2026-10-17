@@ -629,9 +629,9 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		return [
-			'request' => $this->facts( "SELECT r.bucket, r.status, r.ms, r.peak_mb, r.worker FROM requests r JOIN urls u ON u.id = r.url_id WHERE u.server = '{$host}'" ),
-			'timings' => $this->facts( "SELECT category, entry, listener, ms, calls, requests FROM timings WHERE server = '{$host}' ORDER BY category, entry" ),
-			'hourly'  => $this->facts( "SELECT count, timed, sum_ms, max_ms, errors FROM requests_hourly WHERE server = '{$host}'" ),
+			'request' => $this->facts( "SELECT r.bucket, r.status, r.ms, r.peak_mb, r.worker FROM requests r JOIN urls u ON u.id = r.url_id JOIN servers s ON s.id = u.server_id WHERE s.name = '{$host}'" ),
+			'timings' => $this->facts( "SELECT c.name, e.name, t.listener, t.ms, t.calls, t.requests FROM timings t JOIN servers s ON s.id = t.server_id JOIN categories c ON c.id = t.category_id JOIN entries e ON e.id = t.entry_id WHERE s.name = '{$host}' ORDER BY c.name, e.name" ),
+			'hourly'  => $this->facts( "SELECT h.count, h.timed, h.sum_ms, h.max_ms, h.errors FROM requests_hourly h JOIN servers s ON s.id = h.server_id WHERE s.name = '{$host}'" ),
 		];
 	}
 
@@ -1051,7 +1051,7 @@ class FlameBuilderTest extends TestCase {
 		$payload = $reply[ Message::VALUE ];
 		$this->assertSame( 'GET_STATS', $payload['verb'] );
 		$this->assertSame( 1, $payload['data']['buffered_requests'] );
-		$this->assertSame( 3, $payload['data']['buffered_rows'], 'its URL, its agent and its request' );
+		$this->assertSame( 7, $payload['data']['buffered_rows'], 'its server, URL and agent, its two categories, the empty entry, and its request' );
 		$this->assertArrayHasKey( 'auto_tune_pending_count', $payload['data'] );
 		$this->assertSame( 2, $payload['data']['significant_events_count'] );
 	}

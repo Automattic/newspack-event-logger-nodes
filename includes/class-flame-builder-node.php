@@ -7,16 +7,18 @@
  * turns each into a flame tree (via `Flame_Tree`), forwards it to the
  * `flames:partition` Partition for the flame viewer, and buffers the rows
  * the request contributes to the `flame-facts` Row_Table
- * (`Flame_Facts_Row_Schema`): its `requests` row, the `urls` and `agents`
- * rows it names, its `requests_hourly` rollup and, when timed, its
- * `timings` and `timings_site` rows.
+ * (`Flame_Facts_Row_Schema`): its `requests` row, the `urls`, `agents`,
+ * `servers`, `ja4s` and `froms` rows it names, its `requests_hourly` rollup
+ * and, when timed, its `timings` and `timings_site` rows, which name their
+ * `categories` and `entries` rows.
  *
  * `write_rows()` sends the buffer as one `ROWS` batch, one transaction, every
  * FLUSH_INTERVAL_SEC, at every checkpoint, and as soon as it holds
  * BUFFERED_REQUESTS_LIMIT requests or BUFFERED_OPS_LIMIT ops. A batch names
- * each URL and user agent once. Each request's rollups ride
- * as `then` ops of its `requests` row, applied only when that row inserted,
- * so a replay of records already written adds nothing.
+ * each URL and each lookup name once, and a row takes their ids by batch
+ * index. Each request's rollups ride as `then` ops of its `requests` row,
+ * applied only when that row inserted, so a replay of records already
+ * written adds nothing.
  *
  * The builder also keeps `category_window`, each category's and entry's
  * sums over the last `WINDOW_BUCKETS`: a request adds its timings when its
@@ -189,8 +191,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/** @var array<string,int> Batch index of each URL's `urls` op, by url_hash. */
 	private array $url_at = [];
 
-	/** @var array<string,int> Batch index of each user agent's `agents` op. */
-	private array $ua_at = [];
+	/** @var array<string,array<array-key,int>> Batch index of each lookup name's op, by column. */
+	private array $name_at = [];
 
 	/**
 	 * Each category's summed ms and calls over the non-worker requests the
@@ -413,12 +415,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Buffer one completed request's ops: an `ignore` for its URL and, when it
-	 * carries one, its user agent, each the first time the batch meets it,
-	 * whose ids the `requests` row takes by batch index, then that row's
-	 * `ignore`, whose `then` ops add its hourly rollup
-	 * and, when it is timed, a timing row per profile category and entry for
-	 * the URL and for the site.
+	 * Buffer one completed request's ops: an `ignore` for its server, its URL
+	 * and, when it carries each, its user agent, JA4 and From, and, when it is
+	 * timed, for each profile category and entry, each the first time the
+	 * batch meets it, whose ids the rows take by batch index; then the
+	 * request's `ignore`, whose `then` ops add its hourly rollup and, when it
+	 * is timed, a timing row per profile category and entry for the URL and
+	 * for the site, and its share of the category window.
 	 *
 	 * Filed where it COMPLETED (decision 19): its start plus its duration,
 	 * clamped to the tick, since a request cannot have finished after it
@@ -449,27 +452,39 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$method    = Core::str( $request['request_method'] );
 		$country   = self::named( $request['country_code'] ?? null );
 		$ua        = self::named( $request['user_agent'] ?? null );
+		$ja4       = self::named( $request['ja4_hash'] ?? null );
+		$from      = self::named( $request['http_from'] ?? null );
 		$peak      = \max( 0.0, Core::num_float( $request['peak_mb'] ?? 0 ) );
 		$ms        = $timed ? $duration : 0.0;
 		$place     = Log_Position::crumb( $crumb );
 
-		$url_at = $this->url_at[ $url_hash ] ??= $this->op( [ 'ignore', 'urls', [ null, $url_hash, $server, Url_Parts::row_path( $url, $server ) ] ] );
-		$ids    = [ Flame_Facts_Row_Schema::position( 'requests', 'url_id' ) => $url_at ];
-		if ( null !== $ua ) {
-			$ids[ Flame_Facts_Row_Schema::position( 'requests', 'ua_id' ) ] = $this->ua_at[ $ua ] ??= $this->op( [ 'ignore', 'agents', [ null, $ua ] ] );
-		}
-		$then = [
-			[ 'add', 'requests_hourly', [ Bucket::hour( $finished ), $server, self::status_class( $status ), $method, $worker, $country ?? '', 1, $timed ? 1 : 0, $ms, $ms, $peak, self::error_counts( $error ) ? 1 : 0 ] ],
+		$server_at = $this->named_at( 'server_id', $server );
+		$url_at    = $this->url_at[ $url_hash ] ??= $this->op( [ 'ignore', 'urls', [ null, $url_hash, null, Url_Parts::row_path( $url, $server ) ], [], self::ids_at( 'urls', [ 'server_id' => $server_at ] ) ] );
+		$ids       = self::ids_at(
+			'requests',
+			[
+				'server_id' => $server_at,
+				'url_id'    => $url_at,
+				'ua_id'     => $this->named_at( 'ua_id', $ua ),
+				'ja4_id'    => $this->named_at( 'ja4_id', $ja4 ),
+				'from_id'   => $this->named_at( 'from_id', $from ),
+			]
+		);
+		$then      = [
+			[ 'add', 'requests_hourly', [ Bucket::hour( $finished ), null, self::status_class( $status ), $method, $worker, $country ?? '', 1, $timed ? 1 : 0, $ms, $ms, $peak, self::error_counts( $error ) ? 1 : 0 ], [], self::ids_at( 'requests_hourly', [ 'server_id' => $server_at ] ) ],
 		];
-		$profiles = $timed ? Core::arr( $request['profiles'] ?? null ) : [];
-		$url_id   = [ Flame_Facts_Row_Schema::position( 'timings', 'url_id' ) => $url_at ];
-		$timings  = $this->profile_rows( $profiles, $request, $url, 1 === $worker );
-		$windowed = $bucket > $this->window_through;
+		$profiles  = $timed ? Core::arr( $request['profiles'] ?? null ) : [];
+		$timings   = $this->profile_rows( $profiles, $request, $url, 1 === $worker );
+		$windowed  = $bucket > $this->window_through;
 		foreach ( $timings as [ $category, $entry, $listener, $time, $calls ] ) {
-			$then[] = [ 'add', 'timings', [ $bucket, $server, null, $category, $entry, $listener, $time, $calls, 1 ], [], $url_id ];
-			$then[] = [ 'add', 'timings_site', [ $bucket, $server, $worker, $category, $entry, $listener, $time, $calls, 1 ] ];
+			$named  = [
+				'category_id' => $this->named_at( 'category_id', $category ),
+				'entry_id'    => $this->named_at( 'entry_id', $entry ),
+			];
+			$then[] = [ 'add', 'timings', [ $bucket, null, null, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings', $named + [ 'server_id' => $server_at, 'url_id' => $url_at ] ) ];
+			$then[] = [ 'add', 'timings_site', [ $bucket, null, $worker, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings_site', $named + [ 'server_id' => $server_at ] ) ];
 			if ( $windowed ) {
-				$then[] = self::window_op( [ $category, $entry, $listener, $worker, $time, $calls, 1 ], 1, $bucket );
+				$then[] = [ ...self::window_op( [ null, null, $listener, $worker, $time, $calls, 1 ], 1, $bucket ), [], self::ids_at( 'category_window', $named ) ];
 			}
 		}
 		$this->ops += \count( $then );
@@ -486,14 +501,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 					$place['segment'] ?? null,
 					$place['offset'] ?? null,
 					$place['length'] ?? null,
-					$server,
+					null,
 					null,
 					$status,
 					$method,
 					$country,
 					null,
-					self::named( $request['ja4_hash'] ?? null ),
-					self::named( $request['http_from'] ?? null ),
+					null,
+					null,
 					$worker,
 					[] === $timings ? 0 : 1,
 					\in_array( $error, Request_Builder_Node::ERROR_STATUSES, true ) ? $error : null,
@@ -508,6 +523,21 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
+	 * The batch index of the `ignore` filing `$name` in the lookup table
+	 * `Flame_Facts_Row_Schema::NAMED_BY` names for `$column`, appended the
+	 * first time the batch names it; null for no name.
+	 *
+	 * @param string      $column A column naming a lookup row by its id.
+	 * @param string|null $name   The name, exactly as the record carries it.
+	 */
+	private function named_at( string $column, ?string $name ): ?int {
+		if ( null === $name ) {
+			return null;
+		}
+		return $this->name_at[ $column ][ $name ] ??= $this->op( [ 'ignore', Flame_Facts_Row_Schema::NAMED_BY[ $column ], [ null, $name ] ] );
+	}
+
+	/**
 	 * Append one op to the batch and count it.
 	 *
 	 * @param Row_Op $op The op.
@@ -517,6 +547,24 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$this->rows[] = $op;
 		++$this->ops;
 		return \count( $this->rows ) - 1;
+	}
+
+	/**
+	 * An op's `ids` map: each column's position in `$table` to the batch
+	 * index whose id fills it, a column naming no op left null.
+	 *
+	 * @param string                  $table  The table the op writes.
+	 * @param array<string,int|null> $columns Batch indexes by column.
+	 * @return array<int,int>
+	 */
+	private static function ids_at( string $table, array $columns ): array {
+		$ids = [];
+		foreach ( $columns as $column => $at ) {
+			if ( null !== $at ) {
+				$ids[ Flame_Facts_Row_Schema::position( $table, $column ) ] = $at;
+			}
+		}
+		return $ids;
 	}
 
 	/**
@@ -752,7 +800,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$this->buffered      = 0;
 		$this->ops           = 0;
 		$this->url_at        = [];
-		$this->ua_at         = [];
+		$this->name_at       = [];
 		$this->category_sums = [];
 		$this->worked_at     = Core::$now;
 		// Once a minute rather than once a flush: a handful a lifetime.
@@ -812,7 +860,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private function window_expiries( int $first, int $last ): array {
 		$sums = $this->own_rows(
-			'SELECT bucket, category, entry, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY bucket, category, entry, listener, worker',
+			'SELECT bucket, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY bucket, category_id, entry_id, listener, worker',
 			[ $first, $last ]
 		);
 		$then = \array_fill_keys( \range( $first, $last ), [] );
@@ -840,11 +888,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private function window_rebuild( int $through, int $now ): array {
 		$batch = [];
-		foreach ( $this->own_rows( 'SELECT category, entry, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window', [] ) as $row ) {
+		foreach ( $this->own_rows( 'SELECT category_id, entry_id, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window', [] ) as $row ) {
 			$batch[] = self::window_op( $row, -1, Core::as_int( $row[7] ) );
 		}
 		$sums = $this->own_rows(
-			'SELECT category, entry, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY category, entry, listener, worker',
+			'SELECT category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY category_id, entry_id, listener, worker',
 			[ $through + 1, $now ]
 		);
 		foreach ( $sums as $row ) {
@@ -858,16 +906,17 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * A `category_window` add of one category's and entry's sums, added at
-	 * `$sign` 1 and subtracted at -1, its `last_bucket` `$last`.
+	 * `$sign` 1 and subtracted at -1, its `last_bucket` `$last`. A null id
+	 * is one the op's `ids` map fills.
 	 *
-	 * @param list<mixed> $sums Category, entry, listener, worker, ms, calls, requests.
+	 * @param list<mixed> $sums Category id, entry id, listener, worker, ms, calls, requests.
 	 * @param int         $sign 1 or -1.
 	 * @param int         $last The bucket the row last moved in.
 	 * @return Row_Op
 	 */
 	private static function window_op( array $sums, int $sign, int $last ): array {
 		[ $category, $entry, $listener, $worker, $ms, $calls, $requests ] = $sums;
-		return [ 'add', 'category_window', [ Core::as_string( $category ), Core::as_string( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), $sign * Core::num_float( $ms ), $sign * Core::as_int( $calls ), $sign * Core::as_int( $requests ), $last ] ];
+		return [ 'add', 'category_window', [ null === $category ? null : Core::as_int( $category ), null === $entry ? null : Core::as_int( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), $sign * Core::num_float( $ms ), $sign * Core::as_int( $calls ), $sign * Core::as_int( $requests ), $last ] ];
 	}
 
 	/**

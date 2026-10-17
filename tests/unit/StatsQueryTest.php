@@ -56,11 +56,11 @@ final class StatsQueryTest extends TestCase {
 	public function test_a_days_category_ranking_reads_the_window_when_every_watermark_stands_at_its_start(): void {
 		$day = $this->last_day();
 		foreach ( [ 0, 2 ] as $p ) {
-			$this->write_facts( $p, [
-				[ 'ignore', 'window_expiry', [ $day[0][0] - 3 ] ],
-				[ 'ignore', 'window_expiry', [ $day[0][0] - 1 ] ],
-				[ 'add', 'category_window', [ 'hook:ruru_init', '', 0, 0, 21.5 + $p, 3, 2, $day[0][1] ] ],
-				[ 'add', 'category_window', [ 'hook:gone_init', '', 0, 0, 500.0, 1, 1, $day[0][0] - 1 ] ],
+			$this->seed_rows( $p, [
+				[ 'ignore', 'window_expiry', [ 'bucket' => $day[0][0] - 3 ] ],
+				[ 'ignore', 'window_expiry', [ 'bucket' => $day[0][0] - 1 ] ],
+				[ 'add', 'category_window', self::window_row( 'hook:ruru_init', 21.5 + $p, 3, 2, $day[0][1] ) ],
+				[ 'add', 'category_window', self::window_row( 'hook:gone_init', 500.0, 1, 1, $day[0][0] - 1 ) ],
 			] );
 		}
 
@@ -116,6 +116,71 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 'egret.example', 1 ], [ 'kea.example', 1 ] ], $r['rows'] );
 		$this->assertSame( 'requests', $r['source'] );
 		$this->assertSame( 'requests', $r['table'] );
+	}
+
+	/**
+	 * Each partition files a name under an id of its own: `kea.example` is
+	 * partition 0's first server and partition 3's second, and still groups
+	 * as one server, filters as one, and names its URLs, in either the
+	 * composed or the whole-row reading.
+	 */
+	public function test_a_server_filed_under_another_id_in_each_partition_reads_as_one(): void {
+		$this->seed_request( [ 'server' => 'kea.example', 'ms' => 120.0 ] );
+		$this->seed_request( [ 'server' => 'egret.example', 'ms' => 40.0 ], partition: 3 );
+		$this->seed_requests( [ [ 'server' => 'kea.example', 'ms' => 80.0 ], [ 'server' => 'kea.example', 'ms' => 60.0 ] ], partition: 3 );
+		$day = $this->last_day();
+		$url = Log_Manager::url_hash( 'https://kea.example/seed-path/' );
+
+		$by_server = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'server', 'buckets' => $day ] ) );
+		$filtered  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea.example' ] ], 'buckets' => $day ] ) );
+		$composed  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'buckets' => $day ] ) );
+		$whole     = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'p50_ms' ], 'buckets' => $day ] ) );
+
+		$this->assertSame( [ [ 'egret.example', 1 ], [ 'kea.example', 3 ] ], $by_server['rows'] );
+		$this->assertSame( [ [ 3 ] ], $filtered['rows'] );
+		$this->assertSame( [ [ $url, 'https://kea.example/seed-path/', 3 ] ], $composed['rows'] );
+		$this->assertSame( [ [ $url, 'https://kea.example/seed-path/', 80.0 ] ], $whole['rows'] );
+	}
+
+	/**
+	 * A URL filter or a search reads the URL's row alone: only a group that
+	 * names the URL joins its server, so a missing server row drops nothing
+	 * from a count filtered by URL.
+	 */
+	public function test_only_a_url_group_reads_the_urls_server(): void {
+		$url = 'https://pukeko.example/raupo-417';
+		$this->seed_request( [ 'server' => 'pukeko.example', 'url' => $url ] );
+		$this->seed_request( [ 'server' => 'pukeko.example', 'url' => $url ] );
+		( new \PDO( 'sqlite:' . $this->facts_file( 0 ) ) )->exec( 'DELETE FROM servers' );
+		$day = $this->last_day();
+
+		$filtered = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'url' => [ Log_Manager::url_hash( $url ) ] ], 'buckets' => $day ] ) );
+		$searched = Stats_Query::run( self::spec( [ 'source' => 'requests', 'search' => 'raupo', 'buckets' => $day ] ) );
+
+		$this->assertSame( [ [ 2 ] ], $filtered['rows'] );
+		$this->assertSame( [ [ 2 ] ], $searched['rows'] );
+	}
+
+	/**
+	 * A JA4, a From, a category and an entry filed in a different order in
+	 * each partition still group and filter as one name.
+	 */
+	public function test_names_filed_in_another_order_per_partition_read_as_one(): void {
+		$this->seed_request( [ 'ja4' => 't13d_kea', 'from' => 'kea@bot.example' ] );
+		$this->seed_request( [ 'ja4' => 't13d_moa', 'from' => 'moa@bot.example' ], partition: 3 );
+		$this->seed_request( [ 'ja4' => 't13d_kea', 'from' => 'kea@bot.example' ], partition: 3 );
+		$this->seed_site_timings( [ [ 'category' => 'hook:kea_init', 'entry' => 'kea_cb', 'ms' => 7.5 ] ] );
+		$this->seed_site_timings( [ [ 'category' => 'hook:moa_init', 'entry' => 'moa_cb', 'ms' => 2.5 ], [ 'category' => 'hook:kea_init', 'entry' => 'kea_cb', 'ms' => 4.0 ] ], partition: 3 );
+		$day = $this->last_day();
+
+		$ja4  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'ja4', 'from' ], 'sort' => 'ja4', 'buckets' => $day ] ) );
+		$from = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'from' => [ 'kea@bot.example' ] ], 'buckets' => $day ] ) );
+		$cats = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category', 'entry' ], 'filter' => [ 'entry' => [ 'kea_cb' ] ], 'measure' => [ 'ms' ], 'buckets' => [ [ $day[0][1] - 11, $day[0][1] ] ] ] );
+
+		$this->assertSame( [ [ 't13d_kea', 'kea@bot.example', 2 ], [ 't13d_moa', 'moa@bot.example', 1 ] ], $ja4['rows'] );
+		$this->assertSame( [ [ 2 ] ], $from['rows'] );
+		$this->assertSame( 'timings_site', $cats['table'] );
+		$this->assertSame( [ [ 'hook:kea_init', 'kea_cb', 11.5 ] ], $cats['rows'] );
 	}
 
 	public function test_a_missing_status_is_unknown_in_a_status_breakdown(): void {
@@ -201,7 +266,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'error' => 'T', 'ms' => null ] );
 
 		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'country', 'ua', 'ja4', 'from', 'error' ], 'buckets' => $this->last_day() ] ) );
-		$this->seed_request( [ 'country' => 'AU', 'ua' => 'Kakapo/2.0', 'ja4' => 't13d1517h2', 'from_header' => 'bot@kea.example' ], partition: 3 );
+		$this->seed_request( [ 'country' => 'AU', 'ua' => 'Kakapo/2.0', 'ja4' => 't13d1517h2', 'from' => 'bot@kea.example' ], partition: 3 );
 		$named = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'country', 'ua', 'ja4', 'from', 'error' ], 'buckets' => $this->last_day() ] ) );
 
 		$this->assertSame( [ [ 'Unknown', 'Unknown', 'Unknown', 'Unknown', 'T', 1 ] ], $r['rows'] );

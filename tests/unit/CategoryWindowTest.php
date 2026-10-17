@@ -89,7 +89,7 @@ final class CategoryWindowTest extends TestCase {
 	/** The window's live rows as category => [ ms, calls, requests ]. */
 	private function window(): array {
 		$w = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT MAX( bucket ) FROM p0.window_expiry', [] ) );
-		$rows = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT category, ms, calls, requests FROM p0.category_window WHERE last_bucket > ? AND requests > 0 AND entry = ? ORDER BY category', [ $w[0][0], '' ] ) );
+		$rows = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT c.name, w.ms, w.calls, w.requests FROM p0.category_window AS w JOIN p0.categories AS c ON c.id = w.category_id JOIN p0.entries AS e ON e.id = w.entry_id WHERE w.last_bucket > ? AND w.requests > 0 AND e.name = ? ORDER BY c.name', [ $w[0][0], '' ] ) );
 		$out = [];
 		foreach ( $rows as [ $category, $ms, $calls, $requests ] ) {
 			$out[ $category ] = [ $ms, $calls, $requests ];
@@ -99,7 +99,7 @@ final class CategoryWindowTest extends TestCase {
 
 	/** Every window row as stored, zeroed and negative rows included. */
 	private function raw_window(): array {
-		return Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT ms, calls, requests FROM p0.category_window ORDER BY category', [] ) );
+		return Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT w.ms, w.calls, w.requests FROM p0.category_window AS w JOIN p0.categories AS c ON c.id = w.category_id ORDER BY c.name', [] ) );
 	}
 
 	public function test_a_folded_request_adds_its_categories_to_the_window(): void {
@@ -158,13 +158,13 @@ final class CategoryWindowTest extends TestCase {
 
 	public function test_a_start_with_no_state_rebuilds_the_window_from_timings_site(): void {
 		$bucket = Bucket::id( self::NOW );
-		$this->write_facts(
+		$this->seed_rows(
 			0,
 			[
-				[ 'add', 'category_window', [ 'hook:stale_init', '', 0, 0, 999.0, 9, 9, $bucket ] ],
-				[ 'add', 'timings_site', [ $bucket - 3, 'seed.example', 0, 'hook:tui_init', '', 0, 30.5, 4, 2 ] ],
-				[ 'add', 'timings_site', [ $bucket - 287, 'seed.example', 0, 'hook:tui_init', '', 0, 5.25, 3, 1 ] ],
-				[ 'add', 'timings_site', [ $bucket - 288, 'seed.example', 0, 'hook:tui_init', '', 0, 70.0, 1, 1 ] ],
+				[ 'add', 'category_window', self::window_row( 'hook:stale_init', 999.0, 9, 9, $bucket ) ],
+				[ 'add', 'timings_site', [ 'bucket' => $bucket - 3, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 30.5, 'calls' => 4, 'requests' => 2 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $bucket - 287, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 5.25, 'calls' => 3, 'requests' => 1 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $bucket - 288, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 70.0, 'calls' => 1, 'requests' => 1 ] ],
 			]
 		);
 
@@ -216,17 +216,17 @@ final class CategoryWindowTest extends TestCase {
 
 	public function test_a_rebuild_marks_its_watermark_so_a_restart_rebuilds_nothing(): void {
 		$bucket = Bucket::id( self::NOW );
-		$this->write_facts(
+		$this->seed_rows(
 			0,
 			[
-				[ 'add', 'timings_site', [ $bucket - 287, 'seed.example', 0, 'hook:tui_init', '', 0, 30.5, 4, 2 ] ],
-				[ 'add', 'timings_site', [ $bucket - 288, 'seed.example', 0, 'hook:tui_init', '', 0, 6.0, 1, 1 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $bucket - 287, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 30.5, 'calls' => 4, 'requests' => 2 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $bucket - 288, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 6.0, 'calls' => 1, 'requests' => 1 ] ],
 			]
 		);
 		$fb = $this->builder();
 		$fb->flush();
 		// A sum the window does not hold, which only a second rebuild would add.
-		self::rows_into( Core::node( self::FACTS_TABLE ), [ [ 'add', 'timings_site', [ $bucket - 287, 'tui.example', 0, 'hook:tui_init', '', 0, 4.0, 1, 1 ] ] ] );
+		self::rows_into( Core::node( self::FACTS_TABLE ), self::facts_ops( [ [ 'add', 'timings_site', [ 'bucket' => $bucket - 287, 'server' => 'tui.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 4.0, 'calls' => 1, 'requests' => 1 ] ] ] ) );
 
 		$this->restarted( $fb )->flush();
 
@@ -319,6 +319,6 @@ final class CategoryWindowTest extends TestCase {
 
 	/** A window row timings_site holds nothing for, newer than any watermark. */
 	private function seed_stale_window_row(): void {
-		$this->write_facts( 0, [ [ 'add', 'category_window', [ 'hook:stale_init', '', 0, 0, 999.0, 9, 9, Bucket::id( self::NOW ) ] ] ] );
+		$this->seed_rows( 0, [ [ 'add', 'category_window', self::window_row( 'hook:stale_init', 999.0, 9, 9, Bucket::id( self::NOW ) ) ] ] );
 	}
 }
