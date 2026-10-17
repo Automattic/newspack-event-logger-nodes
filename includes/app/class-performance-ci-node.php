@@ -1250,7 +1250,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		$now      = self::now();
 		$scoped   = 'overview' === $verb && null !== $args['server'];
-		$key      = 'urls' === $verb ? null : Overview_Prefetch::key( $verb, $scoped ? [ 'server' => null ] + $args : $args );
+		$key      = 'urls' === $verb ? null : Overview_Prefetch::key( $verb, $scoped ? \array_replace( $args, [ 'server' => null ] ) : $args );
 		$served   = null === $key ? self::snapshot_answers( $args ) : isset( $this->stored_questions()[ $key ] );
 		$snapshot = $served ? Url_Snapshot::open( $now ) : null;
 		try {
@@ -1260,7 +1260,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			$stored = null;
 		}
 		if ( $scoped ) {
-			return self::answer_live( $verb, $args, $now, null === $stored ? null : \array_values( Core::arr( $stored['servers'] ?? null ) ) );
+			$servers = null === $stored ? null : \array_values( Core::arr( $stored['servers'] ?? throw new \UnexpectedValueException( 'performance: the stored overview names no servers' ) ) );
+			return [ 'as_of' => $now ] + self::answer_overview( Core::as_string( $args['server'] ), $now, $servers );
 		}
 		return $stored ?? self::answer_live( $verb, $args, $now );
 	}
@@ -1324,16 +1325,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * dated `$now`.
 	 *
 	 * @api Overview_Prefetch, which stores these.
-	 * @param string                 $verb    `overview`, `urls` or `query`.
-	 * @param array<array-key,mixed> $args    Its bound arguments.
-	 * @param int                    $now     The reply's clock.
-	 * @param list<mixed>|null       $servers The overview's `servers`, read live when null.
+	 * @param string                 $verb `overview`, `urls` or `query`.
+	 * @param array<array-key,mixed> $args Its bound arguments.
+	 * @param int                    $now  The reply's clock.
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException On a verb no answer is stored for, or what the verb refuses.
 	 */
-	public static function answer_live( string $verb, array $args, int $now, ?array $servers = null ): array {
+	public static function answer_live( string $verb, array $args, int $now ): array {
 		return [ 'as_of' => $now ] + match ( $verb ) {
-			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now, $servers ),
+			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now, null ),
 			'urls'     => self::url_page( ...self::url_question( $args ), now: $now ),
 			'query'    => self::answer_query( $args, $now ),
 			default    => throw new \InvalidArgumentException( \esc_html( "no stored answer answers {$verb}" ) ),
