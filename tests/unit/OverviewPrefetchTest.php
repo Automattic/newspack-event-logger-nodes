@@ -498,6 +498,28 @@ final class OverviewPrefetchTest extends TestCase {
 		);
 	}
 
+	public function test_a_scoped_overview_whose_stored_overview_names_no_servers_is_refused(): void {
+		$this->seed_request( [ 'server' => 'kea-6205.example', 'url' => 'https://kea-6205.example/a/', 'ms' => 8.5 ] );
+		$key = Overview_Prefetch::key( 'overview', Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], [] ) );
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			Url_Snapshot::NAME,
+			static function ( Row_Reader $db ) use ( $key ): bool {
+				$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
+				$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, '{"as_of":1790007215,"available":true}' ] );
+				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
+				return true;
+			}
+		);
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6205.example' ] );
+
+		$this->assertIsString( $overview, 'a stored overview with no servers is no empty picker' );
+		$this->assertStringContainsString( 'the stored overview names no servers', $overview );
+	}
+
 	public function test_a_question_the_snapshot_stored_no_answer_for_is_answered_live(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5536/', 'ms' => 33.5 ] );
 		$this->run_job();
