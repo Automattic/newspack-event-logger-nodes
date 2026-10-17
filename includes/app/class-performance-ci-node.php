@@ -1260,12 +1260,13 @@ class Performance_CI_Node extends Service_CI_Node {
 			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
 			$stored = null;
 		}
-		if ( 'overview' === $verb && null !== $stored && ! \is_array( $stored['servers'] ?? null ) ) {
+		$servers = 'overview' === $verb ? ( $stored['servers'] ?? null ) : null;
+		if ( 'overview' === $verb && null !== $stored && ! \is_array( $servers ) ) {
 			Core::print_less_often( 'performance: the stored overview names no servers' );
 			$stored = null;
 		}
 		if ( '' !== $server ) {
-			return [ 'as_of' => $now ] + self::answer_overview( $server, $now, null === $stored ? null : \array_values( Core::arr( $stored['servers'] ) ) );
+			return [ 'as_of' => $now ] + self::answer_overview( $server, $now, \is_array( $servers ) ? \array_values( $servers ) : null );
 		}
 		return $stored ?? self::answer_live( $verb, $args, $now );
 	}
@@ -1350,13 +1351,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * with traffic there, worker traffic counted, busiest first, and the
 	 * leaderboard. A server scopes the totals and the leaderboard; `servers`
 	 * stays whole, so a scoped dashboard can still name the rest. A stored
-	 * list stands in for it unless the scoped server has traffic the list
-	 * predates, which only a live read names. Stats that will not open answer
-	 * `available` false and null totals, never zeroes.
+	 * list stands in for it unless the scoped server has traffic, worker
+	 * traffic counted as the list counts it, that the list predates, which
+	 * only a live read names. Stats that will not open answer `available`
+	 * false and null totals, never zeroes.
 	 *
 	 * @param string           $server  Server to scope to; '' is every server.
 	 * @param int              $now     The reply's clock.
-	 * @param list<mixed>|null $servers The stored `servers`; null reads them.
+	 * @param list<mixed>|null $servers The stored `servers` a scoped answer may take; null, or an unscoped answer, reads them.
 	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, available: bool}
 	 */
 	private static function answer_overview( string $server, int $now, ?array $servers ): array {
@@ -1371,7 +1373,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			]
 		);
 		$totals  = self::measures( $answer );
-		if ( null === $servers || ( 0 < Core::num_int( $totals['count'] ) && ! \in_array( $server, $servers, true ) ) ) {
+		if ( null === $servers || ( ! \in_array( $server, $servers, true ) && self::has_traffic( $server, $chart ) ) ) {
 			$servers = \array_column(
 				Stats_Query::run(
 					[
@@ -1401,6 +1403,26 @@ class Performance_CI_Node extends Service_CI_Node {
 			'leaderboard' => self::site_leaderboard( $server, $now ),
 			'available'   => $answer['available'],
 		];
+	}
+
+	/**
+	 * Whether `$server` has any request over `$buckets`, worker traffic
+	 * counted: one seek of `requests_server`.
+	 *
+	 * @param string                   $server  The server; '' is every server.
+	 * @param list<array{0:int,1:int}> $buckets The buckets.
+	 */
+	private static function has_traffic( string $server, array $buckets ): bool {
+		$answer = Stats_Query::run(
+			[
+				'source'  => 'requests',
+				'group'   => [],
+				'filter'  => self::scope( $server, true ),
+				'measure' => [ 'count' ],
+				'buckets' => $buckets,
+			]
+		);
+		return 0 < Core::num_int( self::measures( $answer )['count'] );
 	}
 
 	/**

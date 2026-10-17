@@ -461,6 +461,20 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( [ 'ruru-6206.example', 'kea-6206.example' ], $overview['servers'], 'the scope stays on a server the job never saw' );
 	}
 
+	/** The list counts worker traffic, so a server only workers reached is new too. */
+	public function test_a_scoped_overview_of_a_server_only_workers_reached_reads_its_servers_live(): void {
+		$this->seed_request( [ 'server' => 'kea-6210.example', 'url' => 'https://kea-6210.example/a/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'server' => 'ruru-6210.example', 'url' => 'https://ruru-6210.example/wp-cron.php', 'ms' => 12.5, 'worker' => 1 ] );
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=ruru-6210.example' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( 0, $overview['totals']['requests'], 'no non-worker request' );
+		$this->assertContains( 'ruru-6210.example', $overview['servers'], 'the scope stays on a server only workers reached' );
+	}
+
 	/** A scoped server with no traffic is no new server: the stored list serves it. */
 	public function test_a_scoped_overview_of_a_server_with_no_traffic_names_the_stored_servers(): void {
 		$this->seed_request( [ 'server' => 'kea-6208.example', 'url' => 'https://kea-6208.example/a/', 'ms' => 33.5 ] );
@@ -495,9 +509,13 @@ final class OverviewPrefetchTest extends TestCase {
 		self::clock( self::NOW + 9 );
 		$said = static fn ( string $text ): array => \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, $text ) );
 
-		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', Overview_Prefetch::questions()['categories']['tokens'] );
-		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		$query = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', Overview_Prefetch::questions()['categories']['tokens'] );
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 
+		$this->assertSame( self::NOW + 9, \is_array( $query ) ? $query['as_of'] : $query, 'the query answered live' );
+		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'overview answered no structure' );
+		$this->assertSame( self::NOW + 9, $reply['as_of'], 'the overview answered live' );
+		$this->assertSame( [ 'kea-6209.example' ], $reply['servers'] );
 		$this->assertNotEmpty( $said( 'performance: the URL snapshot did not read' ), 'the read failure is said' );
 		$this->assertNotEmpty( $said( 'the stored overview names no servers' ), 'and so is the overview naming none' );
 	}
