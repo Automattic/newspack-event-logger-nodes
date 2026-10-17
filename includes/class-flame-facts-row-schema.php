@@ -3,11 +3,13 @@
  * Flame Facts Row Schema
  *
  * The row tables the flame builder writes and every performance reader
- * queries: one `requests` row per completed request, the `urls` and
- * `agents` it names by id, its per-category `timings` per URL and per site,
- * and its `requests_hourly` rollup. A topology declares them as
- * `make_node Row_Table <name> Flame_Facts`, and a reader finds that name
- * through `Bootstrap::row_table()`.
+ * queries: one `requests` row per completed request, its per-category
+ * `timings` per URL and per site, and its `requests_hourly` rollup. Every
+ * string a row repeats, its URL, server, agent, JA4, From, category and
+ * entry, is the id of a row in `urls` or a lookup table, each released once
+ * no row names it. A topology declares them as `make_node Row_Table <name>
+ * Flame_Facts`, and a reader finds that name through
+ * `Bootstrap::row_table()`.
  *
  * `category_window` holds each category's and entry's sums over the last
  * `WINDOW_BUCKETS`, and `window_expiry` one row per bucket expired, so a
@@ -27,6 +29,17 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Buckets are `Bucket::id()`s and hours `Bucket::hour()`s. A key column
  * holds no NULL, so `requests_hourly` files an absent status class as 0 and
  * an absent country as '', and readers spell both `Unknown`.
+ *
+ * @phpstan-type Row_Spec array{
+ *   columns: array<string,string>,
+ *   key?: list<string>,
+ *   add?: array<string,'sum'|'max'>,
+ *   indexes?: array<string,list<string>>,
+ *   retain?: array{0:string,1:int,2:int},
+ *   retained_by?: list<array{0:string,1:string,2:string}>,
+ *   autoincrement?: string,
+ *   fts?: list<string>
+ * }
  */
 final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 
@@ -42,8 +55,37 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	/** Five-minute buckets the category window spans: the chart's 24 hours. */
 	public const WINDOW_BUCKETS = 288;
 
+	/**
+	 * Each column naming a row of another table by that row's `id`, and the
+	 * table it names: the one map each named table's `retained_by`, the
+	 * index leading each such column, the builder's lookup ops and the test
+	 * seeder all read.
+	 */
+	public const NAMED_BY = [
+		'url_id'      => 'urls',
+		'server_id'   => 'servers',
+		'ua_id'       => 'agents',
+		'ja4_id'      => 'ja4s',
+		'from_id'     => 'froms',
+		'category_id' => 'categories',
+		'entry_id'    => 'entries',
+	];
+
+	/** A lookup table: each name the rows repeat, filed once under its id. */
+	private const LOOKUP = [
+		'columns'       => [
+			'id'   => 'INTEGER',
+			'name' => 'TEXT NOT NULL',
+		],
+		'key'           => [ 'name' ],
+		'autoincrement' => 'id',
+	];
+
 	/** @var array<string,array<string,int>> Each table's column positions, read once. */
 	private static array $positions = [];
+
+	/** @var array<string,Row_Spec>|null The tables, derived once. */
+	private static ?array $tables = null;
 
 	/**
 	 * Where a column sits in its table's rows: the index an op's `ids` map
@@ -59,43 +101,42 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	}
 
 	/**
-	 * The eight row tables, each column in row order.
+	 * The thirteen row tables, each column in row order, each table a
+	 * `NAMED_BY` column names `retained_by` that column, and that column
+	 * leading an index wherever its table's key or another index does not.
 	 *
 	 * @api Read by the Row_Table that opens the file.
-	 * @return array<string, array{
-	 *   columns: array<string,string>,
-	 *   key?: list<string>,
-	 *   add?: array<string,'sum'|'max'>,
-	 *   indexes?: array<string,list<string>>,
-	 *   retain?: array{0:string,1:int,2:int},
-	 *   retained_by?: list<array{0:string,1:string,2:string}>,
-	 *   autoincrement?: string,
-	 *   fts?: list<string>
-	 * }> Each table's declaration, by table name.
+	 * @return array<string,Row_Spec> Each table's declaration, by table name.
 	 */
 	public static function tables(): array {
+		return self::$tables ??= self::referenced( self::declared() );
+	}
+
+	/**
+	 * The tables as declared, before `referenced()` adds what `NAMED_BY`
+	 * implies.
+	 *
+	 * @return array<string,Row_Spec>
+	 */
+	private static function declared(): array {
 		return [
 			'urls'            => [
 				'columns'       => [
-					'id'     => 'INTEGER',
-					'hash'   => 'TEXT NOT NULL',
-					'server' => 'TEXT NOT NULL',
-					'path'   => 'TEXT NOT NULL',
+					'id'        => 'INTEGER',
+					'hash'      => 'TEXT NOT NULL',
+					'server_id' => 'INTEGER NOT NULL',
+					'path'      => 'TEXT NOT NULL',
 				],
 				'key'           => [ 'hash' ],
 				'autoincrement' => 'id',
-				'retained_by'   => [ [ 'requests', 'url_id', 'id' ] ],
 				'fts'           => [ 'path' ],
 			],
-			'agents'          => [
-				'columns'       => [
-					'id' => 'INTEGER',
-					'ua' => 'TEXT NOT NULL',
-				],
-				'key'           => [ 'ua' ],
-				'autoincrement' => 'id',
-				'retained_by'   => [ [ 'requests', 'ua_id', 'id' ] ],
-			],
+			'servers'         => self::LOOKUP,
+			'agents'          => self::LOOKUP,
+			'ja4s'            => self::LOOKUP,
+			'froms'           => self::LOOKUP,
+			'categories'      => self::LOOKUP,
+			'entries'         => self::LOOKUP,
 			'requests'        => [
 				'columns' => [
 					'rid'         => 'TEXT NOT NULL',
@@ -106,14 +147,14 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'segment'     => 'INTEGER',
 					'offset'      => 'INTEGER',
 					'length'      => 'INTEGER',
-					'server'      => 'TEXT NOT NULL',
+					'server_id'   => 'INTEGER NOT NULL',
 					'url_id'      => 'INTEGER NOT NULL',
 					'status'      => 'INTEGER',
 					'method'      => 'TEXT NOT NULL',
 					'country'     => 'TEXT',
 					'ua_id'       => 'INTEGER',
-					'ja4'         => 'TEXT',
-					'from_header' => 'TEXT',
+					'ja4_id'      => 'INTEGER',
+					'from_id'     => 'INTEGER',
 					'worker'      => 'INTEGER NOT NULL',
 					'profiled'    => 'INTEGER NOT NULL',
 					'error'       => 'TEXT',
@@ -122,25 +163,24 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				],
 				'key'     => [ 'rid' ],
 				'indexes' => [
-					'requests_url'    => [ 'url_id', 'bucket' ],
-					'requests_ua'     => [ 'ua_id' ],
-					'requests_cover'  => [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ],
+					'requests_url'   => [ 'url_id', 'bucket' ],
+					'requests_cover' => [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ],
 				],
 				'retain'  => [ 'bucket', self::REQUESTS_BUCKETS, Bucket::SECONDS ],
 			],
 			'timings'         => [
 				'columns' => [
-					'bucket'   => 'INTEGER NOT NULL',
-					'server'   => 'TEXT NOT NULL',
-					'url_id'   => 'INTEGER NOT NULL',
-					'category' => 'TEXT NOT NULL',
-					'entry'    => 'TEXT NOT NULL',
-					'listener' => 'INTEGER NOT NULL',
-					'ms'       => 'REAL NOT NULL',
-					'calls'    => 'INTEGER NOT NULL',
-					'requests' => 'INTEGER NOT NULL',
+					'bucket'      => 'INTEGER NOT NULL',
+					'server_id'   => 'INTEGER NOT NULL',
+					'url_id'      => 'INTEGER NOT NULL',
+					'category_id' => 'INTEGER NOT NULL',
+					'entry_id'    => 'INTEGER NOT NULL',
+					'listener'    => 'INTEGER NOT NULL',
+					'ms'          => 'REAL NOT NULL',
+					'calls'       => 'INTEGER NOT NULL',
+					'requests'    => 'INTEGER NOT NULL',
 				],
-				'key'     => [ 'bucket', 'server', 'url_id', 'category', 'entry' ],
+				'key'     => [ 'bucket', 'server_id', 'url_id', 'category_id', 'entry_id' ],
 				'add'     => [
 					'ms'       => 'sum',
 					'calls'    => 'sum',
@@ -151,17 +191,17 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 			],
 			'timings_site'    => [
 				'columns' => [
-					'bucket'   => 'INTEGER NOT NULL',
-					'server'   => 'TEXT NOT NULL',
-					'worker'   => 'INTEGER NOT NULL',
-					'category' => 'TEXT NOT NULL',
-					'entry'    => 'TEXT NOT NULL',
-					'listener' => 'INTEGER NOT NULL',
-					'ms'       => 'REAL NOT NULL',
-					'calls'    => 'INTEGER NOT NULL',
-					'requests' => 'INTEGER NOT NULL',
+					'bucket'      => 'INTEGER NOT NULL',
+					'server_id'   => 'INTEGER NOT NULL',
+					'worker'      => 'INTEGER NOT NULL',
+					'category_id' => 'INTEGER NOT NULL',
+					'entry_id'    => 'INTEGER NOT NULL',
+					'listener'    => 'INTEGER NOT NULL',
+					'ms'          => 'REAL NOT NULL',
+					'calls'       => 'INTEGER NOT NULL',
+					'requests'    => 'INTEGER NOT NULL',
 				],
-				'key'     => [ 'bucket', 'server', 'worker', 'category', 'entry' ],
+				'key'     => [ 'bucket', 'server_id', 'worker', 'category_id', 'entry_id' ],
 				'add'     => [
 					'ms'       => 'sum',
 					'calls'    => 'sum',
@@ -169,10 +209,10 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				],
 				'retain'  => [ 'bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
 			],
-			'category_window'  => [
+			'category_window' => [
 				'columns' => [
-					'category'    => 'TEXT NOT NULL',
-					'entry'       => 'TEXT NOT NULL',
+					'category_id' => 'INTEGER NOT NULL',
+					'entry_id'    => 'INTEGER NOT NULL',
 					'listener'    => 'INTEGER NOT NULL',
 					'worker'      => 'INTEGER NOT NULL',
 					'ms'          => 'REAL NOT NULL',
@@ -180,7 +220,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'requests'    => 'INTEGER NOT NULL',
 					'last_bucket' => 'INTEGER NOT NULL',
 				],
-				'key'     => [ 'category', 'entry', 'worker' ],
+				'key'     => [ 'category_id', 'entry_id', 'worker' ],
 				'add'     => [
 					'ms'          => 'sum',
 					'calls'       => 'sum',
@@ -190,7 +230,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				'indexes' => [ 'category_window_last' => [ 'last_bucket' ] ],
 				'retain'  => [ 'last_bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
 			],
-			'window_expiry'    => [
+			'window_expiry'   => [
 				'columns' => [ 'bucket' => 'INTEGER NOT NULL' ],
 				'key'     => [ 'bucket' ],
 				'retain'  => [ 'bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
@@ -198,7 +238,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 			'requests_hourly' => [
 				'columns' => [
 					'hour'         => 'INTEGER NOT NULL',
-					'server'       => 'TEXT NOT NULL',
+					'server_id'    => 'INTEGER NOT NULL',
 					'status_class' => 'INTEGER NOT NULL',
 					'method'       => 'TEXT NOT NULL',
 					'worker'       => 'INTEGER NOT NULL',
@@ -210,7 +250,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'sum_peak_mb'  => 'REAL NOT NULL',
 					'errors'       => 'INTEGER NOT NULL',
 				],
-				'key'     => [ 'hour', 'server', 'status_class', 'method', 'worker', 'country' ],
+				'key'     => [ 'hour', 'server_id', 'status_class', 'method', 'worker', 'country' ],
 				'add'     => [
 					'count'       => 'sum',
 					'timed'       => 'sum',
@@ -225,11 +265,39 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	}
 
 	/**
+	 * `$tables` with every reference `NAMED_BY` reads in a table's columns
+	 * declared on both sides: its column leading an index, and the named
+	 * table `retained_by` it.
+	 *
+	 * @param array<string,Row_Spec> $tables The declared tables.
+	 * @return array<string,Row_Spec>
+	 * @throws \LogicException When a column names a table declared nowhere.
+	 */
+	private static function referenced( array $tables ): array {
+		$referenced = [];
+		foreach ( $tables as $table => $spec ) {
+			$leading = [ $spec['key'][0] ?? null, ...\array_column( $spec['indexes'] ?? [], 0 ) ];
+			foreach ( \array_diff( \array_keys( \array_intersect_key( self::NAMED_BY, $spec['columns'] ) ), $leading ) as $column ) {
+				$spec['indexes'][ "{$table}_{$column}" ] = [ $column ];
+			}
+			$referenced[ $table ] = $spec;
+		}
+		foreach ( $tables as $table => $spec ) {
+			foreach ( \array_intersect_key( self::NAMED_BY, $spec['columns'] ) as $column => $named ) {
+				$names                  = $referenced[ $named ] ?? throw new \LogicException( \esc_html( "Flame_Facts: {$table}.{$column} names {$named}, which is declared nowhere" ) );
+				$names['retained_by'][] = [ $table, $column, 'id' ];
+				$referenced[ $named ]   = $names;
+			}
+		}
+		return $referenced;
+	}
+
+	/**
 	 * The declared shape's version.
 	 *
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 4;
+		return 5;
 	}
 }

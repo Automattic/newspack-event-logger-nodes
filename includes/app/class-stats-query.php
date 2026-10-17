@@ -7,8 +7,8 @@
  * answer and the buckets to read. `table_for()` picks the cheapest table that
  * answers it exactly, and `run()` builds one statement over every
  * partition's file: a `UNION ALL` of one arm per attached alias, each joining
- * its own `urls` and `agents` before the union, since their ids are
- * partition-local. When every measure the spec names composes, each arm
+ * its own `urls`, `agents` and name lookups before the union, since their
+ * ids are partition-local. When every measure the spec names composes, each arm
  * groups its own rows and the union merges those partials; a percentile or a
  * distinct count reads every arm's rows whole. Field and measure names reach
  * the SQL only through this class's tables; every value binds.
@@ -137,6 +137,18 @@ final class Stats_Query {
 	/** The join a URL field, input or search needs. */
 	private const URL_JOIN = 'JOIN %1$s.urls AS u ON u.id = t.url_id';
 
+	/** The join a URL's server needs, after `urls`. */
+	private const URL_SERVER_JOIN = 'JOIN %1$s.servers AS us ON us.id = u.server_id';
+
+	/** The join a row's server needs. */
+	private const SERVER_JOIN = 'JOIN %1$s.servers AS sv ON sv.id = t.server_id';
+
+	/** The joins a timing row's category and entry need. */
+	private const TIMING_JOINS = [
+		'category' => 'JOIN %1$s.categories AS c ON c.id = t.category_id',
+		'entry'    => 'JOIN %1$s.entries AS e ON e.id = t.entry_id',
+	];
+
 	/** A search: the arm's URL among those its path index matches. */
 	private const SEARCH = 'u.id IN ( SELECT rowid FROM %1$s.urls_fts WHERE urls_fts MATCH ? )';
 
@@ -157,9 +169,10 @@ final class Stats_Query {
 	];
 
 	/**
-	 * Each table's SQL over its row `t`, the URL `u` and the agent `a`: the
-	 * column its bucket ranges read and how many buckets one of its units
-	 * holds; each field's expression; the join a field or input needs, by
+	 * Each table's SQL over its row `t`, its URL `u` and the lookups naming
+	 * its server `sv`, agent `a`, JA4 `j`, From `fr`, category `c` and entry
+	 * `e`: the column its bucket ranges read and how many buckets one of its
+	 * units holds; each field's expression; the join a field or input needs, by
 	 * name; each input an arm projects as `m_<name>`; and each measure's
 	 * aggregate over those inputs, with the inputs it reads, its
 	 * `{error_kinds}` the builder's `ERROR_KINDS`, then its fold over the
@@ -173,23 +186,26 @@ final class Stats_Query {
 				'bucket'       => 't.bucket',
 				'hour'         => 't.bucket / ' . self::BUCKETS_PER_HOUR,
 				'day'          => 't.bucket / ' . self::BUCKETS_PER_DAY,
-				'server'       => 't.server',
+				'server'       => 'sv.name',
 				'url'          => 'u.hash',
 				'status'       => 'CASE WHEN ' . self::KNOWN_STATUS . " THEN t.status ELSE '" . self::UNKNOWN . "' END",
 				'status_class' => 'CASE WHEN ' . self::KNOWN_STATUS . " THEN t.status / 100 ELSE '" . self::UNKNOWN . "' END",
 				'method'       => 't.method',
 				'country'      => "COALESCE( t.country, '" . self::UNKNOWN . "' )",
-				'ua'           => "COALESCE( a.ua, '" . self::UNKNOWN . "' )",
-				'ja4'          => "COALESCE( t.ja4, '" . self::UNKNOWN . "' )",
-				'from'         => "COALESCE( t.from_header, '" . self::UNKNOWN . "' )",
+				'ua'           => "COALESCE( a.name, '" . self::UNKNOWN . "' )",
+				'ja4'          => "COALESCE( j.name, '" . self::UNKNOWN . "' )",
+				'from'         => "COALESCE( fr.name, '" . self::UNKNOWN . "' )",
 				'worker'       => 't.worker',
 				'profiled'     => 't.profiled',
 				'error'        => "COALESCE( t.error, '-' )",
 				'rid'          => 't.rid',
 			],
 			'joins'    => [
-				'url' => self::URL_JOIN,
-				'ua'  => 'LEFT JOIN %1$s.agents AS a ON a.id = t.ua_id',
+				'server' => self::SERVER_JOIN,
+				'url'    => self::URL_JOIN,
+				'ua'     => 'LEFT JOIN %1$s.agents AS a ON a.id = t.ua_id',
+				'ja4'    => 'LEFT JOIN %1$s.ja4s AS j ON j.id = t.ja4_id',
+				'from'   => 'LEFT JOIN %1$s.froms AS fr ON fr.id = t.from_id',
 			],
 			'inputs'   => [
 				'ms'          => 't.ms',
@@ -235,13 +251,13 @@ final class Stats_Query {
 			'fields'   => [
 				'hour'         => 't.hour',
 				'day'          => 't.hour / 24',
-				'server'       => 't.server',
+				'server'       => 'sv.name',
 				'status_class' => "CASE WHEN t.status_class = 0 THEN '" . self::UNKNOWN . "' ELSE t.status_class END",
 				'method'       => 't.method',
 				'worker'       => 't.worker',
 				'country'      => "CASE WHEN t.country = '' THEN '" . self::UNKNOWN . "' ELSE t.country END",
 			],
-			'joins'    => [],
+			'joins'    => [ 'server' => self::SERVER_JOIN ],
 			'inputs'   => [
 				'count'       => 't.count',
 				'timed'       => 't.timed',
@@ -266,13 +282,16 @@ final class Stats_Query {
 			'fields'   => [
 				'bucket'   => 't.bucket',
 				'hour'     => 't.bucket / ' . self::BUCKETS_PER_HOUR,
-				'server'   => 't.server',
+				'server'   => 'sv.name',
 				'url'      => 'u.hash',
-				'category' => 't.category',
-				'entry'    => 't.entry',
+				'category' => 'c.name',
+				'entry'    => 'e.name',
 				'listener' => 't.listener',
 			],
-			'joins'    => [ 'url' => self::URL_JOIN ],
+			'joins'    => [
+				'server' => self::SERVER_JOIN,
+				'url'    => self::URL_JOIN,
+			] + self::TIMING_JOINS,
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],
@@ -281,25 +300,25 @@ final class Stats_Query {
 			'fields'   => [
 				'bucket'   => 't.bucket',
 				'hour'     => 't.bucket / ' . self::BUCKETS_PER_HOUR,
-				'server'   => 't.server',
+				'server'   => 'sv.name',
 				'worker'   => 't.worker',
-				'category' => 't.category',
-				'entry'    => 't.entry',
+				'category' => 'c.name',
+				'entry'    => 'e.name',
 				'listener' => 't.listener',
 			],
-			'joins'    => [],
+			'joins'    => [ 'server' => self::SERVER_JOIN ] + self::TIMING_JOINS,
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],
 		'category_window' => [
 			'range'    => [ 't.last_bucket', 1 ],
 			'fields'   => [
-				'category' => 't.category',
-				'entry'    => 't.entry',
+				'category' => 'c.name',
+				'entry'    => 'e.name',
 				'listener' => 't.listener',
 				'worker'   => 't.worker',
 			],
-			'joins'    => [],
+			'joins'    => self::TIMING_JOINS,
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],
@@ -643,8 +662,8 @@ final class Stats_Query {
 	/**
 	 * An arm grouped inside its partition: each group field as `f<i>` and each
 	 * folded measure's row aggregate as `q_<name>`. A `url` group, grouped by
-	 * id, joins its partition's `urls` after grouping for its hash, server and
-	 * path.
+	 * id, joins its partition's `urls` and `servers` after grouping for its
+	 * hash, server and path.
 	 *
 	 * @param array{0:string, 1:list<scalar|null>} $arm    The arm, its url grouped by id.
 	 * @param Spec                                 $spec   The checked spec.
@@ -659,8 +678,8 @@ final class Stats_Query {
 		$sql      = 'SELECT ' . \implode( ', ', [ ...$groups, ...$select ] ) . " FROM ( {$arm[0]} )" . ( [] === $groups ? '' : ' GROUP BY ' . \implode( ', ', $groups ) );
 		$url      = \array_search( 'url', $spec['group'], true );
 		if ( \is_int( $url ) ) {
-			$outer = \array_map( static fn ( string $column ): string => "f{$url}" === $column ? "u.hash AS f{$url}, u.server AS s{$url}, u.path AS n{$url}" : "g.{$column}", [ ...$groups, ...$partials ] );
-			$sql   = 'SELECT ' . \implode( ', ', $outer ) . " FROM ( {$sql} ) AS g JOIN %1\$s.urls AS u ON u.id = g.f{$url}";
+			$outer = \array_map( static fn ( string $column ): string => "f{$url}" === $column ? "u.hash AS f{$url}, us.name AS s{$url}, u.path AS n{$url}" : "g.{$column}", [ ...$groups, ...$partials ] );
+			$sql   = 'SELECT ' . \implode( ', ', $outer ) . " FROM ( {$sql} ) AS g JOIN %1\$s.urls AS u ON u.id = g.f{$url} " . self::URL_SERVER_JOIN;
 		}
 		return [ $sql, $arm[1] ];
 	}
@@ -854,10 +873,10 @@ final class Stats_Query {
 
 	/**
 	 * One partition's arm, its alias a `%1$s` placeholder: each group field
-	 * as `f<i>` (a URL's server and path beside it as `s<i>` and `n<i>`), each input as
-	 * `m_<name>`, over the bucket ranges, the filters and the search. Grouped
-	 * by id, a URL is its `url_id` alone, and joins `urls` only for a URL
-	 * filter or a search.
+	 * as `f<i>`, a URL's server and path beside it as `s<i>` and `n<i>`, and
+	 * each input as `m_<name>`, over the bucket ranges, the filters and the
+	 * search. Grouped by id, a URL is its `url_id` alone, and joins `urls`
+	 * only for a URL filter or a search, and `servers` never.
 	 *
 	 * @param Spec         $spec      The checked spec.
 	 * @param string       $table     The table answering it.
@@ -870,6 +889,7 @@ final class Stats_Query {
 		$def    = self::TABLES[ $table ];
 		$expr   = $def['fields'];
 		$select = [];
+		$named  = false;
 		foreach ( $spec['group'] as $i => $field ) {
 			if ( 'url' === $field && $by_url_id ) {
 				$select[] = "t.url_id AS f{$i}";
@@ -877,7 +897,8 @@ final class Stats_Query {
 			}
 			$select[] = Core::as_string( $expr[ $field ] ) . " AS f{$i}";
 			if ( 'url' === $field ) {
-				\array_push( $select, "u.server AS s{$i}", "u.path AS n{$i}" );
+				\array_push( $select, "us.name AS s{$i}", "u.path AS n{$i}" );
+				$named = true;
 			}
 		}
 		foreach ( $inputs as $input ) {
@@ -912,6 +933,9 @@ final class Stats_Query {
 			if ( \in_array( $name, [ ...$joined, ...$inputs ], true ) ) {
 				$joins[] = Core::as_string( $join );
 			}
+		}
+		if ( $named ) {
+			$joins[] = self::URL_SERVER_JOIN;
 		}
 		$sql = 'SELECT ' . \implode( ', ', $select ) . " FROM %1\$s.{$table} AS t "
 			. \implode( ' ', $joins ) . ' WHERE ' . \implode( ' AND ', $clauses );

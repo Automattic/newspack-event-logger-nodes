@@ -5,9 +5,12 @@
  *
  * Each seeder sends one `ROWS` batch through a real `Row_Table` bound to the
  * partition it names, so a seed passes the same write contract a flush does:
- * the URL and agent `ignore`s whose ids the row takes by batch index, then
- * the row's own op. Every column a test leaves out takes the seeder's
- * default; a key naming no column fails the seed.
+ * a row names its URL, server, agent, JA4, From, category and entry as text,
+ * each under its `Flame_Facts_Row_Schema::NAMED_BY` column less its `_id`,
+ * and the seeder files each through its lookup's `ignore`, whose id the row
+ * takes by batch index.
+ * Every column a test leaves out takes the seeder's default; a key naming no
+ * column fails the seed.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -36,7 +39,7 @@ trait FactsSeeder {
 	 *
 	 * @param array<string,mixed> $over      Columns by name, plus `url` (a
 	 *                                       logged URL, its host the server's
-	 *                                       by default) and `ua`.
+	 *                                       by default) and the names it files.
 	 * @param int                 $partition The partition file it lands in.
 	 */
 	protected function seed_request( array $over = [], int $partition = 0 ): void {
@@ -50,17 +53,16 @@ trait FactsSeeder {
 	 * @param int                       $partition The partition file they land in.
 	 */
 	protected function seed_requests( array $rows, int $partition = 0 ): void {
-		$now   = (int) Core::$now;
-		$batch = [];
+		$now  = (int) Core::$now;
+		$seed = [];
 		foreach ( $rows as $over ) {
 			$server = Core::as_string( $over['server'] ?? self::$seed_server );
-			$url    = Core::as_string( $over['url'] ?? "https://{$server}/seed-path/" );
-			$ua     = $over['ua'] ?? null;
-			unset( $over['url'], $over['ua'] );
 			$bucket = Core::as_int( $over['bucket'] ?? Bucket::id( $now ) );
-			$row    = self::facts_row(
+			$seed[] = [
+				'ignore',
 				'requests',
 				$over + [
+					'url'         => "https://{$server}/seed-path/",
 					'rid'         => 'rid-seed-' . ( ++$this->seeded_requests ),
 					'bucket'      => $bucket,
 					'finished_at' => (float) ( $bucket * Bucket::SECONDS ),
@@ -70,29 +72,21 @@ trait FactsSeeder {
 					'offset'      => null,
 					'length'      => null,
 					'server'      => $server,
-					'url_id'      => null,
 					'status'      => 200,
 					'method'      => 'GET',
 					'country'     => null,
-					'ua_id'       => null,
+					'ua'          => null,
 					'ja4'         => null,
-					'from_header' => null,
+					'from'        => null,
 					'worker'      => 0,
 					'profiled'    => 0,
 					'error'       => null,
 					'ms'          => 100.0,
 					'peak_mb'     => 24.0,
-				]
-			);
-			$ids     = [ Flame_Facts_Row_Schema::position( 'requests', 'url_id' ) => \count( $batch ) ];
-			$batch[] = self::url_op( $url, $server );
-			if ( null !== $ua ) {
-				$ids[ Flame_Facts_Row_Schema::position( 'requests', 'ua_id' ) ] = \count( $batch );
-				$batch[] = [ 'ignore', 'agents', [ null, $ua ] ];
-			}
-			$batch[] = [ 'ignore', 'requests', $row, [], $ids ];
+				],
+			];
 		}
-		$this->write_facts( $partition, $batch );
+		$this->seed_rows( $partition, $seed );
 	}
 
 	/**
@@ -103,10 +97,7 @@ trait FactsSeeder {
 	 */
 	protected function seed_timing( array $over = [], int $partition = 0 ): void {
 		$server = Core::as_string( $over['server'] ?? self::$seed_server );
-		$url    = Core::as_string( $over['url'] ?? "https://{$server}/seed-path/" );
-		unset( $over['url'] );
-		$row = self::facts_row( 'timings', $over + self::timing_defaults( $server ) + [ 'url_id' => null ] );
-		$this->write_facts( $partition, [ self::url_op( $url, $server ), [ 'add', 'timings', $row, [], [ Flame_Facts_Row_Schema::position( 'timings', 'url_id' ) => 0 ] ] ] );
+		$this->seed_rows( $partition, [ [ 'add', 'timings', $over + [ 'url' => "https://{$server}/seed-path/" ] + self::timing_defaults( $server ) ] ] );
 	}
 
 	/**
@@ -126,12 +117,11 @@ trait FactsSeeder {
 	 * @param int                       $partition The partition file they land in.
 	 */
 	protected function seed_site_timings( array $rows, int $partition = 0 ): void {
-		$ops = [];
+		$seed = [];
 		foreach ( $rows as $over ) {
-			$server = Core::as_string( $over['server'] ?? self::$seed_server );
-			$ops[]  = [ 'add', 'timings_site', self::facts_row( 'timings_site', $over + self::timing_defaults( $server ) + [ 'worker' => 0 ] ) ];
+			$seed[] = [ 'add', 'timings_site', $over + self::timing_defaults( Core::as_string( $over['server'] ?? self::$seed_server ) ) + [ 'worker' => 0 ] ];
 		}
-		$this->write_facts( $partition, $ops );
+		$this->seed_rows( $partition, $seed );
 	}
 
 	/**
@@ -141,24 +131,92 @@ trait FactsSeeder {
 	 * @param int                 $partition The partition file it lands in.
 	 */
 	protected function seed_hourly( array $over = [], int $partition = 0 ): void {
-		$row = self::facts_row(
-			'requests_hourly',
-			$over + [
-				'hour'         => Bucket::hour( (int) Core::$now ),
-				'server'       => self::$seed_server,
-				'status_class' => 2,
-				'method'       => 'GET',
-				'worker'       => 0,
-				'country'      => '',
-				'count'        => 1,
-				'timed'        => 1,
-				'sum_ms'       => 100.0,
-				'max_ms'       => 100.0,
-				'sum_peak_mb'  => 24.0,
-				'errors'       => 0,
-			]
-		);
-		$this->write_facts( $partition, [ [ 'add', 'requests_hourly', $row ] ] );
+		$row = $over + [
+			'hour'         => Bucket::hour( (int) Core::$now ),
+			'server'       => self::$seed_server,
+			'status_class' => 2,
+			'method'       => 'GET',
+			'worker'       => 0,
+			'country'      => '',
+			'count'        => 1,
+			'timed'        => 1,
+			'sum_ms'       => 100.0,
+			'max_ms'       => 100.0,
+			'sum_peak_mb'  => 24.0,
+			'errors'       => 0,
+		];
+		$this->seed_rows( $partition, [ [ 'add', 'requests_hourly', $row ] ] );
+	}
+
+	/**
+	 * Rows of any tables in one batch, each `[ verb, table, columns ]` with its
+	 * names spelled as text.
+	 *
+	 * @param int                                          $partition The partition file they land in.
+	 * @param list<array{0:string,1:string,2:array<string,mixed>}> $rows The rows.
+	 */
+	protected function seed_rows( int $partition, array $rows ): void {
+		$this->write_facts( $partition, self::facts_ops( $rows ) );
+	}
+
+	/**
+	 * The ops writing `$rows`, as `seed_rows()` takes them: before each row,
+	 * the `ignore` filing each name it spells, and its URL's.
+	 *
+	 * @param list<array{0:string,1:string,2:array<string,mixed>}> $rows The rows.
+	 * @return list<array<int,mixed>>
+	 */
+	protected static function facts_ops( array $rows ): array {
+		$batch = [];
+		foreach ( $rows as [ $verb, $table, $values ] ) {
+			$ids = [];
+			if ( \array_key_exists( 'url', $values ) ) {
+				$url    = Core::as_string( $values['url'] );
+				$server = Core::as_string( $values['server'] );
+				unset( $values['url'] );
+				$batch[]          = [ 'ignore', Flame_Facts_Row_Schema::NAMED_BY['server_id'], [ null, $server ] ];
+				$batch[]          = [ 'ignore', 'urls', [ null, Log_Manager::url_hash( $url ), null, Url_Parts::row_path( $url, $server ) ], [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => \count( $batch ) - 1 ] ];
+				$values['url_id'] = null;
+				$ids[ Flame_Facts_Row_Schema::position( $table, 'url_id' ) ] = \count( $batch ) - 1;
+			}
+			foreach ( \array_diff_key( Flame_Facts_Row_Schema::NAMED_BY, [ 'url_id' => true ] ) as $column => $lookup ) {
+				$key = \substr( $column, 0, -3 );
+				if ( ! \array_key_exists( $key, $values ) ) {
+					continue;
+				}
+				if ( null !== $values[ $key ] ) {
+					$ids[ Flame_Facts_Row_Schema::position( $table, $column ) ] = \count( $batch );
+					$batch[] = [ 'ignore', $lookup, [ null, Core::as_string( $values[ $key ] ) ] ];
+				}
+				unset( $values[ $key ] );
+				$values[ $column ] = null;
+			}
+			$batch[] = [ $verb, $table, self::facts_row( $table, $values ), [], $ids ];
+		}
+		return $batch;
+	}
+
+	/**
+	 * A non-worker `category_window` row of a category's own total.
+	 *
+	 * @param string $category    The category, as text.
+	 * @param float  $ms          Its summed ms.
+	 * @param int    $calls       Its summed calls.
+	 * @param int    $requests    The requests it timed.
+	 * @param int    $last_bucket The bucket it last moved in.
+	 * @return array<string,mixed>
+	 */
+	protected static function window_row( string $category, float $ms, int $calls, int $requests, int $last_bucket ): array {
+		return [
+			'category'    => $category,
+			'entry'       => '',
+			'listener'    => 0,
+			'worker'      => 0,
+			'ms'          => $ms,
+			'calls'       => $calls,
+			'requests'    => $requests,
+			'last_bucket' => $last_bucket,
+		];
 	}
 
 	/**
@@ -178,17 +236,6 @@ trait FactsSeeder {
 			'calls'    => 1,
 			'requests' => 1,
 		];
-	}
-
-	/**
-	 * The `ignore` that files a URL, its id the row's by batch index.
-	 *
-	 * @param string $url    A logged URL.
-	 * @param string $server The server its row files under.
-	 * @return array<int,mixed>
-	 */
-	private static function url_op( string $url, string $server ): array {
-		return [ 'ignore', 'urls', [ null, Log_Manager::url_hash( $url ), $server, Url_Parts::row_path( $url, $server ) ] ];
 	}
 
 	/**
@@ -214,6 +261,29 @@ trait FactsSeeder {
 	 * @param list<array<int,mixed>> $batch     The ops.
 	 */
 	protected function write_facts( int $partition, array $batch ): void {
+		self::with_facts_table( $partition, static fn ( Row_Table_Node $table ) => self::rows_into( $table, $batch ) );
+	}
+
+	/**
+	 * Run one retention pass over `$partition`'s file, as the Table tick
+	 * does at the current tick.
+	 *
+	 * @param int $partition The partition file.
+	 * @return int Rows deleted, releases included.
+	 */
+	protected function purge_facts( int $partition ): int {
+		return self::with_facts_table( $partition, static fn ( Row_Table_Node $table ): int => $table->purge( 1000 ) );
+	}
+
+	/**
+	 * Run `$use` over a Row_Table bound to `$partition`, removed after.
+	 *
+	 * @template T
+	 * @param int                           $partition The partition file.
+	 * @param \Closure(Row_Table_Node): T $use       What to do with it.
+	 * @return T
+	 */
+	private static function with_facts_table( int $partition, \Closure $use ): mixed {
 		$bound                  = Core::$var['partition'] ?? null;
 		Core::$var['partition'] = (string) $partition;
 		try {
@@ -227,7 +297,7 @@ trait FactsSeeder {
 			}
 		}
 		try {
-			self::rows_into( $table, $batch );
+			return $use( $table );
 		} finally {
 			$table->remove_node();
 		}

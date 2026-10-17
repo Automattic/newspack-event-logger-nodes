@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- `Flame_Facts_Row_Schema` declares `urls` and `agents` `retained_by` as one-entry lists, the shape the substrate's Row_Table takes.
+- `Flame_Facts_Row_Schema::NAMED_BY` maps each id column to the table it names, and the schema derives from that one map every named table's `retained_by` list and the index leading each referencing column, so a named row is released only once no table names it.
+- **Deploying this resets every site's stats.** The stats rows go to schema version 5 and name each repeated string by an integer id: a row's server, JA4, From, category and entry each become `server_id`, `ja4_id`, `from_id`, `category_id` and `entry_id`, the ids of rows in five new lookup tables, `servers`, `ja4s`, `froms`, `categories` and `entries`, each released once no row names it. `agents` keeps each user agent under `name`, as every lookup does, and a URL stays while a `timings` row names it, as well as a `requests` row. `method`, `country` and `error` stay text. Nothing migrates a version-4 file: each flame builder discards its file at its next open, and the dashboards refill from new traffic, or from the retained logs after the rebuild in decision 5. `Stats_Query` joins the names back inside each partition's arm, so no verb, MCP tool or dashboard answers differently.
 
 ## [0.137.0] - 2026-10-16
 

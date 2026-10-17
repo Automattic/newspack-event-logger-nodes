@@ -29,17 +29,17 @@ final class FlameFactsTest extends TestCase {
 
 		$opened = \array_merge( ...$this->facts( "SELECT name FROM sqlite_master WHERE type = 'table'" ) );
 
-		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_expiry', 'urls_fts' ], $opened ) ) );
-		$this->assertSame( [ [ 4 ] ], $this->facts( 'PRAGMA user_version' ) );
+		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_expiry', 'urls_fts', 'servers', 'ja4s', 'froms', 'categories', 'entries' ], $opened ) ) );
+		$this->assertSame( [ [ 5 ] ], $this->facts( 'PRAGMA user_version' ) );
 	}
 
-	public function test_v4_declares_the_window_its_expiries_and_the_covering_index(): void {
+	public function test_v5_declares_the_window_its_expiries_and_the_covering_index(): void {
 		$tables = Flame_Facts_Row_Schema::tables();
 
-		$this->assertSame( 4, Flame_Facts_Row_Schema::version() );
+		$this->assertSame( 5, Flame_Facts_Row_Schema::version() );
 		$this->assertSame( [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ], $tables['requests']['indexes']['requests_cover'] );
-		$this->assertSame( [ 'category', 'entry', 'listener', 'worker', 'ms', 'calls', 'requests', 'last_bucket' ], \array_keys( $tables['category_window']['columns'] ) );
-		$this->assertSame( [ 'category', 'entry', 'worker' ], $tables['category_window']['key'] );
+		$this->assertSame( [ 'category_id', 'entry_id', 'listener', 'worker', 'ms', 'calls', 'requests', 'last_bucket' ], \array_keys( $tables['category_window']['columns'] ) );
+		$this->assertSame( [ 'category_id', 'entry_id', 'worker' ], $tables['category_window']['key'] );
 		$this->assertSame( [ 'ms' => 'sum', 'calls' => 'sum', 'requests' => 'sum', 'last_bucket' => 'max' ], $tables['category_window']['add'] );
 		$this->assertSame( [ 'last_bucket', Flame_Facts_Row_Schema::TIMINGS_BUCKETS, Bucket::SECONDS ], $tables['category_window']['retain'] );
 		$this->assertArrayNotHasKey( 'window_watermark', $tables, 'the newest expiry is the watermark' );
@@ -48,13 +48,31 @@ final class FlameFactsTest extends TestCase {
 		$this->assertArrayNotHasKey( 'requests_bucket', $tables['requests']['indexes'] );
 	}
 
+	/**
+	 * Every table a column names by id is `retained_by` every table holding
+	 * that column, and the column leads an index or its table's key.
+	 */
+	public function test_each_named_table_is_retained_by_every_column_naming_it(): void {
+		$tables = Flame_Facts_Row_Schema::tables();
+
+		$this->assertSame( [ [ 'requests', 'url_id', 'id' ], [ 'timings', 'url_id', 'id' ] ], $tables['urls']['retained_by'] );
+		$this->assertSame( [ [ 'urls', 'server_id', 'id' ], [ 'requests', 'server_id', 'id' ], [ 'timings', 'server_id', 'id' ], [ 'timings_site', 'server_id', 'id' ], [ 'requests_hourly', 'server_id', 'id' ] ], $tables['servers']['retained_by'] );
+		$this->assertSame( [ [ 'timings', 'entry_id', 'id' ], [ 'timings_site', 'entry_id', 'id' ], [ 'category_window', 'entry_id', 'id' ] ], $tables['entries']['retained_by'] );
+		foreach ( $tables as $table => $spec ) {
+			foreach ( \array_intersect_key( Flame_Facts_Row_Schema::NAMED_BY, $spec['columns'] ) as $column => $named ) {
+				$leading = [ $spec['key'][0] ?? null, ...\array_column( $spec['indexes'] ?? [], 0 ) ];
+				$this->assertContains( $column, $leading, "{$table}.{$column} leads an index or the key" );
+			}
+		}
+	}
+
 	public function test_a_window_row_folds_its_sums_and_keeps_its_latest_bucket(): void {
 		$this->activate_shipped( 'flame-builder', 1 );
-		$this->write_facts(
+		$this->seed_rows(
 			0,
 			[
-				[ 'add', 'category_window', [ 'hook:kea_init', '', 0, 0, 17.5, 3, 1, 5_966_101 ] ],
-				[ 'add', 'category_window', [ 'hook:kea_init', '', 0, 0, 4.25, 2, 1, 5_966_099 ] ],
+				[ 'add', 'category_window', self::window_row( 'hook:kea_init', 17.5, 3, 1, 5_966_101 ) ],
+				[ 'add', 'category_window', self::window_row( 'hook:kea_init', 4.25, 2, 1, 5_966_099 ) ],
 			]
 		);
 
@@ -85,12 +103,12 @@ final class FlameFactsTest extends TestCase {
 		$fb->flush();
 
 		$this->assertSame( [ [ 'rid-3301', 503, 'NZ', 842.5, 61.0, 81, 4096, 300, 0, 'GET', null, 1 ] ], $this->facts( 'SELECT rid, status, country, ms, peak_mb, segment, "offset", length, worker, method, error, profiled FROM requests' ), 'a record with no error files none; its timing rows mark it profiled' );
-		$this->assertSame( [ [ Log_Manager::url_hash( $url ), 'kea.example', '/egret-6617/' ] ], $this->facts( 'SELECT hash, server, path FROM urls' ) );
-		$this->assertSame( [ [ 'Takahe/4.2' ] ], $this->facts( 'SELECT ua FROM agents' ) );
+		$this->assertSame( [ [ Log_Manager::url_hash( $url ), 'kea.example', '/egret-6617/' ] ], $this->facts( 'SELECT u.hash, s.name, u.path FROM urls u JOIN servers s ON s.id = u.server_id' ) );
+		$this->assertSame( [ [ 'Takahe/4.2' ] ], $this->facts( 'SELECT name FROM agents' ) );
 		$this->assertSame( [ [ 1 ] ], $this->facts( 'SELECT count(*) FROM requests r JOIN urls u ON u.id = r.url_id JOIN agents a ON a.id = r.ua_id' ), 'the row names its URL and agent by id' );
-		$this->assertSame( [ [ 'sql', '', 120.25, 9, 1 ], [ 'sql', 'SELECT kea', 80.5, 4, 1 ] ], $this->facts( 'SELECT category, entry, ms, calls, requests FROM timings ORDER BY entry' ) );
+		$this->assertSame( [ [ 'sql', '', 120.25, 9, 1 ], [ 'sql', 'SELECT kea', 80.5, 4, 1 ] ], $this->facts( 'SELECT c.name, e.name, t.ms, t.calls, t.requests FROM timings t JOIN categories c ON c.id = t.category_id JOIN entries e ON e.id = t.entry_id ORDER BY e.name' ) );
 		$this->assertSame( [ [ 5, 1, 1, 842.5, 842.5, 61.0, 0 ] ], $this->facts( 'SELECT status_class, count, timed, sum_ms, max_ms, sum_peak_mb, errors FROM requests_hourly' ), 'a 503 is no error: errors are T and F' );
-		$this->assertSame( [ [ Bucket::hour( self::tick() ), 'kea.example', 'GET', 0, 'NZ' ] ], $this->facts( 'SELECT hour, server, method, worker, country FROM requests_hourly' ) );
+		$this->assertSame( [ [ Bucket::hour( self::tick() ), 'kea.example', 'GET', 0, 'NZ' ] ], $this->facts( 'SELECT h.hour, s.name, h.method, h.worker, h.country FROM requests_hourly h JOIN servers s ON s.id = h.server_id' ) );
 	}
 
 	/**
@@ -122,11 +140,125 @@ final class FlameFactsTest extends TestCase {
 
 		$this->assertSame(
 			[ [ Bucket::id( self::tick() - 70 ), (float) ( self::tick() - 70 ), self::tick() - 100, 5, null, null, null, null, null, 't13d1516h2', 'bot@kea.example', 'T', 0.0 ] ],
-			$this->facts( 'SELECT bucket, finished_at, started_at, partition, segment, status, country, ua_id, ms, ja4, from_header, error, peak_mb FROM requests', '5' ),
+			$this->facts( 'SELECT r.bucket, r.finished_at, r.started_at, r.partition, r.segment, r.status, r.country, r.ua_id, r.ms, j.name, f.name, r.error, r.peak_mb FROM requests r JOIN ja4s j ON j.id = r.ja4_id JOIN froms f ON f.id = r.from_id', '5' ),
 			'a timeout keeps the start its record carries, though its duration is no sample'
 		);
 		$this->assertSame( [ [ 0, '', 1, 0, 0.0, 0.0, 1 ] ], $this->facts( 'SELECT status_class, country, count, timed, sum_ms, max_ms, errors FROM requests_hourly', '5' ), 'a timeout is counted, untimed, and an error' );
 		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM agents', '5' ) );
+	}
+
+	/**
+	 * A request names its server, JA4 and From by id, each name filed once
+	 * in its lookup table, and its URL and hour name the same server row.
+	 */
+	public function test_a_request_names_its_server_ja4_and_from_by_id(): void {
+		$fb = $this->armed_flame_builder();
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-kokako-1', 'url' => 'https://kokako.example/ruru-4410', 'ja4_hash' => 't13d1516h2_kokako', 'http_from' => 'crawler@kokako.example' ] ), '' );
+		$fb->flush();
+
+		$this->assertSame( [ [ 'kokako.example' ] ], $this->facts( 'SELECT name FROM servers' ) );
+		$this->assertSame( [ [ 't13d1516h2_kokako' ] ], $this->facts( 'SELECT name FROM ja4s' ) );
+		$this->assertSame( [ [ 'crawler@kokako.example' ] ], $this->facts( 'SELECT name FROM froms' ) );
+		$this->assertSame(
+			[ [ 'kokako.example', 't13d1516h2_kokako', 'crawler@kokako.example', 'kokako.example', 'kokako.example' ] ],
+			$this->facts( 'SELECT sv.name, j.name, f.name, us.name, hs.name FROM requests r JOIN servers sv ON sv.id = r.server_id JOIN ja4s j ON j.id = r.ja4_id JOIN froms f ON f.id = r.from_id JOIN urls u ON u.id = r.url_id JOIN servers us ON us.id = u.server_id JOIN requests_hourly h JOIN servers hs ON hs.id = h.server_id' )
+		);
+	}
+
+	/**
+	 * A second request of the same server, JA4 and From, in the batch or the
+	 * next, files no second lookup row and names the first's ids.
+	 */
+	public function test_a_repeated_name_files_no_second_lookup_row(): void {
+		$fb   = $this->armed_flame_builder();
+		$same = [ 'url' => 'https://kokako.example/ruru-4411', 'ja4_hash' => 't13d1516h2_ruru', 'http_from' => 'ruru@kokako.example' ];
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-ruru-a' ] + $same ), '' );
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-ruru-b' ] + $same ), '' );
+		$fb->flush();
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-ruru-c' ] + $same ), '' );
+		$fb->flush();
+
+		$this->assertSame( [ [ 1, 1, 1 ] ], $this->facts( 'SELECT ( SELECT count(*) FROM servers ), ( SELECT count(*) FROM ja4s ), ( SELECT count(*) FROM froms )' ) );
+		$this->assertSame( [ [ 3, 1, 1, 1 ] ], $this->facts( 'SELECT count(*), count( DISTINCT server_id ), count( DISTINCT ja4_id ), count( DISTINCT from_id ) FROM requests' ) );
+	}
+
+	/** A request naming no JA4 and no From files null ids and no lookup row. */
+	public function test_an_absent_ja4_and_from_file_null_ids(): void {
+		$fb = $this->armed_flame_builder();
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-hihi-1', 'url' => 'https://kokako.example/hihi', 'ja4_hash' => '', 'http_from' => '' ] ), '' );
+		$fb->flush();
+
+		$this->assertSame( [ [ null, null ] ], $this->facts( 'SELECT ja4_id, from_id FROM requests' ) );
+		$this->assertSame( [ [ 0, 0 ] ], $this->facts( 'SELECT ( SELECT count(*) FROM ja4s ), ( SELECT count(*) FROM froms )' ) );
+	}
+
+	/**
+	 * A profiled request's timing and window rows name each category and
+	 * entry by id, both timing tables naming the server's.
+	 */
+	public function test_a_profiled_requests_timing_rows_name_their_category_and_entry_by_id(): void {
+		$fb = $this->armed_flame_builder();
+		$this->fill_request_at( $fb, $this->completed_request( [ 'url' => 'https://kokako.example/tieke-88', 'profiles' => [ 'sql' => [ 'time' => 12.5, 'count' => 3, 'entries' => [ 'SELECT tieke' => [ 7.25, 2 ] ] ] ] ] ), '' );
+		$fb->flush();
+
+		$named = [ [ 'sql', '' ], [ 'sql', 'SELECT tieke' ] ];
+		$this->assertSame( [ [ 'sql' ] ], $this->facts( 'SELECT name FROM categories' ) );
+		$this->assertSame( [ [ '' ], [ 'SELECT tieke' ] ], $this->facts( 'SELECT name FROM entries ORDER BY name' ) );
+		foreach ( [ 'timings', 'timings_site' ] as $table ) {
+			$this->assertSame( [ [ 'kokako.example', 'sql', '' ], [ 'kokako.example', 'sql', 'SELECT tieke' ] ], $this->facts( "SELECT sv.name, c.name, e.name FROM {$table} t JOIN servers sv ON sv.id = t.server_id JOIN categories c ON c.id = t.category_id JOIN entries e ON e.id = t.entry_id ORDER BY e.name" ), $table );
+		}
+		$this->assertSame( $named, $this->facts( 'SELECT c.name, e.name FROM category_window t JOIN categories c ON c.id = t.category_id JOIN entries e ON e.id = t.entry_id ORDER BY e.name' ) );
+	}
+
+	/**
+	 * A name reads back byte for byte, and names differing only in case or
+	 * spacing file apart.
+	 */
+	public function test_names_differing_in_case_or_spacing_file_apart_and_read_back_byte_for_byte(): void {
+		$fb       = $this->armed_flame_builder();
+		$profiles = [
+			'Hook:Kea_Init'  => [ 'time' => 2.5, 'count' => 1, 'entries' => [] ],
+			'hook:kea_init'  => [ 'time' => 3.5, 'count' => 1, 'entries' => [] ],
+			'hook:kea_init ' => [ 'time' => 4.5, 'count' => 1, 'entries' => [] ],
+		];
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-mohua-1', 'url' => 'https://kokako.example/mohua', 'ja4_hash' => 'T13d_Mohua', 'profiles' => $profiles ] ), '' );
+		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-mohua-2', 'url' => 'https://kokako.example/mohua', 'ja4_hash' => 't13d_mohua' ] ), '' );
+		$fb->flush();
+
+		$this->assertSame( [ [ 'Hook:Kea_Init', 2.5 ], [ 'hook:kea_init', 3.5 ], [ 'hook:kea_init ', 4.5 ] ], $this->facts( 'SELECT c.name, t.ms FROM timings t JOIN categories c ON c.id = t.category_id ORDER BY c.name' ) );
+		$this->assertSame( [ [ 'rid-mohua-1', 'T13d_Mohua' ], [ 'rid-mohua-2', 't13d_mohua' ] ], $this->facts( 'SELECT r.rid, j.name FROM requests r JOIN ja4s j ON j.id = r.ja4_id ORDER BY r.rid' ) );
+	}
+
+	/**
+	 * Purging a URL's last request releases the URL, then the server only it
+	 * named, then the JA4 and the From no other request names; a JA4 a
+	 * newer request names stays.
+	 */
+	public function test_purging_a_urls_last_request_cascades_to_the_names_only_it_named(): void {
+		$this->activate_shipped( 'flame-builder', 1 );
+		$old = Bucket::id( self::tick() ) - Flame_Facts_Row_Schema::REQUESTS_BUCKETS - 3;
+		$this->seed_request( [ 'server' => 'pipit.example', 'url' => 'https://pipit.example/kahu-31', 'ja4' => 't13d_shared', 'from' => 'pipit@bot.example', 'bucket' => $old ] );
+		$this->seed_request( [ 'server' => 'pipit.example', 'url' => 'https://pipit.example/kahu-32', 'ja4' => 't13d_pipit', 'from' => 'pipit@bot.example', 'bucket' => $old ] );
+		$this->seed_request( [ 'server' => 'tauhou.example', 'url' => 'https://tauhou.example/kahu-33', 'ja4' => 't13d_shared', 'from' => 'tauhou@bot.example' ] );
+
+		$this->assertSame( 7, $this->purge_facts( 0 ), 'two requests, their two URLs, pipit.example, t13d_pipit and pipit@bot.example' );
+		$this->assertSame( [ [ '/kahu-33' ] ], $this->facts( 'SELECT path FROM urls' ) );
+		$this->assertSame( [ [ 'tauhou.example' ] ], $this->facts( 'SELECT name FROM servers' ) );
+		$this->assertSame( [ [ 't13d_shared' ] ], $this->facts( 'SELECT name FROM ja4s' ) );
+		$this->assertSame( [ [ 'tauhou@bot.example' ] ], $this->facts( 'SELECT name FROM froms' ) );
+	}
+
+	/** A URL a timing row still names outlives the purge of its last request. */
+	public function test_a_url_a_timing_row_names_outlives_its_last_request(): void {
+		$this->activate_shipped( 'flame-builder', 1 );
+		$url = 'https://pipit.example/riroriro-58';
+		$this->seed_request( [ 'server' => 'pipit.example', 'url' => $url, 'bucket' => Bucket::id( self::tick() ) - Flame_Facts_Row_Schema::REQUESTS_BUCKETS - 3 ] );
+		$this->seed_timing( [ 'server' => 'pipit.example', 'url' => $url, 'category' => 'hook:riroriro_init', 'ms' => 8.25 ] );
+
+		$this->purge_facts( 0 );
+
+		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM requests' ) );
+		$this->assertSame( [ [ '/riroriro-58', 8.25 ] ], $this->facts( 'SELECT u.path, t.ms FROM timings t JOIN urls u ON u.id = t.url_id' ) );
 	}
 
 	/**
@@ -166,8 +298,8 @@ final class FlameFactsTest extends TestCase {
 
 		$this->assertSame( [ [ 2 ] ], $this->facts( 'SELECT count(*) FROM requests' ) );
 		$this->assertSame( [ [ 1 ] ], $this->facts( 'SELECT count(*) FROM urls' ) );
-		$this->assertSame( [ [ '', 9.75, 4, 2 ], [ 'SELECT weka', 5.5, 2, 1 ] ], $this->facts( "SELECT entry, ms, calls, requests FROM timings WHERE category = 'sql' ORDER BY entry" ) );
-		$this->assertSame( [ [ '', 9.75, 4, 2 ], [ 'SELECT weka', 5.5, 2, 1 ] ], $this->facts( "SELECT entry, ms, calls, requests FROM timings_site WHERE category = 'sql' ORDER BY entry" ) );
+		$this->assertSame( [ [ '', 9.75, 4, 2 ], [ 'SELECT weka', 5.5, 2, 1 ] ], $this->facts( "SELECT e.name, t.ms, t.calls, t.requests FROM timings t JOIN categories c ON c.id = t.category_id JOIN entries e ON e.id = t.entry_id WHERE c.name = 'sql' ORDER BY e.name" ) );
+		$this->assertSame( [ [ '', 9.75, 4, 2 ], [ 'SELECT weka', 5.5, 2, 1 ] ], $this->facts( "SELECT e.name, t.ms, t.calls, t.requests FROM timings_site t JOIN categories c ON c.id = t.category_id JOIN entries e ON e.id = t.entry_id WHERE c.name = 'sql' ORDER BY e.name" ) );
 		$this->assertSame( [ [ 2, 2, 105.0, 61.0 ] ], $this->facts( 'SELECT count, timed, sum_ms, max_ms FROM requests_hourly' ) );
 	}
 
@@ -177,7 +309,7 @@ final class FlameFactsTest extends TestCase {
 		$this->fill_request_at( $fb, $this->completed_request( [ 'url' => 'https://kea.example/kiwi-8', 'duration_ms' => 33.0, 'profiles' => [ 'cron' => [ 'time' => 1.5, 'count' => 2, 'entries' => [] ] ] ] ), '' );
 		$fb->flush();
 
-		$this->assertSame( [ [ 0, 'cron', 1.5, 2, 1 ], [ 1, 'cron', 410.5, 6, 1 ] ], $this->facts( 'SELECT worker, category, ms, calls, requests FROM timings_site ORDER BY worker' ) );
+		$this->assertSame( [ [ 0, 'cron', 1.5, 2, 1 ], [ 1, 'cron', 410.5, 6, 1 ] ], $this->facts( 'SELECT t.worker, c.name, t.ms, t.calls, t.requests FROM timings_site t JOIN categories c ON c.id = t.category_id ORDER BY t.worker' ) );
 		$this->assertSame( [ [ 0 ], [ 1 ] ], $this->facts( 'SELECT worker FROM requests ORDER BY worker' ) );
 		$this->assertSame( [ [ 0, 1 ], [ 1, 1 ] ], $this->facts( 'SELECT worker, count FROM requests_hourly ORDER BY worker' ) );
 	}
@@ -201,8 +333,8 @@ final class FlameFactsTest extends TestCase {
 		$fb->flush();
 
 		$expected = [ [ 'Kea_Hooks::rollback @-90', 1 ], [ 'Kea_Hooks::save @10', 1 ], [ 'save_post', 0 ] ];
-		$this->assertSame( $expected, $this->facts( 'SELECT category, listener FROM timings ORDER BY category' ) );
-		$this->assertSame( $expected, $this->facts( 'SELECT category, listener FROM timings_site ORDER BY category' ) );
+		$this->assertSame( $expected, $this->facts( 'SELECT c.name, t.listener FROM timings t JOIN categories c ON c.id = t.category_id ORDER BY c.name' ) );
+		$this->assertSame( $expected, $this->facts( 'SELECT c.name, t.listener FROM timings_site t JOIN categories c ON c.id = t.category_id ORDER BY c.name' ) );
 	}
 
 	/** A profile category whose name is no string or whose data is no map files no timing row. */
@@ -224,7 +356,7 @@ final class FlameFactsTest extends TestCase {
 		);
 		$fb->flush();
 
-		$this->assertSame( [ [ 'http', 6.5, 3 ] ], $this->facts( 'SELECT category, ms, calls FROM timings' ) );
+		$this->assertSame( [ [ 'http', 6.5, 3 ] ], $this->facts( 'SELECT c.name, t.ms, t.calls FROM timings t JOIN categories c ON c.id = t.category_id' ) );
 	}
 
 	/** An untimed request files its request row and its hour, and no timing. */
@@ -249,8 +381,8 @@ final class FlameFactsTest extends TestCase {
 	}
 
 	/**
-	 * Requests to one URL from one agent in one batch name one `urls` row and
-	 * one `agents` row, and the next batch names them again for itself.
+	 * Requests to one URL from one agent in one batch name one `servers`, one
+	 * `urls` and one `agents` row, and the next batch names them again.
 	 */
 	public function test_a_batch_names_each_url_and_agent_once(): void {
 		$fb       = $this->armed_flame_builder();
@@ -264,7 +396,7 @@ final class FlameFactsTest extends TestCase {
 		$fb->flush();
 
 		$tables = \array_map( static fn ( array $asked ): array => \array_column( $asked['value']['ROWS'], 1 ), $recorder->asked );
-		$this->assertSame( [ [ 'urls', 'agents', 'requests', 'requests' ], [ 'urls', 'agents', 'requests' ] ], $tables );
+		$this->assertSame( [ [ 'servers', 'urls', 'agents', 'requests', 'requests' ], [ 'servers', 'urls', 'agents', 'requests' ] ], $tables );
 		$this->assertSame( [ [ 3, 1, 1 ] ], $this->facts( 'SELECT count(*), count( DISTINCT url_id ), count( DISTINCT ua_id ) FROM requests' ) );
 	}
 
