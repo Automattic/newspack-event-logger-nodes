@@ -268,7 +268,6 @@ final class StatsQueryTest extends TestCase {
 	 */
 	public static function name_filters(): array {
 		return [
-			'server on requests'      => [ 'requests', [ 'server' => [ 'kea.example' ] ], 'requests_server_id' ],
 			'server on timings_site'  => [ 'timings', [ 'server' => [ 'kea.example' ] ], 'timings_site_server_id' ],
 			'category on timings_site' => [ 'timings', [ 'category' => [ 'init hook @10' ] ], 'timings_site_category_id' ],
 			'entry on timings_site'   => [ 'timings', [ 'entry' => [ 'kea_init' ] ], 'timings_site_entry_id' ],
@@ -294,6 +293,46 @@ final class StatsQueryTest extends TestCase {
 		);
 
 		$this->assertStringNotContainsString( $release_index, $plan );
+	}
+
+	/** A server filter on requests seeks the server-led index over the window. */
+	public function test_a_server_filter_on_requests_seeks_the_server_led_index(): void {
+		$this->seed_request( [ 'server' => 'kea-6101.example', 'ms' => 41.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6101.example', 'ms' => 7.25 ] );
+		$checked = ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, self::spec( [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea-6101.example' ] ], 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$table   = Stats_Query::table_for( $checked );
+
+		$plan = Row_Table_Node::read(
+			Flame_Facts_Row_Schema::class,
+			static function ( Row_Reader $reader ) use ( $checked, $table ): string {
+				[ $sql, $binds ] = ( new \ReflectionMethod( Stats_Query::class, 'statement' ) )->invoke( null, $checked, $table, $reader->aliases(), false );
+				return \implode( "\n", \array_column( $reader->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
+			}
+		);
+
+		$this->assertMatchesRegularExpression( '/SEARCH t USING (COVERING )?INDEX requests_server \(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
+	}
+
+	public function test_a_server_filter_answers_the_named_servers_rows(): void {
+		$this->seed_request( [ 'server' => 'kea-6102.example', 'ms' => 41.5 ] );
+		$this->seed_request( [ 'server' => 'kea-6102.example', 'ms' => 3.5 ], partition: 2 );
+		$this->seed_request( [ 'server' => 'kaka-6102.example', 'ms' => 7.25 ] );
+		$this->seed_request( [ 'server' => 'tui-6102.example', 'ms' => 900.0 ], partition: 3 );
+		$run = fn ( array $filter ): array => Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => $filter, 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_day() ] ) )['rows'];
+
+		$this->assertSame( [ [ 2, 45.0 ] ], $run( [ 'server' => [ 'kea-6102.example' ] ] ) );
+		$this->assertSame( [ [ 3, 52.25 ] ], $run( [ 'server' => [ 'kea-6102.example', 'kaka-6102.example' ] ] ), 'two names answer both' );
+		$this->assertSame( [ [ 2, 907.25 ] ], $run( [ 'server!' => [ 'kea-6102.example' ] ] ), 'a negation answers every other server' );
+		$this->assertSame( [ [ 0, 0.0 ] ], $run( [ 'server' => [ 'moa-6102.example' ] ] ), 'a name no partition holds answers nothing' );
+	}
+
+	public function test_a_server_group_still_names_each_server(): void {
+		$this->seed_request( [ 'server' => 'kea-6103.example', 'ms' => 41.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6103.example', 'ms' => 7.25 ], partition: 1 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'filter' => [ 'server' => [ 'kaka-6103.example' ] ], 'measure' => [ 'count' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ 'kaka-6103.example', 1 ] ], $r['rows'] );
 	}
 
 	public function test_a_negated_filter_on_an_unknown_field_is_refused_naming_the_field(): void {
