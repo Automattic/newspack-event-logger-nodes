@@ -148,6 +148,12 @@ final class Stats_Query {
 	 */
 	private const SERVER_JOIN = 'JOIN %1$s.servers AS sv ON sv.id = +t.server_id';
 
+	/**
+	 * A `requests` server filter on the row's own id, which the server-led
+	 * index seeks: `%2$s` is ` IN ( ` or ` NOT IN ( `, `%3$s` its marks.
+	 */
+	private const SERVER_ID_FILTER = 't.server_id%2$sSELECT id FROM %1$s.servers WHERE name IN ( %3$s ) )';
+
 	/** The joins a timing row's category and entry need. */
 	private const TIMING_JOINS = [
 		'category' => 'JOIN %1$s.categories AS c ON c.id = +t.category_id',
@@ -178,7 +184,8 @@ final class Stats_Query {
 	 * its server `sv`, agent `a`, JA4 `j`, From `fr`, category `c` and entry
 	 * `e`: the column its bucket ranges read and how many buckets one of its
 	 * units holds; each field's expression; the join a field or input needs, by
-	 * name; each input an arm projects as `m_<name>`; and each measure's
+	 * name; the filter a field binds where its expression would not seek; each
+	 * input an arm projects as `m_<name>`; and each measure's
 	 * aggregate over those inputs, with the inputs it reads, its
 	 * `{error_kinds}` the builder's `ERROR_KINDS`, then its fold over the
 	 * per-partition partials `q_<name>`, null where none composes, with the
@@ -212,6 +219,7 @@ final class Stats_Query {
 				'ja4'    => 'LEFT JOIN %1$s.ja4s AS j ON j.id = t.ja4_id',
 				'from'   => 'LEFT JOIN %1$s.froms AS fr ON fr.id = t.from_id',
 			],
+			'filters'  => [ 'server' => self::SERVER_ID_FILTER ],
 			'inputs'   => [
 				'ms'          => 't.ms',
 				'peak_mb'     => 't.peak_mb',
@@ -935,7 +943,9 @@ final class Stats_Query {
 		foreach ( $spec['filter'] as $key => $values ) {
 			$field     = self::field_of( $key );
 			$in        = $field === $key ? ' IN ( ' : ' NOT IN ( ';
-			$clauses[] = Core::as_string( $expr[ $field ] ) . $in . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
+			$marks     = \implode( ', ', \array_fill( 0, \count( $values ), '?' ) );
+			$bound     = $def['filters'][ $field ] ?? null;
+			$clauses[] = null === $bound ? Core::as_string( $expr[ $field ] ) . $in . $marks . ' )' : \sprintf( Core::as_string( $bound ), '%1$s', $in, $marks );
 			\array_push( $binds, ...$values );
 		}
 		$joined = $by_url_id ? [ ...\array_diff( $fields, [ 'url' ] ), ...\array_intersect( self::filtered( $spec['filter'] ), [ 'url' ] ) ] : $fields;
