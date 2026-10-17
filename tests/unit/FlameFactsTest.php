@@ -34,7 +34,7 @@ final class FlameFactsTest extends TestCase {
 	}
 
 	public function test_v5_declares_the_window_its_expiries_and_the_covering_index(): void {
-		$tables = Flame_Facts_Row_Schema::tables();
+		$tables = self::derived_tables();
 
 		$this->assertSame( 5, Flame_Facts_Row_Schema::version() );
 		$this->assertSame( [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ], $tables['requests']['indexes']['requests_cover'] );
@@ -53,7 +53,7 @@ final class FlameFactsTest extends TestCase {
 	 * that column, and the column leads an index or its table's key.
 	 */
 	public function test_each_named_table_is_retained_by_every_column_naming_it(): void {
-		$tables = Flame_Facts_Row_Schema::tables();
+		$tables = self::derived_tables();
 
 		$this->assertSame( [ [ 'requests', 'url_id', 'id' ], [ 'timings', 'url_id', 'id' ] ], $tables['urls']['retained_by'] );
 		$this->assertSame( [ [ 'urls', 'server_id', 'id' ], [ 'requests', 'server_id', 'id' ], [ 'timings', 'server_id', 'id' ], [ 'timings_site', 'server_id', 'id' ], [ 'requests_hourly', 'server_id', 'id' ] ], $tables['servers']['retained_by'] );
@@ -64,6 +64,17 @@ final class FlameFactsTest extends TestCase {
 				$this->assertContains( $column, $leading, "{$table}.{$column} leads an index or the key" );
 			}
 		}
+	}
+
+	/**
+	 * The schema's tables derived afresh: the bootstrap memoizes them before
+	 * any test runs, so a test reading the memo never runs the derivation.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function derived_tables(): array {
+		( new \ReflectionProperty( Flame_Facts_Row_Schema::class, 'tables' ) )->setValue( null, null );
+		return Flame_Facts_Row_Schema::tables();
 	}
 
 	public function test_a_window_row_folds_its_sums_and_keeps_its_latest_bucket(): void {
