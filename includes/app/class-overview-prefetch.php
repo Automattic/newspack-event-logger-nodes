@@ -22,6 +22,7 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Message;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -54,6 +55,11 @@ final class Overview_Prefetch {
 	 * `admit()` declines a job before it gets here. On a started record each
 	 * answer is a `prefetch answer` span labelled with its question's name.
 	 *
+	 * The job runs as one unit no cooperative stop splits: each span line is
+	 * a Partition write, and so a point a stop could rise, and a stop inside
+	 * the build would discard it. A stop that falls due raises at the first
+	 * pump after the publish.
+	 *
 	 * @api The `eln_overview_prefetch` job handler.
 	 * @param string              $id         Unused; the job names none.
 	 * @param array<string,mixed> $parameters `queued_at` and `interval`.
@@ -67,15 +73,19 @@ final class Overview_Prefetch {
 		if ( $interval < 1 || ! isset( $parameters['queued_at'] ) ) {
 			throw new \InvalidArgumentException( 'overview prefetch: a job names its queued_at and an interval of at least 1' );
 		}
-		$now     = (int) Core::right_now();
-		$answers = [];
-		foreach ( self::stored() as $key => [ 'name' => $name, 'verb' => $verb, 'args' => $args ] ) {
-			$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $args, $now ), start: [ 'l' => $name ] );
-			if ( true === ( $answer['available'] ?? null ) ) {
-				$answers[ $key ] = $answer;
+		$now = (int) Core::right_now();
+		Event_Framework::instance()->uninterruptible(
+			static function () use ( $now, $interval ): void {
+				$answers = [];
+				foreach ( self::stored() as $key => [ 'name' => $name, 'verb' => $verb, 'args' => $args ] ) {
+					$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $args, $now ), start: [ 'l' => $name ] );
+					if ( true === ( $answer['available'] ?? null ) ) {
+						$answers[ $key ] = $answer;
+					}
+				}
+				Url_Snapshot::publish( $now, 2 * $interval, $answers );
 			}
-		}
-		Url_Snapshot::publish( $now, 2 * $interval, $answers );
+		);
 	}
 
 	/**
