@@ -1353,12 +1353,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * stays whole, so a scoped dashboard can still name the rest. A stored
 	 * list stands in for it unless the scoped server has traffic, worker
 	 * traffic counted as the list counts it, that the list predates, which
-	 * only a live read names. Stats that will not open answer `available`
+	 * only a live read names; a server the list lacks costs one scoped count
+	 * a poll to rule that out. Stats that will not open answer `available`
 	 * false and null totals, never zeroes.
 	 *
 	 * @param string           $server  Server to scope to; '' is every server.
 	 * @param int              $now     The reply's clock.
-	 * @param list<mixed>|null $servers The stored `servers` a scoped answer may take; null, or an unscoped answer, reads them.
+	 * @param list<mixed>|null $servers The stored `servers` a scoped answer may take; null reads them.
 	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, available: bool}
 	 */
 	private static function answer_overview( string $server, int $now, ?array $servers ): array {
@@ -1373,7 +1374,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			]
 		);
 		$totals  = self::measures( $answer );
-		if ( null === $servers || ( ! \in_array( $server, $servers, true ) && self::has_traffic( $server, $chart ) ) ) {
+		if ( null === $servers || ( ! \in_array( $server, $servers, true ) && ( 0 < Core::num_int( $totals['count'] ) || self::has_traffic( $server, $chart ) ) ) ) {
 			$servers = \array_column(
 				Stats_Query::run(
 					[
@@ -1407,9 +1408,9 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Whether `$server` has any request over `$buckets`, worker traffic
-	 * counted: one seek of `requests_server`.
+	 * counted: one scoped count.
 	 *
-	 * @param string                   $server  The server; '' is every server.
+	 * @param string                   $server  The scoped server.
 	 * @param list<array{0:int,1:int}> $buckets The buckets.
 	 */
 	private static function has_traffic( string $server, array $buckets ): bool {
