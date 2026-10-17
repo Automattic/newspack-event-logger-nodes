@@ -413,23 +413,89 @@ final class OverviewPrefetchTest extends TestCase {
 	}
 
 	/**
-	 * An `overview` or `query` question whose key the job never stores is
-	 * decided live before the file is touched: a snapshot that would not
-	 * open says nothing, and the default overview after them says so.
+	 * A `query` question whose key the job never stores is decided live
+	 * before the file is touched: a snapshot that would not open says
+	 * nothing, and the default overview after it says so.
 	 */
-	public function test_an_unstored_overview_or_query_never_opens_the_snapshot(): void {
+	public function test_an_unstored_query_never_opens_the_snapshot(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5542/', 'ms' => 8.5 ] );
 		\mkdir( $this->snapshot_file() );
 		$said = static fn (): array => \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not open' ) );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kaka-5542.example' ] );
-		$query    = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', 'status_class', '--top=20', '--top_by=count', '--filter=status_class=5', '--measure=count' ] );
+		$query = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', 'status_class', '--top=20', '--top_by=count', '--filter=status_class=5', '--measure=count' ] );
 
-		$this->assertSame( self::NOW, \is_array( $overview ) ? $overview['as_of'] : $overview );
 		$this->assertSame( self::NOW, \is_array( $query ) ? $query['as_of'] : $query );
-		$this->assertSame( [], $said(), 'neither unstored question opened the file' );
+		$this->assertSame( [], $said(), 'the unstored question never opened the file' );
 		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 		$this->assertNotSame( [], $said(), 'the stored question opens it, so the silence above is real' );
+	}
+
+	/** A scoped overview's totals are live, its servers the job's: no scope changes them. */
+	public function test_a_scoped_overview_names_the_servers_the_snapshot_stored(): void {
+		$this->seed_request( [ 'server' => 'kea-6201.example', 'url' => 'https://kea-6201.example/a/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'server' => 'kea-6201.example', 'url' => 'https://kea-6201.example/b/', 'ms' => 8.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6201.example', 'url' => 'https://kaka-6201.example/c/', 'ms' => 12.5 ] );
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6201.example' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( self::NOW + 9, $overview['as_of'] );
+		$this->assertSame( 2, $overview['totals']['requests'], 'the totals are live' );
+		$this->assertSame( [ 'kea-6201.example' ], $overview['servers'], 'the servers are the job\'s, before kaka' );
+	}
+
+	public function test_a_scoped_overview_with_no_snapshot_reads_its_servers_live(): void {
+		$this->seed_request( [ 'server' => 'kea-6202.example', 'url' => 'https://kea-6202.example/a/', 'ms' => 33.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6202.example', 'url' => 'https://kaka-6202.example/b/', 'ms' => 12.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6202.example', 'url' => 'https://kaka-6202.example/c/', 'ms' => 4.5 ] );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6202.example' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( [ 'kaka-6202.example', 'kea-6202.example' ], $overview['servers'], 'busiest first, read live' );
+	}
+
+	public function test_a_scoped_overview_past_the_snapshot_reads_its_servers_live(): void {
+		$this->seed_request( [ 'server' => 'kea-6203.example', 'url' => 'https://kea-6203.example/a/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'server' => 'kaka-6203.example', 'url' => 'https://kaka-6203.example/b/', 'ms' => 12.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6203.example', 'url' => 'https://kaka-6203.example/c/', 'ms' => 4.5 ] );
+		self::clock( self::NOW + 2 * self::INTERVAL + 1 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6203.example' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( [ 'kaka-6203.example', 'kea-6203.example' ], $overview['servers'] );
+	}
+
+	public function test_a_scoped_overview_whose_stored_answer_will_not_decode_reads_its_servers_live_and_says_so(): void {
+		$this->seed_request( [ 'server' => 'kea-6204.example', 'url' => 'https://kea-6204.example/a/', 'ms' => 8.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6204.example', 'url' => 'https://kaka-6204.example/b/', 'ms' => 2.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6204.example', 'url' => 'https://kaka-6204.example/c/', 'ms' => 1.5 ] );
+		$key = Overview_Prefetch::key( 'overview', Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], [] ) );
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			Url_Snapshot::NAME,
+			static function ( Row_Reader $db ) use ( $key ): bool {
+				$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
+				$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, '{"kea-6204": is no json' ] );
+				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
+				return true;
+			}
+		);
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6204.example' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( [ 'kaka-6204.example', 'kea-6204.example' ], $overview['servers'] );
+		$this->assertNotEmpty(
+			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not read' ) ),
+			'the outage is said once'
+		);
 	}
 
 	public function test_a_question_the_snapshot_stored_no_answer_for_is_answered_live(): void {
