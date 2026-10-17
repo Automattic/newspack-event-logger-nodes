@@ -16,9 +16,6 @@
  *   - `UrlDetailView` → `url-detail:view` and `RequestDetailView` →
  *     `request-detail:view`, the two on-demand modal slices.
  *
- * The `performance` CI verbs answer PHP arrays rather than JSON strings, so a
- * payload reaches `parse` already decoded and no declaration sets `json`.
- *
  * The graph drives every view here through its own `controlFrom`, never by
  * payload shape: `loading` when a filter or a dimension change asks afresh,
  * and `clear` and `error` as a modal opens, closes or fails validation.

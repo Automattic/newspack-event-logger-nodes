@@ -18,8 +18,7 @@ export const views = registerSliceViews( {
 	/**
 	 * `current-request:view` — THIS request's own stored record.
 	 *
-	 * The `performance` CI's `dump_request` verb answers a PHP array, so the
-	 * payload arrives decoded and this declaration sets no `json`. Each reply
+	 * The `performance` CI's `dump_request` verb answers a PHP array. Each reply
 	 * replaces the record whole rather than merging into it: the verb answers
 	 * with the complete body every time, and `flame_data` — written after the
 	 * record, which is what the tab's extra ticks wait for — comes inside it.
