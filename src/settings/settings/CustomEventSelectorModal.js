@@ -17,12 +17,12 @@ import '../styles/custom-event-selector.scss';
 /**
  * Every registered custom event, mapped to the swatch the dashboards draw it in.
  *
- * `Config::get_custom_colors()` merges the deployment config, whatever the
- * `newspack_event_logger_nodes_custom_colors` filter adds and the events spokes
- * reported to the hub, then sorts the map case-insensitively; the picker lists
- * the events in that order and imposes none of its own. WordPress prints the
- * map as an inline script before this bundle, so it is in hand at module load
- * and cannot change while the page lives.
+ * `Config::get_custom_colors()` merges the deployment config and whatever the
+ * `newspack_event_logger_nodes_custom_colors` filter adds on this site, then
+ * sorts the map case-insensitively; the picker lists the events in that order
+ * and imposes none of its own. WordPress prints the map as an inline script
+ * before this bundle, so it is in hand at module load and cannot change while
+ * the page lives.
  *
  * @type {Object<string,string>}
  */

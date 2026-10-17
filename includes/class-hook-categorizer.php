@@ -91,9 +91,17 @@ class Hook_Categorizer {
 	 * Cached merged config (base + user customizations). Null until the first
 	 * `get_merged_config()`, and `clear_cache()` puts it back there.
 	 *
-	 * @var array{colors: array<string,mixed>, descriptions: array<string,mixed>, patterns: array<string,mixed>, overrides: array<string,mixed>}|null
+	 * @var array{colors: array<string,mixed>, descriptions: array<string,mixed>, patterns: array<array-key,mixed>, overrides: array<string,mixed>}|null
 	 */
 	private static ?array $merged_config = null;
+
+	/**
+	 * The merged patterns compiled for `categorize()`, in config order. Null
+	 * until the first categorization, and `clear_cache()` puts it back there.
+	 *
+	 * @var list<array{regex: string, categories: list<string>, walk: list<array{string,string}>}>|null
+	 */
+	private static ?array $matchers = null;
 
 	/**
 	 * Get registered hooks grouped by category.
@@ -135,14 +143,12 @@ class Hook_Categorizer {
 	 * matches decides, in merged-config order, and a hook matching nothing
 	 * lands in `Other`.
 	 *
-	 * Patterns come from the database, so three guards bound the work: one
-	 * longer than MAX_PATTERN_LENGTH is skipped, one carrying a nested
-	 * quantifier is skipped and logged — the test is blunt, so a lazy `.*?`
-	 * trips it too — and `pcre.backtrack_limit` drops to 10000 for the scan,
-	 * restored in `finally`, including on a throw. A pattern PCRE refuses to
-	 * compile is skipped rather than aborting the scan. Both rejections report
-	 * through `Core::print_less_often`, whose throttle key is the message prefix
-	 * alone, so one rejected pattern per window prints and the rest stay silent.
+	 * The patterns are compiled once, by `matchers()`, so a hook costs one
+	 * `preg_match()` per matcher, and the shipped set is one matcher. The scan
+	 * runs under a `pcre.backtrack_limit` of 10000, restored in `finally`,
+	 * including on a throw. A combined matcher that hits it walks its patterns
+	 * one at a time under the same limit, so no pattern is given more than the
+	 * walk would give it.
 	 *
 	 * @param string $hook_name Hook name.
 	 * @return string Category name, or `Other` when nothing matches.
@@ -157,41 +163,148 @@ class Hook_Categorizer {
 
 		// Cap backtracking for the scan; finally restores the old limit.
 		$prev_backtrack_limit = \ini_get( 'pcre.backtrack_limit' );
-		\ini_set( 'pcre.backtrack_limit', 10000 ); // phpcs:ignore WordPress.PHP.IniSet.Risky
+		\ini_set( 'pcre.backtrack_limit', '10000' ); // phpcs:ignore WordPress.PHP.IniSet.Risky
 
 		try {
-			foreach ( $config['patterns'] as $category => $patterns ) {
-				if ( ! \is_array( $patterns ) ) {
-					continue;
+			foreach ( self::matchers() as $matcher ) {
+				$found = \preg_match( $matcher['regex'], $hook_name, $match );
+				// A lone pattern may set its own mark; only ours index.
+				if ( 1 === $found ) {
+					return 1 === \count( $matcher['categories'] ) ? $matcher['categories'][0] : $matcher['categories'][ (int) $match['MARK'] ];
 				}
-				foreach ( $patterns as $pattern ) {
-					if ( ! \is_string( $pattern ) ) {
-						continue;
-					}
-					if ( \strlen( $pattern ) > self::MAX_PATTERN_LENGTH ) {
-						continue;
-					}
-					// Reject patterns with nested quantifiers (ReDoS risk).
-					if ( \preg_match( '/[+*?]\}?\)?[+*?{]/', $pattern ) ) {
-						Core::print_less_often( '[EventLoggerNodes] Hook categorizer pattern rejected (nested quantifier): ', (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) );
-						continue;
-					}
-					// Use \x01 delimiter to avoid injection/escaping issues.
-					$safe_regex = "\x01" . $pattern . "\x01";
-					if ( false === @\preg_match( $safe_regex, '' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Validating user-supplied regex.
-						Core::print_less_often( '[EventLoggerNodes] Invalid hook categorizer pattern rejected: ', (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) );
-						continue;
-					}
-					if ( \preg_match( $safe_regex, $hook_name ) ) {
-						return $category;
+				if ( false === $found ) {
+					foreach ( $matcher['walk'] as [ $regex, $category ] ) {
+						if ( \preg_match( $regex, $hook_name ) ) {
+							return $category;
+						}
 					}
 				}
 			}
 		} finally {
-			\ini_set( 'pcre.backtrack_limit', $prev_backtrack_limit ); // phpcs:ignore WordPress.PHP.IniSet.Risky
+			\ini_set( 'pcre.backtrack_limit', (string) $prev_backtrack_limit ); // phpcs:ignore WordPress.PHP.IniSet.Risky
 		}
 
 		return 'Other';
+	}
+
+	/**
+	 * The merged patterns compiled into matchers, memoized until `clear_cache()`.
+	 *
+	 * Patterns come from the database, so three guards apply as each is
+	 * compiled: one longer than MAX_PATTERN_LENGTH is skipped, one carrying a
+	 * nested quantifier is skipped and logged — the test is blunt, so a lazy
+	 * `.*?` trips it too — and one PCRE refuses to compile is skipped and
+	 * logged. Both rejections report through `Core::print_less_often`, whose
+	 * throttle key is the message prefix alone, so one rejected pattern per
+	 * window prints and the rest stay silent.
+	 *
+	 * A run of consecutive patterns `combinable()` accepts becomes ONE regex:
+	 * an alternation anchored at the start of the name, each branch a lookahead
+	 * that finds its pattern anywhere in it and a `(*MARK)` naming the branch.
+	 * PCRE tries the branches in order at that one position, so the first
+	 * pattern to match anywhere wins, as in the walk, and not the leftmost
+	 * match. A pattern opening with `^` needs no `.*?` to reach it. Any other
+	 * pattern stands alone, between the runs, in its config position.
+	 *
+	 * @return list<array{regex: string, categories: list<string>, walk: list<array{string,string}>}>
+	 */
+	private static function matchers(): array {
+		if ( null !== self::$matchers ) {
+			return self::$matchers;
+		}
+		$matchers = [];
+		$run      = [];
+		foreach ( self::get_merged_config()['patterns'] as $category => $patterns ) {
+			if ( ! \is_array( $patterns ) ) {
+				continue;
+			}
+			foreach ( $patterns as $pattern ) {
+				if ( ! \is_string( $pattern ) ) {
+					continue;
+				}
+				$regex = self::checked_regex( $pattern );
+				if ( null === $regex ) {
+					continue;
+				}
+				if ( self::combinable( $pattern ) ) {
+					$run[] = [ $pattern, (string) $category, $regex ];
+					continue;
+				}
+				$matchers = \array_merge( $matchers, self::combined_matchers( $run ) );
+				$run      = [];
+				$matchers[] = [ 'regex' => $regex, 'categories' => [ (string) $category ], 'walk' => [] ];
+			}
+		}
+		self::$matchers = \array_merge( $matchers, self::combined_matchers( $run ) );
+		return self::$matchers;
+	}
+
+	/**
+	 * One matcher for a run of combinable patterns, or none for an empty run.
+	 * A run whose combined regex outgrows PCRE's compiled-size limit splits in
+	 * two, in order, until each half compiles.
+	 *
+	 * @param list<array{string,string,string}> $run Pattern, category, delimited regex.
+	 * @return list<array{regex: string, categories: list<string>, walk: list<array{string,string}>}>
+	 */
+	private static function combined_matchers( array $run ): array {
+		if ( [] === $run ) {
+			return [];
+		}
+		$branches   = [];
+		$categories = [];
+		$walk       = [];
+		foreach ( $run as $i => [ $pattern, $category, $regex ] ) {
+			$find         = \str_starts_with( $pattern, '^' ) ? $pattern : "(?s:.*?)(?:{$pattern})";
+			$branches[]   = "(?={$find})(*MARK:{$i})";
+			$categories[] = $category;
+			$walk[]       = [ $regex, $category ];
+		}
+		$regex = "\x01\\A(?:" . \implode( '|', $branches ) . ")\x01";
+		if ( 1 === \count( $run ) || false !== @\preg_match( $regex, '' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- A long run can outgrow PCRE's compiled-size limit.
+			return [ [ 'regex' => $regex, 'categories' => $categories, 'walk' => $walk ] ];
+		}
+		$half = \intdiv( \count( $run ), 2 );
+		return \array_merge(
+			self::combined_matchers( \array_slice( $run, 0, $half ) ),
+			self::combined_matchers( \array_slice( $run, $half ) )
+		);
+	}
+
+	/**
+	 * Whether a pattern means the same inside a combined regex as alone: no
+	 * group, alternation or verb, whose numbering or scope the neighbours
+	 * would change, and no escape outside a short list of single-character
+	 * ones, which keeps `\Q`, `\g`, `\k` and back-references out.
+	 *
+	 * @param string $pattern A pattern `checked_regex()` accepted.
+	 */
+	private static function combinable( string $pattern ): bool {
+		return 1 !== \preg_match( '/[()|]|\\\\[^dDwWsS.\-\/^$*+?\[\]{}\\\\]/', $pattern );
+	}
+
+	/**
+	 * The pattern delimited for PCRE, or null when a guard refuses it.
+	 *
+	 * @param string $pattern An operator's or the shipped file's pattern.
+	 * @return string|null `\x01`-delimited regex.
+	 */
+	private static function checked_regex( string $pattern ): ?string {
+		if ( \strlen( $pattern ) > self::MAX_PATTERN_LENGTH ) {
+			return null;
+		}
+		// Reject patterns with nested quantifiers (ReDoS risk).
+		if ( \preg_match( '/[+*?]\}?\)?[+*?{]/', $pattern ) ) {
+			Core::print_less_often( '[EventLoggerNodes] Hook categorizer pattern rejected (nested quantifier): ', (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) );
+			return null;
+		}
+		// Use \x01 delimiter to avoid injection/escaping issues.
+		$regex = "\x01" . $pattern . "\x01";
+		if ( false === @\preg_match( $regex, '' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Validating user-supplied regex.
+			Core::print_less_often( '[EventLoggerNodes] Invalid hook categorizer pattern rejected: ', (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) );
+			return null;
+		}
+		return $regex;
 	}
 
 	/**
@@ -247,24 +360,16 @@ class Hook_Categorizer {
 	/**
 	 * Get all registered hooks from WordPress.
 	 *
-	 * Three sources, deduplicated and sorted: hooks with callbacks in
-	 * `$wp_filter`, hooks the durable ruleset instruments, and hooks a spoke
-	 * reported into `Config::OPTION_DISCOVERED_HOOKS`. The last two matter
-	 * because a hook bound only inside a worker — or only on another site —
-	 * never appears in this request's `$wp_filter`.
+	 * Three sources, deduplicated and sorted: `hooks_with_callbacks()`, hooks
+	 * the durable ruleset instruments, and hooks a spoke reported into
+	 * `Config::OPTION_DISCOVERED_HOOKS`. The last two matter because a hook
+	 * bound only inside a worker — or only on another site — never appears in
+	 * this request's `$wp_filter`.
 	 *
 	 * @return array<int,string> Sorted, deduplicated hook names.
 	 */
 	public static function get_registered_hooks(): array {
-		/** @var array<string,\WP_Hook> $wp_filter WordPress global. */
-		global $wp_filter;
-
-		$hooks = [];
-		foreach ( $wp_filter as $hook_name => $hook_obj ) {
-			if ( ! empty( $hook_obj->callbacks ) ) {
-				$hooks[ $hook_name ] = true;
-			}
-		}
+		$hooks = \array_fill_keys( self::hooks_with_callbacks(), true );
 
 		// Include already-selected hooks so worker-only ones still show.
 		foreach ( self::selected_hooks() as $hook ) {
@@ -296,7 +401,31 @@ class Hook_Categorizer {
 	 * @return string[]
 	 */
 	public static function selected_hooks(): array {
-		return Rule_Set::load()->instrumented_union()['hooks'];
+		return Rule_Set::load()->instrumented_hooks();
+	}
+
+	/**
+	 * Every hook in this process's `$wp_filter` that holds at least one
+	 * callback, in registration order.
+	 *
+	 * The one walk over `$wp_filter`: `get_registered_hooks()` unions it into
+	 * the picker's list, and `App\Discovery_CI_Node` reports it to the hub.
+	 * A numeric hook name keys `$wp_filter` as an integer, so each name is cast
+	 * back to the string WordPress was handed.
+	 *
+	 * @return list<string>
+	 */
+	public static function hooks_with_callbacks(): array {
+		/** @var array<array-key,\WP_Hook> $wp_filter WordPress global; a numeric name keys as int. */
+		global $wp_filter;
+
+		$hooks = [];
+		foreach ( $wp_filter as $hook_name => $hook_obj ) {
+			if ( ! empty( $hook_obj->callbacks ) ) {
+				$hooks[] = (string) $hook_name;
+			}
+		}
+		return $hooks;
 	}
 
 	/**
@@ -323,7 +452,7 @@ class Hook_Categorizer {
 	 * order, a base pattern in an earlier category still beats a user pattern
 	 * in a later one — `overrides` is the way to pin a specific hook.
 	 *
-	 * @return array{colors: array<string,mixed>, descriptions: array<string,mixed>, patterns: array<string,mixed>, overrides: array<string,mixed>} Merged configuration.
+	 * @return array{colors: array<string,mixed>, descriptions: array<string,mixed>, patterns: array<array-key,mixed>, overrides: array<string,mixed>} Merged configuration.
 	 */
 	public static function get_merged_config(): array {
 		if ( null !== self::$merged_config ) {
@@ -350,7 +479,7 @@ class Hook_Categorizer {
 		$descriptions = \array_merge( Core::arr( $base_descs ), Core::arr( $user_descs ) );
 
 		// Merge patterns (user patterns added to base).
-		/** @var array<string,mixed> $patterns config dynamic output. */
+		/** @var array<array-key,mixed> $patterns config dynamic output; a numeric category keys as int. */
 		$patterns = Core::arr( $base_patterns );
 		if ( \is_array( $user_patterns_all ) ) {
 			foreach ( $user_patterns_all as $raw_category => $user_patterns ) {
@@ -479,5 +608,6 @@ class Hook_Categorizer {
 	public static function clear_cache(): void {
 		self::$base_config   = null;
 		self::$merged_config = null;
+		self::$matchers      = null;
 	}
 }

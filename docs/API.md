@@ -94,16 +94,16 @@ The handlers live in this plugin's `Newspack_Event_Logger_Nodes\App\` namespace:
 [`Command_Interpreter_Node::register_namespace()`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-command-interpreter-node.php), and the CIs mount on the substrate's
 `newspack_nodes/request_graph_ready` action.
 
-### `discovery` — spoke-side hook and event roster
+### `discovery` — spoke-side hook roster
 
 | Verb | Role | Args | Returns |
 |------|------|------|---------|
-| `get` | READ | — | `{ registered_hooks: string[], custom_events: string[] }` — the union across every LOG rule of its `hooks` (either tier, resolved through `hooks_for`) and its `custom_events` (`Rule_Set::instrumented_union()`), with `custom_events` filtered out of `registered_hooks` so the picker's two catalogs stay disjoint. A `significant_events` name outside the `hooks` list is not in it, though `App\Core` binds one. |
+| `get` | READ | — | `{ registered_hooks: string[] }` — every hook this spoke's `$wp_filter` holds a callback on, read through `Hook_Categorizer::hooks_with_callbacks()`, less the plugin's and the substrate's own (`Hook_Categorizer::is_internal()`), which the picker never offers. The `/command` request that asks it has loaded every active plugin and the theme, so a hook registered only on a front-end or admin request is not in it. |
 
 Two callers ask it: the hub's [`Discovery_Collector_Node`](../includes/class-discovery-collector-node.php), which union-merges every spoke's
-reply into the `discovered_hooks` / `discovered_events` staging options behind the rules
+reply into the `discovered_hooks` staging option behind the rules
 editor's hook picker, and the substrate `vault` CI's `test` verb, which probes it to check
-one spoke's connection. It reports the ruleset and never writes it — the editor is the only
+one spoke's connection. It never reads or writes the ruleset — the editor is the only
 rules writer. A spoke's stored credentials (Basic application password, or Bearer) carry a
 user holding the READ role, which is what satisfies the gate on the far end.
 

@@ -72,9 +72,9 @@
   <div class="lane">
     <div class="st node" style="flex:0 0 206px"><b>discovery-collector</b>Mints one <span class="mono" style="color:#101517">get</span> command per spoke, addressed to that spoke's discovery interpreter.</div>
     <div class="arw"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
-    <div class="st" style="flex:0 0 206px"><b>The spoke answers</b>Its registered hooks and its custom event names.</div>
+    <div class="st" style="flex:0 0 206px"><b>The spoke answers</b>Every hook its <span class="mono" style="color:#101517">$wp_filter</span> holds a callback on.</div>
     <div class="arw"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
-    <div class="st node" style="flex:1 1 auto"><b>The reply is addressed TO=FROM</b>It lands back in the collector, which merges every spoke's answer into two staging options on the hub, sanitized and capped at 10,000 entries each. The rule editor's hook picker reads them. Nothing here writes a rule.</div>
+    <div class="st node" style="flex:1 1 auto"><b>The reply is addressed TO=FROM</b>It lands back in the collector, which merges every spoke's answer into one staging option on the hub, sanitized and capped at 10,000 entries. The rule editor's hook picker reads it. Nothing here writes a rule.</div>
   </div>
 
   <p class="secn" style="margin-top:26px">Job entries come in <span>· and must not run on the hub as the hub's own</span></p>

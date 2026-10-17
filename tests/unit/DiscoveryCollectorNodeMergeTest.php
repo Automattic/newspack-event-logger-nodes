@@ -3,9 +3,9 @@
  * DiscoveryCollectorNodeMergeTest: the defensive / shape-variant branches of
  * the hub-side union-merge that the happy-path DiscoveryCollectorNodeTest
  * doesn't exercise — read-back arguments, non-array payload guards, and the
- * malformed-option fallbacks for the discovered_hooks / discovered_events
- * staging options. Discovery stages spoke-reported hooks/events into those
- * options; it never writes the ruleset (the editor is the only rules writer).
+ * malformed-option fallback for the discovered_hooks staging option.
+ * Discovery stages spoke-reported hooks into that option; it never writes the
+ * ruleset (the editor is the only rules writer).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -23,8 +23,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 #[CoversClass( Discovery_Collector_Node::class )]
 class DiscoveryCollectorNodeMergeTest extends TestCase {
 
-	private const HOOKS_OPTION  = 'newspack_event_logger_nodes_discovered_hooks';
-	private const EVENTS_OPTION = 'newspack_event_logger_nodes_discovered_events';
+	private const HOOKS_OPTION = 'newspack_event_logger_nodes_discovered_hooks';
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -131,14 +130,14 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 		// WordPress caches the ABSENCE of a row it read, in `notoptions`.
 		require_once \dirname( __DIR__, 3 ) . '/newspack-nodes/tests/Helpers/wp-object-cache-stub.php';
 		$node = $this->wired_node( new Capture_Sink_Node() );
-		$this->assertSame( [], \get_option( self::EVENTS_OPTION, [] ) );
+		$this->assertSame( [], \get_option( self::HOOKS_OPTION, [] ) );
 
-		// Another process stages an event after this worker read the absence.
-		\wp_test_write_elsewhere( self::EVENTS_OPTION, [ 'checkout_done' => true ], false );
+		// Another process stages a hook after this worker read the absence.
+		\wp_test_write_elsewhere( self::HOOKS_OPTION, [ 'checkout_done' => true ], false );
 		$node->fire();
-		$node->fill( $this->reply( [ 'custom_events' => [ 'cart_add' ] ] ) );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'cart_add' ] ] ) );
 
-		$this->assertSame( [ 'checkout_done', 'cart_add' ], \array_keys( Core::arr( $GLOBALS['_wp_options'][ self::EVENTS_OPTION ] ) ) );
+		$this->assertSame( [ 'checkout_done', 'cart_add' ], \array_keys( $this->discovered_hooks() ) );
 	}
 
 	#[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
@@ -147,7 +146,7 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 		$node = $this->wired_node( new Capture_Sink_Node() );
 
 		$node->fire();
-		$node->fill( $this->reply( [ 'registered_hooks' => [ 'save_post' ], 'custom_events' => [ 'cart_add' ] ] ) );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ 'save_post' ] ] ) );
 		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_head' ] ] ) );
 
 		$this->assertSame( [ 'runtime' ], $GLOBALS['_wp_cache_flushes'] );
@@ -170,7 +169,7 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 		$node = $this->wired_node( new Capture_Sink_Node() );
 
 		$node->fill( $this->reply( [] ) );
-		$node->fill( $this->reply( [ 'registered_hooks' => [ '   ', 4417 ], 'custom_events' => [ '' ] ] ) );
+		$node->fill( $this->reply( [ 'registered_hooks' => [ '   ', 4417, '' ] ] ) );
 
 		$this->assertSame( [], $GLOBALS['_wp_cache_flushes'] );
 		$this->assertArrayNotHasKey( self::HOOKS_OPTION, $GLOBALS['_wp_options'] );
@@ -183,14 +182,5 @@ class DiscoveryCollectorNodeMergeTest extends TestCase {
 		$node->fill( $this->reply( [ 'registered_hooks' => [ 'wp_loaded' ] ] ) );
 
 		$this->assertArrayHasKey( 'wp_loaded', $this->discovered_hooks() );
-	}
-
-	public function test_merge_recovers_when_discovered_events_option_is_not_an_array(): void {
-		$GLOBALS['_wp_options'][ self::EVENTS_OPTION ] = 'corrupt-scalar';
-		$node = $this->wired_node( new Capture_Sink_Node() );
-
-		$node->fill( $this->reply( [ 'custom_events' => [ 'evt_a' ] ] ) );
-
-		$this->assertArrayHasKey( 'evt_a', $GLOBALS['_wp_options'][ self::EVENTS_OPTION ] );
 	}
 }

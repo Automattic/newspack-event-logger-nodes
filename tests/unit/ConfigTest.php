@@ -360,20 +360,4 @@ class ConfigTest extends TestCase {
 		\sort( $sorted, SORT_NATURAL | SORT_FLAG_CASE );
 		$this->assertSame( $sorted, $keys );
 	}
-
-	public function test_get_custom_colors_merges_discovered_events(): void {
-		\update_option( 'newspack_event_logger_nodes_discovered_events', [ 'remote_hook' => '#ff0000' ] );
-		Config::reset();
-		$colors = Config::get_custom_colors();
-		$this->assertArrayHasKey( 'remote_hook', $colors );
-		$this->assertSame( '#ff0000', $colors['remote_hook'] );
-	}
-
-	public function test_get_custom_colors_handles_non_string_discovered(): void {
-		\update_option( 'newspack_event_logger_nodes_discovered_events', [ 'h' => 123 ] );
-		Config::reset();
-		$colors = Config::get_custom_colors();
-		$this->assertArrayHasKey( 'h', $colors );
-		$this->assertSame( '#ffa726', $colors['h'] );
-	}
 }

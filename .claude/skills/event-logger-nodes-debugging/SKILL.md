@@ -227,7 +227,7 @@ A node is a hub when an active topology's own top-level frontmatter declares `va
 
 Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally runs `aggregator`, whose `spokes` `Vault_Group` builds one substrate `Remote_Source_Node` broker per member of Vault group `spoke`. Each broker pulls its spoke's firehose and `sources:php` on one connection; this plugin's `Remote_Job_Rewrite_Node`, the firehose source's target, rewrites the ingested `k:"job"` lines to `k:"remote_job"`, which the hub's `Job_Worker_Node` dispatches against the separate `newspack_nodes/remote_job_handlers` map, and the `sources:php` source lands in `php-errors.p0` beside the hub's own error log. A spoke joins by a Vault edit, and its credentials live in the substrate Vault.
 
-The hub's other sweep is `Discovery_Collector_Node`, mounted by `hub-control`: it mints one signed `discovery.get` per spoke on its own tick, which that topology sets to 300 seconds, and union-merges the replies into the `discovered_hooks` and `discovered_events` staging options the rule editor's hook picker offers. It writes no rule, so an empty picker on a hub is this tick — the collector needs the same per-spoke `HTTP_Out` nodes settings-sync uses.
+The hub's other sweep is `Discovery_Collector_Node`, mounted by `hub-control`: it mints one signed `discovery.get` per spoke on its own tick, which that topology sets to 300 seconds, and union-merges the replies — every hook each spoke's `$wp_filter` holds a callback on — into the `discovered_hooks` staging option the rule editor's hook picker offers. It writes no rule, so an empty picker on a hub is this tick — the collector needs the same per-spoke `HTTP_Out` nodes settings-sync uses.
 
 Diagnostic flow:
 
