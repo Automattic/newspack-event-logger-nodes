@@ -657,7 +657,6 @@ export function usePerformanceGraph( opts = {} ) {
 					tee,
 					target: OVERVIEW_TARGET,
 				} );
-				Core.node( each.fetcher ).retry_after_s = STATS_NO_REASK;
 			}
 
 			// @longform The URL modal's three slices ride their OWN Timer
@@ -676,6 +675,11 @@ export function usePerformanceGraph( opts = {} ) {
 					tee: urlTee,
 					target: egressPath( GROUPS.url, SERVER ),
 				} );
+			}
+			for ( const each of [
+				...Object.values( pageSlices ),
+				...Object.values( urlSlices ),
+			] ) {
 				Core.node( each.fetcher ).retry_after_s = STATS_NO_REASK;
 			}
 
@@ -805,25 +809,29 @@ export function usePerformanceGraph( opts = {} ) {
 			return;
 		}
 		const asked = {
-			scope: JSON.stringify( [ selectedUrl.hash, serverFilter ] ),
+			hash: selectedUrl.hash,
+			server: serverFilter,
 			bucket: detailBucket,
 			chips: JSON.stringify( detailChips ),
-			dims: JSON.stringify( [ detailBreakdown, detailThenBy ] ),
+			breakdown: detailBreakdown,
+			thenBy: detailThenBy,
 		};
 		const prev = detailAskedRef.current;
 		detailAskedRef.current = asked;
-		if ( ! prev || prev.scope !== asked.scope ) {
+		const moved = ( ...parts ) =>
+			parts.some( ( part ) => prev[ part ] !== asked[ part ] );
+		if ( ! prev || moved( 'hash', 'server' ) ) {
 			// Another URL's numbers must not stand under this one's title.
 			clear();
 			Object.values( urlSlices ).forEach( ask );
 			return;
 		}
-		const chipsMoved = prev.chips !== asked.chips;
-		if ( chipsMoved || prev.bucket !== asked.bucket ) {
+		const chipsMoved = moved( 'chips' );
+		if ( chipsMoved || moved( 'bucket' ) ) {
 			// The whole-URL slices stay up; the list waits loading.
 			ask( urlSlices.detail );
 		}
-		if ( chipsMoved || prev.dims !== asked.dims ) {
+		if ( chipsMoved || moved( 'breakdown', 'thenBy' ) ) {
 			ask( urlSlices.chart );
 		}
 	}, [

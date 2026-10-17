@@ -171,6 +171,27 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( self::NOW + 9, $served['as_of'] );
 	}
 
+	/**
+	 * A question naming an arg the snapshot does not vary decides live before
+	 * the file is touched: a snapshot that would not open says nothing, and
+	 * the default question after it, which opens the file, says so.
+	 *
+	 * @param list<string> $tokens What the question adds.
+	 */
+	#[DataProvider( 'live_questions' )]
+	public function test_a_live_question_never_opens_the_snapshot( array $tokens ): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/moa-5538/', 'ms' => 8.5, 'error' => 'F', 'status' => 500 ] );
+		\mkdir( $this->snapshot_file() );
+		$said = static fn (): array => \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not open' ) );
+
+		$served = $this->urls( [ '--limit=100', ...$tokens ] );
+
+		$this->assertSame( [ 'https://seed.example/moa-5538/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertSame( [], $said(), 'the live question never opened the file' );
+		$this->urls( [ '--limit=100' ] );
+		$this->assertNotSame( [], $said(), 'the default question opens it, so the silence above is real' );
+	}
+
 	public function test_a_stale_snapshot_is_answered_live(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5520/', 'ms' => 33.5 ] );
 		$this->run_job();
