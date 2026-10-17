@@ -14,9 +14,12 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `--filter=status_class=Unknown` the requests that answered no status:
   timeouts, and CLI or cron runs where workers count. A filter narrows
   `dump_url`'s stats as well as its list, so its `requests_capped` counts
-  against the narrowed `stats.count`. A filter cannot name `server`, which
-  `--server` owns: a `server=` token is refused, so name the server with
-  `--server`. `query` keeps `server=`. `urls` and `ask` echo `filter` (the
+  against the narrowed `stats.count`. One argument owns each field, so a
+  token naming an owned field is refused, naming its owner: `server=` on all
+  three, so name the server with `--server`; `bucket=` on all three, so name
+  the buckets with `--bucket`; and `url=` on `dump_url` and an `ask url:`,
+  whose hash names the URL. `urls` keeps `url=`, and `query` keeps all
+  three, `bucket=<key>` included. `urls` and `ask` echo `filter` (the
   tokens) where they echoed `errors_only`. Every `urls` reply's `totals`
   carries `errors`, and so do an `overview:` brief's `stats` and URL rows.
   `ask` answers no `error_summary`: a `url:` brief always carries the count

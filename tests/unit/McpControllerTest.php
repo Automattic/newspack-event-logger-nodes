@@ -147,7 +147,12 @@ class McpControllerTest extends TestCase {
 			$this->assertStringContainsString( 'whole word', $search, $tool );
 			$this->assertStringNotContainsString( 'ubstring', $search, $tool );
 		}
-		foreach ( [ 'performance_urls', 'dump_url', 'performance_ask' ] as $tool ) {
+		$owners = [
+			'performance_urls' => 'A filter cannot name `server`, which `server` owns, or `bucket`, which `bucket` owns; `url=<hash>` keeps one URL.',
+			'dump_url'         => 'A filter cannot name `server`, which `server` owns, `bucket`, which `bucket` owns, or `url`, which `hash` owns.',
+			'performance_ask'  => 'A filter cannot name `server`, which `server` owns, or `bucket`, which `bucket` owns, and under a `url:` brief cannot name `url`, which the descriptor\'s hash owns.',
+		];
+		foreach ( $owners as $tool => $owned ) {
 			$this->assertArrayNotHasKey( 'errors_only', $tools[ $tool ]['inputSchema']['properties'], $tool );
 			$filter = $tools[ $tool ]['inputSchema']['properties']['filter']['description'];
 			$this->assertStringContainsString( '`status_class=5`', $filter, "{$tool}: the 5xx responses" );
@@ -155,7 +160,7 @@ class McpControllerTest extends TestCase {
 			$this->assertStringContainsString( 'CLI or cron runs', $filter, "{$tool}: no status is not only a timeout" );
 			$this->assertStringContainsString( 'most fatals among them', $filter, "{$tool}: a fatal after headers keeps its status" );
 			$this->assertStringContainsString( '`error=T` and `error=F`', $filter, "{$tool}: the exact successor of errors_only" );
-			$this->assertStringContainsString( 'A filter cannot name `server`, which `server` owns.', $filter, "{$tool}: the server is the select's" );
+			$this->assertStringContainsString( $owned, $filter, "{$tool}: one argument owns each field" );
 		}
 		$this->assertStringContainsString( 'its `avg_ms`, `min_ms` and `max_ms` are null', $tools['performance_urls']['description'], 'it names each row stat null untimed' );
 		$this->assertStringContainsString( 'ranks last on those three sorts', $tools['performance_urls']['description'], 'it says where an untimed row ranks' );

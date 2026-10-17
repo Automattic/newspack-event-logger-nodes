@@ -157,7 +157,19 @@ class Performance_CI_Node extends Service_CI_Node {
 	public const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
 
 	/** The `filter` arg `query`, `urls`, `dump_url` and `ask` each declare. */
-	private const FILTER_ARG = [ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values; a bucket by its key.' ];
+	private const FILTER_ARG = [ 'name' => 'filter', 'type' => 'string', 'required' => false, 'variadic' => true, 'description' => '`field=value`, one value a token; tokens naming one field match any of their values. A field another argument owns is refused; `query`, where none does, takes a bucket by its key.' ];
+
+	/**
+	 * The fields a URL-set filter may not name, each by the argument owning
+	 * it and what that argument names, which the refusal points to.
+	 */
+	private const URL_SET_OWNERS = [
+		'server' => [ '--server', 'server' ],
+		'bucket' => [ '--bucket', 'buckets' ],
+	];
+
+	/** The fields a one-URL filter may not name: a URL-set's, and the hash's. */
+	private const ONE_URL_OWNERS = self::URL_SET_OWNERS + [ 'url' => [ 'the hash', 'URL' ] ];
 
 	/** Buckets the dashboard's charts draw: 24 hours, newest first. */
 	private const CHART_BUCKETS = Flame_Facts_Row_Schema::WINDOW_BUCKETS;
@@ -621,7 +633,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function url_detail( string $hash, string $server, array $tokens, string $spelling, int $now ): array {
 		$buckets = self::window( $spelling, $now, Bucket::MAX_SELECTION );
-		$filter  = [ 'url' => [ $hash ] ] + self::url_filter_of( $tokens ) + self::scope( $server, true );
+		$filter  = [ 'url' => [ $hash ] ] + self::url_filter_of( $tokens, self::ONE_URL_OWNERS ) + self::scope( $server, true );
 		$answer  = Stats_Query::run(
 			[
 				'source'  => 'requests',
@@ -1550,7 +1562,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function url_page( string $server, array $filters, string $sort, string $order, int $offset, int $limit, int $now ): array {
 		$buckets = self::window( $filters['bucket'], $now, Bucket::MAX_SELECTION );
-		$filter  = self::url_filter_of( $filters['filter'] ) + self::scope( $server, $filters['include_workers'] );
+		$filter  = self::url_filter_of( $filters['filter'], self::URL_SET_OWNERS ) + self::scope( $server, $filters['include_workers'] );
 		$base    = [
 			'source'  => 'requests',
 			'filter'  => $filter,
@@ -1756,19 +1768,23 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The filter `urls`, `dump_url` and `ask` bind, as `Stats_Query` binds
-	 * it. `--server` owns the server, so a token naming one is refused.
+	 * it. One argument owns each field, so a token naming a field `$owners`
+	 * lists is refused, naming its owner.
 	 *
-	 * @param list<string> $tokens The filter tokens.
-	 * @return array<string,list<scalar>>
-	 * @throws \InvalidArgumentException On a token `filter_of()` or `by_id()` refuses, or one naming `server`.
+	 * @param list<string>                                 $tokens The filter tokens.
+	 * @param array<string,array{0:string,1:string}> $owners `URL_SET_OWNERS` or `ONE_URL_OWNERS`.
+	 * @return array<string,list<string>>
+	 * @throws \InvalidArgumentException On a token `filter_of()` refuses, or one naming an owned field.
 	 */
-	private static function url_filter_of( array $tokens ): array {
+	private static function url_filter_of( array $tokens, array $owners ): array {
 		$filter = self::filter_of( $tokens );
-		if ( isset( $filter['server'] ) ) {
-			$token = 'server=' . $filter['server'][0];
-			throw new \InvalidArgumentException( \esc_html( "filter {$token} is --server's: name the server with --server" ) );
+		foreach ( $owners as $field => [ $owner, $names ] ) {
+			if ( isset( $filter[ $field ] ) ) {
+				$token = "{$field}={$filter[ $field ][0]}";
+				throw new \InvalidArgumentException( \esc_html( "filter {$token} is {$owner}'s: name the {$names} with {$owner}" ) );
+			}
 		}
-		return self::by_id( $filter );
+		return $filter;
 	}
 
 	/**

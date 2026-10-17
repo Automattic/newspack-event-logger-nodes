@@ -61,10 +61,13 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
  * declare with the Flame_Facts schema: each partition's file, and the WAL
  * files SQLite keeps beside it, named by the substrate's `Table_Node::file()`
  * across every partition a fleet can run; and the URL snapshot the
- * overview-prefetch job publishes, with any build a crashed job left beside
- * it (decision 37). The plugin is inactive here, so
- * its node namespace is registered by hand, and its topologies are read
- * inside `Topology_Registry::with_stock_dir()`: each name its dir holds
+ * overview-prefetch job publishes, with any build of it standing, through
+ * the substrate's `Row_Table_Node::remove_snapshot()` (decision 37). A file
+ * that will not delete is passed over, the snapshot's said once and a
+ * table's by PHP's own warning, so one stuck file leaves the rest to go.
+ * The plugin is inactive here, so its node namespace is registered by hand,
+ * and its topologies are read inside `Topology_Registry::with_stock_dir()`:
+ * each name its dir holds
  * resolves to the copy shipped there, never another dir's or an operator's
  * user-dir copy, and the dir is registered no longer once the read ends.
  * Another plugin's topologies are never read: a broken one cannot block this
@@ -101,13 +104,19 @@ function delete_stats_tables( string $topologies_dir ): int {
 			return \Newspack_Nodes\Bootstrap::row_tables_of( Flame_Facts_Row_Schema::class, ...$shipped );
 		}
 	);
-	$files = [ App\Url_Snapshot::path(), ...( \glob( \dirname( App\Url_Snapshot::path() ) . '/flame-facts.job.*.sqlite' ) ?: [] ) ];
+	$deleted = 0;
+	try {
+		$deleted = \count( \Newspack_Nodes\Row_Table_Node::remove_snapshot( App\Url_Snapshot::NAME ) );
+	} catch ( \RuntimeException $e ) {
+		// A stuck file is said and passed over, as the loop below does.
+		\Newspack_Nodes\Core::print_less_often( 'uninstall: the URL snapshot did not delete', ' — ' . $e->getMessage() );
+	}
+	$files = [];
 	foreach ( $tables as $table ) {
 		for ( $partition = 0; $partition < \Newspack_Nodes\Spawn_Coordinator::MAX_PARTITIONS; $partition++ ) {
 			$files[] = \Newspack_Nodes\Table_Node::file( $table, $partition );
 		}
 	}
-	$deleted = 0;
 	foreach ( $files as $file ) {
 		foreach ( [ $file, "{$file}-wal", "{$file}-shm" ] as $path ) {
 			// phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- one-time uninstall of this plugin's own stats files.

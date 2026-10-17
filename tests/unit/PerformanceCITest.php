@@ -2542,12 +2542,11 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 2, $reply['totals']['requests'] );
 	}
 
-	public function test_urls_bucket_filter_takes_a_key(): void {
-		$latest = self::latest();
-		$this->seed_request( [ 'url' => 'https://seed.example/kakariki-in/', 'bucket' => $latest - 6 ] );
-		$this->seed_request( [ 'url' => 'https://seed.example/kakariki-out/', 'bucket' => $latest - 2 ] );
+	public function test_urls_keeps_a_url_filter(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/kakariki-in/' ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/kakariki-out/' ] );
 
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=bucket=' . Bucket::key( $latest - 6 ) );
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=url=' . self::hash_of( 'https://seed.example/kakariki-in/' ) );
 
 		$this->assertSame( [ 'https://seed.example/kakariki-in/' ], \array_column( $reply['data'], 'url' ) );
 	}
@@ -2585,6 +2584,38 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsString( $reply );
 		$this->assertStringContainsString( "filter server=kahu-9.example is --server's: name the server with --server", $reply );
+	}
+
+	/**
+	 * `--bucket` owns the buckets, and on a one-URL verb the hash owns the
+	 * URL: a filter naming either is refused, naming its owner.
+	 *
+	 * @return array<string,array{0:string,1:string,2:string}>
+	 */
+	public static function owned_filter_refusals(): array {
+		$hash   = Log_Manager::url_hash( 'https://kahu-9.example/hoiho/' );
+		$key    = '2026-09-21-04-35';
+		$bucket = "filter bucket={$key} is --bucket's: name the buckets with --bucket";
+		$url    = "filter url=0ddba11c4e5f is the hash's: name the URL with the hash";
+		return [
+			'urls bucket'               => [ 'urls', "--filter=bucket={$key}", $bucket ],
+			'urls bucket beside --bucket' => [ 'urls', "--bucket={$key} --filter=bucket={$key}", $bucket ],
+			'dump_url bucket'           => [ 'dump_url', "{$hash} --filter=bucket={$key}", $bucket ],
+			'dump_url url'              => [ 'dump_url', "{$hash} --filter=url=0ddba11c4e5f", $url ],
+			'ask overview: bucket'      => [ 'ask', "overview:site --filter=bucket={$key}", $bucket ],
+			'ask url: bucket'           => [ 'ask', "url:{$hash} --filter=bucket={$key}", $bucket ],
+			'ask url: url'              => [ 'ask', "url:{$hash} --filter=url=0ddba11c4e5f", $url ],
+		];
+	}
+
+	#[DataProvider( 'owned_filter_refusals' )]
+	public function test_a_filter_naming_an_owned_field_is_refused_for_its_owner( string $verb, string $tokens, string $refusal ): void {
+		$this->seed_request( [ 'server' => 'kahu-9.example', 'url' => 'https://kahu-9.example/hoiho/' ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, $tokens );
+
+		$this->assertIsString( $reply );
+		$this->assertStringContainsString( $refusal, $reply );
 	}
 
 	public function test_query_keeps_a_server_filter(): void {
