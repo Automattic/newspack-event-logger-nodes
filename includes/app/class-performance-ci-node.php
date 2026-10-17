@@ -1233,10 +1233,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the URL snapshot the overview-prefetch job published, where it answers
 	 * them, else the live one. An `overview` reads the stored unscoped one,
 	 * which a scoped answer takes only its `servers` from, since no scope
-	 * changes them. A `urls` question the snapshot cannot answer, and a
-	 * `query` whose key the job never stores, never open it. A snapshot that
-	 * opens but will not read, or a stored answer that will not decode, says
-	 * so once a window and answers live.
+	 * changes them, and only while they name the scoped server. A `urls`
+	 * question the snapshot cannot answer, and a `query` whose key the job
+	 * never stores, never open it. A snapshot that opens but will not read,
+	 * or a stored answer that will not decode or names no `servers`, says so
+	 * once a window and answers live.
 	 *
 	 * @param string                 $verb `overview`, `urls` or `query`.
 	 * @param array<array-key,mixed> $args Its bound arguments.
@@ -1249,19 +1250,22 @@ class Performance_CI_Node extends Service_CI_Node {
 			$args['filter'] = self::filter_tokens( $args['filter'] );
 		}
 		$now      = self::now();
-		$scoped   = 'overview' === $verb && null !== $args['server'];
-		$key      = 'urls' === $verb ? null : Overview_Prefetch::key( $verb, $scoped ? \array_replace( $args, [ 'server' => null ] ) : $args );
+		$server   = 'overview' === $verb ? Core::as_string( $args['server'] ) : '';
+		$key      = 'urls' === $verb ? null : Overview_Prefetch::key( $verb, 'overview' === $verb ? \array_replace( $args, [ 'server' => null ] ) : $args );
 		$served   = null === $key ? self::snapshot_answers( $args ) : isset( $this->stored_questions()[ $key ] );
 		$snapshot = $served ? Url_Snapshot::open( $now ) : null;
 		try {
 			$stored = null === $snapshot ? null : ( null === $key ? self::stored_urls( $snapshot, $args ) : $snapshot->answer( $key ) );
-		} catch ( \PDOException | \JsonException $e ) {
+			if ( 'overview' === $verb && null !== $stored && ! \is_array( $stored['servers'] ?? null ) ) {
+				throw new \UnexpectedValueException( 'the stored overview names no servers' );
+			}
+		} catch ( \PDOException | \JsonException | \UnexpectedValueException $e ) {
 			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
 			$stored = null;
 		}
-		if ( $scoped ) {
-			$servers = null === $stored ? null : \array_values( Core::arr( $stored['servers'] ?? throw new \UnexpectedValueException( 'performance: the stored overview names no servers' ) ) );
-			return [ 'as_of' => $now ] + self::answer_overview( Core::as_string( $args['server'] ), $now, $servers );
+		if ( '' !== $server ) {
+			$servers = \array_values( Core::arr( $stored['servers'] ?? null ) );
+			return [ 'as_of' => $now ] + self::answer_overview( $server, $now, \in_array( $server, $servers, true ) ? $servers : null );
 		}
 		return $stored ?? self::answer_live( $verb, $args, $now );
 	}
@@ -1950,7 +1954,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'overview',
 					'capability'  => Capabilities::READ,
-					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; a scoped one names the `servers` that run stored, read live where none is stored; `as_of` dates every answer.',
+					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; a scoped one names the `servers` that run stored, read live where none is stored or they lack the scoped server; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],

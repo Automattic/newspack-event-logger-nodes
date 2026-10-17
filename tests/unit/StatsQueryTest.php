@@ -313,6 +313,42 @@ final class StatsQueryTest extends TestCase {
 		$this->assertMatchesRegularExpression( '/SEARCH t USING (COVERING )?INDEX requests_server \(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
 	}
 
+	/**
+	 * The `requests` server join reads its id plainly, so a read naming no
+	 * server, or negating one, must still walk the window by bucket.
+	 *
+	 * @return array<string,array{0:array<string,mixed>}>
+	 */
+	public static function unscoped_server_reads(): array {
+		return [
+			'servers list'    => [ [ 'group' => [ 'server' ], 'sort' => 'count', 'order' => 'desc' ] ],
+			'chart by server' => [ [ 'group' => [ 'bucket', 'server' ], 'top' => 20, 'top_by' => 'count' ] ],
+			'negated server'  => [ [ 'filter' => [ 'server!' => [ 'kea-6104.example' ] ] ] ],
+		];
+	}
+
+	/**
+	 * @param array<string,mixed> $over
+	 */
+	#[DataProvider( 'unscoped_server_reads' )]
+	public function test_a_read_naming_no_server_walks_the_window_by_bucket( array $over ): void {
+		$this->seed_request( [ 'server' => 'kea-6104.example', 'ms' => 41.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6104.example', 'ms' => 7.25 ] );
+		$checked = ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, self::spec( $over + [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
+		$table   = Stats_Query::table_for( $checked );
+
+		$plan = Row_Table_Node::read(
+			Flame_Facts_Row_Schema::class,
+			static function ( Row_Reader $reader ) use ( $checked, $table ): string {
+				[ $sql, $binds ] = ( new \ReflectionMethod( Stats_Query::class, 'statement' ) )->invoke( null, $checked, $table, $reader->aliases(), false );
+				return \implode( "\n", \array_column( $reader->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
+			}
+		);
+
+		$this->assertMatchesRegularExpression( '/SEARCH t USING (COVERING )?INDEX requests_cover \(bucket>\? AND bucket<\?\)/', $plan );
+		$this->assertStringNotContainsString( 'requests_server', $plan );
+	}
+
 	public function test_a_server_filter_answers_the_named_servers_rows(): void {
 		$this->seed_request( [ 'server' => 'kea-6102.example', 'ms' => 41.5 ] );
 		$this->seed_request( [ 'server' => 'kea-6102.example', 'ms' => 3.5 ], partition: 2 );
