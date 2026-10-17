@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - A filter can leave a value out: `--filter=country!=US` on the `query`, `urls`, `dump_url` and `ask` verbs keeps the rows from any other country, `Unknown` included, and `country!=Unknown` the rows with a known one. Several `!=` tokens on one field leave out each of their values, and beside a field's `=` tokens they AND. A `Stats_Query` spec carries them as a filter keyed `<field>!`. The owned fields refuse `!=` as they refuse `=`, and `worker!=` replaces the URL table's worker scope as `worker=` does. In the dashboard a `country!=US` chip shows as **Country ≠ US**.
+- A `status_class` filter reads `5xx`, in any case, as `5` on every verb, as the dashboard's chips already did, so `status_class!=2xx` leaves out the 2xx responses rather than matching nothing.
 
 ### Fixed
 - A filter's field matches in any case, so `Country=SG` filters as `country=SG` does, on the `query`, `urls`, `dump_url` and `ask` verbs and in the dashboard's filter chips; a repeated `field=value` counts once, and a chip already shown is not added twice.

@@ -170,6 +170,18 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 8 ] ], $r['rows'], 'a 2xx and an Unknown class kept' );
 	}
 
+	public function test_a_status_class_filter_reads_its_xx_spelling_in_any_case(): void {
+		$this->seed_request( [ 'status' => 503, 'ms' => 3.0 ] );
+		$this->seed_request( [ 'status' => 204, 'ms' => 40.0 ], partition: 3 );
+		$this->seed_request( [ 'status' => 404, 'ms' => 500.0 ] );
+
+		$kept = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'status_class' => [ '5xx' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$left = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'status_class!' => [ '2XX' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ 3.0 ] ], $kept['rows'] );
+		$this->assertSame( [ [ 503.0 ] ], $left['rows'] );
+	}
+
 	public function test_a_negated_url_filter_joins_the_urls_it_leaves_out(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/kokako/', 'ms' => 33.0 ], partition: 3 );
 		$this->seed_request( [ 'url' => 'https://seed.example/hihi/', 'ms' => 900.0 ] );
