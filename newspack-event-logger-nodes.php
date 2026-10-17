@@ -129,11 +129,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// 2.111.0 is the Row_Table: flame-builder.tsl declares flame-facts, the
 	// builder writes it through Table_Client::write_rows() and Stats_Query
 	// reads it through Row_Table_Node::read().
+	// 2.112.0 is Row_Table_Node::build(), open_snapshot() and
+	// remove_snapshot(), through which the overview job publishes and the
+	// verbs read the URL snapshot (substrate ADR-35).
 	// Raise the floor whenever a new hard requirement appears. The floor is
 	// what makes a too-old substrate DORMANT rather than fatal, so one set
 	// too low is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.111.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.112.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

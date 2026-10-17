@@ -6,6 +6,11 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **This release needs newspack-nodes 2.112.0.** The overview-prefetch job
+  publishes its URL snapshot through `Row_Table_Node::build()` and the verbs
+  read it through `open_snapshot()`; below 2.112.0 the plugin goes dormant
+  behind its admin notice. Install the substrate first.
+
 - **`urls`, `dump_url`, `ask` and their MCP tools refuse `errors_only`.**
   Each takes `--filter=field=value` in its place, repeatable and spelled as
   `query` spells it. `--filter=error=T --filter=error=F` keeps exactly the
