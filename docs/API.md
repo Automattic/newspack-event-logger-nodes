@@ -171,9 +171,9 @@ take at most 288 buckets; `query` takes as many as its source keeps, 2,016 for `
 kept seven days, so an older bucket holds no rows rather than raising.
 
 `overview`, `urls` and `query` answer from the URL snapshot the overview-prefetch job
-publishes every two minutes
-([decision 37](architecture-decisions.md#decision-37-the-overview-reads-a-jobs-snapshot-for-ten-minutes)),
-which serves for ten minutes after it publishes. `urls` with no `--search`, no `--bucket` and no
+publishes once an interval of its tick, 120 s by default
+([decision 37](architecture-decisions.md#decision-37-the-overview-reads-a-jobs-snapshot-for-four-intervals)),
+which serves for four intervals from the end of its build. `urls` with no `--search`, no `--bucket` and no
 `--filter` answers off it for any sort, order, `--server`, `--include_workers`,
 `--limit` and `--offset`. `overview` with no `--server`, the request chart by `server`
 and by `status_class` — the dashboard's default breakdown, and what it falls back to over
@@ -181,7 +181,7 @@ one server — and the category chart, each over the site's non-worker traffic, 
 in it as `includes/app/stored-answers.json` spells their tokens, and a verb asked the same
 bound arguments serves the stored answer; the job stores only an answer the stats could
 open for. `overview` with a non-blank `--server` answers its totals and leaderboard live and its `servers`
-off the stored overview, which no scope changes, unless the server has traffic they lack. Every other question, a snapshot past its ten minutes, and a file that is not
+off the stored overview, which no scope changes, unless the server has traffic they lack. Every other question, a snapshot past its four intervals, and a file that is not
 there yet or will not open are answered live. Each of the three verbs answers `as_of`
 beside the fields below: the epoch second its answer was computed, or the snapshot built.
 
@@ -504,7 +504,7 @@ claiming them again. The drop-in depends on nothing; with the plugin inactive it
 |------|----------|
 | `newspack_nodes/declare_config_keys` | `Config::register_config_keys` — registered at file scope with a literal name, because this plugin loads first. |
 | `Newspack_Nodes\Config::RESET_ACTION` | `Config::reset_local_cache` — not `reset()`, which would re-enter the substrate. |
-| `newspack_nodes/job_worker/before_job` (filter, 4 args) | `Log_Manager::begin_job_context_filter` |
+| `newspack_nodes/job_worker/before_job` (filter, 4 args) | `App\Overview_Prefetch::admit` at priority 5, which declines an overview-prefetch job on a worker bound to another partition, or overtaken, and passes one the tick could not have queued to its handler to refuse; then `Log_Manager::begin_job_context_filter` at 10 |
 | `newspack_nodes/job_worker/after_job` (action, 3 args) | `Log_Manager::end_job_context` |
 | `newspack_nodes/worker_identified` (action, 2 args) | `Log_Manager::identify_worker` — writes `worker_type` and `worker_partition` again with the worker a spawn request validated, so its record moves to that worker's own URL row. |
 | `newspack_nodes/settings_sync/value` (filter, 2 args) | `newspack_event_logger_nodes_resolve_settings_sync_value` — resolves a blank or absent value to the OWNING config's default, and hydrates a pointer rule's hooks so the ruleset ships hook-complete to spokes. |
