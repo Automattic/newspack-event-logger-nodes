@@ -79,33 +79,33 @@ final class Overview_Prefetch {
 		if ( $interval < 1 || ! isset( $parameters['queued_at'] ) ) {
 			throw new \InvalidArgumentException( 'overview prefetch: a job names its queued_at and an interval of at least 1' );
 		}
-		$now = (int) Core::right_now();
+		$now       = (int) Core::right_now();
+		$questions = self::stored();
 		Event_Framework::instance()->uninterruptible(
-			static function () use ( $now, $interval ): void {
-				Url_Snapshot::publish( $now, 2 * $interval, static fn ( array $servers ): array => self::answers( $now, $servers ) );
+			static function () use ( $questions, $now, $interval ): void {
+				Url_Snapshot::publish( $now, 2 * $interval, static fn ( array $servers ): array => self::answers( $questions, $now, $servers ) );
 			}
 		);
 	}
 
 	/**
-	 * Each stored question's live answer by key, a template's once for each
+	 * Each of `$questions`' live answer by key, a template's once for each
 	 * of `$servers`, keyed as that server's poll binds it, and an `overview`
 	 * naming `$servers`; each is a `prefetch answer` span labelled with its
 	 * question's name. An answer the stats could not open for is never stored.
 	 *
-	 * @param int          $now     The job's tick.
-	 * @param list<string> $servers The window's servers, busiest first.
+	 * @param array<string,array{name:string,verb:string,tokens:list<string>,args:array<string,mixed>}> $questions The `stored()` questions.
+	 * @param int                                                                                     $now       The job's tick.
+	 * @param list<string>                                                                            $servers   The window's servers, busiest first.
 	 * @return array<string,array<string,mixed>>
-	 * @throws \InvalidArgumentException As `stored()` and `Performance_CI_Node::answer_live()`.
-	 * @throws \RuntimeException As `stored()`.
-	 * @throws \LogicException As `stored()`.
+	 * @throws \InvalidArgumentException As `Performance_CI_Node::answer_live()`.
 	 */
-	private static function answers( int $now, array $servers ): array {
+	private static function answers( array $questions, int $now, array $servers ): array {
 		$answers = [];
 		$verbs   = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
-		foreach ( self::stored() as [ 'name' => $name, 'verb' => $verb, 'args' => $args, 'tokens' => $tokens ] ) {
-			$asked = self::is_template( $tokens ) ? \array_map( static fn ( string $server ): array => Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ), \str_replace( self::SERVER, $server, $tokens ) ), $servers ) : [ $args ];
-			foreach ( $asked as $bound ) {
+		foreach ( $questions as [ 'name' => $name, 'verb' => $verb, 'args' => $args, 'tokens' => $tokens ] ) {
+			foreach ( self::is_template( $tokens ) ? $servers : [ null ] as $server ) {
+				$bound  = null === $server ? $args : Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ), \str_replace( self::SERVER, $server, $tokens ) );
 				$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $bound, $now, $servers ), start: [ 'l' => $name ] );
 				if ( true === ( $answer['available'] ?? null ) ) {
 					$answers[ self::key( $verb, $bound ) ] = $answer;
@@ -152,8 +152,8 @@ final class Overview_Prefetch {
 	/**
 	 * `$args` with the one server they name put back as `SERVER`: an
 	 * `overview`'s `server`, or a `query`'s one `server=` filter. Args naming
-	 * no server, a blank one, two, or one only by negation come back unchanged, so no
-	 * template's key matches them.
+	 * no server, a blank one, two, or one only by negation come back
+	 * unchanged, so no template's key matches them.
 	 *
 	 * @param array<array-key,mixed> $args Bound arguments.
 	 * @return array<array-key,mixed>
