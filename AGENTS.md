@@ -107,7 +107,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 34 | Stats live in SQLite Tables, and nothing repairs a loss |
 | 35 | A chart hour is one key holding its twelve five-minute slots — superseded by decision 36 |
 | 36 | The query vocabulary is fixed; no SQL from outside; a picker chooses the rollup |
-| 37 | The Overview reads a job's snapshot for ten minutes |
+| 37 | The Overview reads a job's snapshot for four intervals |
 
 ## Layout
 

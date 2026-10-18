@@ -24,6 +24,7 @@ use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Job_Worker_Node;
+use Newspack_Nodes\Jobstats_Record;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
@@ -44,6 +45,9 @@ final class OverviewPrefetchTest extends TestCase {
 
 	/** An interval no default names, so a TTL read from anywhere else fails. */
 	private const INTERVAL = 47;
+
+	/** A snapshot's life: four of its job's intervals. */
+	private const TTL = 4 * self::INTERVAL;
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -101,7 +105,7 @@ final class OverviewPrefetchTest extends TestCase {
 					$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, $value ] );
 				}
 				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
-				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + Url_Snapshot::TTL_S ] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + self::TTL ] );
 				return true;
 			}
 		);
@@ -436,20 +440,20 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5520/', 'ms' => 33.5 ] );
 		$this->run_job();
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5520/', 'ms' => 8.5 ] );
-		self::clock( self::NOW + Url_Snapshot::TTL_S );
+		self::clock( self::NOW + self::TTL );
 
 		$served = $this->urls( [ '--limit=100' ] );
 
 		$this->assertCount( 2, $served['data'] );
-		$this->assertSame( self::NOW + Url_Snapshot::TTL_S, $served['as_of'] );
+		$this->assertSame( self::NOW + self::TTL, $served['as_of'] );
 	}
 
-	/** A served snapshot answers for ten minutes; `UrlSnapshotTest` dates them from its publish. */
-	public function test_a_snapshot_lives_ten_minutes(): void {
+	/** A served snapshot answers for four intervals; `UrlSnapshotTest` dates them from the end of its build. */
+	public function test_a_snapshot_lives_four_intervals(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5523/', 'ms' => 33.5 ] );
 		$this->run_job();
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5523/', 'ms' => 8.5 ] );
-		self::clock( self::NOW + 600 - 1 );
+		self::clock( self::NOW + self::TTL - 1 );
 
 		$this->assertSame( self::NOW, $this->urls( [ '--limit=100' ] )['as_of'] );
 	}
@@ -496,7 +500,7 @@ final class OverviewPrefetchTest extends TestCase {
 			Url_Snapshot::NAME,
 			static function ( Row_Reader $db ): bool {
 				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
-				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + Url_Snapshot::TTL_S ] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + self::TTL ] );
 				return true;
 			}
 		);
@@ -749,7 +753,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->run_job();
 		$this->seed_request( [ 'server' => 'kaka-6203.example', 'url' => 'https://kaka-6203.example/b/', 'ms' => 12.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-6203.example', 'url' => 'https://kaka-6203.example/c/', 'ms' => 4.5 ] );
-		self::clock( self::NOW + Url_Snapshot::TTL_S + 1 );
+		self::clock( self::NOW + self::TTL + 1 );
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6203.example' ] );
 
@@ -864,26 +868,46 @@ final class OverviewPrefetchTest extends TestCase {
 	/**
 	 * Deliver one job through a real worker under the plugin's own hooks.
 	 *
-	 * @param int    $queued_at When the tick queued it.
-	 * @param string $handler   The handler the entry names.
+	 * @param int             $queued_at When the tick queued it.
+	 * @param string          $handler   The handler the entry names.
+	 * @param int             $interval  The interval the entry names.
+	 * @param Job_Worker_Node $jw        The worker to run it.
 	 * @return Job_Worker_Node The worker that ran it.
 	 */
-	private function deliver( int $queued_at, string $handler = Overview_Prefetch::HANDLER ): Job_Worker_Node {
-		$jw = new Job_Worker_Node();
+	private function deliver( int $queued_at, string $handler = Overview_Prefetch::HANDLER, int $interval = self::INTERVAL, Job_Worker_Node $jw = new Job_Worker_Node() ): Job_Worker_Node {
 		self::with_deferred_bootstrap(
-			static function () use ( $jw, $queued_at, $handler ): void {
+			static function () use ( $jw, $queued_at, $handler, $interval ): void {
 				$jw->load_handlers_from_filters();
 				$message                   = Message::new_message();
 				$message[ Message::TYPE ]  = Message::TM_STRUCT;
 				$message[ Message::VALUE ] = [
 					'k'          => 'job',
 					'handler'    => $handler,
-					'parameters' => [ 'queued_at' => $queued_at, 'interval' => self::INTERVAL ],
+					'parameters' => [ 'queued_at' => $queued_at, 'interval' => $interval ],
 				];
 				$jw->fill( $message );
 			}
 		);
 		return $jw;
+	}
+
+	/** A refused job fails in its handler, which records the error, and leaves the fill for its Consumer to dead-letter. */
+	public function test_a_refused_job_fails_in_its_handler_and_records_the_error(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-7028/' ] );
+		$jw     = new Job_Worker_Node();
+		$thrown = null;
+		try {
+			$this->deliver( self::NOW, Overview_Prefetch::HANDLER, -47, $jw );
+		} catch ( \InvalidArgumentException $e ) {
+			$thrown = $e;
+		}
+
+		$this->assertInstanceOf( \InvalidArgumentException::class, $thrown );
+		$this->assertStringContainsString( 'interval wants 1 to 900 seconds, got -47', $thrown->getMessage() );
+		$this->assertFalse( self::snapshot_published() );
+		$stats = $jw->probe_stats();
+		$this->assertCount( 1, $stats );
+		$this->assertSame( 'error', $stats[0][ Jobstats_Record::LAST_STATUS ] ?? null );
 	}
 
 	public function test_a_job_its_successor_overtook_is_declined(): void {
@@ -896,6 +920,36 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertFalse( self::snapshot_published() );
 		$this->assertSame( [], $jw->probe_stats(), 'a declined job records no outcome' );
 		$this->assertSame( '/outer-5529', $_SERVER['REQUEST_URI'], 'a declined job opens no context' );
+	}
+
+	/** A later listener can overwrite admit()'s decline of an overtaken job, so the handler asks again. */
+	public function test_the_job_run_once_overtaken_publishes_nothing(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-7041/' ] );
+
+		Overview_Prefetch::run( '', [ 'queued_at' => self::NOW - self::INTERVAL, 'interval' => self::INTERVAL ] );
+
+		$this->assertFalse( self::snapshot_published() );
+	}
+
+	/** A later listener can overwrite admit()'s decline, so the handler asks again. */
+	public function test_the_job_run_on_another_partition_publishes_nothing(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-7033/' ] );
+		Core::$var['partition'] = '3';
+
+		Overview_Prefetch::run( '', [ 'queued_at' => self::NOW, 'interval' => self::INTERVAL ] );
+
+		$this->assertFalse( self::snapshot_published() );
+	}
+
+	/** Ownership comes first: a job no worker but p0's runs is never this worker's to refuse. */
+	public function test_another_partition_declines_a_job_the_tick_could_not_have_queued(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/takahe-7043/' ] );
+		Core::$var['partition'] = '3';
+		$parameters             = [ 'queued_at' => self::NOW, 'interval' => 1800 ];
+
+		$this->assertFalse( Overview_Prefetch::admit( true, Overview_Prefetch::HANDLER, '', [ Message::VALUE => [ 'parameters' => $parameters ] ] ) );
+		Overview_Prefetch::run( '', $parameters );
+		$this->assertFalse( self::snapshot_published() );
 	}
 
 	public function test_a_worker_bound_to_another_partition_declines(): void {
@@ -923,6 +977,16 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertTrue( Overview_Prefetch::admit( true, 'kea_5530', '', $message ) );
 		$this->assertFalse( Overview_Prefetch::admit( false, 'kea_5530', '', $message ) );
 		$this->assertNull( Overview_Prefetch::admit( null, 'kea_5530', '', $message ) );
+	}
+
+	/** A job the tick could not have queued reaches its handler to be refused, never declined as overtaken. */
+	public function test_admit_passes_a_job_the_tick_could_not_have_queued_to_its_handler(): void {
+		$this->assertTrue( Overview_Prefetch::admit( true, Overview_Prefetch::HANDLER, '', [ Message::VALUE => [ 'parameters' => [ 'interval' => 7031 ] ] ] ) );
+	}
+
+	/** The first second the tick could have queued a job in is one, which is long overtaken. */
+	public function test_admit_declines_a_job_queued_at_one_as_overtaken(): void {
+		$this->assertFalse( Overview_Prefetch::admit( true, Overview_Prefetch::HANDLER, '', [ Message::VALUE => [ 'parameters' => [ 'queued_at' => 1, 'interval' => 47 ] ] ] ) );
 	}
 
 	public function test_admit_keeps_an_earlier_decline(): void {
@@ -960,14 +1024,43 @@ final class OverviewPrefetchTest extends TestCase {
 		Performance_CI_Node::answer_live( 'dump_url', [], self::NOW, null );
 	}
 
-	public function test_a_job_with_no_interval_fails(): void {
-		$this->expectException( \InvalidArgumentException::class );
-		Overview_Prefetch::run( '', [ 'queued_at' => self::NOW, 'interval' => 0 ] );
+	/**
+	 * A job the tick could not have queued fails in its handler.
+	 *
+	 * @return array<string,array{0:array<string,mixed>,1:string}>
+	 */
+	public static function unqueueable_jobs(): array {
+		$queued_at = 'overview prefetch: queued_at wants an epoch second, got ';
+		$bounds    = 'overview prefetch: interval wants 1 to 900 seconds, got ';
+		$integer   = 'overview prefetch: interval wants an integer, got ';
+		return [
+			'an interval below 1'           => [ [ 'queued_at' => 1_790_007_215, 'interval' => -47 ], $bounds . '-47' ],
+			'an interval past 900'          => [ [ 'queued_at' => 1_790_007_215, 'interval' => 901 ], $bounds . '901' ],
+			'a fraction for its interval'   => [ [ 'queued_at' => 1_790_007_215, 'interval' => 900.7 ], $integer . '900.7' ],
+			'a word for its interval'       => [ [ 'queued_at' => 1_790_007_215, 'interval' => 'kea-7029' ], $integer . '"kea-7029"' ],
+			'markup for its interval'       => [ [ 'queued_at' => 1_790_007_215, 'interval' => '<b>7037 & up</b>' ], $integer . '"<b>7037 & up<\/b>"' ],
+			'no queued_at'                  => [ [ 'interval' => 47 ], $queued_at . 'null' ],
+			'a queued_at below 1'           => [ [ 'queued_at' => -5, 'interval' => 47 ], $queued_at . '-5' ],
+			'a queued_at of 0'              => [ [ 'queued_at' => 0, 'interval' => 47 ], $queued_at . '0' ],
+			'a queued_at no JSON encodes'   => [ [ 'queued_at' => \NAN, 'interval' => 47 ], $queued_at . 'double' ],
+			'a fraction for its queued_at'  => [ [ 'queued_at' => 0.5, 'interval' => 47 ], $queued_at . '0.5' ],
+			'a word for its queued_at'      => [ [ 'queued_at' => 'kea-7027', 'interval' => 47 ], $queued_at . '"kea-7027"' ],
+			'a line break in its queued_at' => [ [ 'queued_at' => "kea\n7040", 'interval' => 47 ], $queued_at . '"kea\\n7040"' ],
+			'a cut inside an escape'        => [ [ 'queued_at' => \str_repeat( 'a', 61 ) . 'é', 'interval' => 47 ], $queued_at . '"' . \str_repeat( 'a', 61 ) . '…' ],
+			'a cut after an escaped slash'  => [ [ 'queued_at' => \str_repeat( 'a', 61 ) . '\\é', 'interval' => 47 ], $queued_at . '"' . \str_repeat( 'a', 61 ) . '\\\\…' ],
+			'a long word for its queued_at' => [ [ 'queued_at' => \str_repeat( 'kea-7039 ', 2000 ), 'interval' => 47 ], $queued_at . \substr( '"' . \str_repeat( 'kea-7039 ', 2000 ), 0, 64 ) . '…' ],
+		];
 	}
 
-	public function test_a_job_with_no_queue_time_fails(): void {
+	/**
+	 * @param array<string,mixed> $parameters
+	 * @param string              $refusal
+	 */
+	#[DataProvider( 'unqueueable_jobs' )]
+	public function test_a_job_the_tick_could_not_have_queued_fails_in_its_handler( array $parameters, string $refusal ): void {
 		$this->expectException( \InvalidArgumentException::class );
-		Overview_Prefetch::run( '', [ 'interval' => self::INTERVAL ] );
+		$this->expectExceptionMessage( $refusal );
+		Overview_Prefetch::run( '', $parameters );
 	}
 
 	public function test_a_job_whose_stats_will_not_open_publishes_nothing(): void {

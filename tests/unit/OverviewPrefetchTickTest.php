@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\App\Overview_Prefetch;
 use Newspack_Event_Logger_Nodes\Overview_Prefetch_Tick_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -159,13 +160,67 @@ final class OverviewPrefetchTickTest extends TestCase {
 		$this->assertSame( [ 'queued_at' => 1_790_008_080, 'interval' => 120 ], $this->fed()[0][1]['parameters'] ?? null );
 	}
 
-	/** A zero interval paces at the Timer's one-second floor, and each job names the interval it was paced at, which the job admits. */
-	public function test_a_zero_interval_queues_each_second_a_job_that_runs(): void {
-		$tick = $this->prefetch_tick( '0', 0, self::BUILT_AT + 0.5 );
+	/**
+	 * An interval outside one second to fifteen minutes is refused, naming
+	 * the bounds.
+	 *
+	 * @return array<string,array{0:int}>
+	 */
+	public static function refused_intervals(): array {
+		return [
+			'zero'     => [ 0 ],
+			'past 900' => [ 901 ],
+		];
+	}
 
-		$this->ring( $tick, self::BUILT_AT + 1 );
+	#[DataProvider( 'refused_intervals' )]
+	public function test_an_interval_outside_its_bounds_is_refused( int $interval ): void {
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessageMatches( "/^Bad arguments for Overview_Prefetch_Tick .*: interval_s wants 1 to 900 seconds, got {$interval}$/" );
+		$this->prefetch_tick( '0', $interval, self::BUILT_AT );
+	}
 
-		$this->assertSame( [ [ 'queued_at' => 1_790_008_018, 'interval' => 1 ] ], \array_map( static fn ( array $job ): mixed => $job[1]['parameters'], $this->fed() ) );
+	/** A refused line leaves a live tick as it was: its interval and its tokens. */
+	public function test_a_refused_retune_leaves_the_tick_unchanged(): void {
+		$tick = $this->prefetch_tick( '0', 43, self::BUILT_AT );
+		try {
+			$tick->arguments( [ '901' ] );
+			$this->fail( 'the line is refused' );
+		} catch ( \InvalidArgumentException ) {
+			$this->assertSame( [ '43' ], $tick->arguments() );
+		}
+		$this->ring( $tick, self::BOUNDARY );
+		$this->assertSame( 43, $this->fed()[0][1]['parameters']['interval'] ?? null );
+	}
+
+	/** The palette names the bounds the line is held to and the snapshot's life. */
+	public function test_the_interval_description_names_its_bounds(): void {
+		$described = Overview_Prefetch_Tick_Node::node_schema()['arguments'][0]['description'];
+
+		$this->assertStringContainsString( '1 to 900', $described );
+		$this->assertStringContainsString( 'serves 4 of them', $described );
+	}
+
+	/**
+	 * @return array<string,array{0:int}>
+	 */
+	public static function bound_intervals(): array {
+		return [
+			'one second'      => [ 1 ],
+			'fifteen minutes' => [ 900 ],
+		];
+	}
+
+	#[DataProvider( 'bound_intervals' )]
+	public function test_the_bounds_themselves_are_accepted( int $interval ): void {
+		$this->assertSame( [ (string) $interval ], $this->prefetch_tick( '0', $interval, self::BUILT_AT )->arguments() );
+	}
+
+	/** The shipped line names no interval, so the one it runs is the default the verbs describe. */
+	public function test_the_shipped_line_runs_the_default_interval(): void {
+		$tsl = (string) \file_get_contents( \dirname( __DIR__, 2 ) . '/topologies/flame-builder.tsl' );
+
+		$this->assertMatchesRegularExpression( '/^make_node Overview_Prefetch_Tick overview-prefetch:tick$/m', $tsl );
 	}
 
 	public function test_it_rides_the_router_tick(): void {

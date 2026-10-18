@@ -6,12 +6,13 @@
  *
  * `Overview_Prefetch_Tick_Node` queues each `eln_overview_prefetch` job, and
  * only partition 0's JobWorker runs it. The job builds the window's URL
- * table as one `Url_Snapshot`, which serves `Url_Snapshot::TTL_S` after it
- * publishes, and answers the questions in `stored-answers.json` live inside
- * it, a template naming its server `SERVER` once for each server the window
- * holds: `urls` reads any page of it, `overview` and `query` the stored
- * answer to the same bound arguments, and any other question, a stale
- * snapshot or none is answered live (decision 37).
+ * table as one `Url_Snapshot`, which serves `SNAPSHOT_INTERVALS` intervals
+ * from the end of its build, and answers the questions in
+ * `stored-answers.json` live inside it, a template naming its server
+ * `SERVER` once for each server the window holds: `urls` reads any page of
+ * it, `overview` and `query` the stored answer to the same bound arguments,
+ * and any other question, a stale snapshot or none is answered live
+ * (decision 37).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -38,6 +39,22 @@ final class Overview_Prefetch {
 	/** The job handler, queued once an interval by `Overview_Prefetch_Tick_Node`. */
 	public const HANDLER = 'eln_overview_prefetch';
 
+	/**
+	 * Intervals a snapshot serves from the end of its build: a run a respawn
+	 * lost and the run after it fit inside while each run publishes within
+	 * two intervals of being queued.
+	 */
+	public const SNAPSHOT_INTERVALS = 4;
+
+	/** The least interval, in seconds, a job names and the tick waits. */
+	public const MIN_INTERVAL_S = 1;
+
+	/** The greatest interval, in seconds, a job names and the tick waits. */
+	public const MAX_INTERVAL_S = 900;
+
+	/** Bytes of a refused value's JSON a refusal names, so a dead letter stays short. */
+	private const GIVEN_BYTES = 64;
+
 	/** The placeholder a stored question names its server by. */
 	public const SERVER = '{server}';
 
@@ -53,13 +70,17 @@ final class Overview_Prefetch {
 	public static ?\Closure $read_file = null;
 
 	/**
-	 * The job: build the URL snapshot, which serves `Url_Snapshot::TTL_S`
-	 * after it publishes, and answer every question live inside it, a template once
-	 * for each server its totals sum and the overview naming them. An answer
-	 * the stats could not open for is never stored, so the verb asks again
-	 * live.
-	 * `admit()` declines a job before it gets here. On a started record each
-	 * answer is a `prefetch answer` span labelled with its question's name.
+	 * The job: build the URL snapshot, which serves `SNAPSHOT_INTERVALS`
+	 * intervals from the end of its build, and answer every question live
+	 * inside it, a template once for each server its totals sum and the
+	 * overview naming them. An answer the stats could not open for is never
+	 * stored, so the verb asks again live. A job on a worker bound to a
+	 * partition other than 0, and one `overtaken()` names, runs nothing,
+	 * since a later listener can overwrite `admit()`'s decline; a job
+	 * `queued()` refuses fails here, where the JobWorker records the error
+	 * and its Consumer dead-letters the entry. On a started record
+	 * each answer is a `prefetch answer` span labelled with its question's
+	 * name.
 	 *
 	 * The job runs as one unit no cooperative stop splits: each span line is
 	 * a Partition write, and so a point a stop could rise, and a stop inside
@@ -69,22 +90,30 @@ final class Overview_Prefetch {
 	 * @api The `eln_overview_prefetch` job handler.
 	 * @param string              $id         Unused; the job names none.
 	 * @param array<string,mixed> $parameters `queued_at` and `interval`.
-	 * @throws \InvalidArgumentException On a job naming no `queued_at`, or an
-	 *                                   `interval` below one second.
+	 * @throws \InvalidArgumentException On a job `queued()` refuses, and as
+	 *                                   `Url_Snapshot::publish()`.
 	 * @throws \Newspack_Nodes\Table_Unavailable As `Url_Snapshot::publish()`.
 	 * @throws \RuntimeException As `Url_Snapshot::publish()`.
 	 * @throws \LogicException As `stored()`.
 	 */
 	public static function run( string $id, array $parameters ): void {
-		$interval = Core::num_int( $parameters['interval'] ?? null );
-		if ( $interval < 1 || ! isset( $parameters['queued_at'] ) ) {
-			throw new \InvalidArgumentException( 'overview prefetch: a job names its queued_at and an interval of at least 1' );
+		if ( ! Core::owns( '', Core::bound_partition() ) ) {
+			return;
 		}
-		$now       = (int) Core::right_now();
+		$queued = self::queued( $parameters );
+		if ( \is_string( $queued ) ) {
+			// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- plain-text message for log/CLI consumers; escape at the view, not the runtime.
+			throw new \InvalidArgumentException( "overview prefetch: {$queued}" );
+		}
+		[ $queued_at, $interval ] = $queued;
+		$now                      = (int) Core::right_now();
+		if ( self::overtaken( $now, $queued_at, $interval ) ) {
+			return;
+		}
 		$questions = self::stored();
 		Event_Framework::instance()->uninterruptible(
-			static function () use ( $questions, $now ): void {
-				Url_Snapshot::publish( $now, static fn ( array $servers ): array => self::answers( $questions, $now, $servers ) );
+			static function () use ( $questions, $now, $interval ): void {
+				Url_Snapshot::publish( $now, self::SNAPSHOT_INTERVALS * $interval, static fn ( array $servers ): array => self::answers( $questions, $now, $servers ) );
 			}
 		);
 	}
@@ -206,9 +235,12 @@ final class Overview_Prefetch {
 	}
 
 	/**
-	 * The `before_job` listener: decline this job on a worker bound to a
-	 * partition other than 0, or once its successor has overtaken it. Any
-	 * other handler, and any earlier decline, passes through.
+	 * The `before_job` listener: decline, before a context opens for it, the
+	 * job on a worker bound to a partition other than 0, and one `overtaken()`
+	 * names. On partition 0, or a worker with no partition bound, a job
+	 * `queued()` refuses passes, for its handler to refuse, rather than be
+	 * declined in silence as overtaken; so do any other handler and any
+	 * earlier decline.
 	 *
 	 * @api The `newspack_nodes/job_worker/before_job` filter.
 	 * @param mixed            $run     False once a listener declined.
@@ -224,9 +256,78 @@ final class Overview_Prefetch {
 		if ( ! Core::owns( '', Core::bound_partition() ) ) {
 			return false;
 		}
-		$entry      = Core::arr( $message[ Message::VALUE ] ?? [] );
-		$parameters = Core::arr( $entry['parameters'] ?? [] );
-		$age        = (int) Core::right_now() - Core::num_int( $parameters['queued_at'] ?? null );
-		return $age >= Core::num_int( $parameters['interval'] ?? null ) ? false : $run;
+		$entry  = Core::arr( $message[ Message::VALUE ] ?? [] );
+		$queued = self::queued( Core::arr( $entry['parameters'] ?? [] ) );
+		return \is_array( $queued ) && self::overtaken( (int) Core::right_now(), ...$queued ) ? false : $run;
+	}
+
+	/**
+	 * Whether its successor has overtaken a job: an interval or more behind
+	 * the clock. The tick queues the successor within a Router tick of that,
+	 * so a job declined a second early defers to one no older, where running
+	 * it would build the snapshot twice.
+	 *
+	 * @param int $now       The caller's one read of the clock.
+	 * @param int $queued_at When the tick queued it.
+	 * @param int $interval  The tick's interval.
+	 */
+	private static function overtaken( int $now, int $queued_at, int $interval ): bool {
+		return $now - $queued_at >= $interval;
+	}
+
+	/**
+	 * A job's `queued_at` and `interval`, which the tick writes as integers,
+	 * or why the tick could not have queued it: its `queued_at` no integer
+	 * above 0, or its interval no integer `interval_refusal()` passes, naming
+	 * the value it was given.
+	 *
+	 * @param array<array-key,mixed> $parameters The job's parameters.
+	 * @return array{0:int,1:int}|string
+	 */
+	private static function queued( array $parameters ): array|string {
+		$queued_at = $parameters['queued_at'] ?? null;
+		if ( ! \is_int( $queued_at ) || $queued_at < 1 ) {
+			return 'queued_at wants an epoch second, got ' . self::given( $queued_at );
+		}
+		$interval = $parameters['interval'] ?? null;
+		if ( ! \is_int( $interval ) ) {
+			return 'interval wants an integer, got ' . self::given( $interval );
+		}
+		$why = self::interval_refusal( $interval );
+		return null === $why ? [ $queued_at, $interval ] : "interval {$why}, got " . self::given( $interval );
+	}
+
+	/**
+	 * Why `$seconds` is no interval a job names and the tick waits, the
+	 * bounds it wants from `MIN_INTERVAL_S` to `MAX_INTERVAL_S`; null where
+	 * it is one. The caller names the value it was given.
+	 *
+	 * @api Overview_Prefetch_Tick_Node, which refuses a line naming another.
+	 * @param int $seconds The interval.
+	 */
+	public static function interval_refusal( int $seconds ): ?string {
+		if ( $seconds >= self::MIN_INTERVAL_S && $seconds <= self::MAX_INTERVAL_S ) {
+			return null;
+		}
+		return 'wants ' . self::MIN_INTERVAL_S . ' to ' . self::MAX_INTERVAL_S . ' seconds';
+	}
+
+	/**
+	 * A refused job's value as JSON, which escapes every line break and
+	 * non-ASCII character, cut at `GIVEN_BYTES` bytes and back to its last
+	 * whole escape; its type where it will not encode.
+	 *
+	 * @param mixed $raw The value.
+	 */
+	private static function given( mixed $raw ): string {
+		$given = \wp_json_encode( $raw );
+		if ( ! \is_string( $given ) ) {
+			return \gettype( $raw );
+		}
+		if ( \strlen( $given ) <= self::GIVEN_BYTES ) {
+			return $given;
+		}
+		// An odd run of trailing backslashes opens an escape the cut split.
+		return \preg_replace( '/(?<!\\\\)((?:\\\\\\\\)*)\\\\(?:u[0-9a-fA-F]{0,3})?$/', '$1', \substr( $given, 0, self::GIVEN_BYTES ) ) . '…';
 	}
 }

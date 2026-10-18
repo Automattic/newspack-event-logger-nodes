@@ -9,10 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The overview-prefetch tick paces from wall-clock interval boundaries, so a worker's respawn no longer skips a run, unless its gap straddles a boundary. A fresh process counted its first interval from its own start, and in a worker's 595-second life that lost one 120-second interval in five: the snapshot expired before the next run published, and for the 90–100 s that run took, every Overview poll answered live, 30–50 s each on eln.
-- A prefetch tick declared with a zero interval queues its job each second naming the one-second interval it paces at, so the job runs; it named 0, which every job refused.
+- A prefetch job whose interval or `queued_at` is missing, zero, negative or no number fails in its handler on partition 0 or a worker with no partition bound: the JobWorker records the error and its Consumer dead-letters the entry, where `admit()` declined the job in silence as overtaken. A zero interval queued a job each second, and each was declined. A fractional or numeric-string value, which ran cast to an integer, now fails the same way.
+- The prefetch handler itself declines a job on a worker bound to a partition other than 0, or one its successor has overtaken, so a later `before_job` listener overwriting `admit()`'s decline no longer builds a second snapshot beside p0's or after the newer one.
 
 ### Changed
-- A URL snapshot serves ten minutes after it publishes, where it served two intervals from its run's start, so the run's own length no longer shortens it.
+- The prefetch tick and its job refuse an interval below 1 s or above 900 s. The tick refuses the `make_node` line and leaves a live tick as it was, so a topology naming `overview-prefetch:tick` with 1800 no longer loads. The shipped `flame-builder` line names no interval, and runs the tick's 120 s default.
+- A URL snapshot serves four of the tick's intervals from the end of its build, where it served two from its run's start, so the run's own length no longer shortens it and a run a respawn lost is spanned.
 
 ## [0.141.0] - 2026-10-17
 

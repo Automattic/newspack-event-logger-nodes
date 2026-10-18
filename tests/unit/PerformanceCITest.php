@@ -1908,6 +1908,14 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( '`available`, false when the stats file will not open', self::verbs_by_name()['query']['description'] );
 	}
 
+	/** The three verbs a snapshot answers name its shipped life. */
+	public function test_the_snapshot_verbs_name_its_life(): void {
+		$life = 'serves 4 of its tick\'s intervals, 120 s each by default';
+		foreach ( [ 'overview', 'urls', 'query' ] as $verb ) {
+			$this->assertStringContainsString( $life, self::verbs_by_name()[ $verb ]['description'], $verb );
+		}
+	}
+
 	/** `dump_url`'s description names every stat that reads null unmeasured. */
 	public function test_dump_url_description_names_each_null_unmeasured_stat(): void {
 		$this->assertStringContainsString( '`avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null', self::verbs_by_name()['dump_url']['description'] );

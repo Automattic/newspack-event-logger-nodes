@@ -15,7 +15,7 @@ make_node Consumer requests:consumer <config:logs_dir>/requests.p{partition} <co
 make_node Flame_Builder flame-builder
 make_node Partition flames:partition <config:logs_dir>/flames.p{partition}
 make_node Row_Table flame-facts Flame_Facts
-make_node Overview_Prefetch_Tick overview-prefetch:tick 120
+make_node Overview_Prefetch_Tick overview-prefetch:tick
 command_node requests:consumer:config add_snapshot_node flame-builder
 command_node flame-builder:config set_facts_target flame-facts
 command_node flames:partition:config void_warranty
