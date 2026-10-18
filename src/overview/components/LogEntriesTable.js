@@ -192,7 +192,11 @@ const topOutOfView = ( row ) => {
 	let view = { top: 0, bottom: window.innerHeight };
 	for ( let el = row.parentElement; el; el = el.parentElement ) {
 		const { overflowY } = window.getComputedStyle( el );
-		if ( 'auto' === overflowY || 'scroll' === overflowY ) {
+		// overflow-x alone computes overflow-y to auto: it must also scroll.
+		if (
+			( 'auto' === overflowY || 'scroll' === overflowY ) &&
+			el.scrollHeight > el.clientHeight
+		) {
 			view = el.getBoundingClientRect();
 			break;
 		}
@@ -909,9 +913,10 @@ export default function LogEntriesTable( {
 	/**
 	 * Handle row click for fold/unfold. Merged, `(start)` and `(complete)` rows
 	 * toggle; everything else, including the outermost `process` pair, ignores
-	 * the click. Cmd/Ctrl-click unfolds the whole subtree. A `(complete)` row
-	 * shown is an open pair's, so a plain click on it folds the pair and marks
-	 * the folded row for `topOutOfView()` to recenter.
+	 * the click. Cmd/Ctrl-click unfolds the whole subtree. A plain click on an
+	 * open pair's `(complete)` row folds the pair and marks the folded row for
+	 * `topOutOfView()` to recenter; a `(complete)` row can show for a folded
+	 * pair whose spans nest improperly, and a click there unfolds it.
 	 *
 	 * @param {Object} entry Visible entry.
 	 * @param {number} idx   Index in visibleEntries.
@@ -932,14 +937,15 @@ export default function LogEntriesTable( {
 				if (
 					! recursive &&
 					! entry.isMerged &&
-					isFoldablePairComplete( entry.k )
+					isFoldablePairComplete( entry.k ) &&
+					expandedSet.has( entry.pairId )
 				) {
 					centerAfterShrinkRef.current = { pairId: entry.pairId };
 				}
 				toggleFold( entry.pairId, fullIdx, recursive );
 			}
 		},
-		[ entries, toggleFold ]
+		[ entries, expandedSet, toggleFold ]
 	);
 
 	/**
@@ -948,28 +954,26 @@ export default function LogEntriesTable( {
 	 * leaves the scroll alone. Stops the click there: the row beneath folds on
 	 * click, and showing more must never move the fold.
 	 *
-	 * @param {number} key   The body's fold key: its entry's position.
-	 * @param {number} row   The position the row holding the body stands at.
-	 * @param {Event}  event Click event.
+	 * @param {number}  key   The body's fold key: its entry's position.
+	 * @param {number}  row   The position the row holding the body stands at.
+	 * @param {boolean} open  Whether the body is open, as its link reads.
+	 * @param {Event}   event Click event.
 	 */
-	const toggleBody = useCallback(
-		( key, row, event ) => {
-			event.stopPropagation();
-			if ( expandedBodies.has( key ) ) {
-				centerAfterShrinkRef.current = { entryIdx: row };
+	const toggleBody = useCallback( ( key, row, open, event ) => {
+		event.stopPropagation();
+		if ( open ) {
+			centerAfterShrinkRef.current = { entryIdx: row };
+		}
+		setExpandedBodies( ( prev ) => {
+			const next = new Set( prev );
+			if ( next.has( key ) ) {
+				next.delete( key );
+			} else {
+				next.add( key );
 			}
-			setExpandedBodies( ( prev ) => {
-				const next = new Set( prev );
-				if ( next.has( key ) ) {
-					next.delete( key );
-				} else {
-					next.add( key );
-				}
-				return next;
-			} );
-		},
-		[ expandedBodies ]
-	);
+			return next;
+		} );
+	}, [] );
 
 	/**
 	 * Center the row a shrink left when its top is out of view, after layout
@@ -1293,7 +1297,7 @@ export default function LogEntriesTable( {
 						type="button"
 						className="button-link"
 						onClick={ ( event ) =>
-							toggleBody( key, entry.originalIdx, event )
+							toggleBody( key, entry.originalIdx, open, event )
 						}
 					>
 						{ open

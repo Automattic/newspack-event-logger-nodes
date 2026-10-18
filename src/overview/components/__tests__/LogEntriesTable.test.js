@@ -2762,6 +2762,125 @@ describe( 'recentering after a row shrinks', () => {
 		unmount();
 	} );
 
+	it( 'leaves the scroll alone when a complete row it shows belongs to a folded pair', () => {
+		window.HTMLElement.prototype.getBoundingClientRect = () => ( {
+			top: -137,
+			bottom: -113,
+		} );
+		const calls = [];
+		window.HTMLElement.prototype.scrollIntoView = jest.fn( function () {
+			calls.push( this );
+		} );
+		const row = ( n, k, pairId, indent ) => ( {
+			n,
+			ts: 1700000300 + n,
+			startTs: 1700000300 + n,
+			k,
+			m: '',
+			pairId,
+			indent,
+			originalIdx: n - 1,
+		} );
+		// b opens inside a and closes after it: improperly nested spans.
+		const entries = [
+			row( 1, 'process (start)', 1, 0 ),
+			row( 2, 'kea-a (start)', 2, 1 ),
+			row( 3, 'kea-b (start)', 3, 2 ),
+			row( 4, 'kea-a (complete)', 2, 1 ),
+			row( 5, 'leaf-7085', null, 2 ),
+			row( 6, 'kea-b (complete)', 3, 2 ),
+			row( 7, 'process (complete)', 1, 0 ),
+		];
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const rowOf = ( keyword ) =>
+			[ ...container.querySelectorAll( 'tbody tr' ) ].find( ( tr ) =>
+				tr.textContent.includes( keyword )
+			);
+		act( () => rowOf( 'kea-a' ).click() );
+		expect( rowOf( 'kea-b (complete)' ) ).toBeDefined();
+
+		act( () => rowOf( 'kea-b (complete)' ).click() );
+
+		expect( calls ).toEqual( [] );
+		unmount();
+	} );
+
+	/**
+	 * Mount the stock tree inside two wrappers that both report vertical
+	 * overflow: an inner one that does not scroll (a horizontal-scroll
+	 * wrapper reads `overflow-y: auto` too) and the pane that does.
+	 *
+	 * @param {number} rowTop Where every row's top sits, in viewport pixels.
+	 * @return {Object} The mount and the scroll calls.
+	 */
+	const mountInPane = ( rowTop ) => {
+		window.HTMLElement.prototype.getBoundingClientRect = function () {
+			const top = this.dataset.top ? Number( this.dataset.top ) : rowTop;
+			const bottom = this.dataset.bottom
+				? Number( this.dataset.bottom )
+				: top + 24;
+			return { top, bottom };
+		};
+		const calls = [];
+		window.HTMLElement.prototype.scrollIntoView = jest.fn( function () {
+			calls.push( this );
+		} );
+		const entries = makeEntries();
+		entries[ 1 ] = { ...entries[ 1 ], m: longBody };
+		const mounted = renderComponent(
+			React.createElement(
+				'div',
+				{
+					className: 'kea-pane',
+					style: { overflowY: 'auto' },
+					'data-top': 300,
+					'data-bottom': 700,
+				},
+				React.createElement(
+					'div',
+					{
+						className: 'kea-wrapper',
+						style: { overflowY: 'auto' },
+						'data-top': 0,
+						'data-bottom': 2000,
+					},
+					React.createElement( LogEntriesTable, { entries } )
+				)
+			)
+		);
+		const pane = mounted.container.querySelector( '.kea-pane' );
+		Object.defineProperty( pane, 'scrollHeight', { value: 2000 } );
+		Object.defineProperty( pane, 'clientHeight', { value: 400 } );
+		const toggle = () =>
+			Array.from( mounted.container.querySelectorAll( 'button' ) ).find(
+				( b ) => b.textContent.startsWith( 'Show ' )
+			);
+		return { ...mounted, calls, toggle };
+	};
+
+	it( 'judges a row against the pane that scrolls it, not the window', () => {
+		// Inside the window, above the pane's top edge.
+		const { calls, toggle, unmount } = mountInPane( 213 );
+		act( () => toggle().click() );
+
+		act( () => toggle().click() );
+
+		expect( calls ).toHaveLength( 1 );
+		unmount();
+	} );
+
+	it( 'leaves the scroll alone while the row top is in the pane', () => {
+		const { calls, toggle, unmount } = mountInPane( 413 );
+		act( () => toggle().click() );
+
+		act( () => toggle().click() );
+
+		expect( calls ).toEqual( [] );
+		unmount();
+	} );
+
 	it( 'leaves the scroll alone when the start row folds the pair', () => {
 		const { calls, rowOf, unmount } = mount( -137 );
 		act( () => rowOf( 'db' ).click() );
