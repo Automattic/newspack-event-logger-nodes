@@ -28,9 +28,30 @@ import { useSeriesSelection } from '@newspack-nodes/shared/hooks/useSeriesSelect
 import {
 	getStatusCategory,
 	getStatusColor,
+	phosphorColor,
 	STATUS_COLORS,
 } from '@newspack-nodes/shared/utils/formatUtils';
 import { axisDuration } from '@newspack-nodes/shared/utils/axis-ticks';
+
+/**
+ * Each status class's place in CRT's greens: the four classes brighten with
+ * severity, each pair at least 1.3 apart in lightness, and unknown takes the
+ * green furthest from all four, which no fifth place in the set can hold 1.3
+ * from every one of them.
+ */
+export const STATUS_PLACE = {
+	'2xx': 5,
+	'3xx': 1,
+	'4xx': 7,
+	'5xx': 2,
+	unknown: 0,
+};
+
+/** The trend line's place in CRT's greens; a line, so its shape sets it apart. */
+const TREND_PLACE = 4;
+
+/** The mean line's and its label's place in CRT's greens. */
+const MEAN_PLACE = 3;
 
 /**
  * Total SVG height in pixels. Only the width responds to resize.
@@ -88,7 +109,13 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 		const present = new Set( allPoints.map( ( d ) => d.klass ) );
 		return [ '2xx', '3xx', '4xx', '5xx' ]
 			.filter( ( key ) => present.has( key ) )
-			.map( ( key ) => ( { color: STATUS_COLORS[ key ], label: key } ) );
+			.map( ( key ) => ( {
+				color: phosphorColor(
+					STATUS_PLACE[ key ],
+					STATUS_COLORS[ key ]
+				),
+				label: key,
+			} ) );
 	}, [ allPoints ] );
 	const labels = useMemo(
 		() => legendItems.map( ( i ) => i.label ),
@@ -158,7 +185,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				g.append( 'path' )
 					.datum( chartData )
 					.attr( 'fill', 'none' )
-					.attr( 'stroke', '#4a90d9' )
+					.style( 'stroke', phosphorColor( TREND_PLACE, '#4a90d9' ) )
 					.attr( 'stroke-width', 1.5 )
 					.attr( 'stroke-opacity', 0.5 )
 					// Hit tests stroke the curve; the dots own the pointer.
@@ -179,7 +206,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				.attr( 'x2', innerW )
 				.attr( 'y1', y( avgDuration ) )
 				.attr( 'y2', y( avgDuration ) )
-				.attr( 'stroke', '#e57373' )
+				.style( 'stroke', phosphorColor( MEAN_PLACE, '#e57373' ) )
 				.attr( 'stroke-width', 1 )
 				.attr( 'stroke-dasharray', '5,5' );
 			g.append( 'text' )
@@ -187,7 +214,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				.attr( 'y', y( avgDuration ) - 5 )
 				.attr( 'text-anchor', 'end' )
 				.style( 'font-size', '11px' )
-				.style( 'fill', '#e57373' )
+				.style( 'fill', phosphorColor( MEAN_PLACE, '#e57373' ) )
 				.text(
 					sprintf(
 						// translators: %s: average response time, e.g. 68ms or 130s.
@@ -203,8 +230,14 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				.attr( 'r', 5 )
 				.attr( 'cx', ( d ) => x( d.time ) )
 				.attr( 'cy', ( d ) => y( d.duration ) )
-				.attr( 'fill', ( d ) => getStatusColor( d.status ) )
-				.attr( 'stroke', '#fff' )
+				.style( 'fill', ( d ) =>
+					phosphorColor(
+						STATUS_PLACE[ d.klass ],
+						getStatusColor( d.status )
+					)
+				)
+				// A ring of the paper keeps overlapping dots apart.
+				.style( 'stroke', 'var(--paper, #fff)' )
 				.attr( 'stroke-width', 1 )
 				.style( 'cursor', 'pointer' )
 				.on( 'mouseover', function () {

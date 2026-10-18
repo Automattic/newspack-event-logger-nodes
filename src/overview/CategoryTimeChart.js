@@ -22,7 +22,10 @@
 
 import { useCallback, useMemo } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
-import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
+import {
+	getStateColor,
+	phosphorColor,
+} from '@newspack-nodes/shared/utils/formatUtils';
 import { compactFixed } from '@newspack-nodes/shared/utils/formatters';
 import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
 import {
@@ -111,11 +114,13 @@ const formatYValue = ( val, mode ) => {
 /**
  * Rank categories by their whole-window total, then sample each across it.
  *
- * The rank fixes palette index and legend order, and it runs over the mode's
- * own field — `calls` for "count", `ms` otherwise — so "average" ranks by
- * total time rather than by the mean it plots, and one slow outlier cannot
- * take the top band. That also makes the "count" ranking its own, so a
- * category may wear a different color there than in the other two views.
+ * The rank fixes legend order and, on CRT, the phosphor green a category
+ * draws in; every other skin draws a category in its own color whatever its
+ * rank. It runs over the mode's own field — `calls` for "count", `ms`
+ * otherwise — so "average" ranks by total time rather than by the mean it
+ * plots, and one slow outlier cannot take the top band. That also makes the
+ * "count" ranking its own, so on CRT a category may wear a different green
+ * there than in the other two views.
  *
  * Every series gets a point in every slot, zero where the bucket holds nothing
  * (null for the average, which is then a gap),
@@ -215,8 +220,11 @@ export default function CategoryTimeChart( {
 		[]
 	);
 
-	// Colour by rank through the skin's own tokens.
-	const colorAt = useCallback( ( _label, index ) => chartColor( index ), [] );
+	// Each category in its own colour, as the Time Breakdown draws it.
+	const colorAt = useCallback(
+		( label, index ) => phosphorColor( index, getStateColor( label ) ),
+		[]
+	);
 
 	const slotClick = useSlotClick( axis, onSlotClick );
 	const slotRange = useSlotRange( axis, onSlotRange );

@@ -44,7 +44,7 @@ const URL_CHIP_OPTIONS = FILTER_FIELD_OPTIONS.filter(
 import ResponseTimeChart from '../ResponseTimeChart';
 import RequestTrace, { FlameCutNote } from './RequestTrace';
 import CategoryTimeChart from '../CategoryTimeChart';
-import { ProfileWithCaption } from '../RequestProfile';
+import { ProfileWithCaption, profileOrder } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
 import { breakdownState } from '../AggregateTimeChart';
 import { errorStatus } from '../../components/errorStatus';
@@ -290,6 +290,12 @@ export default function UrlDetailView( {
 		() => answerSlots( categoryAnswer ),
 		[ categoryAnswer ]
 	);
+	// Sorted once a reply: a scroll re-renders the modal.
+	const categories = urlDetail.aggregate_profiles?.categories;
+	const flameOrder = useMemo(
+		() => profileOrder( categories ),
+		[ categories ]
+	);
 
 	/**
 	 * The direction a column's header draws: the sort's own on the sorted
@@ -354,6 +360,7 @@ export default function UrlDetailView( {
 					<div style={ { marginTop: '20px' } }>
 						<RequestTrace
 							flameData={ urlDetail.aggregate_flame }
+							order={ flameOrder }
 							title={ __(
 								'Aggregate Flame Graph',
 								'newspack-event-logger-nodes'

@@ -44,6 +44,7 @@ const FlameGraph = lazy( () => import( '../FlameGraph' ) );
  * @param {Object}                               props.flameData       Flame tree root from `Flame_Tree`, for one request or aggregated across many.
  * @param {string}                               [props.title]         Heading, already translated; defaults to "Request Trace".
  * @param {(i: ?number, path: string[]) => void} [props.onRevealEntry] Called on Cmd/Ctrl+click with the position of the entry the frame opened at, or null, and the frame's path, root-first frame names.
+ * @param {Array<string>}                        [props.order]         The Time Breakdown's categories beside it, longest first, for the frames' CRT greens.
  * @param {Array<Object>}                        [props.entries]       The request's log entries, for the peak-memory track; the track draws nothing without them, which is how the aggregate and overlay views render.
  * @return {import('react').ReactElement} The trace section.
  */
@@ -51,6 +52,7 @@ export default function RequestTrace( {
 	flameData,
 	title = __( 'Request Trace', 'newspack-event-logger-nodes' ),
 	onRevealEntry,
+	order,
 	entries,
 } ) {
 	return (
@@ -69,6 +71,7 @@ export default function RequestTrace( {
 				<FlameGraph
 					data={ flameData }
 					onRevealEntry={ onRevealEntry }
+					order={ order }
 				/>
 			</Suspense>
 			<MemoryTrack

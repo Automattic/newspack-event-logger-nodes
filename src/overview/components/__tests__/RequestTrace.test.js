@@ -31,6 +31,20 @@ async function renderAsync( element ) {
 }
 
 describe( 'RequestTrace', () => {
+	it( 'hands the flame graph the order it is given', async () => {
+		const { unmount } = await renderAsync(
+			React.createElement( RequestTrace, {
+				flameData,
+				order: [ 'kea-7068', 'kea-7069' ],
+			} )
+		);
+		expect( global.__requestTraceFlameProps.order ).toEqual( [
+			'kea-7068',
+			'kea-7069',
+		] );
+		unmount();
+	} );
+
 	it( 'draws the shared loading fallback while the chunk resolves', () => {
 		// Read the fallback off the Suspense element rather than mounting:
 		// the lazy chunk resolves before a mounted fallback can be observed.

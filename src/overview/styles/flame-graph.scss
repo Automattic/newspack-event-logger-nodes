@@ -29,6 +29,11 @@
 	pointer-events: none;
 }
 
+// CRT's label inks are checked on an opaque green; the vendor fill is 0.8.
+.theme-crt .d3-flame-graph rect {
+	fill-opacity: 1;
+}
+
 .event-logger-flame-empty {
 	padding: 24px;
 

@@ -182,6 +182,26 @@ const findRow = ( table, selector ) => {
 };
 
 /**
+ * Whether a row's top sits outside what scrolls it: the nearest ancestor
+ * whose overflow scrolls, else the window.
+ *
+ * @param {Element} row The table row.
+ * @return {boolean} True when the row's top is out of view.
+ */
+const topOutOfView = ( row ) => {
+	let view = { top: 0, bottom: window.innerHeight };
+	for ( let el = row.parentElement; el; el = el.parentElement ) {
+		const { overflowY } = window.getComputedStyle( el );
+		if ( 'auto' === overflowY || 'scroll' === overflowY ) {
+			view = el.getBoundingClientRect();
+			break;
+		}
+	}
+	const { top } = row.getBoundingClientRect();
+	return top < view.top || top >= view.bottom;
+};
+
+/**
  * Scroll to a table row by data-pair-id or data-entry-idx and flash-highlight it.
  * Highlights individual <td> cells since <tr> doesn't support box-shadow reliably.
  *
@@ -293,8 +313,8 @@ export default function LogEntriesTable( {
 	const [ expandedSet, setExpandedSet ] = useState( () => new Set() );
 	// Bodies opened past BODY_FOLD_LINES, keyed by position in `entries`.
 	const [ expandedBodies, setExpandedBodies ] = useState( () => new Set() );
-	// The row a body toggle resized, centered once its new height lays out.
-	const centerAfterToggleRef = useRef( null );
+	// The row a shrink left, centered once laid out if its top is out of view.
+	const centerAfterShrinkRef = useRef( null );
 	const [ highlightRange, setHighlightRange ] = useState( null );
 
 	// Search state.
@@ -889,7 +909,9 @@ export default function LogEntriesTable( {
 	/**
 	 * Handle row click for fold/unfold. Merged, `(start)` and `(complete)` rows
 	 * toggle; everything else, including the outermost `process` pair, ignores
-	 * the click. Cmd/Ctrl-click unfolds the whole subtree.
+	 * the click. Cmd/Ctrl-click unfolds the whole subtree. A `(complete)` row
+	 * shown is an open pair's, so a plain click on it folds the pair and marks
+	 * the folded row for `topOutOfView()` to recenter.
 	 *
 	 * @param {Object} entry Visible entry.
 	 * @param {number} idx   Index in visibleEntries.
@@ -906,52 +928,62 @@ export default function LogEntriesTable( {
 				? findStartIdx( entries, entry.pairId )
 				: -1;
 			if ( fullIdx >= 0 ) {
-				toggleFold(
-					entry.pairId,
-					fullIdx,
-					event.metaKey || event.ctrlKey
-				);
+				const recursive = event.metaKey || event.ctrlKey;
+				if (
+					! recursive &&
+					! entry.isMerged &&
+					isFoldablePairComplete( entry.k )
+				) {
+					centerAfterShrinkRef.current = { pairId: entry.pairId };
+				}
+				toggleFold( entry.pairId, fullIdx, recursive );
 			}
 		},
 		[ entries, toggleFold ]
 	);
 
 	/**
-	 * Open or close one message body, and center its row once the new height
-	 * renders. Stops the click there: the row beneath folds on click, and
-	 * showing more must never move the fold.
+	 * Open or close one message body. Closing marks its row for
+	 * `topOutOfView()` to recenter once the shorter body renders; opening
+	 * leaves the scroll alone. Stops the click there: the row beneath folds on
+	 * click, and showing more must never move the fold.
 	 *
 	 * @param {number} key   The body's fold key: its entry's position.
 	 * @param {number} row   The position the row holding the body stands at.
 	 * @param {Event}  event Click event.
 	 */
-	const toggleBody = useCallback( ( key, row, event ) => {
-		event.stopPropagation();
-		centerAfterToggleRef.current = row;
-		setExpandedBodies( ( prev ) => {
-			const next = new Set( prev );
-			if ( next.has( key ) ) {
-				next.delete( key );
-			} else {
-				next.add( key );
+	const toggleBody = useCallback(
+		( key, row, event ) => {
+			event.stopPropagation();
+			if ( expandedBodies.has( key ) ) {
+				centerAfterShrinkRef.current = { entryIdx: row };
 			}
-			return next;
-		} );
-	}, [] );
+			setExpandedBodies( ( prev ) => {
+				const next = new Set( prev );
+				if ( next.has( key ) ) {
+					next.delete( key );
+				} else {
+					next.add( key );
+				}
+				return next;
+			} );
+		},
+		[ expandedBodies ]
+	);
 
 	/**
-	 * Center the row a body toggle resized, after layout so the scroll lands
-	 * on the height the toggle produced. No flash: the reader just clicked it.
+	 * Center the row a shrink left when its top is out of view, after layout
+	 * so the check reads the height the shrink produced. No flash: the reader
+	 * just clicked it.
 	 */
 	useLayoutEffect( () => {
-		const row = centerAfterToggleRef.current;
-		centerAfterToggleRef.current = null;
-		if ( null !== row ) {
-			findRow( tableRef.current, { entryIdx: row } )?.scrollIntoView(
-				CENTERED
-			);
+		const selector = centerAfterShrinkRef.current;
+		centerAfterShrinkRef.current = null;
+		const row = selector && findRow( tableRef.current, selector );
+		if ( row && topOutOfView( row ) ) {
+			row.scrollIntoView( CENTERED );
 		}
-	}, [ expandedBodies ] );
+	}, [ expandedBodies, expandedSet ] );
 
 	/**
 	 * Get row style based on highlight state and entry type.

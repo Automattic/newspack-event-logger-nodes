@@ -5,8 +5,8 @@
  * until the snapshot expires.
  *
  * `Overview_Prefetch_Tick_Node` queues each `eln_overview_prefetch` job, and
- * the JobWorker of whichever partition it lands on runs it. The job builds the window's URL
- * table as one `Url_Snapshot`, which serves `SNAPSHOT_INTERVALS` intervals
+ * a JobWorker runs it. The job builds the window's URL table as one
+ * `Url_Snapshot`, which serves `SNAPSHOT_INTERVALS` intervals
  * from the end of its build, and answers the questions in
  * `stored-answers.json` live inside it, a template naming its server
  * `SERVER` once for each server the window holds: `urls` reads any page of
@@ -74,8 +74,7 @@ final class Overview_Prefetch {
 	 * intervals from the end of its build, and answer every question live
 	 * inside it, a template once for each server its totals sum and the
 	 * overview naming them. An answer the stats could not open for is never
-	 * stored, so the verb asks again live. It runs on whichever partition
-	 * it lands, since the tick queues one a fleet. A job `overtaken()` names
+	 * stored, so the verb asks again live. A job `overtaken()` names
 	 * runs nothing, since a later listener can overwrite `admit()`'s
 	 * decline; a job `queued()` refuses fails here, where the JobWorker
 	 * records the error and its Consumer dead-letters the entry. On a
@@ -233,7 +232,7 @@ final class Overview_Prefetch {
 
 	/**
 	 * The `before_job` listener: decline the job `overtaken()` names, before
-	 * a context opens for it, on whichever partition it lands. A job
+	 * a context opens for it. A job
 	 * `queued()` refuses passes, for its handler to refuse, rather than be
 	 * declined in silence as overtaken; so do any other handler and any
 	 * earlier decline.

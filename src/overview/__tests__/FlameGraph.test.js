@@ -307,6 +307,65 @@ describe( 'FlameGraph', () => {
 		unmount();
 	} );
 
+	it( 'repaints the frames in the new order when it changes under the same data', () => {
+		const { act } = require( '../../test-helpers/renderHook' );
+		const view = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				order: [ 'kea-7077' ],
+			} )
+		);
+		d3.__chain.each.mockClear();
+
+		act( () =>
+			view.rerender(
+				React.createElement( FlameGraph, {
+					data: SAMPLE_DATA,
+					order: [ 'kea-7078', 'kea-7077' ],
+				} )
+			)
+		);
+
+		// Run the paint pass over one frame, its fill read as #a1b2c3.
+		const [ paint ] = d3.__chain.each.mock.calls.at( -1 );
+		d3.__chain.attr.mockImplementationOnce( () => '#a1b2c3' );
+		d3.__chain.style.mockClear();
+		// Second in the new order; first in the old one, and on first sight.
+		paint.call( {}, { data: { name: 'kea-7077' } } );
+		expect( d3.__chain.style.mock.calls ).toContainEqual( [
+			'fill',
+			'var(--phosphor-2, #a1b2c3)',
+		] );
+		view.unmount();
+	} );
+
+	it( 'paints a new reply once, though its data and its order both changed', () => {
+		const { act } = require( '../../test-helpers/renderHook' );
+		const view = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				order: [ 'kea-7080' ],
+			} )
+		);
+		const stamps = () =>
+			d3.__chain.attr.mock.calls.filter(
+				( call ) => 'data-ask' === call[ 0 ]
+			).length;
+		const before = stamps();
+
+		act( () =>
+			view.rerender(
+				React.createElement( FlameGraph, {
+					data: { ...SAMPLE_DATA, value: SAMPLE_DATA.value + 1 },
+					order: [ 'kea-7081', 'kea-7080' ],
+				} )
+			)
+		);
+
+		expect( stamps() - before ).toBe( 1 );
+		view.unmount();
+	} );
+
 	it( 'onClick(null) clears the zoom path', () => {
 		jest.useFakeTimers();
 		const { unmount } = renderComponent(
