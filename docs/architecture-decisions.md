@@ -76,7 +76,7 @@ The three settings a hub pushes, the ruleset, `log_memory` and `flush_every_line
 
 ## Decision 5: A stats schema change is a version bump and a rebuild, and nothing in this code migrates
 
-`Flame_Facts_Row_Schema::version()`, 6, versions the shape of the stats rows, and each partition's file carries it as SQLite's `user_version`. A builder opening a file at another version discards it and starts empty, and a reader leaves such a file unattached ([substrate ADR-34](https://github.com/Automattic/newspack-nodes/blob/main/docs/architecture-decisions.md#adr-34-a-table-may-hold-declared-rows-sqlite-only)), so a row in an older shape is never read. A schema change therefore bumps `version()`, and the rollout rebuilds the rows from what the logs retain:
+`Flame_Facts_Row_Schema::version()`, 7, versions the shape of the stats rows, and each partition's file carries it as SQLite's `user_version`. A builder opening a file at another version discards it and starts empty, and a reader leaves such a file unattached ([substrate ADR-34](https://github.com/Automattic/newspack-nodes/blob/main/docs/architecture-decisions.md#adr-34-a-table-may-hold-declared-rows-sqlite-only)), so a row in an older shape is never read. A schema change therefore bumps `version()`, and the rollout rebuilds the rows from what the logs retain:
 
 ```bash
 wp nodes stop && wp nodes deactivate performance && wp nodes gc --force && wp nodes memcache flush && wp nodes activate performance && wp nodes start
@@ -362,7 +362,7 @@ Memcache evicts, and every mechanism the stats grew to survive that — the dura
 | `urls` | URL: `id`, `hash`, `server_id`, `path`, with an FTS5 index over `path` | `hash` | while a `requests` or `timings` row names it |
 | `servers`, `agents`, `ja4s`, `froms`, `categories`, `entries` | name a row repeats: `id`, `name` | `name` | while a row names it |
 | `timings` | bucket, server, URL, category and entry, with `listener` and the summed `ms`, `calls` and `requests` | `bucket`, `server_id`, `url_id`, `category_id`, `entry_id` | 300 buckets, 25 hours |
-| `timings_site` | bucket, server, worker, category and entry, with `listener` and the same sums | `bucket`, `server_id`, `worker`, `category_id`, `entry_id` | 300 buckets, 25 hours |
+| `timings_site` | bucket, server, worker, category and entry, with `listener` and the same sums | `server_id`, `bucket`, `worker`, `category_id`, `entry_id` | 300 buckets, 25 hours |
 | `requests_hourly` | hour, server, status class, method, worker and country, with the summed `count`, `timed`, `sum_ms`, `sum_peak_mb` and `errors` and the greatest `max_ms` | its six fields | 168 hours, seven days |
 | `category_window` | category, entry and worker, with `listener` and the summed `ms`, `calls` and `requests` and the greatest `last_bucket` | `category_id`, `entry_id`, `worker` | 300 buckets, 25 hours |
 | `window_expiry` | bucket expired, so a replayed expiry subtracts nothing twice; the newest is the window's watermark | `bucket` | 300 buckets, 25 hours |

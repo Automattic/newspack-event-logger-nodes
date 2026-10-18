@@ -213,7 +213,7 @@ final class UrlSnapshotTest extends TestCase {
 		$this->assertInstanceOf( Row_Reader::class, $db, 'the substrate publishes the snapshot under its name' );
 		[ $sql, $binds ] = ( new \ReflectionMethod( Url_Snapshot::class, 'listing' ) )->invoke( null, $server, $workers, $sort, $order );
 
-		$plan = \implode( "\n", \array_column( $db->rows( "EXPLAIN QUERY PLAN {$sql} LIMIT ? OFFSET ?", [ ...$binds, 3, 1 ] ), 3 ) );
+		$plan = self::plan_text( $db, "{$sql} LIMIT ? OFFSET ?", [ ...$binds, 3, 1 ] );
 
 		$this->assertStringNotContainsString( 'USE TEMP B-TREE', $plan );
 		$this->assertMatchesRegularExpression( '/^(SCAN|SEARCH) urls USING INDEX ' . self::index_of( $sort, $order, $server ) . '( |$)/m', $plan );
@@ -283,7 +283,7 @@ final class UrlSnapshotTest extends TestCase {
 				foreach ( ( new \ReflectionMethod( Url_Snapshot::class, 'url_steps' ) )->invoke( null, $db, self::NOW ) as $span => $statements ) {
 					$steps[ $span ] = \count( $statements );
 					foreach ( $statements as [ $sql, $binds ] ) {
-						$plans[ $sql ] = \implode( "\n", \array_column( $db->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
+						$plans[ $sql ] = self::plan_text( $db, $sql, $binds );
 						$db->rows( $sql, $binds );
 					}
 				}

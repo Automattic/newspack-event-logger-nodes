@@ -24,6 +24,7 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
 
 trait FactsSeeder {
@@ -122,6 +123,17 @@ trait FactsSeeder {
 			$seed[] = [ 'add', 'timings_site', $over + self::timing_defaults( Core::as_string( $over['server'] ?? self::$seed_server ) ) + [ 'worker' => 0 ] ];
 		}
 		$this->seed_rows( $partition, $seed );
+	}
+
+	/**
+	 * The query plan SQLite chooses for a statement, one line per step.
+	 *
+	 * @param Row_Reader        $db    The connection that would run it.
+	 * @param string            $sql   The statement.
+	 * @param list<scalar|null> $binds Its binds.
+	 */
+	protected static function plan_text( Row_Reader $db, string $sql, array $binds ): string {
+		return \implode( "\n", \array_column( $db->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
 	}
 
 	/**
