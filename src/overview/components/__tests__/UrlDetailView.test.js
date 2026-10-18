@@ -26,7 +26,10 @@ jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 
 jest.mock( '../../FlameGraph', () => ( {
 	__esModule: true,
-	default: () => 'FLAME_GRAPH',
+	default: ( props ) => {
+		global.__urlDetailFlameProps = props;
+		return 'FLAME_GRAPH';
+	},
 } ) );
 jest.mock( '../../ResponseTimeChart', () => ( {
 	__esModule: true,
@@ -920,6 +923,57 @@ describe( 'UrlDetailView', () => {
 			'Could not list requests: bucket 2026-10-04-09-07 must be a five-minute key'
 		);
 		unmount();
+	} );
+
+	it( 'hands the flame graph the breakdown order, so the two share CRT greens', async () => {
+		global.__urlDetailFlameProps = null;
+		const { unmount } = mount( {
+			urlDetail: {
+				...baseUrlDetail,
+				aggregate_flame: { children: [ { name: 'kea-7064' } ] },
+				aggregate_profiles: {
+					categories: {
+						'kea-7064': { time: 3, count: 1 },
+						'kea-7065': { time: 9, count: 1 },
+					},
+					count: 2,
+					total_time: 12,
+				},
+			},
+		} );
+		await act( async () => {} );
+		expect( global.__urlDetailFlameProps.order ).toEqual( [
+			'kea-7065',
+			'kea-7064',
+		] );
+		unmount();
+	} );
+
+	it( 'hands the flame graph one order per breakdown, however often it re-renders', async () => {
+		const urlDetail = {
+			...baseUrlDetail,
+			aggregate_flame: { children: [ { name: 'kea-7074' } ] },
+			aggregate_profiles: {
+				categories: { 'kea-7074': { time: 3, count: 1 } },
+				count: 1,
+				total_time: 3,
+			},
+		};
+		const view = mount( { urlDetail } );
+		await act( async () => {} );
+		const first = global.__urlDetailFlameProps.order;
+
+		act( () =>
+			view.rerender(
+				React.createElement( UrlDetailView, {
+					...view.props,
+					onSelectRequest: jest.fn(),
+				} )
+			)
+		);
+
+		expect( global.__urlDetailFlameProps.order ).toBe( first );
+		view.unmount();
 	} );
 
 	it( 'mounts FlameGraph when aggregate_flame has children', async () => {

@@ -19,6 +19,7 @@ jest.mock( '../../FlameGraph', () => ( {
 jest.mock( '../../RequestProfile', () => ( {
 	__esModule: true,
 	default: () => 'REQUEST_PROFILE',
+	profileOrder: jest.requireActual( '../../RequestProfile' ).profileOrder,
 } ) );
 jest.mock( '../LogEntriesTable', () => ( {
 	__esModule: true,
@@ -58,6 +59,34 @@ async function renderAsync( element ) {
 }
 
 describe( 'RequestDetailView', () => {
+	it( 'hands the flame graph one order per breakdown, however often it re-renders', async () => {
+		const props = {
+			requestDetail: {
+				...baseRequest,
+				profiles: { 'kea-7075': { time: 2, count: 1 } },
+			},
+			flameData: { children: [ { name: 'kea-7075' } ] },
+			indentedEntries: [ { k: 'leaf', ts: 1 } ],
+			realEntryCount: 1,
+		};
+		const view = await renderAsync(
+			React.createElement( RequestDetailView, props )
+		);
+		const first = global.__requestDetailFlameProps.order;
+
+		act( () =>
+			view.rerender(
+				React.createElement( RequestDetailView, {
+					...props,
+					rid: 'kea-7076',
+				} )
+			)
+		);
+
+		expect( global.__requestDetailFlameProps.order ).toBe( first );
+		view.unmount();
+	} );
+
 	it( 'mounts a fresh log table for each request, so no fold state carries over', () => {
 		global.__requestDetailTableMounts = 0;
 		const props = ( rid ) =>
@@ -357,6 +386,28 @@ describe( 'RequestDetailView', () => {
 			} )
 		);
 		expect( container.textContent ).toContain( 'No log entries available' );
+		unmount();
+	} );
+
+	it( 'hands the flame graph the breakdown order, so the two share CRT greens', async () => {
+		const { unmount } = await renderAsync(
+			React.createElement( RequestDetailView, {
+				requestDetail: {
+					...baseRequest,
+					profiles: {
+						'kea-7066': { time: 2, count: 1 },
+						'kea-7067': { time: 8, count: 1 },
+					},
+				},
+				flameData: { children: [ { name: 'kea-7066' } ] },
+				indentedEntries: [ { k: 'leaf', ts: 1 } ],
+				realEntryCount: 1,
+			} )
+		);
+		expect( global.__requestDetailFlameProps.order ).toEqual( [
+			'kea-7067',
+			'kea-7066',
+		] );
 		unmount();
 	} );
 

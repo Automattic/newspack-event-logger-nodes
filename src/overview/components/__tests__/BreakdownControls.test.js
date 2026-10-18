@@ -547,6 +547,27 @@ describe( 'BreakdownControls', () => {
 			unmount();
 		} );
 
+		it( 'suggests every chip field but the URL hash, which only a typed chip names', () => {
+			const { container, unmount } = mountBreakdown();
+			const suggested = [
+				...container.querySelectorAll( 'datalist option' ),
+			].map( ( option ) => option.getAttribute( 'value' ) );
+			expect( suggested ).toContain( 'status_class=' );
+			expect( suggested ).not.toContain( 'url=' );
+			unmount();
+		} );
+
+		it( 'takes a typed url chip all the same', () => {
+			const { container, props, unmount } = mountBreakdown();
+			const box = chipBox( container );
+			type( box, 'url=4be3cc0a7084' );
+			press( box, 'Enter' );
+			expect( props.setChips ).toHaveBeenCalledWith( [
+				'url=4be3cc0a7084',
+			] );
+			unmount();
+		} );
+
 		it( 'refuses a field the chips do not offer, naming it', () => {
 			const { container, props, unmount } = mountBreakdown( {
 				chipOptions: FILTER_FIELD_OPTIONS.filter(

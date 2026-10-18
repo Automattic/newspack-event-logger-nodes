@@ -110,6 +110,7 @@ import {
 	rowsWire,
 	slotsEndingAt,
 } from '../../test-helpers/chartWire';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 import { SERIES_MEASURES } from '../constants';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
@@ -255,6 +256,40 @@ describe( 'AggregateTimeChart', () => {
 			( entry ) => entry.label
 		);
 		expect( labels ).toEqual( [ '5xx' ] );
+		unmount();
+	} );
+
+	it( 'draws a status class in its own color, CRT green for its rank', () => {
+		const { unmount } = renderComponent(
+			aggregateChart( {
+				series: dimSeries( {
+					[ bucketKeyNow() ]: { '5xx': [ 7, 917, 3, 7 ] },
+				} ),
+				metric: 'volume',
+				dims: [ 'status_class' ],
+			} )
+		);
+		const fills = d3Mock.style.mock.calls
+			.filter( ( [ property ] ) => 'fill' === property )
+			.map( ( [ , value ] ) => value );
+		expect( fills ).toContain( 'var(--phosphor-1, #ef5350)' );
+		unmount();
+	} );
+
+	it( 'draws any other breakdown in the skin chart color, CRT green for its rank', () => {
+		const { unmount } = renderComponent(
+			aggregateChart( {
+				series: dimSeries( {
+					[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
+				} ),
+				metric: 'volume',
+				dims: [ 'ua' ],
+			} )
+		);
+		const fills = d3Mock.style.mock.calls
+			.filter( ( [ property ] ) => 'fill' === property )
+			.map( ( [ , value ] ) => value );
+		expect( fills ).toContain( `var(--phosphor-1, ${ chartColor( 0 ) })` );
 		unmount();
 	} );
 

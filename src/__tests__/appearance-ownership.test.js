@@ -161,11 +161,14 @@ const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 	[ 'overview/components/UrlDetailView.js', [ /linear-gradient\(to right/ ] ],
 	// A legend item's `color` is series data handed to `ChartLegend`, the
 	// swatch the shared role paints from — not a style prop.
-	[ 'overview/ResponseTimeChart.js', [ /color: STATUS_COLORS/ ] ],
+	[
+		'overview/ResponseTimeChart.js',
+		[ /color: phosphorColor\(\s*STATUS_PLACE\[ key \],\s*STATUS_COLORS/ ],
+	],
 	[
 		'overview/RequestProfile.js',
 		[
-			/background:\s*getStateColor/,
+			/background:\s*phosphorColor\(\s*index,\s*getStateColor/,
 			/cursor:\s*'pointer'/,
 			/cursor:\s*hasEntries/,
 		],
@@ -776,6 +779,19 @@ describe( 'canonical appearance ownership', () => {
 		}
 
 		expect( offenders ).toEqual( [] );
+	} );
+
+	it( "draws CRT's flame frames opaque, the fill their label inks are checked on", () => {
+		const sheet = postcss.parse(
+			compile( path.join( SRC, 'overview/styles/flame-graph.scss' ) )
+		);
+		const opacities = [];
+		sheet.walkDecls( 'fill-opacity', ( declaration ) => {
+			opacities.push(
+				`${ declaration.parent.selector } ${ declaration.value }`
+			);
+		} );
+		expect( opacities ).toContain( '.theme-crt .d3-flame-graph rect 1' );
 	} );
 
 	it( 'contains no hardcoded inline shared appearance', () => {

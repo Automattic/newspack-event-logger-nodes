@@ -36,7 +36,12 @@ import 'd3-flame-graph/dist/d3-flamegraph.css';
 import './styles/flame-graph.scss';
 import { useContainerRefit } from '@newspack-nodes/shared/hooks/useContainerRefit';
 import { pickLabelColor, isColorParseable } from './flameColors';
-import { getStateColor } from '@newspack-nodes/shared/utils/formatUtils';
+import {
+	getStateColor,
+	phosphorColor,
+	phosphorInk,
+	spanBaseName,
+} from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
  * The label d3-flame-graph shows for a frame, and the key it sorts on when no
@@ -367,29 +372,64 @@ export const createColorMapper = () => ( d ) =>
 	d.data?.spacer ? 'transparent' : getStateColor( d.data?.name );
 
 /**
- * Set each frame's label color for contrast against its category fill.
+ * Each frame's place in CRT's greens: a category the Time Breakdown beside it
+ * lists takes its rank there, so the two agree; one it does not list takes
+ * the next free place, on first sight.
  *
- * d3-flame-graph renders the label as a `div.d3-flame-graph-label` inside the
- * frame's `<foreignObject>`; the fill lives on the frame's `<rect>`. Re-run
- * after every chart render/update since the labels are recreated.
- *
- * A spacer's fill is `transparent`, which no contrast can be read against —
- * and it has no label to read anyway.
- *
- * @param {Element} container Flame graph container element.
+ * @param {Array<string>} order The breakdown's categories, longest first.
+ * @return {(name: string) => number} A frame name's place, from 0.
  */
-const applyLabelContrast = ( container ) => {
+export const framePlaces = ( order ) => {
+	const places = new Map( order.map( ( state, i ) => [ state, i ] ) );
+	return ( name ) => {
+		const base = spanBaseName( name );
+		if ( ! places.has( base ) ) {
+			places.set( base, places.size );
+		}
+		return places.get( base );
+	};
+};
+
+/**
+ * Paint each frame CRT's green for its place, and its label the ink that
+ * reads on its fill.
+ *
+ * d3-flame-graph fills the frame's `<rect>` by attribute, which resolves no
+ * `var()`, so the green rides the `style` over it. The label is a
+ * `div.d3-flame-graph-label` inside the frame's `<foreignObject>`. Re-run
+ * after every chart render, update and zoom: the frames persist and are
+ * re-bound, so this pass overwrites or clears every style it sets.
+ *
+ * A spacer's fill is `transparent`, and a style an earlier pass left on its
+ * element is cleared. A fill no contrast can be read against still takes its
+ * green, and its label takes the default ink.
+ *
+ * @param {Element}       container Flame graph container element.
+ * @param {Array<string>} order     The breakdown's categories, longest first.
+ */
+export const applyFrameColors = ( container, order ) => {
+	const placeOf = framePlaces( order );
 	d3.select( container )
 		.selectAll( 'g.frame' )
-		.each( function () {
+		.each( function ( d ) {
 			const frame = d3.select( this );
-			const fill = frame.select( 'rect' ).attr( 'fill' );
-			if ( ! isColorParseable( fill ) ) {
+			const rect = frame.select( 'rect' );
+			const label = frame.select( '.d3-flame-graph-label' );
+			const fill = rect.attr( 'fill' );
+			// A frame is reused across updates: clear what this pass owns.
+			if ( ! fill || 'transparent' === fill ) {
+				rect.style( 'fill', null );
+				label.style( 'color', null );
 				return;
 			}
-			frame
-				.select( '.d3-flame-graph-label' )
-				.style( 'color', pickLabelColor( fill ) );
+			const place = placeOf( d?.data?.name ?? '' );
+			rect.style( 'fill', phosphorColor( place, fill ) );
+			label.style(
+				'color',
+				isColorParseable( fill )
+					? phosphorInk( place, pickLabelColor( fill ) )
+					: null
+			);
 		} );
 };
 
@@ -414,15 +454,19 @@ const applyAskDescriptors = ( container ) => {
 /**
  * Re-apply everything a frame carries beyond its geometry.
  *
- * d3-flame-graph rebuilds every frame on update and on zoom, and re-runs the
- * colour mapper — so both stamps are lost together and must be re-applied
- * together. One function, because applying half leaves the labels at the
- * default colour on a shade chosen to need the other one.
+ * d3-flame-graph keeps its frame elements across an update and a zoom: an
+ * update binds them afresh to whichever node takes each id, and both re-run
+ * the colour mapper. So every pass re-applies both stamps, overwriting or
+ * clearing every style it owns, since an element painted for one frame may
+ * now hold another, a spacer among them. One function, because applying half
+ * leaves the labels at the default colour on a shade chosen to need the other
+ * one.
  *
- * @param {HTMLElement} container The chart container.
+ * @param {HTMLElement}   container The chart container.
+ * @param {Array<string>} order     The breakdown's categories, longest first.
  */
-const restamp = ( container ) => {
-	applyLabelContrast( container );
+const restamp = ( container, order ) => {
+	applyFrameColors( container, order );
 	applyAskDescriptors( container );
 };
 
@@ -771,11 +815,23 @@ export const withTimeSpacers = ( root, maxSpacers = PRUNE_HARD_MAX_NODES ) => {
  *
  * @param {Object}                               props                 Component props.
  * @param {Object}                               props.data            Flame tree root: { name, value, children[] }.
+ * @param {Array<string>}                        [props.order]         The Time Breakdown's categories beside it, longest first, which give each frame its place in CRT's greens.
  * @param {(i: ?number, path: string[]) => void} [props.onRevealEntry] Called on Cmd/Ctrl+Click with the position of the log entry the frame opened at — null for a frame carrying none, an aggregate's or a folded request's — and the frame's path, root-first frame names; absent disables reveal.
  * @return {import('react').ReactElement} Rendered component.
  */
-export default function FlameGraph( { data, onRevealEntry } ) {
+export default function FlameGraph( { data, onRevealEntry, order = [] } ) {
 	const containerRef = useRef( null );
+	// The latest order, for the restamps a zoom's timer runs after a render.
+	const orderRef = useRef( order );
+	orderRef.current = order;
+	// The order the frames were last painted in, so a new one repaints them.
+	const orderKey = order.join( '\n' );
+	const paintedOrderRef = useRef( orderKey );
+	// Paint the frames in the latest order, and remember which order it was.
+	const repaint = useRef( ( container ) => {
+		paintedOrderRef.current = orderRef.current.join( '\n' );
+		restamp( container, orderRef.current );
+	} ).current;
 	const chartRef = useRef( null );
 	const tooltipRef = useRef( null );
 	const metaClickRef = useRef( false ); // Cmd/Ctrl held at the last mousedown.
@@ -828,7 +884,7 @@ export default function FlameGraph( { data, onRevealEntry } ) {
 				}
 			}
 			// After the re-zoom: it rebuilds the frames, unstamped.
-			restamp( container );
+			repaint( container );
 
 			// Restore tooltip state (else it vanishes on refresh/zoom).
 			if ( tooltipHasState ) {
@@ -871,20 +927,20 @@ export default function FlameGraph( { data, onRevealEntry } ) {
 							chartRef.current.transitionDuration( 0 );
 						}
 						// New frames; unstamped.
-						restamp( container );
+						repaint( container );
 					}, 305 );
 				} );
 
 			chartRef.current = chart;
 			d3.select( container ).datum( framedData ).call( chart );
-			restamp( container );
+			repaint( container );
 
 			// Track Cmd/Ctrl on mousedown (more reliable than click on Mac).
 			container.addEventListener( 'mousedown', ( e ) => {
 				metaClickRef.current = e.metaKey || e.ctrlKey;
 			} );
 		}
-	}, [ framedData, onRevealEntry ] );
+	}, [ framedData, onRevealEntry, repaint ] );
 
 	// Tear down on unmount; tooltips live on <body>, outside React's reach.
 	useEffect( () => {
@@ -920,11 +976,22 @@ export default function FlameGraph( { data, onRevealEntry } ) {
 			d3.select( containerRef.current )
 				.datum( framedData )
 				.call( chartRef.current );
-			restamp( containerRef.current );
+			repaint( containerRef.current );
 		},
 		// The dep that binds the observer: the empty state has no container.
 		[ framedData ]
 	);
+
+	// A new ranking under the same data repaints the frames it already drew.
+	useEffect( () => {
+		if (
+			paintedOrderRef.current !== orderKey &&
+			chartRef.current &&
+			containerRef.current
+		) {
+			repaint( containerRef.current );
+		}
+	}, [ orderKey, repaint ] );
 
 	// Gate the empty state on original data; pruning must not fake "no data".
 	if ( ! data || ! data.children || data.children.length === 0 ) {

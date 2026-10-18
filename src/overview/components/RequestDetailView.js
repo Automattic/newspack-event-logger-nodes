@@ -17,11 +17,11 @@
  * to unfold and scroll to that row.
  */
 
-import { useRef } from '@wordpress/element';
+import { useMemo, useRef } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 
 import RequestSummary from '../../components/RequestSummary';
-import RequestProfile from '../RequestProfile';
+import RequestProfile, { profileOrder } from '../RequestProfile';
 import RequestTrace, { FlameCutNote } from './RequestTrace';
 import LogEntriesTable from './LogEntriesTable';
 import FindingList from './FindingList';
@@ -61,6 +61,10 @@ export default function RequestDetailView( {
 	rid,
 } ) {
 	const revealRef = useRef( null );
+	const flameOrder = useMemo(
+		() => profileOrder( requestDetail.profiles ),
+		[ requestDetail.profiles ]
+	);
 	const status = errorStatus( requestDetail.error_status );
 	const hasFindings = Array.isArray( requestDetail.findings );
 	const isFolded = !! requestDetail.folded;
@@ -127,6 +131,7 @@ export default function RequestDetailView( {
 				<div style={ SECTION_STYLE }>
 					<RequestTrace
 						flameData={ flameData }
+						order={ flameOrder }
 						entries={ indentedEntries }
 						onRevealEntry={ ( n, path ) =>
 							revealRef.current?.( n, path )

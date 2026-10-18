@@ -84,10 +84,10 @@ export const chipsOf = ( drafts ) => [ ...new Set( drafts.map( chipOf ) ) ];
  * with it, shown as `Field = value` or `Field ≠ value` — a status class as
  * `5xx` — and the box a typed one is added through.
  *
- * @param {Object}                                props          Component props.
- * @param {string[]}                              props.chips    The chips, each `field=value` as `query` takes a filter.
- * @param {(chips: string[]) => void}             props.onChange Receives the chips an addition or a removal leaves.
- * @param {Array<{label: string, value: string}>} props.options  The fields a chip may name.
+ * @param {Object}                                                     props          Component props.
+ * @param {string[]}                                                   props.chips    The chips, each `field=value` as `query` takes a filter.
+ * @param {(chips: string[]) => void}                                  props.onChange Receives the chips an addition or a removal leaves.
+ * @param {Array<{label: string, value: string, suggested?: boolean}>} props.options  The fields a chip may name; the box suggests those not `suggested: false`.
  * @return {import('react').ReactElement} The chips and their box.
  */
 function FilterChips( { chips, onChange, options } ) {
@@ -115,10 +115,12 @@ function FilterChips( { chips, onChange, options } ) {
 					}
 				} }
 				commitOnBlur={ false }
-				suggestions={ options.map( ( option ) => ( {
-					value: `${ option.value }=`,
-					label: option.label,
-				} ) ) }
+				suggestions={ options
+					.filter( ( option ) => false !== option.suggested )
+					.map( ( option ) => ( {
+						value: `${ option.value }=`,
+						label: option.label,
+					} ) ) }
 				aria-label={ __( 'Filter', 'newspack-event-logger-nodes' ) }
 				placeholder={ __(
 					'Filter, e.g. status_class=5xx',

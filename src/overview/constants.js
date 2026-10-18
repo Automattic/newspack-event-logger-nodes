@@ -77,9 +77,11 @@ export const CHART_METRIC_OPTIONS = [
  *
  * `worker` is a chip, never a series: the Overview charts ask `worker=0`
  * unless a chip names the workers, so a series by it would draw one line.
- * `url` is a chip by hash; the URL modal is the place to chart one URL.
+ * `url` is a chip by hash; the URL modal is the place to chart one URL. It
+ * is `suggested: false`: a reader reaches one URL through the URL table, and
+ * a typed `url=<hash>` still filters.
  *
- * @type {Array<{value: string, label: string, kind: 'series'|'filter'}>}
+ * @type {Array<{value: string, label: string, kind: 'series'|'filter', suggested?: boolean}>}
  */
 const REQUEST_FIELDS = [
 	{
@@ -91,6 +93,7 @@ const REQUEST_FIELDS = [
 		value: 'url',
 		label: __( 'URL Hash', 'newspack-event-logger-nodes' ),
 		kind: 'filter',
+		suggested: false,
 	},
 	{
 		value: 'status',
@@ -179,14 +182,18 @@ export const SCOPED_BREAKDOWN_OPTIONS = CHART_BREAKDOWN_OPTIONS.filter(
 );
 
 /**
- * The fields a filter chip may name: every one but `server`. The Server
+ * The fields a filter chip may name: every one but `server`, each saying
+ * whether the box suggests it. The Server
  * select is the one place a server is chosen, and the `urls`, `dump_url` and
  * `ask` verbs refuse a `server=` filter as `--server`'s, so a chip on it
  * would refuse the table the chart's chips ride.
  */
 export const FILTER_FIELD_OPTIONS = REQUEST_FIELDS.filter(
 	( field ) => 'server' !== field.value
-).map( asOption );
+).map( ( field ) => ( {
+	...asOption( field ),
+	suggested: false !== field.suggested,
+} ) );
 
 /**
  * What the aggregate chart breaks down by until someone chooses otherwise.

@@ -20,7 +20,10 @@
 import { useCallback, useMemo } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
-import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
+import {
+	phosphorColor,
+	STATUS_COLORS,
+} from '@newspack-nodes/shared/utils/formatUtils';
 import {
 	axisDuration,
 	integerTicks,
@@ -218,7 +221,7 @@ export default function AggregateTimeChart( {
 			return { lines: [], colorMap: {}, hours: 0 };
 		}
 
-		// Status classes keep their semantic colours; the rest colour by rank.
+		// Status classes take semantic colours, the rest the skin's by rank.
 		const byClass = 1 === dims.length && 'status_class' === dims[ 0 ];
 		const colorMap = byClass ? STATUS_COLORS : {};
 
@@ -242,8 +245,13 @@ export default function AggregateTimeChart( {
 	// The unit follows the DOMAIN: the chart builds it from the peak it draws.
 	const yFormatFor = Y_FORMATS[ metric ];
 
+	// CRT paints each series its green by rank over that colour.
 	const colorAt = useCallback(
-		( label, index ) => chartState.colorMap[ label ] || chartColor( index ),
+		( label, index ) =>
+			phosphorColor(
+				index,
+				chartState.colorMap[ label ] || chartColor( index )
+			),
 		[ chartState ]
 	);
 

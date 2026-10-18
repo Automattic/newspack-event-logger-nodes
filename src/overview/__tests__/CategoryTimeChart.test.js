@@ -473,6 +473,30 @@ describe( 'CategoryTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'draws each category in its own color, CRT green for its rank', () => {
+		window.eventLoggerCustomColors = {
+			'kea-7051': '#a1b2c3',
+			'kea-7052': '#c3b2a1',
+		};
+		const { unmount } = renderComponent(
+			categoryChart( {
+				data: cats( {
+					[ bucketKeyNow() ]: {
+						'kea-7051': [ 9000, 90 ],
+						'kea-7052': [ 10, 1 ],
+					},
+				} ),
+			} )
+		);
+		const fills = d3Mock.style.mock.calls
+			.filter( ( [ property ] ) => 'fill' === property )
+			.map( ( [ , value ] ) => value );
+		expect( fills ).toContain( 'var(--phosphor-1, #a1b2c3)' );
+		expect( fills ).toContain( 'var(--phosphor-2, #c3b2a1)' );
+		delete window.eventLoggerCustomColors;
+		unmount();
+	} );
+
 	it( 'draws a category named total as a category like any other', () => {
 		const { unmount } = renderComponent(
 			categoryChart( {

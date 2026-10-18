@@ -16,6 +16,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import {
 	getStateColor,
 	formatDuration,
+	phosphorColor,
 } from '@newspack-nodes/shared/utils/formatUtils';
 
 import './styles/request-profile.scss';
@@ -111,6 +112,38 @@ function ProfileEntries( { entries } ) {
 }
 
 /**
+ * A profile's categories as its table lists them: longest first, leaving out
+ * one that took no time and made no call.
+ *
+ * @param {?Object} profiles Category name to `{ time, count, entries }`.
+ * @return {Array<{state: string, count: number, time: number, entries: Object}>} The rows.
+ */
+const sortProfiles = ( profiles ) => {
+	if ( ! profiles || typeof profiles !== 'object' ) {
+		return [];
+	}
+	return Object.entries( profiles )
+		.map( ( [ state, data ] ) => ( {
+			state,
+			count: data.count || 0,
+			time: data.time || 0,
+			entries: data.entries || {},
+		} ) )
+		.filter( ( p ) => p.time > 0 || p.count > 0 )
+		.sort( ( a, b ) => b.time - a.time );
+};
+
+/**
+ * The categories in the order the Time Breakdown ranks them, so a flame graph
+ * beside it gives each category the same CRT green.
+ *
+ * @param {?Object} profiles Category name to `{ time, count, entries }`.
+ * @return {Array<string>} Category names, longest first.
+ */
+export const profileOrder = ( profiles ) =>
+	sortProfiles( profiles ).map( ( p ) => p.state );
+
+/**
  * The time breakdown for one request, or for an average of many.
  *
  * Every percentage divides by `totalMs`, the wall clock, rather than by the
@@ -142,21 +175,10 @@ export default function RequestProfile( {
 	const [ expandedState, setExpandedState ] = useState( null );
 	const [ showAll, setShowAll ] = useState( false );
 
-	const sortedProfiles = useMemo( () => {
-		if ( ! profiles || typeof profiles !== 'object' ) {
-			return [];
-		}
-
-		return Object.entries( profiles )
-			.map( ( [ state, data ] ) => ( {
-				state,
-				count: data.count || 0,
-				time: data.time || 0,
-				entries: data.entries || {},
-			} ) )
-			.filter( ( p ) => p.time > 0 || p.count > 0 )
-			.sort( ( a, b ) => b.time - a.time );
-	}, [ profiles ] );
+	const sortedProfiles = useMemo(
+		() => sortProfiles( profiles ),
+		[ profiles ]
+	);
 
 	// Use the pre-calculated total (aggregated) or sum it (single request).
 	const profiledTime = useMemo( () => {
@@ -198,7 +220,7 @@ export default function RequestProfile( {
 			{ title && <h3>{ title }</h3> }
 
 			<div className="event-logger-profile-bar">
-				{ sortedProfiles.map( ( { state, time } ) => {
+				{ sortedProfiles.map( ( { state, time }, index ) => {
 					if ( isCallbackCategory( state ) ) {
 						return null;
 					}
@@ -213,7 +235,10 @@ export default function RequestProfile( {
 							) } (${ shareText( share ) })` }
 							style={ {
 								width: `${ share ?? 0 }%`,
-								background: getStateColor( state ),
+								background: phosphorColor(
+									index,
+									getStateColor( state )
+								),
 								cursor: 'pointer',
 							} }
 							onClick={ () => toggleExpand( state ) }
@@ -248,7 +273,7 @@ export default function RequestProfile( {
 				</thead>
 				<tbody>
 					{ visibleProfiles.map(
-						( { state, count, time, entries } ) => {
+						( { state, count, time, entries }, index ) => {
 							const share = shareOf( time );
 							const hasEntries =
 								Object.keys( entries ).length > 0;
@@ -275,8 +300,10 @@ export default function RequestProfile( {
 											<span
 												className="event-logger-profile-swatch"
 												style={ {
-													background:
-														getStateColor( state ),
+													background: phosphorColor(
+														index,
+														getStateColor( state )
+													),
 												} }
 											/>
 											{ state }

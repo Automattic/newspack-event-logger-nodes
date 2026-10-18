@@ -15,7 +15,12 @@ import {
 	DARK_TEXT,
 	LIGHT_TEXT,
 } from '../flameColors';
-import { createColorMapper } from '../FlameGraph';
+import * as d3 from 'd3';
+import {
+	applyFrameColors,
+	createColorMapper,
+	framePlaces,
+} from '../FlameGraph';
 import { getStateColor } from '@newspack-nodes/shared/utils/formatUtils';
 
 const BRIGHT = '#41e07a';
@@ -96,5 +101,104 @@ describe( 'createColorMapper', () => {
 		expect(
 			createColorMapper()( { depth: 1, data: { spacer: true } } )
 		).toBe( 'transparent' );
+	} );
+} );
+
+describe( 'framePlaces', () => {
+	it( 'places a listed category at its rank and an unlisted one after the list, on first sight', () => {
+		const placeOf = framePlaces( [ 'kea-7055', 'kea-7058' ] );
+		expect( placeOf( 'kea-7058' ) ).toBe( 1 );
+		expect( placeOf( 'kea-7057: /detail-7057' ) ).toBe( 2 );
+		expect( placeOf( 'kea-7056' ) ).toBe( 3 );
+		expect( placeOf( 'kea-7057' ) ).toBe( 2 );
+		expect( placeOf( 'kea-7055: /detail-7055' ) ).toBe( 0 );
+	} );
+} );
+
+describe( 'applyFrameColors', () => {
+	/**
+	 * Draw frames as d3-flame-graph does: a `g.frame` per node holding its
+	 * attribute-filled rect and its label div.
+	 *
+	 * @param {Array<[string, string]>} frames Name and fill per frame.
+	 * @return {HTMLElement} The container.
+	 */
+	const drawFrames = ( frames ) => {
+		const container = document.createElement( 'div' );
+		const g = d3
+			.select( container )
+			.append( 'svg' )
+			.selectAll( 'g.frame' )
+			.data( frames.map( ( [ name ] ) => ( { data: { name } } ) ) )
+			.join( 'g' )
+			.attr( 'class', 'frame' );
+		g.append( 'rect' ).attr( 'fill', ( _d, i ) => frames[ i ][ 1 ] );
+		g.append( 'foreignObject' )
+			.append( 'xhtml:div' )
+			.attr( 'class', 'd3-flame-graph-label' );
+		return container;
+	};
+	const paints = ( container ) =>
+		[ ...container.querySelectorAll( 'g.frame' ) ].map( ( frame ) => [
+			frame.querySelector( 'rect' ).style.getPropertyValue( 'fill' ),
+			frame
+				.querySelector( '.d3-flame-graph-label' )
+				.style.getPropertyValue( 'color' ),
+		] );
+
+	it( "paints each frame its category's CRT green, its label the matching ink, on every pass", () => {
+		const container = drawFrames( [
+			[ 'kea-7056: /detail-7056', '#123456' ],
+			[ 'kea-7055', '#abcdef' ],
+			[ 'spacer-7059', 'transparent' ],
+		] );
+		const expected = [
+			[
+				'var(--phosphor-2, #123456)',
+				`var(--phosphor-ink-2, ${ pickLabelColor( '#123456' ) })`,
+			],
+			[
+				'var(--phosphor-1, #abcdef)',
+				`var(--phosphor-ink-1, ${ pickLabelColor( '#abcdef' ) })`,
+			],
+			[ '', '' ],
+		];
+
+		applyFrameColors( container, [ 'kea-7055' ] );
+		expect( paints( container ) ).toEqual( expected );
+
+		applyFrameColors( container, [ 'kea-7055' ] );
+		expect( paints( container ) ).toEqual( expected );
+	} );
+
+	it( 'paints a fill it cannot parse its green too, and leaves its label ink alone', () => {
+		const container = drawFrames( [
+			[ 'kea-7079', 'hsl(120, 40%, 40%)' ],
+		] );
+
+		applyFrameColors( container, [] );
+
+		const [ [ fill, ink ] ] = paints( container );
+		expect( fill ).toMatch( /^var\(--phosphor-1, hsl\(120, 40%, 40%\)\)$/ );
+		expect( ink ).toBe( '' );
+	} );
+
+	it( 'clears what an earlier paint left when a frame it painted turns spacer or unparseable', () => {
+		const container = drawFrames( [
+			[ 'kea-7082', '#abcdef' ],
+			[ 'kea-7083', '#123456' ],
+		] );
+		applyFrameColors( container, [] );
+		const [ spacer, odd ] = container.querySelectorAll( 'g.frame rect' );
+		spacer.setAttribute( 'fill', 'transparent' );
+		odd.setAttribute( 'fill', 'hsl(200, 30%, 30%)' );
+
+		applyFrameColors( container, [] );
+
+		expect( paints( container ) ).toEqual( [
+			[ '', '' ],
+			// The spacer takes no place, so this is the first category seen.
+			[ 'var(--phosphor-1, hsl(200, 30%, 30%))', '' ],
+		] );
 	} );
 } );

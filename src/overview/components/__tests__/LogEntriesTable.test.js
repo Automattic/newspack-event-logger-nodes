@@ -2616,19 +2616,34 @@ it( 'Show more opens one merged-tree body, not every row the fold rebuilt', () =
 	unmount();
 } );
 
-describe( 'centering the row a body toggle resized', () => {
+describe( 'recentering after a row shrinks', () => {
 	const longBody = Array.from(
 		{ length: 12 },
 		( _, i ) => `line-${ i + 1 }`
 	).join( '\n' );
+	const originalRect = window.HTMLElement.prototype.getBoundingClientRect;
+
+	afterEach( () => {
+		window.HTMLElement.prototype.getBoundingClientRect = originalRect;
+	} );
 
 	/**
-	 * Mount the stock tree with a long body on `db (start)`, recording the
-	 * row and the text it holds at each `scrollIntoView` call.
+	 * Mount the stock tree with a long body on `db (start)`, every row's top
+	 * at `top` in the window, recording the row and the text it holds at
+	 * each `scrollIntoView` call.
 	 *
-	 * @return {Object} The mount, the calls, and a toggle finder.
+	 * @param {number} top Where every row's top sits, in viewport pixels.
+	 * @return {Object} The mount, the calls, and finders.
 	 */
-	const mount = () => {
+	const mount = ( top ) => {
+		window.HTMLElement.prototype.getBoundingClientRect = () => ( {
+			top,
+			bottom: top + 24,
+			left: 0,
+			right: 800,
+			width: 800,
+			height: 24,
+		} );
 		const calls = [];
 		window.HTMLElement.prototype.scrollIntoView = jest.fn(
 			function ( options ) {
@@ -2644,11 +2659,26 @@ describe( 'centering the row a body toggle resized', () => {
 			Array.from( mounted.container.querySelectorAll( 'button' ) ).find(
 				( b ) => b.textContent.startsWith( 'Show ' )
 			);
-		return { ...mounted, calls, toggle };
+		const rowOf = ( keyword ) =>
+			[ ...mounted.container.querySelectorAll( 'tbody tr' ) ].find(
+				( tr ) => tr.textContent.includes( keyword )
+			);
+		return { ...mounted, calls, toggle, rowOf };
 	};
 
-	it( 'centers the row on Show more once the whole body has rendered', () => {
-		const { container, calls, toggle, unmount } = mount();
+	it( 'leaves the scroll alone on Show more', () => {
+		const { container, calls, toggle, unmount } = mount( -137 );
+
+		act( () => toggle().click() );
+
+		expect( container.textContent ).toContain( 'line-12' );
+		expect( calls ).toEqual( [] );
+		unmount();
+	} );
+
+	it( 'centers the row on Show less when its top has scrolled out of view', () => {
+		const { calls, toggle, unmount } = mount( -137 );
+		act( () => toggle().click() );
 		const row = toggle().closest( 'tr' );
 
 		act( () => toggle().click() );
@@ -2659,31 +2689,30 @@ describe( 'centering the row a body toggle resized', () => {
 			behavior: 'smooth',
 			block: 'center',
 		} );
-		expect( calls[ 0 ].text ).toContain( 'line-12' );
+		expect( calls[ 0 ].text ).toContain( 'line-5' );
+		expect( calls[ 0 ].text ).not.toContain( 'line-12' );
 		// The reader just clicked this row; it gets no flash.
 		for ( const td of row.querySelectorAll( 'td' ) ) {
 			expect( td.style.boxShadow ).toBe( '' );
 		}
-		expect( container.textContent ).toContain( 'line-12' );
 		unmount();
 	} );
 
-	it( 'centers the row on Show less once the body has shrunk', () => {
-		const { calls, toggle, unmount } = mount();
-		act( () => toggle().click() );
-		const row = toggle().closest( 'tr' );
-
+	it( 'leaves the scroll alone on Show less while the row top is in view', () => {
+		const { calls, toggle, unmount } = mount( 213 );
 		act( () => toggle().click() );
 
-		expect( calls ).toHaveLength( 2 );
-		expect( calls[ 1 ].row ).toBe( row );
-		expect( calls[ 1 ].options.block ).toBe( 'center' );
-		expect( calls[ 1 ].text ).toContain( 'line-5' );
-		expect( calls[ 1 ].text ).not.toContain( 'line-12' );
+		act( () => toggle().click() );
+
+		expect( calls ).toEqual( [] );
 		unmount();
 	} );
 
-	it( "centers a merged row's row when its complete side toggles", () => {
+	it( "centers a merged row on its complete side's Show less", () => {
+		window.HTMLElement.prototype.getBoundingClientRect = () => ( {
+			top: -91,
+			bottom: -67,
+		} );
 		const calls = [];
 		window.HTMLElement.prototype.scrollIntoView = jest.fn( function () {
 			calls.push( this );
@@ -2694,14 +2723,53 @@ describe( 'centering the row a body toggle resized', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( LogEntriesTable, { entries } )
 		);
-		const button = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => 'Show more' === b.textContent );
-		const row = button.closest( 'tr' );
+		const button = () =>
+			Array.from( container.querySelectorAll( 'button' ) ).find( ( b ) =>
+				b.textContent.startsWith( 'Show ' )
+			);
+		act( () => button().click() );
+		const row = button().closest( 'tr' );
 
-		act( () => button.click() );
+		act( () => button().click() );
 
 		expect( calls ).toEqual( [ row ] );
+		unmount();
+	} );
+
+	it( 'centers the folded row when an open complete row folds it out of view', () => {
+		const { calls, rowOf, unmount } = mount( -137 );
+		act( () => rowOf( 'db' ).click() );
+		expect( calls ).toEqual( [] );
+
+		act( () => rowOf( 'db (complete)' ).click() );
+
+		expect( rowOf( 'db (complete)' ) ).toBeUndefined();
+		expect( calls ).toHaveLength( 1 );
+		expect( calls[ 0 ].row ).toBe( rowOf( 'db' ) );
+		expect( calls[ 0 ].text ).not.toContain( 'logged value' );
+		expect( calls[ 0 ].options.block ).toBe( 'center' );
+		unmount();
+	} );
+
+	it( 'leaves the scroll alone when the folded row top is in view', () => {
+		const { calls, rowOf, unmount } = mount( 213 );
+		act( () => rowOf( 'db' ).click() );
+
+		act( () => rowOf( 'db (complete)' ).click() );
+
+		expect( rowOf( 'db (complete)' ) ).toBeUndefined();
+		expect( calls ).toEqual( [] );
+		unmount();
+	} );
+
+	it( 'leaves the scroll alone when the start row folds the pair', () => {
+		const { calls, rowOf, unmount } = mount( -137 );
+		act( () => rowOf( 'db' ).click() );
+
+		act( () => rowOf( 'db (start)' ).click() );
+
+		expect( rowOf( 'db (complete)' ) ).toBeUndefined();
+		expect( calls ).toEqual( [] );
 		unmount();
 	} );
 } );

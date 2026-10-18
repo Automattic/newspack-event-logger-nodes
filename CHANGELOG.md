@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The filter box no longer suggests URL Hash.** A reader reaches one URL through the URL table; a typed `url=<hash>` chip still filters, and reads as URL Hash.
+- **The category charts draw each category in its own color.** Time by Category, Events by Category and Average Time per Event take the hook-category and custom-event colors the Time Breakdown and the flame graphs already draw, where they took the skin's chart ramp.
+- **On the CRT skin every data surface draws in eight phosphor greens.** The four charts, the Time Breakdown bar and its swatches, Response Times and the flame graphs paint each mark CRT's green for its place: a series' rank, a breakdown row's rank, a flame frame's category's rank in the breakdown beside it, a status class's own place. The two pairs of CRT chart bands that drew alike now differ. `crt-color`, CRT with its data in their own colors, draws them as every other skin does.
+- **Requires newspack-nodes 2.115.0,** whose style handle carries the `crt-color` skin and CRT's `--phosphor-*` tokens; below it the plugin goes dormant behind its admin notice.
+- The request entries table recenters a row only where a click shrinks it and leaves its top out of view: Show less, or a plain click on an open pair's complete row, which recenters on the folded row. Show more, and folding from the start row, leave the scroll alone; every body toggle recentered its row before.
+
 ## [0.141.2] - 2026-10-18
 
 ### Fixed
-- The overview-prefetch job runs on whichever partition its entry lands. Only partition 0's JobWorker ran it, and inside a worker the tick's firehose entry carries the worker's own spawn request id, so every job of a 595-second life landed on one partition: a four-partition hub ran the job for about one worker life in four, and its Overview answered live between.
+- The overview-prefetch job runs on whichever partition its entry lands. Only partition 0's JobWorker ran it, so a four-partition hub ran about one job in four: one worker life in four where the worker's spawn request had a started record, whose id the tick's firehose entry carries for the worker's 595-second life, and otherwise one interval in four, from a borrowed job context's fresh id. Its Overview answered live between.
 
 ## [0.141.1] - 2026-10-18
 

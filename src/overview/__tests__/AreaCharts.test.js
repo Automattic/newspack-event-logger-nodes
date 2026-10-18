@@ -160,8 +160,10 @@ describe( 'area chart frame', () => {
 		} );
 		const [ only ] = areas( container );
 		expect( areas( container ) ).toHaveLength( 1 );
-		// 4xx keeps its own colour and now peaks at the axis ceiling.
-		expect( only.style.fill ).toBe( STATUS_COLORS[ '4xx' ] );
+		// 4xx keeps its own colour, CRT's green for its rank, at the ceiling.
+		expect( only.style.fill ).toBe(
+			`var(--phosphor-2, ${ STATUS_COLORS[ '4xx' ] })`
+		);
 		expect( highestPoint( only ) ).toBeCloseTo( ceiling, 3 );
 		expect(
 			legendRows( container )[ 1 ]

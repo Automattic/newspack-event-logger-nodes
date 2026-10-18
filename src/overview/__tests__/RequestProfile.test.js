@@ -11,7 +11,10 @@
  */
 
 import * as React from 'react';
-import RequestProfile, { ProfileWithCaption } from '../RequestProfile';
+import RequestProfile, {
+	ProfileWithCaption,
+	profileOrder,
+} from '../RequestProfile';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const baseProfiles = {
@@ -39,6 +42,43 @@ describe( 'RequestProfile', () => {
 		);
 		expect( second.container.textContent ).toBe( '' );
 		second.unmount();
+	} );
+
+	it( 'orders the categories as the table does', () => {
+		expect(
+			profileOrder( {
+				'kea-7061': { time: 1, count: 1 },
+				'kea-7062': { time: 5, count: 1 },
+				'kea-7063': { time: 0, count: 0 },
+			} )
+		).toEqual( [ 'kea-7062', 'kea-7061' ] );
+		expect( profileOrder( undefined ) ).toEqual( [] );
+	} );
+
+	it( "paints each bar segment and swatch its category's CRT green for its rank", () => {
+		window.eventLoggerCustomColors = {
+			'kea-7053': '#a1b2c3',
+			'kea-7054': '#c3b2a1',
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: {
+					'kea-7053': { time: 30, count: 1 },
+					'kea-7054': { time: 20, count: 1 },
+				},
+			} )
+		);
+		const second = 'var(--phosphor-2, #c3b2a1)';
+		const [ , segment ] = container.querySelectorAll(
+			'.event-logger-profile-bar [role="button"]'
+		);
+		expect( segment.style.getPropertyValue( 'background' ) ).toBe( second );
+		const [ , swatch ] = container.querySelectorAll(
+			'.event-logger-profile-swatch'
+		);
+		expect( swatch.style.getPropertyValue( 'background' ) ).toBe( second );
+		delete window.eventLoggerCustomColors;
+		unmount();
 	} );
 
 	it( 'renders rows sorted by time descending', () => {

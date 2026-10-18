@@ -20,7 +20,7 @@ import { resolve as resolvePath } from 'path';
 import * as React from 'react';
 import { MARGIN } from '@newspack-nodes/shared/hooks/useTimeChart';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
-import ResponseTimeChart from '../ResponseTimeChart';
+import ResponseTimeChart, { STATUS_PLACE } from '../ResponseTimeChart';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
 // jsdom lays nothing out and reports clientWidth 0, so `openFrame` falls back.
@@ -132,6 +132,26 @@ const mountChart = ( requests, onRequestClick = jest.fn() ) =>
 const dots = ( container ) => [ ...container.querySelectorAll( 'circle' ) ];
 
 /**
+ * A dot's fill, as the chart paints it.
+ *
+ * @param {Element} circle A dot.
+ * @return {string} Its `style` fill.
+ */
+const fillOf = ( circle ) => circle.style.getPropertyValue( 'fill' );
+
+/** CRT's green for each status class, brighter as it grows more severe. */
+const PLACE = { '2xx': 6, '3xx': 2, '4xx': 8, '5xx': 3, unknown: 1 };
+
+/**
+ * A status class's paint: CRT's green for its place, else its own color.
+ *
+ * @param {string} key The status class.
+ * @return {string} The CSS value.
+ */
+const statusFill = ( key ) =>
+	`var(--phosphor-${ PLACE[ key ] }, ${ STATUS_COLORS[ key ] })`;
+
+/**
  * Every text string the chart drew.
  *
  * @param {Element} container Mounted chart container.
@@ -160,6 +180,37 @@ const valueLabels = ( container ) => {
 };
 
 describe( 'ResponseTimeChart', () => {
+	it( 'gives the four status classes CRT greens that brighten with severity, each pair 1.3 apart', () => {
+		const skins = readFileSync(
+			resolvePath(
+				__dirname,
+				'../../../../newspack-nodes/src/theme/_skins.scss'
+			),
+			'utf8'
+		);
+		const block = /\$phosphor:\s*\(([\s\S]*?)\n\);/.exec( skins )[ 1 ];
+		const greens = [ ...block.matchAll( /\(\s*(#[0-9a-f]{6})/gi ) ].map(
+			( match ) => match[ 1 ]
+		);
+		const luminance = ( hex ) => {
+			const [ r, g, b ] = [ 1, 3, 5 ].map( ( i ) => {
+				const c = parseInt( hex.slice( i, i + 2 ), 16 ) / 255;
+				return c <= 0.03928
+					? c / 12.92
+					: ( ( c + 0.055 ) / 1.055 ) ** 2.4;
+			} );
+			return 0.2126 * r + 0.7152 * g + 0.0722 * b + 0.05;
+		};
+		const severity = [ '2xx', '3xx', '4xx', '5xx' ].map( ( key ) =>
+			luminance( greens[ STATUS_PLACE[ key ] ] )
+		);
+		severity.forEach( ( l, i ) => {
+			for ( const next of severity.slice( i + 1 ) ) {
+				expect( next / l ).toBeGreaterThanOrEqual( 1.3 );
+			}
+		} );
+	} );
+
 	it( 'returns null when requests prop is missing', () => {
 		const { container, unmount } = mountChart( undefined );
 		expect( container.textContent ).toBe( '' );
@@ -211,13 +262,11 @@ describe( 'ResponseTimeChart', () => {
 	it( 'paints each dot the colour of its status class', () => {
 		const { container, unmount } = mountChart( REQUESTS );
 
-		expect(
-			dots( container ).map( ( c ) => c.getAttribute( 'fill' ) )
-		).toEqual( [
-			STATUS_COLORS[ '2xx' ],
-			STATUS_COLORS[ '3xx' ],
-			STATUS_COLORS[ '4xx' ],
-			STATUS_COLORS[ '5xx' ],
+		expect( dots( container ).map( fillOf ) ).toEqual( [
+			statusFill( '2xx' ),
+			statusFill( '3xx' ),
+			statusFill( '4xx' ),
+			statusFill( '5xx' ),
 		] );
 		unmount();
 	} );
@@ -232,7 +281,7 @@ describe( 'ResponseTimeChart', () => {
 		] );
 
 		const [ circle ] = dots( container );
-		expect( circle.getAttribute( 'fill' ) ).toBe( STATUS_COLORS.unknown );
+		expect( fillOf( circle ) ).toBe( statusFill( 'unknown' ) );
 		// `d.status || 'N/A'` — a 0 status has no code to show.
 		expect( circle.querySelector( 'title' ).textContent ).toContain(
 			'Status: N/A'
@@ -299,7 +348,7 @@ describe( 'ResponseTimeChart', () => {
 	it( 'runs the trend line through every plotted point', () => {
 		const { container, unmount } = mountChart( REQUESTS );
 
-		const trend = container.querySelector( 'path[stroke="#4a90d9"]' );
+		const trend = container.querySelector( 'path[stroke-width="1.5"]' );
 		const points = [
 			...trend.getAttribute( 'd' ).matchAll( /([-\d.]+),([-\d.]+)/g ),
 		];
@@ -325,7 +374,7 @@ describe( 'ResponseTimeChart', () => {
 	it( 'leaves the pointer to the dots: the trend line takes none', () => {
 		const { container, unmount } = mountChart( REQUESTS );
 
-		const trend = container.querySelector( 'path[stroke="#4a90d9"]' );
+		const trend = container.querySelector( 'path[stroke-width="1.5"]' );
 		expect( trend.getAttribute( 'pointer-events' ) ).toBe( 'none' );
 		unmount();
 	} );
@@ -356,6 +405,32 @@ describe( 'ResponseTimeChart', () => {
 		expect( Number( mean.getAttribute( 'y1' ) ) ).toBeCloseTo(
 			expectedCy( MEAN_MS ),
 			6
+		);
+		unmount();
+	} );
+
+	it( 'paints the trend, the mean, the dot rings and the legend in CRT greens too', () => {
+		const { container, unmount } = mountChart( REQUESTS );
+
+		const trend = container.querySelector( 'path[stroke-width="1.5"]' );
+		expect( trend.style.getPropertyValue( 'stroke' ) ).toBe(
+			'var(--phosphor-5, #4a90d9)'
+		);
+		const mean = container.querySelector( 'line[stroke-dasharray="5,5"]' );
+		expect( mean.style.getPropertyValue( 'stroke' ) ).toBe(
+			'var(--phosphor-4, #e57373)'
+		);
+		const label = [ ...container.querySelectorAll( 'svg text' ) ].find(
+			( node ) => node.textContent.startsWith( 'avg:' )
+		);
+		expect( label.style.getPropertyValue( 'fill' ) ).toBe(
+			'var(--phosphor-4, #e57373)'
+		);
+		expect(
+			dots( container )[ 0 ].style.getPropertyValue( 'stroke' )
+		).toBe( 'var(--paper, #fff)' );
+		expect( legendRows( container )[ 0 ].innerHTML ).toContain(
+			statusFill( '2xx' )
 		);
 		unmount();
 	} );
@@ -399,7 +474,7 @@ describe( 'ResponseTimeChart', () => {
 		const { container, unmount } = mountChart( REQUESTS );
 		const before = dots( container ).length;
 		const wanted = dots( container ).filter(
-			( c ) => c.getAttribute( 'fill' ) === STATUS_COLORS[ '5xx' ]
+			( c ) => fillOf( c ) === statusFill( '5xx' )
 		).length;
 		expect( wanted ).toBeGreaterThan( 0 );
 		expect( wanted ).toBeLessThan( before );
@@ -410,7 +485,7 @@ describe( 'ResponseTimeChart', () => {
 		expect( dots( container ) ).toHaveLength( wanted );
 		expect(
 			dots( container ).every(
-				( c ) => c.getAttribute( 'fill' ) === STATUS_COLORS[ '5xx' ]
+				( c ) => fillOf( c ) === statusFill( '5xx' )
 			)
 		).toBe( true );
 		unmount();
@@ -427,7 +502,7 @@ describe( 'ResponseTimeChart', () => {
 		] );
 
 		const [ circle ] = dots( container );
-		expect( circle.getAttribute( 'fill' ) ).toBe( STATUS_COLORS[ '5xx' ] );
+		expect( fillOf( circle ) ).toBe( statusFill( '5xx' ) );
 		expect( legendRows( container ).map( ( r ) => r.textContent ) ).toEqual(
 			[ '5xx' ]
 		);
@@ -536,7 +611,7 @@ describe( 'ResponseTimeChart', () => {
 
 		expect( dots( container ) ).toHaveLength( 1 );
 		expect(
-			container.querySelector( 'path[stroke="#4a90d9"]' )
+			container.querySelector( 'path[stroke-width="1.5"]' )
 		).toBeNull();
 		unmount();
 	} );

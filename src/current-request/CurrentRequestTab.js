@@ -14,7 +14,7 @@
  * the tick already makes.
  */
 
-import { useState, useEffect } from '@wordpress/element';
+import { useState, useEffect, useMemo } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { formatCommandArgs, useNodeField } from '@newspack-nodes/runtime';
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
@@ -26,7 +26,7 @@ import { errorStatus } from '../components/errorStatus';
 import RequestTrace, {
 	FlameCutNote,
 } from '../overview/components/RequestTrace';
-import RequestProfile from '../overview/RequestProfile';
+import RequestProfile, { profileOrder } from '../overview/RequestProfile';
 import FindingList from '../overview/components/FindingList';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 import { GROUPS } from '../overview/constants';
@@ -108,6 +108,10 @@ export default function CurrentRequestTab() {
 			setAsksSinceFound( ( n ) => n + 1 );
 		}
 	}, [ model ] );
+
+	// The breakdown's ranking, so the flame paints each category its green.
+	const profiles = request?.profiles;
+	const order = useMemo( () => profileOrder( profiles ), [ profiles ] );
 
 	// @longform
 	// The ask keeps going until the record exists, which serves both failure
@@ -211,7 +215,9 @@ export default function CurrentRequestTab() {
 					<FindingList findings={ request.findings } />
 				</div>
 			) }
-			{ hasFlame && <RequestTrace flameData={ flameData } /> }
+			{ hasFlame && (
+				<RequestTrace flameData={ flameData } order={ order } />
+			) }
 			{ ! hasFlame && request.flame_cut && <FlameCutNote /> }
 			{ hasProfiles && (
 				<div className="eln-current-request__profiles">

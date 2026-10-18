@@ -14,12 +14,16 @@ import CurrentRequestTab from '../CurrentRequestTab';
 // Mock the d3-heavy FlameGraph + RequestProfile to sentinels — test the wiring.
 jest.mock( '../../overview/FlameGraph', () => ( {
 	__esModule: true,
-	default: ( { data } ) => (
-		<div data-testid="flame">{ data && data.name }</div>
+	default: ( { data, order } ) => (
+		<div data-testid="flame" data-order={ ( order || [] ).join( ',' ) }>
+			{ data && data.name }
+		</div>
 	),
 } ) );
 jest.mock( '../../overview/RequestProfile', () => ( {
 	__esModule: true,
+	profileOrder: jest.requireActual( '../../overview/RequestProfile' )
+		.profileOrder,
 	default: ( { profiles } ) => (
 		<div data-testid="profiles">
 			{ profiles && Object.keys( profiles ).join( ',' ) }
@@ -167,6 +171,37 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	expect(
 		view.container.querySelector( '.eln-current-request' ).className
 	).toBe( 'eln-current-request' );
+} );
+
+test( 'hands the flame graph the breakdown order, so the two share CRT greens', async () => {
+	setBlob( {
+		rid: 'kea7071',
+		perfUrl: 'admin.php?page=event-logger-overview',
+	} );
+	answerWith( {
+		rid: 'kea7071',
+		url: 'https://example.test/kea-7071',
+		duration_ms: 71,
+		status_code: 200,
+		timestamp: 1700000071,
+		flame_data: { name: 'request', value: 71, children: [ { name: 'x' } ] },
+		profiles: {
+			'kea-7072': { time: 4, count: 1 },
+			'kea-7073': { time: 9, count: 1 },
+		},
+	} );
+
+	let view;
+	await act( async () => {
+		view = render( <CurrentRequestTab /> );
+	} );
+	await act( async () => {} );
+
+	expect(
+		view.container
+			.querySelector( '[data-testid="flame"]' )
+			.getAttribute( 'data-order' )
+	).toBe( 'kea-7073,kea-7072' );
 } );
 
 // The overlay host re-renders the tab on every drag and resize, and a found
