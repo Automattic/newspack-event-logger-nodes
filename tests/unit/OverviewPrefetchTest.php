@@ -444,7 +444,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( self::NOW + Url_Snapshot::TTL_S, $served['as_of'] );
 	}
 
-	/** A snapshot serves ten minutes from its publish, whatever the interval: a run a respawn lost, and the next, fit inside. */
+	/** A served snapshot answers for ten minutes; `UrlSnapshotTest` dates them from its publish. */
 	public function test_a_snapshot_lives_ten_minutes(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5523/', 'ms' => 33.5 ] );
 		$this->run_job();

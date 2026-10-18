@@ -47,8 +47,8 @@ final class Url_Snapshot {
 	public const NAME = 'flame-facts.job';
 
 	/**
-	 * Seconds a snapshot serves from its publish: a run a worker's respawn
-	 * lost, and the run after it, both fit inside.
+	 * Seconds a snapshot serves from its publish: at the tick's two-minute
+	 * interval, a run a worker's respawn lost and the run after it fit inside.
 	 */
 	public const TTL_S = 600;
 
@@ -102,9 +102,9 @@ final class Url_Snapshot {
 	/**
 	 * Publish the snapshot of the window ending at `$now` through
 	 * `Row_Table_Node::build()`: the URLs, their totals, the answers
-	 * `$answers` gives by key, and an expiry `TTL_S` after it publishes. A fleet with
-	 * no partition file yet publishes nothing, and a build that throws leaves
-	 * the last publish.
+	 * `$answers` gives by key, and an expiry `TTL_S` after it publishes. A
+	 * fleet with no partition file yet publishes nothing, and a build that
+	 * throws leaves the last publish.
 	 *
 	 * On a started record the build is a `snapshot build` span closing
 	 * `published` or `no partition file`, each of its steps a span inside;
