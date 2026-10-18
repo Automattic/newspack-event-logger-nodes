@@ -108,6 +108,23 @@ final class StatsQueryTest extends TestCase {
 		return $over + [ 'group' => [], 'filter' => [], 'measure' => [ 'count' ] ];
 	}
 
+	/**
+	 * The query plan SQLite chooses for a spec, one line per step.
+	 *
+	 * @param array<string,mixed> $spec A `spec()` result.
+	 */
+	private static function plan_of( array $spec ): string {
+		$checked = ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, $spec );
+		$table   = Stats_Query::table_for( $checked );
+		return Row_Table_Node::read(
+			Flame_Facts_Row_Schema::class,
+			static function ( Row_Reader $reader ) use ( $checked, $table ): string {
+				[ $sql, $binds ] = ( new \ReflectionMethod( Stats_Query::class, 'statement' ) )->invoke( null, $checked, $table, $reader->aliases(), false );
+				return self::plan_text( $reader, $sql, $binds );
+			}
+		);
+	}
+
 	public function test_five_xx_by_server_answers_one_row_per_server(): void {
 		$this->seed_request( [ 'server' => 'kea.example', 'status' => 503 ] );
 		$this->seed_request( [ 'server' => 'egret.example', 'status' => 502 ], partition: 3 );
@@ -264,89 +281,117 @@ final class StatsQueryTest extends TestCase {
 	 * index a lookup row's release seeks, which would walk every row the
 	 * name has, past the window.
 	 *
-	 * @return array<string,array{0:string,1:array<string,list<string>>,2:string}>
+	 * Each row: the spec, whether it reads one whole hour, the table it
+	 * reads and the release index it must not.
+	 *
+	 * @return array<string,array{0:array<string,mixed>,1:bool,2:string,3:string}>
 	 */
 	public static function name_filters(): array {
 		return [
-			'server on timings_site'  => [ 'timings', [ 'server' => [ 'kea.example' ] ], 'timings_site_server_id' ],
-			'category on timings_site' => [ 'timings', [ 'category' => [ 'init hook @10' ] ], 'timings_site_category_id' ],
-			'entry on timings_site'   => [ 'timings', [ 'entry' => [ 'kea_init' ] ], 'timings_site_entry_id' ],
-		];
-	}
-
-	/**
-	 * @param array<string,list<string>> $filter
-	 */
-	#[DataProvider( 'name_filters' )]
-	public function test_a_name_filter_reads_the_window_not_the_lookup_id_index( string $source, array $filter, string $release_index ): void {
-		$this->seed_request( [ 'server' => 'kea.example' ] );
-		$this->seed_site_timing( [ 'server' => 'kea.example', 'category' => 'init hook @10', 'entry' => 'kea_init' ] );
-		$checked = ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, self::spec( [ 'source' => $source, 'filter' => $filter, 'measure' => [ 'requests' === $source ? 'count' : 'ms' ], 'buckets' => $this->last_day() ] ) );
-		$table   = Stats_Query::table_for( $checked );
-
-		$plan = Row_Table_Node::read(
-			Flame_Facts_Row_Schema::class,
-			static function ( Row_Reader $reader ) use ( $checked, $table ): string {
-				[ $sql, $binds ] = ( new \ReflectionMethod( Stats_Query::class, 'statement' ) )->invoke( null, $checked, $table, $reader->aliases(), false );
-				return \implode( "\n", \array_column( $reader->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
-			}
-		);
-
-		$this->assertStringNotContainsString( $release_index, $plan );
-	}
-
-	/** A server filter on requests seeks the server-led index over the window. */
-	public function test_a_server_filter_on_requests_seeks_the_server_led_index(): void {
-		$this->seed_request( [ 'server' => 'kea-6101.example', 'ms' => 41.5 ] );
-		$this->seed_request( [ 'server' => 'kaka-6101.example', 'ms' => 7.25 ] );
-		$checked = ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, self::spec( [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea-6101.example' ] ], 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
-		$table   = Stats_Query::table_for( $checked );
-
-		$plan = Row_Table_Node::read(
-			Flame_Facts_Row_Schema::class,
-			static function ( Row_Reader $reader ) use ( $checked, $table ): string {
-				[ $sql, $binds ] = ( new \ReflectionMethod( Stats_Query::class, 'statement' ) )->invoke( null, $checked, $table, $reader->aliases(), false );
-				return \implode( "\n", \array_column( $reader->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
-			}
-		);
-
-		$this->assertMatchesRegularExpression( '/SEARCH t USING (COVERING )?INDEX requests_server \(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
-	}
-
-	/**
-	 * The `requests` server join reads its id plainly, so a read naming no
-	 * server, or negating one, must still walk the window by bucket.
-	 *
-	 * @return array<string,array{0:array<string,mixed>}>
-	 */
-	public static function unscoped_server_reads(): array {
-		return [
-			'servers list'    => [ [ 'group' => [ 'server' ], 'sort' => 'count', 'order' => 'desc' ] ],
-			'chart by server' => [ [ 'group' => [ 'bucket', 'server' ], 'top' => 20, 'top_by' => 'count' ] ],
-			'negated server'  => [ [ 'filter' => [ 'server!' => [ 'kea-6104.example' ] ] ] ],
+			'server on timings'         => [ [ 'source' => 'timings', 'group' => [ 'url' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'ms' ] ], false, 'timings', 'timings_server_id' ],
+			'server on requests_hourly' => [ [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'count' ] ], true, 'requests_hourly', 'requests_hourly_server_id' ],
+			'category on timings_site'  => [ [ 'source' => 'timings', 'group' => [ 'bucket' ], 'filter' => [ 'category' => [ 'init hook @10' ] ], 'measure' => [ 'ms' ] ], false, 'timings_site', 'timings_site_category_id' ],
+			'entry on timings_site'     => [ [ 'source' => 'timings', 'group' => [ 'bucket' ], 'filter' => [ 'entry' => [ 'kea_init' ] ], 'measure' => [ 'ms' ] ], false, 'timings_site', 'timings_site_entry_id' ],
 		];
 	}
 
 	/**
 	 * @param array<string,mixed> $over
 	 */
+	#[DataProvider( 'name_filters' )]
+	public function test_a_name_filter_reads_the_window_not_the_lookup_id_index( array $over, bool $whole_hour, string $table, string $release_index ): void {
+		$hour     = Bucket::hour( (int) Core::$now ) - 1;
+		$per_hour = Bucket::HOUR_SECONDS / Bucket::SECONDS;
+		$this->seed_timing( [ 'server' => 'kea.example' ] );
+		$this->seed_site_timing( [ 'server' => 'kea.example', 'category' => 'init hook @10', 'entry' => 'kea_init' ] );
+		$this->seed_hourly( [ 'server' => 'kea.example', 'hour' => $hour ] );
+		$spec = self::spec( $over + [ 'buckets' => $whole_hour ? [ [ $hour * $per_hour, ( $hour + 1 ) * $per_hour - 1 ] ] : $this->last_day() ] );
+
+		$this->assertSame( $table, Stats_Query::table_for( $spec ) );
+		$this->assertArrayHasKey( $release_index, Flame_Facts_Row_Schema::tables()[ $table ]['indexes'] ?? [], 'the release index exists, so its absence from the plan says something' );
+		$this->assertStringNotContainsString( $release_index, self::plan_of( $spec ) );
+	}
+
+	/** A server filter on requests seeks the server-led index over the window. */
+	public function test_a_server_filter_on_requests_seeks_the_server_led_index(): void {
+		$this->seed_request( [ 'server' => 'kea-6101.example', 'ms' => 41.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-6101.example', 'ms' => 7.25 ] );
+		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea-6101.example' ] ], 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertMatchesRegularExpression( '/SEARCH t USING (COVERING )?INDEX requests_server \(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
+	}
+
+	public function test_a_server_filter_on_timings_site_seeks_its_server_led_key(): void {
+		$this->seed_site_timing( [ 'server' => 'kea-7003.example', 'category' => 'sql', 'ms' => 41.5 ] );
+		$this->seed_site_timing( [ 'server' => 'kaka-7003.example', 'category' => 'sql', 'ms' => 7.25 ] );
+
+		$plan = self::plan_of( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'server' => [ 'kea-7003.example' ], 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertMatchesRegularExpression( '/SEARCH t USING .*\(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
+	}
+
+	public function test_a_server_filter_on_timings_site_answers_the_named_servers_rows(): void {
+		$this->seed_site_timing( [ 'server' => 'kea-7005.example', 'category' => 'sql', 'ms' => 41.5 ] );
+		$this->seed_site_timing( [ 'server' => 'kea-7005.example', 'category' => 'sql', 'ms' => 3.5 ], partition: 2 );
+		$this->seed_site_timing( [ 'server' => 'kaka-7005.example', 'category' => 'sql', 'ms' => 7.25 ] );
+		$run = fn ( array $filter ): array => Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => $filter + [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] ) )['rows'];
+
+		$this->assertSame( [ [ 'sql', 45.0 ] ], $run( [ 'server' => [ 'kea-7005.example' ] ] ) );
+		$this->assertSame( [ [ 'sql', 7.25 ] ], $run( [ 'server!' => [ 'kea-7005.example' ] ] ), 'a negation answers every other server' );
+		$this->assertSame( [], $run( [ 'server' => [ 'moa-7005.example' ] ] ), 'a name no partition holds answers nothing' );
+	}
+
+	/** A server's totals and profiled count read `requests_server` alone. */
+	public function test_a_scoped_totals_read_covers_on_the_server_led_index(): void {
+		$this->seed_request( [ 'server' => 'kea-7001.example', 'ms' => 41.5, 'error' => 'T', 'profiled' => 1 ] );
+		$this->seed_request( [ 'server' => 'kaka-7001.example', 'ms' => 7.25 ] );
+
+		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'group' => [ 'profiled' ], 'filter' => [ 'server' => [ 'kea-7001.example' ], 'worker' => [ 0 ] ], 'measure' => [ 'count', 'timed', 'sum_ms', 'errors' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertMatchesRegularExpression( '/SEARCH t USING COVERING INDEX requests_server \(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
+	}
+
+	/** An unscoped read of the profiled flag, errors, status and completion reads `requests_cover` alone, as the totals and the URL grouping do. */
+	public function test_an_unscoped_read_of_errors_and_completion_covers_on_requests_cover(): void {
+		$this->seed_request( [ 'server' => 'kea-7002.example', 'ms' => 41.5, 'error' => 'F', 'profiled' => 1 ] );
+
+		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'group' => [ 'profiled' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'count', 'errors', 'last_seen', 'count_5xx' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertMatchesRegularExpression( '/SEARCH t USING COVERING INDEX requests_cover \(bucket>\? AND bucket<\?\)/', $plan );
+	}
+
+	/**
+	 * A plain server join must still let a read naming no server, or
+	 * negating one, walk the window by bucket, on each table joining so:
+	 * each row the spec and the bucket-led index it walks.
+	 *
+	 * @return array<string,array{0:array<string,mixed>,1:string}>
+	 */
+	public static function unscoped_server_reads(): array {
+		$reads = [];
+		foreach ( [ 'requests' => [ 'count', 'requests_cover' ], 'timings' => [ 'ms', 'timings_site_bucket' ] ] as $source => [ $measure, $walks ] ) {
+			$reads += [
+				"servers list on {$source}"    => [ [ 'source' => $source, 'group' => [ 'server' ], 'measure' => [ $measure ], 'sort' => $measure, 'order' => 'desc' ], $walks ],
+				"chart by server on {$source}" => [ [ 'source' => $source, 'group' => [ 'bucket', 'server' ], 'measure' => [ $measure ], 'top' => 20, 'top_by' => $measure ], $walks ],
+				"negated server on {$source}"  => [ [ 'source' => $source, 'filter' => [ 'server!' => [ 'kea-6104.example' ] ], 'measure' => [ $measure ] ], $walks ],
+			];
+		}
+		return $reads;
+	}
+
+	/**
+	 * @param array<string,mixed> $over
+	 */
 	#[DataProvider( 'unscoped_server_reads' )]
-	public function test_a_read_naming_no_server_walks_the_window_by_bucket( array $over ): void {
-		$this->seed_request( [ 'server' => 'kea-6104.example', 'ms' => 41.5 ] );
-		$this->seed_request( [ 'server' => 'kaka-6104.example', 'ms' => 7.25 ] );
-		$checked = ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, self::spec( $over + [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
-		$table   = Stats_Query::table_for( $checked );
+	public function test_a_read_naming_no_server_walks_the_window_by_bucket( array $over, string $walks ): void {
+		foreach ( [ 'kea-6104.example' => 41.5, 'kaka-6104.example' => 7.25 ] as $server => $ms ) {
+			$this->seed_request( [ 'server' => $server, 'ms' => $ms ] );
+			$this->seed_site_timing( [ 'server' => $server, 'ms' => $ms ] );
+		}
+		$plan = self::plan_of( self::spec( $over + [ 'buckets' => $this->last_day() ] ) );
 
-		$plan = Row_Table_Node::read(
-			Flame_Facts_Row_Schema::class,
-			static function ( Row_Reader $reader ) use ( $checked, $table ): string {
-				[ $sql, $binds ] = ( new \ReflectionMethod( Stats_Query::class, 'statement' ) )->invoke( null, $checked, $table, $reader->aliases(), false );
-				return \implode( "\n", \array_column( $reader->rows( "EXPLAIN QUERY PLAN {$sql}", $binds ), 3 ) );
-			}
-		);
-
-		$this->assertMatchesRegularExpression( '/SEARCH t USING (COVERING )?INDEX requests_cover \(bucket>\? AND bucket<\?\)/', $plan );
-		$this->assertStringNotContainsString( 'requests_server', $plan );
+		$this->assertMatchesRegularExpression( "/SEARCH t USING (COVERING )?INDEX {$walks} \\(bucket>\\? AND bucket<\\?\\)/", $plan );
+		$this->assertStringNotContainsString( 'server_id=?', $plan );
 	}
 
 	public function test_a_server_filter_answers_the_named_servers_rows(): void {

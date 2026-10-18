@@ -164,8 +164,8 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				'key'     => [ 'rid' ],
 				'indexes' => [
 					'requests_url'    => [ 'url_id', 'bucket' ],
-					'requests_cover'  => [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ],
-					'requests_server' => [ 'server_id', 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb' ],
+					'requests_cover'  => [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb', 'profiled', 'error', 'finished_at' ],
+					'requests_server' => [ 'server_id', 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb', 'profiled', 'error' ],
 				],
 				'retain'  => [ 'bucket', self::REQUESTS_BUCKETS, Bucket::SECONDS ],
 			],
@@ -202,12 +202,13 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'calls'       => 'INTEGER NOT NULL',
 					'requests'    => 'INTEGER NOT NULL',
 				],
-				'key'     => [ 'bucket', 'server_id', 'worker', 'category_id', 'entry_id' ],
+				'key'     => [ 'server_id', 'bucket', 'worker', 'category_id', 'entry_id' ],
 				'add'     => [
 					'ms'       => 'sum',
 					'calls'    => 'sum',
 					'requests' => 'sum',
 				],
+				'indexes' => [ 'timings_site_bucket' => [ 'bucket' ] ],
 				'retain'  => [ 'bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
 			],
 			'category_window' => [
@@ -299,6 +300,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 6;
+		return 7;
 	}
 }

@@ -149,10 +149,11 @@ final class Stats_Query {
 	private const SERVER_JOIN = 'JOIN %1$s.servers AS sv ON sv.id = +t.server_id';
 
 	/**
-	 * A request's server, read plainly: `requests_server` leads with the id
-	 * and then the bucket, so a server filter seeks inside the window.
+	 * A row's server, read plainly, for a table whose key or an index leads
+	 * with `server_id` and then `bucket`, so a server filter seeks inside the
+	 * window.
 	 */
-	private const REQUEST_SERVER_JOIN = 'JOIN %1$s.servers AS sv ON sv.id = t.server_id';
+	private const SEEKING_SERVER_JOIN = 'JOIN %1$s.servers AS sv ON sv.id = t.server_id';
 
 	/** The joins a timing row's category and entry need. */
 	private const TIMING_JOINS = [
@@ -212,7 +213,7 @@ final class Stats_Query {
 				'rid'          => 't.rid',
 			],
 			'joins'    => [
-				'server' => self::REQUEST_SERVER_JOIN,
+				'server' => self::SEEKING_SERVER_JOIN,
 				'url'    => self::URL_JOIN,
 				'ua'     => 'LEFT JOIN %1$s.agents AS a ON a.id = t.ua_id',
 				'ja4'    => 'LEFT JOIN %1$s.ja4s AS j ON j.id = t.ja4_id',
@@ -317,7 +318,7 @@ final class Stats_Query {
 				'entry'    => 'e.name',
 				'listener' => 't.listener',
 			],
-			'joins'    => [ 'server' => self::SERVER_JOIN ] + self::TIMING_JOINS,
+			'joins'    => [ 'server' => self::SEEKING_SERVER_JOIN ] + self::TIMING_JOINS,
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],
