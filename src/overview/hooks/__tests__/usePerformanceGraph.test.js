@@ -2128,6 +2128,20 @@ describe( 'usePerformanceGraph — chart questions', () => {
 } );
 
 describe( 'usePerformanceGraph — the stored answers', () => {
+	// The two `query` asks differ in their first token, the source.
+	const askedOn = ( wire, verb, source ) => {
+		const sent = source
+			? wire.batches
+					.flat()
+					.find(
+						( m ) =>
+							verb === m[ VALUE ]?.name &&
+							source === m[ VALUE ].arguments[ 0 ]
+					)
+			: findVerb( wire.batches, verb );
+		return { verb, tokens: sent?.[ VALUE ].arguments };
+	};
+
 	/**
 	 * The questions the overview-prefetch job answers are the ones a default
 	 * Overview poll puts on the wire, token for token: the request chart's
@@ -2155,32 +2169,59 @@ describe( 'usePerformanceGraph — the stored answers', () => {
 			);
 			await act( async () => {} );
 
-			// The two `query` asks differ in their first token, the source.
-			const asked = ( verb, source ) => {
-				const sent = source
-					? wire.batches
-							.flat()
-							.find(
-								( m ) =>
-									verb === m[ VALUE ]?.name &&
-									source === m[ VALUE ].arguments[ 0 ]
-							)
-					: findVerb( wire.batches, verb );
-				return { verb, tokens: sent?.[ VALUE ].arguments };
-			};
 			expect( Object.keys( storedAnswers ) ).toEqual( [
 				'overview',
 				'chart_by_server',
 				'chart_by_status_class',
 				'categories',
+				'server_overview',
+				'server_chart_by_status_class',
+				'server_categories',
 			] );
-			expect( asked( 'overview' ) ).toEqual( storedAnswers.overview );
-			expect( asked( 'query', 'requests' ) ).toEqual(
+			expect( askedOn( wire, 'overview' ) ).toEqual(
+				storedAnswers.overview
+			);
+			expect( askedOn( wire, 'query', 'requests' ) ).toEqual(
 				storedAnswers[ chart ]
 			);
-			expect( asked( 'query', 'timings' ) ).toEqual(
+			expect( askedOn( wire, 'query', 'timings' ) ).toEqual(
 				storedAnswers.categories
 			);
 		}
 	);
+
+	test( 'a scoped poll asks what the job stores for its server', async () => {
+		const serverFilter = 'kea-7030.example';
+		const { breakdown, thenBy } = activeChart( {
+			breakdown: DEFAULT_CHART_BREAKDOWN,
+			thenBy: '',
+			serverFilter,
+			serverNames: [ serverFilter, 'tui-7030.example' ],
+		} );
+		const wire = installWire();
+		renderHook( () =>
+			usePerformanceGraph( {
+				serverFilter,
+				chartBreakdown: breakdown,
+				chartThenBy: thenBy,
+			} )
+		);
+		await act( async () => {} );
+		const bound = ( { verb, tokens } ) => ( {
+			verb,
+			tokens: tokens.map( ( token ) =>
+				token.replace( '{server}', serverFilter )
+			),
+		} );
+
+		expect( askedOn( wire, 'overview' ) ).toEqual(
+			bound( storedAnswers.server_overview )
+		);
+		expect( askedOn( wire, 'query', 'requests' ) ).toEqual(
+			bound( storedAnswers.server_chart_by_status_class )
+		);
+		expect( askedOn( wire, 'query', 'timings' ) ).toEqual(
+			bound( storedAnswers.server_categories )
+		);
+	} );
 } );
