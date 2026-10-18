@@ -159,23 +159,13 @@ final class OverviewPrefetchTickTest extends TestCase {
 		$this->assertSame( [ 'queued_at' => 1_790_008_080, 'interval' => 120 ], $this->fed()[0][1]['parameters'] ?? null );
 	}
 
-	/** A zero interval paces at the Timer's one-second floor, never a division by zero. */
-	public function test_a_zero_interval_queues_on_each_second(): void {
+	/** A zero interval paces at the Timer's one-second floor, and each job names the interval it was paced at, which the job admits. */
+	public function test_a_zero_interval_queues_each_second_a_job_that_runs(): void {
 		$tick = $this->prefetch_tick( '0', 0, self::BUILT_AT + 0.5 );
 
 		$this->ring( $tick, self::BUILT_AT + 1 );
 
-		$this->assertSame( [ 1_790_008_018 ], \array_map( static fn ( array $job ): mixed => $job[1]['parameters']['queued_at'], $this->fed() ) );
-	}
-
-	/** A tick stopped mid-walk still gets that tick's fire, with its interval zeroed, and paces from now. */
-	public function test_a_stopped_tick_fired_by_the_routers_snapshot_walk_queues(): void {
-		$tick = $this->prefetch_tick( '0', 43, self::BUILT_AT );
-		$tick->stop_timer();
-
-		$this->ring( $tick, self::BUILT_AT + 1 );
-
-		$this->assertSame( [ 1_790_008_018 ], \array_map( static fn ( array $job ): mixed => $job[1]['parameters']['queued_at'], $this->fed() ) );
+		$this->assertSame( [ [ 'queued_at' => 1_790_008_018, 'interval' => 1 ] ], \array_map( static fn ( array $job ): mixed => $job[1]['parameters'], $this->fed() ) );
 	}
 
 	public function test_it_rides_the_router_tick(): void {

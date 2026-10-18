@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The overview-prefetch tick paces from wall-clock interval boundaries, so a worker's respawn no longer skips a run, unless its gap straddles a boundary. A fresh process counted its first interval from its own start, and in a worker's 595-second life that lost one 120-second interval in five: the snapshot expired before the next run published, and for the 90–100 s that run took, every Overview poll answered live, 30–50 s each on eln.
+- A prefetch tick declared with a zero interval queues its job each second naming the one-second interval it paces at, so the job runs; it named 0, which every job refused.
 
 ### Changed
 - A URL snapshot serves ten minutes after it publishes, where it served two intervals from its run's start, so the run's own length no longer shortens it.

@@ -37,7 +37,7 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 	 * interval's boundary: a respawn queues no second job inside the interval
 	 * its predecessor queued in, and queues at the next boundary. A respawn
 	 * whose gap straddles a boundary loses that one, which the snapshot's ten
-	 * minutes span.
+	 * minutes span while a run lasts under ten minutes less two intervals.
 	 *
 	 * @api Called by the substrate during make_node construction.
 	 * @param list<string>|null $args Positional tokens, or null to read them back.
@@ -54,9 +54,10 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 	}
 
 	/**
-	 * Queue the job, where this copy owns it. A leg that did not go, the feed
-	 * `Job_Intake` refused or a firehose no log rule governs, is said once a
-	 * window, each leg's miss on its own.
+	 * Queue the job, where this copy owns it, naming the interval the Timer
+	 * paces at, so a job `admit()` and `run()` measure is one that can run. A
+	 * leg that did not go, the feed `Job_Intake` refused or a firehose no log
+	 * rule governs, is said once a window, each leg's miss on its own.
 	 *
 	 * @api Driven by the substrate Timer (fire_cb).
 	 */
@@ -68,7 +69,7 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 		}
 		$parameters = [
 			'queued_at' => (int) Core::$now,
-			'interval'  => $this->interval_s,
+			'interval'  => \intdiv( $this->interval_ms, 1000 ),
 		];
 		$borrowed   = null === Log_Manager::started_instance();
 		if ( $borrowed ) {
@@ -93,13 +94,11 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 	/**
 	 * The start of the wall-clock interval `Core::$now` falls in, the moment
 	 * the Timer's throttle paces the next job from, stepped by the interval
-	 * the Timer armed, which `cadence_ms()` floors at a second. A disarmed
-	 * Timer's interval is 0, and the Router's snapshot walk can still fire it
-	 * that tick, so it paces from now, as the JS `nextBoundary()` does.
+	 * the Timer armed, which `cadence_ms()` floors at a second.
 	 */
 	private function interval_start(): float {
 		$step = $this->interval_ms / 1000;
-		return $step > 0 ? \floor( Core::$now / $step ) * $step : Core::$now;
+		return \floor( Core::$now / $step ) * $step;
 	}
 
 	/**

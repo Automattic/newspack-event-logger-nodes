@@ -6,13 +6,12 @@
  *
  * `Overview_Prefetch_Tick_Node` queues each `eln_overview_prefetch` job, and
  * only partition 0's JobWorker runs it. The job builds the window's URL
- * table as one `Url_Snapshot`, which serves `Url_Snapshot::TTL_S`
- * after it publishes, and answers the questions in `stored-answers.json` live inside
+ * table as one `Url_Snapshot`, which serves `Url_Snapshot::TTL_S` after it
+ * publishes, and answers the questions in `stored-answers.json` live inside
  * it, a template naming its server `SERVER` once for each server the window
- * holds: `urls` reads any
- * page of it, `overview` and `query` the stored answer to the same bound
- * arguments, and any other question, a stale snapshot or none is answered
- * live (decision 37).
+ * holds: `urls` reads any page of it, `overview` and `query` the stored
+ * answer to the same bound arguments, and any other question, a stale
+ * snapshot or none is answered live (decision 37).
  *
  * @package Newspack_Event_Logger_Nodes
  */
