@@ -84,6 +84,41 @@ final class OverviewPrefetchTest extends TestCase {
 		return Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], $tokens );
 	}
 
+	/**
+	 * Publish a snapshot holding only `$answers`, each its raw stored value
+	 * by key, dated as a job run at `NOW` dates it: no URL table, so only
+	 * the stored answers read.
+	 *
+	 * @param array<string,string> $answers Raw stored values by key.
+	 */
+	private static function snapshot_of( array $answers ): void {
+		Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			Url_Snapshot::NAME,
+			static function ( Row_Reader $db ) use ( $answers ): bool {
+				$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
+				foreach ( $answers as $key => $value ) {
+					$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, $value ] );
+				}
+				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
+				return true;
+			}
+		);
+	}
+
+	/**
+	 * A stored question's tokens as a poll scoped to `$server` sends them;
+	 * a question naming no server comes back as stored.
+	 *
+	 * @param string $name   The question's name in `stored-answers.json`.
+	 * @param string $server The server the poll scopes to.
+	 * @return list<string>
+	 */
+	private static function asked_for( string $name, string $server ): array {
+		return \str_replace( Overview_Prefetch::SERVER, $server, Overview_Prefetch::questions()[ $name ]['tokens'] );
+	}
+
 	/** Run the job as the tick queues it now. */
 	private function run_job( int $queued_at = self::NOW ): void {
 		Overview_Prefetch::run( '', [ 'queued_at' => $queued_at, 'interval' => self::INTERVAL ] );
@@ -155,6 +190,9 @@ final class OverviewPrefetchTest extends TestCase {
 				...$answer( 'chart_by_server' ),
 				...$answer( 'chart_by_status_class' ),
 				...$answer( 'categories' ),
+				...$answer( 'server_overview' ),
+				...$answer( 'server_chart_by_status_class' ),
+				...$answer( 'server_categories' ),
 				[ 'snapshot build (complete)', null, 'published' ],
 			],
 			$spans
@@ -201,7 +239,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$names = self::flame_names( Flame_Tree::build_flame_data( $this->logged_job() ) );
 
 		$this->assertSame(
-			[ 'prefetch answer: overview', 'prefetch answer: chart_by_server', 'prefetch answer: chart_by_status_class', 'prefetch answer: categories' ],
+			[ 'prefetch answer: overview', 'prefetch answer: chart_by_server', 'prefetch answer: chart_by_status_class', 'prefetch answer: categories', 'prefetch answer: server_overview', 'prefetch answer: server_chart_by_status_class', 'prefetch answer: server_categories' ],
 			\array_values( \array_filter( $names, static fn ( string $name ): bool => \str_starts_with( $name, Flame_Tree::PREFETCH_ANSWER ) ) )
 		);
 	}
@@ -219,6 +257,21 @@ final class OverviewPrefetchTest extends TestCase {
 			\array_push( $names, Core::as_string( $child['name'] ?? '' ), ...self::flame_names( $child ) );
 		}
 		return $names;
+	}
+
+	/** A template naming its server where `templated()` cannot find it would store answers no poll reads, so the job refuses it. */
+	public function test_a_template_templated_cannot_invert_is_refused(): void {
+		Overview_Prefetch::$read_file = static fn ( string $path ): string => (string) \wp_json_encode(
+			[ 'kea_7025' => [ 'verb' => 'query', 'tokens' => [ 'requests', 'bucket', '--search={server}', '--measure=count' ] ] ]
+		);
+		try {
+			Overview_Prefetch::stored();
+			$this->fail( 'a template templated() cannot invert is refused' );
+		} catch ( \LogicException $e ) {
+			$this->assertStringContainsString( 'kea_7025', $e->getMessage() );
+		} finally {
+			Overview_Prefetch::$read_file = null;
+		}
 	}
 
 	/** Two stored questions binding to one key would store one answer for both, so the job refuses them. */
@@ -434,17 +487,7 @@ final class OverviewPrefetchTest extends TestCase {
 	public function test_a_stored_answer_that_will_not_decode_is_answered_live_and_said(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5541/', 'ms' => 8.5 ] );
 		$key = Overview_Prefetch::key( 'overview', self::overview_args( [] ) );
-		Row_Table_Node::build(
-			Flame_Facts_Row_Schema::class,
-			Url_Snapshot::NAME,
-			static function ( Row_Reader $db ) use ( $key ): bool {
-				$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
-				$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, '{"kea-5541": is no json' ] );
-				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
-				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
-				return true;
-			}
-		);
+		self::snapshot_of( [ $key => '{"kea-5541": is no json' ] );
 		self::clock( self::NOW + 9 );
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
@@ -479,7 +522,7 @@ final class OverviewPrefetchTest extends TestCase {
 	/** A scoped overview's totals are live, its servers the job's: no scope changes them. */
 	public function test_a_scoped_overview_names_the_servers_the_snapshot_stored(): void {
 		$this->seed_request( [ 'server' => 'kea-6201.example', 'url' => 'https://kea-6201.example/a/', 'ms' => 33.5 ] );
-		$this->run_job();
+		self::snapshot_of( [ Overview_Prefetch::key( 'overview', self::overview_args( [] ) ) => '{"as_of":1790007215,"available":true,"servers":["kea-6201.example"],"totals":{},"slots":[],"leaderboard":{}}' ] );
 		$this->seed_request( [ 'server' => 'kea-6201.example', 'url' => 'https://kea-6201.example/b/', 'ms' => 8.5, 'profiled' => 1 ] );
 		$this->seed_request( [ 'server' => 'kaka-6201.example', 'url' => 'https://kaka-6201.example/c/', 'ms' => 12.5 ] );
 		self::clock( self::NOW + 9 );
@@ -491,6 +534,95 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( 2, $overview['totals']['requests'], 'the totals are live' );
 		$this->assertSame( [ 'kea-6201.example' ], $overview['servers'], 'the servers are the job\'s, before kaka' );
 		$this->assertSame( 1, $overview['leaderboard']['count'], 'the leaderboard is live, the profiled request after the job' );
+	}
+
+	/** Every server the job lists gets its scoped poll stored: the overview and both charts. */
+	public function test_each_listed_servers_scoped_poll_is_served_from_the_snapshot(): void {
+		$this->seed_request( [ 'server' => 'kea-7020.example', 'url' => 'https://kea-7020.example/a/', 'ms' => 33.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-7020.example', 'url' => 'https://kaka-7020.example/b/', 'ms' => 12.5 ], partition: 1 );
+		$this->run_job();
+		$this->seed_request( [ 'server' => 'kea-7020.example', 'url' => 'https://kea-7020.example/c/', 'ms' => 8.5 ] );
+		self::clock( self::NOW + 9 );
+
+		foreach ( [ 'kea-7020.example', 'kaka-7020.example' ] as $server ) {
+			foreach ( [ 'server_overview', 'server_chart_by_status_class', 'server_categories' ] as $name ) {
+				$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', Overview_Prefetch::questions()[ $name ]['verb'], self::asked_for( $name, $server ) );
+				$this->assertSame( self::NOW, \is_array( $reply ) ? $reply['as_of'] : $reply, "{$name} for {$server}" );
+			}
+		}
+		$kea = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7020.example' ] );
+		$this->assertIsArray( $kea, \is_string( $kea ) ? $kea : 'overview answered no structure' );
+		$this->assertSame( 1, $kea['totals']['requests'], 'the stored totals, c unread' );
+		$this->assertSame( [ 'kea-7020.example', 'kaka-7020.example' ], $kea['servers'] );
+	}
+
+	/** A server the job never saw has no stored poll: each question answers live. */
+	public function test_a_scoped_chart_of_a_server_the_job_never_saw_answers_live(): void {
+		$this->seed_request( [ 'server' => 'kea-7021.example', 'url' => 'https://kea-7021.example/a/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'server' => 'ruru-7021.example', 'url' => 'https://ruru-7021.example/b/', 'ms' => 12.5 ] );
+		self::clock( self::NOW + 9 );
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', self::asked_for( 'server_chart_by_status_class', 'ruru-7021.example' ) );
+
+		$this->assertSame( self::NOW + 9, \is_array( $reply ) ? $reply['as_of'] : $reply );
+	}
+
+	/**
+	 * A scoped chart naming two servers, or one only by negation, matches no
+	 * template, so it answers live without touching the file.
+	 *
+	 * @return array<string,array{0:list<string>}>
+	 */
+	public static function untemplated_server_filters(): array {
+		return [
+			'two servers' => [ [ '--filter=server=kea-7022.example', '--filter=server=kaka-7022.example' ] ],
+			'negated'     => [ [ '--filter=server!=kea-7022.example' ] ],
+			'blank'       => [ [ '--filter=server=' ] ],
+		];
+	}
+
+	/**
+	 * @param list<string> $filters
+	 */
+	#[DataProvider( 'untemplated_server_filters' )]
+	public function test_a_chart_naming_servers_no_template_names_never_opens_the_snapshot( array $filters ): void {
+		$this->seed_request( [ 'server' => 'kea-7022.example', 'url' => 'https://kea-7022.example/a/', 'ms' => 8.5 ] );
+		\mkdir( $this->snapshot_file() );
+		$tokens = [ 'requests', 'bucket', 'status_class', '--top=20', '--top_by=count', '--filter=worker=0', ...$filters, '--measure=count', '--measure=sum_ms', '--measure=sum_peak_mb', '--measure=timed' ];
+
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', $tokens );
+
+		$this->assertSame( [], \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not open' ) ) );
+	}
+
+	public function test_a_stored_scoped_answer_that_will_not_decode_answers_live_and_says_so(): void {
+		$this->seed_request( [ 'server' => 'kea-7023.example', 'url' => 'https://kea-7023.example/a/', 'ms' => 8.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-7023.example', 'url' => 'https://kaka-7023.example/b/', 'ms' => 2.5 ] );
+		$this->seed_request( [ 'server' => 'kaka-7023.example', 'url' => 'https://kaka-7023.example/c/', 'ms' => 1.5 ] );
+		self::snapshot_of( [ Overview_Prefetch::key( 'overview', self::overview_args( [ '--server=kea-7023.example' ] ) ) => '{"kea-7023": is no json' ] );
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7023.example' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertSame( self::NOW + 9, $overview['as_of'] );
+		$this->assertSame( [ 'kaka-7023.example', 'kea-7023.example' ], $overview['servers'], 'read live' );
+		$this->assertNotEmpty( \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not read' ) ) );
+	}
+
+	/** A window with no requests stores the overview, naming no servers, and no scoped answer. */
+	public function test_an_empty_window_stores_the_overview_and_no_scoped_answer(): void {
+		$this->seed_request( [ 'server' => 'kea-7024.example', 'url' => 'https://kea-7024.example/a/', 'bucket' => Bucket::id( self::NOW ) - 400, 'ms' => 8.5 ] );
+		$this->run_job();
+		self::clock( self::NOW + 9 );
+
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+		$scoped   = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7024.example' ] );
+
+		$this->assertIsArray( $overview, \is_string( $overview ) ? $overview : 'overview answered no structure' );
+		$this->assertIsArray( $scoped, \is_string( $scoped ) ? $scoped : 'overview answered no structure' );
+		$this->assertSame( [ self::NOW, [] ], [ $overview['as_of'], $overview['servers'] ] );
+		$this->assertSame( self::NOW + 9, $scoped['as_of'], 'no server listed, so none stored' );
 	}
 
 	/** A stored list lacking the scoped server is stale for that question. */
@@ -541,17 +673,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$verbs    = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
 		$overview = Overview_Prefetch::key( 'overview', Command_Args::bind( $verbs['overview']['args'], [] ) );
 		$chart    = Overview_Prefetch::key( 'query', Command_Args::bind( $verbs['query']['args'], Overview_Prefetch::questions()['categories']['tokens'] ) );
-		Row_Table_Node::build(
-			Flame_Facts_Row_Schema::class,
-			Url_Snapshot::NAME,
-			static function ( Row_Reader $db ) use ( $overview, $chart ): bool {
-				$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
-				$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? ), ( ?, ? )', [ $overview, '{"as_of":1790007215,"available":true}', $chart, '{"kea-6209": is no json' ] );
-				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
-				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
-				return true;
-			}
-		);
+		self::snapshot_of( [ $overview => '{"as_of":1790007215,"available":true}', $chart => '{"kea-6209": is no json' ] );
 		self::clock( self::NOW + 9 );
 		$said = static fn ( string $text ): array => \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, $text ) );
 
@@ -610,17 +732,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kaka-6204.example', 'url' => 'https://kaka-6204.example/b/', 'ms' => 2.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-6204.example', 'url' => 'https://kaka-6204.example/c/', 'ms' => 1.5 ] );
 		$key = Overview_Prefetch::key( 'overview', self::overview_args( [] ) );
-		Row_Table_Node::build(
-			Flame_Facts_Row_Schema::class,
-			Url_Snapshot::NAME,
-			static function ( Row_Reader $db ) use ( $key ): bool {
-				$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
-				$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, '{"kea-6204": is no json' ] );
-				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
-				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
-				return true;
-			}
-		);
+		self::snapshot_of( [ $key => '{"kea-6204": is no json' ] );
 		self::clock( self::NOW + 9 );
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6204.example' ] );
@@ -653,17 +765,7 @@ final class OverviewPrefetchTest extends TestCase {
 	public function test_a_stored_overview_naming_no_servers_is_answered_live_and_said( array $tokens ): void {
 		$this->seed_request( [ 'server' => 'kea-6205.example', 'url' => 'https://kea-6205.example/a/', 'ms' => 8.5 ] );
 		$key = Overview_Prefetch::key( 'overview', self::overview_args( [] ) );
-		Row_Table_Node::build(
-			Flame_Facts_Row_Schema::class,
-			Url_Snapshot::NAME,
-			static function ( Row_Reader $db ) use ( $key ): bool {
-				$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
-				$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, '{"as_of":1790007215,"available":true}' ] );
-				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
-				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
-				return true;
-			}
-		);
+		self::snapshot_of( [ $key => '{"as_of":1790007215,"available":true}' ] );
 		self::clock( self::NOW + 9 );
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', $tokens );
@@ -681,14 +783,15 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5536/', 'ms' => 33.5 ] );
 		$this->run_job();
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5536/', 'ms' => 8.5 ] );
+		$this->seed_request( [ 'server' => 'moa-5536.example', 'url' => 'https://moa-5536.example/a/', 'ms' => 4.5 ] );
 		self::clock( self::NOW + 9 );
 
-		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=seed.example' ] );
+		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=moa-5536.example' ] );
 		$query    = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'query', [ 'requests', 'bucket', '--measure=count' ] );
 
 		$this->assertIsArray( $overview );
 		$this->assertSame( self::NOW + 9, $overview['as_of'] );
-		$this->assertSame( 2, $overview['totals']['urls'] );
+		$this->assertSame( 1, $overview['totals']['requests'], 'the live totals of a server the job never listed' );
 		$this->assertSame( self::NOW + 9, \is_array( $query ) ? $query['as_of'] : $query );
 	}
 
@@ -699,9 +802,9 @@ final class OverviewPrefetchTest extends TestCase {
 		self::clock( self::NOW + 9 );
 
 		$questions = Overview_Prefetch::questions();
-		$this->assertSame( [ 'overview', 'chart_by_server', 'chart_by_status_class', 'categories' ], \array_keys( $questions ) );
-		foreach ( $questions as $name => [ 'verb' => $verb, 'tokens' => $tokens ] ) {
-			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, $tokens );
+		$this->assertSame( [ 'overview', 'chart_by_server', 'chart_by_status_class', 'categories', 'server_overview', 'server_chart_by_status_class', 'server_categories' ], \array_keys( $questions ) );
+		foreach ( $questions as $name => [ 'verb' => $verb ] ) {
+			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, self::asked_for( $name, 'seed.example' ) );
 			$this->assertSame( self::NOW, \is_array( $reply ) ? $reply['as_of'] : $reply, $name );
 		}
 		$this->assertSame( 1, VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] )['totals']['urls'], 'the stored overview counts takahe alone' );

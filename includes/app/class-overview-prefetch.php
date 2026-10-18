@@ -7,10 +7,11 @@
  * `Overview_Prefetch_Tick_Node` queues each `eln_overview_prefetch` job, and
  * only partition 0's JobWorker runs it. The job builds the window's URL
  * table as one `Url_Snapshot`, which serves two intervals, and answers the
- * questions in `stored-answers.json` live inside it: `urls` reads any page of
- * it, `overview` and `query` the stored answer to the same bound arguments,
- * and any other question, a stale snapshot or none is answered live
- * (decision 37).
+ * questions in `stored-answers.json` live inside it, a template naming its
+ * server `SERVER` once for each server the window holds: `urls` reads any
+ * page of it, `overview` and `query` the stored answer to the same bound
+ * arguments, and any other question, a stale snapshot or none is answered
+ * live (decision 37).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -37,6 +38,9 @@ final class Overview_Prefetch {
 	/** The job handler, queued once an interval by `Overview_Prefetch_Tick_Node`. */
 	public const HANDLER = 'eln_overview_prefetch';
 
+	/** The placeholder a stored question names its server by. */
+	public const SERVER = '{server}';
+
 	/**
 	 * file_get_contents seam for `stored-answers.json`. Tests reassign it to
 	 * seed questions the shipped file does not hold, so `stored()` runs its
@@ -50,9 +54,9 @@ final class Overview_Prefetch {
 
 	/**
 	 * The job: build the URL snapshot, which serves two intervals, and answer
-	 * every question live inside it, the overview naming the servers its
-	 * totals sum. An answer the stats could not open for is never stored, so
-	 * the verb asks again live.
+	 * every question live inside it, a template once for each server its
+	 * totals sum and the overview naming them. An answer the stats could not
+	 * open for is never stored, so the verb asks again live.
 	 * `admit()` declines a job before it gets here. On a started record each
 	 * answer is a `prefetch answer` span labelled with its question's name.
 	 *
@@ -84,9 +88,10 @@ final class Overview_Prefetch {
 	}
 
 	/**
-	 * Each stored question's live answer by key, an `overview` naming
-	 * `$servers`, each a `prefetch answer` span labelled with its question's
-	 * name. An answer the stats could not open for is never stored.
+	 * Each stored question's live answer by key, a template's once for each
+	 * of `$servers`, keyed as that server's poll binds it, and an `overview`
+	 * naming `$servers`; each is a `prefetch answer` span labelled with its
+	 * question's name. An answer the stats could not open for is never stored.
 	 *
 	 * @param int          $now     The job's tick.
 	 * @param list<string> $servers The window's servers, busiest first.
@@ -97,39 +102,78 @@ final class Overview_Prefetch {
 	 */
 	private static function answers( int $now, array $servers ): array {
 		$answers = [];
-		foreach ( self::stored() as $key => [ 'name' => $name, 'verb' => $verb, 'args' => $args ] ) {
-			$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $args, $now, $servers ), start: [ 'l' => $name ] );
-			if ( true === ( $answer['available'] ?? null ) ) {
-				$answers[ $key ] = $answer;
+		$verbs   = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
+		foreach ( self::stored() as [ 'name' => $name, 'verb' => $verb, 'args' => $args, 'tokens' => $tokens ] ) {
+			$asked = self::is_template( $tokens ) ? \array_map( static fn ( string $server ): array => Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ), \str_replace( self::SERVER, $server, $tokens ) ), $servers ) : [ $args ];
+			foreach ( $asked as $bound ) {
+				$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $bound, $now, $servers ), start: [ 'l' => $name ] );
+				if ( true === ( $answer['available'] ?? null ) ) {
+					$answers[ self::key( $verb, $bound ) ] = $answer;
+				}
 			}
 		}
 		return $answers;
 	}
 
 	/**
-	 * The questions the job answers, each its name in `stored-answers.json`
-	 * and its verb and arguments bound as the verb binds them, by the key its
-	 * answer is stored under.
+	 * The questions the job answers, each its name in `stored-answers.json`,
+	 * its verb and tokens, and its arguments bound as the verb binds them, by
+	 * the key a question naming no `SERVER` stores its answer under. A
+	 * template's key binds `SERVER` itself, the key `templated()` args match;
+	 * its answers are stored under each server's own.
 	 *
-	 * @return array<string,array{name:string,verb:string,args:array<string,mixed>}>
+	 * @return array<string,array{name:string,verb:string,tokens:list<string>,args:array<string,mixed>}>
 	 * @throws \InvalidArgumentException On a question naming a verb
 	 *                                   `performance` does not declare.
 	 * @throws \RuntimeException As `questions()`.
 	 * @throws \LogicException On two questions binding to one key, which
-	 *                         would store one answer for both.
+	 *                         would store one answer for both, or a template
+	 *                         naming its server where `templated()` cannot
+	 *                         find it, whose answers no poll would read.
 	 */
 	public static function stored(): array {
 		$verbs  = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
 		$stored = [];
 		foreach ( self::questions() as $name => [ 'verb' => $verb, 'tokens' => $tokens ] ) {
-			$args = Command_Args::bind( Core::arr( $verbs[ $verb ]['args'] ?? throw new \InvalidArgumentException( \esc_html( "overview prefetch: performance declares no {$verb}" ) ) ), $tokens );
-			$key  = self::key( $verb, $args );
+			$declared = Core::arr( $verbs[ $verb ]['args'] ?? throw new \InvalidArgumentException( \esc_html( "overview prefetch: performance declares no {$verb}" ) ) );
+			$args     = Command_Args::bind( $declared, $tokens );
+			$key      = self::key( $verb, $args );
 			if ( isset( $stored[ $key ] ) ) {
 				throw new \LogicException( \esc_html( "overview prefetch: {$stored[ $key ]['name']} and {$name} bind to one key" ) );
 			}
-			$stored[ $key ] = [ 'name' => $name, 'verb' => $verb, 'args' => $args ];
+			if ( self::is_template( $tokens ) && self::templated( Command_Args::bind( $declared, \str_replace( self::SERVER, 'probe.invalid', $tokens ) ) ) !== $args ) {
+				throw new \LogicException( \esc_html( "overview prefetch: {$name} names its server where templated() cannot find it" ) );
+			}
+			$stored[ $key ] = [ 'name' => $name, 'verb' => $verb, 'tokens' => $tokens, 'args' => $args ];
 		}
 		return $stored;
+	}
+
+	/**
+	 * `$args` with the one server they name put back as `SERVER`: an
+	 * `overview`'s `server`, or a `query`'s one `server=` filter. Args naming
+	 * no server, a blank one, two, or one only by negation come back unchanged, so no
+	 * template's key matches them.
+	 *
+	 * @param array<array-key,mixed> $args Bound arguments.
+	 * @return array<array-key,mixed>
+	 */
+	public static function templated( array $args ): array {
+		if ( \is_string( $args['server'] ?? null ) && '' !== $args['server'] ) {
+			return \array_replace( $args, [ 'server' => self::SERVER ] );
+		}
+		$filter = Core::arr( $args['filter'] ?? [] );
+		$named  = \array_keys( \array_filter( $filter, static fn ( mixed $token ): bool => \str_starts_with( Core::as_string( $token ), 'server=' ) && 'server=' !== $token ) );
+		return 1 === \count( $named ) ? \array_replace( $args, [ 'filter' => \array_replace( $filter, [ $named[0] => 'server=' . self::SERVER ] ) ] ) : $args;
+	}
+
+	/**
+	 * Whether a question's tokens name their server by `SERVER`.
+	 *
+	 * @param list<string> $tokens The question's tokens.
+	 */
+	private static function is_template( array $tokens ): bool {
+		return \str_contains( \implode( "\n", $tokens ), self::SERVER );
 	}
 
 	/**
