@@ -485,6 +485,7 @@ class FlameTreeTest extends TestCase {
 		[ 'snapshot build', 'snapshot copy' ],
 		[ 'snapshot build', 'snapshot index' ],
 		[ 'snapshot build', 'snapshot totals' ],
+		[ 'snapshot build', 'prefetch answer' ],
 	];
 
 	/** The base `hook_categories.json` colours, keyed by category. */

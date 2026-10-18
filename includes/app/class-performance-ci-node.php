@@ -1268,7 +1268,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( '' !== $server ) {
 			return [ 'as_of' => $now ] + self::answer_overview( $server, $now, \is_array( $servers ) ? \array_values( $servers ) : null );
 		}
-		return $stored ?? self::answer_live( $verb, $args, $now );
+		return $stored ?? self::answer_live( $verb, $args, $now, null );
 	}
 
 	/**
@@ -1330,15 +1330,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * dated `$now`.
 	 *
 	 * @api Overview_Prefetch, which stores these.
-	 * @param string                 $verb `overview`, `urls` or `query`.
-	 * @param array<array-key,mixed> $args Its bound arguments.
-	 * @param int                    $now  The reply's clock.
+	 * @param string                 $verb    `overview`, `urls` or `query`.
+	 * @param array<array-key,mixed> $args    Its bound arguments.
+	 * @param int                    $now     The reply's clock.
+	 * @param list<mixed>|null       $servers The servers an `overview` names; null reads them.
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException On a verb no answer is stored for, or what the verb refuses.
 	 */
-	public static function answer_live( string $verb, array $args, int $now ): array {
+	public static function answer_live( string $verb, array $args, int $now, ?array $servers ): array {
 		return [ 'as_of' => $now ] + match ( $verb ) {
-			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now, null ),
+			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now, $servers ),
 			'urls'     => self::url_page( ...self::url_question( $args ), now: $now ),
 			'query'    => self::answer_query( $args, $now ),
 			default    => throw new \InvalidArgumentException( \esc_html( "no stored answer answers {$verb}" ) ),
@@ -1350,16 +1351,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * non-worker requests' totals, their exact distinct URLs, every server
 	 * with traffic there, worker traffic counted, busiest first, and the
 	 * leaderboard. A server scopes the totals and the leaderboard; `servers`
-	 * stays whole, so a scoped dashboard can still name the rest. A stored
-	 * list stands in for it unless the scoped server has traffic, worker
-	 * traffic counted as the list counts it, that the list predates, which
-	 * only a live read names; a server the list lacks costs one scoped count
-	 * a poll to rule that out. Stats that will not open answer `available`
+	 * stays whole, so a scoped dashboard can still name the rest. A list
+	 * handed in stands in for it, unless a scoped server has traffic the list
+	 * lacks, worker traffic counted as the list counts it; only a live read
+	 * names that server, and a server the list lacks costs one scoped count
+	 * a poll to rule it out. Stats that will not open answer `available`
 	 * false and null totals, never zeroes.
 	 *
 	 * @param string           $server  Server to scope to; '' is every server.
 	 * @param int              $now     The reply's clock.
-	 * @param list<mixed>|null $servers The stored `servers` a scoped answer may take; null reads them.
+	 * @param list<mixed>|null $servers The `servers` to name; null reads them.
 	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, available: bool}
 	 */
 	private static function answer_overview( string $server, int $now, ?array $servers ): array {
@@ -1374,7 +1375,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			]
 		);
 		$totals  = self::measures( $answer );
-		if ( null === $servers || ( ! \in_array( $server, $servers, true ) && ( 0 < Core::num_int( $totals['count'] ) || self::has_traffic( $server, $chart ) ) ) ) {
+		if ( null === $servers || ( '' !== $server && ! \in_array( $server, $servers, true ) && ( 0 < Core::num_int( $totals['count'] ) || self::has_traffic( $server, $chart ) ) ) ) {
 			$servers = \array_column(
 				Stats_Query::run(
 					[
