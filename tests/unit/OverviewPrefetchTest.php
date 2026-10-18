@@ -101,7 +101,7 @@ final class OverviewPrefetchTest extends TestCase {
 					$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, $value ] );
 				}
 				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
-				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + Url_Snapshot::TTL_S ] );
 				return true;
 			}
 		);
@@ -436,19 +436,20 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5520/', 'ms' => 33.5 ] );
 		$this->run_job();
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5520/', 'ms' => 8.5 ] );
-		self::clock( self::NOW + 2 * self::INTERVAL );
+		self::clock( self::NOW + Url_Snapshot::TTL_S );
 
 		$served = $this->urls( [ '--limit=100' ] );
 
 		$this->assertCount( 2, $served['data'] );
-		$this->assertSame( self::NOW + 2 * self::INTERVAL, $served['as_of'] );
+		$this->assertSame( self::NOW + Url_Snapshot::TTL_S, $served['as_of'] );
 	}
 
-	public function test_a_snapshot_lives_two_intervals(): void {
+	/** A snapshot serves ten minutes from its publish, whatever the interval: a run a respawn lost, and the next, fit inside. */
+	public function test_a_snapshot_lives_ten_minutes(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5523/', 'ms' => 33.5 ] );
 		$this->run_job();
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5523/', 'ms' => 8.5 ] );
-		self::clock( self::NOW + 2 * self::INTERVAL - 1 );
+		self::clock( self::NOW + 600 - 1 );
 
 		$this->assertSame( self::NOW, $this->urls( [ '--limit=100' ] )['as_of'] );
 	}
@@ -495,7 +496,7 @@ final class OverviewPrefetchTest extends TestCase {
 			Url_Snapshot::NAME,
 			static function ( Row_Reader $db ): bool {
 				$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
-				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + 2 * self::INTERVAL ] );
+				$db->rows( 'INSERT INTO meta VALUES ( ?, ? )', [ self::NOW, self::NOW + Url_Snapshot::TTL_S ] );
 				return true;
 			}
 		);
@@ -748,7 +749,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->run_job();
 		$this->seed_request( [ 'server' => 'kaka-6203.example', 'url' => 'https://kaka-6203.example/b/', 'ms' => 12.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-6203.example', 'url' => 'https://kaka-6203.example/c/', 'ms' => 4.5 ] );
-		self::clock( self::NOW + 2 * self::INTERVAL + 1 );
+		self::clock( self::NOW + Url_Snapshot::TTL_S + 1 );
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6203.example' ] );
 

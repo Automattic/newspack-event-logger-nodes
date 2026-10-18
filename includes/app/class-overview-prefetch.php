@@ -6,9 +6,10 @@
  *
  * `Overview_Prefetch_Tick_Node` queues each `eln_overview_prefetch` job, and
  * only partition 0's JobWorker runs it. The job builds the window's URL
- * table as one `Url_Snapshot`, which serves two intervals, and answers the
- * questions in `stored-answers.json` live inside it, a template naming its
- * server `SERVER` once for each server the window holds: `urls` reads any
+ * table as one `Url_Snapshot`, which serves `Url_Snapshot::TTL_S`
+ * after it publishes, and answers the questions in `stored-answers.json` live inside
+ * it, a template naming its server `SERVER` once for each server the window
+ * holds: `urls` reads any
  * page of it, `overview` and `query` the stored answer to the same bound
  * arguments, and any other question, a stale snapshot or none is answered
  * live (decision 37).
@@ -53,10 +54,11 @@ final class Overview_Prefetch {
 	public static ?\Closure $read_file = null;
 
 	/**
-	 * The job: build the URL snapshot, which serves two intervals, and answer
-	 * every question live inside it, a template once for each server its
-	 * totals sum and the overview naming them. An answer the stats could not
-	 * open for is never stored, so the verb asks again live.
+	 * The job: build the URL snapshot, which serves `Url_Snapshot::TTL_S`
+	 * after it publishes, and answer every question live inside it, a template once
+	 * for each server its totals sum and the overview naming them. An answer
+	 * the stats could not open for is never stored, so the verb asks again
+	 * live.
 	 * `admit()` declines a job before it gets here. On a started record each
 	 * answer is a `prefetch answer` span labelled with its question's name.
 	 *
@@ -82,8 +84,8 @@ final class Overview_Prefetch {
 		$now       = (int) Core::right_now();
 		$questions = self::stored();
 		Event_Framework::instance()->uninterruptible(
-			static function () use ( $questions, $now, $interval ): void {
-				Url_Snapshot::publish( $now, 2 * $interval, static fn ( array $servers ): array => self::answers( $questions, $now, $servers ) );
+			static function () use ( $questions, $now ): void {
+				Url_Snapshot::publish( $now, static fn ( array $servers ): array => self::answers( $questions, $now, $servers ) );
 			}
 		);
 	}
