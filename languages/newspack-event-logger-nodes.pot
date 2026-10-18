@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.141.2\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.142.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-18T12:33:41+00:00\n"
+"POT-Creation-Date: 2026-10-18T15:16:04+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -150,8 +150,8 @@ msgid "Incomplete (gap in the log)"
 msgstr ""
 
 #: src/components/LoadingFallback.js:29
-#: src/current-request/CurrentRequestTab.js:154
-#: src/overview/components/BreakdownControls.js:279
+#: src/current-request/CurrentRequestTab.js:158
+#: src/overview/components/BreakdownControls.js:281
 msgid "Loading…"
 msgstr ""
 
@@ -185,24 +185,24 @@ msgstr ""
 msgid "Remove %s"
 msgstr ""
 
-#: src/current-request/CurrentRequestTab.js:142
+#: src/current-request/CurrentRequestTab.js:146
 msgid "No request to inspect on this page yet."
 msgstr ""
 
-#: src/current-request/CurrentRequestTab.js:171
+#: src/current-request/CurrentRequestTab.js:175
 msgid "This request is still processing — the request builder hasn’t logged it yet."
 msgstr ""
 
-#: src/current-request/CurrentRequestTab.js:191
+#: src/current-request/CurrentRequestTab.js:195
 msgid "Request:"
 msgstr ""
 
-#: src/current-request/CurrentRequestTab.js:197
+#: src/current-request/CurrentRequestTab.js:201
 msgid "View full trace"
 msgstr ""
 
-#: src/current-request/CurrentRequestTab.js:209
-#: src/overview/components/RequestDetailView.js:101
+#: src/current-request/CurrentRequestTab.js:213
+#: src/overview/components/RequestDetailView.js:105
 msgid "Findings"
 msgstr ""
 
@@ -215,7 +215,7 @@ msgid "Error timestamp"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:82
-#: src/overview/components/LogEntriesTable.js:1476
+#: src/overview/components/LogEntriesTable.js:1512
 msgid "Keyword"
 msgstr ""
 
@@ -224,7 +224,7 @@ msgid "Error/warning keyword"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:87
-#: src/overview/components/LogEntriesTable.js:1482
+#: src/overview/components/LogEntriesTable.js:1518
 msgid "Message"
 msgstr ""
 
@@ -366,16 +366,16 @@ msgid "Browse a partition"
 msgstr ""
 
 #: src/log-table/logTable.js:35
-#: src/overview/CategoryTimeChart.js:57
+#: src/overview/CategoryTimeChart.js:60
 #: src/overview/components/BucketField.js:253
-#: src/overview/components/LogEntriesTable.js:1473
-#: src/overview/components/UrlDetailView.js:425
-#: src/overview/RequestProfile.js:237
+#: src/overview/components/LogEntriesTable.js:1509
+#: src/overview/components/UrlDetailView.js:432
+#: src/overview/RequestProfile.js:262
 msgid "Time"
 msgstr ""
 
 #: src/log-table/logTable.js:39
-#: src/overview/components/UrlDetailView.js:433
+#: src/overview/components/UrlDetailView.js:440
 msgid "Request ID"
 msgstr ""
 
@@ -393,7 +393,7 @@ msgid "Request method and URL - click to view URL stats"
 msgstr ""
 
 #: src/log-table/logTable.js:55
-#: src/overview/components/UrlDetailView.js:437
+#: src/overview/components/UrlDetailView.js:444
 msgid "Status"
 msgstr ""
 
@@ -425,73 +425,73 @@ msgstr ""
 msgid "View URL stats"
 msgstr ""
 
-#: src/overview/AggregateTimeChart.js:260
+#: src/overview/AggregateTimeChart.js:268
 #: src/overview/constants.js:53
 msgid "Request Volume"
 msgstr ""
 
-#: src/overview/AggregateTimeChart.js:261
+#: src/overview/AggregateTimeChart.js:269
 #: src/overview/constants.js:57
 msgid "Avg Response Time"
 msgstr ""
 
-#: src/overview/AggregateTimeChart.js:262
+#: src/overview/AggregateTimeChart.js:270
 #: src/overview/constants.js:61
 msgid "Cumulative Response Time"
 msgstr ""
 
-#: src/overview/AggregateTimeChart.js:266
+#: src/overview/AggregateTimeChart.js:274
 #: src/overview/components/HeadlineStats.js:45
 #: src/overview/constants.js:65
 msgid "Avg Peak Memory"
 msgstr ""
 
-#: src/overview/AggregateTimeChart.js:272
+#: src/overview/AggregateTimeChart.js:280
 msgid "Requests per 5 min"
 msgstr ""
 
-#: src/overview/AggregateTimeChart.js:273
+#: src/overview/AggregateTimeChart.js:281
 msgid "Time per 5 min"
 msgstr ""
 
-#: src/overview/AggregateTimeChart.js:293
+#: src/overview/AggregateTimeChart.js:301
 msgid "Total of shown"
 msgstr ""
 
-#: src/overview/AggregateTimeChart.js:294
+#: src/overview/AggregateTimeChart.js:302
 msgid "Total"
 msgstr ""
 
 #. translators: 1: metric name (e.g. Request Volume), 2: hours the axis spans.
-#: src/overview/AggregateTimeChart.js:299
+#: src/overview/AggregateTimeChart.js:307
 #, js-format
 msgid "%1$s (Last %2$d Hour)"
 msgid_plural "%1$s (Last %2$d Hours)"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/AggregateTimeChart.js:306
+#: src/overview/AggregateTimeChart.js:314
 msgid "Chart"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:56
+#: src/overview/CategoryTimeChart.js:59
 msgid "Time by Category"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:61
+#: src/overview/CategoryTimeChart.js:64
 msgid "Events by Category"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:62
+#: src/overview/CategoryTimeChart.js:65
 #: src/rules/RulesAdmin.js:357
 msgid "Events"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:66
+#: src/overview/CategoryTimeChart.js:69
 msgid "Average Time per Event"
 msgstr ""
 
-#: src/overview/CategoryTimeChart.js:67
+#: src/overview/CategoryTimeChart.js:70
 msgid "Time per Event"
 msgstr ""
 
@@ -563,37 +563,37 @@ msgstr ""
 msgid "No field %s to filter on."
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:122
+#: src/overview/components/BreakdownControls.js:124
 msgid "Filter"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:123
+#: src/overview/components/BreakdownControls.js:125
 msgid "Filter, e.g. status_class=5xx"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:231
-#: src/overview/constants.js:87
+#: src/overview/components/BreakdownControls.js:233
+#: src/overview/constants.js:89
 msgid "Server"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:241
+#: src/overview/components/BreakdownControls.js:243
 msgid "Metric"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:250
+#: src/overview/components/BreakdownControls.js:252
 msgid "Breakdown"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:259
+#: src/overview/components/BreakdownControls.js:261
 msgid "Then by"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:263
+#: src/overview/components/BreakdownControls.js:265
 msgid "None"
 msgstr ""
 
 #. translators: %s: the breakdown dimensions' labels, e.g. User Agent.
-#: src/overview/components/BreakdownControls.js:295
+#: src/overview/components/BreakdownControls.js:297
 #, js-format
 msgid "No %s data in this window."
 msgstr ""
@@ -699,57 +699,57 @@ msgid "The last 24 hours in five-minute buckets, the current one so far."
 msgstr ""
 
 #. translators: 1: file:line the fatal was raised at, 2: plugin slug.
-#: src/overview/components/LogEntriesTable.js:341
+#: src/overview/components/LogEntriesTable.js:365
 #, js-format
 msgid "%1$s (plugin %2$s)"
 msgstr ""
 
 #. translators: %d: number of nested log entries hidden inside this collapsed pair.
-#: src/overview/components/LogEntriesTable.js:1164
+#: src/overview/components/LogEntriesTable.js:1200
 #, js-format
 msgid "[%d entry]"
 msgid_plural "[%d entries]"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/components/LogEntriesTable.js:1268
-#: src/overview/RequestProfile.js:326
+#: src/overview/components/LogEntriesTable.js:1304
+#: src/overview/RequestProfile.js:353
 msgid "Show less"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1269
+#: src/overview/components/LogEntriesTable.js:1305
 msgid "Show more"
 msgstr ""
 
 #. translators: %d: number of log entries in the request.
-#: src/overview/components/LogEntriesTable.js:1353
+#: src/overview/components/LogEntriesTable.js:1389
 #, js-format
 msgid "Log Entries (%d)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1364
+#: src/overview/components/LogEntriesTable.js:1400
 msgid "Fold All"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1371
+#: src/overview/components/LogEntriesTable.js:1407
 msgid "Unfold All"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1379
+#: src/overview/components/LogEntriesTable.js:1415
 msgid "Search entries"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1383
+#: src/overview/components/LogEntriesTable.js:1419
 msgid "Search entries…"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1414
+#: src/overview/components/LogEntriesTable.js:1450
 msgid "No matches"
 msgstr ""
 
 #. translators: %d: number of entries matching the search query.
 #. translators: %d: number of matching lines in the request.
-#: src/overview/components/LogEntriesTable.js:1427
+#: src/overview/components/LogEntriesTable.js:1463
 #: src/overview/components/OverviewSection.js:284
 #, js-format
 msgid "%d match"
@@ -757,15 +757,15 @@ msgid_plural "%d matches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/components/LogEntriesTable.js:1441
+#: src/overview/components/LogEntriesTable.js:1477
 msgid "Previous match (p)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1453
+#: src/overview/components/LogEntriesTable.js:1489
 msgid "Next match (n)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1535
+#: src/overview/components/LogEntriesTable.js:1571
 msgid "Click to highlight pair"
 msgstr ""
 
@@ -827,27 +827,27 @@ msgstr ""
 msgid "Global Time Breakdown"
 msgstr ""
 
-#: src/overview/components/RequestDetailView.js:75
+#: src/overview/components/RequestDetailView.js:79
 msgid "Error:"
 msgstr ""
 
-#: src/overview/components/RequestDetailView.js:109
+#: src/overview/components/RequestDetailView.js:113
 msgid "No log entries available for this request."
 msgstr ""
 
-#: src/overview/components/RequestDetailView.js:118
+#: src/overview/components/RequestDetailView.js:122
 msgid "Aggregated under load. This request logged more than the worker could hold alongside the others in flight, so repeated spans were merged into one frame each — counts and totals are exact, the sequence is not. Its opening and closing entries are kept in full, and the merged spans sit between them in the log, each showing how many instances it stands for."
 msgstr ""
 
-#: src/overview/components/RequestTrace.js:52
+#: src/overview/components/RequestTrace.js:53
 msgid "Request Trace"
 msgstr ""
 
-#: src/overview/components/RequestTrace.js:62
+#: src/overview/components/RequestTrace.js:64
 msgid "Loading chart…"
 msgstr ""
 
-#: src/overview/components/RequestTrace.js:92
+#: src/overview/components/RequestTrace.js:95
 msgid "The flame lookup ran out of time, so no trace is shown here; that does not mean none was recorded."
 msgstr ""
 
@@ -867,108 +867,108 @@ msgstr ""
 msgid "The charts and the profile describe every request to this URL; the header and the list below hold %s."
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:357
+#: src/overview/components/UrlDetailView.js:364
 msgid "Aggregate Flame Graph"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:389
+#: src/overview/components/UrlDetailView.js:396
 msgid "Recent Requests"
 msgstr ""
 
 #. translators: %d: number of recent requests shown.
-#: src/overview/components/UrlDetailView.js:395
+#: src/overview/components/UrlDetailView.js:402
 #, js-format
 msgid "Recent Requests (%d)"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/components/UrlDetailView.js:412
+#: src/overview/components/UrlDetailView.js:419
 #, js-format
 msgid "Could not list requests: %s"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:430
-#: src/overview/constants.js:107
+#: src/overview/components/UrlDetailView.js:437
+#: src/overview/constants.js:110
 msgid "Method"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:444
+#: src/overview/components/UrlDetailView.js:451
 #: src/requests/RequestStream.js:97
 msgid "Duration"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:454
+#: src/overview/components/UrlDetailView.js:461
 #: src/overview/UrlTable.js:179
 msgid "Mem"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:468
+#: src/overview/components/UrlDetailView.js:475
 msgid "Loading requests…"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:472
+#: src/overview/components/UrlDetailView.js:479
 msgid "No requests to display"
 msgstr ""
 
-#: src/overview/constants.js:92
+#: src/overview/constants.js:94
 msgid "URL Hash"
 msgstr ""
 
-#: src/overview/constants.js:97
+#: src/overview/constants.js:100
 msgid "Status Code"
 msgstr ""
 
-#: src/overview/constants.js:102
+#: src/overview/constants.js:105
 msgid "Status Class"
 msgstr ""
 
-#: src/overview/constants.js:112
+#: src/overview/constants.js:115
 msgid "Country"
 msgstr ""
 
-#: src/overview/constants.js:117
+#: src/overview/constants.js:120
 msgid "User Agent"
 msgstr ""
 
-#: src/overview/constants.js:122
+#: src/overview/constants.js:125
 msgid "JA4 Hash"
 msgstr ""
 
-#: src/overview/constants.js:127
+#: src/overview/constants.js:130
 msgid "From"
 msgstr ""
 
-#: src/overview/constants.js:132
+#: src/overview/constants.js:135
 msgid "Worker"
 msgstr ""
 
-#: src/overview/constants.js:137
+#: src/overview/constants.js:140
 msgid "Profiled"
 msgstr ""
 
-#: src/overview/constants.js:142
+#: src/overview/constants.js:145
 msgid "Error"
 msgstr ""
 
 #. translators: %d: how many further lines the frame's message holds.
-#: src/overview/FlameGraph.js:115
+#: src/overview/FlameGraph.js:120
 #, js-format
 msgid "… %d more lines"
 msgstr ""
 
 #. translators: 1: node name, 2: percent of parent, 3: percent of total, 4: duration in milliseconds.
-#: src/overview/FlameGraph.js:162
+#: src/overview/FlameGraph.js:167
 #, js-format
 msgid "%1$s - %2$s%% of parent, %3$s%% of total, %4$sms"
 msgstr ""
 
 #. translators: 1: node name, 2: percent of total, 3: duration in milliseconds.
-#: src/overview/FlameGraph.js:174
+#: src/overview/FlameGraph.js:179
 #, js-format
 msgid "%1$s - %2$s%%, %3$sms"
 msgstr ""
 
-#: src/overview/FlameGraph.js:934
+#: src/overview/FlameGraph.js:1001
 msgid "No flame graph data available."
 msgstr ""
 
@@ -1052,46 +1052,46 @@ msgstr ""
 msgid "Loading request…"
 msgstr ""
 
-#: src/overview/RequestProfile.js:78
+#: src/overview/RequestProfile.js:79
 msgid "(anonymous)"
 msgstr ""
 
 #. translators: %d: number of additional entries not shown.
-#: src/overview/RequestProfile.js:99
+#: src/overview/RequestProfile.js:100
 #, js-format
 msgid "… and %d more"
 msgstr ""
 
-#: src/overview/RequestProfile.js:140
+#: src/overview/RequestProfile.js:173
 msgid "Time Breakdown"
 msgstr ""
 
-#: src/overview/RequestProfile.js:235
+#: src/overview/RequestProfile.js:260
 msgid "Category"
 msgstr ""
 
-#: src/overview/RequestProfile.js:239
+#: src/overview/RequestProfile.js:264
 msgid "% of Total"
 msgstr ""
 
-#: src/overview/RequestProfile.js:245
+#: src/overview/RequestProfile.js:270
 msgid "Count"
 msgstr ""
 
 #. translators: %d: number of additional categories that can be shown.
-#: src/overview/RequestProfile.js:332
+#: src/overview/RequestProfile.js:359
 #, js-format
 msgid "Show %d more category"
 msgid_plural "Show %d more categories"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/RequestProfile.js:348
+#: src/overview/RequestProfile.js:375
 msgid "Total Profiled"
 msgstr ""
 
 #. translators: 1: number of requests, 2: the server name.
-#: src/overview/RequestProfile.js:414
+#: src/overview/RequestProfile.js:441
 #, js-format
 msgid "Average breakdown across %1$d request on %2$s"
 msgid_plural "Average breakdown across %1$d requests on %2$s"
@@ -1099,44 +1099,44 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %d: number of requests.
-#: src/overview/RequestProfile.js:425
+#: src/overview/RequestProfile.js:452
 #, js-format
 msgid "Average breakdown across %d request"
 msgid_plural "Average breakdown across %d requests"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/ResponseTimeChart.js:154
+#: src/overview/ResponseTimeChart.js:181
 msgid "Response Time"
 msgstr ""
 
 #. translators: %s: average response time, e.g. 68ms or 130s.
-#: src/overview/ResponseTimeChart.js:194
+#: src/overview/ResponseTimeChart.js:221
 #, js-format
 msgid "avg: %s"
 msgstr ""
 
 #. translators: %s: HTTP status code.
-#: src/overview/ResponseTimeChart.js:227
+#: src/overview/ResponseTimeChart.js:260
 #, js-format
 msgid "Status: %s"
 msgstr ""
 
-#: src/overview/ResponseTimeChart.js:229
+#: src/overview/ResponseTimeChart.js:262
 msgid "N/A"
 msgstr ""
 
 #. translators: %d: duration in milliseconds.
-#: src/overview/ResponseTimeChart.js:233
+#: src/overview/ResponseTimeChart.js:266
 #, js-format
 msgid "Duration: %dms"
 msgstr ""
 
-#: src/overview/ResponseTimeChart.js:239
+#: src/overview/ResponseTimeChart.js:272
 msgid "Click to view details"
 msgstr ""
 
-#: src/overview/ResponseTimeChart.js:258
+#: src/overview/ResponseTimeChart.js:291
 msgid "Response Times (Recent Requests)"
 msgstr ""
 
