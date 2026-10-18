@@ -931,35 +931,37 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertFalse( self::snapshot_published() );
 	}
 
-	/** A later listener can overwrite admit()'s decline, so the handler asks again. */
-	public function test_the_job_run_on_another_partition_publishes_nothing(): void {
+	/** The tick queues one job a fleet, so the job runs on whichever partition it lands. */
+	public function test_the_job_run_on_another_partition_publishes(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-7033/' ] );
 		Core::$var['partition'] = '3';
 
 		Overview_Prefetch::run( '', [ 'queued_at' => self::NOW, 'interval' => self::INTERVAL ] );
 
-		$this->assertFalse( self::snapshot_published() );
+		$this->assertTrue( self::snapshot_published() );
 	}
 
-	/** Ownership comes first: a job no worker but p0's runs is never this worker's to refuse. */
-	public function test_another_partition_declines_a_job_the_tick_could_not_have_queued(): void {
+	/** Another partition refuses a job the tick could not have queued, as partition 0 does. */
+	public function test_another_partition_refuses_a_job_the_tick_could_not_have_queued(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-7043/' ] );
 		Core::$var['partition'] = '3';
 		$parameters             = [ 'queued_at' => self::NOW, 'interval' => 1800 ];
 
-		$this->assertFalse( Overview_Prefetch::admit( true, Overview_Prefetch::HANDLER, '', [ Message::VALUE => [ 'parameters' => $parameters ] ] ) );
+		$this->assertTrue( Overview_Prefetch::admit( true, Overview_Prefetch::HANDLER, '', [ Message::VALUE => [ 'parameters' => $parameters ] ] ) );
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'overview prefetch: interval wants 1 to 900 seconds, got 1800' );
 		Overview_Prefetch::run( '', $parameters );
-		$this->assertFalse( self::snapshot_published() );
 	}
 
-	public function test_a_worker_bound_to_another_partition_declines(): void {
+	/** A hub's firehose entry lands on any partition, and that partition's JobWorker runs it. */
+	public function test_a_worker_bound_to_another_partition_runs_and_publishes(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/takahe-5530/' ] );
 		Core::$var['partition'] = '3';
 
 		$jw = $this->deliver( self::NOW );
 
-		$this->assertFalse( self::snapshot_published() );
-		$this->assertSame( [], $jw->probe_stats() );
+		$this->assertTrue( self::snapshot_published() );
+		$this->assertCount( 1, $jw->probe_stats() );
 	}
 
 	public function test_a_fresh_job_on_partition_zero_runs_and_publishes(): void {

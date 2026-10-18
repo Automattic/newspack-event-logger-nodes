@@ -504,7 +504,7 @@ claiming them again. The drop-in depends on nothing; with the plugin inactive it
 |------|----------|
 | `newspack_nodes/declare_config_keys` | `Config::register_config_keys` — registered at file scope with a literal name, because this plugin loads first. |
 | `Newspack_Nodes\Config::RESET_ACTION` | `Config::reset_local_cache` — not `reset()`, which would re-enter the substrate. |
-| `newspack_nodes/job_worker/before_job` (filter, 4 args) | `App\Overview_Prefetch::admit` at priority 5, which declines an overview-prefetch job on a worker bound to another partition, or overtaken, and passes one the tick could not have queued to its handler to refuse; then `Log_Manager::begin_job_context_filter` at 10 |
+| `newspack_nodes/job_worker/before_job` (filter, 4 args) | `App\Overview_Prefetch::admit` at priority 5, which declines an overtaken overview-prefetch job and passes one the tick could not have queued to its handler to refuse; then `Log_Manager::begin_job_context_filter` at 10 |
 | `newspack_nodes/job_worker/after_job` (action, 3 args) | `Log_Manager::end_job_context` |
 | `newspack_nodes/worker_identified` (action, 2 args) | `Log_Manager::identify_worker` — writes `worker_type` and `worker_partition` again with the worker a spawn request validated, so its record moves to that worker's own URL row. |
 | `newspack_nodes/settings_sync/value` (filter, 2 args) | `newspack_event_logger_nodes_resolve_settings_sync_value` — resolves a blank or absent value to the OWNING config's default, and hydrates a pointer rule's hooks so the ruleset ships hook-complete to spokes. |
