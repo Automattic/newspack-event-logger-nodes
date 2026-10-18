@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.141.1] - 2026-10-18
+
 ### Fixed
 - The overview-prefetch tick paces from wall-clock interval boundaries, so a worker's respawn no longer skips a run, unless its gap straddles a boundary. A fresh process counted its first interval from its own start, and in a worker's 595-second life that lost one 120-second interval in five: the snapshot expired before the next run published, and for the 90–100 s that run took, every Overview poll answered live, 30–50 s each on eln.
 - A prefetch job whose interval or `queued_at` is missing, zero, negative or no number fails in its handler on partition 0 or a worker with no partition bound: the JobWorker records the error and its Consumer dead-letters the entry, where `admit()` declined the job in silence as overtaken. A zero interval queued a job each second, and each was declined. A fractional or numeric-string value, which ran cast to an integer, now fails the same way.
