@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.141.2] - 2026-10-18
+
 ### Fixed
 - The overview-prefetch job runs on whichever partition its entry lands. Only partition 0's JobWorker ran it, and inside a worker the tick's firehose entry carries the worker's own spawn request id, so every job of a 595-second life landed on one partition: a four-partition hub ran the job for about one worker life in four, and its Overview answered live between.
 
