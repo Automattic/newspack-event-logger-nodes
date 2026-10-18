@@ -130,13 +130,56 @@ final class UrlSnapshotTest extends TestCase {
 	}
 
 	/**
+	 * The handed-in list a published snapshot's answers are asked with.
+	 *
+	 * @return list<string>|null
+	 */
+	private static function servers_handed(): ?array {
+		$handed = null;
+		Url_Snapshot::publish(
+			self::NOW,
+			240,
+			static function ( array $servers ) use ( &$handed ): array {
+				$handed = $servers;
+				return [];
+			}
+		);
+		return $handed;
+	}
+
+	/** The answers are asked with every server of the window, worker traffic counted, busiest first. */
+	public function test_publish_asks_its_answers_with_the_windows_servers_busiest_first(): void {
+		$this->seed_request( [ 'server' => 'kea-7040.example', 'url' => 'https://kea-7040.example/a/' ] );
+		$this->seed_requests(
+			[
+				[ 'server' => 'kaka-7040.example', 'url' => 'https://kaka-7040.example/wp-cron.php', 'worker' => 1 ],
+				[ 'server' => 'kaka-7040.example', 'url' => 'https://kaka-7040.example/b/' ],
+			],
+			partition: 1
+		);
+
+		$this->assertSame( [ 'kaka-7040.example', 'kea-7040.example' ], self::servers_handed() );
+	}
+
+	/** The list names no more servers than a live read's one page. */
+	public function test_publish_names_no_more_servers_than_a_live_read(): void {
+		$rows = [];
+		for ( $i = 0; $i <= Stats_Query::MAX_LIMIT; $i++ ) {
+			$rows[] = [ 'server' => "s{$i}-7041.example", 'url' => "https://s{$i}-7041.example/" ];
+		}
+		$this->seed_requests( $rows );
+
+		$this->assertCount( Stats_Query::MAX_LIMIT, self::servers_handed() ?? [] );
+	}
+
+	/**
 	 * Assert a published snapshot's page is the live page, and answer it.
 	 *
 	 * @return list<list<mixed>> The page's rows.
 	 */
 	private function assert_page_is_live( string $sort, string $order, string $server, bool $workers, int $offset, int $limit ): array {
 		$this->seed_parity_traffic();
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
@@ -208,7 +251,7 @@ final class UrlSnapshotTest extends TestCase {
 	#[DataProvider( 'questions' )]
 	public function test_a_page_reads_its_sort_and_scopes_index( string $sort, string $order, string $server, bool $workers ): void {
 		$this->seed_parity_traffic();
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$db = Row_Table_Node::open_snapshot( Url_Snapshot::NAME );
 		$this->assertInstanceOf( Row_Reader::class, $db, 'the substrate publishes the snapshot under its name' );
 		[ $sql, $binds ] = ( new \ReflectionMethod( Url_Snapshot::class, 'listing' ) )->invoke( null, $server, $workers, $sort, $order );
@@ -233,7 +276,7 @@ final class UrlSnapshotTest extends TestCase {
 	/** `urls` takes its rows in hash order, and `servers` its names in name order. */
 	public function test_rowids_rank_urls_by_hash_and_ids_rank_servers_by_name(): void {
 		$this->seed_parity_traffic();
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$db = Row_Table_Node::open_snapshot( Url_Snapshot::NAME );
 		$this->assertInstanceOf( Row_Reader::class, $db );
 
@@ -300,7 +343,7 @@ final class UrlSnapshotTest extends TestCase {
 	/** A server the snapshot does not hold pages no rows. */
 	public function test_an_unknown_server_pages_no_rows(): void {
 		$this->seed_parity_traffic();
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
@@ -339,7 +382,7 @@ final class UrlSnapshotTest extends TestCase {
 
 	public function test_snapshot_totals_are_the_live_totals(): void {
 		$this->seed_parity_traffic();
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
@@ -363,7 +406,7 @@ final class UrlSnapshotTest extends TestCase {
 			'available' => true,
 			'rows'      => [ [ 9 ] ],
 		];
-		Url_Snapshot::publish( self::NOW, 240, [ 'query:6f1e' => $stored ] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [ 'query:6f1e' => $stored ] );
 
 		$snapshot = Url_Snapshot::open( self::NOW );
 
@@ -375,7 +418,7 @@ final class UrlSnapshotTest extends TestCase {
 
 	public function test_a_snapshot_past_its_expiry_does_not_open(): void {
 		$this->seed_request();
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 
 		$this->assertNull( Url_Snapshot::open( self::NOW + 240 ) );
 		$this->assertInstanceOf( Url_Snapshot::class, Url_Snapshot::open( self::NOW + 239 ) );
@@ -442,7 +485,7 @@ final class UrlSnapshotTest extends TestCase {
 					$this->seed_request( self::request( '/tieke-7716/', 3, 11, [ 'ms' => 40.5 ] ) );
 				}
 				try {
-					Url_Snapshot::publish( self::NOW, 240, $answers );
+					Url_Snapshot::publish( self::NOW, 240, static fn (): array => $answers );
 				} catch ( \Throwable $e ) {
 					$thrown = $e;
 				}
@@ -526,14 +569,14 @@ final class UrlSnapshotTest extends TestCase {
 		$this->activate_shipped( 'job-router', 1 );
 
 		$this->expectException( Table_Unavailable::class );
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 	}
 
 	public function test_a_build_that_throws_leaves_no_file(): void {
 		$this->seed_request( self::request( '/tui-4410/', 3, 11, [ 'ms' => 40.5 ] ) );
 
 		try {
-			Url_Snapshot::publish( self::NOW, 240, [ 'query:3c9a' => [ 'mean' => \NAN ] ] );
+			Url_Snapshot::publish( self::NOW, 240, static fn (): array => [ 'query:3c9a' => [ 'mean' => \NAN ] ] );
 			$this->fail( 'an answer that will not encode publishes nothing' );
 		} catch ( \RuntimeException $e ) {
 			$this->assertStringContainsString( 'query:3c9a will not encode', $e->getMessage() );
@@ -546,11 +589,11 @@ final class UrlSnapshotTest extends TestCase {
 	public function test_no_partition_file_publishes_nothing(): void {
 		$tables = \dirname( $this->facts_file( 0 ) );
 		$this->assertDirectoryDoesNotExist( $tables );
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$this->assertDirectoryDoesNotExist( $tables, 'publishing nothing makes no directory' );
 
 		\mkdir( $tables, 0777, true );
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 
 		$this->assertFalse( self::snapshot_published() );
 		$this->assertSame( [], Row_Table_Node::remove_snapshot( Url_Snapshot::NAME ), 'no publish and no build stands' );
@@ -560,7 +603,7 @@ final class UrlSnapshotTest extends TestCase {
 	public function test_a_window_with_no_requests_publishes_an_empty_snapshot(): void {
 		$this->seed_request( self::request( '/tui-4410/', 400, 41, [ 'ms' => 12.5 ] ) );
 
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW );
 
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
@@ -570,10 +613,10 @@ final class UrlSnapshotTest extends TestCase {
 
 	public function test_a_publish_leaves_no_build_file_and_replaces_the_last(): void {
 		$this->seed_request( self::request( '/tui-4410/', 3, 11, [ 'ms' => 40.5 ] ) );
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$this->seed_request( self::request( '/moa-6638/', 1, 51, [ 'ms' => 18.5 ] ), 1 );
 
-		Url_Snapshot::publish( self::NOW + 120, 240, [] );
+		Url_Snapshot::publish( self::NOW + 120, 240, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW + 120 );
 
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
@@ -589,7 +632,7 @@ final class UrlSnapshotTest extends TestCase {
 	#[DataProvider( 'out_of_bounds' )]
 	public function test_a_page_refuses_a_bound_the_live_page_refuses( int $offset, int $limit ): void {
 		$this->seed_request();
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
@@ -614,7 +657,7 @@ final class UrlSnapshotTest extends TestCase {
 
 	public function test_a_page_refuses_a_sort_urls_does_not_take(): void {
 		$this->seed_request();
-		Url_Snapshot::publish( self::NOW, 240, [] );
+		Url_Snapshot::publish( self::NOW, 240, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 

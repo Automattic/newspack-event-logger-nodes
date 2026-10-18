@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Deploying this resets every site's stats.** The stats rows go to schema version 7. `timings_site` keys on its server first, `( server_id, bucket, worker, category_id, entry_id )`, with `bucket` indexed for its purge, and its server join reads the id plainly, so a server-scoped timings read seeks that server's rows. `requests_server` and `requests_cover` carry `profiled` and `error`, and `requests_cover` `finished_at` too, so the totals, the profiled count and the URL snapshot's grouping read an index alone. Nothing migrates a version-6 file: each flame builder discards its file at its next open, and the dashboards refill from new traffic, or from the retained logs after the rebuild in decision 5.
+- The overview-prefetch job reads the Overview's server list off the URL snapshot's totals, where it re-read the window's requests: 3.9 s less a run on eln. Its answers now run inside the snapshot build, after the totals.
 
 ## [0.140.0] - 2026-10-17
 

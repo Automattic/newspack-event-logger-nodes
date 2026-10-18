@@ -95,24 +95,29 @@ final class Url_Snapshot {
 
 	/**
 	 * Publish the snapshot of the window ending at `$now` through
-	 * `Row_Table_Node::build()`: the URLs, their totals, `$answers` by key,
-	 * and an expiry `$ttl` seconds on. A fleet with no partition file yet
-	 * publishes nothing, and a build that throws leaves the last publish.
+	 * `Row_Table_Node::build()`: the URLs, their totals, the answers
+	 * `$answers` gives by key, and an expiry `$ttl` seconds on. A fleet with
+	 * no partition file yet publishes nothing, and a build that throws leaves
+	 * the last publish.
 	 *
 	 * On a started record the build is a `snapshot build` span closing
 	 * `published` or `no partition file`, each of its steps a span inside;
-	 * the architecture guide says what the build span's own time holds.
+	 * the architecture guide says what the build span's own time holds. The
+	 * answers are asked inside the build, after its totals, so each is a span
+	 * inside `snapshot build`.
 	 *
-	 * @param int                                $now     The job's tick.
-	 * @param int                                $ttl     Seconds the snapshot serves.
-	 * @param array<string,array<string,mixed>> $answers The stored answers by key.
+	 * @param int                                                    $now     The job's tick.
+	 * @param int                                                    $ttl     Seconds the snapshot serves.
+	 * @param \Closure(list<string>): array<string,array<string,mixed>> $answers The stored answers by key, given the window's servers busiest first.
 	 * @throws \Newspack_Nodes\Table_Unavailable As `Row_Table_Node::build()`,
 	 *                                           or when no active topology
 	 *                                           declares a Flame_Facts table.
 	 * @throws \RuntimeException When two do, the build will not publish, or
 	 *                           an answer will not encode.
+	 * @throws \InvalidArgumentException As `$answers`.
+	 * @throws \LogicException As `$answers`.
 	 */
-	public static function publish( int $now, int $ttl, array $answers ): void {
+	public static function publish( int $now, int $ttl, \Closure $answers ): void {
 		Log_Manager::span(
 			Flame_Tree::SNAPSHOT_BUILD,
 			static fn (): mixed => Row_Table_Node::build(
@@ -130,13 +135,13 @@ final class Url_Snapshot {
 	/**
 	 * Write the snapshot's tables into the file `$db` builds.
 	 *
-	 * @param Row_Reader                         $db      The building connection.
-	 * @param int                                $now     The job's tick.
-	 * @param int                                $ttl     Seconds the snapshot serves.
-	 * @param array<string,array<string,mixed>> $answers The stored answers by key.
+	 * @param Row_Reader                                             $db      The building connection.
+	 * @param int                                                    $now     The job's tick.
+	 * @param int                                                    $ttl     Seconds the snapshot serves.
+	 * @param \Closure(list<string>): array<string,array<string,mixed>> $answers The stored answers by key, given the window's servers.
 	 * @throws \RuntimeException When an answer will not encode.
 	 */
-	private static function fill( Row_Reader $db, int $now, int $ttl, array $answers ): void {
+	private static function fill( Row_Reader $db, int $now, int $ttl, \Closure $answers ): void {
 		foreach ( self::url_steps( $db, $now ) as $span => $statements ) {
 			self::step( $db, $span, $statements );
 		}
@@ -152,7 +157,7 @@ final class Url_Snapshot {
 			]
 		);
 		$db->rows( 'CREATE TABLE answers ( "key" TEXT PRIMARY KEY, value TEXT NOT NULL )', [] );
-		foreach ( $answers as $key => $answer ) {
+		foreach ( $answers( self::servers( $db ) ) as $key => $answer ) {
 			$json = \wp_json_encode( $answer );
 			if ( false === $json ) {
 				throw new \RuntimeException( \esc_html( "overview prefetch: answer {$key} will not encode" ) );
@@ -161,6 +166,20 @@ final class Url_Snapshot {
 		}
 		$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
 		$db->rows( 'INSERT INTO meta ( as_of, expires ) VALUES ( ?, ? )', [ $now, $now + $ttl ] );
+	}
+
+	/**
+	 * Every server of the window, worker traffic counted, busiest first and
+	 * ties as `Stats_Query::ranking()` breaks them, as many as one page of a
+	 * live read names: the `overview`'s `servers`, summed off the `totals`
+	 * the build just wrote.
+	 *
+	 * @param Row_Reader $db The building connection.
+	 * @return list<string>
+	 */
+	private static function servers( Row_Reader $db ): array {
+		$rows = $db->rows( 'SELECT s.name FROM totals AS t JOIN servers AS s ON s.id = t.server_id WHERE t.workers = 1 ORDER BY ' . Stats_Query::ranking( [ 't.count' ], [ 's.name' ], 'desc', false ) . ' LIMIT ?', [ Stats_Query::MAX_LIMIT ] );
+		return \array_map( static fn ( array $row ): string => Core::as_string( $row[0] ), $rows );
 	}
 
 	/**

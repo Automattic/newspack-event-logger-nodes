@@ -5,9 +5,9 @@
  * until the snapshot expires.
  *
  * `Overview_Prefetch_Tick_Node` queues each `eln_overview_prefetch` job, and
- * only partition 0's JobWorker runs it. The job answers the questions in
- * `stored-answers.json` live and publishes them with the window's URL table
- * as one `Url_Snapshot`, which serves two intervals: `urls` reads any page of
+ * only partition 0's JobWorker runs it. The job builds the window's URL
+ * table as one `Url_Snapshot`, which serves two intervals, and answers the
+ * questions in `stored-answers.json` live inside it: `urls` reads any page of
  * it, `overview` and `query` the stored answer to the same bound arguments,
  * and any other question, a stale snapshot or none is answered live
  * (decision 37).
@@ -49,9 +49,10 @@ final class Overview_Prefetch {
 	public static ?\Closure $read_file = null;
 
 	/**
-	 * The job: answer every question live and publish the available answers
-	 * with the URL snapshot, which serves two intervals. An answer the stats
-	 * could not open for is never stored, so the verb asks again live.
+	 * The job: build the URL snapshot, which serves two intervals, and answer
+	 * every question live inside it, the overview naming the servers its
+	 * totals sum. An answer the stats could not open for is never stored, so
+	 * the verb asks again live.
 	 * `admit()` declines a job before it gets here. On a started record each
 	 * answer is a `prefetch answer` span labelled with its question's name.
 	 *
@@ -67,6 +68,7 @@ final class Overview_Prefetch {
 	 *                                   `interval` below one second.
 	 * @throws \Newspack_Nodes\Table_Unavailable As `Url_Snapshot::publish()`.
 	 * @throws \RuntimeException As `Url_Snapshot::publish()`.
+	 * @throws \LogicException As `stored()`.
 	 */
 	public static function run( string $id, array $parameters ): void {
 		$interval = Core::num_int( $parameters['interval'] ?? null );
@@ -76,16 +78,32 @@ final class Overview_Prefetch {
 		$now = (int) Core::right_now();
 		Event_Framework::instance()->uninterruptible(
 			static function () use ( $now, $interval ): void {
-				$answers = [];
-				foreach ( self::stored() as $key => [ 'name' => $name, 'verb' => $verb, 'args' => $args ] ) {
-					$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $args, $now ), start: [ 'l' => $name ] );
-					if ( true === ( $answer['available'] ?? null ) ) {
-						$answers[ $key ] = $answer;
-					}
-				}
-				Url_Snapshot::publish( $now, 2 * $interval, $answers );
+				Url_Snapshot::publish( $now, 2 * $interval, static fn ( array $servers ): array => self::answers( $now, $servers ) );
 			}
 		);
+	}
+
+	/**
+	 * Each stored question's live answer by key, an `overview` naming
+	 * `$servers`, each a `prefetch answer` span labelled with its question's
+	 * name. An answer the stats could not open for is never stored.
+	 *
+	 * @param int          $now     The job's tick.
+	 * @param list<string> $servers The window's servers, busiest first.
+	 * @return array<string,array<string,mixed>>
+	 * @throws \InvalidArgumentException As `stored()` and `Performance_CI_Node::answer_live()`.
+	 * @throws \RuntimeException As `stored()`.
+	 * @throws \LogicException As `stored()`.
+	 */
+	private static function answers( int $now, array $servers ): array {
+		$answers = [];
+		foreach ( self::stored() as $key => [ 'name' => $name, 'verb' => $verb, 'args' => $args ] ) {
+			$answer = Log_Manager::span( Flame_Tree::PREFETCH_ANSWER, static fn (): array => Performance_CI_Node::answer_live( $verb, $args, $now, $servers ), start: [ 'l' => $name ] );
+			if ( true === ( $answer['available'] ?? null ) ) {
+				$answers[ $key ] = $answer;
+			}
+		}
+		return $answers;
 	}
 
 	/**

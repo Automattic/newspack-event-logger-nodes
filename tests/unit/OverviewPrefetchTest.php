@@ -74,6 +74,16 @@ final class OverviewPrefetchTest extends TestCase {
 		return $reply;
 	}
 
+	/**
+	 * `overview`'s args bound from `$tokens`, as the verb binds them.
+	 *
+	 * @param list<string> $tokens The verb's tokens.
+	 * @return array<array-key,mixed>
+	 */
+	private static function overview_args( array $tokens ): array {
+		return Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], $tokens );
+	}
+
 	/** Run the job as the tick queues it now. */
 	private function run_job( int $queued_at = self::NOW ): void {
 		Overview_Prefetch::run( '', [ 'queued_at' => $queued_at, 'interval' => self::INTERVAL ] );
@@ -127,10 +137,10 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( 'published', $closed[0]['m'] ?? null );
 	}
 
-	/** Each stored question is a span on the job's record, labelled as `stored-answers.json` names it, then the build. */
-	public function test_a_logged_job_spans_each_answer_then_the_build(): void {
+	/** Each stored question is a span on the job's record, labelled as `stored-answers.json` names it, inside the build after its totals. */
+	public function test_a_logged_job_spans_each_answer_inside_the_build_after_its_totals(): void {
 		$categories = [];
-		foreach ( [ Flame_Tree::PREFETCH_ANSWER, Flame_Tree::SNAPSHOT_BUILD ] as $span ) {
+		foreach ( [ Flame_Tree::PREFETCH_ANSWER, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_TOTALS ] as $span ) {
 			\array_push( $categories, "{$span} (start)", "{$span} (complete)" );
 		}
 		$spans  = \array_map( static fn ( array $entry ): array => [ $entry['k'], $entry['l'] ?? null, $entry['m'] ?? null ], self::entries_of( $this->logged_job(), ...$categories ) );
@@ -138,16 +148,52 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$this->assertSame(
 			[
+				[ 'snapshot build (start)', null, null ],
+				[ 'snapshot totals (start)', null, null ],
+				[ 'snapshot totals (complete)', null, 'ok' ],
 				...$answer( 'overview' ),
 				...$answer( 'chart_by_server' ),
 				...$answer( 'chart_by_status_class' ),
 				...$answer( 'categories' ),
-				[ 'snapshot build (start)', null, null ],
 				[ 'snapshot build (complete)', null, 'published' ],
 			],
 			$spans
 		);
 		$this->assertTrue( self::snapshot_published() );
+	}
+
+	/** An overview handed its servers names them and reads none. */
+	public function test_an_overview_handed_its_servers_names_them(): void {
+		$this->seed_request( [ 'server' => 'kea-7010.example', 'url' => 'https://kea-7010.example/a/', 'ms' => 8.5 ] );
+		$answer = Performance_CI_Node::answer_live( 'overview', self::overview_args( [] ), self::NOW, [ 'moa-7010.example', 'kea-7010.example' ] );
+
+		$this->assertSame( [ 'moa-7010.example', 'kea-7010.example' ], $answer['servers'], 'the list handed in, never a read' );
+		$this->assertSame( 1, $answer['totals']['requests'] );
+	}
+
+	/** The job answers its overview with the servers the build hands it, never a read of its own. */
+	public function test_the_jobs_overview_names_the_servers_it_is_handed(): void {
+		$this->seed_request( [ 'server' => 'kea-7012.example', 'url' => 'https://kea-7012.example/a/', 'ms' => 8.5 ] );
+
+		$answers = ( new \ReflectionMethod( Overview_Prefetch::class, 'answers' ) )->invoke( null, self::NOW, [ 'moa-7012.example', 'kea-7012.example' ] );
+
+		$this->assertSame( [ 'moa-7012.example', 'kea-7012.example' ], $answers[ Overview_Prefetch::key( 'overview', self::overview_args( [] ) ) ]['servers'] );
+	}
+
+	/** The stored servers are the live read's, ties and worker traffic included. */
+	public function test_the_stored_servers_are_the_live_reads_ties_broken_alike(): void {
+		$this->seed_request( [ 'server' => 'kea-7011.example', 'url' => 'https://kea-7011.example/a/', 'ms' => 8.5 ] );
+		$this->seed_request( [ 'server' => 'tui-7011.example', 'url' => 'https://tui-7011.example/a/', 'ms' => 2.5 ], partition: 1 );
+		$this->seed_request( [ 'server' => 'ruru-7011.example', 'url' => 'https://ruru-7011.example/wp-cron.php', 'ms' => 1.5, 'worker' => 1 ], partition: 2 );
+		$this->seed_request( [ 'server' => 'ruru-7011.example', 'url' => 'https://ruru-7011.example/wp-cron.php', 'ms' => 1.5, 'worker' => 1 ], partition: 2 );
+		$live = Performance_CI_Node::answer_live( 'overview', self::overview_args( [] ), self::NOW, null )['servers'];
+		$this->run_job();
+		self::clock( self::NOW + 9 );
+
+		$stored = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
+
+		$this->assertSame( [ 'ruru-7011.example', 'tui-7011.example', 'kea-7011.example' ], $live, 'busiest first, a tie by name descending' );
+		$this->assertSame( $live, \is_array( $stored ) ? $stored['servers'] : $stored );
 	}
 
 	/** Folded into a flame, the four answers stay four nodes. */
@@ -219,7 +265,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->run_job();
 		$tokens = [ '--sort=url', '--order=desc', '--limit=7', '--offset=0' ];
 		$args   = Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['urls']['args'], $tokens );
-		$live   = Performance_CI_Node::answer_live( 'urls', $args, self::NOW );
+		$live   = Performance_CI_Node::answer_live( 'urls', $args, self::NOW, null );
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5531/', 'ms' => 8.5 ] );
 
 		// The reply crosses the wire as JSON, as a whole float reads back an int.
@@ -387,7 +433,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 	public function test_a_stored_answer_that_will_not_decode_is_answered_live_and_said(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5541/', 'ms' => 8.5 ] );
-		$key = Overview_Prefetch::key( 'overview', Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], [] ) );
+		$key = Overview_Prefetch::key( 'overview', self::overview_args( [] ) );
 		Row_Table_Node::build(
 			Flame_Facts_Row_Schema::class,
 			Url_Snapshot::NAME,
@@ -563,7 +609,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea-6204.example', 'url' => 'https://kea-6204.example/a/', 'ms' => 8.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-6204.example', 'url' => 'https://kaka-6204.example/b/', 'ms' => 2.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-6204.example', 'url' => 'https://kaka-6204.example/c/', 'ms' => 1.5 ] );
-		$key = Overview_Prefetch::key( 'overview', Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], [] ) );
+		$key = Overview_Prefetch::key( 'overview', self::overview_args( [] ) );
 		Row_Table_Node::build(
 			Flame_Facts_Row_Schema::class,
 			Url_Snapshot::NAME,
@@ -606,7 +652,7 @@ final class OverviewPrefetchTest extends TestCase {
 	#[DataProvider( 'overview_scopes' )]
 	public function test_a_stored_overview_naming_no_servers_is_answered_live_and_said( array $tokens ): void {
 		$this->seed_request( [ 'server' => 'kea-6205.example', 'url' => 'https://kea-6205.example/a/', 'ms' => 8.5 ] );
-		$key = Overview_Prefetch::key( 'overview', Command_Args::bind( Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class )['overview']['args'], [] ) );
+		$key = Overview_Prefetch::key( 'overview', self::overview_args( [] ) );
 		Row_Table_Node::build(
 			Flame_Facts_Row_Schema::class,
 			Url_Snapshot::NAME,
@@ -778,7 +824,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 	public function test_a_verb_with_no_stored_answer_is_refused(): void {
 		$this->expectException( \InvalidArgumentException::class );
-		Performance_CI_Node::answer_live( 'dump_url', [], self::NOW );
+		Performance_CI_Node::answer_live( 'dump_url', [], self::NOW, null );
 	}
 
 	public function test_a_job_with_no_interval_fails(): void {
