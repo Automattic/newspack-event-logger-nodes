@@ -213,7 +213,7 @@ final class OverviewPrefetchTest extends TestCase {
 	public function test_the_jobs_overview_names_the_servers_it_is_handed(): void {
 		$this->seed_request( [ 'server' => 'kea-7012.example', 'url' => 'https://kea-7012.example/a/', 'ms' => 8.5 ] );
 
-		$answers = ( new \ReflectionMethod( Overview_Prefetch::class, 'answers' ) )->invoke( null, self::NOW, [ 'moa-7012.example', 'kea-7012.example' ] );
+		$answers = ( new \ReflectionMethod( Overview_Prefetch::class, 'answers' ) )->invoke( null, Overview_Prefetch::stored(), self::NOW, [ 'moa-7012.example', 'kea-7012.example' ] );
 
 		$this->assertSame( [ 'moa-7012.example', 'kea-7012.example' ], $answers[ Overview_Prefetch::key( 'overview', self::overview_args( [] ) ) ]['servers'] );
 	}
@@ -272,6 +272,35 @@ final class OverviewPrefetchTest extends TestCase {
 		} finally {
 			Overview_Prefetch::$read_file = null;
 		}
+	}
+
+	/** A questions file the job refuses fails the job before the build starts. */
+	public function test_refused_questions_fail_the_job_before_the_build(): void {
+		Overview_Prefetch::$read_file = static fn ( string $path ): string => (string) \wp_json_encode(
+			[
+				'kea_7026'  => [ 'verb' => 'overview', 'tokens' => [ '--server=kaka-7026.example' ] ],
+				'weka_7026' => [ 'verb' => 'overview', 'tokens' => [ '--server=kaka-7026.example' ] ],
+			]
+		);
+		$thrown = null;
+		try {
+			$entries = $this->logged_in(
+				$this->make_temp_dir(),
+				function () use ( &$thrown ): void {
+					$this->seed_request( [ 'url' => 'https://seed.example/kea-7026/', 'ms' => 8.5 ] );
+					try {
+						$this->run_job();
+					} catch ( \LogicException $e ) {
+						$thrown = $e;
+					}
+				}
+			);
+		} finally {
+			Overview_Prefetch::$read_file = null;
+		}
+
+		$this->assertInstanceOf( \LogicException::class, $thrown );
+		$this->assertSame( [], self::entries_of( $entries, Flame_Tree::SNAPSHOT_BUILD . ' (start)' ), 'no build was started' );
 	}
 
 	/** Two stored questions binding to one key would store one answer for both, so the job refuses them. */
