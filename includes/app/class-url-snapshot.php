@@ -46,6 +46,12 @@ final class Url_Snapshot {
 	/** The snapshot's name, which the substrate publishes it under. */
 	public const NAME = 'flame-facts.job';
 
+	/**
+	 * Seconds a snapshot serves from its publish: a run a worker's respawn
+	 * lost, and the run after it, both fit inside.
+	 */
+	public const TTL_S = 600;
+
 	/** The sorts whose key may be null, which rank a null last either way. */
 	private const NULLABLE = [ 'avg_ms', 'min_ms', 'max_ms' ];
 
@@ -96,7 +102,7 @@ final class Url_Snapshot {
 	/**
 	 * Publish the snapshot of the window ending at `$now` through
 	 * `Row_Table_Node::build()`: the URLs, their totals, the answers
-	 * `$answers` gives by key, and an expiry `$ttl` seconds on. A fleet with
+	 * `$answers` gives by key, and an expiry `TTL_S` after it publishes. A fleet with
 	 * no partition file yet publishes nothing, and a build that throws leaves
 	 * the last publish.
 	 *
@@ -107,7 +113,6 @@ final class Url_Snapshot {
 	 * inside `snapshot build`.
 	 *
 	 * @param int                                                    $now     The job's tick.
-	 * @param int                                                    $ttl     Seconds the snapshot serves.
 	 * @param \Closure(list<string>): array<string,array<string,mixed>> $answers The stored answers by key, given the window's servers busiest first.
 	 * @throws \Newspack_Nodes\Table_Unavailable As `Row_Table_Node::build()`,
 	 *                                           or when no active topology
@@ -117,14 +122,14 @@ final class Url_Snapshot {
 	 * @throws \InvalidArgumentException As `$answers`.
 	 * @throws \LogicException As `$answers`.
 	 */
-	public static function publish( int $now, int $ttl, \Closure $answers ): void {
+	public static function publish( int $now, \Closure $answers ): void {
 		Log_Manager::span(
 			Flame_Tree::SNAPSHOT_BUILD,
 			static fn (): mixed => Row_Table_Node::build(
 				Flame_Facts_Row_Schema::class,
 				self::NAME,
-				static function ( Row_Reader $db ) use ( $now, $ttl, $answers ): bool {
-					self::fill( $db, $now, $ttl, $answers );
+				static function ( Row_Reader $db ) use ( $now, $answers ): bool {
+					self::fill( $db, $now, $answers );
 					return true;
 				}
 			),
@@ -137,11 +142,10 @@ final class Url_Snapshot {
 	 *
 	 * @param Row_Reader                                             $db      The building connection.
 	 * @param int                                                    $now     The job's tick.
-	 * @param int                                                    $ttl     Seconds the snapshot serves.
 	 * @param \Closure(list<string>): array<string,array<string,mixed>> $answers The stored answers by key, given the window's servers.
 	 * @throws \RuntimeException When an answer will not encode.
 	 */
-	private static function fill( Row_Reader $db, int $now, int $ttl, \Closure $answers ): void {
+	private static function fill( Row_Reader $db, int $now, \Closure $answers ): void {
 		foreach ( self::url_steps( $db, $now ) as $span => $statements ) {
 			self::step( $db, $span, $statements );
 		}
@@ -165,7 +169,7 @@ final class Url_Snapshot {
 			$db->rows( 'INSERT INTO answers ( "key", value ) VALUES ( ?, ? )', [ $key, $json ] );
 		}
 		$db->rows( 'CREATE TABLE meta ( as_of INTEGER NOT NULL, expires INTEGER NOT NULL )', [] );
-		$db->rows( 'INSERT INTO meta ( as_of, expires ) VALUES ( ?, ? )', [ $now, $now + $ttl ] );
+		$db->rows( 'INSERT INTO meta ( as_of, expires ) VALUES ( ?, ? )', [ $now, (int) Core::right_now() + self::TTL_S ] );
 	}
 
 	/**

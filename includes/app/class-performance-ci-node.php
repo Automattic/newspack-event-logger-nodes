@@ -1993,7 +1993,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'overview',
 					'capability'  => Capabilities::READ,
-					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; a scoped one is answered from that run where it listed the server; one it did not list names the `servers` that run stored, read live where none is stored or the scoped server has traffic they lack, and a blank `server` is the default question; `as_of` dates every answer.',
+					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, which serves ten minutes after it publishes; a scoped one is answered from that run where it listed the server; one it did not list names the `servers` that run stored, read live where none is stored or the scoped server has traffic they lack, and a blank `server` is the default question; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
@@ -2002,7 +2002,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server` and `include_workers` is answered from the overview-prefetch job\'s URL snapshot; any other answers live without opening it, at most two intervals old; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server` and `include_workers` is answered from the overview-prefetch job\'s URL snapshot; any other answers live without opening it, which serves ten minutes after it publishes; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
@@ -2019,7 +2019,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'query',
 					'capability'  => Capabilities::READ,
-					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ as_of, source, table, columns, rows, groups, available, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows and `available`, false when the stats file will not open. Worker requests count unless filtered `worker=0`. Under `top` the rows are every time row of the `top` tuples of the non-time groups `top_by` ranks highest, in rank order, and `groups` counts the tuples; with no `top`, `groups` is null. A default Overview question is answered from the overview-prefetch job\'s last run, at most two intervals old; `as_of` dates every answer.',
+					'description' => 'One question over the request and timing rows, in `Stats_Query`\'s vocabulary: group by fields, filter on them and answer measures over a bucket selection. Answers `{ as_of, source, table, columns, rows, groups, available, filters }`, each row positional in `columns` order, each bucket spelled as its key; no rows and `available`, false when the stats file will not open. Worker requests count unless filtered `worker=0`. Under `top` the rows are every time row of the `top` tuples of the non-time groups `top_by` ranks highest, in rank order, and `groups` counts the tuples; with no `top`, `groups` is null. A default Overview question is answered from the overview-prefetch job\'s last run, which serves ten minutes after it publishes; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'source', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],

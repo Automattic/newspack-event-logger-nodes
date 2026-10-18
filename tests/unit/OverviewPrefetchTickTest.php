@@ -19,6 +19,12 @@ use Newspack_Nodes\Router_Node;
 #[CoversClass( Overview_Prefetch_Tick_Node::class )]
 final class OverviewPrefetchTickTest extends TestCase {
 
+	/** 1_790_008_017 falls 18 s into the 43-second interval starting 1_790_007_999. */
+	private const BUILT_AT = 1_790_008_017.0;
+
+	/** The first boundary after `BUILT_AT`. */
+	private const BOUNDARY = 1_790_008_042.0;
+
 	private string $base;
 
 	private Router_Node $router;
@@ -67,35 +73,53 @@ final class OverviewPrefetchTickTest extends TestCase {
 	}
 
 	public function test_partition_zero_queues_once_an_interval_both_ways(): void {
-		$at   = 1_790_008_017.0;
-		$tick = $this->prefetch_tick( '0', 43, $at );
+		$tick = $this->prefetch_tick( '0', 43, self::BUILT_AT );
 
-		$this->ring( $tick, $at + 43 );
-		$this->ring( $tick, $at + 43 + 42 );
-		$this->ring( $tick, $at + 43 + 43 );
+		$this->ring( $tick, self::BOUNDARY );
+		$this->ring( $tick, self::BOUNDARY + 42 );
+		$this->ring( $tick, self::BOUNDARY + 43 );
 
 		$fed = $this->fed();
 		$this->assertSame( [ 'jobfeed.p0', 'jobfeed.p0' ], \array_column( $fed, 0 ) );
 		$this->assertSame( Overview_Prefetch::HANDLER, $fed[0][1]['handler'] );
-		$this->assertSame( [ 'queued_at' => 1_790_008_060, 'interval' => 43 ], $fed[0][1]['parameters'] );
+		$this->assertSame( [ 'queued_at' => 1_790_008_042, 'interval' => 43 ], $fed[0][1]['parameters'] );
 		$this->assertSame(
 			[
-				[ 'handler' => Overview_Prefetch::HANDLER, 'id' => '', 'parameters' => [ 'queued_at' => 1_790_008_060, 'interval' => 43 ] ],
-				[ 'handler' => Overview_Prefetch::HANDLER, 'id' => '', 'parameters' => [ 'queued_at' => 1_790_008_103, 'interval' => 43 ] ],
+				[ 'handler' => Overview_Prefetch::HANDLER, 'id' => '', 'parameters' => [ 'queued_at' => 1_790_008_042, 'interval' => 43 ] ],
+				[ 'handler' => Overview_Prefetch::HANDLER, 'id' => '', 'parameters' => [ 'queued_at' => 1_790_008_085, 'interval' => 43 ] ],
 			],
 			$this->firehose_jobs()
 		);
 	}
 
-	public function test_a_respawned_worker_waits_an_interval_before_its_first_job(): void {
-		$at   = 1_790_008_017.0;
-		$tick = $this->prefetch_tick( '0', 43, $at );
+	/** A respawned worker queues at the next boundary, as its predecessor would have. */
+	public function test_a_respawned_worker_queues_at_the_next_boundary(): void {
+		$tick = $this->prefetch_tick( '0', 43, self::BUILT_AT );
 
-		$this->ring( $tick, $at + 1 );
-		$this->ring( $tick, $at + 42 );
-
+		$this->ring( $tick, self::BOUNDARY - 1 );
 		$this->assertSame( [], $this->fed() );
-		$this->assertSame( [], $this->firehose_jobs() );
+		$this->ring( $tick, self::BOUNDARY );
+		$this->assertSame( [ 1_790_008_042 ], \array_map( static fn ( array $job ): mixed => $job[1]['parameters']['queued_at'], $this->fed() ) );
+	}
+
+	/** A worker respawned inside the interval its predecessor queued in queues nothing more there. */
+	public function test_a_respawn_inside_its_predecessors_interval_queues_no_second_job(): void {
+		$tick = $this->prefetch_tick( '0', 43, self::BOUNDARY + 18 );
+
+		$this->ring( $tick, self::BOUNDARY + 42 );
+		$this->assertSame( [], $this->fed() );
+		$this->ring( $tick, self::BOUNDARY + 43 );
+		$this->assertCount( 1, $this->fed() );
+	}
+
+	/** A Router tick late past a boundary moves no later job off the boundaries. */
+	public function test_a_late_tick_keeps_the_next_job_on_its_boundary(): void {
+		$tick = $this->prefetch_tick( '0', 43, self::BUILT_AT );
+
+		$this->ring( $tick, self::BOUNDARY + 0.9 );
+		$this->ring( $tick, self::BOUNDARY + 43 );
+
+		$this->assertCount( 2, $this->fed() );
 	}
 
 	public function test_a_firehose_that_logs_nothing_for_the_job_is_said(): void {
@@ -105,10 +129,9 @@ final class OverviewPrefetchTickTest extends TestCase {
 		];
 		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
 		$errors = $this->capture_stderr();
-		$at     = 1_790_008_017.0;
-		$tick   = $this->prefetch_tick( '0', 43, $at );
+		$tick   = $this->prefetch_tick( '0', 43, self::BUILT_AT );
 
-		$this->ring( $tick, $at + 43 );
+		$this->ring( $tick, self::BOUNDARY );
 
 		$this->assertSame( [], $this->firehose_jobs() );
 		$this->assertCount( 1, $this->fed(), 'the feed still carried it' );
@@ -118,26 +141,45 @@ final class OverviewPrefetchTickTest extends TestCase {
 	}
 
 	public function test_any_other_partition_queues_nothing(): void {
-		$tick = $this->prefetch_tick( '2', 43, 1_790_008_017.0 );
-		$this->ring( $tick, 1_790_008_017.0 + 43 );
+		$tick = $this->prefetch_tick( '2', 43, self::BUILT_AT );
+		$this->ring( $tick, self::BOUNDARY );
 
 		$this->assertSame( [], $this->fed() );
 		$this->assertSame( [], $this->firehose_jobs() );
 	}
 
 	public function test_a_line_naming_no_interval_queues_every_two_minutes(): void {
-		$at   = 1_790_008_017.0;
-		$tick = $this->prefetch_tick( '0', 43, $at );
+		$tick = $this->prefetch_tick( '0', 43, self::BUILT_AT );
 		$tick->arguments( [] );
 
-		$this->ring( $tick, $at + 119 );
+		// The two-minute interval BUILT_AT falls in ends at 1_790_008_080.
+		$this->ring( $tick, 1_790_008_079.0 );
 		$this->assertSame( [], $this->fed() );
-		$this->ring( $tick, $at + 120 );
-		$this->assertSame( [ 'queued_at' => 1_790_008_137, 'interval' => 120 ], $this->fed()[0][1]['parameters'] ?? null );
+		$this->ring( $tick, 1_790_008_080.0 );
+		$this->assertSame( [ 'queued_at' => 1_790_008_080, 'interval' => 120 ], $this->fed()[0][1]['parameters'] ?? null );
+	}
+
+	/** A zero interval paces at the Timer's one-second floor, never a division by zero. */
+	public function test_a_zero_interval_queues_on_each_second(): void {
+		$tick = $this->prefetch_tick( '0', 0, self::BUILT_AT + 0.5 );
+
+		$this->ring( $tick, self::BUILT_AT + 1 );
+
+		$this->assertSame( [ 1_790_008_018 ], \array_map( static fn ( array $job ): mixed => $job[1]['parameters']['queued_at'], $this->fed() ) );
+	}
+
+	/** A tick stopped mid-walk still gets that tick's fire, with its interval zeroed, and paces from now. */
+	public function test_a_stopped_tick_fired_by_the_routers_snapshot_walk_queues(): void {
+		$tick = $this->prefetch_tick( '0', 43, self::BUILT_AT );
+		$tick->stop_timer();
+
+		$this->ring( $tick, self::BUILT_AT + 1 );
+
+		$this->assertSame( [ 1_790_008_018 ], \array_map( static fn ( array $job ): mixed => $job[1]['parameters']['queued_at'], $this->fed() ) );
 	}
 
 	public function test_it_rides_the_router_tick(): void {
-		$tick = $this->prefetch_tick( '0', 43, 1_790_008_017.0 );
+		$tick = $this->prefetch_tick( '0', 43, self::BUILT_AT );
 
 		$this->assertSame( 'router', ( fn () => $this->mode )->call( $tick ) );
 	}

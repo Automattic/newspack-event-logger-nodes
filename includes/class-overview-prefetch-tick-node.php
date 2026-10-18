@@ -32,8 +32,12 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 
 	/**
 	 * Read the interval and ride the Router's tick, which throttles the
-	 * hitchhike to it. A fresh process counts its first interval from now, so
-	 * a respawn queues no second job inside the one its predecessor queued.
+	 * hitchhike to it. A fresh process paces from the start of the wall-clock
+	 * interval it starts in, as every fire does, so each job falls on an
+	 * interval's boundary: a respawn queues no second job inside the interval
+	 * its predecessor queued in, and queues at the next boundary. A respawn
+	 * whose gap straddles a boundary loses that one, which the snapshot's ten
+	 * minutes span.
 	 *
 	 * @api Called by the substrate during make_node construction.
 	 * @param list<string>|null $args Positional tokens, or null to read them back.
@@ -45,7 +49,7 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 		}
 		$this->parse_schema_args( $args );
 		$this->set_timer( $this->cadence_ms( $this->interval_s ) );
-		$this->last_fire_time = Core::$now;
+		$this->last_fire_time = $this->interval_start();
 		return $this->arguments;
 	}
 
@@ -57,6 +61,7 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 	 * @api Driven by the substrate Timer (fire_cb).
 	 */
 	protected function fire(): void {
+		$this->last_fire_time = $this->interval_start();
 		// The line names no partition, so the source it asks about is empty.
 		if ( ! Core::owns( '', Core::bound_partition() ) ) {
 			return;
@@ -86,6 +91,18 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 	}
 
 	/**
+	 * The start of the wall-clock interval `Core::$now` falls in, the moment
+	 * the Timer's throttle paces the next job from, stepped by the interval
+	 * the Timer armed, which `cadence_ms()` floors at a second. A disarmed
+	 * Timer's interval is 0, and the Router's snapshot walk can still fire it
+	 * that tick, so it paces from now, as the JS `nextBoundary()` does.
+	 */
+	private function interval_start(): float {
+		$step = $this->interval_ms / 1000;
+		return $step > 0 ? \floor( Core::$now / $step ) * $step : Core::$now;
+	}
+
+	/**
 	 * Palette entry and argument form.
 	 *
 	 * @api Used by the substrate to resolve the node + provide UI.
@@ -96,7 +113,7 @@ class Overview_Prefetch_Tick_Node extends Timer_Node {
 			'category'     => 'Control',
 			'description'  => 'Queues the overview-prefetch job once an interval, to the firehose and jobfeed.p0, from the fleet\'s one copy of the line.',
 			'arguments'    => [
-				[ 'name' => 'interval_s', 'type' => 'int', 'default' => self::INTERVAL_S, 'description' => 'Seconds between jobs; each snapshot serves two of them.' ],
+				[ 'name' => 'interval_s', 'type' => 'int', 'default' => self::INTERVAL_S, 'description' => 'Seconds between jobs, each queued on an interval boundary.' ],
 			],
 			'commands'     => [],
 			'accepts_fill' => false,

@@ -172,8 +172,8 @@ kept seven days, so an older bucket holds no rows rather than raising.
 
 `overview`, `urls` and `query` answer from the URL snapshot the overview-prefetch job
 publishes every two minutes
-([decision 37](architecture-decisions.md#decision-37-the-overview-reads-a-jobs-snapshot-for-two-intervals)),
-which serves for two intervals. `urls` with no `--search`, no `--bucket` and no
+([decision 37](architecture-decisions.md#decision-37-the-overview-reads-a-jobs-snapshot-for-ten-minutes)),
+which serves for ten minutes after it publishes. `urls` with no `--search`, no `--bucket` and no
 `--filter` answers off it for any sort, order, `--server`, `--include_workers`,
 `--limit` and `--offset`. `overview` with no `--server`, the request chart by `server`
 and by `status_class` — the dashboard's default breakdown, and what it falls back to over
@@ -181,7 +181,7 @@ one server — and the category chart, each over the site's non-worker traffic, 
 in it as `includes/app/stored-answers.json` spells their tokens, and a verb asked the same
 bound arguments serves the stored answer; the job stores only an answer the stats could
 open for. `overview` with a non-blank `--server` answers its totals and leaderboard live and its `servers`
-off the stored overview, which no scope changes, unless the server has traffic they lack. Every other question, a snapshot past its two intervals, and a file that is not
+off the stored overview, which no scope changes, unless the server has traffic they lack. Every other question, a snapshot past its ten minutes, and a file that is not
 there yet or will not open are answered live. Each of the three verbs answers `as_of`
 beside the fields below: the epoch second its answer was computed, or the snapshot built.
 
