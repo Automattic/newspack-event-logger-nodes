@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.142.0] - 2026-10-18
+
 ### Changed
 - **The filter box no longer suggests URL Hash.** A reader reaches one URL through the URL table; a typed `url=<hash>` chip still filters, and reads as URL Hash.
 - **The category charts draw each category in its own color.** Time by Category, Events by Category and Average Time per Event take the hook-category and custom-event colors the Time Breakdown and the flame graphs already draw, where they took the skin's chart ramp.
