@@ -56,7 +56,7 @@ import {
 	useSlotClick,
 	useSlotRange,
 } from './chartSlots';
-import { SERIES_MEASURES } from './constants';
+import { DEFAULT_CHART_METRIC, SERIES_MEASURES } from './constants';
 
 /**
  * Total SVG height in pixels, margins included, handed to `AreaTimeChart`.
@@ -204,7 +204,7 @@ export default function AggregateTimeChart( {
 	series,
 	slots,
 	storageKey,
-	metric = 'volume',
+	metric = DEFAULT_CHART_METRIC,
 	dims,
 	partial = false,
 	serverFilter = '',

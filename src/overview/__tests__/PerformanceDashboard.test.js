@@ -159,7 +159,6 @@ jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	SERVER: 'performance',
 	RULES_CI: 'rules',
 	GREP_RESULT_LIMIT: 20,
-	NO_DETAIL_FILTERS: { bucket: '' },
 	NO_CHIPS: [],
 	NO_DETAIL_CHART: { breakdown: 'status_class', thenBy: '', chips: [] },
 	usePerformanceGraph: ( opts ) => {
@@ -186,9 +185,14 @@ const mockNavState = {
 	deepLink: { requestId: null, urlHash: null },
 	clearDeepLink: jest.fn(),
 };
+// On, the dashboard runs the real hook, which pushes the entries it navigates.
+let mockRealNavigation = false;
 jest.mock( '../hooks/useUrlNavigation', () => ( {
 	__esModule: true,
-	default: () => mockNavState,
+	default: ( urls ) =>
+		mockRealNavigation
+			? jest.requireActual( '../hooks/useUrlNavigation' ).default( urls )
+			: mockNavState,
 } ) );
 
 jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
@@ -230,6 +234,7 @@ jest.mock( '../UrlTable', () => ( {
 } ) );
 
 jest.mock( '../components/UrlDetailView', () => ( {
+	...jest.requireActual( '../components/UrlDetailView' ),
 	__esModule: true,
 	default: ( props ) => {
 		const React = require( 'react' );
@@ -393,6 +398,17 @@ const mountDash = () => {
 	return mount;
 };
 
+/**
+ * Close the URL modal by its X, then render the selection it cleared, as the
+ * real navigation hook's own state change does.
+ *
+ * @param {Function} rerender The mount's rerender.
+ */
+const closeModal = async ( rerender ) => {
+	act( () => globalThis.__modalOnRequestClose() );
+	await act( async () => rerender( dashboard() ) );
+};
+
 describe( 'PerformanceDashboard', () => {
 	beforeEach( () => {
 		mockView = null;
@@ -419,6 +435,7 @@ describe( 'PerformanceDashboard', () => {
 		mockNavState.initialSearchQuery = '';
 		mockNavState.selectUrl.mockClear();
 		mockNavState.selectRequest.mockClear();
+		mockRealNavigation = false;
 		jest.clearAllMocks();
 	} );
 
@@ -561,7 +578,7 @@ describe( 'PerformanceDashboard', () => {
 			urlChart,
 			urlCategories,
 		} );
-		const { unmount } = mountDash();
+		const { rerender, unmount } = mountDash();
 		await flushEffects();
 
 		expect( globalThis.__urlDetailProps.chartSlice ).toBe( urlChart );
@@ -574,23 +591,18 @@ describe( 'PerformanceDashboard', () => {
 			chips: [],
 		} );
 
-		act( () =>
-			globalThis.__urlDetailProps.onChartChange( 'breakdown', 'ja4' )
-		);
+		act( () => globalThis.__urlDetailProps.onBreakdownChange( 'ja4' ) );
 		await flushEffects();
 		expect( mockGraphOpts.detailChart.breakdown ).toBe( 'ja4' );
 		expect( globalThis.__urlDetailProps.chart.breakdown ).toBe( 'ja4' );
 
 		// The same value hands the graph the same object, so it asks nothing.
 		const held = mockGraphOpts.detailChart;
-		act( () =>
-			globalThis.__urlDetailProps.onChartChange( 'breakdown', 'ja4' )
-		);
+		act( () => globalThis.__urlDetailProps.onBreakdownChange( 'ja4' ) );
 		await flushEffects();
 		expect( mockGraphOpts.detailChart ).toBe( held );
 
-		act( () => globalThis.__modalOnRequestClose() );
-		await flushEffects();
+		await closeModal( rerender );
 		expect( mockGraphOpts.detailChart.breakdown ).toBe( 'status_class' );
 		unmount();
 	} );
@@ -810,6 +822,40 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 
+		it( 'drops a linked Then by that repeats the Breakdown', async () => {
+			linkTo( 'breakdown=ja4&then=ja4' );
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( mockGraphCalls[ 0 ].chartBreakdown ).toBe( 'ja4' );
+			expect( mockGraphCalls[ 0 ].chartThenBy ).toBe( '' );
+			expect( globalThis.__overviewProps.chartThenBy ).toBe( '' );
+			expect( window.location.search ).toBe( '?page=perf&breakdown=ja4' );
+			unmount();
+		} );
+
+		it( 'keeps a stored Then by through a poll that answers one server', async () => {
+			mockView = serverView( hub );
+			const { rerender, unmount } = mountDash();
+			await flushEffects();
+			act( () =>
+				globalThis.__overviewProps.setChartThenBy( 'status_class' )
+			);
+
+			mockView = serverView( single );
+			await act( async () => rerender( dashboard() ) );
+			await flushEffects();
+			mockView = serverView( hub );
+			await act( async () => rerender( dashboard() ) );
+			await flushEffects();
+
+			expect( param( 'then' ) ).toBe( 'status_class' );
+			expect( mockGraphOpts.chartBreakdown ).toBe( 'server' );
+			expect( mockGraphOpts.chartThenBy ).toBe( 'status_class' );
+			unmount();
+		} );
+
 		it( 'writes a metric or breakdown change and drops a default', async () => {
 			linkTo( 'url=h1&request=r1' );
 			mockView = serverView( hub );
@@ -1020,7 +1066,7 @@ describe( 'PerformanceDashboard', () => {
 				await flushEffects();
 
 				act( () =>
-					globalThis.__urlDetailProps.onChartChange( 'chips', [
+					globalThis.__urlDetailProps.onChipsChange( [
 						'method=PURGE',
 					] )
 				);
@@ -1094,6 +1140,421 @@ describe( 'PerformanceDashboard', () => {
 			expect( globalThis.__overviewProps.serverFilter ).toBe( '' );
 			expect( param( 'server' ) ).toBeNull();
 			unmount();
+		} );
+
+		describe( 'the URL window', () => {
+			const ROW = { hash: 'beef7743', url: '/huia' };
+			// Default order is r3, r2, r1; ascending duration is r2, r3, r1.
+			const REQUESTS = [
+				{ rid: 'r1', timestamp: 1, duration_ms: 300 },
+				{ rid: 'r2', timestamp: 2, duration_ms: 100 },
+				{ rid: 'r3', timestamp: 3, duration_ms: 200 },
+			];
+			const LINKED = [
+				'url_bucket=2026-09-29-14-30',
+				'url_metric=memory',
+				'url_breakdown=ja4',
+				'url_then=country',
+				'url_chip=status_class%3D5xx',
+				'url_chip=method%3DPURGE',
+				'url_sort=duration_ms',
+				'url_order=asc',
+			].join( '&' );
+			// The window's params as the bar holds them, spelled as written.
+			const RESTORED = {
+				url_bucket: [ '2026-09-29-14-30' ],
+				url_metric: [ 'memory' ],
+				url_breakdown: [ 'ja4' ],
+				url_then: [ 'country' ],
+				url_chip: [ 'status_class=5', 'method=PURGE' ],
+				url_sort: [ 'duration_ms' ],
+				url_order: [ 'asc' ],
+			};
+			// Every `url_*` param on the bar, each name to its values in order.
+			const windowParams = () => {
+				const query = new URLSearchParams( window.location.search );
+				return Object.fromEntries(
+					[ ...new Set( query.keys() ) ]
+						.filter( ( name ) => name.startsWith( 'url_' ) )
+						.map( ( name ) => [ name, query.getAll( name ) ] )
+				);
+			};
+			const detailView = ( urls ) =>
+				loadedView( {
+					urls,
+					urlDetail: {
+						data: { stats: {}, requests: REQUESTS },
+						loading: false,
+						error: null,
+					},
+				} );
+			const urlsOf = ( data, filters = null ) => ( {
+				data,
+				filters,
+				loading: false,
+				error: null,
+			} );
+
+			/**
+			 * What the open window draws, read off the graph and the view.
+			 *
+			 * @param {Object} opts The graph options to read.
+			 * @return {Object} Its filters, chart, metric, sort and rows.
+			 */
+			const windowState = ( opts ) => ( {
+				filters: opts.detailFilters,
+				chart: opts.detailChart,
+				metric: globalThis.__urlDetailProps.metric,
+				sort: globalThis.__urlDetailProps.requestSort,
+				rows: globalThis.__urlDetailProps.sortedRequests.map(
+					( req ) => req.rid
+				),
+			} );
+			const LINKED_STATE = {
+				filters: { bucket: '2026-09-29-14-30' },
+				chart: {
+					breakdown: 'ja4',
+					thenBy: 'country',
+					chips: [ 'status_class=5', 'method=PURGE' ],
+				},
+				metric: 'memory',
+				sort: { field: 'duration_ms', dir: 'asc' },
+				rows: [ 'r2', 'r3', 'r1' ],
+			};
+
+			beforeEach( () => {
+				globalThis.__urlDetailProps = null;
+			} );
+
+			it( 'reopens a linked URL on its own chips, Time, chart and sort', async () => {
+				mockRealNavigation = true;
+				linkTo( `url=beef7743&${ LINKED }` );
+				mockView = detailView( urlsOf( [ ROW ] ) );
+				const { unmount } = mountDash();
+				await flushEffects();
+
+				expect( globalThis.__urlDetailProps.urlHash ).toBe(
+					'beef7743'
+				);
+				expect( windowState( mockGraphOpts ) ).toEqual( LINKED_STATE );
+				// The first ask already carries the link: no default fetch.
+				expect( mockGraphCalls[ 0 ].detailFilters ).toEqual(
+					LINKED_STATE.filters
+				);
+				expect( mockGraphCalls[ 0 ].detailChart ).toEqual(
+					LINKED_STATE.chart
+				);
+				expect( windowParams() ).toEqual( RESTORED );
+				expect( param( 'url' ) ).toBe( 'beef7743' );
+				expect( pushSpy ).not.toHaveBeenCalled();
+				unmount();
+			} );
+
+			it( 'keeps the window on the bar while the server resolves the link', async () => {
+				mockRealNavigation = true;
+				linkTo( `url=beef7743&${ LINKED }` );
+				mockView = detailView( urlsOf( [] ) );
+				const { unmount } = mountDash();
+				await flushEffects();
+
+				expect( sentTo( DEEP_URL ) ).toEqual( [ [ 'beef7743' ] ] );
+				expect( globalThis.__urlDetailProps ).toBeNull();
+				expect( windowParams() ).toEqual( RESTORED );
+
+				answerCommand( DEEP_URL, {
+					result: { stats: { url: '/huia' } },
+					args: [ 'beef7743' ],
+				} );
+				await flushEffects();
+
+				expect( globalThis.__urlDetailProps.urlHash ).toBe(
+					'beef7743'
+				);
+				expect( windowState( mockGraphOpts ) ).toEqual( LINKED_STATE );
+				expect( windowParams() ).toEqual( RESTORED );
+				unmount();
+			} );
+
+			it( 'writes each control while a URL is open, and closing drops them all', async () => {
+				mockRealNavigation = true;
+				linkTo( 'url=beef7743' );
+				mockView = detailView( urlsOf( [ ROW ] ) );
+				const { unmount } = mountDash();
+				await flushEffects();
+				expect( windowParams() ).toEqual( {} );
+
+				const view = () => globalThis.__urlDetailProps;
+				act( () => view().onBucketChange( '2026-09-29-14-30' ) );
+				act( () => view().onBreakdownChange( 'ja4' ) );
+				act( () => view().onThenByChange( 'country' ) );
+				act( () =>
+					view().onChipsChange( [ 'method=PURGE', 'country=SG' ] )
+				);
+				act( () => view().onMetricChange( 'avg' ) );
+				act( () => view().onRequestSort( 'duration_ms' ) );
+				expect( windowParams() ).toEqual( {
+					url_bucket: [ '2026-09-29-14-30' ],
+					url_breakdown: [ 'ja4' ],
+					url_then: [ 'country' ],
+					url_chip: [ 'method=PURGE', 'country=SG' ],
+					url_metric: [ 'avg' ],
+					url_sort: [ 'duration_ms' ],
+				} );
+				expect( mockGraphOpts.detailFilters ).toEqual( {
+					bucket: '2026-09-29-14-30',
+				} );
+				expect( mockGraphOpts.detailChart ).toEqual( {
+					breakdown: 'ja4',
+					thenBy: 'country',
+					chips: [ 'method=PURGE', 'country=SG' ],
+				} );
+				expect( view().metric ).toBe( 'avg' );
+
+				act( () => view().onRequestSort( 'duration_ms' ) );
+				expect( param( 'url_order' ) ).toBe( 'asc' );
+				act( () => view().onMetricChange( 'volume' ) );
+				expect( param( 'url_metric' ) ).toBeNull();
+
+				act( () => globalThis.__modalOnRequestClose() );
+				await flushEffects();
+				expect( window.location.search ).toBe( '?page=perf' );
+
+				// The sort outlives the window; its chart and Time do not.
+				await act( async () => {
+					globalThis.__urlTableProps.onSelect( ROW );
+				} );
+				await flushEffects();
+				expect( view().requestSort ).toEqual( {
+					field: 'duration_ms',
+					dir: 'asc',
+				} );
+				expect( view().metric ).toBe( 'volume' );
+				expect( mockGraphOpts.detailChart.breakdown ).toBe(
+					'status_class'
+				);
+				expect( windowParams() ).toEqual( {
+					url_sort: [ 'duration_ms' ],
+					url_order: [ 'asc' ],
+				} );
+				unmount();
+			} );
+
+			it( 'opens a linked value no control offers on its default, and drops it', async () => {
+				mockNavState.selectedUrl = ROW;
+				linkTo(
+					[
+						'url=beef7743',
+						'url_metric=p99',
+						'url_breakdown=server',
+						'url_then=referrer',
+						'url_sort=rid',
+						'url_order=sideways',
+						'url_chip=server%3Dkea.example',
+						'url_chip=url%3Dfeed1234',
+						'url_chip=method%3DPURGE',
+					].join( '&' )
+				);
+				mockView = detailView( urlsOf( [] ) );
+				const { unmount } = mountDash();
+				await flushEffects();
+
+				expect( windowState( mockGraphOpts ) ).toEqual( {
+					filters: { bucket: '' },
+					chart: {
+						breakdown: 'status_class',
+						thenBy: '',
+						chips: [ 'method=PURGE' ],
+					},
+					metric: 'volume',
+					sort: { field: 'timestamp', dir: 'desc' },
+					rows: [ 'r3', 'r2', 'r1' ],
+				} );
+				expect( window.location.search ).toBe(
+					'?page=perf&url=beef7743&url_chip=method%3DPURGE'
+				);
+				unmount();
+			} );
+
+			it( 'drops a linked Then by that repeats the Breakdown', async () => {
+				mockNavState.selectedUrl = ROW;
+				linkTo( 'url=beef7743&url_breakdown=ja4&url_then=ja4' );
+				mockView = detailView( urlsOf( [] ) );
+				const { unmount } = mountDash();
+				await flushEffects();
+
+				expect( mockGraphCalls[ 0 ].detailChart ).toEqual( {
+					breakdown: 'ja4',
+					thenBy: '',
+					chips: [],
+				} );
+				expect( windowParams() ).toEqual( {
+					url_breakdown: [ 'ja4' ],
+				} );
+				unmount();
+			} );
+
+			/**
+			 * Narrow the open window by every control, as an operator would.
+			 */
+			const narrowWindow = () => {
+				const view = globalThis.__urlDetailProps;
+				act( () => view.onBucketChange( '2026-09-29-14-30' ) );
+				act( () => view.onBreakdownChange( 'ja4' ) );
+				act( () => view.onThenByChange( 'country' ) );
+				act( () => view.onChipsChange( [ 'status_class=5' ] ) );
+				act( () => view.onMetricChange( 'memory' ) );
+				act( () => view.onRequestSort( 'duration_ms' ) );
+			};
+			const DEFAULT_WINDOW = {
+				filters: { bucket: '' },
+				chart: { breakdown: 'status_class', thenBy: '', chips: [] },
+				metric: 'volume',
+			};
+			const openWindow = ( opts ) => ( {
+				filters: opts.detailFilters,
+				chart: opts.detailChart,
+				metric: globalThis.__urlDetailProps.metric,
+			} );
+
+			it( 'forgets a window closed other than by its X, but keeps its sort', async () => {
+				mockNavState.selectedUrl = ROW;
+				mockView = detailView( urlsOf( [] ) );
+				const { rerender, unmount } = mountDash();
+				await flushEffects();
+				narrowWindow();
+
+				// Back closes the window without the modal's close handler.
+				mockNavState.selectedUrl = null;
+				await act( async () => rerender( dashboard() ) );
+				mockNavState.selectedUrl = { hash: 'cafe1234', url: '/kea' };
+				await act( async () => rerender( dashboard() ) );
+
+				expect( openWindow( mockGraphOpts ) ).toEqual( DEFAULT_WINDOW );
+				expect( globalThis.__urlDetailProps.requestSort ).toEqual( {
+					field: 'duration_ms',
+					dir: 'desc',
+				} );
+				unmount();
+			} );
+
+			it( "opens a searched request's URL on the window's defaults", async () => {
+				mockNavState.selectedUrl = ROW;
+				mockView = detailView( urlsOf( [] ) );
+				const { rerender, unmount } = mountDash();
+				await flushEffects();
+				narrowWindow();
+
+				await act( async () => {
+					await globalThis.__overviewProps.onSearch( 'r9' );
+				} );
+				answerCommand( SEARCH, {
+					result: { url_hash: 'cafe1234', partition: 0 },
+					args: [ 'r9' ],
+				} );
+				await flushEffects();
+
+				expect( mockNavState.selectedUrl.hash ).toBe( 'cafe1234' );
+				// Back from the found request, to the window it opened in.
+				mockNavState.selectedRequest = null;
+				await act( async () => rerender( dashboard() ) );
+				expect( openWindow( mockGraphOpts ) ).toEqual( DEFAULT_WINDOW );
+				unmount();
+			} );
+
+			it( 'opens no window on what a link held for a URL it never named', async () => {
+				linkTo( LINKED );
+				mockView = detailView( urlsOf( [] ) );
+				const { rerender, unmount } = mountDash();
+				await flushEffects();
+
+				mockNavState.selectedUrl = ROW;
+				await act( async () => rerender( dashboard() ) );
+
+				expect( openWindow( mockGraphOpts ) ).toEqual( DEFAULT_WINDOW );
+				unmount();
+			} );
+
+			it( 'carries no window on the bar while no URL is open', async () => {
+				linkTo( LINKED );
+				mockView = detailView( urlsOf( [] ) );
+				const { unmount } = mountDash();
+				await flushEffects();
+
+				expect( window.location.search ).toBe( '?page=perf' );
+				unmount();
+			} );
+
+			it( 'writes the window into the entry its opening pushed', async () => {
+				mockRealNavigation = true;
+				mockView = detailView(
+					urlsOf( [ ROW ], {
+						bucket: '2026-09-29-14-30',
+						filter: [ 'method=PURGE', 'url=feed1234' ],
+					} )
+				);
+				const { unmount } = mountDash();
+				await flushEffects();
+				const replaceSpy = jest.spyOn( window.history, 'replaceState' );
+
+				await act( async () => {
+					globalThis.__urlTableProps.onSelect( ROW );
+				} );
+				await flushEffects();
+
+				expect( pushSpy ).toHaveBeenCalledTimes( 1 );
+				const pushedAt = pushSpy.mock.invocationCallOrder[ 0 ];
+				const before = replaceSpy.mock.calls.filter(
+					( _call, i ) =>
+						replaceSpy.mock.invocationCallOrder[ i ] < pushedAt
+				);
+				// The entry the push leaves behind never names the window.
+				before.forEach( ( [ , , url ] ) =>
+					expect( url ).not.toContain( 'url_' )
+				);
+				expect( pushSpy.mock.calls[ 0 ][ 2 ] ).toBe(
+					'/wp-admin/admin.php?page=perf&url=beef7743'
+				);
+				expect( window.location.search ).toBe(
+					'?page=perf&url=beef7743&url_bucket=2026-09-29-14-30&url_chip=method%3DPURGE'
+				);
+				replaceSpy.mockRestore();
+				unmount();
+			} );
+
+			it( 'leaves the entry it navigates from as it stood, filters declared above the navigation included', async () => {
+				mockRealNavigation = true;
+				linkTo( 'server=edge-02&request=r1' );
+				mockView = detailView( urlsOf( [ ROW ] ) );
+				mockView.overview = {
+					data: overviewOf( hub ),
+					loading: false,
+					error: null,
+				};
+				const { unmount } = mountDash();
+				await flushEffects();
+				let leftBehind = null;
+				const push = Object.getPrototypeOf( window.history ).pushState;
+				pushSpy.mockImplementation( ( ...args ) => {
+					leftBehind = window.location.search;
+					push.apply( window.history, args );
+				} );
+
+				// The found request resets the server in the same batch.
+				answerCommand( DEEP_REQUEST, {
+					result: { url_hash: 'beef7743', partition: 0 },
+					args: [ 'r1' ],
+				} );
+				await flushEffects();
+
+				expect( pushSpy ).toHaveBeenCalledTimes( 1 );
+				expect( leftBehind ).toBe(
+					'?page=perf&server=edge-02&request=r1'
+				);
+				expect( window.location.search ).toBe(
+					'?page=perf&request=r1&url=beef7743'
+				);
+				unmount();
+			} );
 		} );
 	} );
 
@@ -1267,9 +1728,7 @@ describe( 'PerformanceDashboard', () => {
 			urlDetail: { data: held, loading: true, error: null },
 		} );
 		await act( async () => {
-			globalThis.__urlDetailProps.onChartChange( 'chips', [
-				'status_class=5',
-			] );
+			globalThis.__urlDetailProps.onChipsChange( [ 'status_class=5' ] );
 		} );
 
 		expect( mockGraphOpts.detailChart.chips ).toEqual( [
@@ -1551,7 +2010,7 @@ describe( 'PerformanceDashboard', () => {
 				'country=Kiribati',
 			] );
 			await act( async () => {
-				globalThis.__urlDetailProps.onChartChange( 'chips', [
+				globalThis.__urlDetailProps.onChipsChange( [
 					'country=Kiribati',
 				] );
 			} );
@@ -1613,7 +2072,7 @@ describe( 'PerformanceDashboard', () => {
 		it( "asks a url: brief under the detail's chips, not the table's", async () => {
 			await openFromChippedTable( [ 'method=POST' ] );
 			await act( async () => {
-				globalThis.__urlDetailProps.onChartChange( 'chips', [
+				globalThis.__urlDetailProps.onChipsChange( [
 					'status_class=Unknown',
 				] );
 			} );
@@ -1873,8 +2332,7 @@ describe( 'PerformanceDashboard', () => {
 			);
 
 			await act( async () => {
-				globalThis.__urlDetailProps.onFilterChange(
-					'bucket',
+				globalThis.__urlDetailProps.onBucketChange(
 					'2026-10-04-13-40'
 				);
 			} );
@@ -1894,7 +2352,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 
 			await act( async () => {
-				globalThis.__urlDetailProps.onFilterChange( 'bucket', '' );
+				globalThis.__urlDetailProps.onBucketChange( '' );
 			} );
 			expect( mockGraphOpts.detailFilters.bucket ).toBe( '' );
 			expect( globalThis.__urlTableProps.bucket ).toBe(
@@ -1907,8 +2365,7 @@ describe( 'PerformanceDashboard', () => {
 			await openFromBucketedTable();
 
 			await act( async () => {
-				globalThis.__urlDetailProps.onFilterChange(
-					'bucket',
+				globalThis.__urlDetailProps.onBucketChange(
 					( held ) => `${ held }..2026-10-04-13-40`
 				);
 			} );
@@ -1928,8 +2385,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 
 			await act( async () => {
-				globalThis.__urlDetailProps.onFilterChange(
-					'bucket',
+				globalThis.__urlDetailProps.onBucketChange(
 					'2026-10-04-13-35'
 				);
 			} );
@@ -1940,9 +2396,7 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'forgets the modal bucket when the modal closes', async () => {
 			const { rerender } = await openFromBucketedTable();
-			await act( async () => {
-				globalThis.__modalOnRequestClose();
-			} );
+			await closeModal( rerender );
 
 			mockNavState.selectedUrl = { hash: 'h4', url: '/linked' };
 			await act( async () => {
@@ -1956,8 +2410,7 @@ describe( 'PerformanceDashboard', () => {
 		it( "asks under the modal's bucket, not the table's", async () => {
 			await openFromBucketedTable();
 			await act( async () => {
-				globalThis.__urlDetailProps.onFilterChange(
-					'bucket',
+				globalThis.__urlDetailProps.onBucketChange(
 					'2026-10-04-13-40'
 				);
 			} );
@@ -2009,9 +2462,7 @@ describe( 'PerformanceDashboard', () => {
 				url: '/erring',
 			} );
 		} );
-		await act( async () => {
-			globalThis.__modalOnRequestClose();
-		} );
+		await closeModal( rerender );
 
 		mockNavState.selectedUrl = { hash: 'h4', url: '/linked' };
 		await act( async () => {

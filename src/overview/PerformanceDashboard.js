@@ -13,20 +13,21 @@
  *
  * What it does own is the UI state the graph's fetchers read at fire time: the
  * server filter, the chart metric, dimensions and chips, the refresh cadence,
- * the search box and its results,
- * the request-table sort, the bucket selections that narrow the URL table
- * and the URL modal, the URL modal chart's question, and the inline "Log this
- * URL" rule editor. The server filter, metric, both dimensions, the chart's
- * chips and the table selection also live in the address bar, as `?server=`,
- * `?metric=`, `?breakdown=`, `?then=`, one `?chip=` per chip and `?bucket=`,
- * so a shared link opens the same view. The
- * component also runs every command whose reply sets that state: the `?url=`
- * and `?request=` deep-link resolvers, the title lookup for a hash the loaded
- * catalog page does not carry, the search box's exact-rid lookup and its
- * pattern search, and the ruleset reads and writes behind "Log this URL". It
- * renders the URL / request detail modal and the Ask panel over it, and
- * preserves the modal's scroll position across the URL-detail ↔ request-detail
- * switch.
+ * the search box and its results, the request-table sort, the bucket
+ * selections that narrow the URL table and the URL modal, the URL modal
+ * chart's question and metric, and the inline "Log this URL" rule editor. The
+ * server filter, metric, both dimensions, the chart's chips and the table
+ * selection also live in the address bar, as `?server=`, `?metric=`,
+ * `?breakdown=`, `?then=`, one `?chip=` per chip and `?bucket=`, so a shared
+ * link opens the same view. While a URL modal is open, or a link is opening
+ * one, its own controls ride there too under a `url_` prefix, as
+ * `docs/dashboards.md` lists. The component also runs every command whose
+ * reply sets that state: the `?url=` and `?request=` deep-link resolvers, the
+ * title lookup for a hash the loaded catalog page does not carry, the search
+ * box's exact-rid lookup and its pattern search, and the ruleset reads and
+ * writes behind "Log this URL". It renders the URL / request detail modal and
+ * the Ask panel over it, and preserves the modal's scroll position across the
+ * URL-detail ↔ request-detail switch.
  */
 
 import {
@@ -56,8 +57,12 @@ import {
 	CHART_METRIC_OPTIONS,
 	CHART_BREAKDOWN_OPTIONS,
 	DEFAULT_CHART_BREAKDOWN,
+	DEFAULT_CHART_METRIC,
 	FILTER_FIELD_OPTIONS,
 	GROUPS,
+	SCOPED_BREAKDOWN_OPTIONS,
+	SORT_ORDERS,
+	URL_CHIP_OPTIONS,
 } from './constants';
 import {
 	usePerformanceGraph,
@@ -66,7 +71,6 @@ import {
 	GREP_RESULT_LIMIT,
 	NO_CHIPS,
 	NO_DETAIL_CHART,
-	NO_DETAIL_FILTERS,
 } from './hooks/usePerformanceGraph';
 import useUrlNavigation from './hooks/useUrlNavigation';
 import {
@@ -78,7 +82,10 @@ import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import OverviewSection from './components/OverviewSection';
 import { chipRefusal, chipsOf } from './components/BreakdownControls';
-import UrlDetailView from './components/UrlDetailView';
+import UrlDetailView, {
+	DEFAULT_REQUEST_SORT,
+	REQUEST_SORT_FIELDS,
+} from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
 import AskPanel, { AskButton, useAsk } from './components/AskPanel';
 import { headlineStats } from './components/HeadlineStats';
@@ -160,23 +167,70 @@ const CHART_METRICS = CHART_METRIC_OPTIONS.map( ( option ) => option.value );
 const CHART_BREAKDOWNS = CHART_BREAKDOWN_OPTIONS.map(
 	( option ) => option.value
 );
-const CHART_THEN_BYS = [ '', ...CHART_BREAKDOWNS ];
+const DETAIL_BREAKDOWNS = SCOPED_BREAKDOWN_OPTIONS.map(
+	( option ) => option.value
+);
 
 /**
- * The linked `?chip=` values the chip editor would take, spelled as it
- * commits them and each once; the rest drop, a `server=` among them, since
- * the Server select owns the server.
+ * The Then by choices under a Breakdown, as its select offers them: none, or
+ * any other dimension.
  *
- * @param {string[]} raw Every `?chip=` value, each `field=value`.
+ * @param {string[]} breakdowns Every dimension the chart offers.
+ * @param {string}   breakdown  The Breakdown chosen.
+ * @return {string[]} The Then by whitelist.
+ */
+const thenBysUnder = ( breakdowns, breakdown ) => [
+	'',
+	...breakdowns.filter( ( axis ) => axis !== breakdown ),
+];
+
+/**
+ * The linked chip values the chip editor would take, spelled as it commits
+ * them and each once; the rest drop, a `server=` among them, since the
+ * Server select owns the server.
+ *
+ * @param {string[]}                              raw     Every value the
+ *                                                        param holds, each
+ *                                                        `field=value`.
+ * @param {Array<{label: string, value: string}>} options The fields the
+ *                                                        editor offers.
  * @return {string[]} The chips kept, or `NO_CHIPS` for none.
  */
-const restoreChips = ( raw ) => {
+const restoreChips = ( raw, options ) => {
 	const kept = chipsOf(
-		raw.filter(
-			( chip ) => null === chipRefusal( chip, FILTER_FIELD_OPTIONS )
-		)
+		raw.filter( ( chip ) => null === chipRefusal( chip, options ) )
 	);
 	return kept.length ? kept : NO_CHIPS;
+};
+
+/**
+ * Own one of the URL window's choices, written to `?param=` through `gated`
+ * and left off the bar at its default. A choice `values` does not offer,
+ * linked or left behind when `values` changes, falls back to the default, as
+ * `useQueryParamChoice` does for the page's own.
+ *
+ * @param {string}                                                     param    Query-string parameter name.
+ * @param {string[]}                                                   values   Every choice the control offers.
+ * @param {string}                                                     fallback The default.
+ * @param {(encode: (v: string) => ?string) => (v: string) => ?string} gated    Holds a write-back to the window's opening.
+ * @return {[string, import('react').Dispatch<import('react').SetStateAction<string>>]}
+ *   The choice and its setter.
+ */
+const useUrlWindowChoice = ( param, values, fallback, gated ) => {
+	const [ choice, setChoice ] = useQueryParamState(
+		param,
+		( raw ) => raw ?? fallback,
+		gated( ( value ) => ( value === fallback ? null : value ) )
+	);
+	const shown = values.includes( choice ) ? choice : fallback;
+
+	useEffect( () => {
+		if ( shown !== choice ) {
+			setChoice( shown );
+		}
+	}, [ shown, choice, setChoice ] );
+
+	return [ shown, setChoice ];
 };
 
 /**
@@ -199,27 +253,6 @@ export default function PerformanceDashboard( {
 	onError,
 	headerControlsSlot,
 } ) {
-	// UI and control state only; the four view-node slices own every datum.
-	const [ requestSort, setRequestSort ] = useState( {
-		field: 'timestamp',
-		dir: 'desc',
-	} );
-	// Held here, not in the URL modal, which unmounts for every request.
-	const [ detailFilters, setDetailFilters ] = useState( NO_DETAIL_FILTERS );
-	// Same value, same object: the graph re-asks dump_url on a new one.
-	const setDetailFilter = useCallback(
-		( field, update ) =>
-			setDetailFilters( ( prev ) => {
-				const value =
-					'function' === typeof update
-						? update( prev[ field ] )
-						: update;
-				return prev[ field ] === value
-					? prev
-					: { ...prev, [ field ]: value };
-			} ),
-		[]
-	);
 	// @longform The table's bucket selection, as its spelling. A linked one
 	// goes out as it arrived: the server judges it against the charted slots,
 	// and the Time field's token that shows its refusal is the way out.
@@ -233,7 +266,7 @@ export default function PerformanceDashboard( {
 	const [ chartMetric, setChartMetric ] = useQueryParamChoice(
 		'metric',
 		CHART_METRICS,
-		'volume'
+		DEFAULT_CHART_METRIC
 	);
 
 	// Read each slice from its own per-slice view node (null until mounted).
@@ -270,23 +303,13 @@ export default function PerformanceDashboard( {
 	);
 	const [ chartThenBy, setChartThenBy ] = useQueryParamChoice(
 		'then',
-		CHART_THEN_BYS,
+		thenBysUnder( CHART_BREAKDOWNS, chartBreakdown ),
 		''
 	);
 	const [ chartChips, setChartChips ] = useQueryParamList(
 		'chip',
-		restoreChips,
+		( raw ) => restoreChips( raw, FILTER_FIELD_OPTIONS ),
 		( chips ) => chips
-	);
-	// The URL modal chart's question, which survives a trip to a request.
-	const [ detailChart, setDetailChart ] = useState( NO_DETAIL_CHART );
-	// Same value, same object: the graph re-asks the chart on a new one.
-	const changeDetailChart = useCallback(
-		( field, value ) =>
-			setDetailChart( ( prev ) =>
-				prev[ field ] === value ? prev : { ...prev, [ field ]: value }
-			),
-		[]
 	);
 
 	const [ searchQuery, setSearchQuery ] = useState( '' );
@@ -339,6 +362,102 @@ export default function PerformanceDashboard( {
 		deepLink,
 		clearDeepLink,
 	} = useUrlNavigation( urls );
+
+	// The URL window's state, held here: the modal unmounts for every request.
+	const windowOpen = !! (
+		selectedUrl ||
+		deepLink.urlHash ||
+		deepLink.requestId
+	);
+	// Every write-back of the window's state is off the bar while it is shut.
+	const gated = ( encode ) => ( value ) =>
+		windowOpen ? encode( value ) : null;
+	const [ detailBucket, setDetailBucket ] = useQueryParamState(
+		'url_bucket',
+		( raw ) => raw ?? '',
+		gated( String )
+	);
+	const [ detailMetric, setDetailMetric ] = useUrlWindowChoice(
+		'url_metric',
+		CHART_METRICS,
+		DEFAULT_CHART_METRIC,
+		gated
+	);
+	const [ detailBreakdown, setDetailBreakdown ] = useUrlWindowChoice(
+		'url_breakdown',
+		DETAIL_BREAKDOWNS,
+		NO_DETAIL_CHART.breakdown,
+		gated
+	);
+	const [ detailThenBy, setDetailThenBy ] = useUrlWindowChoice(
+		'url_then',
+		thenBysUnder( DETAIL_BREAKDOWNS, detailBreakdown ),
+		NO_DETAIL_CHART.thenBy,
+		gated
+	);
+	const [ detailChips, setDetailChips ] = useQueryParamList(
+		'url_chip',
+		( raw ) => restoreChips( raw, URL_CHIP_OPTIONS ),
+		gated( ( chips ) => chips )
+	);
+	const [ sortField, setSortField ] = useUrlWindowChoice(
+		'url_sort',
+		REQUEST_SORT_FIELDS,
+		DEFAULT_REQUEST_SORT.field,
+		gated
+	);
+	const [ sortDir, setSortDir ] = useUrlWindowChoice(
+		'url_order',
+		SORT_ORDERS,
+		DEFAULT_REQUEST_SORT.dir,
+		gated
+	);
+	// Same values, same object: the graph re-asks on a new one.
+	const detailFilters = useMemo(
+		() => ( { bucket: detailBucket } ),
+		[ detailBucket ]
+	);
+	const detailChart = useMemo(
+		() => ( {
+			breakdown: detailBreakdown,
+			thenBy: detailThenBy,
+			chips: detailChips,
+		} ),
+		[ detailBreakdown, detailThenBy, detailChips ]
+	);
+	const requestSort = useMemo(
+		() => ( { field: sortField, dir: sortDir } ),
+		[ sortField, sortDir ]
+	);
+	/**
+	 * Reset the window for a URL opened or closed: its bucket and chips as
+	 * given, its chart and metric on the defaults. The request sort stays.
+	 *
+	 * @param {string}   bucket The bucket selection's spelling; '' for none.
+	 * @param {string[]} chips  The chips, or `NO_CHIPS`.
+	 */
+	const resetDetail = useCallback(
+		( bucket, chips ) => {
+			setDetailBucket( bucket );
+			setDetailChips( chips );
+			setDetailBreakdown( NO_DETAIL_CHART.breakdown );
+			setDetailThenBy( NO_DETAIL_CHART.thenBy );
+			setDetailMetric( DEFAULT_CHART_METRIC );
+		},
+		[
+			setDetailBucket,
+			setDetailChips,
+			setDetailBreakdown,
+			setDetailThenBy,
+			setDetailMetric,
+		]
+	);
+	// A shut window forgets how it was narrowed, however it shut.
+	useEffect( () => {
+		if ( ! windowOpen ) {
+			resetDetail( '', NO_CHIPS );
+		}
+	}, [ windowOpen, resetDetail ] );
 
 	selectUrlRef.current = selectUrl;
 	selectRequestRef.current = baseSelectRequest;
@@ -429,15 +548,14 @@ export default function PerformanceDashboard( {
 	const openUrl = useCallback(
 		( url ) => {
 			selectRequest( null );
-			setDetailFilters( { bucket: urlFilters?.bucket ?? '' } );
 			const chips = withoutUrlChips( urlFilters?.filter ?? [] );
-			setDetailChart( {
-				...NO_DETAIL_CHART,
-				chips: chips.length ? chips : NO_CHIPS,
-			} );
+			resetDetail(
+				urlFilters?.bucket ?? '',
+				chips.length ? chips : NO_CHIPS
+			);
 			selectUrlNow( url );
 		},
-		[ selectRequest, selectUrlNow, urlFilters ]
+		[ selectRequest, selectUrlNow, urlFilters, resetDetail ]
 	);
 
 	/**
@@ -447,12 +565,15 @@ export default function PerformanceDashboard( {
 	 *
 	 * @param {string} field Field key to sort by.
 	 */
-	const handleRequestSort = useCallback( ( field ) => {
-		setRequestSort( ( prev ) => ( {
-			field,
-			dir: prev.field === field && prev.dir === 'desc' ? 'asc' : 'desc',
-		} ) );
-	}, [] );
+	const handleRequestSort = useCallback(
+		( field ) => {
+			setSortDir(
+				sortField === field && 'desc' === sortDir ? 'asc' : 'desc'
+			);
+			setSortField( field );
+		},
+		[ sortField, sortDir, setSortField, setSortDir ]
+	);
 
 	/**
 	 * Ask `dump_url` for the title of a hash the loaded catalog page does not
@@ -616,6 +737,8 @@ export default function PerformanceDashboard( {
 				return;
 			}
 			applyFoundRequest( args[ 0 ], result );
+			// A narrowed window could hide the very request searched for.
+			resetDetail( '', NO_CHIPS );
 			setSearchQuery( '' );
 			setQueryParams(
 				{ search: null, url: result.url_hash, request: args[ 0 ] },
@@ -1071,9 +1194,6 @@ export default function PerformanceDashboard( {
 						}
 						selectUrl( null );
 						selectRequest( null );
-						// Only the table opens a URL narrowed; forget it here.
-						setDetailFilters( NO_DETAIL_FILTERS );
-						setDetailChart( NO_DETAIL_CHART );
 					} }
 					className="event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"
 					headerActions={
@@ -1182,13 +1302,17 @@ export default function PerformanceDashboard( {
 							onSelectRequest={ selectRequest }
 							urlHash={ selectedUrl.hash }
 							filters={ detailFilters }
-							onFilterChange={ setDetailFilter }
+							onBucketChange={ setDetailBucket }
 							listing={ detailListing }
 							listError={ urlDetailSlice.error }
 							chartSlice={ urlChartSlice }
 							categoriesSlice={ urlCategoriesSlice }
 							chart={ detailChart }
-							onChartChange={ changeDetailChart }
+							onBreakdownChange={ setDetailBreakdown }
+							onThenByChange={ setDetailThenBy }
+							onChipsChange={ setDetailChips }
+							metric={ detailMetric }
+							onMetricChange={ setDetailMetric }
 						/>
 					) }
 

@@ -157,11 +157,15 @@ function mount( overrides = {} ) {
 		onSelectRequest: jest.fn(),
 		urlHash: 'deadbeef',
 		filters: { bucket: '' },
-		onFilterChange: jest.fn(),
+		onBucketChange: jest.fn(),
 		chartSlice: sliceOf( null ),
 		categoriesSlice: sliceOf( null ),
 		chart: NO_DETAIL_CHART,
-		onChartChange: jest.fn(),
+		onBreakdownChange: jest.fn(),
+		onThenByChange: jest.fn(),
+		onChipsChange: jest.fn(),
+		metric: 'volume',
+		onMetricChange: jest.fn(),
 		...overrides,
 	};
 	return {
@@ -460,10 +464,10 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 'replaces its selection on a plain chart click, and toggles on an additive one', () => {
-		const onFilterChange = jest.fn();
+		const onBucketChange = jest.fn();
 		const { unmount } = mount( {
 			filters: { bucket: '2026-10-04-13-35' },
-			onFilterChange,
+			onBucketChange,
 		} );
 		globalThis.__aggregateSlotClick( '2026-10-04-13-50', {
 			additive: false,
@@ -476,23 +480,22 @@ describe( 'UrlDetailView', () => {
 		} );
 		// Each click hands an updater, applied here to the selection held.
 		expect(
-			onFilterChange.mock.calls.map( ( [ field, update ] ) => [
-				field,
-				update( '2026-10-04-13-35' ),
-			] )
+			onBucketChange.mock.calls.map( ( [ update ] ) =>
+				update( '2026-10-04-13-35' )
+			)
 		).toEqual( [
-			[ 'bucket', '2026-10-04-13-50' ],
-			[ 'bucket', '2026-10-04-13-35..2026-10-04-13-40' ],
-			[ 'bucket', '' ],
+			'2026-10-04-13-50',
+			'2026-10-04-13-35..2026-10-04-13-40',
+			'',
 		] );
 		unmount();
 	} );
 
 	it( 'replaces its selection on a plain chart drag, and adds the span on an additive one', () => {
-		const onFilterChange = jest.fn();
+		const onBucketChange = jest.fn();
 		const { unmount } = mount( {
 			filters: { bucket: '2026-10-04-13-35' },
-			onFilterChange,
+			onBucketChange,
 		} );
 		globalThis.__aggregateSlotRange(
 			[ '2026-10-04-13-45', '2026-10-04-13-50', '2026-10-04-13-55' ],
@@ -503,13 +506,12 @@ describe( 'UrlDetailView', () => {
 			{ additive: true }
 		);
 		expect(
-			onFilterChange.mock.calls.map( ( [ field, update ] ) => [
-				field,
-				update( '2026-10-04-13-35' ),
-			] )
+			onBucketChange.mock.calls.map( ( [ update ] ) =>
+				update( '2026-10-04-13-35' )
+			)
 		).toEqual( [
-			[ 'bucket', '2026-10-04-13-45..2026-10-04-13-55' ],
-			[ 'bucket', '2026-10-04-13-35,2026-10-04-13-45..2026-10-04-13-55' ],
+			'2026-10-04-13-45..2026-10-04-13-55',
+			'2026-10-04-13-35,2026-10-04-13-45..2026-10-04-13-55',
 		] );
 		unmount();
 	} );
@@ -542,7 +544,7 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 'holds its selection in a Time field after the heading', () => {
-		const onFilterChange = jest.fn();
+		const onBucketChange = jest.fn();
 		const { container, unmount } = mount( {
 			chartSlice: sliceOf(
 				classAnswer( [], '2026-10-04-13-05..2026-10-04-14-00' )
@@ -550,7 +552,7 @@ describe( 'UrlDetailView', () => {
 			filters: {
 				bucket: '2026-10-04-13-30,2026-10-04-13-40',
 			},
-			onFilterChange,
+			onBucketChange,
 		} );
 		const field = container.querySelector(
 			'.event-logger-table--requests .event-logger-tag-container'
@@ -570,10 +572,9 @@ describe( 'UrlDetailView', () => {
 				.querySelector( 'button[aria-label="Remove 6:30–6:35 AM"]' )
 				.click()
 		);
-		expect( onFilterChange ).toHaveBeenCalledWith(
-			'bucket',
-			'2026-10-04-13-40'
-		);
+		expect(
+			onBucketChange.mock.calls.map( ( [ value ] ) => value )
+		).toEqual( [ '2026-10-04-13-40' ] );
 		unmount();
 	} );
 
@@ -777,14 +778,17 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 'hands its owner each edit of the chart question', () => {
-		const onChartChange = jest.fn();
+		const edits = [];
+		const edit = ( name ) => ( value ) => edits.push( [ name, value ] );
 		const { container, unmount } = mount( {
 			chart: {
 				breakdown: 'status_class',
 				thenBy: '',
 				chips: [ 'method=PUT' ],
 			},
-			onChartChange,
+			onBreakdownChange: edit( 'breakdown' ),
+			onThenByChange: edit( 'thenBy' ),
+			onChipsChange: edit( 'chips' ),
 		} );
 		const [ , breakdown, thenBy ] = container.querySelectorAll( 'select' );
 		selectOption( breakdown, 'ja4' );
@@ -794,13 +798,44 @@ describe( 'UrlDetailView', () => {
 				.querySelector( 'button[aria-label="Remove Method = PUT"]' )
 				.click();
 		} );
-		expect(
-			onChartChange.mock.calls.map( ( c ) => c.slice( 0, 2 ) )
-		).toEqual( [
+		expect( edits ).toEqual( [
 			[ 'breakdown', 'ja4' ],
 			[ 'thenBy', 'country' ],
 			[ 'chips', [] ],
 		] );
+		unmount();
+	} );
+
+	it( 'draws the metric its owner holds, and hands it a Metric edit', () => {
+		const onMetricChange = jest.fn();
+		const { container, unmount } = mount( {
+			metric: 'memory',
+			onMetricChange,
+			sortedRequests: [
+				{ rid: 'lean-37', timestamp: 1, duration_ms: 900, peak_mb: 37 },
+				{
+					rid: 'heavy-74',
+					timestamp: 2,
+					duration_ms: 100,
+					peak_mb: 74,
+				},
+			],
+		} );
+		const [ metric ] = container.querySelectorAll( 'select' );
+		const bar = ( rid ) =>
+			[ ...container.querySelectorAll( '.event-logger-table__row' ) ]
+				.find( ( r ) => r.querySelector( 'code' ).textContent === rid )
+				.querySelectorAll( '.event-logger-table__cell' )[ 2 ].style
+				.background;
+
+		expect( metric.value ).toBe( 'memory' );
+		// Peak memory bars the row: 37 of 74 MB, where duration bars it full.
+		expect( bar( 'lean-37' ) ).toContain( ' 50%' );
+
+		selectOption( metric, 'avg' );
+		expect(
+			onMetricChange.mock.calls.map( ( [ value ] ) => value )
+		).toEqual( [ 'avg' ] );
 		unmount();
 	} );
 
@@ -840,12 +875,14 @@ describe( 'UrlDetailView', () => {
 			onSelectRequest: jest.fn(),
 			urlHash: 'deadbeef',
 			filters: { bucket: '' },
-			onFilterChange: jest.fn(),
+			onBucketChange: jest.fn(),
 			listing: false,
 			chartSlice: sliceOf( classAnswer( [] ) ),
 			categoriesSlice: sliceOf( classAnswer( [] ) ),
 			chart: NO_DETAIL_CHART,
-			onChartChange: jest.fn(),
+			onBreakdownChange: jest.fn(),
+			onThenByChange: jest.fn(),
+			onChipsChange: jest.fn(),
 		};
 		const { container, rerender, unmount } = renderComponent(
 			React.createElement( UrlDetailView, props )
@@ -1076,20 +1113,17 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 'keeps its dropdowns when the dimension has no rows to chart', () => {
-		const onChartChange = jest.fn();
+		const onBreakdownChange = jest.fn();
 		const { container, unmount } = mount( {
 			chartSlice: sliceOf( classAnswer( [] ) ),
-			onChartChange,
+			onBreakdownChange,
 		} );
 		expect( container.textContent ).toContain(
 			'No Status Class data in this window.'
 		);
 		const [ , breakdown ] = container.querySelectorAll( 'select' );
 		selectOption( breakdown, 'ja4' );
-		expect( onChartChange.mock.calls[ 0 ].slice( 0, 2 ) ).toEqual( [
-			'breakdown',
-			'ja4',
-		] );
+		expect( onBreakdownChange.mock.calls[ 0 ][ 0 ] ).toBe( 'ja4' );
 		unmount();
 	} );
 } );
