@@ -98,6 +98,20 @@ describe( 'TokenInput', () => {
 		field.unmount();
 	} );
 
+	it( 'offers Clear all only to a caller that takes it', () => {
+		const offered = ( props ) => {
+			const field = mountInput( [ 'kea-7316' ], props );
+			const button = field.container.querySelector(
+				'.event-logger-tag-clear'
+			);
+			field.unmount();
+			return null !== button;
+		};
+
+		expect( offered( {} ) ).toBe( false );
+		expect( offered( { onClear: () => {} } ) ).toBe( true );
+	} );
+
 	it( "sets its tokens in the caller's own row when given no row class", () => {
 		const field = mountInput( [ '/kea-31', '/weka-77' ], {
 			rowClassName: undefined,

@@ -160,7 +160,7 @@ Two suites hold every file in the directory to a shape:
 Two contracts tie it to this plugin, and both fail quietly when they move:
 
 - `Log_Manager`'s constructor adopts `request_time` and `request_ts` from that global and unsets them, which stamps `process (start)` with the moment PHP began rather than the moment the logger emitted, and stops a nested job context claiming them twice.
-- The flush runs on `plugins_loaded` at priority **-10001**, one below `hook_start_priority`'s -10000 default, so the plugin-load spans precede what `App\Core` writes for `plugins_loaded`. Each row goes out as a `(start)` / `(complete)` pair carrying its OWN `ts`, because the flush moment would collapse the whole loading phase onto one instant. Reaching `Log_Manager` that early depends on this plugin requiring its Composer autoloader at file scope, ahead of its own deferred `plugins_loaded` 11 bootstrap.
+- The mu-plugin writes nothing: the deferred bootstrap, at `plugins_loaded` **-11001**, calls `Log_Manager::flush_plugin_loads()` before it constructs `App\Core`, so the plugin-load spans precede what `App\Core` writes for `plugins_loaded` at `hook_start_priority`'s -11000 default, and empties the drop-in's list, so a stale copy that still flushes finds nothing. Each row goes out as a `(start)` / `(complete)` pair carrying its OWN `ts`, because the flush moment would collapse the whole loading phase onto one instant.
 
 #### Removing dead code
 

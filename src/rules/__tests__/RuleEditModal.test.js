@@ -609,8 +609,8 @@ describe( 'RuleEditModal — Enter saves through the form', () => {
 		const others = [ ...form.querySelectorAll( 'button' ) ].filter(
 			( b ) => b !== saveButton()
 		);
-		// Select Hooks, Select Events, the tag's remove, Delete and Cancel.
-		expect( others ).toHaveLength( 5 );
+		// Select Hooks, Select Events, the tag's remove, Clear all, Delete, Cancel.
+		expect( others ).toHaveLength( 6 );
 		others.forEach( ( b ) => expect( b.type ).toBe( 'button' ) );
 	} );
 

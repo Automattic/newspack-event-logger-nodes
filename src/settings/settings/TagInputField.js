@@ -1,8 +1,8 @@
 /**
  * The editor for a rule field holding an array of strings. Type a value and
  * press Enter, or blur the input, to add it as a tag; click a tag's remove
- * button, or press Backspace on an empty input, to take one away. Escape
- * drops what was typed. Blank and duplicate values add nothing, and the whole
+ * button, or press Backspace on an empty input, to take one away; Clear all
+ * takes every tag away. Escape drops what was typed. Blank and duplicate values add nothing, and the whole
  * array is reported through `onChange` after every change.
  */
 
@@ -60,6 +60,8 @@ export default function TagInputField( {
 		);
 	}, [] );
 
+	const clearAll = useCallback( () => setValues( [] ), [] );
+
 	const containerClass = `event-logger-tag-container ${
 		horizontal ? 'horizontal' : 'vertical'
 	}`;
@@ -77,6 +79,7 @@ export default function TagInputField( {
 					'newspack-event-logger-nodes'
 				) }
 				className="regular-text"
+				onClear={ clearAll }
 			/>
 		</div>
 	);

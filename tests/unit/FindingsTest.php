@@ -1797,7 +1797,7 @@ class FindingsTest extends TestCase {
 	/**
 	 * A folded record's `truncation` proposes FEWER logged events, so
 	 * `cold_start` cannot answer the same record with the LIFECYCLE BRACKET —
-	 * six hooks across the whole request, the contradiction decision 13 records
+	 * seven hooks across the whole request, the contradiction decision 13 records
 	 * for `entry_gap`, arriving by a second route.
 	 *
 	 * Narrower than "never propose more": a real gap still reports in a folded
@@ -1840,6 +1840,7 @@ class FindingsTest extends TestCase {
 
 		$this->assertNotNull( $found );
 		$this->assertStringContainsString( 'registers no hooks', $found['title'] );
+		$this->assertStringContainsString( 'These seven', $found['proposal']['why'] );
 		$this->assertSame( 'ffff11112222', $found['rule_id'] );
 		$this->assertSame( 'add_hooks', $found['proposal']['action'] );
 		$this->assertSame( Findings::LIFECYCLE_BRACKET, $found['proposal']['hooks'] );
@@ -1847,12 +1848,12 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * The logger binds its rule inside `plugins_loaded`, so a bracket naming
-	 * that hook times nothing; `setup_theme` is the first phase it can see.
+	 * The logger binds its rule at the head of `plugins_loaded`, so that
+	 * hook is the first phase the bracket can split.
 	 */
 	public function test_the_bracket_opens_on_the_first_hook_the_logger_can_time(): void {
 		$this->assertSame(
-			[ 'setup_theme', 'init', 'wp_loaded', 'template_redirect', 'wp_head', 'shutdown' ],
+			[ 'plugins_loaded', 'setup_theme', 'init', 'wp_loaded', 'template_redirect', 'wp_head', 'shutdown' ],
 			Findings::LIFECYCLE_BRACKET
 		);
 	}
@@ -3151,7 +3152,7 @@ class FindingsTest extends TestCase {
 
 	/**
 	 * The window from the logger's opening rows to the first span it bound
-	 * is the rest of `plugins_loaded`, which the logger boots inside.
+	 * holds `plugins_loaded`, whose callbacks follow the logger's boot.
 	 *
 	 * @param float $first_hook When the first bound span opens, seconds past 2000.
 	 * @param float $later_hook When a later one opens.
@@ -3172,14 +3173,101 @@ class FindingsTest extends TestCase {
 		return $record;
 	}
 
-	public function test_the_loggers_boot_window_says_no_rule_edit_can_time_it(): void {
+	public function test_the_loggers_boot_window_proposes_plugins_loaded(): void {
 		$found = $this->of_kind( Findings::for_request( $this->boot_record( 0.520, 0.530 ), $this->instrumented_rule() ), 'entry_gap' );
 
 		$this->assertSame( 'resources', $found['metric']['after'] );
 		$this->assertSame( 'setup_theme hook (start)', $found['metric']['before'] );
+		$this->assertSame( 'add_hooks', $found['proposal']['action'] );
+		$this->assertSame( [ 'plugins_loaded' ], $found['proposal']['hooks'] );
+		$this->assertSame( '/calendar/today', $found['proposal']['pattern'] );
+	}
+
+	/** A window ending at a plugin's own hook names the bracket hooks the rule omits up to the next one logged. */
+	public function test_a_boot_window_ending_at_a_plugins_own_hook_proposes_plugins_loaded(): void {
+		$record                    = $this->boot_record( 0.520, 0.530 );
+		$record['entries'][5]['k'] = 'wpseo_enable_tracking hook (start)';
+		$record['entries'][6]['k'] = 'wpseo_enable_tracking hook (complete)';
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'add_hooks', $found['proposal']['action'] );
+		$this->assertSame( [ 'plugins_loaded', 'setup_theme' ], $found['proposal']['hooks'] );
+	}
+
+	/** A query or a call the logger timed ahead of the window is no hook: the window is still the boot's. */
+	public function test_a_boot_window_after_a_timed_query_proposes_plugins_loaded(): void {
+		$record = $this->boot_record( 0.520, 0.530 );
+		\array_splice( $record['entries'], 5, 0, [
+			[ 'n' => 50, 'ts' => 2000.0950, 'k' => 'sql (start)', 'm' => 'SELECT ?' ],
+			[ 'n' => 51, 'ts' => 2000.0960, 'k' => 'sql (complete)', 'm' => '', 'duration_ms' => 1.0 ],
+		] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'sql (complete)', $found['metric']['after'] );
+		$this->assertSame( [ 'plugins_loaded' ], $found['proposal']['hooks'] );
+	}
+
+	/** A window ending at any hook names the lifecycle hooks after the last one logged. */
+	public function test_a_window_ending_at_a_plain_hook_proposes_the_bracket_hooks_after_the_last_logged(): void {
+		$record                    = $this->boot_record( 0.120, 0.700 );
+		$record['entries'][5]['k'] = 'plugins_loaded hook (start)';
+		$record['entries'][6]['k'] = 'plugins_loaded hook (complete)';
+		$record['entries'][7]['k'] = 'the_content hook (start)';
+		$record['entries'][8]['k'] = 'the_content hook (complete)';
+		$rule                      = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'plugins_loaded', 'the_content', 'wp_head' ] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'entry_gap' );
+
+		$this->assertSame( 'the_content hook (start)', $found['metric']['before'] );
+		$this->assertSame( [ 'setup_theme', 'init', 'wp_loaded', 'template_redirect' ], $found['proposal']['hooks'] );
+		$this->assertStringStartsWith( 'Between plugins_loaded and the_content the rule omits', $found['proposal']['why'] );
+	}
+
+	/** A hook the rule marks significant is bound though the list omits it, so it is never proposed. */
+	public function test_a_hook_marked_significant_is_not_proposed(): void {
+		$rule = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [ 'plugins_loaded', 'setup_theme' ], [], [ 'init', 'wp_loaded' ] );
+
+		$found = $this->of_kind( Findings::for_request( $this->boot_record( 0.520, 0.530 ), $rule ), 'entry_gap' );
+
 		$this->assertSame( 'none', $found['proposal']['action'] );
-		$this->assertStringContainsString( 'plugins_loaded', $found['proposal']['why'] );
-		$this->assertStringContainsString( 'priority 11', $found['proposal']['why'] );
+	}
+
+	/** A hook fired inside `plugins_loaded` ahead of the window leaves `plugins_loaded` in the proposal. */
+	public function test_a_window_after_a_hook_inside_plugins_loaded_still_proposes_it(): void {
+		$record = $this->boot_record( 0.520, 0.530 );
+		\array_splice( $record['entries'], 5, 0, [
+			[ 'n' => 50, 'ts' => 2000.0950, 'k' => 'wpseo_enable_tracking hook (start)', 'm' => '' ],
+			[ 'n' => 51, 'ts' => 2000.0960, 'k' => 'wpseo_enable_tracking hook (complete)', 'm' => '', 'duration_ms' => 1.0 ],
+		] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'setup_theme hook (start)', $found['metric']['before'] );
+		$this->assertSame( [ 'plugins_loaded' ], $found['proposal']['hooks'] );
+	}
+
+	/** A window ending where `plugins_loaded` opens holds no lifecycle hook to add. */
+	public function test_a_window_ending_at_plugins_loaded_proposes_no_later_hook(): void {
+		$record                    = $this->boot_record( 0.520, 0.530 );
+		$record['entries'][5]['k'] = 'plugins_loaded hook (start)';
+		$record['entries'][6]['k'] = 'plugins_loaded hook (complete)';
+		$rule                      = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'plugins_loaded', 'wp_loaded' ] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'entry_gap' );
+
+		$this->assertSame( 'plugins_loaded hook (start)', $found['metric']['before'] );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+	}
+
+	/** A rule already listing `plugins_loaded` gets no proposal to add it. */
+	public function test_a_boot_window_under_a_rule_listing_plugins_loaded_proposes_nothing(): void {
+		$rule = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'plugins_loaded', 'init', 'wp_loaded' ] );
+
+		$found = $this->of_kind( Findings::for_request( $this->boot_record( 0.520, 0.530 ), $rule ), 'entry_gap' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
 	}
 
 	public function test_a_later_request_level_gap_is_no_boot_window(): void {
@@ -3311,9 +3399,9 @@ class FindingsTest extends TestCase {
 		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'entry_gap' );
 
 		$this->assertSame( 'add_hooks', $found['proposal']['action'] );
-		$this->assertSame( [ 'setup_theme', 'init' ], $found['proposal']['hooks'] );
+		$this->assertSame( [ 'plugins_loaded', 'setup_theme', 'init' ], $found['proposal']['hooks'] );
 		$this->assertSame(
-			'Before template_redirect the rule omits the lifecycle hooks setup_theme, init; whichever of them fire inside this window will split it.',
+			'Before template_redirect the rule omits the lifecycle hooks plugins_loaded, setup_theme, init; whichever of them fire inside this window will split it.',
 			$found['proposal']['why']
 		);
 	}

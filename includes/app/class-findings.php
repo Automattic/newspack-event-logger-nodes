@@ -100,16 +100,16 @@ class Findings {
 	public const MIN_DURATION_MS = 50.0;
 
 	/**
-	 * The coarse first round of the bisect: six hooks that split a request into
+	 * The coarse first round of the bisect: seven hooks that split a request into
 	 * phases at a fixed, small cost. The next round subdivides only the phase
 	 * that held the time, which is binary search over the request lifecycle —
 	 * and it is what stops a proposal being "here are forty hooks". It opens
-	 * on `setup_theme` because the logger binds its rule inside
-	 * `plugins_loaded`, too late to time that hook.
+	 * on `plugins_loaded`, which the logger binds at the head of.
 	 *
 	 * @var list<string>
 	 */
 	public const LIFECYCLE_BRACKET = [
+		'plugins_loaded',
 		'setup_theme',
 		'init',
 		'wp_loaded',
@@ -354,12 +354,10 @@ class Findings {
 	 * the positions an `entry:` ask names — and by `at_ms`, where it opens,
 	 * measured from the record's first entry. The proposal is the edit that
 	 * would light the window, made once. At the request's own level of a web
-	 * request, a window ending at a `LIFECYCLE_BRACKET` hook proposes the
-	 * bracket hooks before it the rule omits, per `lifecycle_window()`, which
-	 * light it only where they fire inside it; where it omits none and the
-	 * window ends at the first span the logger bound, the window is the rest
-	 * of `plugins_loaded`, which the logger boots inside, so no edit lights
-	 * it. A worker's record holds no such boot.
+	 * request, a window ending at a hook proposes the bracket hooks the rule
+	 * omits between the last one logged ahead of it and the first at or after
+	 * its end, per `lifecycle_window()`; they light it only where they fire
+	 * inside it.
 	 *
 	 * @param list<mixed>              $entries  The record's entries.
 	 * @param Rule|null                $rule     The governing rule, or null when none does.
@@ -448,7 +446,6 @@ class Findings {
 					'Trim them back once the window is explained; every enabled hook costs overhead on every request this rule matches.',
 					[ 'pattern' => $rule?->pattern, 'hooks' => $lifecycle['omitted'] ]
 				),
-				$lifecycle['boot'] ?? false          => self::proposal( 'none', $rule_id, 'The window is the rest of plugins_loaded: the event logger boots there at priority 11 and binds this rule\'s hooks, too late to time plugins_loaded itself, so no rule edit times it — listing plugins_loaded included.' ),
 				null === $edit                       => self::proposal( 'none', $rule_id, 'Only the request\'s own frame is open there, so no hook the rule could add is known to run in the window.' ),
 				isset( $edit['value'] ) && self::proposes( $dominant, Core::as_string( $edit['value'] ) ) => self::proposal( 'none', $rule_id, "The dominant span's finding already proposes the edit that shows inside {$inside}." ),
 				default                              => $edit,
@@ -506,10 +503,11 @@ class Findings {
 
 	/**
 	 * What the lifecycle says about a request-level window ending at row
-	 * `$to`: null unless that row opens a `LIFECYCLE_BRACKET` hook, else the
-	 * hook as `ends`, the last one logged ahead of it as `after`, the bracket
-	 * hooks between the two that the rule omits as `omitted`, and as `boot`
-	 * whether no span the logger bound opened ahead of it. Whether an omitted
+	 * `$to`: null unless that row opens a hook, else that hook as `ends`, the
+	 * last `LIFECYCLE_BRACKET` hook logged ahead of it as `after`, and as
+	 * `omitted` the bracket hooks after that one and before the first logged
+	 * at or after `$to`, or before `shutdown` where none is, that the rule
+	 * binds neither as a hook nor as a significant event. Whether an omitted
 	 * hook fires at all, or before the window opens rather than inside it, is
 	 * not known: binding one that never fires costs nothing, and once bound it
 	 * logs, so the next record omits fewer. A rule whose hooks are stored out
@@ -518,54 +516,54 @@ class Findings {
 	 * @param list<mixed> $entries The record's entries.
 	 * @param int         $to      The position of the row the window ends at.
 	 * @param Rule        $rule    The governing rule.
-	 * @return array{ends:string,after:?string,omitted:list<string>,boot:bool}|null
+	 * @return array{ends:string,after:?string,omitted:list<string>}|null
 	 */
 	private static function lifecycle_window( array $entries, int $to, Rule $rule ): ?array {
-		$ends = self::bracket_index( Core::arr( $entries[ $to ] ?? null ) );
+		$ends = self::opened_hook( Core::arr( $entries[ $to ] ?? null ) );
 		if ( null === $ends || null === $rule->hooks ) {
 			return null;
 		}
 		$after = -1;
-		$boot  = true;
 		for ( $at = 0; $at < $to; $at++ ) {
-			$entry = Core::arr( $entries[ $at ] );
-			$after = \max( $after, self::bracket_index( $entry ) ?? -1 );
-			$boot  = $boot && ! self::is_bound_span( $entry );
+			$after = \max( $after, self::bracket_at( self::opened_hook( Core::arr( $entries[ $at ] ) ) ) ?? -1 );
 		}
-		$between = \array_slice( self::LIFECYCLE_BRACKET, $after + 1, \max( 0, $ends - $after - 1 ) );
+		$next  = null;
+		$count = \count( $entries );
+		for ( $at = $to; null === $next && $at < $count; $at++ ) {
+			$next = self::bracket_at( self::opened_hook( Core::arr( $entries[ $at ] ) ) );
+		}
+		// Ending inside shutdown is rarer than ending ahead of it.
+		$next  ??= \count( self::LIFECYCLE_BRACKET ) - 1;
+		$between = \array_slice( self::LIFECYCLE_BRACKET, $after + 1, \max( 0, $next - $after - 1 ) );
 		return [
-			'ends'    => self::LIFECYCLE_BRACKET[ $ends ],
+			'ends'    => $ends,
 			'after'   => self::LIFECYCLE_BRACKET[ $after ] ?? null,
-			'omitted' => \array_values( \array_diff( $between, $rule->hooks ) ),
-			'boot'    => $boot,
+			'omitted' => \array_values( \array_diff( $between, $rule->hooks, $rule->significant_events ) ),
 		];
 	}
 
 	/**
-	 * Whether a row opens a span the logger's own binding wrote: neither the
-	 * request's frame nor a plugin load, which the profiler times first.
+	 * Where in `LIFECYCLE_BRACKET` a hook sits, or null for any other.
 	 *
-	 * @param array<array-key,mixed> $entry One entry.
-	 * @return bool
+	 * @param string|null $hook A hook name, or null for no hook.
+	 * @return int|null
 	 */
-	private static function is_bound_span( array $entry ): bool {
-		return 1 === \preg_match( Flame_Tree::PATTERN_START, Core::as_string( $entry['k'] ?? '' ), $m )
-			&& Log_Manager::REQUEST_LABEL !== $m[1] && ! Flame_Tree::is_plugin_load_span( $m[1] );
+	private static function bracket_at( ?string $hook ): ?int {
+		$at = null === $hook ? false : \array_search( $hook, self::LIFECYCLE_BRACKET, true );
+		return false === $at ? null : $at;
 	}
 
 	/**
-	 * Where in `LIFECYCLE_BRACKET` the hook a row opens sits, or null for any
-	 * other row.
+	 * The hook a row opens, or null for any other row.
 	 *
 	 * @param array<array-key,mixed> $entry One entry.
-	 * @return int|null
+	 * @return string|null
 	 */
-	private static function bracket_index( array $entry ): ?int {
+	private static function opened_hook( array $entry ): ?string {
 		if ( 1 !== \preg_match( Flame_Tree::PATTERN_START, Core::as_string( $entry['k'] ?? '' ), $m ) || ! Flame_Tree::is_hook_span( $m[1] ) ) {
 			return null;
 		}
-		$at = \array_search( Flame_Tree::hook_name( Flame_Tree::base_name( $m[1] ) ), self::LIFECYCLE_BRACKET, true );
-		return false === $at ? null : $at;
+		return Flame_Tree::hook_name( Flame_Tree::base_name( $m[1] ) );
 	}
 
 	/**
@@ -607,8 +605,8 @@ class Findings {
 
 	/**
 	 * Each row's neighbour in time: the row stamped just before it, by
-	 * timestamp and then position. The profiler logs its plugin rows after
-	 * the opening rows and stamps them earlier, so position order measures
+	 * timestamp and then position. The bootstrap writes the profiler's plugin
+	 * rows after the opening rows and stamps them earlier, so position order measures
 	 * windows across rows stamped inside them.
 	 *
 	 * @param list<mixed> $entries The record's entries.
@@ -1557,7 +1555,7 @@ class Findings {
 	/**
 	 * Where a record's logging stopped: its last entry ahead of the drain a
 	 * producer writes on its way out, and stamped no earlier than the
-	 * `request` line, as the profiler's later-written plugin rows are not.
+	 * `request` line, as the plugin rows the bootstrap writes later are not.
 	 *
 	 * @param list<mixed> $entries The record's entries.
 	 * @return array{0:?int,1:bool,2:string} Stop index (null when empty), whether it places a stop, the open spans.
@@ -1980,7 +1978,7 @@ class Findings {
 					'add_hooks',
 					$rule->id,
 					'The governing rule registers no hooks, so the request has no interior. '
-						. 'These six split it into phases at a fixed, small cost; the next round subdivides only the phase that held the time.',
+						. 'These seven split it into phases at a fixed, small cost; the next round subdivides only the phase that held the time.',
 					'Trim the hook list back to the phase that mattered once it is identified — '
 						. 'every enabled hook costs overhead on every request this rule matches.',
 					[ 'pattern' => $rule->pattern, 'hooks' => self::LIFECYCLE_BRACKET ]

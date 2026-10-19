@@ -466,6 +466,9 @@
     ],
     "Options & Settings": [
       "^option_",
+      "^pre_option$",
+      "^pre_wp_load_alloptions$",
+      "^wp_load_alloptions$",
       "^pre_option_",
       "^default_option_",
       "^update_option",
@@ -626,7 +629,8 @@
       "^wp_update_term_"
     ],
     "The Events Calendar": [
-      "^tribe_events_",
+      "^tribe_",
+      "^tec_",
       "^stellarwp/"
     ],
     "Theme": [

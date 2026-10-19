@@ -86,7 +86,7 @@ A request under 50 ms, and one that timed out or was aborted, gets no "holds", "
 A logger sees only what the URL's **rule** tells it to time. If the findings say nothing is measured, the URL needs a rule that times more. In the URL's window press **Log this URL**, or **Edit logging rule** if this URL has its own rule. A URL covered only by a broader rule, such as `/blog`, shows **Log this URL**, which adds a rule for it alone.
 
 - Leave **URL pattern** as filled in: the trailing `?` makes the rule cover this one URL only.
-- Each proposal names its change. Under **Hooks**, pick the hooks named after `add_hooks` or, for a URL no rule governs yet, `create_rule`. For a request nothing times, it proposes six that split it into phases: `setup_theme`, `init`, `wp_loaded`, `template_redirect`, `wp_head` and `shutdown`. `mark_significant` names a hook to add under **Significant events**, so the logger never retires it as noise.
+- Each proposal names its change. Under **Hooks**, pick the hooks named after `add_hooks` or, for a URL no rule governs yet, `create_rule`. For a request nothing times, it proposes seven that split it into phases: `plugins_loaded`, `setup_theme`, `init`, `wp_loaded`, `template_redirect`, `wp_head` and `shutdown`. `mark_significant` names a hook to add under **Significant events**, so the logger never retires it as noise.
 - Tick **Log HTTP requests** when you suspect a slow outside service, and **Log database queries** when you suspect the database; a `log_transport` proposal names which. Query logging makes a query-heavy request much slower, so turn it off once you have your answer.
 - Press **Save rule**. It applies at once, but only to requests that arrive after it, so wait for new ones before you look again.
 

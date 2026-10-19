@@ -19,6 +19,7 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
 #[CoversClass( Core::class )]
 class AppCoreTest extends TestCase {
@@ -29,6 +30,8 @@ class AppCoreTest extends TestCase {
 			Config::reset();
 		}
 		Log_Manager::reset();
+		// Each test is a fresh process to report(): nothing said yet.
+		( new \ReflectionProperty( Core::class, 'reported' ) )->setValue( null, [] );
 		$GLOBALS['_wp_options']             = [];
 		$GLOBALS['_wp_test_options']        = [];
 		$GLOBALS['_wp_test_current_filter'] = '';
@@ -666,24 +669,48 @@ class AppCoreTest extends TestCase {
 
 	/**
 	 * The logger binds its rule inside `plugins_loaded`, from the deferred
-	 * bootstrap at priority 11, and its start filter at `hook_start_priority`,
-	 * a priority that dispatch has already passed. Only the close runs, and a
-	 * close no start opened writes nothing: a rule listing `plugins_loaded`
-	 * yields no span.
+	 * bootstrap, and its start filter at `hook_start_priority`. The bootstrap
+	 * runs below that priority, after the profiler's plugin-load flush, so a
+	 * rule listing `plugins_loaded` times the whole hook.
 	 */
-	public function test_a_rule_listing_plugins_loaded_yields_no_span(): void {
+	public function test_a_rule_listing_plugins_loaded_binds_its_start_ahead_of_dispatch(): void {
 		$this->set_governing_rule( new Rule( 'aaaa22223333', '/checkout/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'plugins_loaded' ] ) );
 		$core = new Core();
 
 		$start = $GLOBALS['_wp_test_filters']['plugins_loaded'] ?? [];
 		$at    = \array_keys( \array_filter( $start, static fn ( array $cbs ): bool => \in_array( [ $core, 'hook_start' ], $cbs, true ) ) );
 		$this->assertCount( 1, $at );
-		$this->assertLessThan( 11, $at[0], 'the deferred bootstrap binds at plugins_loaded:11' );
+		$this->assertGreaterThan( \NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY, $at[0] );
 
 		$GLOBALS['_wp_test_current_filter'] = 'plugins_loaded';
+		$core->hook_start();
 		$core->hook_complete();
 
-		$this->assertNull( $this->last_entry( 'plugins_loaded hook (complete)' ) );
+		$this->assertNotNull( $this->last_entry( 'plugins_loaded hook (start)' ) );
+		$this->assertIsFloat( $this->last_entry( 'plugins_loaded hook (complete)' )['duration_ms'] ?? null );
+	}
+
+	/**
+	 * A start priority at or below the bootstrap's runs before the bind, so it
+	 * would miss `plugins_loaded`: say so, once an hour across requests, since
+	 * every request builds a Core and forgets what the last one said.
+	 */
+	public function test_a_start_priority_the_bootstrap_passes_is_reported_once_across_requests(): void {
+		$this->set_governing_rule(
+			new Rule( 'aaaa22223333', '/checkout/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'plugins_loaded', 'init' ] ),
+			[ 'hook_start_priority' => \NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY ]
+		);
+		\Newspack_Nodes\Core::$memd = new InMemoryMemcached();
+		$captured                     = $this->capture_stderr();
+
+		new Core();
+		( new \ReflectionProperty( Core::class, 'reported' ) )->setValue( null, [] );
+		\Newspack_Nodes\Core::$recent_log_timers = [];
+		new Core();
+
+		$said = self::stderr_lines( $captured, 'hook_start_priority' );
+		$this->assertCount( 1, $said );
+		$this->assertStringContainsString( (string) \NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY, $said[0] );
 	}
 
 	/** The label of the span Log_Manager currently has open, innermost first. */
@@ -998,16 +1025,16 @@ class AppCoreTest extends TestCase {
 		$rule = new Rule( '5e2b8c1f4a70', '/reports/', Rule::ACTION_LOG, log_queries: true, hooks: [ 'query' ] );
 		$this->set_governing_rule( $rule );
 
-		$this->capture_added_filters( fn() => new Core() );
+		$core = null;
+		$this->capture_added_filters( function () use ( &$core ): void {
+			$core = new Core();
+		} );
 
-		$this->assertSame(
-			[],
-			\array_filter(
-				$this->bound_priorities( 'query' ),
-				fn( $p ) => $p > -10000 && $p < PHP_INT_MAX - 2
-			),
-			'no hook_start/hook_complete pair on query'
-		);
+		$bound = \array_merge( ...\array_values( $GLOBALS['_wp_test_filters']['query'] ?? [] ) );
+		$this->assertContains( [ $core, 'query_start' ], $bound );
+		foreach ( [ 'hook_start', 'hook_spacer', 'hook_complete' ] as $generic ) {
+			$this->assertNotContains( [ $core, $generic ], $bound, 'no generic pair on query' );
+		}
 	}
 
 	// ── short_name tests via reflection ─────────────────────────────────
@@ -1841,7 +1868,7 @@ class AppCoreTest extends TestCase {
 
 	// ── Hook-start priority configuration ──────────────────────────────
 
-	public function test_hook_start_priority_default_is_1(): void {
+	public function test_hook_start_priority_defaults_to_the_schemas(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
 			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ] )
@@ -1849,10 +1876,70 @@ class AppCoreTest extends TestCase {
 
 		$core = new Core();
 		$ref  = new \ReflectionProperty( Core::class, 'start_priority' );
-		// Default lives in the plugin's bundled config (-10000), not the
-		// fallback `?? 1` baked into Core::__construct — so this test pins
-		// the deployed config's value, not the code-level fallback.
-		$this->assertSame( -10000, $ref->getValue( $core ) );
+		$this->assertSame( -11000, $ref->getValue( $core ) );
+	}
+
+	/** A process that has asked once asks the shared cache nothing more, said or throttled, however often a job rebinds. */
+	public function test_a_rebind_repeats_no_rate_limit_claim(): void {
+		$this->set_governing_rule(
+			new Rule( 'aaaa22223333', '/checkout/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'plugins_loaded', 'init' ] ),
+			[ 'hook_start_priority' => \NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY ]
+		);
+		$memd                         = new InMemoryMemcached();
+		\Newspack_Nodes\Core::$memd = $memd;
+		$captured                     = $this->capture_stderr();
+		new Core();
+		// A second process finds the hour's slot taken: throttled, and silent.
+		( new \ReflectionProperty( Core::class, 'reported' ) )->setValue( null, [] );
+		\Newspack_Nodes\Core::$recent_log_timers = [];
+		$core  = new Core();
+		$trips = $memd->multi_calls;
+
+		$core->rebind_for_current_scope();
+		$core->rebind_for_current_scope();
+
+		$this->assertCount( 1, self::stderr_lines( $captured, 'hook_start_priority' ) );
+		$this->assertSame( $trips, $memd->multi_calls );
+	}
+
+	/** A start priority below the bootstrap's is a choice where no rule binds `plugins_loaded`: no complaint. */
+	public function test_a_wide_start_priority_under_a_rule_without_plugins_loaded_is_not_reported(): void {
+		$this->set_governing_rule(
+			new Rule( 'aaaa22223333', '/checkout/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'init' ] ),
+			[ 'hook_start_priority' => -50000 ]
+		);
+		$captured = $this->capture_stderr();
+
+		new Core();
+
+		$this->assertSame( [], self::stderr_lines( $captured, 'hook_start_priority' ) );
+	}
+
+	/** A boolean reads back as one in the complaint, not as the string PHP casts it to. */
+	public function test_a_boolean_start_priority_is_named_as_one(): void {
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ] ),
+			[ 'hook_start_priority' => true ]
+		);
+		$captured = $this->capture_stderr();
+
+		new Core();
+
+		$this->assertCount( 1, self::stderr_lines( $captured, 'hook_start_priority true is no number' ) );
+	}
+
+	/** A start priority that reads as no number is reported, and the schema's default binds. */
+	public function test_an_unreadable_start_priority_is_reported_and_the_default_binds(): void {
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ] ),
+			[ 'hook_start_priority' => 'early-7316' ]
+		);
+		$captured = $this->capture_stderr();
+
+		$core = new Core();
+
+		$this->assertSame( -11000, ( new \ReflectionProperty( Core::class, 'start_priority' ) )->getValue( $core ) );
+		$this->assertCount( 1, self::stderr_lines( $captured, "hook_start_priority 'early-7316'" ) );
 	}
 
 	public function test_hook_start_priority_custom(): void {

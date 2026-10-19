@@ -564,7 +564,7 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 \Newspack_Event_Logger_Nodes\Config::register_config_keys();
 
 // Register ELN's node-class namespaces + stock topology dir the same way the
-// plugins_loaded pri-11 closure does in production (the harness bypasses it):
+// deferred plugins_loaded closure does in production (the harness bypasses it):
 //  - the top-level prefix resolves make_node('Discovery_Collector', …) etc.
 //  - the App\ prefix resolves the service CIs (make_node('Discovery_CI', …)).
 // Without them make_node silently no-ops and dispatch routes NOT_AVAILABLE.
@@ -582,7 +582,7 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 \Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' );
 
 // The named index formatter the flame-builder .tsl `with_index` leg and
-// Performance_CI's flame lookup resolve by name, replayed from the same pri-11
+// Performance_CI's flame lookup resolve by name, replayed from the same deferred
 // closure. Without it with_index_named() returns false and no index is written.
 \Newspack_Nodes\Formatters::register(
 	'flame-index',

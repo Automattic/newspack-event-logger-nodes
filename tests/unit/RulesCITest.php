@@ -402,7 +402,7 @@ class RulesCITest extends TestCase {
 
 	/**
 	 * Config is memoized per process WITH the stored option folded in by the
-	 * presence overlay, and `App\Core` warms it at `plugins_loaded:11` — so by
+	 * presence overlay, and `App\Core` warms it at `plugins_loaded:-11001` — so by
 	 * the time a verb runs, `Config::value('rules')` already answers with the
 	 * ruleset we are about to discard. Every reset test reproduces that.
 	 */

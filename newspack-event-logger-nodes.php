@@ -24,8 +24,9 @@
  *    hook with a literal action name, because the class holding the constant
  *    is not loaded yet.
  * 2. Everything that touches a substrate class waits inside
- *    `$_newspack_event_logger_nodes_load`, run on `plugins_loaded` priority 11
- *    and gated on the substrate being present AND new enough.
+ *    `$_newspack_event_logger_nodes_load`, run on `plugins_loaded` at
+ *    `NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY` and gated on the substrate
+ *    being present AND new enough.
  * 3. Hooks whose actions only ever fire from substrate code — the
  *    `newspack_nodes/` log-producer, stderr, reconcile and request-graph-ready
  *    hooks — register at file scope. Without the substrate the action never
@@ -41,6 +42,14 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
+}
+/**
+ * The deferred bootstrap's `plugins_loaded` priority: below
+ * `hook_start_priority`'s -11000, so a rule naming `plugins_loaded` times
+ * every callback after it.
+ */
+if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY' ) ) {
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY', -11001 );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
 	// The test shims define plugin_dir_path() but not plugin_dir_url().
@@ -62,8 +71,9 @@ if ( \function_exists( 'add_action' ) ) {
  * Deferred bootstrap: the substrate version gate, then every registration
  * that needs a substrate class, in `newspack_event_logger_nodes_boot()`.
  *
- * Runs on `plugins_loaded` priority 11, once both plugins are loaded. Don't
- * lower the priority. A missing substrate — or one older than
+ * Runs on `plugins_loaded` at `NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY`,
+ * once both plugins are loaded: every plugin file is included before
+ * `plugins_loaded` fires, so any priority finds the substrate. A missing substrate — or one older than
  * `version_at_least()` itself — returns silently; one below the version floor
  * leaves an admin notice naming both versions and returns, so the plugin goes
  * dormant instead of fataling on an API that isn't there.
@@ -147,7 +157,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	\newspack_event_logger_nodes_boot();
 };
 
-\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
+\add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY );
 
 /**
  * Every registration the deferred bootstrap makes once the substrate is known
@@ -227,6 +237,8 @@ function newspack_event_logger_nodes_boot(): void {
 		}
 	);
 
+	// The plugin rows go first, ahead of any span App\Core binds.
+	\Newspack_Event_Logger_Nodes\Log_Manager::instance()->flush_plugin_loads();
 	new \Newspack_Event_Logger_Nodes\App\Core();
 
 	if ( \function_exists( 'is_admin' ) && \is_admin() ) {
