@@ -970,7 +970,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		};
 
 		$s[ Log_Manager::WORKER_TYPE ] = function ( \stdClass $request, array $entry ): void {
-			// The worker gets its own ?worker_type URL row.
+			// The worker gets its own worker-marked URL row.
 			$worker_type = Core::as_string( $entry['m'] ?? '' );
 			// A type no worker id can carry is dropped, never rewritten.
 			if ( [ $worker_type, 0 ] === \Newspack_Nodes\CLI::parse_worker_id( \Newspack_Nodes\CLI::worker_id( $worker_type, 0 ) ) ) {
@@ -1007,11 +1007,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		};
 
 		$s[ Log_Manager::REQUEST_LINE ] = function ( \stdClass $request, array $entry ): void {
-			$line = Log_Manager::parse_request_line( $entry['m'] ?? null );
+			$line = Log_Manager::parse_request_line( $entry );
 			if ( null === $line ) {
 				return;
 			}
-			// URL rows aggregate per query-less `url`; '?' on it marks workers.
 			[ $request->request_method, $request->request_url, $request->url ] = $line;
 		};
 
@@ -1436,12 +1435,12 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * the worker id (`CLI::worker_id()`) when the record names a partition, as
 	 * a spawned worker's does, else the type, as a job's does — so each worker
 	 * hashes to its own URL row instead of collapsing into the endpoint they
-	 * share. A URL that already carries a query gets it too,
-	 * with the right separator: skipping it there puts worker traffic on the
-	 * VISITOR's row, and one row carries one `worker` flag — so the default
-	 * worker filter drops that URL's visitor traffic along with it. The id
-	 * goes in as one `rawurlencode()`d token, because the type grammar admits
-	 * `&`, `=`, `#` and `%`; an unreserved id reads unchanged.
+	 * share. A URL that already carries a query gets it too, with the right
+	 * separator: skipping it there files the worker's requests under the
+	 * visitors' URL row. No visitor key can spell the mark, because
+	 * `Url_Parts::key()` writes each as `name=…`. The id goes in as one
+	 * `rawurlencode()`d token, because the type grammar admits `&`, `=`, `#`
+	 * and `%`; an unreserved id reads unchanged.
 	 *
 	 * @api `Request_Flight_Node` resolves in-flight URLs through this too — the
 	 *      completed record and the gyroscope row MUST agree, or a job's

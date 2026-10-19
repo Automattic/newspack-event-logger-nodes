@@ -728,7 +728,7 @@ class PerformanceCITest extends TestCase {
 
 		$summary = $result['results'][0];
 		$this->assertSame( 'grepR1', $summary['rid'] );
-		$this->assertSame( 'https://kea.test/calendar/today', $summary['url'] );
+		$this->assertSame( 'https://kea.test/calendar/today?x=?', $summary['url'] );
 		$this->assertSame( 'PROPFIND', $summary['method'] );
 		$this->assertGreaterThanOrEqual( 1, $summary['match_count'] );
 		$this->assertStringContainsString( '/calendar', $summary['first_match_excerpt'] );

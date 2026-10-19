@@ -685,8 +685,8 @@ class Ask_Assembler {
 
 	/**
 	 * The URL the record's request fetched, query kept, redacted through the
-	 * one path the firehose uses. The stored `url` is per path, so a
-	 * `?rest_route=` call would read as the homepage.
+	 * one path the firehose uses. The stored `url` masks every value but a
+	 * route's, so it cannot say which page or post a request asked for.
 	 *
 	 * The builder sets `request_url` from the same request line that sets the
 	 * `url` it stores a record by, so a record without one is refused.

@@ -59,17 +59,18 @@ final class Rule_Matcher {
 	/**
 	 * The governing rule for a URL. Matching is case-insensitive: the target and
 	 * the patterns are compared lowercased. Three pattern forms:
-	 *  - `/blog`            — path prefix (query ignored)
-	 *  - `/about?`          — exact path (query ignored)
-	 *  - `/jobs/x?job-work` — exact path AND query prefix (worker URLs)
+	 *  - `/blog`              — path prefix (query ignored)
+	 *  - `/about?`            — exact path (query ignored)
+	 *  - `/?rest_route=%2fwp` — exact path AND query prefix
 	 *
 	 * A prefix matches by string, not by path segment, so `/wp-cron` governs
 	 * `/wp-cron.php` and `/shop` governs `/shopping`. A pattern's query is a
-	 * raw string prefix too, so `/jobs/x?job-worker` governs
-	 * `/jobs/x?job-worker&n=1` and not the same two parameters reversed.
+	 * raw string prefix too, so `/?rest_route=%2fwp` governs
+	 * `/?rest_route=%2fwp%2fv2&_embed=1` and not the same two parameters
+	 * reversed.
 	 *
 	 * Patterns are written as site paths, so a caller holding an absolute URL
-	 * passes its path, as `Rule_Set::for_url()` does. A scheme
+	 * passes its path, as `Rule_Set::for_url()` does with a stored one. A scheme
 	 * and host ahead of the path match no path-leading pattern.
 	 *
 	 * The rule list is already sorted most-specific-first, so the first pattern

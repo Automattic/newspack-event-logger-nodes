@@ -436,9 +436,9 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( Log_Manager::REQUEST_START === $key ) {
 				$ts = Core::num_float( $entry['ts'] ?? $ts );
 			}
-			$request_line = Log_Manager::REQUEST_LINE === $key && '' === $method ? Log_Manager::parse_request_line( $entry['m'] ?? null ) : null;
+			$request_line = Log_Manager::REQUEST_LINE === $key && '' === $method ? Log_Manager::parse_request_line( $entry ) : null;
 			if ( null !== $request_line ) {
-				// A grep row names the query-less URL, as a record's url does.
+				// A grep row names the keyed URL, less any worker mark.
 				[ $method, , $url ] = $request_line;
 			}
 

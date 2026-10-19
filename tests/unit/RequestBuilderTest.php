@@ -604,17 +604,14 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'https://x.test/feed?reconcile', $capture->captured[0][ Message::VALUE ]['url'] );
 	}
 
+	/** A worker's requests keep a URL row of their own when the URL already carries a query. */
 	public function test_worker_marker_survives_a_url_that_already_has_a_query(): void {
-		// Skipping the marker when a query string is already there hands the
-		// worker the VISITOR's URL row. One sticky `worker` flag per row then
-		// takes that URL's visitor traffic out of every header number the
-		// default filter governs — far more than the worker's own requests.
 		$request              = new \stdClass();
-		$request->url         = '/feed/?post_type=event';
+		$request->url         = '/feed/?post_type=?';
 		$request->worker_type = 'cache-cozy';
 
 		$this->assertSame(
-			'/feed/?post_type=event&cache-cozy',
+			'/feed/?post_type=?&cache-cozy',
 			Request_Builder_Node::resolved_request_url( $request )
 		);
 	}
@@ -622,12 +619,12 @@ class RequestBuilderTest extends TestCase {
 	/** A worker with a partition takes its worker id, behind the separator a query needs. */
 	public function test_a_partitioned_worker_resolves_to_its_worker_id_after_a_query(): void {
 		$request                   = new \stdClass();
-		$request->url              = '/feed/?post_type=event';
+		$request->url              = '/feed/?post_type=?';
 		$request->worker_type      = 'kea-7713';
 		$request->worker_partition = 3;
 
 		$this->assertSame(
-			'/feed/?post_type=event&kea-7713.p3',
+			'/feed/?post_type=?&kea-7713.p3',
 			Request_Builder_Node::resolved_request_url( $request )
 		);
 	}
@@ -855,9 +852,9 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
-	 * The record keys its URL row by path and carries the URL the request
-	 * fetched beside it, whatever method the request line names; the request
-	 * brief reads the second.
+	 * The record keys its URL row by path and query keys, and carries the URL
+	 * the request fetched beside it, whatever method the request line names;
+	 * the request brief reads the second.
 	 */
 	public function test_a_record_carries_its_path_row_and_the_url_it_fetched(): void {
 		$rb      = new Request_Builder_Node();
@@ -869,7 +866,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 3, 'r-kea', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
-		$this->assertSame( 'https://example.test/', $req['url'] );
+		$this->assertSame( 'https://example.test/?fields=?&rest_route=/zz/v9', $req['url'] );
 		$this->assertSame( 'https://example.test/?rest_route=%2Fzz%2Fv9&fields=a%2Cb', $req['request_url'] );
 		$this->assertSame( 'PURGE', $req['request_method'] );
 		$this->assertSame(
@@ -1125,7 +1122,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 1, $by_target['main:target'] ?? [] );
 		$error_value   = $by_target['errors:target'][0][ Message::VALUE ];
 		$request_value = $by_target['main:target'][0][ Message::VALUE ];
-		$this->assertSame( 'https://kea.test/error-context-731?errors-worker-731', $error_value['url'] );
+		$this->assertSame( 'https://kea.test/error-context-731?token=?&errors-worker-731', $error_value['url'] );
 		$this->assertSame( $request_value['url'], $error_value['url'] );
 		$this->assertSame( 'PATCH', $error_value['method'] );
 	}

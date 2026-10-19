@@ -2498,7 +2498,7 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( [ '%47%45%54 https://verb-8821.test/thistle' ], \array_values( $lines ) );
 		$this->assertSame(
 			[ '%47%45%54', 'https://verb-8821.test/thistle', 'https://verb-8821.test/thistle' ],
-			Log_Manager::parse_request_line( $lines[ \array_key_first( $lines ) ] )
+			Log_Manager::parse_request_line( [ 'm' => $lines[ \array_key_first( $lines ) ] ] )
 		);
 	}
 
@@ -2519,8 +2519,8 @@ class LogManagerTest extends TestCase {
 		$requests = \array_values( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ) );
 		$this->assertCount( 1, $requests );
 		$this->assertSame(
-			[ \str_repeat( 'PROPFIND', 4 ), 'https://verb-6093.test/sorrel?n=4', 'https://verb-6093.test/sorrel' ],
-			Log_Manager::parse_request_line( $requests[0]['m'] )
+			[ \str_repeat( 'PROPFIND', 4 ), 'https://verb-6093.test/sorrel?n=4', 'https://verb-6093.test/sorrel?n=?' ],
+			Log_Manager::parse_request_line( $requests[0] )
 		);
 	}
 
@@ -2581,8 +2581,8 @@ class LogManagerTest extends TestCase {
 		$lines = \array_column( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ), 'm' );
 		$this->assertSame( [ "{$logged} https://verb-2286.test/p?a=1&b=2" ], \array_values( $lines ) );
 		$this->assertSame(
-			[ $logged, 'https://verb-2286.test/p?a=1&b=2', 'https://verb-2286.test/p' ],
-			Log_Manager::parse_request_line( $lines[ \array_key_first( $lines ) ] )
+			[ $logged, 'https://verb-2286.test/p?a=1&b=2', 'https://verb-2286.test/p?a=?&b=?' ],
+			Log_Manager::parse_request_line( [ 'm' => $lines[ \array_key_first( $lines ) ] ] )
 		);
 	}
 
@@ -2603,13 +2603,13 @@ class LogManagerTest extends TestCase {
 		$requests = \array_values( \array_filter( $this->written_entries(), static fn ( array $e ): bool => 'request' === ( $e['k'] ?? '' ) ) );
 		$this->assertCount( 1, $requests );
 		$this->assertTrue( $requests[0]['truncated'] ?? false, 'the entry says it was trimmed' );
-		$line = Log_Manager::parse_request_line( $requests[0]['m'] );
+		$line = Log_Manager::parse_request_line( $requests[0] );
 		$this->assertNotNull( $line, 'the trimmed line still parses' );
 		[ $method, $request_url, $url ] = $line;
 		$this->assertSame( 'GET', $method );
 		$this->assertStringStartsWith( 'https://long-3307.test/burdock?q=www', $request_url );
 		$this->assertLessThan( \strlen( 'https://long-3307.test/burdock?q=' ) + 5000, \strlen( $request_url ) );
-		$this->assertSame( 'https://long-3307.test/burdock', $url );
+		$this->assertSame( 'https://long-3307.test/burdock', $url, 'its cut parameter keys nothing' );
 	}
 
 	/** A rule matches a percent-encoded URI on its encoded form. */
@@ -3672,7 +3672,8 @@ class LogManagerTest extends TestCase {
 
 	/**
 	 * A request line splits into the record's `request_method`, its
-	 * `request_url` with the query, and its `url`, that URL less its query.
+	 * `request_url` with the query, and its `url`, that URL keyed by its
+	 * query's keys: each value masked as `?`, the keys sorted and deduped.
 	 * The method is whatever token the producer wrote, because both producers
 	 * write `REQUEST_METHOD` as the client sent it.
 	 *
@@ -3680,18 +3681,18 @@ class LogManagerTest extends TestCase {
 	 */
 	public static function request_lines(): array {
 		return [
-			'a query'          => [ 'PATCH https://kea.test/?rest_route=%2Fzz%2Fv9&fields=a%2Cb', [ 'PATCH', 'https://kea.test/?rest_route=%2Fzz%2Fv9&fields=a%2Cb', 'https://kea.test/' ] ],
+			'a query'          => [ 'PATCH https://kea.test/?rest_route=%2Fzz%2Fv9&fields=a%2Cb', [ 'PATCH', 'https://kea.test/?rest_route=%2Fzz%2Fv9&fields=a%2Cb', 'https://kea.test/?fields=?&rest_route=/zz/v9' ] ],
 			'a CLI job'        => [ 'CLI http://kea.test/jobs/kea-sync/4471', [ 'CLI', 'http://kea.test/jobs/kea-sync/4471', 'http://kea.test/jobs/kea-sync/4471' ] ],
-			'a WebDAV method'  => [ 'PROPFIND https://kea.test/dav?depth=1', [ 'PROPFIND', 'https://kea.test/dav?depth=1', 'https://kea.test/dav' ] ],
+			'a WebDAV method'  => [ 'PROPFIND https://kea.test/dav?depth=1', [ 'PROPFIND', 'https://kea.test/dav?depth=1', 'https://kea.test/dav?depth=?' ] ],
 			'a cache method'   => [ 'PURGE https://kea.test/feed/', [ 'PURGE', 'https://kea.test/feed/', 'https://kea.test/feed/' ] ],
-			'a lowercase verb' => [ 'get https://kea.test/x?y=2', [ 'get', 'https://kea.test/x?y=2', 'https://kea.test/x' ] ],
+			'a lowercase verb' => [ 'get https://kea.test/x?y=2', [ 'get', 'https://kea.test/x?y=2', 'https://kea.test/x?y=?' ] ],
 		];
 	}
 
 	/** @param array{string,string,string} $parsed */
 	#[DataProvider( 'request_lines' )]
 	public function test_parse_request_line_splits_method_request_url_and_url( string $message, array $parsed ): void {
-		$this->assertSame( $parsed, Log_Manager::parse_request_line( $message ) );
+		$this->assertSame( $parsed, Log_Manager::parse_request_line( [ 'm' => $message ] ) );
 	}
 
 	/**
@@ -3713,7 +3714,7 @@ class LogManagerTest extends TestCase {
 
 	#[DataProvider( 'non_request_lines' )]
 	public function test_parse_request_line_refuses_what_is_not_a_request_line( mixed $message ): void {
-		$this->assertNull( Log_Manager::parse_request_line( $message ) );
+		$this->assertNull( Log_Manager::parse_request_line( [ 'm' => $message ] ) );
 	}
 
 	/**

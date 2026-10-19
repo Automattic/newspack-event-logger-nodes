@@ -158,10 +158,8 @@ const COLUMNS = logColumns( {
 
 /**
  * URL hash for deep-linking to URL detail — must match PHP
- * `Log_Manager::url_hash`, which hashes the FULL url. The real query is
- * already stripped upstream, so the only `?` left is the intentional
- * `?worker_type` marker on nodes/ELN URLs (e.g. `/jobs/x?reconcile`); keeping
- * it is what makes those URLs deep-link correctly.
+ * `Log_Manager::url_hash`, which hashes the whole stored URL, its keyed query
+ * and any worker mark included; hashing less would deep-link to no row.
  *
  * @param {string} url URL to hash.
  * @return {string} FNV-1a hash.

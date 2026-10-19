@@ -592,14 +592,14 @@ final class Rule_Set {
 
 	/**
 	 * The rule governing a logged URL. The URL is absolute and rules are site
-	 * paths, so its path and query are what `Rule_Matcher` matches.
+	 * paths, so its `Url_Parts::rule_path()` is what `Rule_Matcher` matches.
 	 *
 	 * @param string $url A logged URL, which carries its host.
 	 * @return Rule|null Null when no pattern matches.
 	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public function for_url( string $url ): ?Rule {
-		return $this->matcher()->match( Url_Parts::path_of( $url ) );
+		return $this->matcher()->match( Url_Parts::rule_path( $url ) );
 	}
 
 	/** A matcher over these rules; Rule_Matcher owns the specificity order. */
