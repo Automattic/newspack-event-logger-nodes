@@ -210,7 +210,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * where the interval is positional through arguments().
 	 *
 	 * The verb list is empty because the cadence is the only thing to set; a
-	 * sweep is the timer's to schedule, not an operator's to force.
+	 * sweep is for the timer to schedule, not for an operator to force.
 	 *
 	 * @api Used by the substrate to resolve the node + provide UI.
 	 * @return array<string,mixed>

@@ -604,8 +604,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/**
 	 * Resume a parent whose nested render died without its close.
 	 *
-	 * A row missing the expected number while a nested sequence is open is
-	 * the parent's when its `n` is the next number some level of `seq_stack`
+	 * A row missing the expected number while a nested sequence is open
+	 * belongs to the parent when its `n` is the next number some level of `seq_stack`
 	 * saved: the child (and any child of its) wrote no `gyrobase (complete)`.
 	 * The nested levels above that one are dropped, as their close would have
 	 * dropped them, and the dead render's open span frames stay open.

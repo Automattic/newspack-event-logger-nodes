@@ -398,8 +398,8 @@ export default function RequestProfile( {
  * averages — and, under a server filter, which server they ran on.
  *
  * The caption is the panel's own wording, so both plural forms live here as
- * literal `_n()` calls the `serverName` prop selects between. The heading is
- * the caller's, because only the caller knows what its scope is called; giving
+ * literal `_n()` calls the `serverName` prop selects between. The caller
+ * supplies the heading, because only the caller knows what its scope is called; giving
  * one replaces the profile's built-in title rather than stacking on it.
  *
  * @param {Object}                props                     Component props.

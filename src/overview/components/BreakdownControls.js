@@ -234,7 +234,6 @@ export default function BreakdownControls( {
 						value={ serverFilter }
 						options={ serverOptions }
 						onChange={ setServerFilter }
-						__nextHasNoMarginBottom
 						style={ { minWidth: '180px' } }
 					/>
 				) }
@@ -244,7 +243,6 @@ export default function BreakdownControls( {
 					value={ metric }
 					options={ CHART_METRIC_OPTIONS }
 					onChange={ setMetric }
-					__nextHasNoMarginBottom
 					style={ { minWidth: '180px' } }
 				/>
 				<SelectControl
@@ -253,7 +251,6 @@ export default function BreakdownControls( {
 					value={ breakdown }
 					options={ breakdownOptions }
 					onChange={ setBreakdown }
-					__nextHasNoMarginBottom
 					style={ { minWidth: '140px' } }
 				/>
 				<SelectControl
@@ -270,7 +267,6 @@ export default function BreakdownControls( {
 						),
 					] }
 					onChange={ setThenBy }
-					__nextHasNoMarginBottom
 					style={ { minWidth: '140px' } }
 				/>
 				{ ( loading || 'pending' === state ) && (

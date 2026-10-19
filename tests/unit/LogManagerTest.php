@@ -431,8 +431,8 @@ class LogManagerTest extends TestCase {
 		// The MAX_DATA_SIZE (3840) ↔ PIPE_BUF (4096) gap must absorb the WHOLE
 		// positional envelope at the extremes: an ENTRY fitted right up to
 		// MAX_DATA_SIZE plus a maximum-length request-id KEY. The cap bounds the
-		// entry, so `n`, `k` and `ts` are inside it and the gap is the envelope's
-		// alone. If it doesn't fit, the Partition drops the record whole and this
+		// entry, so `n`, `k` and `ts` are inside it and the gap belongs to the
+		// envelope alone. If it doesn't fit, the Partition drops the record whole and this
 		// test sees no full-size line.
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
@@ -699,7 +699,7 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( $refusal, $thrown, 'the failed write escapes' );
 		$this->assertNotNull(
 			self::last_entry_of( $this->written_entries(), 'process (complete)' ),
-			'the terminal still lands, and a write failure is no abort'
+			'the terminal still lands, and a write failure is not an abort'
 		);
 		$this->assertFalse( $lm->is_started() );
 	}
@@ -836,7 +836,7 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( [ 'p2-s999', 'p2-s1000', 'p10-s1' ], \array_column( self::firehose_entries( $base ), 'k' ) );
 	}
 
-	/** A line whose VALUE is no entry is a producer regression, and the reader says so. */
+	/** A line whose VALUE is not an entry is a producer regression, and the reader says so. */
 	public function test_firehose_entries_fail_on_a_line_that_carries_no_entry(): void {
 		$base = self::test_dir() . '/bytestream-7748';
 		@\mkdir( "{$base}/logs/firehose.p0", 0755, true );
@@ -3712,7 +3712,7 @@ class LogManagerTest extends TestCase {
 	}
 
 	#[DataProvider( 'non_request_lines' )]
-	public function test_parse_request_line_refuses_what_is_no_request_line( mixed $message ): void {
+	public function test_parse_request_line_refuses_what_is_not_a_request_line( mixed $message ): void {
 		$this->assertNull( Log_Manager::parse_request_line( $message ) );
 	}
 

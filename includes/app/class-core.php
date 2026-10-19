@@ -238,7 +238,7 @@ class Core {
 				\is_scalar( $priority ) => "'{$priority}'",
 				default                 => \gettype( $priority ),
 			};
-			self::report( "Newspack ELN: hook_start_priority {$read} is no number; using the schema's default." );
+			self::report( "Newspack ELN: hook_start_priority {$read} is not a number; using the schema's default." );
 			$priority = Settings_Schema::get()->defaults()['hook_start_priority'];
 		}
 		$this->start_priority = RuntimeCore::num_int( $priority );
@@ -1017,7 +1017,7 @@ class Core {
 	 * When a callback removes itself mid-run (es-wp-query's Shoehorn run-once
 	 * filters), WP_Hook::resort_active_iterations() parks the iteration
 	 * pointer on the next surviving priority and apply_filters' `next()` then
-	 * skips it. Without this spacer the skipped priority is hook_complete's,
+	 * skips it. Without this spacer the skipped priority belongs to hook_complete,
 	 * losing the `(complete)` entry; with it, the spacer is consumed instead.
 	 *
 	 * @param mixed $v Filter value (passed through).

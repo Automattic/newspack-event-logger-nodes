@@ -258,7 +258,7 @@ describe( 'a folded span row', () => {
 			[ 'http (complete)', 4988 ],
 		] );
 		expect( rows[ 0 ].ts ).toBeCloseTo( 1000.1205, 6 );
-		// A merged node's last end is no place in the sequence: it rides
+		// A merged node's last end has no place in the sequence: it rides
 		// beside the row for the time cell, and stays off the ruler.
 		expect( rows[ 1 ].ts ).toBe( 0 );
 		expect( rows[ 1 ].endTs ).toBeCloseTo( 1000.73325, 6 );

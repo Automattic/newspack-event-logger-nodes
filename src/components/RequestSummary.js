@@ -10,7 +10,7 @@ import { __ } from '@wordpress/i18n';
 
 /**
  * @param {Object}                    props              Component props.
- * @param {Object}                    props.request      Decoded request body: `request_url`, the URL the request fetched with its query, set from the request line that also sets the `url` the builder files a record by, so a body without one is no record the builder emits and renders `not recorded`; the HTTP verb as `request_method`, `timestamp` in seconds, `duration_ms`, `peak_mb`, `status_code`.
+ * @param {Object}                    props.request      Decoded request body: `request_url`, the URL the request fetched with its query, set from the request line that also sets the `url` the builder files a record by, so a body without one is not a record the builder emits and renders `not recorded`; the HTTP verb as `request_method`, `timestamp` in seconds, `duration_ms`, `peak_mb`, `status_code`.
  * @param {string}                    [props.statusNote] Already-translated note appended to the status code. Its presence marks the row as an error, because the code cannot: `Request_Builder_Node` stamps `error_status` for a fatal, a timeout, an abort or a gap in the log, and any of those can accompany a 200.
  * @param {import('react').ReactNode} [props.errorRow]   Row rendered after the status, for a caller that shows the verdict as its own badge; one that folds the verdict into `statusNote` instead passes nothing.
  * @return {import('react').ReactElement} The summary rows.

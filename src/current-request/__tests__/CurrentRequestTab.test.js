@@ -353,7 +353,7 @@ test( 'stops asking and says why when the stats rows did not open', async () => 
 	);
 } );
 
-// A cut lookup is no unprofiled request: the tab says the lookup timed out.
+// A cut lookup is not an unprofiled request: the tab says the lookup timed out.
 test( 'says the flame lookup ran out of time when it was cut', async () => {
 	setBlob( { rid: 'cutflame8', perfUrl: 'admin.php?page=x' } );
 	answerWith( {

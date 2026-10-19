@@ -2,8 +2,8 @@
  * useGyroscopeGraph — the Gyroscope dashboard's stream graph.
  *
  * The nodes, the SSE connection and the visibility gate are the substrate's
- * `useStreamGraph`. This file declares only what makes that graph this
- * dashboard's: the node-name prefix, the subscription, the view class and the
+ * `useStreamGraph`. This file declares only what is specific to this
+ * dashboard: the node-name prefix, the subscription, the view class and the
  * pre-open clear.
  *
  * Nothing sits between the stream and the view, because `gyroscope:view`

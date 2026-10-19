@@ -412,7 +412,7 @@ class Ask_Assembler {
 	/**
 	 * The span a `(start)` row opens, read off the frame `Flame_Tree` builds
 	 * for it — the one whose `i` is the row's position — so the pairing with
-	 * its `(complete)`, the message rule and the children are the flame's own.
+	 * its `(complete)`, the message rule and the children all come from the flame.
 	 * The caller sits on the start's `l`, the statement and the duration on
 	 * the complete, which a start row read alone hides. The tree is built from
 	 * the entries rather than read off the record, whose folded tree carries
@@ -544,7 +544,7 @@ class Ask_Assembler {
 	/**
 	 * One URL: its stats and its worst recent requests — plus, when nothing
 	 * governs it, the cold-start finding that says which instrumentation to
-	 * switch on. A dimensional breakdown is `query`'s to answer; a brief
+	 * switch on. A dimensional breakdown is for `query` to answer; a brief
 	 * carries no unbounded series.
 	 *
 	 * The requests are the newest `dump_url` lists, and `$requests_capped`

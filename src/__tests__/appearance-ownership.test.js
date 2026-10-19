@@ -447,15 +447,19 @@ describe( 'canonical appearance ownership', () => {
 		expect( missing ).toEqual( [] );
 	} );
 
-	it( 'uses WordPress visual labels for every manually labelled rule field', () => {
+	it( 'uses WordPress labels for every rule field it labels itself', () => {
 		const source = fs.readFileSync(
 			path.join( SRC, 'rules/RuleEditModal.js' ),
 			'utf8'
 		);
 
+		// The two picker buttons take a visual label; the tag box, a BaseControl's.
 		expect(
 			source.match( /<BaseControl\.VisualLabel(?:\s|>)/g ) || []
-		).toHaveLength( 3 );
+		).toHaveLength( 2 );
+		expect( source.match( /<BaseControl(?:\s|>)/g ) || [] ).toHaveLength(
+			1
+		);
 		expect( source ).not.toMatch( /\bcomponents-base-control__label\b/ );
 	} );
 

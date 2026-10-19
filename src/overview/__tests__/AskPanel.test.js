@@ -128,7 +128,7 @@ const dialog = () => view.container.querySelector( '[role="dialog"]' );
 
 // @longform What a real reply carries: no subject, because `useAsk` sends
 // none, and the tokens it answered echoed back as `args`, the descriptor
-// first. The mock's trailing options object is no token, so it is not echoed.
+// first. The mock's trailing options object is not a token, so it is not echoed.
 const answer = ( payload, descriptor = 'request:abc123' ) => {
 	const tokens = sent.findLast( ( args ) => args[ 0 ] === descriptor ) ?? [
 		descriptor,

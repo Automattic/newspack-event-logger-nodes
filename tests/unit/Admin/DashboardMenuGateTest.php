@@ -178,7 +178,7 @@ class DashboardMenuGateTest extends TestCase {
 	}
 
 	/**
-	 * The list this plugin now inherits is the SUBSTRATE's, so its own option
+	 * The list this plugin now inherits belongs to the SUBSTRATE, so its own option
 	 * row governs — the one ELN used to strip out of the merged config as a
 	 * name collision.
 	 */

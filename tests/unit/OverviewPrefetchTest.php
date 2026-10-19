@@ -222,7 +222,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( [ 'moa-7012.example', 'kea-7012.example' ], $answers[ Overview_Prefetch::key( 'overview', self::overview_args( [] ) ) ]['servers'] );
 	}
 
-	/** The stored servers are the live read's, ties and worker traffic included. */
+	/** The stored servers are those the live read returns, ties and worker traffic included. */
 	public function test_the_stored_servers_are_the_live_reads_ties_broken_alike(): void {
 		$this->seed_request( [ 'server' => 'kea-7011.example', 'url' => 'https://kea-7011.example/a/', 'ms' => 8.5 ] );
 		$this->seed_request( [ 'server' => 'tui-7011.example', 'url' => 'https://tui-7011.example/a/', 'ms' => 2.5 ], partition: 1 );
@@ -469,9 +469,9 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertFalse( self::snapshot_published() );
 	}
 
-	public function test_a_snapshot_that_is_no_database_is_answered_live(): void {
+	public function test_a_snapshot_that_is_not_a_database_is_answered_live(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5527/', 'ms' => 8.5 ] );
-		\file_put_contents( $this->snapshot_file(), 'kea-5527 is no sqlite database' );
+		\file_put_contents( $this->snapshot_file(), 'kea-5527 is not a sqlite database' );
 		self::clock( self::NOW + 9 );
 
 		$served = $this->urls( [ '--limit=100' ] );
@@ -521,7 +521,7 @@ final class OverviewPrefetchTest extends TestCase {
 	public function test_a_stored_answer_that_will_not_decode_is_answered_live_and_said(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5541/', 'ms' => 8.5 ] );
 		$key = Overview_Prefetch::key( 'overview', self::overview_args( [] ) );
-		self::snapshot_of( [ $key => '{"kea-5541": is no json' ] );
+		self::snapshot_of( [ $key => '{"kea-5541": is not json' ] );
 		self::clock( self::NOW + 9 );
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
@@ -633,7 +633,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea-7023.example', 'url' => 'https://kea-7023.example/a/', 'ms' => 8.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-7023.example', 'url' => 'https://kaka-7023.example/b/', 'ms' => 2.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-7023.example', 'url' => 'https://kaka-7023.example/c/', 'ms' => 1.5 ] );
-		self::snapshot_of( [ Overview_Prefetch::key( 'overview', self::overview_args( [ '--server=kea-7023.example' ] ) ) => '{"kea-7023": is no json' ] );
+		self::snapshot_of( [ Overview_Prefetch::key( 'overview', self::overview_args( [ '--server=kea-7023.example' ] ) ) => '{"kea-7023": is not json' ] );
 		self::clock( self::NOW + 9 );
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-7023.example' ] );
@@ -687,7 +687,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertContains( 'ruru-6210.example', $overview['servers'], 'the scope stays on a server only workers reached' );
 	}
 
-	/** A scoped server with no traffic is no new server: the stored list serves it. */
+	/** A scoped server with no traffic is not a new server: the stored list serves it. */
 	public function test_a_scoped_overview_of_a_server_with_no_traffic_names_the_stored_servers(): void {
 		$this->seed_request( [ 'server' => 'kea-6208.example', 'url' => 'https://kea-6208.example/a/', 'ms' => 33.5 ] );
 		$this->run_job();
@@ -707,7 +707,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$verbs    = Command_Interpreter_Node::declared_verbs( Performance_CI_Node::class );
 		$overview = Overview_Prefetch::key( 'overview', Command_Args::bind( $verbs['overview']['args'], [] ) );
 		$chart    = Overview_Prefetch::key( 'query', Command_Args::bind( $verbs['query']['args'], Overview_Prefetch::questions()['categories']['tokens'] ) );
-		self::snapshot_of( [ $overview => '{"as_of":1790007215,"available":true}', $chart => '{"kea-6209": is no json' ] );
+		self::snapshot_of( [ $overview => '{"as_of":1790007215,"available":true}', $chart => '{"kea-6209": is not json' ] );
 		self::clock( self::NOW + 9 );
 		$said = static fn ( string $text ): array => \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, $text ) );
 
@@ -766,7 +766,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kaka-6204.example', 'url' => 'https://kaka-6204.example/b/', 'ms' => 2.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-6204.example', 'url' => 'https://kaka-6204.example/c/', 'ms' => 1.5 ] );
 		$key = Overview_Prefetch::key( 'overview', self::overview_args( [] ) );
-		self::snapshot_of( [ $key => '{"kea-6204": is no json' ] );
+		self::snapshot_of( [ $key => '{"kea-6204": is not json' ] );
 		self::clock( self::NOW + 9 );
 
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [ '--server=kea-6204.example' ] );

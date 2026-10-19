@@ -210,7 +210,7 @@ final class RuleSetTest extends TestCase {
 
 	public function test_reset_deletes_the_stored_option_rather_than_storing_an_empty_list(): void {
 		// Storing `[]` would read as "log nothing"; only an ABSENT row reseeds.
-		// What the seed then resolves to is RulesCITest's, over a real config file.
+		// RulesCITest covers what the seed then resolves to, over a real config file.
 		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
 			[ 'id' => 'stored', 'pattern' => '/stored-only/', 'action' => 'skip' ],
 		];

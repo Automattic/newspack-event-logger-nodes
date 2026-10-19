@@ -162,14 +162,14 @@ describe( 'decodeRows', () => {
 			),
 		],
 		[
-			'a measure that is no number',
+			'a measure that is not a number',
 			rowsWire(
 				[ 'bucket', 'server', 'count' ],
 				[ [ '2026-10-15-07-15', 'kea.example', '41' ] ]
 			),
 		],
 		[
-			'a bucket that is no key',
+			'a bucket that is not a key',
 			rowsWire(
 				[ 'bucket', 'server', 'count' ],
 				[ [ 5967, 'kea.example', 41 ] ]

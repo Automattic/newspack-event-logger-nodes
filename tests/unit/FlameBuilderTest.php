@@ -28,8 +28,8 @@ use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
  *   }
  *
  * The flame tree is built from `entries` via LIFO matching of `^(.+?) \(start\)$`
- * / `^(.+?) \(complete\)$` patterns on `k`. The rows a request writes are
- * FlameFactsTest's.
+ * / `^(.+?) \(complete\)$` patterns on `k`. FlameFactsTest covers the rows a request
+ * writes.
  */
 #[CoversClass( Flame_Builder_Node::class )]
 class FlameBuilderTest extends TestCase {
@@ -615,8 +615,8 @@ class FlameBuilderTest extends TestCase {
 
 	/**
 	 * Every row one request writes, for the parity comparison above. Same
-	 * clock both runs, each under a host of its own, so any difference is
-	 * the fold's.
+	 * clock both runs, each under a host of its own, so any difference
+	 * comes from the fold.
 	 *
 	 * @param array<string,mixed> $request Completed-request record.
 	 * @param string              $host    The run's host.
@@ -635,8 +635,8 @@ class FlameBuilderTest extends TestCase {
 		];
 	}
 
-	/** A record whose `entries` are no list still forwards a flame, with no children. */
-	public function test_a_record_whose_entries_are_no_list_forwards_an_empty_flame(): void {
+	/** A record whose `entries` are not a list still forwards a flame, with no children. */
+	public function test_a_record_whose_entries_are_not_a_list_forwards_an_empty_flame(): void {
 		[ $fb, $flames ] = $this->capturing_builder();
 		$fb->connect_node( 'flames:partition' );
 
@@ -865,6 +865,98 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ 'wp_init' ], $state['disable_hooks']['r'] );
 	}
 
+	/**
+	 * A platform request tunes a rule written for one of the platform's
+	 * per-request paths, however the pattern spells it, and a job context a
+	 * rule at `/jobs` or below.
+	 *
+	 * @return array<string,array{0:string,1:string}> Rule pattern, then the request's URL.
+	 */
+	public static function platform_rules(): array {
+		return [
+			'the command route'      => [ '/wp-json/newspack-nodes/v1/command?', 'https://example.com/wp-json/newspack-nodes/v1/command' ],
+			'cron, by its query'     => [ '/wp-cron.php?doing_wp_cron', 'https://example.com/wp-cron.php?doing_wp_cron=1792407316' ],
+			'the command route, cased' => [ '/WP-JSON/Newspack-Nodes/v1/Command?', 'https://example.com/wp-json/newspack-nodes/v1/command' ],
+			'a job, under /jobs'       => [ '/jobs', 'https://example.com/jobs/kiwi-7316/42' ],
+			'a job, under its handler' => [ '/jobs/kiwi-7316', 'https://example.com/jobs/kiwi-7316/42' ],
+			'a spawned worker'         => [ '/wp-json/newspack-nodes/v1/workers/spawn?', 'https://example.com/wp-json/newspack-nodes/v1/workers/spawn' ],
+			'a stream'                 => [ '/wp-json/newspack-nodes/v1/messages/stream?', 'https://example.com/wp-json/newspack-nodes/v1/messages/stream' ],
+		];
+	}
+
+	#[DataProvider( 'platform_rules' )]
+	public function test_a_platform_request_tunes_a_rule_over_platform_paths( string $pattern, string $url ): void {
+		$this->set_rule( [ 'pattern' => $pattern, 'auto_disable_threshold' => 37, 'auto_protect_time_threshold' => 0.05 ] );
+		$fb = $this->unarmed_builder();
+
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'       => $url,
+			'is_worker' => true,
+			'profiles'  => [
+				'noisy_7316 hook' => [ 'time' => 0.1, 'count' => 38, 'entries' => [] ],
+				'slow_7316 hook'  => [ 'time' => 0.4, 'count' => 2, 'entries' => [] ],
+			],
+		] ) );
+
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [ 'noisy_7316' ], $state['disable_hooks']['r'] );
+		$this->assertSame( [ 'slow_7316' ], $state['add_significant_events']['r'] );
+	}
+
+	/**
+	 * A platform request tunes nothing under the catch-all, whatever its
+	 * path: that rule governs every visitor's page too.
+	 *
+	 * @return array<string,array{0:string,1:string}> Rule pattern, then the request's URL.
+	 */
+	public static function untuned_rules(): array {
+		return [
+			'the catch-all'         => [ '/', 'https://example.com/wp-json/newspack-nodes/v1/workers/spawn' ],
+			'a job, under the catch-all' => [ '/', 'https://example.com/jobs/kiwi-7316/42' ],
+		];
+	}
+
+	#[DataProvider( 'untuned_rules' )]
+	public function test_a_platform_request_leaves_the_catch_all_alone( string $pattern, string $url ): void {
+		$this->set_rule( [ 'pattern' => $pattern, 'auto_disable_threshold' => 37, 'auto_protect_time_threshold' => 0.05 ] );
+		$fb = $this->unarmed_builder();
+
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'       => $url,
+			'is_worker' => true,
+			'profiles'  => [
+				'noisy_7316 hook' => [ 'time' => 0.1, 'count' => 38, 'entries' => [] ],
+				'slow_7316 hook'  => [ 'time' => 0.4, 'count' => 2, 'entries' => [] ],
+			],
+		] ) );
+
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [], $state['disable_hooks'] );
+		$this->assertSame( [], $state['add_significant_events'] );
+	}
+
+	/** A category's mean per call belongs to its rule: another rule's slow calls promote nothing here. */
+	public function test_the_significance_mean_is_kept_per_rule(): void {
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] = [
+			[ 'id' => 'quick', 'pattern' => '/quick', 'action' => 'log', 'auto_protect_time_threshold' => 50.0 ],
+			[ 'id' => 'slow', 'pattern' => '/slow', 'action' => 'log' ],
+		];
+		$fb = $this->unarmed_builder();
+
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'      => 'https://example.com/slow',
+			'rule_id'  => 'slow',
+			'profiles' => [ 'shared_7316 hook' => [ 'time' => 900.0, 'count' => 1, 'entries' => [] ] ],
+		] ) );
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'      => 'https://example.com/quick',
+			'rule_id'  => 'quick',
+			'profiles' => [ 'shared_7316 hook' => [ 'time' => 1.0, 'count' => 1, 'entries' => [] ] ],
+		] ) );
+
+		$this->assertSame( [], $fb->get_auto_tune_state()['add_significant_events'] );
+	}
+
 	public function test_rule_significant_events_suppress_redundant_proposals(): void {
 		// An event already declared significant on the governing rule is not
 		// re-flagged when its avg-time detection would otherwise promote it.
@@ -898,7 +990,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ 'render page' ], $fb->get_auto_tune_state()['add_significant_events']['r'] );
 	}
 
-	/** Only a one-token slug is a plugin load; a custom event ending in "plugin" is the application's. */
+	/** Only a one-token slug is a plugin load; a custom event ending in "plugin" belongs to the application. */
 	public function test_a_multi_word_custom_event_ending_in_plugin_is_still_promoted(): void {
 		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
 		$fb = $this->unarmed_builder();
@@ -1729,23 +1821,6 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 		$state = $fb->get_auto_tune_state();
 		$this->assertSame( [ 'wpdb' ], $state['disable_hooks']['r'] );
-	}
-
-	public function test_noisy_hook_detection_excludes_worker_requests(): void {
-		// Auto-disable is a global signal: worker traffic feeds only its own
-		// per-URL row, never the plugin-wide hooks_to_disable decision.
-		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
-		$fb = $this->unarmed_builder();
-
-		$req = $this->completed_request( [
-			'is_worker' => true,
-			'profiles'  => [
-				'wpdb hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
-			],
-		] );
-		$this->fill_request( $fb, $req );
-		$state = $fb->get_auto_tune_state();
-		$this->assertEmpty( $state['disable_hooks'], 'worker traffic must not drive global hook auto-disable' );
 	}
 
 	public function test_callback_categories_skipped_from_auto_tune(): void {

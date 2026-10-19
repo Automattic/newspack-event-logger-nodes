@@ -182,7 +182,6 @@ export default function OverviewSection( {
 							} }
 						>
 							<SearchControl
-								__nextHasNoMarginBottom
 								label={ __(
 									'Request ID or /url pattern',
 									'newspack-event-logger-nodes'
@@ -247,7 +246,6 @@ export default function OverviewSection( {
 								value={ refreshInterval }
 								options={ DASHBOARD_REFRESH_OPTIONS }
 								onChange={ setRefreshInterval }
-								__nextHasNoMarginBottom
 								style={ { minWidth: '80px' } }
 							/>
 						</div>

@@ -11,8 +11,8 @@ const CARETS = { asc: '▲', desc: '▼' };
 /**
  * One column header that sorts, carrying the caret for the current sort.
  *
- * Sorting is the parent's: this reports the click and draws the direction it
- * is handed.
+ * The parent owns the sort: this reports the click and draws the direction
+ * it is handed.
  *
  * @param {Object}                  props           Component props.
  * @param {string}                  props.field     Sort field this header stands for.

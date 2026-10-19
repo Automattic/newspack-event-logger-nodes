@@ -758,7 +758,7 @@ const deepestByBase = ( flame ) => {
  *
  * A start row is numbered and stamped from the node's first start (`n`, `t`),
  * a complete row from its last end (`n_end`, `t_end`) — carried as `endTs`
- * alone when the node merged several spans, since that end is no place in the
+ * alone when the node merged several spans, since that end has no place in the
  * sequence the ruler draws. A row whose instance is
  * a kept row, or whose tree never recorded one, goes unnumbered and unstamped
  * rather than repeating that row or borrowing the other end's.
@@ -797,7 +797,7 @@ const foldedSpanEntries = (
 	const unshown = new Map( kept );
 	// @longform The fold replays the kept head and folds the kept tail, so a
 	// node's first start or last end can be a row already on screen; that
-	// instance's number and time are not this row's to repeat.
+	// instance's number and time are not for this row to repeat.
 	const place = ( n, k, offset ) => {
 		const ts =
 			Number.isFinite( offset ) && Number.isFinite( originTs )
@@ -864,7 +864,7 @@ const foldedSpanEntries = (
 			const closed = place( node.n_end, end, node.t_end );
 			rows.push( {
 				n: closed.n,
-				// A merged node's last end is no place in the sequence.
+				// A merged node's last end has no place in the sequence.
 				ts: node.merged ? 0 : closed.ts,
 				endTs: closed.ts,
 				k: end,
@@ -883,7 +883,7 @@ const foldedSpanEntries = (
  * The body a merged `(complete)` row shows: how many instances it stands for,
  * then the statements or URLs they ran, worst first.
  *
- * The table is `Flame_Fold`'s, kept on merged transport nodes; see its
+ * `Flame_Fold` builds the table and keeps it on merged transport nodes; see its
  * `fold_shape()` for what is in it and what bounds it.
  *
  * @param {Object} node   A merged flame node.
@@ -962,7 +962,7 @@ const owedToTree = ( entries, at ) => {
  * after the `entries (aggregated)` marker, which is the boundary the fold left.
  *
  * Every stored entry is first numbered `i`, its place in the record, because
- * the rows spliced in shift every index after them and `n` is no identity: a
+ * the rows spliced in shift every index after them and `n` is not an identity: a
  * nested render restarts it under the same request id. The spliced rows carry
  * no `i`; they were never stored.
  *

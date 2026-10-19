@@ -283,7 +283,7 @@ abstract class TestCase extends RuntimeTestCase {
 	/**
 	 * Every firehose entry written under a base directory's `logs/`, in
 	 * partition and segment order: each packed Message's VALUE, the entry hash
-	 * `k`, `m` and the rest ride in. A line whose VALUE is no entry fails the
+	 * `k`, `m` and the rest ride in. A line whose VALUE is not an entry fails the
 	 * test, because a producer regression would otherwise drop out unseen.
 	 *
 	 * @param string $base     The base directory the logger wrote under.

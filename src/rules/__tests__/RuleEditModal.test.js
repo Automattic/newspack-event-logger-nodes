@@ -196,6 +196,20 @@ describe( 'RuleEditModal — log rule fields', () => {
 		);
 	} );
 
+	test( 'labels the significant-events box and links its help', () => {
+		mount( LOG_RULE );
+		const field = document.querySelector( '.rule-edit-tag-field' );
+		const box = field.querySelector( 'input' );
+		const label = field.querySelector( 'label' );
+		const help = document.getElementById(
+			box.getAttribute( 'aria-describedby' )
+		);
+
+		expect( label.htmlFor ).toBe( box.id );
+		expect( label.textContent ).toBe( 'Significant events' );
+		expect( help.textContent ).toMatch( /^Press Enter to add one\./ );
+	} );
+
 	test( 'still appends a caller class without dropping its own', () => {
 		const r = renderComponent(
 			<RuleEditModal

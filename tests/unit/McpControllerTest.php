@@ -177,7 +177,7 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( '`aggregate_profiles`', $tools['dump_url']['description'], 'it names the URL\'s profile' );
 		$this->assertStringContainsString( 'performance_query', $tools['dump_url']['description'], 'it points the series at the query tool' );
 		foreach ( [ 'scan_stopped_early', 'requests_window_start', 'index walk', 'log position' ] as $gone ) {
-			$this->assertStringNotContainsString( $gone, \json_encode( $tools['dump_url'] ), "the list is a query, so {$gone} is no part of it" );
+			$this->assertStringNotContainsString( $gone, \json_encode( $tools['dump_url'] ), "the list is a query, so {$gone} is not part of it" );
 		}
 		$this->assertStringContainsString( 'null with `flame_cut` true when the walk ran out of time', $tools['dump_url']['description'], 'only the flame walk is timed' );
 		$this->assertStringContainsString( '`flame_cut` true means the flame lookup ran out of time', $tools['dump_request']['description'] );

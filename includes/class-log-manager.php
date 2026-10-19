@@ -1256,13 +1256,27 @@ class Log_Manager {
 	 * `url` are read from the trimmed prefix.
 	 *
 	 * @param mixed $message The entry's `m`.
-	 * @return array{0:string,1:string,2:string}|null [ request_method, request_url, url ], or null when `m` is no request line.
+	 * @return array{0:string,1:string,2:string}|null [ request_method, request_url, url ], or null when `m` is not a request line.
 	 */
 	public static function parse_request_line( mixed $message ): ?array {
 		if ( ! \is_string( $message ) || 1 !== \preg_match( '~^(\S+) ([a-z][a-z\d+.-]*://.+)$~Di', $message, $m ) ) {
 			return null;
 		}
 		return [ $m[1], $m[2], \explode( '?', $m[2], 2 )[0] ];
+	}
+
+	/**
+	 * Whether a rule pattern is written for the platform's own work: its
+	 * path, lowercased as a rule matches, is one of `PLATFORM_WORKERS`', or
+	 * is `/jobs` or below, where a job context runs. The flame builder lets a
+	 * worker's record tune only such a rule; one under `/jobs` may also
+	 * govern a site's own pages there.
+	 *
+	 * @param string $pattern A rule's URL pattern: a prefix, or an exact match with a `?` and any query.
+	 */
+	public static function serves_platform( string $pattern ): bool {
+		$path = \strtolower( \explode( '?', $pattern, 2 )[0] );
+		return isset( self::PLATFORM_WORKERS[ $path ] ) || '/jobs' === $path || \str_starts_with( $path, '/jobs/' );
 	}
 
 	/**

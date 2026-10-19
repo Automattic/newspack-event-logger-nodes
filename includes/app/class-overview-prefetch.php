@@ -290,7 +290,7 @@ final class Overview_Prefetch {
 	}
 
 	/**
-	 * Why `$seconds` is no interval a job names and the tick waits, the
+	 * Why `$seconds` is not an interval a job names and the tick waits, the
 	 * bounds it wants from `MIN_INTERVAL_S` to `MAX_INTERVAL_S`; null where
 	 * it is one. The caller names the value it was given.
 	 *

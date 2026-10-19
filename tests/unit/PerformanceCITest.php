@@ -218,8 +218,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * The overview names the 288 slots it drew, so the dashboard's axis is
-	 * the reply's and never the browser's clock.
+	 * The overview names the 288 slots it drew, so the dashboard's axis
+	 * comes from the reply and never from the browser's clock.
 	 */
 	public function test_the_overview_names_its_288_slots(): void {
 		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 21600 ] );
@@ -363,7 +363,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( 'https://example.com/deep-flame-here', $record['url'] );
 		$this->assertArrayNotHasKey( 'flame_data', $record );
-		$this->assertTrue( $record['flame_cut'], 'a cut lookup is no missing flame' );
+		$this->assertTrue( $record['flame_cut'], 'a cut lookup is not a missing flame' );
 	}
 
 	/**
@@ -475,7 +475,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_urls_verb_echoes_the_filters_it_applied(): void {
 		// The totals beside these are narrower than the site, and a number
-		// whose scope is not stated is a number that will be read as the site's.
+		// whose scope is not stated is a number that will be read as the site's total.
 		// The verb echoes what it actually applied, so the Ask brief describes
 		// the panel rather than guessing at it.
 		$result = VerbHarness::fire(
@@ -1188,7 +1188,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'Request not found: rid=rid-rowless-4410', \trim( Core::as_string( $result ) ) );
 	}
 
-	/** A row whose place holds no record is no request either. */
+	/** A row whose place holds no record is not a request either. */
 	public function test_dump_request_answers_not_found_where_the_row_points_at_nothing(): void {
 		$this->write_record( [ 'rid' => 'rid-real-7781', 'url' => 'https://example.com/real-7781' ] );
 		$this->seed_request( [ 'rid' => 'rid-gone-7781', 'segment' => 0, 'offset' => 900000, 'length' => 311 ] );
@@ -2047,7 +2047,7 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * Every verb that reads a selection refuses a spelling naming a key
-	 * that is no five-minute key or one in the future, a run ending before
+	 * that is not a five-minute key, or one in the future, a run ending before
 	 * it starts, and more than 288 buckets, each saying which key or naming
 	 * the limit.
 	 *
@@ -2236,7 +2236,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertEqualsWithDelta( 101.0, $kept['SELECT kea_101'][0], 1e-9 );
 	}
 
-	/** A hundred entries is no crowd: every one stays, in its own order. */
+	/** A hundred entries is not a crowd: every one stays, in its own order. */
 	public function test_a_leaderboard_keeps_a_category_at_the_trim_bound_whole(): void {
 		$entries = [];
 		for ( $i = 1; $i <= 100; $i++ ) {
@@ -2569,7 +2569,7 @@ class PerformanceCITest extends TestCase {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=kakapo' );
 
 		$this->assertIsString( $reply );
-		$this->assertStringContainsString( 'filter kakapo is no field=value', $reply );
+		$this->assertStringContainsString( 'filter kakapo is not a field=value pair', $reply );
 	}
 
 	/**
@@ -2599,7 +2599,7 @@ class PerformanceCITest extends TestCase {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, $tokens );
 
 		$this->assertIsString( $reply );
-		$this->assertStringContainsString( "filter server=kahu-9.example is --server's: name the server with --server", $reply );
+		$this->assertStringContainsString( "filter server=kahu-9.example belongs to --server: name the server with --server", $reply );
 	}
 
 	/**
@@ -2611,8 +2611,8 @@ class PerformanceCITest extends TestCase {
 	public static function owned_filter_refusals(): array {
 		$hash   = Log_Manager::url_hash( 'https://kahu-9.example/hoiho/' );
 		$key    = '2026-09-21-04-35';
-		$bucket = "filter bucket={$key} is --bucket's: name the buckets with --bucket";
-		$url    = "filter url=0ddba11c4e5f is the hash's: name the URL with the hash";
+		$bucket = "filter bucket={$key} belongs to --bucket: name the buckets with --bucket";
+		$url    = "filter url=0ddba11c4e5f belongs to the hash: name the URL with the hash";
 		return [
 			'urls bucket'               => [ 'urls', "--filter=bucket={$key}", $bucket ],
 			'urls bucket beside --bucket' => [ 'urls', "--bucket={$key} --filter=bucket={$key}", $bucket ],
@@ -2622,10 +2622,10 @@ class PerformanceCITest extends TestCase {
 			'ask url: bucket'           => [ 'ask', "url:{$hash} --filter=bucket={$key}", $bucket ],
 			'ask url: url'              => [ 'ask', "url:{$hash} --filter=url=0ddba11c4e5f", $url ],
 			'dump_url url capitalised'  => [ 'dump_url', "{$hash} --filter=URL=0ddba11c4e5f", $url ],
-			'urls server negated'       => [ 'urls', '--filter=server!=kahu-9.example', "filter server!=kahu-9.example is --server's: name the server with --server" ],
-			'urls bucket negated'       => [ 'urls', "--filter=bucket!={$key}", "filter bucket!={$key} is --bucket's: name the buckets with --bucket" ],
-			'dump_url url negated'      => [ 'dump_url', "{$hash} --filter=url!=0ddba11c4e5f", "filter url!=0ddba11c4e5f is the hash's: name the URL with the hash" ],
-			'ask overview: server negated' => [ 'ask', 'overview:site --filter=server!=kahu-9.example', "filter server!=kahu-9.example is --server's: name the server with --server" ],
+			'urls server negated'       => [ 'urls', '--filter=server!=kahu-9.example', "filter server!=kahu-9.example belongs to --server: name the server with --server" ],
+			'urls bucket negated'       => [ 'urls', "--filter=bucket!={$key}", "filter bucket!={$key} belongs to --bucket: name the buckets with --bucket" ],
+			'dump_url url negated'      => [ 'dump_url', "{$hash} --filter=url!=0ddba11c4e5f", "filter url!=0ddba11c4e5f belongs to the hash: name the URL with the hash" ],
+			'ask overview: server negated' => [ 'ask', 'overview:site --filter=server!=kahu-9.example', "filter server!=kahu-9.example belongs to --server: name the server with --server" ],
 		];
 	}
 
@@ -2735,7 +2735,7 @@ class PerformanceCITest extends TestCase {
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=error=T --filter=error=F --sort=url --order=asc' );
 
-		$this->assertSame( [ 'https://seed.example/piopio-f/', 'https://seed.example/piopio-t/' ], \array_column( $reply['data'], 'url' ), 'an abort and a 5xx are no errors; a fatal after headers is one' );
+		$this->assertSame( [ 'https://seed.example/piopio-f/', 'https://seed.example/piopio-t/' ], \array_column( $reply['data'], 'url' ), 'an abort and a 5xx are not errors; a fatal after headers is one' );
 		$this->assertSame( [ 2, 2 ], [ $reply['totals']['requests'], $reply['totals']['errors'] ] );
 	}
 

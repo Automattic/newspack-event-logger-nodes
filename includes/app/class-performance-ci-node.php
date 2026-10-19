@@ -797,7 +797,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \RuntimeException When no board holds the category, the name is a callback row, or a URL's stats did not open or name it.
 	 */
 	private static function ask_category( string $name, array $context, string $server, int $now ): array {
-		// A callback row is no board; its time counts inside its hook.
+		// A callback row is not a board; its time counts inside its hook.
 		if ( Flame_Tree::is_listener_span( $name ) ) {
 			throw new \RuntimeException( \esc_html( "'{$name}' is a callback row; ask about the hook it ran under" ) );
 		}
@@ -832,7 +832,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The URL a request row on `$server` in the week the rows keep names
 	 * `$hash` by, server and path joined, worker traffic counted; '' when the
-	 * stats file will not open, which is no stats rather than no URL
+	 * stats file will not open, which means no stats rather than no URL
 	 * (decision 3). No filter narrows it: a URL exists or it does not.
 	 *
 	 * @param string $hash   12-char URL hash.
@@ -1181,7 +1181,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * A flame index line as `locate_by()` reads it: the rid it keys, and its
-	 * record's offset and length; null for a line that is no index entry.
+	 * record's offset and length; null for a line that is not an index entry.
 	 *
 	 * @param string $line Index line.
 	 * @return array{key: string, offset: int, length: int}|null
@@ -1815,8 +1815,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $now  The reply's clock.
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException On a bucket selection `Bucket::selection()`
-	 *                                   refuses, a filter that is no
-	 *                                   `field=value`, or a spec `run()` refuses.
+	 *                                   refuses, a filter that is not a
+	 *                                   `field=value` pair, or a spec `run()` refuses.
 	 */
 	private static function answer_query( array $args, int $now ): array {
 		$spelling = Core::as_string( $args['bucket'] );
@@ -1872,7 +1872,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( $filter as $key => $values ) {
 			if ( isset( $owners[ Stats_Query::field_of( $key ) ] ) ) {
 				[ $owner, $names ] = $owners[ Stats_Query::field_of( $key ) ];
-				throw new \InvalidArgumentException( \esc_html( "filter {$key}={$values[0]} is {$owner}'s: name the {$names} with {$owner}" ) );
+				throw new \InvalidArgumentException( \esc_html( "filter {$key}={$values[0]} belongs to {$owner}: name the {$names} with {$owner}" ) );
 			}
 		}
 		return $filter;
@@ -1903,14 +1903,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param list<string> $tokens The `filter_tokens()` tokens.
 	 * @return array<string,list<string>>
-	 * @throws \InvalidArgumentException On a token that is no `field=value`.
+	 * @throws \InvalidArgumentException On a token that is not a `field=value` pair.
 	 */
 	private static function filter_of( array $tokens ): array {
 		$filter = [];
 		foreach ( $tokens as $token ) {
 			$parts = \explode( '=', $token, 2 );
 			if ( 2 !== \count( $parts ) ) {
-				throw new \InvalidArgumentException( \esc_html( "filter {$token} is no field=value" ) );
+				throw new \InvalidArgumentException( \esc_html( "filter {$token} is not a field=value pair" ) );
 			}
 			$filter[ $parts[0] ][] = $parts[1];
 		}
@@ -2059,8 +2059,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/D', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
-				// @longform The row that opened this modal was the selected
-				// server's, so this answers for the same server — otherwise one
+				// @longform The row that opened this modal belonged to the selected
+				// server, so this answers for the same server — otherwise one
 				// click puts a site-wide average under a scoped count, on two
 				// surfaces too far apart to compare.
 				$server   = Core::as_string( $args['server'] );
@@ -2068,7 +2068,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$spelling = Core::as_string( $args['bucket'] );
 				$now      = self::now();
 				$detail   = self::url_detail( $hash, $server, $tokens, $spelling, $now, self::RECENT_REQUEST_LIMIT );
-				// A narrowed list's flame would not be the URL's.
+				// A narrowed list's flame would not describe the URL.
 				$rebuilt = $detail['available'] && [] === $tokens && '' === $spelling;
 				$flame   = $rebuilt ? self::url_flame( $detail['listed'] ) : null;
 				return [

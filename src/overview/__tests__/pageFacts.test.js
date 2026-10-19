@@ -233,7 +233,7 @@ test( 'the slowest URLs come from the set the totals describe', () => {
 } );
 
 test( 'it names what the totals are scoped to', () => {
-	// The numbers above are one server's, or one search's. Handing a model a
+	// The numbers above cover one server, or one search. Handing a model a
 	// narrower total with no scope on it is how it comes to answer for the site.
 	const facts = pageFacts( {
 		urlTotals: { urls: 313, requests: 9001 },

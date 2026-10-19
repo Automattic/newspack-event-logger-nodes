@@ -661,7 +661,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   request's `environment_v3` entry instead, which carries
   `HTTP_X_A8C_REQUEST_ID` verbatim: `wp nodes reqgrep <edge id>` finds the
   request through that line. A job context carries no edge id: `begin_job_context()` clears the
-  header, because the worker's own spawn request is not the job's.
+  header, because the worker's own spawn request does not belong to the job.
 
 ## 0.96.0
 

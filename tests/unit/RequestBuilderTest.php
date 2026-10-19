@@ -879,7 +879,7 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
-	 * The stub a producer writes in place of an over-long `m` is no request
+	 * The stub a producer writes in place of an over-long `m` is not a request
 	 * line: the record takes no method and no URL from it, so it is never
 	 * indexed under one.
 	 */
@@ -962,7 +962,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertEqualsWithDelta( 6.25, $req['profiles']['inner']['time'], 1e-9 );
 	}
 
-	/** A listener wrapped below zero is a callback too; its time is the hook's, not a debit from it. */
+	/** A listener wrapped below zero is a callback too; its time belongs to the hook and is not a debit from it. */
 	public function test_a_negative_priority_callback_does_not_subtract_from_parent_hook(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
@@ -2065,7 +2065,7 @@ class RequestBuilderTest extends TestCase {
 
 	/**
 	 * The in-flight report answers to `GET_STATS` alone, matching
-	 * `Flame_Builder_Node`; `GET_CACHE` is no verb of this node.
+	 * `Flame_Builder_Node`; `GET_CACHE` is not a verb of this node.
 	 */
 	public function test_get_cache_is_an_unknown_request_verb(): void {
 		$rb      = new Request_Builder_Node();

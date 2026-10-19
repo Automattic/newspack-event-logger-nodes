@@ -653,7 +653,7 @@ export default function LogEntriesTable( {
 	 * Map flame-graph paths to pairIds, so `reveal()` can resolve a frame that
 	 * carries no entry position — one of a request folded under load — to a row.
 	 *
-	 * Such a frame is `Flame_Fold`'s, named by `Flame_Tree::node_name()` alone
+	 * `Flame_Fold` builds such a frame, named by `Flame_Tree::node_name()` alone
 	 * (`name: label`), so each open pair keys its node-name path. A folded row
 	 * owns its path over a kept instance of it, because the merged frame is
 	 * the folded row; otherwise the first occurrence does. The base-name path
@@ -1411,7 +1411,6 @@ export default function LogEntriesTable( {
 			<div className="log-entries-search">
 				<div ref={ searchContainerRef } style={ { flex: 1 } }>
 					<SearchControl
-						__nextHasNoMarginBottom
 						label={ __(
 							'Search entries',
 							'newspack-event-logger-nodes'

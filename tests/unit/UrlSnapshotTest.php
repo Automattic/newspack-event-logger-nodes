@@ -34,7 +34,7 @@ final class UrlSnapshotTest extends TestCase {
 
 	private const NOW = 1_790_011_903;
 
-	/** A snapshot's life no job's interval names, so a TTL read elsewhere fails. */
+	/** A snapshot lifetime that matches no job's interval, so a TTL read elsewhere fails. */
 	private const TTL = 613;
 
 	/** The second server the parity traffic files under. */
@@ -449,7 +449,7 @@ final class UrlSnapshotTest extends TestCase {
 		$this->assertNull( Url_Snapshot::open( self::NOW ) );
 	}
 
-	public function test_a_file_that_is_no_database_does_not_open(): void {
+	public function test_a_file_that_is_not_a_database_does_not_open(): void {
 		$this->seed_request();
 		\file_put_contents( $this->snapshot_file(), 'kiwi-9931' );
 

@@ -49,12 +49,12 @@ class BucketTest extends TestCase {
 	}
 
 	/**
-	 * A key that is no five-minute `Y-m-d-H-i` is refused, naming it.
+	 * A key that is not a five-minute `Y-m-d-H-i` is refused, naming it.
 	 *
 	 * @param string $key The refused key.
 	 */
 	#[DataProvider( 'unread_keys' )]
-	public function test_a_key_that_is_no_five_minute_key_is_refused( string $key ): void {
+	public function test_a_key_that_is_not_a_five_minute_key_is_refused( string $key ): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( "bucket {$key} must be a five-minute key, Y-m-d-H-i in UTC" );
 		Bucket::of_key( $key );

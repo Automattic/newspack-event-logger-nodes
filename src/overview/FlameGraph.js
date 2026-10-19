@@ -659,7 +659,7 @@ export const pruneFlameGraph = ( root, options = {} ) => {
  * Whether a frame sits at one honest place on the axis: it must know its start,
  * and it must stand for a single span. `Flame_Fold` marks a node it folded
  * several spans into `merged`, and there `t` is the earliest span's start while
- * `value` totals them all — `t + value` is then no span's end, and a gap
+ * `value` totals them all — `t + value` is then not the end of any span, and a gap
  * measured from it is fiction. The fold decides; this only reads the verdict.
  *
  * @param {Object} node Flame node.

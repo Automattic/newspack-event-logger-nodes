@@ -1450,7 +1450,7 @@ class AppCoreTest extends TestCase {
 		$callbacks = $wp_filter['pre_http_request']->callbacks;
 		$this->assertSame( 99, $callbacks[10]['cache']['accepted_args'] );
 		foreach ( [ -10000 => 'start', PHP_INT_MAX - 2 => 'spacer', PHP_INT_MAX - 1 => 'complete' ] as $priority => $key ) {
-			$this->assertSame( 1, $callbacks[ $priority ][ $key ]['accepted_args'], "$key is the binder's own" );
+			$this->assertSame( 1, $callbacks[ $priority ][ $key ]['accepted_args'], "$key belongs to the binder" );
 		}
 	}
 
@@ -1925,10 +1925,10 @@ class AppCoreTest extends TestCase {
 
 		new Core();
 
-		$this->assertCount( 1, self::stderr_lines( $captured, 'hook_start_priority true is no number' ) );
+		$this->assertCount( 1, self::stderr_lines( $captured, 'hook_start_priority true is not a number' ) );
 	}
 
-	/** A start priority that reads as no number is reported, and the schema's default binds. */
+	/** A start priority that does not read as a number is reported, and the schema's default binds. */
 	public function test_an_unreadable_start_priority_is_reported_and_the_default_binds(): void {
 		$this->set_governing_rule(
 			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ] ),
@@ -2300,7 +2300,7 @@ class AppCoreTest extends TestCase {
 	}
 
 	public function test_callback_has_ref_param_propagates_what_is_not_a_reflection_failure(): void {
-		// Only "cannot reflect this" reads as no by-ref param; an autoloader
+		// Only "cannot reflect this" reads as having no by-ref param; an autoloader
 		// that throws while loading the target is a failure of its own.
 		$refusal  = new \RuntimeException( 'autoloader refused Quokka_Absent_7732' );
 		$autoload = static function ( string $class ) use ( $refusal ): void {

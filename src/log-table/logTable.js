@@ -8,7 +8,7 @@
  * dashboards spell the same quantity differently (`est_ms`/`time_ms` vs
  * `duration_ms`, `ts` vs `timestamp`), and the URL hash is computed
  * client-side on the In-Flight table but stamped by the view node on the other
- * two. The trailing `key` is the caller's — a dashboard mapping a dynamic
+ * two. The caller supplies the trailing `key` — a dashboard mapping a dynamic
  * column list passes the column, the Error Log's fixed JSX siblings pass
  * nothing.
  */

@@ -125,7 +125,7 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( [ [ 'Takahe/4.2' ] ], $this->facts( 'SELECT name FROM agents' ) );
 		$this->assertSame( [ [ 1 ] ], $this->facts( 'SELECT count(*) FROM requests r JOIN urls u ON u.id = r.url_id JOIN agents a ON a.id = r.ua_id' ), 'the row names its URL and agent by id' );
 		$this->assertSame( [ [ 'sql', '', 120.25, 9, 1 ], [ 'sql', 'SELECT kea', 80.5, 4, 1 ] ], $this->facts( 'SELECT c.name, e.name, t.ms, t.calls, t.requests FROM timings t JOIN categories c ON c.id = t.category_id JOIN entries e ON e.id = t.entry_id ORDER BY e.name' ) );
-		$this->assertSame( [ [ 5, 1, 1, 842.5, 842.5, 61.0, 0 ] ], $this->facts( 'SELECT status_class, count, timed, sum_ms, max_ms, sum_peak_mb, errors FROM requests_hourly' ), 'a 503 is no error: errors are T and F' );
+		$this->assertSame( [ [ 5, 1, 1, 842.5, 842.5, 61.0, 0 ] ], $this->facts( 'SELECT status_class, count, timed, sum_ms, max_ms, sum_peak_mb, errors FROM requests_hourly' ), 'a 503 is not an error: errors are T and F' );
 		$this->assertSame( [ [ Bucket::hour( self::tick() ), 'kea.example', 'GET', 0, 'NZ' ] ], $this->facts( 'SELECT h.hour, s.name, h.method, h.worker, h.country FROM requests_hourly h JOIN servers s ON s.id = h.server_id' ) );
 	}
 
@@ -159,7 +159,7 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame(
 			[ [ Bucket::id( self::tick() - 70 ), (float) ( self::tick() - 70 ), self::tick() - 100, 5, null, null, null, null, null, 't13d1516h2', 'bot@kea.example', 'T', 0.0 ] ],
 			$this->facts( 'SELECT r.bucket, r.finished_at, r.started_at, r.partition, r.segment, r.status, r.country, r.ua_id, r.ms, j.name, f.name, r.error, r.peak_mb FROM requests r JOIN ja4s j ON j.id = r.ja4_id JOIN froms f ON f.id = r.from_id', '5' ),
-			'a timeout keeps the start its record carries, though its duration is no sample'
+			'a timeout keeps the start its record carries, though its duration is not a sample'
 		);
 		$this->assertSame( [ [ 0, '', 1, 0, 0.0, 0.0, 1 ] ], $this->facts( 'SELECT status_class, country, count, timed, sum_ms, max_ms, errors FROM requests_hourly', '5' ), 'a timeout is counted, untimed, and an error' );
 		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM agents', '5' ) );
@@ -281,7 +281,7 @@ final class FlameFactsTest extends TestCase {
 
 	/**
 	 * A completion past the tick that brought the record is clamped to it;
-	 * the start is the record's own.
+	 * the start comes from the record itself.
 	 */
 	public function test_a_clamped_row_keeps_its_records_own_start(): void {
 		$fb = $this->armed_flame_builder();
@@ -355,7 +355,7 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( $expected, $this->facts( 'SELECT c.name, t.listener FROM timings_site t JOIN categories c ON c.id = t.category_id ORDER BY c.name' ) );
 	}
 
-	/** A profile category whose name is no string or whose data is no map files no timing row. */
+	/** A profile category whose name is not a string or whose data is not a map files no timing row. */
 	public function test_a_malformed_profile_category_files_no_timing_row(): void {
 		$fb = $this->armed_flame_builder();
 		$this->fill_request_at(
@@ -385,10 +385,10 @@ final class FlameFactsTest extends TestCase {
 
 		$this->assertSame( [ [ null, 0 ] ], $this->facts( 'SELECT ms, profiled FROM requests' ), 'a profile on an untimed request profiles nothing' );
 		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM timings' ) );
-		$this->assertSame( [ [ 1, 0, 0 ] ], $this->facts( 'SELECT count, timed, errors FROM requests_hourly' ), 'an abort is no error' );
+		$this->assertSame( [ [ 1, 0, 0 ] ], $this->facts( 'SELECT count, timed, errors FROM requests_hourly' ), 'an abort is not an error' );
 	}
 
-	/** A timed request whose profile files no timing row is no profiled request. */
+	/** A timed request whose profile files no timing row is not a profiled request. */
 	public function test_a_timed_request_with_no_timing_rows_is_not_profiled(): void {
 		$fb = $this->armed_flame_builder();
 		$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => 'rid-hoiho-1', 'url' => 'https://kea.example/hoiho', 'duration_ms' => 73.5, 'profiles' => [] ] ), '' );
@@ -537,9 +537,10 @@ final class FlameFactsTest extends TestCase {
 
 	/**
 	 * The significant-event signal is the average per call of a category
-	 * over every non-worker request since the last flush, as the buffer holds
-	 * them: one slow call among many fast ones proposes nothing until a
-	 * flush empties the window.
+	 * over every request that tunes its rule since the last flush, as the
+	 * buffer holds them: one slow call among many fast ones proposes nothing
+	 * until a flush empties the window, and a worker's call under a visitors'
+	 * rule doesn't count toward it.
 	 */
 	public function test_a_significant_event_comes_from_the_buffer(): void {
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] = [ [ 'id' => 'r-takahe', 'pattern' => '/', 'action' => 'log', 'auto_protect_time_threshold' => 0.2 ] ];

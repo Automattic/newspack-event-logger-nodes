@@ -1,7 +1,7 @@
 /**
- * Tag input geometry, whose horizontal row the Time field lays out on too;
- * `TagToken.scss` holds the token's. Shared badge/status/control styles own
- * chrome.
+ * Tag input geometry. The rule editor's field is the substrate's token field,
+ * which owns its frame and chrome; the horizontal row belongs to the Time field
+ * and the breakdown chips. `TagToken.scss` holds the token's styles.
  */
 
 @use "../../styles/base";
@@ -9,8 +9,17 @@
 .event-logger-tag-input {
 	max-width: 60em;
 
-	.event-logger-tag-container {
-		margin-bottom: 8px;
+	// The box and Clear all wrap as one, so Clear all ends the line typed on.
+	.event-logger-tag-entry {
+		display: flex;
+		flex: 1 1 24ch;
+		align-items: center;
+		min-width: 24ch;
+	}
+
+	.event-logger-tag-clear {
+		flex: none;
+		padding: 0 6px;
 	}
 }
 
@@ -29,10 +38,4 @@
 		}
 	}
 
-	&.vertical {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 4px;
-	}
 }

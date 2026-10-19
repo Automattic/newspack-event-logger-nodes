@@ -687,10 +687,10 @@ describe( 'UrlTable', () => {
 		const { container, unmount } = mount( {
 			urls: [],
 			totalUrls: 0,
-			error: 'filter kakapo is no field=value',
+			error: 'filter kakapo is not a field=value pair',
 		} );
 		expect( container.textContent ).toContain(
-			'Could not load URLs: filter kakapo is no field=value'
+			'Could not load URLs: filter kakapo is not a field=value pair'
 		);
 		expect( container.textContent ).not.toContain( 'No URLs to display' );
 		unmount();
