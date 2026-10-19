@@ -204,36 +204,6 @@ const restoreChips = ( raw, options ) => {
 };
 
 /**
- * Own one of the URL window's choices, written to `?param=` through `gated`
- * and left off the bar at its default. A choice `values` does not offer,
- * linked or left behind when `values` changes, falls back to the default, as
- * `useQueryParamChoice` does for the page's own.
- *
- * @param {string}                                                     param    Query-string parameter name.
- * @param {string[]}                                                   values   Every choice the control offers.
- * @param {string}                                                     fallback The default.
- * @param {(encode: (v: string) => ?string) => (v: string) => ?string} gated    Holds a write-back to the window's opening.
- * @return {[string, import('react').Dispatch<import('react').SetStateAction<string>>]}
- *   The choice and its setter.
- */
-const useUrlWindowChoice = ( param, values, fallback, gated ) => {
-	const [ choice, setChoice ] = useQueryParamState(
-		param,
-		( raw ) => raw ?? fallback,
-		gated( ( value ) => ( value === fallback ? null : value ) )
-	);
-	const shown = values.includes( choice ) ? choice : fallback;
-
-	useEffect( () => {
-		if ( shown !== choice ) {
-			setChoice( shown );
-		}
-	}, [ shown, choice, setChoice ] );
-
-	return [ shown, setChoice ];
-};
-
-/**
  * The dashboard's one component: the overview card, the URL table, and the
  * detail modal over them.
  *
@@ -369,48 +339,49 @@ export default function PerformanceDashboard( {
 		deepLink.urlHash ||
 		deepLink.requestId
 	);
-	// Every write-back of the window's state is off the bar while it is shut.
-	const gated = ( encode ) => ( value ) =>
-		windowOpen ? encode( value ) : null;
+	// The window's state stays off the bar while it is shut.
+	const windowParam = { written: windowOpen };
 	const [ detailBucket, setDetailBucket ] = useQueryParamState(
 		'url_bucket',
 		( raw ) => raw ?? '',
-		gated( String )
+		String,
+		windowParam
 	);
-	const [ detailMetric, setDetailMetric ] = useUrlWindowChoice(
+	const [ detailMetric, setDetailMetric ] = useQueryParamChoice(
 		'url_metric',
 		CHART_METRICS,
 		DEFAULT_CHART_METRIC,
-		gated
+		windowParam
 	);
-	const [ detailBreakdown, setDetailBreakdown ] = useUrlWindowChoice(
+	const [ detailBreakdown, setDetailBreakdown ] = useQueryParamChoice(
 		'url_breakdown',
 		DETAIL_BREAKDOWNS,
 		NO_DETAIL_CHART.breakdown,
-		gated
+		windowParam
 	);
-	const [ detailThenBy, setDetailThenBy ] = useUrlWindowChoice(
+	const [ detailThenBy, setDetailThenBy ] = useQueryParamChoice(
 		'url_then',
 		thenBysUnder( DETAIL_BREAKDOWNS, detailBreakdown ),
 		NO_DETAIL_CHART.thenBy,
-		gated
+		windowParam
 	);
 	const [ detailChips, setDetailChips ] = useQueryParamList(
 		'url_chip',
 		( raw ) => restoreChips( raw, URL_CHIP_OPTIONS ),
-		gated( ( chips ) => chips )
+		( chips ) => chips,
+		windowParam
 	);
-	const [ sortField, setSortField ] = useUrlWindowChoice(
+	const [ sortField, setSortField ] = useQueryParamChoice(
 		'url_sort',
 		REQUEST_SORT_FIELDS,
 		DEFAULT_REQUEST_SORT.field,
-		gated
+		windowParam
 	);
-	const [ sortDir, setSortDir ] = useUrlWindowChoice(
+	const [ sortDir, setSortDir ] = useQueryParamChoice(
 		'url_order',
 		SORT_ORDERS,
 		DEFAULT_REQUEST_SORT.dir,
-		gated
+		windowParam
 	);
 	// Same values, same object: the graph re-asks on a new one.
 	const detailFilters = useMemo(
