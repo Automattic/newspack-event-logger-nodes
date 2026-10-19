@@ -46,6 +46,7 @@ import {
 	useQueryParamChoice,
 	useQueryParamFlag,
 } from '@newspack-nodes/shared/hooks/useQueryParamState';
+import { DEFAULT_CHART_METRIC, SORT_ORDERS, cellClass } from './constants';
 
 /**
  * Row height in pixels.
@@ -222,26 +223,6 @@ const SORT_FIELDS = COLUMNS.filter( ( col ) => 'status' !== col.kind ).map(
 	( col ) => col.field
 );
 
-const SORT_ORDERS = [ 'asc', 'desc' ];
-
-/** Per-kind cell modifiers; `code` adds none. */
-const CELL_CLASS = {
-	code: '',
-	numeric: ' event-logger-table__cell--numeric',
-	status: ' event-logger-table__cell--status entry-status',
-};
-
-/**
- * The class list for one cell, in the header or in a row.
- *
- * @param {Object} col Column declaration from COLUMNS.
- * @return {string} The canonical table-cell classes plus the kind's modifier.
- */
-const cellClass = ( col ) =>
-	`event-logger-table__cell newspack-nodes-table__cell${
-		CELL_CLASS[ col.kind ]
-	}`;
-
 /**
  * Render one column's cell for one URL.
  *
@@ -416,7 +397,7 @@ export default function UrlTable( {
 	chips = [],
 	onBucketChange,
 	totalUrls = null,
-	metric = 'volume',
+	metric = DEFAULT_CHART_METRIC,
 	error = null,
 	loading = false,
 } ) {

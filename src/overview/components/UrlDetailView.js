@@ -23,23 +23,14 @@
  * finds no such ancestor and throws — which is why the tests mock that hook.
  */
 
-import {
-	useRef,
-	memo,
-	useMemo,
-	useState,
-	useCallback,
-} from '@wordpress/element';
+import { useRef, memo, useMemo } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
-import { FILTER_FIELD_OPTIONS, SCOPED_BREAKDOWN_OPTIONS } from '../constants';
-
-/**
- * The fields a modal chip may name: every chip field but the URL it is, and,
- * as `FILTER_FIELD_OPTIONS` already leaves out, the server.
- */
-const URL_CHIP_OPTIONS = FILTER_FIELD_OPTIONS.filter(
-	( option ) => 'url' !== option.value
-);
+import {
+	CELL_BASE,
+	SCOPED_BREAKDOWN_OPTIONS,
+	URL_CHIP_OPTIONS,
+	cellClass,
+} from '../constants';
 
 import ResponseTimeChart from '../ResponseTimeChart';
 import RequestTrace, { FlameCutNote } from './RequestTrace';
@@ -122,6 +113,83 @@ const narrowedNote = ( bucket, chips ) => {
 		: null;
 };
 
+/**
+ * The URL modal's Recent Requests columns, in order: its header and every
+ * row render from this. A `sortable` column's heading is a sort button
+ * aligned by `variant`, the rest plain headings. A cell takes its `kind`'s
+ * classes (`cellClass()`), the `tone` classes a column adds, the
+ * content `render` draws, and the `style` and `dataStatus` a column declares;
+ * each reads the row's `barPct` and its `errorStatus()` reading.
+ *
+ * @type {Array<{field: string, label: string, sortable?: boolean, variant?: string, kind?: string, render: Function, tone?: Function, style?: Function, dataStatus?: Function}>}
+ */
+const REQUEST_COLUMNS = [
+	{
+		field: 'timestamp',
+		label: __( 'Time', 'newspack-event-logger-nodes' ),
+		sortable: true,
+		render: ( req ) => new Date( req.timestamp * 1000 ).toLocaleString(),
+	},
+	{
+		field: 'method',
+		label: __( 'Method', 'newspack-event-logger-nodes' ),
+		render: ( req ) => req.method,
+	},
+	{
+		field: 'rid',
+		label: __( 'Request ID', 'newspack-event-logger-nodes' ),
+		kind: 'mono',
+		render: ( req ) => <code>{ req.rid }</code>,
+		style: ( req, { barPct } ) => ( {
+			background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
+		} ),
+	},
+	{
+		field: 'status_code',
+		label: __( 'Status', 'newspack-event-logger-nodes' ),
+		sortable: true,
+		variant: 'center',
+		kind: 'status',
+		render: ( req, { status } ) =>
+			status ? (
+				<span title={ status.label }>{ req.error_status }</span>
+			) : (
+				req.status_code || '-'
+			),
+		tone: ( req, { status } ) =>
+			status ? `newspack-nodes-status ${ status.tone }` : null,
+		dataStatus: ( req, { status } ) =>
+			status ? undefined : req.status_code,
+	},
+	{
+		field: 'duration_ms',
+		label: __( 'Duration', 'newspack-event-logger-nodes' ),
+		sortable: true,
+		variant: 'numeric',
+		kind: 'numeric',
+		render: ( req ) =>
+			'number' === typeof req.duration_ms
+				? wholeMs( req.duration_ms )
+				: '—',
+	},
+	{
+		field: 'peak_mb',
+		label: __( 'Mem', 'newspack-event-logger-nodes' ),
+		sortable: true,
+		variant: 'numeric',
+		kind: 'numeric',
+		render: ( req ) => ( req.peak_mb > 0 ? `${ req.peak_mb }MB` : '-' ),
+	},
+];
+
+/** The fields a request header sorts on, and so the `?url_sort=` whitelist. */
+export const REQUEST_SORT_FIELDS = REQUEST_COLUMNS.filter(
+	( col ) => col.sortable
+).map( ( col ) => col.field );
+
+/** The URL modal's request order until a header is clicked: newest first. */
+export const DEFAULT_REQUEST_SORT = { field: 'timestamp', dir: 'desc' };
+
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const RequestRow = memo(
 	/**
@@ -145,9 +213,10 @@ const RequestRow = memo(
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function RequestRow( { req, onSelect, maxBar, metric } ) {
-		const barPct =
-			maxBar > 0 ? ( barValue( req, metric ) / maxBar ) * 100 : 0;
-		const status = errorStatus( req.error_status );
+		const row = {
+			barPct: maxBar > 0 ? ( barValue( req, metric ) / maxBar ) * 100 : 0,
+			status: errorStatus( req.error_status ),
+		};
 		const handleKeyDown = ( e ) => {
 			if ( e.key === 'Enter' || e.key === ' ' ) {
 				e.preventDefault();
@@ -165,40 +234,18 @@ const RequestRow = memo(
 				onClick={ () => onSelect( req.rid ) }
 				onKeyDown={ handleKeyDown }
 			>
-				<div className="event-logger-table__cell newspack-nodes-table__cell">
-					{ new Date( req.timestamp * 1000 ).toLocaleString() }
-				</div>
-				<div className="event-logger-table__cell newspack-nodes-table__cell">
-					{ req.method }
-				</div>
-				<div
-					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--mono"
-					style={ {
-						background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
-					} }
-				>
-					<code>{ req.rid }</code>
-				</div>
-				<div
-					className={ `event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status${
-						status ? ` newspack-nodes-status ${ status.tone }` : ''
-					}` }
-					data-status={ status ? undefined : req.status_code }
-				>
-					{ status ? (
-						<span title={ status.label }>{ req.error_status }</span>
-					) : (
-						req.status_code || '-'
-					) }
-				</div>
-				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-					{ 'number' === typeof req.duration_ms
-						? wholeMs( req.duration_ms )
-						: '—' }
-				</div>
-				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-					{ req.peak_mb > 0 ? `${ req.peak_mb }MB` : '-' }
-				</div>
+				{ REQUEST_COLUMNS.map( ( col ) => (
+					<div
+						key={ col.field }
+						className={ [ cellClass( col ), col.tone?.( req, row ) ]
+							.filter( Boolean )
+							.join( ' ' ) }
+						style={ col.style?.( req, row ) }
+						data-status={ col.dataStatus?.( req, row ) }
+					>
+						{ col.render( req, row ) }
+					</div>
+				) ) }
 			</div>
 		);
 	}
@@ -214,22 +261,27 @@ const RequestRow = memo(
  * `Status Class = 5xx` lists the URL's 5xx responses past the clean ones
  * that bury them. The bucket selection the charts and the Time field edit
  * lives upstream on the same terms, and the server answers it the same way.
+ * So does the Metric, which only redraws what the chart already holds.
  *
- * @param {Object}                                               props                 Component props.
- * @param {Object}                                               props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, aggregate_flame, flame_cut and aggregate_profiles.
- * @param {Array}                                                props.sortedRequests  Recent requests, already sorted by the parent.
- * @param {Object}                                               props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
- * @param {(field: string) => void}                              props.onRequestSort   Receives a field name when a sortable header is clicked.
- * @param {(rid: string) => void}                                props.onSelectRequest Receives a rid from a row click or a scatter-plot dot.
- * @param {string}                                               props.urlHash         The URL's 12-char hash, which the `?` picker asks about.
- * @param {{bucket: string}}                                     props.filters         The bucket selection's spelling the header and list narrow to, '' for none. The dashboard owns it, so it survives a trip to a request and back.
- * @param {(field: string, value: *) => void}                    props.onFilterChange  Receives one field of `filters` and its new value, or an updater of its held one: the Time field's selection, or a chart click's updater.
- * @param {boolean}                                              [props.listing]       Whether the list is being asked afresh under new filters; the rows it holds answer the old ones, so the list alone shows it loading.
- * @param {?string}                                              [props.listError]     Why the last ask for the list was refused, or null; the list keeps what it held.
- * @param {?Object}                                              props.chartSlice      The `url-chart:view` slice: its `query` answer, `loading` and `error`.
- * @param {?Object}                                              props.categoriesSlice The `url-categories:view` slice, likewise.
- * @param {{breakdown: string, thenBy: string, chips: string[]}} props.chart           The chart's question: its dimensions and chips, the chips narrowing the header and list too.
- * @param {(field: string, value: *) => void}                    props.onChartChange   Receives one field of `chart` and its new value.
+ * @param {Object}                                               props                   Component props.
+ * @param {Object}                                               props.urlDetail         The fields this view reads off the `dump_url` payload: stats, requests, aggregate_flame, flame_cut and aggregate_profiles.
+ * @param {Array}                                                props.sortedRequests    Recent requests, already sorted by the parent.
+ * @param {Object}                                               props.requestSort       Current sort as `{ field, dir }`; drives the header arrows only.
+ * @param {(field: string) => void}                              props.onRequestSort     Receives a field name when a sortable header is clicked.
+ * @param {(rid: string) => void}                                props.onSelectRequest   Receives a rid from a row click or a scatter-plot dot.
+ * @param {string}                                               props.urlHash           The URL's 12-char hash, which the `?` picker asks about.
+ * @param {{bucket: string}}                                     props.filters           The bucket selection's spelling the header and list narrow to, '' for none. The dashboard owns it, so it survives a trip to a request and back.
+ * @param {(update: *) => void}                                  props.onBucketChange    Receives the bucket selection's new spelling, or an updater of the one held: the Time field's selection, or a chart click's updater.
+ * @param {boolean}                                              [props.listing]         Whether the list is being asked afresh under new filters; the rows it holds answer the old ones, so the list alone shows it loading.
+ * @param {?string}                                              [props.listError]       Why the last ask for the list was refused, or null; the list keeps what it held.
+ * @param {?Object}                                              props.chartSlice        The `url-chart:view` slice: its `query` answer, `loading` and `error`.
+ * @param {?Object}                                              props.categoriesSlice   The `url-categories:view` slice, likewise.
+ * @param {{breakdown: string, thenBy: string, chips: string[]}} props.chart             The chart's question: its dimensions and chips, the chips narrowing the header and list too.
+ * @param {(breakdown: string) => void}                          props.onBreakdownChange Receives the Breakdown select's new value.
+ * @param {(thenBy: string) => void}                             props.onThenByChange    Receives the Then by select's new value.
+ * @param {(chips: string[]) => void}                            props.onChipsChange     Receives the chips an addition or a removal leaves.
+ * @param {string}                                               props.metric            The chart's metric, a `CHART_METRIC_OPTIONS` value; `memory` also bars each row by its peak memory.
+ * @param {(metric: string) => void}                             props.onMetricChange    Receives the Metric select's new value.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {
@@ -240,23 +292,23 @@ export default function UrlDetailView( {
 	onSelectRequest,
 	urlHash,
 	filters,
-	onFilterChange,
+	onBucketChange,
 	listing = false,
 	listError = null,
 	chartSlice,
 	categoriesSlice,
 	chart,
-	onChartChange,
+	onBreakdownChange,
+	onThenByChange,
+	onChipsChange,
+	metric,
+	onMetricChange,
 } ) {
 	const listRef = useRef( null );
 	const note = narrowedNote( filters.bucket, chart.chips );
-	const setBucket = useCallback(
-		( update ) => onFilterChange( 'bucket', update ),
-		[ onFilterChange ]
-	);
 	const [ selectedBuckets, pickBucket, pickRange ] = useBucketSelection(
 		filters.bucket,
-		setBucket
+		onBucketChange
 	);
 
 	const { startIndex, endIndex, paddingTop, paddingBottom } =
@@ -268,15 +320,13 @@ export default function UrlDetailView( {
 		);
 	const visibleRequests = sortedRequests.slice( startIndex, endIndex );
 
-	const [ chartMetric, setChartMetric ] = useState( 'volume' );
-
 	const maxBar = useMemo(
 		() =>
 			sortedRequests.reduce(
-				( max, r ) => Math.max( max, barValue( r, chartMetric ) ),
+				( max, r ) => Math.max( max, barValue( r, metric ) ),
 				0
 			),
-		[ sortedRequests, chartMetric ]
+		[ sortedRequests, metric ]
 	);
 	const chartAnswer = chartSlice?.data ?? null;
 	const categoryAnswer = categoriesSlice?.data ?? null;
@@ -320,17 +370,15 @@ export default function UrlDetailView( {
 				breakdownRead={ breakdownRead }
 				slots={ axis }
 				storageKey="event-logger-url-detail-chart-aggregate"
-				metric={ chartMetric }
-				setMetric={ setChartMetric }
+				metric={ metric }
+				setMetric={ onMetricChange }
 				breakdown={ chart.breakdown }
-				setBreakdown={ ( value ) =>
-					onChartChange( 'breakdown', value )
-				}
+				setBreakdown={ onBreakdownChange }
 				thenBy={ chart.thenBy }
-				setThenBy={ ( value ) => onChartChange( 'thenBy', value ) }
+				setThenBy={ onThenByChange }
 				breakdownOptions={ SCOPED_BREAKDOWN_OPTIONS }
 				chips={ chart.chips }
-				setChips={ ( chips ) => onChartChange( 'chips', chips ) }
+				setChips={ onChipsChange }
 				chipOptions={ URL_CHIP_OPTIONS }
 				loading={ !! chartSlice?.loading }
 				error={ chartSlice?.error ?? null }
@@ -409,7 +457,7 @@ export default function UrlDetailView( {
 					<BucketField
 						value={ filters.bucket }
 						slots={ axis }
-						onChange={ setBucket }
+						onChange={ onBucketChange }
 					/>
 				</div>
 				{ listError && (
@@ -427,42 +475,22 @@ export default function UrlDetailView( {
 
 				{ /* Outside listRef, so it is never a virtualized row. */ }
 				<div className="event-logger-table__header newspack-nodes-table__header">
-					<SortHeaderButton
-						field="timestamp"
-						label={ __( 'Time', 'newspack-event-logger-nodes' ) }
-						dir={ sortDir( 'timestamp' ) }
-						onSort={ onRequestSort }
-					/>
-					<div className="event-logger-table__cell newspack-nodes-table__cell">
-						{ __( 'Method', 'newspack-event-logger-nodes' ) }
-					</div>
-					<div className="event-logger-table__cell newspack-nodes-table__cell">
-						{ __( 'Request ID', 'newspack-event-logger-nodes' ) }
-					</div>
-					<SortHeaderButton
-						field="status_code"
-						label={ __( 'Status', 'newspack-event-logger-nodes' ) }
-						dir={ sortDir( 'status_code' ) }
-						variant="center"
-						onSort={ onRequestSort }
-					/>
-					<SortHeaderButton
-						field="duration_ms"
-						label={ __(
-							'Duration',
-							'newspack-event-logger-nodes'
-						) }
-						dir={ sortDir( 'duration_ms' ) }
-						variant="numeric"
-						onSort={ onRequestSort }
-					/>
-					<SortHeaderButton
-						field="peak_mb"
-						label={ __( 'Mem', 'newspack-event-logger-nodes' ) }
-						dir={ sortDir( 'peak_mb' ) }
-						variant="numeric"
-						onSort={ onRequestSort }
-					/>
+					{ REQUEST_COLUMNS.map( ( col ) =>
+						col.sortable ? (
+							<SortHeaderButton
+								key={ col.field }
+								field={ col.field }
+								label={ col.label }
+								dir={ sortDir( col.field ) }
+								variant={ col.variant }
+								onSort={ onRequestSort }
+							/>
+						) : (
+							<div key={ col.field } className={ CELL_BASE }>
+								{ col.label }
+							</div>
+						)
+					) }
 				</div>
 
 				<div
@@ -490,7 +518,7 @@ export default function UrlDetailView( {
 									req={ req }
 									onSelect={ onSelectRequest }
 									maxBar={ maxBar }
-									metric={ chartMetric }
+									metric={ metric }
 								/>
 							) ) }
 							<div style={ { height: paddingBottom } } />

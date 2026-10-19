@@ -191,9 +191,9 @@ const DEFAULT_URL_PARAMS = {
 
 /**
  * The URL modal's bucket selection while nothing narrows it: the whole
- * window. The hook's default, and what the dashboard resets to.
+ * window. The hook's default.
  */
-export const NO_DETAIL_FILTERS = { bucket: '' };
+const NO_DETAIL_FILTERS = { bucket: '' };
 
 /**
  * The URL modal chart's question until someone changes it: its status

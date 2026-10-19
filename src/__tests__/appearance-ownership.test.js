@@ -62,9 +62,9 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-table',
 		'newspack-nodes-table__header',
 		'newspack-nodes-table__row',
-		'newspack-nodes-table__cell',
-		'entry-status',
 	],
+	// The cell classes both Performance tables build through `cellClass()`.
+	'overview/constants.js': [ 'newspack-nodes-table__cell', 'entry-status' ],
 	'overview/components/SortHeaderButton.js': [
 		'newspack-nodes-table__cell',
 		'newspack-nodes-sortable-header-button',
@@ -76,9 +76,7 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-table',
 		'newspack-nodes-table__header',
 		'newspack-nodes-table__row',
-		'newspack-nodes-table__cell',
 		'newspack-nodes-empty-state',
-		'entry-status',
 		'newspack-nodes-status',
 	],
 	'overview/components/RequestDetailView.js': [

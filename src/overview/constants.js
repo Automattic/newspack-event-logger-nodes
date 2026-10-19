@@ -45,8 +45,7 @@ export const DASHBOARD_REFRESH_OPTIONS = [
  * count, `avg` the mean millisecond of the timed requests, `cumulative` the
  * summed seconds, `memory` the mean megabyte.
  *
- * `PerformanceDashboard` and `UrlDetailView` each seed their own state with
- * `'volume'`. The list order sets no default.
+ * `DEFAULT_CHART_METRIC` is the default; the list order sets none.
  */
 export const CHART_METRIC_OPTIONS = [
 	{
@@ -196,6 +195,40 @@ export const FILTER_FIELD_OPTIONS = REQUEST_FIELDS.filter(
 } ) );
 
 /**
+ * The fields a URL modal chip may name: every chip field but the URL it is.
+ */
+export const URL_CHIP_OPTIONS = FILTER_FIELD_OPTIONS.filter(
+	( option ) => 'url' !== option.value
+);
+
+/** The classes every table cell carries, header or row. */
+export const CELL_BASE = 'event-logger-table__cell newspack-nodes-table__cell';
+
+/**
+ * Per-kind cell modifiers, for the URL table and the URL modal's requests;
+ * `code` and a column naming no kind add none.
+ */
+const CELL_CLASS = {
+	code: '',
+	mono: ' event-logger-table__cell--mono',
+	numeric: ' event-logger-table__cell--numeric',
+	status: ' event-logger-table__cell--status entry-status',
+};
+
+/**
+ * The class list for one cell, in the header or in a row.
+ *
+ * @param {{kind?: string}} col Column declaration, from the URL table's or
+ *                              the URL modal's request columns.
+ * @return {string} `CELL_BASE` plus the kind's modifier.
+ */
+export const cellClass = ( col ) =>
+	`${ CELL_BASE }${ CELL_CLASS[ col.kind ] ?? '' }`;
+
+/** The two sort directions, and so every `?order=`-style whitelist. */
+export const SORT_ORDERS = [ 'asc', 'desc' ];
+
+/**
  * What the aggregate chart breaks down by until someone chooses otherwise.
  *
  * `PerformanceDashboard` seeds its `chartBreakdown` state with this and
@@ -205,6 +238,12 @@ export const FILTER_FIELD_OPTIONS = REQUEST_FIELDS.filter(
  * staying on `status_class` for the session.
  */
 export const DEFAULT_CHART_BREAKDOWN = 'server';
+
+/**
+ * What every aggregate chart plots until someone chooses otherwise: request
+ * volume. The Overview, the URL table's bars and the URL modal all open on it.
+ */
+export const DEFAULT_CHART_METRIC = 'volume';
 
 /**
  * The series a chart asks `query` for, ranked by `top_by`:

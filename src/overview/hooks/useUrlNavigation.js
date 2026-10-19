@@ -21,6 +21,7 @@
 import {
 	useState,
 	useEffect,
+	useLayoutEffect,
 	useCallback,
 	useMemo,
 	useRef,
@@ -189,8 +190,10 @@ export default function useUrlNavigation( urls ) {
 		[ initialRequestId, initialUrlHash ]
 	);
 
-	// Write the operator's selection back as a history entry.
-	useEffect( () => {
+	// @longform Write the operator's selection back as a history entry. A
+	// layout effect, so the push lands before any passive replaceState write
+	// on the page, and those write into the entry it opened.
+	useLayoutEffect( () => {
 		// Skip when the address bar drove the change — it already says so.
 		if ( isAddressBarNavigation.current ) {
 			isAddressBarNavigation.current = false;
