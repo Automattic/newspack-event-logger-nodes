@@ -1,6 +1,6 @@
 # The Performance dashboard, for TAMs
 
-This guide takes a slow-site report to a named URL and a named cause. It assumes no flame graphs. The reference behind it is [Dashboards](dashboards.md).
+This guide takes a slow-site report to a named URL and a named cause. It assumes you have never read a flame graph. The reference behind it is [Dashboards](dashboards.md).
 
 ## Where it is
 
@@ -8,7 +8,7 @@ wp-admin → **Event Logger** → **Performance**. The menu needs the logger's *
 
 On a **hub**, the dashboard collects many publishers' sites. Each site is one **server**, named by its host.
 
-The address bar carries what you are looking at: the server, the chart's metric, breakdown, Then by and filter chips, and the table's search, sort, **Include Workers** switch, time and page. Copy the link, and a colleague opens the same view.
+The address bar carries what you are looking at: the server, the chart's metric, breakdown, Then by and filter chips, and the table's search, sort, **Include Workers** switch, time and page. An open URL's window rides along too, with its own filter chips, **Time**, chart and **Recent Requests** sort. Copy the link, and a colleague opens the same view.
 
 ## From a report to a cause
 
@@ -22,13 +22,13 @@ The charts always cover the last 24 hours, in five-minute steps, labelled in you
 
 ### 2. Find the slow URL
 
-The table **URLs by Request Count** lists every URL a logging rule recorded in the last 24 hours, busiest first, 100 to a page. A request no rule logs leaves no row, so a URL the report names but the table lacks has no rule logging it: see step 5.
+The table **URLs by Request Count** lists every URL that a logging rule recorded in the last 24 hours, busiest first, 100 to a page. If a URL named in the report is missing even when you search for it, with no chips, Time selection or server chosen, then either it had no traffic in the last 24 hours or no rule logs it: see step 5.
 
 | Column | What it means |
 |---|---|
 | **Reqs** | Requests in the last 24 hours, or in the buckets you chose, that the search, the server and the chart's filter chips keep. |
 | **URL** | The host, the path, and the names of its query with each value shown as `?`: `/?_embed=?&rest_route=/wp/v2/posts` is a REST call, not the homepage. A `rest_route`, `action`, `wc-ajax` or `feed` value is kept, its numbers shown as `?`, and campaign tags such as `utm_source`, `gclid` or `fbclid` are left out. The shaded bar compares the row with the rest of the page, on whatever the chart's **Metric** measures. |
-| **2xx 3xx 4xx 5xx** | The share of the URL's requests in each status class, as a percent. A request that answered no status falls in no column, so the four need not add to 100. |
+| **2xx 3xx 4xx 5xx** | The share of the URL's requests in each status class, as a percent. A request that never returned a status code is not counted in any of the four, so the percentages need not add up to 100. |
 | **Avg**, **Min**, **Max** | Response time in milliseconds: mean, fastest, slowest. A dash means no request to the URL was timed. |
 | **Mem** | Mean peak memory, in MB. |
 | **Last seen** | How long ago the newest request finished. |
@@ -40,7 +40,7 @@ To find the culprit:
 - **Sort by Avg** for a URL that is slow every time. **Sort by Max** for one that is slow now and then.
 - **A URL the report names:** type a word from it into **Search by whole URL word…**, or press `/` to jump there. Each word you type must be a whole word of the URL, and every word must match: `sports` finds `/blog/sports-news` and `sport` does not. The host is not searched.
 - **A time the report names:** convert it to your own time zone, then click that moment on any chart; cmd-click (ctrl-click) adds or removes another five-minute bucket, and dragging across a chart takes a range. Or type it in your local time into the **Time** field beside the search box, as `16:55`, `4:55 PM` where your clock is 12-hour, or a range such as `16:55-17:30`, or pick a bucket from its list. The table narrows to the buckets you chose, shaded on the charts and shown in the field as local spans such as `6:35–6:40 AM`, each with its own × to remove it.
-- **Errors:** add a filter chip in the **Filter** box above the chart. Type `status_class=5xx` for **Status Class = 5xx**, the 5xx responses, most fatal errors among them, or `status_class=unknown` for **Status Class = Unknown**, the requests that answered no status, which is what a timeout is. `error=F` keeps the fatals and `error=T` the timeouts exactly; a fatal that still answered 200 shows under neither status class. Type `!=` to leave something out instead: `status_class!=2xx` keeps every request but the 2xx responses, shown as **Status Class ≠ 2xx**, and `country!=US` every request from outside the US, unknown countries included. A chip on the server is refused: the **Server** selector chooses the site.
+- **Errors:** add a filter chip in the **Filter** box above the chart. Type `status_class=5xx` for **Status Class = 5xx**, the 5xx responses, most fatal errors among them, or `status_class=unknown` for **Status Class = Unknown**, the requests that never returned a status code, as a timed-out request does. `error=F` keeps the fatals and `error=T` the timeouts exactly; a fatal error that still returned 200 is counted as 2xx, not as 5xx or Unknown. Type `!=` to leave something out instead: `status_class!=2xx` keeps every request but the 2xx responses, shown as **Status Class ≠ 2xx**, and `country!=US` every request from outside the US, unknown countries included. A chip on the server is refused: the **Server** selector chooses the site.
 - The chips narrow the chart, the table and the headline stats above it, so every count then describes those requests alone. They leave the three category charts and the **Time Breakdown** describing every request. **Total Errors** in the headline stats counts the timeouts and fatals among the requests shown.
 - The site's own background traffic is hidden until you press **Include Workers**: WP-Cron, the logger's worker processes and their jobs, and the platform's own REST calls. The button changes the table and the headline stats; the charts leave that traffic out unless you add a `worker` chip.
 
@@ -74,18 +74,18 @@ Open a slow request by clicking its row. Its summary gives the URL, time, durati
 
 | Finding | What it tells you |
 |---|---|
-| "The request died in the … plugin" | A fatal error, with the plugin, the file and the line. That is the cause. "The request died outside any plugin" is the same with no plugin to name. |
+| "The request died in the … plugin" | A fatal error, with the plugin, the file and the line. That is the cause. "The request died outside any plugin" is the same finding when no plugin can be named. |
 | "The request stopped logging … in, after …" | The log ends before the request did: it timed out, or its worker stopped it. The finding names the last entry and what was still open there. "…and where it stopped is unknown" means nothing past the request's first lines was logged. |
 | "… holds N% of the request" | One hook, query, HTTP call or event took 60% or more of the request's time. The detail follows that time down, "Inside it, … holds N% of the request", to the work that explains it. Name the deepest. |
 | "… fired N times in one request, holding …" | One caller ran the same hook, query, HTTP call or event 50 or more times for at least 5% of the request, or twice or more for a quarter of it. Often one database query per item on the page. |
 | "Loading N plugins took …" | Starting the plugins took a quarter of the request or more. No logging change will fix it. |
-| "… passed between … and … with nothing logged" | A silent gap of a quarter second or more. Something ran that nothing is timing; where the record allows, the finding gives the least time the process spent on CPU and the least it spent waiting. |
+| "… passed between … and … with nothing logged" | A silent gap of a quarter second or more. Some code ran during the gap, and no rule times it; where the record allows, the finding gives the least time the process spent on CPU and the least it spent waiting. |
 | "The governing rule registers no hooks, so nothing inside the request is measured" | The logger records only that the request happened. See step 5. |
 | "None of the rule's hooks ran in this request" | The rule times hooks, but the request ended before any of them fired. |
 | "Rule … governed this request, and this ruleset does not hold it" | The rule that logged it has since changed or been deleted, or came from a ruleset this hub never pushed. Its findings carry no proposals. Ask the operator. |
 | "This record was folded under memory pressure" | Parts of the log were merged or lost, so a missing entry proves nothing. |
 
-A request under 50 ms, and one that timed out or was aborted, gets no "holds", "fired" or "Loading" finding.
+A request under 50 ms, and one that timed out or was aborted, never gets a "holds", "fired" or "Loading" finding.
 
 "Nothing stands out in the numbers here." means no finding fired. Try a slower request, or one listed under **Status Class = 5xx** or **Status Class = Unknown**.
 
@@ -93,16 +93,16 @@ Below the findings, **Request Trace** draws the request's own flame graph with i
 
 ### 5. When nothing is measured
 
-A logger sees only what the URL's **rule** tells it to time. If the findings say nothing is measured, the URL needs a rule that times more. In the URL's window press **Log this URL**, or **Edit logging rule** if a rule for exactly this path, ending in `?`, already exists. A URL covered only by a broader rule, such as `/blog`, shows **Log this URL**, which opens **Add rule** on a blank rule for this URL alone. That rule outranks `/blog` for this URL, so add back any hooks `/blog` was timing that you still want.
-
-A URL missing from the table has no rule logging it at all. Add one under **Settings** → **Event Logger** → **Logging Rules** → **+ Add Rule**.
+A logger sees only what the URL's **rule** tells it to time. If the findings say nothing is measured, the URL needs a rule that times more. In the URL's window press **Log this URL**, or **Edit logging rule** if a rule for exactly this path, ending in `?`, already exists. A URL covered only by a broader rule, such as `/blog`, shows **Log this URL**, which opens **Add rule** on a blank rule for this URL alone. That rule outranks `/blog` for this URL, so add back any hooks that `/blog` was timing and that you still want.
 
 - Leave **URL pattern** as filled in: it is the URL's path, and the trailing `?` makes the rule cover that path alone, whatever query a request adds to it.
-- Each proposal names its change. For hooks, press **Select Hooks**, search in **Select Hooks to Log**, tick the hooks named after `add_hooks` or `create_rule`, and press **Apply**. For a request nothing times, the proposal is seven hooks that split it into phases: `plugins_loaded`, `setup_theme`, `init`, `wp_loaded`, `template_redirect`, `wp_head` and `shutdown`. An `add_hooks` proposal is addressed to the rule that governed the request, which may be the broader one; adding the hooks here puts them on this URL's own rule instead.
+- Each proposal names its change. For hooks, press **Select Hooks**, search in **Select Hooks to Log**, tick the hooks named after `add_hooks` or `create_rule`, and press **Apply**. For a request in which nothing is timed, the proposal is seven hooks that split it into phases: `plugins_loaded`, `setup_theme`, `init`, `wp_loaded`, `template_redirect`, `wp_head` and `shutdown`. An `add_hooks` proposal is addressed to the rule that governed the request, which may be the broader one; adding the hooks here puts them on this URL's own rule instead.
 - `mark_significant` names a hook to add under **Significant events**: type it and press Enter. The logger then times each of the hook's listeners separately, which is the only way to see which one holds the time, and never retires the hook as noise.
-- Tick **Log HTTP requests** when you suspect a slow outside service, and **Log database queries** when you suspect the database; a `log_transport` proposal names `log_http` or `log_queries`. Query logging makes a query-heavy request much slower, so turn it off once you have your answer.
+- Tick **Log HTTP requests** when you suspect a slow outside service, and **Log database queries** when you suspect the database; a `log_transport` proposal names `log_http` or `log_queries`. Query logging adds two lines to the request's log for every query, so a request that runs hundreds of queries leaves a large record, which may be folded under memory pressure. Turn it off once you have your answer.
 - `trim_hooks`, proposed on a folded record, asks for fewer hooks on the rule, so the next request of its kind is logged whole.
 - Press **Save rule**. It applies at once, but only to requests that arrive after it, so wait for new ones before you look again.
+
+To log a URL that is missing from the table, go to **Settings** → **Event Logger** → **Logging Rules** and press **+ Add Rule**. It opens the same editor with an empty **URL pattern**: type the URL's path followed by `?`, such as `/blog/sports-news?`. Because no request to the URL has been logged yet, no finding proposes hooks for it, so start with the seven phase hooks above.
 
 Saving a rule needs the **tune** capability. Without it the save fails with "permission denied: tune capability required" and the draft is lost, so send the operator the finding and its proposal instead.
 
@@ -116,7 +116,7 @@ The Ask panel builds a **brief**: a Markdown summary of whatever you clicked, wi
 
 A brief carries URLs and request details, so treat it like any other customer data. When Ask Claude puts the brief in the link, your browser history and any proxy that logs URLs keep it; Copy brief does not.
 
-Each brief carries the same caution, and it matters when you read an assistant's answer: the logger times only what the rule names, so **"Unlogged time is unmeasured, not idle."** An assistant that blames the part of a request nobody timed is guessing.
+Each brief carries the same caution, and it matters when you read an assistant's answer: the logger times only what the rule names, so **"Unlogged time is unmeasured, not idle."** An assistant that blames the part of a request that nobody timed is guessing.
 
 ## Connecting Claude to the site
 
@@ -159,16 +159,16 @@ The connection needs a custom `Authorization` header. Claude Code takes one; cla
 
 | Scope | Tools |
 |---|---|
-| read | `performance_overview` and `performance_urls` (the page and its URL table), `dump_url` and `dump_request` (one URL, one request with its findings), `search_requests` and `grep_requests` (find a request by id, or by text in recent traffic), `performance_query` (any count, average or top list the request and timing rows can answer, broken down and filtered by their fields), `performance_ask` (the same briefs as the panel), `dump_rules` (the logging rules) |
+| read | `performance_overview` and `performance_urls` (the page and its URL table), `dump_url` and `dump_request` (one URL, one request with its findings), `search_requests` and `grep_requests` (find a request by id, or by text in recent traffic), `performance_query` (any count, average or top list that the request and timing rows can answer, broken down and filtered by their fields), `performance_ask` (the same briefs as the panel), `dump_rules` (the logging rules) |
 | tune | the above, plus `rules_upsert` and `rules_delete` (change or remove a logging rule) |
 
-`performance_urls`, `dump_url`, `performance_query` and `performance_ask` also take five-minute buckets in UTC, so Claude can look at the moment a publisher reported. A session sees only its scope's tools, and none at all if the site's `allowed_users` list leaves out the login that issued it. It makes at most 20 calls per 10 seconds, counting every call; past that the server answers "Too many MCP calls; please slow down." Every tool result reaches Claude marked as site data, not instructions, because visitors wrote parts of it: a URL or a user agent can say anything.
+`performance_urls`, `dump_url`, `performance_query` and `performance_ask` also take five-minute buckets in UTC, so Claude can look at the moment a publisher reported. A session sees only its scope's tools, and it sees no tools at all if the site's `allowed_users` list leaves out the login that issued it. It makes at most 20 calls per 10 seconds, counting every call; past that the server answers "Too many MCP calls; please slow down." Every tool result reaches Claude marked as site data, not instructions, because visitors wrote parts of it: a URL or a user agent can say anything.
 
 When you are done, revoke the session with its **Revoke** button under **Sessions** rather than waiting for it to expire. `wp nodes session list` and `wp nodes session revoke <handle>` do the same from WP-CLI.
 
 ## What it cannot tell you
 
-- **Anything the rule does not time.** Step 5 is how you widen it.
+- **Anything that the rule does not time.** Step 5 is how you widen it.
 - **Anything below PHP**: the web server, the edge cache, the network before WordPress starts. A request that is fast here but slow for the reader is slow somewhere this dashboard cannot see.
 - **Anything older than seven days**, or than 25 hours for the time by category. The charts and the table show the last 24 hours unless you choose older buckets, and one selection spans at most 24 hours.
 - **One request in full after about a day.** Its log lines and flame graph are kept only as long as the site's log files, a day by default and less on a busy site. An older request still counts in the table, but opening it answers "Request not found".
