@@ -315,7 +315,7 @@
     "/?x%Acredential=[REDACTED]"
   ],
   [
-    "a literal space, which no request line carries, is no segment boundary",
+    "a literal space, which no request line carries, is not a segment boundary",
     "/?api key=nigella3&x=1",
     "/?api key=nigella3&x=1"
   ],

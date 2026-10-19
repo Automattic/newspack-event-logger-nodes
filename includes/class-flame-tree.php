@@ -601,7 +601,7 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * Whether a span is a hook's, as `App\Core::hook_start()` names one — by
+	 * Whether a span belongs to a hook, as `App\Core::hook_start()` names one — by
 	 * the suffix on its base, so a traced frame carrying its caller answers.
 	 *
 	 * @param string $span A span name, as the flame carries it.
@@ -624,7 +624,7 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * Whether a span is one command verb's, as `Diagnostics_Bridge` names it.
+	 * Whether a span belongs to one command verb, as `Diagnostics_Bridge` names it.
 	 *
 	 * @param string $span A span name, as the flame carries it.
 	 * @return bool
@@ -634,8 +634,8 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * Whether a span is a wrapped listener's rather than a hook's or one of
-	 * the application's own custom events.
+	 * Whether a span belongs to a wrapped listener rather than to a hook or to
+	 * one of the application's own custom events.
 	 *
 	 * @param string $span A span name, as the flame carries it.
 	 * @return bool
@@ -819,8 +819,8 @@ final class Flame_Tree {
 	 * children additively (sums-not-means). Each node carries `sum_value`, the
 	 * sum of inclusive durations across every request the node was seen in;
 	 * `finalize_flame_node()` turns that into a display value at flush time.
-	 * An incoming node that carries a `sum_value` of its own is another
-	 * aggregate's, and adds that sum where a request's node adds its `value`.
+	 * An incoming node that carries a `sum_value` of its own comes from
+	 * another aggregate, and adds that sum where a request's node adds its `value`.
 	 *
 	 * Node `name` is the merge key, which is why build_flame_data numbers
 	 * duplicate siblings first. An incoming node's `message` and `t` never

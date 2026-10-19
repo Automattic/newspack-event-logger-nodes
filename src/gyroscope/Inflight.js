@@ -235,7 +235,7 @@ const renderRate = rateLabel(
 );
 
 /**
- * One cell of an in-flight row. State, What, Age and Lag are this table's own;
+ * One cell of an in-flight row. State, What, Age and Lag are this table's own cells;
  * the rest draw through the shared log-table cells.
  *
  * `est` falls back to `time_ms` and then to zero, so a row the producer has not

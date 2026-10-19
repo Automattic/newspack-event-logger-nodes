@@ -1796,7 +1796,7 @@ const options = ( tokens, name ) =>
  * The positional tokens of a command: its source and its group.
  *
  * @param {string[]} tokens The command's argument tokens.
- * @return {string[]} Every token that is no option.
+ * @return {string[]} Every token that is not an option.
  */
 const positional = ( tokens ) =>
 	tokens.filter( ( token ) => ! token.startsWith( '--' ) );

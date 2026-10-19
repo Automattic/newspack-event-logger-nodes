@@ -295,7 +295,6 @@ export default function HookSelectorModal( {
 									{ isExpanded ? '▼' : '▶' }
 								</span>
 								<CheckboxControl
-									__nextHasNoMarginBottom
 									checked={ allSelected }
 									indeterminate={ someSelected }
 									onChange={ () =>
@@ -345,7 +344,6 @@ export default function HookSelectorModal( {
 											>
 												<CheckboxControl
 													id={ hookId }
-													__nextHasNoMarginBottom
 													checked={ chosen.has(
 														hook
 													) }

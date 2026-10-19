@@ -778,7 +778,7 @@ class FindingsTest extends TestCase {
 		);
 	}
 
-	/** A count past the threshold holding a sliver of the request is no finding (eln 7ea9's `sql ×136`). */
+	/** A count past the threshold holding a sliver of the request is not a finding (eln 7ea9's `sql ×136`). */
 	public function test_a_repeat_holding_a_sliver_of_the_request_is_quiet(): void {
 		$record                = $this->healthy_record();
 		$record['duration_ms'] = 10540.0;
@@ -1112,7 +1112,7 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * A window before the engine opens its log is no edge: own time that only
+	 * A window before the engine opens its log is not an edge: own time that only
 	 * an unmeasured start-up fills still asks to see inside the hook.
 	 */
 	public function test_an_unmeasured_engine_start_up_lends_no_edge(): void {
@@ -1278,7 +1278,7 @@ class FindingsTest extends TestCase {
 		$this->assertStringNotContainsString( 'the rest is inside', $found['detail'] );
 	}
 
-	/** The nested engine's CPU is its own process's, which the PHP samples never count. */
+	/** The nested engine's CPU belongs to its own process, which the PHP samples never count. */
 	public function test_a_gap_inside_the_nested_engine_has_no_cpu_split(): void {
 		$record            = $this->healthy_record();
 		$record['entries'] = [
@@ -2409,7 +2409,7 @@ class FindingsTest extends TestCase {
 
 	/**
 	 * A span inside a same-name ancestor is common — a `render_block` nested in
-	 * a `render_block`. The repeat is the ancestor's, so the leaf must read as
+	 * a `render_block`. The repeat belongs to the ancestor, so the leaf must read as
 	 * inside it, never as having run the ancestor's count at its per-call time.
 	 */
 	public function test_a_leaf_inside_a_same_name_repeat_is_not_credited_with_its_count(): void {
@@ -2607,8 +2607,8 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * Only a single-token slug is the profiler's: an application event whose
-	 * name merely ends in "plugin" is still the application's own.
+	 * Only a single-token slug comes from the profiler: an application event
+	 * whose name merely ends in "plugin" still belongs to the application.
 	 */
 	public function test_a_multi_word_custom_event_ending_in_plugin_stays_custom(): void {
 		$record = $this->healthy_record();
@@ -2682,7 +2682,7 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * One load dominating the profiled time is the dominant span's to name,
+	 * One load dominating the profiled time is for the dominant span to name,
 	 * but when the OTHER loads alone still hold a large share of the request,
 	 * that cost belongs to no dominant span and is still reported.
 	 */
@@ -2719,7 +2719,7 @@ class FindingsTest extends TestCase {
 		$this->assertNull( $found );
 	}
 
-	/** The query span is the logger's own: the proposal is `sql` as a significant event, never a custom one. */
+	/** The logger itself writes the query span: the proposal is `sql` as a significant event, never a custom one. */
 	public function test_repetition_of_the_query_span_proposes_it_as_significant_not_custom(): void {
 		$record             = $this->healthy_record();
 		$record['profiles'] = [
@@ -2790,7 +2790,7 @@ class FindingsTest extends TestCase {
 	 * request: hub 2yoz's eight siblings, one holding 7784 of 7942ms, are one
 	 * slow call beside seven quick ones, not eight calls at 992.7ms each.
 	 */
-	public function test_a_group_one_member_dominates_is_no_repeat(): void {
+	public function test_a_group_one_member_dominates_is_not_a_repeat(): void {
 		$members = [ [ 'name' => 'fieldvalues', 'value' => 7784.0, 'children' => [] ] ];
 		for ( $i = 0; $i < 7; $i++ ) {
 			$members[] = [ 'name' => 'fieldvalues', 'value' => 22.6, 'children' => [] ];
@@ -2814,7 +2814,7 @@ class FindingsTest extends TestCase {
 	 * Three loop siblings of 0.8, 12.5 and 3751.8ms: the slowest holds 99.6%
 	 * of the request beside two quick calls, so nothing repeated.
 	 */
-	public function test_one_slow_call_beside_two_quick_ones_is_no_repeat(): void {
+	public function test_one_slow_call_beside_two_quick_ones_does_not_count_as_a_repeat(): void {
 		$loops = [];
 		foreach ( [ 0.8, 12.5, 3751.8 ] as $ms ) {
 			$loops[] = [ 'name' => 'loop', 'value' => $ms, 'children' => [] ];
@@ -2858,9 +2858,9 @@ class FindingsTest extends TestCase {
 
 	/**
 	 * Two calls are alike up to a 5x ratio: most of the time in one call is a
-	 * slow call, not per-item work. 60 and 11ms (5.45x) are no repeat.
+	 * slow call, not per-item work. 60 and 11ms (5.45x) do not count as a repeat.
 	 */
-	public function test_two_calls_past_the_similar_ratio_are_no_repetition(): void {
+	public function test_two_calls_past_the_similar_ratio_are_not_a_repetition(): void {
 		$this->assertNull( $this->of_kind( Findings::for_request( $this->two_call_record( 60.0, 11.0 ), $this->instrumented_rule() ), 'repetition' ) );
 	}
 
@@ -3195,7 +3195,7 @@ class FindingsTest extends TestCase {
 		$this->assertSame( [ 'plugins_loaded', 'setup_theme' ], $found['proposal']['hooks'] );
 	}
 
-	/** A query or a call the logger timed ahead of the window is no hook: the window is still the boot's. */
+	/** A query or a call the logger timed ahead of the window is not a hook: the window still belongs to the boot. */
 	public function test_a_boot_window_after_a_timed_query_proposes_plugins_loaded(): void {
 		$record = $this->boot_record( 0.520, 0.530 );
 		\array_splice( $record['entries'], 5, 0, [
@@ -3270,7 +3270,7 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 'none', $found['proposal']['action'] );
 	}
 
-	public function test_a_later_request_level_gap_is_no_boot_window(): void {
+	public function test_a_later_request_level_gap_is_not_a_boot_window(): void {
 		$found = $this->of_kind( Findings::for_request( $this->boot_record( 0.120, 0.700 ), $this->instrumented_rule() ), 'entry_gap' );
 
 		$this->assertSame( 'wp_loaded hook (start)', $found['metric']['before'] );
@@ -3353,9 +3353,9 @@ class FindingsTest extends TestCase {
 
 	/**
 	 * Five seconds in one call beside 500 calls of 4ms are not calls alike:
-	 * the slow one is the dominant span's to name, so no repeat is claimed.
+	 * the slow one is for the dominant span to name, so no repeat is claimed.
 	 */
-	public function test_calls_unlike_each_other_are_no_repetition(): void {
+	public function test_calls_unlike_each_other_are_not_a_repetition(): void {
 		$record                = $this->repeat_record( $this->frames( 'sql: Slow_Report->rows', [ 5000.0, ...\array_fill( 0, 500, 4.0 ) ] ) );
 		$record['duration_ms'] = 12000.0;
 		$record['flame_data']['value']                = 12000.0;
@@ -3407,7 +3407,7 @@ class FindingsTest extends TestCase {
 	}
 
 	/** A worker's record holds no web request's boot, so the window says nothing about it. */
-	public function test_a_worker_records_first_window_is_no_boot_window(): void {
+	public function test_a_worker_records_first_window_is_not_a_boot_window(): void {
 		$record              = $this->boot_record( 0.520, 0.530 );
 		$record['is_worker'] = true;
 
@@ -3417,8 +3417,8 @@ class FindingsTest extends TestCase {
 		$this->assertStringNotContainsString( 'plugins_loaded', $found['proposal']['why'] );
 	}
 
-	/** A window ending at a command span is the verb's, not the lifecycle's. */
-	public function test_a_window_ending_at_a_command_is_no_boot_window(): void {
+	/** A window ending at a command span belongs to the verb, not to the lifecycle. */
+	public function test_a_window_ending_at_a_command_is_not_a_boot_window(): void {
 		$record                    = $this->boot_record( 0.520, 0.530 );
 		$record['entries'][5]['k'] = 'Performance_CI_Node urls command (start)';
 		$record['entries'][6]['k'] = 'Performance_CI_Node urls command (complete)';
@@ -3479,7 +3479,7 @@ class FindingsTest extends TestCase {
 		$this->assertStringContainsString( 'The dominant span names it inside do_blocks @9; read that finding before changing the rule.', $repetition['detail'] );
 	}
 
-	/** A name on the dominant span's chain is that finding's to tell. */
+	/** A name on the dominant span's chain is for that finding to tell. */
 	public function test_a_name_on_the_chain_is_left_to_the_dominant_span(): void {
 		$record             = $this->descent_record( $this->frames( 'sql: Term_Cache->prime', \array_fill( 0, 450, 3.0 ) ) );
 		$record['profiles'] = [ 'do_blocks @9' => [ 'count' => 60, 'time' => 368.0, 'entries' => [] ] ];
@@ -3512,7 +3512,7 @@ class FindingsTest extends TestCase {
 	 * the slowest call by its own time, which no estimate from the merged
 	 * group may shrink, so the calls are unlike.
 	 */
-	public function test_a_slow_leaf_beside_wrappers_is_no_repetition(): void {
+	public function test_a_slow_leaf_beside_wrappers_is_not_a_repetition(): void {
 		$blocks = [ [ 'name' => 'render_block hook', 'value' => 1000.0, 'children' => [] ] ];
 		for ( $i = 0; $i < 9; $i++ ) {
 			$blocks[] = [ 'name' => 'render_block hook', 'value' => 1000.0, 'children' => $this->frames( 'render_block hook', \array_fill( 0, 10, 99.0 ) ) ];
@@ -3555,7 +3555,7 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 'log_transport', $found['proposal']['action'] );
 	}
 
-	/** Most of a name's calls outside the explained frame are this finding's to act on. */
+	/** Most of a name's calls outside the explained frame are for this finding to act on. */
 	public function test_an_explained_name_mostly_called_elsewhere_keeps_its_proposal(): void {
 		$record = $this->descent_record( $this->frames( 'sql: Term_Cache->prime', \array_fill( 0, 450, 3.0 ) ) );
 		$record['flame_data']['children'][0]['children'][] = [

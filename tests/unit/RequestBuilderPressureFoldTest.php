@@ -457,7 +457,7 @@ class RequestBuilderPressureFoldTest extends TestCase {
 
 	/**
 	 * A head span re-entered past the head — `the_content` inside an excerpt
-	 * it renders — keeps its OWN close: the inner pair is a stranger's.
+	 * it renders — keeps its OWN close: the inner pair belongs to a stranger.
 	 */
 	public function test_a_reentered_head_span_keeps_its_own_close(): void {
 		$sink = new Capture_Sink_Node();

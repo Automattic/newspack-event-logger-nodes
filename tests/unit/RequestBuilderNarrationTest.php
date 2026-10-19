@@ -195,7 +195,7 @@ class RequestBuilderNarrationTest extends TestCase {
 		);
 
 		$lines = self::lines_by_category( $narration );
-		$this->assertEqualsCanonicalizing( [ Flame_Tree::REQUESTS_RESTORE, Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_WRITES ], \array_keys( $lines ), 'a fold is no line of its own' );
+		$this->assertEqualsCanonicalizing( [ Flame_Tree::REQUESTS_RESTORE, Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_WRITES ], \array_keys( $lines ), 'a fold is not a line of its own' );
 		$this->assertSame( 33, \array_sum( $lines ), 'as many lines as a steady lifetime' );
 		$writes = \array_column( self::entries_of( $narration, Flame_Tree::REQUESTS_WRITES ), 'm' );
 		$sum    = static fn ( string $counter ): int => \array_sum( \array_map( static fn ( string $m ): int => \preg_match( "/(?:^| · )(\\d+) {$counter}(?: · |$)/", $m, $hit ) ? (int) $hit[1] : 0, $writes ) );
@@ -470,7 +470,7 @@ class RequestBuilderNarrationTest extends TestCase {
 
 	/**
 	 * The worker's record flows back through the firehose into the builder,
-	 * its narration included. Narration is no traffic, so a builder with
+	 * its narration included. Narration is not traffic, so a builder with
 	 * nothing else to assemble tells one checkpoint and one rollup, for the
 	 * one visit and the record's opening lines, then nothing, the stop's
 	 * sweep and last checkpoint included.
@@ -485,7 +485,7 @@ class RequestBuilderNarrationTest extends TestCase {
 	}
 
 	/**
-	 * A sibling builder's narration is no traffic either: counted, two builders
+	 * A sibling builder's narration is not traffic either: counted, two builders
 	 * each reading the other's record would keep each other telling. Its
 	 * record's own opening lines are lines, and count once.
 	 */

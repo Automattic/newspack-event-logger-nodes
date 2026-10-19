@@ -30,7 +30,7 @@ use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Core;
-// Both plugins have a `Core`; the hook instrumentation is THIS plugin's.
+// Both plugins have a `Core`; the hook instrumentation belongs to THIS one.
 use Newspack_Event_Logger_Nodes\App\Core as Hooks;
 
 \defined( 'ABSPATH' ) || exit;
@@ -341,7 +341,7 @@ class Findings {
 	 *
 	 * With only the request's own span open, any wide window counts. Inside
 	 * any other span a window counts when that span logged child spans and is
-	 * no transport — before its first child, between children or after its
+	 * not a transport — before its first child, between children or after its
 	 * last — judged when the span closes, or when the record ends for a span
 	 * a timed-out record never closed. A span holding only point entries is a
 	 * leaf its duration measures whole, and a transport's self time IS its
@@ -363,7 +363,7 @@ class Findings {
 	 * @param Rule|null                $rule     The governing rule, or null when none does.
 	 * @param array<string,mixed>|null $cold     The cold-start finding, when there is one.
 	 * @param array<string,mixed>|null $dominant The dominant-span finding, when there is one.
-	 * @param bool                     $worker   Whether the record is a worker's.
+	 * @param bool                     $worker   Whether the record belongs to a worker.
 	 * @return array<string,mixed>|null The finding, or null when no gap reaches `GAP_MS`.
 	 */
 	private static function entry_gap( array $entries, ?Rule $rule, ?array $cold, ?array $dominant, bool $worker ): ?array {
@@ -390,7 +390,7 @@ class Findings {
 						'to_i'   => $at,
 						'at_ms'  => ( $from - $origin ) * 1000.0,
 					];
-					// The engine's CPU is a child's, which no sample counts.
+					// The engine runs in a child, whose CPU no sample counts.
 					if ( ! \in_array( Request_Builder_Node::NESTED_PRODUCER, \array_column( $open, 0 ), true ) ) {
 						$cpu      = false === $cpu ? Log_Manager::cpu_between_samples( $entries ) : $cpu;
 						$window  += self::on_cpu( $cpu, $from, $to, $gap );
@@ -568,7 +568,7 @@ class Findings {
 
 	/**
 	 * The wider of the widest gap so far and a closed span's own, which
-	 * counts only where the span held spans and is no transport.
+	 * counts only where the span held spans and is not a transport.
 	 *
 	 * @param Gap_Window|null $worst The widest gap so far.
 	 * @param Open_Span       $frame The span that closed.
@@ -647,8 +647,8 @@ class Findings {
 	 * other are a slow call beside quick ones, for the dominant span to
 	 * name, and no repetition; a name the flame holds no frame of is judged
 	 * by its count.
-	 * A name the dominant span already names, down its chain, is that
-	 * finding's to tell; one it explains, per `defers()`, repeats here too,
+	 * A name the dominant span already names, down its chain, is for
+	 * that finding to tell; one it explains, per `defers()`, repeats here too,
 	 * counted request-wide, and points at that finding in its detail with no
 	 * proposal of its own. It takes the one slot only when no repeat the
 	 * reader can act on qualifies.
@@ -764,7 +764,7 @@ class Findings {
 	}
 
 	/**
-	 * Whether a repeat is the dominant-span finding's to explain: it names
+	 * Whether a repeat is for the dominant-span finding to explain: it names
 	 * the name among its `explained`, and holds `DEFERRED_SHARE` of the
 	 * name's calls in the request inside the frame it explains.
 	 *
@@ -824,7 +824,7 @@ class Findings {
 	 * Plugin files' loads, summed, when together they hold a large share of
 	 * the request. The profiler times each load before any hook can run, so no
 	 * rule edit reaches inside one. A single load holding `DOMINANT_SHARE` is
-	 * `dominant_span()`'s to report, so it is left out here, and the loads
+	 * for `dominant_span()` to report, so it is left out here, and the loads
 	 * beside it are a finding only when they reach `PLUGIN_LOAD_SHARE` alone.
 	 *
 	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
@@ -843,7 +843,7 @@ class Findings {
 			}
 		}
 		\usort( $loads, static fn ( array $a, array $b ): int => $b['ms'] <=> $a['ms'] );
-		// A dominant load is the dominant span's; count only the rest.
+		// A dominant load belongs to the dominant span; count only the rest.
 		if ( [] !== $loads && $loads[0]['ms'] / $duration >= self::DOMINANT_SHARE ) {
 			\array_shift( $loads );
 		}
@@ -1110,7 +1110,7 @@ class Findings {
 	 * The seven kinds of span the flame carries, classified once so every
 	 * caller reaches the same `SPAN_ADVICE` row. A custom event has no
 	 * listeners, and prose crediting it with any sends the reader hunting a
-	 * callback that does not exist. A query or HTTP span is the logger's own,
+	 * callback that does not exist. A query or HTTP span is the logger's own measurement,
 	 * a plugin span is one plugin file's load, a command span is the frame of
 	 * one verb, and an upkeep span is a builder's own work; the last three
 	 * are logged whatever the rule says, and calling any of these a custom
@@ -1448,7 +1448,7 @@ class Findings {
 	/**
 	 * Whether calls are alike: the slowest takes no more than
 	 * `SIMILAR_CALL_FACTOR` times the mean of the others. A lone call has no
-	 * others and is alike; whether one call repeats is the caller's to ask.
+	 * others and is alike; whether one call repeats is for the caller to ask.
 	 *
 	 * @param float $slowest The slowest call.
 	 * @param float $total   What they hold between them.

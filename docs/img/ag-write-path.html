@@ -50,7 +50,7 @@
     <div class="env"><div class="h">the entry, JSON on the wire</div><div class="f">
       <div class="hot"><b>n</b>line, from 1</div><div class="hot"><b>k</b>category</div><div><b>m</b>payload</div><div><b>l</b>label</div><div><b>…</b>more data</div><div class="hot"><b>ts</b>epoch float</div>
     </div></div>
-    <p style="margin-top:7px">Shaded keys are stamped; <span class="mono">m</span>, <span class="mono">l</span> and the rest (<span class="mono">duration_ms</span>, <span class="mono">status_code</span>, <span class="mono">caller</span>, <span class="mono">rule</span>, …) are the caller's. Over the cap the entry goes through <span class="mono">fit_data()</span>, which cuts <span class="mono">m</span> first and never renames the category.</p>
+    <p style="margin-top:7px">Shaded keys are stamped; <span class="mono">m</span>, <span class="mono">l</span> and the rest (<span class="mono">duration_ms</span>, <span class="mono">status_code</span>, <span class="mono">caller</span>, <span class="mono">rule</span>, …) come from the caller. Over the cap the entry goes through <span class="mono">fit_data()</span>, which cuts <span class="mono">m</span> first and never renames the category.</p>
   </div>
   <div class="arr"><svg width="30" height="18" viewBox="0 0 30 18"><path d="M0 9 H24" stroke="#003DA5" stroke-width="2"/><path d="M20 3 L28 9 L20 15 z" fill="#003DA5"/></svg></div>
   <div class="stage" style="flex:1.05">

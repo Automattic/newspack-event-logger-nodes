@@ -141,7 +141,7 @@ class TopologyShapeTest extends TestCase {
 				$named = $this->first_cmd_index( $topo['cmds'], $fb, 'set_facts_target' );
 				$this->assertNotNull( $named, "$name: flame-builder '$fb' never runs set_facts_target" );
 				$table = $topo['cmds'][ $named ]['args'][0] ?? '';
-				$this->assertSame( 'Row_Table', $topo['nodes'][ $table ] ?? null, "$name: flame-builder '$fb' writes to '$table', which is no Row_Table" );
+				$this->assertSame( 'Row_Table', $topo['nodes'][ $table ] ?? null, "$name: flame-builder '$fb' writes to '$table', which is not a Row_Table" );
 			}
 		}
 	}

@@ -16,7 +16,7 @@ import TagToken from './TagToken';
  * @property {string[]}                tokens         Each token's label, in order.
  * @property {(index: number) => void} onRemove       Takes the token at an index away.
  * @property {string}                  [rowClassName] The token row's class; without one the tokens join the caller's row.
- * @property {() => void}              [onClear]      Takes every token away; a Clear all button shows while any is held.
+ * @property {() => void}              [onClear]      Takes every token away; a Clear all button shows beside the box while any is held, the two wrapping as one.
  */
 
 /**
@@ -58,6 +58,22 @@ export default function TokenInput( {
 			) }
 		/>
 	) );
+	const box = (
+		<CommitInput
+			{ ...commitInputProps }
+			id={ boxId }
+			onKeyDown={ ( event ) => {
+				if (
+					'Backspace' === event.key &&
+					! event.currentTarget.value &&
+					tokens.length
+				) {
+					event.preventDefault();
+					onRemove( tokens.length - 1 );
+				}
+			} }
+		/>
+	);
 	return (
 		<>
 			{ rowClassName
@@ -65,28 +81,21 @@ export default function TokenInput( {
 						<div className={ rowClassName }>{ drawn }</div>
 				  )
 				: drawn }
-			<CommitInput
-				{ ...commitInputProps }
-				id={ boxId }
-				onKeyDown={ ( event ) => {
-					if (
-						'Backspace' === event.key &&
-						! event.currentTarget.value &&
-						tokens.length
-					) {
-						event.preventDefault();
-						onRemove( tokens.length - 1 );
-					}
-				} }
-			/>
-			{ onClear && tokens.length > 0 && (
-				<button
-					type="button"
-					className="button-link event-logger-tag-clear"
-					onClick={ toBox( onClear ) }
-				>
-					{ __( 'Clear all', 'newspack-event-logger-nodes' ) }
-				</button>
+			{ onClear ? (
+				<span className="event-logger-tag-entry">
+					{ box }
+					{ tokens.length > 0 && (
+						<button
+							type="button"
+							className="button-link event-logger-tag-clear"
+							onClick={ toBox( onClear ) }
+						>
+							{ __( 'Clear all', 'newspack-event-logger-nodes' ) }
+						</button>
+					) }
+				</span>
+			) : (
+				box
 			) }
 		</>
 	);

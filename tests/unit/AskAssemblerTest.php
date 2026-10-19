@@ -61,7 +61,7 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	public function test_a_url_brief_states_and_re_fetches_its_scope(): void {
-		// The brief's numbers are one server's; its `fetch` pointer is how an
+		// The brief's numbers cover one server; its `fetch` pointer is how an
 		// agent gets the rest. Without the scope on it, following the pointer
 		// answers site-wide for the same hash, and nothing in the brief says
 		// which of the two contradicting sets it was looking at.
@@ -155,7 +155,7 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	/** A request brief names its server in its URL alone; the env block carries no server field. */
-	/** A brief has to say a duration is a timeout's, or a model reads it as a cost. */
+	/** A brief has to say a duration belongs to a timeout, or a model reads it as a cost. */
 	public function test_a_request_brief_carries_the_error_status(): void {
 		$record                 = $this->record();
 		$record['error_status'] = 'F';
@@ -264,7 +264,7 @@ class AskAssemblerTest extends TestCase {
 	public function test_a_request_brief_summarises_a_loaded_records_flame(): void {
 		$brief = Ask_Assembler::for_request( $this->loaded_record(), $this->rule() );
 
-		$this->assertArrayNotHasKey( 'profiled_ms', $brief['flame'], 'a flame value is no measurement (decision 12)' );
+		$this->assertArrayNotHasKey( 'profiled_ms', $brief['flame'], 'a flame value is not a measurement (decision 12)' );
 		$this->assertSame(
 			[ 'wp_loaded', 'init' ],
 			\array_column( $brief['flame']['top_level'], 'name' )
@@ -770,8 +770,8 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	public function test_a_category_brief_refuses_a_callback_row_and_ignores_negative_priorities(): void {
-		// A callback row is its category's, not a board of its own; a negative
-		// priority is a callback row too.
+		// A callback row belongs to its category, not to a board of its own; a
+		// negative priority is a callback row too.
 		$board = [
 			'count'      => 4,
 			'categories' => [
@@ -905,7 +905,7 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	/**
-	 * The page's own brief: the numbers on screen are the FILTERED set's, so
+	 * The page's own brief: the numbers on screen describe the FILTERED set, so
 	 * the scope rides with them. A brief that quoted site-wide totals under a
 	 * server filter would describe a different site than the one being read.
 	 */

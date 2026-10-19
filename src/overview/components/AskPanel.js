@@ -51,7 +51,7 @@ import { filterTokens, withoutUrlChips } from '../chartSlots';
  * where a server can narrow the answer: a `url:` brief, a `category:` brief
  * from the leaderboard, and the URL pointer a request picked under a URL
  * carries. A span or category inside the URL modal answers from the URL's
- * aggregate, which is every server's; a request, and anything inside it, one
+ * aggregate, which covers every server; a request, and anything inside it, one
  * server already served.
  *
  * @param {Object}   options

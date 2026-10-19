@@ -15,7 +15,7 @@
  * ONE node per path where an unfolded one reaches it as N numbered siblings, so
  * that aggregate's shape depends on whether a request folded. A merged node
  * also declines the extent covering `Flame_Tree` gives a positioned family —
- * `t` is one instance's and `value` is every instance's, so it keeps the sum
+ * `t` belongs to one instance and `value` sums every instance, so it keeps the sum
  * instead, and can read lower than the unfolded tree by the gaps it no longer
  * paints. Every stat outside the flame — leaderboard, categories, hourly,
  * per-URL — reads the record's own duration and `profiles`, so those are
@@ -574,7 +574,7 @@ final class Flame_Fold {
 	/**
 	 * The offset a node can be laid out from, or null when it stands for no
 	 * single span. A merged node's `t` is its earliest instance's start while
-	 * `value` totals them all, so `t + value` is no instance's end and a gap
+	 * `value` totals them all, so `t + value` is not the end of any instance and a gap
 	 * measured from it is fiction — the sum is its only honest width.
 	 *
 	 * @param array<array-key,mixed> $node Folded node.

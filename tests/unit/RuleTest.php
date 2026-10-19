@@ -178,7 +178,7 @@ final class RuleTest extends TestCase {
 		$this->assertFalse( $rule->marks_significant( 'wp_loaded' ) );
 	}
 
-	/** Each transport's gate is its own flag, and a name that is no transport is refused. */
+	/** Each transport's gate is its own flag, and a name that is not a transport is refused. */
 	public function test_logs_transport_reads_the_flag_its_span_needs(): void {
 		$rule = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, log_http: true );
 

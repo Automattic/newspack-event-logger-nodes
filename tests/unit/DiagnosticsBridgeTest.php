@@ -122,7 +122,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		$this->assertArrayNotHasKey( 'l', $done[0] );
 	}
 
-	/** A config interpreter is its patron's: the span names the patron's make_node type. */
+	/** A config interpreter belongs to its patron: the span names the patron's make_node type. */
 	public function test_a_patrons_interpreter_names_its_span_for_the_patron(): void {
 		$lm = $this->started_log_manager();
 		self::wrapped( self::interpreter( 'kakapo:config', new \Newspack_Nodes\Tee_Node() ), 'probe7735', static fn (): string => 'ok' );
@@ -165,7 +165,7 @@ class DiagnosticsBridgeTest extends TestCase {
 
 	/**
 	 * Logging never changes whether a verb runs: a dispatch whose arguments
-	 * are no token list — a nested array, a keyed map — runs and is logged.
+	 * are not a token list — a nested array, a keyed map — runs and is logged.
 	 */
 	public function test_a_logged_verb_runs_whatever_arguments_it_was_dispatched_with(): void {
 		$lm    = $this->started_log_manager();

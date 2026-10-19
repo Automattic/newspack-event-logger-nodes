@@ -130,7 +130,7 @@ final class UninstallStatsTablesTest extends TestCase {
 	/**
 	 * Uninstall reads the plugin's own topologies alone: another plugin's
 	 * broken `.tsl` cannot block it, and a table another plugin declares with
-	 * this schema is that plugin's to clean up.
+	 * this schema is for that plugin to clean up.
 	 */
 	public function test_uninstall_reads_its_own_topologies_and_no_others(): void {
 		$this->use_base_dir( $this->make_temp_dir( 'uninstall-stats-foreign-' ) );
@@ -211,7 +211,7 @@ final class UninstallStatsTablesTest extends TestCase {
 	}
 
 	public function test_uninstall_leaves_the_base_every_unconfigured_install_shares(): void {
-		// The default base is every unconfigured install's, and so its files.
+		// Every unconfigured install shares the default base, and so its files.
 		$default = \Newspack_Nodes\Settings_Schema::get()->defaults()['base_directory'];
 		$this->use_base_dir( $this->make_temp_dir( 'uninstall-stats-default-' ) );
 		\file_put_contents( \getenv( 'LOCAL_NEWSPACK_NODES_CONF' ), "<?php\nreturn [ 'base_directory' => '{$default}' ];\n" );

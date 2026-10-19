@@ -297,7 +297,7 @@ const siteScope = ( serverFilter ) => ( {
 
 /**
  * The scope a URL chart asks under: the URL, worker traffic counted as
- * `dump_url` counts it, and the server's alone under a server filter.
+ * `dump_url` counts it, and only that server's traffic under a server filter.
  *
  * @param {string} hash         The URL hash.
  * @param {string} serverFilter Server scope; '' means every server.

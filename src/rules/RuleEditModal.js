@@ -30,6 +30,7 @@ import { useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import {
 	BaseControl,
+	useBaseControlProps,
 	Modal,
 	TextControl,
 	SelectControl,
@@ -86,7 +87,7 @@ function toNumber( value, parse ) {
  * @param {(draft: Object) => void} props.onSave      Called with the assembled draft once the pattern validates.
  * @param {() => void}              props.onCancel    Dismiss handler (Cancel / ESC / backdrop).
  * @param {(() => void)|undefined}  [props.onDelete]  Delete handler; omitting it hides the delete button.
- * @param {string}                  [props.className] EXTRA class names; the skin classes are the modal's own.
+ * @param {string}                  [props.className] EXTRA class names; the modal supplies its own skin classes.
  * @return {import('react').ReactElement} The modal.
  */
 export default function RuleEditModal( {
@@ -109,6 +110,13 @@ export default function RuleEditModal( {
 	const [ significant, setSignificant ] = useState(
 		Array.isArray( rule?.significant_events ) ? rule.significant_events : []
 	);
+	// The box gets a real label, and its help as its description.
+	const significantBase = useBaseControlProps( {
+		help: __(
+			'Press Enter to add one. Each is timed per callback, and auto-disable never removes it.',
+			'newspack-event-logger-nodes'
+		),
+	} );
 	const [ autoDisable, setAutoDisable ] = useState(
 		String( rule?.auto_disable_threshold ?? 0 )
 	);
@@ -189,7 +197,6 @@ export default function RuleEditModal( {
 				<div className="rule-edit-body">
 					<TextControl
 						__next40pxDefaultSize
-						__nextHasNoMarginBottom
 						label={ __(
 							'URL pattern',
 							'newspack-event-logger-nodes'
@@ -205,7 +212,6 @@ export default function RuleEditModal( {
 
 					<SelectControl
 						__next40pxDefaultSize
-						__nextHasNoMarginBottom
 						label={ __( 'Action', 'newspack-event-logger-nodes' ) }
 						name="rule-action"
 						value={ action }
@@ -292,30 +298,25 @@ export default function RuleEditModal( {
 								</span>
 							</div>
 
-							<div className="rule-edit-tag-field components-base-control">
-								<BaseControl.VisualLabel className="rule-edit-field-label">
-									{ __(
-										'Significant events',
-										'newspack-event-logger-nodes'
-									) }
-								</BaseControl.VisualLabel>
+							<BaseControl
+								{ ...significantBase.baseControlProps }
+								id={ significantBase.baseControlProps.id }
+								className="rule-edit-tag-field"
+								label={ __(
+									'Significant events',
+									'newspack-event-logger-nodes'
+								) }
+							>
 								<TagInputField
+									{ ...significantBase.controlProps }
 									initialValues={ significant }
 									onChange={ setSignificant }
-									horizontal
 								/>
-								<p className="components-base-control__help">
-									{ __(
-										'Events/hooks protected from auto-disable.',
-										'newspack-event-logger-nodes'
-									) }
-								</p>
-							</div>
+							</BaseControl>
 
 							<div className="rule-edit-threshold-row">
 								<TextControl
 									__next40pxDefaultSize
-									__nextHasNoMarginBottom
 									type="number"
 									label={ __(
 										'Auto-disable threshold',
@@ -332,7 +333,6 @@ export default function RuleEditModal( {
 
 								<TextControl
 									__next40pxDefaultSize
-									__nextHasNoMarginBottom
 									type="number"
 									label={ __(
 										'Auto-protect time threshold (ms)',
@@ -350,7 +350,6 @@ export default function RuleEditModal( {
 
 							<CheckboxControl
 								name="rule-log-queries"
-								__nextHasNoMarginBottom
 								label={ __(
 									'Log database queries',
 									'newspack-event-logger-nodes'
@@ -364,7 +363,6 @@ export default function RuleEditModal( {
 							/>
 
 							<CheckboxControl
-								__nextHasNoMarginBottom
 								name="rule-log-http"
 								label={ __(
 									'Log HTTP requests',
@@ -379,7 +377,6 @@ export default function RuleEditModal( {
 							/>
 
 							<CheckboxControl
-								__nextHasNoMarginBottom
 								name="rule-log-plugin-loads"
 								label={ __(
 									'Log plugin load time',
@@ -395,7 +392,6 @@ export default function RuleEditModal( {
 
 							<div className="rule-edit-trace-row">
 								<CheckboxControl
-									__nextHasNoMarginBottom
 									name="rule-trace-hooks"
 									label={ __(
 										'Trace hook callers',
@@ -420,7 +416,6 @@ export default function RuleEditModal( {
 									<div className="rule-edit-trace-count">
 										<TextControl
 											__next40pxDefaultSize
-											__nextHasNoMarginBottom
 											hideLabelFromVision
 											type="number"
 											label={ __(

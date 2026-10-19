@@ -539,7 +539,7 @@ final class StatsQueryTest extends TestCase {
 		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => $measures, 'buckets' => $this->last_day() ] ) );
 
 		$this->assertSame( $measures, $r['columns'] );
-		$this->assertSame( [ [ 3, 2, 120.0, 60.0, 80.0, 40.0, 60.0, 20.0, 30.0, 2, 2, (float) self::NOW - 20.25 ] ], $r['rows'], 'an abort is no error, and the URL seen twice in two partitions counts once' );
+		$this->assertSame( [ [ 3, 2, 120.0, 60.0, 80.0, 40.0, 60.0, 20.0, 30.0, 2, 2, (float) self::NOW - 20.25 ] ], $r['rows'], 'an abort is not an error, and the URL seen twice in two partitions counts once' );
 	}
 
 	public function test_status_class_counts_and_worker_measure_each_group(): void {
@@ -1262,7 +1262,7 @@ final class StatsQueryTest extends TestCase {
 		}
 	}
 
-	public function test_a_timing_measure_is_no_request_measure(): void {
+	public function test_a_timing_measure_is_not_a_request_measure(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'avg_calls' );
 
@@ -1306,7 +1306,7 @@ final class StatsQueryTest extends TestCase {
 
 		$this->assertSame( [ 'count' ], $r['columns'] );
 		$this->assertSame( [], $r['rows'] );
-		$this->assertTrue( $r['available'], 'no file written yet is no stats, not a stats file that will not open' );
+		$this->assertTrue( $r['available'], 'no file written yet means no stats, not a stats file that will not open' );
 	}
 
 	public function test_a_partition_with_no_file_beside_one_with_rows_answers_their_rows(): void {
@@ -1432,7 +1432,7 @@ final class StatsQueryTest extends TestCase {
 	}
 
 	/** A rid filters; it groups nothing and ranks nothing. */
-	public function test_a_rid_filters_but_is_no_group(): void {
+	public function test_a_rid_filters_but_is_not_a_group(): void {
 		$this->seed_request( [ 'rid' => 'rid-ruru-6631', 'server' => 'kea.example' ] );
 		$this->seed_request( [ 'rid' => 'rid-ruru-6632', 'server' => 'kea.example' ] );
 

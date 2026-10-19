@@ -92,7 +92,7 @@ The substrate's security model tables its own doors: the auth, spawn, health-run
 
 [MCP: one route, eleven tools](architecture-guide.md#mcp-one-route-eleven-tools) covers the MCP server; [The profiler drop-in](architecture-guide.md#the-profiler-drop-in) covers the mu-plugin.
 
-Two substrate doors bear on the logger's data. `read` reaches the raw firehose and every registered log source, so any `read` holder can pull the last 64 KB of the PHP error log; that is by design. A `manage_options` holder who adds `wp-config.php` as a log source hands every `read` account the salts the command-signing secret and the Vault key derive from, a mistake rather than an escalation. Both are the substrate's, and [its security model](https://github.com/Automattic/newspack-nodes/blob/main/docs/security-model.md#the-other-doors) describes them.
+Two substrate doors bear on the logger's data. `read` reaches the raw firehose and every registered log source, so any `read` holder can pull the last 64 KB of the PHP error log; that is by design. A `manage_options` holder who adds `wp-config.php` as a log source hands every `read` account the salts the command-signing secret and the Vault key derive from, a mistake rather than an escalation. Both belong to the substrate, and [its security model](https://github.com/Automattic/newspack-nodes/blob/main/docs/security-model.md#the-other-doors) describes them.
 
 ## Tradeoffs
 

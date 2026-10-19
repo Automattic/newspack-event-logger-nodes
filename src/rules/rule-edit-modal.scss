@@ -46,15 +46,8 @@
 		margin: 8px 0 0;
 	}
 
-	.rule-edit-tag-field {
-		.event-logger-tag-input {
-			max-width: none;
-			width: 100%;
-		}
-
-		.event-logger-tag-input input {
-			width: 100%;
-		}
+	.rule-edit-tag-field .event-logger-tag-input {
+		max-width: none;
 	}
 
 	.rule-edit-threshold-row {

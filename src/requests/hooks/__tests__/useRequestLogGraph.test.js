@@ -447,7 +447,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 	} );
 } );
 
-// The segment rail is the substrate's, handed over ready-made on
+// The substrate builds the segment rail and hands it over ready-made on
 // `browse.sidebar`; a browse is a CLICK on it, as the user makes it.
 function railItems( browse ) {
 	const rail = renderComponent( browse.sidebar );

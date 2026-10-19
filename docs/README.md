@@ -1,6 +1,6 @@
 # Documentation
 
-The Event Logger is an application on the newspack-nodes runtime. Its vocabulary, node, message, topology, partition and the rest, is the substrate's; read [the substrate's map](https://github.com/Automattic/newspack-nodes/blob/main/docs/README.md) first if any of those words is new.
+The Event Logger is an application on the newspack-nodes runtime. Its vocabulary, node, message, topology, partition and the rest, comes from the substrate; read [the substrate's map](https://github.com/Automattic/newspack-nodes/blob/main/docs/README.md) first if any of those words is new.
 
 ## Understand it
 

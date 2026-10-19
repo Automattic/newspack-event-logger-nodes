@@ -53,7 +53,6 @@ export default function SelectorModal( {
 			<div className="event-logger-selector-modal__header">
 				<SearchControl
 					__next40pxDefaultSize
-					__nextHasNoMarginBottom
 					value={ search }
 					onChange={ onSearch }
 					placeholder={ placeholder }

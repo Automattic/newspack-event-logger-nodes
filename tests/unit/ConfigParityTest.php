@@ -34,9 +34,9 @@ class ConfigParityTest extends TestCase {
 
 	/**
 	 * Two suites running at once each tear their own trees down, so every
-	 * base a config names is this process's: `bootstrap.php` sets it per PID.
+	 * base a config names belongs to this process: `bootstrap.php` sets it per PID.
 	 */
-	public function test_every_base_directory_is_this_process_own(): void {
+	public function test_every_base_directory_belongs_to_this_process(): void {
 		$base = \sys_get_temp_dir() . '/newspack-event-logger-nodes-test-' . \getmypid();
 
 		$this->assertSame( $base, \getenv( 'NEWSPACK_TEST_BASE_DIR' ) );

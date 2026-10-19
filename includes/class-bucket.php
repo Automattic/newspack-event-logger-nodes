@@ -44,9 +44,9 @@ final class Bucket {
 	 * @param int    $now      The clock; a bucket after the one it falls in holds no rows.
 	 * @param int    $max      Most buckets it may name: `MAX_SELECTION` for a chart, a source's retention for a query.
 	 * @return list<array{0:int,1:int}> First and last bucket id of each run.
-	 * @throws \InvalidArgumentException On a piece that is no five-minute key, a run
+	 * @throws \InvalidArgumentException On a piece that is not a five-minute key, a run
 	 *                                   ending before it starts, a bucket after
-	 *                                   `$now`'s, or more than `$max` buckets.
+	 *                                   the one holding `$now`, or more than `$max` buckets.
 	 */
 	public static function selection( string $spelling, int $now, int $max ): array {
 		if ( '' === $spelling ) {

@@ -9,7 +9,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
  * `Log_Manager` itself writes through. Read by `Newspack_Nodes\Log_Cleaner` to
  * protect `{base}/logs/firehose.p{N}/` from the flat-layout log GC — those dirs
  * are written from request scope and declared in no `.tsl`, so without this
- * registration the GC would orphan them. `jobintake` is `Job_Intake`'s,
+ * registration the GC would orphan them. `jobintake` belongs to `Job_Intake`,
  * substrate code that registers itself.
  */
 class RegisteredLogProducersTest extends TestCase {

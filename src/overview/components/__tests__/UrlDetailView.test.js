@@ -726,7 +726,7 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 'draws no series under dimensions its answer was not asked by', () => {
-		// The answer in hand is the status classes'; the dropdown reads JA4.
+		// The answer in hand breaks down by status class; the dropdown reads JA4.
 		const { container, unmount } = mount( {
 			chart: { breakdown: 'ja4', thenBy: '', chips: [] },
 			chartSlice: sliceOf(

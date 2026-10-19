@@ -76,7 +76,7 @@ class ElnConfigTokenTest extends TestCase {
 	}
 
 	public function test_a_declaration_in_an_included_file_only_makes_a_spoke(): void {
-		// Frontmatter is the top-level file's alone, as num_partitions is.
+		// Only the top-level file's frontmatter counts, as for num_partitions.
 		$dir = $this->make_temp_dir( 'eln-hub-included-' );
 		\file_put_contents( "{$dir}/numbat-core.tsl", "var is_hub = 1\nmake_node Echo numbat-echo-7702\n" );
 		\file_put_contents( "{$dir}/numbat-shell.tsl", "include numbat-core\n" );

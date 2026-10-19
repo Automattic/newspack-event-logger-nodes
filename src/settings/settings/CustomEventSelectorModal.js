@@ -148,7 +148,6 @@ export default function CustomEventSelectorModal( {
 						>
 							<CheckboxControl
 								id={ eventId }
-								__nextHasNoMarginBottom
 								checked={ isSelected }
 								onChange={ () => chosen.toggle( event ) }
 							/>

@@ -162,7 +162,7 @@
 
   <div class="card" id="b5" style="margin-top:10px"><div class="where">GyroscopeViewNode · _updateRequestsPerSecond()</div>
     <h3>rps: the reaped completions over a 10 s window</h3>
-    <p>Each snapshot files its completions under the current second; a bucket 10 s old leaves the running total, and <span class="mono">rps</span> = total ÷ 10. A silent stream decays to 0 over about 10 s. The clock is the snapshot's, not the completion's.</p>
+    <p>Each snapshot files its completions under the current second; a bucket 10 s old leaves the running total, and <span class="mono">rps</span> = total ÷ 10. A silent stream decays to 0 over about 10 s. The clock comes from the snapshot, not from the completion.</p>
   </div>
 </div>
 </div>

@@ -64,7 +64,7 @@
 
 <div class="notes">
   <div class="card"><h3>The fleet name scopes every cursor</h3><p><span class="mono">&lt;topology&gt;</span> rides every offsetlog and dead-letter path, so a <span class="mono">request-builder</span> fleet and a <span class="mono">job-router</span> fleet tailing the same <span class="mono">firehose.pN</span> keep separate cursors. Composing them collapses that byte-identical Consumer line into one reader.</p></div>
-  <div class="card"><h3>One <span class="mono">&lt;eln:&gt;</span> token</h3><p><span class="mono">is_hub</span>, which a hub's own frontmatter declares; the stats rows take no token, because their schema declares each window. <span class="mono">&lt;config:…&gt;</span>, <span class="mono">&lt;partition&gt;</span> and <span class="mono">&lt;topology&gt;</span> are the substrate's.</p></div>
+  <div class="card"><h3>One <span class="mono">&lt;eln:&gt;</span> token</h3><p><span class="mono">is_hub</span>, which a hub's own frontmatter declares; the stats rows take no token, because their schema declares each window. <span class="mono">&lt;config:…&gt;</span>, <span class="mono">&lt;partition&gt;</span> and <span class="mono">&lt;topology&gt;</span> belong to the substrate.</p></div>
   <div class="card"><h3>Shell names, not class names</h3><p><span class="mono">make_node Request_Builder</span> resolves to <span class="mono">\Newspack_Event_Logger_Nodes\Request_Builder_Node</span> by scanning the registered namespace prefixes; <span class="mono">Consumer</span>, <span class="mono">Partition</span>, <span class="mono">Tee</span>, <span class="mono">Topic</span>, <span class="mono">Age_Sieve</span> and <span class="mono">Remote_Source</span> resolve under the substrate's.</p></div>
 </div>
 </div>

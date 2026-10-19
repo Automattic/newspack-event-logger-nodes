@@ -233,7 +233,7 @@ describe( 'CategoryTimeChart', () => {
 	it( 'draws nothing for a malformed reply', () => {
 		const { container, unmount } = renderComponent(
 			categoryChart( {
-				// A measure that is no number: an answer refused whole.
+				// A measure that is not a number: an answer refused whole.
 				data: cats( {
 					[ bucketKeyNow() ]: { memcache: [ 8123, '419' ] },
 				} ),
@@ -349,7 +349,7 @@ describe( 'CategoryTimeChart', () => {
 	 * that's the function that calls formatYValue (the top-level helper) for
 	 * each series value, so invoking it drives coverage of formatYValue's
 	 * branches without exporting it. The render mounts every view in order, so
-	 * the last VIEW_COUNT calls are this render's, indexed the same way.
+	 * the last VIEW_COUNT calls belong to this render, indexed the same way.
 	 *
 	 * @param {number} view Index into the panel's views: time, count, average.
 	 * @return {Function} That view's formatEntry callback.

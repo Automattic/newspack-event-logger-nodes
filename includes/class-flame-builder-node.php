@@ -195,10 +195,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	private array $name_at = [];
 
 	/**
-	 * Each category's summed ms and calls over the non-worker requests the
-	 * batch holds: the significant-event signal's window.
+	 * Each rule's categories, summed ms and calls over the requests the batch
+	 * holds under it: the significant-event signal's window.
 	 *
-	 * @var array<string,array{0:float,1:int}>
+	 * @var array<string,array<string,array{0:float,1:int}>>
 	 */
 	private array $category_sums = [];
 
@@ -250,11 +250,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * answer to an ask a write made, not a record.
 	 *
 	 * A completed request becomes a flame tree, is forwarded to the flames
-	 * partition, and is buffered as rows. A record whose URL names no host
-	 * throws `InvalidArgumentException` before any of that, so the Consumer
-	 * dead-letters it and reads on. Any other message is dropped. The record
-	 * that brings the buffer to BUFFERED_REQUESTS_LIMIT requests or
-	 * BUFFERED_OPS_LIMIT ops writes it.
+	 * partition, and is buffered as rows. A record whose URL does not name a
+	 * host throws `InvalidArgumentException` before any of that, so the
+	 * Consumer dead-letters it and reads on. Any other message is dropped.
+	 * The record that brings the buffer to BUFFERED_REQUESTS_LIMIT requests
+	 * or BUFFERED_OPS_LIMIT ops writes it.
 	 *
 	 * The message runs inside `deferring()`, which holds a cooperative stop a
 	 * downstream forward raises until this message's own bookkeeping is
@@ -317,7 +317,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 		$rid = Core::str( $request['rid'] ?? '' );
 		if ( '' === $rid ) {
-			throw new \InvalidArgumentException( \esc_html( "Flame_Builder: a record for {$url} carries no rid" ) );
+			throw new \InvalidArgumentException( \esc_html( "Flame_Builder: a record for {$url} must not carry a rid" ) );
 		}
 		$url_hash = Log_Manager::url_hash( $url );
 		$entries  = $request['entries'] ?? [];
@@ -328,8 +328,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		// @longform A record carries EITHER raw entries or — when
 		// Request_Builder folded it under memory pressure — the merged tree it
 		// built instead. Every record already on disk carries entries, so
-		// accepting both shapes is what makes the fold cost no rewrite of
-		// history and no dual-write window.
+		// accepting both shapes frees the fold from costing a rewrite of
+		// history or a dual-write window.
 		$prebuilt = $request['flame'] ?? null;
 		/** @var array<string,mixed> $flame_data */
 		$flame_data          = \is_array( $prebuilt ) && [] !== $prebuilt
@@ -373,7 +373,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * index formatter (`format_index_entry`, registered as `flame-index` and
 	 * installed by the topology's `with_index` verb) reads them off VALUE.
 	 *
-	 * Writing is optional: with no target or no sink the flame is simply not
+	 * Writing is optional: without a target or sink the flame is simply not
 	 * persisted, and the caller buffers its rows either way.
 	 *
 	 * @param string               $rid        Request ID.
@@ -426,9 +426,9 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * Filed where it COMPLETED (decision 19): its start plus its duration,
 	 * clamped to the tick, since a request cannot have finished after it
 	 * reached the builder and a reader walks back from the wall. A timeout's
-	 * or an abort's duration is no sample (decision 24), so its row times
-	 * nothing and it writes no timing row; workers write their timings too,
-	 * under `worker` 1, which a site-wide reader leaves out.
+	 * or an abort's duration is not a sample (decision 24), so its row times
+	 * nothing and it does not write a timing row; workers write their timings
+	 * too, under `worker` 1, which a site-wide reader leaves out.
 	 *
 	 * @param array<array-key,mixed> $request  The record, its method labelled.
 	 * @param string                 $rid      Its request id.
@@ -436,10 +436,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param string                 $url      The request's URL.
 	 * @param string                 $url_hash Its `Log_Manager::url_hash()`.
 	 * @param string                 $server   Its host.
-	 * @throws \LogicException When no partition is bound, so no row can name one.
+	 * @throws \LogicException When no partition is bound, so a row can not name one.
 	 */
 	private function buffer_request( array $request, string $rid, string $crumb, string $url, string $url_hash, string $server ): void {
-		$partition = Core::bound_partition() ?? throw new \LogicException( 'Flame_Builder: no partition is bound, so no request row can name one' );
+		$partition = Core::bound_partition() ?? throw new \LogicException( 'Flame_Builder: no partition is bound, so a request row can not name one' );
 		$duration  = Core::num_float( $request['duration_ms'] ?? 0 );
 		$error     = $request['error_status'] ?? '-';
 		$timed     = self::timing_counts( $duration, $error );
@@ -551,7 +551,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * An op's `ids` map: each column's position in `$table` to the batch
-	 * index whose id fills it, a column naming no op left null.
+	 * index whose id fills it, a column naming no op can not be left null.
 	 *
 	 * @param string                  $table  The table the op writes.
 	 * @param array<string,int|null> $columns Batch indexes by column.
@@ -569,7 +569,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * A record field as a row stores it: its string, or null when it is empty
-	 * or no scalar, so a reader spells every absence one way.
+	 * or cannot be represented as a scalar, so a reader spells every absence one way.
 	 *
 	 * @param mixed $value The field.
 	 */
@@ -625,9 +625,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * A timed request's profile as timing rows: each category, entry '', and
 	 * each of its entries, with whether the category is a listener span,
-	 * whose time already counts inside its hook's. A non-worker request's
-	 * categories feed the auto-tune checks of its governing rule: the
-	 * stamped one, else the one its URL matches.
+	 * whose time already counts inside its hook's. A request's categories feed
+	 * the auto-tune checks of its governing rule, the stamped one, else the
+	 * one its URL matches. A worker's feed only a rule written for the
+	 * platform's own work, a platform route or `/jobs` and below
+	 * (`Log_Manager::serves_platform()`): under the catch-all, a worker's
+	 * hooks would tune what every visitor's page binds.
 	 *
 	 * @param array<array-key,mixed> $profiles `profiles{}` from the record.
 	 * @param array<array-key,mixed> $request  The record.
@@ -641,7 +644,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		}
 		$rules = $this->rule_set();
 		$rule  = $rules->rule_by_id( Core::as_string( $request['rule_id'] ?? '' ) ) ?? $rules->for_url( $url );
-		$tunes = ! $worker && null !== $rule && $rule->is_log() && '' !== $rule->id;
+		$tunes = null !== $rule && $rule->is_log() && '' !== $rule->id
+			&& ( ! $worker || Log_Manager::serves_platform( $rule->pattern ) );
 		$rows  = [];
 		foreach ( $profiles as $category => $data ) {
 			if ( ! \is_string( $category ) || ! \is_array( $data ) ) {
@@ -673,13 +677,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Run a non-worker category through its rule's two auto-tune checks.
-	 * Significant: the category's average per call over every non-worker
-	 * request the batch holds reaches the time threshold. Noisy: this
-	 * request called it more often than the count threshold, and it is
-	 * disabled as a custom event when the rule logs it as one, else as a
-	 * hook. A listener or a
-	 * plugin-load span is a view auto-tune cannot act on.
+	 * Run a category through its rule's two auto-tune checks. Significant:
+	 * the category's average per call over every request the batch holds
+	 * that tunes that rule reaches the time threshold; `profile_rows()`
+	 * decides which requests tune it, and a rule at `/jobs` or below can
+	 * mix a job's calls with a page's there. Noisy: this request called
+	 * it more often than the count threshold, and it is disabled as a
+	 * custom event when the rule logs it as one, else as a hook.
+	 * A listener or a plugin-load span is a view auto-tune cannot act on.
 	 *
 	 * @param Rule   $rule     The request's governing log rule.
 	 * @param string $category The category as logged.
@@ -687,9 +692,10 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param int    $calls    Its calls in this request.
 	 */
 	private function tune( Rule $rule, string $category, float $time, int $calls ): void {
-		$sums                               = $this->category_sums[ $category ] ?? [ 0.0, 0 ];
-		$sums                               = [ $sums[0] + $time, $sums[1] + $calls ];
-		$this->category_sums[ $category ] = $sums;
+		$sums = $this->category_sums[ $rule->id ][ $category ] ?? [ 0.0, 0 ];
+		$sums = [ $sums[0] + $time, $sums[1] + $calls ];
+
+		$this->category_sums[ $rule->id ][ $category ] = $sums;
 		if ( Flame_Tree::is_listener_span( $category ) || Flame_Tree::is_plugin_load_span( $category ) ) {
 			return;
 		}
@@ -811,7 +817,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Read the watermark and expire the window before the first fold, so the
-	 * gate reads one no newer bucket has passed.
+	 * gate reads one where no newer bucket has passed.
 	 *
 	 * @throws Worker_Should_Stop Carrying whatever failed, so the record replays.
 	 */
@@ -906,8 +912,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * A `category_window` add of one category's and entry's sums, added at
-	 * `$sign` 1 and subtracted at -1, its `last_bucket` `$last`. A null id
-	 * is one the op's `ids` map fills.
+	 * `$sign` 1 and subtracted at -1, its `last_bucket` `$last`. The op's
+	 * `ids` map fills any null id.
 	 *
 	 * @param list<mixed> $sums Category id, entry id, listener, worker, ms, calls, requests.
 	 * @param int         $sign 1 or -1.
@@ -927,7 +933,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param string            $sql   The statement.
 	 * @param list<scalar|null> $binds Its binds.
 	 * @return list<list<mixed>>
-	 * @throws \LogicException When no partition is bound, or no table named.
+	 * @throws \LogicException When no partition is bound, or no table is named.
 	 * @throws \PDOException When the file will not open.
 	 */
 	private function own_rows( string $sql, array $binds ): array {
@@ -957,7 +963,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * Whether `IDLE_AFTER_SEC` of monotonic time has passed since `$mark`.
 	 *
 	 * Quiet is a duration inside one process, so it is measured on `hrtime()`,
-	 * never the wall: a wall clock stepped forward is no quiet.
+	 * never the wall: a wall clock stepped forward does not count as quiet.
 	 *
 	 * @param int $mark A `monotonic()` the builder stamped when it last worked.
 	 */

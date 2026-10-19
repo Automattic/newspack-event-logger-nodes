@@ -1,4 +1,4 @@
-/* global KeyboardEvent */
+/* global KeyboardEvent, MouseEvent */
 /**
  * Tests for TagInputField — the controlled multi-value tag input.
  *
@@ -8,7 +8,6 @@
 import * as React from 'react';
 import TagInputField from '../TagInputField';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
-import { compileLocal, resolveCascade } from '../../../test-helpers/cascade';
 
 /**
  * Set a controlled-input's value AND dispatch a React-friendly change.
@@ -314,61 +313,59 @@ describe( 'TagInputField', () => {
 		unmount();
 	} );
 
-	it( 'lays tags out horizontally only when asked', () => {
-		const vertical = renderComponent(
-			React.createElement( TagInputField, { initialValues: [ '/a' ] } )
-		);
-		expect(
-			vertical.container.querySelector( '.event-logger-tag-container' )
-				.className
-		).toContain( 'vertical' );
-		vertical.unmount();
-
-		const horizontal = renderComponent(
-			React.createElement( TagInputField, {
-				initialValues: [ '/a' ],
-				horizontal: true,
-			} )
-		);
-		expect(
-			horizontal.container.querySelector( '.event-logger-tag-container' )
-				.className
-		).toContain( 'horizontal' );
-		horizontal.unmount();
-	} );
-
-	it( 'keeps its tag row 8px above the box it sits over', () => {
+	it( 'frames its tags and their box as one token field', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( TagInputField, {
-				initialValues: [ '/takahe' ],
-				horizontal: true,
+				initialValues: [ '/takahe-7316' ],
 			} )
 		);
-		const row = container.querySelector( '.event-logger-tag-container' );
+		const frame = container.querySelector( '.newspack-nodes-token-field' );
 
 		expect(
-			resolveCascade( row, [
-				compileLocal( 'settings/styles/tag-input.scss' ),
-			] )[ 'margin-bottom' ]
-		).toBe( '8px' );
+			frame.querySelector( '.event-logger-tag-token' )
+		).not.toBeNull();
+		expect(
+			frame.querySelector( 'input.newspack-nodes-token-field__entry' )
+		).not.toBeNull();
 		unmount();
 	} );
 
-	it( 'keeps its tags badge-sized, since no box shares their row', () => {
+	it( 'keeps Clear all beside the box, ending the row they share', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( TagInputField, {
-				initialValues: [ '/takahe' ],
-				horizontal: true,
+				initialValues: [ '/takahe-7316' ],
 			} )
 		);
-		const token = container.querySelector( '.event-logger-tag-token' );
+		const frame = container.querySelector( '.newspack-nodes-token-field' );
+		const entry = frame.lastElementChild;
 
-		expect(
-			resolveCascade( token, [
-				compileLocal( 'components/TagToken.scss' ),
-				compileLocal( 'settings/styles/tag-input.scss' ),
-			] )[ 'min-height' ]
-		).toBeUndefined();
+		expect( entry.querySelector( 'input' ) ).not.toBeNull();
+		expect( entry.lastElementChild.className ).toContain(
+			'event-logger-tag-clear'
+		);
+		unmount();
+	} );
+
+	it( 'puts the box in focus when its frame is pressed', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				initialValues: [ '/takahe-7316' ],
+			} )
+		);
+		const frame = container.querySelector( '.newspack-nodes-token-field' );
+
+		act( () => {
+			frame.dispatchEvent(
+				new MouseEvent( 'mousedown', {
+					bubbles: true,
+					cancelable: true,
+				} )
+			);
+		} );
+
+		expect( container.ownerDocument.activeElement ).toBe(
+			frame.querySelector( 'input' )
+		);
 		unmount();
 	} );
 } );

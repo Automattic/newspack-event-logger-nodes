@@ -246,7 +246,7 @@ class FlameTreeTest extends TestCase {
 		$this->assertSame( 'SELECT ID FROM wp_posts', $tree['children'][0]['message'] );
 	}
 
-	/** A message that only repeats the label, at either end, is no message. */
+	/** A message that only repeats the label, at either end, is not a message. */
 	public function test_a_message_repeating_the_label_is_dropped(): void {
 		$tree = Flame_Tree::build_flame_data(
 			[
@@ -567,7 +567,7 @@ class FlameTreeTest extends TestCase {
 			$this->assertArrayHasKey( $category, $base['_colors'] );
 			$this->assertNotEmpty( $base['_descriptions'][ $category ] ?? '', "{$category} is described" );
 			$this->assertArrayNotHasKey( $category, $base['_patterns'], "{$category} claims no hook" );
-			$this->assertCount( 1, \array_keys( $base['_colors'], $base['_colors'][ $category ], true ), "{$category}'s colour is no other category's" );
+			$this->assertCount( 1, \array_keys( $base['_colors'], $base['_colors'][ $category ], true ), "{$category}'s colour belongs to no other category" );
 		}
 		$colors = Flame_Tree::platform_colors();
 		$this->assertSame( $base['_colors']['Event Logger Shutdown'], $colors['stats sweep'] );

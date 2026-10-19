@@ -54,7 +54,7 @@ const keyAt = ( ms ) =>
  *
  * @param {string} key A piece of a spelling.
  * @return {?number} The bucket's first instant, in milliseconds; null for a
- * piece that is no five-minute key.
+ * piece that is not a five-minute key.
  */
 const selectedStart = ( key ) => {
 	if ( ! /^\d{4}(-\d{2}){4}$/.test( key ) ) {
@@ -70,7 +70,7 @@ const selectedStart = ( key ) => {
  *
  * A spelling is comma-separated runs, each `start` or `start..end` over
  * bucket keys; `bucketSpelling()` writes the canonical one. '' selects
- * nothing, and so does a piece that is no five-minute key, a run ending
+ * nothing, and so does a piece that is not a five-minute key, a run ending
  * before it starts, or more than 288 buckets.
  *
  * @param {string} spelling A selection's spelling.

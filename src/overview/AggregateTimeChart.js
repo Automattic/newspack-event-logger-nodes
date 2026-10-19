@@ -114,7 +114,7 @@ const Y_FORMATS = {
 	memory: () => formatMemoryMb,
 };
 
-/** The metrics whose series add up: a stack of means is no total. */
+/** The metrics whose series add up: a stack of means is not a total. */
 const STACKABLE_METRICS = [ 'volume', 'cumulative' ];
 
 /** A slot no request reached: every sum and count 0. */

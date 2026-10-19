@@ -733,9 +733,9 @@ final class Stats_Query {
 	 * A timings spec over exactly `WINDOW_BUCKETS` buckets, naming only the
 	 * window's fields, reads `category_window`. Any other reads
 	 * `timings_site` unless a URL is grouped, filtered or searched; a
-	 * requests spec reads `requests_hourly` when every field
-	 * and measure it names is one the rollup keeps and every bucket range
-	 * covers whole hours, its `top_by` among them.
+	 * requests spec reads `requests_hourly` when the rollup keeps every
+	 * field and measure it names, its `top_by` among them, and every bucket
+	 * range covers whole hours.
 	 *
 	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string, top_by?:string} $spec
 	 */

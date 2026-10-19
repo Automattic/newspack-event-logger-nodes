@@ -384,7 +384,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'reads a malformed answer as the empty state and draws nothing', () => {
 		const bk = bucketKeyNow();
-		// A measure that is no number: an answer the decoder refuses whole.
+		// A measure that is not a number: an answer the decoder refuses whole.
 		const malformed = rowsWire(
 			[ 'bucket', 'ua', ...SERIES_MEASURES ],
 			[ [ bk, 'kea-ua/7', 41, 820, 'three', 41 ] ]
@@ -518,7 +518,7 @@ describe( 'AggregateTimeChart', () => {
 	} );
 
 	it( 'averages over the timed requests alone', () => {
-		// Three requests, two timed at 40 and 60ms: the timeout is no sample.
+		// Three requests, two timed at 40 and 60ms: the timeout is not a sample.
 		const series = dimSeries( {
 			[ bucketKeyNow() ]: { 'kea-ua/7': [ 3, 100, 3, 2 ] },
 		} );

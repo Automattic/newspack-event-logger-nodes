@@ -216,7 +216,7 @@ const GRID_TEMPLATE = gridTemplate(
 /**
  * The fields a header click can sort on, and so the `?sort=` whitelist.
  *
- * Every column but the `status` shares, which are no sort key.
+ * Every column but the `status` shares, which are not sort keys.
  */
 const SORT_FIELDS = COLUMNS.filter( ( col ) => 'status' !== col.kind ).map(
 	( col ) => col.field
@@ -430,7 +430,7 @@ export default function UrlTable( {
 		SORT_ORDERS,
 		'desc'
 	);
-	// `?search=` is the request search's, so the table's is `?q=`.
+	// The request search owns `?search=`, so the table searches on `?q=`.
 	const [ searchTerm, setSearchTerm ] = useQueryParamState(
 		'q',
 		( raw ) => raw ?? '',
@@ -592,7 +592,6 @@ export default function UrlTable( {
 			>
 				<div ref={ searchContainerRef } style={ { flex: 1 } }>
 					<SearchControl
-						__nextHasNoMarginBottom
 						label={ __(
 							'Search by whole URL word',
 							'newspack-event-logger-nodes'
