@@ -12,15 +12,11 @@ use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Router_Node;
 
 /**
- * Task 22 surface area on RequestBuilder:
+ * The flight and compact-summary surface of RequestBuilder:
  *  - hidden RequestFlight sibling attached at construction
  *  - sink() override propagates to Flight
  *  - set_completed_target() + compact-summary secondary emit
  *  - inflight_snapshot()
- *
- * Compact-summary schema mirrors the legacy
- * requests-stream-controller::transform_line output so the schema-parity
- * audit passes.
  */
 #[CoversClass( Request_Builder_Node::class )]
 class RequestBuilderCompactSummaryTest extends TestCase {
@@ -126,16 +122,16 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 			$captured,
 			static fn( $m ): bool => 'completed:tee' === $m[ Message::TO ]
 		) );
-		// Line_Fitter still trims what cannot pack under PIPE_BUF; the sibling
-		// multibyte test covers that. What is gone is the char cap above it.
+		// Line_Fitter trims what cannot pack under PIPE_BUF, as the multibyte
+		// test below shows; no char cap applies.
 		$this->assertSame( $long_url, $compact[0][ Message::VALUE ]['url'] );
 		$this->assertSame( $long_ua, $compact[0][ Message::VALUE ]['user_agent'] );
 	}
 
 	public function test_compact_summary_fits_a_multibyte_payload_under_pipe_buf(): void {
-		// completed:partition lost void_warranty, so the summary must fit at the
-		// source. The 2000/500-char clips are for DISPLAY; a multibyte url clips
-		// to 2000 chars but JSON-packs past PIPE_BUF, so the fit must trim it more.
+		// completed:partition keeps its PIPE_BUF cap, so the summary must fit at
+		// the source: a multibyte url and user agent JSON-pack past PIPE_BUF, and
+		// the fit trims them.
 		$rb       = new Request_Builder_Node();
 		$rb->name( 'rb-fit-8102' );
 		$captured = [];
@@ -176,8 +172,8 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		// Rows are keyed by rid; the row itself carries no duplicate field.
 		$this->assertSame( [ 'r-1', 'r-2' ], \array_keys( $snap ) );
 		$this->assertArrayNotHasKey( 'rid', $snap['r-1'] );
-		// Default state for a primed request with no stack frames matches
-		// legacy InflightTracker (lines 141-143): the unwound-stack default.
+		// Default state for a primed request with no stack frames is the
+		// unwound-stack default.
 		$this->assertSame( 'process', $snap['r-1']['state'] );
 		$this->assertSame( '/a', $snap['r-1']['url'] );
 		$this->assertSame( 'GET', $snap['r-1']['method'] );

@@ -1,8 +1,7 @@
 <?php
 /**
  * Tests for Remote_Job_Rewrite_Node — the hub-side `k:"job"` -> `k:"remote_job"`
- * rewrite on aggregated firehose entries (relocated from the deleted
- * Stream_Merger's `newspack_nodes/aggregator_ingest_line` filter).
+ * rewrite on aggregated firehose entries.
  *
  * @package Newspack_Event_Logger_Nodes
  */

@@ -3,7 +3,7 @@
  * Tests for Newspack_Event_Logger_Nodes\App\Core.
  *
  * Class is named AppCoreTest (not CoreTest) to avoid colliding with the
- * runtime substrate's existing CoreTest in the same monorepo, since both test
+ * runtime substrate's CoreTest in the same monorepo, since both test
  * suites resolve from PHPUnit's classmap.
  *
  * @package Newspack_Event_Logger_Nodes
@@ -39,27 +39,6 @@ class AppCoreTest extends TestCase {
 		$GLOBALS['wp_filter']               = [];
 		// Reset filter registry that Config's apply_filters() walks.
 		$GLOBALS['_wp_actions']             = [];
-		// Add the option-schema entries the legacy bootstrap registered via
-		// the `newspack_event_logger_option_schema_core` filter — Config keeps
-		// the same filter shape under the new namespace
-		// (`newspack_event_logger_nodes_option_schema_core`), so the test must
-		// add them to make `log_events`/`significant_events`/etc. round-trip
-		// through `Config::load_config()`.
-		$GLOBALS['_wp_actions']['newspack_event_logger_nodes_option_schema_core'][] = function ( $schema ) {
-			return \array_merge(
-				$schema,
-				[
-					'log_urls'            => 'array_strings',
-					'skip_urls'           => 'array_strings',
-					'log_events'          => 'array_strings',
-					'custom_events'       => 'array_strings',
-					'log_memory'          => 'bool',
-					'flush_every_line'    => 'bool',
-					'significant_events'  => 'array_strings',
-					'hook_start_priority' => 'int',
-				]
-			);
-		};
 	}
 
 	protected function tearDown(): void {
@@ -112,7 +91,7 @@ class AppCoreTest extends TestCase {
 	/**
 	 * Set config via WP option stubs (overrides file config). Writes to BOTH
 	 * `_wp_options` (newspack-event-logger-nodes/tests/bootstrap.php convention)
-	 * and `_wp_test_options` (legacy convention) so the test is robust whichever
+	 * and `_wp_test_options` so the test is robust whichever
 	 * stub the bootstrap declares.
 	 *
 	 * @param array $config Config key/value pairs.
@@ -594,9 +573,8 @@ class AppCoreTest extends TestCase {
 	}
 
 	/**
-	 * A guard rather than a regression test: it passes on the code before
-	 * these spans traced anything, and it is here so a later diff cannot make
-	 * the budget opt-OUT by accident.
+	 * A guard that the caller budget stays opt-IN: a rule that does not ask
+	 * traces no callers.
 	 */
 	public function test_spans_trace_no_callers_when_the_rule_does_not_ask(): void {
 		$this->set_governing_rule( $this->query_rule( true ) );
@@ -642,9 +620,9 @@ class AppCoreTest extends TestCase {
 
 	/**
 	 * Every other span in the schema is `state` + a separate `l`, and the flame
-	 * composes `state: label` from the two. These two spelled the discriminator
-	 * INTO the state, which is a profile category per table and per host —
-	 * against `MAX_CAT_VALUES` — and left `l`, whose whole job this is, empty.
+	 * composes `state: label` from the two. Spelling the discriminator INTO the
+	 * state would make a profile category per table and per host — against
+	 * `MAX_CAT_VALUES` — and leave `l`, whose whole job this is, empty.
 	 */
 	public function test_a_query_span_states_sql_and_labels_the_table(): void {
 		$this->set_governing_rule( $this->query_rule( true ) );
@@ -2122,9 +2100,8 @@ class AppCoreTest extends TestCase {
 
 	/**
 	 * Install a governing rule whose significant events cover `the_content`, so
-	 * hook_start('the_content') actually invokes wrap_callbacks — the earlier
-	 * use_config()-based wrap tests left `significant` empty, making the wrap a
-	 * no-op. Returns the enabled Core with current_filter set to the_content.
+	 * hook_start('the_content') actually invokes wrap_callbacks — a wrap test
+	 * with `significant` empty would make the wrap a no-op. Returns the enabled Core with current_filter set to the_content.
 	 *
 	 * @param array<string, mixed> $config Extra global config (e.g. hook_start_priority).
 	 */
@@ -2462,7 +2439,7 @@ class AppCoreTest extends TestCase {
 		$this->assertStringNotContainsString( $secret, $logged, 'the literal never reaches the firehose' );
 	}
 
-	/** A long filter value rides whole; 1500 is distinct from the old 1024. */
+	/** A long filter value rides whole, with no 1024-byte cap. */
 	public function test_a_hook_span_carries_a_long_string_value_whole(): void {
 		$this->set_governing_rule( new Rule( '9d3f5b7a1c28', '/reports/', Rule::ACTION_LOG, hooks: [ 'the_content' ] ) );
 		$GLOBALS['_wp_test_current_filter'] = 'the_content';
@@ -2586,8 +2563,8 @@ class AppCoreTest extends TestCase {
 	/**
 	 * A rule buying caller backtraces still names the caller on its query
 	 * spans. `caller_of()` traces only the first few of each statement shape,
-	 * so a label that stopped at the transport left every call past that
-	 * budget with nothing on it saying who asked.
+	 * so a label that stopped at the transport would leave every call past
+	 * that budget with nothing on it saying who asked.
 	 */
 	public function test_a_traced_rule_still_labels_the_query_caller_beyond_the_transport(): void {
 		$this->set_governing_rule(

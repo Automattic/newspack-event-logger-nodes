@@ -1179,9 +1179,9 @@ describe( 'the address bar', () => {
 } );
 
 describe( 'column layout', () => {
-	// The grid track list and the COLUMNS array are one fact. Deleting the p95
-	// column in 0.67.0 left an 11-track template over 10 columns, which slid
-	// Mem into p95's 55px track and stranded its own 60px past the last cell.
+	// The grid track list and the COLUMNS array are one fact: a track left
+	// over slides each later column into its neighbour's width and strands
+	// the last track past the last cell.
 	it( 'lays out exactly one grid track per rendered column', () => {
 		const { container, unmount } = mount();
 

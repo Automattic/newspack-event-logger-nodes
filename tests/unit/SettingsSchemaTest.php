@@ -2,12 +2,10 @@
 /**
  * SettingsSchemaTest: the ELN config declaration parity net.
  *
- * Pins that the single Settings_Schema derives the SAME three arrays the old
- * hand-listed Config::$option_schema / Admin::$option_names /
- * Admin::$delete_on_blank_options literals carried — so wiring Config + Admin
- * to the Schema is a refactor, not a behavior change. The literals below are the
- * authoritative pre-migration sets; if the Schema drifts from them, a consumer
- * breaks.
+ * Pins the three arrays the single Settings_Schema derives for Config and
+ * Admin: the overlay keys, the option names and the delete-on-blank options.
+ * The literals below are the authoritative sets; if the Schema drifts from
+ * them, a consumer breaks.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -22,10 +20,10 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 class SettingsSchemaTest extends TestCase {
 
 	/**
-	 * The unprefixed overlay key-set after the seven ruleset-absorbed settings
+	 * The unprefixed overlay key-set. The seven per-URL settings
 	 * (log_urls/skip_urls/log_events/custom_events/significant_events/
-	 * auto_disable_threshold/auto_protect_time_threshold) were retired to
-	 * per-rule fields in Task 10.
+	 * auto_disable_threshold/auto_protect_time_threshold) are per-rule fields,
+	 * not keys.
 	 *
 	 * Seven keys, because the schema declares every key the application has:
 	 * `custom_colors` and `recommended_log_events` carry no
@@ -45,7 +43,7 @@ class SettingsSchemaTest extends TestCase {
 		'recommended_log_events',
 	];
 
-	/** The prefixed settings-form option names surviving the Task 10 retirement. */
+	/** The prefixed settings-form option names. */
 	private const OPTION_NAMES = [
 		'newspack_event_logger_nodes_enable_logging',
 		'newspack_event_logger_nodes_log_memory',
@@ -53,8 +51,7 @@ class SettingsSchemaTest extends TestCase {
 	];
 
 	/**
-	 * The prefixed delete-on-blank subset. The two auto-tune thresholds were the
-	 * only members and are retired, so no settings Field is delete-on-blank now.
+	 * The prefixed delete-on-blank subset: no settings Field is delete-on-blank.
 	 */
 	private const DELETE_ON_BLANK = [];
 

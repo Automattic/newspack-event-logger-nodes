@@ -56,7 +56,7 @@ class TopologyRegisterPluginTest extends TestCase {
 			$ref = new \ReflectionProperty( Topology_Registry::class, $prop );
 			$out[ $prop ] = $ref->getValue();
 		}
-		// The parse caches moved to Topology_Analyzer with the analysis.
+		// The parse caches live on Topology_Analyzer with the analysis.
 		$ref = new \ReflectionProperty(
 			\Newspack_Nodes\Topology_Analyzer::class,
 			'segment_size_overrides_cache'
@@ -68,7 +68,7 @@ class TopologyRegisterPluginTest extends TestCase {
 	/** @param array<string,mixed> $state */
 	private function restore_registry( array $state ): void {
 		foreach ( $state as $prop => $value ) {
-			// The parse caches moved to Topology_Analyzer with the analysis.
+			// The parse caches live on Topology_Analyzer with the analysis.
 			$owner = 'segment_size_overrides_cache' === $prop
 				? \Newspack_Nodes\Topology_Analyzer::class
 				: Topology_Registry::class;

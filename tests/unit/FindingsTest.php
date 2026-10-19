@@ -1587,7 +1587,7 @@ class FindingsTest extends TestCase {
 		$record['entries'] = [
 			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
 			[ 'n' => 2, 'ts' => 2000.050, 'k' => 'entries (aggregated)', 'm' => 'merged' ],
-			// The marker's own gap is the WIDEST, so the old code reported it.
+			// The marker's own gap is the WIDEST, so counting it would report it.
 			[ 'n' => 3, 'ts' => 2009.000, 'k' => 'init hook', 'm' => '' ],
 			[ 'n' => 4, 'ts' => 2013.800, 'k' => 'wp_loaded hook', 'm' => '' ],
 		];

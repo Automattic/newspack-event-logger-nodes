@@ -61,7 +61,7 @@ const { esbuildAlias, assertNoRetiredOverrides } = (
 	)
 ).default;
 
-// Refuse the retired per-alias overrides; never silently ignore one.
+// Refuse a per-alias override; NEWSPACK_NODES_SRC alone sets every alias.
 assertNoRetiredOverrides( process.env );
 
 /** The `@newspack-nodes/*` aliases; the loop below adds this plugin's deps. */

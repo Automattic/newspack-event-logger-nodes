@@ -46,7 +46,7 @@ describe( 'relativeLuminance', () => {
 } );
 
 /**
- * The fills are palette colors now, so these read real ones: a bright hook
+ * The fills are palette colors, so these read real ones: a bright hook
  * green and a deep database blue, either end of what getStateColor returns.
  */
 describe( 'pickLabelColor', () => {

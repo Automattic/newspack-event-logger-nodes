@@ -209,7 +209,7 @@ class AutoTunerTest extends TestCase {
 	}
 
 	/**
-	 * TUNE, not READ: the granular migration exists to cut authority, so a
+	 * TUNE, not READ: the granular roles exist to cut authority, so a
 	 * dashboard-only reader must still be refused this write.
 	 */
 	public function test_granular_read_capability_alone_is_refused(): void {
@@ -380,7 +380,7 @@ class AutoTunerTest extends TestCase {
 	 * A pointer-tier rule keeps its hooks in the durable option + mc mirror, not
 	 * inline. Disabling ONE hook must resolve the REAL list and re-save — never
 	 * see the pointer's null-hooks and let save() inline-collapse it to [],
-	 * destroying the durable option (the BUG 1 data-loss path).
+	 * destroying the durable option.
 	 *
 	 * @param int $i Range index → synthetic hook name.
 	 */

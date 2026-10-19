@@ -6,8 +6,8 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 /**
- * Job request-context glue that used to live on Job_Worker_Node (now in the
- * substrate). begin/end_job_context suspend the parent LogManager and rewrite
+ * Job request-context glue on Log_Manager, which the substrate's Job_Worker_Node
+ * drives. begin/end_job_context suspend the parent LogManager and rewrite
  * $_SERVER to a synthetic /jobs/{handler} request scope; they are stack-based
  * so the substrate Job_Worker can drive them via the before/after-job actions
  * (which thread no state) and so handlers can nest their own sub-scopes.
@@ -151,7 +151,7 @@ class LogManagerJobContextTest extends TestCase {
 
 	public function test_job_id_appends_to_request_uri(): void {
 		// The action-provided id builds the /jobs/{handler}/{id} URL the
-		// dashboards render — no longer baked into a compound handler string.
+		// dashboards render, rather than a compound handler string.
 		Log_Manager::begin_job_context( 'films_import', 'films-8842' );
 		$this->assertSame( '/jobs/films_import/films-8842', $_SERVER['REQUEST_URI'] );
 		Log_Manager::end_job_context();

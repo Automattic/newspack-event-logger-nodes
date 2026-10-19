@@ -128,7 +128,7 @@ describe( 'area chart frame', () => {
 				'curl/8.7.1',
 			]
 		);
-		// No legend inside the plot's SVG any more.
+		// No legend inside the plot's SVG.
 		expect(
 			container.querySelector(
 				'.newspack-nodes-chart__plot svg rect[width="10"]'

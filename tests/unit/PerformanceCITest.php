@@ -55,8 +55,7 @@ class PerformanceCITest extends TestCase {
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = true;
 		// Reset the hook-categorizer static caches and the WP hook globals
-		// so each hooks_* verb test sees a clean room. Mirrors the legacy
-		// PerfHooksControllerTest / PerfHooksAvailableControllerTest setUp.
+		// so each hooks_* verb test sees a clean room.
 		Hook_Categorizer::clear_cache();
 		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- WP globals.
 		global $wp_actions, $wp_filter;
@@ -235,8 +234,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_overview_verb_rejects_unauthorized(): void {
-		// Legacy controller gates every verb via read_permissions_check ==
-		// manage_options. Performance_CI matches that.
+		// A caller without the capability is refused.
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire( $interpreter, 'performance', 'overview' );
@@ -260,7 +258,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_urls_verb_default_limit_is_50(): void {
-		// Legacy controller default — `limit=50` from sanitize_callback default.
+		// The default `limit` is 50.
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire( $interpreter, 'performance', 'urls' );
 
@@ -511,8 +509,8 @@ class PerformanceCITest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_dump_url_verb_rejects_invalid_hash(): void {
-		// Legacy `get_url_detail` returns invalid_hash 400 when hash regex fails.
-		// We surface that as a verb error string (interpreter errors are string-encoded).
+		// An invalid hash surfaces as a verb error string (interpreter errors are
+		// string-encoded).
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
@@ -526,8 +524,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_dump_url_verb_returns_not_found_when_unknown_hash(): void {
-		// Hash matches the regex but doesn't exist in the URL index — legacy
-		// surfaces a 404 with "URL not found".
+		// Hash matches the regex but doesn't exist in the URL index — the verb
+		// answers "not found".
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
@@ -1034,8 +1032,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A request is named by its rid alone. The old `request:<rid>:<partition>`
-	 * is refused, as the target and as a span's context, never half-read.
+	 * A request is named by its rid alone. A `request:<rid>:<partition>`
+	 * descriptor is refused, as the target and as a span's context, never half-read.
 	 */
 	public function test_ask_refuses_a_request_descriptor_naming_a_partition(): void {
 		$rid = $this->write_request( [ 'rid' => 'rid-ask-part-5521', 'url' => 'https://example.com/asked-partition', 'duration_ms' => 500 ] );
@@ -1329,9 +1327,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_list_hooks_ships_category_descriptions(): void {
-		// The descriptions used to be a hand-written map in HookSelectorModal.js
-		// covering 24 of the 63 categories this config declares — and users can
-		// add more. They travel with the taxonomy that owns them now.
+		// The descriptions travel with the taxonomy that owns them, so every
+		// category this config declares can carry one — and users can add more.
 		$this->seed_wp_filter_with_known_hooks();
 
 		$interpreter = new Performance_CI_Node();
@@ -1408,7 +1405,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_array_option_json_preserves_associative_keys(): void {
 		// A JSON array-option value is json_decoded and sanitize_settings_array keeps
-		// the keys — the old csv-split flattened an assoc map to a list of "1"s.
+		// the keys — a csv split would flatten an assoc map to a list of "1"s.
 		$decode = new \ReflectionMethod( Performance_CI_Node::class, 'decode_array_value' );
 		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
 
@@ -1444,10 +1441,10 @@ class PerformanceCITest extends TestCase {
 
 	public function test_set_verb_carries_a_pointer_rules_null_hooks_through_sanitizing(): void {
 		// A hub sends a heavy rule as a POINTER — `hooks: null`, `hooks_in: mc` —
-		// whenever hydrate_array() could not inline it. Dropping the null left a
-		// map Rule::from_array now refuses outright, so a normal settings push
-		// could only ever fail: the spoke kept its last-good ruleset and the hub
-		// never converged. Null is inert; it must survive the sanitizer.
+		// whenever hydrate_array() could not inline it. Dropping the null leaves a
+		// map Rule::from_array refuses outright, so every settings push fails:
+		// the spoke keeps its last-good ruleset and the hub never converges.
+		// Null is inert; it must survive the sanitizer.
 		$big = \array_map( fn( $i ) => "hook_dowser_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 4 ) );
 		( new Rule_Set( [] ) )->save( [ new Rule( Rule_Set::id_for( '/dowser/' ), '/dowser/', Rule::ACTION_LOG, hooks: $big ) ] );
 		$option = Rule_Set::hooks_option_name( Rule_Set::id_for( '/dowser/' ) );
@@ -1677,7 +1674,7 @@ class PerformanceCITest extends TestCase {
 	public function test_array_option_json_preserves_nested_structure(): void {
 		// A nested map recurses one level and keeps the structure (sanitize_array
 		// recursion branch), not flattened or rejected. Tested on the sanitizer
-		// directly — the ruleset option itself now re-tiers on set().
+		// directly — the ruleset option itself re-tiers on set().
 		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
 
 		$this->assertSame(
@@ -1784,7 +1781,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 3, $result['total_hooks'] );
 	}
 
-	/** Each verb-first name replaces its noun-first one; the old name is refused, not aliased. */
+	/** A noun-first verb name is refused, not aliased to its verb-first spelling. */
 	#[\PHPUnit\Framework\Attributes\DataProvider( 'noun_first_verbs' )]
 	public function test_a_noun_first_verb_is_refused_as_an_unknown_command( string $old ): void {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', $old, 'renamed-arg' );

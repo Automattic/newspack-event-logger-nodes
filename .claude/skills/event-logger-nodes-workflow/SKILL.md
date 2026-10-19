@@ -81,7 +81,7 @@ Declare one `Field` in `Settings_Schema` (`includes/class-settings-schema.php`),
 
 A field's `restart:` key holds `[]` for nothing, `'all'` for every active topology, or CONSUMER NODE-TYPE tokens — the substrate's own schema uses `['Partition','Topic','Log']` — which `Restart_Planner` matches by ancestry and resolves to the live topologies running such a node; they are NEVER topology names, which drift. All three checkboxes declare `'all'`, because `Log_Manager` caches them in its singleton for the process.
 
-Mirror the new key and its default as a commented entry in `newspack-event-logger-nodes-config.php`, the deployment override ledger: `tests/unit/ConfigSchemaTest.php` parses those comments back into an array and holds them to `Settings_Schema::get()->defaults()`. A key the hub must also push to its spokes takes one `cmd settings-sync:config add_setting <local_option> performance <remote_option>` line in `hub-control.tsl` — `rules`, `log_memory` and `flush_every_line` are the three pushed today — and `newspack_event_logger_nodes_resolve_settings_sync_value()` is where a value needs transforming on the way out, as the ruleset does to inline its pointer hooks. Read the key through `Config::value()`, which throws `unknown config key` rather than falling back.
+Mirror the new key and its default as a commented entry in `newspack-event-logger-nodes-config.php`, the deployment override ledger: `tests/unit/ConfigSchemaTest.php` parses those comments back into an array and holds them to `Settings_Schema::get()->defaults()`. A key the hub must also push to its spokes takes one `cmd settings-sync:config add_setting <local_option> performance <remote_option>` line in `hub-control.tsl` — `rules`, `log_memory` and `flush_every_line` are the three pushed — and `newspack_event_logger_nodes_resolve_settings_sync_value()` is where a value needs transforming on the way out, as the ruleset does to inline its pointer hooks. Read the key through `Config::value()`, which throws `unknown config key` rather than falling back.
 
 #### Touching the per-URL logging ruleset
 
@@ -276,7 +276,7 @@ For job handler changes: queue a job through the legitimate caller, wait, check 
 
 - Update `docs/architecture-decisions.md` if the change altered an architecture decision, and AGENTS.md if it altered a key file.
 - If you added a job handler that crosses the hub/spoke boundary, document which side is intended (`job_handlers` vs `remote_job_handlers`).
-- If you called a substrate API newer than 2.116.0, raise the floor in `newspack-event-logger-nodes.php` and say why in the comment beside it.
+- If you called a substrate API newer than 2.116.0, raise the floor in `newspack-event-logger-nodes.php` and say why in the CHANGELOG entry that raises it.
 - Add the CHANGELOG entry, then `./scripts/bump-version.sh <version>` — it rewrites the header, the `NEWSPACK_EVENT_LOGGER_NODES_VERSION` constant, `package.json` and the substrate pin in `release.yml` together, and refuses to bump when the sibling substrate's version is not tagged locally. Never hand-edit any of the four.
 - Push to this plugin's own remote, `Automattic/newspack-event-logger-nodes`. Pushing a `v<major>.<minor>.<patch>` tag runs the Release workflow, which builds the archive and publishes the zip beside the standalone `00-newspack-profiler.php` drop-in.
 

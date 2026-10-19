@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **A restore no longer strips `await` and `keep` from a checkpointed request.** Those two properties belonged to an envelope checkpointed before a fold kept its head frames on its own stack, and the restore warned and dropped them. A checkpoint carrying them now restores them as written.
+
 ## [0.145.0] - 2026-10-19
 
 ### Changed

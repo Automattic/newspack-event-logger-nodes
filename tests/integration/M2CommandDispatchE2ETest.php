@@ -1,6 +1,6 @@
 <?php
 /**
- * M2CommandDispatchE2ETest: M2 acceptance test for the whole stack.
+ * M2CommandDispatchE2ETest: acceptance test for the whole stack.
  *
  * Proves that every service CI mounted by the plugin's
  * `newspack_nodes/request_graph_ready` listener actually responds
@@ -169,7 +169,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 		$message[ Message::ID ]    = "e2e-{$verb}";
 		$message[ Message::VALUE ] = [ 'name' => $verb, 'arguments' => '', 'payload' => \json_decode( $args, true ) ];
 
-		// Ingress no longer signs; a request arrives signed like a real client's.
+		// Ingress does not sign; a request arrives signed like a real client's.
 		\Newspack_Nodes\Command_Auth::sign( $message );
 		$req->set_body( Message::packed( $message ) );
 		// text/plain matches the JSONL/text-plain wire contract (the controller

@@ -99,7 +99,7 @@ class ConfigTest extends TestCase {
 
 	public function test_memcache_servers_wp_option_override_applies(): void {
 		// Stored in its typed array shape (the substrate's sanitize_memcache_servers
-		// writes an array; the read path is a raw passthrough since coerce was removed).
+		// writes an array; the read path is a raw passthrough).
 		\update_option( 'newspack_nodes_memcache_servers', [ 'test-host:11211' ] );
 		Config::reset();
 		$this->assertSame( [ 'test-host:11211' ], Config::load_config()['memcache_servers'] );
@@ -269,7 +269,7 @@ class ConfigTest extends TestCase {
 
 	public function test_recommended_log_events_typo_fails_loud(): void {
 		// A near-miss key (dropped trailing `s`) throws instead of silently
-		// defaulting to [] the way the retired `?? []` read did.
+		// defaulting to [].
 		$this->expectException( \RuntimeException::class );
 		Config::value( 'recommended_log_event' );
 	}

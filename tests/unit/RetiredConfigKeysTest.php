@@ -1,12 +1,13 @@
 <?php
 /**
- * Guard test: retired Config keys must not reappear in test fixtures.
+ * Guard test: each key in `RETIRED_KEYS` is absent from the application
+ * Settings_Schema, from the baseline test config and from every per-test
+ * config fixture.
  *
- * `enable_workers` was retired in v0.5.0; `enable_aggregator` was retired in
- * the pull-side cutover — hub-mode is now derived from active-topology
- * membership (`aggregator` in the substrate `topologies` list), not a separate
- * operator switch. Leaving either in test fixtures suggests it still gates
- * something — which it does not.
+ * Neither `enable_workers` nor `enable_aggregator` is a key: a hub declares
+ * itself through `var is_hub = 1` in an active topology's top-level
+ * frontmatter, not through an operator switch. Either one in a test fixture
+ * suggests it gates something, which it does not.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -17,13 +18,12 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 class RetiredConfigKeysTest extends TestCase {
 
-	/** Keys retired from the substrate or application schema. */
+	/** Keys the application Settings_Schema and the test configs must not carry. */
 	private const RETIRED_KEYS = [
 		'enable_workers',
 		'enable_aggregator',
-		// The seven global settings the per-URL ruleset absorbed (Task 10):
-		// they are now per-RULE fields inside the `newspack_event_logger_nodes_rules`
-		// option, NOT global options.
+		// Per-RULE fields inside the `newspack_event_logger_nodes_rules` option,
+		// NOT global options.
 		'log_urls',
 		'skip_urls',
 		'log_events',
@@ -31,7 +31,7 @@ class RetiredConfigKeysTest extends TestCase {
 		'significant_events',
 		'auto_disable_threshold',
 		'auto_protect_time_threshold',
-		// The durable stats mirror is gone: stats live in named Tables.
+		// Stats live in named Tables, so no stats-mirror key exists.
 		'stats_mirror_read_budget_ms',
 		'stats_mirror_node',
 		'stats_mirror_lifetime',

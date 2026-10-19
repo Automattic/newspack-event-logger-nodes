@@ -1863,7 +1863,7 @@ class Findings {
 	/**
 	 * Add one node's shape table to the group's, through `Flame_Fold`'s own
 	 * accumulator so the group can never hold more rows than a node may. A
-	 * folded tree keys its children by `node_name()`, so today every group is
+	 * folded tree keys its children by `node_name()`, so every group is
 	 * one member and this copies its table; the accumulator is what keeps that
 	 * true if grouping ever gathers two.
 	 *

@@ -258,8 +258,8 @@ class FlameFoldTest extends TestCase {
 
 	public function test_a_state_restored_from_before_starts_existed_is_not_stretched(): void {
 		// A checkpoint written by an older worker carries no `starts`, and a
-		// missing key reading as 0 would say "one span" — the old extent bug,
-		// back for every in-flight request across a deploy. Completions are the
+		// missing key reading as 0 would say "one span" for every in-flight request
+		// across a deploy. Completions are the
 		// floor: a path can never close more often than it opened.
 		$state         = Flame_Fold::start( self::ORIGIN );
 		$state['root'] = [

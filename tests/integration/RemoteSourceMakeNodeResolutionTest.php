@@ -1,13 +1,12 @@
 <?php
 /**
- * make_node resolution guard for the atomic cutover (#41 final).
+ * make_node resolution guard for Remote_Source.
  *
- * The old ELN `Newspack_Event_Logger_Nodes\Remote_Source_Node` is deleted; the
- * self-sufficient substrate `Newspack_Nodes\Remote_Source_Node` (with its
- * SSE_In + HTTP_Out patrons) replaces it. With both production namespaces
- * registered, `make_node Remote_Source <name> <vault> <offsetlog_root>
- * <deadletter_root>` MUST resolve the SUBSTRATE class — there can be no
- * first-registered-wins ambiguity because the ELN class is gone.
+ * With both production namespaces registered, `make_node Remote_Source <name>
+ * <vault> <offsetlog_root> <deadletter_root>` MUST resolve the self-sufficient
+ * SUBSTRATE `Newspack_Nodes\Remote_Source_Node` (with its SSE_In + HTTP_Out
+ * patrons) — ELN declares no class of that name, so there is no
+ * first-registered-wins ambiguity.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -26,7 +25,7 @@ class RemoteSourceMakeNodeResolutionTest extends TestCase {
 		// Both production namespaces are registered for node-class resolution:
 		// the substrate's own prefix plus ELN's. ELN registers BEFORE the
 		// substrate alphabetically, so this is the exact first-registered-wins
-		// arrangement the cutover has to be unambiguous under.
+		// arrangement resolution has to be unambiguous under.
 		Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\' );
 		Command_Interpreter_Node::register_namespace( 'Newspack_Nodes\\' );
 	}

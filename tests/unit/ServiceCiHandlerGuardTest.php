@@ -1,23 +1,21 @@
 <?php
 /**
  * ServiceCiHandlerGuardTest: construction-time + catalog guards for the App
- * service CIs migrated to the schema-driven command mechanism (Events /
- * Performance). (Settings / Status moved to the substrate; Aggregator / Servers
- * were removed earlier.)
+ * service CIs on the schema-driven command mechanism.
  *
- * Each now extends Service_CI_Node, whose ctor builds its dispatch table from
+ * Each extends Service_CI_Node, whose ctor builds its dispatch table from
  * `node_schema()['commands']` via `commands_from_schema()`. That helper emits a
  * rate-limited "no callable handler; skipping" warning (through
- * Core::print_less_often → the stderr handler) for any named verb that lost its
- * handler in the migration. `test_migrated_ci_emits_no_handlerless_warning`
- * captures the stderr handler and asserts NONE of the two CIs warns at
- * construction — i.e. every node_schema verb kept a callable handler.
+ * Core::print_less_often → the stderr handler) for any named verb lacking a
+ * handler. `test_migrated_ci_emits_no_handlerless_warning` captures the stderr
+ * handler and asserts NO CI warns at construction — i.e. every node_schema
+ * verb has a callable handler.
  *
- * Two further guards protect the migration's HEADLINE contract — that these two
- * CIs are now catalog-visible (Inspector-invokable) Service nodes:
+ * Two further guards protect the HEADLINE contract — that these CIs are
+ * catalog-visible (Inspector-invokable) Service nodes:
  *   - test_migrated_cis_appear_in_substrate_class_catalog_as_service: fires the
  *     substrate's `Classes_CI list` and asserts every CI's shell_name is in the
- *     catalog with `category === 'Service'`. A future typo dropping a category
+ *     catalog with `category === 'Service'`. A typo dropping a category
  *     to '' would silently drop the interpreter from the catalog, and one to
  *     'Hidden' would mislabel it; this fails loudly on either.
  *   - test_every_schema_verb_installs_as_a_command: for each CI, asserts every
@@ -42,7 +40,7 @@ use Newspack_Nodes\Rest\Classes_CI_Node;
 class ServiceCiHandlerGuardTest extends TestCase {
 
 	/**
-	 * The migrated CIs keyed by substrate `shell_name` (class short-name
+	 * The guarded CIs keyed by substrate `shell_name` (class short-name
 	 * minus the `_Node` suffix). Single source of truth for both the catalog
 	 * guard's expected set and the per-CI install guard's data provider.
 	 */
@@ -56,7 +54,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	}
 
 	/**
-	 * Construct each migrated CI and assert it does NOT emit the
+	 * Construct each guarded CI and assert it does NOT emit the
 	 * "no callable handler" warning — proving every schema verb has a handler.
 	 *
 	 * @dataProvider provide_migrated_cis
@@ -79,7 +77,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	}
 
 	/**
-	 * Headline-contract guard: the two migrated CIs are catalog-visible Service
+	 * Headline-contract guard: the guarded CIs are catalog-visible Service
 	 * nodes. Fire the substrate's `Classes_CI list` (the same catalog the
 	 * topology-editor palette + Inspector consume) and assert each CI's
 	 * shell_name appears with `category === 'Service'`.
@@ -127,7 +125,7 @@ class ServiceCiHandlerGuardTest extends TestCase {
 	}
 
 	/**
-	 * Install-as-command guard: for each migrated CI, every verb declared in its
+	 * Install-as-command guard: for each guarded CI, every verb declared in its
 	 * node_schema()['commands'] is present as a key in `commands()`. The
 	 * schema→commands derivation (Service_CI_Node::commands_from_schema) must
 	 * actually install each verb — this catches a verb that lists in the schema

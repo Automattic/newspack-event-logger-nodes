@@ -235,7 +235,7 @@ class AskAssemblerTest extends TestCase {
 		$this->assertTrue( $big['entries_truncated'] );
 	}
 
-	/** 600 chars is distinct from the 400-char cap this used to carry. */
+	/** An entry's payload rides whole. */
 	public function test_an_entry_payload_is_carried_whole(): void {
 		$record                    = $this->record();
 		$payload                   = \str_repeat( 'z', 600 );

@@ -225,7 +225,7 @@ describe( 'RequestStream', () => {
 		act( () =>
 			logRowListProps.onStats( { total: 40, visible: 12, lps: 3.5 } )
 		);
-		// The split now means the DEBUG cap, not a filter.
+		// The split means the DEBUG cap, not a filter.
 		expect( container.textContent ).toContain( '12 / 40 requests' );
 		expect( container.textContent ).toContain( '3.5 req/s' );
 	} );

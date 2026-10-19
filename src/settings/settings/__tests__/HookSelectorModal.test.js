@@ -1,8 +1,8 @@
 /* global KeyboardEvent */
 /**
  * Tests for HookSelectorModal — renders a category-grouped checkbox tree from
- * the render model published by useHookCatalogGraph. Post-migration the modal
- * is purely presentational over the hook's `{ hooksByCategory, loading }`
+ * the render model published by useHookCatalogGraph. The modal is purely
+ * presentational over the hook's `{ hooksByCategory, loading }`
  * shape, so these tests mock the hook directly. The hook's own tests
  * (../../hooks/__tests__/useHookCatalogGraph.test.js) cover the graph wiring.
  */
@@ -96,8 +96,8 @@ describe( 'HookSelectorModal', () => {
 	} );
 
 	it( 'renders the description the server ships for a category', () => {
-		// These used to be a hand-written JS map covering 24 of the 63
-		// categories the server declares, so the rest rendered blank.
+		// The server ships each category's description; the modal holds no
+		// map of its own.
 		global.__hookcatalogMockModel = {
 			hooksByCategory: HOOKS,
 			descriptions: { Lifecycle: 'Core request lifecycle' },

@@ -435,8 +435,8 @@ describe( 'OverviewSection', () => {
 	} );
 
 	it( 'says an absent total is absent, not zero', () => {
-		// A plausible zero is how the original bug hid: `0 Unique URLs` beside
-		// 33,049 requests read as a fact. Before the first reply lands there is
+		// A plausible zero hides the gap: `0 Unique URLs` beside
+		// 33,049 requests reads as a fact. Before the first reply lands there is
 		// no answer yet, and saying so is the honest render.
 		const { container } = mount( {}, { urlTotals: null } );
 

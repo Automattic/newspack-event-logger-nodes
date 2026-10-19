@@ -155,10 +155,10 @@ class DashboardMenuGateTest extends TestCase {
 	}
 
 	/**
-	 * The bug the merge fixes. After `wp nodes caps install` the substrate
-	 * resolves MANAGE to `newspack_nodes_manage`, and a user holding that and
-	 * not `manage_options` is admitted everywhere the substrate gates — while
-	 * this plugin asked for the WordPress capability by name and refused them.
+	 * After `wp nodes caps install` the substrate resolves MANAGE to
+	 * `newspack_nodes_manage`, and a user holding that and not `manage_options`
+	 * is admitted everywhere the substrate gates, so the dashboard menu must
+	 * admit them too rather than ask for the WordPress capability by name.
 	 */
 	public function test_granular_manage_capability_reaches_the_dashboard_menu(): void {
 		\update_option( Roles::OPTION, true );
@@ -178,9 +178,8 @@ class DashboardMenuGateTest extends TestCase {
 	}
 
 	/**
-	 * The list this plugin now inherits belongs to the SUBSTRATE, so its own option
-	 * row governs — the one ELN used to strip out of the merged config as a
-	 * name collision.
+	 * The list this plugin inherits belongs to the SUBSTRATE, so the substrate's
+	 * own option row governs.
 	 */
 	public function test_a_login_the_substrate_allowlist_excludes_gets_no_dashboard_menu(): void {
 		\update_option( 'newspack_nodes_allowed_users', [ 'substrate-operator-9207' ] );

@@ -644,7 +644,7 @@ describe( 'ResponseTimeChart', () => {
 	it( 're-fits when its own container resizes, not just the window', () => {
 		// The chart sits inside the URL detail panel, which resizes without the
 		// window ever doing so — opening the panel, or the flame graph above it
-		// growing, left the plot drawn to a width that no longer existed.
+		// growing, would otherwise leave the plot drawn to a stale width.
 		jest.useFakeTimers();
 		resizeObserverCb = null;
 		const { container, unmount } = mountChart( REQUESTS );

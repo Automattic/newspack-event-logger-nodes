@@ -81,8 +81,8 @@ class SettingsSyncResolverTest extends TestCase {
 	 * A blank SUBSTRATE option (`newspack_nodes_*`) resolves to the SUBSTRATE's
 	 * default, not ELN's. The substrate owns `num_partitions`, so its default lives
 	 * in `\Newspack_Nodes\Config` — ELN's own defaults don't carry it, so resolving
-	 * against ELN's defaults (the bug) returns the raw `false` and the reset-to-
-	 * default never ships.
+	 * against ELN's defaults would return the raw `false` and the reset-to-
+	 * default would never ship.
 	 */
 	public function test_blank_substrate_option_resolves_to_substrate_default(): void {
 		// Live, ELN's own defaults do NOT carry the substrate key num_partitions

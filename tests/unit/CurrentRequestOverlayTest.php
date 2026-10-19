@@ -78,7 +78,7 @@ class CurrentRequestOverlayTest extends TestCase {
 		);
 		// finally so a failed assertion can't leak the filter into later tests.
 		try {
-			// A page contributed via the substrate registry is now an overlay
+			// A page contributed via the substrate registry is an overlay
 			// page, while ELN's own defaults still match and unrelated don't.
 			$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'some-consumer-page' ) );
 			$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'event-logger-overview' ) );

@@ -820,10 +820,10 @@ describe( 'computeIndentedEntries', () => {
 	} );
 
 	it( 'nests a killed render under the spans its producer closed on the way out', () => {
-		// The screenshot case, as the FIXED producers write it: the engine
+		// A killed render, as the producers write it: the engine
 		// drains its open spans as `(orphaned)` completes and closes the scope
 		// it owns (`Gyrobase::Log::_unwind_to`), then the parent writes the
-		// terminal it has always owned. Nothing is left open, so the ordinary
+		// terminal it owns. Nothing is left open, so the ordinary
 		// straddle budget keeps `gyrobase` and the merged spans land inside it.
 		// No abort rule is needed here — that was compensating for the gap.
 		const flame = {
@@ -1820,9 +1820,9 @@ describe( 'a merged span beside the one the head left open', () => {
 	} );
 
 	it( 'stops carrying the chain at the end of the claimed subtree', () => {
-		// The claim is per sibling LIST, so every sibling after the claimed one
-		// used to inherit the open chain and dissolve a same-named node in its
-		// own branch. `other`'s `template` must keep its frame, and `cache`
+		// The claim is per sibling LIST, so a sibling after the claimed one must
+		// not inherit the open chain and dissolve a same-named node in its own
+		// branch. `other`'s `template` must keep its frame, and `cache`
 		// must stay inside it rather than reparenting onto `other`.
 		const rows = indentsOf(
 			[
@@ -2001,7 +2001,7 @@ describe( 'a merged span beside the one the head left open', () => {
 
 	it( 'gives a middle-born span of the same name its own frame', () => {
 		// Three `gyrobase` instances merge into one node: the head's, plus two
-		// from the middle. Skipping the node whole left the second tail
+		// from the middle. Skipping the node whole would leave the second tail
 		// `(complete)` with nothing to close, orphaning it outside the request.
 		const rows = indentsOf(
 			[

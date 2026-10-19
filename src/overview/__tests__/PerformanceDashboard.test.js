@@ -2,7 +2,7 @@
 /**
  * Tests for PerformanceDashboard — the orchestrator (JS-node-graph version).
  *
- * Post-D1b de-god the orchestrator reads FOUR per-slice view nodes
+ * The orchestrator reads FOUR per-slice view nodes
  * (`overview:view` / `urls:view` / `url-detail:view` / `request-detail:view`), each
  * via its own `useNodeField`. `usePerformanceGraph` mounts the polls and hands
  * back `handleUrlParamsChange` alone; the verbs a click drives are this
@@ -742,7 +742,7 @@ describe( 'PerformanceDashboard', () => {
 		it( 'returns to Server when a second server starts reporting', async () => {
 			// The fallback is derived per render, never written back: a hub
 			// whose sibling was silent for one window would otherwise be stuck
-			// on Status Codes for the session, which is the original bug.
+			// on Status Codes for the session.
 			mockView = serverView( single );
 			const { rerender, unmount } = mountDash();
 			await flushEffects();
@@ -1198,9 +1198,9 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( "renders the modal's rate from the payload, not a second derivation", async () => {
-		// The client used to sum this URL's series and divide by the buckets it
-		// had, while the header divided by the fixed hour — so a URL seen in two
-		// of twelve buckets read six times its rate under the same "req/s"
+		// The header divides by the fixed hour, so a client that summed this
+		// URL's series and divided by the buckets it had would read a URL seen
+		// in two of twelve buckets at six times its rate under the same "req/s"
 		// label. One owner, one window, one divisor.
 		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
 		mockNavState.selectedRequest = null;
@@ -3148,9 +3148,9 @@ describe( 'PerformanceDashboard', () => {
 		} );
 	} );
 	// @longform A rid found by search carries its own record. Gating the modal
-	// on the URL slice made a found request render NOTHING when that URL had no
-	// stats to answer with — and left the rid selected, so the next URL the
-	// operator opened rendered the stale request instead of itself.
+	// on the URL slice would make a found request render NOTHING when that URL
+	// has no stats to answer with — and leave the rid selected, so the next URL
+	// the operator opens renders the stale request instead of itself.
 	describe( 'a found request does not wait on the URL slice', () => {
 		it( 'opens the request detail when only the URL slice is missing', async () => {
 			mockNavState.selectedUrl = {

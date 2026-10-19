@@ -136,8 +136,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$this->assertNotNull( $enq, 'registrar must enqueue the dashboard script' );
 			$this->assertStringEndsWith( "build/{$tree}/index.js", (string) ( $enq[1] ?? '' ) );
 
-			// Deps now come from the wp-scripts manifest the registrar reads,
-			// not the old hardcoded [wp-element, wp-components, ...] fallback.
+			// Deps come from the wp-scripts manifest the registrar reads,
+			// not a hardcoded [wp-element, wp-components, ...] fallback.
 			$manifest = require \NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.asset.php";
 			$this->assertSame( \array_values( $manifest['dependencies'] ), $enq[2] ?? null );
 
@@ -145,7 +145,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$data = $this->localized_for( $handle );
 			$this->assertNotNull( $data, 'NewspackNodesData must be localized on the handle' );
 			$this->assertArrayHasKey( 'restUrl', $data );
-			// aggregatorRestUrl was a dead localize (no JS consumer) for the pre-command-path aggregator dashboard; removed with src/event-aggregator.
+			// No JS reads an aggregatorRestUrl, so none is localized.
 			$this->assertArrayNotHasKey( 'aggregatorRestUrl', $data );
 			$this->assertArrayHasKey( 'nonce', $data );
 			$this->assertArrayHasKey( 'restartNonce', $data );

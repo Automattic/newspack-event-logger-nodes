@@ -53,8 +53,7 @@ class LogManagerTest extends TestCase {
 
 		// Point config to pre-written test config.
 		@\mkdir( self::test_dir() . '/logs', 0755, true );
-		// Set both possible env-var names — Config (parallel agent) may either
-		// keep the legacy name or rename to match the new namespace.
+		// Point Config at the logging-enabled test config.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			Config::reset();
@@ -172,7 +171,7 @@ class LogManagerTest extends TestCase {
 	// rmdir_recursive() is inherited from RuntimeTestCase (newspack-nodes/tests/Helpers/TestCase.php).
 
 	/**
-	 * Skip a test if the parallel-ported Config class isn't available yet.
+	 * Skip a test when the Config class or a WP stub it needs is missing.
 	 * Tests in this suite that *write* through Topic need real Config; tests
 	 * that exercise pure singleton/state behavior don't.
 	 */
@@ -180,9 +179,7 @@ class LogManagerTest extends TestCase {
 		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			$this->markTestSkipped( 'Config class not yet available (parallel agent porting).' );
 		}
-		// LogManager uses wp_json_encode for line serialization. The bootstrap
-		// doesn't currently stub it — the bootstrap-owning agent needs to
-		// add it (REPORTED in agent report).
+		// LogManager serializes each line through wp_json_encode.
 		foreach ( [ 'wp_json_encode' ] as $fn ) {
 			if ( ! \function_exists( $fn ) ) {
 				$this->markTestSkipped( "WP function stub `{$fn}` not yet in tests/bootstrap.php; see agent report." );
@@ -226,9 +223,9 @@ class LogManagerTest extends TestCase {
 
 		$reentrant_instance = null;
 		$reentry_count      = 0;
-		// Mute after first re-entry so the test exits even when the production
-		// bug is reintroduced — assertNotSame below catches the regression
-		// without the stack-overflow risk.
+		// Mute after first re-entry so the test exits even when construction
+		// re-enters — assertNotSame below catches that without the
+		// stack-overflow risk.
 		$GLOBALS['_test_get_option_hook'] = function () use ( &$reentrant_instance, &$reentry_count ): void {
 			if ( $reentry_count++ > 0 ) {
 				return;
@@ -324,10 +321,10 @@ class LogManagerTest extends TestCase {
 
 	/**
 	 * The size guard must fire on invalid-UTF8 data too: `wp_json_encode` without
-	 * substitute flags returns false there, so the old guard SKIPPED truncation —
-	 * then Message::packed substitutes U+FFFD (6 escaped bytes/bad byte) and the
-	 * oversized record is silently dropped by the Partition. The stderr bridge now
-	 * routes arbitrary substrate bytes through here.
+	 * substitute flags returns false there, so a guard reading that false as small
+	 * skips truncation, Message::packed then substitutes U+FFFD (6 escaped
+	 * bytes/bad byte), and the Partition silently drops the oversized record. The
+	 * stderr bridge routes arbitrary substrate bytes through here.
 	 */
 	public function test_message_truncates_oversized_invalid_utf8_data(): void {
 		$this->require_config_or_skip();
@@ -375,13 +372,13 @@ class LogManagerTest extends TestCase {
 	}
 
 	public function test_firehose_topic_receives_renamed_retention_axes(): void {
-		// The substrate renamed the retention axes: num_segments (count target),
-		// lifetime (age rule), and a NEW trailing max_segments (hard cap). Seed
-		// distinct values for all three — none equal to any default — and prove
-		// Log_Manager reads the new keys and passes them into the firehose tail in
-		// the correct positions. Against the old key reads (`max_segments` as the
-		// count target, `max_lifetime` for age) this fails: `max_lifetime` no
-		// longer resolves and the values land in the wrong slots.
+		// The retention axes are num_segments (count target), lifetime (age
+		// rule) and a trailing max_segments (hard cap). Seed distinct values for
+		// all three — none equal to any default — and prove Log_Manager reads
+		// those keys and passes them into the firehose tail in the correct
+		// positions. Reading `max_segments` as the count target or `max_lifetime`
+		// for age fails: `max_lifetime` does not resolve and the values land in
+		// the wrong slots.
 		$this->require_config_or_skip();
 
 		$config_path = self::test_dir() . '/retention-config.php';
@@ -539,8 +536,8 @@ class LogManagerTest extends TestCase {
 
 	public function test_matched_request_is_started_at_construction(): void {
 		// A request the ruleset classifies as logged must appear in the
-		// firehose even if nothing ever calls message() — the old lazy start
-		// left matched-but-quiet requests invisible.
+		// firehose even if nothing ever calls message() — a lazy start would
+		// leave matched-but-quiet requests invisible.
 		$this->require_config_or_skip();
 		$lm = $this->fresh_log_manager();
 		$this->assertTrue( $lm->is_started(), 'precondition: this request is logged' );
@@ -1614,8 +1611,7 @@ class LogManagerTest extends TestCase {
 		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
-		// Set both possible env-var names — Config (parallel agent) may either
-		// keep the legacy name or rename to match the new namespace.
+		// Point Config at the logging-enabled test config.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
@@ -1638,8 +1634,7 @@ class LogManagerTest extends TestCase {
 		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
-		// Set both possible env-var names — Config (parallel agent) may either
-		// keep the legacy name or rename to match the new namespace.
+		// Point Config at the logging-enabled test config.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
@@ -1691,15 +1686,14 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * Regression: 'k' field must come from $category, not $data.
+	 * The 'k' field must come from $category, not $data.
 	 */
 	public function test_message_k_field_not_overridable_by_data(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
-		// Set both possible env-var names — Config (parallel agent) may either
-		// keep the legacy name or rename to match the new namespace.
+		// Point Config at the logging-enabled test config.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
@@ -1717,15 +1711,14 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * Regression: 'ts' field CAN be overridden (profiler use case).
+	 * The 'ts' field CAN be overridden (profiler use case).
 	 */
 	public function test_message_ts_field_overridable_by_data(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
-		// Set both possible env-var names — Config (parallel agent) may either
-		// keep the legacy name or rename to match the new namespace.
+		// Point Config at the logging-enabled test config.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
@@ -1741,15 +1734,14 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * Regression: 'rid' field must come from request_id, not $data.
+	 * The 'rid' field must come from request_id, not $data.
 	 */
 	public function test_message_rid_field_not_overridable_by_data(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
-		// Set both possible env-var names — Config (parallel agent) may either
-		// keep the legacy name or rename to match the new namespace.
+		// Point Config at the logging-enabled test config.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
@@ -1766,15 +1758,14 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * Regression: 'n' field must come from line_number, not $data.
+	 * The 'n' field must come from line_number, not $data.
 	 */
 	public function test_message_n_field_not_overridable_by_data(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
-		// Set both possible env-var names — Config (parallel agent) may either
-		// keep the legacy name or rename to match the new namespace.
+		// Point Config at the logging-enabled test config.
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
@@ -2205,7 +2196,7 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * Bug 2: a per-value length cap elides an oversized value so one long
+	 * A per-value length cap elides an oversized value so one long
 	 * allowlisted value can't blow the whole environment_v3 map.
 	 */
 	public function test_environment_v3_caps_oversized_value(): void {
@@ -2233,7 +2224,7 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * Bug 3: URL-secret redaction is a catch-all over every allowlisted value
+	 * URL-secret redaction is a catch-all over every allowlisted value
 	 * that carries a URL query — not just HTTP_REFERER. A value like
 	 * A8C_PROXIED_REQUEST=/x?token=SHHH must be redacted.
 	 */
@@ -2979,9 +2970,9 @@ class LogManagerTest extends TestCase {
 
 	/**
 	 * An oversized STRING `m` is trimmed to fit; every other key survives.
-	 * 6000 is distinct from both MAX_DATA_SIZE (3840) and the old 1000-char
-	 * replacement, and `l` is what the flame aggregates on — losing it is what
-	 * made a truncated span unopenable.
+	 * 6000 is distinct from both MAX_DATA_SIZE (3840) and the 1000-byte floor
+	 * slice, and `l` is what the flame aggregates on — losing it leaves a
+	 * truncated span unopenable.
 	 */
 	public function test_message_trims_an_oversized_string_and_keeps_the_other_keys(): void {
 		$this->require_config_or_skip();

@@ -69,7 +69,7 @@ class JobRouterTest extends TestCase {
 	}
 
 	public function test_age_is_not_job_routers_concern(): void {
-		// Staleness moved to the Age_Sieve after job-router in the topology;
+		// Staleness belongs to the Age_Sieve after job-router in the topology;
 		// an ancient body ts routes through untouched.
 		$entry       = $this->jobintake_entry( 'job', 'old_job', [] );
 		$entry['ts'] = Core::$now - 86400.0;

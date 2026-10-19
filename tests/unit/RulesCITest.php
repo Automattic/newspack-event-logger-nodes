@@ -65,8 +65,8 @@ class RulesCITest extends TestCase {
 	 * Put a `rules` seed in the config FILE layer, the way production has one.
 	 *
 	 * Deliberately not a reflection pin on the memoized array: `reset()`
-	 * invalidates that memo, so a pinned one both hides the staleness the memo
-	 * causes and evaporates the moment the fix lands.
+	 * invalidates that memo, so a pinned one hides the staleness the memo
+	 * causes.
 	 *
 	 * @param array<int, array<string, mixed>> $rules Config `rules` entries.
 	 */
@@ -95,7 +95,7 @@ class RulesCITest extends TestCase {
 		$this->assertSame( $hooks, $result['rules'][0]['hooks'], 'each rule nests its resolved hooks' );
 	}
 
-	/** The verb is `dump`; nothing answers to the old name, per the substrate's docs/stability.md. */
+	/** The verb is `dump`; nothing answers to `list`, per the substrate's docs/stability.md. */
 	public function test_list_is_refused_as_an_unknown_command(): void {
 		$result = $this->fire( 'list' );
 
@@ -245,7 +245,7 @@ class RulesCITest extends TestCase {
 	}
 
 	public function test_upsert_replaces_a_legacy_positional_id_rule_for_the_same_pattern(): void {
-		// A rule persisted by v0.26 carries a positional id, not id_for(pattern).
+		// A stored rule may carry a positional id, not id_for(pattern).
 		// An id-less add for that same pattern must still replace it, not duplicate.
 		$legacy = new Rule( 'faed26b5', '/exact/', Rule::ACTION_SKIP );
 		( new Rule_Set( [] ) )->save( [ $legacy ] );
@@ -296,8 +296,8 @@ class RulesCITest extends TestCase {
 
 	/**
 	 * A rule selecting every hook the site has seen is a real edit, not a
-	 * runaway request: gazettenet's catalog held 4,204 hooks, and the editor's
-	 * "Select Hooks → all" came back `payload too large` at the old 64 KB cap.
+	 * runaway request: gazettenet's catalog carries 4,204 hooks, and the editor's
+	 * "Select Hooks → all" sends them in one upsert well past 64 KB.
 	 */
 	public function test_upsert_accepts_a_rule_selecting_a_whole_hook_catalog(): void {
 		$hooks = [];
@@ -321,8 +321,8 @@ class RulesCITest extends TestCase {
 	}
 
 	public function test_upsert_refuses_a_pattern_less_rule_and_keeps_the_baseline(): void {
-		// A pattern-less rule used to coerce to '/', taking the log-all
-		// baseline's id and replacing it with a skip — logging off site-wide.
+		// A pattern-less rule must not coerce to '/', which would take the log-all
+		// baseline's id and replace it with a skip — logging off site-wide.
 		$baseline = new Rule( Log_Manager::url_hash( '/' ), '/', Rule::ACTION_LOG, hooks: [ 'wp_loaded' ] );
 		( new Rule_Set( [] ) )->save( [ $baseline ] );
 

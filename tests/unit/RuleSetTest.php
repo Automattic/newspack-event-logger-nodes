@@ -167,7 +167,7 @@ final class RuleSetTest extends TestCase {
 	}
 
 	public function test_load_preserves_a_nonempty_legacy_id(): void {
-		// A non-empty (legacy positional) id is trusted — its durable hooks option
+		// A non-empty (positional) id is trusted — its durable hooks option
 		// is keyed by it, so load() must NOT rekey it out from under that option.
 		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
 			[ 'id' => 'faed26b5', 'pattern' => '/', 'action' => 'log' ],
@@ -350,9 +350,9 @@ final class RuleSetTest extends TestCase {
 	}
 
 	public function test_sync_round_trip_preserves_pointer_hooks_across_the_wire(): void {
-		// The bug: settings-sync ships OPTION_RULES verbatim, so a pointer rule's
-		// hooks (a SEPARATE durable option) never reach the spoke and hooks_for()
-		// reports "hooks missing". hydrate_array()+apply_synced() must close that gap.
+		// Settings-sync ships OPTION_RULES verbatim, so a pointer rule's hooks (a
+		// SEPARATE durable option) would never reach the spoke and hooks_for()
+		// would report "hooks missing". hydrate_array()+apply_synced() close that gap.
 		$big = \array_map( fn( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
 		( new Rule_Set( [] ) )->save( [ new Rule( 'big', '/heavy/', Rule::ACTION_LOG, hooks: $big ) ] );
 
@@ -523,8 +523,8 @@ final class RuleSetTest extends TestCase {
 	}
 
 	/**
-	 * Two entries sharing an id used to alias one durable hooks option: the
-	 * later inline rule's delete_option wiped the earlier pointer rule's list,
+	 * Two entries sharing an id must not alias one durable hooks option, or the
+	 * later inline rule's delete_option wipes the earlier pointer rule's list,
 	 * losing every hook behind one rate-limited notice.
 	 */
 	public function test_apply_synced_keeps_a_pointer_rules_hooks_when_another_entry_shares_its_id(): void {
@@ -547,8 +547,8 @@ final class RuleSetTest extends TestCase {
 
 	/**
 	 * A pointer entry that lost its `hooks` key — a truncated wire payload, a
-	 * hand-edited push. Re-tiering it used to inline it to [] and delete the
-	 * spoke's durable hooks option; the whole push must fail instead, leaving
+	 * hand-edited push. Re-tiering it would inline it to [] and delete the
+	 * spoke's durable hooks option, so the whole push must fail instead, leaving
 	 * the spoke's last-good ruleset in place.
 	 */
 	public function test_apply_synced_refuses_a_pointer_entry_whose_hooks_key_was_dropped(): void {

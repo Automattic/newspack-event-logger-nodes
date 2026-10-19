@@ -47,8 +47,8 @@ class ReqgrepCoreTest extends TestCase {
 	}
 
 	/**
-	 * The host annotation used to put the URL on EVERY sql line; `App\Core`
-	 * now strips it. A url search must still reach that request's sql lines,
+	 * `App\Core` strips the host annotation, URL and all, so a sql line carries
+	 * none. A url search must still reach that request's sql lines,
 	 * which it does through the `request` entry that carries the full URL.
 	 */
 	public function test_a_url_search_still_collects_sql_lines_carrying_no_url(): void {
@@ -78,9 +78,9 @@ class ReqgrepCoreTest extends TestCase {
 
 	public function test_an_aborted_request_completes_like_any_other_terminal(): void {
 		// `process (aborted)` is a terminal in `Request_Builder_Node::TERMINAL_KEYWORDS`
-		// too. Firing only on `(complete)` left every lease-killed request out of the
-		// dashboard's `grep_requests` reply entirely, and mislabelled `[incomplete]` in
-		// the CLI — the one request an operator greps for.
+		// too. Firing only on `(complete)` would leave every lease-killed request out of
+		// the dashboard's `grep_requests` reply entirely, and mislabel it `[incomplete]`
+		// in the CLI — the one request an operator greps for.
 		$completed = [];
 		$core      = $this->make_core( '/calendar', $completed );
 		$this->push( $core, 'reqAbort', 'process (start)', 'start /calendar', 1 );

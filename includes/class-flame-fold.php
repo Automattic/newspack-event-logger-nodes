@@ -530,7 +530,7 @@ final class Flame_Fold {
 		// Normalized ONCE here; the browser destructures rows, never coerces.
 		$table  = self::shape_table( $node );
 		$shapes = [] === $table ? [] : [ 'shapes' => $table ];
-		// A node a pre-change checkpoint restored has no key or label to give.
+		// A node restored without a key or label has none to give.
 		$logged = isset( $node['k'], $node['l'] )
 			? [
 				'k' => Core::str( $node['k'] ),

@@ -1573,11 +1573,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 					if ( ! \is_array( $val ) ) {
 						return $val;
 					}
-					// Retired: a fold keeps its head frames on its own stack.
-					if ( isset( $val['await'] ) || isset( $val['keep'] ) ) {
-						$this->print_less_often( 'WARNING: dropped a retired fold await/keep from checkpointed request ', Core::as_string( $val['rid'] ?? '' ) );
-						unset( $val['await'], $val['keep'] );
-					}
 					$val['timestamp']   = Core::num_float( $val['timestamp'] ?? null );
 					$val['duration_ms'] = Core::num_float( $val['duration_ms'] ?? null );
 					$val['status_code'] = Core::num_int( $val['status_code'] ?? null );

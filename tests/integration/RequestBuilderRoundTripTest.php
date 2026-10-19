@@ -30,11 +30,10 @@ class RequestBuilderRoundTripTest extends TestCase {
 	/**
 	 * Write an entry through the canonical Topic::fill path. Constructs a
 	 * TM_STRUCT Message keyed by rid (Topic hashes KEY → partition, and the
-	 * v0.2.17+ producer convention is KEY = rid so every entry for a single
+	 * producer convention is KEY = rid so every entry for a single
 	 * request co-locates in one partition). Consumer auto-unpacks on the read
 	 * side; VALUE is the entry array directly (no JSON wrapper). The `$url`
-	 * arg is retained for call-site readability but isn't used as the routing
-	 * key anymore.
+	 * arg is retained for call-site readability and is not the routing key.
 	 */
 	private function topic_write( Topic_Node $topic, string $url, array $entry ): void {
 		$message                       = Message::new_message();
@@ -77,7 +76,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		// on worker 2 — because its cache rode in the offsetlog alongside the cursor
 		// (add_snapshot_node). Without the snapshot, worker 2 starts with an empty
 		// cache, the post-respawn `process (complete)` finds no r1, and the request
-		// vanishes (absent from requests.log, unclickable) — the original bug.
+		// vanishes (absent from requests.log, unclickable).
 		$topic = new Topic_Node();
 		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "1" ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'l' => '', 'ts' => 1 ] );

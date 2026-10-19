@@ -49,9 +49,9 @@ class DiscoveryCollectorNodeTest extends TestCase {
 
 	/** Build a named collector wired to a capturing sink and connected to a Tee target. */
 	/**
-	 * The collector now mints one SIGNED probe per spoke, so the harness wires a
+	 * The collector mints one SIGNED probe per spoke, so the harness wires a
 	 * real egress node and gives it a session — a spoke it cannot sign for is
-	 * skipped, which is the point of the change.
+	 * skipped.
 	 */
 	private function wired_node( Capture_Sink_Node $sink ): Discovery_Collector_Node {
 		$sink->name( '_command_interpreter' );
@@ -108,7 +108,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 	}
 
 	public function test_arguments_arms_recurring_timer(): void {
-		// A 300s cadence (interval_ms > 1000) now hitchhikes the Router TIMER and
+		// A 300s cadence (interval_ms > 1000) hitchhikes the Router TIMER and
 		// throttles in fire_cb() — a real worker drain always has a _router.
 		$router = new \Newspack_Nodes\Router_Node();
 		$router->name( \Newspack_Nodes\Node_Names::ROUTER );

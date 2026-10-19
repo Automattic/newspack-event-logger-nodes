@@ -44,8 +44,8 @@ describe( 'useUrlNavigation', () => {
 	// `urls` holds ONE page of the catalog (50 of ~1000), so a deep link to a
 	// low-traffic URL — the case deep links are FOR — is usually not in it.
 	// This hook answers what it can from the page and REPORTS the rest; asking
-	// the server is a command, and the retry, the one-at-a-time latch and the
-	// backoff that used to live here are what a retried read already does.
+	// the server is a command, and a retried read already supplies the retry,
+	// the one-at-a-time latch and the backoff.
 
 	it( 'resolves a ?url= hash that IS in the loaded page, with no intent left over', async () => {
 		setLocation( 'http://localhost/wp-admin/?url=aaa' );

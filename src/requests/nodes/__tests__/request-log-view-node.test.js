@@ -27,7 +27,7 @@ import { RequestLogViewNode, views } from '../request-log-view-node';
 // Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// Construct + name directly (createX gone); bare-new + name= is the seam.
+// Construct + name directly; bare-new + name= is the seam.
 function makeView( name, opts = {} ) {
 	const node = new RequestLogViewNode( opts.maxLines );
 	node.name = name;

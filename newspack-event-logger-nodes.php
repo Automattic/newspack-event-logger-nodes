@@ -82,74 +82,11 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant when too old. 2.53.0 is Capabilities::can() applying
-	// the operator's allowed_users list, after this plugin deleted its own
-	// copy of it: below the floor the capability still resolves and the list
-	// narrows nothing, a silent widening no gate can see. 2.56.0 is
-	// Admin::overlay_pages() and the station-tab filter the current-request
-	// tab registers on: below it the station has no Request tab and every
-	// rail's fetch is refused. 2.57.0 is the /auth reply naming the signing
-	// key `secret`, which the bundled auth client and MCP_Controller read.
-	// 2.60.0 is the shared AreaTimeChart and the chart roles its `ui` sheet
-	// paints, which every dashboard chart draws on. 2.65.13 is the SSE stream
-	// addressing replies to the command session the bundled stream client
-	// presents; below it the dashboards' streams receive no replies. 2.66.0
-	// is Fanout_Targets::egress_for(). 2.67.0 is Fanout_Targets::send_signed(),
-	// which mints the discovery probes, and an invalidate_options_cache() that
-	// drops every cached option, which the discovery merge relies on.
-	// 2.69.0 is Command_Interpreter_Node::$around_dispatch, the verb spans.
-	// 2.70.0 is that hook handing the command line the spans' (start) carries.
-	// 2.71.0 is Schema_Reflection::answer_request(), which both builders
-	// answer their requests through, and CLI::worker_id(), which spells a
-	// spawned worker's row; below it each call fatals. It is also
-	// newspack_nodes/worker_identified, naming the worker a spawn became.
-	// 2.73.0 is Table_Client, which the flame builder writes its rows
-	// through; below it the builder fatals. 2.74.0 is Table_Unavailable,
-	// the typed refusal of a Table whose backend cannot open on this host,
-	// and the public Durable_Arm::serializer(), the rule a durable Table
-	// stores by.
-	// 2.77.0 is Command_Interpreter_Node::dispatch() binding each verb's
-	// declared args and handing the handler them by name; below it every
-	// handler here reads a raw token list as named args and binds nothing.
-	// 2.79.1 is LRU_Cache::with_timed_rotation()'s owner clock, which the
-	// request builder times requests out on; below it PHP drops the extra
-	// argument and the builder times a reprocess out on the wall.
-	// 2.85.0 is the table-probe topology flame-builder.tsl includes; below it
-	// the topology fails to load.
-	// 2.93.0 is the skin's --wp-components-color-* tokens on the
-	// newspack-nodes-ui handle; below it a tag token's × vanishes on dark.
-	// 2.97.0 is Rate_Limit, which meters the MCP door; below it that fatals.
-	// 2.98.0 is the data-ask-picked paint on the newspack-nodes-ui handle;
-	// below it an Ask pick shows no mark, so nothing says what is selected.
-	// 2.99.0 is the SSE broker, which replaces /log/stream; below it the
-	// hub's reader nodes are unknown.
-	// 2.102.0 is the page's shared stream link and the group Taps;
-	// the dashboards share the page global Core with the substrate's
-	// bundles, so a bundle built against an earlier substrate breaks them.
-	// 2.104.0 is the page link that routes by pairs, which the bundled
-	// stream hooks call.
-	// 2.105.0 is Node::without_config(), which the firehose Topic uses.
-	// 2.106.0 is dump_metadata -o, which the bundled topology console asks
-	// for an owner's sidecars; an older substrate answers it with nothing.
-	// 2.107.0 is dl_remove, which the bundled Triage view sends.
-	// 2.109.0 is the colon stamp aggregator.tsl writes.
-	// 2.110.0 is the add_source verb aggregator.tsl sends and the page link's
-	// attachView(), parkView() and detachView(), which the bundled stream
-	// hooks call.
-	// 2.111.0 is the Row_Table: flame-builder.tsl declares flame-facts, the
-	// builder writes it through Table_Client::write_rows() and Stats_Query
-	// reads it through Row_Table_Node::read().
-	// 2.112.0 is Row_Table_Node::build(), open_snapshot() and
-	// remove_snapshot(), through which the overview job publishes and the
-	// verbs read the URL snapshot (substrate ADR-35).
-	// 2.113.0 is retained_by as a list of references, which the version-5
-	// stats schema declares for each lookup table its rows name.
-	// 2.115.0 is the crt-color skin and CRT's --phosphor tokens, which the
-	// bundled skin list offers and the dashboards' data marks paint through.
-	// 2.116.0 is the shared token field the rule editor's tags sit in.
-	// Raise the floor whenever a new hard requirement appears. The floor is
-	// what makes a too-old substrate DORMANT rather than fatal, so one set
-	// too low is worse than none, and WordPress does not order plugin updates.
+	// @longform Dormant below the 2.116.0 floor. check-substrate-floor.sh holds
+	// it to the substrate PHP this plugin calls; a floor that a topology, a
+	// stylesheet or a bundle needs is raised by hand. The CHANGELOG records
+	// why each raise was made. A floor set too low wires the plugin up against
+	// an older substrate and fatals.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
 		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.116.0', 'Newspack Event Logger Nodes' ) ) {
 		return;

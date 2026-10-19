@@ -140,7 +140,7 @@ export function renderHook( useHook, { initialProps = {} } = {} ) {
 /**
  * Poll an assertion until it passes, flushing React work between attempts.
  *
- * Commands ride the router tick now, so most things a test waits for are a
+ * Commands ride the router tick, so most things a test waits for are a
  * second away rather than a microtask. This is @testing-library's `waitFor`
  * in miniature, which this package has no dependency on.
  *
