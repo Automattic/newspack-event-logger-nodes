@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.144.0] - 2026-10-19
+
 ### Changed
 - **The significant-events field is one token field.** Its tags and the box they are typed into share the substrate's `newspack-nodes-token-field` frame, which wears the field's chrome and focus ring; pressing anywhere in the frame puts the box in focus, and Clear all sits beside the box at the end of the line it is on, the two wrapping together. The box reads "Add a hook or event", and the help says what marking a hook significant does: each is timed per callback, and auto-disable never removes it. `TagInputField` loses its `horizontal` prop, since the frame lays its tags out itself.
 - **Three refusals read as plain English.** `App\Core` reports `hook_start_priority <value> is not a number` on stderr, and the `performance` verbs refuse a filter token with no `=` as `filter <token> is not a field=value pair` and one naming an owned field as `filter <field>=<value> belongs to <owner>: name the <noun> with <owner>`.
