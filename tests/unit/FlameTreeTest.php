@@ -10,10 +10,10 @@ use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 /**
- * Unit tests for the pure flame-graph algorithm split out of Flame_Builder_Node:
- * tree construction (LIFO span matching), duplicate-sibling numbering, suffix
- * stripping, incremental merge, and finalize. Exercised directly here now that
- * it's a standalone helper.
+ * Unit tests for the pure flame-graph algorithm Flame_Builder_Node calls: tree
+ * construction (LIFO span matching), duplicate-sibling numbering, suffix
+ * stripping, incremental merge, and finalize, exercised directly on the
+ * standalone helper.
  */
 #[CoversClass( Flame_Tree::class )]
 class FlameTreeTest extends TestCase {

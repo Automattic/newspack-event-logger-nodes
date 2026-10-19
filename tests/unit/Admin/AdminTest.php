@@ -10,9 +10,8 @@
  */
 
 namespace {
-	// Admin class is normally required by the main plugin file's deferred loader,
-	// but that loader doesn't yet include includes/admin/class-admin.php — until
-	// the main file is updated to wire it, require it here so this test runs.
+	// Require the Admin class directly, so this test runs without the main
+	// plugin file's deferred loader.
 	require_once \dirname( __DIR__, 3 ) . '/includes/admin/class-admin.php';
 }
 
@@ -122,9 +121,8 @@ class AdminTest extends TestCase {
 
 		$this->assertArrayHasKey( 'newspack_event_logger_nodes_general_section', $GLOBALS['_registered_sections'] );
 
-		// The surviving application settings fields (the seven ruleset-absorbed
-		// fields were retired in Task 10). Storage fields (substrate) are NOT
-		// asserted here.
+		// The application settings fields; the per-URL settings are rule fields,
+		// not settings fields. Storage fields (substrate) are NOT asserted here.
 		foreach ( [ 'enable_logging', 'log_memory', 'flush_every_line' ] as $field ) {
 			$this->assertArrayHasKey( $field, $GLOBALS['_registered_fields'], "field $field not registered" );
 			$this->assertSame( Admin::SETTINGS_PAGE, $GLOBALS['_registered_fields'][ $field ]['page'] );
@@ -162,7 +160,7 @@ class AdminTest extends TestCase {
 		$_POST = [ Admin::RESET_NONCE => wp_create_nonce( Admin::RESET_ACTION ) ];
 
 		// Seed application-level options. Substrate options (e.g.
-		// num_partitions) are now owned by `\Newspack_Nodes\Admin` and reset
+		// num_partitions) are owned by `\Newspack_Nodes\Admin` and reset
 		// via its own handler.
 		\update_option( 'newspack_event_logger_nodes_enable_logging', 0 );
 		\update_option( 'newspack_event_logger_nodes_log_memory', 1 );
@@ -237,8 +235,8 @@ class AdminTest extends TestCase {
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'combined', 0 );
 		$this->prepare_lock_dir( 'aggregator', 0 );
-		// Phantom worker-group lock dir that matches NO live topology — the bug
-		// touched this and silently restarted nothing real.
+		// Phantom worker-group lock dir that matches NO live topology — a restart
+		// that touched it would silently restart nothing real.
 		$this->prepare_lock_dir( 'request-workers', 0 );
 
 		$admin = new Admin();
@@ -390,8 +388,8 @@ class AdminTest extends TestCase {
 
 	/**
 	 * With the granular capabilities installed the settings page must register
-	 * under the capability MANAGE resolves to, not the WordPress one it used to
-	 * name, or the page 403s for the very user the substrate admits.
+	 * under the capability MANAGE resolves to, not `manage_options`, or the
+	 * page 403s for the very user the substrate admits.
 	 */
 	public function test_add_admin_menu_registers_the_resolved_manage_capability(): void {
 		\update_option( Roles::OPTION, true );
@@ -897,8 +895,8 @@ class AdminTest extends TestCase {
 		$this->assertSame( [ 'init', 'other' ], $result );
 	}
 	public function test_register_settings_does_not_register_remote_settings(): void {
-		// The three remote-spoke geometry settings moved to the substrate; ELN
-		// no longer registers the options, the section, or the fields.
+		// The three remote-spoke geometry settings belong to the substrate; ELN
+		// registers none of the options, the section, or the fields.
 		$admin = new Admin();
 		$admin->register_settings();
 
@@ -928,8 +926,8 @@ class AdminTest extends TestCase {
 	}
 
 	public function test_maintenance_section_points_at_the_substrate_flush(): void {
-		// This plugin keeps no salt and no flush of its own: three independent
-		// rotations meant flushing one left the other two serving stale values.
+		// This plugin keeps no salt and no flush of its own: with three independent
+		// rotations, flushing one would leave the other two serving stale values.
 		// The section has to say where the one button lives.
 		\ob_start();
 		( new Admin() )->render_maintenance_section();

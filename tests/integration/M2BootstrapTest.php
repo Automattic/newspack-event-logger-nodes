@@ -1,7 +1,7 @@
 <?php
 /**
  * M2BootstrapTest: integration test for the
- * `newspack_nodes/request_graph_ready` hook that wires the nine M2
+ * `newspack_nodes/request_graph_ready` hook that wires the
  * service CIs into the substrate's node registry.
  *
  * `HTTP_In::dispatch` lazy-builds the request-scope graph
@@ -62,8 +62,8 @@ class M2BootstrapTest extends TestCase {
 
 		\do_action( 'newspack_nodes/request_graph_ready', $base );
 
-		// `servers` is no longer mounted by ELN — the substrate Vault_CI owns
-		// the server registry surface now.
+		// ELN mounts no `servers` CI: the substrate Vault_CI owns the server
+		// registry surface.
 		$expected = [
 			// Substrate-mounted (newspack_nodes_mount_substrate_cis):
 			'workers',

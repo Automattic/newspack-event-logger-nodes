@@ -536,9 +536,9 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/wp-shims.ph
 
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/newspack-nodes.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TopologyDurability.php';
-// The substrate no longer wires its runtime at plugin-file scope (it defers to
-// Bootstrap::ensure_runtime_wired() at REST/admin/CLI/cron entry points), so
-// boot it explicitly here — registers the node-class namespaces, the
+// The substrate wires its runtime through Bootstrap::ensure_runtime_wired() at
+// its REST/admin/CLI/cron entry points, not at plugin-file scope, so boot it
+// explicitly here — registers the node-class namespaces, the
 // `<config:…>` token namespace, the stock-topology dir, and Core::$memd.
 \Newspack_Nodes\Bootstrap::ensure_runtime_wired();
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TestCase.php';
@@ -605,7 +605,6 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/FactsSeeder.php';
 require_once __DIR__ . '/Helpers/StatsAskRecorderNode.php';
-require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';
 require_once __DIR__ . '/Helpers/TopologyLockHarness.php';
 require_once __DIR__ . '/Helpers/RedirectException.php';

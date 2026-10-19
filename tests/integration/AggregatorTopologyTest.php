@@ -1,8 +1,8 @@
 <?php
 /**
- * aggregator.tsl parse + mount wiring (post-cutover pull graph).
+ * aggregator.tsl parse + mount wiring (the pull graph).
  *
- * The hub topology mounts no Stream_Merger. It ships a `spokes` Vault_Group
+ * The hub topology ships a `spokes` Vault_Group
  * over group `spoke` (one Remote_Source broker per spoke, following the Vault
  * on reload, each carrying the spoke's firehose and `sources:php` on one
  * connection), the Remote_Job_Rewrite_Node that flips aggregated `k:"job"`

@@ -28,7 +28,7 @@ import { PerfErrorsViewNode, views } from '../perf-errors-view-node';
 // Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// Construct + name directly — createX factory is gone; bare-new is the seam.
+// Construct + name directly; bare-new is the seam.
 function makeView( name, opts = {} ) {
 	const node = new PerfErrorsViewNode( opts.maxLines );
 	node.name = name;

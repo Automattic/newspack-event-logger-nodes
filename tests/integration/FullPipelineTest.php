@@ -24,7 +24,7 @@ class FullPipelineTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
-		// Job handlers now register through the WP filter; clear filter state so
+		// Job handlers register through the WP filter; clear filter state so
 		// nothing leaks in from another test class sharing this process.
 		$GLOBALS['_wp_actions'] = [];
 		$this->tmp = $this->make_temp_dir();
@@ -38,11 +38,10 @@ class FullPipelineTest extends TestCase {
 	/**
 	 * Write an entry through the canonical Topic::fill path. Constructs a
 	 * TM_STRUCT Message keyed by rid (Topic hashes KEY → partition, and the
-	 * v0.2.17+ producer convention is KEY = rid so every entry for a single
+	 * producer convention is KEY = rid so every entry for a single
 	 * request co-locates in one partition). Consumer auto-unpacks on the read
 	 * side; VALUE is the entry array directly (no JSON wrapper). The `$url`
-	 * arg is retained for call-site readability but isn't used as the routing
-	 * key anymore.
+	 * arg is retained for call-site readability and is not the routing key.
 	 */
 	private function topic_write( Topic_Node $topic, string $url, array $entry ): void {
 		$message                       = Message::new_message();

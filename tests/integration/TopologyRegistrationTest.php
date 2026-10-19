@@ -9,7 +9,7 @@ use Newspack_Nodes\Topology_Registry;
  * Verify the application's topology filter registration plumbs through
  * to runtime Bootstrap::expand_workers().
  *
- * Post-A3 the descriptor carries the topology NAME (a stock TSL file in
+ * The descriptor carries the topology NAME (a stock TSL file in
  * `topologies/`), not a PHP file path — Topology_Loader resolves the
  * name to a file at spawn time via Topology_Registry::resolve().
  */

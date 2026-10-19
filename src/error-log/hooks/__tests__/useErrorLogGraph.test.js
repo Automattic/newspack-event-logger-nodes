@@ -6,9 +6,9 @@
  *
  * The page link composes its own `_stream:sse-in` (SseIn) and shares the
  * `_http` (HttpOut) and `_heartbeat` (Heartbeat) singletons, wiring the
- * `connected → slot` bridge to that heartbeat. The `error-log:route`
- * classifier and the `error-log:transform` Callback stay gone — the view's
- * `fill()` shapes raw envelopes inline.
+ * `connected → slot` bridge to that heartbeat. No `error-log:route`
+ * classifier or `error-log:transform` Callback exists — the view's `fill()`
+ * shapes raw envelopes inline.
  *
  * EventSource is faked via `global.EventSource`; SseInNode's connection logic is
  * unmocked here — we drive a `msg` event through the fake EventSource and
@@ -102,7 +102,7 @@ const HEARTBEAT = '_heartbeat';
 const VIEW = 'error-log:view';
 const TEE = 'error-log:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
-// Names that MUST NOT be registered any more — the dead route/transform nodes.
+// Names that MUST NOT be registered — no route or transform node.
 const REMOVED_NODE_NAMES = [
 	'error-log:route',
 	'error-log:transform',
@@ -418,8 +418,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 
 	test( 'a user pause outranks a visibility refocus: pause → hide → refocus stays CLOSED', async () => {
 		// Pause and visibility are combined into ONE isActive gate, so a refocus
-		// cannot auto-resume a user-paused stream. Regression guard against a
-		// fork back to a separate visibility path.
+		// cannot auto-resume a user-paused stream.
 		const { result, rerender } = renderHook( () => useErrorLogGraph() );
 		await act( async () => {} );
 		await act( async () => result.current.setPaused( true ) );
@@ -476,7 +475,7 @@ describe( 'useErrorLogGraph — glob browse', () => {
 		} );
 		const { result } = renderHook( () => useErrorLogGraph() );
 		await act( async () => {} );
-		// Default tail is the glob; the URL is byte-identical to today.
+		// Default tail is the glob.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.*' );
 		await act( async () =>
 			result.current.browse.selectPartition( 'errors.p5' )

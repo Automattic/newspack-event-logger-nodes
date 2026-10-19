@@ -182,9 +182,9 @@ class TopologyCompactSummaryTest extends TestCase {
 
 	/**
 	 * A ≤PIPE_BUF record round-trips through the named partition; a >PIPE_BUF one
-	 * drops whole. void_warranty was removed from errors / completed / gyroscope —
+	 * drops whole. None of errors / completed / gyroscope grants void_warranty —
 	 * the whole family is uniformly ≤PIPE_BUF atomic (each producer fits at the
-	 * source). Re-adding a grant would round-trip the oversize record and break this.
+	 * source). A grant would round-trip the oversize record and break this.
 	 */
 	private function assert_partition_enforces_pipe_buf_cap( string $node ): void {
 		$partition = Core::node( $node );

@@ -95,8 +95,8 @@ final class RuleMatcherTest extends TestCase {
 	}
 
 	public function test_matching_is_case_insensitive(): void {
-		// The legacy compile_url_filter regex was case-insensitive (/i); preserve that
-		// so a mixed-case pattern or a mixed-case request URL matches as before.
+		// Matching is case-insensitive (/i), so a mixed-case pattern or a
+		// mixed-case request URL matches.
 		$matcher = new Rule_Matcher( [
 			new Rule( 'root', '/', Rule::ACTION_LOG ),
 			new Rule( 'cron', '/WP-Cron', Rule::ACTION_SKIP ),

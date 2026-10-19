@@ -1104,7 +1104,7 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_get_stats_returns_payload(): void {
 		// A low per-rule time threshold promotes both seeded hooks so
-		// significant_events_count (now summed across the per-rule cache) is 2.
+		// significant_events_count (summed across the per-rule cache) is 2.
 		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
 		$fb      = $this->unarmed_builder();
 		$capture = new Capture_Sink_Node();

@@ -180,10 +180,10 @@ class TopologyShapeTest extends TestCase {
 	 * An offsetlog is a reader's CURSOR, and the reader is the FLEET: two
 	 * processes tailing one log need two cursors. So every Consumer offsetlog is
 	 * `<topology>`-scoped (distinct across fleets) and distinct within its own
-	 * topology (distinct across readers). That pair is the whole invariant — it
-	 * replaces the old "the offset filename names the snapshot node" convention,
-	 * which broke the moment two topologies wanted to SHARE a reader via include
-	 * (dedup needs byte-identical make_node lines).
+	 * topology (distinct across readers). That pair is the whole invariant.
+	 * Naming the snapshot node in the offset filename would break the moment
+	 * two topologies SHARE a reader via include (dedup needs byte-identical
+	 * make_node lines).
 	 */
 	public function test_every_consumer_offsetlog_is_fleet_scoped_and_unique(): void {
 		foreach ( $this->topology_files() as $path ) {

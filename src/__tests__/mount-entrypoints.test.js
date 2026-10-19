@@ -94,7 +94,7 @@ describe( 'dashboard mount-entry points', () => {
 	} );
 
 	it( 'settings no longer wires legacy reset buttons (per-field reset is the toggle module)', () => {
-		// Reset moved to the shared toggle module; a legacy click is inert.
+		// Reset lives in the shared toggle module; this button dispatches nothing.
 		const div = mountContainer( 'event-logger-log_urls' );
 		div.dataset.values = '[]';
 		div.dataset.default = '[]';

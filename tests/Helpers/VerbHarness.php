@@ -2,7 +2,7 @@
 /**
  * VerbHarness: test fixture for service-CommandInterpreter (interpreter) verbs.
  *
- * Every M2 interpreter test uses this to fire a TM_COMMAND envelope through the
+ * Every interpreter test uses this to fire a TM_COMMAND envelope through the
  * substrate's normal dispatch path (interpreter → base interpreter → Router → HTTP_In) and
  * pull the verb's return value back out as a decoded PHP value. Tests
  * therefore exercise the same plumbing the live REST controller does —

@@ -323,7 +323,7 @@ describe( 'RulesAdmin', () => {
 	test( 'a failed delete reports it and keeps the confirm open', async () => {
 		// useRulesGraph's contract: a mutation's refusal arrives on
 		// `onMutation` and leaves the `error` banner clean. RulesAdmin is the
-		// sole writer of the ruleset; closing on the click left the dialog
+		// sole writer of the ruleset; closing on the click would leave the dialog
 		// gone, the row present, and no trace of the failure at all.
 		const { container } = mount();
 		const row = container.querySelector( 'tr[data-rule-id="r1"]' );

@@ -1,5 +1,5 @@
 /**
- * Regression guard: @wordpress/components <Modal>s portal to document.body,
+ * Guard: @wordpress/components <Modal>s portal to document.body,
  * escaping the themed dashboard root, so they must carry the theme classes
  * themselves or their token references resolve to nothing.
  *

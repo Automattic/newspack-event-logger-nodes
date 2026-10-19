@@ -6,8 +6,8 @@
  *
  * The page link composes its own `_stream:sse-in` (SseIn) and shares the
  * `_http` (HttpOut) and `_heartbeat` (Heartbeat) singletons, wiring the
- * `connected → slot` bridge to that heartbeat. The `request-log:route` and
- * `request-log:transform` intermediate nodes stay gone (shaping is inlined into
+ * `connected → slot` bridge to that heartbeat. No `request-log:route` or
+ * `request-log:transform` intermediate node exists (shaping is inlined into
  * the view).
  *
  * EventSource is faked via `global.EventSource`; SseInNode's connection logic
@@ -543,10 +543,9 @@ describe( 'useRequestLogGraph — glob browse', () => {
 } );
 
 describe( 'useRequestLogGraph — pause vs visibility precedence + replay survival', () => {
-	// Regression guard: pause and visibility are already combined into ONE
-	// isActive gate, so precedence holds by construction. This pins it against a
-	// future fork back to a separate visibility path (the genuinely red-first
-	// version lives on the substrate viewer hooks, which had a separate gate).
+	// Guard: pause and visibility are combined into ONE isActive gate, so
+	// precedence holds by construction. This pins it against a fork back to a
+	// separate visibility path.
 	test( 'a user pause outranks a visibility refocus: pause → hide → refocus stays CLOSED (no auto-resume)', async () => {
 		const { result, rerender } = renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );

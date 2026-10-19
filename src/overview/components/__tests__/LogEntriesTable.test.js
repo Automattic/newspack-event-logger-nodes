@@ -252,8 +252,8 @@ describe( 'LogEntriesTable', () => {
 	} );
 
 	it( 'shows the origin frame beside a value preview, not only instead of one', () => {
-		// `m || l` hid the caller on every hook that filters a value — which is
-		// every hook the label was added for.
+		// `m || l` would hide the caller on every hook that filters a value —
+		// which is every hook the label exists for.
 		const entries = [
 			{
 				n: 1,
@@ -686,7 +686,7 @@ describe( 'LogEntriesTable', () => {
 	it( 'keeps a truncated complete — "(complete)" mid-keyword is not a pair end', () => {
 		const entries = makeEntries();
 		// Defensive: a keyword with "(complete)" mid-string must not read as a
-		// pair end. Log_Manager no longer produces one, but a producer could.
+		// pair end. Log_Manager does not produce one, but a producer could.
 		entries[ 5 ] = { ...entries[ 5 ], k: 'render (complete) (truncated)' };
 		jest.useFakeTimers();
 		const { container, unmount } = renderComponent(

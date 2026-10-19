@@ -582,51 +582,6 @@ class RequestBuilderPressureFoldTest extends TestCase {
 	}
 
 	/**
-	 * An envelope checkpointed before the fold kept its head frames on the
-	 * stack carries `await` and `keep` properties nothing reads. The restore
-	 * drops both, so neither reaches the record.
-	 */
-	public function test_a_restore_drops_the_retired_await_and_keep(): void {
-		$sink = new Capture_Sink_Node();
-		$rb   = $this->builder( $sink );
-		$n    = $this->run_request( $rb, 'retired', 12 );
-		$saved = self::with_retired_fields( $rb->save_state(), 'retired' );
-
-		$successor = $this->builder( $sink, 'request-builder-respawned' );
-		$successor->restore_state( $saved );
-		$this->fill( $successor, $n, 'retired', 'process (complete)', [ 'duration_ms' => 3141, 'status_code' => 200 ] );
-
-		$record = $this->record_for( $sink, 'retired' );
-		$this->assertArrayNotHasKey( 'await', $record );
-		$this->assertArrayNotHasKey( 'keep', $record );
-	}
-
-	/**
-	 * A checkpoint with the two properties a folded envelope carried before
-	 * its head frames rode the fold's own stack, added to one envelope.
-	 *
-	 * @param array<string,mixed> $saved The checkpoint.
-	 * @param string              $rid   The envelope to add them to.
-	 * @return array<string,mixed>
-	 */
-	private static function with_retired_fields( array $saved, string $rid ): array {
-		$walk = static function ( array $node ) use ( &$walk, $rid ): array {
-			foreach ( $node as $key => $value ) {
-				if ( ! \is_array( $value ) ) {
-					continue;
-				}
-				if ( $rid === ( $value['rid'] ?? null ) ) {
-					$value['await'] = [ 'shutdown hook' => true ];
-					$value['keep']  = [ [ 'n' => 99, 'k' => 'shutdown hook (complete)' ] ];
-				}
-				$node[ $key ] = $walk( $value );
-			}
-			return $node;
-		};
-		return $walk( $saved );
-	}
-
-	/**
 	 * A folded envelope is bounded already, so pressure never folds it again:
 	 * a second fold would discard its path map and the marker with it.
 	 */

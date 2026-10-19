@@ -62,7 +62,7 @@ class RequestBuilderTest extends TestCase {
 
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		// Producer convention: rid lives in Message::KEY (LogManager since v0.2.17).
+		// Producer convention: Log_Manager puts the rid in Message::KEY.
 		// Tests must stamp it here too — RequestBuilder reads rid from KEY only.
 		$message[ Message::KEY ]       = $rid;
 		$message[ Message::VALUE ]     = $entry;
@@ -130,8 +130,8 @@ class RequestBuilderTest extends TestCase {
 	/**
 	 * Per-line activity tracking reads the cached per-tick clock, not a fresh
 	 * \microtime() syscall. Pin Core::$now to a sentinel distinct from any real
-	 * clock (700.25) and prove tracker_ts lands on it — the OLD code stamped
-	 * \microtime(true) (~1.7e9) and would miss the pin.
+	 * clock (700.25) and prove tracker_ts lands on it — a stamp from
+	 * \microtime(true) (~1.7e9) would miss the pin.
 	 */
 	public function test_tracker_ts_reads_pinned_cached_clock(): void {
 		$rb = new Request_Builder_Node();
@@ -161,9 +161,8 @@ class RequestBuilderTest extends TestCase {
 	/**
 	 * A flood of missing-message warnings with DIFFERENT sequence numbers must
 	 * throttle on the stable category prefix — not mint a fresh key per seq_n.
-	 * The pre-split call baked $seq_n into the throttled string, so every call
-	 * keyed uniquely and never suppressed (it logged loudest under the worst
-	 * flood). Distinct seq values 5/9/13 (not the trivial 0/1) prove the split.
+	 * Baking $seq_n into the throttled string would key every call uniquely and
+	 * never suppress, logging loudest under the worst flood. Distinct seq values 5/9/13 (not the trivial 0/1) prove the split.
 	 */
 	public function test_missing_message_flood_throttles_on_stable_prefix(): void {
 		$rb = new Request_Builder_Node();
@@ -900,8 +899,8 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_the_record_carries_no_process_id_or_host(): void {
 		// Parsed off `process (start)` by a `preg_match` per request. The Ask
-		// brief's env block named `host`; it names `server_name` now, which is
-		// the axis every other surface scopes by.
+		// brief's env block names `server_name`, the axis every other surface
+		// scopes by.
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -937,10 +936,10 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_a_nested_non_callback_child_is_subtracted_from_its_parent(): void {
 		// The positive case of the rule the callback test states negatively,
-		// and the invariant `Findings::repetition()` now ranks on: a profile's
-		// time is EXCLUSIVE, so the repeat is charged what it spends. Only the
-		// negative case was pinned, so deleting the subtraction loop left every
-		// suite green while the finding silently reverted to contained time.
+		// and the invariant `Findings::repetition()` ranks on: a profile's
+		// time is EXCLUSIVE, so the repeat is charged what it spends. Pinning only
+		// the negative case would let a deleted subtraction loop pass while the
+		// finding silently reverts to contained time.
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -1026,10 +1025,8 @@ class RequestBuilderTest extends TestCase {
 			$this->fill( $rb, $i + 3, 'r1', "deep_$i (start)", [ 'l' => '' ] );
 		}
 
-		// Runaway requests stay visible in the cache (matches legacy
-		// InflightTracker + the Perl gyroscope) — the SchemaParityAudit
-		// test_inflight_snapshot_surfaces_runaway_requests_like_legacy
-		// is the contract for this. push_stack caps the stack depth, so
+		// Runaway requests stay visible in the cache, as in the Perl
+		// gyroscope. push_stack caps the stack depth, so
 		// memory stays bounded even with the runaway request retained.
 		$this->assertSame( 1, $this->cache_size( $rb ) );
 	}
@@ -1068,7 +1065,7 @@ class RequestBuilderTest extends TestCase {
 	// --- Errors sink ------------------------------------------------------
 
 	public function test_error_keyword_forwarded_to_errors_target(): void {
-		// Errors and completed-request messages now go through the SAME sink
+		// Errors and completed-request messages go through the SAME sink
 		// (the routed path); they're distinguished by the message TO field —
 		// errors carry TO=errors_target, completed-requests carry TO=target.
 		$rb      = new Request_Builder_Node();
@@ -1646,7 +1643,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
-	// ── A1: sibling-interpreter + node_schema ─────────────────────────
+	// ── sibling-interpreter + node_schema ─────────────────────────
 
 	public function test_request_builder_constructs_sibling_interpreter(): void {
 		$rb = new Request_Builder_Node();
@@ -1675,7 +1672,7 @@ class RequestBuilderTest extends TestCase {
 
 		// Seed.
 		$this->assertSame( "ok\n", $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target', [ 'errors:partition' ] ) );
-		// Empty arg now clears the target instead of rejecting (live reconfiguration).
+		// An empty arg clears the target rather than refusing (live reconfiguration).
 		$result = $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target' );
 		$this->assertSame( "ok\n", $result );
 		$p = ( new \ReflectionObject( $rb ) )->getProperty( 'errors_target' );
@@ -2263,8 +2260,7 @@ class RequestBuilderTest extends TestCase {
 	// --- restore_state() defensive branches -------------------------------
 
 	public function test_restore_state_no_request_cache_key_noop(): void {
-		// Saved state without the expected 'request_cache' key is a no-op
-		// (used to be a fatal `undefined index`).
+		// Saved state without the expected 'request_cache' key is a no-op.
 		$rb = new Request_Builder_Node();
 		$rb->restore_state( [] );
 		$this->assertSame( 0, $this->cache_size( $rb ) );
@@ -2399,7 +2395,7 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	public function test_emit_entry_fits_an_oversize_entry_under_pipe_buf(): void {
-		// The errors partition no longer lifts the 4KB cap, so emit_entry must
+		// The errors partition keeps the 4KB cap, so emit_entry must
 		// fit the enriched line at the source. A near-limit multibyte `m` plus a
 		// pathologically long url would pack well past PIPE_BUF unfitted.
 		$rb = new Request_Builder_Node();
@@ -2442,7 +2438,7 @@ class RequestBuilderTest extends TestCase {
 
 	public function test_environment_v3_non_map_payload_skipped(): void {
 		// A malformed/truncated environment_v3 whose `m` is a string (the shape a
-		// producer-side MAX_DATA_SIZE truncation leaves behind, or a legacy
+		// producer-side MAX_DATA_SIZE truncation leaves behind, or a
 		// per-key line) is skipped gracefully — no field set, no crash.
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
@@ -2459,7 +2455,7 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	// ------------------------------------------------------------------------
-	// Tachikoma-parity arguments() migration (Task 9).
+	// Tachikoma-parity arguments().
 	// ------------------------------------------------------------------------
 
 	/**

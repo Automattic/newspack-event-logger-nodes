@@ -256,7 +256,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 * Topology_Registry::reset(), which strands every later test that reads a
 	 * topology — and ELN topologies `include` ACROSS the plugin boundary
 	 * (job-router -> job-intake, which the substrate ships), so BOTH dirs must
-	 * resolve. An unresolvable include now throws by design: an empty write set
+	 * resolve. An unresolvable include throws by design: an empty write set
 	 * would read as "no conflict" to the gate and "these logs are orphans" to the
 	 * GC. register_plugin()/register_builtin_dir() are idempotent.
 	 */

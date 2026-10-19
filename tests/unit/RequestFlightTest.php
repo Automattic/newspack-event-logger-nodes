@@ -202,8 +202,8 @@ class RequestFlightTest extends TestCase {
 	public function test_patron_pointer_round_trips(): void {
 		// The patron pointer is what the substrate's dump_metadata reads
 		// to hide RequestFlight from the topology canvas — round-tripping
-		// it is the test for "hidden via patron". Task 22 wires this
-		// automatically inside RequestBuilder's ctor; assert against the
+		// it is the test for "hidden via patron". RequestBuilder's ctor wires
+		// this automatically; assert against the
 		// auto-attached sibling rather than constructing a parallel one
 		// (which would collide on the `:flight` registered node name).
 		$patron = new Request_Builder_Node();
@@ -216,8 +216,8 @@ class RequestFlightTest extends TestCase {
 
 	public function test_fire_without_sink_is_safe(): void {
 		// In production RequestBuilder propagates its sink to Flight via
-		// an overridden sink() setter (Task 22). Before that wire-up, the
-		// timer can fire — must not throw.
+		// an overridden sink() setter. The timer can fire before that
+		// wire-up and must not throw.
 		$flight = new Request_Flight_Node();
 		$flight->name( 'flight-no-sink' );
 		$flight->target( 'gyroscope_partition' );
@@ -388,8 +388,7 @@ class RequestFlightTest extends TestCase {
 		$got = [];
 		$rb->sink( $this->capture_sink( $got ) );
 		$rb->cache->set( 'r-clip', (object) [
-			// 2500/700 clear the old 2000/500 caps and still fit under PIPE_BUF,
-			// so what survives is Line_Fitter's byte-exact fit, not a char cap.
+			// 2500/700 fit under PIPE_BUF, so both ride whole: no char cap applies.
 			'url'            => '/' . \str_repeat( 'u', 2500 ),
 			'user_agent'     => \str_repeat( 'A', 700 ),
 			'request_method' => 'GET',
@@ -407,8 +406,8 @@ class RequestFlightTest extends TestCase {
 	}
 
 	public function test_inflight_row_fits_a_multibyte_payload_under_pipe_buf(): void {
-		// gyroscope:partition lost void_warranty; the char clip is only a proxy —
-		// a 2000-char multibyte url packs past PIPE_BUF, so the fit must trim it.
+		// gyroscope:partition keeps its PIPE_BUF cap, and a multibyte url packs
+		// past it, so the fit must trim the row.
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb-fit-inflight' );
 		$got = [];

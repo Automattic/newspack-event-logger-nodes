@@ -71,7 +71,7 @@ final class RuleTest extends TestCase {
 	/**
 	 * `trace_callers` is a COUNT — how many backtraces one hook may spend.
 	 *
-	 * A fixed cap of 20 left 21% of a real record unattributed and cut the
+	 * A fixed cap of 20 leaves 21% of a real record unattributed and cuts the
 	 * stack one frame short of the answer, so the number a diagnostic run wants
 	 * is not the number steady state wants. `true` still reads as a count, and
 	 * that count is ONE: the budget keys on the caller, so one chain per caller

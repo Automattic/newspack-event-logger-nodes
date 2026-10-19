@@ -7,7 +7,7 @@
  * read the sorted+capped render list. The LOW-frequency control model lives in the
  * `view` field, announced with notify('view').
  *
- * The producer now emits ONE record per in-flight request (KEY='inflight', rid in
+ * The producer emits ONE record per in-flight request (KEY='inflight', rid in
  * VALUE), not one batched list. The view is written ONCE, correct under BOTH producer
  * modes (full re-emit / delta) with no mode awareness:
  *  - inflight record (KEY='inflight', object with rid) → upsert by rid, stamping a

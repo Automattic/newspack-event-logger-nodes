@@ -60,7 +60,7 @@ The flame builder's stats live in the `flame-facts` Row_Table `flame-builder.tsl
 
 Push back on a diff that opens a SQLite file or a PDO handle of its own, calls a `Cache_Backend` arm for stats, builds a stats Table outside the topology (decision 37's URL snapshot is not a Table: `Url_Snapshot` builds it through `Row_Table_Node::build()` and opens it through `Row_Table_Node::open_snapshot()`, by name, the substrate's two paths for a file a job publishes whole, and uninstall erases it through `remove_snapshot()`; its four other stored answers are JSON rows in the snapshot's `answers` table, living and expiring with the file, so a diff giving them a store of their own, wpdb or a Table, is the one to push back on), hardcodes a server list, constructs a second `\Memcached`, adds a cache constructor parameter, or type-hints a cache interface. There is no `Cache_Interface` and no `Memcached_Cache` to inject.
 
-The cross-worker auto-tune lock in `Flame_Builder_Node::apply_auto_tune()` is an `add()` on `Cache_Backend::shared_first()`, memcached else APCu, so it engages on an APCu-only host; with neither it fires unlocked, single-process. A diff reaching for `Core::$memd` there reintroduces the memcached-only lock.
+The cross-worker auto-tune lock in `Flame_Builder_Node::apply_auto_tune()` is an `add()` on `Cache_Backend::shared_first()`, memcached else APCu, so it engages on an APCu-only host; with neither it fires unlocked, single-process. A diff reaching for `Core::$memd` there makes the lock memcached-only, so it never engages on an APCu-only host.
 
 ### 5. Flushing is the substrate's one button
 

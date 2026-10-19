@@ -2,7 +2,7 @@
 /**
  * hub-control.tsl parse + mount wiring.
  *
- * ELN's hub-control is now an overlay: it `include`s the substrate `settings-sync`
+ * ELN's hub-control is an overlay: it `include`s the substrate `settings-sync`
  * topology (Consumer tailing settings.p0, the substrate Settings_Sync_Node with
  * the six-axis remote_* geometry pushes) and layers on
  * the Discovery_Collector_Node plus the three ELN app-key pushes. Loads the TSL
@@ -155,8 +155,8 @@ class HubControlTopologyTest extends TestCase {
 		// Six substrate locals (the remote_* geometry keys: segment_size,
 		// min_segments, num_segments, min_lifetime, lifetime, max_segments) arrive
 		// through the `include settings-sync`; three ELN app keys (rules,
-		// log_memory, flush_every_line) come from the overlay. A hub no longer
-		// pushes its own num_partitions to its spokes.
+		// log_memory, flush_every_line) come from the overlay. A hub does not
+		// push its own num_partitions to its spokes.
 		$this->assertCount( 9, $map );
 		$this->assertArrayNotHasKey( 'newspack_nodes_num_partitions', $map );
 		// Substrate-remap (TO=settings). The remote-spoke geometry options live

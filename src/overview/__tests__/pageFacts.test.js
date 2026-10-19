@@ -7,7 +7,7 @@
 
 import { pageFacts, factsJson } from '../pageFacts';
 
-// Both come off the `urls` reply now: it owns the filters, so it owns every
+// Both come off the `urls` reply: it owns the filters, so it owns every
 // fact about the set they left.
 const SLOWEST = [
 	{ hash: 'aaa', url: '/slow', avg_ms: 2600, max_ms: 2600, count: 4 },
@@ -220,8 +220,8 @@ test( 'every surface names what it is scoped to', () => {
 } );
 
 test( 'the slowest URLs come from the set the totals describe', () => {
-	// `slowest` used to be built from the unscoped index while `totals` came
-	// from the filtered one — one object, one scope statement, two scopes.
+	// `slowest` must come from the filtered index `totals` comes from — one
+	// object, one scope statement, one scope.
 	const facts = pageFacts( {
 		urlTotals: { urls: 2, requests: 9 },
 		urlSlowest: [ { hash: 'zzz', url: '/scoped', avg_ms: 1200, count: 3 } ],

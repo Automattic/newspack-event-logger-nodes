@@ -3,8 +3,8 @@
  * Smoke tests for `wp nodes reqgrep`. Output is captured by swapping the
  * command's `$stdout` node for a line-capturing Callback_Node (the
  * `capture_output()` harness); `joined()` reassembles the captured lines into
- * the byte-stream the old `echo` path produced. The private state machine is
- * still driven via reflection. Tests cover the parts that matter:
+ * the byte-stream the command writes. The private state machine is driven
+ * via reflection. Tests cover the parts that matter:
  *
  *  - LruCache rotation contract.
  *  - Indent state machine: (start)/(complete) push/pop with depth tracking.
@@ -13,7 +13,7 @@
  *  - The Consumer-based read path (cat / follow / stdin) → process_message.
  *
  * Every firehose line is a 7-field positional Message envelope (rid at
- * Message::KEY, entry hash at Message::VALUE); there is no legacy entry-hash
+ * Message::KEY, entry hash at Message::VALUE); there is no bare entry-hash
  * format. Tests feed process_message the unpacked Message array (built via
  * packed_struct()), or a packed envelope through the stdin / disk paths.
  *
@@ -142,7 +142,7 @@ class ReqgrepCommandTest extends TestCase {
 		return $ref->getValue( $this->cmd );
 	}
 
-	/** The grouping engine's history buckets now live on the shared Reqgrep_Core. */
+	/** The grouping engine's history buckets live on the shared Reqgrep_Core. */
 	private function core_history(): array {
 		$core = ( new \ReflectionProperty( $this->cmd, 'core' ) )->getValue( $this->cmd );
 		return ( new \ReflectionProperty( $core, 'history' ) )->getValue( $core );
@@ -160,7 +160,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	/**
 	 * Build a Message struct envelope around an entry — rid in KEY, entry hash in
-	 * VALUE (mirrors Log_Manager since v0.2.17).
+	 * VALUE, as Log_Manager writes it.
 	 *
 	 * @param array<string, mixed> $entry Entry hash.
 	 * @return array<int, mixed> The 7-field positional Message array.
@@ -189,10 +189,9 @@ class ReqgrepCommandTest extends TestCase {
 
 	/**
 	 * The byte-stream exactly as `Stdout_Node` would write it: VALUEs
-	 * concatenated, nothing added. This used to append a "\n" when one was
-	 * absent, attributed to "Stdout_Node's rule" — but `Stdout_Node::fill()`
-	 * writes the VALUE verbatim, so the harness was manufacturing the very
-	 * byte under test and every assertion here passed either way.
+	 * concatenated, nothing added. `Stdout_Node::fill()` writes the VALUE
+	 * verbatim, so a harness appending a "\n" would manufacture the very byte
+	 * under test and every assertion here would pass either way.
 	 */
 	private static function joined( \ArrayObject $lines ): string {
 		$out = '';
@@ -312,11 +311,10 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_an_embedded_engine_trace_does_not_split_the_request(): void {
 		// Nuclear-gyrobase renders through the Perl engine, which logs under the SAME rid with
-		// its OWN entry numbering restarting at 1. Inferring a new request from that numbering
-		// split one request in two and orphaned every PHP span still open across the trace.
+		// its OWN entry numbering restarting at 1, so the numbering cannot mark a new request.
 		// Matching each `(complete)` to the nearest open `(start)` of the same NAME is what
 		// carries the enclosing spans across the nested trace — the rule the dashboard's
-		// computeIndentedEntries() already used, now shared.
+		// computeIndentedEntries() shares.
 		$cmd      = $this->make_cmd();
 		$captured = $this->capture_output( $cmd );
 
@@ -423,7 +421,7 @@ class ReqgrepCommandTest extends TestCase {
 		$cmd      = $this->make_cmd();
 		$captured = $this->capture_output( $cmd );
 
-		// A lease-killed render, as the fixed producers write it: the engine
+		// A lease-killed render, as the producers write it: the engine
 		// drains its open spans as `(orphaned)` completes and closes the scope
 		// it owns, so `gyrobase` straddles the break like any other span and
 		// the terminal the parent writes needs no special case. Mirrors the
@@ -587,8 +585,8 @@ class ReqgrepCommandTest extends TestCase {
 
 		// A marker stands in for entries that were REMOVED, so the interval it
 		// spans is missing detail rather than idle time: docs/architecture-decisions.md, decision 13.
-		// The dashboard draws no ruler anywhere in a folded record; the CLI drew
-		// ten minutes of dots across the same marker and called it elapsed.
+		// The dashboard draws no ruler anywhere in a folded record, and neither
+		// does the CLI: dots across the marker would read as elapsed time.
 		$rid = 'foldGapR';
 		$ts0 = 1700000000.0;
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/g', 'ts' => $ts0 ] );
@@ -762,10 +760,9 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_consecutive_requests_are_separated_by_a_rule(): void {
-		// The rule used to ride the rewind heuristic, so it marked the one place that was never
-		// a boundary and never marked the places that were. It belongs on the real boundary: the
-		// rid changing, which is what output_request already iterates. Leading rule on the first
-		// request would be a rule against nothing.
+		// The rule sits on the real boundary — the rid changing, which is what output_request
+		// iterates — never on an entry-number rewind. Leading rule on the first request would be
+		// a rule against nothing.
 		$cmd      = $this->make_cmd();
 		$captured = $this->capture_output( $cmd );
 
@@ -785,10 +782,10 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_a_rewound_entry_number_is_not_a_request_boundary(): void {
-		// It used to be read as one. Requests are grouped by rid before they are ever formatted,
-		// so a rewind INSIDE a group can only be a second source numbering from its own counter —
-		// the Perl engine nuclear-gyrobase renders through does exactly that. Splitting there
-		// severed every span still open and orphaned its `(complete)`.
+		// Requests are grouped by rid before they are ever formatted, so a rewind INSIDE a group
+		// can only be a second source numbering from its own counter — the Perl engine
+		// nuclear-gyrobase renders through does exactly that. Splitting there would sever every
+		// span still open and orphan its `(complete)`.
 		$cmd      = $this->make_cmd( 'sepR' );
 		$captured = $this->capture_output( $cmd );
 
@@ -1571,7 +1568,7 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_synopsis_uses_firehose_not_global_path(): void {
 		// `--path` collides with WP-CLI's global --path (which WP-CLI consumes
 		// before the command runs), so the firehose-dir override must use its
-		// own name. Guard the rename against regressing to the global.
+		// own name, never the global.
 		$doc = ( new \ReflectionMethod( \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command::class, '__invoke' ) )->getDocComment();
 		$this->assertIsString( $doc );
 		$this->assertStringNotContainsString( '[--path', $doc );

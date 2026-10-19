@@ -1,6 +1,6 @@
 /**
- * usePerformanceGraph tests — the Performance Dashboard data graph rebuilt on the
- * substrate batched-poll toolkit (useBatchedPoll + addSliceFetcher), D1b.
+ * usePerformanceGraph tests — the Performance Dashboard data graph on the
+ * substrate batched-poll toolkit (useBatchedPoll + addSliceFetcher).
  *
  * The graph:
  *   performance:timer (Timer) → performance:tee (Tee) → overview, urls, chart
@@ -189,7 +189,7 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 			'urls:fetch',
 		] );
 		expect( Core.node( 'urls:in:current' ).fetcher ).toBe( 'urls:fetch' );
-		// Every name is `<subject>:<role>`; the old spellings are gone.
+		// Every name is `<subject>:<role>`; no other spelling is registered.
 		for ( const name of [
 			'perf:timer',
 			'perf:tee',
@@ -531,10 +531,10 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		} );
 	} );
 
-	// The view was BOTH the minter and the reply sink: dump_request went out
-	// FROM `request-detail:view`, so one node carried two protocols — its own
-	// controls and a command reply. Every other slice mints from a receiver and
-	// forwards to its view; this one now does too.
+	// No view is both minter and reply sink: dump_request goes out FROM a
+	// receiver, never `request-detail:view`, so one node never carries two
+	// protocols — its own controls and a command reply. Every slice mints from
+	// a receiver and forwards to its view.
 	test( 'dump_request is asked through its Fetcher, answered at the receiver', async () => {
 		const wire = installWire( { dump_request: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
@@ -1609,7 +1609,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 	} );
 
 	test( 'the selected server is emitted in the urls args', async () => {
-		// The URL table is what the Overview header now counts, so the two have
+		// The URL table is what the Overview header counts, so the two have
 		// to be asking the same question: a server the header is scoped to must
 		// reach the `urls` verb as well as `overview`.
 		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
