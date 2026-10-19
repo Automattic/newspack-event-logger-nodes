@@ -740,6 +740,7 @@ export default function PerformanceDashboard( {
 			// A narrowed window could hide the very request searched for.
 			resetDetail( '', NO_CHIPS );
 			setSearchQuery( '' );
+			// Drops ?search= too; the selection's push then adds nothing.
 			setQueryParams(
 				{ search: null, url: result.url_hash, request: args[ 0 ] },
 				{ push: true }

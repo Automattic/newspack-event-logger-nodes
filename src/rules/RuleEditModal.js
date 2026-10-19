@@ -355,7 +355,7 @@ export default function RuleEditModal( {
 									'newspack-event-logger-nodes'
 								) }
 								help={ __(
-									'Times every query as its own flame span. Two log entries per query, so a query-heavy request gets much slower.',
+									"Times every query as its own flame span. Each query adds two entries to the request's log, so a request running hundreds of them leaves a large record, which may be folded under memory pressure.",
 									'newspack-event-logger-nodes'
 								) }
 								checked={ logQueries }
@@ -369,7 +369,7 @@ export default function RuleEditModal( {
 									'newspack-event-logger-nodes'
 								) }
 								help={ __(
-									'Times every outbound HTTP request as its own flame span. Two log entries per request, so a request that calls many APIs gets a little slower.',
+									"Times every outbound HTTP request as its own flame span. Each outbound call adds two entries to the request's log.",
 									'newspack-event-logger-nodes'
 								) }
 								checked={ logHttp }

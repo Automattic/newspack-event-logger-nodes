@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The rule editor names what query and HTTP logging cost: log size, not speed.** "Log database queries" said a query-heavy request "gets much slower" and "Log HTTP requests" that a request "gets a little slower"; nothing measured either, and decision 22 measured the `SAVEQUERIES` cost as noise (3,000 queries in 1.117 s with it, 1.254 s without). The help now says what each costs: every query, and every outbound call, adds two entries to the request's log, so a request running hundreds of queries leaves a large record that may be folded under memory pressure.
+
 ## [0.146.0] - 2026-10-19
 
 ### Added

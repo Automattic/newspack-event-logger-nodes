@@ -425,6 +425,25 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( help ).not.toContain( 'backtraces per hook' );
 	} );
 
+	test( 'the query and HTTP help name what each costs: log entries, not speed', () => {
+		mount( LOG_RULE );
+		const helpOf = ( name ) =>
+			inDialog( `input[name="${ name }"]` ).closest(
+				'.components-base-control'
+			).textContent;
+		const queries = helpOf( 'rule-log-queries' );
+		expect( queries ).toContain(
+			"Each query adds two entries to the request's log"
+		);
+		expect( queries ).toContain( 'may be folded under memory pressure' );
+		expect( helpOf( 'rule-log-http' ) ).toContain(
+			"Each outbound call adds two entries to the request's log"
+		);
+		for ( const name of [ 'rule-log-queries', 'rule-log-http' ] ) {
+			expect( helpOf( name ) ).not.toContain( 'slower' );
+		}
+	} );
+
 	test( 'the backtrace count shares the checkbox row', () => {
 		mount( { ...LOG_RULE, trace_hooks: true } );
 		expect(
