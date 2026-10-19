@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.143.0] - 2026-10-19
+
 ### Added
 - **Significant events clear in one click.** The rule editor's tag field shows a Clear all button beside the box while it holds a tag. Clearing, or removing a tag with its ×, hands focus back to the box.
 
