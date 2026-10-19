@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.143.0\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.144.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-19T10:32:59+00:00\n"
+"POT-Creation-Date: 2026-10-19T12:57:26+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -151,7 +151,7 @@ msgstr ""
 
 #: src/components/LoadingFallback.js:29
 #: src/current-request/CurrentRequestTab.js:158
-#: src/overview/components/BreakdownControls.js:281
+#: src/overview/components/BreakdownControls.js:277
 msgid "Loading…"
 msgstr ""
 
@@ -185,7 +185,7 @@ msgstr ""
 msgid "Remove %s"
 msgstr ""
 
-#: src/components/TokenInput.js:88
+#: src/components/TokenInput.js:93
 msgid "Clear all"
 msgstr ""
 
@@ -219,7 +219,7 @@ msgid "Error timestamp"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:82
-#: src/overview/components/LogEntriesTable.js:1512
+#: src/overview/components/LogEntriesTable.js:1511
 msgid "Keyword"
 msgstr ""
 
@@ -228,7 +228,7 @@ msgid "Error/warning keyword"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:87
-#: src/overview/components/LogEntriesTable.js:1518
+#: src/overview/components/LogEntriesTable.js:1517
 msgid "Message"
 msgstr ""
 
@@ -372,7 +372,7 @@ msgstr ""
 #: src/log-table/logTable.js:35
 #: src/overview/CategoryTimeChart.js:60
 #: src/overview/components/BucketField.js:253
-#: src/overview/components/LogEntriesTable.js:1509
+#: src/overview/components/LogEntriesTable.js:1508
 #: src/overview/components/UrlDetailView.js:432
 #: src/overview/RequestProfile.js:262
 msgid "Time"
@@ -580,24 +580,24 @@ msgstr ""
 msgid "Server"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:243
+#: src/overview/components/BreakdownControls.js:242
 msgid "Metric"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:252
+#: src/overview/components/BreakdownControls.js:250
 msgid "Breakdown"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:261
+#: src/overview/components/BreakdownControls.js:258
 msgid "Then by"
 msgstr ""
 
-#: src/overview/components/BreakdownControls.js:265
+#: src/overview/components/BreakdownControls.js:262
 msgid "None"
 msgstr ""
 
 #. translators: %s: the breakdown dimensions' labels, e.g. User Agent.
-#: src/overview/components/BreakdownControls.js:297
+#: src/overview/components/BreakdownControls.js:293
 #, js-format
 msgid "No %s data in this window."
 msgstr ""
@@ -739,37 +739,37 @@ msgstr ""
 msgid "Unfold All"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1415
+#: src/overview/components/LogEntriesTable.js:1414
 msgid "Search entries"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1419
+#: src/overview/components/LogEntriesTable.js:1418
 msgid "Search entries…"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1450
+#: src/overview/components/LogEntriesTable.js:1449
 msgid "No matches"
 msgstr ""
 
 #. translators: %d: number of entries matching the search query.
 #. translators: %d: number of matching lines in the request.
-#: src/overview/components/LogEntriesTable.js:1463
-#: src/overview/components/OverviewSection.js:284
+#: src/overview/components/LogEntriesTable.js:1462
+#: src/overview/components/OverviewSection.js:282
 #, js-format
 msgid "%d match"
 msgid_plural "%d matches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/components/LogEntriesTable.js:1477
+#: src/overview/components/LogEntriesTable.js:1476
 msgid "Previous match (p)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1489
+#: src/overview/components/LogEntriesTable.js:1488
 msgid "Next match (n)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1571
+#: src/overview/components/LogEntriesTable.js:1570
 msgid "Click to highlight pair"
 msgstr ""
 
@@ -797,37 +797,37 @@ msgstr ""
 msgid "All Servers"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:186
+#: src/overview/components/OverviewSection.js:185
 msgid "Request ID or /url pattern"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:190
+#: src/overview/components/OverviewSection.js:189
 msgid "Request ID or /url pattern…"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:209
+#: src/overview/components/OverviewSection.js:208
 msgid "Searching…"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:239
+#: src/overview/components/OverviewSection.js:238
 msgid "Refresh:"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:260
+#: src/overview/components/OverviewSection.js:258
 msgid "Matches in recent traffic"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:299
+#: src/overview/components/OverviewSection.js:297
 msgid "Showing first results — narrow your search for more."
 msgstr ""
 
 #. translators: %s: the server name being filtered by.
-#: src/overview/components/OverviewSection.js:360
+#: src/overview/components/OverviewSection.js:358
 #, js-format
 msgid "Time Breakdown (%s)"
 msgstr ""
 
-#: src/overview/components/OverviewSection.js:366
+#: src/overview/components/OverviewSection.js:364
 msgid "Global Time Breakdown"
 msgstr ""
 
@@ -1184,47 +1184,47 @@ msgstr ""
 msgid "No URLs to display"
 msgstr ""
 
-#: src/overview/UrlTable.js:596
+#: src/overview/UrlTable.js:595
 msgid "Search by whole URL word"
 msgstr ""
 
-#: src/overview/UrlTable.js:600
+#: src/overview/UrlTable.js:599
 msgid "Search by whole URL word…"
 msgstr ""
 
-#: src/overview/UrlTable.js:619
+#: src/overview/UrlTable.js:618
 msgid "Showing Workers"
 msgstr ""
 
-#: src/overview/UrlTable.js:620
+#: src/overview/UrlTable.js:619
 msgid "Include Workers"
 msgstr ""
 
 #. translators: 1: first URL number on the page, 2: last URL number on the page, 3: total number of URLs.
-#: src/overview/UrlTable.js:695
+#: src/overview/UrlTable.js:694
 #, js-format
 msgid "%1$s–%2$s of %3$s URLs"
 msgstr ""
 
 #. translators: %s: number of URLs in the table.
-#: src/overview/UrlTable.js:709
+#: src/overview/UrlTable.js:708
 #, js-format
 msgid "%s URL"
 msgid_plural "%s URLs"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/UrlTable.js:726
+#: src/overview/UrlTable.js:725
 msgid "Prev"
 msgstr ""
 
 #. translators: 1: current page number, 2: total number of pages.
-#: src/overview/UrlTable.js:731
+#: src/overview/UrlTable.js:730
 #, js-format
 msgid "Page %1$d of %2$d"
 msgstr ""
 
-#: src/overview/UrlTable.js:745
+#: src/overview/UrlTable.js:744
 msgid "Next"
 msgstr ""
 
@@ -1256,53 +1256,57 @@ msgstr ""
 msgid "Request Log"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:145
+#: src/rules/RuleEditModal.js:115
+msgid "Press Enter to add one. Each is timed per callback, and auto-disable never removes it."
+msgstr ""
+
+#: src/rules/RuleEditModal.js:153
 msgid "Pattern is required."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:182
+#: src/rules/RuleEditModal.js:190
 msgid "Edit rule"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:183
+#: src/rules/RuleEditModal.js:191
 msgid "Add rule"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:193
+#: src/rules/RuleEditModal.js:200
 msgid "URL pattern"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:197
+#: src/rules/RuleEditModal.js:204
 msgid "A prefix like /blog, or an exact match ending in ? (e.g. /about?)."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:209
+#: src/rules/RuleEditModal.js:215
 #: src/rules/RulesAdmin.js:351
 msgid "Action"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:214
+#: src/rules/RuleEditModal.js:220
 #: src/rules/RulesAdmin.js:156
 msgid "Log"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:221
+#: src/rules/RuleEditModal.js:227
 #: src/rules/RulesAdmin.js:157
 msgid "Skip"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:235
+#: src/rules/RuleEditModal.js:241
 #: src/rules/RulesAdmin.js:354
 msgid "Hooks"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:245
+#: src/rules/RuleEditModal.js:251
 msgid "Select Hooks"
 msgstr ""
 
 #. translators: %d: number of selected hooks.
 #. translators: %d: number of hooks on the rule.
-#: src/rules/RuleEditModal.js:253
+#: src/rules/RuleEditModal.js:259
 #: src/rules/RulesAdmin.js:164
 #, js-format
 msgid "%d hook"
@@ -1310,17 +1314,17 @@ msgid_plural "%d hooks"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/rules/RuleEditModal.js:266
+#: src/rules/RuleEditModal.js:272
 msgid "Custom events"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:276
+#: src/rules/RuleEditModal.js:282
 msgid "Select Events"
 msgstr ""
 
 #. translators: %d: number of selected custom events.
 #. translators: %d: number of custom events on the rule.
-#: src/rules/RuleEditModal.js:284
+#: src/rules/RuleEditModal.js:290
 #: src/rules/RulesAdmin.js:178
 #, js-format
 msgid "%d event"
@@ -1328,19 +1332,15 @@ msgid_plural "%d events"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/rules/RuleEditModal.js:297
+#: src/rules/RuleEditModal.js:305
 msgid "Significant events"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:308
-msgid "Events/hooks protected from auto-disable."
-msgstr ""
-
-#: src/rules/RuleEditModal.js:320
+#: src/rules/RuleEditModal.js:321
 msgid "Auto-disable threshold"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:324
+#: src/rules/RuleEditModal.js:325
 msgid "Occurrence count before an event auto-disables. 0 = off."
 msgstr ""
 
@@ -1352,65 +1352,65 @@ msgstr ""
 msgid "Duration in ms above which a slow event is protected. 0 = off."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:354
+#: src/rules/RuleEditModal.js:353
 msgid "Log database queries"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:358
+#: src/rules/RuleEditModal.js:357
 msgid "Times every query as its own flame span. Two log entries per query, so a query-heavy request gets much slower."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:369
+#: src/rules/RuleEditModal.js:367
 msgid "Log HTTP requests"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:373
+#: src/rules/RuleEditModal.js:371
 msgid "Times every outbound HTTP request as its own flame span. Two log entries per request, so a request that calls many APIs gets a little slower."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:384
+#: src/rules/RuleEditModal.js:381
 msgid "Log plugin load time"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:388
+#: src/rules/RuleEditModal.js:385
 msgid "Times each site-activated plugin as its own flame span. The measuring happens either way; this is two log entries per plugin, before the request does any work."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:400
+#: src/rules/RuleEditModal.js:396
 msgid "Trace hook callers"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:406
+#: src/rules/RuleEditModal.js:402
 msgid "Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph. The number traces that many calls from each CALLER of a hook, query shape or outbound URL further, recording the twenty frames above each — expensive, so 1 already reaches every caller. At 0 every span still carries its label and none records a backtrace."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:410
+#: src/rules/RuleEditModal.js:406
 msgid "Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:426
+#: src/rules/RuleEditModal.js:421
 msgid "Calls traced per caller of each hook, query shape and URL"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:435
+#: src/rules/RuleEditModal.js:430
 msgid "traced per caller of each hook, query shape and URL"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:465
+#: src/rules/RuleEditModal.js:460
 msgid "Confirm delete"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:469
+#: src/rules/RuleEditModal.js:464
 #: src/rules/RulesAdmin.js:380
 msgid "Delete rule"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:480
+#: src/rules/RuleEditModal.js:475
 #: src/rules/RulesAdmin.js:114
 msgid "Cancel"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:483
+#: src/rules/RuleEditModal.js:478
 msgid "Save rule"
 msgstr ""
 
@@ -1546,6 +1546,6 @@ msgstr ""
 msgid "Loading registered hooks…"
 msgstr ""
 
-#: src/settings/settings/TagInputField.js:77
-msgid "Type a value and press Enter…"
+#: src/settings/settings/TagInputField.js:92
+msgid "Add a hook or event"
 msgstr ""
