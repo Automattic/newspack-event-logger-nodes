@@ -317,7 +317,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 		$rid = Core::str( $request['rid'] ?? '' );
 		if ( '' === $rid ) {
-			throw new \InvalidArgumentException( \esc_html( "Flame_Builder: a record for {$url} must not carry a rid" ) );
+			throw new \InvalidArgumentException( \esc_html( "Flame_Builder: a record for {$url} carries no rid" ) );
 		}
 		$url_hash = Log_Manager::url_hash( $url );
 		$entries  = $request['entries'] ?? [];
