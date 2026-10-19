@@ -128,6 +128,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** Most requests `dump_url` lists. */
 	public const RECENT_REQUEST_LIMIT = 500;
 
+	/** Most listed requests a URL's aggregate flame folds, newest first. */
+	public const FLAME_REQUEST_LIMIT = 100;
+
 	/** `grep_requests` default / max matched-request results (bounds the reply). */
 	private const GREP_RESULT_LIMIT_DEFAULT = 20;
 	private const GREP_RESULT_LIMIT_MAX     = 50;
@@ -560,7 +563,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
 	 */
 	private static function ask_url( string $hash, string $server, array $filters, int $now ): array {
-		$detail            = self::url_detail( $hash, $server, $filters['filter'], $filters['bucket'], $now );
+		$detail            = self::url_detail( $hash, $server, $filters['filter'], $filters['bucket'], $now, self::RECENT_REQUEST_LIMIT );
 		$filters['bucket'] = $detail['bucket'];
 		return Ask_Assembler::for_url(
 			$detail['stats'],
@@ -616,7 +619,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === $url ) {
 			throw new \RuntimeException( \esc_html( 'a span needs its request or its URL for context' ) );
 		}
-		$detail = self::url_detail( $url['id'], $server, [], '', $now );
+		$detail = self::url_detail( $url['id'], $server, [], '', $now, self::FLAME_REQUEST_LIMIT );
 		if ( ! $detail['available'] ) {
 			throw self::stats_outage( "no aggregate for URL {$url['id']}" );
 		}
@@ -631,7 +634,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * One URL over a selection's buckets, or the chart's: its stats and the
-	 * rows of its newest requests, worker traffic counted, which
+	 * rows of its newest `$limit` requests, worker traffic counted, which
 	 * `url_requests()` shapes as `dump_url` lists them and `url_flame()` reads
 	 * each request's partition off, and whether the list holds fewer than the
 	 * stats count. A filter narrows the stats and the list together, and a
@@ -643,11 +646,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param list<string> $tokens   `field=value` filter tokens.
 	 * @param string       $spelling A `Bucket::selection()` spelling; '' for the chart's.
 	 * @param int          $now      The reply's clock.
+	 * @param int          $limit    Most requests listed, newest first.
 	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, requests_per_second:float|int}, listed: list<array<string,mixed>>, requests_capped: bool, bucket: string, available: bool}
 	 * @throws \RuntimeException When no request row names the hash.
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, or a filter `url_filter_of()` refuses.
 	 */
-	private static function url_detail( string $hash, string $server, array $tokens, string $spelling, int $now ): array {
+	private static function url_detail( string $hash, string $server, array $tokens, string $spelling, int $now, int $limit ): array {
 		$buckets = self::window( $spelling, $now, Bucket::MAX_SELECTION );
 		$filter  = [ 'url' => [ $hash ] ] + self::url_filter_of( $tokens, self::ONE_URL_OWNERS ) + self::scope( $server, true );
 		$answer  = Stats_Query::run(
@@ -660,7 +664,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			]
 		);
 		$stats  = self::url_stats( $hash, $server, $answer, $buckets, $now );
-		$listed = $answer['available'] ? Stats_Query::newest_requests( $filter, $buckets, self::RECENT_REQUEST_LIMIT ) : [];
+		$listed = $answer['available'] ? Stats_Query::newest_requests( $filter, $buckets, $limit ) : [];
 		return [
 			'stats'           => $stats,
 			'listed'          => $listed,
@@ -870,10 +874,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * A URL's aggregate flame, folded from the flames its listed requests
-	 * stored, in the display shape: the empty tree over no stored flame.
+	 * A URL's aggregate flame, folded from the flames its newest
+	 * FLAME_REQUEST_LIMIT listed requests stored, in the display shape: the
+	 * empty tree over no stored flame.
 	 *
-	 * Each partition its listed requests sit in is asked once for their
+	 * Each partition those requests sit in is asked once for their
 	 * rids' flames, no further back than the oldest one's `finished_at`,
 	 * since a flame lands in the partition its request did, and each is
 	 * folded as the builder folds it, its timing counted where its duration
@@ -886,6 +891,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<array-key,mixed>|null
 	 */
 	private static function url_flame( array $listed ): ?array {
+		$listed    = \array_slice( $listed, 0, self::FLAME_REQUEST_LIMIT );
 		$durations = [];
 		$since     = [];
 		foreach ( $listed as $row ) {
@@ -2041,7 +2047,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
-					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last 288 buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from their stored flames when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its 25-hour category profile, null over no profiled request. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured. Series come from `query` filtered to the URL.',
+					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last 288 buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its 25-hour category profile, null over no profiled request. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured. Series come from `query` filtered to the URL.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
@@ -2061,7 +2067,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$tokens   = self::filter_tokens( $args['filter'] );
 				$spelling = Core::as_string( $args['bucket'] );
 				$now      = self::now();
-				$detail   = self::url_detail( $hash, $server, $tokens, $spelling, $now );
+				$detail   = self::url_detail( $hash, $server, $tokens, $spelling, $now, self::RECENT_REQUEST_LIMIT );
 				// A narrowed list's flame would not be the URL's.
 				$rebuilt = $detail['available'] && [] === $tokens && '' === $spelling;
 				$flame   = $rebuilt ? self::url_flame( $detail['listed'] ) : null;

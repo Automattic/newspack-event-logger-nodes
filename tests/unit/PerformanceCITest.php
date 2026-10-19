@@ -3046,6 +3046,53 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * One more flamed request than `FLAME_REQUEST_LIMIT` for one URL, each
+	 * holding an `init` span but the oldest, which holds `oldest_only`.
+	 *
+	 * @return string The URL's hash.
+	 */
+	private function seed_one_past_the_flame_limit(): string {
+		$url  = 'https://seed.example/hihi-7316/';
+		$hash = self::hash_of( $url );
+		$at   = (float) ( Bucket::id( (int) Core::$now ) * Bucket::SECONDS );
+		$rows = [];
+		for ( $i = 0; $i <= Performance_CI_Node::FLAME_REQUEST_LIMIT; $i++ ) {
+			$rid    = "rid-hihi-{$i}";
+			$rows[] = [ 'url' => $url, 'rid' => $rid, 'ms' => 50.5, 'finished_at' => $at + $i * 0.25 ];
+			$this->write_flame( [
+				'rid'      => $rid,
+				'url_hash' => $hash,
+				'name'     => 'request',
+				'value'    => 50.5,
+				'children' => 0 === $i
+					? [ [ 'name' => 'oldest_only', 'value' => 40.5, 'children' => [] ] ]
+					: [ [ 'name' => 'init', 'value' => 20.5, 'children' => [] ] ],
+			] );
+		}
+		$this->seed_requests( $rows );
+		return $hash;
+	}
+
+	/** The aggregate folds the newest `FLAME_REQUEST_LIMIT` listed requests: the oldest adds nothing. */
+	public function test_dump_url_flame_folds_the_newest_hundred(): void {
+		$hash = $this->seed_one_past_the_flame_limit();
+
+		$flame = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash )['aggregate_flame'];
+
+		$this->assertSame( Performance_CI_Node::FLAME_REQUEST_LIMIT, $flame['count'] );
+		$this->assertSame( [ 'init' ], \array_column( $flame['children'], 'name' ) );
+	}
+
+	/** An Ask span under a URL reads the same newest `FLAME_REQUEST_LIMIT`. */
+	public function test_ask_span_under_a_url_folds_the_newest_hundred(): void {
+		$hash = $this->seed_one_past_the_flame_limit();
+		$ask  = static fn ( string $span ) => VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ "span:{$span}", "url:{$hash}" ] );
+
+		$this->assertStringContainsString( 'over ' . Performance_CI_Node::FLAME_REQUEST_LIMIT . ' requests', $ask( 'init' )['scope'] );
+		$this->assertStringContainsString( "no span 'oldest_only' in this URL's aggregate", $ask( 'oldest_only' ) );
+	}
+
+	/**
 	 * An untimed request counts toward the means but adds neither its
 	 * duration nor its tree: (120.5 + 80.5) / 3, and two 30.5 spans over 3.
 	 */

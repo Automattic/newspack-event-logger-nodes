@@ -2300,13 +2300,14 @@ class LogManagerTest extends TestCase {
 	}
 
 	/**
-	 * Run the profiler mu-plugin's `plugins_loaded` flush with one plugin row,
-	 * against whatever ruleset the caller seeded.
+	 * Seed one plugin row the profiler drop-in collected under the given
+	 * rule, then run `$run` with the started logger.
 	 *
-	 * @param array<string,mixed> $rule The single rule governing the request.
-	 * @return list<array<string,mixed>> The firehose entries it produced.
+	 * @param array<string,mixed>            $rule The single rule governing the request.
+	 * @param \Closure( Log_Manager ): void $run  What writes, or does not write, the row.
+	 * @return array{0: list<array<string,mixed>>, 1: mixed} The firehose entries, and the rows the drop-in still holds.
 	 */
-	private function flush_plugin_row_under_rule( array $rule ): array {
+	private function with_a_plugin_row( array $rule, \Closure $run ): array {
 		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
@@ -2314,23 +2315,32 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 		$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] = [ $rule ];
 
-		$saved_actions          = $GLOBALS['_wp_actions'] ?? [];
-		$GLOBALS['_wp_actions'] = [];
 		try {
 			$lm = Log_Manager::instance();
 			$lm->start( 'init' );
-			require \dirname( __DIR__, 2 ) . '/mu-plugins/00-newspack-profiler.php';
-			$GLOBALS['newspack_profiler']['plugins'] = [
-				[ 'slug' => 'zither', 'start_ts' => 1.0, 'duration_ns' => 1000, 'new_classes' => 0, 'new_files' => 0 ],
+			$GLOBALS['newspack_profiler'] = [
+				'plugins' => [
+					[ 'slug' => 'zither', 'start_ts' => 1.0, 'duration_ns' => 1000, 'new_classes' => 0, 'new_files' => 0 ],
+				],
 			];
-			\do_action( 'plugins_loaded' );
+			$run( $lm );
+			$left = $GLOBALS['newspack_profiler']['plugins'] ?? null;
 			$lm->finish();
-			return $this->written_entries();
+			return [ $this->written_entries(), $left ];
 		} finally {
-			$GLOBALS['_wp_actions'] = $saved_actions;
 			unset( $GLOBALS['newspack_profiler'], $GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] );
 			Log_Manager::reset();
 		}
+	}
+
+	/**
+	 * Run the deferred bootstrap over one plugin row, per `with_a_plugin_row()`.
+	 *
+	 * @param array<string,mixed> $rule The single rule governing the request.
+	 * @return array{0: list<array<string,mixed>>, 1: mixed} The firehose entries, and the rows the drop-in still holds.
+	 */
+	private function boot_over_a_plugin_row( array $rule ): array {
+		return $this->with_a_plugin_row( $rule, static fn () => self::with_deferred_bootstrap( static function (): void {} ) );
 	}
 
 	/** Whether the entries open a plugin-load span for the seeded row. */
@@ -2343,26 +2353,51 @@ class LogManagerTest extends TestCase {
 		return false;
 	}
 
+	/** The bootstrap writes the drop-in's rows once, leaving it none for a copy that flushes them itself. */
+	public function test_the_bootstrap_writes_the_profilers_plugin_rows_once(): void {
+		$this->require_config_or_skip();
+		[ $entries, $left ] = $this->boot_over_a_plugin_row(
+			[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'log_plugin_loads' => true ]
+		);
+
+		$this->assertTrue( $this->opened_a_plugin_span( $entries ) );
+		$this->assertSame( [], $left );
+	}
+
+	/** The flush empties the list it writes, so a second one writes nothing. */
+	public function test_a_second_flush_writes_no_plugin_row(): void {
+		$this->require_config_or_skip();
+		[ $entries ] = $this->with_a_plugin_row(
+			[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'log_plugin_loads' => true ],
+			static function ( Log_Manager $lm ): void {
+				$lm->flush_plugin_loads();
+				$lm->flush_plugin_loads();
+			}
+		);
+
+		$this->assertCount( 1, \array_filter( $entries, static fn ( array $e ): bool => 'zither plugin (start)' === ( $e['k'] ?? '' ) ) );
+	}
+
 	public function test_a_rule_can_keep_plugin_loads_out_of_the_record(): void {
 		// The mu-plugin measures either way; the rule decides only whether the
 		// record carries two entries per site-activated plugin, which on a
 		// forty-plugin site is eighty before the request does anything.
 		$this->require_config_or_skip();
-		$this->assertFalse(
-			$this->opened_a_plugin_span( $this->flush_plugin_row_under_rule(
-				[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'log_plugin_loads' => false ]
-			) ),
-			'the rule said no plugin loads'
+		[ $entries, $left ] = $this->boot_over_a_plugin_row(
+			[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'log_plugin_loads' => false ]
 		);
+
+		$this->assertFalse( $this->opened_a_plugin_span( $entries ), 'the rule said no plugin loads' );
+		$this->assertSame( [], $left, 'consumed all the same' );
 	}
 
 	public function test_a_rule_silent_about_plugin_loads_logs_none(): void {
 		// Every diagnostic is an opt-in; a rule that says nothing has it off.
 		$this->require_config_or_skip();
 		$this->assertFalse(
-			$this->opened_a_plugin_span( $this->flush_plugin_row_under_rule(
+			$this->opened_a_plugin_span( $this->boot_over_a_plugin_row(
 				[ 'id' => 'r', 'pattern' => '/', 'action' => 'log' ]
-			) ),
+			)[0] ),
 			'silence logs none'
 		);
 	}

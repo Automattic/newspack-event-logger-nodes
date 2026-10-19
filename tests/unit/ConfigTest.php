@@ -154,10 +154,9 @@ class ConfigTest extends TestCase {
 	}
 
 	public function test_value_reads_substrate_and_app_keys_without_runtime_wiring(): void {
-		// The staging fatal: the profiler drop-in flushes its first log line at
-		// plugins_loaded:-10001, before the substrate wires its runtime (it never
-		// does on a frontend request) and before this plugin's plugins_loaded:11
-		// loader registers its keys. Both Configs must self-declare on first read.
+		// Config is read at plugins_loaded:-11001, before the substrate wires its
+		// runtime (it never does on a frontend request) and before any loader
+		// could register keys, so both Configs self-declare on first read.
 		// 7 / true are distinct from the shipped defaults (1 / false).
 		$conf = $this->temp_dir . '/unwired.php';
 		\file_put_contents( $conf, "<?php return [ 'num_partitions' => 7, 'flush_every_line' => true ];\n" );
@@ -243,8 +242,7 @@ class ConfigTest extends TestCase {
 
 	public function test_value_resolves_application_key(): void {
 		// An ELN-own key (declared via the ELN key registration) resolves off the
-		// merged config; 31337 is distinct from the -10000 file default and the
-		// old `?? 1` fallback.
+		// merged config; 31337 is distinct from the -11000 schema default.
 		$conf = $this->temp_dir . '/value-app.php';
 		\file_put_contents( $conf, "<?php return [ 'hook_start_priority' => 31337 ];\n" );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
@@ -294,7 +292,7 @@ class ConfigTest extends TestCase {
 		Config::reset();
 		\delete_option( 'newspack_event_logger_nodes_hook_start_priority' );
 		$config = Config::load_config();
-		$this->assertSame( -10000, $config['hook_start_priority'] );
+		$this->assertSame( -11000, $config['hook_start_priority'] );
 	}
 
 	// ── Path/directory accessors ───────────────────────────────────────────

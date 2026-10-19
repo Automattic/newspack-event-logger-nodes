@@ -23,5 +23,10 @@ VERSION_CONST="NEWSPACK_EVENT_LOGGER_NODES_VERSION"
 # shellcheck disable=SC2034
 SUBSTRATE_PIN=".github/workflows/release.yml"
 
+# The drop-in ships as its own release asset and is copied by hand, so its
+# header has to move with the plugin or nobody can tell which one a site has.
+# shellcheck disable=SC2034
+DROP_IN="mu-plugins/00-newspack-profiler.php"
+
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/lib/bump-version.sh"

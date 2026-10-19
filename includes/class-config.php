@@ -339,8 +339,8 @@ class Config {
 	 * Record and log an operator's stray key WITHOUT throwing.
 	 *
 	 * `setup/newspack-event-logger-nodes.sh` copies the deployment's own config
-	 * over the shipped path, so this file belongs to the operator. The profiler
-	 * drop-in builds `Log_Manager` at `plugins_loaded:-10001`, which loads this
+	 * over the shipped path, so this file belongs to the operator. The
+	 * deferred bootstrap builds `Log_Manager` at `plugins_loaded:-11001`, which loads this
 	 * config, so a throw would take down every request, wp-admin
 	 * included, the day a key is renamed — recoverable only over SSH. Loud means
 	 * visible: stderr once per key set, which is this plugin's whole reporting
@@ -427,9 +427,8 @@ class Config {
 	 * file scope, so the substrate PULLS the declaration whenever it derives its
 	 * declared set — on the first read, and again after a `Config::reset()`
 	 * re-arms that derive. Declaring from the deferred loader instead would come
-	 * too late: the profiler's first log line reads config at
-	 * `plugins_loaded:-10001`, ahead of the loader's `plugins_loaded:11`, and
-	 * `value()` would throw on a real key.
+	 * too late: the substrate's own file scope reads config as it loads, before
+	 * any loader runs, and `value()` would throw on a real key.
 	 */
 	public static function register_config_keys(): void {
 		if ( ! \class_exists( RuntimeConfig::class ) ) {

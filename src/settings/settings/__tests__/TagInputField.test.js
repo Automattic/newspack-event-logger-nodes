@@ -240,6 +240,67 @@ describe( 'TagInputField', () => {
 		unmount();
 	} );
 
+	it( 'clears every tag at once, and offers the button only over tags', () => {
+		const seen = [];
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				initialValues: [ '/alpha-7316', '/beta-7316', '/gamma-7316' ],
+				onChange: ( v ) => seen.push( v ),
+			} )
+		);
+		const clear = () =>
+			container.querySelector( '.event-logger-tag-clear' );
+
+		act( () => {
+			clear().click();
+		} );
+
+		expect( seen ).toEqual( [ [] ] );
+		expect(
+			container.querySelectorAll( '.event-logger-tag-text' )
+		).toHaveLength( 0 );
+		expect( clear() ).toBeNull();
+		unmount();
+	} );
+
+	it( 'hands focus to the box once a removed tag takes its button away', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				initialValues: [ '/alpha-7316' ],
+			} )
+		);
+		const remove = container.querySelector( '.event-logger-tag-remove' );
+		remove.focus();
+
+		act( () => {
+			remove.click();
+		} );
+
+		expect( container.ownerDocument.activeElement ).toBe(
+			container.querySelector( 'input' )
+		);
+		unmount();
+	} );
+
+	it( 'hands focus to the box once Clear all takes itself away', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				initialValues: [ '/alpha-7316' ],
+			} )
+		);
+		const clear = container.querySelector( '.event-logger-tag-clear' );
+		clear.focus();
+
+		act( () => {
+			clear.click();
+		} );
+
+		expect( container.ownerDocument.activeElement ).toBe(
+			container.querySelector( 'input' )
+		);
+		unmount();
+	} );
+
 	it( 'does not report the initial render as an edit', () => {
 		const seen = [];
 		const { unmount } = renderComponent(

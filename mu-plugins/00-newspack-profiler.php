@@ -33,7 +33,9 @@
  * a request's record begins where PHP began rather than where Log_Manager
  * happened to emit its first line. Log_Manager's constructor consumes and
  * unsets both keys, which is what stops a nested job context from claiming
- * them a second time; `plugins` is left for the flush below.
+ * them a second time. `plugins` waits for the event logger's deferred
+ * bootstrap, which writes the rows through `Log_Manager::flush_plugin_loads()`
+ * and empties the list.
  *
  * @var array{request_time:int,request_ts:float,plugins:list<array{slug:string,start_ts:float,duration_ns:int|float,new_classes:int,new_files:int}>} $newspack_profiler
  */
@@ -140,65 +142,4 @@ $newspack_profiler_state = [
 		$newspack_profiler_state['files']   = $files;
 	},
 	1
-);
-
-\add_action(
-	'plugins_loaded',
-	/**
-	 * Write the collected rows to the firehose as start/complete span pairs.
-	 *
-	 * Priority -10001 sits one below `hook_start_priority`, whose default is
-	 * -10000, so these entries precede whatever App\Core's instrumentation
-	 * writes for `plugins_loaded` and the log reads in the order the work
-	 * happened. Reaching Log_Manager this early requires newspack-event-logger-nodes
-	 * to register its Composer autoloader at plugin-file load time rather than
-	 * inside its own deferred `plugins_loaded` 11 bootstrap.
-	 *
-	 * `instance()` builds the logger when nothing else has, and that
-	 * construction is what adopts `request_time` and `request_ts` from the
-	 * global. The `is_started()` gate then drops everything when the governing
-	 * rule did not say `log`, and the rule's `log_plugin_loads` drops the rows
-	 * alone on a URL logged without them — two entries per site-activated
-	 * plugin, which is eighty of them before a forty-plugin site does any work.
-	 * Reading a `Rule` property couples this file to the plugin's class as
-	 * `is_started()` above already does; both ship from the same release.
-	 *
-	 * Each entry carries its own `ts`, overriding the one `message()` would
-	 * stamp: every row was measured before this flush, and the flush moment
-	 * would collapse the whole plugin-loading phase onto one instant. The
-	 * `(start)` / `(complete)` suffixes are what `Flame_Tree` matches to build
-	 * a span, `duration_ms` on the complete is the span's width, and the counts
-	 * ride in `m` because that is the field the entry table renders.
-	 */
-	function () {
-		/** @var array{request_time:int, request_ts:float, plugins:list<array{slug:string,start_ts:float,duration_ns:int|float,new_classes:int,new_files:int}>} $newspack_profiler */
-		global $newspack_profiler;
-
-		if ( ! \class_exists( '\\Newspack_Event_Logger_Nodes\\Log_Manager' ) ) {
-			return;
-		}
-
-		$lm = \Newspack_Event_Logger_Nodes\Log_Manager::instance();
-		if ( ! $lm->is_started() ) {
-			return;
-		}
-
-		if ( ! $lm->governing_rule()?->log_plugin_loads ) {
-			return;
-		}
-
-		foreach ( $newspack_profiler['plugins'] as $plugin ) {
-			$duration_ms = \round( $plugin['duration_ns'] / 1000000, 3 );
-			$duration_s  = $plugin['duration_ns'] / 1000000000;
-			$lm->message( "{$plugin['slug']} plugin (start)", [
-				'ts' => $plugin['start_ts'],
-			] );
-			$lm->message( "{$plugin['slug']} plugin (complete)", [
-				'ts'          => $plugin['start_ts'] + $duration_s,
-				'duration_ms' => $duration_ms,
-				'm'           => "{$duration_ms}ms, {$plugin['new_classes']} classes, {$plugin['new_files']} files",
-			] );
-		}
-	},
-	-10001
 );

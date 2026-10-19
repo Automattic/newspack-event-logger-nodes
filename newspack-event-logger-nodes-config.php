@@ -21,7 +21,7 @@
  * here that the schema does not declare is an operator typo: it is ignored and
  * reported to stderr, never registered and never thrown, because a deploy
  * copies the deployment's own copy of this file over the shipped path and
- * throwing at `plugins_loaded:-10001` would take down wp-admin with everything
+ * throwing at `plugins_loaded:-11001` would take down wp-admin with everything
  * else.
  *
  * `ConfigSchemaTest` parses the commented entries below back into an array and
@@ -88,8 +88,9 @@ return [
 
 	// The priority `App\Core` binds `hook_start` at. Its `hook_complete`
 	// always binds at `PHP_INT_MAX - 1`, so a lower number here widens the
-	// measured span over more of the hook's callbacks.
-	// 'hook_start_priority' => -10000,
+	// measured span over more of the hook's callbacks. Keep it above the
+	// bootstrap's -11001, or no rule can time `plugins_loaded`.
+	// 'hook_start_priority' => -11000,
 
 	// Hook names the settings hook picker stars and its "Recommended" button
 	// selects — that button REPLACES the current selection with this list.
@@ -102,6 +103,7 @@ return [
 	//	'after_setup_theme',
 	//	'init',
 	//	'parse_request',
+	//	'plugins_loaded',
 	//  'pre_get_posts',
 	//	'send_headers',
 	//	'setup_theme',

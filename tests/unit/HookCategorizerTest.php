@@ -164,6 +164,20 @@ class HookCategorizerTest extends TestCase {
 		$this->assertSame( 'Admin', Hook_Categorizer::categorize( 'admin_init' ) );
 	}
 
+	public function test_categorize_files_bare_pre_option_under_options(): void {
+		$this->assertSame( 'Options & Settings', Hook_Categorizer::categorize( 'pre_option' ) );
+	}
+
+	public function test_categorize_files_the_alloptions_loaders_under_options(): void {
+		$this->assertSame( 'Options & Settings', Hook_Categorizer::categorize( 'pre_wp_load_alloptions' ) );
+		$this->assertSame( 'Options & Settings', Hook_Categorizer::categorize( 'wp_load_alloptions' ) );
+	}
+
+	public function test_categorize_files_every_tribe_and_tec_hook_under_the_events_calendar(): void {
+		$this->assertSame( 'The Events Calendar', Hook_Categorizer::categorize( 'tribe_get_option_7316' ) );
+		$this->assertSame( 'The Events Calendar', Hook_Categorizer::categorize( 'tec_events_7316' ) );
+	}
+
 	public function test_categorize_override_takes_precedence(): void {
 		\update_option( Hook_Categorizer::OPTION_NAME, [
 			'overrides' => [ 'wp_ajax_test' => 'Custom' ],

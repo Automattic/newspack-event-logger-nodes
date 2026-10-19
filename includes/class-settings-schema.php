@@ -95,6 +95,7 @@ class Settings_Schema {
 		'after_setup_theme',
 		'init',
 		'parse_request',
+		'plugins_loaded',
 		'pre_get_posts',
 		'send_headers',
 		'setup_theme',
@@ -221,12 +222,12 @@ class Settings_Schema {
 					ui: false,
 					default: self::RULES,
 				),
-				// App\Core registers its hook_start at this priority.
+				// App\Core's hook_start priority, just above the bootstrap's.
 				new Field(
 					key: 'hook_start_priority',
 					type: 'int',
 					ui: false,
-					default: -10000,
+					default: \NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY + 1,
 				),
 				// Custom-event name => hex swatch, for the event picker.
 				new Field(

@@ -115,11 +115,10 @@ class ConfigSchemaTest extends TestCase {
 		Config::$read_shipped_config = static fn ( array $base ): array => $base;
 		Config::reset();
 
-		$this->assertSame( -10000, Config::value( 'hook_start_priority' ) );
+		$this->assertSame( -11000, Config::value( 'hook_start_priority' ) );
 		$this->assertSame( [], Config::value( 'custom_colors' ) );
 		$this->assertContains( 'template_redirect', Config::value( 'recommended_log_events' ) );
-		// The logger binds inside plugins_loaded, so it can never time it.
-		$this->assertNotContains( 'plugins_loaded', Config::value( 'recommended_log_events' ) );
+		$this->assertContains( 'plugins_loaded', Config::value( 'recommended_log_events' ) );
 		$rules = Config::value( 'rules' );
 		$this->assertSame( [ 'pattern' => '/', 'action' => 'log' ], \end( $rules ) );
 	}
@@ -151,7 +150,7 @@ class ConfigSchemaTest extends TestCase {
 	 *
 	 * `setup/newspack-event-logger-nodes.sh` copies the operator's server config
 	 * over that exact path after install, so the file is theirs, not ours.
-	 * Throwing here runs at `plugins_loaded:-10001` and takes down every request
+	 * Throwing here runs at `plugins_loaded:-11001` and takes down every request
 	 * including wp-admin, recoverable only over SSH. It is reported instead,
 	 * rate-limited to stderr.
 	 */
@@ -161,7 +160,7 @@ class ConfigSchemaTest extends TestCase {
 			[ ...$base, 'retired_knob' => 'left over from a rename' ];
 		Config::reset();
 
-		$this->assertSame( -10000, Config::value( 'hook_start_priority' ) );
+		$this->assertSame( -11000, Config::value( 'hook_start_priority' ) );
 		$this->assertSame( [ 'retired_knob' ], Config::unrecognized_keys() );
 	}
 

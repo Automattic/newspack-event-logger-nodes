@@ -35,7 +35,9 @@ use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Event_Logger_Nodes\Settings_Schema;
 use Newspack_Nodes\Core as RuntimeCore;
+use Newspack_Nodes\Rate_Limit;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -184,6 +186,12 @@ class Core {
 	 */
 	private const SPACER_PRIORITY = PHP_INT_MAX - 2;
 
+	/** Seconds a configuration complaint stays quiet once `report()` says it. */
+	private const REPORT_WINDOW_S = 3600;
+
+	/** @var array<string,true> Complaints this process has asked the rate limit about. */
+	private static array $reported = [];
+
 	/** @var string[] Hook names currently bound (tracked for rebind_for_current_scope). */
 	private array $bound_hooks = [];
 
@@ -194,7 +202,7 @@ class Core {
 	private static ?array $hook_arg_keep = null;
 
 	/** @var int Priority hook_start registers at (config key `hook_start_priority`). */
-	private int $start_priority = 1;
+	private int $start_priority;
 
 	/** @var array<int,true> spl_object_id of wrappers we created (prevents double-wrap). */
 	private array $wrapper_ids = [];
@@ -223,7 +231,17 @@ class Core {
 	 * times against the live one.
 	 */
 	public function __construct() {
-		$this->start_priority = RuntimeCore::num_int( Config::value( 'hook_start_priority' ), 1 );
+		$priority = Config::value( 'hook_start_priority' );
+		if ( ! \is_numeric( $priority ) ) {
+			$read = match ( true ) {
+				\is_bool( $priority )   => $priority ? 'true' : 'false',
+				\is_scalar( $priority ) => "'{$priority}'",
+				default                 => \gettype( $priority ),
+			};
+			self::report( "Newspack ELN: hook_start_priority {$read} is no number; using the schema's default." );
+			$priority = Settings_Schema::get()->defaults()['hook_start_priority'];
+		}
+		$this->start_priority = RuntimeCore::num_int( $priority );
 
 		$this->bind_current_scope();
 		\add_action( 'newspack_event_logger_nodes_scope_changed', [ $this, 'rebind_for_current_scope' ] );
@@ -452,6 +470,12 @@ class Core {
 			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
 			$this->bound_hooks[] = $hook_name;
 		}
+		if ( $this->start_priority <= \NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY && \in_array( 'plugins_loaded', $this->bound_hooks, true ) ) {
+			self::report(
+				"Newspack ELN: hook_start_priority {$this->start_priority} is at or below the bootstrap's "
+					. \NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY . ', so the rule binding plugins_loaded cannot time it; raise it.'
+			);
+		}
 
 		// Outbound HTTP blocks below userland, where no hook reaches.
 		if ( $rule->log_http ) {
@@ -475,6 +499,25 @@ class Core {
 		}
 		\add_filter( self::QUERY_HOOK, [ $this, 'query_start' ], $this->start_priority );
 		\add_filter( 'log_query_custom_data', [ $this, 'query_end' ], PHP_INT_MIN, 5 );
+	}
+
+	/**
+	 * A configuration complaint, on stderr at most once per `REPORT_WINDOW_S`
+	 * across requests: every request builds a Core, and a process forgets what
+	 * the last request said. A host with no shared cache reports every time.
+	 * A process asks once per complaint, whatever the answer, since a job's
+	 * rebind checks again.
+	 *
+	 * @param string $text The complaint, which also names its slot.
+	 */
+	private static function report( string $text ): void {
+		if ( isset( self::$reported[ $text ] ) ) {
+			return;
+		}
+		self::$reported[ $text ] = true;
+		if ( Rate_Limit::THROTTLED !== Rate_Limit::claim( 'eln-config:' . \md5( $text ), 1, self::REPORT_WINDOW_S ) ) {
+			RuntimeCore::print_less_often( $text );
+		}
 	}
 
 	/**

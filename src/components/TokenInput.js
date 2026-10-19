@@ -4,6 +4,7 @@
  * Time field and the rule editor's tag input are both one.
  */
 
+import { useId } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import CommitInput from '@newspack-nodes/shared/components/CommitInput';
 import TagToken from './TagToken';
@@ -15,6 +16,7 @@ import TagToken from './TagToken';
  * @property {string[]}                tokens         Each token's label, in order.
  * @property {(index: number) => void} onRemove       Takes the token at an index away.
  * @property {string}                  [rowClassName] The token row's class; without one the tokens join the caller's row.
+ * @property {() => void}              [onClear]      Takes every token away; a Clear all button shows while any is held.
  */
 
 /**
@@ -25,7 +27,8 @@ import TagToken from './TagToken';
 
 /**
  * The input. Backspace in an empty box removes the last token, holding the
- * key, and only while a token exists; an empty field lets it through.
+ * key, and only while a token exists; an empty field lets it through. A ×
+ * or Clear all takes its own button away, so focus moves to the box first.
  *
  * @param {TokenInputProps} props The options and the box's props.
  * @return {import('react').ReactElement} The tokens and the box.
@@ -34,13 +37,20 @@ export default function TokenInput( {
 	tokens,
 	onRemove,
 	rowClassName,
+	onClear,
 	...commitInputProps
 } ) {
+	const mintedId = useId();
+	const boxId = commitInputProps.id ?? mintedId;
+	const toBox = ( take ) => () => {
+		document.getElementById( boxId )?.focus();
+		take();
+	};
 	const drawn = tokens.map( ( label, index ) => (
 		<TagToken
 			key={ index }
 			label={ label }
-			onRemove={ () => onRemove( index ) }
+			onRemove={ toBox( () => onRemove( index ) ) }
 			removeLabel={ sprintf(
 				// translators: %s: the token's label.
 				__( 'Remove %s', 'newspack-event-logger-nodes' ),
@@ -57,6 +67,7 @@ export default function TokenInput( {
 				: drawn }
 			<CommitInput
 				{ ...commitInputProps }
+				id={ boxId }
 				onKeyDown={ ( event ) => {
 					if (
 						'Backspace' === event.key &&
@@ -68,6 +79,15 @@ export default function TokenInput( {
 					}
 				} }
 			/>
+			{ onClear && tokens.length > 0 && (
+				<button
+					type="button"
+					className="button-link event-logger-tag-clear"
+					onClick={ toBox( onClear ) }
+				>
+					{ __( 'Clear all', 'newspack-event-logger-nodes' ) }
+				</button>
+			) }
 		</>
 	);
 }

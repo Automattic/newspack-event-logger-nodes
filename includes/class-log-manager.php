@@ -1058,6 +1058,57 @@ class Log_Manager {
 	}
 
 	/**
+	 * Write the profiler drop-in's plugin-load rows as span pairs, once.
+	 *
+	 * The deferred bootstrap calls this before it binds the rule, so the rows
+	 * precede whatever App\Core writes for `plugins_loaded`. It empties
+	 * `$newspack_profiler['plugins']` whatever the rule says, so the rows are
+	 * written once. Only a started logger
+	 * under a rule with `log_plugin_loads` writes them: two entries per
+	 * site-activated plugin, eighty on a forty-plugin site before it does any
+	 * work.
+	 *
+	 * Each entry carries its own `ts`, overriding the one `message()` would
+	 * stamp, because the flush moment would collapse the whole plugin-loading
+	 * phase onto one instant. `Flame_Tree` builds a span from the `(start)` /
+	 * `(complete)` suffixes, `duration_ms` on the complete is its width, and
+	 * the counts ride in `m`, the field the entry table renders.
+	 */
+	public function flush_plugin_loads(): void {
+		/** @var array{plugins?: list<array{slug:string,start_ts:float,duration_ns:int|float,new_classes:int,new_files:int}>}|null $newspack_profiler */
+		global $newspack_profiler;
+		if ( null === $newspack_profiler ) {
+			return;
+		}
+		$plugins                       = $newspack_profiler['plugins'] ?? [];
+		$newspack_profiler['plugins'] = [];
+		if ( ! $this->is_started() || ! $this->matched_rule?->log_plugin_loads ) {
+			return;
+		}
+		foreach ( $plugins as $plugin ) {
+			$duration_ms = \round( $plugin['duration_ns'] / 1000000, 3 );
+			$this->message( "{$plugin['slug']} plugin (start)", [ 'ts' => $plugin['start_ts'] ] );
+			$this->message(
+				"{$plugin['slug']} plugin (complete)",
+				[
+					'ts'          => $plugin['start_ts'] + $plugin['duration_ns'] / 1000000000,
+					'duration_ms' => $duration_ms,
+					'm'           => "{$duration_ms}ms, {$plugin['new_classes']} classes, {$plugin['new_files']} files",
+				]
+			);
+		}
+	}
+
+	/**
+	 * This context's logging window is open: the governing rule said `log` and
+	 * finish() has not run yet. The gate every caller that instruments its own
+	 * work — rather than just writing a line — should check first.
+	 */
+	public function is_started(): bool {
+		return true === $this->started;
+	}
+
+	/**
 	 * Resolve the rule governing a URL and keep it as this request's.
 	 *
 	 * No match means skip: there is no log-all baseline, so a deployment that
@@ -1069,17 +1120,6 @@ class Log_Manager {
 	public function matches_url_filter( string $url ): bool {
 		$this->matched_rule = $this->matcher?->match( $url );
 		return null !== $this->matched_rule && $this->matched_rule->is_log();
-	}
-
-	/**
-	 * This context's logging window is open: the governing rule said `log` and
-	 * finish() has not run yet. The gate every caller that instruments its own
-	 * work — rather than just writing a line — should check first.
-	 *
-	 * @api Used by the profiler drop-in.
-	 */
-	public function is_started(): bool {
-		return true === $this->started;
 	}
 
 	/**

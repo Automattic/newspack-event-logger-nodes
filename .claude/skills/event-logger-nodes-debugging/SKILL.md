@@ -208,7 +208,7 @@ This plugin registers exactly one REST route of its own: `POST /wp-json/newspack
 | `grep_requests` | `performance.grep_requests` | Pattern-search recent firehose traffic; a bounded summary per match (`rid`, `url`, `method`, `ts`, `match_count`, `first_match_excerpt`) |
 | `search_requests` | `performance.search_requests` | Locate one rid by its request row: `{ rid, url_hash }` |
 | `dump_request` | `performance.dump_request` | Full request plus flame data for a rid, read at the place its request row names; a rid no row names is not found |
-| `dump_url` | `performance.dump_url` | One URL's stats, its 500 newest requests across partitions, the aggregate flame rebuilt from their stored flames |
+| `dump_url` | `performance.dump_url` | One URL's stats, its 500 newest requests across partitions, the aggregate flame rebuilt from the newest 100's stored flames |
 | `performance_query` | `performance.query` | Any group, filter and measure `Stats_Query` names, over the request or timing rows; a top-N by window functions |
 | `performance_urls` | `performance.urls` | The URL table: every URL-set fact under the filters it applied |
 | `performance_overview` | `performance.overview` | Site totals, the servers seen and the 24-hour category leaderboard |
@@ -288,7 +288,7 @@ The overview-prefetch job tells its time on its own record, `/jobs/eln_overview_
 | Knob | Default | What it adds |
 |---|---|---|
 | `log_http` | off | An `http` span per outbound request, between `pre_http_request` at `PHP_INT_MAX` and `http_api_debug` at `PHP_INT_MIN`. A short-circuited request opens nothing, because WordPress returns it without firing the close |
-| `log_plugin_loads` | off | A `{slug} plugin` span per site-activated plugin, flushed by `00-newspack-profiler.php` on `plugins_loaded` at -10001. The mu-plugin times them either way; the knob gates only the flush, so turning it off costs nothing and measures nothing |
+| `log_plugin_loads` | off | A `{slug} plugin` span per site-activated plugin, measured by `00-newspack-profiler.php` and written by the deferred bootstrap at `plugins_loaded` -11001 (`Log_Manager::flush_plugin_loads()`). The mu-plugin times them either way; the knob gates only the flush, so turning it off costs nothing and measures nothing |
 | `log_queries` | off | A `sql` span per query, between `query` and `log_query_custom_data`. It defines `SAVEQUERIES` for the life of the process and costs two entries per query |
 | `trace_hooks` | off | The calling frame on each hook entry's `l`, so one hook firing sixteen times splits into a flame node per caller |
 | `trace_callers` | off | A deep backtrace on the start entry's `caller` field, on hook, query and HTTP spans alike, budgeted per CALLER of each hook, statement shape and URL, and reset for each job — a stored `true` is a count of 1 |
