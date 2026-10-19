@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.145.0] - 2026-10-19
+
 ### Changed
 - **A URL row is keyed by its path and its query's keys.** The stored `url` was the request URL less its query, so `/?rest_route=/wp/v2/posts&_embed=1`, `/?ical=1` and the homepage shared one row. Each query key is now kept as `name=?`, one per key PHP reads into `$_GET` (`ids[0]` and `ids[1]` are `ids`), sorted, so `/?_embed=?&rest_route=/wp/v2/posts` gets a row of its own. `rest_route`, `action`, `wc-ajax` and `feed` keep their values, with each all-digit segment masked, so `admin-ajax.php` splits by action and the REST API by route. Tracking keys (`utm_*`, `fbclid`, `gclid`, `mc_cid` and the like) are dropped, so a page keeps one row however it was linked, and a trimmed request line drops its last parameter, which the trim may have cut. Every URL whose query keeps a key moves to a new row; the old rows age out of the seven-day window.
 - **A stored URL matches rules by its path alone.** `Rule_Set::for_url()`, a `create_rule` proposal and the dashboard's "Log this URL" pattern read `Url_Parts::rule_path()`, which drops the stored query: the producer matches rules against the `REQUEST_URI` a request sent, and the stored query is not that, its values masked and a worker mark perhaps appended. On the cron loopback's row, `/wp-cron.php?doing_wp_cron=?&cron`, the dashboard proposes `/wp-cron.php?` and a `create_rule` proposal `/wp-cron.php`, where the dashboard proposed `/wp-cron.php?cron`, which governed nothing. `Url_Parts::path_of()` is gone, and `Log_Manager::parse_request_line()` takes the entry, reading `m` and `truncated` from it.
