@@ -313,7 +313,7 @@ Both span pairs name their CALLER, never the host or the table, because one host
 
 ## Inspecting on disk
 
-`{base_dir}` is `\Newspack_Nodes\Config::get_base_directory()`, which resolves the substrate's `base_directory` key through the usual layers — schema default `/tmp/newspack-nodes`, then each config file, then the stored option. Neither eve install takes the schema default: `eve-pyrobase1-1` runs `/volumes/pyrobase/tmp/newspack-nodes` and the gyropyro install in `eve-gyrobase1-1` runs `/volumes/gyropyro/tmp/newspack-nodes`, so read the resolved path off `wp nodes doctor` rather than assuming one. Every partition is a directory named `<log>.p<N>` — the flat partition-in-name layout — holding numbered `<segment_id>.log` segments.
+`{base_dir}` is `\Newspack_Nodes\Config::get_base_directory()`, which resolves the substrate's `base_directory` key through the usual layers — schema default `/tmp/newspack-nodes`, then each config file, then the stored option. Both eve installs take the schema default, each in its own container, so `eve-pyrobase1-1` and `eve-gyrobase1-1` hold separate trees at the same path; read a tree from its own container, and the resolved path off `wp nodes doctor`. Every partition is a directory named `<log>.p<N>` — the flat partition-in-name layout — holding numbered `<segment_id>.log` segments.
 
 ```bash
 # The Log_Manager firehose. Lines are 7-element positional Message envelopes;
