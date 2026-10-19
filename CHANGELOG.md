@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.146.0] - 2026-10-19
+
 ### Added
 - **A link to the Performance dashboard reopens the open URL's window as it stood.** While a URL's window is open, the address bar carries its filter chips, Time selection, Metric, Breakdown, Then by and Recent Requests sort as `?url_chip=`, `?url_bucket=`, `?url_metric=`, `?url_breakdown=`, `?url_then=`, `?url_sort=` and `?url_order=`, each left out at its default and all dropped from the bar when the window closes. A link restores them, dropping a Metric, Breakdown, Then by or sort the controls do not offer and a `server=` or `url=` chip; `?url_bucket=` passes through as the table's `?bucket=` does, for the server to judge. Before, a linked URL opened on the defaults. The window's Metric is held by the dashboard rather than the modal, so it also survives a visit to one of the URL's requests. A URL opened from the table still starts on the table's time selection and chips; any other window, a request found through the search box among them, starts on the default chips, Time and chart, and a window closed by Back forgets them as one closed by its X does. The Recent Requests sort carries over to the next window either way.
 
