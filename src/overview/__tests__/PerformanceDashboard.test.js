@@ -1461,6 +1461,38 @@ describe( 'PerformanceDashboard', () => {
 				unmount();
 			} );
 
+			it( 'pushes one entry for a search, which one Back leaves', async () => {
+				mockRealNavigation = true;
+				mockView = detailView( urlsOf( [ ROW ] ) );
+				const { container, unmount } = mountDash();
+				await flushEffects();
+				const before = window.history.length;
+
+				await act( async () => {
+					await globalThis.__overviewProps.onSearch( 'r9' );
+				} );
+				answerCommand( SEARCH, {
+					result: { url_hash: 'beef7743', partition: 0 },
+					args: [ 'r9' ],
+				} );
+				await flushEffects();
+				expect( window.history.length ).toBe( before + 1 );
+				expect( window.location.search ).toBe(
+					'?page=perf&url=beef7743&request=r9'
+				);
+
+				await act( async () => {
+					window.history.back();
+					await new Promise( ( r ) => setTimeout( r, 20 ) );
+				} );
+				await flushEffects();
+				expect( window.location.search ).toBe( '?page=perf' );
+				expect(
+					container.querySelector( '[data-testid="modal"]' )
+				).toBeNull();
+				unmount();
+			} );
+
 			it( 'opens no window on what a link held for a URL it never named', async () => {
 				linkTo( LINKED );
 				mockView = detailView( urlsOf( [] ) );
