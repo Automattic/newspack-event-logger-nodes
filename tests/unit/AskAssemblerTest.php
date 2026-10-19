@@ -191,13 +191,13 @@ class AskAssemblerTest extends TestCase {
 
 	/**
 	 * A per-request brief names the URL its request fetched, query and all,
-	 * from the record's `request_url`, redacted: the stored `url` is per path,
-	 * so a `?rest_route=` call reads as `/`.
+	 * from the record's `request_url`, redacted: the stored `url` masks every
+	 * value but a route's, so it cannot say what the request asked for.
 	 */
 	#[DataProvider( 'per_request_briefs' )]
 	public function test_a_per_request_brief_carries_the_url_its_request_fetched( \Closure $brief ): void {
 		$record                = $this->record();
-		$record['url']         = 'https://example.test/';
+		$record['url']         = 'https://example.test/?fields=?&rest_route=/zz/v9&token=?';
 		$record['request_url'] = 'https://example.test/?rest_route=%2Fzz%2Fv9&token=kea7719&fields=a%2Cb';
 		$record['profiles']    = [ 'gyrobase' => [ 'time' => 410.0, 'count' => 12, 'entries' => [] ] ];
 

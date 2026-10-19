@@ -2,8 +2,8 @@
 /**
  * Url Parts
  *
- * The server and the path a logged URL splits into, and the path a stats row
- * stores.
+ * The server a logged URL names, the key its row is filed by, the path a
+ * stats row stores, and the path a rule matches it by.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -26,6 +26,48 @@ final class Url_Parts {
 	public const MAX_PATH_BYTES = 1024;
 
 	/**
+	 * The query keys whose value routes a request rather than naming what it
+	 * asked for, so `key()` keeps it: a REST route, an admin-ajax action, a
+	 * WooCommerce ajax endpoint and a feed each get a row of their own.
+	 *
+	 * @var array<string,true>
+	 */
+	private const KEY_ROUTES = [
+		'rest_route' => true,
+		'action'     => true,
+		'wc-ajax'    => true,
+		'feed'       => true,
+	];
+
+	/**
+	 * The query keys `key()` drops, beside every `utm_` key: each names the
+	 * link a visitor followed, never what was served, so a page keeps one row
+	 * however it was reached.
+	 *
+	 * @var array<string,true>
+	 */
+	private const KEY_TRACKING = [
+		'fbclid'    => true,
+		'gclid'     => true,
+		'gbraid'    => true,
+		'wbraid'    => true,
+		'dclid'     => true,
+		'msclkid'   => true,
+		'twclid'    => true,
+		'ttclid'    => true,
+		'li_fat_id' => true,
+		'igshid'    => true,
+		'yclid'     => true,
+		'mc_cid'    => true,
+		'mc_eid'    => true,
+		'_ga'       => true,
+		'_gl'       => true,
+		'_hsenc'    => true,
+		'_hsmi'     => true,
+		'mkt_tok'   => true,
+	];
+
+	/**
 	 * The server a URL was logged by: its host, which the producer writes
 	 * from the server name it serves under.
 	 *
@@ -37,19 +79,77 @@ final class Url_Parts {
 	}
 
 	/**
-	 * The PATH of a URL: what a search matches, with no scheme or host.
+	 * The key a request's URL row is filed by, the record's `url`: its path,
+	 * and each key of its query as `name=?`, sorted and deduped, so one row
+	 * holds every request asking the same keys, whatever their values, order
+	 * or spelling. A key is the one PHP reads into `$_GET`, the last sent
+	 * winning, so `ids[0]` and `ids[1]` are `ids` and `a.b` is `a_b`; it is
+	 * written encoded, so no key can spell a separator. A `KEY_ROUTES` key
+	 * keeps its value through `route_value()`. Tracking keys are dropped, a
+	 * trimmed line's last parameter, which the trim may have cut, is
+	 * dropped, and a query left with no key leaves the path alone.
 	 *
-	 * The server is the picker's question, so a term matching the host would
-	 * make one box ask the dropdown's. The authority ends at whichever
-	 * delimiter comes first, so an authority with no path keeps its query on
-	 * the path.
+	 * @param string $request_url The request's absolute URL, query and all.
+	 * @param bool   $truncated   Whether the line was trimmed, cutting its last parameter.
+	 */
+	public static function key( string $request_url, bool $truncated ): string {
+		[ $path, $query ] = \explode( '?', $request_url, 2 ) + [ 1 => '' ];
+		if ( '' === $query ) {
+			return $path;
+		}
+		$parameters = \explode( '&', $query );
+		if ( $truncated ) {
+			\array_pop( $parameters );
+		}
+
+		$keys = [];
+		foreach ( $parameters as $parameter ) {
+			[ $name, $value ] = \explode( '=', $parameter, 2 ) + [ 1 => '' ];
+			\parse_str( $name . '=', $read_as );
+			$key = (string) \array_key_first( $read_as );
+			if ( '' === $key || isset( self::KEY_TRACKING[ $key ] ) || \str_starts_with( $key, 'utm_' ) ) {
+				continue;
+			}
+			$keys[ $key ] = \rawurlencode( $key ) . '=' . ( isset( self::KEY_ROUTES[ $key ] ) ? self::route_value( $value ) : '?' );
+		}
+		if ( [] === $keys ) {
+			return $path;
+		}
+		\ksort( $keys, \SORT_STRING );
+		return $path . '?' . \implode( '&', $keys );
+	}
+
+	/**
+	 * A routing key's value as `key()` keeps it: decoded, each all-digit
+	 * segment masked, each segment encoded again, so `%2Fwp%2Fv2%2Fposts%2F12`
+	 * and `/wp/v2/posts/7` both read `/wp/v2/posts/?` and no value can add a
+	 * parameter.
 	 *
-	 * @param string $url A logged URL, which carries its host.
+	 * @param string $value The value as sent.
+	 */
+	private static function route_value( string $value ): string {
+		return \implode(
+			'/',
+			\array_map(
+				static fn( string $segment ): string => \ctype_digit( $segment ) ? '?' : \rawurlencode( $segment ),
+				\explode( '/', \urldecode( $value ) )
+			)
+		);
+	}
+
+	/**
+	 * The site path a rule matches a stored URL by: its path alone, with no
+	 * scheme or host. A rule matches the URI a request sent, and the stored
+	 * query is not that: `key()` masked its values, and the builder may have
+	 * appended a worker mark. The authority ends at whichever delimiter comes
+	 * first, so a host never swallows a query.
+	 *
+	 * @param string $url A stored URL, which carries its host.
 	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
-	public static function path_of( string $url ): string {
-		[ $offset, $length ] = self::authority( $url );
-		return \substr( $url, $offset + $length );
+	public static function rule_path( string $url ): string {
+		$start = \array_sum( self::authority( $url ) );
+		return \substr( $url, $start, \strcspn( $url, '?', $start ) );
 	}
 
 	/**

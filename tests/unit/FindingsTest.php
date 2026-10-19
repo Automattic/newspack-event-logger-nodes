@@ -1870,6 +1870,16 @@ class FindingsTest extends TestCase {
 		$this->assertSame( '/moa/kiwi', $found['proposal']['pattern'] );
 	}
 
+	/** A masked query names keys, not a query a request sent, so the pattern leaves it out. */
+	public function test_a_rule_to_create_leaves_out_the_masked_query(): void {
+		$found = $this->of_kind(
+			Findings::for_url( [ 'url' => 'https://example.test/moa/kiwi?page=?&rest_route=/wp/v2/posts', 'count' => 3 ], null ),
+			'insufficient_instrumentation'
+		);
+
+		$this->assertSame( '/moa/kiwi', $found['proposal']['pattern'] );
+	}
+
 	/**
 	 * The bisect subdivides only the phase that held the time — proposing forty
 	 * hooks is what this exists to avoid.

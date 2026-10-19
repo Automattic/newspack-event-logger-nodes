@@ -3049,21 +3049,24 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 
-		it( 'does not append a second ? on a nodes/ELN URL that already has one', async () => {
-			mockView = urlModalView( '/jobs/x?reconcile' );
+		// A stored query is masked keys and a worker mark, neither sent by any
+		// request, so the exact pattern is the path alone.
+		it.each( [
+			[ '/kea?page=?&rest_route=/wp/v2/posts', '/kea?' ],
+			[ '/wp-cron.php?doing_wp_cron=?&cron', '/wp-cron.php?' ],
+			[ '/jobs/x?reconcile', '/jobs/x?' ],
+			[ 'https://kea.test/moa?x=?', '/moa?' ],
+		] )( 'patterns %s on its path alone', async ( url, pattern ) => {
+			mockView = urlModalView( url );
 			const { container, unmount } = mountDash();
 			await flushEffects();
 			answerCommand( RULES_DUMP, { result: { rules: [] } } );
-			const btn = container.querySelector(
-				'.event-logger-rule-control button'
-			);
 			await act( async () => {
-				btn.click();
+				container
+					.querySelector( '.event-logger-rule-control button' )
+					.click();
 			} );
-			// ?worker already terminates the URL — no second '?' appended.
-			expect( globalThis.__ruleEditProps.rule.pattern ).toBe(
-				'/jobs/x?reconcile'
-			);
+			expect( globalThis.__ruleEditProps.rule.pattern ).toBe( pattern );
 			unmount();
 		} );
 

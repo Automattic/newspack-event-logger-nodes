@@ -474,12 +474,16 @@ final class RuleSetTest extends TestCase {
 		] );
 	}
 
-	/** A logged URL is absolute; its rule is the one its path and query match. */
-	public function test_for_url_matches_a_logged_urls_path_and_query(): void {
+	/**
+	 * A logged URL is absolute, and its rule is the one its path matches: its
+	 * stored query is masked keys and a worker mark, which no request sent.
+	 */
+	public function test_for_url_matches_a_logged_urls_path(): void {
 		$set = self::tui_rules();
-		$this->assertSame( '/tui-6620?moa', $set->for_url( 'https://kea-7713.test/tui-6620?moa-2' )?->pattern );
+		$this->assertSame( '/tui-6620', $set->for_url( 'https://kea-7713.test/tui-6620?moa-2' )?->pattern, 'a worker mark is not a query' );
 		$this->assertSame( '/tui-6620', $set->for_url( 'https://kea-7713.test/tui-6620/nest' )?->pattern );
 		$this->assertNull( $set->for_url( 'https://kea-7713.test/weka-6620' ), 'no pattern matches' );
+		$this->assertSame( '/tui-6620', $set->for_url( 'https://kea-7713.test/tui-6620?moa=?' )?->pattern, 'a masked key is not a query' );
 		foreach ( [ '', '/tui-6620' ] as $hostless ) {
 			try {
 				$set->for_url( $hostless );

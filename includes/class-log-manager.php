@@ -761,7 +761,7 @@ class Log_Manager {
 	 * @return string 12-character hex hash.
 	 */
 	public static function url_hash( string $url ): string {
-		// Hash full string: surviving '?' is ?worker_type mark — don't strip.
+		// Hash the whole string: its query keys the URL and marks a worker.
 		$hash1 = self::fnv1a32( $url );
 		$hash2 = self::fnv1a32( $url, $hash1 ^ 0x811c9dc5 );
 		return \sprintf( '%08x%04x', $hash1, $hash2 & 0xFFFF );
@@ -1240,9 +1240,10 @@ class Log_Manager {
 
 	/**
 	 * Split a `REQUEST_LINE` entry's `m` into the record's `request_method`,
-	 * its `request_url` with the query, and its `url`, that URL less its
-	 * query. The one parse of that line, for the readers that show a request
-	 * and those that aggregate per URL alike.
+	 * its `request_url` with the query, and its `url`, the key
+	 * `Url_Parts::key()` files that URL's row by. The one parse of that line,
+	 * for the readers that show a request and those that aggregate per URL
+	 * alike.
 	 *
 	 * The method is any token: both producers write `REQUEST_METHOD` as the
 	 * client sent it, less control characters, with each space, `&` and `?`
@@ -1255,14 +1256,15 @@ class Log_Manager {
 	 * long URL: its entry carries `truncated`, and its `request_url` and
 	 * `url` are read from the trimmed prefix.
 	 *
-	 * @param mixed $message The entry's `m`.
+	 * @param array<array-key,mixed> $entry The `REQUEST_LINE` entry, whose `truncated` says `fit_data()` trimmed it.
 	 * @return array{0:string,1:string,2:string}|null [ request_method, request_url, url ], or null when `m` is not a request line.
 	 */
-	public static function parse_request_line( mixed $message ): ?array {
+	public static function parse_request_line( array $entry ): ?array {
+		$message = $entry['m'] ?? null;
 		if ( ! \is_string( $message ) || 1 !== \preg_match( '~^(\S+) ([a-z][a-z\d+.-]*://.+)$~Di', $message, $m ) ) {
 			return null;
 		}
-		return [ $m[1], $m[2], \explode( '?', $m[2], 2 )[0] ];
+		return [ $m[1], $m[2], Url_Parts::key( $m[2], ! empty( $entry['truncated'] ) ) ];
 	}
 
 	/**
@@ -1696,11 +1698,12 @@ class Log_Manager {
 	}
 
 	/**
-	 * A query parameter name as PHP reads it: `%XX` decoded, `+` and `%20`
-	 * read as `_`, and cut at its first NUL, so `api%5Fkey`, `api+key` and
-	 * `api%20key` all read `api_key`, and `key%00x` reads `key`. A raw space
-	 * stays a space: no request line carries one, so it is prose, and reading
-	 * it as `_` would make `The client said` a `_client_` segment.
+	 * A query parameter name as redaction reads it: `%XX` decoded, `+` and
+	 * `%20` read as `_`, and cut at its first NUL, so `api%5Fkey`, `api+key`
+	 * and `api%20key` all read `api_key`, and `key%00x` reads `key`. Unlike
+	 * `$_GET`, `.` and `[` stay as sent, and a raw space stays a space: no
+	 * request line carries one, so it is prose, and reading it as `_` would
+	 * make `The client said` a `_client_` segment.
 	 *
 	 * @param string $name The name as sent.
 	 */

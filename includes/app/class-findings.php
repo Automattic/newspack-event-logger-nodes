@@ -1953,7 +1953,7 @@ class Findings {
 	 * that registers nothing. Both propose MORE, and both name their own
 	 * removal. A rule whose hooks ran nowhere in the record proposes nothing.
 	 *
-	 * @param string                 $url      The URL, whose path a `create_rule` proposal takes as its pattern.
+	 * @param string                 $url      The URL, whose rule path a `create_rule` proposal takes as its pattern.
 	 * @param Rule|null              $rule     The governing rule, or null when none does.
 	 * @param array<array-key,mixed> $metric   The numbers that ARE known.
 	 * @param string                 $measured Where they came from.
@@ -1969,7 +1969,7 @@ class Findings {
 					null,
 					'No rule governs this URL, so nothing about it is logged at all.',
 					'Delete the rule, or set its action to skip, once the question is answered.',
-					[ 'pattern' => Url_Parts::path_of( $url ), 'hooks' => self::LIFECYCLE_BRACKET ]
+					[ 'pattern' => Url_Parts::rule_path( $url ), 'hooks' => self::LIFECYCLE_BRACKET ]
 				),
 			],
 			$hookless      => [

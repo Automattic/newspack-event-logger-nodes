@@ -788,11 +788,12 @@ export default function PerformanceDashboard( {
 
 	const ruleUrl = selectedUrl?.url;
 	const canLogUrl = !! ruleUrl && UNKNOWN_URL() !== ruleUrl;
-	// Strip origin so exact rule matches REQUEST_URI ('?' = match sentinel).
-	const rulePath = ruleUrl ? ruleUrl.replace( /^https?:\/\/[^/]+/, '' ) : '';
-	// A path already carrying a query is the exact-plus-query-prefix form.
-	const needsSentinel = ruleUrl && ! rulePath.includes( '?' );
-	const exactPattern = needsSentinel ? `${ rulePath }?` : rulePath;
+	// The path alone, as Url_Parts::rule_path() reads it; '?' marks it exact.
+	const exactPattern = `${
+		( ruleUrl ?? '' )
+			.replace( /^[a-z][a-z\d+.-]*:\/\/[^/?#]+/i, '' )
+			.split( '?' )[ 0 ]
+	}?`;
 
 	/**
 	 * Read the whole ruleset. A retried READ, and `existingRule` is DERIVED from

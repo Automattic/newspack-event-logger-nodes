@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 
@@ -31,22 +32,72 @@ class UrlPartsTest extends TestCase {
 		$this->assertSame( '/short-5521', Url_Parts::row_path( 'https://kea.test/short-5521', 'kea.test' ) );
 	}
 
-	public function test_a_urls_path_drops_its_scheme_and_host_alone(): void {
-		// An authority with no path is the case that bites: everything after
-		// the host is the path, or the host swallows a query.
+	/**
+	 * A rule matches a stored URL by its path alone: neither the masked query
+	 * nor the worker mark is anything a request sent. An authority with no
+	 * path has an empty one, so the host never swallows the query.
+	 */
+	public function test_a_rule_path_is_the_path_alone(): void {
 		$this->assertSame(
-			[ '/reports', '/?cache-cozy', '?q=1', '' ],
+			[ '/', '/wp-cron.php', '/jobs/kea', '/moa/kiwi', '', '' ],
 			\array_map(
-				[ Url_Parts::class, 'path_of' ],
-				[ 'https://alpha.test/reports', 'https://alpha.test/?cache-cozy', 'https://alpha.test?q=1', 'https://alpha.test' ]
+				[ Url_Parts::class, 'rule_path' ],
+				[
+					'https://alpha.test/?_embed=?&rest_route=/wp/v2/posts',
+					'https://alpha.test/wp-cron.php?doing_wp_cron=?&cron',
+					'https://alpha.test/jobs/kea?job-worker.p0',
+					'https://alpha.test/moa/kiwi',
+					'https://alpha.test?page=?&weka.p2',
+					'https://alpha.test',
+				]
 			)
 		);
+	}
+
+	/**
+	 * The key a URL row is filed by: one row per set of keys as PHP reads
+	 * them into `$_GET`, whatever their values, order or spelling, each written encoded
+	 * so no key can spell a separator. A routing key keeps its value, its
+	 * numeric segments masked; a tracking key is dropped.
+	 *
+	 * @return array<string,array{string,string}>
+	 */
+	public static function keys(): array {
+		return [
+			'order and repeats'      => [ 'https://kea.test/moa?zz=4&aa=5&zz=6', 'https://kea.test/moa?aa=?&zz=?' ],
+			'tracking alone'         => [ 'https://kea.test/story-81?utm_source=kea&fbclid=x9', 'https://kea.test/story-81' ],
+			'tracking beside a key'  => [ 'https://kea.test/story-81?utm_medium=e&gclid=z&page=3', 'https://kea.test/story-81?page=?' ],
+			'a REST route'           => [ 'https://kea.test/?rest_route=/wp/v2/posts/8812&_embed=1', 'https://kea.test/?_embed=?&rest_route=/wp/v2/posts/?' ],
+			'an encoded REST route'  => [ 'https://kea.test/?rest_route=%2Fwp%2Fv2%2Fposts%2F8812', 'https://kea.test/?rest_route=/wp/v2/posts/?' ],
+			'an ajax action'         => [ 'https://kea.test/wp-admin/admin-ajax.php?action=heartbeat&_nonce=ab12', 'https://kea.test/wp-admin/admin-ajax.php?_nonce=?&action=heartbeat' ],
+			'a wc-ajax endpoint'     => [ 'https://kea.test/?wc-ajax=get_refreshed_fragments&time=7', 'https://kea.test/?time=?&wc-ajax=get_refreshed_fragments' ],
+			'a feed'                 => [ 'https://kea.test/?feed=rss2&cat=41', 'https://kea.test/?cat=?&feed=rss2' ],
+			'a kept value escaped'   => [ 'https://kea.test/?action=a%26b%3Dc%3Fd', 'https://kea.test/?action=a%26b%3Dc%3Fd' ],
+			'empty names'            => [ 'https://kea.test/weka?&&=7&k=1', 'https://kea.test/weka?k=?' ],
+			'two spellings, one key' => [ 'https://kea.test/?api%5Fkey=1&api_key=2', 'https://kea.test/?api_key=?' ],
+			'an array key'           => [ 'https://kea.test/?ids[0]=1&ids%5B1%5D=2', 'https://kea.test/?ids=?' ],
+			'a dotted key'           => [ 'https://kea.test/?a.b=1&a_b=2', 'https://kea.test/?a_b=?' ],
+			'an encoded separator'   => [ 'https://kea.test/?x%26cron=1', 'https://kea.test/?x%26cron=?' ],
+			'a bare key'             => [ 'https://kea.test/kiwi?amp', 'https://kea.test/kiwi?amp=?' ],
+			'a bare route'           => [ 'https://kea.test/?action', 'https://kea.test/?action=' ],
+		];
+	}
+
+	#[DataProvider( 'keys' )]
+	public function test_a_query_keys_the_url_by_its_keys( string $request_url, string $url ): void {
+		$this->assertSame( $url, Url_Parts::key( $request_url, false ) );
+	}
+
+	/** A trimmed line may cut its last parameter mid-name or mid-value, so that one keys nothing. */
+	public function test_a_trimmed_lines_last_parameter_keys_nothing(): void {
+		$this->assertSame( 'https://kea.test/moa?aa=?', Url_Parts::key( 'https://kea.test/moa?aa=1&rest_ro', true ) );
+		$this->assertSame( 'https://kea.test/moa', Url_Parts::key( 'https://kea.test/moa?rest_route=/wp/v2/po', true ) );
 	}
 
 	/** Every logged URL carries its host, so a hostless one is refused, never read as a bare path. */
 	public function test_a_hostless_url_is_refused(): void {
 		foreach ( [ '/bare-7731', '/r?to=https://kea.test/aisle-9', 'https:///no-host-7731', '' ] as $url ) {
-			foreach ( [ 'path_of', 'server_of' ] as $reader ) {
+			foreach ( [ 'rule_path', 'server_of' ] as $reader ) {
 				try {
 					Url_Parts::$reader( $url );
 					$this->fail( "{$reader}( '{$url}' ) answered" );
