@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.146.3] - 2026-10-19
+
 ### Added
 - **A slow performance verb shows where its time goes.** A 16.7 s `dump_url` on staging held one `Performance_CI dump_url command` span and nothing inside. Each read a verb or a prefetch answer runs is now a span inside it: a `stats query` per `Stats_Query` read, labelled `l` with its source, groups and a page's offset (`timings by category,listener offset 1000`; `requests newest` and `requests by rid` for the two listings) and closing `<n> rows` or `unavailable`; a `flame lookup` per partition `stored_flames()` walks, labelled with its partition (`flames.p3`) and closing `<n> of <m> found` or `cut`; and a `grep scan` per firehose partition `grep_requests` drains, labelled `firehose.p0` and closing `<n> lines`, plus ` · cut` where its budget ran out. All three are `Flame_Tree` platform names of kind `upkeep` in a new Event Logger Reads category (`#5B4B8A`), which stands out inside a prefetch answer and a command span alike.
 
