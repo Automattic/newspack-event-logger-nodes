@@ -58,6 +58,7 @@ import {
 import {
 	DEFAULT_CHART_METRIC,
 	NO_PAGE_KEYS,
+	SHAPES_PER_ASK,
 	SORT_ORDERS,
 	cellClass,
 	pageKey,
@@ -90,16 +91,39 @@ const restorePage = ( raw ) => {
  *
  * `usePerformanceGraph` fixes the `urls` verb's `limit` at 100 to match, since
  * every `offset` this table sends is derived from this number: the two are one
- * page size split across two files. An expanded page's shapes are asked under
- * the same limit, so it is also the most shapes one page shows.
+ * page size split across two files.
  */
 const URLS_PER_PAGE = 100;
 
 /**
  * The last offset the `urls` verb serves (`Stats_Query::MAX_OFFSET`); it
- * clamps a later one to this, so the pager stops at the page that starts here.
+ * clamps a later one to this, so the pager stops at the page that starts here,
+ * and an expanded page's shapes at the window that starts here.
  */
 const URLS_MAX_OFFSET = 10000;
+
+/**
+ * How far apart the offsets an expanded page's shapes are asked from lie:
+ * half of what one ask lists, so the rows in view always sit inside one
+ * window, however near a step's edge the scroll stops.
+ */
+const SHAPES_STEP = SHAPES_PER_ASK / 2;
+
+/** The most shapes the verb lists under a page: its last window's end. */
+const SHAPES_REACH = URLS_MAX_OFFSET + SHAPES_PER_ASK;
+
+/**
+ * The offset an expanded page's shapes are asked from while its shape
+ * `index` is the first in view, clamped as the table's pager is.
+ *
+ * @param {number} index The first shape in view, from 0.
+ * @return {number} The offset.
+ */
+const shapesOffset = ( index ) =>
+	Math.min(
+		Math.floor( index / SHAPES_STEP ) * SHAPES_STEP,
+		URLS_MAX_OFFSET
+	);
 
 /**
  * One status class's share of a row's requests, as a whole percentage.
@@ -125,8 +149,9 @@ const pct = ( part, total ) => {
  * `kind` defaults to `numeric` — a sortable right-aligned header over a
  * numeric cell. `status` is an unsortable HTTP-class heading over a `pct()`
  * share, `code` the sortable URL heading over the bar-backed `<code>` cell
- * holding the row's name. `render` overrides the default
- * `formatNum( url[ field ], 'ms' )`, and `width` is the column's grid track.
+ * holding the row's `url`, the name a page and a shape row alike carry.
+ * `render` overrides the default `formatNum( url[ field ], 'ms' )`, and
+ * `width` is the column's grid track.
  *
  * A `status` column's `status` is a representative code, not a count of that
  * one status: the shared `.entry-status[data-status^="2"]` rules colour the
@@ -146,7 +171,7 @@ const COLUMNS = [
 		width: 'minmax(0, 1fr)',
 		label: __( 'URL', 'newspack-event-logger-nodes' ),
 		kind: 'code',
-		render: ( url, formatNum, name ) => <code>{ name }</code>,
+		render: ( url ) => <code>{ url.url }</code>,
 	},
 	{
 		field: 'count_2xx',
@@ -250,33 +275,23 @@ const SORT_FIELDS = COLUMNS.filter( ( col ) => 'status' !== col.kind ).map(
  * @param {Object}   col       Column declaration from COLUMNS.
  * @param {Object}   url       One page or shape row.
  * @param {Function} formatNum Number formatter, from the table.
- * @param {string}   name      What the row's URL cell names.
  * @return {string|import('react').ReactElement} Cell content.
  */
-const renderCell = ( col, url, formatNum, name ) => {
+const renderCell = ( col, url, formatNum ) => {
 	if ( 'status' === col.kind ) {
 		return pct( url[ col.field ], url.count );
 	}
 	return col.render
-		? col.render( url, formatNum, name )
+		? col.render( url, formatNum )
 		: formatNum( url[ col.field ], 'ms' );
 };
 
 /**
- * What a page row's URL cell names: its path where the table is scoped to
- * its server, else the page, whose host says which server it was.
- *
- * @param {Object}  page   A page row.
- * @param {boolean} scoped Whether the table lists one server.
- * @return {string} The name.
- */
-const pageName = ( page, scoped ) => ( scoped ? page.path : page.page );
-
-/**
  * The table's rows in order: each page, and beneath a page of several shapes
- * the reader expanded, one slot per shape it shows, then the shapes past
- * those as a count. A slot is a position, filled when the page's slice
- * answers, so every row is laid out before any shape arrives.
+ * the reader expanded, one slot per shape, then any shapes past the last the
+ * verb lists as a count. A slot is a position, filled when the window of the
+ * page's slice holding it answers, so every row is laid out before any shape
+ * arrives.
  *
  * @param {Object[]}    pages    The page rows, as the server ordered them.
  * @param {Set<string>} expanded The keys of the pages expanded.
@@ -287,7 +302,7 @@ const layOut = ( pages, expanded ) =>
 		if ( ! ( 1 < page.shapes && expanded.has( pageKey( page ) ) ) ) {
 			return [ { page } ];
 		}
-		const shown = Math.min( page.shapes, URLS_PER_PAGE );
+		const shown = Math.min( page.shapes, SHAPES_REACH );
 		return [
 			{ page, open: true },
 			...Array.from( { length: shown }, ( _, shape ) => ( {
@@ -386,7 +401,6 @@ const UrlRow = memo(
 	 *
 	 * @param {Object}                       props             Component props.
 	 * @param {Object}                       props.url         A page row, or a shape's URL row.
-	 * @param {string}                       props.name        What its URL cell names.
 	 * @param {boolean}                      [props.shape]     Whether it is a shape beneath its page.
 	 * @param {?string}                      [props.expandKey] The key a page of several shapes toggles by; null for any other row.
 	 * @param {boolean}                      [props.open]      Whether that page is expanded.
@@ -400,7 +414,6 @@ const UrlRow = memo(
 	 */
 	function UrlRow( {
 		url,
-		name,
 		shape = false,
 		expandKey = null,
 		open = false,
@@ -466,7 +479,7 @@ const UrlRow = memo(
 								{ expandable ? '▾' : '' }
 							</span>
 						) }
-						{ renderCell( col, url, formatNum, name ) }
+						{ renderCell( col, url, formatNum ) }
 					</div>
 				) ) }
 			</div>
@@ -502,8 +515,9 @@ function NoteRow( { text } ) {
 }
 
 /**
- * One run of an expanded page's shape slots, filled from the view its slice
- * publishes, each shape keyed by its hash. Not memoized: the slice is built
+ * One run of an expanded page's shape slots, filled from the window of shapes
+ * its slice's view holds, each shape keyed by its hash; a slot outside that
+ * window waits for the next. Not memoized: the slice is built
  * after the row that reads it, so it re-reads its view on the table's next
  * render.
  *
@@ -528,13 +542,12 @@ function PageShapes( { page, from, to, rowProps, selected } ) {
 		: __( 'Loading URLs…', 'newspack-event-logger-nodes' );
 	return Array.from( { length: to - from }, ( _, at ) => {
 		const index = from + at;
-		const shape = model?.data?.[ index ];
+		const shape = model?.data?.[ index - model.offset ];
 		return shape ? (
 			<UrlRow
 				key={ shape.hash }
 				{ ...rowProps }
 				url={ shape }
-				name={ shape.url }
 				shape
 				isSelected={ selected?.hash === shape.hash }
 			/>
@@ -685,26 +698,6 @@ export default function UrlTable( {
 		}
 	}, [ currentPage, page, setCurrentPage ] );
 
-	useEffect( () => {
-		onParamsChange?.( {
-			search: searchTerm,
-			sort: sortField,
-			order: sortOrder,
-			offset,
-			includeWorkers,
-			bucket,
-		} );
-	}, [
-		searchTerm,
-		sortField,
-		sortOrder,
-		page,
-		offset,
-		includeWorkers,
-		bucket,
-		onParamsChange,
-	] );
-
 	const expandedKeys = useMemo( () => new Set( expanded ), [ expanded ] );
 	const rows = useMemo(
 		() => layOut( urls, expandedKeys ),
@@ -747,6 +740,41 @@ export default function UrlTable( {
 			rows.length,
 			`.${ PAGE_CONTENT_CLASS }`
 		);
+	const visible = shapeRuns( rows.slice( startIndex, endIndex ) );
+	// Each expanded page in view, to the offset its shapes are asked from.
+	const windows = JSON.stringify(
+		Object.fromEntries(
+			visible
+				.filter( ( run ) => run.shapesOf )
+				.map( ( run ) => [
+					pageKey( run.shapesOf ),
+					shapesOffset( run.from ),
+				] )
+		)
+	);
+
+	useEffect( () => {
+		onParamsChange?.( {
+			search: searchTerm,
+			sort: sortField,
+			order: sortOrder,
+			offset,
+			includeWorkers,
+			bucket,
+			shapeOffsets: JSON.parse( windows ),
+		} );
+	}, [
+		searchTerm,
+		sortField,
+		sortOrder,
+		page,
+		offset,
+		includeWorkers,
+		bucket,
+		windows,
+		onParamsChange,
+	] );
+
 	const rowProps = {
 		onSelect,
 		onToggle: onToggleExpand,
@@ -754,7 +782,6 @@ export default function UrlTable( {
 		maxAvg,
 		barField,
 	};
-	const scoped = '' !== server;
 
 	return (
 		<div className="event-logger-table event-logger-table--urls">
@@ -848,58 +875,56 @@ export default function UrlTable( {
 							{ emptyText( error, loading, searchTerm ) }
 						</div>
 					) : (
-						shapeRuns( rows.slice( startIndex, endIndex ) ).map(
-							( row ) => {
-								if ( row.shapesOf ) {
-									return (
-										<PageShapes
-											key={ `shapes:${ pageKey(
-												row.shapesOf
-											) }` }
-											page={ row.shapesOf }
-											from={ row.from }
-											to={ row.to }
-											rowProps={ rowProps }
-											selected={ selectedUrl }
-										/>
-									);
-								}
-								const key = pageKey( row.page );
-								if ( row.more ) {
-									return (
-										<NoteRow
-											key={ `more:${ key }` }
-											text={ sprintf(
-												// translators: %s: how many more URLs the page holds.
-												_n(
-													'%s more URL',
-													'%s more URLs',
-													row.more,
-													'newspack-event-logger-nodes'
-												),
-												formatGroupedCount( row.more )
-											) }
-										/>
-									);
-								}
+						visible.map( ( row ) => {
+							if ( row.shapesOf ) {
 								return (
-									<UrlRow
-										key={ key }
-										{ ...rowProps }
-										url={ row.page }
-										name={ pageName( row.page, scoped ) }
-										expandKey={
-											1 < row.page.shapes ? key : null
-										}
-										open={ !! row.open }
-										isSelected={
-											!! row.page.hash &&
-											selectedUrl?.hash === row.page.hash
-										}
+									<PageShapes
+										key={ `shapes:${ pageKey(
+											row.shapesOf
+										) }` }
+										page={ row.shapesOf }
+										from={ row.from }
+										to={ row.to }
+										rowProps={ rowProps }
+										selected={ selectedUrl }
 									/>
 								);
 							}
-						)
+							const key = pageKey( row.page );
+							if ( row.more ) {
+								return (
+									<NoteRow
+										key={ `more:${ key }` }
+										text={ sprintf(
+											// translators: 1: how many URLs the page holds past those listed, 2: how many the server lists under one page.
+											_n(
+												'%1$s more URL, past the first %2$s the server lists',
+												'%1$s more URLs, past the first %2$s the server lists',
+												row.more,
+												'newspack-event-logger-nodes'
+											),
+											formatGroupedCount( row.more ),
+											formatGroupedCount( SHAPES_REACH )
+										) }
+									/>
+								);
+							}
+							return (
+								<UrlRow
+									key={ key }
+									{ ...rowProps }
+									url={ row.page }
+									expandKey={
+										1 < row.page.shapes ? key : null
+									}
+									open={ !! row.open }
+									isSelected={
+										!! row.page.hash &&
+										selectedUrl?.hash === row.page.hash
+									}
+								/>
+							);
+						} )
 					) }
 				</div>
 			</div>

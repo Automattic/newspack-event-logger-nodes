@@ -345,6 +345,9 @@ export default function PerformanceDashboard( {
 	const urlDetail = urlDetailSlice?.data ?? null;
 	const requestDetail = requestDetailSlice?.data ?? null;
 	urlsRef.current = urls;
+	// The URL window's model on screen, which a one-request click records.
+	const urlDetailSliceRef = useRef( urlDetailSlice );
+	urlDetailSliceRef.current = urlDetailSlice;
 	// @longform The pages whose shapes the graph asks: those expanded, listed
 	// and of several shapes. A key naming a page off this page asks nothing.
 	const expandedPages = useMemo(
@@ -531,6 +534,9 @@ export default function PerformanceDashboard( {
 
 	// Where the URL detail was scrolled to, restored when the request closes.
 	const urlDetailScrollRef = useRef( 0 );
+	// @longform A one-request row just opened, until its window answers: its
+	// hash, and the window's model at the click, which answers another URL.
+	const [ oneRequest, setOneRequest ] = useState( null );
 
 	/**
 	 * Open one of the URL's requests inside the modal, or return to the URL
@@ -559,12 +565,18 @@ export default function PerformanceDashboard( {
 	 * previous one. A URL picked from a narrowed table opens narrowed the same
 	 * way: on the bucket and the chips its rows were fetched under, the echo
 	 * rather than the live pick, less a `url=` chip, since the modal is one
-	 * URL and a chip on another would chart that one instead.
+	 * URL and a chip on another would chart that one instead. A row of one
+	 * request goes on to that request once the window names its rid.
 	 *
-	 * @param {Object} url The `{hash, url}` catalog entry to open.
+	 * @param {Object} url The row: its `hash`, its `url` and its `count`.
 	 */
 	const openUrl = useCallback(
 		( url ) => {
+			setOneRequest(
+				1 === url.count
+					? { hash: url.hash, before: urlDetailSliceRef.current }
+					: null
+			);
 			selectRequest( null );
 			const chips = withoutUrlChips( urlFilters?.filter ?? [] );
 			resetDetail(
@@ -575,6 +587,45 @@ export default function PerformanceDashboard( {
 		},
 		[ selectRequest, selectUrlNow, urlFilters, resetDetail ]
 	);
+
+	// @longform A row of one request opens that request, its rid named by the
+	// window's own dump_url; an answer naming none, or a refusal, leaves the
+	// window open. Until then the window is held unpainted. An answer names
+	// its hash in `stats`; a refusal names none, but the Current gate passes
+	// only the held ask's, so any refusal published since the click is its.
+	useEffect( () => {
+		if ( ! oneRequest ) {
+			return;
+		}
+		const { hash, before } = oneRequest;
+		if ( selectedUrl?.hash !== hash || selectedRequest ) {
+			setOneRequest( null );
+			return;
+		}
+		if ( urlDetailSlice !== before && urlDetailSlice?.error ) {
+			setOneRequest( null );
+			return;
+		}
+		if ( urlDetail?.stats?.hash !== hash ) {
+			return;
+		}
+		setOneRequest( null );
+		const rid = urlDetail.requests?.[ 0 ]?.rid;
+		if ( rid ) {
+			selectRequest( rid );
+		}
+	}, [
+		oneRequest,
+		urlDetail,
+		urlDetailSlice,
+		selectedUrl,
+		selectedRequest,
+		selectRequest,
+	] );
+	const holdingWindow =
+		null !== oneRequest &&
+		selectedUrl?.hash === oneRequest.hash &&
+		! selectedRequest;
 
 	/**
 	 * Sort the URL modal's request table by one column. Clicking the column
@@ -1202,8 +1253,9 @@ export default function PerformanceDashboard( {
 			{ /* URL/Request Detail Modal */ }
 			{ /* The SELECTION opens this, never a slice: each pane below owns
 			     its own empty state, and a modal that can close is the only way
-			     back out of one. */ }
-			{ selectedUrl && (
+			     back out of one. A one-request row holds it until its request
+			     is known, so it opens on the request. */ }
+			{ selectedUrl && ! holdingWindow && (
 				<Modal
 					title={
 						selectedRequest && requestDetail

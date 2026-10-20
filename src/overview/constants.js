@@ -325,3 +325,9 @@ export const NO_PAGE_KEYS = [];
  * @return {string} `shapes:<page key>`.
  */
 export const shapesSubject = ( page ) => `shapes:${ pageKey( page ) }`;
+
+/**
+ * The shapes one ask for an expanded page lists: `Stats_Query::MAX_LIMIT`,
+ * the most the `urls` verb answers at once.
+ */
+export const SHAPES_PER_ASK = 1000;

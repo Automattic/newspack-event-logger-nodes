@@ -1935,7 +1935,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$also   = $listed['also'] ?? throw new \LogicException( 'a spec naming also answers it' );
 		$shapes = self::shapes_of( $base, [ ...$listed['rows'], ...$also ] );
 		return [
-			'columns' => [ ...$listed['columns'], 'shapes', 'hash' ],
+			'columns' => [ ...$listed['columns'], 'shapes', 'hash', 'url_name' ],
 			'rows'    => self::shaped( $listed['rows'], $shapes ),
 			'also'    => self::shaped( $also, $shapes ),
 		];
@@ -1965,21 +1965,22 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Each listed page's shapes in the set, by page hash then server: the
-	 * URLs it holds, and the one URL's hash where it holds one, else null.
+	 * URLs it holds, and the one URL's hash and name where it holds one, else
+	 * null.
 	 *
 	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()` naming no page.
 	 * @param list<list<mixed>> $rows Page rows, each its hash, name and server first.
-	 * @return array<string,array<string,array{0:int,1:?string}>>
+	 * @return array<string,array<string,array{0:int,1:?string,2:?string}>>
 	 */
 	private static function shapes_of( array $base, array $rows ): array {
 		$shapes = [];
 		foreach ( self::every_row( $base, $rows, [ 'page', 'server' ], 'urls' ) as [ $page, , $server, $urls ] ) {
-			$shapes[ Core::as_string( $page ) ][ Core::as_string( $server ) ] = [ Core::num_int( $urls ), null ];
+			$shapes[ Core::as_string( $page ) ][ Core::as_string( $server ) ] = [ Core::num_int( $urls ), null, null ];
 		}
 		$single = \array_filter( $rows, static fn ( array $row ): bool => 1 === ( $shapes[ Core::as_string( $row[0] ) ][ Core::as_string( $row[2] ) ][0] ?? null ) );
-		foreach ( self::every_row( $base, $single, [ 'page', 'server', 'url' ], 'count' ) as [ $page, , $server, $url ] ) {
+		foreach ( self::every_row( $base, $single, [ 'page', 'server', 'url' ], 'count' ) as [ $page, , $server, $url, $name ] ) {
 			if ( 1 === ( $shapes[ Core::as_string( $page ) ][ Core::as_string( $server ) ][0] ?? null ) ) {
-				$shapes[ Core::as_string( $page ) ][ Core::as_string( $server ) ][1] = Core::as_string( $url );
+				$shapes[ Core::as_string( $page ) ][ Core::as_string( $server ) ] = [ 1, Core::as_string( $url ), Core::as_string( $name ) ];
 			}
 		}
 		return $shapes;
@@ -2020,10 +2021,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Page rows with each one's `shapes` and `hash` after its measures.
+	 * Page rows with each one's `shapes`, `hash` and `url_name` after its
+	 * measures.
 	 *
-	 * @param list<list<mixed>>                                $rows   Page rows, each its hash, name and server first.
-	 * @param array<string,array<string,array{0:int,1:?string}>> $shapes `shapes_of()` the rows.
+	 * @param list<list<mixed>>                                           $rows   Page rows, each its hash, name and server first.
+	 * @param array<string,array<string,array{0:int,1:?string,2:?string}>> $shapes `shapes_of()` the rows.
 	 * @return list<list<mixed>>
 	 * @throws \LogicException When a row's page holds no URL of the set.
 	 */
@@ -2106,12 +2108,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * A `page`- and `server`-grouped listing's rows as the `urls` reply
 	 * carries them: the page by its hash and its name, its server and the
-	 * path under it, its `shapes`, the URLs folded, and `hash`, the one
-	 * URL's hash where it folds one, else null; then its measures, as
-	 * `measured()` shapes them. A page's `worker` is true where any shape
-	 * folded is a worker's.
+	 * path under it, its `shapes`, the URLs folded, `hash`, the one URL's
+	 * hash where it folds one, else null, and `url`, the name the row shows:
+	 * the one URL's own name, its case, query and scheme kept, or for a page
+	 * of more `https://` and the page; then its measures, as `measured()`
+	 * shapes them. A page's `worker` is true where any shape folded is a
+	 * worker's.
 	 *
-	 * @param array{columns: list<string>, rows: list<list<mixed>>} $answer A page listing over `URL_MEASURES`, `shapes` and `hash`.
+	 * @param array{columns: list<string>, rows: list<list<mixed>>} $answer A page listing over `URL_MEASURES`, `shapes`, `hash` and `url_name`.
 	 * @return list<array<string,mixed>>
 	 */
 	private static function page_rows( array $answer ): array {
@@ -2125,6 +2129,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'path'      => Url_Parts::page_path( Core::as_string( $row['page_name'] ), Core::as_string( $row['server'] ) ),
 				'shapes'    => $row['shapes'],
 				'hash'      => $row['hash'],
+				'url'       => 1 === Core::num_int( $row['shapes'] ) ? $row['url_name'] : 'https://' . Core::as_string( $row['page_name'] ),
 			] + self::measured( $row );
 		}
 		return $rows;
@@ -2408,7 +2413,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs the set holds of that page on one server, its case spellings and its query shapes: `page_hash`, `page`, `server`, `path` (the page under its server), `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--filter=page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures. `rows` is the exact count the pager lists, the pages or under a page filter that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `include_workers` and one `page=<page hash>` filter is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs the set holds of that page on one server, its case spellings and its query shapes: `page_hash`, `page`, `server`, `path` (the page under its server), `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), `url` (the name the row shows: the one URL\'s own name, its case, query and scheme kept, or for a page of more `https://` and the page), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--filter=page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures. `rows` is the exact count the pager lists, the pages or under a page filter that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `include_workers` and one `page=<page hash>` filter is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],

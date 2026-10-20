@@ -10,10 +10,11 @@
  * page by `page_hash` and name, and its rowids assigned in hash order; a
  * `pages` table of one row per page and server, a second only for a page
  * of both worker and visitor shapes, each URL measure folded over its URLs,
- * `views` naming the view that reads it, `shapes` counting the URLs and
- * `hash` naming the one where there is one, its rowids in hash order and
- * indexed for each sort the `urls` verb takes once site-wide and once led
- * by the server, a nullable sort's null-last ranking taking a second pair;
+ * `views` naming the view that reads it, `shapes` counting the URLs, and
+ * `hash` and `path` naming the one where there is one, its rowids in hash
+ * order and indexed for each sort the `urls` verb takes once site-wide and
+ * once led by the server, a nullable sort's null-last ranking taking a
+ * second pair;
  * `urls_page` seeking a page's URLs; a `totals` table of one row per view
  * and scope, counting its pages; the stored answers by key; and when it was
  * built and expires. The substrate publishes it whole under `NAME` and
@@ -35,6 +36,7 @@ use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
@@ -77,7 +79,7 @@ final class Url_Snapshot {
 		'pages' => [
 			'group' => [ 'page', 'server' ],
 			'ahead' => 'page_hash, page, ( SELECT name FROM servers WHERE servers.id = pages.server_id ) AS server',
-			'after' => [ 'shapes', 'hash' ],
+			'after' => [ 'shapes', 'hash', 'path' ],
 			'sorts' => Performance_CI_Node::PAGE_SORTS,
 			'named' => [ 'page' ],
 		],
@@ -115,17 +117,18 @@ final class Url_Snapshot {
 	 * in both views; 1, every shape of a page with a worker shape, which
 	 * Include Workers reads; 2, the visitor shapes of a page with both, which
 	 * the default view reads. So a view keeps `views <> workers + 1`.
-	 * `shapes` counts the URLs a row folds, and `hash` names the one URL of
-	 * a row folding one.
+	 * `shapes` counts the URLs a row folds, and `hash` and `path` name the one
+	 * URL of a row folding one.
 	 */
 	private const PAGES_TABLE = 'CREATE TABLE pages AS '
-		. 'WITH i AS ( SELECT page_hash, MIN( page ) AS page, server_id, %2$s, COUNT( * ) AS shapes, MIN( url ) AS hash '
-		. 'FROM ( SELECT u.page_hash, u.page, u.server_id, u.worker AS w, u.url, %1$s FROM urls AS u ) GROUP BY page_hash, server_id, w ), '
+		. 'WITH i AS ( SELECT page_hash, MIN( page ) AS page, server_id, %2$s, COUNT( * ) AS shapes, MIN( url ) AS hash, MIN( path ) AS path '
+		. 'FROM ( SELECT u.page_hash, u.page, u.server_id, u.worker AS w, u.url, u.path, %1$s FROM urls AS u ) GROUP BY page_hash, server_id, w ), '
 		. 'k ( kind ) AS ( VALUES ( 1 ), ( 2 ) ), '
 		. 'r AS ( SELECT k.kind, i.page_hash, i.page, i.server_id, i.worker AS w, %3$s, '
-		. 'CASE WHEN ' . self::KIND_KEEPS . ' THEN i.shapes END AS q_shapes, CASE WHEN ' . self::KIND_KEEPS . ' THEN i.hash END AS q_hash FROM k JOIN i ) '
+		. 'CASE WHEN ' . self::KIND_KEEPS . ' THEN i.shapes END AS q_shapes, CASE WHEN ' . self::KIND_KEEPS . ' THEN i.hash END AS q_hash, '
+		. 'CASE WHEN ' . self::KIND_KEEPS . ' THEN i.path END AS q_path FROM k JOIN i ) '
 		. 'SELECT page_hash, MIN( page ) AS page, server_id, CASE kind WHEN 2 THEN 2 ELSE MAX( w ) END AS views, %4$s, '
-		. 'SUM( q_shapes ) AS shapes, CASE SUM( q_shapes ) WHEN 1 THEN MIN( q_hash ) END AS hash '
+		. 'SUM( q_shapes ) AS shapes, CASE SUM( q_shapes ) WHEN 1 THEN MIN( q_hash ) END AS hash, CASE SUM( q_shapes ) WHEN 1 THEN MIN( q_path ) END AS path '
 		. 'FROM r GROUP BY page_hash, server_id, kind HAVING kind = 1 OR MIN( w ) < MAX( w ) ORDER BY page_hash, server_id, kind';
 
 	/**
@@ -344,8 +347,9 @@ final class Url_Snapshot {
 	/**
 	 * One listing of the pages a view and scope keep, as `Stats_Query`
 	 * answers a `page` and `server` group with `URL_MEASURES` sorted by
-	 * `$sort`, each row's `shapes` and `hash` after them, and beside it as
-	 * `also` the slowest `SLOWEST_ROWS` by `avg_ms`.
+	 * `$sort`, each row's `shapes`, `hash` and `url_name` after them, the one
+	 * URL's name as a live `url` group names it, and beside it as `also` the
+	 * slowest `SLOWEST_ROWS` by `avg_ms`.
 	 *
 	 * @param string $server  Server to scope to; '' is every server.
 	 * @param bool   $workers Read Include Workers' rows; false reads the default view's.
@@ -358,7 +362,30 @@ final class Url_Snapshot {
 	 *                                   live listing refuses.
 	 */
 	public function pages( string $server, bool $workers, string $sort, string $order, int $offset, int $limit ): array {
-		return $this->listed( 'pages', self::viewed( $server, $workers ), $sort, $order, $offset, $limit );
+		$listed = $this->listed( 'pages', self::viewed( $server, $workers ), $sort, $order, $offset, $limit );
+		return [
+			'columns' => [ ...\array_slice( $listed['columns'], 0, -1 ), 'url_name' ],
+			'rows'    => self::url_named( $listed['rows'] ),
+			'also'    => self::url_named( $listed['also'] ),
+		] + $listed;
+	}
+
+	/**
+	 * Page rows, their server third, with the stored path that ends each
+	 * joined to that server as `Url_Parts::join_url()` names a URL; null where
+	 * the row folds more than one URL.
+	 *
+	 * @param list<list<mixed>> $rows Page rows ending in their one URL's path.
+	 * @return list<list<mixed>>
+	 */
+	private static function url_named( array $rows ): array {
+		return \array_map(
+			static function ( array $row ): array {
+				$path = \array_pop( $row );
+				return [ ...$row, null === $path ? null : Url_Parts::join_url( Core::as_string( $row[2] ), Core::as_string( $path ) ) ];
+			},
+			$rows
+		);
 	}
 
 	/**

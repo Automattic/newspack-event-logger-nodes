@@ -328,7 +328,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 				data: [ { hash: 'a' } ],
 				totals: { urls: 12, requests: 340 },
 				limit: 100,
-				offset: 0,
+				offset: 200,
 			},
 		} );
 		renderHook( () => usePerformanceGraph() );
@@ -338,6 +338,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 			data: [ { hash: 'a' } ],
 			totals: { urls: 12, requests: 340 },
 			rows: 0,
+			offset: 200,
 			slowest: [],
 			filters: null,
 			loading: false,
@@ -2315,7 +2316,7 @@ describe( 'usePerformanceGraph — an expanded page asks its shapes', () => {
 			'page=c4f7a2e19b05',
 		] );
 		expect( option( asked, 'server' ) ).toBe( 'hoiho-5172.example' );
-		expect( option( asked, 'limit' ) ).toBe( '100' );
+		expect( option( asked, 'limit' ) ).toBe( '1000' );
 		expect( option( asked, 'offset' ) ).toBeUndefined();
 		// The table's own question names no page.
 		expect( options( urlsFrom( wire, 'urls:in' )[ 0 ], 'filter' ) ).toEqual(
@@ -2415,6 +2416,61 @@ describe( 'usePerformanceGraph — an expanded page asks its shapes', () => {
 			option( urlsFrom( wire, `${ SUBJECT }:in` ).at( -1 ), 'search' )
 		).toBe( 'kokako' );
 		jest.useRealTimers();
+	} );
+
+	test( 'asks the window of shapes the table scrolls to, and nothing else', async () => {
+		const wire = installWire();
+		const { getApi } = renderGraph( {
+			expandedPages: [ { ...KOKAKO, shapes: 2600 } ],
+		} );
+		await act( async () => {} );
+		const table = {
+			search: '',
+			sort: 'count',
+			order: 'desc',
+			offset: 0,
+			includeWorkers: false,
+			bucket: '',
+		};
+		await act( async () => {
+			getApi().handleUrlParamsChange( {
+				...table,
+				shapeOffsets: { 'c4f7a2e19b05:hoiho-5172.example': 0 },
+			} );
+		} );
+		await nextTask();
+		const shapesAsked = urlsFrom( wire, `${ SUBJECT }:in` ).length;
+		const tableAsked = urlsFrom( wire, 'urls:in' ).length;
+
+		await act( async () => {
+			getApi().handleUrlParamsChange( {
+				...table,
+				shapeOffsets: { 'c4f7a2e19b05:hoiho-5172.example': 1500 },
+			} );
+		} );
+		await nextTask();
+
+		const asked = urlsFrom( wire, `${ SUBJECT }:in` );
+		expect( asked ).toHaveLength( shapesAsked + 1 );
+		expect( option( asked.at( -1 ), 'offset' ) ).toBe( '1500' );
+		expect( option( asked.at( -1 ), 'limit' ) ).toBe( '1000' );
+		expect( urlsFrom( wire, 'urls:in' ) ).toHaveLength( tableAsked );
+
+		// A window report naming no page leaves the last one standing.
+		await act( async () => {
+			getApi().handleUrlParamsChange( { ...table, shapeOffsets: {} } );
+		} );
+		await nextTask();
+		expect( urlsFrom( wire, `${ SUBJECT }:in` ) ).toHaveLength(
+			shapesAsked + 1
+		);
+		await act( async () => {
+			getApi().handleUrlParamsChange( { ...table, sort: 'max_ms' } );
+		} );
+		await nextTask();
+		expect(
+			option( urlsFrom( wire, `${ SUBJECT }:in` ).at( -1 ), 'offset' )
+		).toBe( '1500' );
 	} );
 
 	test( 'a chip change asks the shapes again', async () => {

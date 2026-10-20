@@ -2515,6 +2515,7 @@ class PerformanceCITest extends TestCase {
 					'path'         => '/kotuku-6604/',
 					'shapes'       => 2,
 					'hash'         => null,
+					'url'          => 'https://seed.example/kotuku-6604/',
 					'count'        => 3,
 					'timed_count'  => 3,
 					'count_2xx'    => 2,
@@ -2539,6 +2540,7 @@ class PerformanceCITest extends TestCase {
 					'path'         => '/tieke-6604/',
 					'shapes'       => 1,
 					'hash'         => self::hash_of( 'https://seed.example/tieke-6604/' ),
+					'url'          => 'https://seed.example/tieke-6604/',
 					'count'        => 1,
 					'timed_count'  => 1,
 					'count_2xx'    => 1,
@@ -2653,10 +2655,67 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * A one-shape page row names its URL as that URL's own row does, its
+	 * case, its query and its scheme kept, an http one included, live and
+	 * off the snapshot alike.
+	 */
+	public function test_a_one_shape_page_rows_url_keeps_its_urls_case_and_query(): void {
+		$this->seed_requests(
+			[
+				[ 'url' => 'https://seed.example/Hoiho-3317/?kiwi=?', 'ms' => 21.5 ],
+				[ 'url' => 'http://seed.example/Kaka-3317/', 'ms' => 32.5 ],
+			]
+		);
+		$question = '--sort=url --order=asc';
+
+		$live = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $question );
+		Url_Snapshot::publish( self::tick(), 600, static fn (): array => [] );
+		VerbHarness::reset();
+		$stored = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $question );
+
+		foreach ( [ $live, $stored ] as $reply ) {
+			$this->assertSame(
+				[
+					[ 'seed.example/hoiho-3317/', 1, 'https://seed.example/Hoiho-3317/?kiwi=?' ],
+					[ 'seed.example/kaka-3317/', 1, 'http://seed.example/Kaka-3317/' ],
+				],
+				\array_map( static fn ( array $row ): array => [ $row['page'], $row['shapes'], $row['url'] ], $reply['data'] )
+			);
+		}
+	}
+
+	/**
+	 * A page of several shapes is named `https://` and its page, whatever
+	 * scheme its shapes were asked under: an http and an https shape of one
+	 * address fold into one page of two shapes.
+	 */
+	public function test_a_page_of_several_shapes_is_named_https_and_its_page(): void {
+		$this->seed_requests(
+			[
+				[ 'url' => 'http://seed.example/Kea-3317/', 'ms' => 43.5 ],
+				[ 'url' => 'https://seed.example/kea-3317/?ruru=?', 'ms' => 54.5 ],
+			]
+		);
+
+		$live = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+		Url_Snapshot::publish( self::tick(), 600, static fn (): array => [] );
+		VerbHarness::reset();
+		$stored = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		foreach ( [ $live, $stored ] as $reply ) {
+			$this->assertSame(
+				[ [ 'seed.example/kea-3317/', 2, null, 'https://seed.example/kea-3317/' ] ],
+				\array_map( static fn ( array $row ): array => [ $row['page'], $row['shapes'], $row['hash'], $row['url'] ], $reply['data'] )
+			);
+		}
+	}
+
+	/**
 	 * The traffic the live and stored answers are held together over: two
 	 * servers of more than one page, a third whose capital sorts it first
 	 * by name and last by page, a page of visitor and worker shapes, a
-	 * worker-only page, an untimed page, and a timeout.
+	 * worker-only page, an untimed page, a timeout, and a one-shape http page
+	 * whose URL keeps its case and query.
 	 */
 	private function seed_page_parity(): void {
 		$this->seed_kotuku();
@@ -2666,6 +2725,7 @@ class PerformanceCITest extends TestCase {
 				[ 'server' => 'kahu-6604.example', 'url' => 'https://kahu-6604.example/Ruru-6604/?q=?', 'ms' => null, 'error' => 'T', 'status' => 0, 'peak_mb' => 15.25, 'finished_at' => $at + 21.0 ],
 				[ 'server' => 'kahu-6604.example', 'url' => 'https://kahu-6604.example/ruru-6604/', 'ms' => 30.25, 'peak_mb' => 25.75, 'finished_at' => $at + 22.0 ],
 				[ 'server' => 'kahu-6604.example', 'url' => 'https://kahu-6604.example/titi-6604/', 'ms' => 55.0, 'peak_mb' => 18.5, 'finished_at' => $at + 25.0 ],
+				[ 'server' => 'kahu-6604.example', 'url' => 'http://kahu-6604.example/Pipi-6604/?tuatua=?', 'ms' => 88.25, 'peak_mb' => 12.5, 'finished_at' => $at + 27.0 ],
 				[ 'server' => 'Weka-6604.example', 'url' => 'https://Weka-6604.example/Moa-6604/', 'ms' => 66.5, 'peak_mb' => 19.5, 'finished_at' => $at + 26.0 ],
 				[ 'url' => 'https://seed.example/jobs/weka-6604', 'ms' => 77.5, 'peak_mb' => 35.25, 'worker' => 1, 'finished_at' => $at + 23.0 ],
 				[ 'url' => 'https://seed.example/huia-6604/', 'ms' => null, 'peak_mb' => 45.75, 'finished_at' => $at + 24.0 ],
@@ -2723,6 +2783,9 @@ class PerformanceCITest extends TestCase {
 		$served = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $tokens );
 
 		$this->assertNotSame( [], $live['data'], 'the question lists real rows' );
+		if ( ! $shapes && '' !== $server ) {
+			$this->assertContains( 'http://kahu-6604.example/Pipi-6604/?tuatua=?', \array_column( $live['slowest'], 'url' ), 'a one-shape page names its URL' );
+		}
 		// The reply crosses the wire as JSON, as a whole float reads back an int.
 		$this->assertSame( \json_decode( (string) \wp_json_encode( $live ), true ), $served );
 	}
@@ -2752,6 +2815,7 @@ class PerformanceCITest extends TestCase {
 				'path'         => '/kakapo/',
 				'shapes'       => 1,
 				'hash'         => self::hash_of( $kakapo ),
+				'url'          => $kakapo,
 				'count'        => 3,
 				'timed_count'  => 2,
 				'count_2xx'    => 1,
