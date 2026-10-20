@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.146.2] - 2026-10-19
+
+### Changed
+- **Built against newspack-nodes 2.117.1.** The reserved-name table each bundle inlines no longer lists `_connect_timer`, the connect-queue timer that release deletes.
+
 ## [0.146.1] - 2026-10-19
 
 ### Changed
