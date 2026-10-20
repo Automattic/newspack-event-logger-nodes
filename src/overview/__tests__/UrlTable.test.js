@@ -21,13 +21,33 @@ jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 } ) );
 
 import * as React from 'react';
+import { Core } from '@newspack-nodes/runtime';
 import UrlTable from '../UrlTable';
+import { views } from '../nodes/register';
 import { renderComponent, act } from '../../test-helpers/renderHook';
+
+/**
+ * A one-shape page row on `kea.example`, as the `urls` verb lists it.
+ *
+ * @param {Object} row      Its hash, its path and its measures.
+ * @param {string} row.hash The one URL's hash.
+ * @param {string} row.path The page under its server.
+ * @return {Object} The page row.
+ */
+const asPage = ( { hash, path, ...measures } ) => ( {
+	page_hash: `p${ hash }`,
+	page: `kea.example${ path }`,
+	server: 'kea.example',
+	path,
+	shapes: 1,
+	hash,
+	...measures,
+} );
 
 const URLS = [
 	{
 		hash: 'h1',
-		url: '/foo',
+		path: '/foo',
 		count: 100,
 		count_2xx: 80,
 		count_4xx: 20,
@@ -38,7 +58,7 @@ const URLS = [
 	},
 	{
 		hash: 'h2',
-		url: '/bar',
+		path: '/bar',
 		count: 50,
 		count_2xx: 50,
 		avg_ms: 100,
@@ -48,7 +68,7 @@ const URLS = [
 	},
 	{
 		hash: 'h3',
-		url: '/baz',
+		path: '/baz',
 		count: 200,
 		count_2xx: 100, // 100 unclassified — orphan, counts as "error"
 		avg_ms: 75,
@@ -56,7 +76,7 @@ const URLS = [
 		max_ms: 300,
 		avg_peak_mb: 8,
 	},
-];
+].map( asPage );
 
 // The table writes its filters into the bar; no test may inherit another's.
 beforeEach( () => {
@@ -69,7 +89,7 @@ function mount( overrides = {} ) {
 		selectedUrl: null,
 		onSelect: jest.fn(),
 		onParamsChange: jest.fn(),
-		totalUrls: 3,
+		totalRows: 3,
 		...overrides,
 	};
 	return {
@@ -118,14 +138,14 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'names the pager count as the URLs the filters left', () => {
-		// Every row is one URL, so the pager counts what the header counts.
-		const { container, unmount } = mount( { totalUrls: 502 } );
+	it( 'names the pager count as the pages the filters left', () => {
+		// Every row is one page, so the pager counts the rows it lists.
+		const { container, unmount } = mount( { totalRows: 502 } );
 
 		const info = container.querySelector(
 			'.event-logger-table__pagination-info'
 		);
-		expect( info.textContent ).toBe( '1\u2013100 of 502 URLs' );
+		expect( info.textContent ).toBe( '1\u2013100 of 502 pages' );
 		unmount();
 	} );
 
@@ -140,7 +160,7 @@ describe( 'UrlTable', () => {
 			selectedUrl: null,
 			onSelect: jest.fn(),
 			onParamsChange,
-			totalUrls: 800,
+			totalRows: 800,
 		};
 		const { container, rerender, unmount } = renderComponent(
 			React.createElement( UrlTable, props )
@@ -152,7 +172,7 @@ describe( 'UrlTable', () => {
 		onParamsChange.mockClear();
 
 		rerender(
-			React.createElement( UrlTable, { ...props, totalUrls: 30 } )
+			React.createElement( UrlTable, { ...props, totalRows: 30 } )
 		);
 
 		expect(
@@ -185,19 +205,19 @@ describe( 'UrlTable', () => {
 	} );
 
 	it( 'renders no overflow row', () => {
-		// Every row is one URL the server counted exactly; a row flagged as
-		// an aggregate is still that URL, opened and asked about as any other.
+		// Every row is one page the server counted exactly; a one-shape page
+		// flagged as an aggregate is still its URL, opened and asked about.
 		const onSelect = jest.fn();
 		const { container, unmount } = mount( {
 			urls: [
 				{ ...URLS[ 0 ] },
-				{
+				asPage( {
 					hash: 'c0ffee71',
-					url: 'https://kea.example/huia/',
+					path: '/huia/',
 					aggregate: true,
 					count: 900,
 					avg_ms: 12,
-				},
+				} ),
 			],
 			onSelect,
 		} );
@@ -210,7 +230,7 @@ describe( 'UrlTable', () => {
 		const last = rows[ rows.length - 1 ];
 		expect( last.getAttribute( 'role' ) ).toBe( 'button' );
 		expect( last.getAttribute( 'data-ask' ) ).toBe( 'url:c0ffee71' );
-		expect( last.textContent ).toContain( 'https://kea.example/huia/' );
+		expect( last.textContent ).toContain( 'kea.example/huia/' );
 		last.dispatchEvent(
 			new window.MouseEvent( 'click', { bubbles: true } )
 		);
@@ -220,7 +240,7 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'renders each URL row', () => {
+	it( 'renders each page row', () => {
 		const { container, unmount } = mount();
 		expect( container.textContent ).toContain( '/foo' );
 		expect( container.textContent ).toContain( '/bar' );
@@ -379,7 +399,7 @@ describe( 'UrlTable', () => {
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( {
 			onParamsChange,
-			totalUrls: 800,
+			totalRows: 800,
 		} );
 		type( container, 'kea' );
 		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
@@ -408,7 +428,7 @@ describe( 'UrlTable', () => {
 	} );
 
 	it( 'shows the search empty state when the server returns no rows', () => {
-		const { container, unmount } = mount( { urls: [], totalUrls: 0 } );
+		const { container, unmount } = mount( { urls: [], totalRows: 0 } );
 		type( container, 'nope' );
 		expect( container.textContent ).toContain( 'No URLs match' );
 		unmount();
@@ -435,7 +455,7 @@ describe( 'UrlTable', () => {
 			row.click();
 		} );
 		expect( onSelect ).toHaveBeenCalledWith(
-			expect.objectContaining( { url: '/foo' } )
+			expect.objectContaining( { hash: 'h1' } )
 		);
 		unmount();
 	} );
@@ -455,7 +475,7 @@ describe( 'UrlTable', () => {
 			);
 		} );
 		expect( onSelect ).toHaveBeenCalledWith(
-			expect.objectContaining( { url: '/bar' } )
+			expect.objectContaining( { hash: 'h2' } )
 		);
 		unmount();
 	} );
@@ -468,7 +488,7 @@ describe( 'UrlTable', () => {
 				selectedUrl,
 				onSelect: setSelectedUrl,
 				onParamsChange: jest.fn(),
-				totalUrls: 3,
+				totalRows: 3,
 			} );
 		}
 
@@ -532,7 +552,7 @@ describe( 'UrlTable', () => {
 		const onParamsChange = jest.fn();
 		const { props, container, rerender, unmount } = mount( {
 			onParamsChange,
-			totalUrls: 800,
+			totalRows: 800,
 			bucket: '2026-10-04-13-35',
 		} );
 		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
@@ -596,7 +616,7 @@ describe( 'UrlTable', () => {
 			const onParamsChange = jest.fn();
 			const { props, container, rerender, unmount } = mount( {
 				onParamsChange,
-				totalUrls: 800,
+				totalRows: 800,
 			} );
 			let current = props;
 			const update = ( next ) => {
@@ -621,7 +641,7 @@ describe( 'UrlTable', () => {
 			] );
 
 			// The narrowed reply's total keeps page 1, not its last page.
-			update( { totalUrls: 250 } );
+			update( { totalRows: 250 } );
 			expect( onParamsChange ).toHaveBeenCalledTimes( 1 );
 			expect( container.textContent ).toContain( 'Page 1 of 3' );
 			unmount();
@@ -661,7 +681,7 @@ describe( 'UrlTable', () => {
 		const onBucketChange = jest.fn();
 		const { container, unmount } = mount( {
 			urls: [],
-			totalUrls: 0,
+			totalRows: 0,
 			bucket: '2026-10-04-13-37',
 			onBucketChange,
 			error: 'bucket must be one of the charted five-minute keys, Y-m-d-H-i in UTC',
@@ -677,8 +697,8 @@ describe( 'UrlTable', () => {
 	} );
 
 	it( 'shows total count summary when total <= URLS_PER_PAGE (100)', () => {
-		const { container, unmount } = mount( { totalUrls: 3 } );
-		expect( container.textContent ).toContain( '3 URLs' );
+		const { container, unmount } = mount( { totalRows: 3 } );
+		expect( container.textContent ).toContain( '3 pages' );
 		expect( container.textContent ).not.toContain( 'Prev' );
 		unmount();
 	} );
@@ -686,7 +706,7 @@ describe( 'UrlTable', () => {
 	it( 'says the page failed, not that it is empty, when the verb refused', () => {
 		const { container, unmount } = mount( {
 			urls: [],
-			totalUrls: 0,
+			totalRows: 0,
 			error: 'filter kakapo is not a field=value pair',
 		} );
 		expect( container.textContent ).toContain(
@@ -699,7 +719,7 @@ describe( 'UrlTable', () => {
 	it( 'says it is asking, not that it is empty, while the first page is owed', () => {
 		const { container, unmount } = mount( {
 			urls: [],
-			totalUrls: 0,
+			totalRows: 0,
 			loading: true,
 		} );
 		expect( container.textContent ).toContain( 'Loading URLs…' );
@@ -710,7 +730,7 @@ describe( 'UrlTable', () => {
 	it( 'shows the unfiltered empty state when there are no URLs', () => {
 		const { container, unmount } = mount( {
 			urls: [],
-			totalUrls: 0,
+			totalRows: 0,
 		} );
 		expect( container.textContent ).toContain( 'No URLs to display' );
 		expect(
@@ -720,8 +740,8 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'shows prev/next pagination when totalUrls > URLS_PER_PAGE', () => {
-		const { container, unmount } = mount( { totalUrls: 250 } );
+	it( 'shows prev/next pagination when totalRows > URLS_PER_PAGE', () => {
+		const { container, unmount } = mount( { totalRows: 250 } );
 		expect( container.textContent ).toContain( 'Prev' );
 		expect( container.textContent ).toContain( 'Next' );
 		expect( container.textContent ).toContain( 'Page 1 of 3' );
@@ -729,7 +749,7 @@ describe( 'UrlTable', () => {
 	} );
 
 	it( 'renders the pagination controls as stock compact buttons', () => {
-		const { container, unmount } = mount( { totalUrls: 250 } );
+		const { container, unmount } = mount( { totalRows: 250 } );
 		const btns = container.querySelectorAll(
 			'.event-logger-table__pagination-btn'
 		);
@@ -744,7 +764,7 @@ describe( 'UrlTable', () => {
 	it( 'advances to page 2 when Next is clicked', () => {
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( {
-			totalUrls: 250,
+			totalRows: 250,
 			onParamsChange,
 		} );
 		const next = button( container, ( t ) => t.includes( 'Next' ) );
@@ -762,7 +782,7 @@ describe( 'UrlTable', () => {
 	it( 'returns to page 1 when Prev is clicked from page 2', () => {
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( {
-			totalUrls: 250,
+			totalRows: 250,
 			onParamsChange,
 		} );
 		const next = button( container, ( t ) => t.includes( 'Next' ) );
@@ -816,19 +836,24 @@ describe( 'UrlTable', () => {
 	it.each( [ 'avg', 'cumulative' ] )(
 		'draws no %s bar for a URL no timed request reached, and scales the rest without it',
 		( metric ) => {
-			const untimed = Array.from( { length: 20 }, ( _, i ) => ( {
-				hash: `u${ i }`,
-				url: `/moa-${ i }`,
-				count: 7,
-				count_2xx: 0,
-				avg_ms: null,
-				min_ms: null,
-				max_ms: null,
-				avg_peak_mb: 3,
-			} ) );
+			const untimed = Array.from( { length: 20 }, ( _, i ) =>
+				asPage( {
+					hash: `u${ i }`,
+					path: `/moa-${ i }`,
+					count: 7,
+					count_2xx: 0,
+					avg_ms: null,
+					min_ms: null,
+					max_ms: null,
+					avg_peak_mb: 3,
+				} )
+			);
 			const { container, unmount } = mount( {
-				urls: [ ...untimed, { ...URLS[ 0 ], url: '/tui-9913' } ],
-				totalUrls: 21,
+				urls: [
+					...untimed,
+					{ ...URLS[ 0 ], page: 'kea.example/tui-9913' },
+				],
+				totalRows: 21,
 				metric,
 			} );
 			const bars = Array.from(
@@ -848,7 +873,7 @@ describe( 'UrlTable', () => {
 			urls: [
 				{ ...URLS[ 0 ], avg_ms: null, min_ms: null, max_ms: null },
 			],
-			totalUrls: 1,
+			totalRows: 1,
 		} );
 		const cells = [ 'avg_ms', 'min_ms', 'max_ms' ].map(
 			( field ) =>
@@ -911,7 +936,7 @@ describe( 'UrlTable', () => {
 			jest.setSystemTime( new Date( 1758500000400 ) );
 			const { container, unmount } = mount( {
 				urls: [ { ...URLS[ 0 ], last_updated: 1758499699.75 } ],
-				totalUrls: 1,
+				totalRows: 1,
 			} );
 			const cell = container.querySelector(
 				'.event-logger-table__list [data-field="last_updated"]'
@@ -925,7 +950,7 @@ describe( 'UrlTable', () => {
 			jest.setSystemTime( new Date( 1758500000000 ) );
 			const { container, unmount } = mount( {
 				urls: [ { ...URLS[ 0 ], last_updated: 1758500004.5 } ],
-				totalUrls: 1,
+				totalRows: 1,
 			} );
 			const cell = container.querySelector(
 				'.event-logger-table__list [data-field="last_updated"]'
@@ -937,7 +962,7 @@ describe( 'UrlTable', () => {
 		it( 'renders "-" for a row with no last_updated', () => {
 			const { container, unmount } = mount( {
 				urls: [ URLS[ 0 ] ],
-				totalUrls: 1,
+				totalRows: 1,
 			} );
 			const cell = container.querySelector(
 				'.event-logger-table__list [data-field="last_updated"]'
@@ -1063,7 +1088,7 @@ describe( 'the address bar', () => {
 	} );
 
 	it( 'writes the page as ?paged=, since ?page= is the admin screen', () => {
-		const { container, unmount } = mount( { totalUrls: 800 } );
+		const { container, unmount } = mount( { totalRows: 800 } );
 		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
 		act( () => button( container, ( t ) => t.includes( 'Next' ) ).click() );
 
@@ -1080,7 +1105,7 @@ describe( 'the address bar', () => {
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( {
 			onParamsChange,
-			totalUrls: 800,
+			totalRows: 800,
 		} );
 
 		expect( onParamsChange ).toHaveBeenCalledWith(
@@ -1095,7 +1120,7 @@ describe( 'the address bar', () => {
 		const onParamsChange = jest.fn();
 		const { unmount } = mount( {
 			onParamsChange,
-			totalUrls: 800,
+			totalRows: 800,
 			bucket: '2026-10-04-13-35',
 		} );
 
@@ -1116,7 +1141,7 @@ describe( 'the address bar', () => {
 			selectedUrl: null,
 			onSelect: jest.fn(),
 			onParamsChange,
-			totalUrls: null,
+			totalRows: null,
 		};
 		const { container, rerender, unmount } = renderComponent(
 			React.createElement( UrlTable, props )
@@ -1130,7 +1155,7 @@ describe( 'the address bar', () => {
 			React.createElement( UrlTable, {
 				...props,
 				urls: URLS,
-				totalUrls: 800,
+				totalRows: 800,
 			} )
 		);
 		expect( container.textContent ).toContain( 'Page 4 of 8' );
@@ -1142,7 +1167,7 @@ describe( 'the address bar', () => {
 		( raw ) => {
 			linkTo( `paged=${ raw }` );
 			const onParamsChange = jest.fn();
-			const { unmount } = mount( { onParamsChange, totalUrls: 800 } );
+			const { unmount } = mount( { onParamsChange, totalRows: 800 } );
 
 			expect( onParamsChange ).toHaveBeenCalledWith(
 				expect.objectContaining( { offset: 0 } )
@@ -1158,7 +1183,7 @@ describe( 'the address bar', () => {
 		const onParamsChange = jest.fn();
 		const { container, unmount } = mount( {
 			onParamsChange,
-			totalUrls: 63900,
+			totalRows: 63900,
 		} );
 
 		expect( container.textContent ).toContain( 'Page 101 of 101' );
@@ -1171,7 +1196,7 @@ describe( 'the address bar', () => {
 
 	it( 'moves the bar down with a page the set no longer reaches', () => {
 		linkTo( 'paged=7' );
-		const { unmount } = mount( { totalUrls: 250 } );
+		const { unmount } = mount( { totalRows: 250 } );
 
 		expect( param( 'paged' ) ).toBe( '3' );
 		unmount();
@@ -1192,6 +1217,291 @@ describe( 'column layout', () => {
 		const cells = header.querySelectorAll( '[data-field]' ).length;
 		expect( cells ).toBe( 11 );
 		expect( tracks ).toHaveLength( cells );
+		unmount();
+	} );
+} );
+
+describe( 'pages and their shapes', () => {
+	/** A page asked two ways on one server, which the table can expand. */
+	const PIWAKAWAKA = {
+		page_hash: 'b17e0a99c4d2',
+		page: 'tui-3381.example/piwakawaka-3381/',
+		server: 'tui-3381.example',
+		path: '/piwakawaka-3381/',
+		shapes: 3,
+		hash: null,
+		count: 61,
+		count_2xx: 61,
+		avg_ms: 41.5,
+		min_ms: 12.5,
+		max_ms: 90.5,
+		avg_peak_mb: 3.5,
+	};
+
+	/** A page asked one way, whose row is that one URL. */
+	const RURU = {
+		page_hash: '5e1f0ab3c771',
+		page: 'tui-3381.example/ruru-3381/',
+		server: 'tui-3381.example',
+		path: '/ruru-3381/',
+		shapes: 1,
+		hash: 'd4a1e00c3381',
+		count: 29,
+		count_2xx: 29,
+		avg_ms: 22.5,
+		min_ms: 9.5,
+		max_ms: 40.5,
+		avg_peak_mb: 2.5,
+	};
+
+	const PIWAKAWAKA_KEY = 'b17e0a99c4d2:tui-3381.example';
+	const PIWAKAWAKA_VIEW = 'shapes:b17e0a99c4d2:tui-3381.example:view';
+
+	/** The two shapes the page's slice answered, busiest first. */
+	const SHAPES = [
+		{
+			hash: 'a1c0ffee2001',
+			url: 'https://tui-3381.example/Piwakawaka-3381/?kowhai=?',
+			count: 40,
+			count_2xx: 40,
+			avg_ms: 30.5,
+			min_ms: 12.5,
+			max_ms: 60.5,
+			avg_peak_mb: 3.5,
+		},
+		{
+			hash: 'a1c0ffee2002',
+			url: 'https://tui-3381.example/piwakawaka-3381/?rata=?',
+			count: 21,
+			count_2xx: 21,
+			avg_ms: 62.5,
+			min_ms: 20.5,
+			max_ms: 90.5,
+			avg_peak_mb: 3.5,
+		},
+	];
+
+	beforeEach( () => Core.reset() );
+
+	/**
+	 * Stand up the view a page's slice publishes into, as the graph names it.
+	 *
+	 * @param {string} name  The view's node name.
+	 * @param {Object} model What the view holds.
+	 * @return {Object} The view node.
+	 */
+	const shapesView = ( name, model ) => {
+		const view = new views.UrlsView();
+		view.name = name;
+		view.setField( 'view', { ...view.view, ...model } );
+		return view;
+	};
+
+	const rowsOf = ( container ) =>
+		Array.from( container.querySelectorAll( '.event-logger-table__row' ) );
+
+	const click = ( element ) =>
+		act( () => {
+			element.dispatchEvent(
+				new window.MouseEvent( 'click', { bubbles: true } )
+			);
+		} );
+
+	it( 'renders a one-shape page as a leaf that opens its URL', () => {
+		const onSelect = jest.fn();
+		const onToggleExpand = jest.fn();
+		const { container, unmount } = mount( {
+			urls: [ RURU ],
+			totalRows: 1,
+			onSelect,
+			onToggleExpand,
+		} );
+
+		const [ row ] = rowsOf( container );
+		expect( row.textContent ).toContain( 'tui-3381.example/ruru-3381/' );
+		expect( row.getAttribute( 'data-ask' ) ).toBe( 'url:d4a1e00c3381' );
+		expect( row.getAttribute( 'aria-expanded' ) ).toBeNull();
+		expect( row.querySelector( '.newspack-nodes-disclosure' ) ).toBeNull();
+		click( row );
+
+		expect( onSelect ).toHaveBeenCalledTimes( 1 );
+		expect( onSelect.mock.calls[ 0 ][ 0 ].hash ).toBe( 'd4a1e00c3381' );
+		expect( onToggleExpand ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'shows a page under the server it is scoped to by its path', () => {
+		const { container, unmount } = mount( {
+			urls: [ RURU ],
+			totalRows: 1,
+			server: 'tui-3381.example',
+		} );
+
+		const cell =
+			rowsOf( container )[ 0 ].querySelector( '[data-field="url"]' );
+		expect( cell.textContent ).toBe( '/ruru-3381/' );
+		unmount();
+	} );
+
+	it( 'toggles a page of several shapes, opening no URL window', () => {
+		const onSelect = jest.fn();
+		const onToggleExpand = jest.fn();
+		const { container, unmount } = mount( {
+			urls: [ PIWAKAWAKA ],
+			totalRows: 1,
+			onSelect,
+			onToggleExpand,
+		} );
+
+		const [ row ] = rowsOf( container );
+		expect( row.getAttribute( 'aria-expanded' ) ).toBe( 'false' );
+		expect( row.getAttribute( 'data-ask' ) ).toBeNull();
+		const caret = row.querySelector( '.newspack-nodes-disclosure' );
+		expect( caret ).toBeTruthy();
+		click( caret );
+		click( row );
+
+		expect( onToggleExpand.mock.calls ).toEqual( [
+			[ PIWAKAWAKA_KEY ],
+			[ PIWAKAWAKA_KEY ],
+		] );
+		expect( onSelect ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'expands a page into its shapes', () => {
+		shapesView( PIWAKAWAKA_VIEW, { data: SHAPES, rows: 2 } );
+		const onSelect = jest.fn();
+		const { container, unmount } = mount( {
+			urls: [ PIWAKAWAKA, RURU ],
+			totalRows: 2,
+			expanded: [ PIWAKAWAKA_KEY ],
+			onSelect,
+		} );
+
+		const rows = rowsOf( container );
+		// The page, its three slots (one unanswered), then the next page.
+		expect( rows ).toHaveLength( 5 );
+		expect( rows[ 0 ].getAttribute( 'aria-expanded' ) ).toBe( 'true' );
+		expect( rows[ 1 ].classList.contains( 'is-shape' ) ).toBe( true );
+		expect( rows[ 1 ].textContent ).toContain( SHAPES[ 0 ].url );
+		expect( rows[ 1 ].getAttribute( 'data-ask' ) ).toBe(
+			'url:a1c0ffee2001'
+		);
+		expect( rows[ 2 ].textContent ).toContain( SHAPES[ 1 ].url );
+		expect( rows[ 3 ].classList.contains( 'is-shape' ) ).toBe( true );
+		expect( rows[ 4 ].textContent ).toContain( 'ruru-3381' );
+		// Every row, a shape's included, keeps the table's one height.
+		expect( mockVirtualization.mock.calls.at( -1 )[ 2 ] ).toBe( 5 );
+		for ( const row of rows ) {
+			expect( row.style.height ).toBe( '40px' );
+		}
+		click( rows[ 2 ] );
+
+		expect( onSelect ).toHaveBeenCalledWith( SHAPES[ 1 ] );
+		unmount();
+	} );
+
+	it( 'marks the open shape selected', () => {
+		shapesView( PIWAKAWAKA_VIEW, { data: SHAPES, rows: 2 } );
+		const { container, unmount } = mount( {
+			urls: [ PIWAKAWAKA ],
+			totalRows: 1,
+			expanded: [ PIWAKAWAKA_KEY ],
+			selectedUrl: { hash: 'a1c0ffee2002' },
+		} );
+
+		const selected = container.querySelectorAll( '.is-selected' );
+		expect( selected ).toHaveLength( 1 );
+		expect( selected[ 0 ].textContent ).toContain( SHAPES[ 1 ].url );
+		unmount();
+	} );
+
+	it( 'says a page is asking for its shapes, and why it has none', () => {
+		const view = shapesView( PIWAKAWAKA_VIEW, { loading: true } );
+		const { container, rerender, unmount } = mount( {
+			urls: [ PIWAKAWAKA ],
+			totalRows: 1,
+			expanded: [ PIWAKAWAKA_KEY ],
+		} );
+		expect( rowsOf( container )[ 1 ].textContent ).toContain(
+			'Loading URLs…'
+		);
+
+		act( () =>
+			view.setField( 'view', {
+				...view.view,
+				loading: false,
+				error: 'filter page=b17e0a99c4d2 refused',
+			} )
+		);
+		rerender(
+			React.createElement( UrlTable, {
+				urls: [ PIWAKAWAKA ],
+				selectedUrl: null,
+				onSelect: jest.fn(),
+				onParamsChange: jest.fn(),
+				totalRows: 1,
+				expanded: [ PIWAKAWAKA_KEY ],
+			} )
+		);
+		expect( rowsOf( container )[ 1 ].textContent ).toContain(
+			'Could not load URLs: filter page=b17e0a99c4d2 refused'
+		);
+		unmount();
+	} );
+
+	it( 'says nothing under a page whose shapes answered none', () => {
+		shapesView( PIWAKAWAKA_VIEW, { data: [], rows: 0 } );
+		const { container, unmount } = mount( {
+			urls: [ PIWAKAWAKA ],
+			totalRows: 1,
+			expanded: [ PIWAKAWAKA_KEY ],
+		} );
+
+		const slots = rowsOf( container ).slice( 1 );
+		expect( slots ).toHaveLength( 3 );
+		for ( const slot of slots ) {
+			expect( slot.textContent ).toBe( '' );
+		}
+		unmount();
+	} );
+
+	it( 'shows a page of more shapes than one page holds, then how many more', () => {
+		const big = { ...PIWAKAWAKA, shapes: 137 };
+		const { container, unmount } = mount( {
+			urls: [ big ],
+			totalRows: 1,
+			expanded: [ PIWAKAWAKA_KEY ],
+		} );
+
+		const rows = rowsOf( container );
+		expect( rows ).toHaveLength( 1 + 100 + 1 );
+		expect( rows.at( -1 ).textContent ).toContain( '37 more URLs' );
+		unmount();
+	} );
+
+	it( 'leaves a one-shape page and an unexpanded page shut', () => {
+		const { container, unmount } = mount( {
+			urls: [ RURU, PIWAKAWAKA ],
+			totalRows: 2,
+			expanded: [ '5e1f0ab3c771:tui-3381.example' ],
+		} );
+
+		expect( rowsOf( container ) ).toHaveLength( 2 );
+		unmount();
+	} );
+
+	it( 'counts pages, the rows it lists', () => {
+		const { container, unmount } = mount( {
+			urls: [ PIWAKAWAKA, RURU ],
+			totalRows: 2,
+		} );
+
+		expect(
+			container.querySelector( '.event-logger-table__pagination-info' )
+				.textContent
+		).toBe( '2 pages' );
 		unmount();
 	} );
 } );

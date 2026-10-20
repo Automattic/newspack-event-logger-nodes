@@ -10,8 +10,24 @@ import { pageFacts, factsJson } from '../pageFacts';
 // Both come off the `urls` reply: it owns the filters, so it owns every
 // fact about the set they left.
 const SLOWEST = [
-	{ hash: 'aaa', url: '/slow', avg_ms: 2600, max_ms: 2600, count: 4 },
-	{ hash: 'bbb', url: '/next', avg_ms: 900, max_ms: 900, count: 40 },
+	{
+		page: 'kea.example/slow',
+		server: 'kea.example',
+		shapes: 1,
+		hash: 'aaa',
+		avg_ms: 2600,
+		max_ms: 2600,
+		count: 4,
+	},
+	{
+		page: 'kea.example/next',
+		server: 'kea.example',
+		shapes: 2,
+		hash: null,
+		avg_ms: 900,
+		max_ms: 900,
+		count: 40,
+	},
 ];
 
 test( 'with nothing selected it carries the totals the panel is rendering', () => {
@@ -21,6 +37,7 @@ test( 'with nothing selected it carries the totals the panel is rendering', () =
 	const facts = pageFacts( {
 		urlTotals: {
 			urls: 313,
+			pages: 211,
 			requests: 9001,
 			errors: 23,
 			avg_ms: 70,
@@ -32,14 +49,17 @@ test( 'with nothing selected it carries the totals the panel is rendering', () =
 	expect( facts.surface ).toBe( 'overview' );
 	expect( facts.totals ).toEqual( {
 		urls: 313,
+		pages: 211,
 		requests: 9001,
 		errors: 23,
 		avg_ms: 70,
 		avg_peak_mb: 3.3,
 	} );
 	expect( facts.slowest[ 0 ] ).toEqual( {
+		page: 'kea.example/slow',
+		server: 'kea.example',
+		shapes: 1,
 		hash: 'aaa',
-		url: '/slow',
 		avg_ms: 2600,
 		count: 4,
 	} );
@@ -155,8 +175,13 @@ test( 'a slowest row no timed request reached carries its mean as unmeasured', (
 	const facts = pageFacts( {
 		urlTotals: { urls: 2, requests: 40, avg_ms: null },
 		urlSlowest: [
-			{ hash: 'ddd', url: '/moa-31', count: 7, avg_ms: null },
-			{ hash: 'eee', url: '/tui-9913', count: 33, avg_ms: 88.5 },
+			{ hash: 'ddd', page: 'kea.example/moa-31', count: 7, avg_ms: null },
+			{
+				hash: 'eee',
+				page: 'kea.example/tui-9913',
+				count: 33,
+				avg_ms: 88.5,
+			},
 		],
 	} );
 
@@ -219,17 +244,23 @@ test( 'every surface names what it is scoped to', () => {
 	} );
 } );
 
-test( 'the slowest URLs come from the set the totals describe', () => {
+test( 'the slowest pages come from the set the totals describe', () => {
 	// `slowest` must come from the filtered index `totals` comes from — one
 	// object, one scope statement, one scope.
+	const scoped = {
+		page: 'kea.example/scoped',
+		server: 'kea.example',
+		shapes: 1,
+		hash: 'zzz',
+		avg_ms: 1200,
+		count: 3,
+	};
 	const facts = pageFacts( {
-		urlTotals: { urls: 2, requests: 9 },
-		urlSlowest: [ { hash: 'zzz', url: '/scoped', avg_ms: 1200, count: 3 } ],
+		urlTotals: { urls: 2, pages: 2, requests: 9 },
+		urlSlowest: [ scoped ],
 	} );
 
-	expect( facts.slowest ).toEqual( [
-		{ hash: 'zzz', url: '/scoped', avg_ms: 1200, count: 3 },
-	] );
+	expect( facts.slowest ).toEqual( [ scoped ] );
 } );
 
 test( 'it names what the totals are scoped to', () => {
@@ -262,6 +293,7 @@ test( 'nothing loaded yet reads as absent, not as zero traffic', () => {
 	expect( facts.surface ).toBe( 'overview' );
 	expect( facts.totals ).toEqual( {
 		urls: null,
+		pages: null,
 		requests: null,
 		errors: null,
 		avg_ms: null,
@@ -336,4 +368,34 @@ test( 'before the first reply the filters read as absent, not as defaults', () =
 	// states a filter state nothing has confirmed: the plausible-default twin
 	// of the plausible-zero this block already stopped emitting for totals.
 	expect( pageFacts( {} ).filters ).toBeNull();
+} );
+
+test( 'the slowest are pages, each named by its page, its server and its shapes', () => {
+	const facts = pageFacts( {
+		urlTotals: { urls: 9, pages: 4, requests: 77 },
+		urlSlowest: [
+			{
+				page_hash: '7d1c9e0a4417',
+				page: 'weka-4417.example/kereru-4417/',
+				server: 'weka-4417.example',
+				path: '/kereru-4417/',
+				shapes: 3,
+				hash: null,
+				avg_ms: 1310.5,
+				count: 12,
+			},
+		],
+	} );
+
+	expect( facts.totals.pages ).toBe( 4 );
+	expect( facts.slowest ).toEqual( [
+		{
+			page: 'weka-4417.example/kereru-4417/',
+			server: 'weka-4417.example',
+			shapes: 3,
+			hash: null,
+			avg_ms: 1310.5,
+			count: 12,
+		},
+	] );
 } );

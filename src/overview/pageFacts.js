@@ -39,9 +39,9 @@ function num( value, fallback = 0 ) {
  *
  * @param {Object}   [state]                 The dashboard's current selection.
  * @param {?Object}  [state.urlTotals]       Totals for the URL set the filters selected.
- * @param {?Array}   [state.urlSlowest]      The slowest URLs of that same set.
+ * @param {?Array}   [state.urlSlowest]      The slowest pages of that same set.
  * @param {?Object}  [state.urlFilters]      The filters both are of.
- * @param {?Object}  [state.selectedUrl]     The selected URL row.
+ * @param {?Object}  [state.selectedUrl]     The selected URL's `{ hash, url }`.
  * @param {?Object}  [state.urlDetail]       Its detail payload.
  * @param {string[]} [state.detailChips]     The modal chart's chips, each
  *                                           `field=value`, which narrow its
@@ -112,15 +112,19 @@ export function pageFacts( {
 		// handed 0 during first paint would report an idle site.
 		totals: {
 			urls: num( urlTotals?.urls, null ),
+			pages: num( urlTotals?.pages, null ),
 			requests: num( urlTotals?.requests, null ),
 			errors: num( urlTotals?.errors, null ),
 			avg_ms: num( urlTotals?.avg_ms, null ),
 			avg_peak_mb: num( urlTotals?.avg_peak_mb, null ),
 		},
-		// The SAME set the totals are of, ranked by `avg_ms` server-side.
+		// @longform The SAME set's pages the totals are of, ranked by `avg_ms`
+		// server-side; `hash` names the one URL of a one-shape page, else null.
 		slowest: ( urlSlowest ?? [] ).slice( 0, 10 ).map( ( u ) => ( {
+			page: u.page,
+			server: u.server,
+			shapes: num( u.shapes ),
 			hash: u.hash,
-			url: u.url,
 			avg_ms: num( u.avg_ms, null ),
 			count: num( u.count ),
 		} ) ),

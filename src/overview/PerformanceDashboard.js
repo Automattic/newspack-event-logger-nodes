@@ -16,10 +16,11 @@
  * the search box and its results, the request-table sort, the bucket
  * selections that narrow the URL table and the URL modal, the URL modal
  * chart's question and metric, and the inline "Log this URL" rule editor. The
- * server filter, metric, both dimensions, the chart's chips and the table
- * selection also live in the address bar, as `?server=`, `?metric=`,
- * `?breakdown=`, `?then=`, one `?chip=` per chip and `?bucket=`, so a shared
- * link opens the same view. While a URL modal is open, or a link is opening
+ * server filter, metric, both dimensions, the chart's chips, the table
+ * selection and the pages the table expands also live in the address bar, as
+ * `?server=`, `?metric=`, `?breakdown=`, `?then=`, one `?chip=` per chip,
+ * `?bucket=` and one `?expand=` per page, so a shared link opens the same
+ * view. While a URL modal is open, or a link is opening
  * one, its own controls ride there too under a `url_` prefix, as
  * `docs/dashboards.md` lists. The component also runs every command whose
  * reply sets that state: the `?url=` and `?request=` deep-link resolvers, the
@@ -63,6 +64,9 @@ import {
 	SCOPED_BREAKDOWN_OPTIONS,
 	SORT_ORDERS,
 	URL_CHIP_OPTIONS,
+	NO_PAGE_KEYS,
+	PAGE_KEY,
+	pageKey,
 } from './constants';
 import {
 	usePerformanceGraph,
@@ -161,6 +165,19 @@ const NO_SEARCH_ANSWER = {
 
 /** A query the search box looks up as one exact request id. */
 const RID_SHAPE = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * The linked `?expand=` values that name a page, each once.
+ *
+ * @param {string[]} raw Every value the param holds.
+ * @return {string[]} The page keys kept, or `NO_PAGE_KEYS` for none.
+ */
+const restoreExpanded = ( raw ) => {
+	const kept = [
+		...new Set( raw.filter( ( key ) => PAGE_KEY.test( key ) ) ),
+	];
+	return kept.length ? kept : NO_PAGE_KEYS;
+};
 
 // The address-bar whitelists: what the dropdowns offer.
 const CHART_METRICS = CHART_METRIC_OPTIONS.map( ( option ) => option.value );
@@ -281,6 +298,25 @@ export default function PerformanceDashboard( {
 		( raw ) => restoreChips( raw, FILTER_FIELD_OPTIONS ),
 		( chips ) => chips
 	);
+	const [ expanded, setExpanded ] = useQueryParamList(
+		'expand',
+		restoreExpanded,
+		( keys ) => keys
+	);
+	/**
+	 * Expand a page of the URL table, or shut it.
+	 *
+	 * @param {string} key The page's `pageKey()`.
+	 */
+	const toggleExpanded = useCallback(
+		( key ) =>
+			setExpanded( ( keys ) =>
+				keys.includes( key )
+					? keys.filter( ( other ) => other !== key )
+					: [ ...keys, key ]
+			),
+		[ setExpanded ]
+	);
 
 	const [ searchQuery, setSearchQuery ] = useState( '' );
 	const [ searchAnswer, setSearchAnswer ] = useState( NO_SEARCH_ANSWER );
@@ -309,6 +345,16 @@ export default function PerformanceDashboard( {
 	const urlDetail = urlDetailSlice?.data ?? null;
 	const requestDetail = requestDetailSlice?.data ?? null;
 	urlsRef.current = urls;
+	// @longform The pages whose shapes the graph asks: those expanded, listed
+	// and of several shapes. A key naming a page off this page asks nothing.
+	const expandedPages = useMemo(
+		() =>
+			urls.filter(
+				( page ) =>
+					1 < page.shapes && expanded.includes( pageKey( page ) )
+			),
+		[ urls, expanded ]
+	);
 
 	// The selector shows the derived axes; the state keeps the choice made.
 	const {
@@ -480,6 +526,7 @@ export default function PerformanceDashboard( {
 		detailFilters,
 		detailChart,
 		askActive: ask.active,
+		expandedPages,
 	} );
 
 	// Where the URL detail was scrolled to, restored when the request closes.
@@ -881,7 +928,13 @@ export default function PerformanceDashboard( {
 	const [ rules, setRules ] = useState( null );
 	const [ ruleError, setRuleError ] = useState( null );
 
-	const ruleUrl = selectedUrl?.url;
+	// @longform A one-shape page's row names no URL, so its window is named by
+	// what dump_url answers for its hash, never by another URL's answer.
+	const ruleUrl =
+		selectedUrl?.url ||
+		( urlDetail?.stats?.hash === selectedUrl?.hash
+			? urlDetail?.stats?.url
+			: undefined );
 	const canLogUrl = !! ruleUrl && UNKNOWN_URL() !== ruleUrl;
 	// The path alone, as Url_Parts::rule_path() reads it; '?' marks it exact.
 	const exactPattern = `${
@@ -1060,7 +1113,10 @@ export default function PerformanceDashboard( {
 							urlTotals,
 							urlSlowest,
 							urlFilters,
-							selectedUrl,
+							selectedUrl: selectedUrl && {
+								hash: selectedUrl.hash,
+								url: ruleUrl,
+							},
 							urlDetail,
 							detailChips: detailChart.chips,
 							detailFilters,
@@ -1115,7 +1171,7 @@ export default function PerformanceDashboard( {
 						<CardHeader>
 							<h2>
 								{ __(
-									'URLs by Request Count',
+									'Pages by Request Count',
 									'newspack-event-logger-nodes'
 								) }
 							</h2>
@@ -1125,12 +1181,14 @@ export default function PerformanceDashboard( {
 								urls={ urls }
 								selectedUrl={ selectedUrl }
 								onSelect={ openUrl }
+								expanded={ expanded }
+								onToggleExpand={ toggleExpanded }
 								onParamsChange={ handleUrlParamsChange }
 								bucket={ tableBucket }
 								slots={ overview?.slots ?? null }
 								server={ serverFilter }
 								onBucketChange={ setTableBucket }
-								totalUrls={ urlsSlice?.rows }
+								totalRows={ urlsSlice?.rows }
 								chips={ chartChips }
 								metric={ chartMetric }
 								error={ urlsSlice?.error ?? null }
@@ -1157,7 +1215,7 @@ export default function PerformanceDashboard( {
 									),
 									selectedRequest
 							  )
-							: selectedUrl.url
+							: ruleUrl
 					}
 					onRequestClose={ () => {
 						// Keep URL modal open while the nested editor is open.
