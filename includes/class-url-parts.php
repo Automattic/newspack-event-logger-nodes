@@ -95,12 +95,23 @@ final class Url_Parts {
 	 */
 	public static function key( string $request_url, bool $truncated ): string {
 		[ $path, $query ] = \explode( '?', $request_url, 2 ) + [ 1 => '' ];
-		$keys             = [];
-		foreach ( self::parameters( $query, $truncated ) as [ $key, $value ] ) {
+		if ( '' === $query ) {
+			return $path;
+		}
+		$parameters = \explode( '&', $query );
+		if ( $truncated ) {
+			\array_pop( $parameters );
+		}
+
+		$keys = [];
+		foreach ( $parameters as $parameter ) {
+			[ $name, $value ] = \explode( '=', $parameter, 2 ) + [ 1 => '' ];
+			\parse_str( $name . '=', $read_as );
+			$key = (string) \array_key_first( $read_as );
 			if ( '' === $key || isset( self::KEY_TRACKING[ $key ] ) || \str_starts_with( $key, 'utm_' ) ) {
 				continue;
 			}
-			$keys[ $key ] = \rawurlencode( $key ) . '=' . ( isset( self::KEY_ROUTES[ $key ] ) ? self::route_value( $value ?? '' ) : '?' );
+			$keys[ $key ] = \rawurlencode( $key ) . '=' . ( isset( self::KEY_ROUTES[ $key ] ) ? self::route_value( $value ) : '?' );
 		}
 		if ( [] === $keys ) {
 			return $path;
@@ -142,25 +153,16 @@ final class Url_Parts {
 	}
 
 	/**
-	 * The page a stored URL belongs to: its host, its path and its
-	 * `KEY_ROUTES` keys with the values `key()` kept, lowercased, every other
-	 * key and any worker mark dropped, so every case, scheme and other query
-	 * shape of one address shares a page, and a route stays a page of its
-	 * own. The worker mark is the one parameter `key()` never writes with an
-	 * `=`, so a mark spelling a routing key still goes.
+	 * The page a stored URL belongs to: its host and path, lowercased, with
+	 * the query and any worker mark dropped, so every case, query shape and
+	 * scheme of one address shares a page.
 	 *
 	 * @param string $url A stored URL, which carries its host.
 	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public static function page( string $url ): string {
 		[ $start ] = self::authority( $url );
-		$routes    = [];
-		foreach ( self::parameters( \explode( '?', \substr( $url, $start ), 2 )[1] ?? '', false ) as [ $key, $value ] ) {
-			if ( null !== $value && isset( self::KEY_ROUTES[ $key ] ) ) {
-				$routes[] = \rawurlencode( $key ) . '=' . $value;
-			}
-		}
-		return \strtolower( self::path_from( $url, $start ) . ( [] === $routes ? '' : '?' . \implode( '&', $routes ) ) );
+		return \strtolower( self::path_from( $url, $start ) );
 	}
 
 	/**
@@ -171,33 +173,6 @@ final class Url_Parts {
 	 */
 	private static function path_from( string $url, int $start ): string {
 		return \substr( $url, $start, \strcspn( $url, '?', $start ) );
-	}
-
-	/**
-	 * A query's parameters in order, each as the key PHP reads into `$_GET`,
-	 * the last sent winning a repeat, and its value as sent, null where the
-	 * parameter carries no `=`. A trimmed line's last parameter, which the
-	 * trim may have cut, is left out.
-	 *
-	 * @param string $query     The query, without its `?`.
-	 * @param bool   $truncated Whether the line was trimmed, cutting its last parameter.
-	 * @return list<array{0:string,1:?string}>
-	 */
-	private static function parameters( string $query, bool $truncated ): array {
-		if ( '' === $query ) {
-			return [];
-		}
-		$parameters = \explode( '&', $query );
-		if ( $truncated ) {
-			\array_pop( $parameters );
-		}
-		$read = [];
-		foreach ( $parameters as $parameter ) {
-			[ $name, $value ] = \explode( '=', $parameter, 2 ) + [ 1 => null ];
-			\parse_str( $name . '=', $read_as );
-			$read[] = [ (string) \array_key_first( $read_as ), $value ];
-		}
-		return $read;
 	}
 
 	/**

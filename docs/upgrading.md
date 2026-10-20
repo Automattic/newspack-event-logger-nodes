@@ -7,9 +7,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 ## Unreleased
 
 - **`urls` and the MCP `performance_urls` tool list pages, not URLs.** A
-  page is a URL's host and path, lowercased, with its routing keys
-  (`rest_route`, `action`, `wc-ajax` and `feed`) and their values kept, and
-  a row is one page on one server, folding every URL of it. A row carries
+  page is a URL's lowercased host and path, every query key folded, and a
+  row is one page on one server, folding every URL of it. A row carries
   `page_hash` (`Log_Manager::url_hash()` of the page), `page`, `server`,
   `path` (the page under its server) and `shapes` (the URLs folded), then
   the measures a URL row carried. It no longer carries `url`. `hash` is the

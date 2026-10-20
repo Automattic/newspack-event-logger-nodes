@@ -2492,12 +2492,11 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A `urls` row is a page: its lowercased host, path and routing keys,
-	 * its server and the path under it, every shape of it folded, a
-	 * one-shape page naming its URL by the URL's hash and a page of more
-	 * naming none. The default view folds the visitor shapes; Include
-	 * Workers folds every shape, and a page holding any worker shape reads
-	 * `worker` true.
+	 * A `urls` row is a page: its lowercased host and path, its server and
+	 * the path under it, every shape of it folded, a one-shape page naming
+	 * its URL by the URL's hash and a page of more naming none. The default
+	 * view folds the visitor shapes; Include Workers folds every shape, and a
+	 * page holding any worker shape reads `worker` true.
 	 */
 	public function test_urls_answers_pages(): void {
 		$this->seed_kotuku();
