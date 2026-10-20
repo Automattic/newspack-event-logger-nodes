@@ -121,6 +121,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public const BUFFERED_OPS_LIMIT = 20_000;
 
 	/**
+	 * Categories a timed request writes to the timing tables, its dearest by
+	 * self time with their entries: on a URL whose rule binds thousands of
+	 * hooks, the rest are a long tail of about 5% of its time. The request's
+	 * own record keeps every one, and auto-tune judges every one.
+	 */
+	public const TIMED_CATEGORIES = 100;
+
+	/**
 	 * Monotonic clock seam, replacing `hrtime( true )` where a builder times
 	 * its own quiet or a wait. Tests reassign it to step the monotonic clock
 	 * apart from the wall one. Signature: `function (): int`, nanoseconds.
@@ -623,9 +631,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * A timed request's profile as timing rows: each category, entry '', and
-	 * each of its entries, with whether the category is a listener span,
-	 * whose time already counts inside its hook's. A request's categories feed
+	 * A timed request's profile as timing rows: each of its
+	 * `TIMED_CATEGORIES` dearest categories by self time, ties by name,
+	 * entry '', and each of its entries, with whether the category is a
+	 * listener span, whose time already counts inside its hook's. Auto-tune
+	 * judges every category, the ones past the cut included. A request's categories feed
 	 * the auto-tune checks of its governing rule, the stamped one, else the
 	 * one its URL matches. A worker's feed only a rule written for the
 	 * platform's own work, a platform route or `/jobs` and below
@@ -647,6 +657,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$tunes = null !== $rule && $rule->is_log() && '' !== $rule->id
 			&& ( ! $worker || Log_Manager::serves_platform( $rule->pattern ) );
 		$rows  = [];
+		$times = [];
 		foreach ( $profiles as $category => $data ) {
 			if ( ! \is_string( $category ) || ! \is_array( $data ) ) {
 				continue;
@@ -655,16 +666,19 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$listener = 'listener' === $kind ? 1 : 0;
 			$time     = Core::num_float( $data['time'] ?? 0 );
 			$calls    = Core::num_int( $data['count'] ?? 0 );
-			$rows[]   = [ $category, '', $listener, $time, $calls ];
+			$times[ $category ]  = $time;
+			$rows[ $category ][] = [ $category, '', $listener, $time, $calls ];
 			foreach ( Core::arr( $data['entries'] ?? null ) as $name => $entry ) {
-				$entry  = Core::arr( $entry );
-				$rows[] = [ $category, (string) $name, $listener, Core::num_float( $entry[0] ?? 0 ), Core::num_int( $entry[1] ?? 0 ) ];
+				$entry               = Core::arr( $entry );
+				$rows[ $category ][] = [ $category, (string) $name, $listener, Core::num_float( $entry[0] ?? 0 ), Core::num_int( $entry[1] ?? 0 ) ];
 			}
 			if ( $tunes ) {
 				$this->tune( $rule, $category, $kind, $time, $calls );
 			}
 		}
-		return $rows;
+		$names = \array_map( 'strval', \array_keys( $times ) );
+		\array_multisort( \array_values( $times ), \SORT_DESC, \SORT_NUMERIC, $names, \SORT_ASC, \SORT_STRING );
+		return \array_merge( ...\array_map( static fn ( string $name ): array => $rows[ $name ], \array_slice( $names, 0, self::TIMED_CATEGORIES ) ) );
 	}
 
 	/**

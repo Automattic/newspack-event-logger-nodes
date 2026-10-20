@@ -1864,6 +1864,112 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayNotHasKey( 'r', $state['disable_custom_events'] );
 	}
 
+	/**
+	 * `$count` categories `cat-000` onward, dearest first: `cat-000` at
+	 * `$count` ms down to the last at 1 ms, each with two entries.
+	 *
+	 * @param int $count Categories.
+	 * @return array<string,array{time:float,count:int,entries:array<string,array{0:float,1:int}>}>
+	 */
+	private static function ranked_profiles( int $count ): array {
+		$profiles = [];
+		for ( $i = 0; $i < $count; $i++ ) {
+			$name              = \sprintf( 'cat-%03d', $i );
+			$profiles[ $name ] = [
+				'time'    => (float) ( $count - $i ),
+				'count'   => 3,
+				'entries' => [ "{$name} caller-a" => [ 0.5, 1 ], "{$name} caller-b" => [ 0.25, 2 ] ],
+			];
+		}
+		return $profiles;
+	}
+
+	/**
+	 * The category names one request writes to `timings` and to
+	 * `timings_site`, and the entries `timings` holds, each run under a
+	 * host of its own.
+	 *
+	 * @param array<string,mixed> $profiles The record's `profiles{}`.
+	 * @param string              $host     The run's host.
+	 * @return array{timings: list<string>, site: list<string>, entries: list<string>}
+	 */
+	private function written_categories( array $profiles, string $host ): array {
+		Core::node( 'fb' )?->remove_node();
+		$fb = $this->armed_flame_builder();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => "https://{$host}/cap-7741", 'profiles' => $profiles ] ) );
+		$fb->flush();
+		$names = fn ( string $table ): array => \array_column( $this->facts( "SELECT DISTINCT c.name FROM {$table} t JOIN servers s ON s.id = t.server_id JOIN categories c ON c.id = t.category_id WHERE s.name = '{$host}' ORDER BY c.name" ), 0 );
+		return [
+			'timings' => $names( 'timings' ),
+			'site'    => $names( 'timings_site' ),
+			'entries' => \array_column( $this->facts( "SELECT e.name FROM timings t JOIN servers s ON s.id = t.server_id JOIN entries e ON e.id = t.entry_id WHERE s.name = '{$host}' AND e.name <> '' ORDER BY e.name" ), 0 ),
+		];
+	}
+
+	/** Past `TIMED_CATEGORIES`, a request's cheapest categories and their entries are not written. */
+	public function test_a_request_writes_its_hundred_dearest_categories(): void {
+		$this->set_rule();
+		$written = $this->written_categories( self::ranked_profiles( 101 ), 'cap-101.test' );
+
+		$kept = \array_keys( self::ranked_profiles( 100 ) );
+		$this->assertSame( $kept, $written['timings'] );
+		$this->assertSame( $kept, $written['site'] );
+		$this->assertNotContains( 'cat-100 caller-a', $written['entries'] );
+		$this->assertContains( 'cat-099 caller-b', $written['entries'] );
+	}
+
+	/** A request at the cap writes every category. */
+	public function test_a_request_with_a_hundred_categories_writes_them_all(): void {
+		$this->set_rule();
+		$written = $this->written_categories( self::ranked_profiles( 100 ), 'cap-100.test' );
+
+		$this->assertCount( 100, $written['timings'] );
+		$this->assertCount( 200, $written['entries'] );
+	}
+
+	/** A tie at the cut keeps the earlier name, whatever order the record lists them in. */
+	public function test_a_tie_at_the_cut_keeps_the_earlier_name(): void {
+		$this->set_rule();
+		$profiles             = self::ranked_profiles( 100 );
+		$profiles['cat-099b'] = $profiles['cat-099'];
+
+		$listed   = $this->written_categories( $profiles, 'tie-listed.test' );
+		$reversed = $this->written_categories( \array_reverse( $profiles, true ), 'tie-reversed.test' );
+
+		$this->assertContains( 'cat-099', $listed['timings'] );
+		$this->assertNotContains( 'cat-099b', $listed['timings'] );
+		$this->assertSame( $listed['timings'], $reversed['timings'] );
+	}
+
+	/** Auto-tune judges every category, the ones the cap leaves unwritten included. */
+	public function test_auto_tune_judges_a_category_the_cap_cuts(): void {
+		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
+		$fb       = $this->unarmed_builder();
+		$profiles = [];
+		for ( $i = 0; $i < 139; $i++ ) {
+			$profiles[ \sprintf( 'busy-%03d', $i ) ] = [ 'time' => 70.0 + $i, 'count' => 5000, 'entries' => [] ];
+		}
+		$profiles['ruru_slow_render'] = [ 'time' => 61.5, 'count' => 1, 'entries' => [] ];
+
+		$this->fill_request( $fb, $this->completed_request( [ 'profiles' => $profiles ] ) );
+
+		$this->assertSame( [ 'ruru_slow_render' ], $fb->get_auto_tune_state()['add_significant_events']['r'] );
+	}
+
+	/** A listener ranks by its own time, so it is written though its hook is cut. */
+	public function test_a_kept_listener_writes_without_its_hook(): void {
+		$this->set_rule();
+		$profiles                              = self::ranked_profiles( 150 );
+		$profiles['kakapo_render hook']        = [ 'time' => 0.5, 'count' => 1, 'entries' => [] ];
+		$listener                              = Flame_Tree::listener_name( 'kakapo_cb', 10 );
+		$profiles[ $listener ]                 = [ 'time' => 148.5, 'count' => 1, 'entries' => [] ];
+
+		$written = $this->written_categories( $profiles, 'listener-cap.test' );
+
+		$this->assertContains( $listener, $written['timings'] );
+		$this->assertNotContains( 'kakapo_render hook', $written['timings'] );
+	}
+
 	/** No hook list holds a transport, so a noisy one is never disabled. */
 	public function test_a_noisy_transport_is_never_disabled(): void {
 		$this->set_rule( [ 'auto_disable_threshold' => 61 ] );
