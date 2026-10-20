@@ -49,7 +49,7 @@ export const rowsWire = ( columns, rows, extra = {} ) => ( {
 	available: true,
 	filters: {
 		filter: {},
-		bucket: '2026-09-28-14-40..2026-09-29-14-35',
+		bucket: '2026-09-28-14-40..2026-09-29-14-40',
 		search: '',
 	},
 	...extra,

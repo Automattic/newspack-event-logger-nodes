@@ -335,7 +335,8 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( 'adds across buckets', $properties['top_by']['description'] );
 		$this->assertStringContainsString( '`groups`', $tool['description'], 'it says what `groups` counts' );
 		$this->assertStringContainsString( 'one value', $properties['filter']['description'] );
-		$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30', $properties['bucket']['description'] );
+		$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30', $properties['bucket']['description'] );
+		$this->assertStringContainsString( 'up to the key that closes it', $properties['bucket']['description'] );
 		$this->assertStringContainsString( 'unless filtered `worker=0`', $tool['description'], 'it says worker traffic counts' );
 		$this->assertStringContainsString( 'sort by `url_name`', $tool['description'], 'it says a URL group sorts by its name' );
 		$this->assertStringContainsString( 'sort by `page_name`', $tool['description'], 'it says a page group sorts by its name' );
@@ -380,7 +381,7 @@ class McpControllerTest extends TestCase {
 		$decoded = \json_decode( \trim( \substr( $text, \strlen( '<site-data>' ), -\strlen( '</site-data>' ) ) ), true );
 		$this->assertSame( [ 'server', 'status', 'count' ], $decoded['columns'] );
 		$this->assertSame( [ [ 'kea.example', 503, 1 ], [ 'kea.example', 504, 1 ] ], $decoded['rows'] );
-		$this->assertSame( Bucket::key( Bucket::id( $now ) - 287 ) . '..' . Bucket::key( Bucket::id( $now ) ), $decoded['filters']['bucket'] );
+		$this->assertSame( Bucket::key( Bucket::id( $now ) - 287 ) . '..' . Bucket::key( Bucket::id( $now ) + 1 ), $decoded['filters']['bucket'] );
 	}
 
 	/**
@@ -611,7 +612,9 @@ class McpControllerTest extends TestCase {
 		foreach ( [ 'performance_urls', 'dump_url', 'performance_ask' ] as $tool ) {
 			$this->assertArrayHasKey( 'bucket', $tools[ $tool ]['args'], $tool );
 			$this->assertStringContainsString( 'Y-m-d-H-i', $tools[ $tool ]['args']['bucket'], $tool );
-			$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30', $tools[ $tool ]['args']['bucket'], $tool );
+			$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30', $tools[ $tool ]['args']['bucket'], $tool );
+			$this->assertStringContainsString( 'up to the key that closes it', $tools[ $tool ]['args']['bucket'], $tool );
+			$this->assertStringNotContainsString( 'inclusive', $tools[ $tool ]['args']['bucket'], $tool );
 			$this->assertStringContainsString( '288', $tools[ $tool ]['args']['bucket'], $tool );
 		}
 		$this->assertStringContainsString( '2,016 (seven days) for `requests` and 300 (25 hours) for `timings`', $tools['performance_query']['args']['bucket'], 'a query reaches its source\'s retention' );

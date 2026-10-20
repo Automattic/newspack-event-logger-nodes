@@ -90,7 +90,7 @@ const sliceOf = ( data, more = {} ) => ( {
  * @param {string}  bucket The selection it echoes.
  * @return {Object} The answer.
  */
-const uaAnswer = ( rows, bucket = '2026-09-28-14-40..2026-09-29-14-35' ) =>
+const uaAnswer = ( rows, bucket = '2026-09-28-14-40..2026-09-29-14-40' ) =>
 	rowsWire( [ 'bucket', 'ua', ...SERIES_MEASURES ], rows, {
 		filters: { filter: {}, bucket, search: '' },
 	} );
@@ -231,10 +231,10 @@ describe( 'OverviewSection', () => {
 			{},
 			{
 				chartSlice: sliceOf(
-					uaAnswer( [], '2026-09-29-14-25..2026-09-29-14-35' )
+					uaAnswer( [], '2026-09-29-14-25..2026-09-29-14-40' )
 				),
 				categoriesSlice: sliceOf(
-					uaAnswer( [], '2026-09-29-13-05..2026-09-29-13-15' )
+					uaAnswer( [], '2026-09-29-13-05..2026-09-29-13-20' )
 				),
 			}
 		);
@@ -249,7 +249,7 @@ describe( 'OverviewSection', () => {
 		const props = {
 			chartSlice: sliceOf( uaAnswer( [] ) ),
 			categoriesSlice: sliceOf(
-				uaAnswer( [], '2026-09-29-13-05..2026-09-29-13-15' )
+				uaAnswer( [], '2026-09-29-13-05..2026-09-29-13-20' )
 			),
 		};
 		const { rerender, unmount } = mount( {}, props );

@@ -164,8 +164,13 @@ among them. Disk-walking verbs work regardless. Every handler throws on bad inpu
 interpreter wraps the throw as a TM_ERROR reply, so no handler returns an error shape.
 
 A `--bucket` selection is `Bucket::selection()`'s spelling: comma-separated runs of
-`Y-m-d-H-i` UTC keys, each one bucket or `start..end` inclusive, none later than the
-current one. Empty means the last 288, the chart's 24 hours. `urls`, `dump_url` and `ask`
+`Y-m-d-H-i` UTC keys, each a lone key, its one bucket, or `start..end`, the buckets
+from `start` up to the key that closes the run, `end` not among them, so
+`2026-10-20-11-00..2026-10-20-19-00` is the 96 buckets 11:00 through 18:55. A run whose
+`end` is not after its `start` is refused, `a..a` among them, and so is a bucket later
+than the current one; a run may close at the end of the current bucket, its `end` the
+next key. The canonical spelling writes a lone bucket as its key and a run of several as
+its first key and the key closing it. Empty means the last 288, the chart's 24 hours. `urls`, `dump_url` and `ask`
 take at most 288 buckets; `query` takes as many as its source keeps, 2,016 for `requests`
 (seven days) and 300 for `timings` (25 hours), `Stats_Query::retention()`. Requests are
 kept seven days, so an older bucket holds no rows rather than raising.
@@ -209,7 +214,7 @@ For example, these `query` tokens ask for the five busiest status classes by buc
 hour:
 
 ```
-query requests bucket status_class --measure=count --top=5 --top_by=count --bucket=2026-10-15-14-00..2026-10-15-14-55
+query requests bucket status_class --measure=count --top=5 --top_by=count --bucket=2026-10-15-14-00..2026-10-15-15-00
 ```
 
 **`set`** is the normalized positional single-option writer (`set <option> <value>`) over a

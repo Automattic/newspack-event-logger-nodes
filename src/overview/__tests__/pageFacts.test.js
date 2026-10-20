@@ -142,11 +142,11 @@ test( "a URL names the modal's own selection, beside the table's filters", () =>
 		selectedUrl: { hash: 'kea', url: '/kea' },
 		urlDetail: { stats: { count: 17, avg_ms: 240, max_ms: 910 } },
 		detailFilters: {
-			bucket: '2026-10-04-13-40..2026-10-04-13-50',
+			bucket: '2026-10-04-13-40..2026-10-04-13-55',
 		},
 	} );
 
-	expect( facts.bucket ).toBe( '2026-10-04-13-40..2026-10-04-13-50' );
+	expect( facts.bucket ).toBe( '2026-10-04-13-40..2026-10-04-13-55' );
 	expect( facts.filters.bucket ).toBe( '2026-10-04-13-35,2026-10-04-14-00' );
 	expect( facts.stats.count ).toBe( 17 );
 } );

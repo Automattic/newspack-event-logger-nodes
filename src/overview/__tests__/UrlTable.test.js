@@ -652,7 +652,7 @@ describe( 'UrlTable', () => {
 	it( 'holds the selection in a Time field beside the search box', () => {
 		const onBucketChange = jest.fn();
 		const { container, unmount } = mount( {
-			bucket: '2026-10-04-13-30..2026-10-04-13-35,2026-10-04-14-00',
+			bucket: '2026-10-04-13-30..2026-10-04-13-40,2026-10-04-14-00',
 			slots: [ '2026-10-04-14-00' ],
 			onBucketChange,
 		} );
@@ -673,7 +673,7 @@ describe( 'UrlTable', () => {
 				.click()
 		);
 		expect( onBucketChange ).toHaveBeenCalledWith(
-			'2026-10-04-13-30..2026-10-04-13-35'
+			'2026-10-04-13-30..2026-10-04-13-40'
 		);
 		unmount();
 	} );

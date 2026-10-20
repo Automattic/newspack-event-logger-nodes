@@ -1373,7 +1373,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_hourly( [ 'hour' => $hour - 72, 'count' => 13 ] );
 		$this->seed_hourly( [ 'hour' => $hour - 1, 'count' => 4 ], partition: 3 );
 		$this->seed_hourly( [ 'hour' => $hour - 169, 'count' => 900 ] );
-		$week = Bucket::key( ( $hour - 168 ) * 12 ) . '..' . Bucket::key( $hour * 12 - 1 );
+		$week = Bucket::key( ( $hour - 168 ) * 12 ) . '..' . Bucket::key( $hour * 12 );
 
 		$reply = self::query( 'requests', 'day', '--measure=count', "--bucket={$week}", '--sort=day' );
 
@@ -1386,7 +1386,7 @@ final class StatsQueryTest extends TestCase {
 	public function test_a_query_past_its_sources_retention_is_refused(): void {
 		$latest = Bucket::id( self::NOW );
 		foreach ( [ [ 'requests', 2016 ], [ 'timings', 300 ] ] as [ $source, $kept ] ) {
-			$over = Bucket::key( $latest - $kept ) . '..' . Bucket::key( $latest );
+			$over = Bucket::key( $latest - $kept ) . '..' . Bucket::key( $latest + 1 );
 
 			$reply = self::query( $source, '--measure=' . ( 'requests' === $source ? 'count' : 'ms' ), "--bucket={$over}" );
 
@@ -1398,7 +1398,7 @@ final class StatsQueryTest extends TestCase {
 	public function test_the_url_table_keeps_the_charts_selection(): void {
 		$latest = Bucket::id( self::NOW );
 
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--bucket=' . Bucket::key( $latest - 288 ) . '..' . Bucket::key( $latest ) ] );
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--bucket=' . Bucket::key( $latest - 288 ) . '..' . Bucket::key( $latest + 1 ) ] );
 
 		$this->assertSame( 'bucket selection holds more than 288 buckets', \trim( Core::as_string( $reply ) ) );
 	}
@@ -1409,7 +1409,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'bucket' => $now - 5, 'status' => 204 ], partition: 3 );
 		$this->seed_request( [ 'bucket' => $now - 5, 'status' => 302 ], partition: 3 );
 		$this->seed_request( [ 'bucket' => $now - 9, 'status' => 204 ] );
-		$selection = Bucket::key( $now - 6 ) . '..' . Bucket::key( $now - 5 );
+		$selection = Bucket::key( $now - 6 ) . '..' . Bucket::key( $now - 4 );
 
 		$reply = self::query( 'requests', 'bucket', '--measure=count', '--measure=max_ms', '--filter=status_class=2', '--filter=status_class=5', "--bucket={$selection}" );
 
@@ -1441,7 +1441,7 @@ final class StatsQueryTest extends TestCase {
 		$reply = self::query( 'requests', '--measure=sum_ms' );
 
 		$this->assertSame( [ [ 6 ] ], $reply['rows'] );
-		$this->assertSame( Bucket::key( $now - 287 ) . '..' . Bucket::key( $now ), $reply['filters']['bucket'] );
+		$this->assertSame( Bucket::key( $now - 287 ) . '..' . Bucket::key( $now + 1 ), $reply['filters']['bucket'], 'the run closes at the end of the current bucket' );
 	}
 
 	public function test_the_query_verb_groups_positionally_and_pages(): void {

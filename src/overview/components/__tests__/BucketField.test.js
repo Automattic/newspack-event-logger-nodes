@@ -122,7 +122,7 @@ function mountField( value, slots = SLOTS ) {
 describe( 'BucketField', () => {
 	it( 'shows adjacent buckets as one token, a lone bucket as its own', () => {
 		const field = mountField(
-			'2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30'
+			'2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30'
 		);
 		expect( field.tokens() ).toEqual( [
 			'9:55–10:15 AM',
@@ -176,7 +176,7 @@ describe( 'BucketField', () => {
 
 	it( 'draws no Clear button, leaving each token its own ×', () => {
 		const field = mountField(
-			'2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30'
+			'2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30'
 		);
 
 		expect(
@@ -227,7 +227,7 @@ describe( 'BucketField', () => {
 		field.unmount();
 	} );
 
-	it( 'adds a typed range through the bucket opening at its end', () => {
+	it( 'adds a typed range stopping before the bucket opening at its end', () => {
 		const field = mountField( '' );
 		type( field.input(), '9:55-10:30' );
 		press( field.input(), 'Enter' );
@@ -235,7 +235,56 @@ describe( 'BucketField', () => {
 		expect( field.seen ).toEqual( [
 			'2026-10-05-16-55..2026-10-05-17-30',
 		] );
-		expect( field.tokens() ).toEqual( [ '9:55–10:35 AM' ] );
+		expect( field.tokens() ).toEqual( [ '9:55–10:30 AM' ] );
+		field.unmount();
+	} );
+
+	it( 'selects what the matching link selects, and reads it the same', () => {
+		const link = '2026-10-20-11-00..2026-10-20-19-00';
+		const typed = mountField( '', slotsEndingAt( '2026-10-20-19-30' ) );
+		type( typed.input(), '4:00-12:00' );
+		press( typed.input(), 'Enter' );
+		const linked = mountField( link, slotsEndingAt( '2026-10-20-19-30' ) );
+
+		expect( typed.seen ).toEqual( [ link ] );
+		expect( typed.tokens() ).toEqual( [ '4:00 AM–12:00 PM' ] );
+		expect( linked.tokens() ).toEqual( typed.tokens() );
+		typed.unmount();
+		linked.unmount();
+	} );
+
+	it( 'adds a range closing at the end of the latest charted bucket', () => {
+		const field = mountField( '' );
+		type( field.input(), '11:30-11:45' );
+		press( field.input(), 'Enter' );
+
+		expect( field.seen ).toEqual( [
+			'2026-10-05-18-30..2026-10-05-18-45',
+		] );
+		field.unmount();
+	} );
+
+	it( 'refuses a range ending off the five-minute grid, as it refuses such a time', () => {
+		const field = mountField( '' );
+		type( field.input(), '9:55-10:32' );
+		press( field.input(), 'Enter' );
+
+		expect( field.seen ).toEqual( [] );
+		expect(
+			field.container.querySelector( '[role="alert"]' ).textContent
+		).toBe( 'No charted bucket closes at 10:32.' );
+		field.unmount();
+	} );
+
+	it( 'refuses a range that does not end after it starts', () => {
+		const field = mountField( '' );
+		type( field.input(), '9:55-9:55' );
+		press( field.input(), 'Enter' );
+
+		expect( field.seen ).toEqual( [] );
+		expect(
+			field.container.querySelector( '[role="alert"]' ).textContent
+		).toBe( '9:55-9:55 does not end after it starts.' );
 		field.unmount();
 	} );
 
@@ -260,7 +309,7 @@ describe( 'BucketField', () => {
 			'2026-10-05-06-50..2026-10-05-07-05',
 		] );
 		expect( field.tokens() ).toEqual( [
-			'Oct 4, 11:50 PM–Oct 5, 12:10 AM',
+			'Oct 4, 11:50 PM–Oct 5, 12:05 AM',
 		] );
 		field.unmount();
 	} );
@@ -338,12 +387,12 @@ describe( 'BucketField', () => {
 
 	it( 'removes the last token on Backspace in an empty field', () => {
 		const field = mountField(
-			'2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30'
+			'2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30'
 		);
 		const event = press( field.input(), 'Backspace' );
 
 		expect( field.seen ).toEqual( [
-			'2026-10-05-16-55..2026-10-05-17-10',
+			'2026-10-05-16-55..2026-10-05-17-15',
 		] );
 		expect( event.defaultPrevented ).toBe( true );
 		field.unmount();
@@ -415,7 +464,7 @@ describe( 'BucketField', () => {
 
 	it( "removes one token through its ×, labelled with the token's span", () => {
 		const field = mountField(
-			'2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30'
+			'2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30'
 		);
 		const remove = field.container.querySelector(
 			'button[aria-label="Remove 9:55–10:15 AM"]'
