@@ -195,8 +195,8 @@ final class UrlSnapshotTest extends TestCase {
 
 	/**
 	 * Assert a published snapshot's listing of pages is the live `page` and
-	 * `server` group, its `shapes` and `hash` beside the live columns, and
-	 * answer its rows.
+	 * `server` group, its `shapes`, `hash` and `url_name` beside the live
+	 * columns, and answer its rows.
 	 *
 	 * @return list<list<mixed>> The listing's rows.
 	 */
@@ -224,10 +224,10 @@ final class UrlSnapshotTest extends TestCase {
 			]
 		);
 		$pages = $snapshot->pages( $server, $workers, Performance_CI_Node::PAGE_SORTS[ $sort ], $order, $offset, $limit );
-		$cut   = static fn ( array $rows ): array => \array_map( static fn ( array $row ): array => \array_slice( $row, 0, -2 ), $rows );
+		$cut   = static fn ( array $rows ): array => \array_map( static fn ( array $row ): array => \array_slice( $row, 0, -3 ), $rows );
 
 		$this->assertNotSame( [], $live['rows'], 'the question lists real rows' );
-		$this->assertSame( [ ...$live['columns'], 'shapes', 'hash' ], $pages['columns'] );
+		$this->assertSame( [ ...$live['columns'], 'shapes', 'hash', 'url_name' ], $pages['columns'] );
 		$this->assertSame( $live['rows'], $cut( $pages['rows'] ) );
 		$this->assertSame( $live['also'], $cut( $pages['also'] ) );
 		$this->assertTrue( $pages['available'] );

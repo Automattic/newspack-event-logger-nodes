@@ -28,9 +28,11 @@
  *
  * An expanded page adds one more polled slice, `shapes:<page key>`, asking
  * `urls --filter=page=<page hash>` on the page's own server under the
- * table's question from its first row, so its shape rows describe the traffic
- * its page row folds. It hangs off `performance:tee` while the page is
- * expanded and listed, and is asked afresh when the table's question moves.
+ * table's question, so its shape rows describe the traffic its page row
+ * folds, `SHAPES_PER_ASK` at a time from the offset the table reports for the
+ * shapes in view. It hangs off `performance:tee` while the page is expanded
+ * and listed, and is asked afresh when the table's question or that offset
+ * moves.
  *
  * ON-DEMAND slices. Opening a modal fetches; neither modal hangs off
  * `performance:timer`, and the overview poll pauses while either is open:
@@ -94,6 +96,8 @@ import {
 	CHART_TOP,
 	GROUPS,
 	SERIES_MEASURES,
+	SHAPES_PER_ASK,
+	pageKey,
 	shapesSubject,
 } from '../constants';
 
@@ -209,7 +213,11 @@ const DEFAULT_URL_PARAMS = {
 	offset: 0,
 	includeWorkers: false,
 	bucket: '',
+	shapeOffsets: {},
 };
+
+/** The rows one `urls` ask for the table lists: `UrlTable`'s page size. */
+const URLS_PER_ASK = 100;
 
 /**
  * The URL modal's bucket selection while nothing narrows it: the whole
@@ -394,9 +402,10 @@ const overviewArgs = ( serverFilter ) =>
  * scope. One verb answers for the table and for the header totals summed from
  * it, so the scope reaches both or the two contradict each other.
  *
- * `limit` is fixed at 100 because `UrlTable` derives every `offset` it sends
- * from its own `URLS_PER_PAGE`; the two numbers are one page size, split across
- * two files.
+ * The table's `limit` is `URLS_PER_ASK` because `UrlTable` derives every
+ * `offset` it sends from its own `URLS_PER_PAGE`; the two numbers are one page
+ * size, split across two files. An expanded page's shapes ask
+ * `SHAPES_PER_ASK`.
  *
  * `include_workers` widens a set the verb excludes by default, because a
  * long-running job would otherwise dominate every average on the page.
@@ -412,9 +421,10 @@ const overviewArgs = ( serverFilter ) =>
  * @param {string}   arg.serverFilter Server scope; '' means every server.
  * @param {string[]} arg.chips        The Overview chart's chips, each
  *                                    `field=value`.
+ * @param {number}   arg.limit        The most rows to list.
  * @return {string[]} The command token array.
  */
-function urlsArgs( { urlParams, serverFilter, chips } ) {
+function urlsArgs( { urlParams, serverFilter, chips, limit } ) {
 	const options = {};
 	if ( urlParams.sort ) {
 		options.sort = urlParams.sort;
@@ -422,7 +432,7 @@ function urlsArgs( { urlParams, serverFilter, chips } ) {
 	if ( urlParams.order ) {
 		options.order = urlParams.order;
 	}
-	options.limit = 100;
+	options.limit = limit;
 	if ( urlParams.offset ) {
 		options.offset = urlParams.offset;
 	}
@@ -563,6 +573,7 @@ export function usePerformanceGraph( opts = {} ) {
 				urlParams: urlParamsRef.current,
 				serverFilter: serverFilterRef.current,
 				chips: chipsRef.current,
+				limit: URLS_PER_ASK,
 			} ),
 		[]
 	);
@@ -666,7 +677,8 @@ export function usePerformanceGraph( opts = {} ) {
 
 	/**
 	 * Hang one expanded page's slice off the polled Tee: the table's question
-	 * from its first row, on the page's server and filtered to the page.
+	 * from the offset the table reports for the page's shapes in view, on the
+	 * page's server and filtered to the page.
 	 *
 	 * @param {Object} interpreter The graph's interpreter.
 	 * @param {Object} tee         The Tee the page's slices hang off.
@@ -676,9 +688,15 @@ export function usePerformanceGraph( opts = {} ) {
 	const addShapes = useCallback( ( interpreter, tee, page ) => {
 		const one = slice( shapesSubject( page ), 'urls', views.UrlsView, () =>
 			urlsArgs( {
-				urlParams: { ...urlParamsRef.current, offset: 0 },
+				urlParams: {
+					...urlParamsRef.current,
+					offset:
+						urlParamsRef.current.shapeOffsets[ pageKey( page ) ] ??
+						0,
+				},
 				serverFilter: page.server,
 				chips: [ ...chipsRef.current, `page=${ page.page_hash }` ],
+				limit: SHAPES_PER_ASK,
 			} )
 		);
 		addSliceFetcher( interpreter, {
@@ -687,7 +705,7 @@ export function usePerformanceGraph( opts = {} ) {
 			target: OVERVIEW_TARGET,
 		} );
 		Core.node( one.fetcher ).retry_after_s = STATS_NO_REASK;
-		shapesRef.current.set( shapesSubject( page ), one );
+		shapesRef.current.set( pageKey( page ), one );
 		return one;
 	}, [] );
 
@@ -697,17 +715,17 @@ export function usePerformanceGraph( opts = {} ) {
 	 * gate being `<receiver>:current`.
 	 *
 	 * @param {Object} interpreter The graph's interpreter.
-	 * @param {string} subject     The slice's subject.
+	 * @param {string} key         The page's `pageKey()`.
 	 */
-	const dropShapes = useCallback( ( interpreter, subject ) => {
-		const { fetcher, receiver, view } = shapesRef.current.get( subject );
+	const dropShapes = useCallback( ( interpreter, key ) => {
+		const { fetcher, receiver, view } = shapesRef.current.get( key );
 		interpreter.dispatch( 'remove_node', [
 			fetcher,
 			receiver,
 			`${ receiver }:current`,
 			view,
 		] );
-		shapesRef.current.delete( subject );
+		shapesRef.current.delete( key );
 	}, [] );
 
 	// Poll cadence (ms); an unparseable setting takes the declared default.
@@ -779,8 +797,8 @@ export function usePerformanceGraph( opts = {} ) {
 				if ( urlFetchTimerRef.current ) {
 					clearTimeout( urlFetchTimerRef.current );
 				}
-				for ( const subject of [ ...shapesRef.current.keys() ] ) {
-					dropShapes( interpreter, subject );
+				for ( const key of [ ...shapesRef.current.keys() ] ) {
+					dropShapes( interpreter, key );
 				}
 			};
 		},
@@ -857,7 +875,7 @@ export function usePerformanceGraph( opts = {} ) {
 	}, [ chartChips ] );
 
 	// A page expanded asks its shapes at once; a page shut drops its slice.
-	const expandedKey = JSON.stringify( expandedPages.map( shapesSubject ) );
+	const expandedKey = JSON.stringify( expandedPages.map( pageKey ) );
 	useEffect( () => {
 		const interpreter = interpreterRef.current;
 		const tee = Core.node( PERFORMANCE_TEE );
@@ -865,18 +883,15 @@ export function usePerformanceGraph( opts = {} ) {
 			return;
 		}
 		const wanted = new Map(
-			expandedRef.current.map( ( page ) => [
-				shapesSubject( page ),
-				page,
-			] )
+			expandedRef.current.map( ( page ) => [ pageKey( page ), page ] )
 		);
 		const shut = [ ...shapesRef.current.keys() ].filter(
-			( subject ) => ! wanted.has( subject )
+			( key ) => ! wanted.has( key )
 		);
 		const opened = [ ...wanted ].filter(
-			( [ subject ] ) => ! shapesRef.current.has( subject )
+			( [ key ] ) => ! shapesRef.current.has( key )
 		);
-		shut.forEach( ( subject ) => dropShapes( interpreter, subject ) );
+		shut.forEach( ( key ) => dropShapes( interpreter, key ) );
 		for ( const [ , page ] of opened ) {
 			ask( addShapes( interpreter, tee, page ) );
 		}
@@ -1027,13 +1042,16 @@ export function usePerformanceGraph( opts = {} ) {
 	 * every other change fetches at once: a sort or a page turn is one
 	 * deliberate click, while a search is a keystroke per character.
 	 *
-	 * @param {Object}  params                The table's live controls.
-	 * @param {string}  params.search         Substring filter; '' matches all.
-	 * @param {string}  params.sort           Sort field.
-	 * @param {string}  params.order          Sort direction.
-	 * @param {number}  params.offset         First row of the page.
-	 * @param {boolean} params.includeWorkers Include worker traffic.
-	 * @param {string}  params.bucket         Bucket selection's spelling; '' for none.
+	 * @param {Object}                params                The table's live controls.
+	 * @param {string}                params.search         Substring filter; '' matches all.
+	 * @param {string}                params.sort           Sort field.
+	 * @param {string}                params.order          Sort direction.
+	 * @param {number}                params.offset         First row of the page.
+	 * @param {boolean}               params.includeWorkers Include worker traffic.
+	 * @param {string}                params.bucket         Bucket selection's spelling; '' for none.
+	 * @param {Object<string,number>} [params.shapeOffsets] Each expanded
+	 *                                                      page in view, by `pageKey()`, to the offset its shapes are asked
+	 *                                                      from. A page it leaves out keeps the offset it last had.
 	 */
 	const handleUrlParamsChange = useCallback(
 		( params ) => {
@@ -1045,19 +1063,37 @@ export function usePerformanceGraph( opts = {} ) {
 				prev.order === params.order &&
 				!! prev.includeWorkers === !! params.includeWorkers &&
 				prev.bucket === params.bucket;
-			if ( sameQuestion && prev.offset === params.offset ) {
+			const shapeOffsets = {
+				...prev.shapeOffsets,
+				...params.shapeOffsets,
+			};
+			const scrolled = Object.keys( shapeOffsets ).filter(
+				( key ) =>
+					( prev.shapeOffsets[ key ] ?? 0 ) !== shapeOffsets[ key ]
+			);
+			const turned = prev.offset !== params.offset;
+			if ( sameQuestion && ! turned && ! scrolled.length ) {
 				return;
 			}
 			const searchChanged = prev.search !== params.search;
-			urlParamsRef.current = params;
+			urlParamsRef.current = { ...params, shapeOffsets };
 			if ( urlFetchTimerRef.current ) {
 				clearTimeout( urlFetchTimerRef.current );
 			}
 			// `urls:in:current` drops the answer to every ask this supersedes.
 			const doFetch = () => {
-				ask( pageSlices.urls );
+				if ( ! sameQuestion || turned ) {
+					ask( pageSlices.urls );
+				}
 				if ( ! sameQuestion ) {
 					askShapes();
+					return;
+				}
+				for ( const key of scrolled ) {
+					const one = shapesRef.current.get( key );
+					if ( one ) {
+						ask( one );
+					}
 				}
 			};
 			if ( searchChanged ) {

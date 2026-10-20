@@ -168,12 +168,13 @@ describe( 'UrlsView — the envelope slice', () => {
 		expect( v.view.totals ).toBeNull();
 	} );
 
-	test( 'unwraps data and totals, dropping limit and offset', () => {
+	test( 'unwraps data, totals and the offset its rows start at, dropping limit', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
 		expect( v.view ).toEqual( {
 			data: [],
 			totals: null,
 			rows: null,
+			offset: 0,
 			slowest: [],
 			filters: null,
 			loading: false,
@@ -196,6 +197,7 @@ describe( 'UrlsView — the envelope slice', () => {
 			data: [ { url: '/a' } ],
 			totals: { urls: 7331, requests: 90210 },
 			rows: 7331,
+			offset: 0,
 			slowest: [ { url: '/slow', avg_ms: 2600 } ],
 			filters: { server: 'edge-01', search: '', filter: [] },
 			loading: false,
@@ -223,6 +225,7 @@ describe( 'UrlsView — the envelope slice', () => {
 			'error',
 			'filters',
 			'loading',
+			'offset',
 			'rows',
 			'slowest',
 			'totals',
@@ -256,5 +259,41 @@ describe( 'UrlsView — the envelope slice', () => {
 		expect( v.view.data ).toEqual( [ { url: '/a' } ] );
 		expect( v.view.totals ).toEqual( { urls: 7331 } );
 		expect( v.view.error ).toBe( 'query timed out' );
+	} );
+} );
+
+describe( "UrlsView — an expanded page's window of shapes", () => {
+	test( 'keeps the offset its rows start at, beside the envelope', () => {
+		const v = makeView(
+			'UrlsView',
+			'shapes:c0de4417aa01:moa.example:view'
+		);
+		expect( v.view.offset ).toBe( 0 );
+		expect( v.view.rows ).toBeNull();
+
+		v.fill(
+			reply( 'urls', {
+				data: [
+					{ hash: 'b4417c0de001', url: 'https://moa.example/?k=?' },
+				],
+				totals: { urls: 4417 },
+				rows: 4417,
+				slowest: [],
+				filters: null,
+				limit: 1000,
+				offset: 3500,
+			} )
+		);
+
+		expect( v.view ).toEqual( {
+			data: [ { hash: 'b4417c0de001', url: 'https://moa.example/?k=?' } ],
+			totals: { urls: 4417 },
+			rows: 4417,
+			offset: 3500,
+			slowest: [],
+			filters: null,
+			loading: false,
+			error: null,
+		} );
 	} );
 } );

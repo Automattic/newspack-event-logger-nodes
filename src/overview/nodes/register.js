@@ -55,18 +55,19 @@ export const views = registerSliceViews( {
 	),
 
 	/**
-	 * `urls:view` — the always-on URL leaderboard, and each expanded page's
-	 * shapes.
+	 * `urls:view` — the always-on URL leaderboard — and each expanded page's
+	 * `shapes:<page key>:view`.
 	 *
 	 * The `urls` verb answers an envelope, `{ data, rows, totals, slowest,
 	 * filters, limit, offset }`, so the payload is not the slice. `rows`
-	 * counts the pages the filters left, which `<UrlTable>` paginates on, or
-	 * under a page filter the page's URLs, and
-	 * `totals` is the same set's headline numbers. `slowest` is the set ranked
-	 * by `avg_ms` for the facts block, and `limit` / `offset` are dropped
-	 * because the fetcher's own args produced them. `filters` says what the
-	 * totals are OF, echoed by the verb rather than read back off the client,
-	 * so it describes the data in hand and not what was typed since.
+	 * counts the rows the filters left, the pages `<UrlTable>` paginates on,
+	 * or under a page filter that page's URLs, and `totals` is the same set's
+	 * headline numbers. `slowest` is the set ranked by `avg_ms` for the facts
+	 * block. `offset` is where the rows start, which places an expanded
+	 * page's window of shapes beneath it; `limit` is dropped, the fetcher's
+	 * own args having produced it. `filters` says what the totals are OF,
+	 * echoed by the verb rather than read back off the client, so it
+	 * describes the data in hand and not what was typed since.
 	 *
 	 * A malformed envelope publishes an empty table rather than throwing,
 	 * and no totals rather than zeroes: a zero here reads as a measurement.
@@ -79,6 +80,7 @@ export const views = registerSliceViews( {
 			data: [],
 			totals: null,
 			rows: null,
+			offset: 0,
 			slowest: [],
 			filters: null,
 			loading: false,
@@ -91,6 +93,7 @@ export const views = registerSliceViews( {
 						data: ( payload && payload.data ) || [],
 						totals: ( payload && payload.totals ) || null,
 						rows: ( payload && payload.rows ) || 0,
+						offset: ( payload && payload.offset ) || 0,
 						slowest: ( payload && payload.slowest ) || [],
 						filters: ( payload && payload.filters ) || null,
 				  },

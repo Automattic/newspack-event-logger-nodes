@@ -41,6 +41,7 @@ const asPage = ( { hash, path, ...measures } ) => ( {
 	path,
 	shapes: 1,
 	hash,
+	url: `https://kea.example${ path }`,
 	...measures,
 } );
 
@@ -523,6 +524,7 @@ describe( 'UrlTable', () => {
 			offset: 0,
 			includeWorkers: false,
 			bucket: '',
+			shapeOffsets: {},
 		} );
 		unmount();
 	} );
@@ -1015,6 +1017,7 @@ describe( 'the address bar', () => {
 			offset: 0,
 			includeWorkers: true,
 			bucket: '',
+			shapeOffsets: {},
 		} );
 		expect( container.querySelector( 'input' ).value ).toBe( 'wp-cron' );
 		expect( button( container, ( t ) => t.startsWith( 'Avg' ) ) ).toBe(
@@ -1229,6 +1232,7 @@ describe( 'pages and their shapes', () => {
 		server: 'tui-3381.example',
 		path: '/piwakawaka-3381/',
 		shapes: 3,
+		url: 'https://tui-3381.example/piwakawaka-3381/',
 		hash: null,
 		count: 61,
 		count_2xx: 61,
@@ -1245,6 +1249,7 @@ describe( 'pages and their shapes', () => {
 		server: 'tui-3381.example',
 		path: '/ruru-3381/',
 		shapes: 1,
+		url: 'https://tui-3381.example/Ruru-3381/?kaka=?',
 		hash: 'd4a1e00c3381',
 		count: 29,
 		count_2xx: 29,
@@ -1318,7 +1323,9 @@ describe( 'pages and their shapes', () => {
 		} );
 
 		const [ row ] = rowsOf( container );
-		expect( row.textContent ).toContain( 'tui-3381.example/ruru-3381/' );
+		expect( row.textContent ).toContain(
+			'https://tui-3381.example/Ruru-3381/?kaka=?'
+		);
 		expect( row.getAttribute( 'data-ask' ) ).toBe( 'url:d4a1e00c3381' );
 		expect( row.getAttribute( 'aria-expanded' ) ).toBeNull();
 		expect( row.querySelector( '.newspack-nodes-disclosure' ) ).toBeNull();
@@ -1330,16 +1337,21 @@ describe( 'pages and their shapes', () => {
 		unmount();
 	} );
 
-	it( 'shows a page under the server it is scoped to by its path', () => {
+	it( 'names a page by its url, its server shown in a narrowed table too', () => {
 		const { container, unmount } = mount( {
-			urls: [ RURU ],
-			totalRows: 1,
+			urls: [ RURU, PIWAKAWAKA ],
+			totalRows: 2,
 			server: 'tui-3381.example',
 		} );
 
-		const cell =
-			rowsOf( container )[ 0 ].querySelector( '[data-field="url"]' );
-		expect( cell.textContent ).toBe( '/ruru-3381/' );
+		const names = rowsOf( container ).map(
+			( row ) =>
+				row.querySelector( '[data-field="url"] code' ).textContent
+		);
+		expect( names ).toEqual( [
+			'https://tui-3381.example/Ruru-3381/?kaka=?',
+			'https://tui-3381.example/piwakawaka-3381/',
+		] );
 		unmount();
 	} );
 
@@ -1390,7 +1402,7 @@ describe( 'pages and their shapes', () => {
 		);
 		expect( rows[ 2 ].textContent ).toContain( SHAPES[ 1 ].url );
 		expect( rows[ 3 ].classList.contains( 'is-shape' ) ).toBe( true );
-		expect( rows[ 4 ].textContent ).toContain( 'ruru-3381' );
+		expect( rows[ 4 ].textContent ).toContain( 'Ruru-3381' );
 		// Every row, a shape's included, keeps the table's one height.
 		expect( mockVirtualization.mock.calls.at( -1 )[ 2 ] ).toBe( 5 );
 		for ( const row of rows ) {
@@ -1467,17 +1479,107 @@ describe( 'pages and their shapes', () => {
 		unmount();
 	} );
 
-	it( 'shows a page of more shapes than one page holds, then how many more', () => {
-		const big = { ...PIWAKAWAKA, shapes: 137 };
+	/**
+	 * `count` shape rows from `from`, each its own URL, as one window holds.
+	 *
+	 * @param {number} from  The first shape's position under its page.
+	 * @param {number} count How many.
+	 * @return {Object[]} The rows.
+	 */
+	const shapesFrom = ( from, count ) =>
+		Array.from( { length: count }, ( _, i ) => ( {
+			hash: `5a${ ( from + i ).toString( 16 ).padStart( 10, '0' ) }`,
+			url: `https://tui-3381.example/piwakawaka-3381/?k${ from + i }=?`,
+			count: 2,
+		} ) );
+
+	/**
+	 * Show the virtualizer's window over `[ start, start + size )`.
+	 *
+	 * @param {number} start First row shown.
+	 * @param {number} size  How many rows show.
+	 */
+	const scrollTo = ( start, size ) =>
+		mockVirtualization.mockImplementation( ( _ref, _row, total ) => ( {
+			startIndex: start,
+			endIndex: Math.min( start + size, total ),
+			paddingTop: 0,
+			paddingBottom: 0,
+			offsetTop: 0,
+			totalHeight: total * 40,
+		} ) );
+
+	afterEach( () => scrollTo( 0, Infinity ) );
+
+	it( 'renders every shape of a page of more than 100, with no note', () => {
+		shapesView( PIWAKAWAKA_VIEW, {
+			data: shapesFrom( 0, 137 ),
+			rows: 137,
+			offset: 0,
+		} );
 		const { container, unmount } = mount( {
-			urls: [ big ],
+			urls: [ { ...PIWAKAWAKA, shapes: 137 } ],
 			totalRows: 1,
 			expanded: [ PIWAKAWAKA_KEY ],
 		} );
 
 		const rows = rowsOf( container );
-		expect( rows ).toHaveLength( 1 + 100 + 1 );
-		expect( rows.at( -1 ).textContent ).toContain( '37 more URLs' );
+		expect( rows ).toHaveLength( 1 + 137 );
+		expect( rows.at( -1 ).textContent ).toContain(
+			'piwakawaka-3381/?k136=?'
+		);
+		expect( container.querySelector( '.is-note' ) ).toBeNull();
+		unmount();
+	} );
+
+	it( 'loads the next window of a page of more shapes than one ask returns', () => {
+		shapesView( PIWAKAWAKA_VIEW, {
+			data: shapesFrom( 1500, 900 ),
+			rows: 2400,
+			offset: 1500,
+		} );
+		const onParamsChange = jest.fn();
+		const props = {
+			urls: [ { ...PIWAKAWAKA, shapes: 2400 } ],
+			selectedUrl: null,
+			onSelect: jest.fn(),
+			onParamsChange,
+			totalRows: 1,
+			expanded: [ PIWAKAWAKA_KEY ],
+		};
+		scrollTo( 0, 30 );
+		const { container, rerender, unmount } = renderComponent(
+			React.createElement( UrlTable, props )
+		);
+		expect( onParamsChange.mock.lastCall[ 0 ].shapeOffsets ).toEqual( {
+			[ PIWAKAWAKA_KEY ]: 0,
+		} );
+
+		// Row 1 is the page; its shape 1700 is row 1701.
+		scrollTo( 1701, 30 );
+		act( () => rerender( React.createElement( UrlTable, props ) ) );
+
+		expect( onParamsChange.mock.lastCall[ 0 ].shapeOffsets ).toEqual( {
+			[ PIWAKAWAKA_KEY ]: 1500,
+		} );
+		const [ first ] = rowsOf( container );
+		expect( first.textContent ).toContain( 'piwakawaka-3381/?k1700=?' );
+		expect( mockVirtualization.mock.lastCall[ 2 ] ).toBe( 1 + 2400 );
+		unmount();
+	} );
+
+	it( 'says how many shapes lie past the last window the server serves', () => {
+		scrollTo( 1 + 11000 - 3, 10 );
+		const { container, unmount } = mount( {
+			urls: [ { ...PIWAKAWAKA, shapes: 11237 } ],
+			totalRows: 1,
+			expanded: [ PIWAKAWAKA_KEY ],
+		} );
+
+		expect( mockVirtualization.mock.lastCall[ 2 ] ).toBe( 1 + 11000 + 1 );
+		expect( rowsOf( container ).at( -1 ).textContent ).toBe(
+			'237 more URLs, past the first 11,000 the server lists'
+		);
 		unmount();
 	} );
 

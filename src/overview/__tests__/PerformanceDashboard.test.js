@@ -3868,4 +3868,165 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 	} );
+
+	describe( 'a URL of one request', () => {
+		const KIWI = 'c1a7e0f45108';
+		const KIWI_URL = 'https://hoiho-5108.example/Kiwi-5108/?toroa=?';
+
+		/**
+		 * A loaded view whose URL window answered `requests` for KIWI.
+		 *
+		 * @param {Object[]} requests The rows its `dump_url` listed.
+		 * @return {Object} The view model.
+		 */
+		const answered = ( requests ) =>
+			loadedView( {
+				urlDetail: {
+					data: {
+						stats: { hash: KIWI, url: KIWI_URL, count: 1 },
+						requests,
+					},
+					loading: false,
+					error: null,
+				},
+			} );
+
+		/**
+		 * Click the table's row for KIWI, then render the selection it made.
+		 *
+		 * @param {Function} rerender The mount's rerender.
+		 * @param {number}   count    The row's request count.
+		 */
+		const clickRow = async ( rerender, count ) => {
+			act( () =>
+				globalThis.__urlTableProps.onSelect( {
+					hash: KIWI,
+					url: KIWI_URL,
+					count,
+				} )
+			);
+			await act( async () => rerender( dashboard() ) );
+			await flushEffects();
+		};
+
+		it( 'opens the request detail of a one-request row by its rid', async () => {
+			mockView = answered( [ { rid: 'kiwi5108rid', status: 200 } ] );
+			const { rerender, unmount } = mountDash();
+			await flushEffects();
+
+			await clickRow( rerender, 1 );
+
+			expect( mockNavState.selectUrl ).toHaveBeenCalledWith(
+				expect.objectContaining( { hash: KIWI } )
+			);
+			expect( mockNavState.selectRequest ).toHaveBeenLastCalledWith(
+				'kiwi5108rid'
+			);
+			unmount();
+		} );
+
+		it( 'paints no URL window before a one-request row opens its request', async () => {
+			mockView = loadedView();
+			const { container, rerender, unmount } = mountDash();
+			await flushEffects();
+
+			await clickRow( rerender, 1 );
+			expect( mockNavState.selectedUrl.hash ).toBe( KIWI );
+			expect(
+				container.querySelector( '[data-testid="modal"]' )
+			).toBeNull();
+
+			mockView = answered( [ { rid: 'kiwi5108rid', status: 200 } ] );
+			await act( async () => rerender( dashboard() ) );
+			await flushEffects();
+			expect( mockNavState.selectedRequest ).toBe( 'kiwi5108rid' );
+			await act( async () => rerender( dashboard() ) );
+			expect(
+				container.querySelector( '[data-testid="url-detail"]' )
+			).toBeNull();
+			expect( container.textContent ).toContain( 'Loading request' );
+			unmount();
+		} );
+
+		it( "holds a one-request row's window past the last window's error", async () => {
+			mockView = loadedView( {
+				urlDetail: {
+					data: null,
+					loading: false,
+					error: 'moa7731 stats will not open',
+				},
+			} );
+			const { container, rerender, unmount } = mountDash();
+			await flushEffects();
+
+			await clickRow( rerender, 1 );
+			expect(
+				container.querySelector( '[data-testid="modal"]' )
+			).toBeNull();
+
+			mockView = answered( [ { rid: 'kiwi5108rid', status: 200 } ] );
+			await act( async () => rerender( dashboard() ) );
+			await flushEffects();
+			expect( mockNavState.selectedRequest ).toBe( 'kiwi5108rid' );
+			await act( async () => rerender( dashboard() ) );
+			expect(
+				container.querySelector( '[data-testid="url-detail"]' )
+			).toBeNull();
+			unmount();
+		} );
+
+		it( 'paints the URL window when its dump_url refuses', async () => {
+			mockView = loadedView();
+			const { container, rerender, unmount } = mountDash();
+			await flushEffects();
+			await clickRow( rerender, 1 );
+
+			mockView = loadedView( {
+				urlDetail: {
+					data: null,
+					loading: false,
+					error: 'kiwi5108 stats will not open',
+				},
+			} );
+			await act( async () => rerender( dashboard() ) );
+			await flushEffects();
+
+			expect( container.textContent ).toContain(
+				'Could not load this URL: kiwi5108 stats will not open'
+			);
+			unmount();
+		} );
+
+		it( 'opens the URL window of a row of two requests', async () => {
+			mockView = answered( [
+				{ rid: 'kiwi5108one', status: 200 },
+				{ rid: 'kiwi5108two', status: 200 },
+			] );
+			const { rerender, unmount } = mountDash();
+			await flushEffects();
+
+			await clickRow( rerender, 2 );
+
+			expect( mockNavState.selectedUrl.hash ).toBe( KIWI );
+			expect( mockNavState.selectRequest ).not.toHaveBeenCalledWith(
+				'kiwi5108one'
+			);
+			expect( mockNavState.selectedRequest ).toBeNull();
+			unmount();
+		} );
+
+		it( 'stays on the URL window when its one request comes back as none', async () => {
+			mockView = answered( [] );
+			const { container, rerender, unmount } = mountDash();
+			await flushEffects();
+
+			await clickRow( rerender, 1 );
+
+			expect( mockNavState.selectedRequest ).toBeNull();
+			expect(
+				container.querySelector( '[data-testid="url-detail"]' )
+			).toBeTruthy();
+			unmount();
+		} );
+	} );
 } );
