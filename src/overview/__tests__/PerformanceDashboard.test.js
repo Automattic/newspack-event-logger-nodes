@@ -2240,10 +2240,10 @@ describe( 'PerformanceDashboard', () => {
 
 			await click( '2026-10-04-13-40', true );
 			expect( bucketParam() ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-40'
+				'2026-10-04-13-35..2026-10-04-13-45'
 			);
 			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-40'
+				'2026-10-04-13-35..2026-10-04-13-45'
 			);
 			expect( globalThis.__overviewProps.selectedBuckets ).toEqual( [
 				'2026-10-04-13-35',
@@ -2273,15 +2273,15 @@ describe( 'PerformanceDashboard', () => {
 				false
 			);
 			expect( bucketParam() ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-45'
+				'2026-10-04-13-35..2026-10-04-13-50'
 			);
 
 			await drag( [ '2026-10-04-14-10', '2026-10-04-14-15' ], true );
 			expect( bucketParam() ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10..2026-10-04-14-15'
+				'2026-10-04-13-35..2026-10-04-13-50,2026-10-04-14-10..2026-10-04-14-20'
 			);
 			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10..2026-10-04-14-15'
+				'2026-10-04-13-35..2026-10-04-13-50,2026-10-04-14-10..2026-10-04-14-20'
 			);
 		} );
 
@@ -2299,7 +2299,7 @@ describe( 'PerformanceDashboard', () => {
 			window.history.replaceState(
 				null,
 				'',
-				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35..2026-10-04-13-40,2026-10-04-14-00'
+				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-00'
 			);
 			mockNavState.selectedUrl = null;
 			mockView = loadedView();
@@ -2308,21 +2308,21 @@ describe( 'PerformanceDashboard', () => {
 
 			await act( async () => {
 				globalThis.__urlTableProps.onBucketChange(
-					'2026-10-04-13-35..2026-10-04-13-40'
+					'2026-10-04-13-35..2026-10-04-13-45'
 				);
 			} );
 			expect( bucketParam() ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-40'
+				'2026-10-04-13-35..2026-10-04-13-45'
 			);
 			expect( globalThis.__urlTableProps.bucket ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-40'
+				'2026-10-04-13-35..2026-10-04-13-45'
 			);
 
 			// The urls reply echoes the selection it was asked under.
 			mockView = loadedView( {
 				urls: {
 					data: [],
-					filters: { bucket: '2026-10-04-13-35..2026-10-04-13-40' },
+					filters: { bucket: '2026-10-04-13-35..2026-10-04-13-45' },
 					loading: false,
 					error: null,
 				},
@@ -2347,7 +2347,7 @@ describe( 'PerformanceDashboard', () => {
 			target.remove();
 
 			expect( sentTo( 'ask' ).at( -1 ) ).toContain(
-				'--bucket=2026-10-04-13-35..2026-10-04-13-40'
+				'--bucket=2026-10-04-13-35..2026-10-04-13-45'
 			);
 		} );
 
@@ -2416,11 +2416,11 @@ describe( 'PerformanceDashboard', () => {
 
 			await act( async () => {
 				globalThis.__urlDetailProps.onBucketChange(
-					( held ) => `${ held }..2026-10-04-13-40`
+					( held ) => `${ held }..2026-10-04-13-45`
 				);
 			} );
 			expect( mockGraphOpts.detailFilters.bucket ).toBe(
-				'2026-10-04-13-35..2026-10-04-13-40'
+				'2026-10-04-13-35..2026-10-04-13-45'
 			);
 			expect( globalThis.__urlTableProps.bucket ).toBe(
 				'2026-10-04-13-35'

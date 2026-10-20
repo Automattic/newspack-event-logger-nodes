@@ -6,6 +6,15 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **A bucket run's `end` is exclusive.** In `--bucket`, the MCP `bucket`
+  argument, `?bucket=` and `?url_bucket=`, `start..end` is the buckets from
+  `start` up to the one `end` opens, `end` not among them, and
+  `filters.bucket` echoes runs that way. A run written for the old
+  inclusive meaning now selects one bucket fewer: write its `end` as the
+  key after its last bucket, so `11-00..18-55` becomes `11-00..19-00`. A
+  run `a..a` is refused rather than selecting `a`; write the lone key `a`.
+  Nothing reads the old meaning.
+
 - **`urls` and the MCP `performance_urls` tool list pages, not URLs.** A
   page is a URL's lowercased host and path, every query key folded, and a
   row is one page on one server, folding every URL of it. A row carries

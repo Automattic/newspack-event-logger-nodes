@@ -83,27 +83,29 @@ class BucketTest extends TestCase {
 	}
 
 	/**
-	 * Cases of one fixture section, keyed by their spelling.
+	 * Cases of one fixture section, keyed by their spelling: the spelling,
+	 * its keys, and the canonical spelling they write, which a canonical
+	 * case is itself.
 	 *
 	 * @param string $section The fixture key.
-	 * @return array<string,array{0:string,1:list<string>}>
+	 * @return array<string,array{0:string,1:list<string>,2:string}>
 	 */
 	private static function spelled( string $section ): array {
 		$out = [];
 		foreach ( Core::arr( self::selection_cases()[ $section ] ?? null ) as $case ) {
-			$case = Core::arr( $case );
+			$case             = Core::arr( $case );
 			$spelling         = Core::as_string( $case['spelling'] );
-			$out[ $spelling ] = [ $spelling, \array_values( \array_map( Core::as_string( ... ), Core::arr( $case['keys'] ) ) ) ];
+			$out[ $spelling ] = [ $spelling, \array_values( \array_map( Core::as_string( ... ), Core::arr( $case['keys'] ) ) ), Core::as_string( $case['canonical'] ?? $spelling ) ];
 		}
 		return $out;
 	}
 
-	/** @return array<string,array{0:string,1:list<string>}> */
+	/** @return array<string,array{0:string,1:list<string>,2:string}> */
 	public static function canonical_selections(): array {
 		return self::spelled( 'canonical' );
 	}
 
-	/** @return array<string,array{0:string,1:list<string>}> */
+	/** @return array<string,array{0:string,1:list<string>,2:string}> */
 	public static function loose_selections(): array {
 		return self::spelled( 'normalizes' );
 	}
@@ -148,14 +150,31 @@ class BucketTest extends TestCase {
 	}
 
 	/**
-	 * A loose spelling parses to its keys ascending, each once.
+	 * A loose spelling parses to its keys ascending, each once, and writes
+	 * back canonical, touching runs joined.
 	 *
-	 * @param string       $spelling A non-canonical spelling.
-	 * @param list<string> $keys     The keys it names.
+	 * @param string       $spelling  A non-canonical spelling.
+	 * @param list<string> $keys      The keys it names.
+	 * @param string       $canonical The spelling those keys write.
 	 */
 	#[DataProvider( 'loose_selections' )]
-	public function test_a_loose_selection_normalizes( string $spelling, array $keys ): void {
-		$this->assertSame( $keys, self::keys_of( Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION ) ) );
+	public function test_a_loose_selection_normalizes( string $spelling, array $keys, string $canonical ): void {
+		$ranges = Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION );
+
+		$this->assertSame( $keys, self::keys_of( $ranges ) );
+		$this->assertSame( $canonical, Bucket::spelling( $ranges ) );
+	}
+
+	/**
+	 * A run names its close, so `11-00..19-00` is the 96 buckets 11:00
+	 * through 18:55, and a lone key is its one bucket.
+	 */
+	public function test_a_run_ends_before_the_key_closing_it(): void {
+		$ranges = Bucket::selection( '2026-10-20-11-00..2026-10-20-19-00', \gmmktime( 0, 0, 0, 10, 21, 2026 ), Bucket::MAX_SELECTION );
+
+		$this->assertSame( [ [ Bucket::of_key( '2026-10-20-11-00' ), Bucket::of_key( '2026-10-20-18-55' ) ] ], $ranges );
+		$this->assertSame( 96, $ranges[0][1] - $ranges[0][0] + 1 );
+		$this->assertSame( [ '2026-10-20-11-00' ], self::keys_of( Bucket::selection( '2026-10-20-11-00', \gmmktime( 0, 0, 0, 10, 21, 2026 ), Bucket::MAX_SELECTION ) ) );
 	}
 
 	/** A selection is ranges of bucket ids, adjacent and overlapping runs merged. */
@@ -165,7 +184,7 @@ class BucketTest extends TestCase {
 
 		$this->assertSame(
 			[ [ $first, $first + 3 ], [ $apart, $apart ] ],
-			Bucket::selection( '2026-10-05-18-30,2026-10-05-16-55..2026-10-05-17-10,2026-10-05-17-00', self::now(), Bucket::MAX_SELECTION )
+			Bucket::selection( '2026-10-05-18-30,2026-10-05-16-55..2026-10-05-17-15,2026-10-05-17-00', self::now(), Bucket::MAX_SELECTION )
 		);
 		$this->assertSame( [], Bucket::selection( '', self::now(), Bucket::MAX_SELECTION ) );
 	}
@@ -187,7 +206,8 @@ class BucketTest extends TestCase {
 		foreach ( [
 			'2026-10-05-16-55,2026-10-05-16-57'  => 'bucket 2026-10-05-16-57 must be a five-minute key, Y-m-d-H-i in UTC',
 			'2026-10-05-16-55,kea'               => 'bucket kea must be a five-minute key, Y-m-d-H-i in UTC',
-			'2026-10-05-17-10..2026-10-05-16-55' => 'bucket run 2026-10-05-17-10..2026-10-05-16-55 ends before it starts',
+			'2026-10-05-17-10..2026-10-05-16-55' => 'bucket run 2026-10-05-17-10..2026-10-05-16-55 does not end after it starts',
+			'2026-10-05-16-55..2026-10-05-16-55' => 'bucket run 2026-10-05-16-55..2026-10-05-16-55 does not end after it starts',
 		] as $spelling => $message ) {
 			try {
 				Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION );
@@ -198,14 +218,18 @@ class BucketTest extends TestCase {
 		}
 	}
 
-	/** A bucket after the one `$now` falls in holds no rows, so it is refused. */
+	/**
+	 * A bucket after the one `$now` falls in holds no rows, so it is
+	 * refused; a run closing at the end of `$now`'s bucket ends in it.
+	 */
 	public function test_a_bucket_after_the_clock_is_refused(): void {
 		$now = \gmmktime( 9, 12, 41, 10, 5, 2026 );
 
 		$this->assertSame( [ [ Bucket::id( $now ), Bucket::id( $now ) ] ], Bucket::selection( '2026-10-05-09-10', $now, Bucket::MAX_SELECTION ) );
+		$this->assertSame( [ [ Bucket::id( $now ) - 1, Bucket::id( $now ) ] ], Bucket::selection( '2026-10-05-09-05..2026-10-05-09-15', $now, Bucket::MAX_SELECTION ) );
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'bucket 2026-10-05-09-15 is in the future' );
-		Bucket::selection( '2026-10-05-09-10..2026-10-05-09-15', $now, Bucket::MAX_SELECTION );
+		Bucket::selection( '2026-10-05-09-10..2026-10-05-09-20', $now, Bucket::MAX_SELECTION );
 	}
 
 	/**
@@ -215,10 +239,10 @@ class BucketTest extends TestCase {
 	 */
 	public function test_a_selection_past_the_limit_is_refused(): void {
 		$first = \gmmktime( 6, 40, 0, 10, 3, 2026 );
-		$last  = Bucket::key( Bucket::id( $first ) + 287 );
+		$close = Bucket::key( Bucket::id( $first ) + 288 );
 
-		$this->assertSame( [ [ Bucket::id( $first ), Bucket::id( $first ) + 287 ] ], Bucket::selection( "2026-10-03-06-40..{$last}", self::now(), Bucket::MAX_SELECTION ) );
-		foreach ( [ '2026-10-03-06-35..' . $last, "2026-10-03-06-40..{$last},2026-10-05-23-55", '2026-10-03-06-40..2026-10-05-23-55,2026-10-05-23-55..2026-10-05-23-55' ] as $over ) {
+		$this->assertSame( [ [ Bucket::id( $first ), Bucket::id( $first ) + 287 ] ], Bucket::selection( "2026-10-03-06-40..{$close}", self::now(), Bucket::MAX_SELECTION ) );
+		foreach ( [ '2026-10-03-06-35..' . $close, "2026-10-03-06-40..{$close},2026-10-05-23-55", '2026-10-03-06-40..2026-10-05-23-55,2026-10-05-23-55..2026-10-06-00-00' ] as $over ) {
 			try {
 				Bucket::selection( $over, \PHP_INT_MAX, Bucket::MAX_SELECTION );
 				$this->fail( "{$over} parsed" );

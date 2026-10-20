@@ -175,7 +175,7 @@ test( 'a pick carries the scope the page is showing', () => {
 			search: 'wp-admin',
 			filter: [ 'status_class=5', 'country=Kiribati' ],
 			include_workers: true,
-			bucket: '2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10',
+			bucket: '2026-10-04-13-35..2026-10-04-13-50,2026-10-04-14-10',
 		},
 	} );
 
@@ -201,7 +201,7 @@ test( 'a pick carries the scope the page is showing', () => {
 				server: 'alpha.example',
 				search: 'wp-admin',
 				include_workers: '1',
-				bucket: '2026-10-04-13-35..2026-10-04-13-45,2026-10-04-14-10',
+				bucket: '2026-10-04-13-35..2026-10-04-13-50,2026-10-04-14-10',
 			},
 			'--filter=status_class=5',
 			'--filter=country=Kiribati',

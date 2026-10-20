@@ -104,7 +104,7 @@ const sliceOf = ( data, more = {} ) => ( {
  * @param {string}  bucket The selection it echoes.
  * @return {Object} The answer.
  */
-const classAnswer = ( rows, bucket = '2026-09-28-14-40..2026-09-29-14-35' ) =>
+const classAnswer = ( rows, bucket = '2026-09-28-14-40..2026-09-29-14-40' ) =>
 	rowsWire( [ 'bucket', 'status_class', ...SERIES_MEASURES ], rows, {
 		filters: { filter: {}, bucket, search: '' },
 	} );
@@ -485,7 +485,7 @@ describe( 'UrlDetailView', () => {
 			)
 		).toEqual( [
 			'2026-10-04-13-50',
-			'2026-10-04-13-35..2026-10-04-13-40',
+			'2026-10-04-13-35..2026-10-04-13-45',
 			'',
 		] );
 		unmount();
@@ -510,8 +510,8 @@ describe( 'UrlDetailView', () => {
 				update( '2026-10-04-13-35' )
 			)
 		).toEqual( [
-			'2026-10-04-13-45..2026-10-04-13-55',
-			'2026-10-04-13-35,2026-10-04-13-45..2026-10-04-13-55',
+			'2026-10-04-13-45..2026-10-04-14-00',
+			'2026-10-04-13-35,2026-10-04-13-45..2026-10-04-14-00',
 		] );
 		unmount();
 	} );
@@ -530,7 +530,7 @@ describe( 'UrlDetailView', () => {
 	it( "shades the modal's own selection on both charts", () => {
 		const { unmount } = mount( {
 			filters: {
-				bucket: '2026-10-04-13-30..2026-10-04-13-35',
+				bucket: '2026-10-04-13-30..2026-10-04-13-40',
 			},
 		} );
 		expect( globalThis.__aggregateSelected ).toEqual( [
@@ -547,7 +547,7 @@ describe( 'UrlDetailView', () => {
 		const onBucketChange = jest.fn();
 		const { container, unmount } = mount( {
 			chartSlice: sliceOf(
-				classAnswer( [], '2026-10-04-13-05..2026-10-04-14-00' )
+				classAnswer( [], '2026-10-04-13-05..2026-10-04-14-05' )
 			),
 			filters: {
 				bucket: '2026-10-04-13-30,2026-10-04-13-40',
@@ -713,10 +713,10 @@ describe( 'UrlDetailView', () => {
 	it( 'draws each chart on the buckets its own answer read', () => {
 		const { container, unmount } = mount( {
 			chartSlice: sliceOf(
-				classAnswer( [], '2026-09-29-14-30..2026-09-29-14-40' )
+				classAnswer( [], '2026-09-29-14-30..2026-09-29-14-45' )
 			),
 			categoriesSlice: sliceOf(
-				classAnswer( [], '2026-09-29-14-25..2026-09-29-14-35' )
+				classAnswer( [], '2026-09-29-14-25..2026-09-29-14-40' )
 			),
 		} );
 		expect( container.textContent ).toContain( 'slots:2026-09-29-14-40 ' );
@@ -745,7 +745,7 @@ describe( 'UrlDetailView', () => {
 		const { props, rerender, unmount } = mount( {
 			chartSlice: sliceOf( classAnswer( [] ) ),
 			categoriesSlice: sliceOf(
-				classAnswer( [], '2026-09-29-13-05..2026-09-29-13-15' )
+				classAnswer( [], '2026-09-29-13-05..2026-09-29-13-20' )
 			),
 		} );
 		const [ aggregate, category ] = [

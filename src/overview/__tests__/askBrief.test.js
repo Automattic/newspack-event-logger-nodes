@@ -369,7 +369,7 @@ test( 'a brief under several runs names each as its local span', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',
 		url: '/kea',
-		bucket: '2026-10-04-23-50..2026-10-05-00-05,2026-10-05-09-15',
+		bucket: '2026-10-04-23-50..2026-10-05-00-10,2026-10-05-09-15',
 		stats: { count: 17 },
 		rule: null,
 		findings: [],
@@ -377,7 +377,7 @@ test( 'a brief under several runs names each as its local span', () => {
 	} );
 
 	expect( md ).toContain(
-		'**bucket:** 2026-10-04-23-50..2026-10-05-00-05,2026-10-05-09-15 (4:50–5:10 PM, 2:15–2:20 AM America/Los_Angeles)'
+		'**bucket:** 2026-10-04-23-50..2026-10-05-00-10,2026-10-05-09-15 (4:50–5:10 PM, 2:15–2:20 AM America/Los_Angeles)'
 	);
 } );
 

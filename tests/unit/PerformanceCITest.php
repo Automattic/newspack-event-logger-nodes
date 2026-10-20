@@ -2180,8 +2180,8 @@ class PerformanceCITest extends TestCase {
 				'overflowing'      => [ '2026-10-04-25-00', 'bucket 2026-10-04-25-00 must be a five-minute key, Y-m-d-H-i in UTC' ],
 				'future'           => [ '2026-10-05-09-15', 'bucket 2026-10-05-09-15 is in the future' ],
 				'one key off grid' => [ '2026-10-04-13-35,2026-10-04-13-41', 'bucket 2026-10-04-13-41 must be a five-minute key, Y-m-d-H-i in UTC' ],
-				'reversed run'     => [ '2026-10-04-13-40..2026-10-04-13-35', 'bucket run 2026-10-04-13-40..2026-10-04-13-35 ends before it starts' ],
-				'289 buckets'      => [ '2026-10-04-09-00..2026-10-05-09-00', 'bucket selection holds more than 288 buckets' ],
+				'reversed run'     => [ '2026-10-04-13-40..2026-10-04-13-35', 'bucket run 2026-10-04-13-40..2026-10-04-13-35 does not end after it starts' ],
+				'289 buckets'      => [ '2026-10-04-09-00..2026-10-05-09-05', 'bucket selection holds more than 288 buckets' ],
 			] as $why => [ $bucket, $message ] ) {
 				$out[ "{$verb}, {$why}" ] = [ \strtok( $verb, ' ' ), $args, $bucket, $message ];
 			}
@@ -3259,14 +3259,14 @@ class PerformanceCITest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://seed.example/a/', 'ms' => 40.5, 'bucket' => $latest - 10 ] );
 		$this->seed_request( [ 'url' => 'https://seed.example/b/', 'ms' => 60.5, 'bucket' => $latest - 3 ] );
 		$this->seed_request( [ 'url' => 'https://seed.example/a/', 'ms' => 500.0 ] );
-		$selection = Bucket::key( $latest - 3 ) . ',' . Bucket::key( $latest - 10 ) . '..' . Bucket::key( $latest - 9 );
+		$selection = Bucket::key( $latest - 3 ) . ',' . Bucket::key( $latest - 10 ) . '..' . Bucket::key( $latest - 8 );
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', "--bucket={$selection} --sort=url --order=asc" );
 
 		$this->assertSame( [ 'seed.example/a/' => 40.5, 'seed.example/b/' => 60.5 ], \array_column( $reply['data'], 'avg_ms', 'page' ) );
 		$this->assertSame( 2, $reply['totals']['requests'] );
 		$this->assertEqualsWithDelta( 2 / 900, $reply['totals']['requests_per_second'], 1e-12, 'three closed buckets of 300 seconds' );
-		$this->assertSame( Bucket::key( $latest - 10 ) . '..' . Bucket::key( $latest - 9 ) . ',' . Bucket::key( $latest - 3 ), $reply['filters']['bucket'], 'the canonical spelling' );
+		$this->assertSame( Bucket::key( $latest - 10 ) . '..' . Bucket::key( $latest - 8 ) . ',' . Bucket::key( $latest - 3 ), $reply['filters']['bucket'], 'the canonical spelling' );
 	}
 
 	public function test_urls_refuses_a_bucket_in_the_future(): void {
@@ -3999,7 +3999,7 @@ class PerformanceCITest extends TestCase {
 
 		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $url ) . ' --bucket=' . Bucket::key( $latest - 1 ) . ',' . Bucket::key( $latest - 2 ) );
 
-		$this->assertSame( Bucket::key( $latest - 2 ) . '..' . Bucket::key( $latest - 1 ), $brief['bucket'] );
+		$this->assertSame( Bucket::key( $latest - 2 ) . '..' . Bucket::key( $latest ), $brief['bucket'] );
 		$this->assertSame( [ 1, 44.5 ], [ $brief['stats']['count'], $brief['stats']['avg_ms'] ] );
 	}
 

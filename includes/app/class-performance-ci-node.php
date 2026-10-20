@@ -2379,7 +2379,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'page', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A page\'s hash, `page_hash`: answers that page\'s URL rows in place of pages. It owns the page field, so a `page=` or `page!=` filter beside it is refused.' ],
 						self::FILTER_ARG,
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
-						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end` inclusive, at most 288 buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last 288. `filters.bucket` echoes the canonical spelling.' ],
+						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end`, the buckets from `start` up to the key that closes it, `end` not among them, at most 288 buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last 288. `filters.bucket` echoes the canonical spelling.' ],
 					],
 					'handler'     => static fn ( self $self, array $args, array $envelope = [] ): array => $self->answered( 'urls', $args ),
 				],

@@ -337,7 +337,7 @@ describe( 'answerSlots', () => {
 	it( "draws the buckets an answer's echoed selection names, newest first", () => {
 		expect(
 			answerSlots( {
-				filters: { bucket: '2026-10-15-07-05..2026-10-15-07-15' },
+				filters: { bucket: '2026-10-15-07-05..2026-10-15-07-20' },
 			} )
 		).toEqual( [
 			'2026-10-15-07-15',
@@ -365,12 +365,19 @@ describe( 'bucketSpan', () => {
 
 	it( 'names each run of a selection as its local span, in order', () => {
 		expect(
-			bucketSpan( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30' )
+			bucketSpan( '2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30' )
 		).toBe( '9:55–10:15 AM, 11:30–11:35 AM' );
+	} );
+
+	it( 'names a run by the key that closes it', () => {
+		expect( bucketSpan( '2026-10-20-11-00..2026-10-20-19-00' ) ).toBe(
+			'4:00 AM–12:00 PM'
+		);
 	} );
 
 	it( 'answers null for a selection the server would refuse', () => {
 		expect( bucketSpan( '2026-10-05-17-10..2026-10-05-16-55' ) ).toBeNull();
+		expect( bucketSpan( '2026-10-05-16-55..2026-10-05-16-55' ) ).toBeNull();
 	} );
 } );
 
@@ -422,12 +429,26 @@ describe( 'bucketsOf and bucketSpelling', () => {
 		}
 	);
 
-	it.each( FIXTURE.normalizes.map( ( c ) => [ c.spelling, c.keys ] ) )(
-		'reads the loose spelling %j as ascending keys, each once',
-		( spelling, keys ) => {
+	it.each(
+		FIXTURE.normalizes.map( ( c ) => [ c.spelling, c.keys, c.canonical ] )
+	)(
+		'reads the loose spelling %j as ascending keys, each once, spelled canonical',
+		( spelling, keys, canonical ) => {
 			expect( bucketsOf( spelling ) ).toEqual( keys );
+			expect( bucketSpelling( keys ) ).toBe( canonical );
 		}
 	);
+
+	it( 'reads a run as the buckets before the key closing it', () => {
+		const keys = bucketsOf( '2026-10-20-11-00..2026-10-20-19-00' );
+
+		expect( keys ).toHaveLength( 96 );
+		expect( keys[ 0 ] ).toBe( '2026-10-20-11-00' );
+		expect( keys.at( -1 ) ).toBe( '2026-10-20-18-55' );
+		expect( bucketsOf( '2026-10-20-11-00' ) ).toEqual( [
+			'2026-10-20-11-00',
+		] );
+	} );
 
 	it.each( FIXTURE.refused )( 'selects nothing for %j', ( spelling ) => {
 		expect( bucketsOf( spelling ) ).toEqual( [] );
@@ -435,11 +456,11 @@ describe( 'bucketsOf and bucketSpelling', () => {
 
 	it( "holds a selection to the fixture's limit, as the server does", () => {
 		const first = '2026-10-03-06-40';
-		const full = `${ first }..${ keyAfter( first, FIXTURE.max - 1 ) }`;
+		const full = `${ first }..${ keyAfter( first, FIXTURE.max ) }`;
 
 		expect( bucketsOf( full ) ).toHaveLength( FIXTURE.max );
 		expect(
-			bucketsOf( `${ first }..${ keyAfter( first, FIXTURE.max ) }` )
+			bucketsOf( `${ first }..${ keyAfter( first, FIXTURE.max + 1 ) }` )
 		).toEqual( [] );
 		expect( bucketsOf( `${ full },2026-10-05-23-55` ) ).toEqual( [] );
 	} );
@@ -573,7 +594,7 @@ describe( 'useBucketSelection', () => {
 		return result.current[ 0 ];
 	};
 
-	const HELD = '2026-10-05-16-55..2026-10-05-17-00';
+	const HELD = '2026-10-05-16-55..2026-10-05-17-05';
 
 	it( 'replaces the selection with the bucket a plain click names', () => {
 		expect( afterClick( HELD, '2026-10-05-18-30', false ) ).toBe(
@@ -590,7 +611,7 @@ describe( 'useBucketSelection', () => {
 
 	it( 'adds the bucket an additive click names, merging a neighbour', () => {
 		expect( afterClick( HELD, '2026-10-05-17-05', true ) ).toBe(
-			'2026-10-05-16-55..2026-10-05-17-05'
+			'2026-10-05-16-55..2026-10-05-17-10'
 		);
 	} );
 
@@ -631,21 +652,29 @@ describe( 'useBucketSelection', () => {
 
 	it( 'replaces the selection with the buckets a plain drag spans', () => {
 		expect( afterDrag( HELD, DRAGGED, false ) ).toBe(
-			'2026-10-05-18-25..2026-10-05-18-35'
+			'2026-10-05-18-25..2026-10-05-18-40'
+		);
+	} );
+
+	it( 'writes a drag across 4:00 AM to 12:00 PM as the run it closes', () => {
+		const keys = bucketsOf( '2026-10-20-11-00..2026-10-20-19-00' );
+
+		expect( afterDrag( '', keys, false ) ).toBe(
+			'2026-10-20-11-00..2026-10-20-19-00'
 		);
 	} );
 
 	it( 'adds the span an additive drag covers, keeping what was held', () => {
 		expect( afterDrag( HELD, DRAGGED, true ) ).toBe(
-			'2026-10-05-16-55..2026-10-05-17-00,2026-10-05-18-25..2026-10-05-18-35'
+			'2026-10-05-16-55..2026-10-05-17-05,2026-10-05-18-25..2026-10-05-18-40'
 		);
 		expect(
 			afterDrag( HELD, [ '2026-10-05-17-00', '2026-10-05-17-05' ], true )
-		).toBe( '2026-10-05-16-55..2026-10-05-17-05' );
+		).toBe( '2026-10-05-16-55..2026-10-05-17-10' );
 	} );
 
 	it( "reads the held spelling's keys for the charts to shade", () => {
-		const result = mountSelection( '2026-10-05-16-55..2026-10-05-17-00' );
+		const result = mountSelection( '2026-10-05-16-55..2026-10-05-17-05' );
 
 		expect( result.current[ 1 ] ).toEqual( [
 			'2026-10-05-16-55',
@@ -663,7 +692,7 @@ describe( 'useBucketSelection', () => {
 		} );
 
 		expect( result.current[ 0 ] ).toBe(
-			'2026-10-05-16-55..2026-10-05-17-00,2026-10-05-18-30'
+			'2026-10-05-16-55..2026-10-05-17-05,2026-10-05-18-30'
 		);
 		expect( result.current[ 2 ] ).toBe( pick );
 

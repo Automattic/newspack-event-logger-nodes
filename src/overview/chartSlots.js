@@ -68,10 +68,11 @@ const selectedStart = ( key ) => {
  * The bucket keys a selection's spelling names, ascending, each once: the
  * twin of `Bucket::selection()`, selecting nothing where that one refuses.
  *
- * A spelling is comma-separated runs, each `start` or `start..end` over
- * bucket keys; `bucketSpelling()` writes the canonical one. '' selects
- * nothing, and so does a piece that is not a five-minute key, a run ending
- * before it starts, or more than 288 buckets.
+ * A spelling is comma-separated runs over bucket keys, each a lone key, its
+ * one bucket, or `start..end`, the buckets from `start` up to the one `end`
+ * opens, `end` not among them; `bucketSpelling()` writes the canonical one.
+ * '' selects nothing, and so does a piece that is not a five-minute key, a
+ * run not ending after it starts, or more than 288 buckets.
  *
  * @param {string} spelling A selection's spelling.
  * @return {string[]} Its keys, ascending; [] when refused.
@@ -81,8 +82,13 @@ export const bucketsOf = ( spelling ) => {
 	for ( const run of '' === spelling ? [] : spelling.split( ',' ) ) {
 		const cut = run.indexOf( '..' );
 		const first = selectedStart( -1 === cut ? run : run.slice( 0, cut ) );
-		const last = -1 === cut ? first : selectedStart( run.slice( cut + 2 ) );
-		if ( null === first || null === last || last < first ) {
+		const close = -1 === cut ? null : selectedStart( run.slice( cut + 2 ) );
+		const last = -1 === cut ? first : close - BUCKET_MS;
+		if (
+			null === first ||
+			( -1 !== cut && null === close ) ||
+			last < first
+		) {
 			return [];
 		}
 		for (
@@ -202,7 +208,8 @@ export const runSpan = ( run ) => {
 
 /**
  * A selection's canonical spelling: its keys as runs, each adjacent pair
- * merged, a lone bucket spelled alone. The twin of `Bucket::spelling()`.
+ * merged, a lone bucket spelled as its key and a run of several as its first
+ * key and the key closing it. The twin of `Bucket::spelling()`.
  *
  * @param {string[]} keys Bucket keys, ascending, each once.
  * @return {string} The spelling; '' for none.
@@ -210,7 +217,11 @@ export const runSpan = ( run ) => {
 export const bucketSpelling = ( keys ) =>
 	runsOf( keys )
 		.map( ( run ) =>
-			1 === run.length ? run[ 0 ] : `${ run[ 0 ] }..${ run.at( -1 ) }`
+			1 === run.length
+				? run[ 0 ]
+				: `${ run[ 0 ] }..${ keyAt(
+						keyStart( run.at( -1 ) ).getTime() + BUCKET_MS
+				  ) }`
 		)
 		.join( ',' );
 

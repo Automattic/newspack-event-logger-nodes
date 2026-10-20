@@ -51,6 +51,9 @@ const MAX_RUN_MINUTES = 12 * 60;
 /** Minutes in a day, which a range crossing midnight wraps through. */
 const DAY_MINUTES = 24 * 60;
 
+/** Minutes a bucket spans. */
+const BUCKET_MINUTES = 5;
+
 /** What to type, as typed: input syntax rather than translatable prose. */
 const TYPED_TIME = '16:55';
 const TYPED_TWELVE = '4:55 PM';
@@ -105,8 +108,10 @@ const readTime = ( text, twelve ) => {
 };
 
 /**
- * The buckets a typed local time or range names: the latest charted bucket
- * opening at its end, back to the latest at its start before that.
+ * The buckets a typed local time or range names: a time, the latest charted
+ * bucket opening at it; a range, the latest charted bucket closing at its
+ * end, back to the latest opening at its start before that, so a range's end
+ * names its close as a `..` run's does.
  *
  * @param {string}                              text What was typed.
  * @param {Array<{date:Date,bucketKey:string}>} axis The chart's slots, oldest first.
@@ -134,6 +139,19 @@ const typedRun = ( text, axis ) => {
 		};
 	}
 	const [ from, to = from ] = ends;
+	if ( 2 === pieces.length && from === to ) {
+		return {
+			keys: [],
+			refusal: sprintf(
+				// translators: %s: the range as typed.
+				__(
+					'%s does not end after it starts.',
+					'newspack-event-logger-nodes'
+				),
+				pieces.join( '-' )
+			),
+		};
+	}
 	if (
 		from > to &&
 		( to - from + DAY_MINUTES ) % DAY_MINUTES > MAX_RUN_MINUTES
@@ -152,8 +170,24 @@ const typedRun = ( text, axis ) => {
 		};
 	}
 	const times = axis.map( minutesOf );
-	const last = times.lastIndexOf( to );
+	const range = 2 === pieces.length;
+	const last = times.lastIndexOf(
+		range ? ( to - BUCKET_MINUTES + DAY_MINUTES ) % DAY_MINUTES : to
+	);
 	const first = -1 === last ? -1 : times.lastIndexOf( from, last );
+	if ( -1 === last && range ) {
+		return {
+			keys: [],
+			refusal: sprintf(
+				// translators: %s: a local time as typed, e.g. 17:30.
+				__(
+					'No charted bucket closes at %s.',
+					'newspack-event-logger-nodes'
+				),
+				pieces[ 1 ]
+			),
+		};
+	}
 	return -1 === first
 		? {
 				keys: [],
@@ -163,7 +197,7 @@ const typedRun = ( text, axis ) => {
 						'No charted bucket opens at %s.',
 						'newspack-event-logger-nodes'
 					),
-					-1 === last ? pieces.at( -1 ) : pieces[ 0 ]
+					pieces[ 0 ]
 				),
 		  }
 		: {

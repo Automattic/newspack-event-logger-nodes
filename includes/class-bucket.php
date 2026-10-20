@@ -34,8 +34,10 @@ final class Bucket {
 	 * The buckets a selection's spelling names, as ascending ranges of
 	 * bucket ids that neither touch nor overlap.
 	 *
-	 * A spelling is comma-separated runs, each `start` or `start..end` over
-	 * `key()`s; `spelling()` writes the canonical one, which the dashboard's
+	 * A spelling is comma-separated runs over `key()`s, each a lone key, its
+	 * one bucket, or `start..end`, the buckets from `start` up to the one
+	 * `end` opens, `end` not among them, so a run names the key that closes
+	 * it; `spelling()` writes the canonical one, which the dashboard's
 	 * address bar, `--bucket` and the MCP `bucket` argument all carry. ''
 	 * selects nothing. Runs are counted, never walked, so no spelling
 	 * enumerates more than it names.
@@ -45,7 +47,7 @@ final class Bucket {
 	 * @param int    $max      Most buckets it may name: `MAX_SELECTION` for a chart, a source's retention for a query.
 	 * @return list<array{0:int,1:int}> First and last bucket id of each run.
 	 * @throws \InvalidArgumentException On a piece that is not a five-minute key, a run
-	 *                                   ending before it starts, a bucket after
+	 *                                   not ending after it starts, a bucket after
 	 *                                   the one holding `$now`, or more than `$max` buckets.
 	 */
 	public static function selection( string $spelling, int $now, int $max ): array {
@@ -57,9 +59,9 @@ final class Bucket {
 		foreach ( \explode( ',', $spelling ) as $run ) {
 			$ends  = \explode( '..', $run, 2 );
 			$first = self::of_key( $ends[0] );
-			$last  = self::of_key( $ends[1] ?? $ends[0] );
+			$last  = isset( $ends[1] ) ? self::of_key( $ends[1] ) - 1 : $first;
 			if ( $last < $first ) {
-				throw new \InvalidArgumentException( "bucket run {$run} ends before it starts" );
+				throw new \InvalidArgumentException( "bucket run {$run} does not end after it starts" );
 			}
 			if ( $last > $latest ) {
 				throw new \InvalidArgumentException( 'bucket ' . self::key( $last ) . ' is in the future' );
@@ -132,8 +134,8 @@ final class Bucket {
 	}
 
 	/**
-	 * A selection's canonical spelling: its ranges as runs, a lone bucket
-	 * spelled alone.
+	 * A selection's canonical spelling: a lone bucket as its key, and a run
+	 * of several as its first key and the key closing it.
 	 *
 	 * @param list<array{0:int,1:int}> $ranges Ascending, as `selection()` answers.
 	 */
@@ -141,7 +143,7 @@ final class Bucket {
 		return \implode(
 			',',
 			\array_map(
-				static fn ( array $range ): string => $range[0] === $range[1] ? self::key( $range[0] ) : self::key( $range[0] ) . '..' . self::key( $range[1] ),
+				static fn ( array $range ): string => $range[0] === $range[1] ? self::key( $range[0] ) : self::key( $range[0] ) . '..' . self::key( $range[1] + 1 ),
 				$ranges
 			)
 		);

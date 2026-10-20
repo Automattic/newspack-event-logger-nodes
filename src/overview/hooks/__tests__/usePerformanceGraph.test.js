@@ -1180,7 +1180,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 
 describe( 'usePerformanceGraph — the bucket selection', () => {
 	// Two runs, as the address bar and `--bucket` carry them.
-	const RUNS = '2026-10-04-13-40..2026-10-04-13-50,2026-10-04-14-15';
+	const RUNS = '2026-10-04-13-40..2026-10-04-13-55,2026-10-04-14-15';
 
 	test( 'asks urls for the selection by its spelling, and again when only it moves', async () => {
 		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
