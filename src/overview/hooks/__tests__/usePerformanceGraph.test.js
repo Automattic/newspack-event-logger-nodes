@@ -2297,7 +2297,7 @@ describe( 'usePerformanceGraph — an expanded page asks its shapes', () => {
 			)
 			.map( ( m ) => m[ VALUE ].arguments );
 
-	test( 'asks the page filter through one slice of its own, on the page server', async () => {
+	test( 'asks the page through one slice of its own, by --page on the page server', async () => {
 		const wire = installWire( {
 			urls: { data: SHAPE_ROWS, rows: 1, totals: { urls: 1 } },
 		} );
@@ -2311,10 +2311,8 @@ describe( 'usePerformanceGraph — an expanded page asks its shapes', () => {
 		await act( async () => {} );
 
 		const [ asked ] = urlsFrom( wire, `${ SUBJECT }:in` );
-		expect( options( asked, 'filter' ) ).toEqual( [
-			'method=PATCH',
-			'page=c4f7a2e19b05',
-		] );
+		expect( option( asked, 'page' ) ).toBe( 'c4f7a2e19b05' );
+		expect( options( asked, 'filter' ) ).toEqual( [ 'method=PATCH' ] );
 		expect( option( asked, 'server' ) ).toBe( 'hoiho-5172.example' );
 		expect( option( asked, 'limit' ) ).toBe( '1000' );
 		expect( option( asked, 'offset' ) ).toBeUndefined();
@@ -2552,7 +2550,29 @@ describe( 'usePerformanceGraph — an expanded page asks its shapes', () => {
 
 		expect(
 			options( urlsFrom( wire, `${ SUBJECT }:in` ).at( -1 ), 'filter' )
-		).toEqual( [ 'country=Tuvalu', 'page=c4f7a2e19b05' ] );
+		).toEqual( [ 'country=Tuvalu' ] );
+	} );
+
+	test( "a page chip stays off the page's own --page question", async () => {
+		const wire = installWire();
+		renderHook( () =>
+			usePerformanceGraph( {
+				chartChips: [
+					'page=c4f7a2e19b05',
+					'page!=9a9a9a9a9a9a',
+					'method=GET',
+				],
+				expandedPages: [ KOKAKO ],
+			} )
+		);
+		await act( async () => {} );
+
+		const [ asked ] = urlsFrom( wire, `${ SUBJECT }:in` );
+		expect( option( asked, 'page' ) ).toBe( 'c4f7a2e19b05' );
+		expect( options( asked, 'filter' ) ).toEqual( [ 'method=GET' ] );
+		expect( options( urlsFrom( wire, 'urls:in' )[ 0 ], 'filter' ) ).toEqual(
+			[ 'page=c4f7a2e19b05', 'page!=9a9a9a9a9a9a', 'method=GET' ]
+		);
 	} );
 
 	test( 'unmount removes every shapes slice with the graph', async () => {

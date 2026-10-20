@@ -615,6 +615,19 @@ final class OverviewPrefetchTest extends TestCase {
 		$this->assertSame( [ 'kea-7020.example', 'kaka-7020.example' ], $kea['servers'] );
 	}
 
+	/** A server asked in other capitals is the listed server, and its stored poll serves it. */
+	public function test_a_mixed_case_server_is_served_its_stored_poll(): void {
+		$this->seed_request( [ 'server' => 'kea-7022.example', 'url' => 'https://kea-7022.example/a/', 'ms' => 33.5 ] );
+		$this->run_job();
+		$this->seed_request( [ 'server' => 'kea-7022.example', 'url' => 'https://kea-7022.example/c/', 'ms' => 8.5 ] );
+		self::clock( self::NOW + 9 );
+
+		foreach ( [ 'server_overview', 'server_chart_by_status_class', 'server_categories' ] as $name ) {
+			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', Overview_Prefetch::questions()[ $name ]['verb'], self::asked_for( $name, 'KEA-7022.Example' ) );
+			$this->assertSame( self::NOW, \is_array( $reply ) ? $reply['as_of'] : $reply, $name );
+		}
+	}
+
 	/** A server the job never saw has no stored poll: each question answers live. */
 	public function test_a_scoped_chart_of_a_server_the_job_never_saw_answers_live(): void {
 		$this->seed_request( [ 'server' => 'kea-7021.example', 'url' => 'https://kea-7021.example/a/', 'ms' => 33.5 ] );

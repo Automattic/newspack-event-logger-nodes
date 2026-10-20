@@ -210,7 +210,7 @@ This plugin registers exactly one REST route of its own: `POST /wp-json/newspack
 | `dump_request` | `performance.dump_request` | Full request plus flame data for a rid, read at the place its request row names; a rid no row names is not found |
 | `dump_url` | `performance.dump_url` | One URL's stats, its 500 newest requests across partitions, the aggregate flame rebuilt from the newest 100's stored flames |
 | `performance_query` | `performance.query` | Any group, filter and measure `Stats_Query` names, over the request or timing rows; a top-N by window functions |
-| `performance_urls` | `performance.urls` | The table of pages: every URL-set fact under the filters it applied, and a page's URLs under `page=<page hash>` |
+| `performance_urls` | `performance.urls` | The table of pages: every URL-set fact under the filters it applied, and a page's URLs under `--page=<page hash>` |
 | `performance_overview` | `performance.overview` | Site totals, the servers seen and the 24-hour category leaderboard |
 | `performance_ask` | `performance.ask` | `Findings` for one picker descriptor — `overview:`, `url:`, `request:`, `span:`, `entry:` or `category:` |
 | `dump_rules` / `rules_upsert` / `rules_delete` | `rules.*` | The per-URL logging ruleset |

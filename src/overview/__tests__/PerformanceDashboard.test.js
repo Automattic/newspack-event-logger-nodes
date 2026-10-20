@@ -898,6 +898,24 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 
+		it( 'reads a server linked in other capitals as the one the list names', async () => {
+			linkTo( 'server=Edge-02' );
+			mockView = loadedView( {
+				overview: { data: null, loading: true, error: null },
+			} );
+			const { rerender, unmount } = mountDash();
+			await flushEffects();
+			expect( mockGraphCalls[ 0 ].serverFilter ).toBe( 'edge-02' );
+
+			mockView = serverView( hub );
+			rerender( dashboard() );
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-02' );
+			expect( mockGraphOpts.serverFilter ).toBe( 'edge-02' );
+			unmount();
+		} );
+
 		it( 'resets a linked server the list does not name, and drops it', async () => {
 			linkTo( 'server=edge-09&url=h1' );
 			mockView = loadedView( {

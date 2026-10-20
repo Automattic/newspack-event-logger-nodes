@@ -27,8 +27,8 @@
  * and `urls`, whose rows and header the chips narrow too.
  *
  * An expanded page adds one more polled slice, `shapes:<page key>`, asking
- * `urls --filter=page=<page hash>` on the page's own server under the
- * table's question, so its shape rows describe the traffic its page row
+ * `urls --page=<page hash>` on the page's own server under the table's
+ * question less any `page` chip, which `--page` owns, so its shape rows describe the traffic its page row
  * folds, `SHAPES_PER_ASK` at a time from the offset the table reports for the
  * shapes in view. It hangs off `performance:tee` while the page is expanded
  * and listed, and is asked afresh when the table's question or that offset
@@ -419,13 +419,18 @@ const overviewArgs = ( serverFilter ) =>
  * @param {Object}   arg.urlParams    The table's live search, sort, page and
  *                                    filter state.
  * @param {string}   arg.serverFilter Server scope; '' means every server.
+ * @param {string}   [arg.page]       The page whose URLs to list, by its
+ *                                    hash; absent lists pages.
  * @param {string[]} arg.chips        The Overview chart's chips, each
  *                                    `field=value`.
  * @param {number}   arg.limit        The most rows to list.
  * @return {string[]} The command token array.
  */
-function urlsArgs( { urlParams, serverFilter, chips, limit } ) {
+function urlsArgs( { urlParams, serverFilter, page, chips, limit } ) {
 	const options = {};
+	if ( page ) {
+		options.page = page;
+	}
 	if ( urlParams.sort ) {
 		options.sort = urlParams.sort;
 	}
@@ -678,7 +683,7 @@ export function usePerformanceGraph( opts = {} ) {
 	/**
 	 * Hang one expanded page's slice off the polled Tee: the table's question
 	 * from the offset the table reports for the page's shapes in view, on the
-	 * page's server and filtered to the page.
+	 * page's server and naming the page by `--page`.
 	 *
 	 * @param {Object} interpreter The graph's interpreter.
 	 * @param {Object} tee         The Tee the page's slices hang off.
@@ -695,7 +700,11 @@ export function usePerformanceGraph( opts = {} ) {
 						0,
 				},
 				serverFilter: page.server,
-				chips: [ ...chipsRef.current, `page=${ page.page_hash }` ],
+				page: page.page_hash,
+				chips: chipsRef.current.filter(
+					( chip ) =>
+						'page' !== chip.split( '=' )[ 0 ].replace( /!$/, '' )
+				),
 				limit: SHAPES_PER_ASK,
 			} )
 		);

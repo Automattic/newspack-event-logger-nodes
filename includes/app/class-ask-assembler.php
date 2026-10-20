@@ -929,8 +929,8 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * One page row as the overview brief carries it: its hash, for a
-	 * `page=<hash>` filter, its name and server, its shape count, and its
+	 * One page row as the overview brief carries it: its hash, for
+	 * `--page=<hash>`, its name and server, its shape count, and its
 	 * busiest shape's URL hash, so an agent can widen to `url:<hash>`; then
 	 * the numbers the table sorts on.
 	 *

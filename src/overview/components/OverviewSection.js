@@ -39,7 +39,6 @@ import { AskButton } from './AskPanel';
 import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
 import UnparseableLinesNotice from '@newspack-nodes/shared/components/UnparseableLinesNotice';
 import HeadlineStats from './HeadlineStats';
-import { serverName } from '../../log-table/urlIdentity';
 
 /**
  * Overview Section component.
@@ -113,19 +112,16 @@ export default function OverviewSection( {
 	ask,
 	headerControlsSlot,
 } ) {
-	// A server linked in other capitals is the one the list names.
-	const server = serverName( serverFilter );
-
 	// One server offers no choice, but an applied filter needs a way out.
 	const serverOptions = useMemo( () => {
 		const names = serverNames ?? [];
-		if ( names.length < 2 && '' === server ) {
+		if ( names.length < 2 && '' === serverFilter ) {
 			return null;
 		}
 		const offered =
-			'' === server || names.includes( server )
+			'' === serverFilter || names.includes( serverFilter )
 				? names
-				: [ ...names, server ];
+				: [ ...names, serverFilter ];
 		return [
 			{
 				label: __( 'All Servers', 'newspack-event-logger-nodes' ),
@@ -133,7 +129,7 @@ export default function OverviewSection( {
 			},
 			...offered.map( ( name ) => ( { label: name, value: name } ) ),
 		];
-	}, [ serverNames, server ] );
+	}, [ serverNames, serverFilter ] );
 
 	// Dropping 'server' cannot strand the selection: the caller resolved it.
 	const breakdownOptions = canBreakDownByServer
@@ -331,7 +327,7 @@ export default function OverviewSection( {
 						loading={ !! chartSlice?.loading }
 						error={ chartSlice?.error ?? null }
 						serverOptions={ serverOptions }
-						serverFilter={ server }
+						serverFilter={ serverFilter }
 						setServerFilter={ setServerFilter }
 						onSlotClick={ onSlotClick }
 						onSlotRange={ onSlotRange }
@@ -356,21 +352,21 @@ export default function OverviewSection( {
 							}
 							count={ overview.leaderboard.count }
 							heading={
-								server
+								serverFilter
 									? sprintf(
 											// translators: %s: the server name being filtered by.
 											__(
 												'Time Breakdown (%s)',
 												'newspack-event-logger-nodes'
 											),
-											server
+											serverFilter
 									  )
 									: __(
 											'Global Time Breakdown',
 											'newspack-event-logger-nodes'
 									  )
 							}
-							serverName={ server }
+							serverName={ serverFilter }
 						/>
 					) }
 				</CardBody>
