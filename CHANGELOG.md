@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.148.2] - 2026-10-20
+
 ### Changed
 - **A bucket run names the key that closes it.** In a `bucket` selection, `start..end` is the buckets from `start` up to the one `end` opens, `end` not among them, so `2026-10-20-11-00..2026-10-20-19-00` selects the 96 buckets 11:00 through 18:55 UTC and its chip reads 4:00 AM–12:00 PM in UTC−7, where it selected 97 and read 4:00 AM–12:05 PM. A lone key still selects its one bucket. `Bucket::selection()` refuses a run whose end is not after its start, `a..a` included, naming the run, and judges the future by the run's last bucket, so a run closing at the end of the current bucket is accepted. `Bucket::spelling()` and its JS twin `bucketSpelling()` write a run of several buckets as its first key and the key closing it; `bucketsOf()` reads the same grammar, so a chart click or drag, the Time field, `?bucket=`, `?url_bucket=` and every `filters.bucket` echo carry it. A range typed into the Time field stops before the bucket opening at its end in the same way, so `4:00-12:00` in UTC−7 selects what a `11-00..19-00` link selects and reads 4:00 AM–12:00 PM; a typed end off the five-minute grid is refused, as a typed time off it already was, and a typed range ending where it starts is refused. `tests/fixtures/bucket-selection.json`, which both suites read, holds the two to the new spelling. The MCP `bucket` argument texts, the verb descriptions, the API reference, the architecture guide, decision 36, the dashboards page and the TAM guide state it. An address-bar link or a script written with the old inclusive meaning now selects one bucket fewer per run, and one written `a..a` is refused.
 
