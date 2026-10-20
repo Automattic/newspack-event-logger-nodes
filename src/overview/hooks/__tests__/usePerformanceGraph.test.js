@@ -43,6 +43,7 @@ import storedAnswers from '../../../../includes/app/stored-answers.json';
 import { DEFAULT_CHART_BREAKDOWN } from '../../constants';
 import { activeChart } from '../../chartSlots';
 import { nextTask as oneTask } from '@newspack-nodes/shared/test-utils/nextTask';
+import { holdRouterCadence } from '@newspack-nodes/shared/test-utils/holdRouterCadence';
 
 /**
  * The value a command's tokens carry for `--<name>=`, as the server's binder
@@ -89,6 +90,8 @@ jest.setTimeout( 20000 );
 // specific reply installs its own over this one.
 beforeEach( () => {
 	Core.reset();
+	// Every ask counted here is one a test asked for.
+	holdRouterCadence();
 	installWire();
 } );
 
