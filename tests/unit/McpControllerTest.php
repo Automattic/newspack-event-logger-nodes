@@ -212,12 +212,13 @@ class McpControllerTest extends TestCase {
 		);
 
 		$urls = $tools['performance_urls']['description'];
-		foreach ( [ '`page_hash`', '`page`', '`server`', '`path`', '`shapes`', '`hash`', '`worker`', '`totals.pages`', '`page=<page hash>`' ] as $named ) {
+		foreach ( [ '`page_hash`', '`page`', '`server`', '`path`', '`shapes`', '`hash`', '`worker`', '`totals.pages`', '`page`' ] as $named ) {
 			$this->assertStringContainsString( $named, $urls, $named );
 		}
 		$this->assertStringContainsString( 'A `page_hash` is never a URL hash', $urls );
 		$this->assertStringNotContainsString( 'The URL table', $urls );
-		$this->assertStringContainsString( '`page=<page hash>` lists that page\'s URLs', $tools['performance_urls']['inputSchema']['properties']['filter']['description'] );
+		$this->assertStringContainsString( 'lists that page\'s URL rows', $tools['performance_urls']['inputSchema']['properties']['page']['description'] );
+		$this->assertStringContainsString( '`page=<page hash>` keeps that one page row', $tools['performance_urls']['inputSchema']['properties']['filter']['description'] );
 		$this->assertStringContainsString( 'per-page facts from performance_urls', $tools['performance_overview']['description'] );
 		$this->assertStringContainsString( '`busiest_hash`', $tools['performance_ask']['description'] );
 		$this->assertStringContainsString( 'page rows', $tools['performance_ask']['description'] );

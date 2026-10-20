@@ -83,6 +83,7 @@ import {
 	useQueryParamState,
 } from '@newspack-nodes/shared/hooks/useQueryParamState';
 import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
+import { serverName } from '../log-table/urlIdentity';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import { useDismissable } from '@newspack-nodes/shared/hooks/useDismissable';
 import OverviewSection from './components/OverviewSection';
@@ -291,12 +292,23 @@ export default function PerformanceDashboard( {
 		() => ( answeredServers ? [ ...answeredServers ].sort() : null ),
 		[ answeredServers ]
 	);
-	// The server filter is page-wide scope, not the overview card's own.
-	const [ serverFilter, setServerFilter ] = useQueryParamChoice(
+	// @longform The server filter is page-wide scope, not the overview card's
+	// own. A server linked in other capitals is the one the list names, and
+	// one the list does not name is dropped once the list can judge it.
+	const [ linkedServer, setServerFilter ] = useQueryParamState(
 		'server',
-		serverNames,
-		''
+		( raw ) => serverName( raw ?? '' ),
+		( value ) => value || null
 	);
+	const serverFilter =
+		! serverNames?.length || serverNames.includes( linkedServer )
+			? linkedServer
+			: '';
+	useEffect( () => {
+		if ( serverFilter !== linkedServer ) {
+			setServerFilter( serverFilter );
+		}
+	}, [ serverFilter, linkedServer, setServerFilter ] );
 
 	// The chart's question rides the `chart` fetch, so it lives here.
 	const [ chartBreakdown, setChartBreakdown ] = useQueryParamChoice(

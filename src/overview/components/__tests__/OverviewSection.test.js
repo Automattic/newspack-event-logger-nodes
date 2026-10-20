@@ -544,29 +544,6 @@ describe( 'OverviewSection', () => {
 		}
 	);
 
-	it( 'matches a server linked in other capitals to its listed name', () => {
-		const { container, unmount } = mount(
-			{},
-			{
-				serverFilter: 'Edge-9907.Example',
-				serverNames: [ 'edge-9907.example', 'edge-9908.example' ],
-			}
-		);
-		const select = Array.from(
-			container.querySelectorAll( 'select' )
-		).find( ( sel ) =>
-			Array.from( sel.options ).some(
-				( o ) => 'All Servers' === o.textContent
-			)
-		);
-
-		expect( select.value ).toBe( 'edge-9907.example' );
-		expect( Array.from( select.options ).map( ( o ) => o.value ) ).toEqual(
-			[ '', 'edge-9907.example', 'edge-9908.example' ]
-		);
-		unmount();
-	} );
-
 	it( "mounts the leaderboard section from the overview's leaderboard", () => {
 		const { container, unmount } = mount( {
 			leaderboard: {

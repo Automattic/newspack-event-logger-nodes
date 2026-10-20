@@ -583,6 +583,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame(
 			[
 				'server'          => 'alpha.example',
+				'page'            => '',
 				'search'          => '/reviews/',
 				'filter'          => [ 'method=POST' ],
 				'include_workers' => false,
@@ -1945,7 +1946,7 @@ class PerformanceCITest extends TestCase {
 		// default EXCLUDES.
 		$args = self::args_by_name( 'urls' );
 		$this->assertSame(
-			[ 'sort', 'order', 'limit', 'offset', 'search', 'server', 'filter', 'include_workers', 'bucket' ],
+			[ 'sort', 'order', 'limit', 'offset', 'search', 'server', 'page', 'filter', 'include_workers', 'bucket' ],
 			\array_keys( $args )
 		);
 		$this->assertSame( 'string', $args['bucket']['type'] );
@@ -2003,7 +2004,8 @@ class PerformanceCITest extends TestCase {
 		$description = self::verbs_by_name()['urls']['description'];
 
 		$this->assertStringContainsString( '`worker` is true where any shape folded is a worker\'s', $description );
-		$this->assertStringContainsString( '`--filter=page=<page hash>` answers that page\'s URLs', $description );
+		$this->assertStringContainsString( '`--page=<page hash>` answers that page\'s URLs', $description );
+		$this->assertStringContainsString( '`--filter=page=<page hash>` keeps that one page row', $description );
 	}
 
 	public function test_query_description_names_available(): void {
@@ -2569,14 +2571,14 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * `page=<page hash>` answers that page's URLs, each a row as a URL row
+	 * `--page=<page hash>` answers that page's URLs, each a row as a URL row
 	 * has always been, live and, for a question naming nothing else, off the
 	 * snapshot, in the view asked for.
 	 */
-	public function test_a_page_filter_answers_its_shapes(): void {
+	public function test_page_answers_its_shapes(): void {
 		$this->seed_kotuku();
 		$page   = self::hash_of( 'seed.example/kotuku-6604/' );
-		$tokens = "--filter=page={$page} --sort=url --order=asc";
+		$tokens = "--page={$page} --sort=url --order=asc";
 
 		$readers = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $tokens );
 		VerbHarness::reset();
@@ -2586,7 +2588,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ self::hash_of( 'https://seed.example/Kotuku-6604/?a=?' ), self::hash_of( 'https://seed.example/kotuku-6604/?b=?' ) ], \array_column( $readers['data'], 'hash' ) );
 		$this->assertSame( [ 'hash', 'url', 'count', 'timed_count', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_updated', 'avg_ms', 'avg_peak_mb' ], \array_keys( $readers['data'][0] ) );
 		$this->assertSame( [ 2, 2, 1, 3 ], [ $readers['rows'], $readers['totals']['urls'], $readers['totals']['pages'], $readers['totals']['requests'] ] );
-		$this->assertSame( [ "page={$page}" ], $readers['filters']['filter'] );
+		$this->assertSame( [ [], $page ], [ $readers['filters']['filter'], $readers['filters']['page'] ] );
 		$this->assertSame( [ 'https://seed.example/Kotuku-6604/?a=?', 'https://seed.example/kotuku-6604/?b=?', 'https://seed.example/kotuku-6604/?cron=?' ], \array_column( $all['data'], 'url' ) );
 
 		Url_Snapshot::publish( self::tick(), 600, static fn (): array => [] );
@@ -2601,25 +2603,21 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A page filter beside another filter token: a status class, or a second
-	 * page.
+	 * `--page` beside a filter token answers live: the snapshot reads one
+	 * page and nothing else, so serving this question from it would drop the
+	 * token in silence.
 	 *
 	 * @return array<string,array{0:string}>
 	 */
 	public static function page_filters_beside(): array {
 		return [
-			'a page beside a status class' => [ 'status_class=2' ],
-			'two pages'                    => [ 'page=' . self::hash_of( 'seed.example/tieke-6604/' ) ],
+			'a status class' => [ 'status_class=2' ],
+			'a method'       => [ 'method=GET' ],
 		];
 	}
 
-	/**
-	 * A page filter beside any other token answers live: the snapshot reads
-	 * one page and nothing else, so serving this question from it would drop
-	 * the other token in silence.
-	 */
 	#[DataProvider( 'page_filters_beside' )]
-	public function test_a_page_filter_beside_another_is_answered_live( string $beside ): void {
+	public function test_a_page_beside_a_filter_is_answered_live( string $beside ): void {
 		$this->seed_kotuku();
 		Url_Snapshot::publish( self::tick(), 600, static fn (): array => [] );
 		$this->seed_request( [ 'url' => 'https://seed.example/KOTUKU-6604/?late=?', 'ms' => 5.5 ] );
@@ -2627,10 +2625,48 @@ class PerformanceCITest extends TestCase {
 		Core::$clock = static fn (): float => (float) $later;
 		Core::right_now();
 
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--filter=page=' . self::hash_of( 'seed.example/kotuku-6604/' ), "--filter={$beside}" ] );
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--page=' . self::hash_of( 'seed.example/kotuku-6604/' ), "--filter={$beside}" ] );
 
 		$this->assertSame( $later, $reply['as_of'], 'dated by the live read, not the job' );
 		$this->assertContains( 'https://seed.example/KOTUKU-6604/?late=?', \array_column( $reply['data'], 'url' ), 'the shape asked after the job ran' );
+	}
+
+	/**
+	 * A `page=` filter narrows pages as any filter does: the listing is that
+	 * one page's row, never its URLs.
+	 */
+	public function test_a_page_filter_lists_its_one_page_row(): void {
+		$this->seed_kotuku();
+		$page = self::hash_of( 'seed.example/kotuku-6604/' );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', "--filter=page={$page}" );
+
+		$this->assertSame( [ [ $page, 2, 3 ] ], \array_map( static fn ( array $row ): array => [ $row['page_hash'], $row['shapes'], $row['count'] ], $reply['data'] ) );
+		$this->assertSame( [ 1, 1 ], [ $reply['rows'], $reply['totals']['pages'] ] );
+		$this->assertSame( '', $reply['filters']['page'] );
+	}
+
+	/**
+	 * `--page` owns the page field: a `page=` or `page!=` filter beside it is
+	 * refused, naming its owner, whatever page it names.
+	 *
+	 * @return array<string,array{0:string}>
+	 */
+	public static function page_tokens_beside_page(): array {
+		return [
+			'the same page'    => [ 'page=' . self::hash_of( 'seed.example/kotuku-6604/' ) ],
+			'another page'     => [ 'page=' . self::hash_of( 'seed.example/tieke-6604/' ) ],
+			'a page left out'  => [ 'page!=' . self::hash_of( 'seed.example/tieke-6604/' ) ],
+		];
+	}
+
+	#[DataProvider( 'page_tokens_beside_page' )]
+	public function test_a_page_filter_beside_page_is_refused( string $token ): void {
+		$this->seed_kotuku();
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--page=' . self::hash_of( 'seed.example/kotuku-6604/' ), "--filter={$token}" ] );
+
+		$this->assertStringContainsString( 'belongs to --page: name the page with --page', Core::as_string( $reply ) );
 	}
 
 	/**
@@ -2785,7 +2821,7 @@ class PerformanceCITest extends TestCase {
 	public function test_live_and_snapshot_pages_agree( string $sort, string $order, string $server, bool $workers, bool $shapes ): void {
 		$this->seed_page_parity();
 		$page   = '' === $server ? 'seed.example/kotuku-6604/' : 'kahu-6604.example/ruru-6604/';
-		$tokens = [ "--sort={$sort}", "--order={$order}", '--limit=3', $shapes ? '--filter=page=' . self::hash_of( $page ) : '--offset=1' ];
+		$tokens = [ "--sort={$sort}", "--order={$order}", '--limit=3', $shapes ? '--page=' . self::hash_of( $page ) : '--offset=1' ];
 		if ( '' !== $server ) {
 			$tokens[] = "--server={$server}";
 		}
@@ -3216,7 +3252,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 1, 0, 1 ], [ $reply['data'][0]['count'], $reply['data'][0]['count_2xx'], $reply['data'][0]['count_4xx'] ] );
 		$this->assertSame( 1, $reply['totals']['requests'] );
 		$this->assertSame(
-			[ 'server' => 'alpha.example', 'search' => '', 'filter' => [], 'include_workers' => false, 'bucket' => '' ],
+			[ 'server' => 'alpha.example', 'page' => '', 'search' => '', 'filter' => [], 'include_workers' => false, 'bucket' => '' ],
 			$reply['filters']
 		);
 	}
@@ -3325,6 +3361,33 @@ class PerformanceCITest extends TestCase {
 			[ [ 'kaka-5309.example', 4, self::hash_of( 'https://KAKA-5309.example/WETA-5309/?d=?' ) ] ],
 			\array_map( static fn ( array $page ): array => [ $page['server'], $page['shapes'], $page['busiest_hash'] ], $pages ),
 			'the 5xx shapes alone, the busiest of them by count'
+		);
+	}
+
+	/**
+	 * Under a `page=` chip the brief lists that one page and reads its
+	 * busiest URL through that page's `--page` question, which owns the page
+	 * field, so the chip does not ride along.
+	 *
+	 * @return array<string,array{0:string}>
+	 */
+	public static function page_chips(): array {
+		return [
+			'the page kept'      => [ 'page=' . self::hash_of( 'seed.example/kotuku-6604/' ) ],
+			'another left out'   => [ 'page!=' . self::hash_of( 'seed.example/tieke-6604/' ) ],
+		];
+	}
+
+	#[DataProvider( 'page_chips' )]
+	public function test_an_overview_brief_under_a_page_chip_names_its_busiest_shape( string $chip ): void {
+		$this->seed_kotuku();
+
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "overview:site --filter={$chip}" );
+
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'the brief answered no structure' );
+		$this->assertSame(
+			[ [ self::hash_of( 'seed.example/kotuku-6604/' ), 2, self::hash_of( 'https://seed.example/Kotuku-6604/?a=?' ) ] ],
+			\array_map( static fn ( array $page ): array => [ $page['page_hash'], $page['shapes'], $page['busiest_hash'] ], $brief['pages'] )
 		);
 	}
 

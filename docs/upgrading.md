@@ -21,7 +21,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   filters). A page's `worker` is true where any shape is a worker's. `rows`
   counts the pages matching, `totals.pages` is new beside `totals.urls`, the
   `url` sort orders by `page`, and `slowest` lists pages. For URL rows as
-  `urls` answered them before, ask `--filter=page=<page hash>`: it answers
+  `urls` answered them before, ask `--page=<page hash>`: it answers
   that page's URLs, each with `hash`, `url` and the measures, and `rows`
   counts them.
 

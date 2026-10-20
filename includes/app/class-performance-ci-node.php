@@ -162,11 +162,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** Each `urls` sort, as the `Stats_Query` sort a `page` group answers it by. */
 	public const PAGE_SORTS = [ 'url' => 'page_name' ] + self::URL_SORTS;
 
-	/**
-	 * The `urls` args a snapshot listing varies; every other stays at its
-	 * default, and the filter names one page or nothing.
-	 */
-	private const SNAPSHOT_VARIES = [ 'server', 'include_workers', 'sort', 'order', 'offset', 'limit', 'filter' ];
+	/** The `urls` args a snapshot listing varies; every other stays at its default. */
+	private const SNAPSHOT_VARIES = [ 'server', 'page', 'include_workers', 'sort', 'order', 'offset', 'limit' ];
 
 	/** What a `urls` listing totals, ungrouped, live and in the snapshot. */
 	public const URL_TOTALS = [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors', 'pages' ];
@@ -185,6 +182,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		'server' => [ '--server', 'server' ],
 		'bucket' => [ '--bucket', 'buckets' ],
 	];
+
+	/** The field `--page` owns while it names a page. */
+	private const PAGE_OWNER = [ 'page' => [ '--page', 'page' ] ];
 
 	/** The fields a one-URL filter may not name: a URL-set's, and the hash's. */
 	private const ONE_URL_OWNERS = self::URL_SET_OWNERS + [ 'url' => [ 'the hash', 'URL' ] ];
@@ -554,11 +554,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The `overview:` brief — the dashboard as it is being read: the pages
 	 * the table lists, busiest first, under the same filters, with the
-	 * filtered set's totals and the scoped leaderboard beside them. A
-	 * question the snapshot answers reads it, as the table does, and each
-	 * page of several shapes takes its `busiest_hash` off it; any other
-	 * reads both live. A one-page filter answers live, because the snapshot
-	 * lists that page's URLs, not the page. `answer_overview()`'s totals are
+	 * filtered set's totals and the scoped leaderboard beside them. It asks
+	 * the table's own `urls` question, so a question the snapshot answers
+	 * reads it, as the table does, and each page of several shapes takes its
+	 * `busiest_hash` from that page's `--page` question off the same source;
+	 * any other reads both live. `answer_overview()`'s totals are
 	 * deliberately NOT used: they ignore the URL filters, so under a search
 	 * they would describe a different set than the one on screen.
 	 *
@@ -570,18 +570,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
 	 */
 	private static function ask_overview( string $server, array $filters, int $now ): array {
-		$workers = $filters['include_workers'];
-		$stored  = null === self::one_page( $filters['filter'] )
-			? self::snapshot_urls(
-				self::brief_question( $server, $filters ),
-				$now,
-				static fn ( Url_Snapshot $snapshot, array $args ): array => self::with_busiest( self::stored_urls( $snapshot, $args ), self::stored_busiest_shape( $snapshot, $workers ) )
-			)
-			: null;
-		$listing = $stored ?? self::with_busiest(
-			[ 'as_of' => $now ] + self::url_page( 'page', $server, $filters, 'count', 'desc', 0, self::OVERVIEW_BRIEF_PAGES, $now ),
-			self::busiest_shape( self::url_set( $server, $filters, $now ) )
-		);
+		$question = self::brief_question( $server, $filters );
+		$listing  = self::snapshot_urls(
+			$question,
+			$now,
+			static fn ( Url_Snapshot $snapshot, array $args ): array => self::with_busiest( self::stored_urls( $snapshot, $args ), static fn ( array $row ): array => self::stored_urls( $snapshot, self::busiest_question( $args, $row ) ) )
+		) ?? self::with_busiest( self::answer_live( 'urls', $question, $now, null ), static fn ( array $row ): array => self::answer_live( 'urls', self::busiest_question( $question, $row ), $now, null ) );
 
 		$filters['bucket'] = Core::as_string( Core::arr( $listing['filters'] )['bucket'] );
 		return Ask_Assembler::for_overview( $listing, self::site_leaderboard( $server, $now ), $server, $filters );
@@ -589,18 +583,18 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * A page listing with each row's `busiest_hash`: a one-shape page's own
-	 * `hash`, and `$busiest` of any other.
+	 * `hash`, and the first URL row `$shapes` answers for any other.
 	 *
-	 * @param array<string,mixed>                       $listing A `urls` reply of pages.
-	 * @param \Closure(array<array-key,mixed>): string $busiest A page row to its busiest URL's hash.
+	 * @param array<string,mixed>                                     $listing A `urls` reply of pages.
+	 * @param \Closure(array<array-key,mixed>): array<string,mixed> $shapes  A page row to the `urls` reply of its busiest URL.
 	 * @return array<string,mixed>
-	 * @throws \LogicException As `$busiest`, on a listed page holding no URL.
+	 * @throws \LogicException On a listed page holding no URL.
 	 */
-	private static function with_busiest( array $listing, \Closure $busiest ): array {
+	private static function with_busiest( array $listing, \Closure $shapes ): array {
 		$listing['data'] = \array_map(
-			static function ( mixed $row ) use ( $busiest ): array {
+			static function ( mixed $row ) use ( $shapes ): array {
 				$row = Core::arr( $row );
-				return $row + [ 'busiest_hash' => 1 === Core::num_int( $row['shapes'] ) ? $row['hash'] : $busiest( $row ) ];
+				return $row + [ 'busiest_hash' => 1 === Core::num_int( $row['shapes'] ) ? $row['hash'] : Core::arr( Core::arr( $shapes( $row )['data'] )[0] ?? throw new \LogicException( \esc_html( 'listed page ' . Core::as_string( $row['page_hash'] ) . ' holds no URL' ) ) )['hash'] ];
 			},
 			Core::arr( $listing['data'] )
 		);
@@ -633,45 +627,28 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * A live page row's busiest URL in the set, by count, ties going to the
-	 * higher hash as a descending sort breaks them: one read of that page on
-	 * that row's server.
+	 * The `--page` question naming a listed page's busiest URL: the
+	 * listing's question on that page and that row's server, its one URL by
+	 * count, ties going to the higher hash as a descending sort breaks them.
+	 * `--page` owns the page field, so a `page` token the listing narrowed by
+	 * goes; the row is that page already.
 	 *
-	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()`.
-	 * @return \Closure(array<array-key,mixed>): string A `page_rows()` row to its busiest URL's hash.
+	 * @param array<array-key,mixed> $args The listing's bound `urls` args.
+	 * @param array<array-key,mixed> $row  A page row it listed.
+	 * @return array<array-key,mixed>
 	 */
-	private static function busiest_shape( array $base ): \Closure {
-		return static fn ( array $row ): string => Core::as_string(
-			Stats_Query::run(
-				[
-					'group'   => [ 'url' ],
-					'filter'  => [
-						'page'   => [ Core::as_string( $row['page_hash'] ) ],
-						'server' => [ Core::as_string( $row['server'] ) ],
-					] + $base['filter'],
-					'measure' => [ 'count' ],
-					'sort'    => 'count',
-					'order'   => 'desc',
-					'limit'   => 1,
-					'offset'  => 0,
-				] + $base
-			)['rows'][0][0] ?? throw new \LogicException( \esc_html( 'listed page ' . Core::as_string( $row['page_hash'] ) . ' holds no URL' ) )
-		);
-	}
-
-	/**
-	 * A stored page row's busiest URL, by count, ties going to the higher
-	 * hash: the first of the page's URLs the snapshot lists on that row's
-	 * server in the view.
-	 *
-	 * @param Url_Snapshot $snapshot The published snapshot the row came from.
-	 * @param bool         $workers  Read Include Workers' URLs; false the default view's.
-	 * @return \Closure(array<array-key,mixed>): string A `page_rows()` row to its busiest URL's hash, raising `\PDOException` where the snapshot's `urls` will not read.
-	 */
-	private static function stored_busiest_shape( Url_Snapshot $snapshot, bool $workers ): \Closure {
-		return static fn ( array $row ): string => Core::as_string(
-			$snapshot->shapes( Core::as_string( $row['page_hash'] ), Core::as_string( $row['server'] ), $workers, 'count', 'desc', 0, 1 )['rows'][0][0]
-				?? throw new \LogicException( \esc_html( 'listed page ' . Core::as_string( $row['page_hash'] ) . ' holds no URL' ) )
+	private static function busiest_question( array $args, array $row ): array {
+		return \array_replace(
+			$args,
+			[
+				'page'   => Core::as_string( $row['page_hash'] ),
+				'server' => Core::as_string( $row['server'] ),
+				'filter' => \array_values( \array_filter( Stats_Query::strings( $args['filter'] ), static fn ( string $token ): bool => 'page' !== Stats_Query::field_of( \explode( '=', $token, 2 )[0] ) ) ),
+				'sort'   => 'count',
+				'order'  => 'desc',
+				'offset' => 0,
+				'limit'  => 1,
+			]
 		);
 	}
 
@@ -1388,6 +1365,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( \array_key_exists( 'filter', $args ) ) {
 			$args['filter'] = self::filter_tokens( $args['filter'] );
 		}
+		// The stored answers name each server as the rows store it.
+		if ( \is_string( $args['server'] ?? null ) ) {
+			$args['server'] = Url_Parts::server_name( $args['server'] );
+		}
 		if ( 'overview' === $verb && '' === $args['server'] ) {
 			$args['server'] = null;
 		}
@@ -1459,18 +1440,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Whether the snapshot answers a `urls` question: a filter naming one
-	 * page or nothing, and every arg outside `SNAPSHOT_VARIES` at the
-	 * default the binder gives it, so a search, a bucket selection, any
-	 * other filter or any arg added later answers live.
+	 * Whether the snapshot answers a `urls` question: every arg outside
+	 * `SNAPSHOT_VARIES` at the default the binder gives it, so a search, a
+	 * bucket selection, a filter or any arg added later answers live.
 	 *
 	 * @param array<array-key,mixed> $args The bound verb args.
 	 */
 	private static function snapshot_answers( array $args ): bool {
-		$filter = Stats_Query::strings( $args['filter'] );
-		if ( [] !== $filter && null === self::one_page( $filter ) ) {
-			return false;
-		}
 		$defaults = \array_diff_key( self::url_defaults(), \array_flip( self::SNAPSHOT_VARIES ) );
 		foreach ( $defaults as $name => $default ) {
 			if ( $args[ $name ] !== $default ) {
@@ -1492,8 +1468,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `urls` answer off the snapshot, dated when the job built it, to a
-	 * question `snapshot_answers()` admits: its pages, or under one page's
-	 * filter that page's URLs.
+	 * question `snapshot_answers()` admits: its pages, or under `--page`
+	 * that page's URLs.
 	 *
 	 * @param Url_Snapshot           $snapshot The published snapshot.
 	 * @param array<array-key,mixed> $args     The bound verb args.
@@ -1502,31 +1478,20 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \PDOException When the snapshot opens but will not read.
 	 */
 	private static function stored_urls( Url_Snapshot $snapshot, array $args ): array {
-		[ $server, $filters, $sort, $order, $offset, $limit ] = self::url_question( $args );
+		[ $page, $server, $filters, $sort, $order, $offset, $limit ] = self::url_question( $args );
 		$now     = $snapshot->as_of();
 		$workers = $filters['include_workers'];
-		$page    = self::one_page( $filters['filter'] );
 		return [ 'as_of' => $now ] + self::url_reply(
-			null === $page ? 'page' : 'url',
+			$page,
 			$server,
 			$filters,
-			null === $page ? $snapshot->totals( $server, $workers ) : $snapshot->shape_totals( $page, $server, $workers ),
-			null === $page ? $snapshot->pages( $server, $workers, self::PAGE_SORTS[ $sort ], $order, $offset, $limit ) : $snapshot->shapes( $page, $server, $workers, self::URL_SORTS[ $sort ], $order, $offset, $limit ),
+			'' === $page ? $snapshot->totals( $server, $workers ) : $snapshot->shape_totals( $page, $server, $workers ),
+			'' === $page ? $snapshot->pages( $server, $workers, self::PAGE_SORTS[ $sort ], $order, $offset, $limit ) : $snapshot->shapes( $page, $server, $workers, self::URL_SORTS[ $sort ], $order, $offset, $limit ),
 			self::window( '', $now, Bucket::MAX_SELECTION ),
 			$offset,
 			$limit,
 			$now
 		);
-	}
-
-	/**
-	 * The page a filter of one `page=<hash>` token asks the shapes of, as
-	 * `filter_tokens()` spells it; null for any other filter.
-	 *
-	 * @param list<string> $tokens The filter tokens.
-	 */
-	private static function one_page( array $tokens ): ?string {
-		return 1 === \count( $tokens ) && \str_starts_with( $tokens[0], 'page=' ) ? \substr( $tokens[0], \strlen( 'page=' ) ) : null;
 	}
 
 	/**
@@ -1544,7 +1509,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	public static function answer_live( string $verb, array $args, int $now, ?array $servers ): array {
 		return [ 'as_of' => $now ] + match ( $verb ) {
 			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now, $servers ),
-			'urls'     => self::url_page( self::listed( Stats_Query::strings( $args['filter'] ) ), ...self::url_question( $args ), now: $now ),
+			'urls'     => self::url_page( ...self::url_question( $args ), now: $now ),
 			'query'    => self::answer_query( $args, $now ),
 			default    => throw new \InvalidArgumentException( \esc_html( "no stored answer answers {$verb}" ) ),
 		};
@@ -1800,17 +1765,19 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `urls` question bound arguments ask, as `url_page()` takes it: an
+	 * The `urls` question bound arguments ask, as `url_page()` takes it: the
+	 * page whose URLs it lists, '' for pages, then the scope and filters; an
 	 * unknown sort reads as `count`, any order but `asc` as `desc`, and the
-	 * page and its offset clamp inside `Stats_Query`'s bounds.
+	 * listing's limit and offset clamp inside `Stats_Query`'s bounds.
 	 *
 	 * @param array<array-key,mixed> $args The bound verb args.
-	 * @return array{0:string, 1:Url_Filters, 2:string, 3:string, 4:int, 5:int}
+	 * @return array{0:string, 1:string, 2:Url_Filters, 3:string, 4:string, 5:int, 6:int}
 	 */
 	private static function url_question( array $args ): array {
 		$sort  = Core::as_string( $args['sort'] );
 		$order = Core::as_string( $args['order'] );
 		return [
+			Core::as_string( $args['page'] ),
 			Core::as_string( $args['server'] ),
 			[
 				'search'          => \trim( Core::as_string( $args['search'] ) ),
@@ -1828,13 +1795,13 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * One listing of the URL set the filters leave, over the last 288
-	 * buckets or the selected ones, read live: its totals, and its rows of
-	 * the `$listed` group, pages or URLs, with the slowest ten beside them,
-	 * shaped by `url_reply()`. Worker traffic is left out unless asked for. A
-	 * filter narrows the rows, the totals and the slowest ten together, and a
-	 * filter on `worker`, negated or not, replaces the scope's.
+	 * buckets or the selected ones, read live: its totals, and its rows,
+	 * pages or one page's URLs, with the slowest ten beside them, shaped by
+	 * `url_reply()`. Worker traffic is left out unless asked for. A filter
+	 * narrows the rows, the totals and the slowest ten together, and a filter
+	 * on `worker`, negated or not, replaces the scope's.
 	 *
-	 * @param 'page'|'url' $listed  `page` for pages, `url` for URLs, as `listed()` names a question's.
+	 * @param string       $page    The page whose URLs to list, by its hash; '' lists pages.
 	 * @param string       $server  Server to scope to; '' is every server.
 	 * @param Url_Filters  $filters The url filters in force.
 	 * @param string       $sort    A `URL_SORTS` key.
@@ -1845,44 +1812,29 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array{data: list<array<string,mixed>>, rows: int, totals: array<string,mixed>|null, slowest: list<array<string,mixed>>, filters: array<string,mixed>, limit: int, offset: int, available: bool}
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, a filter `url_filter_of()` refuses or a search with no word.
 	 */
-	private static function url_page( string $listed, string $server, array $filters, string $sort, string $order, int $offset, int $limit, int $now ): array {
-		$base   = self::url_set( $server, $filters, $now );
+	private static function url_page( string $page, string $server, array $filters, string $sort, string $order, int $offset, int $limit, int $now ): array {
+		$base   = self::url_set( $page, $server, $filters, $now );
 		$answer = self::url_totals( $base );
-		$rows   = match ( $listed ) {
-			'page' => self::page_listing( $base, $sort, $order, $offset, $limit ),
-			'url'  => self::url_listing( $base, $sort, $order, $offset, $limit ),
-		};
-		return self::url_reply( $listed, $server, $filters, $answer, $rows, $base['buckets'], $offset, $limit, $now );
-	}
-
-	/**
-	 * What a `urls` question lists: a page's URLs, `url`, where a filter
-	 * token keeps a page, and pages, `page`, otherwise.
-	 *
-	 * @param list<string> $tokens The filter tokens, as `filter_tokens()` spells them.
-	 * @return 'page'|'url'
-	 */
-	private static function listed( array $tokens ): string {
-		foreach ( $tokens as $token ) {
-			if ( \str_starts_with( $token, 'page=' ) ) {
-				return 'url';
-			}
-		}
-		return 'page';
+		$rows   = '' === $page ? self::page_listing( $base, $sort, $order, $offset, $limit ) : self::url_listing( $base, $sort, $order, $offset, $limit );
+		return self::url_reply( $page, $server, $filters, $answer, $rows, $base['buckets'], $offset, $limit, $now );
 	}
 
 	/**
 	 * The requests a `urls` question reads, as the spec its totals and its
-	 * listing share: the filter, the scope, the buckets and the search.
+	 * listing share: the filter, the page `--page` names, the scope, the
+	 * buckets and the search. A named page owns the page field, so a filter
+	 * token naming it is refused beside one.
 	 *
+	 * @param string      $page    The page `--page` names, by its hash; '' names none.
 	 * @param string      $server  Server to scope to; '' is every server.
 	 * @param Url_Filters $filters The url filters in force.
 	 * @param int         $now     The reply's clock.
 	 * @return array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string}
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses or a filter `url_filter_of()` refuses.
 	 */
-	private static function url_set( string $server, array $filters, int $now ): array {
-		$filter  = self::url_filter_of( $filters['filter'], self::URL_SET_OWNERS );
+	private static function url_set( string $page, string $server, array $filters, int $now ): array {
+		$filter  = self::url_filter_of( $filters['filter'], '' === $page ? self::URL_SET_OWNERS : self::URL_SET_OWNERS + self::PAGE_OWNER );
+		$filter += '' === $page ? [] : [ 'page' => [ $page ] ];
 		$filter += self::scope( $server, $filters['include_workers'] || \in_array( 'worker', Stats_Query::filtered( $filter ), true ) );
 		return [
 			'source'  => 'requests',
@@ -2042,27 +1994,24 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The `urls` reply a listing and its totals make, live or off the
 	 * snapshot: its rows, its exact totals and its slowest ten, every mean
 	 * request-weighted. A listing of pages answers page rows and counts its
-	 * pages as `rows`, the pager's; a listing of URLs answers URL rows and
-	 * counts its URLs. The totals carry the errors counted.
+	 * pages as `rows`, the pager's; a listing of one page's URLs answers URL
+	 * rows and counts its URLs. The totals carry the errors counted.
 	 *
-	 * @param 'page'|'url'                                                               $listed  `page` for a listing of pages, `url` for one of URLs.
+	 * @param string                                                                     $page    The page whose URLs are listed, by its hash; '' for a listing of pages.
 	 * @param string                                                                     $server  Server scoped to; '' is every server.
 	 * @param Url_Filters                                                                $filters The url filters in force.
 	 * @param array{columns: list<string>, rows: list<list<mixed>>, available: bool}     $answer  The totals: `URL_TOTALS`, ungrouped.
-	 * @param array{columns: list<string>, rows: list<list<mixed>>, also?: list<list<mixed>>} $rows The `$listed`-grouped listing over `URL_MEASURES`, the slowest as `also`.
+	 * @param array{columns: list<string>, rows: list<list<mixed>>, also?: list<list<mixed>>} $rows The page- or URL-grouped listing over `URL_MEASURES`, the slowest as `also`.
 	 * @param list<array{0:int,1:int}>                                                   $buckets The buckets read.
 	 * @param int                                                                        $offset  Listing offset.
 	 * @param int                                                                        $limit   Listing size.
 	 * @param int                                                                        $now     The reply's clock.
 	 * @return array{data: list<array<string,mixed>>, rows: int, totals: array<string,mixed>|null, slowest: list<array<string,mixed>>, filters: array<string,mixed>, limit: int, offset: int, available: bool}
 	 */
-	private static function url_reply( string $listed, string $server, array $filters, array $answer, array $rows, array $buckets, int $offset, int $limit, int $now ): array {
+	private static function url_reply( string $page, string $server, array $filters, array $answer, array $rows, array $buckets, int $offset, int $limit, int $now ): array {
 		$totals            = self::measures( $answer );
 		$count             = Core::num_int( $totals['count'] );
-		[ $shape, $pager ] = match ( $listed ) {
-			'page' => [ self::page_rows( ... ), 'pages' ],
-			'url'  => [ self::url_rows( ... ), 'urls' ],
-		};
+		[ $shape, $pager ] = '' === $page ? [ self::page_rows( ... ), 'pages' ] : [ self::url_rows( ... ), 'urls' ];
 		$slowest           = [
 			'columns' => $rows['columns'],
 			'rows'    => $rows['also'] ?? throw new \LogicException( 'a spec naming also answers it' ),
@@ -2082,6 +2031,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			'slowest' => $shape( $slowest ),
 			'filters' => [
 				'server'          => $server,
+				'page'            => $page,
 				'search'          => $filters['search'],
 				'filter'          => $filters['filter'],
 				'include_workers' => $filters['include_workers'],
@@ -2282,10 +2232,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `filter` arg's tokens in one spelling, each field lowercase and
-	 * each token once, so a field matches in any case and a repeated token
-	 * counts once: what `query`, `urls`, `dump_url` and `ask` read and echo,
-	 * and what a stored answer's key is taken over.
+	 * The `filter` arg's tokens in one spelling, each field lowercase, a
+	 * server as `Url_Parts::server_name()` stores it, and each token once, so
+	 * a field matches in any case and a repeated token counts once: what
+	 * `query`, `urls`, `dump_url` and `ask` read and echo, and what a stored
+	 * answer's key is taken over.
 	 *
 	 * @param mixed $arg The bound `filter` arg.
 	 * @return list<string>
@@ -2293,8 +2244,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function filter_tokens( mixed $arg ): array {
 		$tokens = [];
 		foreach ( Stats_Query::strings( $arg ) as $token ) {
-			$parts    = \explode( '=', $token, 2 );
-			$tokens[] = 2 === \count( $parts ) ? \strtolower( $parts[0] ) . '=' . $parts[1] : $token;
+			$parts = \explode( '=', $token, 2 );
+			if ( 2 !== \count( $parts ) ) {
+				$tokens[] = $token;
+				continue;
+			}
+			$field    = \strtolower( $parts[0] );
+			$tokens[] = $field . '=' . ( 'server' === Stats_Query::field_of( $field ) ? Url_Parts::server_name( $parts[1] ) : $parts[1] );
 		}
 		return \array_values( \array_unique( $tokens ) );
 	}
@@ -2413,7 +2369,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs the set holds of that page on one server, its case spellings and its query shapes: `page_hash`, `page`, `server`, `path` (the page under its server), `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), `url` (the name the row shows: the one URL\'s own name, its case, query and scheme kept, or for a page of more `https://` and the page), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--filter=page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures. `rows` is the exact count the pager lists, the pages or under a page filter that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `include_workers` and one `page=<page hash>` filter is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs the set holds of that page on one server, its case spellings and its query shapes: `page_hash`, `page`, `server`, `path` (the page under its server), `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), `url` (the name the row shows: the one URL\'s own name, its case, query and scheme kept, or for a page of more `https://` and the page), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures; it owns the page field, so a `page=` or `page!=` filter beside it is refused. `--filter=page=<page hash>` keeps that one page row, as any filter narrows the pages. `rows` is the exact count the pager lists, the pages or under `--page` that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `page` and `include_workers` is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
@@ -2421,6 +2377,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'page', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A page\'s hash, `page_hash`: answers that page\'s URL rows in place of pages. It owns the page field, so a `page=` or `page!=` filter beside it is refused.' ],
 						self::FILTER_ARG,
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end` inclusive, at most 288 buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last 288. `filters.bucket` echoes the canonical spelling.' ],
