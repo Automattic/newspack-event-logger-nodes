@@ -227,8 +227,8 @@ jest.mock( '../UrlTable', () => ( {
 		return React.createElement(
 			'div',
 			{ 'data-testid': 'url-table' },
-			'UrlTable totalUrls=',
-			props.totalUrls
+			'UrlTable totalRows=',
+			props.totalRows
 		);
 	},
 } ) );
@@ -3705,6 +3705,166 @@ describe( 'PerformanceDashboard', () => {
 				hash: 'fac69dee1c14',
 				url: 'https://community.example/charlotte/MovieTimes',
 			} );
+			unmount();
+		} );
+	} );
+
+	describe( 'pages and their shapes', () => {
+		/** A page of three shapes, and a page of one, as `urls` rows. */
+		const KOKAKO = {
+			page_hash: 'c4f7a2e19b05',
+			page: 'hoiho-5172.example/kokako-5172/',
+			server: 'hoiho-5172.example',
+			path: '/kokako-5172/',
+			shapes: 3,
+			hash: null,
+			count: 44,
+		};
+		const HIHI = {
+			page_hash: '0b9d3e6a5172',
+			page: 'hoiho-5172.example/hihi-5172/',
+			server: 'hoiho-5172.example',
+			path: '/hihi-5172/',
+			shapes: 1,
+			hash: 'f1e2d3c45172',
+			count: 17,
+		};
+		const KOKAKO_KEY = 'c4f7a2e19b05:hoiho-5172.example';
+		const HIHI_KEY = '0b9d3e6a5172:hoiho-5172.example';
+
+		const pagesView = ( rows ) =>
+			loadedView( {
+				urls: { data: rows, rows: rows.length, loading: false },
+			} );
+		const expandedInBar = () =>
+			new URLSearchParams( window.location.search ).getAll( 'expand' );
+
+		it( 'keeps the expanded pages across a reload', async () => {
+			window.history.replaceState(
+				null,
+				'',
+				`/wp-admin/admin.php?page=perf&expand=${ KOKAKO_KEY }&expand=not%20a%20page`
+			);
+			mockView = pagesView( [ KOKAKO, HIHI ] );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__urlTableProps.expanded ).toEqual( [
+				KOKAKO_KEY,
+			] );
+			expect( mockGraphOpts.expandedPages ).toEqual( [ KOKAKO ] );
+			expect( expandedInBar() ).toEqual( [ KOKAKO_KEY ] );
+			unmount();
+		} );
+
+		it( 'writes each toggle into the bar and hands the graph the page', async () => {
+			mockView = pagesView( [ KOKAKO, HIHI ] );
+			const { unmount } = mountDash();
+			await flushEffects();
+			expect( mockGraphOpts.expandedPages ).toEqual( [] );
+
+			act( () =>
+				globalThis.__urlTableProps.onToggleExpand( KOKAKO_KEY )
+			);
+			await flushEffects();
+			expect( expandedInBar() ).toEqual( [ KOKAKO_KEY ] );
+			expect( mockGraphOpts.expandedPages ).toEqual( [ KOKAKO ] );
+
+			act( () =>
+				globalThis.__urlTableProps.onToggleExpand( KOKAKO_KEY )
+			);
+			await flushEffects();
+			expect( expandedInBar() ).toEqual( [] );
+			expect( mockGraphOpts.expandedPages ).toEqual( [] );
+			unmount();
+		} );
+
+		it( 'asks the shapes of a listed page of several shapes alone', async () => {
+			window.history.replaceState(
+				null,
+				'',
+				`/wp-admin/admin.php?page=perf&expand=${ HIHI_KEY }&expand=9a9a9a9a9a9a:hoiho-5172.example&expand=${ KOKAKO_KEY }`
+			);
+			mockView = pagesView( [ HIHI, KOKAKO ] );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( mockGraphOpts.expandedPages ).toEqual( [ KOKAKO ] );
+			unmount();
+		} );
+
+		it( 'counts the pages the table lists', async () => {
+			mockView = pagesView( [ KOKAKO, HIHI ] );
+			const { container, unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__urlTableProps.totalRows ).toBe( 2 );
+			expect( container.textContent ).toContain(
+				'Pages by Request Count'
+			);
+			unmount();
+		} );
+
+		it( "titles a one-shape page's window, and its rule, by the URL dump_url names", async () => {
+			mockNavState.selectedUrl = HIHI;
+			mockView = loadedView( {
+				urlDetail: {
+					data: {
+						stats: {
+							hash: 'f1e2d3c45172',
+							avg_ms: 50,
+							url: 'https://hoiho-5172.example/Hihi-5172/?kaka=?',
+						},
+						requests: [],
+					},
+					loading: false,
+					error: null,
+				},
+			} );
+			const { container, unmount } = mountDash();
+			await flushEffects();
+			answerCommand( RULES_DUMP, { result: { rules: [] } } );
+
+			const modal = container.querySelector( '[data-testid="modal"]' );
+			expect( modal.querySelector( 'h2' ).textContent ).toBe(
+				'https://hoiho-5172.example/Hihi-5172/?kaka=?'
+			);
+			const btn = container.querySelector(
+				'.event-logger-rule-control button'
+			);
+			expect( btn.disabled ).toBe( false );
+			act( () => btn.click() );
+			expect( globalThis.__ruleEditProps.rule.pattern ).toBe(
+				'/Hihi-5172/?'
+			);
+			unmount();
+		} );
+
+		it( 'names a one-shape page by no other URL the window last answered', async () => {
+			mockNavState.selectedUrl = HIHI;
+			mockView = loadedView( {
+				urlDetail: {
+					data: {
+						stats: {
+							hash: '77aa00bb5172',
+							url: 'https://hoiho-5172.example/kea-5172/',
+						},
+						requests: [],
+					},
+					loading: false,
+					error: null,
+				},
+			} );
+			const { container, unmount } = mountDash();
+			await flushEffects();
+			answerCommand( RULES_DUMP, { result: { rules: [] } } );
+
+			const modal = container.querySelector( '[data-testid="modal"]' );
+			expect( modal.querySelector( 'h2' ).textContent ).toBe( '' );
+			expect(
+				container.querySelector( '.event-logger-rule-control button' )
+					.disabled
+			).toBe( true );
 			unmount();
 		} );
 	} );

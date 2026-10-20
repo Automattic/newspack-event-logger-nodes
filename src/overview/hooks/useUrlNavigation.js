@@ -45,9 +45,10 @@ const isValidRequestId = ( id ) =>
 	typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test( id );
 
 /**
- * The catalog entry for a hash, when the loaded page holds one.
+ * The page row naming a URL hash, when the loaded page holds one: a page of
+ * one shape, whose `hash` is that URL's; a page of more names none.
  *
- * @param {Array}   urls One page of the URL catalog.
+ * @param {Array}   urls One page of the URL table's page rows.
  * @param {?string} hash The hash to resolve.
  * @return {?Object} The entry carrying that hash, or null.
  */
@@ -57,8 +58,9 @@ const findUrl = ( urls, hash ) =>
 /**
  * Hold the selection the dashboard renders, and the address bar that names it.
  *
- * The returned object carries the selection — `selectedUrl`, a `{hash, url}`
- * object, and `selectedRequest`, a request id — with a setter for each. It also
+ * The returned object carries the selection — `selectedUrl`, an object
+ * carrying the URL's `hash` and, when the row it came from names one, its
+ * `url` — and `selectedRequest`, a request id — with a setter for each. It also
  * carries `initialSearchQuery`, the `?search=` value read once on mount: the
  * owner runs that search and then clears the value through
  * `setInitialSearchQuery`, or it runs on every render.
@@ -71,8 +73,8 @@ const findUrl = ( urls, hash ) =>
  * `selectRequest` SUPERSEDES a link still being resolved: it cancels the intent,
  * so a reply landing afterwards answers nothing and is dropped by the caller.
  *
- * @param {Array} urls One page of the URL catalog; each entry carries a `hash`
- *                     and a `url`.
+ * @param {Array} urls One page of the URL table's page rows; a one-shape
+ *                     page's `hash` is its URL's.
  * @return {Object} Navigation state and callbacks.
  */
 export default function useUrlNavigation( urls ) {

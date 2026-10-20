@@ -97,6 +97,34 @@
 	.event-logger-table__row {
 		min-width: 800px;
 	}
+
+	// A page's caret leads its URL cell; its shapes sit indented beneath.
+	.event-logger-table__row [data-field="url"] {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+
+		code {
+			flex: 1;
+			min-width: 0;
+		}
+	}
+
+	.event-logger-table__row.is-shape [data-field="url"] {
+		padding-left: 32px;
+	}
+}
+
+// Width and turn only: the shared disclosure role paints it.
+.event-logger-table__caret {
+	flex: none;
+	width: 16px;
+	text-align: center;
+	transition: transform 0.1s;
+}
+
+.event-logger-table__row[aria-expanded="false"] .event-logger-table__caret {
+	transform: rotate(-90deg);
 }
 
 .event-logger-table__pagination {

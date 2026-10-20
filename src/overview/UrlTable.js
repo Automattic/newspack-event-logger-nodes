@@ -1,5 +1,10 @@
 /**
- * The Performance dashboard's URL leaderboard.
+ * The Performance dashboard's URL leaderboard, one row per page.
+ *
+ * A page is a URL's lowercased host and path, and its row folds every query
+ * shape the set holds of it. A page of one shape is that URL, and a click
+ * opens it; a page of more expands into its shapes, each a URL row beneath it
+ * that its own slice answers, at most a page's worth and then how many more.
  *
  * The server owns the set. `PerformanceDashboard` polls the `performance` CI's
  * `urls` verb and this table draws the page it is handed, in the order it
@@ -18,8 +23,11 @@
  * holds all three, and the table reads them only to start a new set on its
  * first page.
  *
- * Rows virtualize against window scroll, and each row's URL cell carries a
- * background bar scaling the active chart metric against the page's p95.
+ * Which pages are expanded is the dashboard's, which keeps it as `?expand=`.
+ *
+ * Pages and the shapes beneath them virtualize as one list against window
+ * scroll, and each row's URL cell carries a background bar scaling the
+ * active chart metric against the page's p95.
  */
 
 import {
@@ -32,6 +40,7 @@ import {
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { SearchControl } from '@wordpress/components';
+import { useNodeField } from '@newspack-nodes/runtime';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { PAGE_CONTENT_CLASS } from '../components/DashboardShell';
 import SortHeaderButton from './components/SortHeaderButton';
@@ -46,7 +55,14 @@ import {
 	useQueryParamChoice,
 	useQueryParamFlag,
 } from '@newspack-nodes/shared/hooks/useQueryParamState';
-import { DEFAULT_CHART_METRIC, SORT_ORDERS, cellClass } from './constants';
+import {
+	DEFAULT_CHART_METRIC,
+	NO_PAGE_KEYS,
+	SORT_ORDERS,
+	cellClass,
+	pageKey,
+	shapesSubject,
+} from './constants';
 
 /**
  * Row height in pixels.
@@ -74,7 +90,8 @@ const restorePage = ( raw ) => {
  *
  * `usePerformanceGraph` fixes the `urls` verb's `limit` at 100 to match, since
  * every `offset` this table sends is derived from this number: the two are one
- * page size split across two files.
+ * page size split across two files. An expanded page's shapes are asked under
+ * the same limit, so it is also the most shapes one page shows.
  */
 const URLS_PER_PAGE = 100;
 
@@ -107,9 +124,9 @@ const pct = ( part, total ) => {
  *
  * `kind` defaults to `numeric` — a sortable right-aligned header over a
  * numeric cell. `status` is an unsortable HTTP-class heading over a `pct()`
- * share, `code` the sortable URL heading over the bar-backed `<code>` cell.
- * `render` overrides the default `formatNum( url[ field ], 'ms' )`, and
- * `width` is the column's grid track.
+ * share, `code` the sortable URL heading over the bar-backed `<code>` cell
+ * holding the row's name. `render` overrides the default
+ * `formatNum( url[ field ], 'ms' )`, and `width` is the column's grid track.
  *
  * A `status` column's `status` is a representative code, not a count of that
  * one status: the shared `.entry-status[data-status^="2"]` rules colour the
@@ -129,7 +146,7 @@ const COLUMNS = [
 		width: 'minmax(0, 1fr)',
 		label: __( 'URL', 'newspack-event-logger-nodes' ),
 		kind: 'code',
-		render: ( url ) => <code>{ url.url }</code>,
+		render: ( url, formatNum, name ) => <code>{ name }</code>,
 	},
 	{
 		field: 'count_2xx',
@@ -231,18 +248,81 @@ const SORT_FIELDS = COLUMNS.filter( ( col ) => 'status' !== col.kind ).map(
  * express.
  *
  * @param {Object}   col       Column declaration from COLUMNS.
- * @param {Object}   url       One row of the `urls` reply.
+ * @param {Object}   url       One page or shape row.
  * @param {Function} formatNum Number formatter, from the table.
+ * @param {string}   name      What the row's URL cell names.
  * @return {string|import('react').ReactElement} Cell content.
  */
-const renderCell = ( col, url, formatNum ) => {
+const renderCell = ( col, url, formatNum, name ) => {
 	if ( 'status' === col.kind ) {
 		return pct( url[ col.field ], url.count );
 	}
 	return col.render
-		? col.render( url, formatNum )
+		? col.render( url, formatNum, name )
 		: formatNum( url[ col.field ], 'ms' );
 };
+
+/**
+ * What a page row's URL cell names: its path where the table is scoped to
+ * its server, else the page, whose host says which server it was.
+ *
+ * @param {Object}  page   A page row.
+ * @param {boolean} scoped Whether the table lists one server.
+ * @return {string} The name.
+ */
+const pageName = ( page, scoped ) => ( scoped ? page.path : page.page );
+
+/**
+ * The table's rows in order: each page, and beneath a page of several shapes
+ * the reader expanded, one slot per shape it shows, then the shapes past
+ * those as a count. A slot is a position, filled when the page's slice
+ * answers, so every row is laid out before any shape arrives.
+ *
+ * @param {Object[]}    pages    The page rows, as the server ordered them.
+ * @param {Set<string>} expanded The keys of the pages expanded.
+ * @return {Array<{page: Object, open?: boolean, shape?: number, more?: number}>} The rows.
+ */
+const layOut = ( pages, expanded ) =>
+	pages.flatMap( ( page ) => {
+		if ( ! ( 1 < page.shapes && expanded.has( pageKey( page ) ) ) ) {
+			return [ { page } ];
+		}
+		const shown = Math.min( page.shapes, URLS_PER_PAGE );
+		return [
+			{ page, open: true },
+			...Array.from( { length: shown }, ( _, shape ) => ( {
+				page,
+				shape,
+			} ) ),
+			...( shown < page.shapes
+				? [ { page, more: page.shapes - shown } ]
+				: [] ),
+		];
+	} );
+
+/**
+ * The visible rows with each page's run of shape slots folded into one
+ * `{ shapesOf, from, to }`, which one component renders off the page's view.
+ *
+ * @param {Object[]} rows A window of `layOut()` rows.
+ * @return {Object[]} The rows, each run of slots one entry.
+ */
+const shapeRuns = ( rows ) =>
+	rows.reduce( ( runs, row ) => {
+		const last = runs.at( -1 );
+		if ( undefined === row.shape ) {
+			runs.push( row );
+		} else if ( last?.shapesOf === row.page ) {
+			last.to = row.shape + 1;
+		} else {
+			runs.push( {
+				shapesOf: row.page,
+				from: row.shape,
+				to: row.shape + 1,
+			} );
+		}
+		return runs;
+	}, [] );
 
 /**
  * What the table says in place of rows: why it has none it can vouch for.
@@ -294,27 +374,39 @@ const barFieldFor = ( metric ) => {
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const UrlRow = memo(
 	/**
-	 * One URL row, memoized so a scroll re-renders only the rows that entered
-	 * the window.
+	 * One page or shape row, memoized so a scroll re-renders only the rows
+	 * that entered the window.
 	 *
 	 * The URL cell carries a background bar whose width is this row's value as
 	 * a fraction of `maxAvg`; a row above that value fills the cell and stops.
-	 * The row is a button carrying the `?` picker's `url:` descriptor, so a
-	 * picker click asks about this URL rather than the page.
+	 * A row naming one URL is a button carrying the `?` picker's `url:`
+	 * descriptor, so a picker click asks about that URL rather than the page,
+	 * and a click opens it. A page of several shapes names none: its click
+	 * expands or shuts it, behind the shared disclosure caret.
 	 *
-	 * @param {Object}                       props            Component props.
-	 * @param {Object}                       props.url        One row of the `urls` reply.
-	 * @param {boolean}                      props.isSelected Whether the detail modal is open on this row.
-	 * @param {(url: Object) => void}        props.onSelect   Receives the row on click or Enter/Space.
-	 * @param {(n: number, s?: string) => *} props.formatNum  Number formatter, from the table.
-	 * @param {number}                       props.maxAvg     The page's p95 of the measured bar metric; 0 draws no bar.
-	 * @param {string}                       props.barField   The row field the bar measures, from `barFieldFor()`.
+	 * @param {Object}                       props             Component props.
+	 * @param {Object}                       props.url         A page row, or a shape's URL row.
+	 * @param {string}                       props.name        What its URL cell names.
+	 * @param {boolean}                      [props.shape]     Whether it is a shape beneath its page.
+	 * @param {?string}                      [props.expandKey] The key a page of several shapes toggles by; null for any other row.
+	 * @param {boolean}                      [props.open]      Whether that page is expanded.
+	 * @param {boolean}                      props.isSelected  Whether the detail modal is open on this row.
+	 * @param {(url: Object) => void}        props.onSelect    Receives a row naming one URL on click or Enter/Space.
+	 * @param {(key: string) => void}        [props.onToggle]  Receives `expandKey` on click or Enter/Space.
+	 * @param {(n: number, s?: string) => *} props.formatNum   Number formatter, from the table.
+	 * @param {number}                       props.maxAvg      The page's p95 of the measured bar metric; 0 draws no bar.
+	 * @param {string}                       props.barField    The row field the bar measures, from `barFieldFor()`.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function UrlRow( {
 		url,
+		name,
+		shape = false,
+		expandKey = null,
+		open = false,
 		isSelected,
 		onSelect,
+		onToggle,
 		formatNum,
 		maxAvg,
 		barField,
@@ -328,10 +420,13 @@ const UrlRow = memo(
 				background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
 			};
 		}
+		const expandable = null !== expandKey;
+		const activate = () =>
+			expandable ? onToggle( expandKey ) : onSelect( url );
 		const handleKeyDown = ( e ) => {
 			if ( e.key === 'Enter' || e.key === ' ' ) {
 				e.preventDefault();
-				onSelect( url );
+				activate();
 			}
 		};
 
@@ -339,12 +434,13 @@ const UrlRow = memo(
 			<div
 				role="button"
 				tabIndex={ 0 }
-				data-ask={ `url:${ url.hash }` }
-				onClick={ () => onSelect( url ) }
+				data-ask={ url.hash ? `url:${ url.hash }` : undefined }
+				aria-expanded={ expandable ? open : undefined }
+				onClick={ activate }
 				onKeyDown={ handleKeyDown }
 				className={ `event-logger-table__row newspack-nodes-table__row${
-					isSelected ? ' is-selected' : ''
-				}` }
+					shape ? ' is-shape' : ''
+				}${ isSelected ? ' is-selected' : '' }` }
 				style={ {
 					height: ROW_HEIGHT,
 					gridTemplateColumns: GRID_TEMPLATE,
@@ -358,7 +454,19 @@ const UrlRow = memo(
 						className={ cellClass( col ) }
 						style={ 'code' === col.kind ? barStyle : undefined }
 					>
-						{ renderCell( col, url, formatNum ) }
+						{ 'code' === col.kind && ! shape && (
+							<span
+								className={ `event-logger-table__caret${
+									expandable
+										? ' newspack-nodes-disclosure'
+										: ''
+								}` }
+								aria-hidden="true"
+							>
+								{ expandable ? '▾' : '' }
+							</span>
+						) }
+						{ renderCell( col, url, formatNum, name ) }
 					</div>
 				) ) }
 			</div>
@@ -367,20 +475,95 @@ const UrlRow = memo(
 );
 
 /**
+ * A row holding only a line of text in the URL column, under a page: why a
+ * shape slot is empty, or how many shapes the page holds past those shown.
+ *
+ * @param {Object} props      Component props.
+ * @param {string} props.text The line; '' for a slot still empty.
+ * @return {import('react').ReactElement} Rendered row.
+ */
+function NoteRow( { text } ) {
+	return (
+		<div
+			className="event-logger-table__row newspack-nodes-table__row is-shape is-note"
+			style={ { height: ROW_HEIGHT, gridTemplateColumns: GRID_TEMPLATE } }
+		>
+			{ COLUMNS.map( ( col ) => (
+				<div
+					key={ col.field }
+					data-field={ col.field }
+					className={ `${ cellClass( col ) } is-muted` }
+				>
+					{ 'code' === col.kind ? text : null }
+				</div>
+			) ) }
+		</div>
+	);
+}
+
+/**
+ * One run of an expanded page's shape slots, filled from the view its slice
+ * publishes, each shape keyed by its hash. Not memoized: the slice is built
+ * after the row that reads it, so it re-reads its view on the table's next
+ * render.
+ *
+ * @param {Object}  props          Component props.
+ * @param {Object}  props.page     The page row.
+ * @param {number}  props.from     Its first slot in this run.
+ * @param {number}  props.to       One past its last slot.
+ * @param {Object}  props.rowProps What every row takes from the table.
+ * @param {?Object} props.selected The open URL, or null.
+ * @return {import('react').ReactElement[]} The rows.
+ */
+function PageShapes( { page, from, to, rowProps, selected } ) {
+	const model = useNodeField( `${ shapesSubject( page ) }:view`, 'view' );
+	// `rows` stays null until a reply counts the page's shapes, none included.
+	const unanswered = null === ( model?.rows ?? null );
+	const waiting = model?.error
+		? sprintf(
+				// translators: %s: the error message.
+				__( 'Could not load URLs: %s', 'newspack-event-logger-nodes' ),
+				model.error
+		  )
+		: __( 'Loading URLs…', 'newspack-event-logger-nodes' );
+	return Array.from( { length: to - from }, ( _, at ) => {
+		const index = from + at;
+		const shape = model?.data?.[ index ];
+		return shape ? (
+			<UrlRow
+				key={ shape.hash }
+				{ ...rowProps }
+				url={ shape }
+				name={ shape.url }
+				shape
+				isSelected={ selected?.hash === shape.hash }
+			/>
+		) : (
+			<NoteRow
+				key={ `#${ index }` }
+				text={ 0 === index && unanswered ? waiting : '' }
+			/>
+		);
+	} );
+}
+
+/**
  * The URL leaderboard: its search and filter controls, the virtualized table,
  * and the pager beneath it.
  *
  * @param {Object}                     props                  Component props.
- * @param {Array<Object>}              props.urls             The page of rows the `urls` verb returned.
- * @param {?Object}                    props.selectedUrl      The row the detail modal is open on, or null.
- * @param {(url: Object) => void}      props.onSelect         Receives a row on click or Enter/Space, and is forwarded to each row.
+ * @param {Array<Object>}              props.urls             The page rows the `urls` verb returned.
+ * @param {?Object}                    props.selectedUrl      The URL the detail modal is open on, or null.
+ * @param {(url: Object) => void}      props.onSelect         Receives a row naming one URL, a one-shape page or a shape, on click or Enter/Space.
+ * @param {string[]}                   [props.expanded]       The keys of the expanded pages, as `pageKey()` spells them.
+ * @param {(key: string) => void}      [props.onToggleExpand] Receives the key of a page of several shapes to expand or shut.
  * @param {(params: Object) => void}   props.onParamsChange   Receives `search`, `sort`, `order`, `offset`, `includeWorkers` and `bucket` whenever one of them changes.
  * @param {string}                     [props.bucket]         The spelling of the bucket selection the dashboard narrowed the table to; '' for none.
  * @param {string[]|null}              [props.slots]          The charted bucket keys, newest first, which the Time field resolves a typed time against.
  * @param {string}                     [props.server]         The server the dashboard scoped the table to; '' for every server.
  * @param {string[]}                   [props.chips]          The chart's chips, which narrow the table's set server-side; a change starts the new set on page 1.
  * @param {(spelling: string) => void} [props.onBucketChange] Receives the selection the Time field leaves.
- * @param {?number}                    [props.totalUrls]      The URLs the server's filters left, which the pager pages over. Null until a reply has counted them.
+ * @param {?number}                    [props.totalRows]      The pages the server's filters left, which the pager pages over. Null until a reply has counted them.
  * @param {string}                     [props.metric]         Chart metric the row bars scale.
  * @param {?string}                    [props.error]          The last `urls` refusal; the table shows it in place of rows it cannot vouch for.
  * @param {boolean}                    [props.loading]        Whether a page is asked for and not yet answered.
@@ -390,13 +573,15 @@ export default function UrlTable( {
 	urls,
 	selectedUrl,
 	onSelect,
+	expanded = NO_PAGE_KEYS,
+	onToggleExpand,
 	onParamsChange,
 	bucket = '',
 	slots = null,
 	server = '',
 	chips = [],
 	onBucketChange,
-	totalUrls = null,
+	totalRows = null,
 	metric = DEFAULT_CHART_METRIC,
 	error = null,
 	loading = false,
@@ -481,7 +666,7 @@ export default function UrlTable( {
 	};
 
 	// Clamped on READ: a shrinking set strands the page, pager and all.
-	const total = totalUrls ?? 0;
+	const total = totalRows ?? 0;
 	const totalPages = Math.max(
 		1,
 		Math.min(
@@ -491,7 +676,7 @@ export default function UrlTable( {
 	);
 	// An unmeasured set clamps nothing, so a linked page survives to its reply.
 	const page =
-		null === totalUrls ? currentPage : Math.min( currentPage, totalPages );
+		null === totalRows ? currentPage : Math.min( currentPage, totalPages );
 	const offset = ( page - 1 ) * URLS_PER_PAGE;
 	// Move the state too, or a growing set springs the page back.
 	useEffect( () => {
@@ -520,12 +705,16 @@ export default function UrlTable( {
 		onParamsChange,
 	] );
 
-	const filteredUrls = urls;
+	const expandedKeys = useMemo( () => new Set( expanded ), [ expanded ] );
+	const rows = useMemo(
+		() => layOut( urls, expandedKeys ),
+		[ urls, expandedKeys ]
+	);
 
 	const barField = barFieldFor( metric );
 	// Bar-background max uses p95 so outliers don't blow out the scale.
 	const maxAvg = useMemo( () => {
-		const values = filteredUrls
+		const values = urls
 			.map( ( u ) => u[ barField ] )
 			.filter( Number.isFinite )
 			.sort( ( a, b ) => a - b );
@@ -534,7 +723,7 @@ export default function UrlTable( {
 		}
 		const p95Index = Math.floor( values.length * 0.95 );
 		return values[ Math.min( p95Index, values.length - 1 ) ];
-	}, [ filteredUrls, barField ] );
+	}, [ urls, barField ] );
 
 	/**
 	 * Format a count or a measurement for one cell.
@@ -555,10 +744,17 @@ export default function UrlTable( {
 		useVirtualization(
 			listRef,
 			ROW_HEIGHT,
-			filteredUrls.length,
+			rows.length,
 			`.${ PAGE_CONTENT_CLASS }`
 		);
-	const visibleUrls = filteredUrls.slice( startIndex, endIndex );
+	const rowProps = {
+		onSelect,
+		onToggle: onToggleExpand,
+		formatNum,
+		maxAvg,
+		barField,
+	};
+	const scoped = '' !== server;
 
 	return (
 		<div className="event-logger-table event-logger-table--urls">
@@ -643,7 +839,7 @@ export default function UrlTable( {
 					className="event-logger-table__list newspack-nodes-table"
 					style={ { paddingTop, paddingBottom } }
 				>
-					{ error || filteredUrls.length === 0 ? (
+					{ error || urls.length === 0 ? (
 						<div
 							className={ `event-logger-table__empty newspack-nodes-empty-state${
 								error ? ' newspack-nodes-status is-error' : ''
@@ -652,17 +848,58 @@ export default function UrlTable( {
 							{ emptyText( error, loading, searchTerm ) }
 						</div>
 					) : (
-						visibleUrls.map( ( url ) => (
-							<UrlRow
-								key={ url.hash }
-								url={ url }
-								isSelected={ selectedUrl?.hash === url.hash }
-								onSelect={ onSelect }
-								formatNum={ formatNum }
-								maxAvg={ maxAvg }
-								barField={ barField }
-							/>
-						) )
+						shapeRuns( rows.slice( startIndex, endIndex ) ).map(
+							( row ) => {
+								if ( row.shapesOf ) {
+									return (
+										<PageShapes
+											key={ `shapes:${ pageKey(
+												row.shapesOf
+											) }` }
+											page={ row.shapesOf }
+											from={ row.from }
+											to={ row.to }
+											rowProps={ rowProps }
+											selected={ selectedUrl }
+										/>
+									);
+								}
+								const key = pageKey( row.page );
+								if ( row.more ) {
+									return (
+										<NoteRow
+											key={ `more:${ key }` }
+											text={ sprintf(
+												// translators: %s: how many more URLs the page holds.
+												_n(
+													'%s more URL',
+													'%s more URLs',
+													row.more,
+													'newspack-event-logger-nodes'
+												),
+												formatGroupedCount( row.more )
+											) }
+										/>
+									);
+								}
+								return (
+									<UrlRow
+										key={ key }
+										{ ...rowProps }
+										url={ row.page }
+										name={ pageName( row.page, scoped ) }
+										expandKey={
+											1 < row.page.shapes ? key : null
+										}
+										open={ !! row.open }
+										isSelected={
+											!! row.page.hash &&
+											selectedUrl?.hash === row.page.hash
+										}
+									/>
+								);
+							}
+						)
 					) }
 				</div>
 			</div>
@@ -671,9 +908,9 @@ export default function UrlTable( {
 				<span className="event-logger-table__pagination-info newspack-nodes-status">
 					{ total > URLS_PER_PAGE &&
 						sprintf(
-							// translators: 1: first URL number on the page, 2: last URL number on the page, 3: total number of URLs.
+							// translators: 1: first row number on the page, 2: last row number on the page, 3: total number of pages listed.
 							__(
-								'%1$s–%2$s of %3$s URLs',
+								'%1$s–%2$s of %3$s pages',
 								'newspack-event-logger-nodes'
 							),
 							formatGroupedCount( offset + 1 ),
@@ -685,10 +922,10 @@ export default function UrlTable( {
 					{ total > 0 &&
 						total <= URLS_PER_PAGE &&
 						sprintf(
-							// translators: %s: number of URLs in the table.
+							// translators: %s: number of pages in the table.
 							_n(
-								'%s URL',
-								'%s URLs',
+								'%s page',
+								'%s pages',
 								total,
 								'newspack-event-logger-nodes'
 							),

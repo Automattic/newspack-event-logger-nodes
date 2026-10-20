@@ -26,6 +26,12 @@
  * chart dimension change asks the chart alone, and a chip change the chart
  * and `urls`, whose rows and header the chips narrow too.
  *
+ * An expanded page adds one more polled slice, `shapes:<page key>`, asking
+ * `urls --filter=page=<page hash>` on the page's own server under the
+ * table's question from its first row, so its shape rows describe the traffic
+ * its page row folds. It hangs off `performance:tee` while the page is
+ * expanded and listed, and is asked afresh when the table's question moves.
+ *
  * ON-DEMAND slices. Opening a modal fetches; neither modal hangs off
  * `performance:timer`, and the overview poll pauses while either is open:
  *
@@ -58,7 +64,13 @@
  * React through each slice's own `useNodeField( '<slice>:view', 'view' )`.
  */
 
-import { useCallback, useEffect, useMemo, useRef } from '@wordpress/element';
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from '@wordpress/element';
 import {
 	Core,
 	formatCommandArgs,
@@ -82,6 +94,7 @@ import {
 	CHART_TOP,
 	GROUPS,
 	SERIES_MEASURES,
+	shapesSubject,
 } from '../constants';
 
 /** @typedef {import('@newspack-nodes/runtime').TimerNode} TimerNode */
@@ -149,6 +162,12 @@ const slice = ( subject, command, viewClass, argsFn ) => ( {
 
 /** No filter chips: one array, so an unset chip list never re-asks. */
 export const NO_CHIPS = [];
+
+/** No expanded page: one array, so an unset list never re-syncs. */
+const NO_PAGES = [];
+
+/** The Tee the page's polled slices, an expanded page's among them, hang off. */
+const PERFORMANCE_TEE = 'performance:tee';
 
 /** The overview chart's slice: the site's series by its dimensions. */
 const CHART = 'chart';
@@ -469,6 +488,9 @@ function urlsArgs( { urlParams, serverFilter, chips } ) {
  *                                          fresh object asks nothing.
  * @param {?string}  [opts.selectedRequest] Rid of the open request detail
  *                                          modal; null closes and clears it.
+ * @param {Object[]} [opts.expandedPages]   The `urls` page rows whose shapes
+ *                                          the table shows, each asking them
+ *                                          through a slice of its own.
  * @return {{ handleUrlParamsChange: (params: Object) => void }} The URL table's params
  *         callback, and nothing else.
  */
@@ -484,6 +506,7 @@ export function usePerformanceGraph( opts = {} ) {
 		selectedRequest = null,
 		detailFilters = NO_DETAIL_FILTERS,
 		detailChart = NO_DETAIL_CHART,
+		expandedPages = NO_PAGES,
 	} = opts;
 
 	// The whole opts object, for the modal getters' fire-time selection.
@@ -517,6 +540,12 @@ export function usePerformanceGraph( opts = {} ) {
 	};
 	// Search-debounce handle; the build's cleanup clears it on teardown.
 	const urlFetchTimerRef = useRef( null );
+	const expandedRef = useRef( expandedPages );
+	expandedRef.current = expandedPages;
+	// Each expanded page's slice, by subject.
+	const shapesRef = useRef( new Map() );
+	// Re-renders the page, so the table reads a shapes view built since.
+	const [ , bumpShapes ] = useState( 0 );
 
 	const isPageVisible = usePageVisibility();
 	// A Reset Graph rebuilds both detail Timers stopped; this re-arms them.
@@ -635,12 +664,58 @@ export function usePerformanceGraph( opts = {} ) {
 		[ urlDetailNow, urlChartNow, urlCategoriesNow ]
 	);
 
+	/**
+	 * Hang one expanded page's slice off the polled Tee: the table's question
+	 * from its first row, on the page's server and filtered to the page.
+	 *
+	 * @param {Object} interpreter The graph's interpreter.
+	 * @param {Object} tee         The Tee the page's slices hang off.
+	 * @param {Object} page        The page row.
+	 * @return {Object} The slice.
+	 */
+	const addShapes = useCallback( ( interpreter, tee, page ) => {
+		const one = slice( shapesSubject( page ), 'urls', views.UrlsView, () =>
+			urlsArgs( {
+				urlParams: { ...urlParamsRef.current, offset: 0 },
+				serverFilter: page.server,
+				chips: [ ...chipsRef.current, `page=${ page.page_hash }` ],
+			} )
+		);
+		addSliceFetcher( interpreter, {
+			...one,
+			tee,
+			target: OVERVIEW_TARGET,
+		} );
+		Core.node( one.fetcher ).retry_after_s = STATS_NO_REASK;
+		shapesRef.current.set( shapesSubject( page ), one );
+		return one;
+	}, [] );
+
+	/**
+	 * Remove one expanded page's slice through the interpreter's own
+	 * `remove_node`: the four nodes `addSliceFetcher` names after it, the
+	 * gate being `<receiver>:current`.
+	 *
+	 * @param {Object} interpreter The graph's interpreter.
+	 * @param {string} subject     The slice's subject.
+	 */
+	const dropShapes = useCallback( ( interpreter, subject ) => {
+		const { fetcher, receiver, view } = shapesRef.current.get( subject );
+		interpreter.dispatch( 'remove_node', [
+			fetcher,
+			receiver,
+			`${ receiver }:current`,
+			view,
+		] );
+		shapesRef.current.delete( subject );
+	}, [] );
+
 	// Poll cadence (ms); an unparseable setting takes the declared default.
 	const intervalMs =
 		parseInt( refreshInterval, 10 ) || DEFAULT_REFRESH_INTERVAL_MS;
 
 	// The graph: the page's four slices poll; the modal slices are on demand.
-	const { pollNow } = useBatchedPoll( {
+	const { interpreterRef, pollNow } = useBatchedPoll( {
 		build: ( { interpreter, tee } ) => {
 			for ( const each of Object.values( pageSlices ) ) {
 				addSliceFetcher( interpreter, {
@@ -674,6 +749,10 @@ export function usePerformanceGraph( opts = {} ) {
 			] ) {
 				Core.node( each.fetcher ).retry_after_s = STATS_NO_REASK;
 			}
+			shapesRef.current = new Map();
+			for ( const page of expandedRef.current ) {
+				addShapes( interpreter, tee, page );
+			}
 
 			// @longform On-demand dump_request: a selection asks through
 			// `askNow()`, and the slice's own Timer sends what that could not
@@ -700,10 +779,13 @@ export function usePerformanceGraph( opts = {} ) {
 				if ( urlFetchTimerRef.current ) {
 					clearTimeout( urlFetchTimerRef.current );
 				}
+				for ( const subject of [ ...shapesRef.current.keys() ] ) {
+					dropShapes( interpreter, subject );
+				}
 			};
 		},
 		timerName: 'performance:timer',
-		teeName: 'performance:tee',
+		teeName: PERFORMANCE_TEE,
 		// @longform Suspend the offscreen overview poll while a detail modal
 		// is open, and while the `?` picker is armed: a page repainting under
 		// a stationary pointer swaps the row being aimed at.
@@ -756,14 +838,52 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendControl ]
 	);
 
+	/** Ask every expanded page's shapes afresh. */
+	const askShapes = useCallback(
+		() => shapesRef.current.forEach( ( one ) => ask( one ) ),
+		[ ask ]
+	);
+
 	// @longform A new server is a new page; a new chart question asks the
-	// chart, and new chips the table they narrow too.
+	// chart, and new chips the table they narrow too, its shapes included.
 	useOnChange( pokePage, [ serverFilter ] );
 	useOnChange(
 		() => ask( pageSlices.chart ),
 		[ chartBreakdown, chartThenBy, chartChips ]
 	);
-	useOnChange( () => ask( pageSlices.urls ), [ chartChips ] );
+	useOnChange( () => {
+		ask( pageSlices.urls );
+		askShapes();
+	}, [ chartChips ] );
+
+	// A page expanded asks its shapes at once; a page shut drops its slice.
+	const expandedKey = JSON.stringify( expandedPages.map( shapesSubject ) );
+	useEffect( () => {
+		const interpreter = interpreterRef.current;
+		const tee = Core.node( PERFORMANCE_TEE );
+		if ( ! interpreter || ! tee ) {
+			return;
+		}
+		const wanted = new Map(
+			expandedRef.current.map( ( page ) => [
+				shapesSubject( page ),
+				page,
+			] )
+		);
+		const shut = [ ...shapesRef.current.keys() ].filter(
+			( subject ) => ! wanted.has( subject )
+		);
+		const opened = [ ...wanted ].filter(
+			( [ subject ] ) => ! shapesRef.current.has( subject )
+		);
+		shut.forEach( ( subject ) => dropShapes( interpreter, subject ) );
+		for ( const [ , page ] of opened ) {
+			ask( addShapes( interpreter, tee, page ) );
+		}
+		if ( shut.length || opened.length ) {
+			bumpShapes( ( n ) => n + 1 );
+		}
+	}, [ expandedKey, interpreterRef, ask, addShapes, dropShapes ] );
 
 	// Every hold leaves the page stale, so each refreshes on release.
 	const wasHeld = useRef( false );
@@ -918,14 +1038,14 @@ export function usePerformanceGraph( opts = {} ) {
 	const handleUrlParamsChange = useCallback(
 		( params ) => {
 			const prev = urlParamsRef.current;
-			if (
+			// A page turn moves the table alone; the rest moves its shapes.
+			const sameQuestion =
 				prev.search === params.search &&
 				prev.sort === params.sort &&
 				prev.order === params.order &&
-				prev.offset === params.offset &&
 				!! prev.includeWorkers === !! params.includeWorkers &&
-				prev.bucket === params.bucket
-			) {
+				prev.bucket === params.bucket;
+			if ( sameQuestion && prev.offset === params.offset ) {
 				return;
 			}
 			const searchChanged = prev.search !== params.search;
@@ -936,6 +1056,9 @@ export function usePerformanceGraph( opts = {} ) {
 			// `urls:in:current` drops the answer to every ask this supersedes.
 			const doFetch = () => {
 				ask( pageSlices.urls );
+				if ( ! sameQuestion ) {
+					askShapes();
+				}
 			};
 			if ( searchChanged ) {
 				urlFetchTimerRef.current = setTimeout( doFetch, 300 );
@@ -943,7 +1066,7 @@ export function usePerformanceGraph( opts = {} ) {
 				doFetch();
 			}
 		},
-		[ ask, pageSlices ]
+		[ ask, askShapes, pageSlices ]
 	);
 
 	return { handleUrlParamsChange };

@@ -8,7 +8,7 @@ wp-admin → **Event Logger** → **Performance**. The menu needs the logger's *
 
 On a **hub**, the dashboard collects many publishers' sites. Each site is one **server**, named by its host.
 
-The address bar carries what you are looking at: the server, the chart's metric, breakdown, Then by and filter chips, and the table's search, sort, **Include Workers** switch, time and page. An open URL's window rides along too, with its own filter chips, **Time**, chart and **Recent Requests** sort. Copy the link, and a colleague opens the same view.
+The address bar carries what you are looking at: the server, the chart's metric, breakdown, Then by and filter chips, and the table's search, sort, **Include Workers** switch, time, page number and the pages opened to their URLs. An open URL's window rides along too, with its own filter chips, **Time**, chart and **Recent Requests** sort. Copy the link, and a colleague opens the same view.
 
 ## From a report to a cause
 
@@ -22,14 +22,14 @@ The charts always cover the last 24 hours, in five-minute steps, labelled in you
 
 ### 2. Find the slow URL
 
-The table **URLs by Request Count** lists every URL that a logging rule recorded in the last 24 hours, busiest first, 100 to a page. If a URL named in the report is missing even when you search for it, with no chips, Time selection or server chosen, then either it had no traffic in the last 24 hours or no rule logs it: see step 5.
+The table **Pages by Request Count** lists every page that a logging rule recorded in the last 24 hours, busiest first, 100 at a time. A page is a URL's host and path in lower case, whatever its query: `https://example.com/Cincinnati/MovieTimes?film=?` and `https://example.com/cincinnati/movietimes` are one page, `example.com/cincinnati/movietimes`, and its row adds up both. A page reached one way only is that URL, and clicking it opens it. A page reached several ways shows a ▾ caret: click the row to list its URLs beneath it, each with its own numbers in the same columns and in the table's order, and click one to open it. A page of more than 100 URLs lists the first 100 and says how many more it has. The address bar remembers which pages you opened, so a reload or a shared link shows them open. If a URL named in the report is missing even when you search for it, with no chips, Time selection or server chosen, then either it had no traffic in the last 24 hours or no rule logs it: see step 5.
 
 | Column | What it means |
 |---|---|
-| **Reqs** | Requests in the last 24 hours, or in the buckets you chose, that the search, the server and the chart's filter chips keep. |
-| **URL** | The host, the path, and the names of its query with each value shown as `?`: `/?_embed=?&rest_route=/wp/v2/posts` is a REST call, not the homepage. A `rest_route`, `action`, `wc-ajax` or `feed` value is kept, its numbers shown as `?`, and campaign tags such as `utm_source`, `gclid` or `fbclid` are left out. The shaded bar compares the row with the rest of the page, on whatever the chart's **Metric** measures. |
-| **2xx 3xx 4xx 5xx** | The share of the URL's requests in each status class, as a percent. A request that never returned a status code is not counted in any of the four, so the percentages need not add up to 100. |
-| **Avg**, **Min**, **Max** | Response time in milliseconds: mean, fastest, slowest. A dash means no request to the URL was timed. |
+| **Reqs** | Requests in the last 24 hours, or in the buckets you chose, that the search, the server and the chart's filter chips keep. A page's row counts the requests to all its URLs. |
+| **URL** | On a page's row, its host and path in lower case, or the path alone once you pick a **Server**. On a URL's row, the host, the path, and the names of its query with each value shown as `?`: `/?_embed=?&rest_route=/wp/v2/posts` is a REST call, not the homepage. A `rest_route`, `action`, `wc-ajax` or `feed` value is kept, its numbers shown as `?`, and campaign tags such as `utm_source`, `gclid` or `fbclid` are left out. The shaded bar compares the row with the pages listed, on whatever the chart's **Metric** measures. |
+| **2xx 3xx 4xx 5xx** | The share of the row's requests, a page's or a URL's, in each status class, as a percent. A request that never returned a status code is not counted in any of the four, so the percentages need not add up to 100. |
+| **Avg**, **Min**, **Max** | Response time in milliseconds: mean, fastest, slowest. A dash means none of the row's requests was timed. |
 | **Mem** | Mean peak memory, in MB. |
 | **Last seen** | How long ago the newest request finished. |
 
@@ -108,7 +108,7 @@ Saving a rule needs the **tune** capability. Without it the save fails with "per
 
 ## Sending the brief to an assistant
 
-The Ask panel builds a **brief**: a Markdown summary of whatever you clicked, with its numbers, its rule and its findings. Press **Ask AI**, then click what you want to ask about: a URL row or the open URL's window, a request, a flame-graph bar, a **Time Breakdown** row, a log line, or the page's background for the whole site. Cmd-click (Ctrl-click) adds more things to one brief, or removes one already added, and Escape cancels. A URL or site brief picked under a filter chip or a **Time** selection says so.
+The Ask panel builds a **brief**: a Markdown summary of whatever you clicked, with its numbers, its rule and its findings. Press **Ask AI**, then click what you want to ask about: the row of a page reached one way, a URL listed under a page, the open URL's window, a request, a flame-graph bar, a **Time Breakdown** row, a log line, or the page's background for the whole site. Cmd-click (Ctrl-click) adds more things to one brief, or removes one already added, and Escape cancels. A URL or site brief picked under a filter chip or a **Time** selection says so.
 
 - **The brief that leaves this page** opens to show exactly what will be sent.
 - **Copy brief** puts it on your clipboard, to paste into any assistant or ticket.

@@ -300,3 +300,28 @@ export const STREAM_GLOBS = {
 	requestLog: 'completed.*',
 	gyroscope: 'gyroscope.*',
 };
+
+/**
+ * A `urls` page row's identity: its page hash and its server, because one
+ * page served under two servers lists twice. The URL table keys its row by it
+ * and the address bar names an expanded page by it, as `?expand=`.
+ *
+ * @param {{page_hash: string, server: string}} page A page row.
+ * @return {string} `<page_hash>:<server>`.
+ */
+export const pageKey = ( page ) => `${ page.page_hash }:${ page.server }`;
+
+/** What `pageKey()` writes: a page hash, then the server, which holds no `/`. */
+export const PAGE_KEY = /^[a-f0-9]+:[^\s/]+$/;
+
+/** No page expanded: one array, so an unset list re-lays and re-asks nothing. */
+export const NO_PAGE_KEYS = [];
+
+/**
+ * The subject of the slice an expanded page asks its shapes through, whose
+ * view the URL table reads its shape rows from as `<subject>:view`.
+ *
+ * @param {{page_hash: string, server: string}} page A page row.
+ * @return {string} `shapes:<page key>`.
+ */
+export const shapesSubject = ( page ) => `shapes:${ pageKey( page ) }`;

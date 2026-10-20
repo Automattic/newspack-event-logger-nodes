@@ -2263,6 +2263,201 @@ describe( 'usePerformanceGraph — the stored answers', () => {
 	} );
 } );
 
+describe( 'usePerformanceGraph — an expanded page asks its shapes', () => {
+	/** A page of three shapes on one server, as a `urls` row names it. */
+	const KOKAKO = {
+		page_hash: 'c4f7a2e19b05',
+		page: 'hoiho-5172.example/kokako-5172/',
+		server: 'hoiho-5172.example',
+		path: '/kokako-5172/',
+		shapes: 3,
+		hash: null,
+	};
+	const SUBJECT = 'shapes:c4f7a2e19b05:hoiho-5172.example';
+	const SHAPE_ROWS = [
+		{
+			hash: 'e0a1c4f75172',
+			url: 'https://hoiho-5172.example/Kokako-5172/',
+		},
+	];
+
+	/**
+	 * Every `urls` ask the named receiver sent, oldest first.
+	 *
+	 * @param {Object} wire The fake wire.
+	 * @param {string} from The receiver the ask names as FROM.
+	 * @return {string[][]} Each ask's tokens.
+	 */
+	const urlsFrom = ( wire, from ) =>
+		wire.batches
+			.flat()
+			.filter(
+				( m ) => 'urls' === m[ VALUE ]?.name && from === m[ FROM ]
+			)
+			.map( ( m ) => m[ VALUE ].arguments );
+
+	test( 'asks the page filter through one slice of its own, on the page server', async () => {
+		const wire = installWire( {
+			urls: { data: SHAPE_ROWS, rows: 1, totals: { urls: 1 } },
+		} );
+		renderHook( () =>
+			usePerformanceGraph( {
+				serverFilter: '',
+				chartChips: [ 'method=PATCH' ],
+				expandedPages: [ KOKAKO ],
+			} )
+		);
+		await act( async () => {} );
+
+		const [ asked ] = urlsFrom( wire, `${ SUBJECT }:in` );
+		expect( options( asked, 'filter' ) ).toEqual( [
+			'method=PATCH',
+			'page=c4f7a2e19b05',
+		] );
+		expect( option( asked, 'server' ) ).toBe( 'hoiho-5172.example' );
+		expect( option( asked, 'limit' ) ).toBe( '100' );
+		expect( option( asked, 'offset' ) ).toBeUndefined();
+		// The table's own question names no page.
+		expect( options( urlsFrom( wire, 'urls:in' )[ 0 ], 'filter' ) ).toEqual(
+			[ 'method=PATCH' ]
+		);
+		expect( Core.node( `${ SUBJECT }:view` ).view.data ).toEqual(
+			SHAPE_ROWS
+		);
+		expect( Core.node( `${ SUBJECT }:fetch` ).retry_after_s ).toBe( 0 );
+		expect( Core.node( 'performance:tee' ).target ).toContain(
+			`${ SUBJECT }:fetch`
+		);
+	} );
+
+	test( 'expanding a page asks at once, and collapsing it removes the slice', async () => {
+		const wire = installWire( {
+			urls: { data: SHAPE_ROWS, rows: 1, totals: { urls: 1 } },
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { expandedPages: [] },
+		} );
+		await act( async () => {} );
+		expect( Core.node( `${ SUBJECT }:fetch` ) ).toBeNull();
+
+		await act( async () => {
+			rerender( { expandedPages: [ KOKAKO ] } );
+		} );
+		await nextTask();
+		expect( urlsFrom( wire, `${ SUBJECT }:in` ) ).toHaveLength( 1 );
+		expect( Core.node( `${ SUBJECT }:view` ).view.data ).toEqual(
+			SHAPE_ROWS
+		);
+
+		await act( async () => {
+			rerender( { expandedPages: [] } );
+		} );
+		for ( const role of [ 'fetch', 'in', 'in:current', 'view' ] ) {
+			expect( Core.node( `${ SUBJECT }:${ role }` ) ).toBeNull();
+		}
+		expect( Core.node( 'performance:tee' ).liveTargets() ).not.toContain(
+			`${ SUBJECT }:fetch`
+		);
+	} );
+
+	test( "asks again under the table's sort, order, search and Include Workers", async () => {
+		jest.useFakeTimers();
+		const wire = installWire();
+		const { getApi } = renderGraph( { expandedPages: [ KOKAKO ] } );
+		await act( async () => {} );
+		await act( async () => {
+			getApi().handleUrlParamsChange( {
+				search: '',
+				sort: 'max_ms',
+				order: 'asc',
+				offset: 300,
+				includeWorkers: true,
+				bucket: '2026-10-04-13-35',
+			} );
+		} );
+		await nextTask();
+
+		const asked = urlsFrom( wire, `${ SUBJECT }:in` ).at( -1 );
+		expect( option( asked, 'sort' ) ).toBe( 'max_ms' );
+		expect( option( asked, 'order' ) ).toBe( 'asc' );
+		expect( option( asked, 'include_workers' ) ).toBe( '1' );
+		expect( option( asked, 'bucket' ) ).toBe( '2026-10-04-13-35' );
+		expect( option( asked, 'offset' ) ).toBeUndefined();
+		const before = urlsFrom( wire, `${ SUBJECT }:in` ).length;
+
+		// A page turn moves the table alone.
+		await act( async () => {
+			getApi().handleUrlParamsChange( {
+				search: '',
+				sort: 'max_ms',
+				order: 'asc',
+				offset: 400,
+				includeWorkers: true,
+				bucket: '2026-10-04-13-35',
+			} );
+		} );
+		await nextTask();
+		expect( urlsFrom( wire, `${ SUBJECT }:in` ) ).toHaveLength( before );
+
+		await act( async () => {
+			getApi().handleUrlParamsChange( {
+				search: 'kokako',
+				sort: 'max_ms',
+				order: 'asc',
+				offset: 0,
+				includeWorkers: true,
+				bucket: '2026-10-04-13-35',
+			} );
+		} );
+		jest.advanceTimersByTime( 300 );
+		await nextTask();
+		expect(
+			option( urlsFrom( wire, `${ SUBJECT }:in` ).at( -1 ), 'search' )
+		).toBe( 'kokako' );
+		jest.useRealTimers();
+	} );
+
+	test( 'a chip change asks the shapes again', async () => {
+		const wire = installWire();
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { expandedPages: [ KOKAKO ] },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				expandedPages: [ KOKAKO ],
+				chartChips: [ 'country=Tuvalu' ],
+			} );
+		} );
+		await nextTask();
+
+		expect(
+			options( urlsFrom( wire, `${ SUBJECT }:in` ).at( -1 ), 'filter' )
+		).toEqual( [ 'country=Tuvalu', 'page=c4f7a2e19b05' ] );
+	} );
+
+	test( 'unmount removes every shapes slice with the graph', async () => {
+		installWire();
+		const { rerender, unmount } = renderHook(
+			( p ) => usePerformanceGraph( p ),
+			{ initialProps: { expandedPages: [] } }
+		);
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { expandedPages: [ KOKAKO ] } );
+		} );
+		expect( Core.node( `${ SUBJECT }:view` ) ).toBeTruthy();
+		unmount();
+
+		for ( const role of [ 'fetch', 'in', 'in:current', 'view' ] ) {
+			expect( Core.node( `${ SUBJECT }:${ role }` ) ).toBeNull();
+		}
+	} );
+} );
+
+// @longform A URL opened with no session parks its asks: nothing can sign
+// them yet. The url-detail Timer stays due, so the tick the session's
+// arrival asks for sends them, rather than its 120s grid holding them back.
 describe( 'usePerformanceGraph — a url-detail tick with no session', () => {
 	test( 'stays due, and the tick the session landing asks for sends its asks', async () => {
 		installWire( { dump_url: { stats: {}, requests: [] } } );

@@ -10,7 +10,8 @@
  *
  * `usePerformanceGraph` builds:
  *   - `OverviewView` → `overview:view` and `UrlsView` → `urls:view`, the two
- *     slices `addSliceFetcher` polls off the shared tick;
+ *     slices `addSliceFetcher` polls off the shared tick, and `UrlsView` →
+ *     `shapes:<page key>:view` for each page the URL table expands;
  *   - `QueryView` → `chart:view`, `categories:view`, `url-chart:view` and
  *     `url-categories:view`, one per chart, each holding one `query` answer;
  *   - `UrlDetailView` → `url-detail:view` and `RequestDetailView` →
@@ -54,11 +55,13 @@ export const views = registerSliceViews( {
 	),
 
 	/**
-	 * `urls:view` — the always-on URL leaderboard.
+	 * `urls:view` — the always-on URL leaderboard, and each expanded page's
+	 * shapes.
 	 *
 	 * The `urls` verb answers an envelope, `{ data, rows, totals, slowest,
 	 * filters, limit, offset }`, so the payload is not the slice. `rows`
-	 * counts the URLs the filters left, which `<UrlTable>` paginates on, and
+	 * counts the pages the filters left, which `<UrlTable>` paginates on, or
+	 * under a page filter the page's URLs, and
 	 * `totals` is the same set's headline numbers. `slowest` is the set ranked
 	 * by `avg_ms` for the facts block, and `limit` / `offset` are dropped
 	 * because the fetcher's own args produced them. `filters` says what the
