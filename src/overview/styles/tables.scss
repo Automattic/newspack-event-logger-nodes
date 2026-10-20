@@ -113,6 +113,12 @@
 	.event-logger-table__row.is-shape [data-field="url"] {
 		padding-left: 32px;
 	}
+
+	// The stock spinner a row shows while its one request opens.
+	.event-logger-table__row [data-field="url"] .components-spinner {
+		flex: none;
+		margin: 0;
+	}
 }
 
 // Width and turn only: the shared disclosure role paints it.

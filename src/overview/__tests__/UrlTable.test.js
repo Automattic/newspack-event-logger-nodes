@@ -1594,6 +1594,41 @@ describe( 'pages and their shapes', () => {
 		unmount();
 	} );
 
+	it( 'marks busy the one row a click is waiting on, at its fixed height', () => {
+		shapesView( PIWAKAWAKA_VIEW, { data: SHAPES, rows: 2 } );
+		const { container, rerender, unmount } = mount( {
+			urls: [ RURU, PIWAKAWAKA ],
+			totalRows: 2,
+			expanded: [ PIWAKAWAKA_KEY ],
+			busy: 'd4a1e00c3381',
+		} );
+
+		let busy = container.querySelectorAll( '[aria-busy="true"]' );
+		expect( busy ).toHaveLength( 1 );
+		expect( busy[ 0 ].textContent ).toContain( 'Ruru-3381' );
+		expect( busy[ 0 ].querySelector( '.components-spinner' ) ).toBeTruthy();
+		expect( busy[ 0 ].style.height ).toBe( '40px' );
+
+		rerender(
+			React.createElement( UrlTable, {
+				urls: [ RURU, PIWAKAWAKA ],
+				selectedUrl: null,
+				onSelect: jest.fn(),
+				onParamsChange: jest.fn(),
+				totalRows: 2,
+				expanded: [ PIWAKAWAKA_KEY ],
+				busy: 'a1c0ffee2002',
+			} )
+		);
+		busy = container.querySelectorAll( '[aria-busy="true"]' );
+		expect( busy ).toHaveLength( 1 );
+		expect( busy[ 0 ].textContent ).toContain( SHAPES[ 1 ].url );
+		expect(
+			container.querySelectorAll( '.components-spinner' )
+		).toHaveLength( 1 );
+		unmount();
+	} );
+
 	it( 'counts pages, the rows it lists', () => {
 		const { container, unmount } = mount( {
 			urls: [ PIWAKAWAKA, RURU ],

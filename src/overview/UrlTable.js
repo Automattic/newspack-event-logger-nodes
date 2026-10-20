@@ -39,7 +39,7 @@ import {
 	memo,
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { SearchControl } from '@wordpress/components';
+import { SearchControl, Spinner } from '@wordpress/components';
 import { useNodeField } from '@newspack-nodes/runtime';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { PAGE_CONTENT_CLASS } from '../components/DashboardShell';
@@ -405,6 +405,7 @@ const UrlRow = memo(
 	 * @param {?string}                      [props.expandKey] The key a page of several shapes toggles by; null for any other row.
 	 * @param {boolean}                      [props.open]      Whether that page is expanded.
 	 * @param {boolean}                      props.isSelected  Whether the detail modal is open on this row.
+	 * @param {boolean}                      [props.isBusy]    Whether a click on it waits for its one request to open.
 	 * @param {(url: Object) => void}        props.onSelect    Receives a row naming one URL on click or Enter/Space.
 	 * @param {(key: string) => void}        [props.onToggle]  Receives `expandKey` on click or Enter/Space.
 	 * @param {(n: number, s?: string) => *} props.formatNum   Number formatter, from the table.
@@ -418,6 +419,7 @@ const UrlRow = memo(
 		expandKey = null,
 		open = false,
 		isSelected,
+		isBusy = false,
 		onSelect,
 		onToggle,
 		formatNum,
@@ -449,6 +451,7 @@ const UrlRow = memo(
 				tabIndex={ 0 }
 				data-ask={ url.hash ? `url:${ url.hash }` : undefined }
 				aria-expanded={ expandable ? open : undefined }
+				aria-busy={ isBusy || undefined }
 				onClick={ activate }
 				onKeyDown={ handleKeyDown }
 				className={ `event-logger-table__row newspack-nodes-table__row${
@@ -480,6 +483,7 @@ const UrlRow = memo(
 							</span>
 						) }
 						{ renderCell( col, url, formatNum ) }
+						{ 'code' === col.kind && isBusy && <Spinner /> }
 					</div>
 				) ) }
 			</div>
@@ -527,9 +531,10 @@ function NoteRow( { text } ) {
  * @param {number}  props.to       One past its last slot.
  * @param {Object}  props.rowProps What every row takes from the table.
  * @param {?Object} props.selected The open URL, or null.
+ * @param {?string} props.busy     The hash a click waits on, or null.
  * @return {import('react').ReactElement[]} The rows.
  */
-function PageShapes( { page, from, to, rowProps, selected } ) {
+function PageShapes( { page, from, to, rowProps, selected, busy } ) {
 	const model = useNodeField( `${ shapesSubject( page ) }:view`, 'view' );
 	// `rows` stays null until a reply counts the page's shapes, none included.
 	const unanswered = null === ( model?.rows ?? null );
@@ -550,6 +555,7 @@ function PageShapes( { page, from, to, rowProps, selected } ) {
 				url={ shape }
 				shape
 				isSelected={ selected?.hash === shape.hash }
+				isBusy={ busy === shape.hash }
 			/>
 		) : (
 			<NoteRow
@@ -569,6 +575,7 @@ function PageShapes( { page, from, to, rowProps, selected } ) {
  * @param {?Object}                    props.selectedUrl      The URL the detail modal is open on, or null.
  * @param {(url: Object) => void}      props.onSelect         Receives a row naming one URL, a one-shape page or a shape, on click or Enter/Space.
  * @param {string[]}                   [props.expanded]       The keys of the expanded pages, as `pageKey()` spells them.
+ * @param {?string}                    [props.busy]           The URL hash a click waits on to open its one request; its row shows busy.
  * @param {(key: string) => void}      [props.onToggleExpand] Receives the key of a page of several shapes to expand or shut.
  * @param {(params: Object) => void}   props.onParamsChange   Receives `search`, `sort`, `order`, `offset`, `includeWorkers` and `bucket` whenever one of them changes.
  * @param {string}                     [props.bucket]         The spelling of the bucket selection the dashboard narrowed the table to; '' for none.
@@ -588,6 +595,7 @@ export default function UrlTable( {
 	onSelect,
 	expanded = NO_PAGE_KEYS,
 	onToggleExpand,
+	busy = null,
 	onParamsChange,
 	bucket = '',
 	slots = null,
@@ -887,6 +895,7 @@ export default function UrlTable( {
 										to={ row.to }
 										rowProps={ rowProps }
 										selected={ selectedUrl }
+										busy={ busy }
 									/>
 								);
 							}
@@ -921,6 +930,10 @@ export default function UrlTable( {
 									isSelected={
 										!! row.page.hash &&
 										selectedUrl?.hash === row.page.hash
+									}
+									isBusy={
+										!! row.page.hash &&
+										busy === row.page.hash
 									}
 								/>
 							);
