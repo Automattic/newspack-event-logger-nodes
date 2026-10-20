@@ -124,12 +124,34 @@ class UrlPartsTest extends TestCase {
 			'an encoded separator'   => [ 'https://kea.test/?x%26cron=1', 'https://kea.test/?x%26cron=?' ],
 			'a bare key'             => [ 'https://kea.test/kiwi?amp', 'https://kea.test/kiwi?amp=?' ],
 			'a bare route'           => [ 'https://kea.test/?action', 'https://kea.test/?action=' ],
+			'names sort by any case' => [ 'https://kea.test/Moa-4402?B=1&a=2', 'https://kea.test/Moa-4402?a=?&B=?' ],
 		];
 	}
 
 	#[DataProvider( 'keys' )]
 	public function test_a_query_keys_the_url_by_its_keys( string $request_url, string $url ): void {
 		$this->assertSame( $url, Url_Parts::key( $request_url, false ) );
+	}
+
+	/**
+	 * A URL row's identity: its key lowercased and an http scheme read as
+	 * https, held to `urlIdentity()` in JS by the one case list, so every
+	 * page that hashes a URL reaches the same row.
+	 *
+	 * @return array<string,array{0:string,1:string}>
+	 */
+	public static function identities(): array {
+		$cases = \json_decode( (string) \file_get_contents( __DIR__ . '/../fixtures/url-identities.json' ), true, 512, \JSON_THROW_ON_ERROR );
+		$out   = [];
+		foreach ( $cases as [ $label, $url, $identity ] ) {
+			$out[ $label ] = [ $url, $identity ];
+		}
+		return $out;
+	}
+
+	#[DataProvider( 'identities' )]
+	public function test_a_urls_identity_folds_case_and_scheme( string $url, string $identity ): void {
+		$this->assertSame( $identity, Url_Parts::identity( $url ) );
 	}
 
 	/** A trimmed line may cut its last parameter mid-name or mid-value, so that one keys nothing. */

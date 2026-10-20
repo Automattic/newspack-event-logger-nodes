@@ -35,7 +35,7 @@ import {
 	getStateColor,
 	getTextColor,
 } from '@newspack-nodes/shared/utils/formatUtils';
-import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
+import { urlHash } from '../log-table/urlIdentity';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
 import UnparseableLinesNotice from '@newspack-nodes/shared/components/UnparseableLinesNotice';
 import ColumnPicker from '@newspack-nodes/shared/components/ColumnPicker';
@@ -155,16 +155,6 @@ const COLUMNS = logColumns( {
 		width: '50px',
 	},
 } );
-
-/**
- * URL hash for deep-linking to URL detail — must match PHP
- * `Log_Manager::url_hash`, which hashes the whole stored URL, its keyed query
- * and any worker mark included; hashing less would deep-link to no row.
- *
- * @param {string} url URL to hash.
- * @return {string} FNV-1a hash.
- */
-const urlHash = ( url ) => fnv1a( url || '' );
 
 /**
  * Columns shown until the operator picks otherwise, and whenever the persisted

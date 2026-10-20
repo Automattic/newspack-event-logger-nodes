@@ -15,7 +15,7 @@ import {
 	ID,
 	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
-import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
+import { urlHash } from '../../log-table/urlIdentity';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 
 /** Rows the ring holds when the graph passes no cap of its own. */
@@ -99,8 +99,8 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 	 *
 	 * Drops an empty rid, the `connected` sentinel, and any VALUE that is not a
 	 * plain object. Clips the message at `MAX_M_LENGTH` and the displayed URL at
-	 * `MAX_URL_LENGTH`, but hashes the UNCLIPPED URL, so `urlHash` keys the same
-	 * Overview URL detail the server's `Log_Manager::url_hash()` does. The
+	 * `MAX_URL_LENGTH`, but hashes the UNCLIPPED URL's identity, so `urlHash`
+	 * keys the same Overview URL detail its row is stored under. The
 	 * `method`, `url` and `urlHash` trio appears only when the entry carried a
 	 * URL, which is what leaves that cell empty for an entry with none.
 	 *
@@ -151,7 +151,7 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 		if ( url ) {
 			row.method = method;
 			row.url = url;
-			row.urlHash = fnv1a( rawUrl );
+			row.urlHash = urlHash( rawUrl );
 		}
 		return row;
 	}
