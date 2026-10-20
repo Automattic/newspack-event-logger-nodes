@@ -3733,7 +3733,6 @@ describe( 'PerformanceDashboard', () => {
 			page_hash: 'c4f7a2e19b05',
 			page: 'hoiho-5172.example/kokako-5172/',
 			server: 'hoiho-5172.example',
-			path: '/kokako-5172/',
 			shapes: 3,
 			hash: null,
 			count: 44,
@@ -3742,7 +3741,6 @@ describe( 'PerformanceDashboard', () => {
 			page_hash: '0b9d3e6a5172',
 			page: 'hoiho-5172.example/hihi-5172/',
 			server: 'hoiho-5172.example',
-			path: '/hihi-5172/',
 			shapes: 1,
 			hash: 'f1e2d3c45172',
 			count: 17,
@@ -3772,6 +3770,23 @@ describe( 'PerformanceDashboard', () => {
 			] );
 			expect( mockGraphOpts.expandedPages ).toEqual( [ KOKAKO ] );
 			expect( expandedInBar() ).toEqual( [ KOKAKO_KEY ] );
+			unmount();
+		} );
+
+		it( 'expands a page linked under its server in other capitals', async () => {
+			window.history.replaceState(
+				null,
+				'',
+				'/wp-admin/admin.php?page=perf&expand=c4f7a2e19b05:Hoiho-5172.EXAMPLE'
+			);
+			mockView = pagesView( [ KOKAKO, HIHI ] );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__urlTableProps.expanded ).toEqual( [
+				KOKAKO_KEY,
+			] );
+			expect( mockGraphOpts.expandedPages ).toEqual( [ KOKAKO ] );
 			unmount();
 		} );
 

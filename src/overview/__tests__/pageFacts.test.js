@@ -378,7 +378,6 @@ test( 'the slowest are pages, each named by its page, its server and its shapes'
 				page_hash: '7d1c9e0a4417',
 				page: 'weka-4417.example/kereru-4417/',
 				server: 'weka-4417.example',
-				path: '/kereru-4417/',
 				shapes: 3,
 				hash: null,
 				avg_ms: 1310.5,

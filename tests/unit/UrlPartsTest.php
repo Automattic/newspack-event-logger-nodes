@@ -50,15 +50,6 @@ class UrlPartsTest extends TestCase {
 		$this->assertSame( 'moa.test/', Url_Parts::page( 'https://moa.test/?a=?' ) );
 	}
 
-	public function test_a_page_path_drops_its_own_server(): void {
-		// A page carries its lowercased host, so the server it is shown under
-		// matches whatever case it was logged in.
-		$this->assertSame( '/cincinnati/movietimes', Url_Parts::page_path( 'www.example.com/cincinnati/movietimes', 'Www.Example.com' ) );
-		$this->assertSame( 'moa.test/weka-1308', Url_Parts::page_path( 'moa.test/weka-1308', 'kea.test' ), 'another host stays whole' );
-		$this->assertSame( 'kea.testing/hihi-4403', Url_Parts::page_path( 'kea.testing/hihi-4403', 'kea.test' ), 'a longer host is not this server' );
-		$this->assertSame( 'kea.test', Url_Parts::page_path( 'kea.test', 'kea.test' ), 'no path to stand alone' );
-	}
-
 	public function test_case_variants_share_a_page(): void {
 		$this->assertSame(
 			Url_Parts::page( 'https://kea.test/Kea-5521?a=?' ),

@@ -61,7 +61,7 @@ export const views = registerSliceViews( {
 	 * The `urls` verb answers an envelope, `{ data, rows, totals, slowest,
 	 * filters, limit, offset }`, so the payload is not the slice. `rows`
 	 * counts the rows the filters left, the pages `<UrlTable>` paginates on,
-	 * or under a page filter that page's URLs, and `totals` is the same set's
+	 * or under `--page` that page's URLs, and `totals` is the same set's
 	 * headline numbers. `slowest` is the set ranked by `avg_ms` for the facts
 	 * block. `offset` is where the rows start, which places an expanded
 	 * page's window of shapes beneath it; `limit` is dropped, the fetcher's

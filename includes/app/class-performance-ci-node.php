@@ -2057,8 +2057,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * A `page`- and `server`-grouped listing's rows as the `urls` reply
-	 * carries them: the page by its hash and its name, its server and the
-	 * path under it, its `shapes`, the URLs folded, `hash`, the one URL's
+	 * carries them: the page by its hash and its name, its server, its
+	 * `shapes`, the URLs folded, `hash`, the one URL's
 	 * hash where it folds one, else null, and `url`, the name the row shows:
 	 * the one URL's own name, its case, query and scheme kept, or for a page
 	 * of more `https://` and the page; then its measures, as `measured()`
@@ -2076,7 +2076,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				'page_hash' => $row['page'],
 				'page'      => $row['page_name'],
 				'server'    => $row['server'],
-				'path'      => Url_Parts::page_path( Core::as_string( $row['page_name'] ), Core::as_string( $row['server'] ) ),
 				'shapes'    => $row['shapes'],
 				'hash'      => $row['hash'],
 				'url'       => 1 === Core::num_int( $row['shapes'] ) ? $row['url_name'] : 'https://' . Core::as_string( $row['page_name'] ),
@@ -2369,7 +2368,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs the set holds of that page on one server, its case spellings and its query shapes: `page_hash`, `page`, `server`, `path` (the page under its server), `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), `url` (the name the row shows: the one URL\'s own name, its case, query and scheme kept, or for a page of more `https://` and the page), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures; it owns the page field, so a `page=` or `page!=` filter beside it is refused. `--filter=page=<page hash>` keeps that one page row, as any filter narrows the pages. `rows` is the exact count the pager lists, the pages or under `--page` that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `page` and `include_workers` is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs the set holds of that page on one server, its case spellings and its query shapes: `page_hash`, `page`, `server`, `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), `url` (the name the row shows: the one URL\'s own name, its case, query and scheme kept, or for a page of more `https://` and the page), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures; it owns the page field, so a `page=` or `page!=` filter beside it is refused. `--filter=page=<page hash>` keeps that one page row, as any filter narrows the pages. `rows` is the exact count the pager lists, the pages or under `--page` that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `page` and `include_workers` is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
