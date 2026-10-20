@@ -5,20 +5,26 @@
  *
  * One SQLite file, `{base}/tables/flame-facts.job.sqlite`, holds a `servers`
  * table naming each server by an id assigned in name order; a `urls` table
- * of one row per URL, `Stats_Query`'s `url` group over every partition
- * with `Performance_CI_Node::URL_MEASURES`, its server by id and its
- * rowids assigned in hash order, indexed for each sort the `urls` verb
- * takes once site-wide and once led by the server, a nullable sort's
- * null-last ranking taking a second pair; a `totals` table of
- * one row per view and scope; the stored answers by key; and when it was
- * built and expires. The substrate publishes it whole under `NAME` and
- * opens it `immutable` (ADR-35), so no reader sees a half-built file.
+ * of one row per URL, `Stats_Query`'s `url` and `page` group over every
+ * partition with `Performance_CI_Node::URL_MEASURES`, its server by id, its
+ * page by `page_hash` and name, and its rowids assigned in hash order; a
+ * `pages` table of one row per page and server, a second only for a page
+ * of both worker and visitor shapes, each URL measure folded over its URLs,
+ * `views` naming the view that reads it, `shapes` counting the URLs and
+ * `hash` naming the one where there is one, its rowids in hash order; both
+ * indexed for each sort the `urls` verb takes once site-wide and once led
+ * by the server, a nullable sort's null-last ranking taking a second pair,
+ * and `urls_page` seeking a page's URLs; a `totals` table of one row per
+ * view and scope, counting its pages; the stored answers by key; and when
+ * it was built and expires. The substrate publishes it whole under `NAME`
+ * and opens it `immutable` (ADR-35), so no reader sees a half-built file.
  *
  * The verbs name a server by its name and a URL by its hash, and a page
  * answers both; the ids stay inside the file.
  *
  * A worker URL is a property of the URL, so the default view keeps the rows
- * whose `worker` is 0 and Include Workers keeps every row.
+ * whose `worker` is 0 and Include Workers keeps every row; of `pages`, the
+ * default view keeps `views` 0 and 2 and Include Workers 0 and 1.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -49,10 +55,19 @@ final class Url_Snapshot {
 	/** The sorts whose key may be null, which rank a null last either way. */
 	private const NULLABLE = [ 'avg_ms', 'min_ms', 'max_ms' ];
 
-	/** The `url` group the `urls` table stores and a page answers. */
-	private const GROUPED = [
+	/** The `url` group a listing of `urls` answers. */
+	private const ANSWERED = [
 		'group'   => [ 'url' ],
 		'measure' => Performance_CI_Node::URL_MEASURES,
+	];
+
+	/** The groups the `urls` table stores: each URL and the page it fixes. */
+	private const GROUPED = [ 'group' => [ 'url', 'page' ] ] + self::ANSWERED;
+
+	/** Each table a sort lists, as the key its `url_name` sort ranks after `server_id`. */
+	private const SORTED = [
+		'urls'  => 'path',
+		'pages' => 'page',
 	];
 
 	/** What a scope with no URLs totals, in `URL_TOTALS` order. */
@@ -72,17 +87,45 @@ final class Url_Snapshot {
 		'server' => 'server_id = ' . self::SERVER_ID,
 	];
 
+	/** Whether a `pages` kind folds an `i` row: kind 1 each, kind 2 a visitor's. */
+	private const KIND_KEEPS = 'k.kind = 1 OR i.worker = 0';
+
+	/**
+	 * The `pages` rows of each page and server, in hash order. `i` folds the
+	 * URLs' partials `%1$s` by `%2$s` once per worker flag; each `kind` then
+	 * folds those, its partials `%3$s` by `%4$s`: kind 1 every one, kind 2
+	 * the visitors' alone, kept only where the page has both. A row's `views`
+	 * says which view reads it: 0, a page of visitor shapes alone, the same
+	 * in both views; 1, every shape of a page with a worker shape, which
+	 * Include Workers reads; 2, the visitor shapes of a page with both, which
+	 * the default view reads. So a view keeps `views <> workers + 1`.
+	 * `shapes` counts the URLs a row folds, and `hash` names the one URL of
+	 * a row folding one.
+	 */
+	private const PAGES_TABLE = 'CREATE TABLE pages AS '
+		. 'WITH i AS ( SELECT page_hash, MIN( page ) AS page, server_id, %2$s, COUNT( * ) AS shapes, MIN( url ) AS hash '
+		. 'FROM ( SELECT u.page_hash, u.page, u.server_id, u.worker AS w, u.url, %1$s FROM urls AS u ) GROUP BY page_hash, server_id, w ), '
+		. 'k ( kind ) AS ( VALUES ( 1 ), ( 2 ) ), '
+		. 'r AS ( SELECT k.kind, i.page_hash, i.page, i.server_id, i.worker AS w, %3$s, '
+		. 'CASE WHEN ' . self::KIND_KEEPS . ' THEN i.shapes END AS q_shapes, CASE WHEN ' . self::KIND_KEEPS . ' THEN i.hash END AS q_hash FROM k JOIN i ) '
+		. 'SELECT page_hash, MIN( page ) AS page, server_id, CASE kind WHEN 2 THEN 2 ELSE MAX( w ) END AS views, %4$s, '
+		. 'SUM( q_shapes ) AS shapes, CASE SUM( q_shapes ) WHEN 1 THEN MIN( q_hash ) END AS hash '
+		. 'FROM r GROUP BY page_hash, server_id, kind HAVING kind = 1 OR MIN( w ) < MAX( w ) ORDER BY page_hash, server_id, kind';
+
 	/**
 	 * One `totals` row per view and scope, every server as id 0 then each:
 	 * the URLs' partials `%1$s` summed once by worker and server, then
-	 * folded by the totals `%2$s`, every one a sum, so the sums compose.
+	 * folded by the totals `%2$s`, every one a sum, so the sums compose;
+	 * and `pages`, the `pages` rows of the view and scope, summed off `c`,
+	 * which counts `pages` once by `views` and server.
 	 */
 	private const TOTALS_TABLE = 'CREATE TABLE totals AS '
 		. 'WITH g AS ( SELECT u.worker, u.server_id, %1$s, COUNT( * ) AS q_urls FROM urls AS u GROUP BY u.worker, u.server_id ), '
+		. 'c AS MATERIALIZED ( SELECT views, server_id, COUNT( * ) AS n FROM pages GROUP BY views, server_id ), '
 		. 'v ( workers ) AS ( VALUES ( 0 ), ( 1 ) ), '
 		. 'r AS ( SELECT v.workers, g.* FROM v JOIN g ON v.workers = 1 OR g.worker = 0 ) '
-		. 'SELECT workers, 0 AS server_id, %2$s FROM r GROUP BY workers '
-		. 'UNION ALL SELECT workers, server_id, %2$s FROM r GROUP BY workers, server_id';
+		. 'SELECT workers, 0 AS server_id, %2$s, ( SELECT SUM( n ) FROM c WHERE c.views <> r.workers + 1 ) AS pages FROM r GROUP BY workers '
+		. 'UNION ALL SELECT workers, server_id, %2$s, ( SELECT SUM( n ) FROM c WHERE c.views <> r.workers + 1 AND c.server_id = r.server_id ) AS pages FROM r GROUP BY workers, server_id';
 
 	/**
 	 * Hold an opened snapshot.
@@ -95,9 +138,9 @@ final class Url_Snapshot {
 
 	/**
 	 * Publish the snapshot of the window ending at `$now` through
-	 * `Row_Table_Node::build()`: the URLs, their totals, the answers
-	 * `$answers` gives by key, and an expiry `$ttl` seconds from the end of
-	 * its build, written last, ahead only of the sync and rename that
+	 * `Row_Table_Node::build()`: the URLs, their pages, their totals, the
+	 * answers `$answers` gives by key, and an expiry `$ttl` seconds from the
+	 * end of its build, written last, ahead only of the sync and rename that
 	 * publish the file. A fleet with no partition file yet publishes nothing,
 	 * and a build that throws leaves the last publish.
 	 *
@@ -146,8 +189,9 @@ final class Url_Snapshot {
 		foreach ( self::url_steps( $db, $now ) as $span => $statements ) {
 			self::step( $db, $span, $statements );
 		}
-		foreach ( self::indexes() as $name => $columns ) {
-			self::step( $db, Flame_Tree::SNAPSHOT_INDEX, [ [ "CREATE INDEX urls_{$name} ON urls ( {$columns} )", [] ] ], [ 'l' => "urls_{$name}" ] );
+		self::step( $db, Flame_Tree::SNAPSHOT_PAGES, [ [ self::pages_table(), [] ] ] );
+		foreach ( self::indexes() as $name => [ $table, $columns ] ) {
+			self::step( $db, Flame_Tree::SNAPSHOT_INDEX, [ [ "CREATE INDEX {$name} ON {$table} ( {$columns} )", [] ] ], [ 'l' => $name ] );
 		}
 		self::step(
 			$db,
@@ -189,42 +233,71 @@ final class Url_Snapshot {
 	 * partitions, and `urls` the URL count, one row each.
 	 */
 	private static function totals_table(): string {
-		$partials = [];
-		$totals   = [];
-		foreach ( Performance_CI_Node::URL_TOTALS as $name ) {
-			if ( 'urls' === $name ) {
-				$totals[ $name ] = 'SUM( q_urls ) AS urls';
-				continue;
-			}
-			[ $fold, $reads ] = Stats_Query::fold( 'requests', $name );
-			$totals[ $name ]  = "{$fold} AS {$name}";
-			foreach ( $reads as $read ) {
-				$partials[ $read ] = "SUM( u.{$read} ) AS q_{$read}";
-			}
-		}
+		[ $partials, $folds ] = self::folded( \array_diff( Performance_CI_Node::URL_TOTALS, [ 'urls' ] ), 'SUM( u.%s )' );
+		$folds['urls']        = 'SUM( q_urls ) AS urls';
+		$totals               = \array_map( static fn ( string $name ): string => $folds[ $name ], Performance_CI_Node::URL_TOTALS );
 		return \sprintf( self::TOTALS_TABLE, \implode( ', ', $partials ), \implode( ', ', $totals ) );
 	}
 
 	/**
-	 * The `urls` indexes by name: per sort its keys for the site-wide page
-	 * and, as `server_<sort>`, `server_id` then its keys for one server's, a
-	 * nullable key adding a `_null` pair ranking its nulls last. Each ends at
-	 * its keys, because the rowid every index carries breaks a tie as the
-	 * hash does, and a backward scan serves the other order. `url_name`'s
-	 * leads with `server_id`, so it serves both scopes.
+	 * Every index by name, as its table and its columns. Each `SORTED`
+	 * table takes, per sort, its keys for the site-wide listing and, as
+	 * `<table>_server_<sort>`, `server_id` then its keys for one server's, a
+	 * nullable key adding a `_null` pair ranking its nulls last; the view is
+	 * a filter on the scan. Each ends at its keys, because the rowid every
+	 * index carries breaks a tie as the hash does, and a backward scan serves
+	 * the other order. `url_name`'s leads with `server_id`, so it serves both
+	 * scopes. `urls_page` seeks a page's URLs, the worker flag after the
+	 * hash, so the default view seeks it whole and Include Workers by hash.
 	 *
-	 * @return array<string,string>
+	 * @return array<string,array{0:string,1:string}>
 	 */
 	private static function indexes(): array {
-		$indexes = [ 'url_name' => 'server_id, path' ];
-		foreach ( \array_diff( Performance_CI_Node::URL_SORTS, [ 'url_name' ] ) as $sort ) {
-			$keys = [ $sort => $sort ] + ( \in_array( $sort, self::NULLABLE, true ) ? [ "{$sort}_null" => "{$sort} IS NULL, {$sort}" ] : [] );
-			foreach ( $keys as $name => $columns ) {
-				$indexes[ $name ]            = $columns;
-				$indexes[ "server_{$name}" ] = "server_id, {$columns}";
+		$indexes = [];
+		foreach ( self::SORTED as $table => $named ) {
+			$indexes[ "{$table}_url_name" ] = [ $table, "server_id, {$named}" ];
+			foreach ( \array_diff( Performance_CI_Node::URL_SORTS, [ 'url_name' ] ) as $sort ) {
+				$keys = [ $sort => $sort ] + ( \in_array( $sort, self::NULLABLE, true ) ? [ "{$sort}_null" => "{$sort} IS NULL, {$sort}" ] : [] );
+				foreach ( $keys as $name => $columns ) {
+					$indexes[ "{$table}_{$name}" ]        = [ $table, $columns ];
+					$indexes[ "{$table}_server_{$name}" ] = [ $table, "server_id, {$columns}" ];
+				}
 			}
 		}
-		return $indexes;
+		return $indexes + [ 'urls_page' => [ 'urls', 'page_hash, worker' ] ];
+	}
+
+	/**
+	 * The statement creating `pages`: each of `URL_MEASURES` folded over the
+	 * URLs of a page as `Stats_Query` merges a query's partitions, first by
+	 * worker flag, then by kind.
+	 */
+	private static function pages_table(): string {
+		[ $by_flag, $flagged ] = self::folded( Performance_CI_Node::URL_MEASURES, 'u.%s' );
+		[ $by_kind, $kinded ]  = self::folded( Performance_CI_Node::URL_MEASURES, 'CASE WHEN ' . self::KIND_KEEPS . ' THEN i.%s END' );
+		return \sprintf( self::PAGES_TABLE, \implode( ', ', $by_flag ), \implode( ', ', $flagged ), \implode( ', ', $by_kind ), \implode( ', ', $kinded ) );
+	}
+
+	/**
+	 * Each `requests` measure of `$names` as its `Stats_Query::fold()` named
+	 * for itself, and each column those folds read as its partial
+	 * `q_<column>`, `$partial` of the column's name.
+	 *
+	 * @param array<string> $names   Measures that fold.
+	 * @param string        $partial The partial's expression over the name `%s`.
+	 * @return array{0:array<string,string>, 1:array<string,string>} The partials, then the folds, each by name.
+	 */
+	private static function folded( array $names, string $partial ): array {
+		$partials = [];
+		$folds    = [];
+		foreach ( $names as $name ) {
+			[ $fold, $reads ] = Stats_Query::fold( 'requests', $name );
+			$folds[ $name ]   = "{$fold} AS {$name}";
+			foreach ( $reads as $read ) {
+				$partials[ $read ] = \sprintf( $partial, $read ) . " AS q_{$read}";
+			}
+		}
+		return [ $partials, $folds ];
 	}
 
 	/**
@@ -250,10 +323,10 @@ final class Url_Snapshot {
 	/**
 	 * The statements building `servers` and `urls`, and their binds, by the
 	 * step that runs them, in the order they run: the window's URLs grouped
-	 * into a scratch table in hash order; then the servers named by ids in
-	 * name order, the URLs copied in the scratch table's order, so a rowid
-	 * ranks as the hash, and the scratch table dropped ahead of the indexes,
-	 * which reuse its pages.
+	 * with their pages into a scratch table in hash order; then the servers
+	 * named by ids in name order, the URLs copied in the scratch table's
+	 * order, so a rowid ranks as the hash, and the scratch table dropped
+	 * ahead of the indexes, which reuse the space it frees.
 	 *
 	 * @param Row_Reader $db  The building connection.
 	 * @param int        $now The job's tick.
@@ -272,7 +345,7 @@ final class Url_Snapshot {
 			Flame_Tree::SNAPSHOT_COPY  => [
 				[ 'CREATE TABLE servers ( id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE )', [] ],
 				[ 'INSERT INTO servers ( name ) SELECT server FROM grouped_urls GROUP BY server ORDER BY server', [] ],
-				[ "CREATE TABLE urls AS SELECT g.url, s.id AS server_id, g.path, {$measures} FROM grouped_urls AS g JOIN servers AS s ON s.name = g.server ORDER BY g.rowid", [] ],
+				[ "CREATE TABLE urls AS SELECT g.url, s.id AS server_id, g.path, g.page AS page_hash, g.page_name AS page, {$measures} FROM grouped_urls AS g JOIN servers AS s ON s.name = g.server ORDER BY g.rowid", [] ],
 				[ 'DROP TABLE grouped_urls', [] ],
 			],
 		];
@@ -303,10 +376,10 @@ final class Url_Snapshot {
 		[ $page, $binds ] = self::listing( $server, $workers, $sort, $order );
 		[ $slow ]         = self::listing( $server, $workers, 'avg_ms', 'desc' );
 		return [
-			'columns'   => Stats_Query::columns( self::GROUPED ),
-			'rows'      => Stats_Query::named( self::GROUPED['group'], $this->db->rows( "{$page} LIMIT ? OFFSET ?", [ ...$binds, $limit, $offset ] ) ),
+			'columns'   => Stats_Query::columns( self::ANSWERED ),
+			'rows'      => Stats_Query::named( self::ANSWERED['group'], $this->db->rows( "{$page} LIMIT ? OFFSET ?", [ ...$binds, $limit, $offset ] ) ),
 			'available' => true,
-			'also'      => Stats_Query::named( self::GROUPED['group'], $this->db->rows( "{$slow} LIMIT ?", [ ...$binds, Performance_CI_Node::SLOWEST_ROWS ] ) ),
+			'also'      => Stats_Query::named( self::ANSWERED['group'], $this->db->rows( "{$slow} LIMIT ?", [ ...$binds, Performance_CI_Node::SLOWEST_ROWS ] ) ),
 		];
 	}
 
@@ -324,7 +397,7 @@ final class Url_Snapshot {
 	private static function listing( string $server, bool $workers, string $sort, string $order ): array {
 		[ $where, $binds ] = self::where( Performance_CI_Node::scope( $server, $workers ) );
 		$named             = 'SELECT url, ( SELECT name FROM servers WHERE servers.id = urls.server_id ) AS server, path, ';
-		return [ $named . \implode( ', ', self::GROUPED['measure'] ) . " FROM urls{$where} ORDER BY " . self::order( $sort, $order ), $binds ];
+		return [ $named . \implode( ', ', self::ANSWERED['measure'] ) . " FROM urls{$where} ORDER BY " . self::order( $sort, $order ), $binds ];
 	}
 
 	/**

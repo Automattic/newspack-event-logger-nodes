@@ -491,9 +491,10 @@ final class Stats_Query {
 	 * file it writes, and its binds, unpaged: each group field under its own
 	 * name, a `url` group as its hash `url` and its `server` and `path`, a
 	 * `page` group as its hash `page` and its `page_name`, then each measure
-	 * under its own. A sort naming a group field orders the rows by it, as
-	 * the GROUP BY already emits them, so SQLite sorts once; with no sort
-	 * they come in no order. An empty window stores an empty table.
+	 * under its own. A sort naming a group field orders the rows by it, its
+	 * ties by the other group fields in their order, so a sort by the first
+	 * is the order the GROUP BY already emits and SQLite sorts once; with no
+	 * sort they come in no order. An empty window stores an empty table.
 	 *
 	 * @param Row_Reader          $builder The connection building the file.
 	 * @param string              $table   The table to create, of `a-z` and `_`.
@@ -534,8 +535,9 @@ final class Stats_Query {
 		}
 		[ $sql, $binds ] = self::statement( $spec, self::readable( $builder, $aliases, $spec, $read ), $aliases, false );
 		$projected       = \array_map( static fn ( string $column, string $name ): string => "{$column} AS \"{$name}\"", \array_keys( $columns ), $columns );
-		// The bare key the GROUP BY names, so SQLite sorts once.
-		$ordered = null === $sorted ? '' : " ORDER BY f{$sorted}" . ( 'desc' === $spec['order'] ? ' DESC' : '' );
+		// The bare group keys, the sorted one first.
+		$keys    = null === $sorted ? [] : [ $sorted, ...\array_diff( \array_keys( $spec['group'] ), [ $sorted ] ) ];
+		$ordered = [] === $keys ? '' : ' ORDER BY ' . \implode( ', ', \array_map( static fn ( int $i ): string => "f{$i}" . ( 'desc' === $spec['order'] ? ' DESC' : '' ), $keys ) );
 		return [ "CREATE TABLE {$table} AS SELECT " . \implode( ', ', $projected ) . " FROM ( {$sql}{$ordered} )", $binds ];
 	}
 
