@@ -15,7 +15,7 @@ import {
 	ID,
 	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
-import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
+import { urlHash } from '../../log-table/urlIdentity';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 
 /** Rows the ring holds until a caller assigns `maxLines` of its own. */
@@ -81,8 +81,8 @@ export class RequestLogViewNode extends LogStreamViewNode {
 	 * Every field is carried whole. `Request_Builder_Node` fits the url and the
 	 * user agent under PIPE_BUF through `Line_Fitter::fit()` before it emits, so
 	 * a character cap here would be a second, invented bound on a string the
-	 * producer already fits — and `urlHash` keys the FULL url, matching
-	 * the server's `Log_Manager::url_hash()`, so even a long URL deep-links to a
+	 * producer already fits — and `urlHash` keys the FULL url's identity,
+	 * the hash its row is stored under, so even a long URL deep-links to a
 	 * detail view the Overview has stored. `raw` holds the summary's whole JSON
 	 * and `struct` marks it parseable, which is what makes debug mode
 	 * pretty-print the record rather than print it as one line.
@@ -109,7 +109,7 @@ export class RequestLogViewNode extends LogStreamViewNode {
 			rid,
 			method,
 			url,
-			urlHash: fnv1a( req.url ),
+			urlHash: urlHash( req.url ),
 			duration_ms: req.duration_ms || 0,
 			status_code: statusCode,
 			remote_addr: req.remote_addr || '',

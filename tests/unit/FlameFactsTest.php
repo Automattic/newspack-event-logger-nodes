@@ -2,10 +2,12 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Row_Reader;
@@ -111,6 +113,55 @@ final class FlameFactsTest extends TestCase {
 			$this->facts( 'SELECT page, page_hash FROM urls ORDER BY id' )
 		);
 		$this->assertSame( [ [ 'urls_page' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'urls_page'" ) );
+	}
+
+	/**
+	 * Requests whose keys differ only in case or scheme are one URL row, its
+	 * hash the identity's, its path as the first request spelled it.
+	 */
+	public function test_a_urls_case_and_scheme_variants_file_one_row(): void {
+		$fb   = $this->armed_flame_builder();
+		$sent = [ 'https://kea.example/Cincinnati/EventSearch?v=1', 'https://kea.example/cincinnati/eventsearch?v=2', 'http://kea.example/CINCINNATI/eventsearch?v=3' ];
+		foreach ( $sent as $i => $request_url ) {
+			$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => "rid-4402{$i}", 'url' => Url_Parts::key( $request_url, false ), 'request_url' => $request_url ] ), '' );
+			// A flush apiece forgets the URL's id, so each insert reaches the table.
+			$fb->flush();
+		}
+
+		$this->assertSame(
+			[ [ Log_Manager::url_hash( 'https://kea.example/cincinnati/eventsearch?v=?' ), '/Cincinnati/EventSearch?v=?', 3 ] ],
+			$this->facts( 'SELECT u.hash, u.path, count(r.rid) FROM urls u JOIN requests r ON r.url_id = u.id GROUP BY u.id' )
+		);
+	}
+
+	/**
+	 * A URL row shows the spelling and scheme of the first request it filed:
+	 * the `urls` insert is an `ignore`, and `row_path()` keeps an http URL
+	 * whole.
+	 *
+	 * @return array<string,array{0:list<string>,1:string}>
+	 */
+	public static function first_seen(): array {
+		return [
+			'https, then http' => [ [ 'https://kea.example/Weka-4402/', 'http://kea.example/weka-4402/' ], '/Weka-4402/' ],
+			'http, then https' => [ [ 'http://kea.example/Weka-4402/', 'https://kea.example/weka-4402/' ], 'http://kea.example/Weka-4402/' ],
+			'http alone'       => [ [ 'http://kea.example/Weka-4402/' ], 'http://kea.example/Weka-4402/' ],
+		];
+	}
+
+	/**
+	 * @param list<string> $sent The request URLs, in the order they arrive.
+	 * @param string       $path The path the row shows.
+	 */
+	#[DataProvider( 'first_seen' )]
+	public function test_a_url_rows_path_is_its_first_requests_spelling_and_scheme( array $sent, string $path ): void {
+		$fb = $this->armed_flame_builder();
+		foreach ( $sent as $i => $request_url ) {
+			$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => "rid-4403{$i}", 'url' => Url_Parts::key( $request_url, false ), 'request_url' => $request_url ] ), '' );
+			$fb->flush();
+		}
+
+		$this->assertSame( [ [ $path ] ], $this->facts( 'SELECT path FROM urls' ) );
 	}
 
 	public function test_one_request_writes_its_row_and_rollups(): void {

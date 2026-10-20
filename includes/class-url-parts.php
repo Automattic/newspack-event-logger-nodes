@@ -81,7 +81,8 @@ final class Url_Parts {
 
 	/**
 	 * The key a request's URL row is filed by, the record's `url`: its path,
-	 * and each key of its query as `name=?`, sorted and deduped, so one row
+	 * and each key of its query as `name=?`, sorted in any case and deduped,
+	 * so one row
 	 * holds every request asking the same keys, whatever their values, order
 	 * or spelling. A key is the one PHP reads into `$_GET`, the last sent
 	 * winning, so `ids[0]` and `ids[1]` are `ids` and `a.b` is `a_b`; it is
@@ -116,7 +117,7 @@ final class Url_Parts {
 		if ( [] === $keys ) {
 			return $path;
 		}
-		\ksort( $keys, \SORT_STRING );
+		\ksort( $keys, \SORT_STRING | \SORT_FLAG_CASE );
 		return $path . '?' . \implode( '&', $keys );
 	}
 
@@ -193,6 +194,18 @@ final class Url_Parts {
 			}
 		}
 		throw new \InvalidArgumentException( "Url_Parts: URL has no host: '{$url}'" );
+	}
+
+	/**
+	 * What a URL row is hashed by: a stored URL, a `key()` with any worker
+	 * mark, lowercased (ASCII only), its `http://` read as `https://`, so its
+	 * case and scheme variants share a row. JS `urlIdentity()` is its twin.
+	 *
+	 * @param string $url A stored URL.
+	 */
+	public static function identity( string $url ): string {
+		$url = \strtolower( $url );
+		return \str_starts_with( $url, 'http://' ) ? 'https://' . \substr( $url, \strlen( 'http://' ) ) : $url;
 	}
 
 	/**

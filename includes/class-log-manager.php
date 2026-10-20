@@ -753,10 +753,11 @@ class Log_Manager {
 	 * URL hash - 12-char FNV-1a hash. The shared URL identity primitive: the
 	 * firehose per-URL key (Request_Builder_Node / Flame_Builder_Node) and the
 	 * per-URL rule id (Rule_Set::id_for) both derive from this one function. Note
-	 * they hash different inputs — a rule id hashes a PATTERN (`/shop`), a stats
-	 * bucket hashes a concrete request URL (`/shop/item/5`), and a page id
-	 * hashes a lowercased host and path (`shop.test/shop/item/5`) — so the keys
-	 * coincide only for an exact (`?`-terminated) rule pattern; don't join them.
+	 * they hash different inputs — a rule id hashes a PATTERN (`/shop`), a URL
+	 * row hashes a request URL's `Url_Parts::identity()` (`/shop/item/5`), and
+	 * a page id hashes a lowercased host and path (`shop.test/shop/item/5`) —
+	 * so the keys coincide only for an exact (`?`-terminated) rule pattern;
+	 * don't join them.
 	 *
 	 * @param string $url URL to hash.
 	 * @return string 12-character hex hash.

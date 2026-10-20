@@ -1,0 +1,11 @@
+[
+  ["case folds", "https://Kea.Test/Cincinnati/EventSearch?v=?", "https://kea.test/cincinnati/eventsearch?v=?"],
+  ["http reads as https", "http://kea.test/moa-4402", "https://kea.test/moa-4402"],
+  ["an http scheme in capitals", "HTTP://Kea.Test/Moa-4402", "https://kea.test/moa-4402"],
+  ["https stays https", "https://kea.test/moa-4402", "https://kea.test/moa-4402"],
+  ["only the leading scheme", "https://kea.test/go?u=http://x", "https://kea.test/go?u=http://x"],
+  ["a worker mark folds with the key", "https://kea.test/wp-cron.php?doing_wp_cron=?&Cron.p0", "https://kea.test/wp-cron.php?doing_wp_cron=?&cron.p0"],
+  ["a routing value folds", "https://kea.test/wp-admin/admin-ajax.php?_nonce=?&action=HeartBeat", "https://kea.test/wp-admin/admin-ajax.php?_nonce=?&action=heartbeat"],
+  ["an escape's hex folds", "https://kea.test/?action=a%26b%3Dc", "https://kea.test/?action=a%26b%3dc"],
+  ["only ASCII folds", "https://kea.test/Ärger-4402", "https://kea.test/Ärger-4402"]
+]

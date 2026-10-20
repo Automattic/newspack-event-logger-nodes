@@ -10,8 +10,11 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   page is a URL's lowercased host and path, every query key folded, and a
   row is one page on one server, folding every URL of it. A row carries
   `page_hash` (`Log_Manager::url_hash()` of the page), `page`, `server`,
-  `path` (the page under its server) and `shapes` (the URLs folded), then
-  the measures a URL row carried. It no longer carries `url`. `hash` is the
+  `path` (the page under its server), `shapes` (the URLs folded) and `url`,
+  then the measures a URL row carried. `url` is now the name the row shows,
+  not one URL's: a one-shape page's URL as its own row names it, a page of
+  more `https://` and the page, so never read a page row's `url` as a URL
+  `dump_url` takes; it is a display name. `hash` is the
   URL's hash only where the page folds one shape; on a page of more it is
   null, so key a row by `page_hash` and `server`, and never pass a
   `page_hash` where a URL hash goes (`dump_url`, `?url=`, `ask url:`, `url=`
@@ -21,6 +24,19 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `urls` answered them before, ask `--filter=page=<page hash>`: it answers
   that page's URLs, each with `hash`, `url` and the measures, and `rows`
   counts them.
+
+- **A URL's hash folds case and scheme.** A URL row is hashed by
+  `Url_Parts::identity()`, its key with any worker mark lowercased and its
+  `http://` read as `https://`, so a URL's case and scheme variants are one
+  row. The key itself, the record's `url` and every display keep the
+  spelling and scheme the request was sent with, and a row shows those of
+  the first request it filed. A `?url=` link, a `url:` descriptor or a
+  `url=` filter carrying a hash from 0.147.0 or earlier names a URL spelled
+  with capitals or over http that no row carries any more; open the URL from
+  the table again for its new hash. A page that hashes a stored URL itself
+  takes `urlIdentity()` first, as the request stream, the in-flight view and
+  the error log do. `Log_Manager::url_hash()` is unchanged, so rule ids keep
+  their hashes.
 
 - **An `overview:` brief lists pages as `pages`, not URLs as `urls`.** The
   `ask` verb and the MCP `performance_ask` tool answer `pages`, each with

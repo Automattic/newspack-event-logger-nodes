@@ -112,6 +112,26 @@ test( 'urlHash keeps the ?worker marker so nodes/ELN URLs deep-link (matches PHP
 	expect( v.lines[ 0 ].urlHash ).not.toBe( fnv1a( '/jobs/x' ) );
 } );
 
+test( 'a row shows its URL as sent and links by its identity', () => {
+	const v = makeView( 'request-log:view' );
+	v.fill(
+		rowMsg(
+			row( {
+				rid: 'case-4402',
+				url: 'http://Kea.Test/Cincinnati/EventSearch?v=?',
+				end_time: 1,
+			} )
+		)
+	);
+
+	expect( v.lines[ 0 ].url ).toBe(
+		'http://Kea.Test/Cincinnati/EventSearch?v=?'
+	);
+	expect( v.lines[ 0 ].urlHash ).toBe(
+		fnv1a( 'https://kea.test/cincinnati/eventsearch?v=?' )
+	);
+} );
+
 test( 'urlHash keys the FULL url, not the display clip', () => {
 	// The display clip is a display decision; `urlHash` is an identity. PHP's
 	// `Log_Manager::url_hash()` hashes the whole string, and the Error Log's
