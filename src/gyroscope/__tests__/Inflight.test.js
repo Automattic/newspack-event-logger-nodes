@@ -16,6 +16,7 @@ jest.mock( '../hooks/useGyroscopeGraph', () => ( {
 
 import * as React from 'react';
 import { Core, mountExospine, reservedNames } from '@newspack-nodes/runtime';
+import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import Inflight from '../Inflight';
 import { publishSkippedLines } from '@newspack-nodes/shared/test-utils/skippedLines';
 import {
@@ -197,6 +198,30 @@ describe( 'Inflight', () => {
 		tickRefresh();
 		expect( node.snapshot ).toHaveBeenCalledWith( 100 );
 		expect( container.textContent ).toContain( 'r1' );
+	} );
+
+	it( 'shows the URL of a row as sent and links it by its identity', () => {
+		registerViewFixture( {
+			rows: [
+				{
+					rid: 'r-4402',
+					url: 'http://Kea.Test/Moa-4402/?v=?',
+					method: 'GET',
+					state: 'process',
+					what: 'moa',
+				},
+			],
+		} );
+		const { container } = mount();
+		tickRefresh();
+		const link = container.querySelector( 'a[href*="&url="]' );
+
+		expect( link.textContent ).toContain( 'http://Kea.Test/Moa-4402/?v=?' );
+		expect( link.getAttribute( 'href' ) ).toBe(
+			`admin.php?page=event-logger-overview&url=${ fnv1a(
+				'https://kea.test/moa-4402/?v=?'
+			) }`
+		);
 	} );
 
 	it( 'inks a pale state badge dark so the label stays legible', () => {

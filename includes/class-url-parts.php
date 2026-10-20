@@ -70,21 +70,31 @@ final class Url_Parts {
 
 	/**
 	 * The server a URL was logged by: its host, which the producer writes
-	 * from the server name it serves under.
+	 * from the server name it serves under, as `server_name()` spells it.
 	 *
 	 * @param string $url A logged URL, which carries its host.
 	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public static function server_of( string $url ): string {
-		return \substr( $url, ...self::authority( $url ) );
+		return self::server_name( \substr( $url, ...self::authority( $url ) ) );
 	}
 
 	/**
-	 * The key a request's URL row is filed by, the record's `url`: its path,
-	 * and each key of its query as `name=?`, sorted in any case and deduped,
-	 * so one row
-	 * holds every request asking the same keys, whatever their values, order
-	 * or spelling. A key is the one PHP reads into `$_GET`, the last sent
+	 * A server's name as the rows store it and every reader matches it: the
+	 * host lowercased, so its spellings are one server.
+	 *
+	 * @param string $host A host, in any case.
+	 */
+	public static function server_name( string $host ): string {
+		return \strtolower( $host );
+	}
+
+	/**
+	 * The key a request's URL is stored by, the record's `url`: its path, and
+	 * each key of its query as `name=?`, sorted without regard to case and
+	 * deduped, so every request asking the same keys, whatever their values,
+	 * order or spelling, has one key, and `identity()` of it picks the row.
+	 * A key is the one PHP reads into `$_GET`, the last sent
 	 * winning, so `ids[0]` and `ids[1]` are `ids` and `a.b` is `a_b`; it is
 	 * written encoded, so no key can spell a separator. A `KEY_ROUTES` key
 	 * keeps its value through `route_value()`. Tracking keys are dropped, a
@@ -197,6 +207,16 @@ final class Url_Parts {
 	}
 
 	/**
+	 * The hash a URL row is stored under: `Log_Manager::url_hash()` of the
+	 * stored URL's `identity()`. JS `urlHash()` is its twin.
+	 *
+	 * @param string $url A stored URL.
+	 */
+	public static function hash( string $url ): string {
+		return Log_Manager::url_hash( self::identity( $url ) );
+	}
+
+	/**
 	 * What a URL row is hashed by: a stored URL, a `key()` with any worker
 	 * mark, lowercased (ASCII only), its `http://` read as `https://`, so its
 	 * case and scheme variants share a row. JS `urlIdentity()` is its twin.
@@ -223,8 +243,8 @@ final class Url_Parts {
 
 	/**
 	 * The path a row stores for a URL served by `$server`: what the key does
-	 * not already say. An https URL whose authority is the server keeps only
-	 * its path, which a reader joins back as `https://{server}{path}`; any
+	 * not already say. An https URL whose authority is the server, in any
+	 * case, keeps only its path, which a reader joins back as `https://{server}{path}`; any
 	 * other URL, an http one, is kept whole, so no reader shows a scheme it
 	 * was not. Cut to `MAX_PATH_BYTES`, the last of them an ellipsis.
 	 *
@@ -233,7 +253,7 @@ final class Url_Parts {
 	 */
 	public static function row_path( string $url, string $server ): string {
 		$origin = 'https://' . $server;
-		$path   = \str_starts_with( $url, $origin . '/' ) ? \substr( $url, \strlen( $origin ) ) : $url;
+		$path   = 0 === \strncasecmp( $url, $origin . '/', \strlen( $origin ) + 1 ) ? \substr( $url, \strlen( $origin ) ) : $url;
 		if ( \strlen( $path ) <= self::MAX_PATH_BYTES ) {
 			return $path;
 		}

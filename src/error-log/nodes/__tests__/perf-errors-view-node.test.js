@@ -152,6 +152,24 @@ test( 'retains request URL context and hashes it for the URL detail link', () =>
 	);
 } );
 
+test( 'shows the URL as sent and links by its identity', () => {
+	const v = makeView( 'error-log:view' );
+	const url = 'http://Kea.Test/Moa-4402/?v=?';
+	v.fill(
+		envMsg( 'case-rid-4402', {
+			k: 'error',
+			m: 'case failure 4402',
+			method: 'GET',
+			url,
+		} )
+	);
+
+	expect( v.lines[ 0 ].url ).toBe( url );
+	expect( v.lines[ 0 ].urlHash ).toBe(
+		fnv1a( 'https://kea.test/moa-4402/?v=?' )
+	);
+} );
+
 test( 'hashes the full request URL while clipping only its display value', () => {
 	const v = makeView( 'error-log:view' );
 	const url = `/long-error-url-731/${ 'x731'.repeat(

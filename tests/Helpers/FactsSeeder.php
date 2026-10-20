@@ -19,8 +19,8 @@ namespace Newspack_Event_Logger_Nodes\Tests\Helpers;
 
 use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
 use Newspack_Event_Logger_Nodes\Bucket;
+use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
-use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Core;
@@ -191,17 +191,21 @@ trait FactsSeeder {
 		};
 		foreach ( $rows as [ $verb, $table, $values ] ) {
 			$ids = [];
+			// A server is stored as the builder names it.
+			if ( \is_string( $values['server'] ?? null ) ) {
+				$values['server'] = Url_Parts::server_name( $values['server'] );
+			}
 			if ( \array_key_exists( 'url', $values ) ) {
 				$url    = Core::as_string( $values['url'] );
 				$server = Core::as_string( $values['server'] );
 				unset( $values['url'] );
 				$server_at = $named( Flame_Facts_Row_Schema::NAMED_BY['server_id'], $server );
-				$url_at    = $at['urls'][ $url ] ?? null;
+				$hash      = Url_Parts::hash( $url );
+				$url_at    = $at['urls'][ $hash ] ?? null;
 				if ( null === $url_at ) {
-					$page                = Url_Parts::page( $url );
 					$url_at              = \count( $batch );
-					$at['urls'][ $url ] = $url_at;
-					$batch[]            = [ 'ignore', 'urls', [ null, Log_Manager::url_hash( $url ), null, Url_Parts::row_path( $url, $server ), $page, Log_Manager::url_hash( $page ) ], [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => $server_at ] ];
+					$at['urls'][ $hash ] = $url_at;
+					$batch[]             = [ 'ignore', 'urls', Flame_Builder_Node::url_row( $url, $server ), [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => $server_at ] ];
 				}
 				$values['url_id'] = null;
 				$ids[ Flame_Facts_Row_Schema::position( $table, 'url_id' ) ] = $url_at;

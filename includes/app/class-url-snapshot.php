@@ -576,8 +576,9 @@ final class Url_Snapshot {
 	}
 
 	/**
-	 * The WHERE clause a filter names through `SCOPED`, and its binds; a
-	 * server `servers` lacks keeps no row.
+	 * The WHERE clause a filter names through `SCOPED`, and its binds, a
+	 * server as `Url_Parts::server_name()` stores it; a server `servers`
+	 * lacks keeps no row.
 	 *
 	 * @param array<string,list<scalar>> $filter Fields `SCOPED` maps.
 	 * @return array{0:string, 1:list<scalar>}
@@ -593,7 +594,7 @@ final class Url_Snapshot {
 			if ( 1 !== \count( $values ) ) {
 				throw new \LogicException( \esc_html( "the URL snapshot scopes one {$field}, not " . \count( $values ) ) );
 			}
-			$binds[] = $values[0];
+			$binds[] = 'server' === $field ? Url_Parts::server_name( Core::as_string( $values[0] ) ) : $values[0];
 		}
 		return [ [] === $clauses ? '' : ' WHERE ' . \implode( ' AND ', $clauses ), $binds ];
 	}
@@ -648,7 +649,7 @@ final class Url_Snapshot {
 	 * @return array{columns:list<string>, rows:list<list<mixed>>, available:true}
 	 */
 	public function totals( string $server, bool $workers ): array {
-		$scope = '' === $server ? [ '0', [] ] : [ self::SERVER_ID, [ $server ] ];
+		$scope = '' === $server ? [ '0', [] ] : [ self::SERVER_ID, [ Url_Parts::server_name( $server ) ] ];
 		$rows  = $this->db->rows(
 			'SELECT ' . \implode( ', ', Performance_CI_Node::URL_TOTALS ) . " FROM totals WHERE workers = ? AND server_id = {$scope[0]}",
 			[ $workers ? 1 : 0, ...$scope[1] ]
