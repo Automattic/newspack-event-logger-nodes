@@ -30,15 +30,15 @@ final class FlameFactsTest extends TestCase {
 		$opened = \array_merge( ...$this->facts( "SELECT name FROM sqlite_master WHERE type = 'table'" ) );
 
 		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_expiry', 'urls_fts', 'servers', 'ja4s', 'froms', 'categories', 'entries' ], $opened ) ) );
-		$this->assertSame( [ [ 7 ] ], $this->facts( 'PRAGMA user_version' ) );
+		$this->assertSame( [ [ 8 ] ], $this->facts( 'PRAGMA user_version' ) );
 		$this->assertSame( [ [ 'requests_server' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'requests_server'" ) );
 		$this->assertSame( [ [ 'timings_site_bucket' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'timings_site_bucket'" ) );
 	}
 
-	public function test_v7_declares_the_window_its_expiries_and_the_server_led_keys(): void {
+	public function test_v8_declares_the_window_its_expiries_and_the_server_led_keys(): void {
 		$tables = self::derived_tables();
 
-		$this->assertSame( 7, Flame_Facts_Row_Schema::version() );
+		$this->assertSame( 8, Flame_Facts_Row_Schema::version() );
 		$this->assertSame( [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb', 'profiled', 'error', 'finished_at' ], $tables['requests']['indexes']['requests_cover'] );
 		$this->assertSame( [ 'server_id', 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb', 'profiled', 'error' ], $tables['requests']['indexes']['requests_server'] );
 		$this->assertArrayNotHasKey( 'requests_server_id', $tables['requests']['indexes'], 'the server-led index serves a server row\'s release' );
@@ -97,6 +97,20 @@ final class FlameFactsTest extends TestCase {
 		$rows = Row_Table_Node::read( Flame_Facts_Row_Schema::class, static fn ( Row_Reader $r ): array => $r->rows( 'SELECT ms, calls, requests, last_bucket FROM p0.category_window', [] ) );
 
 		$this->assertSame( [ [ 21.75, 5, 2, 5_966_101 ] ], $rows );
+	}
+
+	public function test_urls_carry_their_page(): void {
+		$fb = $this->armed_flame_builder();
+		foreach ( [ 'https://Kea.example/Kea-5521?a=1', 'https://kea.example/kea-5521?b=2' ] as $i => $url ) {
+			$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => "rid-552{$i}", 'url' => $url ] ), '' );
+		}
+		$fb->flush();
+
+		$this->assertSame(
+			[ [ 'kea.example/kea-5521', Log_Manager::url_hash( 'kea.example/kea-5521' ) ], [ 'kea.example/kea-5521', Log_Manager::url_hash( 'kea.example/kea-5521' ) ] ],
+			$this->facts( 'SELECT page, page_hash FROM urls ORDER BY id' )
+		);
+		$this->assertSame( [ [ 'urls_page' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'urls_page'" ) );
 	}
 
 	public function test_one_request_writes_its_row_and_rollups(): void {

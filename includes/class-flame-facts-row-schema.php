@@ -126,8 +126,11 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'hash'      => 'TEXT NOT NULL',
 					'server_id' => 'INTEGER NOT NULL',
 					'path'      => 'TEXT NOT NULL',
+					'page'      => 'TEXT NOT NULL',
+					'page_hash' => 'TEXT NOT NULL',
 				],
 				'key'           => [ 'hash' ],
+				'indexes'       => [ 'urls_page' => [ 'page_hash', 'server_id' ] ],
 				'autoincrement' => 'id',
 				'fts'           => [ 'path' ],
 			],
@@ -300,6 +303,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 7;
+		return 8;
 	}
 }

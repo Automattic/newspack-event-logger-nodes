@@ -77,7 +77,7 @@ The three settings a hub pushes, the ruleset, `log_memory` and `flush_every_line
 
 ## Decision 5: A stats schema change is a version bump and a rebuild, and nothing in this code migrates
 
-`Flame_Facts_Row_Schema::version()`, 7, versions the shape of the stats rows, and each partition's file carries it as SQLite's `user_version`. A builder opening a file at another version discards it and starts empty, and a reader leaves such a file unattached ([substrate ADR-34](https://github.com/Automattic/newspack-nodes/blob/main/docs/architecture-decisions.md#adr-34-a-table-may-hold-declared-rows-sqlite-only)), so a row in an older shape is never read. A schema change therefore bumps `version()`, and the rollout rebuilds the rows from what the logs retain:
+`Flame_Facts_Row_Schema::version()`, 8, versions the shape of the stats rows, and each partition's file carries it as SQLite's `user_version`. A builder opening a file at another version discards it and starts empty, and a reader leaves such a file unattached ([substrate ADR-34](https://github.com/Automattic/newspack-nodes/blob/main/docs/architecture-decisions.md#adr-34-a-table-may-hold-declared-rows-sqlite-only)), so a row in an older shape is never read. A schema change therefore bumps `version()`, and the rollout rebuilds the rows from what the logs retain:
 
 ```bash
 wp nodes stop && wp nodes deactivate performance && wp nodes gc --force && wp nodes memcache flush && wp nodes activate performance && wp nodes start
@@ -360,7 +360,7 @@ Memcache evicts, so stats kept there need a mirror, a sweep and a probe to repai
 | Table | One row per | Key | Window |
 |---|---|---|---|
 | `requests` | completed request: its `rid`, `bucket`, `finished_at`, `started_at`, the log position its record sits at (`partition`, `segment`, `offset`, `length`), `server_id`, `url_id`, `status`, `method`, `country`, `ua_id`, `ja4_id`, `from_id`, `worker`, `profiled`, `error`, `ms` (NULL when untimed) and `peak_mb` | `rid` | 2,016 buckets, seven days |
-| `urls` | URL: `id`, `hash`, `server_id`, `path`, with an FTS5 index over `path` | `hash` | while a `requests` or `timings` row names it |
+| `urls` | URL: `id`, `hash`, `server_id`, `path`, `page` (its lowercased host and path) and `page_hash` (`Log_Manager::url_hash()` of the page), with an FTS5 index over `path` and the index `urls_page` on `( page_hash, server_id )` | `hash` | while a `requests` or `timings` row names it |
 | `servers`, `agents`, `ja4s`, `froms`, `categories`, `entries` | name a row repeats: `id`, `name` | `name` | while a row names it |
 | `timings` | bucket, server, URL, category and entry, with `listener` and the summed `ms`, `calls` and `requests` | `bucket`, `server_id`, `url_id`, `category_id`, `entry_id` | 300 buckets, 25 hours |
 | `timings_site` | bucket, server, worker, category and entry, with `listener` and the same sums | `server_id`, `bucket`, `worker`, `category_id`, `entry_id` | 300 buckets, 25 hours |
