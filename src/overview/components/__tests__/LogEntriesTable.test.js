@@ -2691,9 +2691,8 @@ describe( 'recentering after a row shrinks', () => {
 		} );
 		expect( calls[ 0 ].text ).toContain( 'line-5' );
 		expect( calls[ 0 ].text ).not.toContain( 'line-12' );
-		// The reader just clicked this row; it gets no flash.
 		for ( const td of row.querySelectorAll( 'td' ) ) {
-			expect( td.style.boxShadow ).toBe( '' );
+			expect( td.style.boxShadow ).toContain( 'inset' );
 		}
 		unmount();
 	} );
@@ -2705,6 +2704,9 @@ describe( 'recentering after a row shrinks', () => {
 		act( () => toggle().click() );
 
 		expect( calls ).toEqual( [] );
+		for ( const td of toggle().closest( 'tr' ).querySelectorAll( 'td' ) ) {
+			expect( td.style.boxShadow ).toBe( '' );
+		}
 		unmount();
 	} );
 
@@ -2748,6 +2750,9 @@ describe( 'recentering after a row shrinks', () => {
 		expect( calls[ 0 ].row ).toBe( rowOf( 'db' ) );
 		expect( calls[ 0 ].text ).not.toContain( 'logged value' );
 		expect( calls[ 0 ].options.block ).toBe( 'center' );
+		for ( const td of rowOf( 'db' ).querySelectorAll( 'td' ) ) {
+			expect( td.style.boxShadow ).toContain( 'inset' );
+		}
 		unmount();
 	} );
 
