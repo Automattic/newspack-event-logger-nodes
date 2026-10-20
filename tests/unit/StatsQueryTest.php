@@ -657,6 +657,41 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 2, 0, 0.0, null, null, 2 ] ], $hourly['rows'] );
 	}
 
+	/**
+	 * Seed `sql` as id 1 in partition 0 and as id 3 in partition 3, two
+	 * hooks named ahead of it there, on one URL; answer its hash.
+	 */
+	private function seed_sql_numbered_apart(): string {
+		$url = 'https://kea.example/kaka-8812/';
+		$this->seed_timing( [ 'url' => $url, 'server' => 'kea.example', 'category' => 'sql', 'ms' => 12.5 ] );
+		$this->seed_timing( [ 'url' => $url, 'server' => 'kea.example', 'category' => 'kaka_init hook', 'ms' => 1.5 ], 3 );
+		$this->seed_timing( [ 'url' => $url, 'server' => 'kea.example', 'category' => 'tui_init hook', 'ms' => 2.5 ], 3 );
+		$this->seed_timing( [ 'url' => $url, 'server' => 'kea.example', 'category' => 'sql', 'ms' => 30.25 ], 3 );
+		return Log_Manager::url_hash( $url );
+	}
+
+	/** Each partition sums a category by its own id, and the names merge the partitions. */
+	public function test_timings_group_by_id_inside_each_partition(): void {
+		$spec = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'url' => [ $this->seed_sql_numbered_apart() ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+
+		$rows = Stats_Query::run( $spec )['rows'];
+
+		$this->assertContains( [ 'sql', 42.75 ], $rows );
+		$checked = ( new \ReflectionMethod( Stats_Query::class, 'checked' ) )->invoke( null, $spec );
+		$sql     = Row_Table_Node::read(
+			Flame_Facts_Row_Schema::class,
+			static fn ( Row_Reader $reader ): string => ( new \ReflectionMethod( Stats_Query::class, 'statement' ) )->invoke( null, $checked, 'timings', $reader->aliases(), false )[0]
+		);
+		$this->assertStringContainsString( 't.category_id AS f0', $sql );
+	}
+
+	/** A category filter still matches by name in each partition. */
+	public function test_a_category_filter_still_matches_by_name(): void {
+		$spec = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'url' => [ $this->seed_sql_numbered_apart() ], 'category' => [ 'sql' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+
+		$this->assertSame( [ [ 'sql', 42.75 ] ], Stats_Query::run( $spec )['rows'] );
+	}
+
 	public function test_a_url_groups_by_hash_across_partitions_whose_ids_differ(): void {
 		$this->seed_request( [ 'url' => 'https://kea.example/egret-1/', 'server' => 'kea.example' ] );
 		$this->seed_request( [ 'url' => 'https://kea.example/tui-2/', 'server' => 'kea.example' ], partition: 3 );

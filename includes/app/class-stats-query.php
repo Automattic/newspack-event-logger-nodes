@@ -136,6 +136,17 @@ final class Stats_Query {
 	/** The measures reading each group's timed requests ranked by `ms`. */
 	private const RANKED = [ 'p50_ms', 'p95_ms' ];
 
+	/**
+	 * The fields a partition sums by id when its measures compose, each its
+	 * id column and the table naming it: the sum then names each group once
+	 * rather than joining a name onto every row.
+	 */
+	private const BY_ID = [
+		'url'      => [ 't.url_id', 'urls' ],
+		'category' => [ 't.category_id', 'categories' ],
+		'entry'    => [ 't.entry_id', 'entries' ],
+	];
+
 	/** The join a URL field, input or search needs. */
 	private const URL_JOIN = 'JOIN %1$s.urls AS u ON u.id = t.url_id';
 
@@ -702,11 +713,11 @@ final class Stats_Query {
 
 	/**
 	 * An arm grouped inside its partition: each group field as `f<i>` and each
-	 * folded measure's row aggregate as `q_<name>`. A `url` group, grouped by
-	 * id, joins its partition's `urls` and `servers` after grouping for its
-	 * hash, server and path.
+	 * folded measure's row aggregate as `q_<name>`. Each `BY_ID` group, grouped
+	 * by id, joins its partition's table after grouping for its name: a URL
+	 * its hash, server and path.
 	 *
-	 * @param array{0:string, 1:list<scalar|null>} $arm    The arm, its url grouped by id.
+	 * @param array{0:string, 1:list<scalar|null>} $arm    The arm, its `BY_ID` groups by id.
 	 * @param Spec                                 $spec   The checked spec.
 	 * @param Measured                             $def    The table answering it.
 	 * @param list<string>                         $folded The measures whose partials it carries.
@@ -717,10 +728,19 @@ final class Stats_Query {
 		$partials = \array_map( static fn ( string $name ): string => "q_{$name}", $folded );
 		$select   = \array_map( static fn ( string $name ): string => self::aggregate( $def, $name ) . " AS q_{$name}", $folded );
 		$sql      = 'SELECT ' . \implode( ', ', [ ...$groups, ...$select ] ) . " FROM ( {$arm[0]} )" . ( [] === $groups ? '' : ' GROUP BY ' . \implode( ', ', $groups ) );
-		$url      = \array_search( 'url', $spec['group'], true );
-		if ( \is_int( $url ) ) {
-			$outer = \array_map( static fn ( string $column ): string => "f{$url}" === $column ? "u.hash AS f{$url}, us.name AS s{$url}, u.path AS n{$url}" : "g.{$column}", [ ...$groups, ...$partials ] );
-			$sql   = 'SELECT ' . \implode( ', ', $outer ) . " FROM ( {$sql} ) AS g JOIN %1\$s.urls AS u ON u.id = g.f{$url} " . self::URL_SERVER_JOIN;
+		$outer    = \array_map( static fn ( string $column ): string => "g.{$column}", [ ...$groups, ...$partials ] );
+		$joins    = [];
+		foreach ( $spec['group'] as $i => $field ) {
+			if ( 'url' === $field ) {
+				$outer[ $i ] = "u.hash AS f{$i}, us.name AS s{$i}, u.path AS n{$i}";
+				$joins[]     = "JOIN %1\$s.urls AS u ON u.id = g.f{$i} " . self::URL_SERVER_JOIN;
+			} elseif ( isset( self::BY_ID[ $field ] ) ) {
+				$outer[ $i ] = "l{$i}.name AS f{$i}";
+				$joins[]     = 'JOIN %1$s.' . self::BY_ID[ $field ][1] . " AS l{$i} ON l{$i}.id = g.f{$i}";
+			}
+		}
+		if ( [] !== $joins ) {
+			$sql = 'SELECT ' . \implode( ', ', $outer ) . " FROM ( {$sql} ) AS g " . \implode( ' ', $joins );
 		}
 		return [ $sql, $arm[1] ];
 	}
@@ -918,24 +938,25 @@ final class Stats_Query {
 	 * One partition's arm, its alias a `%1$s` placeholder: each group field
 	 * as `f<i>`, a URL's server and path beside it as `s<i>` and `n<i>`, and
 	 * each input as `m_<name>`, over the bucket ranges, the filters and the
-	 * search. Grouped by id, a URL is its `url_id` alone, and joins `urls`
-	 * only for a URL filter or a search, and `servers` never.
+	 * search. Grouped by id, a `BY_ID` field is its id alone, and joins its
+	 * table only for a filter on it or, for a URL, a search; a URL never
+	 * joins `servers`.
 	 *
 	 * @param Spec         $spec      The checked spec.
 	 * @param string       $table     The table answering it.
 	 * @param list<string> $fields    Every field the spec groups or filters.
 	 * @param list<string> $inputs    Every input its measures read.
-	 * @param bool         $by_url_id Whether a URL group projects its id.
+	 * @param bool         $by_id     Whether a `BY_ID` group projects its id.
 	 * @return array{0:string, 1:list<scalar|null>}
 	 */
-	private static function arm( array $spec, string $table, array $fields, array $inputs, bool $by_url_id = false ): array {
+	private static function arm( array $spec, string $table, array $fields, array $inputs, bool $by_id = false ): array {
 		$def    = self::TABLES[ $table ];
 		$expr   = $def['fields'];
 		$select = [];
 		$named  = false;
 		foreach ( $spec['group'] as $i => $field ) {
-			if ( 'url' === $field && $by_url_id ) {
-				$select[] = "t.url_id AS f{$i}";
+			if ( $by_id && isset( self::BY_ID[ $field ] ) ) {
+				$select[] = self::BY_ID[ $field ][0] . " AS f{$i}";
 				continue;
 			}
 			$select[] = Core::as_string( $expr[ $field ] ) . " AS f{$i}";
@@ -965,7 +986,8 @@ final class Stats_Query {
 			$clauses[] = Core::as_string( $expr[ $field ] ) . $in . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
 			\array_push( $binds, ...$values );
 		}
-		$joined = $by_url_id ? [ ...\array_diff( $fields, [ 'url' ] ), ...\array_intersect( self::filtered( $spec['filter'] ), [ 'url' ] ) ] : $fields;
+		$ids    = \array_keys( self::BY_ID );
+		$joined = $by_id ? [ ...\array_diff( $fields, $ids ), ...\array_intersect( self::filtered( $spec['filter'] ), $ids ) ] : $fields;
 		if ( '' !== $spec['match'] ) {
 			$clauses[] = self::SEARCH;
 			$binds[]   = $spec['match'];
