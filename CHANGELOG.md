@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.147.0] - 2026-10-20
+
 ### Changed
+- **Built against newspack-nodes 2.118.0.** The bundled runtime reads a raw block's format off its stamp, delivers a `read_block` reply whole, and renders a bare `TM_BATCH` as its text; the bundled debug overlay keeps its Timeline trace button out of the REPL and stores no trace or debug level.
 - **A timed request writes its 100 dearest categories to the timing tables.** `Flame_Builder_Node::TIMED_CATEGORIES` (100) caps what each request adds to `timings`, `timings_site` and `category_window`: its categories by self time, ties by name, each with every entry. A rule binding thousands of hooks made the platform's own `/wp-json/newspack-nodes/v1/command` on one staging spoke write about 1,100 categories a request, 1.3 million `timings` rows a day for that URL alone, and its URL profile took 22 s to read. Over that URL's newest 500 requests, the cap writes 11.3 times fewer rows; its chart keeps the same top 20 in the same order, its worst top-20 total reads 0.06% low and its worst five-minute point 0.27% low, and a URL profile's total keeps about 95% of the profiled time. The request's own record keeps every category, so the request detail is unchanged, and auto-tune judges every category before the cut. Rows written before the change age out within the 25 hours timings are kept; no rebuild is needed.
 - **A timings read sums each partition by category and entry id, and names only the sums.** `Stats_Query` already summed a URL group by its id inside each partition; `category` and `entry` now take the same path (`BY_ID`), so a partition's sum no longer joins two name tables onto every row it reads. A filter on either still matches by name.
 
