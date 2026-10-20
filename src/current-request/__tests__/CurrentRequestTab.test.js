@@ -62,6 +62,8 @@ beforeEach( () => {
 } );
 
 afterEach( () => {
+	nowSpy?.mockRestore();
+	nowSpy = null;
 	while ( views.length ) {
 		views.pop().unmount();
 	}
@@ -69,9 +71,15 @@ afterEach( () => {
 	delete global.fetch;
 } );
 
+// Each tick a second on, so a 1s poll is owed it rather than throttled.
+let nowSpy = null;
+
 // One router heartbeat — the tick the tab's poll rides — plus the microtask
 // turns the reply needs to cross the wire and land on the view node.
 const tick = async () => {
+	const next = Core.now() + 1;
+	nowSpy ??= jest.spyOn( Core, 'now' );
+	nowSpy.mockReturnValue( next );
 	await act( async () => {
 		Core.node( '_router' ).fireCb();
 	} );

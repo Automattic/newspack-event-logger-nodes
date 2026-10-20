@@ -14,6 +14,7 @@
 
 import { renderHook, act, waitFor } from '../../../test-helpers/renderHook';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
+import { nextTask } from '@newspack-nodes/shared/test-utils/nextTask';
 import {
 	newMessage,
 	ID,
@@ -135,9 +136,11 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 		expect( Core.node( HTTP ) ).toBeTruthy();
 	} );
 
-	test( 'does NOT fire any command while isOpen is false', () => {
+	test( 'does NOT fire any command while isOpen is false', async () => {
 		const wire = installWire();
 		renderHook( () => useHookCatalogGraph( { isOpen: false } ) );
+		// Let any tick, and the task a held send leaves on, run first.
+		await act( nextTask );
 		expect( wire.batches.length ).toBe( 0 );
 	} );
 

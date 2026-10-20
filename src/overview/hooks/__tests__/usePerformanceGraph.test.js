@@ -42,6 +42,7 @@ import { usePerformanceGraph } from '../usePerformanceGraph';
 import storedAnswers from '../../../../includes/app/stored-answers.json';
 import { DEFAULT_CHART_BREAKDOWN } from '../../constants';
 import { activeChart } from '../../chartSlots';
+import { nextTask as oneTask } from '@newspack-nodes/shared/test-utils/nextTask';
 
 /**
  * The value a command's tokens carry for `--<name>=`, as the server's binder
@@ -75,6 +76,9 @@ function installWire( payloadByVerb = {}, opts = {} ) {
 		return new Error( payload?.message ?? payload ?? name );
 	} );
 }
+
+// An ask made outside a Router tick leaves on the next task, on either clock.
+const nextTask = () => act( oneTask );
 
 // Every verb here rides the router tick, so a dispatch takes a second rather
 // than a microtask; jest's 5s default is not enough for a test that awaits
@@ -476,6 +480,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		await act( async () => {
 			rerender( { serverFilter: 'web7' } );
 		} );
+		await nextTask();
 
 		expect( countVerbs( wire.batches, 'overview' ) ).toBe( 0 );
 	} );
@@ -645,9 +650,11 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		await act( async () => {
 			rerender( { selectedRequest: 'kea4471' } );
 		} );
+		await nextTask();
 		await act( async () => {
 			rerender( { selectedRequest: 'kahu9932' } );
 		} );
+		await nextTask();
 		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
 			rid: 'kahu9932',
 		} );
@@ -762,6 +769,7 @@ describe( 'usePerformanceGraph — a newer urls question retires the older', () 
 		await act( async () => {
 			api.handleUrlParamsChange( { ...bySort, sort: 'url' } );
 		} );
+		await nextTask();
 		const view = Core.node( 'urls:view' );
 		expect( view.view.data ).toEqual( [ { hash: 'c0ffee7731aa' } ] );
 
@@ -798,8 +806,12 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 			order: 'desc',
 			offset: 0,
 		} );
+		jest.advanceTimersByTime( 299 );
+		// Past the task an undebounced ask would have left in.
+		await nextTask();
 		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before );
-		jest.advanceTimersByTime( 300 );
+		jest.advanceTimersByTime( 1 );
+		await nextTask();
 		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
 		unmount();
 		jest.useRealTimers();
@@ -825,6 +837,7 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 			offset: 0,
 		} );
 		jest.advanceTimersByTime( 300 );
+		await nextTask();
 
 		const sent = wire.batches
 			.flat()
@@ -884,11 +897,13 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		await act( async () => {
 			getApi().handleUrlParamsChange( base );
 		} );
+		await nextTask();
 		wire.batches.length = 0;
 
 		await act( async () => {
 			rerender( { chartChips: [ 'method=PATCH' ] } );
 		} );
+		await nextTask();
 
 		const asked = urlsSent( wire );
 		expect( asked ).toHaveLength( 1 );
@@ -912,6 +927,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		await act( async () => {
 			getApi().handleUrlParamsChange( { ...base, offset: 0 } );
 		} );
+		await nextTask();
 		expect( urlsSent( wire ) ).toHaveLength( 1 );
 	} );
 
@@ -927,6 +943,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		await act( async () => {
 			rerender( { chartBreakdown: 'ja4', chartChips: chips } );
 		} );
+		await nextTask();
 
 		expect( queryFrom( wire.batches, 'chart:in' ) ).toBeTruthy();
 		expect( urlsSent( wire ) ).toEqual( [] );
@@ -1027,6 +1044,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 				detailFilters: { bucket: '2026-10-04-13-35' },
 			} );
 		} );
+		await nextTask();
 		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 1 );
 		expect( queryFrom( wire.batches, 'url-chart:in' ) ).toBeNull();
 
@@ -1039,6 +1057,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 				detailFilters: { bucket: '2026-10-04-13-35' },
 			} );
 		} );
+		await nextTask();
 		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 0 );
 		expect(
 			positional(
@@ -1082,6 +1101,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 				},
 			} );
 		} );
+		await nextTask();
 
 		expect(
 			options(
@@ -1124,6 +1144,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 				selectedUrl: { hash: 'f00d7731' },
 			} );
 		} );
+		await nextTask();
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
@@ -1135,6 +1156,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 				},
 			} );
 		} );
+		await nextTask();
 		await act( async () => {
 			held.forEach( ( resolve ) =>
 				resolve( {
@@ -1172,6 +1194,7 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 			bucket: '2026-10-04-13-35',
 		};
 		api.handleUrlParamsChange( base );
+		await nextTask();
 		const asked = () =>
 			wire.batches.flat().filter( ( m ) => m[ VALUE ]?.name === 'urls' );
 		expect( option( asked().at( -1 )[ VALUE ].arguments, 'bucket' ) ).toBe(
@@ -1180,6 +1203,7 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 		const before = asked().length;
 
 		api.handleUrlParamsChange( { ...base, bucket: RUNS } );
+		await nextTask();
 
 		expect( asked() ).toHaveLength( before + 1 );
 		expect( option( asked().at( -1 )[ VALUE ].arguments, 'bucket' ) ).toBe(
@@ -1187,6 +1211,7 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 		);
 
 		api.handleUrlParamsChange( { ...base, bucket: '' } );
+		await nextTask();
 		expect(
 			option( asked().at( -1 )[ VALUE ].arguments, 'bucket' )
 		).toBeUndefined();
@@ -1209,6 +1234,7 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 				},
 			} );
 		} );
+		await nextTask();
 		const opened = findVerb( wire.batches, 'dump_url' );
 		expect( option( opened[ VALUE ].arguments, 'bucket' ) ).toBe(
 			'2026-10-04-13-35'
@@ -1224,6 +1250,7 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 				},
 			} );
 		} );
+		await nextTask();
 		const moved = findVerb( wire.batches, 'dump_url' );
 		expect( option( moved[ VALUE ].arguments, 'bucket' ) ).toBe( RUNS );
 
@@ -1514,6 +1541,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			rerender( { refreshInterval: '120000', selectedUrl } );
 		} );
+		await nextTask();
 
 		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 		expect( Core.node( 'url-detail:timer' ).interval_ms ).toBe( 120000 );
@@ -1636,6 +1664,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 				offset: 50,
 			} );
 		} );
+		await nextTask();
 		// A non-search change fetches immediately (no debounce).
 		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
 		const urls = wire.batches
@@ -1660,6 +1689,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 				bucket: '',
 			} );
 		} );
+		await nextTask();
 		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before );
 	} );
 
@@ -1683,6 +1713,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 			offset: 0,
 		} );
 		jest.advanceTimersByTime( 300 );
+		await nextTask();
 		// Exactly one fetch despite two changes — the first was cancelled.
 		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
 		unmount();
@@ -1703,6 +1734,7 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 				selectedUrl: { hash: 'NOT-HEX!' },
 			} );
 		} );
+		await nextTask();
 		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( before );
 		expect( Core.node( 'url-detail:view' ).view.error ).toBe(
 			'Invalid URL hash format'
@@ -1720,6 +1752,7 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 				selectedRequest: 'bad id!',
 			} );
 		} );
+		await nextTask();
 		expect( findVerb( wire.batches, 'dump_request' ) ).toBeNull();
 		expect( Core.node( 'request-detail:view' ).view.error ).toBe(
 			'Invalid request ID format'
@@ -1970,6 +2003,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		await act( async () => {
 			rerender( { chartBreakdown: 'ja4', chartChips: [] } );
 		} );
+		await nextTask();
 		expect(
 			positional(
 				queryFrom( wire.batches, 'chart:in' )[ VALUE ].arguments
@@ -1982,6 +2016,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		await act( async () => {
 			rerender( { chartBreakdown: 'ja4', chartChips: [ 'method=PUT' ] } );
 		} );
+		await nextTask();
 		expect(
 			options(
 				queryFrom( wire.batches, 'chart:in' )[ VALUE ].arguments,
@@ -2068,6 +2103,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 				},
 			} );
 		} );
+		await nextTask();
 
 		expect(
 			positional(
@@ -2094,6 +2130,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 				detailFilters: { bucket: '2026-10-04-13-35' },
 			} );
 		} );
+		await nextTask();
 
 		expect( findVerb( wire.batches, 'dump_url' ) ).toBeTruthy();
 		expect( queryFrom( wire.batches, 'url-chart:in' ) ).toBeNull();
@@ -2223,5 +2260,37 @@ describe( 'usePerformanceGraph — the stored answers', () => {
 		expect( askedOn( wire, 'query', 'timings' ) ).toEqual(
 			bound( storedAnswers.server_categories )
 		);
+	} );
+} );
+
+describe( 'usePerformanceGraph — a url-detail tick with no session', () => {
+	test( 'stays due, and the tick the session landing asks for sends its asks', async () => {
+		installWire( { dump_url: { stats: {}, requests: [] } } );
+		forgetSession();
+		__setAuthFetch( async () => null );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '120000' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '120000',
+				selectedUrl: { hash: 'b7e3c9a104d2' },
+			} );
+		} );
+		const timer = Core.node( 'url-detail:timer' );
+		expect( timer.fireCount ).toBe( 1 );
+		expect( timer.due ).toBe( true );
+
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		forgetSession();
+		await act( async () => {
+			await ensureSession();
+		} );
+		await nextTask();
+
+		const asked = findVerb( wire.batches, 'dump_url' );
+		expect( asked ).toBeTruthy();
+		expect( asked[ VALUE ].arguments[ 0 ] ).toBe( 'b7e3c9a104d2' );
 	} );
 } );
