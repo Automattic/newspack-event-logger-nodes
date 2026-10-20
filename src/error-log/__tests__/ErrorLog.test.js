@@ -293,6 +293,11 @@ describe( 'ErrorLog', () => {
 		expect( cls( 'notice' ) ).toContain( 'entry-keyword--info' );
 		// An alert must NOT fall through to the generic info accent.
 		expect( cls( 'alert' ) ).not.toContain( 'entry-keyword--info' );
+		// PSR-3's levels above error accent as errors, not the fleet journal.
+		expect( cls( 'qm (critical)' ) ).toContain( 'entry-keyword--error' );
+		expect( cls( 'qm (alert)' ) ).toContain( 'entry-keyword--error' );
+		expect( cls( 'qm (emergency)' ) ).toContain( 'entry-keyword--error' );
+		expect( cls( 'qm (warning)' ) ).toContain( 'entry-keyword--warning' );
 	} );
 
 	it( 'renders the fixed column headers via the shared LogListHeader', () => {

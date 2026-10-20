@@ -61,9 +61,13 @@ final class Stats_Query {
 		'timings'  => [ 'bucket', 'hour', 'server', 'url', 'page', 'worker', 'category', 'entry', 'listener' ],
 	];
 
-	/** What each source measures over the rows a spec selects. */
+	/**
+	 * What each source measures over the rows a spec selects. `errors` counts
+	 * the requests ending in a timeout or fatal (`ERROR_KINDS`), and `error_rate`
+	 * is `errors` over `count`, null where nothing was counted.
+	 */
 	public const MEASURES = [
-		'requests' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'min_ms', 'p50_ms', 'p95_ms', 'sum_peak_mb', 'avg_peak_mb', 'max_peak_mb', 'errors', 'urls', 'pages', 'last_seen', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'worker' ],
+		'requests' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'min_ms', 'p50_ms', 'p95_ms', 'p99_ms', 'sum_peak_mb', 'avg_peak_mb', 'max_peak_mb', 'errors', 'error_rate', 'urls', 'pages', 'last_seen', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'worker' ],
 		'timings'  => [ 'ms', 'calls', 'requests', 'avg_ms', 'avg_calls' ],
 	];
 
@@ -107,7 +111,7 @@ final class Stats_Query {
 	private const HOURLY_FIELDS = [ 'hour', 'day', 'server', 'status_class', 'method', 'worker', 'country' ];
 
 	/** The measures `requests_hourly` answers exactly. */
-	private const HOURLY_MEASURES = [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'sum_peak_mb', 'avg_peak_mb', 'errors' ];
+	private const HOURLY_MEASURES = [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'sum_peak_mb', 'avg_peak_mb', 'errors', 'error_rate' ];
 
 	/** Buckets an hour holds. */
 	private const BUCKETS_PER_HOUR = Bucket::HOUR_SECONDS / Bucket::SECONDS;
@@ -134,7 +138,7 @@ final class Stats_Query {
 	private const FOLDS = 3;
 
 	/** The measures reading each group's timed requests ranked by `ms`. */
-	private const RANKED = [ 'p50_ms', 'p95_ms' ];
+	private const RANKED = [ 'p50_ms', 'p95_ms', 'p99_ms' ];
 
 	/**
 	 * The fields a partition sums by id when its measures compose, each its
@@ -289,10 +293,12 @@ final class Stats_Query {
 				'min_ms'      => [ 'MIN( m_ms )', [ 'ms' ], 'MIN( q_min_ms )', [ 'min_ms' ] ],
 				'p50_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 50 + 99 ) / 100 THEN m_ms END )', [ 'ms' ], null, [] ],
 				'p95_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 95 + 99 ) / 100 THEN m_ms END )', [ 'ms' ], null, [] ],
+				'p99_ms'      => [ 'MAX( CASE WHEN m_rank = ( m_ranked * 99 + 99 ) / 100 THEN m_ms END )', [ 'ms' ], null, [] ],
 				'sum_peak_mb' => [ 'TOTAL( m_peak_mb )', [ 'peak_mb' ], 'TOTAL( q_sum_peak_mb )', [ 'sum_peak_mb' ] ],
 				'avg_peak_mb' => [ 'AVG( m_peak_mb )', [ 'peak_mb' ], 'SUM( q_sum_peak_mb ) / NULLIF( SUM( q_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
 				'max_peak_mb' => [ 'MAX( m_peak_mb )', [ 'peak_mb' ], 'MAX( q_max_peak_mb )', [ 'max_peak_mb' ] ],
 				'errors'      => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END )', [ 'error' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
+				'error_rate'  => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END ) * 1.0 / NULLIF( COUNT( * ), 0 )', [ 'error' ], 'SUM( q_errors ) * 1.0 / NULLIF( SUM( q_count ), 0 )', [ 'errors', 'count' ] ],
 				'urls'        => [ 'COUNT( DISTINCT m_url )', [ 'url' ], null, [] ],
 				'pages'       => [ "COUNT( DISTINCT m_page || ' ' || m_server )", [ 'page', 'server' ], null, [] ],
 				'last_seen'   => [ 'MAX( m_finished_at )', [ 'finished_at' ], 'MAX( q_last_seen )', [ 'last_seen' ] ],
@@ -332,6 +338,7 @@ final class Stats_Query {
 				'sum_peak_mb' => [ 'TOTAL( m_sum_peak_mb )', [ 'sum_peak_mb' ], 'TOTAL( q_sum_peak_mb )', [ 'sum_peak_mb' ] ],
 				'avg_peak_mb' => [ 'SUM( m_sum_peak_mb ) / NULLIF( SUM( m_count ), 0 )', [ 'sum_peak_mb', 'count' ], 'SUM( q_sum_peak_mb ) / NULLIF( SUM( q_count ), 0 )', [ 'sum_peak_mb', 'count' ] ],
 				'errors'      => [ 'COALESCE( SUM( m_errors ), 0 )', [ 'errors' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
+				'error_rate'  => [ 'SUM( m_errors ) * 1.0 / NULLIF( SUM( m_count ), 0 )', [ 'errors', 'count' ], 'SUM( q_errors ) * 1.0 / NULLIF( SUM( q_count ), 0 )', [ 'errors', 'count' ] ],
 			],
 		],
 		'timings'         => [

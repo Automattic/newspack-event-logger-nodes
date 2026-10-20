@@ -617,7 +617,8 @@ final class Url_Snapshot {
 				return Core::as_int( $meta[1] ) <= $now ? null : new self( $db, Core::as_int( $meta[0] ) );
 			}
 		} catch ( Table_Unavailable | \PDOException $e ) {
-			$why = $e->getMessage();
+			// The stderr line reaches the firehose: a driver's text is shaped.
+			$why = Log_Manager::driver_text( $e );
 		}
 		Core::print_less_often( 'performance: the URL snapshot did not open', ' — ' . $why );
 		return null;

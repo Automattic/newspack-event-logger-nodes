@@ -105,19 +105,26 @@ const DEFAULT_COLUMNS = [ 'time', 'rid', 'url', 'keyword', 'message' ];
  */
 const GRID_TEMPLATE = gridTemplate( COLUMNS, DEFAULT_COLUMNS );
 
+/** The keyword suffixes accented as errors: PSR-3's `error` and above. */
+const ERROR_SUFFIXES = [ '(error)', '(critical)', '(alert)', '(emergency)' ];
+
 /**
  * Get keyword severity class.
  *
  * `Request_Builder_Node` routes `error`, `warning`, `stderr` and the
- * `(error)` / `(warning)` suffixes into `errors.*`, and `alert` into
- * `alerts.p0`, which this dashboard does not tail.
+ * `(error)`, `(warning)`, `(critical)`, `(alert)` and `(emergency)` suffixes
+ * into `errors.*`, and the bare `alert` into `alerts.p0`, which this
+ * dashboard does not tail. The three suffixes above `(error)` accent as it.
  *
  * @param {string} keyword Log keyword.
  * @return {string} Suffix of the `entry-keyword--` accent class in
  *                  `styles/error-log.scss`.
  */
 const getKeywordClass = ( keyword ) => {
-	if ( keyword === 'error' || keyword.endsWith( '(error)' ) ) {
+	if (
+		keyword === 'error' ||
+		ERROR_SUFFIXES.some( ( suffix ) => keyword.endsWith( suffix ) )
+	) {
 		return 'error';
 	}
 	if ( keyword === 'warning' || keyword.endsWith( '(warning)' ) ) {

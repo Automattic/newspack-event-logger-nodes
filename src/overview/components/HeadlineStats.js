@@ -36,6 +36,26 @@ const STATS = {
 		short: __( 'avg', 'newspack-event-logger-nodes' ),
 		format: wholeMs,
 	},
+	error_rate: {
+		label: __( 'Error Rate', 'newspack-event-logger-nodes' ),
+		short: __( 'err', 'newspack-event-logger-nodes' ),
+		format: ( n ) => `${ ( n * 100 ).toFixed( 2 ) }%`,
+	},
+	p50_ms: {
+		label: __( 'p50 Response', 'newspack-event-logger-nodes' ),
+		short: __( 'p50', 'newspack-event-logger-nodes' ),
+		format: wholeMs,
+	},
+	p95_ms: {
+		label: __( 'p95 Response', 'newspack-event-logger-nodes' ),
+		short: __( 'p95', 'newspack-event-logger-nodes' ),
+		format: wholeMs,
+	},
+	p99_ms: {
+		label: __( 'p99 Response', 'newspack-event-logger-nodes' ),
+		short: __( 'p99', 'newspack-event-logger-nodes' ),
+		format: wholeMs,
+	},
 	requests_per_second: {
 		label: __( 'Req/s', 'newspack-event-logger-nodes' ),
 		short: __( 'req/s', 'newspack-event-logger-nodes' ),

@@ -2,7 +2,8 @@
  * The Error Log dashboard's view node.
  *
  * The `errors.*` partitions carry one record per firehose line whose keyword is
- * `error`, `warning` or `stderr`, or ends in `(error)` or `(warning)` —
+ * `error`, `warning` or `stderr`, or ends in `(error)`, `(warning)`,
+ * `(critical)`, `(alert)` or `(emergency)` —
  * `Request_Builder_Node` splits those off. This file maps the raw envelopes to
  * the rows `ErrorLog.js` renders, and does nothing else: the stream plumbing
  * lives in `useGlobStreamGraph`, the browse controls in `useGlobBrowse`, and

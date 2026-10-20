@@ -1,7 +1,8 @@
 /**
  * Request Detail View Component
  *
- * Everything known about one logged request: the summary line, its findings,
+ * Everything known about one logged request: the summary line, the context
+ * WordPress routed it to, its findings,
  * the flame graph, the profile breakdown, and the log entries table. `PerformanceDashboard`
  * renders this inside the URL modal once a request row is selected.
  *
@@ -21,6 +22,7 @@ import { useMemo, useRef } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 
 import RequestSummary from '../../components/RequestSummary';
+import RequestContext from './RequestContext';
 import RequestProfile, { profileOrder } from '../RequestProfile';
 import RequestTrace, { FlameCutNote } from './RequestTrace';
 import LogEntriesTable from './LogEntriesTable';
@@ -33,8 +35,8 @@ const SECTION_STYLE = { marginBottom: '20px' };
 /**
  * `requestDetail` is the durable request body `record_of()` writes and
  * `dump_request` reads back: `request_url`, `request_method`, `timestamp` (seconds),
- * `duration_ms`, `peak_mb`, `status_code`, `profiles`, `error_status` and
- * `folded`, plus the `findings` `dump_request` computes for it — absent when
+ * `duration_ms`, `peak_mb`, `status_code`, `profiles`, `error_status`,
+ * `folded`, the `object_cache` map and the `context` map, plus the `findings` `dump_request` computes for it — absent when
  * no detector ran, which is not the same answer as an empty list — and
  * `flame_cut`, true when the flame lookup ran out of time.
  *
@@ -97,6 +99,12 @@ export default function RequestDetailView( {
 					errorRow={ errorRow }
 				/>
 			</div>
+
+			{ requestDetail.context && (
+				<div style={ SECTION_STYLE }>
+					<RequestContext context={ requestDetail.context } />
+				</div>
+			) }
 
 			{ /* What is wrong, worst first: the answer before the evidence. */ }
 			{ hasFindings && (

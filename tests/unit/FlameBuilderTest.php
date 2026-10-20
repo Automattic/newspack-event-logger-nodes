@@ -1865,6 +1865,27 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
+	 * A Query Monitor timer rides every logged request whatever the rule
+	 * names, so auto-tune never promotes or disables `qm` in a rule.
+	 */
+	public function test_query_monitor_spans_are_skipped_from_auto_tune(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 61, 'auto_protect_time_threshold' => 0.05 ] );
+		$fb = $this->unarmed_builder();
+
+		$this->fill_request( $fb, $this->completed_request( [
+			'profiles' => [
+				Flame_Tree::QM_STATE  => [ 'time' => 16.7, 'count' => 73, 'entries' => [ 'kea-import' => [ 16.7, 73 ] ] ],
+				Flame_Tree::SQL_STATE => [ 'time' => 0.4, 'count' => 2, 'entries' => [] ],
+			],
+		] ) );
+
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [ Flame_Tree::SQL_STATE ], $state['add_significant_events']['r'] );
+		$this->assertArrayNotHasKey( 'r', $state['disable_hooks'] );
+		$this->assertArrayNotHasKey( 'r', $state['disable_custom_events'] );
+	}
+
+	/**
 	 * `$count` categories `cat-000` onward, dearest first: `cat-000` at
 	 * `$count` ms down to the last at 1 ms, each with two entries.
 	 *
@@ -1954,6 +1975,35 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'profiles' => $profiles ] ) );
 
 		$this->assertSame( [ 'ruru_slow_render' ], $fb->get_auto_tune_state()['add_significant_events']['r'] );
+	}
+
+	/**
+	 * A Query Monitor timer overlays its hook's time, as a listener does, so
+	 * its rows carry the overlay flag every profiled-time sum leaves out.
+	 */
+	public function test_a_query_monitor_row_carries_the_overlay_flag(): void {
+		$this->set_rule();
+		$rows = $this->stats_for(
+			[
+				'profiles' => [
+					'kea_7746 hook'      => [ 'time' => 100.0, 'count' => 1, 'entries' => [] ],
+					Flame_Tree::QM_STATE => [ 'time' => 30.0, 'count' => 1, 'entries' => [] ],
+				],
+			],
+			'overlay-7746.test'
+		)['timings'];
+
+		$flags = \array_column( $rows, 2, 0 );
+		$this->assertSame( 0, (int) $flags['kea_7746 hook'] );
+		$this->assertSame( 1, (int) $flags[ Flame_Tree::QM_STATE ] );
+	}
+
+	/** One predicate names every span whose time already counts in its parent's. */
+	public function test_the_overlay_spans_are_listeners_and_query_monitor_timers(): void {
+		$this->assertTrue( Flame_Tree::is_overlay_span( Flame_Tree::listener_name( 'kea_cb', 10 ) ) );
+		$this->assertTrue( Flame_Tree::is_overlay_span( 'qm: kea-import' ) );
+		$this->assertFalse( Flame_Tree::is_overlay_span( 'kea_7746 hook' ) );
+		$this->assertFalse( Flame_Tree::is_overlay_span( 'qmx' ) );
 	}
 
 	/** A listener ranks by its own time, so it is written though its hook is cut. */

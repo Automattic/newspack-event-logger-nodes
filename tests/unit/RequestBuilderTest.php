@@ -1143,6 +1143,131 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 2, $errors );
 	}
 
+	/**
+	 * PSR-3's three levels above `error` reach the Errors stream too, by
+	 * suffix, so a `qm/emergency` is never quieter there than a warning.
+	 * The bare `alert` keyword stays the fleet journal's.
+	 */
+	public function test_critical_alert_and_emergency_suffixes_are_forwarded(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->set_errors_target( 'errors:target' );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+		$this->fill( $rb, 3, 'r1', 'qm (critical)', [ 'm' => 'kea 7746' ] );
+		$this->fill( $rb, 4, 'r1', 'qm (alert)', [ 'm' => 'weka 7746' ] );
+		$this->fill( $rb, 5, 'r1', 'qm (emergency)', [ 'm' => 'kaka 7746' ] );
+		$this->fill( $rb, 6, 'r1', 'qm (notice)', [ 'm' => 'tui 7746' ] );
+		$this->fill( $rb, 7, 'r1', 'process (complete)' );
+
+		$forwarded = \array_values( \array_map(
+			static fn ( $m ) => $m[ Message::VALUE ]['k'],
+			\array_filter( $capture->captured, fn ( $m ) => 'errors:target' === $m[ Message::TO ] )
+		) );
+		$this->assertSame( [ 'qm (critical)', 'qm (alert)', 'qm (emergency)' ], $forwarded );
+	}
+
+	/**
+	 * The request record is the request detail's source, so what a span came
+	 * to rides into it: a query's rows or error, an HTTP call's method.
+	 */
+	public function test_a_stored_entry_carries_what_a_transport_span_came_to(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r7', 'process (start)' );
+		$this->fill( $rb, 2, 'r7', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+		$this->fill( $rb, 3, 'r7', 'sql (complete)', [ 'm' => 'SELECT 1', 'rows' => 37, 'duration_ms' => 1.5 ] );
+		$this->fill( $rb, 4, 'r7', 'sql (complete)', [ 'm' => 'INSERT x', 'error' => 'Duplicate entry ?', 'duration_ms' => 1.5 ] );
+		$this->fill( $rb, 5, 'r7', 'http (complete)', [ 'm' => '207', 'http_method' => 'PATCH', 'duration_ms' => 9.0 ] );
+		$this->fill( $rb, 6, 'r7', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
+
+		$entries = $this->captured_request( $capture )['entries'];
+		$this->assertSame( 37, $entries[2]['rows'] ?? null );
+		$this->assertSame( 'Duplicate entry ?', $entries[3]['error'] ?? null );
+		$this->assertSame( 'PATCH', $entries[4]['http_method'] ?? null );
+	}
+
+	/**
+	 * A Query Monitor timer overlays time its hook already counts, so it
+	 * takes nothing from the hook's exclusive time, which auto-tune reads.
+	 */
+	public function test_a_query_monitor_span_leaves_its_hooks_exclusive_time_whole(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r5', 'process (start)' );
+		$this->fill( $rb, 2, 'r5', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+		$this->fill( $rb, 3, 'r5', 'kea_7746 hook (start)' );
+		$this->fill( $rb, 4, 'r5', 'qm (start)', [ 'l' => 'kea-import' ] );
+		$this->fill( $rb, 5, 'r5', 'qm (complete)', [ 'duration_ms' => 30.0 ] );
+		$this->fill( $rb, 6, 'r5', 'kea_7746 hook (complete)', [ 'duration_ms' => 100.0 ] );
+		$this->fill( $rb, 7, 'r5', 'process (complete)', [ 'duration_ms' => 150.0, 'status_code' => 200 ] );
+
+		$profiles = $this->captured_request( $capture )['profiles'];
+		$this->assertSame( 100.0, (float) $profiles['kea_7746 hook']['time'] );
+		$this->assertSame( 30.0, (float) $profiles['qm']['time'] );
+	}
+
+	/** The terminal's object-cache counts land on the record for the Summary. */
+	public function test_the_record_carries_its_object_cache_counts(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r8', 'process (start)' );
+		$this->fill( $rb, 2, 'r8', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+		$counts = [ 'kind' => 'memcached', 'local' => 900, 'gets' => 120, 'hits' => 100, 'misses' => 20, 'multi_keys' => 37 ];
+		$this->fill( $rb, 3, 'r8', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200, 'object_cache' => $counts + [ 'bogus' => 7 ] ] );
+
+		$this->assertSame( $counts, $this->captured_request( $capture )['object_cache'] ?? null );
+	}
+
+	/** A map naming a kind the producer does not write is not carried. */
+	public function test_an_unknown_kind_of_cache_counts_is_not_carried(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r8', 'process (start)' );
+		$this->fill( $rb, 2, 'r8', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+		$this->fill( $rb, 3, 'r8', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200, 'object_cache' => [ 'kind' => 'redis', 'hits' => 4 ] ] );
+
+		$this->assertArrayNotHasKey( 'object_cache', $this->captured_request( $capture ) );
+	}
+
+	/** A terminal carrying no counts leaves none on the record, never zeros. */
+	public function test_a_record_without_cache_counts_carries_none(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r8', 'process (start)' );
+		$this->fill( $rb, 2, 'r8', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+		$this->fill( $rb, 3, 'r8', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
+
+		$this->assertArrayNotHasKey( 'object_cache', $this->captured_request( $capture ) );
+	}
+
+	/** The request-context entry lands on the record as `context`. */
+	public function test_the_record_carries_its_request_context(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$context = [ 'template' => 'themes/kea/single.php', 'conditionals' => [ 'is_single' ] ];
+
+		$this->fill( $rb, 1, 'r6', 'process (start)' );
+		$this->fill( $rb, 2, 'r6', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+		$this->fill( $rb, 3, 'r6', Log_Manager::REQUEST_CONTEXT, [ 'm' => $context ] );
+		$this->fill( $rb, 4, 'r6', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
+
+		$this->assertSame( $context, $this->captured_request( $capture )['context'] ?? null );
+	}
+
 	public function test_stderr_keyword_forwarded_to_errors_target_but_alert_is_not(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();

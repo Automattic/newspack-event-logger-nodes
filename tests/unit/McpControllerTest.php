@@ -173,6 +173,8 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( 'null `duration_ms`', $tools['dump_url']['description'], 'it says an unmeasured duration is null' );
 		$this->assertStringContainsString( '`finished_at`', $tools['dump_url']['description'], 'it names the order the list keeps' );
 		$this->assertStringContainsString( '`stats.avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null', $tools['dump_url']['description'], 'it names each stat null unmeasured' );
+		$this->assertStringContainsString( 'the nearest-rank `p50_ms`, `p95_ms` and `p99_ms`, null where no request was timed', $tools['dump_url']['description'], 'it names the percentiles null untimed' );
+		$this->assertStringContainsString( '`error_rate`, `errors` over `count`, null over no requests', $tools['dump_url']['description'], 'it names the error rate null over nothing' );
 		$this->assertStringContainsString( '`requests_capped`', $tools['dump_url']['description'], 'it says when the list holds the newest only' );
 		$this->assertStringContainsString( '`aggregate_profiles`', $tools['dump_url']['description'], 'it names the URL\'s profile' );
 		$this->assertStringContainsString( 'performance_query', $tools['dump_url']['description'], 'it points the series at the query tool' );

@@ -164,7 +164,11 @@ const compareRequests = ( a, b, { field, dir } ) => {
 const URL_HEADER_STATS = [
 	'requests_per_second',
 	'errors',
+	'error_rate',
 	'avg_ms',
+	'p50_ms',
+	'p95_ms',
+	'p99_ms',
 	'avg_peak_mb',
 ];
 

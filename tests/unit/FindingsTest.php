@@ -2631,6 +2631,25 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
+	 * A Query Monitor timer is the code's own measurement, logged whatever
+	 * the rule says: no rule edit reaches it, and it is no custom event.
+	 */
+	public function test_a_dominant_query_monitor_span_proposes_nothing(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'qm: kea-import', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'Query Monitor', $found['detail'] );
+		$this->assertStringNotContainsString( 'custom event', $found['detail'] . $found['proposal']['why'] );
+	}
+
+	/**
 	 * Only a single-token slug comes from the profiler: an application event
 	 * whose name merely ends in "plugin" still belongs to the application.
 	 */

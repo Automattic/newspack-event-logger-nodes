@@ -183,6 +183,9 @@ if ( ! class_exists( '\WP_REST_Request' ) ) {
 		}
 		public function get_data(): mixed { return $this->data; }
 		public function get_status(): int { return $this->status; }
+		private array $headers = [];
+		public function header( string $key, string $value, bool $replace = true ): void { $this->headers[ $key ] = $value; }
+		public function get_headers(): array { return $this->headers; }
 	}
 	class WP_Error {
 		public string $code;
@@ -512,6 +515,13 @@ if ( ! function_exists( 'wp_parse_args' ) ) {
 if ( ! function_exists( 'trailingslashit' ) ) {
 	function trailingslashit( string $value ): string {
 		return \rtrim( $value, '/\\' ) . '/';
+	}
+}
+
+// A test sets `_wp_test_doing_ajax` to stand in admin-ajax.php.
+if ( ! function_exists( 'wp_doing_ajax' ) ) {
+	function wp_doing_ajax(): bool {
+		return (bool) ( $GLOBALS['_wp_test_doing_ajax'] ?? false );
 	}
 }
 

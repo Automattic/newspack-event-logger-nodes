@@ -39,6 +39,9 @@ final class Flame_Tree {
 	/** The state an outbound-HTTP span carries, as `App\Core` opens it. */
 	public const HTTP_STATE = 'http';
 
+	/** The state a Query Monitor timer's span carries; its `l` names the timer. */
+	public const QM_STATE = 'qm';
+
 	/** What the profiler drop-in appends to a slug to name a plugin's load. */
 	public const PLUGIN_LOAD_SUFFIX = ' plugin';
 
@@ -615,8 +618,9 @@ final class Flame_Tree {
 	/**
 	 * Whether a rule names a span — a hook, a transport or a custom event —
 	 * so its `l` label names what a repeat is judged by. A plugin load, a
-	 * command verb and the plugin's own work are logged whatever the rule
-	 * says, and a listener only because its hook is significant.
+	 * command verb, a Query Monitor timer and the plugin's own work are
+	 * logged whatever the rule says, and a listener only because its hook is
+	 * significant.
 	 *
 	 * @param string $span A span name, as the flame carries it.
 	 * @return bool
@@ -626,24 +630,29 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * The seven kinds of span the flame carries, classified once so auto-tune
+	 * The eight kinds of span the flame carries, classified once so auto-tune
 	 * and every `Findings` reader agree. A custom event has no listeners,
 	 * and prose crediting it with any sends the reader hunting a callback
 	 * that does not exist. A query or HTTP span is the logger's own
 	 * measurement, a plugin span is one plugin file's load, a command span is
 	 * the frame of one verb, and an upkeep span is the plugin's own work;
 	 * the last three are logged whatever the rule says, and calling any of
-	 * these a custom event proposes a rule edit that changes nothing. A hook
+	 * these a custom event proposes a rule edit that changes nothing. A `qm`
+	 * span is a Query Monitor timer, written on every logged request whatever
+	 * the rule names, so no rule binds it either. A hook
 	 * is known by its BASE name: with hook tracing on, the frame carries the
 	 * caller too.
 	 *
 	 * @param string $span A span name, as the flame carries it.
-	 * @return 'transport'|'plugin'|'command'|'upkeep'|'hook'|'listener'|'custom'
+	 * @return 'transport'|'plugin'|'command'|'upkeep'|'qm'|'hook'|'listener'|'custom'
 	 */
 	public static function span_kind( string $span ): string {
 		$base = self::base_name( $span );
 		if ( self::is_transport_span( $base ) ) {
 			return 'transport';
+		}
+		if ( self::QM_STATE === $base ) {
+			return 'qm';
 		}
 		if ( self::is_plugin_load_span( $base ) ) {
 			return 'plugin';
@@ -659,17 +668,6 @@ final class Flame_Tree {
 			return 'hook';
 		}
 		return self::is_listener_span( $base ) ? 'listener' : 'custom';
-	}
-
-	/**
-	 * Whether a span belongs to a wrapped listener rather than to a hook or to
-	 * one of the application's own custom events.
-	 *
-	 * @param string $span A span name, as the flame carries it.
-	 * @return bool
-	 */
-	public static function is_listener_span( string $span ): bool {
-		return 1 === \preg_match( self::LISTENER_PATTERN, self::base_name( $span ) );
 	}
 
 	/**
@@ -710,6 +708,31 @@ final class Flame_Tree {
 	 */
 	public static function is_transport_span( string $span ): bool {
 		return \in_array( self::base_name( $span ), [ self::SQL_STATE, self::HTTP_STATE ], true );
+	}
+
+	/**
+	 * Whether a span OVERLAYS time its enclosing span already counts — a
+	 * wrapped listener, whose time is its hook's, or a Query Monitor timer,
+	 * which the code laid over whatever it timed — so every sum of exclusive
+	 * time leaves it out: a profile's total, the profiled time per request,
+	 * a breakdown's bar, a parent's self time. The one predicate for both.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_overlay_span( string $span ): bool {
+		return self::is_listener_span( $span ) || self::QM_STATE === self::base_name( $span );
+	}
+
+	/**
+	 * Whether a span belongs to a wrapped listener rather than to a hook or to
+	 * one of the application's own custom events.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_listener_span( string $span ): bool {
+		return 1 === \preg_match( self::LISTENER_PATTERN, self::base_name( $span ) );
 	}
 
 	/**

@@ -1156,6 +1156,46 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( [ [ 3.0, 9.0 ] ], $timed['rows'] );
 	}
 
+	public function test_p99_is_the_nearest_rank_beyond_p95(): void {
+		foreach ( \range( 1, 40 ) as $i ) {
+			$this->seed_request( [ 'ms' => $i * 7.5 ], partition: $i % 4 );
+		}
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'p95_ms', 'p99_ms' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ 285.0, 300.0 ] ], $r['rows'], 'rank 38 and rank 40 of 40' );
+	}
+
+	public function test_error_rate_is_exact_across_partitions(): void {
+		foreach ( [ 'T', null, null ] as $error ) {
+			$this->seed_request( [ 'server' => 'kea.example', 'error' => $error ] );
+		}
+		foreach ( [ 'F', 'T', null, null, null ] as $error ) {
+			$this->seed_request( [ 'server' => 'kea.example', 'error' => $error ], partition: 2 );
+		}
+		$this->seed_request( [ 'server' => 'tui.example', 'error' => null ], partition: 1 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count', 'errors', 'error_rate' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ 'kea.example', 8, 3, 0.375 ], [ 'tui.example', 1, 0, 0.0 ] ], $r['rows'], 'not the mean of 1/3 and 2/5' );
+	}
+
+	public function test_error_rate_reads_the_hourly_rollup_and_agrees_with_the_rows(): void {
+		$hour = Bucket::hour( self::NOW );
+		$this->seed_hourly( [ 'hour' => $hour - 2, 'count' => 6, 'errors' => 1 ] );
+		$this->seed_hourly( [ 'hour' => $hour - 2, 'count' => 10, 'errors' => 4 ], partition: 3 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'error_rate' ], 'buckets' => $this->last_hours() ] ) );
+
+		$this->assertSame( 'requests_hourly', $r['table'] );
+		$this->assertSame( [ [ 0.3125 ] ], $r['rows'] );
+	}
+
+	public function test_error_rate_is_no_top_by_because_it_does_not_add_across_buckets(): void {
+		$this->expectExceptionMessage( 'top_by error_rate' );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'measure' => [ 'count' ], 'top' => 3, 'top_by' => 'error_rate', 'buckets' => $this->last_day() ] ) );
+	}
+
 	public function test_sort_order_limit_and_offset_page_the_rows(): void {
 		foreach ( [ 'a.example' => 1, 'b.example' => 4, 'c.example' => 2, 'd.example' => 3 ] as $server => $count ) {
 			for ( $i = 0; $i < $count; $i++ ) {

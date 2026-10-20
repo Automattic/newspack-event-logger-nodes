@@ -678,7 +678,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				continue;
 			}
 			$kind     = Flame_Tree::span_kind( $category );
-			$listener = 'listener' === $kind ? 1 : 0;
+			// The column flags an overlay: its time is already its parent's.
+			$listener = Flame_Tree::is_overlay_span( $category ) ? 1 : 0;
 			$time     = Core::num_float( $data['time'] ?? 0 );
 			$calls    = Core::num_int( $data['count'] ?? 0 );
 			$times[ $category ]  = $time;

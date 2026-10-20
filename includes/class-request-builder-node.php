@@ -14,8 +14,9 @@
  *
  * - the full completed-request doc to the primary sink (`requests.p{N}`);
  * - a compact one-line summary to `completed_target`;
- * - `error` / `warning` / `stderr` lines to `errors_target`, and `alert`
- *   lines to `alerts_target`;
+ * - `error` / `warning` / `stderr` lines, and any keyword ending `(error)`,
+ *   `(warning)`, `(critical)`, `(alert)` or `(emergency)`, to
+ *   `errors_target`, and `alert` lines to `alerts_target`;
  * - periodic in-flight snapshots, emitted by the hidden `Request_Flight_Node`
  *   sibling this node constructs and wires.
  *
@@ -502,6 +503,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			|| 'stderr' === $keyword
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
+			|| \str_ends_with( $keyword, '(critical)' )
+			|| \str_ends_with( $keyword, '(alert)' )
+			|| \str_ends_with( $keyword, '(emergency)' )
 		) {
 			$this->emit_entry( $entry, $rid, $request, $this->errors_target, 'errors' );
 		}
@@ -558,6 +562,16 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			// Allowlist: a producer field named nowhere here is dropped.
 			if ( isset( $entry['caller'] ) ) {
 				$stored['caller'] = Core::as_string( $entry['caller'], '' );
+			}
+			// What a transport span came to, which App\Core puts on its close.
+			if ( isset( $entry['rows'] ) ) {
+				$stored['rows'] = Core::num_int( $entry['rows'] );
+			}
+			if ( isset( $entry['error'] ) ) {
+				$stored['error'] = Core::as_string( $entry['error'], '' );
+			}
+			if ( isset( $entry['http_method'] ) ) {
+				$stored['http_method'] = Core::as_string( $entry['http_method'], '' );
 			}
 			// Log_Manager trimmed this entry to fit; the reader says so.
 			if ( ! empty( $entry['truncated'] ) ) {
@@ -775,7 +789,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * duration is subtracted from its ancestors, so a hook's number is its own
 	 * work and not its children's. Callback states (" @N") are the exception in
 	 * both directions — they neither trigger the subtraction nor stop it, since
-	 * a callback's time is already part of the hook that dispatched it.
+	 * a callback's time is already part of the hook that dispatched it. A
+	 * Query Monitor timer (`qm`) triggers none either: it overlays time the
+	 * spans around it already count.
 	 *
 	 * @param \stdClass $request Request object.
 	 * @param string    $state   State name to match.
@@ -835,8 +851,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			unset( $profile );
 		}
 
-		// Subtract child time from ancestors; a listener (" @N") does not.
-		if ( ! empty( $stack ) && ! Flame_Tree::is_listener_span( $state ) ) {
+		// A listener's or a QM timer's time is already its ancestors'.
+		if ( ! empty( $stack ) && ! Flame_Tree::is_overlay_span( $state ) ) {
 			for ( $j = \count( $stack ) - 1; $j >= 0; $j-- ) {
 				$ancestor_frame = $stack[ $j ];
 				$ancestor       = $ancestor_frame[0];
@@ -994,6 +1010,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			// A hole outranks a nominal finish, never a stamped one.
 			$request->error_status = '-' === $error_status && Core::int( $request->gap_after ?? 0, 0 ) > 0 ? 'I' : $error_status;
 			self::carry_fatal( $request, $entry );
+			self::carry_cache_counts( $request, $entry );
 			$request->state        = 'complete';
 		};
 
@@ -1003,7 +1020,14 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$request->status_code  = Core::num_int( $entry['status_code'] ?? null );
 			$request->error_status = 'A';
 			self::carry_fatal( $request, $entry );
+			self::carry_cache_counts( $request, $entry );
 			$request->state        = 'complete';
+		};
+
+		$s[ Log_Manager::REQUEST_CONTEXT ] = function ( \stdClass $request, array $entry ): void {
+			if ( \is_array( $entry['m'] ?? null ) ) {
+				$request->context = $entry['m'];
+			}
 		};
 
 		$s[ Log_Manager::REQUEST_LINE ] = function ( \stdClass $request, array $entry ): void {
@@ -1698,6 +1722,27 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$request->fatal_line   = Core::int( $entry['fatal_line'] ?? 0, 0 );
 		$request->fatal_type   = Core::int( $entry['fatal_type'] ?? 0, 0 );
 		$request->fatal_plugin = Core::str( $entry['fatal_plugin'] ?? '', '' );
+	}
+
+	/**
+	 * Copy a terminal's `object_cache` map onto the record, keeping only the
+	 * counts `Object_Cache_Counts` writes for its kind; a kind it does not
+	 * write is not carried.
+	 *
+	 * @param \stdClass              $request The request being closed.
+	 * @param array<array-key,mixed> $entry   The terminal entry.
+	 */
+	private static function carry_cache_counts( \stdClass $request, array $entry ): void {
+		$counts = Core::arr( $entry['object_cache'] ?? null, [] );
+		$fields = Object_Cache_Counts::FIELDS[ Core::as_string( $counts['kind'] ?? '', '' ) ] ?? null;
+		if ( null === $fields ) {
+			return;
+		}
+		$carried = [ 'kind' => $counts['kind'] ];
+		foreach ( $fields as $field ) {
+			$carried[ $field ] = Core::num_int( $counts[ $field ] ?? null );
+		}
+		$request->object_cache = $carried;
 	}
 
 	/**
