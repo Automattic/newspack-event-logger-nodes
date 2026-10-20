@@ -361,6 +361,50 @@ final class UrlSnapshotTest extends TestCase {
 		}
 	}
 
+	/**
+	 * The plan of the statement `$method` makes, in a scratch build over
+	 * `seed_page_traffic()` that has run the URL steps and `$before`.
+	 *
+	 * @param string       $method A `Url_Snapshot` method making a statement.
+	 * @param list<string> $before `Url_Snapshot` methods whose statements run first.
+	 */
+	private function built_plan( string $method, array $before = [] ): string {
+		$this->seed_page_traffic();
+		$plan = Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			'pages-plan-6120',
+			static function ( Row_Reader $db ) use ( $method, $before ): string {
+				foreach ( ( new \ReflectionMethod( Url_Snapshot::class, 'url_steps' ) )->invoke( null, $db, self::NOW ) as $statements ) {
+					foreach ( $statements as [ $sql, $binds ] ) {
+						$db->rows( $sql, $binds );
+					}
+				}
+				foreach ( $before as $made ) {
+					$db->rows( Core::as_string( ( new \ReflectionMethod( Url_Snapshot::class, $made ) )->invoke( null ) ), [] );
+				}
+				return self::plan_text( $db, Core::as_string( ( new \ReflectionMethod( Url_Snapshot::class, $method ) )->invoke( null ) ), [] );
+			}
+		);
+		$this->assertIsString( $plan );
+		return $plan;
+	}
+
+	/** Building `pages` sorts by group alone: its ORDER BY is the order its GROUP BY emits. */
+	public function test_building_pages_sorts_once(): void {
+		$plan = $this->built_plan( 'pages_table' );
+
+		$this->assertStringContainsString( 'USE TEMP B-TREE FOR GROUP BY', $plan );
+		$this->assertStringNotContainsString( 'USE TEMP B-TREE FOR ORDER BY', $plan );
+	}
+
+	/** `totals` counts its pages off one read of `pages`, however many views and scopes it holds. */
+	public function test_totals_read_pages_once(): void {
+		$plan = $this->built_plan( 'totals_table', [ 'pages_table' ] );
+
+		$this->assertSame( 1, \preg_match_all( '/^\s*(SCAN|SEARCH) pages( |$)/m', $plan ), $plan );
+		$this->assertSame( 0, \preg_match_all( '/^\s*(SCAN|SEARCH) p( |$)/m', $plan ), $plan );
+	}
+
 	/** A server the snapshot does not hold pages no rows. */
 	public function test_an_unknown_server_pages_no_rows(): void {
 		$this->seed_parity_traffic();
@@ -419,6 +463,192 @@ final class UrlSnapshotTest extends TestCase {
 			}
 		}
 		$this->assertSame( [ [ 0, null, null, 0, 0 ] ], $snapshot->totals( 'absent-4471.example', true )['rows'], 'a server with no URLs answers zeroes' );
+	}
+
+	/**
+	 * The parity traffic, plus a second shape of `/tui-4410/` in another case
+	 * and a worker shape of `/weta-3307/`, the page's newest request, so pages
+	 * fold more than one shape and the two views part on one page.
+	 */
+	private function seed_page_traffic(): void {
+		$this->seed_parity_traffic();
+		$this->seed_requests(
+			[
+				self::request( '/Tui-4410/?utm=?', 2, 41, [ 'ms' => 30.25, 'peak_mb' => 29.5, 'status' => 200 ] ),
+				self::request( '/weta-3307/?cron=?', 0, 42, [ 'ms' => 610.75, 'peak_mb' => 81.25, 'status' => 200, 'worker' => 1 ] ),
+			],
+			1
+		);
+		$this->seed_request( self::request( '/weta-3307/?cron=?', 5, 43, [ 'ms' => 4.5, 'peak_mb' => 12.75, 'status' => 500, 'worker' => 1 ] ), 3 );
+	}
+
+	/** The connection to the snapshot published over `seed_page_traffic()`. */
+	private function published_pages(): Row_Reader {
+		$this->seed_page_traffic();
+		return $this->published();
+	}
+
+	/**
+	 * The clause keeping the `pages` rows of a view and a server, and its
+	 * binds: the default view drops `views` 1, Include Workers drops 2.
+	 *
+	 * @return array{0:string,1:list<scalar>}
+	 */
+	private static function pages_scope( string $server, bool $workers ): array {
+		return '' === $server
+			? [ 'views <> ?', [ $workers ? 2 : 1 ] ]
+			: [ 'views <> ? AND server_id = ( SELECT id FROM servers WHERE name = ? )', [ $workers ? 2 : 1, $server ] ];
+	}
+
+	/** The published snapshot's connection. */
+	private function published(): Row_Reader {
+		Url_Snapshot::publish( self::NOW, self::TTL, static fn (): array => [] );
+		$db = Row_Table_Node::open_snapshot( Url_Snapshot::NAME );
+		$this->assertInstanceOf( Row_Reader::class, $db, 'the substrate publishes the snapshot under its name' );
+		return $db;
+	}
+
+	/** When a request `$age` buckets back, `$second` seconds in, finished. */
+	private static function finished( int $age, int $second ): float {
+		return (float) ( ( Bucket::id( self::NOW ) - $age ) * Bucket::SECONDS + $second );
+	}
+
+	/**
+	 * A page with a visitor shape and a worker shape, the worker's the newest
+	 * request: Include Workers reads its `views` 1 row of both shapes, the
+	 * default view its `views` 2 row of the visitor's.
+	 */
+	public function test_a_page_carries_its_shapes_totals_per_view(): void {
+		$visitor = 'https://' . self::$seed_server . '/Kea-5521/?a=?';
+		$rows    = [];
+		for ( $i = 0; $i < 7; $i++ ) {
+			$rows[] = self::request( '/Kea-5521/?a=?', $i + 1, 10 + $i, [ 'ms' => 20.5 + $i ] );
+		}
+		$this->seed_requests( $rows );
+		$this->seed_requests(
+			[
+				self::request( '/kea-5521/?b=?', 0, 31, [ 'ms' => 100.25, 'worker' => 1 ] ),
+				self::request( '/kea-5521/?b=?', 4, 32, [ 'ms' => 140.75, 'worker' => 1 ] ),
+				self::request( '/kea-5521/?b=?', 6, 33, [ 'ms' => 180.5, 'worker' => 1 ] ),
+			],
+			2
+		);
+		$db   = $this->published();
+		$page = self::$seed_server . '/kea-5521/';
+
+		$this->assertSame(
+			[
+				[ 1, $page, 10, 1, self::finished( 0, 31 ), 2, null ],
+				[ 2, $page, 7, 0, self::finished( 1, 10 ), 1, Log_Manager::url_hash( $visitor ) ],
+			],
+			$db->rows( 'SELECT views, page, count, worker, last_seen, shapes, hash FROM pages WHERE page_hash = ? ORDER BY views', [ Log_Manager::url_hash( $page ) ] )
+		);
+	}
+
+	/** A page of visitor shapes alone is one `views` 0 row, a page of worker shapes alone one `views` 1 row. */
+	public function test_a_page_of_one_kind_is_one_row(): void {
+		$this->seed_requests(
+			[
+				self::request( '/Moa-1184/?x=?', 2, 14, [ 'ms' => 33.5 ] ),
+				self::request( '/moa-1184/', 3, 15, [ 'ms' => 44.25 ] ),
+				self::request( '/jobs/huia-2290', 4, 16, [ 'ms' => 55.75, 'worker' => 1 ] ),
+			]
+		);
+		$db  = $this->published();
+		$row = static fn ( string $page ): array => $db->rows( 'SELECT views, count, worker, shapes FROM pages WHERE page_hash = ?', [ Log_Manager::url_hash( self::$seed_server . $page ) ] );
+
+		$this->assertSame( [ [ 0, 2, 0, 2 ] ], $row( '/moa-1184/' ) );
+		$this->assertSame( [ [ 1, 1, 1, 1 ] ], $row( '/jobs/huia-2290' ) );
+	}
+
+	/** A page of one shape names that shape's URL by its hash. */
+	public function test_a_one_shape_page_names_its_url(): void {
+		$url = 'https://' . self::$seed_server . '/Ruru-7302/?q=?';
+		$this->seed_request( self::request( '/Ruru-7302/?q=?', 3, 19, [ 'ms' => 61.5 ] ) );
+		$db = $this->published();
+
+		$this->assertSame(
+			[ [ 0, 1, Log_Manager::url_hash( $url ) ] ],
+			$db->rows( 'SELECT views, shapes, hash FROM pages WHERE page_hash = ?', [ Log_Manager::url_hash( self::$seed_server . '/ruru-7302/' ) ] )
+		);
+	}
+
+	/**
+	 * Every view and scope: each page's row is the live `page` group's, every
+	 * URL measure folded exactly, and its shapes are the URLs it groups.
+	 */
+	public function test_pages_are_the_live_page_group(): void {
+		$db = $this->published_pages();
+
+		foreach ( [ '', self::KAKA, self::$seed_server, 'absent-4471.example' ] as $server ) {
+			foreach ( [ false, true ] as $workers ) {
+				[ $where, $binds ] = self::pages_scope( $server, $workers );
+				$label             = "'{$server}' " . ( $workers ? 'workers' : 'no workers' );
+				$live              = self::live( $server, $workers, [ 'group' => [ 'page' ], 'measure' => Performance_CI_Node::URL_MEASURES, 'sort' => 'page' ] );
+				$shapes            = self::live( $server, $workers, [ 'group' => [ 'page' ], 'measure' => [ 'urls' ], 'sort' => 'page' ] );
+
+				$this->assertSame( $live['rows'], $db->rows( 'SELECT page_hash, page, ' . \implode( ', ', Performance_CI_Node::URL_MEASURES ) . " FROM pages WHERE {$where} ORDER BY page_hash", $binds ), $label );
+				$this->assertSame( $shapes['rows'], $db->rows( "SELECT page_hash, page, shapes FROM pages WHERE {$where} ORDER BY page_hash", $binds ), $label );
+			}
+		}
+		$this->assertContains( [ 2 ], $db->rows( 'SELECT shapes FROM pages WHERE views = 0', [] ), 'a page folds two visitor shapes' );
+		$this->assertSame( [ [ 1 ], [ 2 ] ], $db->rows( 'SELECT views FROM pages WHERE page_hash = ? ORDER BY views', [ Log_Manager::url_hash( self::$seed_server . '/weta-3307/' ) ] ), 'the mixed page holds both rows' );
+	}
+
+	/** `pages` takes its rows in hash order, so a rowid breaks a tie as the hash does. */
+	public function test_pages_rowids_rank_by_hash(): void {
+		$db     = $this->published_pages();
+		$rows   = $db->rows( 'SELECT page_hash, views FROM pages ORDER BY rowid', [] );
+		$ranked = $rows;
+		\usort( $ranked, static fn ( array $a, array $b ): int => \strcmp( Core::as_string( $a[0] ), Core::as_string( $b[0] ) ) ?: $a[1] <=> $b[1] );
+
+		$this->assertCount( 9, $rows, 'six visitor pages, the worker page and both rows of the mixed one' );
+		$this->assertSame( $ranked, $rows );
+	}
+
+	/**
+	 * Every page of `pages` a view and scope keep reads its rows in order off
+	 * the index its sort and scope name, `pages_` where `urls` reads `urls_`,
+	 * its view a filter on the scan as a `urls` view is.
+	 */
+	#[DataProvider( 'questions' )]
+	public function test_a_pages_listing_reads_its_sort_and_scopes_index( string $sort, string $order, string $server, bool $workers ): void {
+		$db                = $this->published_pages();
+		[ $where, $binds ] = self::pages_scope( $server, $workers );
+		$sorted            = 'url_name' === $sort ? [ 'server_id', 'page' ] : [ $sort ];
+		$ranking           = Stats_Query::ranking( $sorted, [ 'rowid' ], $order, \in_array( $sort, [ 'avg_ms', 'min_ms', 'max_ms' ], true ) );
+
+		$plan = self::plan_text( $db, "SELECT page_hash FROM pages WHERE {$where} ORDER BY {$ranking} LIMIT ? OFFSET ?", [ ...$binds, 3, 1 ] );
+
+		$this->assertStringNotContainsString( 'USE TEMP B-TREE', $plan );
+		$this->assertMatchesRegularExpression( '/^(SCAN|SEARCH) pages USING INDEX pages_' . \substr( self::index_of( $sort, $order, $server ), \strlen( 'urls_' ) ) . '( |$)/m', $plan );
+	}
+
+	/** Each `urls` row carries its page, and a page's shapes seek `urls_page` in either view. */
+	public function test_a_pages_shapes_seek_urls_page(): void {
+		$db   = $this->published_pages();
+		$page = self::$seed_server . '/tui-4410/';
+		$tui  = [ Log_Manager::url_hash( 'https://' . self::$seed_server . '/Tui-4410/?utm=?' ), Log_Manager::url_hash( 'https://' . self::$seed_server . '/tui-4410/' ) ];
+		\sort( $tui, \SORT_STRING );
+
+		$this->assertSame( [ [ $tui[0], $page ], [ $tui[1], $page ] ], $db->rows( 'SELECT url, page FROM urls WHERE page_hash = ? ORDER BY url', [ Log_Manager::url_hash( $page ) ] ) );
+		$this->assertStringContainsString( 'SEARCH urls USING INDEX urls_page (page_hash=? AND worker=?)', self::plan_text( $db, 'SELECT url FROM urls WHERE page_hash = ? AND worker = ?', [ Log_Manager::url_hash( $page ), 0 ] ) );
+		$this->assertStringContainsString( 'SEARCH urls USING INDEX urls_page (page_hash=?)', self::plan_text( $db, 'SELECT url FROM urls WHERE page_hash = ?', [ Log_Manager::url_hash( $page ) ] ) );
+	}
+
+	/** Each totals row counts the pages its view and scope keep. */
+	public function test_totals_count_the_pages_each_view_and_scope_keeps(): void {
+		$db = $this->published_pages();
+
+		foreach ( [ '', self::KAKA, self::$seed_server ] as $server ) {
+			foreach ( [ false, true ] as $workers ) {
+				$live   = self::live( $server, $workers, [ 'group' => [ 'page' ], 'measure' => [ 'count' ] ] );
+				$scoped = '' === $server ? [ '0', [] ] : [ '( SELECT id FROM servers WHERE name = ? )', [ $server ] ];
+
+				$this->assertSame( [ [ \count( $live['rows'] ) ] ], $db->rows( "SELECT pages FROM totals WHERE workers = ? AND server_id = {$scoped[0]}", [ $workers ? 1 : 0, ...$scoped[1] ] ), "'{$server}' " . ( $workers ? 'workers' : 'no workers' ) );
+			}
+		}
+		$this->assertSame( [ [ 0, 7 ], [ 1, 8 ] ], $db->rows( 'SELECT workers, pages FROM totals WHERE server_id = 0 ORDER BY workers', [] ) );
 	}
 
 	public function test_a_published_snapshot_answers_its_stored_answers(): void {
@@ -523,12 +753,12 @@ final class UrlSnapshotTest extends TestCase {
 	 * @return list<array{0:mixed,1:mixed,2:mixed}>
 	 */
 	private static function snapshot_spans( array $entries ): array {
-		return self::spans_of( $entries, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_GROUP, Flame_Tree::SNAPSHOT_COPY, Flame_Tree::SNAPSHOT_INDEX, Flame_Tree::SNAPSHOT_TOTALS );
+		return self::spans_of( $entries, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_GROUP, Flame_Tree::SNAPSHOT_COPY, Flame_Tree::SNAPSHOT_PAGES, Flame_Tree::SNAPSHOT_INDEX, Flame_Tree::SNAPSHOT_TOTALS );
 	}
 
 	/** The index names `indexes()` declares, as the file names them. */
 	private static function index_names(): array {
-		return \array_map( static fn ( string $name ): string => "urls_{$name}", \array_keys( ( new \ReflectionMethod( Url_Snapshot::class, 'indexes' ) )->invoke( null ) ) );
+		return \array_keys( ( new \ReflectionMethod( Url_Snapshot::class, 'indexes' ) )->invoke( null ) );
 	}
 
 	/** The build is one span on the job's record, each step a span inside it, each index labelled. */
@@ -542,11 +772,14 @@ final class UrlSnapshotTest extends TestCase {
 		}
 		$this->assertNull( $thrown );
 		$this->assertContains( [ 'snapshot index (start)', 'urls_server_avg_ms_null', null ], $indexes );
+		$this->assertContains( [ 'snapshot index (start)', 'pages_server_avg_ms_null', null ], $indexes );
+		$this->assertContains( [ 'snapshot index (start)', 'urls_page', null ], $indexes );
 		$this->assertSame(
 			[
 				[ 'snapshot build (start)', null, null ],
 				...$step( 'snapshot group' ),
 				...$step( 'snapshot copy' ),
+				...$step( 'snapshot pages' ),
 				...$indexes,
 				...$step( 'snapshot totals' ),
 				[ 'snapshot build (complete)', null, 'published' ],

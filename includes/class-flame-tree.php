@@ -81,7 +81,10 @@ final class Flame_Tree {
 	/** The build's step naming the servers and copying the URLs. */
 	public const SNAPSHOT_COPY = 'snapshot copy';
 
-	/** The build's step creating one `urls` index. */
+	/** The build's step folding the URLs into `pages`, a row per page and server. */
+	public const SNAPSHOT_PAGES = 'snapshot pages';
+
+	/** The build's step creating one `urls` or `pages` index. */
 	public const SNAPSHOT_INDEX = 'snapshot index';
 
 	/** The build's step folding the URLs into `totals`. */
@@ -126,6 +129,7 @@ final class Flame_Tree {
 		self::SNAPSHOT_BUILD      => [ 'Event Logger Snapshot', 'upkeep' ],
 		self::SNAPSHOT_GROUP      => [ 'Event Logger', 'upkeep' ],
 		self::SNAPSHOT_COPY       => [ 'Event Logger', 'upkeep' ],
+		self::SNAPSHOT_PAGES      => [ 'Event Logger', 'upkeep' ],
 		self::SNAPSHOT_INDEX      => [ 'Event Logger', 'upkeep' ],
 		self::SNAPSHOT_TOTALS     => [ 'Event Logger', 'upkeep' ],
 		self::STATS_QUERY         => [ 'Event Logger Reads', 'upkeep' ],
