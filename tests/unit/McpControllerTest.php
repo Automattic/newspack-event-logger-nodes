@@ -304,6 +304,8 @@ class McpControllerTest extends TestCase {
 		$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-10,2026-10-05-18-30', $properties['bucket']['description'] );
 		$this->assertStringContainsString( 'unless filtered `worker=0`', $tool['description'], 'it says worker traffic counts' );
 		$this->assertStringContainsString( 'sort by `url_name`', $tool['description'], 'it says a URL group sorts by its name' );
+		$this->assertStringContainsString( 'sort by `page_name`', $tool['description'], 'it says a page group sorts by its name' );
+		$this->assertStringContainsString( '`page=<page hash>`', $tool['description'], 'it says a page filters by its hash' );
 		$this->assertStringContainsString( '`available`, false when the stats file will not open', $tool['description'], 'it says how an outage answers' );
 		foreach ( Stats_Query::FIELDS as $source => $fields ) {
 			foreach ( [ ...$fields, ...Stats_Query::MEASURES[ $source ] ] as $word ) {

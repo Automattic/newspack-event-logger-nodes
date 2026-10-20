@@ -97,6 +97,7 @@ describe( 'the lists drawn from it', () => {
 			expect( values ).not.toContain( time );
 		}
 		expect( values ).not.toContain( 'url' );
+		expect( values ).not.toContain( 'page' );
 	} );
 
 	it( 'drops only the server from the scoped list', () => {

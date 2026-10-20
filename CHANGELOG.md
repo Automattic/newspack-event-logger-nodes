@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`Stats_Query` groups and filters by page.** `requests` and `timings` gain a `page` field, the stored `page_hash`: a `page` group answers `page_name`, the page itself, beside the hash and may sort by it, and a `page=<page hash>` filter keeps every URL of that page, any case or query shape. When every measure composes, each partition sums a page by its URLs' ids and looks each id's page up once, as a `url` group does, and the union merges the URLs of one page by its hash; a percentile or the distinct URL count reads the rows whole. A `page=<page hash>` filter seeks the page's URLs through `urls_page`, then their rows through `requests_url` or `timings_url`. A timings question naming a page reads `timings`, the table holding URLs. A question naming both a URL and its page joins `urls` once. The MCP `performance_query` description, the Overview's filter chips (`Page Hash`, unsuggested, as `URL Hash` is) and the docs list the field.
+
 ### Changed
 - **A `urls` row carries its page.** `Url_Parts::page()` is a logged URL's host and path, lowercased, with its query and worker mark dropped; each row stores it as `page`, with `page_hash` (`Log_Manager::url_hash()` of the page) and an index `urls_page` on `( page_hash, server_id )`. `Flame_Facts_Row_Schema::version()` is 8, so an older file is discarded and recreated empty at open; the rebuild follows [decision 5](docs/architecture-decisions.md#decision-5-a-stats-schema-change-is-a-version-bump-and-a-rebuild-and-nothing-in-this-code-migrates).
 
