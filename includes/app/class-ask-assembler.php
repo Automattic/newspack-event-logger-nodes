@@ -807,30 +807,32 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * The dashboard itself: the numbers on screen, the URLs behind them and
+	 * The dashboard itself: the numbers on screen, the pages behind them and
 	 * the category board beside them, all of the SAME set the reader is
 	 * looking at.
 	 *
 	 * The descriptor is `overview:site` — the id names the subject, and the
 	 * scope rides in the arguments, exactly as `url:<hash>` carries its server
 	 * there. That split is what keeps one descriptor from meaning two things:
-	 * the same page filtered two ways is the same subject, two scopes.
+	 * the same dashboard filtered two ways is the same subject, two scopes.
 	 *
-	 * A page carrying no `totals` leaves the brief's null rather than zeros,
-	 * which would read as an idle site.
+	 * A listing carrying no `totals` leaves the brief's null rather than
+	 * zeros, which would read as an idle site.
 	 *
-	 * @param array<string,mixed> $page    A `urls` reply: its totals and its data.
+	 * @param array<string,mixed> $listing A `urls` reply of pages: its `as_of`, its totals and its data, each row carrying its `busiest_hash`.
 	 * @param array<string,mixed> $board   A `leaderboard_of()`-shaped board.
-	 * @param string              $server  Server the page is scoped to; '' is every server.
+	 * @param string              $server  Server the dashboard is scoped to; '' is every server.
 	 * @param Url_Filters         $filters The url filters in force.
 	 * @return array<string,mixed>
 	 */
-	public static function for_overview( array $page, array $board, string $server, array $filters ): array {
-		$totals = \is_array( $page['totals'] ?? null ) ? $page['totals'] : null;
-		$rows   = \array_values( Core::arr( $page['data'] ?? null ) );
+	public static function for_overview( array $listing, array $board, string $server, array $filters ): array {
+		$totals = \is_array( $listing['totals'] ?? null ) ? $listing['totals'] : null;
+		$rows   = \array_values( Core::arr( $listing['data'] ?? null ) );
 
 		return [
 			'subject'    => 'overview',
+			// When the listing was read: the snapshot's build, or now.
+			'as_of'      => Core::as_int( $listing['as_of'] ),
 			// What these numbers are OF; every pointer below carries it too.
 			'server'     => $server,
 			'scope'      => '' === $server ? 'every server' : $server,
@@ -840,9 +842,10 @@ class Ask_Assembler {
 				'include_workers' => $filters['include_workers'],
 				'bucket'          => $filters['bucket'],
 			],
-			// The keys `urls` answers with, which are the page's own readout.
+			// The keys `urls` answers with: the dashboard's own readout.
 			'stats'      => null === $totals ? null : [
 				'urls'                => Core::num_int( $totals['urls'] ?? 0 ),
+				'pages'               => Core::num_int( $totals['pages'] ?? 0 ),
 				'requests'            => Core::num_int( $totals['requests'] ?? 0 ),
 				'avg_ms'              => self::measured_figure( $totals['avg_ms'] ?? null ),
 				'avg_peak_mb'         => self::measured_figure( $totals['avg_peak_mb'] ?? null ),
@@ -850,8 +853,8 @@ class Ask_Assembler {
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
 				'errors'              => Core::num_int( $totals['errors'] ),
 			],
-			'urls'       => \array_map(
-				self::overview_url_shape( ... ),
+			'pages'      => \array_map(
+				self::overview_page_shape( ... ),
 				\array_slice( $rows, 0, self::TOP_SPANS )
 			),
 			'categories' => self::board_rows( Core::arr( $board['categories'] ?? null ) ),
@@ -926,21 +929,26 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * One URL row as the overview brief carries it: its hash, so an agent can
-	 * widen to `url:<hash>`, and the three numbers the table sorts on.
+	 * One page row as the overview brief carries it: its hash, for a
+	 * `page=<hash>` filter, its name and server, its shape count, and its
+	 * busiest shape's URL hash, so an agent can widen to `url:<hash>`; then
+	 * the numbers the table sorts on.
 	 *
-	 * @param mixed $row A `urls` data row.
+	 * @param mixed $row A `urls` page row with its `busiest_hash`.
 	 * @return array<string,mixed>
 	 */
-	private static function overview_url_shape( mixed $row ): array {
+	private static function overview_page_shape( mixed $row ): array {
 		$row = Core::arr( $row );
 		return [
-			'hash'   => Core::as_string( $row['hash'] ?? '' ),
-			'url'    => Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
-			'count'  => Core::num_int( $row['count'] ?? 0 ),
-			'avg_ms' => self::measured_figure( $row['avg_ms'] ?? null ),
-			'max_ms' => self::measured_figure( $row['max_ms'] ?? null ),
-			'errors' => Core::num_int( $row['errors'] ),
+			'page_hash'    => Core::as_string( $row['page_hash'] ),
+			'page'         => Log_Manager::redact_url( Core::as_string( $row['page'] ) ),
+			'server'       => Core::as_string( $row['server'] ),
+			'shapes'       => Core::num_int( $row['shapes'] ),
+			'busiest_hash' => Core::as_string( $row['busiest_hash'] ),
+			'count'        => Core::num_int( $row['count'] ?? 0 ),
+			'avg_ms'       => self::measured_figure( $row['avg_ms'] ?? null ),
+			'max_ms'       => self::measured_figure( $row['max_ms'] ?? null ),
+			'errors'       => Core::num_int( $row['errors'] ),
 		];
 	}
 

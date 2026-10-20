@@ -2492,11 +2492,12 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A `urls` row is a page: its lowercased host and path, its server and
-	 * the path under it, every shape of it folded, a one-shape page naming
-	 * its URL by the URL's hash and a page of more naming none. The default
-	 * view folds the visitor shapes; Include Workers folds every shape, and a
-	 * page holding any worker shape reads `worker` true.
+	 * A `urls` row is a page: its lowercased host, path and routing keys,
+	 * its server and the path under it, every shape of it folded, a
+	 * one-shape page naming its URL by the URL's hash and a page of more
+	 * naming none. The default view folds the visitor shapes; Include
+	 * Workers folds every shape, and a page holding any worker shape reads
+	 * `worker` true.
 	 */
 	public function test_urls_answers_pages(): void {
 		$this->seed_kotuku();
@@ -3182,22 +3183,184 @@ class PerformanceCITest extends TestCase {
 		);
 	}
 
-	public function test_ask_overview_briefs_the_urls_page_and_the_board(): void {
-		$this->seed_request( [ 'server' => 'alpha.example', 'url' => 'https://alpha.example/slow/', 'ms' => 900.5, 'profiled' => 1 ] );
-		$this->seed_request( [ 'server' => 'beta.example', 'url' => 'https://beta.example/fast/', 'ms' => 30.0, 'profiled' => 1 ] );
+	/**
+	 * The overview brief lists the table's pages: each names its shapes and
+	 * the hash of its busiest one, so a page of several still reaches a URL.
+	 */
+	public function test_ask_overview_briefs_the_pages_and_the_board(): void {
+		$this->seed_requests(
+			[
+				[ 'server' => 'alpha.example', 'url' => 'https://alpha.example/Ruru-4471/?a=?', 'ms' => 900.5 ],
+				[ 'server' => 'alpha.example', 'url' => 'https://alpha.example/ruru-4471/?b=?', 'ms' => 300.5 ],
+				[ 'server' => 'alpha.example', 'url' => 'https://alpha.example/ruru-4471/?b=?', 'ms' => 300.5 ],
+				[ 'server' => 'alpha.example', 'url' => 'https://alpha.example/ruru-4471/?b=?', 'ms' => 300.5 ],
+				[ 'server' => 'alpha.example', 'url' => 'https://alpha.example/ruru-4471/', 'ms' => 120.5 ],
+				[ 'server' => 'alpha.example', 'url' => 'https://alpha.example/tui-4471/', 'ms' => 40.5, 'profiled' => 1 ],
+				[ 'server' => 'beta.example', 'url' => 'https://beta.example/fast/', 'ms' => 30.0, 'profiled' => 1 ],
+			]
+		);
 		$this->seed_site_timing( [ 'server' => 'alpha.example', 'category' => 'wpdb', 'ms' => 44.4, 'calls' => 74, 'requests' => 1 ] );
 
-		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --server=alpha.example --search=slow --include_workers=1' );
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --server=alpha.example --include_workers=1' );
 
 		$this->assertSame( 'alpha.example', $brief['server'] );
-		$this->assertSame( [ 'urls' => 1, 'requests' => 1, 'avg_ms' => 900.5 ], \array_intersect_key( $brief['stats'], [ 'urls' => 1, 'requests' => 1, 'avg_ms' => 1 ] ) );
-		$this->assertSame( [ self::hash_of( 'https://alpha.example/slow/' ) ], \array_column( $brief['urls'], 'hash' ) );
+		$this->assertSame( [ 'urls' => 4, 'pages' => 2, 'requests' => 6 ], \array_intersect_key( $brief['stats'], [ 'urls' => 1, 'pages' => 1, 'requests' => 1 ] ) );
+		$this->assertSame(
+			[
+				[ self::hash_of( 'alpha.example/ruru-4471/' ), 'alpha.example/ruru-4471/', 'alpha.example', 3, self::hash_of( 'https://alpha.example/ruru-4471/?b=?' ), 5 ],
+				[ self::hash_of( 'alpha.example/tui-4471/' ), 'alpha.example/tui-4471/', 'alpha.example', 1, self::hash_of( 'https://alpha.example/tui-4471/' ), 1 ],
+			],
+			\array_map( static fn ( array $p ): array => [ $p['page_hash'], $p['page'], $p['server'], $p['shapes'], $p['busiest_hash'], $p['count'] ], $brief['pages'] ),
+			'busiest first; the busiest shape by count, not the slowest'
+		);
 		$this->assertSame( 'wpdb', $brief['categories'][0]['name'] );
 		$this->assertEqualsWithDelta( 44.4, $brief['categories'][0]['avg_time_ms'], 1e-9 );
 		$this->assertTrue( $brief['filters']['include_workers'] );
 		$this->assertArrayNotHasKey( 'estimated', $brief );
 		$this->assertArrayNotHasKey( 'provisional', $brief );
 		$this->assertSame( 'alpha.example', $brief['fetch'][0]['arguments']['server'] );
+	}
+
+	/**
+	 * A busiest shape is the busiest of the set the brief describes: under
+	 * the brief's filter, and on the row's own spelling of its server.
+	 */
+	public function test_an_overview_briefs_busiest_shape_is_of_its_filtered_rows_server(): void {
+		$this->seed_requests(
+			[
+				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/Weta-5309/?a=?', 'status' => 503 ],
+				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?b=?', 'status' => 502 ],
+				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?b=?', 'status' => 502 ],
+				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?c=?', 'status' => 200 ],
+				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?c=?', 'status' => 200 ],
+				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?c=?', 'status' => 200 ],
+				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?d=?', 'status' => 504 ],
+				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?d=?', 'status' => 504 ],
+				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?d=?', 'status' => 504 ],
+				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?d=?', 'status' => 504 ],
+				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?e=?', 'status' => 500 ],
+			]
+		);
+
+		$pages = \array_column( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --filter=status_class=5' )['pages'], null, 'server' );
+
+		$this->assertSame( [ 'KAKA-5309.example', 'kaka-5309.example' ], \array_keys( $pages ) );
+		$this->assertSame( [ 2, self::hash_of( 'https://KAKA-5309.example/WETA-5309/?d=?' ) ], [ $pages['KAKA-5309.example']['shapes'], $pages['KAKA-5309.example']['busiest_hash'] ] );
+		$this->assertSame( [ 2, self::hash_of( 'https://kaka-5309.example/weta-5309/?b=?' ) ], [ $pages['kaka-5309.example']['shapes'], $pages['kaka-5309.example']['busiest_hash'] ] );
+	}
+
+	/**
+	 * Seeds `pateke-7720` with `?a=?` its busiest shape, publishes the
+	 * snapshot, then makes `?b=?` the busiest and adds a busier page the
+	 * snapshot never saw, nine seconds on.
+	 *
+	 * @return int When the snapshot was built.
+	 */
+	private function seed_pateke_behind_its_snapshot(): int {
+		$this->seed_requests(
+			[
+				[ 'url' => 'https://seed.example/Pateke-7720/?a=?', 'ms' => 70.5 ],
+				[ 'url' => 'https://seed.example/pateke-7720/?a=?', 'ms' => 70.5 ],
+				[ 'url' => 'https://seed.example/pateke-7720/?b=?', 'ms' => 20.5 ],
+				[ 'url' => 'https://seed.example/toroa-7720/', 'ms' => 10.5 ],
+			]
+		);
+		$built = self::tick();
+		Url_Snapshot::publish( $built, 600, static fn (): array => [] );
+		$late = [];
+		for ( $i = 0; $i < 3; $i++ ) {
+			$late[] = [ 'url' => 'https://seed.example/pateke-7720/?b=?', 'ms' => 20.5 ];
+		}
+		for ( $i = 0; $i < 9; $i++ ) {
+			$late[] = [ 'url' => 'https://seed.example/hoiho-7720/', 'ms' => 5.5 ];
+		}
+		$this->seed_requests( $late );
+		$later       = $built + 9;
+		Core::$clock = static fn (): float => (float) $later;
+		Core::right_now();
+		return $built;
+	}
+
+	/**
+	 * The default brief lists the pages the default table shows, off the
+	 * same snapshot, and names the busiest shape the snapshot holds.
+	 */
+	public function test_a_stored_overview_brief_lists_the_stored_tables_pages(): void {
+		$built = $this->seed_pateke_behind_its_snapshot();
+
+		$table = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+		VerbHarness::reset();
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site' );
+
+		$this->assertSame( $built, $table['as_of'], 'the table reads the snapshot' );
+		$this->assertSame( $built, $brief['as_of'], 'the brief is as old as the snapshot' );
+		$this->assertSame( \array_column( $table['data'], 'count', 'page_hash' ), \array_column( $brief['pages'], 'count', 'page_hash' ) );
+		$this->assertSame( $table['totals']['pages'], $brief['stats']['pages'] );
+		$this->assertSame(
+			[ self::hash_of( 'https://seed.example/pateke-7720/?a=?' ), self::hash_of( 'https://seed.example/toroa-7720/' ) ],
+			\array_column( $brief['pages'], 'busiest_hash' ),
+			'the busiest shape as the snapshot holds it'
+		);
+	}
+
+	/**
+	 * A brief the snapshot cannot answer reads live, as the table does under
+	 * the same question, busiest shape included.
+	 */
+	public function test_a_live_overview_brief_lists_the_live_tables_pages(): void {
+		$built = $this->seed_pateke_behind_its_snapshot();
+
+		$table = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--filter=status_class=2' );
+		VerbHarness::reset();
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --filter=status_class=2' );
+
+		$this->assertSame( $built + 9, $table['as_of'], 'the table reads live' );
+		$this->assertSame( $built + 9, $brief['as_of'], 'the brief is dated by the live read' );
+		$this->assertSame( \array_column( $table['data'], 'count', 'page_hash' ), \array_column( $brief['pages'], 'count', 'page_hash' ) );
+		$this->assertSame(
+			[ self::hash_of( 'https://seed.example/hoiho-7720/' ), self::hash_of( 'https://seed.example/pateke-7720/?b=?' ), self::hash_of( 'https://seed.example/toroa-7720/' ) ],
+			\array_column( $brief['pages'], 'busiest_hash' ),
+			'the busiest shape as the rows hold it now'
+		);
+	}
+
+	/**
+	 * A stats read fails soft: a snapshot whose `urls` table will not read
+	 * answers the brief live, though its `pages` listing reads.
+	 */
+	public function test_a_brief_whose_stored_shapes_will_not_read_answers_live(): void {
+		$built = $this->seed_pateke_behind_its_snapshot();
+		$file  = \dirname( $this->facts_file( 0 ) ) . '/' . Url_Snapshot::NAME . '.sqlite';
+		$this->assertFileExists( $file );
+		( new \PDO( 'sqlite:' . $file, null, null, [ \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION ] ) )->exec( 'ALTER TABLE urls RENAME TO urls_moved_7720' );
+
+		$table = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+		VerbHarness::reset();
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site' );
+
+		$this->assertSame( $built, $table['as_of'], 'the listing alone still reads the snapshot' );
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'the brief answered no structure' );
+		$this->assertSame( $built + 9, $brief['as_of'], 'the brief answered live' );
+		$this->assertContains( self::hash_of( 'https://seed.example/pateke-7720/?b=?' ), \array_column( $brief['pages'], 'busiest_hash' ) );
+		$this->assertNotEmpty( \array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not read' ) ) );
+	}
+
+	/**
+	 * Two shapes of one page tied on count: the busiest is the one the
+	 * sort's own direction ranks first, the higher hash, live and stored.
+	 */
+	public function test_an_overview_briefs_busiest_shape_breaks_a_tie_by_the_higher_hash(): void {
+		$urls = [ 'https://seed.example/kotare-9051/?a=?', 'https://seed.example/kotare-9051/?b=?' ];
+		$this->seed_requests( [ [ 'url' => $urls[0] ], [ 'url' => $urls[1] ] ] );
+		$hashes = \array_map( self::hash_of( ... ), $urls );
+		\rsort( $hashes );
+
+		$live = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site' );
+		Url_Snapshot::publish( self::tick(), 600, static fn (): array => [] );
+		VerbHarness::reset();
+		$stored = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site' );
+
+		$this->assertSame( [ $hashes[0], $hashes[0] ], [ $live['pages'][0]['busiest_hash'], $stored['pages'][0]['busiest_hash'] ] );
 	}
 
 	public function test_ask_category_with_no_request_or_url_answers_from_the_scoped_leaderboard(): void {

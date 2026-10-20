@@ -110,19 +110,35 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 		},
 		stats: {
 			urls: 137,
+			pages: 61,
 			requests: 4210,
 			errors: 23,
 			avg_ms: 812.5,
 			avg_peak_mb: 44.25,
 			requests_per_second: 0.83,
 		},
-		urls: [
+		pages: [
 			{
-				hash: '5efdf8a72d74',
-				url: '/wp-admin/post.php',
+				page_hash: '9c9c9c9c9c9c',
+				page: 'alpha.example/wp-admin/post.php',
+				server: 'alpha.example',
+				shapes: 4,
+				busiest_hash: '5efdf8a72d74',
 				count: 90,
+				errors: 7,
 				avg_ms: 3100,
 				max_ms: 32828.4,
+			},
+			{
+				page_hash: '8b8b8b8b8b8b',
+				page: 'alpha.example/wp-admin/edit.php',
+				server: 'ALPHA.example',
+				shapes: 1,
+				busiest_hash: 'aaaaaaaaaaaa',
+				count: 12,
+				errors: 0,
+				avg_ms: 40,
+				max_ms: 120,
 			},
 		],
 		categories: [
@@ -142,12 +158,18 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 		'**bucket:** 2026-10-04-13-35 (6:35–6:40 AM America/Los_Angeles)'
 	);
 	expect( md ).toContain( '23 errors, 4,210 requests' );
-	expect( md ).toContain( '137 urls' );
+	expect( md ).toContain( '137 urls, 61 pages' );
 	// `num()` gives a sub-1 value three decimals, as it does everywhere else.
 	expect( md ).toContain( '0.830/s' );
 	expect( md ).not.toContain( '/s recent' );
-	expect( md ).toContain( '/wp-admin/post.php' );
-	expect( md ).toContain( '5efdf8a72d74' );
+	expect( md ).toContain( '### busiest pages' );
+	expect( md ).toContain(
+		'- <site-data>alpha.example/wp-admin/post.php</site-data> on <site-data>alpha.example</site-data> (page `9c9c9c9c9c9c`, 4 shapes, busiest `5efdf8a72d74`): 7 errors in 90× 3100ms avg, 32828.4ms worst'
+	);
+	expect( md ).toContain(
+		'- <site-data>alpha.example/wp-admin/edit.php</site-data> on <site-data>ALPHA.example</site-data> (page `8b8b8b8b8b8b`, 1 shape `aaaaaaaaaaaa`): 0 errors in 12× 40ms avg, 120ms worst'
+	);
+	expect( md ).not.toContain( 'busiest urls' );
 	expect( md ).toContain( 'sql' );
 	// A board row's count is a per-request MEAN, so `\u00d70.075` reads as a
 	// multiplier of something and says nothing.
@@ -162,15 +184,19 @@ test( 'an overview brief counts the errors before the traffic', () => {
 		filters: { filter: [] },
 		stats: {
 			urls: 2,
+			pages: 1,
 			requests: 6150,
 			errors: 41,
 			avg_ms: 800,
 			requests_per_second: 0.5,
 		},
-		urls: [
+		pages: [
 			{
-				hash: '0e11a5c3b2d9',
-				url: '/erring',
+				page_hash: '0d0d0d0d0d0d',
+				page: 'kereru.example/erring',
+				server: 'kereru.example',
+				shapes: 1,
+				busiest_hash: '0e11a5c3b2d9',
 				count: 6100,
 				errors: 38,
 				avg_ms: 790,
@@ -194,7 +220,7 @@ test( 'an overview brief with no totals prints no traffic, never zero', () => {
 		scope: 'spoke-01',
 		filters: {},
 		stats: null,
-		urls: [],
+		pages: [],
 		categories: [],
 		caveat: 'c',
 	} );
@@ -212,22 +238,29 @@ test( 'an overview brief shows an unmeasured mean as a dash with no unit', () =>
 		filters: {},
 		stats: {
 			urls: 3,
+			pages: 2,
 			requests: 29,
 			errors: 2,
 			avg_ms: null,
 			requests_per_second: 0.41,
 		},
-		urls: [
+		pages: [
 			{
-				hash: '0a1b2c3d4e5f',
-				url: '/moa-31',
+				page_hash: '0a0a0a0a0a0a',
+				page: 'kea-7713.test/moa-31',
+				server: 'kea-7713.test',
+				shapes: 2,
+				busiest_hash: '0a1b2c3d4e5f',
 				count: 29,
 				avg_ms: null,
 				max_ms: null,
 			},
 			{
-				hash: '1a2b3c4d5e6f',
-				url: '/tui-9913',
+				page_hash: '1b1b1b1b1b1b',
+				page: 'kea-7713.test/tui-9913',
+				server: 'kea-7713.test',
+				shapes: 1,
+				busiest_hash: '1a2b3c4d5e6f',
 				count: 11,
 				avg_ms: 61.5,
 				max_ms: 140,
@@ -237,7 +270,7 @@ test( 'an overview brief shows an unmeasured mean as a dash with no unit', () =>
 		caveat: 'c',
 	} );
 
-	expect( md ).toContain( '29 requests, 3 urls, — avg, 0.410/s' );
+	expect( md ).toContain( '29 requests, 3 urls, 2 pages, — avg, 0.410/s' );
 	expect( md ).toContain( '29× — avg, — worst' );
 	expect( md ).toContain( '11× 61.5ms avg, 140ms worst' );
 	expect( md ).not.toContain( '—ms' );
@@ -249,8 +282,8 @@ test( 'an overview brief with no server says it is the whole fleet', () => {
 		server: '',
 		scope: 'every server',
 		filters: {},
-		stats: { urls: 1, requests: 7, errors: 0, avg_ms: 10 },
-		urls: [],
+		stats: { urls: 1, pages: 1, requests: 7, errors: 0, avg_ms: 10 },
+		pages: [],
 		categories: [],
 		caveat: 'c',
 	} );

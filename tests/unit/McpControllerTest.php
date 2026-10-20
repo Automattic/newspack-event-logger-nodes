@@ -195,6 +195,38 @@ class McpControllerTest extends TestCase {
 		$this->assertStringNotContainsString( 'estimate', $tools['performance_urls']['description'] );
 	}
 
+	/**
+	 * `performance_urls` answers pages, and a page's hash is not a URL's: an
+	 * agent passing a `page_hash` to `dump_url` or `url=` finds nothing, so
+	 * the descriptions name the row's fields and the filter that lists URLs.
+	 */
+	public function test_the_url_tools_describe_page_rows_and_the_page_filter(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$tools = \array_column(
+			$controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 5, 'method' => 'tools/list' ], $bearer ) )['result']['tools'],
+			null,
+			'name'
+		);
+
+		$urls = $tools['performance_urls']['description'];
+		foreach ( [ '`page_hash`', '`page`', '`server`', '`path`', '`shapes`', '`hash`', '`worker`', '`totals.pages`', '`page=<page hash>`' ] as $named ) {
+			$this->assertStringContainsString( $named, $urls, $named );
+		}
+		$this->assertStringContainsString( 'A `page_hash` is never a URL hash', $urls );
+		$this->assertStringNotContainsString( 'The URL table', $urls );
+		$this->assertStringContainsString( '`page=<page hash>` lists that page\'s URLs', $tools['performance_urls']['inputSchema']['properties']['filter']['description'] );
+		$this->assertStringContainsString( 'per-page facts from performance_urls', $tools['performance_overview']['description'] );
+		$this->assertStringContainsString( '`busiest_hash`', $tools['performance_ask']['description'] );
+		$this->assertStringContainsString( 'page rows', $tools['performance_ask']['description'] );
+		$this->assertStringContainsString( 'carries `as_of`', $tools['performance_ask']['description'], 'a stored brief says how old it is' );
+		foreach ( $tools as $name => $tool ) {
+			$this->assertStringNotContainsString( 'Tachikoma', \json_encode( $tool ), $name );
+		}
+	}
+
 	public function test_a_tune_scope_is_offered_the_ruleset(): void {
 		[ , $bearer ] = $this->session( Capabilities::TUNE );
 		$controller   = new MCP_Controller();

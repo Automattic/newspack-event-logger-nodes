@@ -872,7 +872,7 @@ final class StatsQueryTest extends TestCase {
 	}
 
 	/**
-	 * A page groups every case and query shape of one host and path by its
+	 * A page groups every case and other query shape of one page by its
 	 * hash, whichever partition filed each URL under whichever id, two of its
 	 * URLs sharing one partition, and answers its `page_name` beside it.
 	 * Every measure that composes sums by URL id first and still totals the

@@ -1,10 +1,11 @@
 /**
  * The Performance dashboard's URL leaderboard, one row per page.
  *
- * A page is a URL's lowercased host and path, and its row folds every query
- * shape the set holds of it. A page of one shape is that URL, and a click
- * opens it; a page of more expands into its shapes, each a URL row beneath it
- * that its own slice answers, at most a page's worth and then how many more.
+ * A page is a URL's lowercased host and path with its routing keys, and its
+ * row folds every other query shape the set holds of it. A page of one shape
+ * is that URL, and a click opens it; a page of more expands into its shapes,
+ * each a URL row beneath it that its own slice answers, at most a page's
+ * worth and then how many more.
  *
  * The server owns the set. `PerformanceDashboard` polls the `performance` CI's
  * `urls` verb and this table draws the page it is handed, in the order it

@@ -7,20 +7,30 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 ## Unreleased
 
 - **`urls` and the MCP `performance_urls` tool list pages, not URLs.** A
-  page is a URL's lowercased host and path, and a row is one page on one
-  server, folding every query shape of it. A row carries `page_hash`
-  (`Log_Manager::url_hash()` of the page), `page`, `server`, `path` (the
-  page under its server) and `shapes` (the URLs folded), then the measures
-  a URL row carried. It no longer carries `url`. `hash` is the URL's hash
-  only where the page folds one shape; on a page of more it is null, so
-  key a row by `page_hash` and `server`, and never pass a `page_hash` where
-  a URL hash goes (`dump_url`, `?url=`, `ask url:`, `url=` filters). A
-  page's `worker` is true where any shape is a worker's. `rows` counts the
-  pages matching, `totals.pages` is new beside `totals.urls`, the `url` sort
-  orders by `page`, and `slowest` lists pages. For URL rows as `urls`
-  answered them before, ask `--filter=page=<page hash>`: it answers that
-  page's URLs, each with `hash`, `url` and the measures, and `rows` counts
-  them.
+  page is a URL's host and path, lowercased, with its routing keys
+  (`rest_route`, `action`, `wc-ajax` and `feed`) and their values kept, and
+  a row is one page on one server, folding every URL of it. A row carries
+  `page_hash` (`Log_Manager::url_hash()` of the page), `page`, `server`,
+  `path` (the page under its server) and `shapes` (the URLs folded), then
+  the measures a URL row carried. It no longer carries `url`. `hash` is the
+  URL's hash only where the page folds one shape; on a page of more it is
+  null, so key a row by `page_hash` and `server`, and never pass a
+  `page_hash` where a URL hash goes (`dump_url`, `?url=`, `ask url:`, `url=`
+  filters). A page's `worker` is true where any shape is a worker's. `rows`
+  counts the pages matching, `totals.pages` is new beside `totals.urls`, the
+  `url` sort orders by `page`, and `slowest` lists pages. For URL rows as
+  `urls` answered them before, ask `--filter=page=<page hash>`: it answers
+  that page's URLs, each with `hash`, `url` and the measures, and `rows`
+  counts them.
+
+- **An `overview:` brief lists pages as `pages`, not URLs as `urls`.** The
+  `ask` verb and the MCP `performance_ask` tool answer `pages`, each with
+  `page_hash`, `page`, `server`, `shapes`, `busiest_hash`, `count`,
+  `avg_ms`, `max_ms` and `errors`, and its `stats` gain `pages`. It carries
+  `as_of`, the snapshot's build where the snapshot answered it. An entry
+  carries no `url` and no `hash`: pass `busiest_hash`, the URL hash of the
+  page's one shape or of its busiest, where `hash` went, as a `url:`
+  descriptor or to `dump_url`.
 
 - **This release needs newspack-nodes 2.112.0.** The overview-prefetch job
   publishes its URL snapshot through `Row_Table_Node::build()` and the verbs

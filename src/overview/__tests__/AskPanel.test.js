@@ -251,7 +251,7 @@ test( 'the panel makes no finding claim for a brief that ran no detector', () =>
 		result: {
 			subject: 'overview',
 			scope: 'every server',
-			stats: { urls: 1, requests: 7, errors: 0 },
+			stats: { urls: 1, pages: 1, requests: 7, errors: 0 },
 			caveat: 'c',
 		},
 	} );
