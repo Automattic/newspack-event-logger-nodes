@@ -255,6 +255,7 @@ describe( 'useRequestLogGraph — exospine + page link wiring', () => {
 		// need no nonce threaded through construction.
 		installFakeCommandWire( () => undefined );
 		http.fill( newMessage() );
+		http.flush();
 		expect( typeof http.client.postBatch ).toBe( 'function' );
 	} );
 } );

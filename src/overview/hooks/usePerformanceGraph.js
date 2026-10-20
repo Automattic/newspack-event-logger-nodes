@@ -68,7 +68,10 @@ import {
 import { controlMsg } from '@newspack-nodes/shared/helpers/controlMsg';
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
-import { armTimer } from '@newspack-nodes/shared/helpers/armTimer';
+import {
+	armTimer,
+	keepUnsignedDue,
+} from '@newspack-nodes/shared/helpers/armTimer';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { views } from '../nodes/register';
 import { chartDims, chipParts, filterTokens } from '../chartSlots';
@@ -655,6 +658,7 @@ export function usePerformanceGraph( opts = {} ) {
 				interpreter.makeNode( 'Timer', URLDETAIL_TIMER )
 			);
 			urlDetailTimer.stopTimer();
+			keepUnsignedDue( urlDetailTimer );
 			const urlTee = interpreter.makeNode( 'Tee', URLDETAIL_TEE );
 			urlDetailTimer.connectNode( URLDETAIL_TEE );
 			for ( const each of Object.values( urlSlices ) ) {
@@ -679,6 +683,7 @@ export function usePerformanceGraph( opts = {} ) {
 				interpreter.makeNode( 'Timer', REQUESTDETAIL_TIMER )
 			);
 			requestDetailTimer.stopTimer();
+			keepUnsignedDue( requestDetailTimer );
 			addSliceFetcher( interpreter, {
 				fetcher: REQUESTDETAIL_FETCHER,
 				receiver: REQUESTDETAIL_RECV,

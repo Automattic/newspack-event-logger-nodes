@@ -15,6 +15,7 @@
 
 import { renderHook, act, waitFor } from '../../test-helpers/renderHook';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
+import { nextTask as oneTask } from '@newspack-nodes/shared/test-utils/nextTask';
 import {
 	ID,
 	TO,
@@ -98,6 +99,9 @@ function installWire( payloadByVerb = {}, opts = {} ) {
 		return new Error( payload?.message ?? payload ?? name );
 	} );
 }
+
+// An ask made outside a Router tick leaves on the next task.
+const nextTask = () => act( oneTask );
 
 beforeEach( () => {
 	Core.reset();
@@ -201,6 +205,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 
 		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
+		await nextTask();
 
 		expect( wire.batches.length ).toBeGreaterThanOrEqual( 1 );
 		expect( wire.batches[ 0 ][ 0 ][ VALUE ].auth ).toBeDefined();
@@ -230,6 +235,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 			landAuth();
 			await pending;
 		} );
+		await nextTask();
 
 		const listed = wire.batches
 			.flat()
