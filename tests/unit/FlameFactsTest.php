@@ -101,6 +101,18 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( [ [ 21.75, 5, 2, 5_966_101 ] ], $rows );
 	}
 
+	/** A host logged in two spellings is one server. */
+	public function test_a_hosts_spellings_file_one_server(): void {
+		$fb = $this->armed_flame_builder();
+		foreach ( [ 'https://Example-9907.COM/Moa?a=1', 'https://example-9907.com/weka' ] as $i => $request_url ) {
+			$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => "rid-9907{$i}", 'url' => Url_Parts::key( $request_url, false ), 'request_url' => $request_url ] ), '' );
+		}
+		$fb->flush();
+
+		$this->assertSame( [ [ 'example-9907.com', 2 ] ], $this->facts( 'SELECT s.name, count(r.rid) FROM servers s JOIN requests r ON r.server_id = s.id GROUP BY s.id' ) );
+		$this->assertSame( [ [ '/Moa?a=?' ], [ '/weka' ] ], $this->facts( 'SELECT path FROM urls ORDER BY path' ), 'each path under its server in any case' );
+	}
+
 	public function test_urls_carry_their_page(): void {
 		$fb = $this->armed_flame_builder();
 		foreach ( [ 'https://Kea.example/Kea-5521?a=1', 'https://kea.example/kea-5521?b=2' ] as $i => $url ) {

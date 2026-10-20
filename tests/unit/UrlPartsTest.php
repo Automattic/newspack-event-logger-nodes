@@ -3,6 +3,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 
@@ -18,6 +19,7 @@ class UrlPartsTest extends TestCase {
 		$this->assertSame( 'http://kea.test/kakapo-4417', Url_Parts::row_path( 'http://kea.test/kakapo-4417', 'kea.test' ) );
 		$this->assertSame( 'https://moa.test/weka-1308', Url_Parts::row_path( 'https://moa.test/weka-1308', 'kea.test' ) );
 		$this->assertSame( 'https://kea.test?q=3', Url_Parts::row_path( 'https://kea.test?q=3', 'kea.test' ), 'no path to stand alone' );
+		$this->assertSame( '/Kakapo-4417', Url_Parts::row_path( 'https://Kea.Test/Kakapo-4417', 'kea.test' ), 'its own server in any case' );
 	}
 
 	public function test_a_row_path_is_capped_with_an_ellipsis(): void {
@@ -152,6 +154,7 @@ class UrlPartsTest extends TestCase {
 	#[DataProvider( 'identities' )]
 	public function test_a_urls_identity_folds_case_and_scheme( string $url, string $identity ): void {
 		$this->assertSame( $identity, Url_Parts::identity( $url ) );
+		$this->assertSame( Log_Manager::url_hash( $identity ), Url_Parts::hash( $url ), 'the hash its row is stored under' );
 	}
 
 	/** A trimmed line may cut its last parameter mid-name or mid-value, so that one keys nothing. */
@@ -174,9 +177,11 @@ class UrlPartsTest extends TestCase {
 		}
 	}
 
-	/** A URL's server is its host. */
+	/** A URL's server is its host, lowercased, so its spellings are one server. */
 	public function test_a_urls_server_is_its_host(): void {
 		$this->assertSame( 'kea.test', Url_Parts::server_of( 'https://kea.test/sku-41?q=9' ) );
+		$this->assertSame( 'example-9907.com', Url_Parts::server_of( 'https://Example-9907.COM/Moa' ) );
+		$this->assertSame( 'example-9907.com', Url_Parts::server_name( 'Example-9907.COM' ) );
 		$this->assertSame( 'wren.test', Url_Parts::server_of( 'http://wren.test?q=3' ) );
 		$this->assertSame( 'kea.test', Url_Parts::server_of( 'https://kea.test' ) );
 	}

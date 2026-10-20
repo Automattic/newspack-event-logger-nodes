@@ -10,6 +10,7 @@ use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -737,13 +738,38 @@ final class StatsQueryTest extends TestCase {
 		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'buckets' => $this->last_day() ] ) );
 
 		$expected = [
-			[ Log_Manager::url_hash( 'https://kea.example/egret-1/' ), 'https://kea.example/egret-1/', 2 ],
-			[ Log_Manager::url_hash( 'https://kea.example/tui-2/' ), 'https://kea.example/tui-2/', 1 ],
-			[ Log_Manager::url_hash( 'http://kea.example/plain' ), 'http://kea.example/plain', 1 ],
+			[ Url_Parts::hash( 'https://kea.example/egret-1/' ), 'https://kea.example/egret-1/', 2 ],
+			[ Url_Parts::hash( 'https://kea.example/tui-2/' ), 'https://kea.example/tui-2/', 1 ],
+			[ Url_Parts::hash( 'http://kea.example/plain' ), 'http://kea.example/plain', 1 ],
 		];
 		\usort( $expected, static fn ( array $a, array $b ): int => $a[0] <=> $b[0] );
 		$this->assertSame( [ 'url', 'url_name', 'count' ], $r['columns'] );
 		$this->assertSame( $expected, $r['rows'], 'url_id 1 is egret in partition 0 and tui in partition 3; rows order by hash' );
+	}
+
+	/**
+	 * Each partition's `urls` row keeps the first spelling it filed, and a
+	 * reader merging partitions names the URL by the least of them, server
+	 * and path each on its own: `/` sorts below `h`, so an https path beats
+	 * an http one kept whole, and a capital beats its lowercase.
+	 *
+	 * @return array<string,array{0:string,1:string,2:string}>
+	 */
+	public static function spellings_across_partitions(): array {
+		return [
+			'http in one, https in another' => [ 'http://seed.example/Moa-7731/?v=?', 'https://seed.example/moa-7731/?v=?', 'https://seed.example/moa-7731/?v=?' ],
+			'two capitalisations'           => [ 'https://seed.example/moa-7731/?v=?', 'https://seed.example/Moa-7731/?v=?', 'https://seed.example/Moa-7731/?v=?' ],
+		];
+	}
+
+	#[DataProvider( 'spellings_across_partitions' )]
+	public function test_a_url_spelled_two_ways_in_two_partitions_reads_as_the_least( string $first, string $second, string $named ): void {
+		$this->seed_request( [ 'url' => $first ], partition: 0 );
+		$this->seed_request( [ 'url' => $second ], partition: 2 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ Log_Manager::url_hash( 'https://seed.example/moa-7731/?v=?' ), $named, 2 ] ], $r['rows'] );
 	}
 
 	/**
@@ -907,13 +933,13 @@ final class StatsQueryTest extends TestCase {
 			),
 			$composed['rows']
 		);
-		$this->assertSame( $by_hash( [ [ Log_Manager::url_hash( $kokako ), $kokako, 4, 30.0, 4 ], [ Log_Manager::url_hash( $tui ), $tui, 1, 7.5, 1 ] ] ), $whole['rows'] );
+		$this->assertSame( $by_hash( [ [ Log_Manager::url_hash( $kokako ), $kokako, 4, 30.0, 2 ], [ Log_Manager::url_hash( $tui ), $tui, 1, 7.5, 1 ] ] ), $whole['rows'], 'three spellings of one URL and a query shape: two URLs' );
 	}
 
 	/**
 	 * `pages` counts each page once a server, however many shapes, cases and
 	 * partitions ask it: a page logged under two spellings of its server is
-	 * two pages, as the URL table lists it.
+	 * one page on one server, as the URL table lists it.
 	 */
 	public function test_pages_counts_each_page_once_a_server(): void {
 		$this->seed_request( [ 'url' => 'https://kea.example/Hihi-7718/?a=?', 'server' => 'kea.example' ] );
@@ -924,8 +950,8 @@ final class StatsQueryTest extends TestCase {
 		$site      = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'pages', 'urls' ], 'buckets' => $this->last_day() ] ) );
 		$by_server = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'pages' ], 'sort' => 'server', 'buckets' => $this->last_day() ] ) );
 
-		$this->assertSame( [ [ 3, 4 ] ], $site['rows'] );
-		$this->assertSame( [ [ 'KEA.example', 1 ], [ 'kea.example', 2 ] ], $by_server['rows'] );
+		$this->assertSame( [ [ 2, 4 ] ], $site['rows'] );
+		$this->assertSame( [ [ 'kea.example', 2 ] ], $by_server['rows'] );
 		$this->assertSame( 'requests', Stats_Query::table_for( self::spec( [ 'source' => 'requests', 'measure' => [ 'pages' ], 'buckets' => $this->last_hours() ] ) ), 'the rollup holds no page' );
 	}
 
@@ -1002,8 +1028,8 @@ final class StatsQueryTest extends TestCase {
 		$left    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'page!' => [ $page ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
 		$timings = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
 
-		$this->assertSame( [ [ Log_Manager::url_hash( $upper ), $upper, 20.0 ], [ Log_Manager::url_hash( $query ), $query, 40.0 ] ], $kept['rows'] );
-		$this->assertSame( [ [ Log_Manager::url_hash( $other ), $other, 900.0 ] ], $left['rows'] );
+		$this->assertSame( [ [ Url_Parts::hash( $upper ), $upper, 20.0 ], [ Url_Parts::hash( $query ), $query, 40.0 ] ], $kept['rows'] );
+		$this->assertSame( [ [ Url_Parts::hash( $other ), $other, 900.0 ] ], $left['rows'] );
 		$this->assertSame( 'timings', Stats_Query::table_for( $timings ) );
 		$this->assertSame( [ [ 'sql', 12.5 ] ], Stats_Query::run( $timings )['rows'] );
 	}
@@ -1015,14 +1041,14 @@ final class StatsQueryTest extends TestCase {
 	 */
 	public function test_url_and_page_named_together_join_urls_once(): void {
 		$upper = 'https://kea.example/Ruru-5521';
-		$lower = 'https://kea.example/ruru-5521';
+		$lower = 'https://kea.example/ruru-5521?a=?';
 		$this->seed_request( [ 'url' => $upper, 'server' => 'kea.example', 'ms' => 10.0 ] );
 		$this->seed_request( [ 'url' => $lower, 'server' => 'kea.example', 'ms' => 30.0 ], partition: 1 );
 		$this->seed_request( [ 'url' => $lower, 'server' => 'kea.example', 'ms' => 50.0 ], partition: 1 );
 		$name = 'kea.example/ruru-5521';
 		$page = Log_Manager::url_hash( $name );
 		$rows = static function ( float $upper_ms, float $lower_ms ) use ( $page, $name, $upper, $lower ): array {
-			$rows = [ [ $page, $name, Log_Manager::url_hash( $upper ), $upper, $upper_ms ], [ $page, $name, Log_Manager::url_hash( $lower ), $lower, $lower_ms ] ];
+			$rows = [ [ $page, $name, Url_Parts::hash( $upper ), $upper, $upper_ms ], [ $page, $name, Url_Parts::hash( $lower ), $lower, $lower_ms ] ];
 			\usort( $rows, static fn ( array $a, array $b ): int => $a[2] <=> $b[2] );
 			return $rows;
 		};

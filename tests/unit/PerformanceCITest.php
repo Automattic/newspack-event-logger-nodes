@@ -21,6 +21,7 @@ use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
@@ -2242,7 +2243,7 @@ class PerformanceCITest extends TestCase {
 
 	/** One seeded URL's hash. */
 	private static function hash_of( string $url ): string {
-		return Log_Manager::url_hash( $url );
+		return Url_Parts::hash( $url );
 	}
 
 	public function test_overview_totals_count_every_non_worker_request(): void {
@@ -2633,11 +2634,10 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * One page logged under two spellings of its server is two rows, each
-	 * naming its own one URL or none: a hash lookup over the page's hash
-	 * meets both servers' URLs, and only a one-shape row takes one.
+	 * One page logged under two spellings of its server is one row on one
+	 * server, live and off the snapshot: a server is its host lowercased.
 	 */
-	public function test_a_page_under_two_server_spellings_names_each_rows_own_url(): void {
+	public function test_a_page_under_two_server_spellings_is_one_row(): void {
 		$this->seed_requests(
 			[
 				[ 'server' => 'kea-8812.example', 'url' => 'https://kea-8812.example/Hihi-8812/?a=?', 'ms' => 31.5 ],
@@ -2645,13 +2645,34 @@ class PerformanceCITest extends TestCase {
 				[ 'server' => 'KEA-8812.example', 'url' => 'https://KEA-8812.example/HIHI-8812/', 'ms' => 53.5 ],
 			]
 		);
+		$expected = [ [ 'kea-8812.example', 'kea-8812.example/hihi-8812/', '/hihi-8812/', 3, null, 3 ] ];
+		$shape    = static fn ( array $reply ): array => \array_map( static fn ( array $row ): array => [ $row['server'], $row['page'], $row['path'], $row['shapes'], $row['hash'], $row['count'] ], $reply['data'] );
 
-		$rows = \array_column( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' )['data'], null, 'server' );
+		$live = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+		Url_Snapshot::publish( self::tick(), 600, static fn (): array => [] );
+		VerbHarness::reset();
+		$stored = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
-		$this->assertSame( [ 'kea-8812.example', 'KEA-8812.example' ], \array_keys( $rows ), 'one row a spelling, the busier first' );
-		$this->assertSame( [ 'kea-8812.example/hihi-8812/', 2, null ], [ $rows['kea-8812.example']['page'], $rows['kea-8812.example']['shapes'], $rows['kea-8812.example']['hash'] ] );
-		$this->assertSame( [ 'kea-8812.example/hihi-8812/', 1, self::hash_of( 'https://KEA-8812.example/HIHI-8812/' ) ], [ $rows['KEA-8812.example']['page'], $rows['KEA-8812.example']['shapes'], $rows['KEA-8812.example']['hash'] ] );
-		$this->assertSame( '/hihi-8812/', $rows['KEA-8812.example']['path'] );
+		$this->assertSame( self::tick(), $stored['as_of'], 'the snapshot answers' );
+		$this->assertSame( $expected, $shape( $live ) );
+		$this->assertSame( $expected, $shape( $stored ) );
+	}
+
+	/** A `--server` in any case names the server its host is, live and stored. */
+	public function test_a_mixed_case_server_finds_its_rows(): void {
+		$this->seed_request( [ 'server' => 'Kea-9907.example', 'url' => 'https://Kea-9907.example/Toroa-9907/', 'ms' => 21.5 ] );
+		$this->seed_request( [ 'server' => 'moa-9907.example', 'url' => 'https://moa-9907.example/other/', 'ms' => 1.5 ] );
+
+		$live = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=KEA-9907.Example' );
+		Url_Snapshot::publish( self::tick(), 600, static fn (): array => [] );
+		VerbHarness::reset();
+		$stored = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=KEA-9907.Example' );
+
+		foreach ( [ 'live' => $live, 'stored' => $stored ] as $read => $reply ) {
+			$this->assertSame( [ 'kea-9907.example/toroa-9907/' ], \array_column( $reply['data'], 'page' ), $read );
+			$this->assertSame( 1, $reply['totals']['requests'], $read );
+		}
+		$this->assertSame( self::tick(), $stored['as_of'], 'the snapshot answers' );
 	}
 
 	/**
@@ -3285,31 +3306,26 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A busiest shape is the busiest of the set the brief describes: under
-	 * the brief's filter, and on the row's own spelling of its server.
+	 * A busiest shape is the busiest of the set the brief describes, under
+	 * the brief's filter, and a page whose server is logged in two spellings
+	 * is one page on one server.
 	 */
-	public function test_an_overview_briefs_busiest_shape_is_of_its_filtered_rows_server(): void {
-		$this->seed_requests(
-			[
-				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/Weta-5309/?a=?', 'status' => 503 ],
-				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?b=?', 'status' => 502 ],
-				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?b=?', 'status' => 502 ],
-				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?c=?', 'status' => 200 ],
-				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?c=?', 'status' => 200 ],
-				[ 'server' => 'kaka-5309.example', 'url' => 'https://kaka-5309.example/weta-5309/?c=?', 'status' => 200 ],
-				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?d=?', 'status' => 504 ],
-				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?d=?', 'status' => 504 ],
-				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?d=?', 'status' => 504 ],
-				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?d=?', 'status' => 504 ],
-				[ 'server' => 'KAKA-5309.example', 'url' => 'https://KAKA-5309.example/WETA-5309/?e=?', 'status' => 500 ],
-			]
+	public function test_an_overview_briefs_busiest_shape_is_of_its_filtered_set(): void {
+		$rows = [];
+		foreach ( [ [ 'kaka-5309.example', 'Weta-5309/?a=?', 503, 1 ], [ 'kaka-5309.example', 'weta-5309/?b=?', 502, 2 ], [ 'kaka-5309.example', 'weta-5309/?c=?', 200, 5 ], [ 'KAKA-5309.example', 'WETA-5309/?d=?', 504, 4 ], [ 'KAKA-5309.example', 'WETA-5309/?e=?', 500, 1 ] ] as [ $server, $path, $status, $times ] ) {
+			for ( $i = 0; $i < $times; $i++ ) {
+				$rows[] = [ 'server' => $server, 'url' => "https://{$server}/{$path}", 'status' => $status ];
+			}
+		}
+		$this->seed_requests( $rows );
+
+		$pages = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --filter=status_class=5' )['pages'];
+
+		$this->assertSame(
+			[ [ 'kaka-5309.example', 4, self::hash_of( 'https://KAKA-5309.example/WETA-5309/?d=?' ) ] ],
+			\array_map( static fn ( array $page ): array => [ $page['server'], $page['shapes'], $page['busiest_hash'] ], $pages ),
+			'the 5xx shapes alone, the busiest of them by count'
 		);
-
-		$pages = \array_column( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site --filter=status_class=5' )['pages'], null, 'server' );
-
-		$this->assertSame( [ 'KAKA-5309.example', 'kaka-5309.example' ], \array_keys( $pages ) );
-		$this->assertSame( [ 2, self::hash_of( 'https://KAKA-5309.example/WETA-5309/?d=?' ) ], [ $pages['KAKA-5309.example']['shapes'], $pages['KAKA-5309.example']['busiest_hash'] ] );
-		$this->assertSame( [ 2, self::hash_of( 'https://kaka-5309.example/weta-5309/?b=?' ) ], [ $pages['kaka-5309.example']['shapes'], $pages['kaka-5309.example']['busiest_hash'] ] );
 	}
 
 	/**

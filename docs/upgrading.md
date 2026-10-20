@@ -25,18 +25,23 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   that page's URLs, each with `hash`, `url` and the measures, and `rows`
   counts them.
 
-- **A URL's hash folds case and scheme.** A URL row is hashed by
+- **A URL's hash folds case and scheme, and a server's name is lowercase.**
+  A URL row is hashed by `Url_Parts::hash()`, `Log_Manager::url_hash()` of
   `Url_Parts::identity()`, its key with any worker mark lowercased and its
   `http://` read as `https://`, so a URL's case and scheme variants are one
   row. The key itself, the record's `url` and every display keep the
-  spelling and scheme the request was sent with, and a row shows those of
-  the first request it filed. A `?url=` link, a `url:` descriptor or a
-  `url=` filter carrying a hash from 0.147.0 or earlier names a URL spelled
-  with capitals or over http that no row carries any more; open the URL from
-  the table again for its new hash. A page that hashes a stored URL itself
-  takes `urlIdentity()` first, as the request stream, the in-flight view and
-  the error log do. `Log_Manager::url_hash()` is unchanged, so rule ids keep
-  their hashes.
+  spelling and scheme the request was sent with. Each partition's row keeps
+  the first it filed, and a read across partitions shows the byte-wise least
+  of them, an https URL before an http one. A server is stored as its host
+  lowercased (`Url_Parts::server_name()`), and every reader folds a server
+  it is given the same way, so `--server=Example.com` matches; a `?server=`
+  link or a script comparing server names takes them lowercased. A `?url=`
+  link, a `url:` descriptor or a `url=` filter carrying a hash from 0.147.0
+  or earlier names a URL spelled with capitals or over http that no row
+  carries any more; open the URL from the table again for its new hash. A
+  page that hashes a stored URL itself takes `urlHash()`, as the request
+  stream, the in-flight view and the error log do. `Log_Manager::url_hash()`
+  is unchanged, so rule ids keep their hashes.
 
 - **An `overview:` brief lists pages as `pages`, not URLs as `urls`.** The
   `ask` verb and the MCP `performance_ask` tool answer `pages`, each with

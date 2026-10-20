@@ -16,6 +16,7 @@ use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
@@ -347,7 +348,7 @@ final class UrlSnapshotTest extends TestCase {
 	public function test_a_pages_shapes_seek_urls_page(): void {
 		$db   = $this->published_pages();
 		$page = self::$seed_server . '/tui-4410/';
-		$tui  = [ Log_Manager::url_hash( 'https://' . self::$seed_server . '/Tui-4410/?utm=?' ), Log_Manager::url_hash( 'https://' . self::$seed_server . '/tui-4410/' ) ];
+		$tui  = [ Url_Parts::hash( 'https://' . self::$seed_server . '/Tui-4410/?utm=?' ), Url_Parts::hash( 'https://' . self::$seed_server . '/tui-4410/' ) ];
 		\sort( $tui, \SORT_STRING );
 
 		$this->assertSame( [ [ $tui[0], $page ], [ $tui[1], $page ] ], $db->rows( 'SELECT url, page FROM urls WHERE page_hash = ? ORDER BY url', [ Log_Manager::url_hash( $page ) ] ) );
@@ -608,7 +609,7 @@ final class UrlSnapshotTest extends TestCase {
 		$this->assertSame(
 			[
 				[ 1, $page, 10, 1, self::finished( 0, 31 ), 2, null ],
-				[ 2, $page, 7, 0, self::finished( 1, 10 ), 1, Log_Manager::url_hash( $visitor ) ],
+				[ 2, $page, 7, 0, self::finished( 1, 10 ), 1, Url_Parts::hash( $visitor ) ],
 			],
 			$db->rows( 'SELECT views, page, count, worker, last_seen, shapes, hash FROM pages WHERE page_hash = ? ORDER BY views', [ Log_Manager::url_hash( $page ) ] )
 		);
@@ -637,7 +638,7 @@ final class UrlSnapshotTest extends TestCase {
 		$db = $this->published();
 
 		$this->assertSame(
-			[ [ 0, 1, Log_Manager::url_hash( $url ) ] ],
+			[ [ 0, 1, Url_Parts::hash( $url ) ] ],
 			$db->rows( 'SELECT views, shapes, hash FROM pages WHERE page_hash = ?', [ Log_Manager::url_hash( self::$seed_server . '/ruru-7302/' ) ] )
 		);
 	}

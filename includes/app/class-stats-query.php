@@ -1312,13 +1312,17 @@ final class Stats_Query {
 	/**
 	 * A filter value as it binds: an integer field's digits as an integer,
 	 * so it compares equal to the column, a status class spelled `5xx` in any
-	 * case as its digit; anything else as it came.
+	 * case as its digit, a server as `Url_Parts::server_name()` stores it;
+	 * anything else as it came.
 	 *
 	 * @param string $field The field it filters.
 	 * @param mixed  $value The value.
 	 * @return scalar|null
 	 */
 	private static function bindable( string $field, mixed $value ): mixed {
+		if ( 'server' === $field && \is_string( $value ) ) {
+			return Url_Parts::server_name( $value );
+		}
 		if ( 'status_class' === $field && \is_string( $value ) && 1 === \preg_match( '/^(\d)xx$/iD', $value, $class ) ) {
 			$value = $class[1];
 		}
