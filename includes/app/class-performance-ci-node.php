@@ -54,6 +54,7 @@ use Newspack_Event_Logger_Nodes\Overview_Prefetch_Tick_Node;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Callback_Node;
@@ -157,11 +158,17 @@ class Performance_CI_Node extends Service_CI_Node {
 		'last_updated' => 'last_seen',
 	];
 
-	/** The `urls` args a snapshot page varies; every other stays at its default. */
-	private const SNAPSHOT_VARIES = [ 'server', 'include_workers', 'sort', 'order', 'offset', 'limit' ];
+	/** Each `urls` sort, as the `Stats_Query` sort a `page` group answers it by. */
+	public const PAGE_SORTS = [ 'url' => 'page_name' ] + self::URL_SORTS;
 
-	/** What a `urls` page totals, ungrouped, live and in the snapshot. */
-	public const URL_TOTALS = [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ];
+	/**
+	 * The `urls` args a snapshot listing varies; every other stays at its
+	 * default, and the filter names one page or nothing.
+	 */
+	private const SNAPSHOT_VARIES = [ 'server', 'include_workers', 'sort', 'order', 'offset', 'limit', 'filter' ];
+
+	/** What a `urls` listing totals, ungrouped, live and in the snapshot. */
+	public const URL_TOTALS = [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors', 'pages' ];
 
 	/** What a `urls` row measures. */
 	public const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
@@ -557,7 +564,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private static function ask_overview( string $server, array $filters, int $now ): array {
-		$page              = self::url_page( $server, $filters, 'count', 'desc', 0, self::OVERVIEW_BRIEF_URLS, $now );
+		$page              = self::url_page( 'url', $server, $filters, 'count', 'desc', 0, self::OVERVIEW_BRIEF_URLS, $now );
 		$filters['bucket'] = Core::as_string( $page['filters']['bucket'] );
 		return Ask_Assembler::for_overview( $page, self::site_leaderboard( $server, $now ), $server, $filters );
 	}
@@ -1319,13 +1326,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Whether the snapshot answers a `urls` question: every arg outside
-	 * `SNAPSHOT_VARIES` at the default the binder gives it, so a search, a
-	 * bucket selection, a filter or any arg added later answers live.
+	 * Whether the snapshot answers a `urls` question: a filter naming one
+	 * page or nothing, and every arg outside `SNAPSHOT_VARIES` at the
+	 * default the binder gives it, so a search, a bucket selection, any
+	 * other filter or any arg added later answers live.
 	 *
 	 * @param array<array-key,mixed> $args The bound verb args.
 	 */
 	private static function snapshot_answers( array $args ): bool {
+		$filter = Stats_Query::strings( $args['filter'] );
+		if ( [] !== $filter && null === self::one_page( $filter ) ) {
+			return false;
+		}
 		$declared = Core::arr( Command_Interpreter_Node::declared_verbs( self::class )['urls']['args'] ?? throw new \LogicException( 'urls declares its args' ) );
 		$defaults = \array_diff_key( Command_Args::bind( $declared, [] ), \array_flip( self::SNAPSHOT_VARIES ) );
 		foreach ( $defaults as $name => $default ) {
@@ -1338,26 +1350,40 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `urls` answer off the snapshot, dated when the job built it, to a
-	 * question `snapshot_answers()` admits.
+	 * question `snapshot_answers()` admits: its pages, or under one page's
+	 * filter that page's URLs.
 	 *
 	 * @param Url_Snapshot           $snapshot The published snapshot.
 	 * @param array<array-key,mixed> $args     The bound verb args.
 	 * @return array<string,mixed>
+	 * @throws \InvalidArgumentException As `Url_Snapshot::pages()` and `shapes()`.
 	 */
 	private static function stored_urls( Url_Snapshot $snapshot, array $args ): array {
 		[ $server, $filters, $sort, $order, $offset, $limit ] = self::url_question( $args );
 		$now     = $snapshot->as_of();
 		$workers = $filters['include_workers'];
+		$page    = self::one_page( $filters['filter'] );
 		return [ 'as_of' => $now ] + self::url_reply(
+			null === $page ? 'page' : 'url',
 			$server,
 			$filters,
-			$snapshot->totals( $server, $workers ),
-			$snapshot->page( $server, $workers, self::URL_SORTS[ $sort ], $order, $offset, $limit ),
+			null === $page ? $snapshot->totals( $server, $workers ) : $snapshot->shape_totals( $page, $server, $workers ),
+			null === $page ? $snapshot->pages( $server, $workers, self::PAGE_SORTS[ $sort ], $order, $offset, $limit ) : $snapshot->shapes( $page, $server, $workers, self::URL_SORTS[ $sort ], $order, $offset, $limit ),
 			self::window( '', $now, Bucket::MAX_SELECTION ),
 			$offset,
 			$limit,
 			$now
 		);
+	}
+
+	/**
+	 * The page a filter of one `page=<hash>` token asks the shapes of, as
+	 * `filter_tokens()` spells it; null for any other filter.
+	 *
+	 * @param list<string> $tokens The filter tokens.
+	 */
+	private static function one_page( array $tokens ): ?string {
+		return 1 === \count( $tokens ) && \str_starts_with( $tokens[0], 'page=' ) ? \substr( $tokens[0], \strlen( 'page=' ) ) : null;
 	}
 
 	/**
@@ -1375,7 +1401,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	public static function answer_live( string $verb, array $args, int $now, ?array $servers ): array {
 		return [ 'as_of' => $now ] + match ( $verb ) {
 			'overview' => self::answer_overview( Core::as_string( $args['server'] ), $now, $servers ),
-			'urls'     => self::url_page( ...self::url_question( $args ), now: $now ),
+			'urls'     => self::url_page( self::listed( Stats_Query::strings( $args['filter'] ) ), ...self::url_question( $args ), now: $now ),
 			'query'    => self::answer_query( $args, $now ),
 			default    => throw new \InvalidArgumentException( \esc_html( "no stored answer answers {$verb}" ) ),
 		};
@@ -1658,83 +1684,257 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One page of the URL set the filters leave, over the last 288 buckets
-	 * or the selected ones, read live: its totals and its page with the
-	 * slowest ten beside it, shaped by `url_reply()`. Worker traffic is left
-	 * out unless asked for. A filter narrows the rows, the totals and the
-	 * slowest ten together, and a filter on `worker`, negated or not, replaces
-	 * the scope's.
+	 * One listing of the URL set the filters leave, over the last 288
+	 * buckets or the selected ones, read live: its totals, and its rows of
+	 * the `$listed` group, pages or URLs, with the slowest ten beside them,
+	 * shaped by `url_reply()`. Worker traffic is left out unless asked for. A
+	 * filter narrows the rows, the totals and the slowest ten together, and a
+	 * filter on `worker`, negated or not, replaces the scope's.
 	 *
-	 * @param string      $server  Server to scope to; '' is every server.
-	 * @param Url_Filters $filters The url filters in force.
-	 * @param string      $sort    A `URL_SORTS` key.
-	 * @param string      $order   'asc' or 'desc'.
-	 * @param int         $offset  Page offset, inside `Stats_Query`'s bounds.
-	 * @param int         $limit   Page size, inside `Stats_Query`'s bounds.
-	 * @param int         $now     The reply's clock.
+	 * @param 'page'|'url' $listed  `page` for pages, `url` for URLs, as `listed()` names a question's.
+	 * @param string       $server  Server to scope to; '' is every server.
+	 * @param Url_Filters  $filters The url filters in force.
+	 * @param string       $sort    A `URL_SORTS` key.
+	 * @param string       $order   'asc' or 'desc'.
+	 * @param int          $offset  Listing offset, inside `Stats_Query`'s bounds.
+	 * @param int          $limit   Listing size, inside `Stats_Query`'s bounds.
+	 * @param int          $now     The reply's clock.
 	 * @return array{data: list<array<string,mixed>>, rows: int, totals: array<string,mixed>|null, slowest: list<array<string,mixed>>, filters: array<string,mixed>, limit: int, offset: int, available: bool}
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, a filter `url_filter_of()` refuses or a search with no word.
 	 */
-	private static function url_page( string $server, array $filters, string $sort, string $order, int $offset, int $limit, int $now ): array {
-		$buckets = self::window( $filters['bucket'], $now, Bucket::MAX_SELECTION );
-		$filter  = self::url_filter_of( $filters['filter'], self::URL_SET_OWNERS );
-		$filter += self::scope( $server, $filters['include_workers'] || \in_array( 'worker', Stats_Query::filtered( $filter ), true ) );
-		$base    = [
-			'source'  => 'requests',
-			'filter'  => $filter,
-			'buckets' => $buckets,
-			'search'  => $filters['search'],
-		];
-		$answer  = Stats_Query::run( $base + [ 'group' => [], 'measure' => self::URL_TOTALS ] );
-		$page    = Stats_Query::run(
-			[
-				'group'   => [ 'url' ],
-				'measure' => self::URL_MEASURES,
-				'sort'    => self::URL_SORTS[ $sort ],
-				'order'   => $order,
-				'limit'   => $limit,
-				'offset'  => $offset,
-				'also'    => [
-					'sort'  => 'avg_ms',
-					'order' => 'desc',
-					'limit' => self::SLOWEST_ROWS,
-				],
-			] + $base
-		);
-		return self::url_reply( $server, $filters, $answer, $page, $buckets, $offset, $limit, $now );
+	private static function url_page( string $listed, string $server, array $filters, string $sort, string $order, int $offset, int $limit, int $now ): array {
+		$base   = self::url_set( $server, $filters, $now );
+		$answer = self::url_totals( $base );
+		$rows   = match ( $listed ) {
+			'page' => self::page_listing( $base, $sort, $order, $offset, $limit ),
+			'url'  => self::url_listing( $base, $sort, $order, $offset, $limit ),
+		};
+		return self::url_reply( $listed, $server, $filters, $answer, $rows, $base['buckets'], $offset, $limit, $now );
 	}
 
 	/**
-	 * The `urls` reply a page and its totals make, live or off the snapshot:
-	 * its rows, its exact totals and its slowest ten, every mean
-	 * request-weighted. `rows` is the exact count of URLs matching, the
-	 * pager's, and the totals carry the errors counted.
+	 * What a `urls` question lists: a page's URLs, `url`, where a filter
+	 * token keeps a page, and pages, `page`, otherwise.
 	 *
+	 * @param list<string> $tokens The filter tokens, as `filter_tokens()` spells them.
+	 * @return 'page'|'url'
+	 */
+	private static function listed( array $tokens ): string {
+		foreach ( $tokens as $token ) {
+			if ( \str_starts_with( $token, 'page=' ) ) {
+				return 'url';
+			}
+		}
+		return 'page';
+	}
+
+	/**
+	 * The requests a `urls` question reads, as the spec its totals and its
+	 * listing share: the filter, the scope, the buckets and the search.
+	 *
+	 * @param string      $server  Server to scope to; '' is every server.
+	 * @param Url_Filters $filters The url filters in force.
+	 * @param int         $now     The reply's clock.
+	 * @return array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string}
+	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses or a filter `url_filter_of()` refuses.
+	 */
+	private static function url_set( string $server, array $filters, int $now ): array {
+		$filter  = self::url_filter_of( $filters['filter'], self::URL_SET_OWNERS );
+		$filter += self::scope( $server, $filters['include_workers'] || \in_array( 'worker', Stats_Query::filtered( $filter ), true ) );
+		return [
+			'source'  => 'requests',
+			'filter'  => $filter,
+			'buckets' => self::window( $filters['bucket'], $now, Bucket::MAX_SELECTION ),
+			'search'  => $filters['search'],
+		];
+	}
+
+	/**
+	 * A URL set's totals: `URL_TOTALS`, ungrouped.
+	 *
+	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()`.
+	 * @return array{columns: list<string>, rows: list<list<mixed>>, available: bool}
+	 */
+	private static function url_totals( array $base ): array {
+		return Stats_Query::run( $base + [ 'group' => [], 'measure' => self::URL_TOTALS ] );
+	}
+
+	/**
+	 * One listing of a URL set's URLs, `url`-grouped over `URL_MEASURES`,
+	 * the slowest ten as `also`.
+	 *
+	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()`.
+	 * @param string $sort   A `URL_SORTS` key.
+	 * @param string $order  'asc' or 'desc'.
+	 * @param int    $offset Listing offset.
+	 * @param int    $limit  Listing size.
+	 * @return array{columns: list<string>, rows: list<list<mixed>>, also?: list<list<mixed>>}
+	 */
+	private static function url_listing( array $base, string $sort, string $order, int $offset, int $limit ): array {
+		return Stats_Query::run( [ 'group' => [ 'url' ], 'sort' => self::URL_SORTS[ $sort ] ] + self::listing_spec( $order, $offset, $limit ) + $base );
+	}
+
+	/**
+	 * One listing of a URL set's pages, `page`- and `server`-grouped over
+	 * `URL_MEASURES` as the snapshot keeps them, the slowest ten as `also`,
+	 * each row's `shapes` and `hash` after its measures.
+	 *
+	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()` naming no page.
+	 * @param string $sort   A `URL_SORTS` key.
+	 * @param string $order  'asc' or 'desc'.
+	 * @param int    $offset Listing offset.
+	 * @param int    $limit  Listing size.
+	 * @return array{columns: list<string>, rows: list<list<mixed>>, also: list<list<mixed>>}
+	 * @throws \LogicException When a listed page holds no URL of the set.
+	 */
+	private static function page_listing( array $base, string $sort, string $order, int $offset, int $limit ): array {
+		$listed = Stats_Query::run( [ 'group' => [ 'page', 'server' ], 'sort' => self::PAGE_SORTS[ $sort ] ] + self::listing_spec( $order, $offset, $limit ) + $base );
+		$also   = $listed['also'] ?? throw new \LogicException( 'a spec naming also answers it' );
+		$shapes = self::shapes_of( $base, [ ...$listed['rows'], ...$also ] );
+		return [
+			'columns' => [ ...$listed['columns'], 'shapes', 'hash' ],
+			'rows'    => self::shaped( $listed['rows'], $shapes ),
+			'also'    => self::shaped( $also, $shapes ),
+		];
+	}
+
+	/**
+	 * What a listing of `URL_MEASURES` sorts, pages and ranks its slowest by.
+	 *
+	 * @param string $order  'asc' or 'desc'.
+	 * @param int    $offset Listing offset.
+	 * @param int    $limit  Listing size.
+	 * @return array{measure: list<string>, order: string, limit: int, offset: int, also: array{sort: string, order: string, limit: int}}
+	 */
+	private static function listing_spec( string $order, int $offset, int $limit ): array {
+		return [
+			'measure' => self::URL_MEASURES,
+			'order'   => $order,
+			'limit'   => $limit,
+			'offset'  => $offset,
+			'also'    => [
+				'sort'  => 'avg_ms',
+				'order' => 'desc',
+				'limit' => self::SLOWEST_ROWS,
+			],
+		];
+	}
+
+	/**
+	 * Each listed page's shapes in the set, by page hash then server: the
+	 * URLs it holds, and the one URL's hash where it holds one, else null.
+	 *
+	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()` naming no page.
+	 * @param list<list<mixed>> $rows Page rows, each its hash, name and server first.
+	 * @return array<string,array<string,array{0:int,1:?string}>>
+	 */
+	private static function shapes_of( array $base, array $rows ): array {
+		$shapes = [];
+		foreach ( self::every_row( $base, $rows, [ 'page', 'server' ], 'urls' ) as [ $page, , $server, $urls ] ) {
+			$shapes[ Core::as_string( $page ) ][ Core::as_string( $server ) ] = [ Core::num_int( $urls ), null ];
+		}
+		$single = \array_filter( $rows, static fn ( array $row ): bool => 1 === ( $shapes[ Core::as_string( $row[0] ) ][ Core::as_string( $row[2] ) ][0] ?? null ) );
+		foreach ( self::every_row( $base, $single, [ 'page', 'server', 'url' ], 'count' ) as [ $page, , $server, $url ] ) {
+			if ( 1 === ( $shapes[ Core::as_string( $page ) ][ Core::as_string( $server ) ][0] ?? null ) ) {
+				$shapes[ Core::as_string( $page ) ][ Core::as_string( $server ) ][1] = Core::as_string( $url );
+			}
+		}
+		return $shapes;
+	}
+
+	/**
+	 * Every row of a URL set's requests on the pages `$rows` name, grouped by
+	 * `$group` over one measure, `Stats_Query::MAX_LIMIT` at a time until a
+	 * short read; past `Stats_Query::MAX_OFFSET` the query refuses.
+	 *
+	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()` naming no page.
+	 * @param array<list<mixed>> $rows    Page rows, each its hash first.
+	 * @param list<string>       $group   The fields to group by, `page` first.
+	 * @param string             $measure The measure.
+	 * @return list<list<mixed>>
+	 */
+	private static function every_row( array $base, array $rows, array $group, string $measure ): array {
+		$pages = \array_values( \array_unique( \array_map( static fn ( array $row ): string => Core::as_string( $row[0] ), $rows ) ) );
+		$found = [];
+		for ( $offset = 0; [] !== $pages; $offset += Stats_Query::MAX_LIMIT ) {
+			$read = Stats_Query::run(
+				[
+					'group'   => $group,
+					'filter'  => [ 'page' => $pages ] + $base['filter'],
+					'measure' => [ $measure ],
+					'sort'    => 'page',
+					'order'   => 'asc',
+					'limit'   => Stats_Query::MAX_LIMIT,
+					'offset'  => $offset,
+				] + $base
+			)['rows'];
+			\array_push( $found, ...$read );
+			if ( \count( $read ) < Stats_Query::MAX_LIMIT ) {
+				break;
+			}
+		}
+		return $found;
+	}
+
+	/**
+	 * Page rows with each one's `shapes` and `hash` after its measures.
+	 *
+	 * @param list<list<mixed>>                                $rows   Page rows, each its hash, name and server first.
+	 * @param array<string,array<string,array{0:int,1:?string}>> $shapes `shapes_of()` the rows.
+	 * @return list<list<mixed>>
+	 * @throws \LogicException When a row's page holds no URL of the set.
+	 */
+	private static function shaped( array $rows, array $shapes ): array {
+		$shaped = [];
+		foreach ( $rows as $row ) {
+			$page     = Core::as_string( $row[0] );
+			$shaped[] = [ ...$row, ...( $shapes[ $page ][ Core::as_string( $row[2] ) ] ?? throw new \LogicException( \esc_html( "listed page {$page} holds no URL" ) ) ) ];
+		}
+		return $shaped;
+	}
+
+	/**
+	 * The `urls` reply a listing and its totals make, live or off the
+	 * snapshot: its rows, its exact totals and its slowest ten, every mean
+	 * request-weighted. A listing of pages answers page rows and counts its
+	 * pages as `rows`, the pager's; a listing of URLs answers URL rows and
+	 * counts its URLs. The totals carry the errors counted.
+	 *
+	 * @param 'page'|'url'                                                               $listed  `page` for a listing of pages, `url` for one of URLs.
 	 * @param string                                                                     $server  Server scoped to; '' is every server.
 	 * @param Url_Filters                                                                $filters The url filters in force.
-	 * @param array{columns: list<string>, rows: list<list<mixed>>, available: bool}     $answer  The totals: count, avg_ms, avg_peak_mb, urls and errors, ungrouped.
-	 * @param array{columns: list<string>, rows: list<list<mixed>>, also?: list<list<mixed>>} $page The `url`-grouped page over `URL_MEASURES`, the slowest as `also`.
+	 * @param array{columns: list<string>, rows: list<list<mixed>>, available: bool}     $answer  The totals: `URL_TOTALS`, ungrouped.
+	 * @param array{columns: list<string>, rows: list<list<mixed>>, also?: list<list<mixed>>} $rows The `$listed`-grouped listing over `URL_MEASURES`, the slowest as `also`.
 	 * @param list<array{0:int,1:int}>                                                   $buckets The buckets read.
-	 * @param int                                                                        $offset  Page offset.
-	 * @param int                                                                        $limit   Page size.
+	 * @param int                                                                        $offset  Listing offset.
+	 * @param int                                                                        $limit   Listing size.
 	 * @param int                                                                        $now     The reply's clock.
 	 * @return array{data: list<array<string,mixed>>, rows: int, totals: array<string,mixed>|null, slowest: list<array<string,mixed>>, filters: array<string,mixed>, limit: int, offset: int, available: bool}
 	 */
-	private static function url_reply( string $server, array $filters, array $answer, array $page, array $buckets, int $offset, int $limit, int $now ): array {
-		$totals = self::measures( $answer );
-		$count  = Core::num_int( $totals['count'] );
+	private static function url_reply( string $listed, string $server, array $filters, array $answer, array $rows, array $buckets, int $offset, int $limit, int $now ): array {
+		$totals            = self::measures( $answer );
+		$count             = Core::num_int( $totals['count'] );
+		[ $shape, $pager ] = match ( $listed ) {
+			'page' => [ self::page_rows( ... ), 'pages' ],
+			'url'  => [ self::url_rows( ... ), 'urls' ],
+		};
+		$slowest           = [
+			'columns' => $rows['columns'],
+			'rows'    => $rows['also'] ?? throw new \LogicException( 'a spec naming also answers it' ),
+		];
 		return [
-			'data'    => self::url_rows( $page ),
-			'rows'    => Core::num_int( $totals['urls'] ),
+			'data'    => $shape( $rows ),
+			'rows'    => Core::num_int( $totals[ $pager ] ),
 			'totals'  => $answer['available'] ? [
 				'urls'                => Core::num_int( $totals['urls'] ),
+				'pages'               => Core::num_int( $totals['pages'] ),
 				'requests'            => $count,
 				'avg_ms'              => Ask_Assembler::measured_figure( $totals['avg_ms'] ),
 				'avg_peak_mb'         => Ask_Assembler::measured_figure( $totals['avg_peak_mb'] ),
 				'requests_per_second' => $count / self::elapsed_seconds( $buckets, $now ),
 				'errors'              => Core::num_int( $totals['errors'] ),
 			] : null,
-			'slowest' => self::url_rows( [ 'columns' => $page['columns'], 'rows' => $page['also'] ?? throw new \LogicException( 'a spec naming also answers it' ) ] ),
+			'slowest' => $shape( $slowest ),
 			'filters' => [
 				'server'          => $server,
 				'search'          => $filters['search'],
@@ -1761,8 +1961,35 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * A `url`-grouped answer's rows as the `urls` reply carries them, means
-	 * null where nothing was measured.
+	 * A `page`- and `server`-grouped listing's rows as the `urls` reply
+	 * carries them: the page by its hash and its name, its server and the
+	 * path under it, its `shapes`, the URLs folded, and `hash`, the one
+	 * URL's hash where it folds one, else null; then its measures, as
+	 * `measured()` shapes them. A page's `worker` is true where any shape
+	 * folded is a worker's.
+	 *
+	 * @param array{columns: list<string>, rows: list<list<mixed>>} $answer A page listing over `URL_MEASURES`, `shapes` and `hash`.
+	 * @return list<array<string,mixed>>
+	 */
+	private static function page_rows( array $answer ): array {
+		$rows = [];
+		foreach ( $answer['rows'] as $values ) {
+			$row    = \array_combine( $answer['columns'], $values );
+			$rows[] = [
+				'page_hash' => $row['page'],
+				'page'      => $row['page_name'],
+				'server'    => $row['server'],
+				'path'      => Url_Parts::page_path( Core::as_string( $row['page_name'] ), Core::as_string( $row['server'] ) ),
+				'shapes'    => $row['shapes'],
+				'hash'      => $row['hash'],
+			] + self::measured( $row );
+		}
+		return $rows;
+	}
+
+	/**
+	 * A `url`-grouped answer's rows as the `urls` reply carries them: the
+	 * URL's hash and its name, then its measures.
 	 *
 	 * @param array{columns: list<string>, rows: list<list<mixed>>} $answer A `Stats_Query::run()` answer grouped by `url` over `URL_MEASURES`.
 	 * @return list<array{hash:mixed,url:mixed,count:mixed,timed_count:mixed,count_2xx:mixed,count_3xx:mixed,count_4xx:mixed,count_5xx:mixed,errors:mixed,sum_ms:mixed,min_ms:?float,max_ms:?float,sum_peak_mb:mixed,max_peak_mb:mixed,worker:bool,last_updated:mixed,avg_ms:?float,avg_peak_mb:?float}>
@@ -1772,27 +1999,39 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( $answer['rows'] as $values ) {
 			$row    = \array_combine( $answer['columns'], $values );
 			$rows[] = [
-				'hash'         => $row['url'],
-				'url'          => $row['url_name'],
-				'count'        => $row['count'],
-				'timed_count'  => $row['timed'],
-				'count_2xx'    => $row['count_2xx'],
-				'count_3xx'    => $row['count_3xx'],
-				'count_4xx'    => $row['count_4xx'],
-				'count_5xx'    => $row['count_5xx'],
-				'errors'       => $row['errors'],
-				'sum_ms'       => $row['sum_ms'],
-				'min_ms'       => Ask_Assembler::measured_figure( $row['min_ms'] ),
-				'max_ms'       => Ask_Assembler::measured_figure( $row['max_ms'] ),
-				'sum_peak_mb'  => $row['sum_peak_mb'],
-				'max_peak_mb'  => $row['max_peak_mb'],
-				'worker'       => 1 === $row['worker'],
-				'last_updated' => $row['last_seen'],
-				'avg_ms'       => Ask_Assembler::measured_figure( $row['avg_ms'] ),
-				'avg_peak_mb'  => Ask_Assembler::measured_figure( $row['avg_peak_mb'] ),
-			];
+				'hash' => $row['url'],
+				'url'  => $row['url_name'],
+			] + self::measured( $row );
 		}
 		return $rows;
+	}
+
+	/**
+	 * A listed row's `URL_MEASURES` as a `urls` row carries them, means
+	 * null where nothing was measured.
+	 *
+	 * @param array<string,mixed> $row A listing's row by column.
+	 * @return array{count:mixed,timed_count:mixed,count_2xx:mixed,count_3xx:mixed,count_4xx:mixed,count_5xx:mixed,errors:mixed,sum_ms:mixed,min_ms:?float,max_ms:?float,sum_peak_mb:mixed,max_peak_mb:mixed,worker:bool,last_updated:mixed,avg_ms:?float,avg_peak_mb:?float}
+	 */
+	private static function measured( array $row ): array {
+		return [
+			'count'        => $row['count'],
+			'timed_count'  => $row['timed'],
+			'count_2xx'    => $row['count_2xx'],
+			'count_3xx'    => $row['count_3xx'],
+			'count_4xx'    => $row['count_4xx'],
+			'count_5xx'    => $row['count_5xx'],
+			'errors'       => $row['errors'],
+			'sum_ms'       => $row['sum_ms'],
+			'min_ms'       => Ask_Assembler::measured_figure( $row['min_ms'] ),
+			'max_ms'       => Ask_Assembler::measured_figure( $row['max_ms'] ),
+			'sum_peak_mb'  => $row['sum_peak_mb'],
+			'max_peak_mb'  => $row['max_peak_mb'],
+			'worker'       => 1 === $row['worker'],
+			'last_updated' => $row['last_seen'],
+			'avg_ms'       => Ask_Assembler::measured_figure( $row['avg_ms'] ),
+			'avg_peak_mb'  => Ask_Assembler::measured_figure( $row['avg_peak_mb'] ),
+		];
 	}
 
 	/**
@@ -2026,7 +2265,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable URL table with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server` and `include_workers` is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs, the query shapes, the set holds of that page on one server: `page_hash`, `page`, `server`, `path` (the page under its server), `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--filter=page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures. `rows` is the exact count the pager lists, the pages or under a page filter that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `include_workers` and one `page=<page hash>` filter is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],

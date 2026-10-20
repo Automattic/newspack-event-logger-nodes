@@ -358,7 +358,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$served = $this->urls( [ '--sort=avg_ms', '--order=asc', '--limit=1', '--offset=1' ] );
 
-		$this->assertSame( [ 'https://seed.example/takahe-5519/' ], \array_column( $served['data'], 'url' ), 'the snapshot, not the live rows' );
+		$this->assertSame( [ 'seed.example/takahe-5519/' ], \array_column( $served['data'], 'page' ), 'the snapshot, not the live rows' );
 		$this->assertSame( 2, $served['rows'] );
 		$this->assertSame( self::NOW, $served['as_of'] );
 	}
@@ -398,12 +398,12 @@ final class OverviewPrefetchTest extends TestCase {
 		$server  = $this->urls( [ '--server=kaka-5532.example', '--limit=100' ] );
 		$workers = $this->urls( [ '--include_workers', '--sort=url', '--order=asc', '--limit=100' ] );
 
-		$this->assertSame( [ 'https://kaka-5532.example/takahe-5532/' ], \array_column( $server['data'], 'url' ) );
+		$this->assertSame( [ 'kaka-5532.example/takahe-5532/' ], \array_column( $server['data'], 'page' ) );
 		$this->assertSame( 'kaka-5532.example', $server['filters']['server'] );
 		$this->assertSame( self::NOW, $server['as_of'] );
 		$this->assertSame(
-			[ 'https://kaka-5532.example/takahe-5532/', 'https://seed.example/kea-5532/', 'https://seed.example/wp-cron-5532/' ],
-			\array_column( $workers['data'], 'url' )
+			[ 'kaka-5532.example/takahe-5532/', 'seed.example/kea-5532/', 'seed.example/wp-cron-5532/' ],
+			\array_column( $workers['data'], 'page' )
 		);
 		$this->assertTrue( $workers['filters']['include_workers'] );
 		$this->assertSame( self::NOW, $workers['as_of'] );
@@ -420,6 +420,7 @@ final class OverviewPrefetchTest extends TestCase {
 			'a search'           => [ [ '--search=moa' ] ],
 			'a bucket selection' => [ [ '--bucket=' . Bucket::key( Bucket::id( self::NOW ) ) ] ],
 			'a filter'           => [ [ '--filter=status_class=5' ] ],
+			'a page left out'    => [ [ '--filter=page!=0ddba11c4e5f' ] ],
 		];
 	}
 
@@ -435,7 +436,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$served = $this->urls( [ '--limit=100', ...$tokens ] );
 
-		$this->assertContains( 'https://seed.example/moa-5533/', \array_column( $served['data'], 'url' ) );
+		$this->assertContains( 'seed.example/moa-5533/', \array_column( $served['data'], 'page' ) );
 		$this->assertSame( self::NOW + 9, $served['as_of'] );
 	}
 
@@ -454,7 +455,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$served = $this->urls( [ '--limit=100', ...$tokens ] );
 
-		$this->assertSame( [ 'https://seed.example/moa-5538/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertSame( [ 'seed.example/moa-5538/' ], \array_column( $served['data'], 'page' ) );
 		$this->assertSame( [], $said(), 'the live question never opened the file' );
 		$this->urls( [ '--limit=100' ] );
 		$this->assertNotSame( [], $said(), 'the default question opens it, so the silence above is real' );
@@ -488,7 +489,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$served = $this->urls( [ '--limit=100' ] );
 
-		$this->assertSame( [ 'https://seed.example/moa-5522/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertSame( [ 'seed.example/moa-5522/' ], \array_column( $served['data'], 'page' ) );
 		$this->assertSame( self::NOW + 9, $served['as_of'] );
 		$this->assertFalse( self::snapshot_published() );
 	}
@@ -500,7 +501,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$served = $this->urls( [ '--limit=100' ] );
 
-		$this->assertSame( [ 'https://seed.example/moa-5527/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertSame( [ 'seed.example/moa-5527/' ], \array_column( $served['data'], 'page' ) );
 		$this->assertSame( self::NOW + 9, $served['as_of'] );
 	}
 
@@ -510,7 +511,7 @@ final class OverviewPrefetchTest extends TestCase {
 
 		$served = $this->urls( [ '--limit=100' ] );
 
-		$this->assertSame( [ 'https://seed.example/moa-5528/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertSame( [ 'seed.example/moa-5528/' ], \array_column( $served['data'], 'page' ) );
 		$this->assertNotEmpty(
 			\array_filter( Core::$recent_log, static fn ( string $line ): bool => \str_contains( $line, 'performance: the URL snapshot did not open' ) ),
 			'the outage is said once'
@@ -533,7 +534,7 @@ final class OverviewPrefetchTest extends TestCase {
 		$served   = $this->urls( [ '--limit=100' ] );
 		$overview = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', [] );
 
-		$this->assertSame( [ 'https://seed.example/moa-5537/' ], \array_column( $served['data'], 'url' ) );
+		$this->assertSame( [ 'seed.example/moa-5537/' ], \array_column( $served['data'], 'page' ) );
 		$this->assertSame( self::NOW + 9, $served['as_of'] );
 		$this->assertSame( self::NOW + 9, \is_array( $overview ) ? $overview['as_of'] : $overview );
 		$this->assertNotEmpty(
@@ -1082,6 +1083,6 @@ final class OverviewPrefetchTest extends TestCase {
 		$served = $this->urls( [ '--limit=100' ] );
 
 		$this->assertTrue( $served['available'] );
-		$this->assertSame( [ 'https://seed.example/moa-5526/' ], \array_column( $served['data'], 'url' ), 'answered live, not the stored outage' );
+		$this->assertSame( [ 'seed.example/moa-5526/' ], \array_column( $served['data'], 'page' ), 'answered live, not the stored outage' );
 	}
 }

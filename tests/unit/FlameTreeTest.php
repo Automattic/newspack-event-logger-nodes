@@ -693,7 +693,7 @@ class FlameTreeTest extends TestCase {
 
 	/** The builders' and the prefetch job's own upkeep spans — never their point lines, a verb or a hook. */
 	public function test_span_kind_names_the_plugins_own_spans_upkeep(): void {
-		foreach ( [ Flame_Tree::STATS_SWEEP . ' (complete)', Flame_Tree::STATS_SWEEP . ': 3', Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE, Flame_Tree::PREFETCH_ANSWER, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_GROUP, Flame_Tree::SNAPSHOT_COPY, Flame_Tree::SNAPSHOT_PAGES, Flame_Tree::SNAPSHOT_INDEX . ': urls_server_avg_ms', Flame_Tree::SNAPSHOT_TOTALS, Flame_Tree::STATS_QUERY . ': timings by category', Flame_Tree::FLAME_LOOKUP, Flame_Tree::GREP_SCAN . ': firehose.p0' ] as $span ) {
+		foreach ( [ Flame_Tree::STATS_SWEEP . ' (complete)', Flame_Tree::STATS_SWEEP . ': 3', Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE, Flame_Tree::PREFETCH_ANSWER, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_GROUP, Flame_Tree::SNAPSHOT_COPY, Flame_Tree::SNAPSHOT_PAGES, Flame_Tree::SNAPSHOT_INDEX . ': pages_server_avg_ms', Flame_Tree::SNAPSHOT_TOTALS, Flame_Tree::STATS_QUERY . ': timings by category', Flame_Tree::FLAME_LOOKUP, Flame_Tree::GREP_SCAN . ': firehose.p0' ] as $span ) {
 			$this->assertSame( 'upkeep', Flame_Tree::span_kind( $span ), $span );
 		}
 		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats sweeps', 'Discovery_CI get command', 'wp_loaded hook', 'sql' ] as $span ) {

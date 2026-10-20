@@ -911,6 +911,25 @@ final class StatsQueryTest extends TestCase {
 	}
 
 	/**
+	 * `pages` counts each page once a server, however many shapes, cases and
+	 * partitions ask it: a page logged under two spellings of its server is
+	 * two pages, as the URL table lists it.
+	 */
+	public function test_pages_counts_each_page_once_a_server(): void {
+		$this->seed_request( [ 'url' => 'https://kea.example/Hihi-7718/?a=?', 'server' => 'kea.example' ] );
+		$this->seed_request( [ 'url' => 'https://kea.example/hihi-7718/?b=?', 'server' => 'kea.example' ], partition: 3 );
+		$this->seed_request( [ 'url' => 'https://kea.example/toutouwai-7718', 'server' => 'kea.example' ], partition: 2 );
+		$this->seed_request( [ 'url' => 'https://KEA.example/HIHI-7718/', 'server' => 'KEA.example' ], partition: 3 );
+
+		$site      = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'pages', 'urls' ], 'buckets' => $this->last_day() ] ) );
+		$by_server = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'pages' ], 'sort' => 'server', 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( [ [ 3, 4 ] ], $site['rows'] );
+		$this->assertSame( [ [ 'KEA.example', 1 ], [ 'kea.example', 2 ] ], $by_server['rows'] );
+		$this->assertSame( 'requests', Stats_Query::table_for( self::spec( [ 'source' => 'requests', 'measure' => [ 'pages' ], 'buckets' => $this->last_hours() ] ) ), 'the rollup holds no page' );
+	}
+
+	/**
 	 * The page-grouped reads whose measures compose, on each source.
 	 *
 	 * @return array<string,array{0:array<string,mixed>}>
@@ -1225,7 +1244,7 @@ final class StatsQueryTest extends TestCase {
 	 * distinct count or a latest stamp would rank by a figure no tuple has.
 	 */
 	public function test_top_by_a_measure_that_adds_across_buckets_alone(): void {
-		foreach ( [ 'requests' => [ 'avg_ms', 'p50_ms', 'p95_ms', 'urls', 'max_ms', 'min_ms', 'max_peak_mb', 'avg_peak_mb', 'last_seen', 'worker' ], 'timings' => [ 'avg_ms', 'avg_calls' ] ] as $source => $measures ) {
+		foreach ( [ 'requests' => [ 'avg_ms', 'p50_ms', 'p95_ms', 'urls', 'pages', 'max_ms', 'min_ms', 'max_peak_mb', 'avg_peak_mb', 'last_seen', 'worker' ], 'timings' => [ 'avg_ms', 'avg_calls' ] ] as $source => $measures ) {
 			foreach ( $measures as $measure ) {
 				try {
 					Stats_Query::run( self::spec( [ 'source' => $source, 'group' => [ 'bucket', 'server' ], 'measure' => [ 'requests' === $source ? 'count' : 'ms' ], 'top' => 3, 'top_by' => $measure, 'buckets' => $this->last_day() ] ) );

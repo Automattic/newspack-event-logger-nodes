@@ -63,7 +63,7 @@ final class Stats_Query {
 
 	/** What each source measures over the rows a spec selects. */
 	public const MEASURES = [
-		'requests' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'min_ms', 'p50_ms', 'p95_ms', 'sum_peak_mb', 'avg_peak_mb', 'max_peak_mb', 'errors', 'urls', 'last_seen', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'worker' ],
+		'requests' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'min_ms', 'p50_ms', 'p95_ms', 'sum_peak_mb', 'avg_peak_mb', 'max_peak_mb', 'errors', 'urls', 'pages', 'last_seen', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'worker' ],
 		'timings'  => [ 'ms', 'calls', 'requests', 'avg_ms', 'avg_calls' ],
 	];
 
@@ -268,6 +268,8 @@ final class Stats_Query {
 				'finished_at' => 't.finished_at',
 				'started_at'  => 't.started_at',
 				'url'         => 'u.hash',
+				'page'        => 'u.page_hash',
+				'server'      => 'sv.name',
 				'class'       => 'CASE WHEN ' . self::KNOWN_STATUS . ' THEN t.status / 100 END',
 				'worker'      => 't.worker',
 				'rid'         => 't.rid',
@@ -292,6 +294,7 @@ final class Stats_Query {
 				'max_peak_mb' => [ 'MAX( m_peak_mb )', [ 'peak_mb' ], 'MAX( q_max_peak_mb )', [ 'max_peak_mb' ] ],
 				'errors'      => [ 'COUNT( CASE WHEN m_error IN ( {error_kinds} ) THEN 1 END )', [ 'error' ], 'COALESCE( SUM( q_errors ), 0 )', [ 'errors' ] ],
 				'urls'        => [ 'COUNT( DISTINCT m_url )', [ 'url' ], null, [] ],
+				'pages'       => [ "COUNT( DISTINCT m_page || ' ' || m_server )", [ 'page', 'server' ], null, [] ],
 				'last_seen'   => [ 'MAX( m_finished_at )', [ 'finished_at' ], 'MAX( q_last_seen )', [ 'last_seen' ] ],
 				'count_2xx'   => [ 'COUNT( CASE WHEN m_class = 2 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_2xx ), 0 )', [ 'count_2xx' ] ],
 				'count_3xx'   => [ 'COUNT( CASE WHEN m_class = 3 THEN 1 END )', [ 'class' ], 'COALESCE( SUM( q_count_3xx ), 0 )', [ 'count_3xx' ] ],

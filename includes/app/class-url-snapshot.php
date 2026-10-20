@@ -11,16 +11,16 @@
  * `pages` table of one row per page and server, a second only for a page
  * of both worker and visitor shapes, each URL measure folded over its URLs,
  * `views` naming the view that reads it, `shapes` counting the URLs and
- * `hash` naming the one where there is one, its rowids in hash order; both
+ * `hash` naming the one where there is one, its rowids in hash order and
  * indexed for each sort the `urls` verb takes once site-wide and once led
- * by the server, a nullable sort's null-last ranking taking a second pair,
- * and `urls_page` seeking a page's URLs; a `totals` table of one row per
- * view and scope, counting its pages; the stored answers by key; and when
- * it was built and expires. The substrate publishes it whole under `NAME`
- * and opens it `immutable` (ADR-35), so no reader sees a half-built file.
+ * by the server, a nullable sort's null-last ranking taking a second pair;
+ * `urls_page` seeking a page's URLs; a `totals` table of one row per view
+ * and scope, counting its pages; the stored answers by key; and when it was
+ * built and expires. The substrate publishes it whole under `NAME` and
+ * opens it `immutable` (ADR-35), so no reader sees a half-built file.
  *
- * The verbs name a server by its name and a URL by its hash, and a page
- * answers both; the ids stay inside the file.
+ * The verbs name a server by its name, a page and a URL by their hashes,
+ * and a listing answers each; the ids stay inside the file.
  *
  * A worker URL is a property of the URL, so the default view keeps the rows
  * whose `worker` is 0 and Include Workers keeps every row; of `pages`, the
@@ -55,36 +55,52 @@ final class Url_Snapshot {
 	/** The sorts whose key may be null, which rank a null last either way. */
 	private const NULLABLE = [ 'avg_ms', 'min_ms', 'max_ms' ];
 
-	/** The `url` group a listing of `urls` answers. */
-	private const ANSWERED = [
-		'group'   => [ 'url' ],
+	/** The groups the `urls` table stores: each URL and the page it fixes. */
+	private const GROUPED = [
+		'group'   => [ 'url', 'page' ],
 		'measure' => Performance_CI_Node::URL_MEASURES,
 	];
 
-	/** The groups the `urls` table stores: each URL and the page it fixes. */
-	private const GROUPED = [ 'group' => [ 'url', 'page' ] ] + self::ANSWERED;
-
-	/** Each table a sort lists, as the key its `url_name` sort ranks after `server_id`. */
-	private const SORTED = [
-		'urls'  => 'path',
-		'pages' => 'page',
+	/**
+	 * Each table a listing reads: the `Stats_Query` group its rows answer
+	 * as, what it selects ahead of `URL_MEASURES` and after them, the sorts
+	 * it takes, and the columns its name sort ranks by.
+	 */
+	private const LISTED = [
+		'urls'  => [
+			'group' => [ 'url' ],
+			'ahead' => 'url, ( SELECT name FROM servers WHERE servers.id = urls.server_id ) AS server, path',
+			'after' => [],
+			'sorts' => Performance_CI_Node::URL_SORTS,
+			'named' => [ 'server_id', 'path' ],
+		],
+		'pages' => [
+			'group' => [ 'page', 'server' ],
+			'ahead' => 'page_hash, page, ( SELECT name FROM servers WHERE servers.id = pages.server_id ) AS server',
+			'after' => [ 'shapes', 'hash' ],
+			'sorts' => Performance_CI_Node::PAGE_SORTS,
+			'named' => [ 'page' ],
+		],
 	];
 
 	/** What a scope with no URLs totals, in `URL_TOTALS` order. */
-	private const NO_TOTALS = [ 0, null, null, 0, 0 ];
+	private const NO_TOTALS = [ 0, null, null, 0, 0, 0 ];
 
 	/** The id of the server a `?` names; null for a name `servers` lacks. */
 	private const SERVER_ID = '( SELECT id FROM servers WHERE name = ? )';
 
 	/**
-	 * Each `Performance_CI_Node::scope()` field as the `urls` clause matching
-	 * its one value, bound as given: a server by its id, an equality the
-	 * server-led index seeks, and the worker flag, an integer the column's
-	 * no-affinity value matches only as an integer.
+	 * Each field a listing's filter names as the clause its one value binds:
+	 * a server by its id, an equality the server-led index seeks; the worker
+	 * flag, an integer the column's no-affinity value matches only as an
+	 * integer; a page by its hash, which `urls_page` seeks; and the view a
+	 * `pages` row is not of, so it keeps every row but the other view's.
 	 */
 	private const SCOPED = [
 		'worker' => 'worker = ?',
 		'server' => 'server_id = ' . self::SERVER_ID,
+		'page'   => 'page_hash = ?',
+		'views'  => 'views <> ?',
 	];
 
 	/** Whether a `pages` kind folds an `i` row: kind 1 each, kind 2 a visitor's. */
@@ -228,40 +244,36 @@ final class Url_Snapshot {
 	}
 
 	/**
-	 * The statement creating `totals`: each of `URL_TOTALS` but `urls`
-	 * folded from the URLs' partials as `Stats_Query` merges a query's
-	 * partitions, and `urls` the URL count, one row each.
+	 * The statement creating `totals`: each of `URL_TOTALS` but `urls` and
+	 * `pages` folded from the URLs' partials as `Stats_Query` merges a
+	 * query's partitions, `urls` the URL count, and `pages` as
+	 * `TOTALS_TABLE` counts it, one row each.
 	 */
 	private static function totals_table(): string {
-		[ $partials, $folds ] = self::folded( \array_diff( Performance_CI_Node::URL_TOTALS, [ 'urls' ] ), 'SUM( u.%s )' );
-		$folds['urls']        = 'SUM( q_urls ) AS urls';
-		$totals               = \array_map( static fn ( string $name ): string => $folds[ $name ], Performance_CI_Node::URL_TOTALS );
+		[ $partials, $totals ] = self::totals_of( \array_diff( Performance_CI_Node::URL_TOTALS, [ 'pages' ] ), 'SUM( u.%s )', [ 'urls' => 'SUM( q_urls )' ] );
 		return \sprintf( self::TOTALS_TABLE, \implode( ', ', $partials ), \implode( ', ', $totals ) );
 	}
 
 	/**
-	 * Every index by name, as its table and its columns. Each `SORTED`
-	 * table takes, per sort, its keys for the site-wide listing and, as
-	 * `<table>_server_<sort>`, `server_id` then its keys for one server's, a
+	 * Every index by name, as its table and its columns. `pages` takes, per
+	 * sort, its keys for the site-wide listing as `pages_<sort>` and, as
+	 * `pages_server_<sort>`, `server_id` then its keys for one server's, a
 	 * nullable key adding a `_null` pair ranking its nulls last; the view is
 	 * a filter on the scan. Each ends at its keys, because the rowid every
 	 * index carries breaks a tie as the hash does, and a backward scan serves
-	 * the other order. `url_name`'s leads with `server_id`, so it serves both
-	 * scopes. `urls_page` seeks a page's URLs, the worker flag after the
-	 * hash, so the default view seeks it whole and Include Workers by hash.
+	 * the other order. `urls_page` seeks a page's URLs, the worker flag after
+	 * the hash, so the default view seeks it whole and Include Workers by
+	 * hash, and a page's few shapes sort in memory.
 	 *
 	 * @return array<string,array{0:string,1:string}>
 	 */
 	private static function indexes(): array {
 		$indexes = [];
-		foreach ( self::SORTED as $table => $named ) {
-			$indexes[ "{$table}_url_name" ] = [ $table, "server_id, {$named}" ];
-			foreach ( \array_diff( Performance_CI_Node::URL_SORTS, [ 'url_name' ] ) as $sort ) {
-				$keys = [ $sort => $sort ] + ( \in_array( $sort, self::NULLABLE, true ) ? [ "{$sort}_null" => "{$sort} IS NULL, {$sort}" ] : [] );
-				foreach ( $keys as $name => $columns ) {
-					$indexes[ "{$table}_{$name}" ]        = [ $table, $columns ];
-					$indexes[ "{$table}_server_{$name}" ] = [ $table, "server_id, {$columns}" ];
-				}
+		foreach ( self::LISTED['pages']['sorts'] as $sort ) {
+			$keys = [ $sort => self::sorted( 'pages', $sort ) ] + ( \in_array( $sort, self::NULLABLE, true ) ? [ "{$sort}_null" => [ "{$sort} IS NULL", $sort ] ] : [] );
+			foreach ( $keys as $name => $columns ) {
+				$indexes[ "pages_{$name}" ]        = [ 'pages', \implode( ', ', $columns ) ];
+				$indexes[ "pages_server_{$name}" ] = [ 'pages', \implode( ', ', [ 'server_id', ...$columns ] ) ];
 			}
 		}
 		return $indexes + [ 'urls_page' => [ 'urls', 'page_hash, worker' ] ];
@@ -276,28 +288,6 @@ final class Url_Snapshot {
 		[ $by_flag, $flagged ] = self::folded( Performance_CI_Node::URL_MEASURES, 'u.%s' );
 		[ $by_kind, $kinded ]  = self::folded( Performance_CI_Node::URL_MEASURES, 'CASE WHEN ' . self::KIND_KEEPS . ' THEN i.%s END' );
 		return \sprintf( self::PAGES_TABLE, \implode( ', ', $by_flag ), \implode( ', ', $flagged ), \implode( ', ', $by_kind ), \implode( ', ', $kinded ) );
-	}
-
-	/**
-	 * Each `requests` measure of `$names` as its `Stats_Query::fold()` named
-	 * for itself, and each column those folds read as its partial
-	 * `q_<column>`, `$partial` of the column's name.
-	 *
-	 * @param array<string> $names   Measures that fold.
-	 * @param string        $partial The partial's expression over the name `%s`.
-	 * @return array{0:array<string,string>, 1:array<string,string>} The partials, then the folds, each by name.
-	 */
-	private static function folded( array $names, string $partial ): array {
-		$partials = [];
-		$folds    = [];
-		foreach ( $names as $name ) {
-			[ $fold, $reads ] = Stats_Query::fold( 'requests', $name );
-			$folds[ $name ]   = "{$fold} AS {$name}";
-			foreach ( $reads as $read ) {
-				$partials[ $read ] = \sprintf( $partial, $read ) . " AS q_{$read}";
-			}
-		}
-		return [ $partials, $folds ];
 	}
 
 	/**
@@ -352,10 +342,44 @@ final class Url_Snapshot {
 	}
 
 	/**
-	 * One page of the URLs a view and scope keep, as `Stats_Query` answers a
-	 * `url` group with `URL_MEASURES` sorted by `$sort`, and beside it as
+	 * One listing of the pages a view and scope keep, as `Stats_Query`
+	 * answers a `page` and `server` group with `URL_MEASURES` sorted by
+	 * `$sort`, each row's `shapes` and `hash` after them, and beside it as
 	 * `also` the slowest `SLOWEST_ROWS` by `avg_ms`.
 	 *
+	 * @param string $server  Server to scope to; '' is every server.
+	 * @param bool   $workers Read Include Workers' rows; false reads the default view's.
+	 * @param string $sort    One of `Performance_CI_Node::PAGE_SORTS`' values.
+	 * @param string $order   'asc' or 'desc'.
+	 * @param int    $offset  Rows skipped, 0 to `Stats_Query::MAX_OFFSET`.
+	 * @param int    $limit   Rows answered, 1 to `Stats_Query::MAX_LIMIT`.
+	 * @return array{columns:list<string>, rows:list<list<mixed>>, available:true, also:list<list<mixed>>}
+	 * @throws \InvalidArgumentException On a sort, an order or a bound the
+	 *                                   live listing refuses.
+	 */
+	public function pages( string $server, bool $workers, string $sort, string $order, int $offset, int $limit ): array {
+		return $this->listed( 'pages', self::viewed( $server, $workers ), $sort, $order, $offset, $limit );
+	}
+
+	/**
+	 * The `pages` filter keeping a view over a scope: every row but the
+	 * other view's, the default view's `views` 2 or Include Workers' 1.
+	 *
+	 * @param string $server  Server to scope to; '' is every server.
+	 * @param bool   $workers Include Workers; false is the default view.
+	 * @return array<string,list<scalar>>
+	 */
+	private static function viewed( string $server, bool $workers ): array {
+		return [ 'views' => [ $workers ? 2 : 1 ] ] + Performance_CI_Node::scope( $server, true );
+	}
+
+	/**
+	 * One listing of a page's URLs a view and scope keep, as `Stats_Query`
+	 * answers a `url` group with `URL_MEASURES` filtered to the page, sorted
+	 * by `$sort`, and beside it as `also` the slowest `SLOWEST_ROWS` by
+	 * `avg_ms`.
+	 *
+	 * @param string $page    The page's hash.
 	 * @param string $server  Server to scope to; '' is every server.
 	 * @param bool   $workers Keep worker URLs; false leaves them out.
 	 * @param string $sort    One of `Performance_CI_Node::URL_SORTS`' values.
@@ -364,70 +388,175 @@ final class Url_Snapshot {
 	 * @param int    $limit   Rows answered, 1 to `Stats_Query::MAX_LIMIT`.
 	 * @return array{columns:list<string>, rows:list<list<mixed>>, available:true, also:list<list<mixed>>}
 	 * @throws \InvalidArgumentException On a sort, an order or a bound the
-	 *                                   live page refuses.
+	 *                                   live listing refuses.
 	 */
-	public function page( string $server, bool $workers, string $sort, string $order, int $offset, int $limit ): array {
+	public function shapes( string $page, string $server, bool $workers, string $sort, string $order, int $offset, int $limit ): array {
+		return $this->listed( 'urls', [ 'page' => [ $page ] ] + Performance_CI_Node::scope( $server, $workers ), $sort, $order, $offset, $limit );
+	}
+
+	/**
+	 * One listing of `$table`'s rows `$filter` keeps, in `Stats_Query`'s
+	 * columns for the table's group, and its slowest as `also`.
+	 *
+	 * @param string                     $table  A `LISTED` table.
+	 * @param array<string,list<scalar>> $filter Fields `SCOPED` maps, one value each.
+	 * @param string                     $sort   One of the table's sorts.
+	 * @param string                     $order  'asc' or 'desc'.
+	 * @param int                        $offset Rows skipped, 0 to `Stats_Query::MAX_OFFSET`.
+	 * @param int                        $limit  Rows answered, 1 to `Stats_Query::MAX_LIMIT`.
+	 * @return array{columns:list<string>, rows:list<list<mixed>>, available:true, also:list<list<mixed>>}
+	 * @throws \InvalidArgumentException On a sort, an order or a bound the
+	 *                                   live listing refuses.
+	 */
+	private function listed( string $table, array $filter, string $sort, string $order, int $offset, int $limit ): array {
 		if ( $limit < 1 || $limit > Stats_Query::MAX_LIMIT ) {
 			throw new \InvalidArgumentException( \esc_html( "limit {$limit} is outside 1.." . Stats_Query::MAX_LIMIT ) );
 		}
 		if ( $offset < 0 || $offset > Stats_Query::MAX_OFFSET ) {
 			throw new \InvalidArgumentException( \esc_html( "offset {$offset} is outside 0.." . Stats_Query::MAX_OFFSET ) );
 		}
-		[ $page, $binds ] = self::listing( $server, $workers, $sort, $order );
-		[ $slow ]         = self::listing( $server, $workers, 'avg_ms', 'desc' );
+		[ $sql, $binds ] = self::listing( $table, $filter, $sort, $order );
+		[ $slow ]        = self::listing( $table, $filter, 'avg_ms', 'desc' );
+		$group           = self::LISTED[ $table ]['group'];
 		return [
-			'columns'   => Stats_Query::columns( self::ANSWERED ),
-			'rows'      => Stats_Query::named( self::ANSWERED['group'], $this->db->rows( "{$page} LIMIT ? OFFSET ?", [ ...$binds, $limit, $offset ] ) ),
+			'columns'   => Stats_Query::columns(
+				[
+					'group'   => $group,
+					'measure' => [ ...Performance_CI_Node::URL_MEASURES, ...self::LISTED[ $table ]['after'] ],
+				]
+			),
+			'rows'      => Stats_Query::named( $group, $this->db->rows( "{$sql} LIMIT ? OFFSET ?", [ ...$binds, $limit, $offset ] ) ),
 			'available' => true,
-			'also'      => Stats_Query::named( self::ANSWERED['group'], $this->db->rows( "{$slow} LIMIT ?", [ ...$binds, Performance_CI_Node::SLOWEST_ROWS ] ) ),
+			'also'      => Stats_Query::named( $group, $this->db->rows( "{$slow} LIMIT ?", [ ...$binds, Performance_CI_Node::SLOWEST_ROWS ] ) ),
 		];
 	}
 
 	/**
-	 * The unpaged SELECT of the URLs a view and scope keep in a sort's order,
-	 * and its binds.
+	 * The unpaged SELECT of `$table`'s rows `$filter` keeps in a sort's
+	 * order, and its binds.
 	 *
-	 * @param string $server  Server to scope to; '' is every server.
-	 * @param bool   $workers Keep worker URLs; false leaves them out.
-	 * @param string $sort    One of `Performance_CI_Node::URL_SORTS`' values.
-	 * @param string $order   'asc' or 'desc'.
+	 * @param string                     $table  A `LISTED` table.
+	 * @param array<string,list<scalar>> $filter Fields `SCOPED` maps, one value each.
+	 * @param string                     $sort   One of the table's sorts.
+	 * @param string                     $order  'asc' or 'desc'.
 	 * @return array{0:string, 1:list<scalar>}
-	 * @throws \InvalidArgumentException On a sort or an order `urls` does not take.
+	 * @throws \InvalidArgumentException On a sort or an order the table does not take.
 	 */
-	private static function listing( string $server, bool $workers, string $sort, string $order ): array {
-		[ $where, $binds ] = self::where( Performance_CI_Node::scope( $server, $workers ) );
-		$named             = 'SELECT url, ( SELECT name FROM servers WHERE servers.id = urls.server_id ) AS server, path, ';
-		return [ $named . \implode( ', ', self::ANSWERED['measure'] ) . " FROM urls{$where} ORDER BY " . self::order( $sort, $order ), $binds ];
+	private static function listing( string $table, array $filter, string $sort, string $order ): array {
+		[ $where, $binds ] = self::where( $filter );
+		$selected          = [ self::LISTED[ $table ]['ahead'], ...Performance_CI_Node::URL_MEASURES, ...self::LISTED[ $table ]['after'] ];
+		return [ 'SELECT ' . \implode( ', ', $selected ) . " FROM {$table}{$where} ORDER BY " . self::order( $table, $sort, $order ), $binds ];
 	}
 
 	/**
-	 * The ORDER BY a sort and an order name, as `Stats_Query::ranking()`
-	 * ranks a sort, its ties broken by the rowid, which ranks as the hash.
+	 * The ORDER BY a sort and an order name over `$table`, as
+	 * `Stats_Query::ranking()` ranks a sort, its ties broken by the rowid,
+	 * which ranks as the hash.
 	 *
-	 * @param string $sort  One of `Performance_CI_Node::URL_SORTS`' values.
+	 * @param string $table A `LISTED` table.
+	 * @param string $sort  One of the table's sorts.
 	 * @param string $order 'asc' or 'desc'.
-	 * @throws \InvalidArgumentException On a sort or an order `urls` does not take.
+	 * @throws \InvalidArgumentException On a sort or an order the table does not take.
 	 */
-	private static function order( string $sort, string $order ): string {
-		if ( ! \in_array( $sort, Performance_CI_Node::URL_SORTS, true ) ) {
-			throw new \InvalidArgumentException( \esc_html( "unknown URL sort {$sort}: one of " . \implode( ', ', Performance_CI_Node::URL_SORTS ) ) );
+	private static function order( string $table, string $sort, string $order ): string {
+		if ( ! \in_array( $sort, self::LISTED[ $table ]['sorts'], true ) ) {
+			throw new \InvalidArgumentException( \esc_html( "unknown sort {$sort} for {$table}: one of " . \implode( ', ', self::LISTED[ $table ]['sorts'] ) ) );
 		}
 		if ( 'asc' !== $order && 'desc' !== $order ) {
 			throw new \InvalidArgumentException( \esc_html( "unknown order {$order}: asc or desc" ) );
 		}
-		$sorted = 'url_name' === $sort ? [ 'server_id', 'path' ] : [ $sort ];
-		return Stats_Query::ranking( $sorted, [ 'rowid' ], $order, \in_array( $sort, self::NULLABLE, true ) );
+		return Stats_Query::ranking( self::sorted( $table, $sort ), [ 'rowid' ], $order, \in_array( $sort, self::NULLABLE, true ) );
 	}
 
 	/**
-	 * The WHERE clause a scope filter names over `urls` through `SCOPED`,
-	 * and its binds; a server `servers` lacks keeps no URL.
+	 * The columns a sort of `$table` ranks by: the table's name columns for
+	 * its name sort, the sort's own column for any other.
 	 *
-	 * @param array<string,list<scalar>> $filter A `Performance_CI_Node::scope()` filter.
+	 * @param string $table A `LISTED` table.
+	 * @param string $sort  One of the table's sorts.
+	 * @return list<string>
+	 */
+	private static function sorted( string $table, string $sort ): array {
+		return self::LISTED[ $table ]['sorts']['url'] === $sort ? self::LISTED[ $table ]['named'] : [ $sort ];
+	}
+
+	/**
+	 * The totals of a page's URLs a view and scope keep, as `Stats_Query`
+	 * answers `Performance_CI_Node::URL_TOTALS` filtered to the page with no
+	 * group, folded off the page's `urls` rows: zeroes and null means where
+	 * the scope holds none of them.
+	 *
+	 * @param string $page    The page's hash.
+	 * @param string $server  Server to scope to; '' is every server.
+	 * @param bool   $workers Keep worker URLs; false leaves them out.
+	 * @return array{columns:list<string>, rows:list<list<mixed>>, available:true}
+	 */
+	public function shape_totals( string $page, string $server, bool $workers ): array {
+		[ $where, $binds ]     = self::where( [ 'page' => [ $page ] ] + Performance_CI_Node::scope( $server, $workers ) );
+		[ $partials, $totals ] = self::totals_of(
+			Performance_CI_Node::URL_TOTALS,
+			'%s',
+			[
+				'urls'  => 'COUNT( * )',
+				'pages' => 'COUNT( DISTINCT server_id )',
+			]
+		);
+		return [
+			'columns'   => Performance_CI_Node::URL_TOTALS,
+			'rows'      => $this->db->rows( 'SELECT ' . \implode( ', ', $totals ) . ' FROM ( SELECT server_id, ' . \implode( ', ', $partials ) . " FROM urls{$where} )", $binds ),
+			'available' => true,
+		];
+	}
+
+	/**
+	 * Each total of `$names` as its SQL, in their order: a count `$counts`
+	 * names as that count, and every other folded from the partials
+	 * `$partial` reads; and those partials.
+	 *
+	 * @param array<string>        $names   `URL_TOTALS` names, in their order.
+	 * @param string               $partial A partial's expression over the column `%s`.
+	 * @param array<string,string> $counts  The SQL counting each count among `$names`, by name.
+	 * @return array{0:array<string,string>, 1:list<string>} The partials, then the totals.
+	 */
+	private static function totals_of( array $names, string $partial, array $counts ): array {
+		[ $partials, $folds ] = self::folded( \array_diff( $names, \array_keys( $counts ) ), $partial );
+		foreach ( $counts as $name => $count ) {
+			$folds[ $name ] = "{$count} AS {$name}";
+		}
+		return [ $partials, \array_values( \array_map( static fn ( string $name ): string => $folds[ $name ], $names ) ) ];
+	}
+
+	/**
+	 * Each `requests` measure of `$names` as its `Stats_Query::fold()` named
+	 * for itself, and each column those folds read as its partial
+	 * `q_<column>`, `$partial` of the column's name.
+	 *
+	 * @param array<string> $names   Measures that fold.
+	 * @param string        $partial The partial's expression over the name `%s`.
+	 * @return array{0:array<string,string>, 1:array<string,string>} The partials, then the folds, each by name.
+	 */
+	private static function folded( array $names, string $partial ): array {
+		$partials = [];
+		$folds    = [];
+		foreach ( $names as $name ) {
+			[ $fold, $reads ] = Stats_Query::fold( 'requests', $name );
+			$folds[ $name ]   = "{$fold} AS {$name}";
+			foreach ( $reads as $read ) {
+				$partials[ $read ] = \sprintf( $partial, $read ) . " AS q_{$read}";
+			}
+		}
+		return [ $partials, $folds ];
+	}
+
+	/**
+	 * The WHERE clause a filter names through `SCOPED`, and its binds; a
+	 * server `servers` lacks keeps no row.
+	 *
+	 * @param array<string,list<scalar>> $filter Fields `SCOPED` maps.
 	 * @return array{0:string, 1:list<scalar>}
 	 * @throws \LogicException On a field `SCOPED` maps no clause for, or one
-	 *                         naming other than one value, which a scope the
-	 *                         snapshot ignored would leave a page unfiltered.
+	 *                         naming other than one value, which a filter the
+	 *                         snapshot ignored would leave a listing unfiltered.
 	 */
 	private static function where( array $filter ): array {
 		$clauses = [];

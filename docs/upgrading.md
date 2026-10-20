@@ -6,6 +6,22 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **`urls` and the MCP `performance_urls` tool list pages, not URLs.** A
+  page is a URL's lowercased host and path, and a row is one page on one
+  server, folding every query shape of it. A row carries `page_hash`
+  (`Log_Manager::url_hash()` of the page), `page`, `server`, `path` (the
+  page under its server) and `shapes` (the URLs folded), then the measures
+  a URL row carried. It no longer carries `url`. `hash` is the URL's hash
+  only where the page folds one shape; on a page of more it is null, so
+  key a row by `page_hash` and `server`, and never pass a `page_hash` where
+  a URL hash goes (`dump_url`, `?url=`, `ask url:`, `url=` filters). A
+  page's `worker` is true where any shape is a worker's. `rows` counts the
+  pages matching, `totals.pages` is new beside `totals.urls`, the `url` sort
+  orders by `page`, and `slowest` lists pages. For URL rows as `urls`
+  answered them before, ask `--filter=page=<page hash>`: it answers that
+  page's URLs, each with `hash`, `url` and the measures, and `rows` counts
+  them.
+
 - **This release needs newspack-nodes 2.112.0.** The overview-prefetch job
   publishes its URL snapshot through `Row_Table_Node::build()` and the verbs
   read it through `open_snapshot()`; below 2.112.0 the plugin goes dormant
