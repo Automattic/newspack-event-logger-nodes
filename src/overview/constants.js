@@ -78,7 +78,7 @@ export const CHART_METRIC_OPTIONS = [
  * unless a chip names the workers, so a series by it would draw one line.
  * `url` is a chip by hash; the URL modal is the place to chart one URL. It
  * is `suggested: false`: a reader reaches one URL through the URL table, and
- * a typed `url=<hash>` still filters.
+ * a typed `url=<hash>` still filters. `page` is the same, by the page's hash.
  *
  * @type {Array<{value: string, label: string, kind: 'series'|'filter', suggested?: boolean}>}
  */
@@ -91,6 +91,12 @@ const REQUEST_FIELDS = [
 	{
 		value: 'url',
 		label: __( 'URL Hash', 'newspack-event-logger-nodes' ),
+		kind: 'filter',
+		suggested: false,
+	},
+	{
+		value: 'page',
+		label: __( 'Page Hash', 'newspack-event-logger-nodes' ),
 		kind: 'filter',
 		suggested: false,
 	},

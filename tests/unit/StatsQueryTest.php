@@ -465,6 +465,42 @@ final class StatsQueryTest extends TestCase {
 		$this->assertStringNotContainsString( 'server_id=?', $plan );
 	}
 
+	/**
+	 * The page-filtered reads the URL table and its charts ask, each the
+	 * url-led index it reaches the rows by.
+	 *
+	 * @return array<string,array{0:array<string,mixed>,1:string}>
+	 */
+	public static function page_filtered_reads(): array {
+		return [
+			'requests totals'     => [ [ 'source' => 'requests', 'measure' => [ 'count', 'sum_ms' ] ], 'requests_url' ],
+			'requests by url'     => [ [ 'source' => 'requests', 'group' => [ 'url' ], 'measure' => [ 'count', 'sum_ms' ] ], 'requests_url' ],
+			'requests by bucket'  => [ [ 'source' => 'requests', 'group' => [ 'bucket' ], 'measure' => [ 'count', 'p95_ms' ] ], 'requests_url' ],
+			'timings by category' => [ [ 'source' => 'timings', 'group' => [ 'category' ], 'measure' => [ 'ms' ] ], 'timings_url' ],
+		];
+	}
+
+	/**
+	 * A page filter seeks the page's URLs through `urls_page`, then each
+	 * URL's rows over the window through the url-led index, rather than
+	 * walking the whole window and looking up every row's URL.
+	 *
+	 * @param array<string,mixed> $over The read.
+	 * @param string              $seeks The url-led index it seeks.
+	 */
+	#[DataProvider( 'page_filtered_reads' )]
+	public function test_a_page_filter_seeks_its_urls_then_their_rows( array $over, string $seeks ): void {
+		foreach ( [ 'https://kea.example/Hihi-6105/', 'https://kea.example/hihi-6105/?a=?', 'https://kea.example/kaka-6105/' ] as $i => $url ) {
+			$this->seed_request( [ 'url' => $url, 'server' => 'kea.example', 'ms' => 12.5 + $i ] );
+			$this->seed_timing( [ 'url' => $url, 'server' => 'kea.example', 'ms' => 12.5 + $i ] );
+		}
+		$plan = self::plan_of( self::spec( $over + [ 'filter' => [ 'page' => [ Log_Manager::url_hash( 'kea.example/hihi-6105/' ) ] ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertMatchesRegularExpression( '/^SEARCH u USING (COVERING )?INDEX urls_page \(page_hash=\?\)$/m', $plan );
+		$this->assertMatchesRegularExpression( "/^SEARCH t USING (COVERING )?INDEX {$seeks} \\(url_id=\\? AND bucket>\\? AND bucket<\\?\\)$/m", $plan );
+		$this->assertLessThan( \strpos( $plan, "INDEX {$seeks}" ), \strpos( $plan, 'INDEX urls_page' ), "the page's URLs drive the read:\n{$plan}" );
+	}
+
 	public function test_a_server_filter_answers_the_named_servers_rows(): void {
 		$this->seed_request( [ 'server' => 'kea-6102.example', 'ms' => 41.5 ] );
 		$this->seed_request( [ 'server' => 'kea-6102.example', 'ms' => 3.5 ], partition: 2 );
@@ -833,6 +869,153 @@ final class StatsQueryTest extends TestCase {
 		$this->assertSame( 'category_window', Stats_Query::table_for( $site ) );
 		$this->assertSame( [ [ 'sql', 42.5, 6, 2, 21.25, 3.0 ] ], Stats_Query::run( $by_url )['rows'] );
 		$this->assertSame( [ [ 'sql', 9999.0 ] ], Stats_Query::run( $site )['rows'] );
+	}
+
+	/**
+	 * A page groups every case and query shape of one host and path by its
+	 * hash, whichever partition filed each URL under whichever id, two of its
+	 * URLs sharing one partition, and answers its `page_name` beside it.
+	 * Every measure that composes sums by URL id first and still totals the
+	 * page exactly; a percentile and the distinct URL count read the rows
+	 * whole.
+	 */
+	public function test_requests_group_by_page_across_partitions(): void {
+		$this->seed_request( [ 'url' => 'https://kea.example/Kokako-5521/Times', 'server' => 'kea.example', 'ms' => 30.0 ] );
+		$this->seed_request( [ 'url' => 'https://kea.example/tui-5521/', 'server' => 'kea.example', 'ms' => 7.5 ], partition: 3 );
+		$this->seed_request( [ 'url' => 'https://kea.example/kokako-5521/times?day=?', 'server' => 'kea.example', 'ms' => 50.0 ], partition: 3 );
+		$this->seed_request( [ 'url' => 'https://kea.example/KOKAKO-5521/TIMES', 'server' => 'kea.example', 'ms' => 10.0, 'status' => 503, 'peak_mb' => 61.5, 'finished_at' => self::NOW - 5.5 ], partition: 3 );
+		$this->seed_request( [ 'url' => 'https://kea.example/kokako-5521/times', 'server' => 'kea.example', 'ms' => 70.0 ], partition: 2 );
+		$kokako  = 'kea.example/kokako-5521/times';
+		$tui     = 'kea.example/tui-5521/';
+		$opened  = (float) ( Bucket::id( self::NOW ) * Bucket::SECONDS );
+		$by_hash = static function ( array $rows ): array {
+			\usort( $rows, static fn ( array $a, array $b ): int => $a[0] <=> $b[0] );
+			return $rows;
+		};
+
+		$composed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'measure' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'max_peak_mb', 'count_5xx', 'last_seen' ], 'buckets' => $this->last_day() ] ) );
+		$whole    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'measure' => [ 'count', 'p50_ms', 'urls' ], 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( 'requests', $composed['table'] );
+		$this->assertSame( [ 'page', 'page_name', 'count', 'timed', 'sum_ms', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'max_peak_mb', 'count_5xx', 'last_seen' ], $composed['columns'] );
+		$this->assertSame(
+			$by_hash(
+				[
+					[ Log_Manager::url_hash( $kokako ), $kokako, 4, 4, 160.0, 40.0, 10.0, 70.0, 33.375, 61.5, 1, (float) self::NOW - 5.5 ],
+					[ Log_Manager::url_hash( $tui ), $tui, 1, 1, 7.5, 7.5, 7.5, 7.5, 24.0, 24.0, 0, $opened ],
+				]
+			),
+			$composed['rows']
+		);
+		$this->assertSame( $by_hash( [ [ Log_Manager::url_hash( $kokako ), $kokako, 4, 30.0, 4 ], [ Log_Manager::url_hash( $tui ), $tui, 1, 7.5, 1 ] ] ), $whole['rows'] );
+	}
+
+	/**
+	 * The page-grouped reads whose measures compose, on each source.
+	 *
+	 * @return array<string,array{0:array<string,mixed>}>
+	 */
+	public static function composed_page_groups(): array {
+		return [
+			'requests'           => [ [ 'source' => 'requests', 'group' => [ 'page' ], 'measure' => [ 'count', 'sum_ms', 'last_seen' ] ] ],
+			'requests by bucket' => [ [ 'source' => 'requests', 'group' => [ 'bucket', 'page' ], 'measure' => [ 'count' ] ] ],
+			'timings'            => [ [ 'source' => 'timings', 'group' => [ 'page', 'category' ], 'measure' => [ 'ms', 'calls' ] ] ],
+		];
+	}
+
+	/**
+	 * A page group whose measures compose sums each partition's rows by URL
+	 * id, then looks each id's page up once, as a `url` group does, rather
+	 * than looking a URL up for every row of the window.
+	 *
+	 * @param array<string,mixed> $over The read.
+	 */
+	#[DataProvider( 'composed_page_groups' )]
+	public function test_a_composed_page_group_sums_by_url_id_before_it_names_the_page( array $over ): void {
+		$this->seed_request( [ 'url' => 'https://kea.example/Hoiho-6106/' ] );
+		$this->seed_timing( [ 'url' => 'https://kea.example/Hoiho-6106/' ] );
+
+		$plan = self::plan_of( self::spec( $over + [ 'buckets' => $this->last_day() ] ) );
+
+		[ $per_row, $per_id ] = \explode( "\nSCAN g\n", $plan, 2 ) + [ 1 => '' ];
+		$this->assertStringNotContainsString( 'SEARCH u ', $per_row, "no row looks its URL up:\n{$plan}" );
+		$this->assertStringStartsWith( 'SEARCH u USING INTEGER PRIMARY KEY (rowid=?)', $per_id, "each id looks its URL up once:\n{$plan}" );
+	}
+
+	/** A page's name sorts its groups, and only a page group answers one. */
+	public function test_a_page_name_sort_orders_by_the_page(): void {
+		$pages = [ 'kea.example/weka-6630', 'kea.example/aaa-tui-6630', 'egret.example/moa-6630' ];
+		foreach ( $pages as $i => $page ) {
+			$this->seed_request( [ 'url' => 'https://' . \strtoupper( $page ), 'server' => \strtok( $page, '/' ) ], partition: $i );
+		}
+		$by_hash = $pages;
+		\usort( $by_hash, static fn ( string $a, string $b ): int => Log_Manager::url_hash( $a ) <=> Log_Manager::url_hash( $b ) );
+		$named = [ 'egret.example/moa-6630', 'kea.example/aaa-tui-6630', 'kea.example/weka-6630' ];
+		$this->assertNotSame( $named, $by_hash, 'the fixture is void unless hash order differs from name order' );
+
+		$asc  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'sort' => 'page_name', 'order' => 'asc', 'buckets' => $this->last_day() ] ) );
+		$desc = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'sort' => 'page_name', 'order' => 'desc', 'buckets' => $this->last_day() ] ) );
+
+		$this->assertSame( $named, \array_column( $asc['rows'], 1 ) );
+		$this->assertSame( \array_reverse( $named ), \array_column( $desc['rows'], 1 ) );
+		$this->expectException( \InvalidArgumentException::class );
+		$this->expectExceptionMessage( 'page_name' );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'page_name', 'buckets' => $this->last_day() ] ) );
+	}
+
+	/**
+	 * A `page` filter takes the page's hash and keeps every URL of that page,
+	 * any case or query shape, and a negated one keeps every other; a
+	 * timings question naming a page reads `timings`, the table holding URLs.
+	 */
+	public function test_a_page_filter_keeps_its_urls(): void {
+		$upper = 'https://kea.example/Weka-5521/';
+		$query = 'https://kea.example/weka-5521/?id=?';
+		$other = 'https://kea.example/weka-5521-other/';
+		$this->seed_request( [ 'url' => $upper, 'server' => 'kea.example', 'ms' => 20.0 ] );
+		$this->seed_request( [ 'url' => $query, 'server' => 'kea.example', 'ms' => 40.0 ], partition: 2 );
+		$this->seed_request( [ 'url' => $other, 'server' => 'kea.example', 'ms' => 900.0 ] );
+		$this->seed_timing( [ 'url' => $upper, 'server' => 'kea.example', 'category' => 'sql', 'ms' => 12.5 ], partition: 1 );
+		$this->seed_timing( [ 'url' => $other, 'server' => 'kea.example', 'category' => 'sql', 'ms' => 99.0 ] );
+		$page = Log_Manager::url_hash( 'kea.example/weka-5521/' );
+
+		$kept    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'sum_ms' ], 'sort' => 'url_name', 'buckets' => $this->last_day() ] ) );
+		$left    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'page!' => [ $page ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$timings = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+
+		$this->assertSame( [ [ Log_Manager::url_hash( $upper ), $upper, 20.0 ], [ Log_Manager::url_hash( $query ), $query, 40.0 ] ], $kept['rows'] );
+		$this->assertSame( [ [ Log_Manager::url_hash( $other ), $other, 900.0 ] ], $left['rows'] );
+		$this->assertSame( 'timings', Stats_Query::table_for( $timings ) );
+		$this->assertSame( [ [ 'sql', 12.5 ] ], Stats_Query::run( $timings )['rows'] );
+	}
+
+	/**
+	 * A question naming both a URL and its page joins `urls` once, so its
+	 * alias never collides: grouped by both, merged or whole, and listed
+	 * under a page filter, where the listing's URL input joins it too.
+	 */
+	public function test_url_and_page_named_together_join_urls_once(): void {
+		$upper = 'https://kea.example/Ruru-5521';
+		$lower = 'https://kea.example/ruru-5521';
+		$this->seed_request( [ 'url' => $upper, 'server' => 'kea.example', 'ms' => 10.0 ] );
+		$this->seed_request( [ 'url' => $lower, 'server' => 'kea.example', 'ms' => 30.0 ], partition: 1 );
+		$this->seed_request( [ 'url' => $lower, 'server' => 'kea.example', 'ms' => 50.0 ], partition: 1 );
+		$name = 'kea.example/ruru-5521';
+		$page = Log_Manager::url_hash( $name );
+		$rows = static function ( float $upper_ms, float $lower_ms ) use ( $page, $name, $upper, $lower ): array {
+			$rows = [ [ $page, $name, Log_Manager::url_hash( $upper ), $upper, $upper_ms ], [ $page, $name, Log_Manager::url_hash( $lower ), $lower, $lower_ms ] ];
+			\usort( $rows, static fn ( array $a, array $b ): int => $a[2] <=> $b[2] );
+			return $rows;
+		};
+
+		$composed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page', 'url' ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$whole    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page', 'url' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'p50_ms' ], 'buckets' => $this->last_day() ] ) );
+		$listed   = Stats_Query::newest_requests( [ 'page' => [ $page ] ], $this->last_day(), 10 );
+
+		$this->assertSame( [ 'page', 'page_name', 'url', 'url_name', 'sum_ms' ], $composed['columns'] );
+		$this->assertSame( $rows( 10.0, 80.0 ), $composed['rows'] );
+		$this->assertSame( $rows( 10.0, 30.0 ), $whole['rows'] );
+		$this->assertSame( 3, \count( $listed ) );
 	}
 
 	public function test_site_timings_group_by_worker_entry_and_listener(): void {

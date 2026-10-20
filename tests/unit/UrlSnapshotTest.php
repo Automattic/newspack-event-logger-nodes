@@ -15,6 +15,7 @@ use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
@@ -714,6 +715,30 @@ final class UrlSnapshotTest extends TestCase {
 				],
 			],
 		];
+	}
+
+	/**
+	 * `into_statement()` stores a page group as its hash `page` and its
+	 * `page_name`, one row however many partitions hold its URLs, and
+	 * `named()` reads that layout back as an answer's columns.
+	 */
+	public function test_into_stores_a_page_as_its_hash_and_its_name(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/Hoiho-7718/?a=?' ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/hoiho-7718/' ], partition: 2 );
+		$spec = self::count_spec( [ 'group' => [ 'page' ] ] );
+
+		$stored = Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			'into-scratch-7718',
+			static function ( Row_Reader $db ) use ( $spec ): array {
+				$db->rows( ...Stats_Query::into_statement( $db, 'pages', $spec ) );
+				return [ \array_column( $db->rows( 'PRAGMA table_info( pages )', [] ), 1 ), $db->rows( 'SELECT * FROM pages', [] ) ];
+			}
+		);
+
+		$page = 'seed.example/hoiho-7718/';
+		$this->assertSame( [ 'page', 'page_name', 'count' ], $stored[0] );
+		$this->assertSame( [ [ Log_Manager::url_hash( $page ), $page, 2 ] ], Stats_Query::named( [ 'page' ], $stored[1] ) );
 	}
 
 	public function test_into_refuses_a_builder_attaching_no_partition(): void {
