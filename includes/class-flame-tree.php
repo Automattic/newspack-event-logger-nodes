@@ -87,6 +87,15 @@ final class Flame_Tree {
 	/** The build's step folding the URLs into `totals`. */
 	public const SNAPSHOT_TOTALS = 'snapshot totals';
 
+	/** A performance reader's span over one `App\Stats_Query` read of the stats rows. */
+	public const STATS_QUERY = 'stats query';
+
+	/** A performance reader's span walking one partition's flame index for rids. */
+	public const FLAME_LOOKUP = 'flame lookup';
+
+	/** `grep_requests`' span draining one firehose partition. */
+	public const GREP_SCAN = 'grep scan';
+
 	/**
 	 * Every name above: its hook category (a key of `hook_categories.json`
 	 * `_colors`, so an operator recolouring a category recolours its spans),
@@ -98,9 +107,11 @@ final class Flame_Tree {
 	 * category of their own so the inner frames stand out: the flame
 	 * builder's sweep runs a flush and so holds every other flush span, and
 	 * takes Event Logger Shutdown; the snapshot build holds its steps, and
-	 * takes Event Logger Snapshot. All three are this plugin's own
-	 * categories, described and pattern-free like `Other`, so no third-party
-	 * hook category's colour moves a platform span.
+	 * takes Event Logger Snapshot. The performance readers' reads nest inside
+	 * a verb's command span or a prefetch answer, and take Event Logger
+	 * Reads. All four are this plugin's own categories, described and
+	 * pattern-free like `Other`, so no third-party hook category's colour
+	 * moves a platform span.
 	 *
 	 * @var array<string,array{0: string, 1: 'upkeep'|null}>
 	 */
@@ -117,7 +128,21 @@ final class Flame_Tree {
 		self::SNAPSHOT_COPY       => [ 'Event Logger', 'upkeep' ],
 		self::SNAPSHOT_INDEX      => [ 'Event Logger', 'upkeep' ],
 		self::SNAPSHOT_TOTALS     => [ 'Event Logger', 'upkeep' ],
+		self::STATS_QUERY         => [ 'Event Logger Reads', 'upkeep' ],
+		self::FLAME_LOOKUP        => [ 'Event Logger Reads', 'upkeep' ],
+		self::GREP_SCAN           => [ 'Event Logger Reads', 'upkeep' ],
 	];
+
+	/**
+	 * The `span_kind()`s a rule names: a hook, a transport or a custom event.
+	 * Each one's `l` label names what a repeat is judged by — a custom
+	 * event's the work, a hook's the caller `App\Core::origin_frame()` finds
+	 * under `trace_hooks`, a transport's the code that ran the query or the
+	 * call — and `significant_events` or a disable list acts on it.
+	 *
+	 * @var list<string>
+	 */
+	public const RULE_BOUND_KINDS = [ 'custom', 'hook', 'transport' ];
 
 	/** What `listener_name()` puts between a listener's callable and its priority. */
 	private const LISTENER_SEPARATOR = ' @';
@@ -584,53 +609,52 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * Whether a span is one of the logger's own round trips — a query
-	 * (decision 22) or an outbound HTTP call (decision 20) — rather than a
-	 * hook, a listener or a custom event the application logs.
-	 *
-	 * The vocabulary the fold needs lives here, beside the naming both machines
-	 * compose spans with, because `Flame_Fold` folds a Perl or pyrobase
-	 * producer's entries as readily as `App\Core`'s and must not reach up into
-	 * one of them to ask; `App\Core` mints the names and reads the shapes here.
+	 * Whether a rule names a span — a hook, a transport or a custom event —
+	 * so its `l` label names what a repeat is judged by. A plugin load, a
+	 * command verb and the plugin's own work are logged whatever the rule
+	 * says, and a listener only because its hook is significant.
 	 *
 	 * @param string $span A span name, as the flame carries it.
 	 * @return bool
 	 */
-	public static function is_transport_span( string $span ): bool {
-		return \in_array( self::base_name( $span ), [ self::SQL_STATE, self::HTTP_STATE ], true );
+	public static function rule_binds( string $span ): bool {
+		return \in_array( self::span_kind( $span ), self::RULE_BOUND_KINDS, true );
 	}
 
 	/**
-	 * Whether a span belongs to a hook, as `App\Core::hook_start()` names one — by
-	 * the suffix on its base, so a traced frame carrying its caller answers.
+	 * The seven kinds of span the flame carries, classified once so auto-tune
+	 * and every `Findings` reader agree. A custom event has no listeners,
+	 * and prose crediting it with any sends the reader hunting a callback
+	 * that does not exist. A query or HTTP span is the logger's own
+	 * measurement, a plugin span is one plugin file's load, a command span is
+	 * the frame of one verb, and an upkeep span is the plugin's own work;
+	 * the last three are logged whatever the rule says, and calling any of
+	 * these a custom event proposes a rule edit that changes nothing. A hook
+	 * is known by its BASE name: with hook tracing on, the frame carries the
+	 * caller too.
 	 *
 	 * @param string $span A span name, as the flame carries it.
-	 * @return bool
+	 * @return 'transport'|'plugin'|'command'|'upkeep'|'hook'|'listener'|'custom'
 	 */
-	public static function is_hook_span( string $span ): bool {
-		return \str_ends_with( self::base_name( $span ), self::HOOK_SUFFIX );
-	}
-
-	/**
-	 * The `Findings` kind of one of the platform's own spans, told whatever
-	 * the rule says, so no rule edit reaches inside it: `upkeep`. Null for
-	 * anything else, a point event's name included.
-	 *
-	 * @param string $span A span name, as the flame carries it.
-	 * @return 'upkeep'|null
-	 */
-	public static function platform_span_kind( string $span ): ?string {
-		return self::PLATFORM[ self::base_name( $span ) ][1] ?? null;
-	}
-
-	/**
-	 * Whether a span belongs to one command verb, as `Diagnostics_Bridge` names it.
-	 *
-	 * @param string $span A span name, as the flame carries it.
-	 * @return bool
-	 */
-	public static function is_command_span( string $span ): bool {
-		return \str_ends_with( self::base_name( $span ), self::COMMAND_SUFFIX );
+	public static function span_kind( string $span ): string {
+		$base = self::base_name( $span );
+		if ( self::is_transport_span( $base ) ) {
+			return 'transport';
+		}
+		if ( self::is_plugin_load_span( $base ) ) {
+			return 'plugin';
+		}
+		if ( \str_ends_with( $base, self::COMMAND_SUFFIX ) ) {
+			return 'command';
+		}
+		$platform = self::PLATFORM[ $base ][1] ?? null;
+		if ( null !== $platform ) {
+			return $platform;
+		}
+		if ( self::is_hook_span( $base ) ) {
+			return 'hook';
+		}
+		return self::is_listener_span( $base ) ? 'listener' : 'custom';
 	}
 
 	/**
@@ -645,6 +669,17 @@ final class Flame_Tree {
 	}
 
 	/**
+	 * Whether a span belongs to a hook, as `App\Core::hook_start()` names one — by
+	 * the suffix on its base, so a traced frame carrying its caller answers.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_hook_span( string $span ): bool {
+		return \str_ends_with( self::base_name( $span ), self::HOOK_SUFFIX );
+	}
+
+	/**
 	 * Whether a span is one plugin file's load, as the profiler drop-in times
 	 * it. A slug is one token, which keeps an application's own multi-word
 	 * event that happens to end in "plugin" out.
@@ -654,6 +689,23 @@ final class Flame_Tree {
 	 */
 	public static function is_plugin_load_span( string $span ): bool {
 		return 1 === \preg_match( self::PLUGIN_LOAD_PATTERN, self::base_name( $span ) );
+	}
+
+	/**
+	 * Whether a span is one of the logger's own round trips — a query
+	 * (decision 22) or an outbound HTTP call (decision 20) — rather than a
+	 * hook, a listener or a custom event the application logs.
+	 *
+	 * The vocabulary the fold needs lives here, beside the naming both machines
+	 * compose spans with, because `Flame_Fold` folds a Perl or pyrobase
+	 * producer's entries as readily as `App\Core`'s and must not reach up into
+	 * one of them to ask; `App\Core` mints the names and reads the shapes here.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_transport_span( string $span ): bool {
+		return \in_array( self::base_name( $span ), [ self::SQL_STATE, self::HTTP_STATE ], true );
 	}
 
 	/**

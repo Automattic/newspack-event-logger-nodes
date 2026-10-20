@@ -460,11 +460,11 @@ class FlameTreeTest extends TestCase {
 	}
 
 	/** A verb's span is `<class> <verb> command`, read by its base's suffix. */
-	public function test_is_command_span_reads_the_suffix(): void {
-		$this->assertTrue( Flame_Tree::is_command_span( 'Performance_CI urls' . Flame_Tree::COMMAND_SUFFIX ) );
-		$this->assertTrue( Flame_Tree::is_command_span( 'Rules_CI dump command: traced' ) );
-		$this->assertFalse( Flame_Tree::is_command_span( 'Performance_CI urls' ) );
-		$this->assertFalse( Flame_Tree::is_command_span( 'wp_loaded hook' ) );
+	public function test_a_command_span_is_read_by_its_suffix(): void {
+		$this->assertSame( 'command', Flame_Tree::span_kind( 'Performance_CI urls' . Flame_Tree::COMMAND_SUFFIX ) );
+		$this->assertSame( 'command', Flame_Tree::span_kind( 'Rules_CI dump command: traced' ) );
+		$this->assertNotSame( 'command', Flame_Tree::span_kind( 'Performance_CI urls' ) );
+		$this->assertNotSame( 'command', Flame_Tree::span_kind( 'wp_loaded hook' ) );
 	}
 
 	/** Every platform span, spelled out, so a dropped or added row fails here. */
@@ -472,12 +472,14 @@ class FlameTreeTest extends TestCase {
 		'stats writes', 'stats sweep',
 		'requests writes', 'requests checkpoint', 'requests restore', 'requests expire',
 		'prefetch answer', 'snapshot build', 'snapshot group', 'snapshot copy', 'snapshot index', 'snapshot totals',
+		'stats query', 'flame lookup', 'grep scan',
 	];
 
 	/**
 	 * Nested pairs, derived from the code: `Flame_Builder_Node::shutdown_sweep()`
-	 * spans `STATS_SWEEP` around a flush, which tells the writes, and
-	 * `Url_Snapshot::publish()` spans `SNAPSHOT_BUILD` around its steps.
+	 * spans `STATS_SWEEP` around a flush, which tells the writes,
+	 * `Url_Snapshot::publish()` spans `SNAPSHOT_BUILD` around its steps, and
+	 * each `PREFETCH_ANSWER` asks the stats rows its `STATS_QUERY`s.
 	 */
 	private const NESTED_PAIRS = [
 		[ 'stats sweep', 'stats writes' ],
@@ -486,6 +488,7 @@ class FlameTreeTest extends TestCase {
 		[ 'snapshot build', 'snapshot index' ],
 		[ 'snapshot build', 'snapshot totals' ],
 		[ 'snapshot build', 'prefetch answer' ],
+		[ 'prefetch answer', 'stats query' ],
 	];
 
 	/** The base `hook_categories.json` colours, keyed by category. */
@@ -563,7 +566,7 @@ class FlameTreeTest extends TestCase {
 	/** Every platform category ships in the JSON, and the builders' own carry a description and no pattern. */
 	public function test_every_platform_category_ships_in_hook_categories_json(): void {
 		$base = Hook_Categorizer::get_base_config();
-		foreach ( [ 'Event Logger', 'Event Logger Shutdown', 'Event Logger Snapshot' ] as $category ) {
+		foreach ( [ 'Event Logger', 'Event Logger Shutdown', 'Event Logger Snapshot', 'Event Logger Reads' ] as $category ) {
 			$this->assertArrayHasKey( $category, $base['_colors'] );
 			$this->assertNotEmpty( $base['_descriptions'][ $category ] ?? '', "{$category} is described" );
 			$this->assertArrayNotHasKey( $category, $base['_patterns'], "{$category} claims no hook" );
@@ -575,6 +578,9 @@ class FlameTreeTest extends TestCase {
 		$this->assertSame( $base['_colors']['Event Logger'], $colors['snapshot index'] );
 		$this->assertSame( $base['_colors']['Event Logger'], $colors['prefetch answer'] );
 		$this->assertSame( $base['_colors']['Event Logger Snapshot'], $colors['snapshot build'] );
+		foreach ( [ 'stats query', 'flame lookup', 'grep scan' ] as $span ) {
+			$this->assertSame( $base['_colors']['Event Logger Reads'], $colors[ $span ], $span );
+		}
 	}
 
 	public function test_every_platform_fill_holds_four_and_a_half_to_one_under_its_flame_label(): void {
@@ -592,6 +598,14 @@ class FlameTreeTest extends TestCase {
 
 	public function test_no_platform_colour_is_the_command_spans(): void {
 		$this->assertNotContains( '#905665', \array_map( 'strtolower', Flame_Tree::platform_colors() ) );
+	}
+
+	/** A verb's reads nest inside its command span, so they stand out from it. */
+	public function test_the_reads_differ_from_the_command_spans_by_twenty_delta_e_or_more(): void {
+		$colors = Flame_Tree::platform_colors();
+		foreach ( [ 'stats query', 'flame lookup', 'grep scan' ] as $span ) {
+			$this->assertGreaterThanOrEqual( 20.0, $this->delta_e( '#905665', $colors[ $span ] ), $span );
+		}
 	}
 
 	/** An operator recolouring a category recolours its spans; a custom colour of the span's own name still wins. */
@@ -677,12 +691,39 @@ class FlameTreeTest extends TestCase {
 	}
 
 	/** The builders' and the prefetch job's own upkeep spans — never their point lines, a verb or a hook. */
-	public function test_platform_span_kind_names_the_builders_upkeep(): void {
-		foreach ( [ Flame_Tree::STATS_SWEEP . ' (complete)', Flame_Tree::STATS_SWEEP . ': 3', Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE, Flame_Tree::PREFETCH_ANSWER, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_GROUP, Flame_Tree::SNAPSHOT_COPY, Flame_Tree::SNAPSHOT_INDEX . ': urls_server_avg_ms', Flame_Tree::SNAPSHOT_TOTALS ] as $span ) {
-			$this->assertSame( 'upkeep', Flame_Tree::platform_span_kind( $span ), $span );
+	public function test_span_kind_names_the_plugins_own_spans_upkeep(): void {
+		foreach ( [ Flame_Tree::STATS_SWEEP . ' (complete)', Flame_Tree::STATS_SWEEP . ': 3', Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::REQUESTS_RESTORE, Flame_Tree::PREFETCH_ANSWER, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_GROUP, Flame_Tree::SNAPSHOT_COPY, Flame_Tree::SNAPSHOT_INDEX . ': urls_server_avg_ms', Flame_Tree::SNAPSHOT_TOTALS, Flame_Tree::STATS_QUERY . ': timings by category', Flame_Tree::FLAME_LOOKUP, Flame_Tree::GREP_SCAN . ': firehose.p0' ] as $span ) {
+			$this->assertSame( 'upkeep', Flame_Tree::span_kind( $span ), $span );
 		}
 		foreach ( [ Flame_Tree::STATS_WRITES, Flame_Tree::REQUESTS_WRITES, Flame_Tree::REQUESTS_EXPIRE, 'stats sweeps', 'Discovery_CI get command', 'wp_loaded hook', 'sql' ] as $span ) {
-			$this->assertNull( Flame_Tree::platform_span_kind( $span ), $span );
+			$this->assertNotSame( 'upkeep', Flame_Tree::span_kind( $span ), $span );
+		}
+	}
+
+	/** Each of the seven kinds, read off the base so a labelled frame answers too. */
+	public function test_span_kind_names_each_kind_by_its_base(): void {
+		$kinds = [
+			'sql: wpdb_query_caller'           => 'transport',
+			'http'                             => 'transport',
+			'woocommerce plugin'               => 'plugin',
+			'Performance_CI dump_url command'  => 'command',
+			Flame_Tree::SNAPSHOT_INDEX . ': i' => 'upkeep',
+			'init hook: theme.php:12'          => 'hook',
+			'wp_head @-5'                      => 'listener',
+			'render page'                      => 'custom',
+		];
+		foreach ( $kinds as $span => $kind ) {
+			$this->assertSame( $kind, Flame_Tree::span_kind( $span ), $span );
+		}
+	}
+
+	/** Only what a rule binds by name — a hook, a transport, a custom event — is one auto-tune acts on. */
+	public function test_a_rule_binds_a_hook_a_transport_or_a_custom_event_alone(): void {
+		foreach ( [ 'init hook', 'sql', 'render page' ] as $span ) {
+			$this->assertTrue( Flame_Tree::rule_binds( $span ), $span );
+		}
+		foreach ( [ 'woocommerce plugin', 'Rules_CI dump command', Flame_Tree::PREFETCH_ANSWER, 'wp_head @10' ] as $span ) {
+			$this->assertFalse( Flame_Tree::rule_binds( $span ), $span );
 		}
 	}
 

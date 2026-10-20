@@ -651,7 +651,8 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			if ( ! \is_string( $category ) || ! \is_array( $data ) ) {
 				continue;
 			}
-			$listener = Flame_Tree::is_listener_span( $category ) ? 1 : 0;
+			$kind     = Flame_Tree::span_kind( $category );
+			$listener = 'listener' === $kind ? 1 : 0;
 			$time     = Core::num_float( $data['time'] ?? 0 );
 			$calls    = Core::num_int( $data['count'] ?? 0 );
 			$rows[]   = [ $category, '', $listener, $time, $calls ];
@@ -660,7 +661,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 				$rows[] = [ $category, (string) $name, $listener, Core::num_float( $entry[0] ?? 0 ), Core::num_int( $entry[1] ?? 0 ) ];
 			}
 			if ( $tunes ) {
-				$this->tune( $rule, $category, $time, $calls );
+				$this->tune( $rule, $category, $kind, $time, $calls );
 			}
 		}
 		return $rows;
@@ -684,19 +685,22 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * mix a job's calls with a page's there. Noisy: this request called
 	 * it more often than the count threshold, and it is disabled as a
 	 * custom event when the rule logs it as one, else as a hook.
-	 * A listener or a plugin-load span is a view auto-tune cannot act on.
+	 * Only a span the rule binds by name is one auto-tune acts on; any
+	 * other keeps its sums and goes no further (`Flame_Tree::RULE_BOUND_KINDS`).
+	 * A transport is promoted but never disabled: no hook list holds it.
 	 *
 	 * @param Rule   $rule     The request's governing log rule.
 	 * @param string $category The category as logged.
+	 * @param string $kind     Its `Flame_Tree::span_kind()`.
 	 * @param float  $time     Its ms in this request.
 	 * @param int    $calls    Its calls in this request.
 	 */
-	private function tune( Rule $rule, string $category, float $time, int $calls ): void {
+	private function tune( Rule $rule, string $category, string $kind, float $time, int $calls ): void {
 		$sums = $this->category_sums[ $rule->id ][ $category ] ?? [ 0.0, 0 ];
 		$sums = [ $sums[0] + $time, $sums[1] + $calls ];
 
 		$this->category_sums[ $rule->id ][ $category ] = $sums;
-		if ( Flame_Tree::is_listener_span( $category ) || Flame_Tree::is_plugin_load_span( $category ) ) {
+		if ( ! \in_array( $kind, Flame_Tree::RULE_BOUND_KINDS, true ) ) {
 			return;
 		}
 		$base = Flame_Tree::hook_name( $category );
@@ -706,7 +710,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$this->significant_events[ $rule->id ][ $base ]                    = true;
 			$this->auto_tune['add_significant_events'][ $rule->id ][ $base ] = true;
 		}
-		if ( $rule->auto_disable_threshold > 0 && $calls > $rule->auto_disable_threshold ) {
+		if ( 'transport' !== $kind && $rule->auto_disable_threshold > 0 && $calls > $rule->auto_disable_threshold ) {
 			$kind                                        = \in_array( $base, $rule->custom_events, true ) ? 'disable_custom_events' : 'disable_hooks';
 			$this->auto_tune[ $kind ][ $rule->id ][ $base ] = true;
 		}

@@ -1838,6 +1838,48 @@ class FlameBuilderTest extends TestCase {
 		$this->assertEmpty( $state['disable_hooks'], 'callback categories never proposed' );
 	}
 
+	/**
+	 * A verb's frame and the plugin's own spans are logged whatever the rule
+	 * says, so auto-tune neither promotes nor disables them; a transport span,
+	 * which `significant_events` gives meaning, still tunes beside them.
+	 */
+	public function test_command_and_platform_spans_are_skipped_from_auto_tune(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 61, 'auto_protect_time_threshold' => 0.05 ] );
+		$fb    = $this->unarmed_builder();
+		$heavy = [ 'time' => 16.7, 'count' => 73, 'entries' => [] ];
+
+		$this->fill_request( $fb, $this->completed_request( [
+			'profiles' => [
+				'Performance_CI dump_url command' => $heavy,
+				Flame_Tree::PREFETCH_ANSWER      => $heavy,
+				Flame_Tree::SNAPSHOT_INDEX       => $heavy,
+				Flame_Tree::STATS_SWEEP          => $heavy,
+				Flame_Tree::SQL_STATE            => [ 'time' => 0.4, 'count' => 2, 'entries' => [] ],
+			],
+		] ) );
+
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [ Flame_Tree::SQL_STATE ], $state['add_significant_events']['r'] );
+		$this->assertArrayNotHasKey( 'r', $state['disable_hooks'] );
+		$this->assertArrayNotHasKey( 'r', $state['disable_custom_events'] );
+	}
+
+	/** No hook list holds a transport, so a noisy one is never disabled. */
+	public function test_a_noisy_transport_is_never_disabled(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 61 ] );
+		$fb = $this->unarmed_builder();
+
+		$this->fill_request( $fb, $this->completed_request( [
+			'profiles' => [
+				Flame_Tree::SQL_STATE  => [ 'time' => 3.1, 'count' => 452, 'entries' => [] ],
+				Flame_Tree::HTTP_STATE => [ 'time' => 2.6, 'count' => 97, 'entries' => [] ],
+				'kakapo_render hook'   => [ 'time' => 1.3, 'count' => 88, 'entries' => [] ],
+			],
+		] ) );
+
+		$this->assertSame( [ 'r' => [ 'kakapo_render' ] ], $fb->get_auto_tune_state()['disable_hooks'] );
+	}
+
 	public function test_significant_event_detection_picks_up_slow_avg(): void {
 		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] ); // 50ms threshold
 		$fb = $this->unarmed_builder();

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A slow performance verb shows where its time goes.** A 16.7 s `dump_url` on staging held one `Performance_CI dump_url command` span and nothing inside. Each read a verb or a prefetch answer runs is now a span inside it: a `stats query` per `Stats_Query` read, labelled `l` with its source, groups and a page's offset (`timings by category,listener offset 1000`; `requests newest` and `requests by rid` for the two listings) and closing `<n> rows` or `unavailable`; a `flame lookup` per partition `stored_flames()` walks, labelled with its partition (`flames.p3`) and closing `<n> of <m> found` or `cut`; and a `grep scan` per firehose partition `grep_requests` drains, labelled `firehose.p0` and closing `<n> lines`, plus ` · cut` where its budget ran out. All three are `Flame_Tree` platform names of kind `upkeep` in a new Event Logger Reads category (`#5B4B8A`), which stands out inside a prefetch answer and a command span alike.
+
+### Changed
+- **Auto-tune never acts on a command or platform span.** `Flame_Builder_Node::tune()` skipped listener and plugin-load spans alone, so it promoted verb frames such as `Performance_CI dump_url command` into a rule's `significant_events`, and could put them on `disable_hooks`, where neither does anything. It now acts only on a span a rule names, a hook, a transport or a custom event (`Flame_Tree::RULE_BOUND_KINDS`), and never puts a transport on `disable_hooks`, where `sql` or `http` likewise changed nothing. `Findings::span_kind()` moves to `Flame_Tree::span_kind()`, so `Findings` and auto-tune classify a span once, by one table. Names auto-tune already promoted stay on their rules until an operator removes them.
+- **The `upkeep` advice is true of every span it covers.** It called each one a step of a builder's upkeep whose `(complete)` line counts what it wrote, folded or healed, which the prefetch, snapshot and read spans are not; it now calls each the event logger's own work, whose `(complete)` line says what came of it.
+
 ## [0.146.2] - 2026-10-19
 
 ### Changed

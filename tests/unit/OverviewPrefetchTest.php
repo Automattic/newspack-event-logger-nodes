@@ -248,6 +248,35 @@ final class OverviewPrefetchTest extends TestCase {
 		);
 	}
 
+	/** Each answer holds the stats queries it asked, so its time reads as theirs. */
+	public function test_each_answer_holds_the_stats_queries_it_asked(): void {
+		$answers = \array_filter(
+			self::flame_nodes( Flame_Tree::build_flame_data( $this->logged_job() ) ),
+			static fn ( array $node ): bool => \str_starts_with( Core::as_string( $node['name'] ), Flame_Tree::PREFETCH_ANSWER )
+		);
+
+		$this->assertCount( 7, $answers );
+		foreach ( $answers as $answer ) {
+			$queries = \array_filter( self::flame_names( $answer ), static fn ( string $name ): bool => \str_starts_with( $name, Flame_Tree::STATS_QUERY . ': ' ) );
+			$this->assertNotEmpty( $queries, Core::as_string( $answer['name'] ) );
+		}
+	}
+
+	/**
+	 * Every node under a flame node, depth first.
+	 *
+	 * @param array<array-key,mixed> $node A flame node.
+	 * @return list<array<array-key,mixed>>
+	 */
+	private static function flame_nodes( array $node ): array {
+		$nodes = [];
+		foreach ( Core::arr( $node['children'] ?? [] ) as $child ) {
+			$child = Core::arr( $child );
+			\array_push( $nodes, $child, ...self::flame_nodes( $child ) );
+		}
+		return $nodes;
+	}
+
 	/**
 	 * Every node name under a flame node, depth first.
 	 *
@@ -255,12 +284,7 @@ final class OverviewPrefetchTest extends TestCase {
 	 * @return list<string>
 	 */
 	public static function flame_names( array $node ): array {
-		$names = [];
-		foreach ( Core::arr( $node['children'] ?? [] ) as $child ) {
-			$child = Core::arr( $child );
-			\array_push( $names, Core::as_string( $child['name'] ?? '' ), ...self::flame_names( $child ) );
-		}
-		return $names;
+		return \array_map( static fn ( array $child ): string => Core::as_string( $child['name'] ?? '' ), self::flame_nodes( $node ) );
 	}
 
 	/** A template naming its server where `templated()` cannot find it would store answers no poll reads, so the job refuses it. */
