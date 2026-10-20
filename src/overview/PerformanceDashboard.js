@@ -84,6 +84,7 @@ import {
 } from '@newspack-nodes/shared/hooks/useQueryParamState';
 import { setQueryParams } from '@newspack-nodes/shared/utils/queryParams';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
+import { useDismissable } from '@newspack-nodes/shared/hooks/useDismissable';
 import OverviewSection from './components/OverviewSection';
 import { chipRefusal, chipsOf } from './components/BreakdownControls';
 import UrlDetailView, {
@@ -113,6 +114,21 @@ const UNKNOWN_URL = () => __( 'Unknown URL', 'newspack-event-logger-nodes' );
 import './styles/modal.scss';
 import './styles/tables.scss';
 import './styles/charts.scss';
+
+/** A held click is no element, so only Escape dismisses it. */
+const NO_ELEMENT = { current: null };
+
+/**
+ * A one-request click held until its request opens, which Escape cancels.
+ *
+ * @param {Object}     props          Component props.
+ * @param {() => void} props.onCancel Cancels the held click.
+ * @return {null} Nothing: it only listens.
+ */
+function HeldClick( { onCancel } ) {
+	useDismissable( NO_ELEMENT, onCancel );
+	return null;
+}
 
 /**
  * Order two request rows by one column in one direction. A null duration,
@@ -610,7 +626,9 @@ export default function PerformanceDashboard( {
 			return;
 		}
 		setOneRequest( null );
-		const rid = urlDetail.requests?.[ 0 ]?.rid;
+		// The row may be stale; the answer says whether it is one request.
+		const rid =
+			1 === urlDetail.stats.count ? urlDetail.requests?.[ 0 ]?.rid : null;
 		if ( rid ) {
 			selectRequest( rid );
 		}
@@ -626,6 +644,11 @@ export default function PerformanceDashboard( {
 		null !== oneRequest &&
 		selectedUrl?.hash === oneRequest.hash &&
 		! selectedRequest;
+	/** Cancel a held click: no window opens, and the bar drops `?url=`. */
+	const cancelHold = useCallback( () => {
+		setOneRequest( null );
+		selectUrl( null );
+	}, [ selectUrl ] );
 
 	/**
 	 * Sort the URL modal's request table by one column. Clicking the column
@@ -1234,6 +1257,7 @@ export default function PerformanceDashboard( {
 								onSelect={ openUrl }
 								expanded={ expanded }
 								onToggleExpand={ toggleExpanded }
+								busy={ holdingWindow ? oneRequest.hash : null }
 								onParamsChange={ handleUrlParamsChange }
 								bucket={ tableBucket }
 								slots={ overview?.slots ?? null }
@@ -1249,6 +1273,8 @@ export default function PerformanceDashboard( {
 					</Card>
 				</div>
 			</div>
+
+			{ holdingWindow && <HeldClick onCancel={ cancelHold } /> }
 
 			{ /* URL/Request Detail Modal */ }
 			{ /* The SELECTION opens this, never a slice: each pane below owns

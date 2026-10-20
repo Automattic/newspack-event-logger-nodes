@@ -3877,13 +3877,14 @@ describe( 'PerformanceDashboard', () => {
 		 * A loaded view whose URL window answered `requests` for KIWI.
 		 *
 		 * @param {Object[]} requests The rows its `dump_url` listed.
+		 * @param {number}   [count]  The requests its stats count.
 		 * @return {Object} The view model.
 		 */
-		const answered = ( requests ) =>
+		const answered = ( requests, count = requests.length ) =>
 			loadedView( {
 				urlDetail: {
 					data: {
-						stats: { hash: KIWI, url: KIWI_URL, count: 1 },
+						stats: { hash: KIWI, url: KIWI_URL, count },
 						requests,
 					},
 					loading: false,
@@ -3994,6 +3995,83 @@ describe( 'PerformanceDashboard', () => {
 			expect( container.textContent ).toContain(
 				'Could not load this URL: kiwi5108 stats will not open'
 			);
+			unmount();
+		} );
+
+		it( 'marks the clicked row busy while held, and clears it once the request opens', async () => {
+			mockView = loadedView();
+			const { rerender, unmount } = mountDash();
+			await flushEffects();
+			expect( globalThis.__urlTableProps.busy ).toBeNull();
+
+			await clickRow( rerender, 1 );
+			expect( globalThis.__urlTableProps.busy ).toBe( KIWI );
+
+			mockView = answered( [ { rid: 'kiwi5108rid', status: 200 } ] );
+			await act( async () => rerender( dashboard() ) );
+			await flushEffects();
+			await act( async () => rerender( dashboard() ) );
+			expect( mockNavState.selectedRequest ).toBe( 'kiwi5108rid' );
+			expect( globalThis.__urlTableProps.busy ).toBeNull();
+			unmount();
+		} );
+
+		it( 'cancels the hold on Escape, and the link with it', async () => {
+			mockRealNavigation = true;
+			mockView = loadedView();
+			const { container, unmount } = mountDash();
+			await flushEffects();
+			act( () =>
+				globalThis.__urlTableProps.onSelect( {
+					hash: KIWI,
+					url: KIWI_URL,
+					count: 1,
+				} )
+			);
+			await flushEffects();
+			expect( globalThis.__urlTableProps.busy ).toBe( KIWI );
+			expect(
+				new URLSearchParams( window.location.search ).get( 'url' )
+			).toBe( KIWI );
+
+			act( () => {
+				document.dispatchEvent(
+					new window.KeyboardEvent( 'keydown', {
+						key: 'Escape',
+						bubbles: true,
+					} )
+				);
+			} );
+			await flushEffects();
+
+			expect( globalThis.__urlTableProps.busy ).toBeNull();
+			expect(
+				new URLSearchParams( window.location.search ).get( 'url' )
+			).toBeNull();
+			mockView = answered( [ { rid: 'kiwi5108rid', status: 200 } ] );
+			await flushEffects();
+			expect(
+				container.querySelector( '[data-testid="modal"]' )
+			).toBeNull();
+			unmount();
+		} );
+
+		it( 'paints the URL window when the answer counts more than the row did', async () => {
+			mockView = loadedView();
+			const { container, rerender, unmount } = mountDash();
+			await flushEffects();
+			await clickRow( rerender, 1 );
+
+			mockView = answered( [ { rid: 'kiwi5108new', status: 200 } ], 7 );
+			await act( async () => rerender( dashboard() ) );
+			await flushEffects();
+
+			expect( mockNavState.selectRequest ).not.toHaveBeenCalledWith(
+				'kiwi5108new'
+			);
+			expect(
+				container.querySelector( '[data-testid="url-detail"]' )
+			).toBeTruthy();
 			unmount();
 		} );
 

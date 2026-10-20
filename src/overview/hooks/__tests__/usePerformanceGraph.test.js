@@ -2473,6 +2473,69 @@ describe( 'usePerformanceGraph — an expanded page asks its shapes', () => {
 		).toBe( '1500' );
 	} );
 
+	test( 'a scroll inside the search debounce leaves the search ask to go', async () => {
+		jest.useFakeTimers();
+		const wire = installWire();
+		const { getApi } = renderGraph( {
+			expandedPages: [ { ...KOKAKO, shapes: 2600 } ],
+		} );
+		await act( async () => {} );
+		const searched = {
+			search: 'tieke',
+			sort: 'count',
+			order: 'desc',
+			offset: 0,
+			includeWorkers: false,
+			bucket: '',
+		};
+		getApi().handleUrlParamsChange( searched );
+		jest.advanceTimersByTime( 100 );
+		getApi().handleUrlParamsChange( {
+			...searched,
+			shapeOffsets: { 'c4f7a2e19b05:hoiho-5172.example': 500 },
+		} );
+		await nextTask();
+		expect(
+			option( urlsFrom( wire, `${ SUBJECT }:in` ).at( -1 ), 'offset' )
+		).toBe( '500' );
+
+		jest.advanceTimersByTime( 200 );
+		await nextTask();
+		expect( option( urlsFrom( wire, 'urls:in' ).at( -1 ), 'search' ) ).toBe(
+			'tieke'
+		);
+		jest.useRealTimers();
+	} );
+
+	test( 'a page shut and opened again asks its shapes from the first', async () => {
+		const wire = installWire();
+		const { rerender, getApi } = renderGraph( {
+			expandedPages: [ { ...KOKAKO, shapes: 2600 } ],
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			getApi().handleUrlParamsChange( {
+				search: '',
+				sort: 'count',
+				order: 'desc',
+				offset: 0,
+				includeWorkers: false,
+				bucket: '',
+				shapeOffsets: { 'c4f7a2e19b05:hoiho-5172.example': 1500 },
+			} );
+		} );
+		await nextTask();
+		await act( async () => rerender( { expandedPages: [] } ) );
+		await act( async () =>
+			rerender( { expandedPages: [ { ...KOKAKO, shapes: 2600 } ] } )
+		);
+		await nextTask();
+
+		expect(
+			option( urlsFrom( wire, `${ SUBJECT }:in` ).at( -1 ), 'offset' )
+		).toBeUndefined();
+	} );
+
 	test( 'a chip change asks the shapes again', async () => {
 		const wire = installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {

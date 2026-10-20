@@ -712,7 +712,8 @@ export function usePerformanceGraph( opts = {} ) {
 	/**
 	 * Remove one expanded page's slice through the interpreter's own
 	 * `remove_node`: the four nodes `addSliceFetcher` names after it, the
-	 * gate being `<receiver>:current`.
+	 * gate being `<receiver>:current`. The page's window offset goes too, so
+	 * a page opened again asks from its first shape.
 	 *
 	 * @param {Object} interpreter The graph's interpreter.
 	 * @param {string} key         The page's `pageKey()`.
@@ -726,6 +727,14 @@ export function usePerformanceGraph( opts = {} ) {
 			view,
 		] );
 		shapesRef.current.delete( key );
+		urlParamsRef.current = {
+			...urlParamsRef.current,
+			shapeOffsets: Object.fromEntries(
+				Object.entries( urlParamsRef.current.shapeOffsets ).filter(
+					( [ other ] ) => other !== key
+				)
+			),
+		};
 	}, [] );
 
 	// Poll cadence (ms); an unparseable setting takes the declared default.
@@ -1040,7 +1049,9 @@ export function usePerformanceGraph( opts = {} ) {
 	 * Fetch the page of the URL table these params describe. Params matching
 	 * the ones in hand fetch nothing, a changed search waits out 300ms, and
 	 * every other change fetches at once: a sort or a page turn is one
-	 * deliberate click, while a search is a keystroke per character.
+	 * deliberate click, while a search is a keystroke per character. A scroll
+	 * that moves only an expanded page's window asks that page's shapes alone,
+	 * and leaves a search still waiting to go.
 	 *
 	 * @param {Object}                params                The table's live controls.
 	 * @param {string}                params.search         Substring filter; '' matches all.
@@ -1049,9 +1060,7 @@ export function usePerformanceGraph( opts = {} ) {
 	 * @param {number}                params.offset         First row of the page.
 	 * @param {boolean}               params.includeWorkers Include worker traffic.
 	 * @param {string}                params.bucket         Bucket selection's spelling; '' for none.
-	 * @param {Object<string,number>} [params.shapeOffsets] Each expanded
-	 *                                                      page in view, by `pageKey()`, to the offset its shapes are asked
-	 *                                                      from. A page it leaves out keeps the offset it last had.
+	 * @param {Object<string,number>} [params.shapeOffsets] Each expanded page in view, by `pageKey()`, to the offset its shapes are asked from; one left out keeps its last.
 	 */
 	const handleUrlParamsChange = useCallback(
 		( params ) => {
@@ -1077,23 +1086,29 @@ export function usePerformanceGraph( opts = {} ) {
 			}
 			const searchChanged = prev.search !== params.search;
 			urlParamsRef.current = { ...params, shapeOffsets };
-			if ( urlFetchTimerRef.current ) {
-				clearTimeout( urlFetchTimerRef.current );
-			}
-			// `urls:in:current` drops the answer to every ask this supersedes.
-			const doFetch = () => {
-				if ( ! sameQuestion || turned ) {
-					ask( pageSlices.urls );
-				}
-				if ( ! sameQuestion ) {
-					askShapes();
-					return;
-				}
+			const askScrolled = () => {
 				for ( const key of scrolled ) {
 					const one = shapesRef.current.get( key );
 					if ( one ) {
 						ask( one );
 					}
+				}
+			};
+			// A scroll alone leaves a pending table ask, a search's, to go.
+			if ( sameQuestion && ! turned ) {
+				askScrolled();
+				return;
+			}
+			if ( urlFetchTimerRef.current ) {
+				clearTimeout( urlFetchTimerRef.current );
+			}
+			// `urls:in:current` drops the answer to every ask this supersedes.
+			const doFetch = () => {
+				ask( pageSlices.urls );
+				if ( sameQuestion ) {
+					askScrolled();
+				} else {
+					askShapes();
 				}
 			};
 			if ( searchChanged ) {
