@@ -17,6 +17,7 @@ use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Stats_Query;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
@@ -302,6 +303,98 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( 'right', $result['flame_data']['flame']['name'] );
 		$this->assertFalse( $result['flame_cut'] );
+	}
+
+	/**
+	 * Each `$span` span `$work` writes on a started record over this test's
+	 * tree: its category, its `l` and its `m`, and the entries before it.
+	 *
+	 * @param string              $span   A `Flame_Tree` span name.
+	 * @param \Closure(): void    $work   What to log.
+	 * @param array<string,mixed> $extras Config beside logging.
+	 * @return array{0: list<array{0:mixed,1:mixed,2:mixed}>, 1: list<array<string,mixed>>}
+	 */
+	private function logged_spans( string $span, \Closure $work, array $extras = [] ): array {
+		$entries = $this->logged_in( $this->tmp, $work, $extras );
+		return [ self::spans_of( $entries, $span ), $entries ];
+	}
+
+	/** A flame lookup is a span naming its partition, closing on how many of its rids it found. */
+	public function test_a_logged_flame_lookup_names_its_partition_and_rids_and_what_it_found(): void {
+		[ $spans ] = $this->logged_spans(
+			Flame_Tree::FLAME_LOOKUP,
+			function (): void {
+				$rid = $this->write_request( [ 'rid' => 'rid-kokako-lookup-4417', 'url' => 'https://example.com/kokako-4417', 'timestamp' => 1700005100, 'duration_ms' => 41 ] );
+				$this->write_flame( [ 'rid' => $rid, 'flame' => [ 'name' => 'kokako', 'value' => 41, 'children' => [] ] ] );
+				VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
+			}
+		);
+
+		$this->assertSame( [ [ 'flame lookup (start)', 'flames.p0', null ], [ 'flame lookup (complete)', null, '1 of 1 found' ] ], $spans );
+	}
+
+	/** A lookup the deadline cut closes `cut`, never as a count of what it had found. */
+	public function test_a_logged_flame_lookup_the_deadline_cut_closes_cut(): void {
+		[ $spans ] = $this->logged_spans(
+			Flame_Tree::FLAME_LOOKUP,
+			function (): void {
+				$rid = $this->write_request( [ 'rid' => 'rid-hihi-cut-4418', 'url' => 'https://example.com/hihi-4418', 'timestamp' => 1700006300, 'duration_ms' => 23 ] );
+				$this->write_flame( [ 'rid' => $rid, 'flame' => [ 'name' => 'hihi', 'value' => 23, 'children' => [] ] ] );
+				$this->pad_flame_index();
+				$reads       = 0;
+				Core::$clock = static function () use ( &$reads ): float {
+					return (float) ++$reads;
+				};
+				VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
+			}
+		);
+
+		$this->assertSame( [ [ 'flame lookup (start)', 'flames.p0', null ], [ 'flame lookup (complete)', null, 'cut' ] ], $spans );
+	}
+
+	/** Each firehose partition `grep_requests` drains is a span naming it, closing on the lines it read. */
+	public function test_a_logged_grep_scans_each_firehose_partition_as_a_span(): void {
+		$this->write_firehose( 0, [
+			[ 'rid' => 'grepKaka1', 'k' => 'request', 'm' => 'GET https://kea.test/kaka-6612', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'grepKaka1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.4, 'n' => 2 ],
+			[ 'rid' => 'grepKaka2', 'k' => 'request', 'm' => 'GET https://kea.test/feed', 'ts' => 1700000001.0, 'n' => 1 ],
+		] );
+
+		[ $spans, $entries ] = $this->logged_spans(
+			Flame_Tree::GREP_SCAN,
+			static function (): void {
+				VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', '/kaka-6612' );
+			}
+		);
+
+		$read = \array_search( 'grep scan (complete)', \array_column( $entries, 'k' ), true );
+		$this->assertSame( [ [ 'grep scan (start)', 'firehose.p0', null ], [ 'grep scan (complete)', null, "{$read} lines" ] ], $spans, 'every line ahead of the close is read' );
+	}
+
+	/** The partition the budget ran out in closes `cut`, and the next is never opened. */
+	public function test_a_logged_grep_the_budget_cut_closes_cut_and_opens_no_further_partition(): void {
+		$entries = [];
+		for ( $i = 0; $i < ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride(); $i++ ) {
+			$entries[] = [ 'rid' => "noise{$i}", 'k' => 'request', 'm' => 'GET https://kea.test/feed', 'ts' => 1700000000.0, 'n' => 1 ];
+		}
+		$this->write_firehose( 0, $entries );
+		$this->write_firehose( 1, [ [ 'rid' => 'lateKaka', 'k' => 'request', 'm' => 'GET https://kea.test/kaka-late-6613', 'ts' => 1700000900.0, 'n' => 1 ] ] );
+
+		[ $spans ] = $this->logged_spans(
+			Flame_Tree::GREP_SCAN,
+			static function (): void {
+				$seconds     = 0.0;
+				Core::$clock = static function () use ( &$seconds ): float {
+					return $seconds += 1.0;
+				};
+				VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', '/kaka-late-6613' );
+			},
+			[ 'num_partitions' => 2 ]
+		);
+
+		$this->assertCount( 2, $spans );
+		$this->assertSame( [ 'grep scan (start)', 'firehose.p0', null ], $spans[0] );
+		$this->assertMatchesRegularExpression( '/^\d+ lines · cut$/', Core::as_string( $spans[1][2] ) );
 	}
 
 	/** A rid is looked up in its row; no index is walked. */

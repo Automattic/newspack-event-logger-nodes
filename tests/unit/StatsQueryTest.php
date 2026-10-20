@@ -8,6 +8,7 @@ use Newspack_Event_Logger_Nodes\App\Stats_Query;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
@@ -123,6 +124,76 @@ final class StatsQueryTest extends TestCase {
 				return self::plan_text( $reader, $sql, $binds );
 			}
 		);
+	}
+
+	/**
+	 * Each `stats query` span `$work` writes on a started record: its
+	 * category, its `l` and its `m`.
+	 *
+	 * @param \Closure(): void $work What to log.
+	 * @return list<array{0:mixed,1:mixed,2:mixed}>
+	 */
+	private function stats_spans( \Closure $work ): array {
+		return self::spans_of( $this->logged_in( $this->make_temp_dir(), $work ), Flame_Tree::STATS_QUERY );
+	}
+
+	/** A read is a span labelled with its source, its groups and a page's offset, closing on the rows it read. */
+	public function test_a_logged_read_is_a_stats_query_span_naming_its_source_groups_and_offset(): void {
+		$spans = $this->stats_spans(
+			function (): void {
+				$this->seed_site_timings( [ [ 'category' => 'hook:tieke_init', 'ms' => 9.5 ], [ 'category' => 'hook:hoiho_init', 'ms' => 4.5 ], [ 'category' => 'hook:weka_init', 'ms' => 3.5 ] ] );
+				$spec = [ 'source' => 'timings', 'group' => [ 'category', 'listener' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day(), 'sort' => 'ms' ];
+				Stats_Query::run( $spec );
+				Stats_Query::run( [ 'offset' => 2 ] + $spec );
+				Stats_Query::run( [ 'source' => 'timings', 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+			}
+		);
+
+		$this->assertSame(
+			[
+				[ 'stats query (start)', 'timings by category,listener', null ],
+				[ 'stats query (complete)', null, '3 rows' ],
+				[ 'stats query (start)', 'timings by category,listener offset 2', null ],
+				[ 'stats query (complete)', null, '1 rows' ],
+				[ 'stats query (start)', 'timings', null ],
+				[ 'stats query (complete)', null, '1 rows' ],
+			],
+			$spans
+		);
+	}
+
+	/** The two request listings are spans too, each named for what it lists. */
+	public function test_a_logged_listing_names_the_newest_requests_or_the_rid_it_seeks(): void {
+		$spans = $this->stats_spans(
+			function (): void {
+				$this->seed_requests( [ [ 'rid' => 'rid-kokako-8812', 'url' => 'https://seed.example/kokako-8812/' ], [ 'rid' => 'rid-kakapo-8813', 'url' => 'https://seed.example/kokako-8812/' ] ] );
+				Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( 'https://seed.example/kokako-8812/' ) ] ], $this->last_day(), 7 );
+				Stats_Query::request_row( 'rid-kakapo-8813' );
+			}
+		);
+
+		$this->assertSame(
+			[
+				[ 'stats query (start)', 'requests newest', null ],
+				[ 'stats query (complete)', null, '2 rows' ],
+				[ 'stats query (start)', 'requests by rid', null ],
+				[ 'stats query (complete)', null, '1 rows' ],
+			],
+			$spans
+		);
+	}
+
+	/** A read whose rows did not open says so, never as zero rows. */
+	public function test_a_logged_read_whose_rows_did_not_open_closes_unavailable(): void {
+		$spans = $this->stats_spans(
+			function (): void {
+				\update_option( 'newspack_nodes_topologies', [] );
+				\Newspack_Nodes\Config::reset();
+				Stats_Query::run( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count' ], 'buckets' => $this->last_day() ] );
+			}
+		);
+
+		$this->assertSame( [ [ 'stats query (start)', 'requests by server', null ], [ 'stats query (complete)', null, 'unavailable' ] ], $spans );
 	}
 
 	public function test_five_xx_by_server_answers_one_row_per_server(): void {

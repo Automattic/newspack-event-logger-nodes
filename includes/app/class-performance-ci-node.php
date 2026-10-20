@@ -303,7 +303,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the workers' durable cursor dirs are never touched. Bounded three ways: a
 	 * per-request byte/line cap (in the engine), MAX_SCAN_S of reading — which
 	 * stops the drain itself, so the partitions after it go unread — and a
-	 * result cap. Every limit is reported honestly in `truncated`.
+	 * result cap. Every limit is reported honestly in `truncated`. On a
+	 * started record each partition's drain is a `grep scan` span labelled
+	 * with its dir, closing on the lines it read, its own `(start)` lines
+	 * among them, and `cut` where the budget ran out.
 	 *
 	 * Many processes append to the firehose, so a torn line can sit in it until
 	 * its segment rotates. Having no cursor to replay it from, the scan skips
@@ -371,11 +374,21 @@ class Performance_CI_Node extends Service_CI_Node {
 				self::name_scratch_consumer( $consumer, $p );
 				$consumer->sink( new Callback_Node( $on_message ) );
 				$consumer->next_offset( 'recent' );
-				// By reference: an arrow fn would freeze $spent at false.
-				$consumer->drain(
-					static function () use ( &$spent ): bool {
-						return $spent;
-					}
+				Log_Manager::span(
+					Flame_Tree::GREP_SCAN,
+					static function () use ( $consumer, &$spent, &$lines ): array {
+						$from = $lines;
+						// By reference: an arrow fn would freeze $spent.
+						$consumer->drain(
+							static function () use ( &$spent ): bool {
+								return $spent;
+							}
+						);
+						return [ $lines - $from, $spent ];
+					},
+					/** @param array{0:int,1:bool} $scan Lines read, and whether the budget cut them. */
+					static fn ( array $scan ): string => $scan[0] . ' lines' . ( $scan[1] ? ' · cut' : '' ),
+					start: [ 'l' => \basename( $source_dir ) ]
 				);
 				$scanned[] = $consumer;
 			} finally {
@@ -1093,7 +1106,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * line before `$since`: the builder appends a request's flame no earlier
 	 * than the tick its row's `finished_at` is clamped to, on this host's
 	 * clock, so no older segment holds one. `$deadline` bounds the rest, and
-	 * a walk it cuts answers null rather than the part it read.
+	 * a walk it cuts answers null rather than the part it read. On a started
+	 * record the walk is a `flame lookup` span labelled with the partition,
+	 * closing on how many of its rids it found, or `cut`.
 	 *
 	 * @param int          $partition The flames partition.
 	 * @param list<string> $rids      Request ids.
@@ -1109,27 +1124,28 @@ class Performance_CI_Node extends Service_CI_Node {
 			return [];
 		}
 		$clock    = self::scan_clock();
-		$messages = self::on_partition(
-			'flames',
-			$partition,
-			$dir,
-			static function ( Partition_Node $node ) use ( $rids, $since, $deadline, $clock ): ?array {
-				$closed = \array_filter( $node->index_mtimes(), static fn ( int $mtime ): bool => $mtime < $since );
-				$lines  = 0;
-				$found  = $node->locate_by(
-					static function ( string $line, int $segment ) use ( $closed, $deadline, $clock, &$lines ): array|bool|null {
-						if ( isset( $closed[ $segment ] ) ) {
-							return true;
-						}
-						if ( 0 === ++$lines % self::SCAN_CLOCK_STRIDE && $clock() > $deadline ) {
-							return false;
-						}
-						return self::locate_flame( $line );
-					},
-					$rids
-				);
-				return null === $found ? null : $node->read_many( $found );
-			}
+		$walk     = static function ( Partition_Node $node ) use ( $rids, $since, $deadline, $clock ): ?array {
+			$closed = \array_filter( $node->index_mtimes(), static fn ( int $mtime ): bool => $mtime < $since );
+			$lines  = 0;
+			$found  = $node->locate_by(
+				static function ( string $line, int $segment ) use ( $closed, $deadline, $clock, &$lines ): array|bool|null {
+					if ( isset( $closed[ $segment ] ) ) {
+						return true;
+					}
+					if ( 0 === ++$lines % self::SCAN_CLOCK_STRIDE && $clock() > $deadline ) {
+						return false;
+					}
+					return self::locate_flame( $line );
+				},
+				$rids
+			);
+			return null === $found ? null : $node->read_many( $found );
+		};
+		$messages = Log_Manager::span(
+			Flame_Tree::FLAME_LOOKUP,
+			static fn (): ?array => self::on_partition( 'flames', $partition, $dir, $walk ),
+			static fn ( ?array $found ): string => null === $found ? 'cut' : \count( $found ) . ' of ' . \count( $rids ) . ' found',
+			start: [ 'l' => \basename( $dir ) ]
 		);
 		if ( null === $messages ) {
 			return null;

@@ -515,14 +515,14 @@ final class UrlSnapshotTest extends TestCase {
 	}
 
 	/**
-	 * Each span line among `$entries`, in order, as its category, `l` and `m`.
+	 * Each snapshot span line among `$entries`, in order, as its category,
+	 * `l` and `m`.
 	 *
 	 * @param list<array<string,mixed>> $entries Firehose entries.
 	 * @return list<array{0:mixed,1:mixed,2:mixed}>
 	 */
-	private static function spans_of( array $entries ): array {
-		$spans = \array_filter( $entries, static fn ( array $entry ): bool => 1 === \preg_match( '/^snapshot \w+ \((start|complete)\)$/', Core::as_string( $entry['k'] ?? '' ) ) );
-		return \array_values( \array_map( static fn ( array $entry ): array => [ $entry['k'], $entry['l'] ?? null, $entry['m'] ?? null ], $spans ) );
+	private static function snapshot_spans( array $entries ): array {
+		return self::spans_of( $entries, Flame_Tree::SNAPSHOT_BUILD, Flame_Tree::SNAPSHOT_GROUP, Flame_Tree::SNAPSHOT_COPY, Flame_Tree::SNAPSHOT_INDEX, Flame_Tree::SNAPSHOT_TOTALS );
 	}
 
 	/** The index names `indexes()` declares, as the file names them. */
@@ -550,7 +550,7 @@ final class UrlSnapshotTest extends TestCase {
 				...$step( 'snapshot totals' ),
 				[ 'snapshot build (complete)', null, 'published' ],
 			],
-			self::spans_of( $entries )
+			self::snapshot_spans( $entries )
 		);
 		$this->assertTrue( self::snapshot_published() );
 	}
@@ -569,7 +569,7 @@ final class UrlSnapshotTest extends TestCase {
 	/** A build that throws closes its span with what it threw, and leaves no publish. */
 	public function test_a_logged_build_that_throws_closes_its_span(): void {
 		[ $entries, $thrown ] = $this->logged_publish( [ 'query:7716' => [ 'mean' => \NAN ] ] );
-		$spans                = self::spans_of( $entries );
+		$spans                = self::snapshot_spans( $entries );
 
 		$this->assertInstanceOf( \RuntimeException::class, $thrown );
 		$this->assertSame( [ 'snapshot build (start)', null, null ], $spans[0] );
@@ -582,7 +582,7 @@ final class UrlSnapshotTest extends TestCase {
 		[ $entries, $thrown ] = $this->logged_publish( [], false );
 
 		$this->assertNull( $thrown );
-		$this->assertSame( [ [ 'snapshot build (start)', null, null ], [ 'snapshot build (complete)', null, 'no partition file' ] ], self::spans_of( $entries ) );
+		$this->assertSame( [ [ 'snapshot build (start)', null, null ], [ 'snapshot build (complete)', null, 'no partition file' ] ], self::snapshot_spans( $entries ) );
 	}
 
 	public function test_a_fleet_declaring_no_facts_table_refuses_to_publish(): void {

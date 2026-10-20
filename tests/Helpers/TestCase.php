@@ -351,6 +351,25 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * The `(start)` and `(complete)` lines of the named spans among
+	 * `$entries`, in order, each as its category, `l` and `m`.
+	 *
+	 * @param list<array<string,mixed>> $entries  What `firehose_entries()` read.
+	 * @param string                    ...$spans Span names.
+	 * @return list<array{0:mixed,1:mixed,2:mixed}>
+	 */
+	protected static function spans_of( array $entries, string ...$spans ): array {
+		$categories = [];
+		foreach ( $spans as $span ) {
+			\array_push( $categories, "{$span} (start)", "{$span} (complete)" );
+		}
+		return \array_map(
+			static fn ( array $entry ): array => [ $entry['k'], $entry['l'] ?? null, $entry['m'] ?? null ],
+			self::entries_of( $entries, ...$categories )
+		);
+	}
+
+	/**
 	 * The entries whose category `k` is one of `$categories`, in order.
 	 *
 	 * @param list<array<string,mixed>> $entries       What `firehose_entries()` read.

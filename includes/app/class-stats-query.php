@@ -21,6 +21,8 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Row_Reader;
@@ -354,6 +356,7 @@ final class Stats_Query {
 		$spec   = self::checked( $spec );
 		$read   = self::table( $spec );
 		$rows   = self::read(
+			self::label( $spec ),
 			static function ( Row_Reader $reader, array $aliases ) use ( $spec, &$read ): array {
 				// Sets the table run() reports.
 				$read = self::readable( $reader, $aliases, $spec, $read );
@@ -440,6 +443,21 @@ final class Stats_Query {
 			},
 			$rows
 		);
+	}
+
+	/**
+	 * A spec as its read's span names it, so the reads of one reply tell
+	 * apart in a flame: the source, then `by` its groups, then a page's
+	 * offset — `timings by category,listener offset 1000`.
+	 *
+	 * @param Spec $spec The checked spec.
+	 */
+	private static function label( array $spec ): string {
+		$label = $spec['source'];
+		if ( [] !== $spec['group'] ) {
+			$label .= ' by ' . \implode( ',', $spec['group'] );
+		}
+		return 0 === $spec['offset'] ? $label : "{$label} offset {$spec['offset']}";
 	}
 
 	/**
@@ -844,7 +862,7 @@ final class Stats_Query {
 	 * @throws \InvalidArgumentException Naming a field, a bucket range or a limit it refuses.
 	 */
 	public static function newest_requests( array $filter, array $buckets, int $limit ): array {
-		return self::listed( $filter, $buckets, $limit ) ?? [];
+		return self::listed( 'requests newest', $filter, $buckets, $limit ) ?? [];
 	}
 
 	/**
@@ -857,7 +875,7 @@ final class Stats_Query {
 	 * @return array{available: bool, row: array<string,mixed>|null}
 	 */
 	public static function request_row( string $rid ): array {
-		$rows = self::listed( [ 'rid' => [ $rid ] ], [], 1 );
+		$rows = self::listed( 'requests by rid', [ 'rid' => [ $rid ] ], [], 1 );
 		return [
 			'available' => null !== $rows,
 			'row'       => $rows[0] ?? null,
@@ -869,13 +887,14 @@ final class Stats_Query {
 	 * `$buckets`, newest `finished_at` first, at most `$limit`; null where the
 	 * stats file will not open.
 	 *
+	 * @param string                          $label   What the listing is, the label of its read's span.
 	 * @param array<string,list<scalar|null>> $filter  Requests fields to the values each matches.
 	 * @param list<array{0:int,1:int}>        $buckets The bucket ranges to read; none for a key.
 	 * @param int                             $limit   Most rows listed.
 	 * @return list<array<string,mixed>>|null
 	 * @throws \InvalidArgumentException Naming what `checked()` refuses.
 	 */
-	private static function listed( array $filter, array $buckets, int $limit ): ?array {
+	private static function listed( string $label, array $filter, array $buckets, int $limit ): ?array {
 		$spec = self::checked(
 			[
 				'source'  => 'requests',
@@ -885,6 +904,7 @@ final class Stats_Query {
 			]
 		);
 		$rows = self::read(
+			$label,
 			static function ( Row_Reader $reader, array $aliases ) use ( $spec ): array {
 				[ $from, $binds ] = self::union( self::arm( $spec, 'requests', self::filtered( $spec['filter'] ), self::LISTED ), $aliases );
 				$listed           = \implode( ', ', \array_map( static fn ( string $column ): string => "m_{$column}", self::LISTED ) );
@@ -987,23 +1007,34 @@ final class Stats_Query {
 	 * or that declares no such table, says so once a window and answers null
 	 * (decision 3); one declaring two is refused.
 	 *
-	 * @param \Closure(Row_Reader, non-empty-list<string>): list<list<mixed>> $read The read, over the reader and its aliases.
+	 * On a started record the read is a `stats query` span labelled `$label`,
+	 * closing on the rows it read, or `unavailable`.
+	 *
+	 * @param string                                                          $label What the read is, as `label()` names a spec.
+	 * @param \Closure(Row_Reader, non-empty-list<string>): list<list<mixed>> $read  The read, over the reader and its aliases.
 	 * @return list<list<mixed>>|null
 	 * @throws \RuntimeException When the active topologies declare two such tables.
 	 */
-	private static function read( \Closure $read ): ?array {
-		try {
-			return Row_Table_Node::read(
-				Flame_Facts_Row_Schema::class,
-				static function ( Row_Reader $reader ) use ( $read ): array {
-					$aliases = $reader->aliases();
-					return [] === $aliases ? [] : $read( $reader, $aliases );
+	private static function read( string $label, \Closure $read ): ?array {
+		return Log_Manager::span(
+			Flame_Tree::STATS_QUERY,
+			static function () use ( $read ): ?array {
+				try {
+					return Row_Table_Node::read(
+						Flame_Facts_Row_Schema::class,
+						static function ( Row_Reader $reader ) use ( $read ): array {
+							$aliases = $reader->aliases();
+							return [] === $aliases ? [] : $read( $reader, $aliases );
+						}
+					);
+				} catch ( Table_Unavailable $e ) {
+					Core::print_less_often( 'performance: stats rows did not open', ' — ' . $e->getMessage() );
+					return null;
 				}
-			);
-		} catch ( Table_Unavailable $e ) {
-			Core::print_less_often( 'performance: stats rows did not open', ' — ' . $e->getMessage() );
-			return null;
-		}
+			},
+			static fn ( ?array $rows ): string => null === $rows ? 'unavailable' : \count( $rows ) . ' rows',
+			start: [ 'l' => $label ]
+		);
 	}
 
 	/**

@@ -2065,6 +2065,15 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 1, \substr_count( $found['detail'], '%' ) );
 	}
 
+	/** Each kind a rule names has the advice row its significant mark reads. */
+	public function test_every_kind_a_rule_names_has_a_significant_row(): void {
+		/** @var array<string,array<string,string>> $advice */
+		$advice = ( new \ReflectionClassConstant( Findings::class, 'SPAN_ADVICE' ) )->getValue();
+		foreach ( Flame_Tree::RULE_BOUND_KINDS as $kind ) {
+			$this->assertArrayHasKey( "significant:{$kind}", $advice, $kind );
+		}
+	}
+
 	/**
 	 * A `SPAN_ADVICE` detail is prose, never a format string: the two rows
 	 * stating the held share name it as `{held}`, followed by a literal `%`
@@ -2598,9 +2607,13 @@ class FindingsTest extends TestCase {
 		$this->assertStringNotContainsString( 'custom event', $found['detail'] );
 	}
 
-	/** The builders' own upkeep spans are told whatever the rule; no edit reaches them. */
+	/**
+	 * The plugin's own spans — a builder's upkeep, the prefetch job's steps,
+	 * a reader's query, lookup or scan — are told whatever the rule; no edit
+	 * reaches them, and the advice claims no builder for a reader's span.
+	 */
 	public function test_a_dominant_upkeep_span_proposes_nothing(): void {
-		foreach ( [ Flame_Tree::REQUESTS_RESTORE, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT ] as $step ) {
+		foreach ( [ Flame_Tree::REQUESTS_RESTORE, Flame_Tree::STATS_SWEEP, Flame_Tree::REQUESTS_CHECKPOINT, Flame_Tree::PREFETCH_ANSWER, Flame_Tree::STATS_QUERY, Flame_Tree::FLAME_LOOKUP, Flame_Tree::GREP_SCAN ] as $step ) {
 			$record = $this->healthy_record();
 			$record['flame']['children'] = [
 				[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
@@ -2611,7 +2624,8 @@ class FindingsTest extends TestCase {
 
 			$this->assertNotNull( $found, $step );
 			$this->assertSame( 'none', $found['proposal']['action'], $step );
-			$this->assertStringContainsString( 'upkeep', $found['proposal']['why'], $step );
+			$this->assertStringContainsString( 'own work', $found['proposal']['why'], $step );
+			$this->assertStringNotContainsString( 'builder', $found['proposal']['why'] . $found['detail'], $step );
 			$this->assertStringNotContainsString( 'custom event', $found['detail'], $step );
 		}
 	}

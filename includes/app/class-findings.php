@@ -205,25 +205,14 @@ class Findings {
 			'why'    => '%s is a command verb, timed whatever the rule says; the time is inside that verb, so read its children — no rule edit reaches the handler itself.',
 		],
 		'upkeep'           => [
-			'detail' => 'This is a builder\'s own work, told whatever the rule says, so no rule edit reaches inside it.',
-			'why'    => '%s is a step of a builder\'s upkeep on its worker, whose `(complete)` line counts what it wrote, folded or healed. Look there — nothing a rule can switch on runs inside it.',
+			'detail' => 'This is the event logger\'s own work, told whatever the rule says, so no rule edit reaches inside it.',
+			'why'    => '%s is the event logger\'s own work, timed whatever the rule says: its `(complete)` line says what came of it, and the spans inside it, where it has any, say where its time went. Look there — nothing a rule can switch on runs inside it.',
 		],
 		'listener'         => [
 			'detail' => 'This is one listener on a significant hook — the time is inside this callback.',
 			'why'    => '%s is a listener, logged because its hook is already a significant event — this is the finest grain the logger has, and the answer is inside that callback.',
 		],
 	];
-
-	/**
-	 * The `span_kind()`s whose `l` label names what a repeat is judged by:
-	 * a custom event's names the work — the function, include or macro — a
-	 * hook's the caller `App\Core::origin_frame()` finds under `trace_hooks`,
-	 * and a transport's the code that ran the query or the call. A listener's
-	 * is empty, and the command, upkeep and plugin spans write none.
-	 *
-	 * @var list<string>
-	 */
-	private const LABELLED_KINDS = [ 'custom', 'hook', 'transport' ];
 
 	/**
 	 * Findings for one completed request record, worst first.
@@ -788,7 +777,7 @@ class Findings {
 	 * the name the flame gives it.
 	 *
 	 * A profile is keyed by state and tallies each `l` label in `entries`.
-	 * For a kind `LABELLED_KINDS` names, each label is its own
+	 * For a kind `Flame_Tree::RULE_BOUND_KINDS` names, each label is its own
 	 * `<state>: <label>`, judged apart from the rest: 452 queries from 22
 	 * callers are 22 questions, not one. The calls no label holds —
 	 * unlabelled, or past the builder's label cap — stay under the bare state
@@ -802,7 +791,7 @@ class Findings {
 	private static function repeats_in( string $state, array $profile ): array {
 		$time  = Core::num_float( $profile['time'] ?? 0 );
 		$count = Core::num_int( $profile['count'] ?? 0 );
-		if ( ! \in_array( self::span_kind( $state ), self::LABELLED_KINDS, true ) ) {
+		if ( ! Flame_Tree::rule_binds( $state ) ) {
 			return [ [ $state, $time, $count ] ];
 		}
 		$out = [];
@@ -1096,48 +1085,12 @@ class Findings {
 	 * @return array<string,string>
 	 */
 	private static function span_advice( string $base, ?Rule $rule ): array {
-		$kind = self::span_kind( $base );
-		// A listener or a plugin load has no significant row.
-		$row = "significant:{$kind}";
+		$kind = Flame_Tree::span_kind( $base );
 		if ( 'transport' === $kind && null !== $rule && ! $rule->logs_transport( $base ) ) {
 			return self::SPAN_ADVICE['transport:unlogged'];
 		}
-		$marked = isset( self::SPAN_ADVICE[ $row ] ) && null !== $rule && $rule->marks_significant( Flame_Tree::hook_name( $base ) );
-		return self::SPAN_ADVICE[ $marked ? $row : $kind ];
-	}
-
-	/**
-	 * The seven kinds of span the flame carries, classified once so every
-	 * caller reaches the same `SPAN_ADVICE` row. A custom event has no
-	 * listeners, and prose crediting it with any sends the reader hunting a
-	 * callback that does not exist. A query or HTTP span is the logger's own measurement,
-	 * a plugin span is one plugin file's load, a command span is the frame of
-	 * one verb, and an upkeep span is a builder's own work; the last three
-	 * are logged whatever the rule says, and calling any of these a custom
-	 * event proposes a rule edit that changes nothing. A hook is known by its
-	 * BASE name: with hook tracing on, the frame carries the caller too.
-	 *
-	 * @param string $base The span's base name, per `Flame_Tree::base_name()`.
-	 * @return 'transport'|'plugin'|'command'|'upkeep'|'hook'|'listener'|'custom'
-	 */
-	private static function span_kind( string $base ): string {
-		if ( Flame_Tree::is_transport_span( $base ) ) {
-			return 'transport';
-		}
-		if ( Flame_Tree::is_plugin_load_span( $base ) ) {
-			return 'plugin';
-		}
-		if ( Flame_Tree::is_command_span( $base ) ) {
-			return 'command';
-		}
-		$platform = Flame_Tree::platform_span_kind( $base );
-		if ( null !== $platform ) {
-			return $platform;
-		}
-		if ( Flame_Tree::is_hook_span( $base ) ) {
-			return 'hook';
-		}
-		return Flame_Tree::is_listener_span( $base ) ? 'listener' : 'custom';
+		$marked = \in_array( $kind, Flame_Tree::RULE_BOUND_KINDS, true ) && null !== $rule && $rule->marks_significant( Flame_Tree::hook_name( $base ) );
+		return self::SPAN_ADVICE[ $marked ? "significant:{$kind}" : $kind ];
 	}
 
 	/**
