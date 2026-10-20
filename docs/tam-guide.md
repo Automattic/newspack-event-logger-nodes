@@ -14,7 +14,7 @@ The address bar carries what you are looking at: the server, the chart's metric,
 
 ### 1. Scope to the site
 
-If the report names one publisher and you are on a hub, pick that site's host in the **Server** selector, the first control above the chart; **All Servers** clears it. Every number below it then describes that site alone: the headline stats, the URL table, the charts and the **Time Breakdown**. The selector appears once two or more servers have reported.
+If the report names one publisher and you are on a hub, pick that site's host in the **Server** selector, the first control above the chart; **All Servers** clears it. Every number below it then describes that site alone: the headline stats, the table of pages, the charts and the **Time Breakdown**. The selector appears once two or more servers have reported.
 
 If the report carries a request ID, paste it into **Request ID or /url pattern…** at the top of the page and press Enter: the request opens directly. Anything else typed there searches recent traffic and lists what it finds under "Matches in recent traffic".
 
@@ -22,12 +22,12 @@ The charts always cover the last 24 hours, in five-minute steps, labelled in you
 
 ### 2. Find the slow URL
 
-The table **Pages by Request Count** lists every page that a logging rule recorded in the last 24 hours, busiest first, 100 at a time. A page is a URL's host and path in lower case, whatever its query: `https://example.com/Cincinnati/MovieTimes?film=?` and `https://example.com/cincinnati/movietimes` are one page, `example.com/cincinnati/movietimes`, and its row adds up both. A page reached one way only is that URL, and clicking it opens it. A page reached several ways shows a ▾ caret: click the row to list its URLs beneath it, each with its own numbers in the same columns and in the table's order, and click one to open it. A page of more than 100 URLs lists the first 100 and says how many more it has. The address bar remembers which pages you opened, so a reload or a shared link shows them open. If a URL named in the report is missing even when you search for it, with no chips, Time selection or server chosen, then either it had no traffic in the last 24 hours or no rule logs it: see step 5.
+The table **Pages by Request Count** lists every page that a logging rule recorded in the last 24 hours, busiest first, 100 at a time. A page is a URL's host and path in lower case, whatever its other query keys: `https://example.com/Cincinnati/MovieTimes?film=?` and `https://example.com/cincinnati/movietimes` are one page, `example.com/cincinnati/movietimes`, and its row adds up both. Four query keys pick what the site runs, so they stay in the page with their values: `rest_route`, `action`, `wc-ajax` and `feed`. `/?_embed=?&rest_route=/wp/v2/posts` is the page `example.com/?rest_route=/wp/v2/posts`, not the home page, and each admin-ajax action is a page of its own. A page reached one way only is that URL, and clicking it opens it. A page reached several ways shows a ▾ caret: click the row to list its URLs beneath it, each with its own numbers in the same columns and in the table's order, and click one to open it. A page of more than 100 URLs lists the first 100 and says how many more it has. The address bar remembers which pages you opened, so a reload or a shared link shows them open. If a URL named in the report is missing even when you search for it, with no chips, Time selection or server chosen, then either it had no traffic in the last 24 hours or no rule logs it: see step 5.
 
 | Column | What it means |
 |---|---|
 | **Reqs** | Requests in the last 24 hours, or in the buckets you chose, that the search, the server and the chart's filter chips keep. A page's row counts the requests to all its URLs. |
-| **URL** | On a page's row, its host and path in lower case, or the path alone once you pick a **Server**. On a URL's row, the host, the path, and the names of its query with each value shown as `?`: `/?_embed=?&rest_route=/wp/v2/posts` is a REST call, not the homepage. A `rest_route`, `action`, `wc-ajax` or `feed` value is kept, its numbers shown as `?`, and campaign tags such as `utm_source`, `gclid` or `fbclid` are left out. The shaded bar compares the row with the pages listed, on whatever the chart's **Metric** measures. |
+| **URL** | On a page's row, its host and path in lower case, with any routing key, or the path alone once you pick a **Server**. On a URL's row, the host, the path, and the names of its query with each value shown as `?`: `/?_embed=?&rest_route=/wp/v2/posts` is a REST call, not the homepage. A `rest_route`, `action`, `wc-ajax` or `feed` value is kept, its numbers shown as `?`, and campaign tags such as `utm_source`, `gclid` or `fbclid` are left out. The shaded bar compares the row with the pages listed, on whatever the chart's **Metric** measures. |
 | **2xx 3xx 4xx 5xx** | The share of the row's requests, a page's or a URL's, in each status class, as a percent. A request that never returned a status code is not counted in any of the four, so the percentages need not add up to 100. |
 | **Avg**, **Min**, **Max** | Response time in milliseconds: mean, fastest, slowest. A dash means none of the row's requests was timed. |
 | **Mem** | Mean peak memory, in MB. |
@@ -37,14 +37,14 @@ Avg, Min and Max count only the requests that were timed. A request that timed o
 
 To find the culprit:
 
-- **Sort by Avg** for a URL that is slow every time. **Sort by Max** for one that is slow now and then.
+- **Sort by Avg** for a page that is slow every time. **Sort by Max** for one that is slow now and then.
 - **A URL the report names:** type a word from it into **Search by whole URL word…**, or press `/` to jump there. Each word you type must be a whole word of the URL, and every word must match: `sports` finds `/blog/sports-news` and `sport` does not. The host is not searched.
 - **A time the report names:** convert it to your own time zone, then click that moment on any chart; cmd-click (ctrl-click) adds or removes another five-minute bucket, and dragging across a chart takes a range. Or type it in your local time into the **Time** field beside the search box, as `16:55`, `4:55 PM` where your clock is 12-hour, or a range such as `16:55-17:30`, or pick a bucket from its list. The table narrows to the buckets you chose, shaded on the charts and shown in the field as local spans such as `6:35–6:40 AM`, each with its own × to remove it.
 - **Errors:** add a filter chip in the **Filter** box above the chart. Type `status_class=5xx` for **Status Class = 5xx**, the 5xx responses, most fatal errors among them, or `status_class=unknown` for **Status Class = Unknown**, the requests that never returned a status code, as a timed-out request does. `error=F` keeps the fatals and `error=T` the timeouts exactly; a fatal error that still returned 200 is counted as 2xx, not as 5xx or Unknown. Type `!=` to leave something out instead: `status_class!=2xx` keeps every request but the 2xx responses, shown as **Status Class ≠ 2xx**, and `country!=US` every request from outside the US, unknown countries included. A chip on the server is refused: the **Server** selector chooses the site.
 - The chips narrow the chart, the table and the headline stats above it, so every count then describes those requests alone. They leave the three category charts and the **Time Breakdown** describing every request. **Total Errors** in the headline stats counts the timeouts and fatals among the requests shown.
 - The site's own background traffic is hidden until you press **Include Workers**: WP-Cron, the logger's worker processes and their jobs, and the platform's own REST calls. The button changes the table and the headline stats; the charts leave that traffic out unless you add a `worker` chip.
 
-Every count and average in the table is exact. **Avg** is the mean over the URL's timed requests, and **Mem** over those whose peak memory was sampled. The URL's own window counts its worker traffic, which the table hides until **Include Workers**.
+Every count and average in the table is exact. **Avg** is the mean over the row's timed requests, and **Mem** over those whose peak memory was sampled. The URL's own window counts its worker traffic, which the table hides until **Include Workers**.
 
 ### 3. Open the URL
 
@@ -108,7 +108,7 @@ Saving a rule needs the **tune** capability. Without it the save fails with "per
 
 ## Sending the brief to an assistant
 
-The Ask panel builds a **brief**: a Markdown summary of whatever you clicked, with its numbers, its rule and its findings. Press **Ask AI**, then click what you want to ask about: the row of a page reached one way, a URL listed under a page, the open URL's window, a request, a flame-graph bar, a **Time Breakdown** row, a log line, or the page's background for the whole site. Cmd-click (Ctrl-click) adds more things to one brief, or removes one already added, and Escape cancels. A URL or site brief picked under a filter chip or a **Time** selection says so.
+The Ask panel builds a **brief**: a Markdown summary of whatever you clicked, with its numbers, its rule and its findings. Press **Ask AI**, then click what you want to ask about: the row of a page reached one way, a URL listed under a page, the open URL's window, a request, a flame-graph bar, a **Time Breakdown** row, a log line, or the page's background for the whole site. Cmd-click (Ctrl-click) adds more things to one brief, or removes one already added, and Escape cancels. A URL or site brief picked under a filter chip or a **Time** selection says so. A site brief lists the six busiest pages, each with the hash of its busiest URL, so an assistant can ask about that URL next.
 
 - **The brief that leaves this page** opens to show exactly what will be sent.
 - **Copy brief** puts it on your clipboard, to paste into any assistant or ticket.
@@ -159,7 +159,7 @@ The connection needs a custom `Authorization` header. Claude Code takes one; cla
 
 | Scope | Tools |
 |---|---|
-| read | `performance_overview` and `performance_urls` (the page and its URL table), `dump_url` and `dump_request` (one URL, one request with its findings), `search_requests` and `grep_requests` (find a request by id, or by text in recent traffic), `performance_query` (any count, average or top list that the request and timing rows can answer, broken down and filtered by their fields), `performance_ask` (the same briefs as the panel), `dump_rules` (the logging rules) |
+| read | `performance_overview` and `performance_urls` (the dashboard's headline figures and its table of pages), `dump_url` and `dump_request` (one URL, one request with its findings), `search_requests` and `grep_requests` (find a request by id, or by text in recent traffic), `performance_query` (any count, average or top list that the request and timing rows can answer, broken down and filtered by their fields), `performance_ask` (the same briefs as the panel), `dump_rules` (the logging rules) |
 | tune | the above, plus `rules_upsert` and `rules_delete` (change or remove a logging rule) |
 
 `performance_urls`, `dump_url`, `performance_query` and `performance_ask` also take five-minute buckets in UTC, so Claude can look at the moment a publisher reported. A session sees only its scope's tools, and it sees no tools at all if the site's `allowed_users` list leaves out the login that issued it. It makes at most 20 calls per 10 seconds, counting every call; past that the server answers "Too many MCP calls; please slow down." Every tool result reaches Claude marked as site data, not instructions, because visitors wrote parts of it: a URL or a user agent can say anything.

@@ -844,7 +844,7 @@ class AskAssemblerTest extends TestCase {
 
 		$unmeasured = Ask_Assembler::for_category( $categories, 'sql' );
 		$measured   = Ask_Assembler::for_category( $categories, 'wpdb' );
-		$overview   = Ask_Assembler::for_overview( [ 'data' => [], 'totals' => null ], [ 'categories' => $categories ], '', self::FILTERS );
+		$overview   = Ask_Assembler::for_overview( [ 'as_of' => 1792481007, 'data' => [], 'totals' => null ], [ 'categories' => $categories ], '', self::FILTERS );
 
 		$this->assertSame( [ null, null, null ], [ $unmeasured['avg_time_ms'], $unmeasured['avg_count'], $unmeasured['share'] ] );
 		$this->assertSame( [ [ 'wpdb', 44.5, 7.0 ] ], \array_map( static fn ( array $o ): array => [ $o['name'], $o['avg_time_ms'], $o['avg_count'] ], $unmeasured['others'] ) );
@@ -912,10 +912,12 @@ class AskAssemblerTest extends TestCase {
 	public function test_an_overview_brief_carries_the_scope_its_numbers_are_of(): void {
 		$brief = Ask_Assembler::for_overview(
 			[
+				'as_of'     => 1792481007,
 				// The shape `urls` actually answers with — not the per-URL row
 				// shape, which is what this brief first read and printed as 0.
 				'totals'    => [
 					'urls'                => 137,
+					'pages'               => 61,
 					'requests'            => 4210,
 					'avg_ms'              => 812.5,
 					'avg_peak_mb'         => 44.25,
@@ -923,8 +925,8 @@ class AskAssemblerTest extends TestCase {
 					'errors'              => 23,
 				],
 				'data'      => [
-					[ 'hash' => '5efdf8a72d74', 'url' => 'https://example.com/slow', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4, 'errors' => 7 ],
-					[ 'hash' => 'aaaaaaaaaaaa', 'url' => 'https://example.com/fast', 'count' => 4000, 'avg_ms' => 40.0, 'max_ms' => 120.0, 'errors' => 0 ],
+					[ 'page_hash' => '9c9c9c9c9c9c', 'page' => 'example.com/slow', 'server' => 'example.com', 'shapes' => 4, 'hash' => null, 'busiest_hash' => '5efdf8a72d74', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4, 'errors' => 7 ],
+					[ 'page_hash' => '8b8b8b8b8b8b', 'page' => 'example.com/fast', 'server' => 'example.com', 'shapes' => 1, 'hash' => 'aaaaaaaaaaaa', 'busiest_hash' => 'aaaaaaaaaaaa', 'count' => 4000, 'avg_ms' => 40.0, 'max_ms' => 120.0, 'errors' => 0 ],
 				],
 			],
 			[
@@ -938,6 +940,7 @@ class AskAssemblerTest extends TestCase {
 		);
 
 		$this->assertSame( 'overview', $brief['subject'] );
+		$this->assertSame( 1792481007, $brief['as_of'], 'as old as what answered it' );
 		$this->assertSame( 'www.elsol.com.ar', $brief['server'] );
 		$this->assertSame( 'wp-admin', $brief['filters']['search'] );
 		$this->assertTrue( $brief['filters']['include_workers'] );
@@ -947,12 +950,16 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 0.83, $brief['stats']['requests_per_second'] );
 		$this->assertSame( 44.25, $brief['stats']['avg_peak_mb'] );
 		$this->assertSame( 23, $brief['stats']['errors'], 'errors counted beside the traffic' );
-		$this->assertSame( [ 7, 0 ], \array_column( $brief['urls'], 'errors' ) );
+		$this->assertSame( 61, $brief['stats']['pages'] );
 		$this->assertSame(
-			[ '5efdf8a72d74', 'aaaaaaaaaaaa' ],
-			\array_column( $brief['urls'], 'hash' ),
-			'the leaderboard as ordered, so the brief reads as the page does'
+			[
+				[ 'page_hash' => '9c9c9c9c9c9c', 'page' => 'example.com/slow', 'server' => 'example.com', 'shapes' => 4, 'busiest_hash' => '5efdf8a72d74', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4, 'errors' => 7 ],
+				[ 'page_hash' => '8b8b8b8b8b8b', 'page' => 'example.com/fast', 'server' => 'example.com', 'shapes' => 1, 'busiest_hash' => 'aaaaaaaaaaaa', 'count' => 4000, 'avg_ms' => 40.0, 'max_ms' => 120.0, 'errors' => 0 ],
+			],
+			$brief['pages'],
+			'the page rows as ordered, each naming its busiest shape, so the brief reads as the table does'
 		);
+		$this->assertArrayNotHasKey( 'urls', $brief );
 		$this->assertSame( 'sql', $brief['categories'][0]['name'] );
 		// The producer's own keys, read as `leaderboard_of()` emits them.
 		$this->assertSame( 410.0, $brief['categories'][0]['avg_time_ms'] );
@@ -969,7 +976,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_an_overview_pointer_carries_every_filter_in_force(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'requests' => 4210, 'errors' => 0 ], 'data' => [] ],
+			[ 'as_of' => 1792481007, 'totals' => [ 'requests' => 4210, 'errors' => 0 ], 'data' => [] ],
 			[ 'categories' => [] ],
 			'spoke-07',
 			[ 'search' => 'checkout', 'filter' => [ 'status_class=5', 'method=POST' ], 'include_workers' => true ] + self::FILTERS
@@ -1000,7 +1007,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_an_overview_brief_says_when_the_totals_cannot_be_scoped(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => null, 'data' => [] ],
+			[ 'as_of' => 1792481007, 'totals' => null, 'data' => [] ],
 			[ 'categories' => [] ],
 			'spoke-01',
 			self::FILTERS
@@ -1012,7 +1019,7 @@ class AskAssemblerTest extends TestCase {
 
 	/** Every count a brief quotes is exact, so it carries no flag saying otherwise. */
 	public function test_an_overview_brief_carries_no_estimate_or_provisional_flag(): void {
-		$brief = Ask_Assembler::for_overview( [ 'totals' => [ 'urls' => 4217, 'requests' => 9001, 'errors' => 0 ], 'data' => [] ], [ 'categories' => [] ], '', self::FILTERS );
+		$brief = Ask_Assembler::for_overview( [ 'as_of' => 1792481007, 'totals' => [ 'urls' => 4217, 'requests' => 9001, 'errors' => 0 ], 'data' => [] ], [ 'categories' => [] ], '', self::FILTERS );
 
 		$this->assertSame( 4217, $brief['stats']['urls'] );
 		$this->assertArrayNotHasKey( 'estimated', $brief );
@@ -1022,7 +1029,7 @@ class AskAssemblerTest extends TestCase {
 	/** No server filter is the fleet, and the brief says so rather than ''. */
 	public function test_an_overview_brief_with_no_server_answers_for_the_fleet(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'requests' => 7, 'errors' => 0 ], 'data' => [] ],
+			[ 'as_of' => 1792481007, 'totals' => [ 'requests' => 7, 'errors' => 0 ], 'data' => [] ],
 			[ 'categories' => [] ],
 			'',
 			self::FILTERS
@@ -1221,7 +1228,7 @@ class AskAssemblerTest extends TestCase {
 	/** An overview brief's bucket rides its filters and its `performance_urls` pointer. */
 	public function test_a_bucketed_overview_brief_names_its_bucket_and_re_fetches_it(): void {
 		$brief = Ask_Assembler::for_overview(
-			[ 'totals' => [ 'urls' => 2, 'requests' => 18, 'errors' => 0 ], 'data' => [] ],
+			[ 'as_of' => 1792481007, 'totals' => [ 'urls' => 2, 'requests' => 18, 'errors' => 0 ], 'data' => [] ],
 			[ 'categories' => [] ],
 			'kiwi.example',
 			[ 'search' => '', 'filter' => [], 'include_workers' => false, 'bucket' => '2026-10-04-13-35' ]

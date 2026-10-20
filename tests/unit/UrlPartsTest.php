@@ -32,6 +32,24 @@ class UrlPartsTest extends TestCase {
 		$this->assertSame( '/short-5521', Url_Parts::row_path( 'https://kea.test/short-5521', 'kea.test' ) );
 	}
 
+	/**
+	 * A page keeps the routing keys `key()` keeps, with their values as it
+	 * keeps them, so a REST route or an admin-ajax action is a page of its
+	 * own and never folds into the path it is served from.
+	 */
+	public function test_a_page_keeps_its_routing_keys(): void {
+		$this->assertSame( 'h.example/?rest_route=/wp/v2/posts/?', Url_Parts::page( Url_Parts::key( 'https://H.example/?rest_route=/wp/v2/posts/7&_embed=1', false ) ) );
+		$this->assertSame( 'h.example/wp-admin/admin-ajax.php?action=heartbeat', Url_Parts::page( Url_Parts::key( 'https://H.example/wp-admin/admin-ajax.php?action=Heartbeat&_nonce=x', false ) ) );
+		$this->assertSame( 'kea-6631.test/?rest_route=/wp/v2/posts', Url_Parts::page( 'https://kea-6631.test/?_embed=?&rest_route=/wp/v2/posts' ), 'a REST call is not the home page' );
+		$this->assertSame( 'kea-6631.test/?action=save-6631&feed=atom', Url_Parts::page( 'https://Kea-6631.test/?_a=?&action=Save-6631&feed=atom&z=?' ) );
+	}
+
+	/** A worker mark is a bare token, so one spelling a routing key still goes. */
+	public function test_a_worker_mark_spelling_a_routing_key_leaves_the_page(): void {
+		$this->assertSame( 'kea-6631.test/?feed=rss2', Url_Parts::page( 'https://kea-6631.test/?feed=rss2&action' ) );
+		$this->assertSame( 'kea-6631.test/wp-cron.php', Url_Parts::page( 'https://kea-6631.test/wp-cron.php?doing_wp_cron=?&cron' ) );
+	}
+
 	public function test_a_page_is_the_lowercased_host_and_path(): void {
 		$this->assertSame( 'www.example.com/cincinnati/movietimes', Url_Parts::page( 'https://Www.Example.com/Cincinnati/MovieTimes?film=?&show=?' ) );
 		$this->assertSame( 'moa.test', Url_Parts::page( 'https://MOA.test' ) );

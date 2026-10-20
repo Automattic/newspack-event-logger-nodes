@@ -327,6 +327,26 @@ function spanInside( span ) {
 }
 
 /**
+ * One page an overview brief lists: its name and server, its hash for a
+ * `page=` filter, and the URL hash of its one shape or its busiest.
+ *
+ * @param {Object} p A page entry of an overview brief.
+ * @return {string} A markdown list item.
+ */
+function pageLine( p ) {
+	const shapes =
+		1 === p.shapes
+			? `1 shape \`${ p.busiest_hash }\``
+			: `${ p.shapes } shapes, busiest \`${ p.busiest_hash }\``;
+	return `- ${ siteData( p.page ) } on ${ siteData( p.server ) } (page \`${
+		p.page_hash
+	}\`, ${ shapes }): ${ p.errors } errors in ${ p.count }× ${ withUnit(
+		p.avg_ms,
+		'ms'
+	) } avg, ${ withUnit( p.max_ms, 'ms' ) } worst`;
+}
+
+/**
  * Subject-specific body, above the findings.
  *
  * @param {Object} brief An assembled brief.
@@ -396,6 +416,9 @@ function bodyLines( brief ) {
 									`${ brief.stats.urls.toLocaleString(
 										'en-US'
 									) } urls`,
+									`${ brief.stats.pages.toLocaleString(
+										'en-US'
+									) } pages`,
 									`${ withUnit(
 										brief.stats.avg_ms,
 										'ms'
@@ -416,23 +439,12 @@ function bodyLines( brief ) {
 							: '',
 					],
 				] ),
-				...( ( brief.urls ?? [] ).length
+				...( ( brief.pages ?? [] ).length
 					? [
 							'',
-							'### busiest urls',
+							'### busiest pages',
 							'',
-							...( brief.urls ?? [] ).map(
-								( u ) =>
-									`- ${ siteData( u.url ) } \`${ u.hash }\` ${
-										u.errors
-									} errors in ${ u.count }× ${ withUnit(
-										u.avg_ms,
-										'ms'
-									) } avg, ${ withUnit(
-										u.max_ms,
-										'ms'
-									) } worst`
-							),
+							...( brief.pages ?? [] ).map( pageLine ),
 					  ]
 					: [] ),
 				...( ( brief.categories ?? [] ).length

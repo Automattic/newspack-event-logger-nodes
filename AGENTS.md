@@ -109,6 +109,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 36 | The query vocabulary is fixed; no SQL from outside; a picker chooses the rollup |
 | 37 | The Overview reads a job's snapshot for four intervals |
 | 38 | A request writes its hundred dearest categories |
+| 39 | A URL row is a page; a query shape is its child |
 
 ## Layout
 
@@ -168,7 +169,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 
 - `docs/README.md` — the documentation map
 - `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, stats schema
-- `docs/architecture-decisions.md` — the 38 decisions
+- `docs/architecture-decisions.md` — the 39 decisions
 - `docs/security-model.md` — what the logger captures and what crosses to the hub
 - `docs/API.md` — the MCP route, every service-CI verb, the WP-CLI verbs, the PHP API and the hooks
 - `README.md` — requirements, quick start, configuration, dashboards

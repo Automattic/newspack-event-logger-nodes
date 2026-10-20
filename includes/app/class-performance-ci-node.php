@@ -111,10 +111,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const SCAN_CLOCK_STRIDE = 100;
 
 	/**
-	 * URL rows an `overview:` brief walks for: exactly what the brief keeps,
-	 * so raising one raises both. The rest is a pointer to `performance_urls`.
+	 * Page rows an `overview:` brief lists: exactly what the brief keeps, so
+	 * raising one raises both, and each page of several shapes costs one read
+	 * for its busiest. The rest is a pointer to `performance_urls`.
 	 */
-	private const OVERVIEW_BRIEF_URLS = Ask_Assembler::TOP_SPANS;
+	private const OVERVIEW_BRIEF_PAGES = Ask_Assembler::TOP_SPANS;
 
 	/**
 	 * TSL node names the disk-walking verbs resolve their partitions through.
@@ -551,22 +552,127 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `overview:` brief — the dashboard as it is being read: the same
-	 * `url_page()` the table asks, with the same filters, for the filtered
-	 * set's totals and its top rows, and the scoped leaderboard beside it.
-	 * `answer_overview()`'s totals are deliberately NOT used: they ignore the
-	 * URL filters, so under a search they would describe a different set
-	 * than the one on screen.
+	 * The `overview:` brief — the dashboard as it is being read: the pages
+	 * the table lists, busiest first, under the same filters, with the
+	 * filtered set's totals and the scoped leaderboard beside them. A
+	 * question the snapshot answers reads it, as the table does, and each
+	 * page of several shapes takes its `busiest_hash` off it; any other
+	 * reads both live. A one-page filter answers live, because the snapshot
+	 * lists that page's URLs, not the page. `answer_overview()`'s totals are
+	 * deliberately NOT used: they ignore the URL filters, so under a search
+	 * they would describe a different set than the one on screen.
 	 *
 	 * @param string      $server  Server the page is scoped to; '' is every server.
 	 * @param Url_Filters $filters The url filters, as the page has them.
 	 * @param int         $now     The reply's clock, read once at its entry.
 	 * @return array<string,mixed>
+	 * @throws \LogicException When a listed page holds no URL of the set.
+	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
 	 */
 	private static function ask_overview( string $server, array $filters, int $now ): array {
-		$page              = self::url_page( 'url', $server, $filters, 'count', 'desc', 0, self::OVERVIEW_BRIEF_URLS, $now );
-		$filters['bucket'] = Core::as_string( $page['filters']['bucket'] );
-		return Ask_Assembler::for_overview( $page, self::site_leaderboard( $server, $now ), $server, $filters );
+		$workers = $filters['include_workers'];
+		$stored  = null === self::one_page( $filters['filter'] )
+			? self::snapshot_urls(
+				self::brief_question( $server, $filters ),
+				$now,
+				static fn ( Url_Snapshot $snapshot, array $args ): array => self::with_busiest( self::stored_urls( $snapshot, $args ), self::stored_busiest_shape( $snapshot, $workers ) )
+			)
+			: null;
+		$listing = $stored ?? self::with_busiest(
+			[ 'as_of' => $now ] + self::url_page( 'page', $server, $filters, 'count', 'desc', 0, self::OVERVIEW_BRIEF_PAGES, $now ),
+			self::busiest_shape( self::url_set( $server, $filters, $now ) )
+		);
+
+		$filters['bucket'] = Core::as_string( Core::arr( $listing['filters'] )['bucket'] );
+		return Ask_Assembler::for_overview( $listing, self::site_leaderboard( $server, $now ), $server, $filters );
+	}
+
+	/**
+	 * A page listing with each row's `busiest_hash`: a one-shape page's own
+	 * `hash`, and `$busiest` of any other.
+	 *
+	 * @param array<string,mixed>                       $listing A `urls` reply of pages.
+	 * @param \Closure(array<array-key,mixed>): string $busiest A page row to its busiest URL's hash.
+	 * @return array<string,mixed>
+	 * @throws \LogicException As `$busiest`, on a listed page holding no URL.
+	 */
+	private static function with_busiest( array $listing, \Closure $busiest ): array {
+		$listing['data'] = \array_map(
+			static function ( mixed $row ) use ( $busiest ): array {
+				$row = Core::arr( $row );
+				return $row + [ 'busiest_hash' => 1 === Core::num_int( $row['shapes'] ) ? $row['hash'] : $busiest( $row ) ];
+			},
+			Core::arr( $listing['data'] )
+		);
+		return $listing;
+	}
+
+	/**
+	 * The `urls` question an `overview:` brief lists: the busiest
+	 * `OVERVIEW_BRIEF_PAGES` pages under the brief's filters, every other
+	 * arg bound at its default, so it is the table's question.
+	 *
+	 * @param string      $server  Server the page is scoped to; '' is every server.
+	 * @param Url_Filters $filters The url filters, as the page has them.
+	 * @return array<string,mixed>
+	 * @throws \InvalidArgumentException As `Command_Args::bind()`.
+	 */
+	private static function brief_question( string $server, array $filters ): array {
+		$bound = self::url_defaults();
+		return \array_replace(
+			$bound,
+			[
+				'server'          => $server,
+				'search'          => '' === $filters['search'] ? $bound['search'] : $filters['search'],
+				'filter'          => $filters['filter'],
+				'include_workers' => $filters['include_workers'],
+				'bucket'          => $filters['bucket'],
+				'limit'           => self::OVERVIEW_BRIEF_PAGES,
+			]
+		);
+	}
+
+	/**
+	 * A live page row's busiest URL in the set, by count, ties going to the
+	 * higher hash as a descending sort breaks them: one read of that page on
+	 * that row's server.
+	 *
+	 * @param array{source:string, filter:array<string,list<scalar>>, buckets:list<array{0:int,1:int}>, search:string} $base A `url_set()`.
+	 * @return \Closure(array<array-key,mixed>): string A `page_rows()` row to its busiest URL's hash.
+	 */
+	private static function busiest_shape( array $base ): \Closure {
+		return static fn ( array $row ): string => Core::as_string(
+			Stats_Query::run(
+				[
+					'group'   => [ 'url' ],
+					'filter'  => [
+						'page'   => [ Core::as_string( $row['page_hash'] ) ],
+						'server' => [ Core::as_string( $row['server'] ) ],
+					] + $base['filter'],
+					'measure' => [ 'count' ],
+					'sort'    => 'count',
+					'order'   => 'desc',
+					'limit'   => 1,
+					'offset'  => 0,
+				] + $base
+			)['rows'][0][0] ?? throw new \LogicException( \esc_html( 'listed page ' . Core::as_string( $row['page_hash'] ) . ' holds no URL' ) )
+		);
+	}
+
+	/**
+	 * A stored page row's busiest URL, by count, ties going to the higher
+	 * hash: the first of the page's URLs the snapshot lists on that row's
+	 * server in the view.
+	 *
+	 * @param Url_Snapshot $snapshot The published snapshot the row came from.
+	 * @param bool         $workers  Read Include Workers' URLs; false the default view's.
+	 * @return \Closure(array<array-key,mixed>): string A `page_rows()` row to its busiest URL's hash, raising `\PDOException` where the snapshot's `urls` will not read.
+	 */
+	private static function stored_busiest_shape( Url_Snapshot $snapshot, bool $workers ): \Closure {
+		return static fn ( array $row ): string => Core::as_string(
+			$snapshot->shapes( Core::as_string( $row['page_hash'] ), Core::as_string( $row['server'] ), $workers, 'count', 'desc', 0, 1 )['rows'][0][0]
+				?? throw new \LogicException( \esc_html( 'listed page ' . Core::as_string( $row['page_hash'] ) . ' holds no URL' ) )
+		);
 	}
 
 	/**
@@ -1285,13 +1391,15 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( 'overview' === $verb && '' === $args['server'] ) {
 			$args['server'] = null;
 		}
-		$now      = self::now();
+		$now = self::now();
+		if ( 'urls' === $verb ) {
+			return self::snapshot_urls( $args, $now, self::stored_urls( ... ) ) ?? self::answer_live( $verb, $args, $now, null );
+		}
 		$server   = 'overview' === $verb ? Core::as_string( $args['server'] ) : '';
-		$key      = 'urls' === $verb ? null : Overview_Prefetch::key( $verb, $args );
-		$served   = null === $key ? self::snapshot_answers( $args ) : isset( $this->stored_questions()[ Overview_Prefetch::key( $verb, Overview_Prefetch::templated( $args ) ) ] );
-		$snapshot = $served ? Url_Snapshot::open( $now ) : null;
+		$key      = Overview_Prefetch::key( $verb, $args );
+		$snapshot = isset( $this->stored_questions()[ Overview_Prefetch::key( $verb, Overview_Prefetch::templated( $args ) ) ] ) ? Url_Snapshot::open( $now ) : null;
 		try {
-			$stored = null === $snapshot ? null : ( null === $key ? self::stored_urls( $snapshot, $args ) : $snapshot->answer( $key ) );
+			$stored = $snapshot?->answer( $key );
 			// The overview whose servers this reply names.
 			$listed = null === $stored && '' !== $server && null !== $snapshot ? $snapshot->answer( Overview_Prefetch::key( $verb, \array_replace( $args, [ 'server' => null ] ) ) ) : $stored;
 		} catch ( \PDOException | \JsonException $e ) {
@@ -1326,6 +1434,31 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * What `$read` answers off the snapshot for a `urls` question the
+	 * snapshot answers; null where the question answers live: one
+	 * `snapshot_answers()` refuses, no snapshot, or one that opens but will
+	 * not read for `$read`, which is said once a window. Only a
+	 * `PDOException` falls back; anything else `$read` raises propagates.
+	 *
+	 * @param array<array-key,mixed>                                                            $args The bound verb args.
+	 * @param int                                                                               $now  The reply's clock.
+	 * @param \Closure(Url_Snapshot, array<array-key,mixed>): array<string,mixed>               $read The answer off the opened snapshot, as `stored_urls()` gives one.
+	 * @return array<string,mixed>|null
+	 */
+	private static function snapshot_urls( array $args, int $now, \Closure $read ): ?array {
+		$snapshot = self::snapshot_answers( $args ) ? Url_Snapshot::open( $now ) : null;
+		if ( null === $snapshot ) {
+			return null;
+		}
+		try {
+			return $read( $snapshot, $args );
+		} catch ( \PDOException $e ) {
+			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
+			return null;
+		}
+	}
+
+	/**
 	 * Whether the snapshot answers a `urls` question: a filter naming one
 	 * page or nothing, and every arg outside `SNAPSHOT_VARIES` at the
 	 * default the binder gives it, so a search, a bucket selection, any
@@ -1338,14 +1471,23 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( [] !== $filter && null === self::one_page( $filter ) ) {
 			return false;
 		}
-		$declared = Core::arr( Command_Interpreter_Node::declared_verbs( self::class )['urls']['args'] ?? throw new \LogicException( 'urls declares its args' ) );
-		$defaults = \array_diff_key( Command_Args::bind( $declared, [] ), \array_flip( self::SNAPSHOT_VARIES ) );
+		$defaults = \array_diff_key( self::url_defaults(), \array_flip( self::SNAPSHOT_VARIES ) );
 		foreach ( $defaults as $name => $default ) {
 			if ( $args[ $name ] !== $default ) {
 				return false;
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * The `urls` verb's args as the binder gives them unasked.
+	 *
+	 * @return array<string,mixed>
+	 * @throws \InvalidArgumentException As `Command_Args::bind()`.
+	 */
+	private static function url_defaults(): array {
+		return Command_Args::bind( Core::arr( Command_Interpreter_Node::declared_verbs( self::class )['urls']['args'] ?? throw new \LogicException( 'urls declares its args' ) ), [] );
 	}
 
 	/**
@@ -1357,6 +1499,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<array-key,mixed> $args     The bound verb args.
 	 * @return array<string,mixed>
 	 * @throws \InvalidArgumentException As `Url_Snapshot::pages()` and `shapes()`.
+	 * @throws \PDOException When the snapshot opens but will not read.
 	 */
 	private static function stored_urls( Url_Snapshot $snapshot, array $args ): array {
 		[ $server, $filters, $sort, $order, $offset, $limit ] = self::url_question( $args );
@@ -2265,7 +2408,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'urls',
 					'capability'  => Capabilities::READ,
-					'description' => 'Paginated, sortable table of pages, a page being a URL\'s lowercased host and path, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs, the query shapes, the set holds of that page on one server: `page_hash`, `page`, `server`, `path` (the page under its server), `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--filter=page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures. `rows` is the exact count the pager lists, the pages or under a page filter that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `include_workers` and one `page=<page hash>` filter is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
+					'description' => 'Paginated, sortable table of pages, a page being a URL\'s host and path, lowercased, with its routing keys kept, with exact totals and the slowest ten, every mean request-weighted; stats that will not open answer `available` false and `totals` null. A page row folds the URLs the set holds of that page on one server, its case spellings and its query shapes but the routing keys: `page_hash`, `page`, `server`, `path` (the page under its server), `shapes` (the URLs folded), `hash` (the one URL\'s hash, null where it folds more), then the measures a URL row carries; its `worker` is true where any shape folded is a worker\'s, so under `include_workers` a page with one worker shape among visitor shapes reads true. The `url` sort orders pages by `page`. `--filter=page=<page hash>` answers that page\'s URLs instead, each a URL row: `hash`, `url` and the measures. `rows` is the exact count the pager lists, the pages or under a page filter that page\'s URLs, and `totals` counts both `urls` and `pages`. Where no timed request reached a row, its `avg_ms`, `min_ms` and `max_ms` are null, and it ranks last on those three sorts in either order. A question setting no arg but `sort`, `order`, `limit`, `offset`, `server`, `include_workers` and one `page=<page hash>` filter is answered from the overview-prefetch job\'s URL snapshot, which ' . $life . ', from the end of its build; any other answers live without opening it; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'desc' ],
