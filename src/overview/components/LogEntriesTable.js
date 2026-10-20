@@ -206,16 +206,15 @@ const topOutOfView = ( row ) => {
 };
 
 /**
- * Center a row and flash-highlight it, dropping any highlight before it.
- * Highlights individual <td> cells since <tr> doesn't support box-shadow
- * reliably. The highlight clears itself after two seconds, or sooner if
- * another call preempts it.
+ * Flash-highlight a row, dropping any highlight before it. Highlights
+ * individual <td> cells since <tr> doesn't support box-shadow reliably.
+ * The highlight clears itself after two seconds, or sooner if another
+ * call preempts it.
  *
  * @param {Element} row The table row.
  */
-const centerAndHighlight = ( row ) => {
+const highlightRow = ( row ) => {
 	clearHighlight();
-	row.scrollIntoView( CENTERED );
 	const cells = row.querySelectorAll( 'td' );
 	const highlighted = [];
 	for ( const td of cells ) {
@@ -253,7 +252,8 @@ const scrollToAndHighlight = ( tableRef, selector ) => {
 		clearHighlight();
 		const row = findRow( tableRef.current, selector );
 		if ( row ) {
-			centerAndHighlight( row );
+			row.scrollIntoView( CENTERED );
+			highlightRow( row );
 		}
 	} );
 };
@@ -984,17 +984,22 @@ export default function LogEntriesTable( {
 	}, [] );
 
 	/**
-	 * Center the row a shrink left when its top is out of view, after layout
-	 * so the check reads the height the shrink produced, and flash it as a
-	 * search match is flashed, so the eye finds the row the scroll moved.
+	 * Flash the row a shrink left, as a search match is flashed, so the eye
+	 * finds it however little moved, and center it when its top is out of
+	 * view. Runs after layout, so the check reads the height the shrink
+	 * produced.
 	 */
 	useLayoutEffect( () => {
 		const selector = centerAfterShrinkRef.current;
 		centerAfterShrinkRef.current = null;
 		const row = selector && findRow( tableRef.current, selector );
-		if ( row && topOutOfView( row ) ) {
-			centerAndHighlight( row );
+		if ( ! row ) {
+			return;
 		}
+		if ( topOutOfView( row ) ) {
+			row.scrollIntoView( CENTERED );
+		}
+		highlightRow( row );
 	}, [ expandedBodies, expandedSet ] );
 
 	/**

@@ -2697,7 +2697,7 @@ describe( 'recentering after a row shrinks', () => {
 		unmount();
 	} );
 
-	it( 'leaves the scroll alone on Show less while the row top is in view', () => {
+	it( 'flashes the row on Show less without scrolling while its top is in view', () => {
 		const { calls, toggle, unmount } = mount( 213 );
 		act( () => toggle().click() );
 
@@ -2705,7 +2705,7 @@ describe( 'recentering after a row shrinks', () => {
 
 		expect( calls ).toEqual( [] );
 		for ( const td of toggle().closest( 'tr' ).querySelectorAll( 'td' ) ) {
-			expect( td.style.boxShadow ).toBe( '' );
+			expect( td.style.boxShadow ).toContain( 'inset' );
 		}
 		unmount();
 	} );
@@ -2756,7 +2756,7 @@ describe( 'recentering after a row shrinks', () => {
 		unmount();
 	} );
 
-	it( 'leaves the scroll alone when the folded row top is in view', () => {
+	it( 'flashes the folded row without scrolling while its top is in view', () => {
 		const { calls, rowOf, unmount } = mount( 213 );
 		act( () => rowOf( 'db' ).click() );
 
@@ -2764,6 +2764,9 @@ describe( 'recentering after a row shrinks', () => {
 
 		expect( rowOf( 'db (complete)' ) ).toBeUndefined();
 		expect( calls ).toEqual( [] );
+		for ( const td of rowOf( 'db' ).querySelectorAll( 'td' ) ) {
+			expect( td.style.boxShadow ).toContain( 'inset' );
+		}
 		unmount();
 	} );
 
