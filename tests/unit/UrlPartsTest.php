@@ -32,6 +32,31 @@ class UrlPartsTest extends TestCase {
 		$this->assertSame( '/short-5521', Url_Parts::row_path( 'https://kea.test/short-5521', 'kea.test' ) );
 	}
 
+	public function test_a_page_is_the_lowercased_host_and_path(): void {
+		$this->assertSame( 'www.example.com/cincinnati/movietimes', Url_Parts::page( 'https://Www.Example.com/Cincinnati/MovieTimes?film=?&show=?' ) );
+		$this->assertSame( 'moa.test', Url_Parts::page( 'https://MOA.test' ) );
+		$this->assertSame( 'moa.test/', Url_Parts::page( 'https://moa.test/?a=?' ) );
+	}
+
+	public function test_case_variants_share_a_page(): void {
+		$this->assertSame(
+			Url_Parts::page( 'https://kea.test/Kea-5521?a=?' ),
+			Url_Parts::page( 'https://KEA.test/kea-5521?b=?&c=?' )
+		);
+	}
+
+	public function test_a_worker_mark_and_a_query_leave_the_page_alone(): void {
+		$this->assertSame( 'kea.test/wp-json/newspack-nodes/v1/command', Url_Parts::page( 'https://kea.test/wp-json/newspack-nodes/v1/command?restapi' ) );
+		$this->assertSame( 'kea.test/jobs/weka', Url_Parts::page( 'https://kea.test/jobs/weka?job-worker.p0' ) );
+	}
+
+	public function test_an_http_url_and_a_cut_url_derive_a_page(): void {
+		$this->assertSame( 'kea.test/pukeko', Url_Parts::page( 'http://kea.test/Pukeko?a=?' ) );
+		$long = 'https://kea.test/Takahe/' . \str_repeat( 'x', 1100 );
+		$this->assertSame( 'kea.test/takahe/' . \str_repeat( 'x', 1100 ), Url_Parts::page( $long ) );
+		$this->assertSame( 'kea.test/takahe/…', Url_Parts::page( 'https://kea.test/Takahe/…' ) );
+	}
+
 	/**
 	 * A rule matches a stored URL by its path alone: neither the masked query
 	 * nor the worker mark is anything a request sent. An authority with no

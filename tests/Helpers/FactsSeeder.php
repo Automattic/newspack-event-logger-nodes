@@ -198,9 +198,10 @@ trait FactsSeeder {
 				$server_at = $named( Flame_Facts_Row_Schema::NAMED_BY['server_id'], $server );
 				$url_at    = $at['urls'][ $url ] ?? null;
 				if ( null === $url_at ) {
+					$page                = Url_Parts::page( $url );
 					$url_at              = \count( $batch );
 					$at['urls'][ $url ] = $url_at;
-					$batch[]            = [ 'ignore', 'urls', [ null, Log_Manager::url_hash( $url ), null, Url_Parts::row_path( $url, $server ) ], [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => $server_at ] ];
+					$batch[]            = [ 'ignore', 'urls', [ null, Log_Manager::url_hash( $url ), null, Url_Parts::row_path( $url, $server ), $page, Log_Manager::url_hash( $page ) ], [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => $server_at ] ];
 				}
 				$values['url_id'] = null;
 				$ids[ Flame_Facts_Row_Schema::position( $table, 'url_id' ) ] = $url_at;

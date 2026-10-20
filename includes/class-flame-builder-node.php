@@ -467,7 +467,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$place     = Log_Position::crumb( $crumb );
 
 		$server_at = $this->named_at( 'server_id', $server );
-		$url_at    = $this->url_at[ $url_hash ] ??= $this->op( [ 'ignore', 'urls', [ null, $url_hash, null, Url_Parts::row_path( $url, $server ) ], [], self::ids_at( 'urls', [ 'server_id' => $server_at ] ) ] );
+		$url_at    = $this->url_at[ $url_hash ] ??= $this->op( [ 'ignore', 'urls', self::url_row( $url_hash, $url, $server ), [], self::ids_at( 'urls', [ 'server_id' => $server_at ] ) ] );
 		$ids       = self::ids_at(
 			'requests',
 			[
@@ -573,6 +573,21 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			}
 		}
 		return $ids;
+	}
+
+	/**
+	 * The positional values of a `urls` row, in the schema's column order:
+	 * the id the table assigns, the URL's hash, the server id the caller
+	 * fills, the stored path, the page and the page's hash.
+	 *
+	 * @param string $url_hash The URL's `Log_Manager::url_hash()`.
+	 * @param string $url      The request's URL.
+	 * @param string $server   Its host.
+	 * @return list<int|string|null>
+	 */
+	private static function url_row( string $url_hash, string $url, string $server ): array {
+		$page = Url_Parts::page( $url );
+		return [ null, $url_hash, null, Url_Parts::row_path( $url, $server ), $page, Log_Manager::url_hash( $page ) ];
 	}
 
 	/**

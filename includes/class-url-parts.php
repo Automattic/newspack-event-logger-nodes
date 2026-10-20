@@ -3,7 +3,8 @@
  * Url Parts
  *
  * The server a logged URL names, the key its row is filed by, the path a
- * stats row stores, and the path a rule matches it by.
+ * stats row stores, the path a rule matches it by, and the page it belongs
+ * to.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -148,7 +149,29 @@ final class Url_Parts {
 	 * @throws \InvalidArgumentException When the URL has no host.
 	 */
 	public static function rule_path( string $url ): string {
-		$start = \array_sum( self::authority( $url ) );
+		return self::path_from( $url, \array_sum( self::authority( $url ) ) );
+	}
+
+	/**
+	 * The page a stored URL belongs to: its host and path, lowercased, with
+	 * the query and any worker mark dropped, so every case, query shape and
+	 * scheme of one address shares a page.
+	 *
+	 * @param string $url A stored URL, which carries its host.
+	 * @throws \InvalidArgumentException When the URL has no host.
+	 */
+	public static function page( string $url ): string {
+		[ $start ] = self::authority( $url );
+		return \strtolower( self::path_from( $url, $start ) );
+	}
+
+	/**
+	 * The URL from `$start` to its first `?`, or its end.
+	 *
+	 * @param string $url   A stored URL.
+	 * @param int    $start Where to start reading.
+	 */
+	private static function path_from( string $url, int $start ): string {
 		return \substr( $url, $start, \strcspn( $url, '?', $start ) );
 	}
 

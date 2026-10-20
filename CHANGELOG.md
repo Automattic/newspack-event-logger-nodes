@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **A `urls` row carries its page.** `Url_Parts::page()` is a logged URL's host and path, lowercased, with its query and worker mark dropped; each row stores it as `page`, with `page_hash` (`Log_Manager::url_hash()` of the page) and an index `urls_page` on `( page_hash, server_id )`. `Flame_Facts_Row_Schema::version()` is 8, so an older file is discarded and recreated empty at open; the rebuild follows [decision 5](docs/architecture-decisions.md#decision-5-a-stats-schema-change-is-a-version-bump-and-a-rebuild-and-nothing-in-this-code-migrates).
+
 ## [0.147.0] - 2026-10-20
 
 ### Changed
