@@ -3,8 +3,8 @@
  * Url Parts
  *
  * The server a logged URL names, the key its row is filed by, the path a
- * stats row stores, the path a rule matches it by, the page it belongs to,
- * and the path that page shows under its server.
+ * stats row stores, the path a rule matches it by, and the page it belongs
+ * to.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -226,19 +226,6 @@ final class Url_Parts {
 	public static function identity( string $url ): string {
 		$url = \strtolower( $url );
 		return \str_starts_with( $url, 'http://' ) ? 'https://' . \substr( $url, \strlen( 'http://' ) ) : $url;
-	}
-
-	/**
-	 * A page as `$server` shows it: the path after the server, which the
-	 * page carries lowercased, as `row_path()` drops an https origin naming
-	 * the server; any other page, or one with no path, is kept whole.
-	 *
-	 * @param string $page   A `page()`.
-	 * @param string $server The server its row is filed under.
-	 */
-	public static function page_path( string $page, string $server ): string {
-		$host = \strtolower( $server );
-		return \str_starts_with( $page, $host . '/' ) ? \substr( $page, \strlen( $host ) ) : $page;
 	}
 
 	/**

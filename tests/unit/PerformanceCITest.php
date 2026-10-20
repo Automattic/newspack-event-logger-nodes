@@ -2515,7 +2515,6 @@ class PerformanceCITest extends TestCase {
 					'page_hash'    => self::hash_of( 'seed.example/kotuku-6604/' ),
 					'page'         => 'seed.example/kotuku-6604/',
 					'server'       => 'seed.example',
-					'path'         => '/kotuku-6604/',
 					'shapes'       => 2,
 					'hash'         => null,
 					'url'          => 'https://seed.example/kotuku-6604/',
@@ -2540,7 +2539,6 @@ class PerformanceCITest extends TestCase {
 					'page_hash'    => self::hash_of( 'seed.example/tieke-6604/' ),
 					'page'         => 'seed.example/tieke-6604/',
 					'server'       => 'seed.example',
-					'path'         => '/tieke-6604/',
 					'shapes'       => 1,
 					'hash'         => self::hash_of( 'https://seed.example/tieke-6604/' ),
 					'url'          => 'https://seed.example/tieke-6604/',
@@ -2681,8 +2679,8 @@ class PerformanceCITest extends TestCase {
 				[ 'server' => 'KEA-8812.example', 'url' => 'https://KEA-8812.example/HIHI-8812/', 'ms' => 53.5 ],
 			]
 		);
-		$expected = [ [ 'kea-8812.example', 'kea-8812.example/hihi-8812/', '/hihi-8812/', 3, null, 3 ] ];
-		$shape    = static fn ( array $reply ): array => \array_map( static fn ( array $row ): array => [ $row['server'], $row['page'], $row['path'], $row['shapes'], $row['hash'], $row['count'] ], $reply['data'] );
+		$expected = [ [ 'kea-8812.example', 'kea-8812.example/hihi-8812/', 3, null, 3 ] ];
+		$shape    = static fn ( array $reply ): array => \array_map( static fn ( array $row ): array => [ $row['server'], $row['page'], $row['shapes'], $row['hash'], $row['count'] ], $reply['data'] );
 
 		$live = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 		Url_Snapshot::publish( self::tick(), 600, static fn (): array => [] );
@@ -2869,7 +2867,6 @@ class PerformanceCITest extends TestCase {
 				'page_hash'    => self::hash_of( 'seed.example/kakapo/' ),
 				'page'         => 'seed.example/kakapo/',
 				'server'       => 'seed.example',
-				'path'         => '/kakapo/',
 				'shapes'       => 1,
 				'hash'         => self::hash_of( $kakapo ),
 				'url'          => $kakapo,

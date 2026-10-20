@@ -212,10 +212,11 @@ class McpControllerTest extends TestCase {
 		);
 
 		$urls = $tools['performance_urls']['description'];
-		foreach ( [ '`page_hash`', '`page`', '`server`', '`path`', '`shapes`', '`hash`', '`worker`', '`totals.pages`', '`page`' ] as $named ) {
+		foreach ( [ '`page_hash`', '`page`', '`server`', '`shapes`', '`hash`', '`worker`', '`totals.pages`', '`page`' ] as $named ) {
 			$this->assertStringContainsString( $named, $urls, $named );
 		}
 		$this->assertStringContainsString( 'A `page_hash` is never a URL hash', $urls );
+		$this->assertStringNotContainsString( '`path`', $urls, 'a page row carries no path' );
 		$this->assertStringNotContainsString( 'The URL table', $urls );
 		$this->assertStringContainsString( 'lists that page\'s URL rows', $tools['performance_urls']['inputSchema']['properties']['page']['description'] );
 		$this->assertStringContainsString( '`page=<page hash>` keeps that one page row', $tools['performance_urls']['inputSchema']['properties']['filter']['description'] );

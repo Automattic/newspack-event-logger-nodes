@@ -14,7 +14,7 @@ import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
  * @return {string} The identity a row's hash is taken of.
  */
 function urlIdentity( url ) {
-	const folded = serverName( url );
+	const folded = asciiLower( url );
 	return folded.startsWith( 'http://' )
 		? `https://${ folded.slice( 'http://'.length ) }`
 		: folded;
@@ -37,9 +37,20 @@ export function urlHash( url ) {
  * `Url_Parts::server_name()`: its ASCII capitals folded, as PHP's
  * `strtolower()` folds them, so a server linked in any case is one server.
  *
- * @param {string} name A host, or any text folded the same way.
+ * @param {string} name A host.
  * @return {string} The name, lowercased.
  */
 export function serverName( name ) {
-	return name.replace( /[A-Z]+/g, ( run ) => run.toLowerCase() );
+	return asciiLower( name );
+}
+
+/**
+ * Text with its ASCII capitals folded and every other character kept, as
+ * PHP's `strtolower()` folds.
+ *
+ * @param {string} text Any text.
+ * @return {string} The text, folded.
+ */
+function asciiLower( text ) {
+	return text.replace( /[A-Z]+/g, ( run ) => run.toLowerCase() );
 }

@@ -10,20 +10,19 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   page is a URL's lowercased host and path, every query key folded, and a
   row is one page on one server, folding every URL of it. A row carries
   `page_hash` (`Log_Manager::url_hash()` of the page), `page`, `server`,
-  `path` (the page under its server), `shapes` (the URLs folded) and `url`,
-  then the measures a URL row carried. `url` is now the name the row shows,
-  not one URL's: a one-shape page's URL as its own row names it, a page of
-  more `https://` and the page, so never read a page row's `url` as a URL
-  `dump_url` takes; it is a display name. `hash` is the
-  URL's hash only where the page folds one shape; on a page of more it is
-  null, so key a row by `page_hash` and `server`, and never pass a
-  `page_hash` where a URL hash goes (`dump_url`, `?url=`, `ask url:`, `url=`
-  filters). A page's `worker` is true where any shape is a worker's. `rows`
-  counts the pages matching, `totals.pages` is new beside `totals.urls`, the
-  `url` sort orders by `page`, and `slowest` lists pages. For URL rows as
-  `urls` answered them before, ask `--page=<page hash>`: it answers
-  that page's URLs, each with `hash`, `url` and the measures, and `rows`
-  counts them.
+  `shapes` (the URLs folded) and `url`, then the measures a URL row carried.
+  `url` is now the name the row shows, not one URL's: a one-shape page's URL
+  as its own row names it, a page of more `https://` and the page, so never
+  read a page row's `url` as a URL `dump_url` takes; it is a display name.
+  `hash` is the URL's hash only where the page folds one shape; on a page of
+  more it is null, so key a row by `page_hash` and `server`, and never pass
+  a `page_hash` where a URL hash goes (`dump_url`, `?url=`, `ask url:`,
+  `url=` filters). A page's `worker` is true where any shape is a worker's.
+  `rows` counts the pages matching, `totals.pages` is new beside
+  `totals.urls`, the `url` sort orders by `page`, and `slowest` lists pages.
+  For URL rows as `urls` answered them before, ask `--page=<page hash>`: it
+  answers that page's URLs, each with `hash`, `url` and the measures, and
+  `rows` counts them.
 
 - **A URL's hash folds case and scheme, and a server's name is lowercase.**
   A URL row is hashed by `Url_Parts::hash()`, `Log_Manager::url_hash()` of
@@ -34,14 +33,14 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   the first it filed, and a read across partitions shows the byte-wise least
   of them, an https URL before an http one. A server is stored as its host
   lowercased (`Url_Parts::server_name()`), and every reader folds a server
-  it is given the same way, so `--server=Example.com` matches; a `?server=`
-  link or a script comparing server names takes them lowercased. A `?url=`
-  link, a `url:` descriptor or a `url=` filter carrying a hash from 0.147.0
-  or earlier names a URL spelled with capitals or over http that no row
-  carries any more; open the URL from the table again for its new hash. A
-  page that hashes a stored URL itself takes `urlHash()`, as the request
-  stream, the in-flight view and the error log do. `Log_Manager::url_hash()`
-  is unchanged, so rule ids keep their hashes.
+  it is given the same way, so `--server=Example.com` matches; a script
+  comparing server names lowercases them; the Overview folds a `?server=`
+  link itself. A `?url=` link, a `url:` descriptor or a `url=` filter
+  carrying a hash from 0.147.0 or earlier names a URL spelled with capitals
+  or over http that no row carries any more; open the URL from the table
+  again for its new hash. A page that hashes a stored URL itself takes
+  `urlHash()`, as the request stream, the in-flight view and the error log
+  do. `Log_Manager::url_hash()` is unchanged, so rule ids keep their hashes.
 
 - **An `overview:` brief lists pages as `pages`, not URLs as `urls`.** The
   `ask` verb and the MCP `performance_ask` tool answer `pages`, each with

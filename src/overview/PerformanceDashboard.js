@@ -116,7 +116,7 @@ import './styles/modal.scss';
 import './styles/tables.scss';
 import './styles/charts.scss';
 
-/** A held click is no element, so only Escape dismisses it. */
+/** A held click has no element of its own, so only Escape dismisses it. */
 const NO_ELEMENT = { current: null };
 
 /**
@@ -184,14 +184,22 @@ const NO_SEARCH_ANSWER = {
 const RID_SHAPE = /^[a-zA-Z0-9_-]+$/;
 
 /**
- * The linked `?expand=` values that name a page, each once.
+ * The linked `?expand=` values that name a page, each once, its server
+ * spelled as the list names it.
  *
  * @param {string[]} raw Every value the param holds.
  * @return {string[]} The page keys kept, or `NO_PAGE_KEYS` for none.
  */
 const restoreExpanded = ( raw ) => {
 	const kept = [
-		...new Set( raw.filter( ( key ) => PAGE_KEY.test( key ) ) ),
+		...new Set(
+			raw
+				.filter( ( key ) => PAGE_KEY.test( key ) )
+				.map( ( key ) => {
+					const at = key.indexOf( ':' ) + 1;
+					return key.slice( 0, at ) + serverName( key.slice( at ) );
+				} )
+		),
 	];
 	return kept.length ? kept : NO_PAGE_KEYS;
 };
@@ -617,10 +625,12 @@ export default function PerformanceDashboard( {
 	);
 
 	// @longform A row of one request opens that request, its rid named by the
-	// window's own dump_url; an answer naming none, or a refusal, leaves the
-	// window open. Until then the window is held unpainted. An answer names
-	// its hash in `stats`; a refusal names none, but the Current gate passes
-	// only the held ask's, so any refusal published since the click is its.
+	// window's own dump_url, only when that answer counts exactly one; any
+	// other answer, or a refusal, paints the window. Until then the window is
+	// held unpainted, the row spins with aria-busy, and Escape cancels and
+	// drops ?url=. An answer names its hash in `stats`; a refusal names none,
+	// but the Current gate passes only the held ask's, so any refusal
+	// published since the click is its.
 	useEffect( () => {
 		if ( ! oneRequest ) {
 			return;
