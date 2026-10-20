@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Show less and a folded pair always flash the row they leave.** The request entries table outlined that row only when it had to scroll it back into view; it now outlines it for two seconds every time, as `n` and `N` outline a search match, and scrolls only when the row's top is out of view, because folding even a few lines moves the rows beneath the pointer.
+
 ## [0.148.0] - 2026-10-20
 
 ### Added
