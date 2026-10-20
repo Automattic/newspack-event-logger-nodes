@@ -206,12 +206,41 @@ const topOutOfView = ( row ) => {
 };
 
 /**
+ * Center a row and flash-highlight it, dropping any highlight before it.
+ * Highlights individual <td> cells since <tr> doesn't support box-shadow
+ * reliably. The highlight clears itself after two seconds, or sooner if
+ * another call preempts it.
+ *
+ * @param {Element} row The table row.
+ */
+const centerAndHighlight = ( row ) => {
+	clearHighlight();
+	row.scrollIntoView( CENTERED );
+	const cells = row.querySelectorAll( 'td' );
+	const highlighted = [];
+	for ( const td of cells ) {
+		td.style.boxShadow =
+			'inset 0 2px 0 0 rgba(79, 195, 247, 0.8), inset 0 -2px 0 0 rgba(79, 195, 247, 0.8)';
+		highlighted.push( td );
+	}
+	// Add left edge to first cell and right edge to last.
+	if ( cells.length > 0 ) {
+		cells[ 0 ].style.boxShadow +=
+			', inset 2px 0 0 0 rgba(79, 195, 247, 0.8)';
+		cells[ cells.length - 1 ].style.boxShadow +=
+			', inset -2px 0 0 0 rgba(79, 195, 247, 0.8)';
+	}
+	activeHighlight.cells = highlighted;
+	activeHighlight.timer = setTimeout( () => {
+		clearHighlight();
+	}, 2000 );
+};
+
+/**
  * Scroll to a table row by data-pair-id or data-entry-idx and flash-highlight it.
- * Highlights individual <td> cells since <tr> doesn't support box-shadow reliably.
  *
  * The lookup runs inside `requestAnimationFrame` so the row an expand just
- * revealed exists in the DOM by the time we query for it. The highlight
- * clears itself after two seconds, or sooner if another call preempts it.
+ * revealed exists in the DOM by the time we query for it.
  *
  * @param {Object} tableRef React ref to the table element.
  * @param {Object} selector Either { pairId: number } or { entryIdx: number }.
@@ -221,32 +250,11 @@ const scrollToAndHighlight = ( tableRef, selector ) => {
 		if ( ! tableRef.current ) {
 			return;
 		}
-
 		clearHighlight();
-
 		const row = findRow( tableRef.current, selector );
-		if ( ! row ) {
-			return;
+		if ( row ) {
+			centerAndHighlight( row );
 		}
-		row.scrollIntoView( CENTERED );
-		const cells = row.querySelectorAll( 'td' );
-		const highlighted = [];
-		for ( const td of cells ) {
-			td.style.boxShadow =
-				'inset 0 2px 0 0 rgba(79, 195, 247, 0.8), inset 0 -2px 0 0 rgba(79, 195, 247, 0.8)';
-			highlighted.push( td );
-		}
-		// Add left edge to first cell and right edge to last.
-		if ( cells.length > 0 ) {
-			cells[ 0 ].style.boxShadow +=
-				', inset 2px 0 0 0 rgba(79, 195, 247, 0.8)';
-			cells[ cells.length - 1 ].style.boxShadow +=
-				', inset -2px 0 0 0 rgba(79, 195, 247, 0.8)';
-		}
-		activeHighlight.cells = highlighted;
-		activeHighlight.timer = setTimeout( () => {
-			clearHighlight();
-		}, 2000 );
 	} );
 };
 
@@ -977,15 +985,15 @@ export default function LogEntriesTable( {
 
 	/**
 	 * Center the row a shrink left when its top is out of view, after layout
-	 * so the check reads the height the shrink produced. No flash: the reader
-	 * just clicked it.
+	 * so the check reads the height the shrink produced, and flash it as a
+	 * search match is flashed, so the eye finds the row the scroll moved.
 	 */
 	useLayoutEffect( () => {
 		const selector = centerAfterShrinkRef.current;
 		centerAfterShrinkRef.current = null;
 		const row = selector && findRow( tableRef.current, selector );
 		if ( row && topOutOfView( row ) ) {
-			row.scrollIntoView( CENTERED );
+			centerAndHighlight( row );
 		}
 	}, [ expandedBodies, expandedSet ] );
 
