@@ -156,6 +156,30 @@ describe( 'RequestProfile', () => {
 		unmount();
 	} );
 
+	it( 'leaves a Query Monitor timer out of Total Profiled and the bar', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: {
+					'kea_7746 hook': { count: 1, time: 100 },
+					qm: { count: 1, time: 30 },
+				},
+				totalMs: 150,
+			} )
+		);
+		expect( container.querySelector( 'tfoot tr' ).textContent ).toContain(
+			'Total Profiled100.0ms66.7%'
+		);
+		expect(
+			container.querySelector( 'tfoot tr' ).textContent
+		).not.toContain( '130' );
+		const segments = container.querySelectorAll(
+			'.event-logger-profile-bar [role="button"]'
+		);
+		expect( segments ).toHaveLength( 1 );
+		expect( container.textContent ).toContain( 'qm' );
+		unmount();
+	} );
+
 	it( 'uses totalProfiledTime override when provided', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( RequestProfile, {

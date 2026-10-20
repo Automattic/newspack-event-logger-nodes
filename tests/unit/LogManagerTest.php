@@ -62,6 +62,7 @@ class LogManagerTest extends TestCase {
 
 	protected function tearDown(): void {
 		Log_Manager::reset();
+		Log_Manager::$last_error = null;
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			Config::reset();
 		}
@@ -3369,6 +3370,258 @@ class LogManagerTest extends TestCase {
 		$this->assertNotNull( $process_entry );
 		// status_code is always present; fatal-specific keys are not.
 		$this->assertArrayHasKey( 'status_code', $process_entry );
+	}
+
+	// ── object cache counts and time so far ────────────────────────────────
+
+	/**
+	 * A web request's terminal carries what it asked of the object cache,
+	 * counted over the whole process, since the process IS the request.
+	 */
+	public function test_the_terminal_carries_the_object_caches_counts(): void {
+		$this->require_config_or_skip();
+		require_once \dirname( __DIR__ ) . '/fixtures/object-cache/wp-includes/class-wp-object-cache.php';
+		$this->rmdir_recursive( self::test_dir() );
+		$saved                        = $GLOBALS['wp_object_cache'] ?? null;
+		$cache                        = new \WP_Object_Cache();
+		$cache->cache_hits            = 4815;
+		$cache->cache_misses          = 162;
+		$GLOBALS['wp_object_cache'] = $cache;
+
+		$lm = $this->fresh_log_manager();
+		$lm->finish();
+		$GLOBALS['wp_object_cache'] = $saved;
+
+		$terminal = self::entries_of( $this->written_entries(), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
+		$this->assertSame( [ 'kind' => 'core', 'hits' => 4815, 'misses' => 162 ], $terminal['object_cache'] ?? null );
+		$this->assertArrayNotHasKey( 'cache_hits', $terminal );
+	}
+
+	/** A cache this logger does not know gets nothing written, not zeros. */
+	public function test_an_unknown_cache_adds_nothing_to_the_terminal(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$saved                        = $GLOBALS['wp_object_cache'] ?? null;
+		$GLOBALS['wp_object_cache'] = (object) [ 'cache_hits' => 4815, 'cache_misses' => 162 ];
+
+		$lm = $this->fresh_log_manager();
+		$lm->finish();
+		$GLOBALS['wp_object_cache'] = $saved;
+
+		$terminal = self::entries_of( $this->written_entries(), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
+		$this->assertArrayNotHasKey( 'object_cache', $terminal );
+		$this->assertArrayNotHasKey( 'cache_hits', $terminal, 'counters an unknown cache declares are not read' );
+	}
+
+	/**
+	 * The time so far is the open record's: each closed span's SELF time by
+	 * its label, so a parent holding a child is charged only its own share.
+	 */
+	public function test_timing_so_far_charges_each_label_its_self_time(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$lm = $this->fresh_log_manager();
+
+		$lm->start( 'kea_7746 hook' );
+		$lm->start( 'sql' );
+		$lm->complete( 'sql' );
+		$lm->complete( 'kea_7746 hook' );
+		$lm->start( 'sql' );
+		$lm->complete( 'sql' );
+		$so_far = $lm->timing_so_far();
+
+		$durations = static fn ( string $k ): array => \array_column( self::entries_of( self::firehose_entries( self::test_dir() ), $k ), 'duration_ms' );
+		[ $hook ]  = $durations( 'kea_7746 hook (complete)' );
+		$sql       = $durations( 'sql (complete)' );
+		$this->assertSame( [ 'sql', 'kea_7746 hook' ], \array_keys( $so_far['spent'] ), 'in the order each first closed' );
+		$this->assertEqualsWithDelta( $hook - $sql[0], $so_far['spent']['kea_7746 hook'], 1e-9 );
+		$this->assertEqualsWithDelta( $sql[0] + $sql[1], $so_far['spent']['sql'], 1e-9 );
+		$this->assertGreaterThanOrEqual( $hook + $sql[1], $so_far['total_ms'] );
+		$lm->finish();
+	}
+
+	/** A logger that never started has no time to tell. */
+	/**
+	 * A listener's time is already its hook's, as `Request_Builder_Node`
+	 * reckons it: closing one adds nothing to the hook's inner time, while a
+	 * query inside it is charged against the listener and the hook alike.
+	 */
+	public function test_a_listener_span_leaves_its_hooks_self_time_whole(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$lm = $this->fresh_log_manager();
+
+		$lm->start( 'kea_7746 hook' );
+		$lm->start( 'Kea_Listener::run @10' );
+		$lm->start( 'sql' );
+		$lm->complete( 'sql' );
+		$lm->complete( 'Kea_Listener::run @10' );
+		$lm->complete( 'kea_7746 hook' );
+		$spent = $lm->timing_so_far()['spent'];
+
+		$entries  = self::firehose_entries( self::test_dir() );
+		$duration = static fn ( string $k ): float => (float) self::entries_of( $entries, $k )[0]['duration_ms'];
+		$sql      = $duration( 'sql (complete)' );
+		$this->assertEqualsWithDelta( $duration( 'kea_7746 hook (complete)' ) - $sql, $spent['kea_7746 hook'], 1e-9 );
+		$this->assertEqualsWithDelta( $duration( 'Kea_Listener::run @10 (complete)' ) - $sql, $spent['Kea_Listener::run @10'], 1e-9 );
+		$lm->finish();
+	}
+
+	/**
+	 * A fatal's file is capped as its message is, so a long path beside a
+	 * non-ASCII message cannot push the terminal past the cap and lose the
+	 * status it carries.
+	 */
+	public function test_a_fatal_with_a_long_path_keeps_its_terminal_whole(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		Log_Manager::$last_error = static fn (): array => [
+			'type'    => E_ERROR,
+			'message' => \str_repeat( '错', 400 ),
+			'file'    => '/srv/' . \str_repeat( 'kea-7746/', 330 ) . 'boom.php',
+			'line'    => 4815,
+		];
+		$lm = $this->fresh_log_manager();
+		$lm->finish();
+
+		$terminal = self::entries_of( $this->written_entries(), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
+		$this->assertArrayNotHasKey( 'truncated', $terminal );
+		$this->assertArrayHasKey( 'status_code', $terminal );
+		$this->assertSame( 'F', $terminal['error_status'] ?? null );
+		$this->assertSame( 4815, $terminal['fatal_line'] ?? null );
+		$this->assertSame( 256, \strlen( (string) $terminal['fatal_file'] ) );
+	}
+
+	/**
+	 * The fatal fields are capped by their ENCODED size: a 1,024-byte message
+	 * of 4-byte characters encodes to 3,072 bytes, and beside a non-ASCII
+	 * path and plugin slug it would push the terminal to the floor, losing
+	 * its status. Each is cut on a character boundary.
+	 */
+	public function test_a_fatal_of_astral_characters_keeps_its_terminal_whole(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$slug                    = \str_repeat( '插', 85 );
+		Log_Manager::$last_error = static fn (): array => [
+			'type'    => E_ERROR,
+			'message' => \str_repeat( '😀', 256 ),
+			'file'    => WP_PLUGIN_DIR . "/{$slug}/" . \str_repeat( '路', 90 ) . '.php',
+			'line'    => 4815,
+		];
+		$lm = $this->fresh_log_manager();
+		$lm->finish();
+
+		$terminal = self::entries_of( $this->written_entries(), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
+		$this->assertArrayNotHasKey( 'truncated', $terminal );
+		$this->assertArrayHasKey( 'status_code', $terminal );
+		$this->assertSame( 4815, $terminal['fatal_line'] ?? null );
+		$encoded = static fn ( mixed $v ): int => \strlen( (string) \wp_json_encode( $v ) );
+		$this->assertStringStartsWith( '😀😀', (string) $terminal['fatal_error'] );
+		$this->assertLessThanOrEqual( 2048, $encoded( $terminal['fatal_error'] ) );
+		$this->assertLessThanOrEqual( 640, $encoded( $terminal['fatal_file'] ) );
+		$this->assertLessThanOrEqual( 640, $encoded( $terminal['fatal_plugin'] ) );
+		$this->assertTrue( \mb_check_encoding( $terminal['fatal_error'] . $terminal['fatal_file'] . $terminal['fatal_plugin'], 'UTF-8' ), 'every cut falls on a character boundary' );
+		$this->assertLessThanOrEqual( 3840, $encoded( $terminal ) );
+	}
+
+	/**
+	 * A driver's error carries its code and its message cut at the first
+	 * quote, which is where every value MySQL or SQLite echoes back begins.
+	 */
+	public function test_a_driver_error_keeps_its_code_and_none_of_its_values(): void {
+		$this->assertSame( '[1062] Duplicate entry', Log_Manager::driver_error( 1062, "Duplicate entry 'weka-7746@kea.test' for key 'user_email'" ) );
+		$this->assertSame( '[HY000] SQLSTATE[HY000]: General error: 1 near', Log_Manager::driver_error( 'HY000', 'SQLSTATE[HY000]: General error: 1 near "kea-7746": syntax error' ) );
+		$this->assertSame( 'PDOException: [23000] SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry', Log_Manager::thrown( new \PDOException( "SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'weka-7746' for key 'k'", 23000 ) ) );
+		$this->assertSame( 'RuntimeException: kea \'quoted\' stays', Log_Manager::thrown( new \RuntimeException( "kea 'quoted' stays" ) ) );
+	}
+
+	/**
+	 * A SIGNAL's text is the author's own MESSAGE_TEXT, values and no quotes
+	 * at all, so errno 1644 and SQLSTATE 45000 keep the number alone.
+	 */
+	public function test_a_signal_keeps_its_number_and_none_of_its_text(): void {
+		$this->assertSame( '[1644]', Log_Manager::driver_error( 1644, 'bad email weka@kea.test' ) );
+		$this->assertSame( '[45000]', Log_Manager::driver_error( '45000', 'SQLSTATE[45000]: <<Unknown error>>: 1644 bad email weka@kea.test' ) );
+		$this->assertSame( 'PDOException: [45000]', Log_Manager::thrown( new \PDOException( 'SQLSTATE[45000]: <<Unknown error>>: 1644 bad email weka@kea.test', 45000 ) ) );
+	}
+
+	/**
+	 * An uncaught driver exception's fatal keeps its class and the cut of
+	 * its message, and no fatal keeps its stack trace, whose frames carry
+	 * the arguments a statement ran with.
+	 *
+	 * @return array<string,mixed> The terminal of a request that died of `$message`.
+	 */
+	private function terminal_of_fatal( string $message ): array {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		Log_Manager::$last_error = static fn (): array => [ 'type' => E_ERROR, 'message' => $message, 'file' => '/srv/kea.php', 'line' => 12 ];
+		$lm = $this->fresh_log_manager();
+		$lm->finish();
+		return self::entries_of( $this->written_entries(), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
+	}
+
+	public function test_an_uncaught_driver_exception_reaches_the_terminal_without_its_values(): void {
+		$terminal = $this->terminal_of_fatal(
+			"Uncaught PDOException: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'weka-7746@kea.test' for key 'user_email' in /srv/kea.php:12\nStack trace:\n#0 /srv/kea.php(12): PDOStatement->execute(Array)\n#1 {main}\n  thrown"
+		);
+
+		$this->assertSame( 'Uncaught PDOException: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry', $terminal['fatal_error'] ?? null );
+	}
+
+	public function test_an_uncaught_signal_keeps_only_its_state(): void {
+		$terminal = $this->terminal_of_fatal( "Uncaught PDOException: SQLSTATE[45000]: <<Unknown error>>: 1644 bad email weka@kea.test in /srv/kea.php:12\nStack trace:\n#0 {main}\n  thrown" );
+
+		$this->assertSame( 'Uncaught PDOException: SQLSTATE[45000]', $terminal['fatal_error'] ?? null );
+	}
+
+	public function test_a_fatal_drops_its_stack_trace_and_keeps_its_message(): void {
+		$terminal = $this->terminal_of_fatal( "Uncaught RuntimeException: kea feed refused in /srv/kea.php:12\nStack trace:\n#0 /srv/kea.php(9): kea_import('weka-7746')\n#1 {main}\n  thrown" );
+
+		$this->assertSame( 'Uncaught RuntimeException: kea feed refused in /srv/kea.php:12', $terminal['fatal_error'] ?? null );
+	}
+
+	/** A span that throws a driver exception closes on its shaped text. */
+	public function test_a_span_thrown_by_a_driver_closes_without_its_values(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$lm = $this->fresh_log_manager();
+		try {
+			Log_Manager::span( 'kea read', static function (): never {
+				throw new \PDOException( "SQLSTATE[23000]: 1062 Duplicate entry 'weka-7746' for key 'k'" );
+			} );
+		} catch ( \PDOException ) {
+			// The span re-raises; what it wrote is the assertion.
+		}
+		$lm->finish();
+
+		$close = self::entries_of( $this->written_entries(), 'kea read (complete)' )[0]['m'] ?? '';
+		$this->assertStringNotContainsString( 'weka-7746', $close );
+		$this->assertStringStartsWith( 'PDOException: [0] SQLSTATE[23000]', $close );
+	}
+
+	/** The innermost open frame says where a span written now would nest. */
+	public function test_open_since_names_the_innermost_frames_start(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$lm = $this->fresh_log_manager();
+		\Newspack_Nodes\Core::$clock = static fn (): float => 1_800_000_300.5;
+		$lm->start( 'kea_7746 hook' );
+		\Newspack_Nodes\Core::$clock = static fn (): float => 1_800_000_301.75;
+
+		$since = $lm->open_since();
+		$lm->finish();
+
+		$this->assertSame( 1_800_000_300.5, $since['ts'] ?? null );
+		$this->assertIsInt( $since['hr'] ?? null );
+	}
+
+	public function test_timing_so_far_is_null_before_a_record_opens(): void {
+		$this->require_config_or_skip();
+		$_SERVER['REQUEST_URI'] = '/no-rule-governs-this-7746';
+		$this->set_rules_option( [] );
+
+		$this->assertNull( $this->fresh_log_manager()->timing_so_far() );
 	}
 
 	// ── instance(): re-entrant call returns the SAME partial $this ──────────

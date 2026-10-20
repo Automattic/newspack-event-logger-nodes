@@ -789,6 +789,17 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( [ 'render' ], \array_column( $brief['others'], 'name' ) );
 	}
 
+	/** A Query Monitor row overlays its hook: no part of the total, still askable. */
+	public function test_a_category_brief_leaves_query_monitor_time_out_of_the_total(): void {
+		$categories = [
+			'kea hook' => [ 'time' => 100.0, 'count' => 1.0, 'samples' => 4 ],
+			'qm'       => [ 'time' => 30.0, 'count' => 1.0, 'samples' => 4 ],
+		];
+
+		$this->assertEqualsWithDelta( 1.0, Ask_Assembler::for_category( $categories, 'kea hook' )['share'], 1e-9 );
+		$this->assertEqualsWithDelta( 0.3, Ask_Assembler::for_category( $categories, 'qm' )['share'], 1e-9 );
+	}
+
 	public function test_a_url_span_brief_reports_elsewhere_without_a_call_count(): void {
 		$flame = [
 			'name'     => 'aggregate',

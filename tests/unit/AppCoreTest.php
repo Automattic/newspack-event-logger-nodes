@@ -42,6 +42,8 @@ class AppCoreTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
+		Core::$query_outcome        = null;
+		Core::$query_monitor_loaded = null;
 		$GLOBALS['_wp_options']             = [];
 		$GLOBALS['_wp_test_options']        = [];
 		$GLOBALS['_wp_test_current_filter'] = '';
@@ -2637,6 +2639,241 @@ class AppCoreTest extends TestCase {
 			$ref->invoke( null, "SELECT * FROM t WHERE slug = 'alpha' LIMIT 5" ),
 			$ref->invoke( null, "SELECT * FROM t WHERE slug = 'beta' LIMIT 9" )
 		);
+	}
+
+	// ── the request-scoped listeners: QM, context, Server-Timing ────────
+
+	/**
+	 * A logged request binds Query Monitor's actions, the request-context
+	 * capture and the Server-Timing emitters without a rule naming them.
+	 */
+	public function test_a_logged_request_binds_the_request_scoped_listeners(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( new Rule( '3e7a1c9b5d20', '/reports/', Rule::ACTION_LOG ) );
+
+		$bound = $this->capture_added_filters( fn() => new Core() );
+
+		foreach ( [ 'qm/start', 'qm/stop', 'qm/lap', 'qm/error', 'qm/debug', 'template_include', 'send_headers', 'rest_pre_serve_request', 'admin_init', 'shutdown' ] as $hook ) {
+			$this->assertContains( $hook, $bound, "{$hook} is bound on a logged request" );
+		}
+	}
+
+	/** A request no rule logs binds none of them. */
+	public function test_an_unlogged_request_binds_no_request_scoped_listener(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( null );
+
+		$bound = $this->capture_added_filters( fn() => new Core() );
+
+		$this->assertSame( [], \array_intersect( [ 'qm/start', 'template_include', 'send_headers', 'shutdown' ], $bound ) );
+	}
+
+	/** A scope no rule logs takes them back off. */
+	public function test_a_rebind_to_an_unlogged_scope_unbinds_them(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( new Rule( '3e7a1c9b5d20', '/reports/', Rule::ACTION_LOG ) );
+		$core = new Core();
+		$qm   = ( new \ReflectionProperty( Core::class, 'query_monitor' ) )->getValue( $core );
+		$this->assertTrue( $this->is_registered( 'qm/start', [ $qm, 'start' ] ) );
+
+		$this->set_governing_rule( null );
+		$core->rebind_for_current_scope();
+
+		$this->assertFalse( $this->is_registered( 'qm/start', [ $qm, 'start' ] ) );
+		$this->assertArrayNotHasKey( 'send_headers', $GLOBALS['_wp_test_filters'] );
+	}
+
+	// ── what a query and an HTTP call came to ──────────────────────────
+
+	/**
+	 * Run one logged query through the pair, the driver answering `$outcome`,
+	 * and return its `(complete)` entry.
+	 *
+	 * @param string     $sql     The statement as the database was asked it.
+	 * @param array|null $outcome What the seam says the driver reported.
+	 * @return array<string,mixed>
+	 */
+	private function completed_query( string $sql, ?array $outcome ): array {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		Core::$query_outcome = static fn ( object $wpdb ): ?array => $outcome;
+		$core                = new Core();
+		$core->query_start( $sql );
+		$core->query_end( null, $sql, 0.002, '', 1.0 );
+		$entry = $this->last_entry( 'sql (complete)' );
+		$this->assertIsArray( $entry );
+		return $entry;
+	}
+
+	/** A SELECT counts the rows it selected, not the rows a write touched. */
+	public function test_a_select_span_carries_the_rows_it_selected(): void {
+		$entry = $this->completed_query( 'SELECT ID FROM wp_posts WHERE 1', [ 'errno' => 0, 'error' => '', 'affected' => 91, 'selected' => 37 ] );
+
+		$this->assertSame( 37, $entry['rows'] ?? null );
+		$this->assertArrayNotHasKey( 'error', $entry );
+	}
+
+	/** A write counts the rows it touched, as `wpdb` reports `rows_affected`. */
+	public function test_a_write_span_carries_the_rows_it_affected(): void {
+		$entry = $this->completed_query( "UPDATE wp_options SET option_value = 'x' WHERE option_name = 'y'", [ 'errno' => 0, 'error' => '', 'affected' => 91, 'selected' => null ] );
+
+		$this->assertSame( 91, $entry['rows'] ?? null );
+	}
+
+	/** DDL returns no count in `wpdb` either, so the span claims none. */
+	public function test_a_ddl_span_carries_no_rows(): void {
+		$entry = $this->completed_query( 'CREATE TABLE kea_7746 ( id INT )', [ 'errno' => 0, 'error' => '', 'affected' => 91, 'selected' => null ] );
+
+		$this->assertArrayNotHasKey( 'rows', $entry );
+	}
+
+	/**
+	 * A failed query carries its error NUMBER and the message cut at its
+	 * first quote: the firehose replicates to the hub, and MySQL quotes the
+	 * values it failed on, a duplicate key's whole.
+	 */
+	public function test_a_duplicate_key_error_carries_no_value(): void {
+		$entry = $this->completed_query(
+			"INSERT INTO wp_users ( user_email ) VALUES ( 'weka-7746@kea.test' )",
+			[ 'errno' => 1062, 'error' => "Duplicate entry 'weka-7746@kea.test' for key 'user_email'", 'affected' => -1, 'selected' => null ]
+		);
+
+		$this->assertSame( '[1062] Duplicate entry', $entry['error'] ?? null );
+		$this->assertArrayNotHasKey( 'rows', $entry );
+	}
+
+	/**
+	 * A syntax error quotes the statement from where it failed, and when
+	 * that fragment opens at a literal its quotes pair wrongly, which is why
+	 * shaping the message leaves the values bare. Cut at the first quote,
+	 * none survives.
+	 */
+	public function test_a_syntax_error_quoting_a_literal_carries_no_value(): void {
+		$entry = $this->completed_query(
+			"UPDATE wp_options SET option_value = ''kea-7746' WHERE option_name = 'weka'",
+			[ 'errno' => 1064, 'error' => "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near ''kea-7746' WHERE option_name = 'weka'' at line 1", 'affected' => -1, 'selected' => null ]
+		);
+
+		$error = (string) ( $entry['error'] ?? '' );
+		$this->assertSame( '[1064] You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near', $error );
+		$this->assertStringNotContainsString( 'kea-7746', $error );
+		$this->assertStringNotContainsString( 'weka', $error );
+	}
+
+	/** MySQL cuts the fragment at 80 characters, so its quotes may not pair at all. */
+	public function test_a_cut_fragment_carries_no_value(): void {
+		$entry = $this->completed_query(
+			'SELECT 1',
+			[ 'errno' => 1064, 'error' => "You have an error in your SQL syntax; near 'kea-7746' AND autoload = \"weka\" ORDER BY `option_id` DESC LIMIT 1 OFFSET 9' at line 1", 'affected' => -1, 'selected' => null ]
+		);
+
+		$error = (string) ( $entry['error'] ?? '' );
+		$this->assertSame( '[1064] You have an error in your SQL syntax; near', $error );
+		foreach ( [ 'kea-7746', 'weka', 'option_id' ] as $literal ) {
+			$this->assertStringNotContainsString( $literal, $error );
+		}
+	}
+
+	/** An error message is capped, its number included. */
+	public function test_a_query_error_is_capped(): void {
+		$entry = $this->completed_query( 'SELECT 1', [ 'errno' => 2013, 'error' => 'Lost connection ' . \str_repeat( 'kea ', 400 ), 'affected' => -1, 'selected' => null ] );
+
+		$error = (string) ( $entry['error'] ?? '' );
+		$this->assertSame( 256, \strlen( $error ) );
+		$this->assertStringStartsWith( '[2013] Lost connection kea', $error );
+	}
+
+	/** A driver the seam cannot read reports nothing, never a zero. */
+	public function test_a_query_the_driver_cannot_describe_carries_neither_field(): void {
+		$entry = $this->completed_query( 'SELECT ID FROM wp_posts WHERE 1', null );
+
+		$this->assertArrayNotHasKey( 'rows', $entry );
+		$this->assertArrayNotHasKey( 'error', $entry );
+	}
+
+	/**
+	 * With Query Monitor loaded the array is its query panel, so the close
+	 * leaves it whole; without, the drain bounds a long-lived worker's memory.
+	 */
+	public function test_query_end_leaves_wpdb_queries_whole_under_query_monitor(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		Core::$query_monitor_loaded = static fn (): bool => true;
+		$core            = new Core();
+		$previous_wpdb   = $GLOBALS['wpdb'] ?? null;
+		$kept            = [ [ 'SELECT 7746', 0.1, 'trace', 1.0, [] ] ];
+		$GLOBALS['wpdb'] = (object) [ 'queries' => $kept ];
+
+		$core->query_end( null, 'SELECT 7746' );
+		$left            = $GLOBALS['wpdb']->queries;
+		$GLOBALS['wpdb'] = $previous_wpdb;
+
+		$this->assertSame( $kept, $left );
+	}
+
+	/**
+	 * `QM_VERSION` is defined before Query Monitor's early returns under
+	 * the CLI, cron, an install and `QM_DISABLED`, so a worker where QM
+	 * bailed collects nothing: the drain still runs there.
+	 */
+	public function test_query_end_drains_where_query_monitor_bailed_after_its_version(): void {
+		if ( ! \defined( 'QM_VERSION' ) ) {
+			\define( 'QM_VERSION', '4.0.7' );
+		}
+		$this->assertFalse( \class_exists( 'QueryMonitor', false ), 'QM never got past its early returns' );
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core            = new Core();
+		$previous_wpdb   = $GLOBALS['wpdb'] ?? null;
+		$GLOBALS['wpdb'] = (object) [ 'queries' => [ [ 'SELECT 7746', 0.1, 'trace', 1.0, [] ] ] ];
+
+		$core->query_end( null, 'SELECT 7746' );
+		$left            = $GLOBALS['wpdb']->queries;
+		$GLOBALS['wpdb'] = $previous_wpdb;
+
+		$this->assertSame( [], $left );
+	}
+
+	/** A self-referencing object shapes to `?` past the depth cap, never a fatal. */
+	public function test_a_self_referencing_argument_shapes_without_recursing_forever(): void {
+		$loop       = new \stdClass();
+		$loop->self = $loop;
+		$loop->post_type = 'kea_story';
+
+		$shaped = Core::shaped_argument( $loop );
+
+		$depth = 0;
+		for ( $branch = $shaped; \is_array( $branch ); $branch = $branch['self'] ) {
+			$this->assertSame( 'kea_story', $branch['post_type'] );
+			++$depth;
+		}
+		$this->assertSame( '?', $branch );
+		$this->assertSame( Core::MAX_DEPTH, $depth );
+	}
+
+	/** An HTTP span names the method the request was sent with. */
+	public function test_an_http_span_carries_its_method(): void {
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG, log_http: true ) );
+		$core = new Core();
+		$url  = 'https://img.example.net/a.jpg';
+
+		$core->http_start( false, [ 'method' => 'PATCH' ], $url );
+		$core->http_end( [ 'response' => [ 'code' => 207 ] ], 'response', 'Requests', [ 'method' => 'PATCH' ], $url );
+
+		$entry = $this->last_entry( 'http (complete)' );
+		$this->assertSame( 'PATCH', $entry['http_method'] ?? null );
+		$this->assertSame( '207', $entry['m'] ?? null );
+	}
+
+	/** A failed call carries its WP_Error message, redacted like the URL. */
+	public function test_a_failed_http_span_carries_its_error_redacted(): void {
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG, log_http: true ) );
+		$core = new Core();
+		$url  = 'https://api.kea.test/feed?access_token=weka-7746';
+
+		$core->http_start( false, [ 'method' => 'GET' ], $url );
+		$core->http_end( new \WP_Error( 'http_request_failed', "cURL error 28: timed out reading {$url}" ), 'response', 'Requests', [ 'method' => 'GET' ], $url );
+
+		$error = (string) ( $this->last_entry( 'http (complete)' )['error'] ?? '' );
+		$this->assertStringStartsWith( 'cURL error 28: timed out reading https://api.kea.test/feed?access_token=', $error );
+		$this->assertStringNotContainsString( 'weka-7746', $error );
 	}
 
 	/** Distinct frames, so `l` differs and the budget key with it. */

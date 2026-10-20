@@ -168,6 +168,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** What a `urls` listing totals, ungrouped, live and in the snapshot. */
 	public const URL_TOTALS = [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors', 'pages' ];
 
+	/** What one URL's stats read beyond `URL_MEASURES`, which no snapshot keeps. */
+	private const URL_DETAIL_EXTRAS = [ 'p50_ms', 'p95_ms', 'p99_ms', 'error_rate' ];
+
 	/** What a `urls` row measures. */
 	public const URL_MEASURES = [ 'count', 'timed', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'errors', 'sum_ms', 'min_ms', 'max_ms', 'sum_peak_mb', 'max_peak_mb', 'worker', 'last_seen', 'avg_ms', 'avg_peak_mb' ];
 
@@ -750,7 +753,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string       $spelling A `Bucket::selection()` spelling; '' for the chart's.
 	 * @param int          $now      The reply's clock.
 	 * @param int          $limit    Most requests listed, newest first.
-	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, requests_per_second:float|int}, listed: list<array<string,mixed>>, requests_capped: bool, bucket: string, available: bool}
+	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}, listed: list<array<string,mixed>>, requests_capped: bool, bucket: string, available: bool}
 	 * @throws \RuntimeException When no request row names the hash.
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, or a filter `url_filter_of()` refuses.
 	 */
@@ -762,7 +765,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'source'  => 'requests',
 				'group'   => [ 'url' ],
 				'filter'  => $filter,
-				'measure' => self::URL_MEASURES,
+				'measure' => [ ...self::URL_MEASURES, ...self::URL_DETAIL_EXTRAS ],
 				'buckets' => $buckets,
 			]
 		);
@@ -789,7 +792,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array{columns: list<string>, rows: list<list<mixed>>, available: bool} $answer  The URL's answer over `$buckets`.
 	 * @param list<array{0:int,1:int}>                                                 $buckets The buckets read.
 	 * @param int                                                                      $now     The reply's clock.
-	 * @return array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, requests_per_second:float|int}
+	 * @return array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}
 	 * @throws \RuntimeException When no request row names the hash.
 	 */
 	private static function url_stats( string $hash, string $server, array $answer, array $buckets, int $now ): array {
@@ -805,6 +808,10 @@ class Performance_CI_Node extends Service_CI_Node {
 			'last_updated' => 0,
 			'errors'       => 0,
 		];
+		$extra = \array_fill_keys( self::URL_DETAIL_EXTRAS, null );
+		if ( [] !== $rows ) {
+			$extra = \array_intersect_key( \array_combine( $answer['columns'], $answer['rows'][0] ), $extra );
+		}
 		return [
 			'hash'                => $hash,
 			'url'                 => Core::as_string( $row['url'] ),
@@ -812,10 +819,14 @@ class Performance_CI_Node extends Service_CI_Node {
 			'avg_ms'              => $row['avg_ms'],
 			'min_ms'              => $row['min_ms'],
 			'max_ms'              => $row['max_ms'],
+			'p50_ms'              => Ask_Assembler::measured_figure( $extra['p50_ms'] ),
+			'p95_ms'              => Ask_Assembler::measured_figure( $extra['p95_ms'] ),
+			'p99_ms'              => Ask_Assembler::measured_figure( $extra['p99_ms'] ),
 			'avg_peak_mb'         => $row['avg_peak_mb'],
 			'max_peak_mb'         => $row['max_peak_mb'],
 			'last_updated'        => $row['last_updated'],
 			'errors'              => $row['errors'],
+			'error_rate'          => Ask_Assembler::measured_figure( $extra['error_rate'] ),
 			'requests_per_second' => Core::num_int( $row['count'] ) / self::elapsed_seconds( $buckets, $now ),
 		];
 	}
@@ -1384,7 +1395,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			// The overview whose servers this reply names.
 			$listed = null === $stored && '' !== $server && null !== $snapshot ? $snapshot->answer( Overview_Prefetch::key( $verb, \array_replace( $args, [ 'server' => null ] ) ) ) : $stored;
 		} catch ( \PDOException | \JsonException $e ) {
-			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
+			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . Log_Manager::driver_text( $e ) );
 			$stored = null;
 			$listed = null;
 		}
@@ -1434,7 +1445,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		try {
 			return $read( $snapshot, $args );
 		} catch ( \PDOException $e ) {
-			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . $e->getMessage() );
+			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . Log_Manager::driver_text( $e ) );
 			return null;
 		}
 	}
@@ -1630,7 +1641,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$sum_req_time = 0.0;
 		$categories   = self::timing_rows( [ 'category', 'listener' ], [ 'filter' => $filter + [ 'entry' => [ '' ] ] ] + $timings );
 		foreach ( $categories as [ $category, $listener, $ms, $calls, $requests ] ) {
-			// A listener's time already counts inside its hook's.
+			// An overlay's time (a listener's, a QM timer's) counts already.
 			$sum_req_time += 0 === $listener ? Core::num_float( $ms ) : 0.0;
 			$sums[ Core::as_string( $category ) ] = [
 				'samples'   => $requests,
@@ -1719,7 +1730,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param array<array-key,mixed> $sums         Per category: `samples`, `sum_time`, `sum_count`, and `entries` of `[ ms, calls, samples ]`.
 	 * @param int                    $count        Profiled requests.
-	 * @param float                  $sum_req_time Their summed profiled time, listeners left out.
+	 * @param float                  $sum_req_time Their summed profiled time, overlays (listeners, QM timers) left out.
 	 * @return array{count:int, total_time:?float, categories:array<array-key,mixed>}
 	 */
 	public static function leaderboard_of( array $sums, int $count, float $sum_req_time ): array {
@@ -2406,7 +2417,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
-					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last 288 buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its 25-hour category profile, null over no profiled request. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured. Series come from `query` filtered to the URL.',
+					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last 288 buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its 25-hour category profile, null over no profiled request. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured, as are the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` in `stats`, which also carries `error_rate`, `errors` over `count`. Series come from `query` filtered to the URL.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],

@@ -701,7 +701,13 @@ class FlameTreeTest extends TestCase {
 		}
 	}
 
-	/** Each of the seven kinds, read off the base so a labelled frame answers too. */
+	/** A Query Monitor timer is not a span any rule binds. */
+	public function test_a_query_monitor_span_is_not_rule_bound(): void {
+		$this->assertFalse( Flame_Tree::rule_binds( 'qm: kea-import' ) );
+		$this->assertSame( Flame_Tree::QM_STATE, \Newspack_Event_Logger_Nodes\App\Query_Monitor_Actions::STATE );
+	}
+
+	/** Each of the eight kinds, read off the base so a labelled frame answers too. */
 	public function test_span_kind_names_each_kind_by_its_base(): void {
 		$kinds = [
 			'sql: wpdb_query_caller'           => 'transport',
@@ -712,6 +718,7 @@ class FlameTreeTest extends TestCase {
 			'init hook: theme.php:12'          => 'hook',
 			'wp_head @-5'                      => 'listener',
 			'render page'                      => 'custom',
+			'qm: kea-import'                   => 'qm',
 		];
 		foreach ( $kinds as $span => $kind ) {
 			$this->assertSame( $kind, Flame_Tree::span_kind( $span ), $span );

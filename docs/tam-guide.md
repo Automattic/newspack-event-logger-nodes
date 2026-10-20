@@ -70,7 +70,7 @@ This window has its own **Time** field, beside the list's heading. A chart click
 
 ### 4. Name the cause
 
-Open a slow request by clicking its row. Its summary gives the URL, time, duration, memory and status; for a **T** or **A** request the duration is how long it ran before it was given up, not a measured time. Under the summary, **Findings** lists what is wrong with it, worst first, each with the number that shows it and, where a logging change would help, the change to make.
+Open a slow request by clicking its row. Its summary gives the URL, time, duration, memory and status; for a **T** or **A** request the duration is how long it ran before it was given up, not a measured time. The summary then adds **Object cache**. Under WordPress's own object cache it gives the hits, the misses and the hit ratio. Under the memcached object cache WP Cloud runs it gives the lookups answered from the request's own copy (which include lookups in groups that never reach memcached), the memcached gets with how many found the key, how many missed and the memcached hit ratio, and the keys fetched in batches, whose hits it cannot tell apart. Any other object cache shows no row. A web request then shows **Context**: the template file WordPress included, the rewrite rule and query the URL matched, the conditionals the main query answered true (`is_single`, `is_archive`, …) and the main query's variables, any value read as `?` unless it is a structural one such as `post_type` or `paged`. "Some of it was trimmed" means the context outgrew one log line and lost its last query variables first. Under the summary, **Findings** lists what is wrong with it, worst first, each with the number that shows it and, where a logging change would help, the change to make.
 
 | Finding | What it tells you |
 |---|---|
@@ -89,7 +89,9 @@ A request under 50 ms, and one that timed out or was aborted, never gets a "hold
 
 "Nothing stands out in the numbers here." means no finding fired. Try a slower request, or one listed under **Status Class = 5xx** or **Status Class = Unknown**.
 
-Below the findings, **Request Trace** draws the request's own flame graph with its peak memory beneath, the **Time Breakdown** gives its time by category, and **Log Entries** lists every line it logged, with a search box. The **←** button returns to the URL's window.
+Below the findings, **Request Trace** draws the request's own flame graph with its peak memory beneath, the **Time Breakdown** gives its time by category, and **Log Entries** lists every line it logged, with a search box. A database query's row shows how many rows it returned or changed, or in red the error it failed with: its MySQL error number and its message up to the first quote, where MySQL starts quoting the values it failed on; an outbound HTTP call's row shows its method and, in red, the error a failed call returned. Code instrumented for Query Monitor appears too, on any logged request: a timer is a `qm` row named after it, its laps and the timers stopped inside it nested within; one that started before the hook it ended in is drawn from that hook's start, and its row says how long it really ran, and a log line is a `qm (error)`, `qm (warning)` or other level row, the warning and more severe levels also reaching the Error Log. "Timer not started" and "Timer not stopped" are Query Monitor's own complaints about code that stopped a timer it never started, or never stopped one. The **←** button returns to the URL's window.
+
+If you hold the logger's read role, every logged page you load while signed in carries a `Server-Timing` header: the browser's network panel, under **Timing**, shows the time so far, the five most expensive categories and the request id, which the `search_requests` tool or `wp nodes reqgrep <id>` finds. A page's numbers stop where its headers were sent, before the page itself rendered.
 
 ### 5. When nothing is measured
 

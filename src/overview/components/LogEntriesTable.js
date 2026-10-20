@@ -1123,21 +1123,50 @@ export default function LogEntriesTable( {
 	};
 
 	/**
-	 * Render the duration and peak-memory figures, or nothing when the entry
-	 * carries neither.
+	 * Render the figures a row carries — an HTTP span's method, the duration,
+	 * a query span's row count, the peak memory — or nothing when it carries
+	 * none of them.
 	 *
-	 * @param {Object} entry Log entry; `duration_ms` and `peak_mb` may be absent.
+	 * @param {Object} entry Log entry; `http_method`, `duration_ms`, `rows` and `peak_mb` may be absent.
 	 * @return {import('react').ReactElement|null} Stats span, or null.
 	 */
 	const renderStats = ( entry ) => {
 		const hasPeak = entry.peak_mb > 0;
-		if ( ! hasDuration( entry ) && ! hasPeak ) {
+		const hasRows = Number.isFinite( entry.rows );
+		const method =
+			'string' === typeof entry.http_method ? entry.http_method : '';
+		if ( ! hasDuration( entry ) && ! hasPeak && ! hasRows && ! method ) {
 			return null;
 		}
 		return (
 			<span className="newspack-nodes-status">
+				{ method && (
+					<span
+						className="newspack-nodes-status is-info"
+						style={ { marginRight: '6px' } }
+					>
+						{ method }
+					</span>
+				) }
 				{ hasDuration( entry ) &&
 					`(${ entry.duration_ms.toFixed( 3 ) }ms)` }
+				{ hasRows && (
+					<span
+						className="newspack-nodes-status is-muted"
+						style={ { marginLeft: '6px' } }
+					>
+						{ sprintf(
+							// translators: %d: rows a query selected, or a write touched.
+							_n(
+								'%d row',
+								'%d rows',
+								entry.rows,
+								'newspack-event-logger-nodes'
+							),
+							entry.rows
+						) }
+					</span>
+				) }
 				{ hasPeak && (
 					<span
 						className="newspack-nodes-status is-warning"
@@ -1152,8 +1181,9 @@ export default function LogEntriesTable( {
 
 	/**
 	 * The figures on a line of their own under the body, with whatever else
-	 * rides beside them, or nothing when there is nothing to put there. A figure
-	 * on the body's last line reads as part of it.
+	 * rides beside them and a transport span's error below, or nothing when
+	 * there is nothing to put there. A figure on the body's last line reads as
+	 * part of it.
 	 *
 	 * @param {Object}                    entry Log entry object.
 	 * @param {import('react').ReactNode} extra Anything else the line carries.
@@ -1161,10 +1191,17 @@ export default function LogEntriesTable( {
 	 */
 	const renderStatsLine = ( entry, extra = null ) => {
 		const stats = renderStats( entry );
-		return stats || extra ? (
+		const error =
+			'string' === typeof entry.error && entry.error ? (
+				<div className="log-entries-error newspack-nodes-status is-error">
+					{ markSearchTerm( entry.error ) }
+				</div>
+			) : null;
+		return stats || extra || error ? (
 			<div className="log-entries-stats">
 				{ stats }
 				{ extra }
+				{ error }
 			</div>
 		) : null;
 	};

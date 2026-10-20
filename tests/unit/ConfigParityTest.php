@@ -20,6 +20,7 @@ class ConfigParityTest extends TestCase {
 			'enabled'  => [ 'logging-enabled' ],
 			'disabled' => [ 'logging-disabled' ],
 			'memory'   => [ 'logging-memory' ],
+			'capture'  => [ 'logging-capture' ],
 		];
 	}
 

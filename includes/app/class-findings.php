@@ -204,6 +204,10 @@ class Findings {
 			'detail' => 'This is one command verb\'s handler: its time is that verb\'s, and the SQL, HTTP and hook spans it ran nest inside it.',
 			'why'    => '%s is a command verb, timed whatever the rule says; the time is inside that verb, so read its children — no rule edit reaches the handler itself.',
 		],
+		'qm'               => [
+			'detail' => 'This is a Query Monitor timer the code starts and stops itself, logged on every logged request whatever the rule says, so no rule edit reaches inside it.',
+			'why'    => '%s is a Query Monitor timer: the code calling `qm/start` and `qm/stop` decides what it covers, and nothing a rule can switch on runs inside it.',
+		],
 		'upkeep'           => [
 			'detail' => 'This is the event logger\'s own work, told whatever the rule says, so no rule edit reaches inside it.',
 			'why'    => '%s is the event logger\'s own work, timed whatever the rule says: its `(complete)` line says what came of it, and the spans inside it, where it has any, say where its time went. Look there — nothing a rule can switch on runs inside it.',

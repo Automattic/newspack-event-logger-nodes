@@ -435,4 +435,63 @@ describe( 'RequestDetailView', () => {
 		] );
 		unmount();
 	} );
+	it( 'shows what WordPress made of the request, when the record says', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestDetailView, {
+				requestDetail: {
+					...baseRequest,
+					context: {
+						template: 'themes/kea/single.php',
+						matched_rule: '([^/]+)/?$',
+						matched_query: 'name=kea-7746',
+						query_vars: {
+							name: '?',
+							post_type: 'post',
+							meta: { key: '?' },
+						},
+						conditionals: [ 'is_single', 'is_singular' ],
+						trimmed: true,
+					},
+				},
+				flameData: null,
+				indentedEntries: [ { k: 'leaf', ts: 1 } ],
+				realEntryCount: 1,
+			} )
+		);
+		const section = container.querySelector(
+			'.event-logger-request-context'
+		);
+		expect( section.textContent ).toContain(
+			'Template: themes/kea/single.php'
+		);
+		expect( section.textContent ).toContain( 'Rewrite rule: ([^/]+)/?$' );
+		expect( section.textContent ).toContain(
+			'Matched query: name=kea-7746'
+		);
+		expect( section.textContent ).toContain(
+			'Conditionals: is_single, is_singular'
+		);
+		expect( section.textContent ).toContain(
+			'Query vars: name=?, post_type=post, meta={"key":"?"}'
+		);
+		expect( section.textContent ).toContain(
+			'Trimmed to fit one log line: its last query vars went first, then its matched query, rewrite rule and template were halved in that order, then its last conditionals went.'
+		);
+		unmount();
+	} );
+
+	it( 'shows no context section for a record without one', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestDetailView, {
+				requestDetail: baseRequest,
+				flameData: null,
+				indentedEntries: [ { k: 'leaf', ts: 1 } ],
+				realEntryCount: 1,
+			} )
+		);
+		expect(
+			container.querySelector( '.event-logger-request-context' )
+		).toBeNull();
+		unmount();
+	} );
 } );

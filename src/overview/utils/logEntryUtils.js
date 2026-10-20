@@ -1066,6 +1066,10 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 						completeEntry?.endTs || completeEntry?.ts || entry.ts,
 					duration_ms: completeEntry?.duration_ms ?? null,
 					peak_mb: completeEntry?.peak_mb || 0,
+					// What a transport span came to rides its close.
+					rows: completeEntry?.rows,
+					error: completeEntry?.error,
+					http_method: completeEntry?.http_method,
 					completeMessage: completeEntry?.m ?? '',
 					// The complete's own position: what its body folds under.
 					completeIdx: null !== completeEntry ? j : undefined,

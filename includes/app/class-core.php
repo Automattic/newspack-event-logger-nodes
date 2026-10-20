@@ -172,6 +172,50 @@ class Core {
 	/** What a string has to open with before it is treated as a statement. */
 	private const SQL_LEAD = '/\A\s*(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|SHOW|DESCRIBE|EXPLAIN|CREATE|ALTER|DROP|TRUNCATE)\b/i';
 
+	/** A statement `wpdb::query()` returns no row count for, in its own words. */
+	private const DDL_LEAD = '/^\s*(create|alter|truncate|drop)\s/i';
+
+	/** A statement `wpdb::query()` counts `rows_affected` for, in its own words. */
+	private const WRITE_LEAD = '/^\s*(insert|delete|update|replace)\s/i';
+
+	/**
+	 * Branches `shaped_argument()` descends before a branch reads `?`: one
+	 * below the depth the shaped value is JSON-encoded at, so the encoding
+	 * never fails on it.
+	 */
+	public const MAX_DEPTH = 15;
+
+	/** Bytes a span's error message keeps, after its shaping or redaction. */
+	private const ERROR_MAX = 256;
+
+	/** Bytes an HTTP span's method keeps: room for every registered method. */
+	private const METHOD_MAX = 32;
+
+	/**
+	 * Driver-read seam: what the database said of the statement it just ran.
+	 *
+	 * Replaces the `mysqli_*` reads on `$wpdb`'s own connection, the only
+	 * reliable source inside `log_query_custom_data`: `wpdb::query()` resets
+	 * `last_error`, `num_rows` and `rows_affected` before the statement runs
+	 * and sets them only after this filter returns. Tests reassign it.
+	 * Signature: `function ( object $wpdb ): ?array{errno: int, error: string, affected: int, selected: int|null}`,
+	 * answering null when the connection is not a mysqli one.
+	 *
+	 * @var \Closure|null
+	 */
+	public static ?\Closure $query_outcome = null;
+
+	/**
+	 * Query Monitor seam: whether QM is collecting, so `query_end()` leaves
+	 * `$wpdb->queries` for its query panel. Replaces the
+	 * `class_exists( 'QueryMonitor', false )` test, which no test can undo
+	 * once it declares the class. Tests reassign it.
+	 * Signature: `function (): bool`.
+	 *
+	 * @var \Closure|null
+	 */
+	public static ?\Closure $query_monitor_loaded = null;
+
 	/** Dispatchers between a hook and its caller; flipped for O(1) lookup. */
 	private const HOOK_DISPATCHERS = [
 		'apply_filters'           => true,
@@ -222,6 +266,18 @@ class Core {
 	/** @var int Backtraces the governing rule allows per hook; 0 is off. */
 	private int $trace_callers = 0;
 
+	/** @var Query_Monitor_Actions Query Monitor's timers and log lines. */
+	private Query_Monitor_Actions $query_monitor;
+
+	/** @var Request_Context The shutdown entry naming what WordPress routed. */
+	private Request_Context $request_context;
+
+	/** @var Server_Timing The response header a reader gets. */
+	private Server_Timing $server_timing;
+
+	/** @var list<array{0: string, 1: callable, 2: int}> What `bind_current_scope()` bound of those three. */
+	private array $listeners = [];
+
 	/**
 	 * Read the start priority from config, bind the current scope, and listen
 	 * for scope changes.
@@ -243,6 +299,9 @@ class Core {
 		}
 		$this->start_priority = RuntimeCore::num_int( $priority );
 
+		$this->query_monitor   = new Query_Monitor_Actions();
+		$this->request_context = new Request_Context();
+		$this->server_timing   = new Server_Timing();
 		$this->bind_current_scope();
 		\add_action( 'newspack_event_logger_nodes_scope_changed', [ $this, 'rebind_for_current_scope' ] );
 	}
@@ -317,12 +376,31 @@ class Core {
 	 * integration key. A list of leaves shapes to one `?`, as SQL's `IN (?)`
 	 * does, because its length is data too.
 	 *
+	 * Public because the one rule shapes every value this layer publishes:
+	 * a Query Monitor log line's context and the main query's vars too.
+	 *
 	 * @param mixed $value The filter argument, or a branch of it.
 	 * @return mixed The branch with its unlisted leaves replaced.
 	 */
-	private static function shaped_argument( $value ) {
+	public static function shaped_argument( $value ) {
+		return self::shaped_branch( $value, 0 );
+	}
+
+	/**
+	 * One branch of `shaped_argument()`, `$depth` levels down; past
+	 * `MAX_DEPTH` a branch is `?`, so an object that holds itself ends there
+	 * rather than recursing until the request dies.
+	 *
+	 * @param mixed $value A branch of the argument.
+	 * @param int   $depth How many branches lie above it.
+	 * @return mixed The branch with its unlisted leaves replaced.
+	 */
+	private static function shaped_branch( $value, int $depth ) {
 		self::$hook_arg_keep ??= \array_flip( self::HOOK_ARG_KEEP );
 		$keep                  = self::$hook_arg_keep;
+		if ( $depth >= self::MAX_DEPTH ) {
+			return '?';
+		}
 		if ( \is_object( $value ) ) {
 			$value = \get_object_vars( $value );
 		}
@@ -332,7 +410,7 @@ class Core {
 		$out = [];
 		foreach ( $value as $key => $item ) {
 			$out[ $key ] = \is_array( $item ) || \is_object( $item )
-				? self::shaped_argument( $item )
+				? self::shaped_branch( $item, $depth + 1 )
 				: ( isset( $keep[ \strtolower( (string) $key ) ] ) ? $item : '?' );
 		}
 		if ( [] !== $out && \array_is_list( $out ) && [ '?' ] === \array_unique( $out, \SORT_REGULAR ) ) {
@@ -401,6 +479,11 @@ class Core {
 		\remove_filter( self::HTTP_HOOK, [ $this, 'http_wrap' ], PHP_INT_MIN );
 		\remove_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN );
 		\remove_filter( self::QUERY_HOOK, [ $this, 'query_start' ], $this->start_priority );
+		foreach ( $this->listeners as [ $hook, $callback, $priority ] ) {
+			\remove_filter( $hook, $callback, $priority );
+		}
+		$this->listeners = [];
+		$this->query_monitor->reset();
 		$this->bound_hooks = [];
 		$this->significant = [];
 		$this->traced      = [];
@@ -426,6 +509,13 @@ class Core {
 		$rule = Log_Manager::instance()->governing_rule();
 		if ( null === $rule || ! $rule->is_log() ) {
 			return;
+		}
+		// Ride any logged request: no rule names them.
+		foreach ( [ $this->query_monitor, $this->request_context, $this->server_timing ] as $part ) {
+			foreach ( $part->listeners() as [ $hook, $callback, $priority, $args ] ) {
+				\add_filter( $hook, $callback, $priority, $args );
+				$this->listeners[] = [ $hook, $callback, $priority ];
+			}
 		}
 
 		// Instrument real hooks; custom events (not do_action) are excluded.
@@ -890,9 +980,11 @@ class Core {
 	 *
 	 * SAVEQUERIES makes `wpdb` retain every query it runs — 217 bytes each,
 	 * measured — which is the memory pressure that folds these records in the
-	 * first place. Draining here bounds it to what one query holds. Anything
-	 * else reading that array (Query Monitor) sees an empty one, which is why
-	 * this rides a per-rule opt-in rather than being always on.
+	 * first place. Draining here bounds it to what one query holds. Nothing
+	 * here reads that array, so with Query Monitor loaded, whose query panel
+	 * it is, the close leaves it whole and QM's own retention is the bound.
+	 *
+	 * The entry carries what the statement came to, from `query_outcome()`.
 	 *
 	 * @param mixed  $data        Custom query data, passed through untouched.
 	 * @param string $query       The SQL as rewritten, which the entry reports.
@@ -902,10 +994,10 @@ class Core {
 	 * @return mixed
 	 */
 	public function query_end( $data = null, string $query = '', float $query_time = 0.0, string $callstack = '', float $query_start = 0.0 ) {
+		$wpdb = $GLOBALS['wpdb'] ?? null;
 		// SAVEQUERIES outlives any logger: drain first; never CREATE `queries`.
-		if ( isset( $GLOBALS['wpdb'] ) && \is_object( $GLOBALS['wpdb'] )
-			&& \property_exists( $GLOBALS['wpdb'], 'queries' ) ) {
-			$GLOBALS['wpdb']->queries = [];
+		if ( \is_object( $wpdb ) && \property_exists( $wpdb, 'queries' ) && ! self::query_monitor_loaded() ) {
+			$wpdb->queries = [];
 		}
 		$label = \array_pop( $this->query_spans );
 		$lm    = Log_Manager::started_instance();
@@ -913,9 +1005,57 @@ class Core {
 			return $data;
 		}
 		// Only here is the statement the one the database was actually asked.
-		$sql = self::without_literals( self::without_host_annotation( $query ) );
-		$lm->complete( $label, '' === $sql ? [] : [ 'm' => $sql ], shaped: true );
+		$sql  = self::without_literals( self::without_host_annotation( $query ) );
+		$done = ( '' === $sql ? [] : [ 'm' => $sql ] ) + ( \is_object( $wpdb ) ? self::query_outcome( $wpdb, $query ) : [] );
+		$lm->complete( $label, $done, shaped: true );
 		return $data;
+	}
+
+	/**
+	 * What a statement came to: its error as `Log_Manager::driver_error()`
+	 * writes it, the number and the message cut at its first quote, then cut
+	 * at `ERROR_MAX`; or its row count by the split `wpdb::query()` makes —
+	 * none for DDL, `rows_affected` for a write, `num_rows` for the rest. The
+	 * firehose replicates to the hub, and MySQL quotes the values it failed
+	 * on: a duplicate key whole, and a syntax error's fragment, whose quotes
+	 * pair wrongly when it opens at a literal, so no shaping can be trusted.
+	 *
+	 * @param object $wpdb  The database object that ran it.
+	 * @param string $query The statement as the database was asked it.
+	 * @return array{error?: string, rows?: int} Nothing when the driver says nothing.
+	 */
+	private static function query_outcome( object $wpdb, string $query ): array {
+		$read    = self::$query_outcome ?? static function ( object $wpdb ): ?array {
+			// wpdb's __get and __isset reach its protected connection.
+			$dbh = $wpdb->dbh ?? null;
+			if ( ! $dbh instanceof \mysqli ) {
+				return null;
+			}
+			$result = $wpdb->result ?? null;
+			// phpcs:disable WordPress.DB.RestrictedFunctions -- reads, on wpdb's own connection, what the statement it just ran came to.
+			return [
+				'errno'    => \mysqli_errno( $dbh ),
+				'error'    => \mysqli_error( $dbh ),
+				'affected' => (int) \mysqli_affected_rows( $dbh ),
+				'selected' => $result instanceof \mysqli_result ? (int) \mysqli_num_rows( $result ) : null,
+			];
+			// phpcs:enable WordPress.DB.RestrictedFunctions
+		};
+		/** @var array{errno: int, error: string, affected: int, selected: int|null}|null $outcome The seam's declared signature. */
+		$outcome = $read( $wpdb );
+		if ( null === $outcome ) {
+			return [];
+		}
+		if ( '' !== $outcome['error'] ) {
+			return [ 'error' => \substr( Log_Manager::driver_error( $outcome['errno'], $outcome['error'] ), 0, self::ERROR_MAX ) ];
+		}
+		if ( 1 === \preg_match( self::DDL_LEAD, $query ) ) {
+			return [];
+		}
+		if ( 1 === \preg_match( self::WRITE_LEAD, $query ) ) {
+			return [ 'rows' => $outcome['affected'] ];
+		}
+		return null === $outcome['selected'] ? [] : [ 'rows' => $outcome['selected'] ];
 	}
 
 	/**
@@ -986,6 +1126,16 @@ class Core {
 	}
 
 	/**
+	 * Whether Query Monitor is collecting, through the seam: its main class
+	 * loads only past the CLI, cron, install and `QM_DISABLED` returns.
+	 */
+	private static function query_monitor_loaded(): bool {
+		// QM_VERSION is defined ahead of QM's CLI, cron and disabled returns.
+		$loaded = self::$query_monitor_loaded ?? static fn (): bool => \class_exists( 'QueryMonitor', false );
+		return true === $loaded();
+	}
+
+	/**
 	 * Close the span `http_start` opened. Registered on `http_api_debug` at
 	 * PHP_INT_MIN so the span covers the request and not the other listeners
 	 * on that action.
@@ -994,10 +1144,15 @@ class Core {
 	 * redirect hands this action the final URL, and a label that no longer
 	 * matches leaves the span open.
 	 *
+	 * The entry carries the status code as `m`, the request's method as
+	 * `http_method`, and a failed call's `WP_Error` message as `error`,
+	 * redacted as the URL is and cut at `ERROR_MAX`, because a transport
+	 * error can quote the URL it failed on.
+	 *
 	 * @param mixed               $response Response array or WP_Error.
 	 * @param string              $context  Always 'response'.
 	 * @param string              $class    Transport class (unused).
-	 * @param array<string,mixed> $args     Request arguments (unused).
+	 * @param array<string,mixed> $args     Request arguments; `method` is read.
 	 * @param string              $url      Request URL (unused).
 	 */
 	public function http_end( $response = null, string $context = '', string $class = '', array $args = [], string $url = '' ): void {
@@ -1006,9 +1161,17 @@ class Core {
 		if ( null === $label || null === $lm ) {
 			return;
 		}
-		$inner = \is_array( $response ) ? RuntimeCore::arr( $response['response'] ?? null, [] ) : [];
-		$code  = RuntimeCore::as_string( $inner['code'] ?? '', '' );
-		$lm->complete( $label, '' === $code ? [] : [ 'm' => $code ] );
+		$inner  = \is_array( $response ) ? RuntimeCore::arr( $response['response'] ?? null, [] ) : [];
+		$code   = RuntimeCore::as_string( $inner['code'] ?? '', '' );
+		$done   = '' === $code ? [] : [ 'm' => $code ];
+		$method = \substr( (string) \preg_replace( '/[^\x21-\x7E]/', '', RuntimeCore::as_string( $args['method'] ?? '', '' ) ), 0, self::METHOD_MAX );
+		if ( '' !== $method ) {
+			$done['http_method'] = $method;
+		}
+		if ( $response instanceof \WP_Error ) {
+			$done['error'] = \substr( Log_Manager::redact_url( $response->get_error_message() ), 0, self::ERROR_MAX );
+		}
+		$lm->complete( $label, $done );
 	}
 
 	/**

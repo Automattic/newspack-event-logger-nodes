@@ -775,9 +775,10 @@ class Ask_Assembler {
 			if ( Flame_Tree::is_listener_span( (string) $key ) ) {
 				continue;
 			}
-			$row    = Core::arr( $row );
-			$time   = self::measured_figure( $row['time'] ?? null );
-			$total += $time ?? 0.0;
+			$row  = Core::arr( $row );
+			$time = self::measured_figure( $row['time'] ?? null );
+			// A Query Monitor timer overlays time the rest already count.
+			$total += Flame_Tree::is_overlay_span( (string) $key ) ? 0.0 : ( $time ?? 0.0 );
 			if ( (string) $key !== $name ) {
 				$others[] = [
 					'name'        => (string) $key,

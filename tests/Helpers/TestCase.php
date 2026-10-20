@@ -252,6 +252,38 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Open a logged request at `$uri` under one `/kea/` log rule, on the
+	 * `logging-capture` config, which writes every line straight to disk for
+	 * `logged_entries()` to read, in segments too large for a test to rotate. The caller's tearDown undoes the config,
+	 * the rules option and REQUEST_URI.
+	 *
+	 * @param string $uri The request's REQUEST_URI, under `/kea/`.
+	 */
+	protected function start_logged_request( string $uri = '/kea/7746' ): \Newspack_Event_Logger_Nodes\Log_Manager {
+		$this->rmdir_recursive( self::test_dir() );
+		@\mkdir( self::test_dir() . '/logs', 0755, true );
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-capture' ) );
+		$rule = new \Newspack_Event_Logger_Nodes\Rule( 'a1b2c3d4e5f6', '/kea/', \Newspack_Event_Logger_Nodes\Rule::ACTION_LOG );
+		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] = [ $rule->to_array() ];
+		$_SERVER['REQUEST_URI'] = $uri;
+		\Newspack_Event_Logger_Nodes\Config::reset();
+		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
+		$lm = \Newspack_Event_Logger_Nodes\Log_Manager::instance();
+		self::assertTrue( $lm->is_started(), 'the /kea/ rule logs the request' );
+		return $lm;
+	}
+
+	/**
+	 * Finish the logged request and read back every entry it wrote.
+	 *
+	 * @return list<array<string,mixed>>
+	 */
+	protected function logged_entries(): array {
+		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
+		return self::firehose_entries( self::test_dir() );
+	}
+
+	/**
 	 * Re-assert the topology registration bootstrap.php makes. Sibling tests call
 	 * Topology_Registry::reset(), which strands every later test that reads a
 	 * topology — and ELN topologies `include` ACROSS the plugin boundary

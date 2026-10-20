@@ -46,6 +46,19 @@ const VISIBLE_ENTRY_COUNT = 10;
 const isCallbackCategory = ( state ) => / @-?\d+$/.test( state );
 
 /**
+ * Test whether a category OVERLAYS time the others already count, as
+ * `Flame_Tree::is_overlay_span()` reads it: a wrapped listener, whose time is
+ * its hook's, or a Query Monitor timer (`qm`), laid over whatever it timed.
+ * Neither joins Total Profiled nor takes a segment of the bar, or the bar's
+ * segments would no longer tile the time measured.
+ *
+ * @param {string} state Category name.
+ * @return {boolean} True for a listener or a Query Monitor timer.
+ */
+const isOverlayCategory = ( state ) =>
+	isCallbackCategory( state ) || 'qm' === state.split( ': ' )[ 0 ];
+
+/**
  * The breakdown of one expanded category by the code that raised it: the
  * slowest origins by time, then a count of what was left out.
  *
@@ -153,10 +166,11 @@ export const profileOrder = ( profiles ) =>
  *
  * A category's time is exclusive of its children, `Request_Builder_Node`
  * having subtracted each closing span from its ancestors, so the segments
- * tile rather than nest and Total Profiled is a plain sum. Wrapped listeners
- * are what that sum and that bar leave out, their time being already inside
- * the hook that dispatched them. They keep their table rows, which is where a
- * hook's slowest callback is found, so the percentage column does not add up
+ * tile rather than nest and Total Profiled is a plain sum. The overlays —
+ * wrapped listeners and Query Monitor timers — are what that sum and that
+ * bar leave out, their time being already inside the spans they ran in. They
+ * keep their table rows, which is where a hook's slowest callback is found,
+ * so the percentage column does not add up
  * to the footer's. With no wall clock measured every share reads `—`.
  *
  * @param {Object}                props                     Component props.
@@ -185,9 +199,9 @@ export default function RequestProfile( {
 		if ( totalProfiledTime !== undefined ) {
 			return totalProfiledTime;
 		}
-		// Single request: sum category times, skip " @N" listeners.
+		// Single request: sum category times, skip the overlays.
 		return sortedProfiles
-			.filter( ( p ) => ! isCallbackCategory( p.state ) )
+			.filter( ( p ) => ! isOverlayCategory( p.state ) )
 			.reduce( ( sum, p ) => sum + p.time, 0 );
 	}, [ sortedProfiles, totalProfiledTime ] );
 
@@ -221,7 +235,7 @@ export default function RequestProfile( {
 
 			<div className="event-logger-profile-bar">
 				{ sortedProfiles.map( ( { state, time }, index ) => {
-					if ( isCallbackCategory( state ) ) {
+					if ( isOverlayCategory( state ) ) {
 						return null;
 					}
 					const share = shareOf( time );

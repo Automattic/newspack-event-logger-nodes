@@ -90,6 +90,9 @@ class Log_Manager {
 	/** Category of the memory high-water entry the close writes. */
 	public const MEMORY = 'memory';
 
+	/** Category of the entry whose `m` is `App\Request_Context`'s shutdown map. */
+	public const REQUEST_CONTEXT = 'request_context';
+
 	/** The `m` of a `(complete)` closing a span its caller never closed. */
 	public const ORPHANED = '(orphaned)';
 
@@ -158,6 +161,51 @@ class Log_Manager {
 	private const REQUEST_METHOD_MAX = 32;
 
 	private const MAX_DATA_SIZE = 3840;
+
+	/**
+	 * The codes a SIGNAL raises, keyed for lookup: MySQL's
+	 * `ER_SIGNAL_EXCEPTION` and the SQLSTATE a PDO reports it under.
+	 *
+	 * @var array<int,true>
+	 */
+	private const SIGNALS = [
+		1644  => true,
+		45000 => true,
+	];
+
+	/** Raw bytes a fatal's message keeps on the terminal, cut on a character. */
+	private const FATAL_MESSAGE_MAX = 1024;
+
+	/** Raw bytes a fatal's file and plugin slug keep, cut on a character. */
+	private const FATAL_PATH_MAX = 256;
+
+	/**
+	 * ENCODED bytes the terminal's fatal message may take.
+	 *
+	 * The terminal's other fields at their worst take at most 512 encoded
+	 * bytes: `n` (17 with its key), `k` (25, `process (complete)`),
+	 * `status_code` (18), `duration_ms` (38, an exponent float), `peak_mb`
+	 * (20), `ts` (22), `error_status` (19), `fatal_line` (24), `fatal_type`
+	 * (16), the three fatal keys with their quotes (51) and `object_cache` at
+	 * its widest, the memcached map with five 19-digit counts (200): 450,
+	 * rounded up. That leaves 3,840 − 512 = 3,328 for the three strings:
+	 * 2,048 for the message and 640 each for the file and the plugin slug.
+	 * Raw bytes are no bound — a 4-byte character encodes to 12 — so each is
+	 * measured as `message()` encodes it.
+	 */
+	private const FATAL_MESSAGE_BUDGET = 2048;
+
+	/** ENCODED bytes the fatal's file and plugin slug may each take; see above. */
+	private const FATAL_PATH_BUDGET = 640;
+
+	/**
+	 * Last-error seam: replaces the `error_get_last()` call, which no test
+	 * can make report a fatal without dying of one. Tests reassign it.
+	 * Signature: `function (): ?array`, shaped as `error_get_last()` answers.
+	 *
+	 * @var \Closure|null
+	 */
+	public static ?\Closure $last_error = null;
 
 	/** The firehose's name; each partition is the directory `<name>.p<N>`. */
 	private const FIREHOSE = 'firehose';
@@ -262,8 +310,19 @@ class Log_Manager {
 	private ?string $saved_unique_id = null;
 	/** @var bool|null True while logging, false after finish(), null when no rule started it. */
 	private $started = null;
-	/** @var array<int,array{label: string,ts: int|float,m?: mixed,keep?: mixed}> Timer-frame stack. */
+	/** @var array<int,array{label: string,ts: int|float,at?: float,m?: mixed,keep?: mixed,inner?: float}> Timer-frame stack; `at` is its wall-clock start, `inner` the ms its closed children took. */
 	private $times = [];
+
+	/** @var array<string,float> Self time of every closed span so far, in ms, by label. */
+	private array $spent = [];
+
+	/**
+	 * The `Object_Cache_Counts::mark()` this context's terminal counts the
+	 * object cache from; null when the cache is not one it knows.
+	 *
+	 * @var array{kind: string, counters: array<string,int>, positions: array<array-key,int>}|null
+	 */
+	private ?array $cache_from = null;
 	/** @var \Newspack_Nodes\Topic_Node|null The firehose Topic; null until init_firehose() runs. */
 	private $topic = null;
 
@@ -380,13 +439,16 @@ class Log_Manager {
 	 */
 	private function write_terminal(): void {
 		$complete_extra = [];
-		$error          = \error_get_last();
+		$last           = self::$last_error ?? static fn (): ?array => \error_get_last();
+		/** @var array{type: int, message: string, file: string, line: int}|null $error As `error_get_last()` answers. */
+		$error = $last();
 		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
-			$complete_extra['fatal_error']  = \substr( $error['message'], 0, 1024 );
-			$complete_extra['fatal_file']   = $error['file'];
+			$plugin                         = self::extract_plugin_slug( $error['file'] );
+			$complete_extra['fatal_error']  = self::within_encoding( self::fatal_message( $error['message'] ), self::FATAL_MESSAGE_MAX, self::FATAL_MESSAGE_BUDGET );
+			$complete_extra['fatal_file']   = self::within_encoding( $error['file'], self::FATAL_PATH_MAX, self::FATAL_PATH_BUDGET );
 			$complete_extra['fatal_line']   = $error['line'];
 			$complete_extra['fatal_type']   = $error['type'];
-			$complete_extra['fatal_plugin'] = self::extract_plugin_slug( $error['file'] );
+			$complete_extra['fatal_plugin'] = null === $plugin ? null : self::within_encoding( $plugin, self::FATAL_PATH_MAX, self::FATAL_PATH_BUDGET );
 			$complete_extra['error_status'] = 'F';
 		}
 		if ( $this->aborted ) {
@@ -394,10 +456,63 @@ class Log_Manager {
 		}
 		$this->complete(
 			self::REQUEST_LABEL,
-			\array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ),
+			\array_merge( [ 'status_code' => \http_response_code() ?: 0 ], Object_Cache_Counts::since( $this->cache_from ), $complete_extra ),
 			$this->aborted ? 'aborted' : 'complete'
 		);
 		$this->topic?->flush();
+	}
+
+	/**
+	 * A fatal's message as the terminal carries it. Its stack trace goes, for
+	 * every fatal: `fatal_file` and `fatal_line` locate it, and a frame
+	 * prints the arguments a statement ran with. An uncaught
+	 * `PDOException` or `mysqli_sql_exception`, or a subclass, as PHP prints
+	 * it (`Uncaught <Class>: <message> in <file>:<line>`), keeps its class
+	 * and its message cut as `driver_error()` cuts one — its SQLSTATE alone
+	 * for a SIGNAL — since no error number survives into the text.
+	 *
+	 * @param string $message `error_get_last()`'s message.
+	 */
+	private static function fatal_message( string $message ): string {
+		$message = \explode( "\nStack trace:", $message, 2 )[0];
+		if ( 1 !== \preg_match( '/^Uncaught ([\w\\\\]+): (.*) in [^\n]*:\d+$/s', $message, $uncaught ) || ! self::is_driver_class( $uncaught[1] ) ) {
+			return $message;
+		}
+		$state = 1 === \preg_match( '/SQLSTATE\[(\w+)\]/', $uncaught[2], $code ) ? $code[1] : '';
+		$said  = isset( self::SIGNALS[ $state ] ) ? "SQLSTATE[{$state}]" : self::before_quote( $uncaught[2] );
+		return "Uncaught {$uncaught[1]}: {$said}";
+	}
+
+	/**
+	 * Whether a class PHP named in a fatal is a database driver's exception.
+	 *
+	 * @param string $class The class as PHP printed it.
+	 */
+	private static function is_driver_class( string $class ): bool {
+		return \is_a( $class, \PDOException::class, true ) || \is_a( $class, 'mysqli_sql_exception', true );
+	}
+
+	/**
+	 * A prefix of `$text` no longer than `$bytes` raw and `$budget` encoded,
+	 * as `message()` encodes it, its quotes counted, cut on a character
+	 * boundary. JSON escapes each character on its own, so the encoding of
+	 * the prefix is the sum of its characters'.
+	 *
+	 * @param string $text   The text.
+	 * @param int    $bytes  Raw bytes it may keep.
+	 * @param int    $budget Encoded bytes it may take.
+	 */
+	private static function within_encoding( string $text, int $bytes, int $budget ): string {
+		$size = 2;
+		$kept = '';
+		foreach ( \mb_str_split( \mb_strcut( $text, 0, $bytes, 'UTF-8' ), 1, 'UTF-8' ) as $char ) {
+			$size += \strlen( (string) \wp_json_encode( $char, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR ) ) - 2;
+			if ( $size > $budget ) {
+				break;
+			}
+			$kept .= $char;
+		}
+		return $kept;
 	}
 
 	/**
@@ -496,7 +611,7 @@ class Log_Manager {
 			return $result;
 		} catch ( \Throwable $e ) {
 			if ( null !== $describe ) {
-				$done['m'] = self::outcome( $e );
+				$done['m'] = self::thrown( $e );
 			}
 			throw $e;
 		} finally {
@@ -553,10 +668,37 @@ class Log_Manager {
 		if ( ! empty( $match ) ) {
 			$data += \array_intersect_key( $match, [ 'keep' => true ] );
 			$data['duration_ms'] = \max( 0, ( $now - $start ) / self::NS_PER_MS );
+			$this->charge( $label, $data['duration_ms'], $match['inner'] ?? 0.0 );
 			if ( $this->log_memory ) {
 				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
 			}
 			$this->message( "{$label} ({$suffix})", $data, $shaped );
+		}
+	}
+
+	/**
+	 * Charge a closed span's self time to its label, and its whole time to
+	 * the frames that held it, by `Request_Builder_Node::pop_stack()`'s rule:
+	 * up through any listener frames to the first frame that is not one. A
+	 * listener's own time is already its hook's, so it charges no frame. The
+	 * request's root frame is the total, not a category, and is skipped.
+	 *
+	 * @param string $label    The span's label.
+	 * @param float  $ms       Its duration.
+	 * @param float  $inner_ms What its closed children took.
+	 */
+	private function charge( string $label, float $ms, float $inner_ms ): void {
+		for ( $i = \count( $this->times ) - 1; $i >= 0 && ! Flame_Tree::is_overlay_span( $label ); $i-- ) {
+			if ( self::REQUEST_LABEL === $this->times[ $i ]['label'] ) {
+				break;
+			}
+			$this->times[ $i ]['inner'] = ( $this->times[ $i ]['inner'] ?? 0.0 ) + $ms;
+			if ( ! Flame_Tree::is_listener_span( $this->times[ $i ]['label'] ) ) {
+				break;
+			}
+		}
+		if ( self::REQUEST_LABEL !== $label ) {
+			$this->spent[ $label ] = ( $this->spent[ $label ] ?? 0.0 ) + $ms - $inner_ms;
 		}
 	}
 
@@ -575,22 +717,63 @@ class Log_Manager {
 	}
 
 	/**
-	 * A thrown span's `(complete)` `m`: `stop` for a cooperative stop, else
-	 * `Class: message` — the short class, `class@anonymous` for an anonymous
-	 * one, whose name carries a file path and a NUL. message() clips a
-	 * message too long for the line, so the class always survives.
+	 * A caught throwable as a line the firehose may carry: `stop` for a
+	 * cooperative stop, else `Class: message` — the short class,
+	 * `class@anonymous` for an anonymous one, whose name carries a file path
+	 * and a NUL — its message through `driver_text()`. message() clips a
+	 * message too long for the line, so the class always survives. A thrown
+	 * span's close, a Query Monitor log line and a builder's narration all
+	 * spell a throwable this way.
 	 *
-	 * @param \Throwable $thrown What the span's work threw.
+	 * @param \Throwable $thrown What was thrown.
 	 */
-	private static function outcome( \Throwable $thrown ): string {
+	public static function thrown( \Throwable $thrown ): string {
 		if ( $thrown instanceof Worker_Should_Stop ) {
 			return 'stop';
 		}
 		$class = \str_contains( $thrown::class, '@anonymous' )
 			? 'class@anonymous'
 			: \basename( \strtr( $thrown::class, '\\', '/' ) );
-		$said  = $thrown->getMessage();
+		$said  = self::driver_text( $thrown );
 		return '' === $said ? $class : "{$class}: {$said}";
+	}
+
+	/**
+	 * A throwable's message, or a database driver's through
+	 * `driver_error()`: `PDOException` and `mysqli_sql_exception` quote the
+	 * values a statement failed on.
+	 *
+	 * @param \Throwable $thrown What was thrown.
+	 */
+	public static function driver_text( \Throwable $thrown ): string {
+		return $thrown instanceof \PDOException || $thrown instanceof \mysqli_sql_exception
+			? self::driver_error( $thrown->getCode(), $thrown->getMessage() )
+			: $thrown->getMessage();
+	}
+
+	/**
+	 * A database error as the firehose may carry it: `[<code>] ` and the
+	 * message cut at its first quote. MySQL and SQLite quote every value
+	 * they echo — a duplicate key, the fragment a syntax error stopped at,
+	 * the 80 characters of it MySQL keeps — and a fragment opening at a
+	 * literal pairs its quotes wrongly, so the cut is the one safe rule. A
+	 * SIGNAL (`SIGNALS`) keeps its number alone: its text is the author's
+	 * own MESSAGE_TEXT, values and no quotes at all.
+	 *
+	 * @param int|string $code    The driver's error number or SQLSTATE.
+	 * @param string     $message The driver's message.
+	 */
+	public static function driver_error( int|string $code, string $message ): string {
+		return isset( self::SIGNALS[ (string) $code ] ) ? "[{$code}]" : "[{$code}] " . self::before_quote( $message );
+	}
+
+	/**
+	 * A driver's message up to its first quote, where its values begin.
+	 *
+	 * @param string $message The driver's message.
+	 */
+	private static function before_quote( string $message ): string {
+		return \rtrim( (string) \preg_replace( '/[\'"`].*/s', '', $message ) );
 	}
 
 	/**
@@ -634,7 +817,8 @@ class Log_Manager {
 			throw $stop;
 		} finally {
 			if ( $written ) {
-				$entry = [ 'label' => $label, 'ts' => \hrtime( true ) ];
+				// message() re-pinned Core::$now to the line's own `ts`.
+				$entry = [ 'label' => $label, 'ts' => \hrtime( true ), 'at' => Core::$now ];
 				if ( ! empty( $data['m'] ) ) {
 					$entry['m'] = $data['m'];
 				}
@@ -1102,12 +1286,50 @@ class Log_Manager {
 	}
 
 	/**
+	 * The open record's time so far: milliseconds since the request's root
+	 * frame opened — the profiler drop-in's start where it took one — and
+	 * the self time of every span closed so far, by label. Null when no
+	 * record is open. `App\Server_Timing` reads it as the headers leave.
+	 *
+	 * @return array{total_ms: float, spent: array<string,float>}|null
+	 */
+	public function timing_so_far(): ?array {
+		if ( ! $this->is_started() || [] === $this->times ) {
+			return null;
+		}
+		return [
+			'total_ms' => \max( 0, ( \hrtime( true ) - $this->times[0]['ts'] ) / self::NS_PER_MS ),
+			'spent'    => $this->spent,
+		];
+	}
+
+	/**
+	 * Where a span written now would nest: the innermost open frame's start,
+	 * monotonic (`hr`, nanoseconds) and wall-clock (`ts`). Null when no record
+	 * is open. `App\Query_Monitor_Actions` clamps a timer to it.
+	 *
+	 * @return array{hr: int|float, ts: float}|null
+	 */
+	public function open_since(): ?array {
+		$frame = [] === $this->times || ! $this->is_started() ? null : $this->times[ \count( $this->times ) - 1 ];
+		return null === $frame ? null : [ 'hr' => $frame['ts'], 'ts' => $frame['at'] ?? Core::$now ];
+	}
+
+	/**
 	 * This context's logging window is open: the governing rule said `log` and
 	 * finish() has not run yet. The gate every caller that instruments its own
 	 * work — rather than just writing a line — should check first.
 	 */
 	public function is_started(): bool {
 		return true === $this->started;
+	}
+
+	/**
+	 * Whether a job context is open: a job's record, not a web request's,
+	 * is the one being written.
+	 */
+	public static function in_job_context(): bool {
+		return [] !== self::$job_stack;
 	}
 
 	/**
@@ -1422,7 +1644,9 @@ class Log_Manager {
 		$process_data['rule'] = $this->governing_rule_id();
 
 		$this->message( self::REQUEST_START, $process_data );
-		$this->times[] = [ 'label' => self::REQUEST_LABEL, 'ts' => $process_hr ];
+		$this->times[] = [ 'label' => self::REQUEST_LABEL, 'ts' => $process_hr, 'at' => $this->request_ts ?? Core::$now ];
+		// A web request is its process; a job counts from its own start.
+		$this->cache_from = Object_Cache_Counts::mark( [] === self::$job_stack );
 		$this->log_worker();
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- CONTROL_CHARS stripped, as REQUEST_URI is.

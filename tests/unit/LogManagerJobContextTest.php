@@ -251,6 +251,41 @@ class LogManagerJobContextTest extends TestCase {
 	}
 
 	/**
+	 * A job's object-cache counts are its own: the worker's process ran other
+	 * jobs before it, so the terminal carries what moved while it ran.
+	 */
+	public function test_a_jobs_object_cache_counts_are_what_moved_while_it_ran(): void {
+		$this->arrange_logging();
+		require_once \dirname( __DIR__ ) . '/fixtures/object-cache/wp-includes/class-wp-object-cache.php';
+		$saved               = $GLOBALS['wp_object_cache'] ?? null;
+		$cache               = new \WP_Object_Cache();
+		$cache->cache_hits   = 100;
+		$cache->cache_misses = 10;
+
+		$GLOBALS['wp_object_cache'] = $cache;
+		Log_Manager::begin_job_context( 'counted_handler' );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'counted' ] );
+		$cache->cache_hits   = 4915;
+		$cache->cache_misses = 172;
+		Log_Manager::end_job_context();
+		$GLOBALS['wp_object_cache'] = $saved;
+
+		$terminal = self::entries_of( self::firehose_entries( self::test_dir() ), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
+		$this->assertSame( [ 'kind' => 'core', 'hits' => 4815, 'misses' => 162 ], $terminal['object_cache'] ?? null );
+	}
+
+	/** A job context is what `in_job_context()` reports, and only while open. */
+	public function test_in_job_context_holds_while_a_job_context_is_open(): void {
+		$this->assertFalse( Log_Manager::in_job_context() );
+		Log_Manager::begin_job_context( 'kea_7746' );
+		$inside = Log_Manager::in_job_context();
+		Log_Manager::end_job_context();
+
+		$this->assertTrue( $inside );
+		$this->assertFalse( Log_Manager::in_job_context() );
+	}
+
+	/**
 	 * A job's trace has no way back to the record that caused it unless the
 	 * message travels with the context: FROM names the producer, ID is the
 	 * `segment:offset:length` the Consumer stamped, KEY the partition key. That

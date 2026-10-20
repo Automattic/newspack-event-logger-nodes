@@ -1758,6 +1758,37 @@ describe( 'PerformanceDashboard', () => {
 		}
 	);
 
+	it( 'shows the URL modal header p50, p95, p99 and error rate', async () => {
+		mockNavState.selectedUrl = { hash: 'h9', url: '/heron' };
+		mockNavState.selectedRequest = null;
+		mockView = loadedView( {
+			urlDetail: {
+				data: {
+					stats: {
+						errors: 3,
+						error_rate: 0.0375,
+						p50_ms: 111,
+						p95_ms: 987,
+						p99_ms: 1543,
+					},
+					requests: [],
+				},
+				loading: false,
+				error: null,
+			},
+		} );
+		const { container } = mountDash();
+		await flushEffects();
+
+		const text = container.querySelector(
+			'.event-logger-header-stats'
+		).textContent;
+		expect( text ).toContain( '111ms' );
+		expect( text ).toContain( '987ms' );
+		expect( text ).toContain( '1543ms' );
+		expect( text ).toContain( '3.75%' );
+	} );
+
 	it( 'keeps the URL modal mounted while a chip change relists it', async () => {
 		mockNavState.selectedUrl = { hash: 'h9', url: '/heron' };
 		mockNavState.selectedRequest = null;
@@ -1853,7 +1884,7 @@ describe( 'PerformanceDashboard', () => {
 				'.event-logger-header-stats > .newspack-nodes-stat'
 			)
 		);
-		expect( headerStats ).toHaveLength( 4 );
+		expect( headerStats ).toHaveLength( 8 );
 		for ( const stat of headerStats ) {
 			expect(
 				stat.querySelector( '.newspack-nodes-stat-value' )
@@ -1876,13 +1907,21 @@ describe( 'PerformanceDashboard', () => {
 			{
 				requests_per_second: 7.125,
 				errors: 1207,
+				error_rate: 0.0211,
 				avg_ms: 412.6,
+				p50_ms: 301.2,
+				p95_ms: 1204.4,
+				p99_ms: 2890.5,
 				avg_peak_mb: 26.45,
 			},
 			[
 				[ '7.13', 'req/s' ],
 				[ '1,207', 'errors' ],
+				[ '2.11%', 'err' ],
 				[ '413ms', 'avg' ],
+				[ '301ms', 'p50' ],
+				[ '1204ms', 'p95' ],
+				[ '2891ms', 'p99' ],
 				[ '26.4MB', 'mem' ],
 			],
 		],
@@ -1895,7 +1934,11 @@ describe( 'PerformanceDashboard', () => {
 			[
 				[ '3.75', 'req/s' ],
 				[ '—', 'errors' ],
+				[ '—', 'err' ],
 				[ '—', 'avg' ],
+				[ '—', 'p50' ],
+				[ '—', 'p95' ],
+				[ '—', 'p99' ],
 			],
 		],
 		[
@@ -1909,7 +1952,11 @@ describe( 'PerformanceDashboard', () => {
 			[
 				[ '2.50', 'req/s' ],
 				[ '0', 'errors' ],
+				[ '—', 'err' ],
 				[ '77ms', 'avg' ],
+				[ '—', 'p50' ],
+				[ '—', 'p95' ],
+				[ '—', 'p99' ],
 			],
 		],
 	] )( '%s', async ( _name, stats, expected ) => {

@@ -1357,6 +1357,81 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'shows what a transport span came to on its folded row', () => {
+		const entries = [
+			{
+				n: 1,
+				ts: 1000,
+				startTs: 1000,
+				k: 'sql (start)',
+				l: 'Kea->load',
+				pairId: 1,
+				indent: 0,
+				originalIdx: 0,
+			},
+			{
+				n: 2,
+				ts: 1001,
+				k: 'sql (complete)',
+				m: 'SELECT 1',
+				rows: 37,
+				duration_ms: 1.5,
+				pairId: 1,
+				indent: 0,
+				originalIdx: 1,
+			},
+			{
+				n: 3,
+				ts: 1002,
+				startTs: 1002,
+				k: 'http (start)',
+				m: 'https://kea.test/feed',
+				pairId: 2,
+				indent: 0,
+				originalIdx: 2,
+			},
+			{
+				n: 4,
+				ts: 1003,
+				k: 'http (complete)',
+				http_method: 'PATCH',
+				error: 'cURL error 28: timed out',
+				duration_ms: 9,
+				pairId: 2,
+				indent: 0,
+				originalIdx: 3,
+			},
+		];
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		expect( container.textContent ).toContain( '37 rows' );
+		expect( container.textContent ).toContain( 'PATCH' );
+		const error = container.querySelector( '.log-entries-error' );
+		expect( error.textContent ).toBe( 'cURL error 28: timed out' );
+		expect( error.classList.contains( 'is-error' ) ).toBe( true );
+		unmount();
+	} );
+
+	it( 'shows a single row count in the singular, and on an unfolded close', () => {
+		const entries = [
+			{
+				n: 1,
+				ts: 1000,
+				k: 'sql (complete)',
+				m: 'SELECT 1',
+				rows: 1,
+				duration_ms: 1.5,
+			},
+		];
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		expect( container.textContent ).toContain( '1 row' );
+		expect( container.textContent ).not.toContain( '1 rows' );
+		unmount();
+	} );
+
 	it( 'shows duration + peak_mb stats on complete entries', () => {
 		const entries = makeEntries();
 		const { container, unmount } = renderComponent(

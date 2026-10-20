@@ -666,6 +666,19 @@ class PerformanceCITest extends TestCase {
 		$this->assertNull( $brief['findings'][0]['metric']['max_ms'], 'its finding' );
 	}
 
+	public function test_dump_url_stats_carry_the_percentiles_and_the_error_rate(): void {
+		$url = 'https://seed.example/tui-4471/';
+		foreach ( \range( 1, 40 ) as $i ) {
+			$this->seed_request( [ 'url' => $url, 'ms' => $i * 7.5, 'error' => 0 === $i % 8 ? 'T' : null ] );
+		}
+
+		$dump = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) );
+
+		$this->assertEquals( [ 150.0, 285.0, 300.0 ], [ $dump['stats']['p50_ms'], $dump['stats']['p95_ms'], $dump['stats']['p99_ms'] ] );
+		$this->assertSame( [ 40, 5 ], [ $dump['stats']['count'], $dump['stats']['errors'] ] );
+		$this->assertEqualsWithDelta( 0.125, $dump['stats']['error_rate'], 1e-9 );
+	}
+
 	public function test_a_rebuild_reads_only_the_partitions_its_requests_are_in(): void {
 		// Flames partition like the requests they came from; p0 holds none.
 		$this->activate_shipped( 'performance', 2 );
@@ -3631,7 +3644,7 @@ class PerformanceCITest extends TestCase {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) . ' --bucket=' . Bucket::key( $latest - 20 ) );
 
 		$this->assertSame(
-			[ 'hash' => self::hash_of( $url ), 'url' => $url, 'count' => 0, 'avg_ms' => null, 'min_ms' => null, 'max_ms' => null, 'avg_peak_mb' => null, 'max_peak_mb' => 0, 'last_updated' => 0, 'errors' => 0, 'requests_per_second' => 0 ],
+			[ 'hash' => self::hash_of( $url ), 'url' => $url, 'count' => 0, 'avg_ms' => null, 'min_ms' => null, 'max_ms' => null, 'p50_ms' => null, 'p95_ms' => null, 'p99_ms' => null, 'avg_peak_mb' => null, 'max_peak_mb' => 0, 'last_updated' => 0, 'errors' => 0, 'error_rate' => null, 'requests_per_second' => 0 ],
 			$reply['stats']
 		);
 		$this->assertSame( [], $reply['requests'] );
@@ -3914,10 +3927,14 @@ class PerformanceCITest extends TestCase {
 				'avg_ms'              => 2250.5,
 				'min_ms'              => 1500.5,
 				'max_ms'              => 3000.5,
+				'p50_ms'              => 1500.5,
+				'p95_ms'              => 3000.5,
+				'p99_ms'              => 3000.5,
 				'avg_peak_mb'         => 50.5,
 				'max_peak_mb'         => 60.5,
 				'last_updated'        => $latest * 300 + 8.5,
 				'errors'              => 1,
+				'error_rate'          => 0.5,
 				'requests_per_second' => 2 / ( 287 * 300 + self::tick() % 300 ),
 			],
 			$detail['stats']
@@ -4073,7 +4090,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame(
 			[
-				'stats'              => [ 'hash' => self::hash_of( $url ), 'url' => '', 'count' => 0, 'avg_ms' => null, 'min_ms' => null, 'max_ms' => null, 'avg_peak_mb' => null, 'max_peak_mb' => 0, 'last_updated' => 0, 'errors' => 0, 'requests_per_second' => 0 ],
+				'stats'              => [ 'hash' => self::hash_of( $url ), 'url' => '', 'count' => 0, 'avg_ms' => null, 'min_ms' => null, 'max_ms' => null, 'p50_ms' => null, 'p95_ms' => null, 'p99_ms' => null, 'avg_peak_mb' => null, 'max_peak_mb' => 0, 'last_updated' => 0, 'errors' => 0, 'error_rate' => null, 'requests_per_second' => 0 ],
 				'requests'           => [],
 				'requests_capped'    => false,
 				'aggregate_flame'    => null,
