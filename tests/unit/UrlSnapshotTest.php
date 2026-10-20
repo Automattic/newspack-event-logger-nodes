@@ -194,23 +194,25 @@ final class UrlSnapshotTest extends TestCase {
 	}
 
 	/**
-	 * Assert a published snapshot's page is the live page, and answer it.
+	 * Assert a published snapshot's listing of pages is the live `page` and
+	 * `server` group, its `shapes` and `hash` beside the live columns, and
+	 * answer its rows.
 	 *
-	 * @return list<list<mixed>> The page's rows.
+	 * @return list<list<mixed>> The listing's rows.
 	 */
-	private function assert_page_is_live( string $sort, string $order, string $server, bool $workers, int $offset, int $limit ): array {
-		$this->seed_parity_traffic();
+	private function assert_pages_are_live( string $sort, string $order, string $server, bool $workers, int $offset, int $limit ): array {
+		$this->seed_page_traffic();
 		Url_Snapshot::publish( self::NOW, self::TTL, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
-		$live = self::live(
+		$live  = self::live(
 			$server,
 			$workers,
 			[
-				'group'   => [ 'url' ],
+				'group'   => [ 'page', 'server' ],
 				'measure' => Performance_CI_Node::URL_MEASURES,
-				'sort'    => $sort,
+				'sort'    => Performance_CI_Node::PAGE_SORTS[ $sort ],
 				'order'   => $order,
 				'limit'   => $limit,
 				'offset'  => $offset,
@@ -221,29 +223,30 @@ final class UrlSnapshotTest extends TestCase {
 				],
 			]
 		);
-		$page = $snapshot->page( $server, $workers, $sort, $order, $offset, $limit );
+		$pages = $snapshot->pages( $server, $workers, Performance_CI_Node::PAGE_SORTS[ $sort ], $order, $offset, $limit );
+		$cut   = static fn ( array $rows ): array => \array_map( static fn ( array $row ): array => \array_slice( $row, 0, -2 ), $rows );
 
-		$this->assertNotSame( [], $live['rows'], 'the question pages real rows' );
-		$this->assertSame( $live['columns'], $page['columns'] );
-		$this->assertSame( $live['rows'], $page['rows'] );
-		$this->assertSame( $live['also'], $page['also'] );
-		$this->assertTrue( $page['available'] );
-		return $page['rows'];
+		$this->assertNotSame( [], $live['rows'], 'the question lists real rows' );
+		$this->assertSame( [ ...$live['columns'], 'shapes', 'hash' ], $pages['columns'] );
+		$this->assertSame( $live['rows'], $cut( $pages['rows'] ) );
+		$this->assertSame( $live['also'], $cut( $pages['also'] ) );
+		$this->assertTrue( $pages['available'] );
+		return $pages['rows'];
 	}
 
-	/** Every sort, both orders, every server, both views: the snapshot page is the live page. */
+	/** Every sort, both orders, every server, both views: the snapshot's pages are the live pages. */
 	#[DataProvider( 'questions' )]
-	public function test_a_snapshot_page_is_the_live_page( string $sort, string $order, string $server, bool $workers ): void {
-		$this->assert_page_is_live( $sort, $order, $server, $workers, 1, 3 );
+	public function test_a_snapshot_listing_of_pages_is_the_live_page_group( string $sort, string $order, string $server, bool $workers ): void {
+		$this->assert_pages_are_live( $sort, $order, $server, $workers, 1, 3 );
 	}
 
-	/** A nullable sort's tail page ranks its tied nulls as the live page does. */
+	/** A nullable sort's tail ranks its tied nulls as the live listing does. */
 	#[DataProvider( 'tails' )]
-	public function test_a_tail_page_ranks_tied_nulls_as_the_live_page( string $sort, string $order, bool $workers ): void {
-		$rows   = $this->assert_page_is_live( $sort, $order, '', $workers, 4, 10 );
-		$column = \array_search( $sort, [ 'url', 'url_name', ...Performance_CI_Node::URL_MEASURES ], true );
+	public function test_a_tail_ranks_tied_nulls_as_the_live_listing( string $sort, string $order, bool $workers ): void {
+		$rows   = $this->assert_pages_are_live( $sort, $order, '', $workers, 4, 10 );
+		$column = \array_search( $sort, [ 'page', 'page_name', 'server', ...Performance_CI_Node::URL_MEASURES ], true );
 
-		$this->assertSame( [ null, null ], \array_slice( \array_column( $rows, (int) $column ), -2 ), 'two tied nulls close the page' );
+		$this->assertSame( [ null, null ], \array_slice( \array_column( $rows, (int) $column ), -2 ), 'two tied nulls close the listing' );
 	}
 
 	/**
@@ -264,34 +267,97 @@ final class UrlSnapshotTest extends TestCase {
 	}
 
 	/**
-	 * Every page reads its rows in order off the one index its sort and
-	 * scope name: `urls_<sort>` site-wide and `urls_server_<sort>` for a
-	 * server, each `_null` ascending on a nullable sort, and `urls_url_name`
-	 * in both scopes. No page sorts.
+	 * Every listing of pages reads its rows in order off the one index its
+	 * sort and scope name: `pages_<sort>` site-wide and `pages_server_<sort>`
+	 * for a server, each `_null` ascending on a nullable sort, the view a
+	 * filter on the scan. No listing sorts.
 	 */
 	#[DataProvider( 'questions' )]
-	public function test_a_page_reads_its_sort_and_scopes_index( string $sort, string $order, string $server, bool $workers ): void {
-		$this->seed_parity_traffic();
-		Url_Snapshot::publish( self::NOW, self::TTL, static fn (): array => [] );
-		$db = Row_Table_Node::open_snapshot( Url_Snapshot::NAME );
-		$this->assertInstanceOf( Row_Reader::class, $db, 'the substrate publishes the snapshot under its name' );
-		[ $sql, $binds ] = ( new \ReflectionMethod( Url_Snapshot::class, 'listing' ) )->invoke( null, $server, $workers, $sort, $order );
+	public function test_a_pages_listing_reads_its_sort_and_scopes_index( string $sort, string $order, string $server, bool $workers ): void {
+		$db              = $this->published_pages();
+		$sorted          = Performance_CI_Node::PAGE_SORTS[ $sort ];
+		[ $sql, $binds ] = ( new \ReflectionMethod( Url_Snapshot::class, 'listing' ) )->invoke( null, 'pages', ( new \ReflectionMethod( Url_Snapshot::class, 'viewed' ) )->invoke( null, $server, $workers ), $sorted, $order );
 
 		$plan = self::plan_text( $db, "{$sql} LIMIT ? OFFSET ?", [ ...$binds, 3, 1 ] );
 
 		$this->assertStringNotContainsString( 'USE TEMP B-TREE', $plan );
-		$this->assertMatchesRegularExpression( '/^(SCAN|SEARCH) urls USING INDEX ' . self::index_of( $sort, $order, $server ) . '( |$)/m', $plan );
+		$this->assertMatchesRegularExpression( '/^(SCAN|SEARCH) pages USING INDEX ' . self::index_of( $sorted, $order, $server ) . '( |$)/m', $plan );
 	}
 
 	/**
-	 * The index a page of `$sort` in `$order` over `$server` reads.
+	 * The index a listing of pages by `$sort` in `$order` over `$server` reads.
 	 */
 	private static function index_of( string $sort, string $order, string $server ): string {
-		if ( 'url_name' === $sort ) {
-			return 'urls_url_name';
-		}
-		$scoped = '' === $server ? 'urls_' : 'urls_server_';
+		$scoped = '' === $server ? 'pages_' : 'pages_server_';
 		return $scoped . $sort . ( 'asc' === $order && \in_array( $sort, [ 'avg_ms', 'min_ms', 'max_ms' ], true ) ? '_null' : '' );
+	}
+
+	/**
+	 * The page whose shapes a scope's listing reads: a page of two visitor
+	 * shapes on each server.
+	 */
+	private static function shaped( string $server ): string {
+		return Log_Manager::url_hash( self::KAKA === $server ? self::KAKA . '/kokako-5530/' : self::$seed_server . '/tui-4410/' );
+	}
+
+	/**
+	 * Every sort, both orders, every server, both views: a page's shapes off
+	 * the snapshot are the live `url` group of the page, and their totals the
+	 * live totals.
+	 */
+	#[DataProvider( 'questions' )]
+	public function test_a_snapshot_listing_of_shapes_is_the_live_url_group( string $sort, string $order, string $server, bool $workers ): void {
+		$this->seed_page_traffic();
+		$this->seed_request( self::request( '/Kokako-5530/?k=?', 3, 44, [ 'server' => self::KAKA, 'ms' => 91.5, 'peak_mb' => 13.25 ] ), 2 );
+		Url_Snapshot::publish( self::NOW, self::TTL, static fn (): array => [] );
+		$snapshot = Url_Snapshot::open( self::NOW );
+		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
+		$page = self::shaped( $server );
+
+		$live   = self::live(
+			$server,
+			$workers,
+			[
+				'filter'  => [ 'page' => [ $page ] ] + Performance_CI_Node::scope( $server, $workers ),
+				'group'   => [ 'url' ],
+				'measure' => Performance_CI_Node::URL_MEASURES,
+				'sort'    => Performance_CI_Node::URL_SORTS[ $sort ],
+				'order'   => $order,
+				'limit'   => 50,
+				'offset'  => 0,
+				'also'    => [
+					'sort'  => 'avg_ms',
+					'order' => 'desc',
+					'limit' => Performance_CI_Node::SLOWEST_ROWS,
+				],
+			]
+		);
+		$totals = self::live( $server, $workers, [ 'filter' => [ 'page' => [ $page ] ] + Performance_CI_Node::scope( $server, $workers ), 'group' => [], 'measure' => Performance_CI_Node::URL_TOTALS ] );
+		$shapes = $snapshot->shapes( $page, $server, $workers, Performance_CI_Node::URL_SORTS[ $sort ], $order, 0, 50 );
+
+		$this->assertCount( 2, $live['rows'], 'the page holds two shapes' );
+		$this->assertSame( $live['columns'], $shapes['columns'] );
+		$this->assertSame( $live['rows'], $shapes['rows'] );
+		$this->assertSame( $live['also'], $shapes['also'] );
+		$this->assertSame( $totals['columns'], $snapshot->shape_totals( $page, $server, $workers )['columns'] );
+		$this->assertSame( $totals['rows'], $snapshot->shape_totals( $page, $server, $workers )['rows'] );
+	}
+
+	/** A page's shapes seek `urls_page`, in either view and either scope. */
+	public function test_a_pages_shapes_seek_urls_page(): void {
+		$db   = $this->published_pages();
+		$page = self::$seed_server . '/tui-4410/';
+		$tui  = [ Log_Manager::url_hash( 'https://' . self::$seed_server . '/Tui-4410/?utm=?' ), Log_Manager::url_hash( 'https://' . self::$seed_server . '/tui-4410/' ) ];
+		\sort( $tui, \SORT_STRING );
+
+		$this->assertSame( [ [ $tui[0], $page ], [ $tui[1], $page ] ], $db->rows( 'SELECT url, page FROM urls WHERE page_hash = ? ORDER BY url', [ Log_Manager::url_hash( $page ) ] ) );
+		foreach ( [ '', self::$seed_server ] as $server ) {
+			foreach ( [ false, true ] as $workers ) {
+				[ $sql, $binds ] = ( new \ReflectionMethod( Url_Snapshot::class, 'listing' ) )->invoke( null, 'urls', [ 'page' => [ Log_Manager::url_hash( $page ) ] ] + Performance_CI_Node::scope( $server, $workers ), 'count', 'desc' );
+
+				$this->assertMatchesRegularExpression( '/^SEARCH urls USING INDEX urls_page \\(page_hash=\\?( AND worker=\\?)?\\)/m', self::plan_text( $db, $sql, $binds ), "'{$server}' " . ( $workers ? 'workers' : 'no workers' ) );
+			}
+		}
 	}
 
 	/** `urls` takes its rows in hash order, and `servers` its names in name order. */
@@ -332,6 +398,7 @@ final class UrlSnapshotTest extends TestCase {
 		return [
 			'an unmapped field' => [ [ 'country' => [ 'NZ' ] ], 'the URL snapshot scopes no country' ],
 			'two servers'       => [ [ 'server' => [ self::KAKA, 'tui-6103.example' ] ], 'the URL snapshot scopes one server, not 2' ],
+			'two pages'         => [ [ 'page' => [ 'a1b2c3d4e5f6', 'f6e5d4c3b2a1' ] ], 'the URL snapshot scopes one page, not 2' ],
 		];
 	}
 
@@ -405,27 +472,28 @@ final class UrlSnapshotTest extends TestCase {
 		$this->assertSame( 0, \preg_match_all( '/^\s*(SCAN|SEARCH) p( |$)/m', $plan ), $plan );
 	}
 
-	/** A server the snapshot does not hold pages no rows. */
+	/** A server the snapshot does not hold lists no page and no shape. */
 	public function test_an_unknown_server_pages_no_rows(): void {
 		$this->seed_parity_traffic();
 		Url_Snapshot::publish( self::NOW, self::TTL, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
-		$page = $snapshot->page( 'absent-4471.example', true, 'count', 'desc', 0, 50 );
+		$pages  = $snapshot->pages( 'absent-4471.example', true, 'count', 'desc', 0, 50 );
+		$shapes = $snapshot->shapes( self::shaped( '' ), 'absent-4471.example', true, 'count', 'desc', 0, 50 );
 
-		$this->assertSame( [], $page['rows'] );
-		$this->assertSame( [], $page['also'] );
+		$this->assertSame( [ [], [], [], [] ], [ $pages['rows'], $pages['also'], $shapes['rows'], $shapes['also'] ] );
+		$this->assertSame( [ [ 0, null, null, 0, 0, 0 ] ], $snapshot->shape_totals( self::shaped( '' ), 'absent-4471.example', true )['rows'] );
 	}
 
 	/**
-	 * Each sort a `urls` page takes, both orders, every scope and both views.
+	 * Each sort `urls` takes, by its key, both orders, every scope and both views.
 	 *
 	 * @return array<string,array{0:string,1:string,2:string,3:bool}>
 	 */
 	public static function questions(): array {
 		$cases = [];
-		foreach ( [ 'count', 'url_name', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_seen' ] as $sort ) {
+		foreach ( \array_keys( Performance_CI_Node::URL_SORTS ) as $sort ) {
 			foreach ( [ 'asc', 'desc' ] as $order ) {
 				foreach ( [ '', self::KAKA, self::$seed_server ] as $server ) {
 					foreach ( [ false, true ] as $workers ) {
@@ -437,12 +505,13 @@ final class UrlSnapshotTest extends TestCase {
 		return $cases;
 	}
 
-	/** The sorts a page takes are `urls`' sorts. */
+	/** The sorts a listing takes are `urls`' sorts, a page's name standing for a URL's. */
 	public function test_the_parity_sorts_are_the_urls_verbs_sorts(): void {
 		$this->assertSame(
 			[ 'count', 'url_name', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_seen' ],
 			\array_values( Performance_CI_Node::URL_SORTS )
 		);
+		$this->assertSame( [ 'url' => 'page_name' ] + Performance_CI_Node::URL_SORTS, Performance_CI_Node::PAGE_SORTS );
 	}
 
 	public function test_snapshot_totals_are_the_live_totals(): void {
@@ -453,7 +522,7 @@ final class UrlSnapshotTest extends TestCase {
 
 		foreach ( [ '', self::KAKA, self::$seed_server, 'absent-4471.example' ] as $server ) {
 			foreach ( [ false, true ] as $workers ) {
-				$live   = self::live( $server, $workers, [ 'group' => [], 'measure' => [ 'count', 'avg_ms', 'avg_peak_mb', 'urls', 'errors' ] ] );
+				$live   = self::live( $server, $workers, [ 'group' => [], 'measure' => Performance_CI_Node::URL_TOTALS ] );
 				$totals = $snapshot->totals( $server, $workers );
 				$label  = "'{$server}' " . ( $workers ? 'workers' : 'no workers' );
 
@@ -462,7 +531,7 @@ final class UrlSnapshotTest extends TestCase {
 				$this->assertTrue( $totals['available'], $label );
 			}
 		}
-		$this->assertSame( [ [ 0, null, null, 0, 0 ] ], $snapshot->totals( 'absent-4471.example', true )['rows'], 'a server with no URLs answers zeroes' );
+		$this->assertSame( [ [ 0, null, null, 0, 0, 0 ] ], $snapshot->totals( 'absent-4471.example', true )['rows'], 'a server with no URLs answers zeroes' );
 	}
 
 	/**
@@ -606,36 +675,6 @@ final class UrlSnapshotTest extends TestCase {
 		$this->assertSame( $ranked, $rows );
 	}
 
-	/**
-	 * Every page of `pages` a view and scope keep reads its rows in order off
-	 * the index its sort and scope name, `pages_` where `urls` reads `urls_`,
-	 * its view a filter on the scan as a `urls` view is.
-	 */
-	#[DataProvider( 'questions' )]
-	public function test_a_pages_listing_reads_its_sort_and_scopes_index( string $sort, string $order, string $server, bool $workers ): void {
-		$db                = $this->published_pages();
-		[ $where, $binds ] = self::pages_scope( $server, $workers );
-		$sorted            = 'url_name' === $sort ? [ 'server_id', 'page' ] : [ $sort ];
-		$ranking           = Stats_Query::ranking( $sorted, [ 'rowid' ], $order, \in_array( $sort, [ 'avg_ms', 'min_ms', 'max_ms' ], true ) );
-
-		$plan = self::plan_text( $db, "SELECT page_hash FROM pages WHERE {$where} ORDER BY {$ranking} LIMIT ? OFFSET ?", [ ...$binds, 3, 1 ] );
-
-		$this->assertStringNotContainsString( 'USE TEMP B-TREE', $plan );
-		$this->assertMatchesRegularExpression( '/^(SCAN|SEARCH) pages USING INDEX pages_' . \substr( self::index_of( $sort, $order, $server ), \strlen( 'urls_' ) ) . '( |$)/m', $plan );
-	}
-
-	/** Each `urls` row carries its page, and a page's shapes seek `urls_page` in either view. */
-	public function test_a_pages_shapes_seek_urls_page(): void {
-		$db   = $this->published_pages();
-		$page = self::$seed_server . '/tui-4410/';
-		$tui  = [ Log_Manager::url_hash( 'https://' . self::$seed_server . '/Tui-4410/?utm=?' ), Log_Manager::url_hash( 'https://' . self::$seed_server . '/tui-4410/' ) ];
-		\sort( $tui, \SORT_STRING );
-
-		$this->assertSame( [ [ $tui[0], $page ], [ $tui[1], $page ] ], $db->rows( 'SELECT url, page FROM urls WHERE page_hash = ? ORDER BY url', [ Log_Manager::url_hash( $page ) ] ) );
-		$this->assertStringContainsString( 'SEARCH urls USING INDEX urls_page (page_hash=? AND worker=?)', self::plan_text( $db, 'SELECT url FROM urls WHERE page_hash = ? AND worker = ?', [ Log_Manager::url_hash( $page ), 0 ] ) );
-		$this->assertStringContainsString( 'SEARCH urls USING INDEX urls_page (page_hash=?)', self::plan_text( $db, 'SELECT url FROM urls WHERE page_hash = ?', [ Log_Manager::url_hash( $page ) ] ) );
-	}
-
 	/** Each totals row counts the pages its view and scope keep. */
 	public function test_totals_count_the_pages_each_view_and_scope_keeps(): void {
 		$db = $this->published_pages();
@@ -771,9 +810,10 @@ final class UrlSnapshotTest extends TestCase {
 			\array_push( $indexes, ...$step( 'snapshot index', $name ) );
 		}
 		$this->assertNull( $thrown );
-		$this->assertContains( [ 'snapshot index (start)', 'urls_server_avg_ms_null', null ], $indexes );
 		$this->assertContains( [ 'snapshot index (start)', 'pages_server_avg_ms_null', null ], $indexes );
+		$this->assertContains( [ 'snapshot index (start)', 'pages_page_name', null ], $indexes );
 		$this->assertContains( [ 'snapshot index (start)', 'urls_page', null ], $indexes );
+		$this->assertSame( [ 'urls_page' ], \array_values( \array_filter( self::index_names(), static fn ( string $name ): bool => \str_starts_with( $name, 'urls_' ) ) ), 'no listing sorts URLs' );
 		$this->assertSame(
 			[
 				[ 'snapshot build (start)', null, null ],
@@ -861,8 +901,8 @@ final class UrlSnapshotTest extends TestCase {
 		$snapshot = Url_Snapshot::open( self::NOW );
 
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
-		$this->assertSame( [], $snapshot->page( '', true, 'count', 'desc', 0, 50 )['rows'] );
-		$this->assertSame( [ [ 0, null, null, 0, 0 ] ], $snapshot->totals( '', true )['rows'] );
+		$this->assertSame( [], $snapshot->pages( '', true, 'count', 'desc', 0, 50 )['rows'] );
+		$this->assertSame( [ [ 0, null, null, 0, 0, 0 ] ], $snapshot->totals( '', true )['rows'] );
 	}
 
 	public function test_a_publish_leaves_no_build_file_and_replaces_the_last(): void {
@@ -876,13 +916,13 @@ final class UrlSnapshotTest extends TestCase {
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 		$this->assertSame( self::NOW + 120, $snapshot->as_of() );
 		$this->assertSame(
-			[ 'https://seed.example/moa-6638/', 'https://seed.example/tui-4410/' ],
-			\array_column( $snapshot->page( '', false, 'url_name', 'asc', 0, 50 )['rows'], 1 )
+			[ 'seed.example/moa-6638/', 'seed.example/tui-4410/' ],
+			\array_column( $snapshot->pages( '', false, 'page_name', 'asc', 0, 50 )['rows'], 1 )
 		);
 		$this->assertSame( [ $this->snapshot_file() ], Row_Table_Node::remove_snapshot( Url_Snapshot::NAME ), 'the publish alone stands' );
 	}
 
-	/** A page takes the bounds a live page takes. */
+	/** A listing takes the bounds a live listing takes. */
 	#[DataProvider( 'out_of_bounds' )]
 	public function test_a_page_refuses_a_bound_the_live_page_refuses( int $offset, int $limit ): void {
 		$this->seed_request();
@@ -891,7 +931,7 @@ final class UrlSnapshotTest extends TestCase {
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
 		$this->expectException( \InvalidArgumentException::class );
-		$snapshot->page( '', false, 'count', 'desc', $offset, $limit );
+		$snapshot->pages( '', false, 'count', 'desc', $offset, $limit );
 	}
 
 	/**
@@ -909,14 +949,31 @@ final class UrlSnapshotTest extends TestCase {
 		];
 	}
 
-	public function test_a_page_refuses_a_sort_urls_does_not_take(): void {
+	/**
+	 * A sort `urls` does not take, and a URL's name sort over pages or a
+	 * page's over URLs.
+	 *
+	 * @return array<string,array{0:string,1:string}>
+	 */
+	public static function foreign_sorts(): array {
+		return [
+			'pages by a sum'        => [ 'pages', 'sum_ms' ],
+			'pages by a URL name'   => [ 'pages', 'url_name' ],
+			'shapes by a page name' => [ 'urls', 'page_name' ],
+		];
+	}
+
+	/** A listing refuses a sort its table does not take. */
+	#[DataProvider( 'foreign_sorts' )]
+	public function test_a_listing_refuses_a_sort_its_table_does_not_take( string $table, string $sort ): void {
 		$this->seed_request();
 		Url_Snapshot::publish( self::NOW, self::TTL, static fn (): array => [] );
 		$snapshot = Url_Snapshot::open( self::NOW );
 		$this->assertInstanceOf( Url_Snapshot::class, $snapshot );
 
 		$this->expectException( \InvalidArgumentException::class );
-		$snapshot->page( '', false, 'sum_ms', 'desc', 0, 50 );
+		$this->expectExceptionMessage( "unknown sort {$sort}" );
+		'pages' === $table ? $snapshot->pages( '', false, $sort, 'desc', 0, 50 ) : $snapshot->shapes( self::shaped( '' ), '', false, $sort, 'desc', 0, 50 );
 	}
 
 	/**
