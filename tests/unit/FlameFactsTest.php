@@ -32,7 +32,7 @@ final class FlameFactsTest extends TestCase {
 	}
 
 	public function test_v8_declares_the_window_its_expiries_and_the_server_led_keys(): void {
-		$tables = self::derived_tables();
+		$tables = Flame_Facts_Row_Schema::tables();
 
 		$this->assertSame( 8, Flame_Facts_Row_Schema::version() );
 		$this->assertSame( [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb', 'profiled', 'error', 'finished_at' ], $tables['requests']['indexes']['requests_cover'] );
@@ -44,11 +44,37 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( [ 'category_id', 'entry_id', 'listener', 'worker', 'ms', 'calls', 'requests', 'last_bucket' ], \array_keys( $tables['category_window']['columns'] ) );
 		$this->assertSame( [ 'category_id', 'entry_id', 'worker' ], $tables['category_window']['key'] );
 		$this->assertSame( [ 'ms' => 'sum', 'calls' => 'sum', 'requests' => 'sum', 'last_bucket' => 'max' ], $tables['category_window']['add'] );
-		$this->assertSame( [ 'last_bucket', Flame_Facts_Row_Schema::TIMINGS_BUCKETS, Bucket::SECONDS ], $tables['category_window']['retain'] );
 		$this->assertArrayNotHasKey( 'window_watermark', $tables, 'the newest expiry is the watermark' );
 		$this->assertSame( [ 'bucket' ], $tables['window_expiry']['key'] );
-		$this->assertSame( 288, Flame_Facts_Row_Schema::WINDOW_BUCKETS );
 		$this->assertArrayNotHasKey( 'requests_bucket', $tables['requests']['indexes'] );
+	}
+
+	/**
+	 * Every stats table keeps the span and an hour of slack, read from
+	 * `min_lifetime` each time the tables are asked for: 24 buckets and 12 at
+	 * 7,200 seconds, `requests_hourly` the 3 hours covering those 36; 36 and
+	 * 12 at 10,800, and the 4 hours covering those 48.
+	 */
+	public function test_each_stats_table_keeps_the_span_and_an_hour_of_slack(): void {
+		foreach ( [ 7200 => [ 36, 3 ], 10800 => [ 48, 4 ] ] as $lifetime => [ $buckets, $hours ] ) {
+			$this->use_min_lifetime( $lifetime );
+			$tables = Flame_Facts_Row_Schema::tables();
+
+			foreach ( [ 'requests', 'timings', 'timings_site', 'window_expiry' ] as $table ) {
+				$this->assertSame( [ 'bucket', $buckets, Bucket::SECONDS ], $tables[ $table ]['retain'], "{$table} at {$lifetime}" );
+			}
+			$this->assertSame( [ 'last_bucket', $buckets, Bucket::SECONDS ], $tables['category_window']['retain'] );
+			$this->assertSame( [ 'hour', $hours, Bucket::HOUR_SECONDS ], $tables['requests_hourly']['retain'] );
+		}
+	}
+
+	/** A `min_lifetime` short of one bucket declares no tables, naming the key. */
+	public function test_a_span_short_of_a_bucket_declares_no_tables(): void {
+		$this->use_min_lifetime( 299 );
+
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( 'min_lifetime 299 is below the 300-second floor of one stats bucket' );
+		Flame_Facts_Row_Schema::tables();
 	}
 
 	/**
@@ -56,7 +82,7 @@ final class FlameFactsTest extends TestCase {
 	 * that column, and the column leads an index or its table's key.
 	 */
 	public function test_each_named_table_is_retained_by_every_column_naming_it(): void {
-		$tables = self::derived_tables();
+		$tables = Flame_Facts_Row_Schema::tables();
 
 		$this->assertSame( [ [ 'requests', 'url_id', 'id' ], [ 'timings', 'url_id', 'id' ] ], $tables['urls']['retained_by'] );
 		$this->assertSame( [ [ 'urls', 'server_id', 'id' ], [ 'requests', 'server_id', 'id' ], [ 'timings', 'server_id', 'id' ], [ 'timings_site', 'server_id', 'id' ], [ 'requests_hourly', 'server_id', 'id' ] ], $tables['servers']['retained_by'] );
@@ -67,17 +93,6 @@ final class FlameFactsTest extends TestCase {
 				$this->assertContains( $column, $leading, "{$table}.{$column} leads an index or the key" );
 			}
 		}
-	}
-
-	/**
-	 * The schema's tables derived afresh: the bootstrap memoizes them before
-	 * any test runs, so a test reading the memo never runs the derivation.
-	 *
-	 * @return array<string,array<string,mixed>>
-	 */
-	private static function derived_tables(): array {
-		( new \ReflectionProperty( Flame_Facts_Row_Schema::class, 'tables' ) )->setValue( null, null );
-		return Flame_Facts_Row_Schema::tables();
 	}
 
 	public function test_a_window_row_folds_its_sums_and_keeps_its_latest_bucket(): void {
@@ -102,7 +117,7 @@ final class FlameFactsTest extends TestCase {
 	 */
 	public function test_purging_a_urls_last_request_cascades_to_the_names_only_it_named(): void {
 		$this->activate_shipped( 'stats-builder', 1 );
-		$old = Bucket::id( self::tick() ) - Flame_Facts_Row_Schema::REQUESTS_BUCKETS - 3;
+		$old = Bucket::id( self::tick() ) - Bucket::window() - Bucket::RETAIN_SLACK - 3;
 		$this->seed_request( [ 'server' => 'pipit.example', 'url' => 'https://pipit.example/kahu-31', 'ja4' => 't13d_shared', 'from' => 'pipit@bot.example', 'bucket' => $old ] );
 		$this->seed_request( [ 'server' => 'pipit.example', 'url' => 'https://pipit.example/kahu-32', 'ja4' => 't13d_pipit', 'from' => 'pipit@bot.example', 'bucket' => $old ] );
 		$this->seed_request( [ 'server' => 'tauhou.example', 'url' => 'https://tauhou.example/kahu-33', 'ja4' => 't13d_shared', 'from' => 'tauhou@bot.example' ] );
@@ -118,7 +133,7 @@ final class FlameFactsTest extends TestCase {
 	public function test_a_url_a_timing_row_names_outlives_its_last_request(): void {
 		$this->activate_shipped( 'stats-builder', 1 );
 		$url = 'https://pipit.example/riroriro-58';
-		$this->seed_request( [ 'server' => 'pipit.example', 'url' => $url, 'bucket' => Bucket::id( self::tick() ) - Flame_Facts_Row_Schema::REQUESTS_BUCKETS - 3 ] );
+		$this->seed_request( [ 'server' => 'pipit.example', 'url' => $url, 'bucket' => Bucket::id( self::tick() ) - Bucket::window() - Bucket::RETAIN_SLACK - 3 ] );
 		$this->seed_timing( [ 'server' => 'pipit.example', 'url' => $url, 'category' => 'hook:riroriro_init', 'ms' => 8.25 ] );
 
 		$this->purge_facts( 0 );

@@ -46,7 +46,6 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
-use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
@@ -192,9 +191,6 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/** The fields a one-URL filter may not name: a URL-set's, and the hash's. */
 	private const ONE_URL_OWNERS = self::URL_SET_OWNERS + [ 'url' => [ 'the hash', 'URL' ] ];
-
-	/** Buckets the dashboard's charts draw: 24 hours, newest first. */
-	private const CHART_BUCKETS = Flame_Facts_Row_Schema::WINDOW_BUCKETS;
 
 	/** Entries past which a leaderboard category keeps only its slowest. */
 	private const ENTRY_TRIM_ABOVE = 100;
@@ -759,7 +755,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, or a filter `url_filter_of()` refuses.
 	 */
 	private static function url_detail( string $hash, string $server, array $tokens, string $spelling, int $now, int $limit ): array {
-		$buckets = self::window( $spelling, $now, Bucket::MAX_SELECTION );
+		$buckets = self::buckets_of( $spelling, $now );
 		$filter  = [ 'url' => [ $hash ] ] + self::url_filter_of( $tokens, self::ONE_URL_OWNERS ) + self::scope( $server, true );
 		$answer  = Stats_Query::run(
 			[
@@ -945,7 +941,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The URL a request row on `$server` in the week the rows keep names
+	 * The URL a request row on `$server` in the buckets the rows keep names
 	 * `$hash` by, server and path joined, worker traffic counted; '' when the
 	 * stats file will not open, which means no stats rather than no URL
 	 * (decision 3). No filter narrows it: a URL exists or it does not.
@@ -962,7 +958,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'group'   => [ 'url' ],
 				'filter'  => [ 'url' => [ $hash ] ] + self::scope( $server, true ),
 				'measure' => [ 'count' ],
-				'buckets' => Bucket::last( Flame_Facts_Row_Schema::REQUESTS_BUCKETS, $now ),
+				'buckets' => Bucket::last( Stats_Query::retention( 'requests' ), $now ),
 			]
 		);
 		if ( ! $answer['available'] ) {
@@ -975,7 +971,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * A URL's category profile over the 25 hours the timings keep, in the
+	 * A URL's category profile over every bucket the timings keep, in the
 	 * leaderboard's shape, or null over no profiled request.
 	 *
 	 * @param string                     $hash  12-char URL hash.
@@ -984,7 +980,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array{count:int, total_time:?float, avg_ms:?float, categories:array<array-key,mixed>}|null
 	 */
 	private static function url_profile( string $hash, array $scope, int $now ): ?array {
-		$board = self::leaderboard( $scope + [ 'url' => [ $hash ] ], Bucket::last( Flame_Facts_Row_Schema::TIMINGS_BUCKETS, $now ) );
+		$board = self::leaderboard( $scope + [ 'url' => [ $hash ] ], Bucket::last( Stats_Query::retention( 'timings' ), $now ), $now );
 		return 0 === $board['count'] ? null : $board;
 	}
 
@@ -1500,7 +1496,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$filters,
 			'' === $page ? $snapshot->totals( $server, $workers ) : $snapshot->shape_totals( $page, $server, $workers ),
 			'' === $page ? $snapshot->pages( $server, $workers, self::PAGE_SORTS[ $sort ], $order, $offset, $limit ) : $snapshot->shapes( $page, $server, $workers, self::URL_SORTS[ $sort ], $order, $offset, $limit ),
-			self::window( '', $now, Bucket::MAX_SELECTION ),
+			self::buckets_of( '', $now ),
 			$offset,
 			$limit,
 			$now
@@ -1529,7 +1525,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `overview` verb's answer over the chart's 288 buckets: the
+	 * The `overview` verb's answer over the chart's `Bucket::window()`: the
 	 * non-worker requests' totals, their exact distinct URLs, every server
 	 * with traffic there, worker traffic counted, busiest first, and the
 	 * leaderboard. A server scopes the totals and the leaderboard; `servers`
@@ -1546,7 +1542,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, available: bool}
 	 */
 	private static function answer_overview( string $server, int $now, ?array $servers ): array {
-		$chart   = Bucket::last( self::CHART_BUCKETS, $now );
+		$chart   = Bucket::last( Bucket::window(), $now );
 		$answer  = Stats_Query::run(
 			[
 				'source'  => 'requests',
@@ -1610,7 +1606,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The non-worker leaderboard over the chart's 24 hours, scoped to `$server`
+	 * The non-worker leaderboard over the chart's buckets, scoped to `$server`
 	 * when one is named.
 	 *
 	 * @param string $server Server to scope to; '' is every server.
@@ -1618,7 +1614,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array{count:int, total_time:?float, avg_ms:?float, categories:array<array-key,mixed>}
 	 */
 	private static function site_leaderboard( string $server, int $now ): array {
-		return self::leaderboard( self::scope( $server, false ), Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, $now ) );
+		return self::leaderboard( self::scope( $server, false ), Bucket::last( Bucket::window(), $now ), $now );
 	}
 
 	/**
@@ -1630,14 +1626,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param array<string,list<scalar>>  $filter  Fields both sources hold.
 	 * @param list<array{0:int,1:int}>    $buckets The board's buckets.
+	 * @param int                         $now     The reply's clock.
 	 * @return array{count:int, total_time:?float, avg_ms:?float, categories:array<array-key,mixed>}
 	 */
-	private static function leaderboard( array $filter, array $buckets ): array {
+	private static function leaderboard( array $filter, array $buckets, int $now ): array {
 		$timings      = [
 			'source'  => 'timings',
 			'filter'  => $filter,
 			'measure' => [ 'ms', 'calls', 'requests' ],
 			'buckets' => $buckets,
+			'now'     => $now,
 		];
 		$sums         = [];
 		$sum_req_time = 0.0;
@@ -1691,7 +1689,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * a window and answers what it read, the cheapest rows left out.
 	 *
 	 * @param list<string>                                                                                                          $group   The fields to group by.
-	 * @param array{source:string, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>} $timings The timings spec, less its group, sort and page.
+	 * @param array{source:string, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, now:int} $timings The timings spec, less its group, sort and page.
 	 * @return list<list<mixed>>
 	 */
 	private static function timing_rows( array $group, array $timings ): array {
@@ -1807,8 +1805,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One listing of the URL set the filters leave, over the last 288
-	 * buckets or the selected ones, read live: its totals, and its rows,
+	 * One listing of the URL set the filters leave, over the chart's buckets
+	 * or the selected ones, read live: its totals, and its rows,
 	 * pages or one page's URLs, with the slowest ten beside them, shaped by
 	 * `url_reply()`. Worker traffic is left out unless asked for. A filter
 	 * narrows the rows, the totals and the slowest ten together, and a filter
@@ -1852,7 +1850,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return [
 			'source'  => 'requests',
 			'filter'  => $filter,
-			'buckets' => self::window( $filters['bucket'], $now, Bucket::MAX_SELECTION ),
+			'buckets' => self::buckets_of( $filters['bucket'], $now ),
 			'search'  => $filters['search'],
 		];
 	}
@@ -2185,7 +2183,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function answer_query( array $args, int $now ): array {
 		$spelling = Core::as_string( $args['bucket'] );
-		$buckets  = self::window( $spelling, $now, Stats_Query::retention( Core::as_string( $args['source'] ) ) );
+		$buckets  = self::buckets_of( $spelling, $now, Stats_Query::retention( Core::as_string( $args['source'] ) ) );
 		$filter   = self::filter_of( Stats_Query::strings( $args['filter'] ) );
 		$search   = Core::as_string( $args['search'] );
 		$spec     = [
@@ -2197,6 +2195,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			'sort'    => Core::as_string( $args['sort'] ),
 			'order'   => Core::as_string( $args['order'] ),
 			'search'  => $search,
+			'now'     => $now,
 		];
 		foreach ( [ 'limit', 'offset', 'top' ] as $name ) {
 			if ( null !== $args[ $name ] ) {
@@ -2308,14 +2307,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The buckets a selection's spelling names, or the chart's when it
 	 * names none.
 	 *
-	 * @param string $spelling A `Bucket::selection()` spelling; '' for the chart's.
-	 * @param int    $now      The reply's clock.
-	 * @param int    $max      Most buckets the spelling may name.
+	 * @param string   $spelling A `Bucket::selection()` spelling; '' for the chart's.
+	 * @param int      $now      The reply's clock.
+	 * @param int|null $max      Most buckets the spelling may name; null is the chart's span.
 	 * @return list<array{0:int,1:int}>
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses.
+	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
 	 */
-	private static function window( string $spelling, int $now, int $max ): array {
-		return '' === $spelling ? Bucket::last( self::CHART_BUCKETS, $now ) : Bucket::selection( $spelling, $now, $max );
+	private static function buckets_of( string $spelling, int $now, ?int $max = null ): array {
+		return '' === $spelling ? Bucket::last( Bucket::window(), $now ) : Bucket::selection( $spelling, $now, $max ?? Bucket::window() );
 	}
 
 	/**
@@ -2364,6 +2364,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	public static function node_schema(): array {
 		$life = 'serves ' . Overview_Prefetch::SNAPSHOT_INTERVALS . ' of its tick\'s intervals, ' . Overview_Prefetch_Tick_Node::INTERVAL_S . ' s each by default';
+		[ 'window' => $span, 'kept' => $kept ] = Bucket::span_words();
 		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
 			'description' => 'Performance-dashboard surface: overview, URLs, requests, hooks, config, settings.',
@@ -2372,7 +2373,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'overview',
 					'capability'  => Capabilities::READ,
-					'description' => 'The site over the chart\'s 288 buckets: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the 24-hour category leaderboard. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, which ' . $life . ', from the end of its build; a scoped one is answered from that run where it listed the server; one it did not list names the `servers` that run stored, read live where none is stored or the scoped server has traffic they lack, and a blank `server` is the default question; `as_of` dates every answer.',
+					'description' => 'The site over the last ' . $span . ' buckets, the chart\'s: non-worker totals, every server with traffic there, worker traffic counted, busiest first, and the category leaderboard over them. `server` scopes the totals and the leaderboard, never `servers`; chart series come from `query`. Stats that will not open answer `available` false and `totals` null. A default Overview question is answered from the overview-prefetch job\'s last run, which ' . $life . ', from the end of its build; a scoped one is answered from that run where it listed the server; one it did not list names the `servers` that run stored, read live where none is stored or the scoped server has traffic they lack, and a blank `server` is the default question; `as_of` dates every answer.',
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 					],
@@ -2392,7 +2393,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'page', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A page\'s hash, `page_hash`: answers that page\'s URL rows in place of pages. It owns the page field, so a `page=` or `page!=` filter beside it is refused.' ],
 						self::FILTER_ARG,
 						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
-						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end`, the buckets from `start` up to the key that closes it, `end` not among them, at most 288 buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last 288. `filters.bucket` echoes the canonical spelling.' ],
+						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection of five-minute buckets as `Bucket::selection()` reads one: comma-separated runs, each a `Y-m-d-H-i` UTC key or `start..end`, the buckets from `start` up to the key that closes it, `end` not among them, at most ' . $span . ' buckets, none later than the current one. Narrows every row, the totals and the rate to the requests completing in them; empty is the last ' . $span . '. `filters.bucket` echoes the canonical spelling.' ],
 					],
 					'handler'     => static fn ( self $self, array $args, array $envelope = [] ): array => $self->answered( 'urls', $args ),
 				],
@@ -2405,7 +2406,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'group', 'type' => 'string', 'required' => false, 'variadic' => true ],
 						self::FILTER_ARG,
 						[ 'name' => 'measure', 'type' => 'string', 'required' => false, 'variadic' => true ],
-						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection as `Bucket::selection()` reads one, at most as many buckets as the source keeps, `Stats_Query::retention()`: 2,016 for `requests`, 300 for `timings`; empty is the last 288 buckets.' ],
+						[ 'name' => 'bucket', 'type' => 'string', 'required' => false, 'default' => '', 'description' => 'A selection as `Bucket::selection()` reads one, at most as many buckets as the source keeps, `Stats_Query::retention()`: ' . $kept . ' buckets for either source; empty is the last ' . $span . ' buckets.' ],
 						[ 'name' => 'search', 'type' => 'string', 'required' => false, 'default' => '' ],
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => '' ],
 						[ 'name' => 'order', 'type' => 'string', 'required' => false, 'default' => 'asc' ],
@@ -2419,7 +2420,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
-					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last 288 buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its 25-hour category profile, null over no profiled request. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured, as are the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` in `stats`, which also carries `error_rate`, `errors` over `count`. Series come from `query` filtered to the URL.',
+					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last ' . $span . ' buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its category profile over the ' . $kept . ' buckets the timings keep, null over no profiled request. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured, as are the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` in `stats`, which also carries `error_rate`, `errors` over `count`. Series come from `query` filtered to the URL.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
@@ -2490,7 +2491,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_request',
 					'capability'  => Capabilities::READ,
-					'description' => 'Full request + flame data for a rid, read at the place its request row names, with `flame_cut` true when MAX_SCAN_S ended the flame lookup before it found `flame_data`; is not found when no row names the rid (aged past seven days or not yet written) or when its record has aged out of the raw logs, about a day by default, though the request still counts in every aggregate.',
+					'description' => 'Full request + flame data for a rid, read at the place its request row names, with `flame_cut` true when MAX_SCAN_S ended the flame lookup before it found `flame_data`; is not found when no row names the rid (aged past the ' . $kept . ' buckets the rows keep, or not yet written) or when its record has aged out of the raw logs, which keep it at least `min_lifetime` unless `max_segments` prunes it sooner, though the request still counts in every aggregate.',
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 					],

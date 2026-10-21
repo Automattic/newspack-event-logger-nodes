@@ -4,10 +4,12 @@
  *
  * The axis is the buckets a reply read — the `overview` reply's `slots`, or a
  * `query` answer's echoed selection through `answerSlots()`: one five-minute
- * slot per bucket key, `YYYY-MM-DD-HH-MM`, 288 of them ending at the bucket
- * the reply read the clock in. Every slot carries the seconds it spans.
- * Nothing here reads a clock: the reply said which buckets it read, and the
- * axis is those.
+ * slot per bucket key, `YYYY-MM-DD-HH-MM`, as many as the reply sent, ending
+ * at the bucket the reply read the clock in. Every slot carries the seconds
+ * it spans. Nothing here reads a clock or knows the window's length: the
+ * reply said which buckets it read, and the axis is those. A selection holds
+ * at most as many buckets as the reply charted, the limit the server holds
+ * it to.
  *
  * A series is a `query` answer grouped by `bucket` and the dimensions it
  * breaks down by, one positional row per bucket and tuple. `decodeRows()` is
@@ -16,6 +18,7 @@
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import {
 	BUCKET_MS,
 	BUCKET_SECONDS,
@@ -31,13 +34,6 @@ const keyStart = ( key ) => {
 	const [ y, m, d, h, i ] = key.split( '-' ).map( Number );
 	return new Date( Date.UTC( y, m - 1, d, h, i ) );
 };
-
-/**
- * Buckets a selection may hold: the chart's 288, `Bucket::MAX_SELECTION`.
- *
- * @type {number}
- */
-const SELECTION_MAX = 288;
 
 /**
  * The bucket key an instant falls in, `YYYY-MM-DD-HH-MM` UTC.
@@ -72,12 +68,13 @@ const selectedStart = ( key ) => {
  * one bucket, or `start..end`, the buckets from `start` up to the one `end`
  * opens, `end` not among them; `bucketSpelling()` writes the canonical one.
  * '' selects nothing, and so does a piece that is not a five-minute key, a
- * run not ending after it starts, or more than 288 buckets.
+ * run not ending after it starts, or more than `max` buckets.
  *
  * @param {string} spelling A selection's spelling.
+ * @param {number} max      Most buckets it may hold: the slots the reply charted.
  * @return {string[]} Its keys, ascending; [] when refused.
  */
-export const bucketsOf = ( spelling ) => {
+export const bucketsOf = ( spelling, max ) => {
 	const keys = new Set();
 	for ( const run of '' === spelling ? [] : spelling.split( ',' ) ) {
 		const cut = run.indexOf( '..' );
@@ -93,12 +90,12 @@ export const bucketsOf = ( spelling ) => {
 		}
 		for (
 			let at = first;
-			at <= last && keys.size <= SELECTION_MAX;
+			at <= last && keys.size <= max;
 			at += BUCKET_MS
 		) {
 			keys.add( keyAt( at ) );
 		}
-		if ( keys.size > SELECTION_MAX ) {
+		if ( keys.size > max ) {
 			return [];
 		}
 	}
@@ -233,10 +230,11 @@ export const bucketSpelling = ( keys ) =>
  * @param {string}  spelling The held selection.
  * @param {string}  key      The clicked bucket.
  * @param {boolean} additive Whether cmd or ctrl was held.
+ * @param {number}  max      Most buckets the held selection may hold.
  * @return {string} The new selection's spelling.
  */
-const clickSelection = ( spelling, key, additive ) => {
-	const held = bucketsOf( spelling );
+const clickSelection = ( spelling, key, additive, max ) => {
+	const held = bucketsOf( spelling, max );
 	if ( ! additive ) {
 		return held.includes( key ) ? '' : key;
 	}
@@ -254,13 +252,14 @@ const clickSelection = ( spelling, key, additive ) => {
  * @param {string}   spelling The held selection.
  * @param {string[]} keys     The dragged buckets, ascending.
  * @param {boolean}  additive Whether cmd or ctrl was held.
+ * @param {number}   max      Most buckets the held selection may hold.
  * @return {string} The new selection's spelling.
  */
-const rangeSelection = ( spelling, keys, additive ) =>
+const rangeSelection = ( spelling, keys, additive, max ) =>
 	bucketSpelling(
 		[
 			...new Set( [
-				...( additive ? bucketsOf( spelling ) : [] ),
+				...( additive ? bucketsOf( spelling, max ) : [] ),
 				...keys,
 			] ),
 		].sort()
@@ -270,12 +269,13 @@ const rangeSelection = ( spelling, keys, additive ) =>
  * A selection as local spans, one per run, the way a filter names it.
  *
  * @param {?string} spelling A candidate selection's spelling.
+ * @param {number}  max      Most buckets it may hold: the slots the reply charted.
  * @return {?string} Each run's `runSpan()`, comma-joined; null for none or
  * for a spelling the server would refuse.
  */
-export const bucketSpan = ( spelling ) => {
+export const bucketSpan = ( spelling, max ) => {
 	const runs = runsOf(
-		'string' === typeof spelling ? bucketsOf( spelling ) : []
+		'string' === typeof spelling ? bucketsOf( spelling, max ) : []
 	);
 	return runs.length ? runs.map( runSpan ).join( ', ' ) : null;
 };
@@ -286,9 +286,21 @@ export const bucketSpan = ( spelling ) => {
  * control that clears it can still name it.
  *
  * @param {string} spelling A candidate selection's spelling.
+ * @param {number} max      Most buckets it may hold: the slots the reply charted.
  * @return {string} Its `bucketSpan()`, or the spelling itself.
  */
-export const bucketLabel = ( spelling ) => bucketSpan( spelling ) ?? spelling;
+export const bucketLabel = ( spelling, max ) =>
+	bucketSpan( spelling, max ) ?? spelling;
+
+/**
+ * Most buckets a selection may hold: as many as the reply charted, and no
+ * limit before a reply names its slots, the server holding the selection to
+ * its window meanwhile.
+ *
+ * @param {Array|null} slots The reply's slots, or the axis built from them; null before one.
+ * @return {number} The limit.
+ */
+export const selectionLimit = ( slots ) => slots?.length ?? Infinity;
 
 /**
  * Build the slots a chart's time axis is drawn over, oldest first.
@@ -303,6 +315,55 @@ export const buildChartSlots = ( slots ) =>
 		bucketKey: bucket,
 		seconds: BUCKET_SECONDS,
 	} ) );
+
+/**
+ * Minutes in the hour a caption counts whole hours by.
+ *
+ * @type {number}
+ */
+const MINUTES_PER_HOUR = 60;
+
+/**
+ * The span a reply's slots cover, as a caption names the window: whole hours
+ * as hours, anything under two hours as minutes, the rest as hours and
+ * minutes, so no span reads as 0 hours or rounds to an hour it is not.
+ *
+ * @param {Array} slots The reply's slots, or the axis built from them.
+ * @return {string} `2 hours`, `90 minutes` or `3 hours 5 minutes`.
+ */
+export const slotSpan = ( slots ) => {
+	const minutes = ( slots.length * BUCKET_SECONDS ) / 60;
+	const hours = Math.floor( minutes / MINUTES_PER_HOUR );
+	const past = minutes % MINUTES_PER_HOUR;
+	const inMinutes = ( count ) =>
+		sprintf(
+			// translators: %d: minutes the window spans.
+			_n(
+				'%d minute',
+				'%d minutes',
+				count,
+				'newspack-event-logger-nodes'
+			),
+			count
+		);
+	const inHours = sprintf(
+		// translators: %d: whole hours the window spans.
+		_n( '%d hour', '%d hours', hours, 'newspack-event-logger-nodes' ),
+		hours
+	);
+	if ( hours > 0 && 0 === past ) {
+		return inHours;
+	}
+	if ( minutes < 2 * MINUTES_PER_HOUR ) {
+		return inMinutes( minutes );
+	}
+	return sprintf(
+		// translators: 1: whole hours, e.g. 3 hours, 2: the minutes past them, e.g. 5 minutes.
+		__( '%1$s %2$s', 'newspack-event-logger-nodes' ),
+		inHours,
+		inMinutes( past )
+	);
+};
 
 /**
  * Map the slot index `AreaTimeChart` reports back to that slot's bucket key,
@@ -348,25 +409,35 @@ export const useSlotRange = ( axis, onSlotRange ) =>
  * A selection held as its spelling, read as the keys a chart shades and
  * edited by a chart click or drag. Each edit is an updater over the held
  * spelling, so every edit of one batch lands on the selection the one before
- * it left.
+ * it left. The selection holds at most as many buckets as the reply charted;
+ * before a reply names its slots it holds no limit, the server holding it to
+ * its window.
  *
  * @param {string}                                              spelling The held selection's spelling.
  * @param {(update: string|((held: string) => string)) => void} onChange The holder's setter, taking a spelling or an updater of one.
+ * @param {string[]|null}                                       slots    The reply's bucket keys, newest first; null before one.
  * @return {[string[], (bucketKey: string, click: {additive: boolean}) => void, (bucketKeys: string[], drag: {additive: boolean}) => void]} The selection's keys, the click that edits it and the drag that edits it, both held stable.
  */
-export const useBucketSelection = ( spelling, onChange ) => [
-	useMemo( () => bucketsOf( spelling ), [ spelling ] ),
-	useCallback(
-		( key, { additive } ) =>
-			onChange( ( held ) => clickSelection( held, key, additive ) ),
-		[ onChange ]
-	),
-	useCallback(
-		( keys, { additive } ) =>
-			onChange( ( held ) => rangeSelection( held, keys, additive ) ),
-		[ onChange ]
-	),
-];
+export const useBucketSelection = ( spelling, onChange, slots ) => {
+	const max = selectionLimit( slots );
+	return [
+		useMemo( () => bucketsOf( spelling, max ), [ spelling, max ] ),
+		useCallback(
+			( key, { additive } ) =>
+				onChange( ( held ) =>
+					clickSelection( held, key, additive, max )
+				),
+			[ onChange, max ]
+		),
+		useCallback(
+			( keys, { additive } ) =>
+				onChange( ( held ) =>
+					rangeSelection( held, keys, additive, max )
+				),
+			[ onChange, max ]
+		),
+	];
+};
 
 /**
  * The axis indexes a chart shades for the selected buckets.
@@ -580,13 +651,14 @@ export const hasRows = ( decoded ) =>
 
 /**
  * The buckets a `query` answer read, as its echoed selection names them:
- * the axis its series are drawn over.
+ * the axis its series are drawn over. The server held that selection to its
+ * window before it answered, so the echo is read whole, however long.
  *
  * @param {?{filters: {bucket: string}}} answer A `query` answer, or null.
  * @return {string[]|null} Bucket keys, newest first; null before an answer.
  */
 export const answerSlots = ( answer ) =>
-	answer ? bucketsOf( answer.filters.bucket ).reverse() : null;
+	answer ? bucketsOf( answer.filters.bucket, Infinity ).reverse() : null;
 
 /**
  * Whether a chart's answer ranked more series than it holds.

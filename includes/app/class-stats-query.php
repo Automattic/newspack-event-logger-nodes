@@ -51,7 +51,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *
  * @phpstan-type Also array{sort:string, order:string, limit:int}
  * @phpstan-type Measured array{measures:array<string,array{0:string,1:list<string>,2:?string,3:list<string>}>}
- * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string, also:?Also}
+ * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string, also:?Also, now:?int}
  */
 final class Stats_Query {
 
@@ -75,12 +75,6 @@ final class Stats_Query {
 	private const KEYS = [
 		'requests' => [ 'rid' ],
 		'timings'  => [],
-	];
-
-	/** Buckets each source's rows reach back: the most a selection over it names. */
-	private const RETENTION = [
-		'requests' => Flame_Facts_Row_Schema::REQUESTS_BUCKETS,
-		'timings'  => Flame_Facts_Row_Schema::TIMINGS_BUCKETS,
 	];
 
 	/** Most rows one answer holds. */
@@ -395,10 +389,12 @@ final class Stats_Query {
 	 * will not open says so once a window and answers no rows, `available`
 	 * false (decision 3). A spec naming `also` answers that page as `also`,
 	 * read from the same grouped rows as `rows`, so the union is scanned once.
+	 * `now` is the reply's clock the caller read (decision 29); a spec naming
+	 * none never reads `category_window`.
 	 *
 	 * @param array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>,
 	 *              buckets:list<array{0:int,1:int}>, sort?:string, order?:string, limit?:int, offset?:int, search?:string,
-	 *              top?:int, top_by?:string, also?:Also} $spec
+	 *              top?:int, top_by?:string, also?:Also, now?:int} $spec
 	 * @return array{source:string, table:string, columns:list<string>, rows:list<list<mixed>>, groups:?int, available:bool, also?:list<list<mixed>>}
 	 * @throws \InvalidArgumentException naming an unknown source, field, measure
 	 *                                   or sort, a field the table read lacks,
@@ -800,14 +796,18 @@ final class Stats_Query {
 	/**
 	 * The table that answers $spec exactly at least cost: category_window | timings_site | timings | requests_hourly | requests.
 	 *
-	 * A timings spec over exactly `WINDOW_BUCKETS` buckets, naming only the
-	 * window's fields, reads `category_window`. Any other reads
-	 * `timings_site` unless a URL or a page is grouped or filtered, or a URL
-	 * searched; a requests spec reads `requests_hourly` when the rollup keeps
+	 * A timings spec over exactly the `Bucket::window()` buckets ending at the
+	 * bucket of its `now`, naming only the window's fields, reads
+	 * `category_window`; with `readable()` holding the watermark to its
+	 * start, the builder and the reader then keep one span. Any other reads
+	 * `timings_site` unless a URL
+	 * or a page is grouped or filtered, or a URL searched; a requests spec
+	 * reads `requests_hourly` when the rollup keeps
 	 * every field and measure it names, its `top_by` among them, and every
 	 * bucket range covers whole hours.
 	 *
-	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string, top_by?:string} $spec
+	 * @param array{source:string, group:list<string>, filter:array<string,mixed>, measure:list<string>, buckets:list<array{0:int,1:int}>, search?:string, top_by?:string, now?:int|null} $spec
+	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
 	 */
 	public static function table_for( array $spec ): string {
 		$named    = [ ...$spec['group'], ...self::filtered( $spec['filter'] ) ];
@@ -817,8 +817,10 @@ final class Stats_Query {
 			if ( $by_url ) {
 				return 'timings';
 			}
-			$day = 1 === \count( $spec['buckets'] ) && Flame_Facts_Row_Schema::WINDOW_BUCKETS === $spec['buckets'][0][1] - $spec['buckets'][0][0] + 1;
-			return $day && [] === \array_diff( $named, \array_keys( self::TABLES['category_window']['fields'] ) ) ? 'category_window' : 'timings_site';
+			$range = 1 === \count( $spec['buckets'] ) ? $spec['buckets'][0] : null;
+			$now   = $spec['now'] ?? null;
+			$span  = null !== $range && null !== $now && Bucket::id( $now ) === $range[1] && Bucket::window() === $range[1] - $range[0] + 1;
+			return $span && [] === \array_diff( $named, \array_keys( self::TABLES['category_window']['fields'] ) ) ? 'category_window' : 'timings_site';
 		}
 		$hourly = ! $by_url
 			&& [] === \array_diff( $named, self::HOURLY_FIELDS )
@@ -1159,6 +1161,7 @@ final class Stats_Query {
 			'limit'   => Core::as_int( $spec['limit'] ?? self::MAX_LIMIT ),
 			'offset'  => Core::as_int( $spec['offset'] ?? 0 ),
 			'search'  => Core::as_string( $spec['search'] ?? '' ),
+			'now'     => isset( $spec['now'] ) ? Core::as_int( $spec['now'] ) : null,
 		];
 		$checked['match']                     = '' === $checked['search'] ? '' : self::match( $checked['search'] );
 		[ $checked['top'], $checked['top_by'] ] = self::top( $spec, $source, $group );
@@ -1352,13 +1355,14 @@ final class Stats_Query {
 
 	/**
 	 * The most buckets a selection over `$source` may name: as many as its
-	 * rows reach back, a week of `requests` and 25 hours of `timings`.
+	 * rows reach back, the span and `Bucket::RETAIN_SLACK` for either source.
 	 *
 	 * @param string $source A source of `FIELDS`.
 	 * @throws \InvalidArgumentException On a source the vocabulary lacks.
+	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
 	 */
 	public static function retention( string $source ): int {
-		return self::RETENTION[ $source ] ?? throw self::unknown_source( $source );
+		return isset( self::FIELDS[ $source ] ) ? Bucket::window() + Bucket::RETAIN_SLACK : throw self::unknown_source( $source );
 	}
 
 	/**

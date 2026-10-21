@@ -126,7 +126,66 @@ class McpControllerTest extends TestCase {
 	}
 
 	/**
-	 * A search is whole words from the index, and an overview names its 288
+	 * Every tool and argument naming a stats span names the one
+	 * `min_lifetime` sets, read when the tools are listed: 13 buckets at
+	 * 3,900 seconds, kept 25.
+	 */
+	public function test_the_tools_name_the_span_min_lifetime_sets(): void {
+		$this->use_min_lifetime( 3900 );
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$tools = \array_column(
+			$controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 6, 'method' => 'tools/list' ], $bearer ) )['result']['tools'],
+			null,
+			'name'
+		);
+		$arg   = static fn ( string $tool, string $name ): string => $tools[ $tool ]['inputSchema']['properties'][ $name ]['description'];
+
+		$this->assertStringContainsString( 'The site over the last 13 five-minute buckets', $tools['performance_overview']['description'] );
+		$this->assertStringContainsString( '`leaderboard` covers the same buckets', $tools['performance_overview']['description'] );
+		$this->assertStringContainsString( 'over the last 13 five-minute buckets or a selection', $tools['performance_urls']['description'] );
+		$this->assertStringContainsString( 'A selection holds at most 13 buckets', $arg( 'performance_urls', 'bucket' ) );
+		$this->assertStringContainsString( 'requests are kept 25 buckets', $arg( 'performance_urls', 'bucket' ) );
+		$this->assertStringContainsString( 'more than 13 buckets are refused', $arg( 'performance_urls', 'bucket' ) );
+		$this->assertStringContainsString( '`stats` covers the last 13 five-minute buckets', $tools['dump_url']['description'] );
+		$this->assertStringContainsString( 'its category profile over the 25 buckets timings are kept', $tools['dump_url']['description'] );
+		$this->assertStringContainsString( 'at most 13 buckets', $arg( 'dump_url', 'bucket' ) );
+		$this->assertStringContainsString( 'no request row in the 25 buckets the rows keep', $arg( 'dump_url', 'bucket' ) );
+		$this->assertStringContainsString( 'one row per completed request, 25 buckets of them', $tools['performance_query']['description'] );
+		$this->assertStringContainsString( 'hook time, 25 buckets of it', $tools['performance_query']['description'] );
+		$this->assertStringContainsString( '25 for either source', $arg( 'performance_query', 'bucket' ) );
+		$this->assertStringContainsString( 'Omitted, the last 13.', $arg( 'performance_query', 'bucket' ) );
+		$this->assertStringContainsString( 'no row of the last 25 buckets names that rid', $tools['dump_request']['description'] );
+		$this->assertStringContainsString( 'at most 13 buckets', $arg( 'performance_ask', 'bucket' ) );
+		$this->assertDoesNotMatchRegularExpression( '/\b(288|2,016|300)\b|24 hours|25 hours|seven days|\{(window|kept)\}/', (string) \wp_json_encode( $tools ) );
+	}
+
+	/**
+	 * Under a `min_lifetime` short of one bucket the tools still list, each
+	 * span spelled from the key, and a stats tool answers an error naming it.
+	 */
+	public function test_a_span_short_of_a_bucket_lists_the_tools_and_fails_the_call(): void {
+		$this->use_min_lifetime( 299 );
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$tools = \array_column(
+			$controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 7, 'method' => 'tools/list' ], $bearer ) )['result']['tools'],
+			null,
+			'name'
+		);
+		$reply = $controller->dispatch( $this->request( [ 'jsonrpc' => '2.0', 'id' => 8, 'method' => 'tools/call', 'params' => [ 'name' => 'performance_overview', 'arguments' => [] ] ], $bearer ) );
+
+		$this->assertStringContainsString( 'The site over the last `min_lifetime` / 300 five-minute buckets', $tools['performance_overview']['description'] );
+		$this->assertTrue( $reply['result']['isError'] );
+		$this->assertSame( 'min_lifetime 299 is below the 300-second floor of one stats bucket', $reply['result']['content'][0]['text'] );
+	}
+
+	/**
+	 * A search is whole words from the index, and an overview names its
 	 * five-minute slots and divides an average by the timed requests: an
 	 * agent reading a description written for a substring match, or for a
 	 * three-field row, misreads the answer.
@@ -383,7 +442,7 @@ class McpControllerTest extends TestCase {
 		$decoded = \json_decode( \trim( \substr( $text, \strlen( '<site-data>' ), -\strlen( '</site-data>' ) ) ), true );
 		$this->assertSame( [ 'server', 'status', 'count' ], $decoded['columns'] );
 		$this->assertSame( [ [ 'kea.example', 503, 1 ], [ 'kea.example', 504, 1 ] ], $decoded['rows'] );
-		$this->assertSame( Bucket::key( Bucket::id( $now ) - 287 ) . '..' . Bucket::key( Bucket::id( $now ) + 1 ), $decoded['filters']['bucket'] );
+		$this->assertSame( Bucket::key( Bucket::id( $now ) - Bucket::window() + 1 ) . '..' . Bucket::key( Bucket::id( $now ) + 1 ), $decoded['filters']['bucket'] );
 	}
 
 	/**
@@ -617,9 +676,9 @@ class McpControllerTest extends TestCase {
 			$this->assertStringContainsString( '2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30', $tools[ $tool ]['args']['bucket'], $tool );
 			$this->assertStringContainsString( 'up to the key that closes it', $tools[ $tool ]['args']['bucket'], $tool );
 			$this->assertStringNotContainsString( 'inclusive', $tools[ $tool ]['args']['bucket'], $tool );
-			$this->assertStringContainsString( '288', $tools[ $tool ]['args']['bucket'], $tool );
+			$this->assertStringContainsString( 'at most {window} buckets', $tools[ $tool ]['args']['bucket'], $tool );
 		}
-		$this->assertStringContainsString( '2,016 (seven days) for `requests` and 300 (25 hours) for `timings`', $tools['performance_query']['args']['bucket'], 'a query reaches its source\'s retention' );
+		$this->assertStringContainsString( '{kept} for either source', $tools['performance_query']['args']['bucket'], 'a query reaches its source\'s retention' );
 	}
 
 	public function test_a_json_false_reaches_the_verb_as_false(): void {
@@ -655,9 +714,9 @@ class McpControllerTest extends TestCase {
 			$this->assertStringNotContainsString( 'budget', $tools[ $tool ]['summary'], $tool );
 			$this->assertStringContainsString( 'not found', $tools[ $tool ]['summary'], $tool );
 		}
-		$this->assertStringContainsString( 'seven days', $tools['dump_request']['summary'], 'it says a request outlives its row' );
+		$this->assertStringContainsString( 'no row of the last {kept} buckets', $tools['dump_request']['summary'], 'it says a request outlives its row' );
 		$this->assertStringContainsString( 'aged out of the raw logs', $tools['dump_request']['summary'], 'it says a row can outlive its record' );
-		$this->assertStringContainsString( 'about a day by default', $tools['dump_request']['summary'] );
+		$this->assertStringContainsString( 'which keep it at least `min_lifetime` unless `max_segments` prunes it sooner', $tools['dump_request']['summary'] );
 		$this->assertStringContainsString( '`request:<rid>`', $tools['performance_ask']['summary'], 'a request is named by its rid alone' );
 		$this->assertStringNotContainsString( '<partition>', $tools['performance_ask']['summary'] );
 		$this->assertStringNotContainsString( 'index', $tools['dump_request']['summary'] );

@@ -19,9 +19,9 @@ import { CATEGORY_MEASURES } from '../constants';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
- * The slots every reply here names: 288 ending at 14:35.
+ * The slots every reply here names: 24 ending at 14:35.
  */
-const SLOTS = slotsEndingAt( '2026-09-29-14-35' );
+const SLOTS = slotsEndingAt( '2026-09-29-14-35', 24 );
 
 // An AggregateTimeChart on SLOTS under a test storage key.
 const aggregateChart = ( props ) =>
@@ -258,7 +258,7 @@ describe( 'area chart frame', () => {
 		);
 
 		expect(
-			valueLabels( container, 'Request Volume (Last 24 Hours)' )
+			valueLabels( container, 'Request Volume (Last 2 hours)' )
 		).toEqual( [ '0', '1', '2', '3' ] );
 		unmount();
 	} );

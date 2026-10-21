@@ -1,10 +1,10 @@
 /**
  * The Performance dashboard's profile-category panel.
  *
- * D3 area charts of profile-category timings over the last 24 hours, from a
- * `query` answer over the timing rows grouped by `bucket` and `category`,
- * the top categories by milliseconds — site-wide (or per-server) on the
- * overview, per-URL in the URL detail view. `AggregateTimeChart` plots
+ * D3 area charts of profile-category timings over the window the reply
+ * charted, from a `query` answer over the timing rows grouped by `bucket` and
+ * `category`, the top categories by milliseconds — site-wide (or per-server)
+ * on the overview, per-URL in the URL detail view. `AggregateTimeChart` plots
  * request-level metrics on the same `AreaTimeChart` frame; this one breaks the
  * window down by profile category.
  *
@@ -125,8 +125,9 @@ const formatYValue = ( val, mode ) => {
  * Every series gets a point in every slot, zero where the bucket holds nothing
  * (null for the average, which is then a gap),
  * because `AreaTimeChart` takes its x-domain from the first series alone and
- * reads the rest by that index. A slot is five minutes of the 288 the reply
- * drew (`buildChartSlots()`), and both rates divide by the seconds it spans.
+ * reads the rest by that index. A slot is five minutes of the window the
+ * reply drew (`buildChartSlots()`), and both rates divide by the seconds it
+ * spans.
  *
  * @param {{names: string[], byBucket: Object}}                decoded The category series, through `decodeRows()`.
  * @param {string}                                             mode    One of 'time', 'count', or 'average'.

@@ -35,6 +35,7 @@ import {
 	buildChartSlots,
 	runsOf,
 	runSpan,
+	selectionLimit,
 	twelveHourClock,
 } from '../chartSlots';
 import '../../settings/styles/tag-input.scss';
@@ -210,8 +211,8 @@ const typedRun = ( text, axis ) => {
 
 /**
  * The charted buckets to pick from, newest first. A time the window holds
- * twice, as a DST change or a full day can, is offered once, as the latest:
- * the bucket typing it selects.
+ * twice, as a DST change or a window over a day long can, is offered once,
+ * as the latest: the bucket typing it selects.
  *
  * @param {Array<{date:Date,bucketKey:string}>} axis   The chart's slots, oldest first.
  * @param {boolean}                             twelve Whether the locale's clock is 12-hour.
@@ -241,8 +242,8 @@ const suggestions = ( axis, twelve ) => {
  * @return {import('react').ReactElement} The field.
  */
 export default function BucketField( { value, slots, onChange } ) {
-	const held = bucketsOf( value );
 	const axis = buildChartSlots( slots );
+	const held = bucketsOf( value, selectionLimit( slots ) );
 	const twelve = twelveHourClock();
 	// A spelling the server would refuse shows whole, so it can be removed.
 	const stray = ! held.length && value;

@@ -1,5 +1,6 @@
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { formatGroupedCount } from '@newspack-nodes/shared/utils/formatters';
+import { slotSpan } from '../chartSlots';
 
 /**
  * A duration in whole milliseconds.
@@ -102,19 +103,30 @@ export function headlineStats( totals, keys ) {
  * describe the set the filters selected, the same set the table below lists,
  * so they come from one payload rather than from whichever source happens
  * to hold each figure. Every count is exact, the unique URLs among them.
+ * The caption names the span the chart's answer read, the slots the
+ * table's selection is held to, and is absent until it answers.
  *
  * @param {Object}      props
  * @param {Object|null} props.totals The `urls` reply's totals; null until it answers.
+ * @param {Array|null}  props.slots  The chart answer's slots; null before it answers.
  * @return {import('react').ReactElement} The stats grid.
  */
-export default function HeadlineStats( { totals } ) {
+export default function HeadlineStats( { totals, slots } ) {
 	return (
 		<div
 			className="newspack-nodes-stats-grid event-logger-overview-stats"
-			title={ __(
-				'The last 24 hours in five-minute buckets, the current one so far.',
-				'newspack-event-logger-nodes'
-			) }
+			title={
+				slots
+					? sprintf(
+							// translators: %s: the span the window covers, e.g. 2 hours.
+							__(
+								'The last %s in five-minute buckets, the current one so far.',
+								'newspack-event-logger-nodes'
+							),
+							slotSpan( slots )
+					  )
+					: undefined
+			}
 		>
 			{ headlineStats( totals, [
 				'urls',

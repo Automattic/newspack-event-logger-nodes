@@ -56,7 +56,7 @@ class PerformanceCITest extends TestCase {
 		// matching SettingsCITest / EventsCITest.
 		$this->tmp  = '/tmp/performance-ci-test-' . \uniqid();
 		\mkdir( $this->tmp, 0755, true );
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400 ] );
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 7200 ] );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = true;
 		// Reset the hook-categorizer static caches and the WP hook globals
@@ -222,20 +222,82 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * The overview names the 288 slots it drew, so the dashboard's axis
-	 * comes from the reply and never from the browser's clock.
+	 * The overview names the slots it drew, the `min_lifetime` span rounded
+	 * up to whole buckets, so the dashboard's axis comes from the reply and
+	 * never from the browser's clock.
 	 */
-	public function test_the_overview_names_its_288_slots(): void {
-		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 21600 ] );
+	public function test_the_overview_names_the_spans_slots(): void {
+		$this->use_base_dir( $this->make_temp_dir(), [ 'min_lifetime' => 3900 ] );
 		$this->activate_shipped( 'performance', 1 );
 		Core::$now = (float) \gmmktime( 14, 37, 11, 9, 29, 2026 );
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
 
 		$slots = $reply['slots'] ?? [];
-		$this->assertCount( 288, $slots, 'the chart draws 24 hours whatever the retention window' );
-		$this->assertSame( [ '2026-09-29-14-35', '2026-09-29-14-30', '2026-09-28-14-40' ], [ $slots[0], $slots[1], $slots[287] ] );
+		$this->assertCount( 13, $slots, '3,900 seconds is 13 buckets, the last one part-filled' );
+		$this->assertSame( [ '2026-09-29-14-35', '2026-09-29-14-30', '2026-09-29-13-35' ], [ $slots[0], $slots[1], $slots[12] ] );
 		$this->assertArrayNotHasKey( 'plan', $reply );
+	}
+
+	/** A selection holds at most the span: 13 buckets parse, 14 are refused. */
+	public function test_a_selection_past_the_span_is_refused(): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/kea/' ] );
+		$this->use_min_lifetime( 3900 );
+		$latest = Bucket::id( self::tick() );
+		$thirteen = '--bucket=' . Bucket::key( $latest - 12 ) . '..' . Bucket::key( $latest + 1 );
+		$fourteen = '--bucket=' . Bucket::key( $latest - 13 ) . '..' . Bucket::key( $latest + 1 );
+
+		$this->assertIsArray( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ $thirteen ] ) );
+		foreach ( [ 'urls' => [ $fourteen ], 'dump_url' => [ Url_Parts::hash( 'https://seed.example/kea/' ), $fourteen ] ] as $verb => $args ) {
+			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, $args );
+			$this->assertSame( 'bucket selection holds more than 13 buckets', \trim( Core::as_string( $reply ) ), $verb );
+		}
+	}
+
+	/**
+	 * A `min_lifetime` short of one bucket makes every stats read answer an
+	 * error naming the key, never a span of its own.
+	 *
+	 * @param int $seconds The refused lifetime.
+	 */
+	#[DataProvider( 'spans_short_of_a_bucket' )]
+	public function test_a_span_short_of_a_bucket_is_an_error_naming_the_key( int $seconds ): void {
+		$this->seed_request( [ 'url' => 'https://seed.example/kea/' ] );
+		$this->use_min_lifetime( $seconds );
+
+		foreach ( [ 'overview' => [], 'urls' => [], 'query' => [ '--source=requests', '--measure=count' ] ] as $verb => $args ) {
+			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', $verb, $args );
+			$this->assertIsString( $reply, $verb );
+			$this->assertStringContainsString( "min_lifetime {$seconds} is below the 300-second floor of one stats bucket", $reply, $verb );
+		}
+	}
+
+	/** @return array<string,array{0:int}> */
+	public static function spans_short_of_a_bucket(): array {
+		return [
+			'zero'           => [ 0 ],
+			'a second short' => [ 299 ],
+		];
+	}
+
+	/**
+	 * Every description naming a stats span names the one `min_lifetime`
+	 * sets: 13 buckets at 3,900 seconds, kept 25.
+	 */
+	public function test_the_verb_descriptions_name_the_span_min_lifetime_sets(): void {
+		$this->use_min_lifetime( 3900 );
+		$verbs = \array_column( Performance_CI_Node::node_schema()['commands'], null, 'name' );
+		$arg   = static fn ( string $verb, string $name ): string => \array_column( $verbs[ $verb ]['args'], 'description', 'name' )[ $name ];
+
+		$this->assertStringContainsString( 'The site over the last 13 buckets', $verbs['overview']['description'] );
+		$this->assertStringContainsString( 'at most 13 buckets', $arg( 'urls', 'bucket' ) );
+		$this->assertStringContainsString( 'empty is the last 13', $arg( 'urls', 'bucket' ) );
+		$this->assertStringContainsString( '25 buckets for either source; empty is the last 13', $arg( 'query', 'bucket' ) );
+		$this->assertStringContainsString( '`stats` over the last 13 buckets', $verbs['dump_url']['description'] );
+		$this->assertStringContainsString( 'its category profile over the 25 buckets the timings keep', $verbs['dump_url']['description'] );
+		$this->assertStringContainsString( 'aged past the 25 buckets the rows keep', $verbs['dump_request']['description'] );
+		$this->assertStringContainsString( 'at least `min_lifetime` unless `max_segments` prunes it sooner', $verbs['dump_request']['description'] );
+		$this->assertDoesNotMatchRegularExpression( '/\b(288|2,016|300)\b|24 hours|24-hour|25 hours|25-hour|seven days/', (string) \wp_json_encode( $verbs ) );
 	}
 
 	public function test_overview_verb_rejects_unauthorized(): void {
@@ -2115,7 +2177,7 @@ class PerformanceCITest extends TestCase {
 		// boundary falls between the two, and the page it seeded reads empty.
 		$this->seed_request( [ 'url' => 'https://seed.example/tick-1/' ] );
 
-		$rows = Stats_Query::run( [ 'source' => 'requests', 'group' => [ 'bucket' ], 'filter' => [], 'measure' => [ 'count' ], 'buckets' => Bucket::last( 288, self::tick() ) ] )['rows'];
+		$rows = Stats_Query::run( [ 'source' => 'requests', 'group' => [ 'bucket' ], 'filter' => [], 'measure' => [ 'count' ], 'buckets' => Bucket::last( Bucket::window(), self::tick() ) ] )['rows'];
 
 		$this->assertSame( [ [ Bucket::id( self::tick() ), 1 ] ], $rows );
 	}
@@ -2136,7 +2198,7 @@ class PerformanceCITest extends TestCase {
 
 	// -------------------------------------------------------------------------
 	// A five-minute bucket: `--bucket` narrows `urls`, `dump_url` and `ask` to
-	// one slot of the 288 the charts draw.
+	// one slot of the span the charts draw.
 	// -------------------------------------------------------------------------
 
 	/** The bucket the tests narrow to: slot 7 of its hour. */
@@ -2144,10 +2206,11 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * Pin the reply at 2026-10-05 09:12 UTC, so BUCKET is about 20 hours
-	 * back, inside the 288 buckets a chart draws.
+	 * back, inside the 264 buckets a chart draws at a `min_lifetime` of
+	 * 79,200 seconds.
 	 */
 	private function at_the_bucket_clock(): void {
-		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1 ] );
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 79200 ] );
 		$this->activate_shipped( 'performance', 1 );
 		Core::$now = (float) \gmmktime( 9, 12, 0, 10, 5, 2026 );
 	}
@@ -2156,17 +2219,17 @@ class PerformanceCITest extends TestCase {
 	public function test_the_oldest_charted_slot_is_a_bucket(): void {
 		$this->at_the_bucket_clock();
 
-		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--bucket=2026-10-04-09-15' );
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--bucket=2026-10-04-11-15' );
 
 		$this->assertIsArray( $page );
-		$this->assertSame( '2026-10-04-09-15', $page['filters']['bucket'] );
+		$this->assertSame( '2026-10-04-11-15', $page['filters']['bucket'] );
 	}
 
 	/**
 	 * Every verb that reads a selection refuses a spelling naming a key
 	 * that is not a five-minute key, or one in the future, a run ending before
-	 * it starts, and more than 288 buckets, each saying which key or naming
-	 * the limit.
+	 * it starts, and more buckets than the span, each saying which key or
+	 * naming the limit.
 	 *
 	 * @param string $verb    The verb.
 	 * @param string $args    Its arguments before the bucket.
@@ -2194,7 +2257,7 @@ class PerformanceCITest extends TestCase {
 				'future'           => [ '2026-10-05-09-15', 'bucket 2026-10-05-09-15 is in the future' ],
 				'one key off grid' => [ '2026-10-04-13-35,2026-10-04-13-41', 'bucket 2026-10-04-13-41 must be a five-minute key, Y-m-d-H-i in UTC' ],
 				'reversed run'     => [ '2026-10-04-13-40..2026-10-04-13-35', 'bucket run 2026-10-04-13-40..2026-10-04-13-35 does not end after it starts' ],
-				'289 buckets'      => [ '2026-10-04-09-00..2026-10-05-09-05', 'bucket selection holds more than 288 buckets' ],
+				'265 buckets'      => [ '2026-10-04-11-10..2026-10-05-09-15', 'bucket selection holds more than 264 buckets' ],
 			] as $why => [ $bucket, $message ] ) {
 				$out[ "{$verb}, {$why}" ] = [ \strtok( $verb, ' ' ), $args, $bucket, $message ];
 			}
@@ -2264,10 +2327,10 @@ class PerformanceCITest extends TestCase {
 	public function test_overview_totals_count_every_non_worker_request(): void {
 		$latest = self::latest();
 		$this->seed_request( [ 'url' => 'https://seed.example/kea-14/', 'ms' => 120.5, 'peak_mb' => 30.25 ] );
-		$this->seed_request( [ 'url' => 'https://seed.example/kea-14/', 'ms' => 80.0, 'peak_mb' => 20.25, 'bucket' => $latest - 287 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/kea-14/', 'ms' => 80.0, 'peak_mb' => 20.25, 'bucket' => $latest - Bucket::window() + 1 ] );
 		$this->seed_request( [ 'url' => 'https://seed.example/weka-3/', 'ms' => null, 'error' => 'T', 'peak_mb' => 10.25 ] );
 		$this->seed_request( [ 'url' => 'https://seed.example/cron-9/', 'ms' => 5000.0, 'peak_mb' => 99.0, 'worker' => 1 ] );
-		$this->seed_request( [ 'url' => 'https://seed.example/aged-2/', 'ms' => 7.0, 'bucket' => $latest - 288 ] );
+		$this->seed_request( [ 'url' => 'https://seed.example/aged-2/', 'ms' => 7.0, 'bucket' => $latest - Bucket::window() ] );
 
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
 
@@ -2275,9 +2338,9 @@ class PerformanceCITest extends TestCase {
 			[ 'requests' => 3, 'timed' => 2, 'avg_ms' => 100.25, 'avg_peak_mb' => 20.25, 'errors' => 1, 'urls' => 2 ],
 			$reply['totals']
 		);
-		$this->assertCount( 288, $reply['slots'] );
+		$this->assertCount( 24, $reply['slots'], '7,200 seconds is 24 buckets' );
 		$this->assertSame( Bucket::key( $latest ), $reply['slots'][0], 'newest first' );
-		$this->assertSame( Bucket::key( $latest - 287 ), $reply['slots'][287] );
+		$this->assertSame( Bucket::key( $latest - 23 ), $reply['slots'][23] );
 		$this->assertSame( [ 'as_of', 'totals', 'slots', 'servers', 'leaderboard', 'available' ], \array_keys( $reply ) );
 		$this->assertTrue( $reply['available'] );
 	}
@@ -2360,8 +2423,8 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'SELECT moa_1', \array_key_first( $board['categories']['wpdb']['entries'] ) );
 	}
 
-	public function test_overview_leaderboard_spans_the_charts_288_buckets(): void {
-		$this->seed_site_timing( [ 'category' => 'sql', 'bucket' => self::latest() - 290, 'ms' => 4000.0, 'calls' => 40, 'requests' => 4 ] );
+	public function test_overview_leaderboard_spans_the_charts_buckets(): void {
+		$this->seed_site_timing( [ 'category' => 'sql', 'bucket' => self::latest() - Bucket::window(), 'ms' => 4000.0, 'calls' => 40, 'requests' => 4 ] );
 		$this->seed_site_timing( [ 'category' => 'init hook @10', 'bucket' => self::latest() - 10, 'ms' => 31.5, 'calls' => 3, 'requests' => 3 ] );
 
 		$board = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' )['leaderboard'];
@@ -2374,7 +2437,7 @@ class PerformanceCITest extends TestCase {
 		$this->seed_site_timing( [ 'category' => 'sql', 'entry' => 'SELECT kea', 'ms' => 181.0, 'calls' => 5, 'requests' => 2 ] );
 		$this->seed_site_timing( [ 'category' => 'init hook @10', 'listener' => 1, 'ms' => 90.0, 'calls' => 3, 'requests' => 3 ] );
 		$this->seed_site_timing( [ 'category' => 'sql', 'worker' => 1, 'ms' => 9000.0, 'calls' => 70, 'requests' => 7 ] );
-		$this->seed_site_timing( [ 'category' => 'sql', 'bucket' => self::latest() - 300, 'ms' => 4000.0, 'calls' => 40, 'requests' => 4 ] );
+		$this->seed_site_timing( [ 'category' => 'sql', 'bucket' => self::latest() - Bucket::window(), 'ms' => 4000.0, 'calls' => 40, 'requests' => 4 ] );
 		foreach ( [ 200.5, 400.5, 300.5, 100.5 ] as $ms ) {
 			$this->seed_request( [ 'ms' => $ms, 'profiled' => 1 ] );
 		}
@@ -2873,7 +2936,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 4, $reply['totals']['requests'] );
 		$this->assertSame( 150.25, $reply['totals']['avg_ms'] );
 		$this->assertSame( 25.25, $reply['totals']['avg_peak_mb'] );
-		$this->assertEqualsWithDelta( 4 / ( 287 * 300 + self::tick() % 300 ), $reply['totals']['requests_per_second'], 1e-9, 'over the window\'s elapsed seconds' );
+		$this->assertEqualsWithDelta( 4 / ( ( Bucket::window() - 1 ) * Bucket::SECONDS + self::tick() % Bucket::SECONDS ), $reply['totals']['requests_per_second'], 1e-9, 'over the window\'s elapsed seconds' );
 		$this->assertSame( 1, $reply['totals']['errors'], 'every reply counts its timeouts and fatals' );
 		$this->assertSame(
 			[
@@ -3656,7 +3719,7 @@ class PerformanceCITest extends TestCase {
 		$this->seed_timing( [ 'url' => $url, 'category' => 'sql', 'ms' => 90.5, 'calls' => 6, 'requests' => 2 ] );
 		$this->seed_timing( [ 'url' => $url, 'category' => 'sql', 'entry' => 'SELECT pateke', 'ms' => 40.25, 'calls' => 2, 'requests' => 2 ] );
 		$this->seed_timing( [ 'url' => $url, 'category' => 'init hook @10', 'listener' => 1, 'ms' => 12.5, 'calls' => 2, 'requests' => 2 ] );
-		$this->seed_timing( [ 'url' => $url, 'category' => 'sql', 'bucket' => $latest - 300, 'ms' => 5000.0, 'calls' => 50, 'requests' => 5 ] );
+		$this->seed_timing( [ 'url' => $url, 'category' => 'sql', 'bucket' => $latest - Bucket::window() - Bucket::RETAIN_SLACK, 'ms' => 5000.0, 'calls' => 50, 'requests' => 5 ] );
 		$this->seed_timing( [ 'url' => 'https://seed.example/elsewhere-31/', 'category' => 'sql', 'ms' => 9000.0, 'calls' => 90, 'requests' => 9 ] );
 		$this->seed_request( [ 'url' => 'https://seed.example/elsewhere-31/', 'ms' => 7000.5, 'profiled' => 1 ] );
 		$this->seed_request( [ 'url' => $url, 'ms' => 120.5, 'profiled' => 1 ] );
@@ -3935,7 +3998,7 @@ class PerformanceCITest extends TestCase {
 				'last_updated'        => $latest * 300 + 8.5,
 				'errors'              => 1,
 				'error_rate'          => 0.5,
-				'requests_per_second' => 2 / ( 287 * 300 + self::tick() % 300 ),
+				'requests_per_second' => 2 / ( ( Bucket::window() - 1 ) * Bucket::SECONDS + self::tick() % Bucket::SECONDS ),
 			],
 			$detail['stats']
 		);

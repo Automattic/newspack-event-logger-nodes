@@ -25,6 +25,7 @@ import { Core } from '@newspack-nodes/runtime';
 import UrlTable from '../UrlTable';
 import { views } from '../nodes/register';
 import { renderComponent, act } from '../../test-helpers/renderHook';
+import { slotsEndingAt } from '../../test-helpers/chartWire';
 
 /**
  * A one-shape page row on `kea.example`, as the `urls` verb lists it.
@@ -653,7 +654,7 @@ describe( 'UrlTable', () => {
 		const onBucketChange = jest.fn();
 		const { container, unmount } = mount( {
 			bucket: '2026-10-04-13-30..2026-10-04-13-40,2026-10-04-14-00',
-			slots: [ '2026-10-04-14-00' ],
+			slots: slotsEndingAt( '2026-10-04-14-00', 7 ),
 			onBucketChange,
 		} );
 		const field = container.querySelector( '.event-logger-tag-container' );
@@ -665,7 +666,7 @@ describe( 'UrlTable', () => {
 				field.querySelectorAll( '.event-logger-tag-text' )
 			).map( ( token ) => token.textContent )
 		).toEqual( [ '6:30–6:40 AM', '7:00–7:05 AM' ] );
-		expect( field.querySelectorAll( 'datalist option' ) ).toHaveLength( 1 );
+		expect( field.querySelectorAll( 'datalist option' ) ).toHaveLength( 7 );
 
 		act( () =>
 			field

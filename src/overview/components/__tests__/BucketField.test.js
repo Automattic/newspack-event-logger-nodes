@@ -18,11 +18,17 @@ import {
 } from '../../../test-helpers/cascade';
 
 /**
+ * Slots enough that every local time of a day names one bucket, the window
+ * these cases type times into.
+ */
+const DAY_OF_SLOTS = ( 24 * 60 ) / 5;
+
+/**
  * The charted slots at 18:40 UTC on 5 October, 11:40 AM in Los Angeles, where
  * the suite runs, newest first: the window opens at 11:45 AM the day before,
  * so every local time names one bucket.
  */
-const SLOTS = slotsEndingAt( '2026-10-05-18-40' );
+const SLOTS = slotsEndingAt( '2026-10-05-18-40', DAY_OF_SLOTS );
 
 /**
  * Set a controlled input's value through the native setter, so React sees it.
@@ -241,10 +247,16 @@ describe( 'BucketField', () => {
 
 	it( 'selects what the matching link selects, and reads it the same', () => {
 		const link = '2026-10-20-11-00..2026-10-20-19-00';
-		const typed = mountField( '', slotsEndingAt( '2026-10-20-19-30' ) );
+		const typed = mountField(
+			'',
+			slotsEndingAt( '2026-10-20-19-30', DAY_OF_SLOTS )
+		);
 		type( typed.input(), '4:00-12:00' );
 		press( typed.input(), 'Enter' );
-		const linked = mountField( link, slotsEndingAt( '2026-10-20-19-30' ) );
+		const linked = mountField(
+			link,
+			slotsEndingAt( '2026-10-20-19-30', DAY_OF_SLOTS )
+		);
 
 		expect( typed.seen ).toEqual( [ link ] );
 		expect( typed.tokens() ).toEqual( [ '4:00 AM–12:00 PM' ] );
@@ -315,7 +327,10 @@ describe( 'BucketField', () => {
 	} );
 
 	it( 'reads a range across midnight at 00:30, its start the day before', () => {
-		const field = mountField( '', slotsEndingAt( '2026-10-05-07-30' ) );
+		const field = mountField(
+			'',
+			slotsEndingAt( '2026-10-05-07-30', DAY_OF_SLOTS )
+		);
 		type( field.input(), '23:50-00:05' );
 		press( field.input(), 'Enter' );
 
@@ -331,7 +346,7 @@ describe( 'BucketField', () => {
 	] )(
 		'refuses a range running backwards at %s, offering it the right way round',
 		( _, last ) => {
-			const field = mountField( '', slotsEndingAt( last ) );
+			const field = mountField( '', slotsEndingAt( last, DAY_OF_SLOTS ) );
 			type( field.input(), '17:30-16:55' );
 			press( field.input(), 'Enter' );
 
@@ -489,6 +504,34 @@ describe( 'BucketField', () => {
 		field.unmount();
 	} );
 
+	it( 'shows a selection longer than the 24 slots charted as it arrived', () => {
+		const run = '2026-10-05-16-30..2026-10-05-18-35';
+		const field = mountField(
+			run,
+			slotsEndingAt( '2026-10-05-18-40', 24 )
+		);
+
+		expect( field.tokens() ).toEqual( [ run ] );
+		field.unmount();
+	} );
+
+	it( 'reads a linked selection by its span before the chart answers', () => {
+		const field = mountField( '2026-10-05-16-40..2026-10-05-18-40', null );
+
+		expect( field.tokens() ).toEqual( [ '9:40–11:40 AM' ] );
+		field.unmount();
+	} );
+
+	it( 'reads a selection as long as the 24 slots charted by its span', () => {
+		const field = mountField(
+			'2026-10-05-16-40..2026-10-05-18-40',
+			slotsEndingAt( '2026-10-05-18-40', 24 )
+		);
+
+		expect( field.tokens() ).toEqual( [ '9:40–11:40 AM' ] );
+		field.unmount();
+	} );
+
 	it( 'suggests every charted bucket, newest first, by local time', () => {
 		const field = mountField( '' );
 		const list = document.getElementById(
@@ -496,7 +539,7 @@ describe( 'BucketField', () => {
 		);
 		const options = Array.from( list.querySelectorAll( 'option' ) );
 
-		expect( options ).toHaveLength( 288 );
+		expect( options ).toHaveLength( DAY_OF_SLOTS );
 		expect( options[ 0 ].value ).toBe( '11:40 AM' );
 		expect( options[ 0 ].label ).toBe( '11:40–11:45 AM' );
 		expect( options.at( -1 ).value ).toBe( '11:45 AM' );
@@ -565,7 +608,10 @@ describe( 'BucketField', () => {
 	} );
 
 	it( 'takes the later of a local time the clocks fall back through', () => {
-		const field = mountField( '', slotsEndingAt( '2026-11-01-12-00' ) );
+		const field = mountField(
+			'',
+			slotsEndingAt( '2026-11-01-12-00', DAY_OF_SLOTS )
+		);
 		const values = Array.from(
 			document
 				.getElementById( field.input().getAttribute( 'list' ) )
@@ -581,7 +627,10 @@ describe( 'BucketField', () => {
 	} );
 
 	it( 'refuses a local time the clocks spring forward past', () => {
-		const field = mountField( '', slotsEndingAt( '2026-03-08-18-00' ) );
+		const field = mountField(
+			'',
+			slotsEndingAt( '2026-03-08-18-00', DAY_OF_SLOTS )
+		);
 		type( field.input(), '2:30' );
 		press( field.input(), 'Enter' );
 

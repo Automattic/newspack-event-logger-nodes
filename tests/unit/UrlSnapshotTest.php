@@ -129,7 +129,7 @@ final class UrlSnapshotTest extends TestCase {
 			$over + [
 				'source'  => 'requests',
 				'filter'  => Performance_CI_Node::scope( $server, $workers ),
-				'buckets' => Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, self::NOW ),
+				'buckets' => Bucket::last( Bucket::window(), self::NOW ),
 			]
 		);
 	}
@@ -1086,7 +1086,7 @@ final class UrlSnapshotTest extends TestCase {
 			'source'  => 'requests',
 			'filter'  => [],
 			'measure' => [ 'count' ],
-			'buckets' => Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, self::NOW ),
+			'buckets' => Bucket::last( Bucket::window(), self::NOW ),
 		];
 	}
 }

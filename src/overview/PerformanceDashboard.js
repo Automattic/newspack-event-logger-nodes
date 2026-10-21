@@ -100,7 +100,12 @@ import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
 
 import UrlTable from './UrlTable';
-import { activeChart, useBucketSelection, withoutUrlChips } from './chartSlots';
+import {
+	activeChart,
+	answerSlots,
+	useBucketSelection,
+	withoutUrlChips,
+} from './chartSlots';
 
 /**
  * The stand-in title for a URL whose hash is selected but whose name has not
@@ -277,8 +282,6 @@ export default function PerformanceDashboard( {
 		( raw ) => raw ?? '',
 		String
 	);
-	const [ tableBuckets, pickTableBucket, pickTableRange ] =
-		useBucketSelection( tableBucket, setTableBucket );
 	const [ chartMetric, setChartMetric ] = useQueryParamChoice(
 		'metric',
 		CHART_METRICS,
@@ -295,6 +298,14 @@ export default function PerformanceDashboard( {
 	const urlCategoriesSlice = useNodeField( 'url-categories:view', 'view' );
 	const requestDetailSlice = useNodeField( 'request-detail:view', 'view' );
 	const overview = overviewSlice?.data ?? null;
+	// The live chart the selection is edited on bounds it.
+	const chartAnswer = chartSlice?.data ?? null;
+	const chartSlots = useMemo(
+		() => answerSlots( chartAnswer ),
+		[ chartAnswer ]
+	);
+	const [ tableBuckets, pickTableBucket, pickTableRange ] =
+		useBucketSelection( tableBucket, setTableBucket, chartSlots );
 
 	// @longform Every overview answer names every server with traffic, busiest
 	// first; the select lists them by name. Null until the first one lands,
@@ -1286,7 +1297,7 @@ export default function PerformanceDashboard( {
 								busy={ holdingWindow ? oneRequest.hash : null }
 								onParamsChange={ handleUrlParamsChange }
 								bucket={ tableBucket }
-								slots={ overview?.slots ?? null }
+								slots={ chartSlots }
 								server={ serverFilter }
 								onBucketChange={ setTableBucket }
 								totalRows={ urlsSlice?.rows }

@@ -171,7 +171,7 @@ const above = ( container, text ) =>
 describe( 'BreakdownControls', () => {
 	it( 'hands the chart the slots its answer read', () => {
 		const { container, unmount } = mountBreakdown( {
-			slots: slotsEndingAt( '2026-09-29-14-35' ),
+			slots: slotsEndingAt( '2026-09-29-14-35', 24 ),
 		} );
 		expect( container.textContent ).toContain( 'slots:2026-09-29-14-35' );
 		unmount();
