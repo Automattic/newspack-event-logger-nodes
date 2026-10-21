@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.148.2\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.149.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-20T19:39:11+00:00\n"
+"POT-Creation-Date: 2026-10-21T03:45:24+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -155,27 +155,67 @@ msgstr ""
 msgid "Loading…"
 msgstr ""
 
-#: src/components/RequestSummary.js:30
+#. translators: 1: runtime object-cache hits, 2: misses.
+#: src/components/RequestSummary.js:41
+#, js-format
+msgid "%1$d hits, %2$d misses"
+msgstr ""
+
+#. translators: %s: the share of lookups that hit, as a percentage.
+#: src/components/RequestSummary.js:48
+#, js-format
+msgid "%s%% hit ratio"
+msgstr ""
+
+#. translators: %d: lookups answered from the request's own copy.
+#: src/components/RequestSummary.js:60
+#, js-format
+msgid "%d answered locally"
+msgstr ""
+
+#. translators: 1: single-key memcached gets, 2: that found the key, 3: that missed.
+#: src/components/RequestSummary.js:65
+#, js-format
+msgid "%1$d memcached gets: %2$d found, %3$d missed"
+msgstr ""
+
+#. translators: %s: the share of memcached gets that found the key, as a percentage.
+#: src/components/RequestSummary.js:76
+#, js-format
+msgid "%s%% memcached hit ratio"
+msgstr ""
+
+#. translators: %d: keys asked for in get_multiple batches.
+#: src/components/RequestSummary.js:85
+#, js-format
+msgid "%d keys by get_multiple"
+msgstr ""
+
+#: src/components/RequestSummary.js:113
 msgid "URL:"
 msgstr ""
 
-#: src/components/RequestSummary.js:33
+#: src/components/RequestSummary.js:116
 msgid "not recorded"
 msgstr ""
 
-#: src/components/RequestSummary.js:37
+#: src/components/RequestSummary.js:120
 msgid "Time:"
 msgstr ""
 
-#: src/components/RequestSummary.js:45
+#: src/components/RequestSummary.js:128
 msgid "Duration:"
 msgstr ""
 
-#: src/components/RequestSummary.js:52
+#: src/components/RequestSummary.js:135
 msgid "Memory:"
 msgstr ""
 
-#: src/components/RequestSummary.js:64
+#: src/components/RequestSummary.js:143
+msgid "Object cache:"
+msgstr ""
+
+#: src/components/RequestSummary.js:155
 msgid "Status:"
 msgstr ""
 
@@ -206,7 +246,7 @@ msgid "View full trace"
 msgstr ""
 
 #: src/current-request/CurrentRequestTab.js:213
-#: src/overview/components/RequestDetailView.js:105
+#: src/overview/components/RequestDetailView.js:113
 msgid "Findings"
 msgstr ""
 
@@ -219,7 +259,7 @@ msgid "Error timestamp"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:82
-#: src/overview/components/LogEntriesTable.js:1524
+#: src/overview/components/LogEntriesTable.js:1561
 msgid "Keyword"
 msgstr ""
 
@@ -228,7 +268,7 @@ msgid "Error/warning keyword"
 msgstr ""
 
 #: src/error-log/ErrorLog.js:87
-#: src/overview/components/LogEntriesTable.js:1530
+#: src/overview/components/LogEntriesTable.js:1567
 msgid "Message"
 msgstr ""
 
@@ -237,7 +277,7 @@ msgid "Error message"
 msgstr ""
 
 #. translators: %d: number of rows the ring holds.
-#: src/error-log/ErrorLog.js:148
+#: src/error-log/ErrorLog.js:155
 #, js-format
 msgid "%d entry"
 msgid_plural "%d entries"
@@ -245,7 +285,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: 1: rows shown, 2: rows the ring holds.
-#: src/error-log/ErrorLog.js:155
+#: src/error-log/ErrorLog.js:162
 #, js-format
 msgid "%1$d / %2$d entry"
 msgid_plural "%1$d / %2$d entries"
@@ -253,16 +293,16 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %s: entries-per-second rate, formatted to one decimal place.
-#: src/error-log/ErrorLog.js:171
+#: src/error-log/ErrorLog.js:178
 #, js-format
 msgid "%s entries/s"
 msgstr ""
 
-#: src/error-log/ErrorLog.js:266
+#: src/error-log/ErrorLog.js:273
 msgid "Error log"
 msgstr ""
 
-#: src/error-log/ErrorLog.js:283
+#: src/error-log/ErrorLog.js:290
 msgid "Filter by URL, keyword, message, or request ID…"
 msgstr ""
 
@@ -372,9 +412,9 @@ msgstr ""
 #: src/log-table/logTable.js:35
 #: src/overview/CategoryTimeChart.js:60
 #: src/overview/components/BucketField.js:287
-#: src/overview/components/LogEntriesTable.js:1521
+#: src/overview/components/LogEntriesTable.js:1558
 #: src/overview/components/UrlDetailView.js:129
-#: src/overview/RequestProfile.js:262
+#: src/overview/RequestProfile.js:276
 msgid "Time"
 msgstr ""
 
@@ -445,7 +485,7 @@ msgid "Cumulative Response Time"
 msgstr ""
 
 #: src/overview/AggregateTimeChart.js:274
-#: src/overview/components/HeadlineStats.js:45
+#: src/overview/components/HeadlineStats.js:65
 #: src/overview/constants.js:64
 msgid "Avg Peak Memory"
 msgstr ""
@@ -699,18 +739,50 @@ msgid "avg"
 msgstr ""
 
 #: src/overview/components/HeadlineStats.js:40
-msgid "Req/s"
+msgid "Error Rate"
 msgstr ""
 
 #: src/overview/components/HeadlineStats.js:41
-msgid "req/s"
+msgid "err"
+msgstr ""
+
+#: src/overview/components/HeadlineStats.js:45
+msgid "p50 Response"
 msgstr ""
 
 #: src/overview/components/HeadlineStats.js:46
+msgid "p50"
+msgstr ""
+
+#: src/overview/components/HeadlineStats.js:50
+msgid "p95 Response"
+msgstr ""
+
+#: src/overview/components/HeadlineStats.js:51
+msgid "p95"
+msgstr ""
+
+#: src/overview/components/HeadlineStats.js:55
+msgid "p99 Response"
+msgstr ""
+
+#: src/overview/components/HeadlineStats.js:56
+msgid "p99"
+msgstr ""
+
+#: src/overview/components/HeadlineStats.js:60
+msgid "Req/s"
+msgstr ""
+
+#: src/overview/components/HeadlineStats.js:61
+msgid "req/s"
+msgstr ""
+
+#: src/overview/components/HeadlineStats.js:66
 msgid "mem"
 msgstr ""
 
-#: src/overview/components/HeadlineStats.js:94
+#: src/overview/components/HeadlineStats.js:114
 msgid "The last 24 hours in five-minute buckets, the current one so far."
 msgstr ""
 
@@ -720,52 +792,60 @@ msgstr ""
 msgid "%1$s (plugin %2$s)"
 msgstr ""
 
+#. translators: %d: rows a query selected, or a write touched.
+#: src/overview/components/LogEntriesTable.js:1160
+#, js-format
+msgid "%d row"
+msgid_plural "%d rows"
+msgstr[0] ""
+msgstr[1] ""
+
 #. translators: %d: number of nested log entries hidden inside this collapsed pair.
-#: src/overview/components/LogEntriesTable.js:1213
+#: src/overview/components/LogEntriesTable.js:1250
 #, js-format
 msgid "[%d entry]"
 msgid_plural "[%d entries]"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/components/LogEntriesTable.js:1317
-#: src/overview/RequestProfile.js:353
+#: src/overview/components/LogEntriesTable.js:1354
+#: src/overview/RequestProfile.js:367
 msgid "Show less"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1318
+#: src/overview/components/LogEntriesTable.js:1355
 msgid "Show more"
 msgstr ""
 
 #. translators: %d: number of log entries in the request.
-#: src/overview/components/LogEntriesTable.js:1402
+#: src/overview/components/LogEntriesTable.js:1439
 #, js-format
 msgid "Log Entries (%d)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1413
+#: src/overview/components/LogEntriesTable.js:1450
 msgid "Fold All"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1420
+#: src/overview/components/LogEntriesTable.js:1457
 msgid "Unfold All"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1427
+#: src/overview/components/LogEntriesTable.js:1464
 msgid "Search entries"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1431
+#: src/overview/components/LogEntriesTable.js:1468
 msgid "Search entries…"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1462
+#: src/overview/components/LogEntriesTable.js:1499
 msgid "No matches"
 msgstr ""
 
 #. translators: %d: number of entries matching the search query.
 #. translators: %d: number of matching lines in the request.
-#: src/overview/components/LogEntriesTable.js:1475
+#: src/overview/components/LogEntriesTable.js:1512
 #: src/overview/components/OverviewSection.js:282
 #, js-format
 msgid "%d match"
@@ -773,15 +853,15 @@ msgid_plural "%d matches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/components/LogEntriesTable.js:1489
+#: src/overview/components/LogEntriesTable.js:1526
 msgid "Previous match (p)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1501
+#: src/overview/components/LogEntriesTable.js:1538
 msgid "Next match (n)"
 msgstr ""
 
-#: src/overview/components/LogEntriesTable.js:1583
+#: src/overview/components/LogEntriesTable.js:1620
 msgid "Click to highlight pair"
 msgstr ""
 
@@ -843,15 +923,43 @@ msgstr ""
 msgid "Global Time Breakdown"
 msgstr ""
 
-#: src/overview/components/RequestDetailView.js:79
+#: src/overview/components/RequestContext.js:37
+msgid "Template:"
+msgstr ""
+
+#: src/overview/components/RequestContext.js:39
+msgid "Rewrite rule:"
+msgstr ""
+
+#: src/overview/components/RequestContext.js:43
+msgid "Matched query:"
+msgstr ""
+
+#: src/overview/components/RequestContext.js:47
+msgid "Conditionals:"
+msgstr ""
+
+#: src/overview/components/RequestContext.js:53
+msgid "Query vars:"
+msgstr ""
+
+#: src/overview/components/RequestContext.js:68
+msgid "Context"
+msgstr ""
+
+#: src/overview/components/RequestContext.js:77
+msgid "Trimmed to fit one log line: its last query vars went first, then its matched query, rewrite rule and template were halved in that order, then its last conditionals went."
+msgstr ""
+
+#: src/overview/components/RequestDetailView.js:81
 msgid "Error:"
 msgstr ""
 
-#: src/overview/components/RequestDetailView.js:113
+#: src/overview/components/RequestDetailView.js:121
 msgid "No log entries available for this request."
 msgstr ""
 
-#: src/overview/components/RequestDetailView.js:122
+#: src/overview/components/RequestDetailView.js:130
 msgid "Aggregated under load. This request logged more than the worker could hold alongside the others in flight, so repeated spans were merged into one frame each — counts and totals are exact, the sequence is not. Its opening and closing entries are kept in full, and the merged spans sit between them in the log, each showing how many instances it stands for."
 msgstr ""
 
@@ -1009,109 +1117,109 @@ msgid "Unknown URL"
 msgstr ""
 
 #. translators: %s: the request ID that was searched for.
-#: src/overview/PerformanceDashboard.js:844
+#: src/overview/PerformanceDashboard.js:848
 #, js-format
 msgid "Request \"%s\" not found — prefix with / to search recent traffic"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:907
+#: src/overview/PerformanceDashboard.js:911
 msgid "No matches in recent traffic"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1104
+#: src/overview/PerformanceDashboard.js:1108
 msgid "Could not save the logging rule."
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1136
+#: src/overview/PerformanceDashboard.js:1140
 msgid "Could not delete the logging rule."
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1188
+#: src/overview/PerformanceDashboard.js:1192
 msgid "Loading performance data…"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1269
+#: src/overview/PerformanceDashboard.js:1273
 msgid "Pages by Request Count"
 msgstr ""
 
 #. translators: %s: the request ID.
-#: src/overview/PerformanceDashboard.js:1312
+#: src/overview/PerformanceDashboard.js:1316
 #, js-format
 msgid "Request: %s"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1337
+#: src/overview/PerformanceDashboard.js:1341
 msgid "Back to URL details"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1384
+#: src/overview/PerformanceDashboard.js:1388
 msgid "Edit logging rule"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1388
+#: src/overview/PerformanceDashboard.js:1392
 msgid "Log this URL"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/PerformanceDashboard.js:1413
+#: src/overview/PerformanceDashboard.js:1417
 #, js-format
 msgid "Could not load this URL: %s"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1419
+#: src/overview/PerformanceDashboard.js:1423
 msgid "Loading URL…"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/PerformanceDashboard.js:1471
+#: src/overview/PerformanceDashboard.js:1475
 #, js-format
 msgid "Could not load this request: %s"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1477
+#: src/overview/PerformanceDashboard.js:1481
 msgid "Loading request…"
 msgstr ""
 
-#: src/overview/RequestProfile.js:79
+#: src/overview/RequestProfile.js:92
 msgid "(anonymous)"
 msgstr ""
 
 #. translators: %d: number of additional entries not shown.
-#: src/overview/RequestProfile.js:100
+#: src/overview/RequestProfile.js:113
 #, js-format
 msgid "… and %d more"
 msgstr ""
 
-#: src/overview/RequestProfile.js:173
+#: src/overview/RequestProfile.js:187
 msgid "Time Breakdown"
 msgstr ""
 
-#: src/overview/RequestProfile.js:260
+#: src/overview/RequestProfile.js:274
 msgid "Category"
 msgstr ""
 
-#: src/overview/RequestProfile.js:264
+#: src/overview/RequestProfile.js:278
 msgid "% of Total"
 msgstr ""
 
-#: src/overview/RequestProfile.js:270
+#: src/overview/RequestProfile.js:284
 msgid "Count"
 msgstr ""
 
 #. translators: %d: number of additional categories that can be shown.
-#: src/overview/RequestProfile.js:359
+#: src/overview/RequestProfile.js:373
 #, js-format
 msgid "Show %d more category"
 msgid_plural "Show %d more categories"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/RequestProfile.js:375
+#: src/overview/RequestProfile.js:389
 msgid "Total Profiled"
 msgstr ""
 
 #. translators: 1: number of requests, 2: the server name.
-#: src/overview/RequestProfile.js:441
+#: src/overview/RequestProfile.js:455
 #, js-format
 msgid "Average breakdown across %1$d request on %2$s"
 msgid_plural "Average breakdown across %1$d requests on %2$s"
@@ -1119,7 +1227,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: %d: number of requests.
-#: src/overview/RequestProfile.js:452
+#: src/overview/RequestProfile.js:466
 #, js-format
 msgid "Average breakdown across %d request"
 msgid_plural "Average breakdown across %d requests"
