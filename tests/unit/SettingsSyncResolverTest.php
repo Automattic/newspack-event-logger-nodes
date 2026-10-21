@@ -68,6 +68,12 @@ class SettingsSyncResolverTest extends TestCase {
 		$this->assertSame( [ 'init', 'wp', 'shutdown' ], $resolved[0]['hooks'] );
 	}
 
+	/** An option outside this plugin's prefix passes through, even one spelled like a short key. */
+	public function test_an_unprefixed_option_passes_through_unresolved(): void {
+		$this->assertSame( '', newspack_event_logger_nodes_resolve_settings_sync_value( '', 'rules' ) );
+		$this->assertFalse( newspack_event_logger_nodes_resolve_settings_sync_value( false, 'newspack_nodes_remote_lifetime' ) );
+	}
+
 	/** A blank value for a NON-synced option passes through unchanged (no resolution). */
 	public function test_blank_non_synced_option_passes_through(): void {
 		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
@@ -75,46 +81,5 @@ class SettingsSyncResolverTest extends TestCase {
 			'some_unrelated_option'
 		);
 		$this->assertSame( '', $resolved );
-	}
-
-	/**
-	 * A blank SUBSTRATE option (`newspack_nodes_*`) resolves to the SUBSTRATE's
-	 * default, not ELN's. The substrate owns `num_partitions`, so its default lives
-	 * in `\Newspack_Nodes\Config` — ELN's own defaults don't carry it, so resolving
-	 * against ELN's defaults would return the raw `false` and the reset-to-
-	 * default would never ship.
-	 */
-	public function test_blank_substrate_option_resolves_to_substrate_default(): void {
-		// Live, ELN's own defaults do NOT carry the substrate key num_partitions
-		// (the bundled test config masks this by setting it via LOCAL_NEWSPACK_NODES_CONF,
-		// which load_config_defaults merges in). Strip it so the test reproduces the
-		// live miss: the resolver must reach the SUBSTRATE config for the default.
-		$eln_defaults = Config::load_config_defaults();
-		unset( $eln_defaults['num_partitions'] );
-		$ref = new \ReflectionProperty( Config::class, 'config_defaults' );
-		$ref->setValue( null, $eln_defaults );
-
-		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
-			false,
-			'newspack_nodes_num_partitions'
-		);
-		$this->assertSame( \Newspack_Nodes\Config::load_config_defaults()['num_partitions'], $resolved );
-	}
-
-	/**
-	 * A remote_* option is a first-class substrate setting with its OWN default
-	 * (remote_min_lifetime=3600), distinct from the hub's canonical key
-	 * (min_lifetime=86400). The resolver must return the remote default — NOT strip
-	 * `^remote_` to the canonical key — so the spoke gets the remote geometry the
-	 * operator sees on the Nodes Runtime page, not the hub's retention.
-	 */
-	public function test_blank_remote_option_resolves_to_its_own_remote_default(): void {
-		$defaults = \Newspack_Nodes\Config::load_config_defaults();
-		$resolved = newspack_event_logger_nodes_resolve_settings_sync_value(
-			false,
-			'newspack_nodes_remote_min_lifetime'
-		);
-		$this->assertSame( $defaults['remote_min_lifetime'], $resolved );
-		$this->assertNotSame( $defaults['min_lifetime'], $resolved );
 	}
 }

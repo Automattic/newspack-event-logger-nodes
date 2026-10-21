@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The substrate floor is newspack-nodes 2.122.0.** `Config::load_config()` overlays the stored options through the substrate's `Schema::overlay()`, which also resolves a setting that follows another, where it called `Options_Overlay::apply()` itself. `Schema::overlay()` arrives in newspack-nodes 2.122.0, so the bootstrap goes dormant below it.
+- **The substrate resolves its own options for settings-sync.** `newspack_event_logger_nodes_resolve_settings_sync_value()` no longer resolves a blank or absent `newspack_nodes_*` option; newspack-nodes 2.122.0's `Settings_Sync_Node` pushes `Config::blank_value()` for those before the filter runs, so this filter resolves only this plugin's own options.
+
 ## [0.149.2] - 2026-10-21
 
 ### Changed

@@ -82,13 +82,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant below the 2.121.0 floor. check-substrate-floor.sh holds
+	// @longform Dormant below the 2.122.0 floor. check-substrate-floor.sh holds
 	// it to the substrate PHP this plugin calls; a floor that a topology, a
 	// stylesheet or a bundle needs is raised by hand. The CHANGELOG records
 	// why each raise was made. A floor set too low wires the plugin up against
 	// an older substrate and fatals.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.121.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.122.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
@@ -222,15 +222,14 @@ function newspack_event_logger_nodes_register_log_producers( array $producers ):
  * Resolve a synced option's value for `Settings_Sync_Node` at consume time.
  *
  * Two transforms, and every other value passes through untouched. A blank ('')
- * or absent (false) value resolves to its file-backed default, so blanking a
- * field syncs the DEFAULT rather than '', which would fail a spoke's typed
- * sanitization. The default key is the option name with the
- * `newspack_event_logger_nodes_` / `newspack_nodes_` prefix stripped, looked up
- * in the OWNING config's defaults: `newspack_nodes_` keys — `remote_*` spoke
- * geometry among them, whose defaults differ from the hub's — live in the
- * substrate's \Newspack_Nodes\Config, the rest in this plugin's. Second, the
- * ruleset arrives hydrated, so a spoke reads every rule's hooks inline instead
- * of a pointer into an option only the hub holds.
+ * or absent (false) value of one of this plugin's options resolves to its
+ * file-backed default, so blanking a field syncs the DEFAULT rather than '',
+ * which would fail a spoke's typed sanitization. The default key is the option
+ * name with the `newspack_event_logger_nodes_` prefix stripped, looked up in
+ * this plugin's config defaults. Every other option passes through: a
+ * `newspack_nodes_` option arrives already resolved by `Settings_Sync_Node`.
+ * Second, the ruleset arrives hydrated, so a spoke reads every rule's hooks
+ * inline instead of a pointer into an option only the hub holds.
  *
  * @api Hooked to `newspack_nodes/settings_sync/value` by the deferred bootstrap.
  * @param mixed  $value  The raw option value Settings_Sync_Node read (default get_option).
@@ -238,19 +237,10 @@ function newspack_event_logger_nodes_register_log_producers( array $producers ):
  * @return mixed The resolved value.
  */
 function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string $option ) {
-	if ( '' === $value || false === $value ) {
-		// Route to the OWNING config's defaults (substrate keys aren't ELN's).
-		if ( 0 === \strpos( $option, 'newspack_event_logger_nodes_' ) ) {
-			$config_key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
-			$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
-		} elseif ( 0 === \strpos( $option, 'newspack_nodes_' ) ) {
-			$config_key = \substr( $option, \strlen( 'newspack_nodes_' ) );
-			$defaults   = \Newspack_Nodes\Config::load_config_defaults();
-		} else {
-			$config_key = $option;
-			$defaults   = \Newspack_Event_Logger_Nodes\Config::load_config_defaults();
-		}
-		$value = $defaults[ $config_key ] ?? $value;
+	$own = 0 === \strpos( $option, 'newspack_event_logger_nodes_' );
+	if ( $own && ( '' === $value || false === $value ) ) {
+		$config_key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
+		$value      = \Newspack_Event_Logger_Nodes\Config::load_config_defaults()[ $config_key ] ?? $value;
 	}
 
 	// Inline pointer hooks so the ruleset ships hook-complete to spokes.
