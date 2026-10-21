@@ -207,15 +207,9 @@ class Config {
 		$defaults         = \array_merge( self::load_config_defaults(), $substrate );
 
 		// Presence overlay: stored option (even ''/[]/false/0) beats default.
-		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
-			$defaults,
-			$schema->overlay_keys(),
-			$schema->prefix()
-		);
+		self::$config = $schema->overlay( $defaults );
 
-		self::$config = $config;
-
-		return $config;
+		return self::$config;
 	}
 
 	/**
