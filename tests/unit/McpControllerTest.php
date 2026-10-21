@@ -355,7 +355,7 @@ class McpControllerTest extends TestCase {
 		$now         = 1_790_003_000;
 		Core::$clock = static fn (): float => (float) $now;
 		Core::right_now();
-		$this->activate_shipped( 'flame-builder', 2 );
+		$this->activate_shipped( 'stats-builder', 2 );
 		$this->seed_request( [ 'server' => 'kea.example', 'status' => 503 ] );
 		$this->seed_request( [ 'server' => 'kea.example', 'status' => 504 ], partition: 1 );
 		$this->seed_request( [ 'server' => 'egret.example', 'status' => 200 ], partition: 1 );

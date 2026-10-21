@@ -23,6 +23,7 @@ use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Job_Router_Node;
 use Newspack_Event_Logger_Nodes\Remote_Job_Rewrite_Node;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -40,6 +41,7 @@ class NodeLifecycleTest extends TestCase {
 			'JobRouter'        => [ static fn () => new Job_Router_Node() ],
 			'RequestBuilder'   => [ static fn () => new Request_Builder_Node() ],
 			'RemoteJobRewrite' => [ static fn () => new Remote_Job_Rewrite_Node() ],
+			'StatsBuilder'     => [ static fn () => new Stats_Builder_Node() ],
 		];
 	}
 

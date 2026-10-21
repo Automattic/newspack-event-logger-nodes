@@ -41,7 +41,7 @@ table.reg td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mon
 <div class="b node" id="rw" style="left:326px;top:436px;width:400px"><span class="t">remote-job-rewrite</span><p>Remote_Job_Rewrite_Node: an array VALUE with <span class="mono">k:"job"</span> leaves as <span class="mono">k:"remote_job"</span>, 7 bytes longer; everything else passes untouched. A graph node, not a filter, so the substrate's sources stay application-agnostic.</p></div>
 
 <div class="b node" id="tp" style="left:20px;top:580px;width:480px"><span class="t">firehose:topic</span><p>Multi-partition Topic, <span class="mono">firehose.p{partition}</span>: KEY-routes by request-id hash onto the hub's own <span class="mono">firehose.pN</span> on disk, so each downstream partition sees its own slice, exactly as a local request would.</p></div>
-<div class="b" id="cm" style="left:552px;top:580px;width:480px;background:#fff"><span class="t">the hub's own complete workers</span><p>Request_Builder assembles spoke requests beside local ones; Flame_Builder's <span class="mono">set_is_hub</span> turns on the per-server aggregates; Job_Worker dispatches <span class="mono">remote_job</span> against <span class="mono">newspack_nodes/remote_job_handlers</span>.</p></div>
+<div class="b" id="cm" style="left:552px;top:580px;width:480px;background:#fff"><span class="t">the hub's own complete workers</span><p>Request_Builder assembles spoke requests beside local ones; Flame_Builder and Stats_Builder turn them into flames and per-server rows; Job_Worker dispatches <span class="mono">remote_job</span> against <span class="mono">newspack_nodes/remote_job_handlers</span>.</p></div>
 </div>
 
 <div class="matrix">

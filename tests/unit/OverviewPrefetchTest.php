@@ -56,7 +56,7 @@ final class OverviewPrefetchTest extends TestCase {
 		Core::$var['partition'] = '0';
 		$GLOBALS['_current_user_can'] = true;
 		$this->use_scratch_config( $this->make_temp_dir( 'overview-prefetch-' ) );
-		$this->activate_shipped( 'flame-builder', 3 );
+		$this->activate_shipped( 'stats-builder', 3 );
 	}
 
 	protected function tearDown(): void {
@@ -1090,7 +1090,7 @@ final class OverviewPrefetchTest extends TestCase {
 		} catch ( Table_Unavailable ) {
 			$this->assertFalse( self::snapshot_published() );
 		}
-		$this->activate_shipped( 'flame-builder', 3 );
+		$this->activate_shipped( 'stats-builder', 3 );
 		$this->seed_request( [ 'url' => 'https://seed.example/moa-5526/', 'ms' => 8.5 ] );
 
 		$served = $this->urls( [ '--limit=100' ] );

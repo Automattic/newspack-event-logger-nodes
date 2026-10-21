@@ -33,4 +33,4 @@ parameters:
         # IS the verb's implementation — deleting it silently disables the verb.
         -
             identifier: shipmonk.deadMethod
-            message: '#::set_(completed_target|errors_target|alerts_target|inflight_delta|facts_target)$#'
+            message: '#::set_(completed_target|errors_target|alerts_target|inflight_delta|facts_target|requests_partition)$#'

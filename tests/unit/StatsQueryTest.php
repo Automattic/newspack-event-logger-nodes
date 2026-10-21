@@ -6,10 +6,10 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Stats_Query;
 use Newspack_Event_Logger_Nodes\Bucket;
-use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\FactsSeeder;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
@@ -37,7 +37,7 @@ final class StatsQueryTest extends TestCase {
 		Core::$clock = static fn (): float => (float) self::NOW;
 		Core::right_now();
 		$GLOBALS['_current_user_can'] = true;
-		$this->activate_shipped( 'flame-builder', 4 );
+		$this->activate_shipped( 'stats-builder', 4 );
 	}
 
 	protected function tearDown(): void {
@@ -1593,13 +1593,13 @@ final class StatsQueryTest extends TestCase {
 	 * between the two tables without the answer moving.
 	 */
 	public function test_requests_and_the_hourly_rollup_agree_on_status_class_and_errors(): void {
-		$this->assertSame( [ 'T', 'F' ], Flame_Builder_Node::ERROR_KINDS );
-		$this->assertSame( [ 100, 599 ], [ Flame_Builder_Node::STATUS_MIN, Flame_Builder_Node::STATUS_MAX ] );
-		$fb = $this->armed_flame_builder();
+		$this->assertSame( [ 'T', 'F' ], Stats_Builder_Node::ERROR_KINDS );
+		$this->assertSame( [ 100, 599 ], [ Stats_Builder_Node::STATUS_MIN, Stats_Builder_Node::STATUS_MAX ] );
+		$sb = $this->armed_stats_builder();
 		foreach ( [ [ 99, '-' ], [ 100, 'A' ], [ 599, 'T' ], [ 600, 'F' ], [ null, 'I' ], [ 204, '-' ] ] as $i => [ $status, $error ] ) {
-			$this->fill_request_at( $fb, $this->completed_request( [ 'rid' => "rid-agree-{$i}", 'status_code' => $status, 'error_status' => $error, 'timestamp' => self::NOW - 4000 ] ), '' );
+			$this->fill_flame( $sb, $this->completed_request( [ 'rid' => "rid-agree-{$i}", 'status_code' => $status, 'error_status' => $error, 'timestamp' => self::NOW - 4000 ] ) );
 		}
-		$fb->flush();
+		$sb->flush();
 		$hour = Bucket::hour( self::NOW - 4000 );
 		$spec = [ 'source' => 'requests', 'group' => [ 'status_class' ], 'measure' => [ 'count', 'errors' ] ];
 
@@ -1833,7 +1833,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'rid' => 'rid-pipit-clean', 'bucket' => $now - 3 ] );
 		$this->seed_request( [ 'rid' => 'rid-pipit-elsewhere', 'bucket' => $now - 3, 'error' => 'T', 'server' => 'ruru.example' ] );
 
-		$rows = Stats_Query::newest_requests( [ 'server' => [ 'seed.example' ], 'error' => Flame_Builder_Node::ERROR_KINDS ], [ [ $now - 5, $now ] ], 500 );
+		$rows = Stats_Query::newest_requests( [ 'server' => [ 'seed.example' ], 'error' => Stats_Builder_Node::ERROR_KINDS ], [ [ $now - 5, $now ] ], 500 );
 
 		$this->assertSame( [ 'rid-pipit-in' ], \array_column( $rows, 'rid' ) );
 	}

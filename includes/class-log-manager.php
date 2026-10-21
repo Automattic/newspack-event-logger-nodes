@@ -5,8 +5,8 @@
  * A logged request opens the shared `_firehose:topic` Topic, hashes its request
  * id to a partition, and appends one TM_STRUCT Message per log line. Each line
  * lands on disk as a JSON array (Message::packed), keyed by the request id, and
- * `Request_Builder_Node` / `Flame_Builder_Node` reassemble those lines
- * downstream into requests, flame graphs, and stats.
+ * `Request_Builder_Node`, `Flame_Builder_Node` and `Stats_Builder_Node`
+ * reassemble those lines downstream into requests, flame graphs, and stats.
  *
  * This file is also the event logger's public API: Pyrobase and Nuclear
  * Gyrobase log through `Log_Manager::instance()`, while the substrate's job

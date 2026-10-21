@@ -1,6 +1,6 @@
 <!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
 <style>
-.g { position:relative; width:1052px; height:830px; }
+.g { position:relative; width:1052px; height:965px; }
 .g svg.wire { position:absolute; left:0; top:0; }
 .b { position:absolute; background:#fff; border:1px solid #C3C4C7; border-radius:7px; padding:7px 10px; font-size:11.5px; line-height:1.35; }
 .b .t { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight:700; font-size:12px; color:#003DA5; }
@@ -20,10 +20,10 @@
 </style>
 <div class="sheet">
 <h1>The <span class="mono">complete</span> worker, one partition of it</h1>
-<p class="sub">Four Consumers, two of them tailing what another branch wrote. Solid boxes are Nodes the topology declares; dashed boxes are partition logs on disk; green is the flame builder's <span class="mono">flame-facts</span> Row_Table. One firehose Consumer feeds two branches through a Tee, and a job crosses two logs, an ingress log and <span class="mono">jobs.pN</span>, before a handler runs it.</p>
+<p class="sub">Five Consumers, three of them tailing what another branch wrote. Solid boxes are Nodes the topology declares; dashed boxes are partition logs on disk; green is the stats builder's <span class="mono">flame-facts</span> Row_Table. One firehose Consumer feeds two branches through a Tee, and a job crosses two logs, an ingress log and <span class="mono">jobs.pN</span>, before a handler runs it.</p>
 
 <div class="g" id="g">
-<svg class="wire" id="wire" width="1052" height="830"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
+<svg class="wire" id="wire" width="1052" height="965"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
 
 <div class="b log" id="fh" style="left:0;top:0;width:150px"><div class="t">firehose.pN</div><div class="s">many PHP writers</div></div>
 <div class="b node" id="fhc" style="left:196px;top:0;width:176px"><div class="t">firehose:consumer</div><div class="s">multi-writer; snapshots request-builder into its offsetlog</div></div>
@@ -47,18 +47,24 @@
 <div class="b node" id="jw" style="left:418px;top:424px;width:150px"><div class="t">job-worker</div><div class="s">Job_Worker_Node; ELN's begin/end_job_context rides its before_job / after_job hooks</div></div>
 <div class="b out" id="h" style="left:614px;top:424px;width:438px"><div class="t">registered handlers</div><div class="s"><span class="mono">k:"job"</span> → <span class="mono">newspack_nodes/job_handlers</span>; <span class="mono">k:"remote_job"</span> → <span class="mono">newspack_nodes/remote_job_handlers</span>. A 15 s Job_Probe writes jobstats.p0.</div></div>
 
-<div class="lane" style="top:540px">flames and stats</div>
+<div class="lane" style="top:540px">flames</div>
 <div class="b log" id="req2" style="left:0;top:558px;width:150px"><div class="t">requests.pN</div><div class="s">what request-builder wrote</div></div>
-<div class="b node" id="rc" style="left:196px;top:558px;width:176px"><div class="t">requests:consumer</div><div class="s">snapshots flame-builder: the crumb of the last record counted</div></div>
-<div class="b node" id="fb" style="left:418px;top:558px;width:372px"><div class="t">flame-builder</div><div class="s">Flame_Builder_Node: builds each request's flame tree, files the request in the 5-minute bucket it FINISHED in, buffers its rows and writes them every 5 s from its Router-tick timer, at each checkpoint, and at 1,000 requests or 20,000 row ops, and judges the governing rule's auto-tune thresholds. <span class="mono">set_facts_target</span> names the Row_Table it writes.</div></div>
-<div class="b out" id="fl" style="left:836px;top:558px;width:216px"><div class="t">flames.pN</div><div class="s">per-request flame data; flame-index</div></div>
-<div class="b mc" id="mc" style="left:836px;top:640px;width:216px"><div class="t">Row_Table flame-facts</div><div class="s">six row tables in one SQLite file a partition, one ROWS batch a write, rollups summed</div></div>
-<div class="b node" id="at" style="left:836px;top:766px;width:216px"><div class="t">flame-builder:auto-tuner</div><div class="s">hidden sibling; mutates one rule, Rule_Set::save()</div></div>
+<div class="b node" id="rc" style="left:196px;top:558px;width:176px"><div class="t">requests:consumer</div><div class="s">snapshots nothing: the flame builder holds nothing durable</div></div>
+<div class="b node" id="fb" style="left:418px;top:558px;width:372px"><div class="t">flame-builder</div><div class="s">Flame_Builder_Node: builds each request's flame tree, stamps it with <span class="mono">rid</span>, <span class="mono">url_hash</span> and <span class="mono">request_at</span>, the record's place in requests.pN, and judges the governing rule's auto-tune thresholds, emitting its decisions at each 5 s flush.</div></div>
+<div class="b out" id="fl" style="left:836px;top:558px;width:216px"><div class="t">flames.pN</div><div class="s">per-request flame data and its request_at; flame-index</div></div>
+<div class="b node" id="at" style="left:836px;top:632px;width:216px"><div class="t">flame-builder:auto-tuner</div><div class="s">hidden sibling; mutates one rule, Rule_Set::save()</div></div>
+
+<div class="lane" style="top:700px">stats</div>
+<div class="b log" id="fl2" style="left:0;top:718px;width:150px"><div class="t">flames.pN</div><div class="s">what flame-builder wrote</div></div>
+<div class="b node" id="fc" style="left:196px;top:718px;width:176px"><div class="t">flames:consumer</div><div class="s">snapshots stats-builder: its buffer is written before each checkpoint</div></div>
+<div class="b node" id="sb" style="left:418px;top:718px;width:372px"><div class="t">stats-builder</div><div class="s">Stats_Builder_Node: reads each flame's record at its request_at, skipping and counting one that is gone; files the request in the 5-minute bucket it FINISHED in, buffers its rows and writes them every 5 s from its Router-tick timer, at each checkpoint, and at 1,000 requests or 20,000 row ops. <span class="mono">set_facts_target</span> names the Row_Table it writes.</div></div>
+<div class="b mc" id="mc" style="left:836px;top:718px;width:216px"><div class="t">Row_Table flame-facts</div><div class="s">thirteen tables in one SQLite file a partition, one ROWS batch a write, rollups summed</div></div>
+<div class="b log" id="rr" style="left:418px;top:885px;width:372px"><div class="t">requests.pN</div><div class="s">read back by a private reader <span class="mono">set_requests_partition</span> names, never published in the node table</div></div>
 </div>
 
 <div class="vars">
-  <div class="card"><h3><span class="mono">performance</span></h3><p>The first and last lanes, without the two job lanes: the consumer wires straight to request-builder, and a separate fleet dispatches jobs.</p></div>
-  <div class="card"><h3><span class="mono">flame-builder</span> alone</h3><p>The bottom lane by itself, for a fleet that only turns assembled records into flames and stats.</p></div>
+  <div class="card"><h3><span class="mono">performance</span></h3><p>The first lane and the last two, without the two job lanes: the consumer wires straight to request-builder, and a separate fleet dispatches jobs.</p></div>
+  <div class="card"><h3><span class="mono">flame-builder</span> and <span class="mono">stats-builder</span></h3><p>The bottom two lanes, each its own topology: flame-builder alone writes flames and no stats.</p></div>
   <div class="card"><h3><span class="mono">job-spoke</span></h3><p>The two job lanes with <span class="mono">jobfeed.pN</span> in the firehose's place, so the router reads jobs alone.</p></div>
   <div class="card"><h3>A hub adds <span class="mono">aggregator</span></h3><p>Remote_Source nodes pull each spoke's firehose over SSE, Remote_Job_Rewrite flips <span class="mono">job</span> to <span class="mono">remote_job</span>, and a Topic KEY-routes the lines into this same <span class="mono">firehose.pN</span>.</p></div>
 </div>
@@ -72,6 +78,8 @@
     var y0=a.y+(opt.fy!=null?opt.fy:a.h/2), y1=b.y+(opt.ty!=null?opt.ty:b.h/2);
     if(opt.down){ // vertical, from bottom-center of f to top-center of t
       var x=a.x+a.w/2; d='M'+x+' '+(a.y+a.h)+' V'+(b.y-2);
+    } else if(opt.up){ // vertical, from top-center of f to bottom-center of t
+      var x=a.x+a.w/2; d='M'+x+' '+a.y+' V'+(b.y+b.h+2);
     } else {
       var x0=a.x+a.w, x1=b.x-2, mid=x0+(opt.mid!=null?opt.mid:(x1-x0)/2);
       d= y0===y1 ? 'M'+x0+' '+y0+' H'+x1 : 'M'+x0+' '+y0+' H'+mid+' V'+y1+' H'+x1;
@@ -84,6 +92,8 @@
   wire('ji','jic');wire('jic','jr');wire('jr','sv');wire('sv','jobs');
   wire('jobs2','jc');wire('jc','jw');wire('jw','h');
   wire('req2','rc');wire('rc','fb',{ty:22});
-  wire('fb','fl',{fy:22,ty:22,mid:20});wire('fb','mc',{fy:22,mid:20});wire('fb','at',{fy:22,mid:20});
+  wire('fb','fl',{fy:22,ty:22,mid:20});wire('fb','at',{fy:22,mid:20});
+  wire('fl2','fc');wire('fc','sb',{ty:22});
+  wire('sb','mc',{fy:22,ty:22,mid:20});wire('rr','sb',{up:true});
 })();
 </script>

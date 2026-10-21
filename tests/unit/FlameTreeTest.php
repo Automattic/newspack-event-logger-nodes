@@ -476,7 +476,7 @@ class FlameTreeTest extends TestCase {
 	];
 
 	/**
-	 * Nested pairs, derived from the code: `Flame_Builder_Node::shutdown_sweep()`
+	 * Nested pairs, derived from the code: `Stats_Builder_Node::shutdown_sweep()`
 	 * spans `STATS_SWEEP` around a flush, which tells the writes,
 	 * `Url_Snapshot::publish()` spans `SNAPSHOT_BUILD` around its steps, and
 	 * each `PREFETCH_ANSWER` asks the stats rows its `STATS_QUERY`s.

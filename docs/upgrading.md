@@ -6,6 +6,41 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **The stats writer is `Stats_Builder_Node`, in its own `stats-builder`
+  topology.** `flame-builder.tsl` writes flames and runs auto-tune only;
+  `stats-builder.tsl` tails `flames.pN` and reads each flame's record back
+  from `requests.pN` at the flame's new `request_at` field, and
+  `performance.tsl` includes it, so `complete` runs it too. A fork of
+  `flame-builder.tsl` drops `make_node Row_Table flame-facts Flame_Facts`,
+  `command_node flame-builder:config set_facts_target flame-facts`,
+  `include table-probe`, `make_node Overview_Prefetch_Tick
+  overview-prefetch:tick` and `command_node requests:consumer:config
+  add_snapshot_node flame-builder`, and the topology composing it adds
+  `include stats-builder`. A fork still naming `flame-builder:config
+  set_facts_target` fails at load, naming the verb. A site running
+  `flame-builder` alone activates `stats-builder` beside it, or it writes
+  no stats.
+- **The first start replays the retained flames.** `flames:consumer`
+  starts with no cursor, at `<topology>.flames.p{partition}`, and reads
+  every flame `flames.pN` keeps. Each flame whose record `requests.pN`
+  still holds is read again and adds nothing, because every `requests` row
+  is an insert-ignore on `rid`. A flame whose record is gone, or which was
+  written before `request_at` existed, is skipped and counted as
+  `records_gone`, never dead-lettered. The Row_Table keeps its name, its
+  files and schema version 8, so nothing needs a rebuild.
+- **`GET_STATS` answers on two nodes.** `request stats-builder GET_STATS`
+  answers `{ buffered_requests, buffered_rows, last_flush_age_s,
+  records_gone, narration }`; `request flame-builder GET_STATS` answers
+  `{ auto_tune_pending_count, significant_events_count }`. A script reading
+  the buffer or the narration from `flame-builder` reads them from
+  `stats-builder`.
+- **The request-counting constants moved with the stats.** `STATUS_MIN`,
+  `STATUS_MAX`, `ERROR_KINDS`, `UNTIMED_STATUSES`, `BUFFERED_REQUESTS_LIMIT`,
+  `BUFFERED_OPS_LIMIT`, `TIMED_CATEGORIES`, `timing_counts()`,
+  `error_counts()` and `completed_at()` are on `Stats_Builder_Node`, with no
+  alias on `Flame_Builder_Node`. `monotonic()`, `quiet_since()` and
+  `IDLE_AFTER_SEC` stay on `Flame_Builder_Node`.
+
 ## 0.148.2
 
 - **A bucket run's `end` is exclusive.** In `--bucket`, the MCP `bucket`

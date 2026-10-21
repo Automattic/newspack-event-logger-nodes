@@ -1,0 +1,22 @@
+# Stats_Builder topology.
+#
+#   Consumer (flames.log) ─→ StatsBuilder ─→ Row_Table (flame-facts, Flame_Facts, by message via set_facts_target)
+#                                └─ reads each flame's record from requests.log at its request_at (set_requests_partition)
+#   Overview_Prefetch_Tick (Router tick) ─→ firehose job entry + jobfeed.p0, every two minutes
+#   topic-probe reports the Consumer's lag; table-probe sweeps the Row_Table
+#   into the station's Tables tab
+
+var on_demand_idle = 30
+
+include topic-probe
+include table-probe
+
+make_node Consumer flames:consumer <config:logs_dir>/flames.p{partition} <config:offsets_dir>/<topology>.flames.p{partition} <config:deadletter_dir>/<topology>.flames.p{partition}
+make_node Stats_Builder stats-builder
+make_node Row_Table flame-facts Flame_Facts
+make_node Overview_Prefetch_Tick overview-prefetch:tick
+command_node flames:consumer:config add_snapshot_node stats-builder
+command_node stats-builder:config set_facts_target flame-facts
+command_node stats-builder:config set_requests_partition <config:logs_dir>/requests.p{partition}
+connect_node flames:consumer stats-builder
+secure

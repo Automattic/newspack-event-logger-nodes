@@ -71,7 +71,7 @@ class TopologyShapeTest extends TestCase {
 	}
 
 	/** The document canvas lays the Row_Table out below the builder only along this edge. */
-	public function test_the_dashboard_graphs_draw_the_flame_builders_row_table(): void {
+	public function test_the_dashboard_graphs_draw_the_stats_builders_row_table(): void {
 		\Newspack_Nodes\Topology_Registry::reset();
 		\Newspack_Nodes\Topology_Registry::register_plugin(
 			'Newspack_Event_Logger_Nodes\\',
@@ -81,14 +81,14 @@ class TopologyShapeTest extends TestCase {
 			\dirname( __DIR__, 3 ) . '/newspack-nodes/topologies'
 		);
 
-		foreach ( [ 'complete', 'performance', 'flame-builder' ] as $topology ) {
+		foreach ( [ 'complete', 'performance', 'stats-builder' ] as $topology ) {
 			$edges = \Newspack_Nodes\Topology_Analyzer::graph_for( $topology )['edges'];
-			$this->assertContains( [ 'flame-builder', 'flame-facts' ], $edges, "$topology: flame-builder draws no edge to flame-facts" );
+			$this->assertContains( [ 'stats-builder', 'flame-facts' ], $edges, "$topology: stats-builder draws no edge to flame-facts" );
 		}
 	}
 
-	/** The flame builder's topology includes table-probe, so its Tables report. */
-	public function test_the_flame_builder_probes_its_tables(): void {
+	/** The stats builder's topology includes table-probe, so its Tables report. */
+	public function test_the_stats_builder_probes_its_tables(): void {
 		\Newspack_Nodes\Topology_Registry::reset();
 		\Newspack_Nodes\Topology_Registry::register_plugin(
 			'Newspack_Event_Logger_Nodes\\',
@@ -98,7 +98,7 @@ class TopologyShapeTest extends TestCase {
 			\dirname( __DIR__, 3 ) . '/newspack-nodes/topologies'
 		);
 
-		foreach ( [ 'complete', 'performance', 'flame-builder' ] as $topology ) {
+		foreach ( [ 'complete', 'performance', 'stats-builder' ] as $topology ) {
 			$types = \array_column( \Newspack_Nodes\Topology_Analyzer::graph_for( $topology )['nodes'], 'type' );
 			$this->assertContains( 'Table_Probe', $types, "$topology: no Table_Probe sweeps its Tables" );
 		}
@@ -132,17 +132,45 @@ class TopologyShapeTest extends TestCase {
 		}
 	}
 
-	/** Every Flame_Builder writes to a Row_Table its topology declares, by set_facts_target. */
-	public function test_flame_builder_topologies_name_their_row_table(): void {
+	/** Every Stats_Builder writes to a Row_Table its topology declares, by set_facts_target. */
+	public function test_stats_builder_topologies_name_their_row_table(): void {
 		foreach ( $this->topology_files() as $path ) {
 			$name = \basename( $path );
 			$topo = $this->parse_topology( $path );
-			foreach ( $this->nodes_of_type( $topo['nodes'], 'Flame_Builder' ) as $fb ) {
-				$named = $this->first_cmd_index( $topo['cmds'], $fb, 'set_facts_target' );
-				$this->assertNotNull( $named, "$name: flame-builder '$fb' never runs set_facts_target" );
+			foreach ( $this->nodes_of_type( $topo['nodes'], 'Stats_Builder' ) as $sb ) {
+				$named = $this->first_cmd_index( $topo['cmds'], $sb, 'set_facts_target' );
+				$this->assertNotNull( $named, "$name: stats-builder '$sb' never runs set_facts_target" );
 				$table = $topo['cmds'][ $named ]['args'][0] ?? '';
-				$this->assertSame( 'Row_Table', $topo['nodes'][ $table ] ?? null, "$name: flame-builder '$fb' writes to '$table', which is not a Row_Table" );
+				$this->assertSame( 'Row_Table', $topo['nodes'][ $table ] ?? null, "$name: stats-builder '$sb' writes to '$table', which is not a Row_Table" );
 			}
+		}
+	}
+
+	/**
+	 * A fork that still hands the flame builder its Row_Table fails at load,
+	 * naming the verb no Flame_Builder answers.
+	 */
+	public function test_a_fork_naming_the_flame_builders_facts_target_fails_at_load(): void {
+		$tmp = $this->make_temp_dir( 'forked-flame-builder-' );
+		$this->use_scratch_config( $tmp );
+		\file_put_contents(
+			$tmp . '/flame-builder.tsl',
+			"make_node Flame_Builder flame-builder\nmake_node Row_Table flame-facts Flame_Facts\ncommand_node flame-builder:config set_facts_target flame-facts\n"
+		);
+		$router = new \Newspack_Nodes\Router_Node();
+		$router->name( \Newspack_Nodes\Node_Names::ROUTER );
+		$interpreter = new \Newspack_Nodes\Command_Interpreter_Node();
+		$interpreter->name( '_command_interpreter' );
+		$interpreter->sink( $router );
+
+		try {
+			\Newspack_Nodes\Topology_Registry::with_stock_dir(
+				$tmp,
+				static fn () => \Newspack_Nodes\Topology_Loader::load( 'flame-builder', 2, $interpreter )
+			);
+			$this->fail( 'a fork naming set_facts_target on the flame builder loaded' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertStringContainsString( 'flame-builder:config set_facts_target', $e->getMessage() );
 		}
 	}
 
@@ -268,12 +296,12 @@ class TopologyShapeTest extends TestCase {
 	 * classmap must not make every node look non-stateful).
 	 */
 	public function test_shape_guards_are_not_vacuous(): void {
-		$flame_builders     = 0;
+		$stats_builders     = 0;
 		$consumers          = 0;
 		$stateful_consumers = 0;
 		foreach ( $this->topology_files() as $path ) {
 			$topo            = $this->parse_topology( $path );
-			$flame_builders += \count( $this->nodes_of_type( $topo['nodes'], 'Flame_Builder' ) );
+			$stats_builders += \count( $this->nodes_of_type( $topo['nodes'], 'Stats_Builder' ) );
 			$consumers      += \count( $topo['consumers'] );
 			foreach ( \array_keys( $topo['consumers'] ) as $consumer ) {
 				if ( ! empty( $this->reachable_stateful( $consumer, $topo['nodes'], $topo['edges'] ) ) ) {
@@ -281,10 +309,10 @@ class TopologyShapeTest extends TestCase {
 				}
 			}
 		}
-		$this->assertGreaterThan( 0, $flame_builders, 'no Flame_Builder nodes — a rename silently disabled the snapshot guard\'s stateful type' );
+		$this->assertGreaterThan( 0, $stats_builders, 'no Stats_Builder nodes — a rename silently disabled the snapshot guard\'s stateful type' );
 		$this->assertGreaterThan( 0, $consumers, 'no Consumer nodes — a rename silently disabled the snapshot guard' );
 		$this->assertGreaterThan( 0, $stateful_consumers, 'no consumer reaches a stateful node — a rewire made the snapshot guard vacuous' );
-		$this->assertTrue( $this->is_stateful_type( 'Flame_Builder' ), 'Flame_Builder no longer resolves as stateful — a stale classmap makes the snapshot guard vacuous' );
+		$this->assertTrue( $this->is_stateful_type( 'Stats_Builder' ), 'Stats_Builder no longer resolves as stateful — a stale classmap makes the snapshot guard vacuous' );
 	}
 
 	// -------------------------------------------------------------------------
@@ -435,9 +463,9 @@ class TopologyShapeTest extends TestCase {
 	}
 
 	/** The Row_Table resolves one Flame_Facts file per partition from the shipped graph. */
-	public function test_the_flame_builder_declares_its_row_table_per_partition(): void {
+	public function test_the_stats_builder_declares_its_row_table_per_partition(): void {
 		$this->use_base_dir( $this->make_temp_dir() );
-		$this->activate_shipped( 'performance', 3 );
+		$this->activate_shipped( 'stats-builder', 3 );
 		$this->assertSame(
 			[
 				'name'  => 'flame-facts',

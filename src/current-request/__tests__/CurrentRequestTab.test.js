@@ -249,9 +249,8 @@ test( 'keeps the found request across a re-render from the host', async () => {
 	expect( text ).toContain( '503' );
 } );
 
-// `Flame_Builder_Node` consumes requests.log AFTER `Request_Builder_Node` wrote
-// the record, so the reply that finds a request almost always predates its
-// flame. Settling on that first reply forfeits the trace until a reload.
+// A reply can find the request without its flame, when `MAX_SCAN_S` cut the
+// flame lookup. Settling on that first reply forfeits the trace until a reload.
 test( 'renders the flame graph written after the record was found', async () => {
 	setBlob( {
 		rid: 'lateflame42',
@@ -333,7 +332,7 @@ test( 'stops asking a few ticks past the record when no flame arrives', async ()
 	expect( wire.batches.length ).toBe( asks );
 } );
 
-// A site running no `flame-builder` topology has no stats rows to find the
+// A site running no `stats-builder` topology has no stats rows to find the
 // request by, so no ask will ever find it: the tab says why and stops.
 test( 'stops asking and says why when the stats rows did not open', async () => {
 	setBlob( { rid: 'nofacts21', perfUrl: 'admin.php?page=x' } );

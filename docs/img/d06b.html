@@ -1,6 +1,6 @@
 <!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
 <style>
-  .map { position: relative; width: 1052px; height: 850px; }
+  .map { position: relative; width: 1052px; height: 890px; }
   .map > svg { position: absolute; left: 0; top: 0; }
   .abs { position: absolute; }
   .card.node { padding: 12px 14px; }
@@ -28,10 +28,10 @@
 </style>
 <div class="sheet">
 <h1>Who reads which partition</h1>
-<p class="sub">The firehose interleaves every request's lines. Four topologies pull them apart: <span class="mono">request-builder</span>, <span class="mono">job-router</span> and <span class="mono">flame-builder</span> belong to the plugin, <span class="mono">job-worker</span> to the runtime. The <span class="mono">complete</span> topology runs all four in one worker, with a Tee splitting one firehose consumer between the builder and the router.</p>
+<p class="sub">The firehose interleaves every request's lines. Five topologies pull them apart: <span class="mono">request-builder</span>, <span class="mono">job-router</span>, <span class="mono">flame-builder</span> and <span class="mono">stats-builder</span> belong to the plugin, <span class="mono">job-worker</span> to the runtime. The <span class="mono">complete</span> topology runs all five in one worker, with a Tee splitting one firehose consumer between the builder and the router.</p>
 
 <div class="map">
-  <svg width="1052" height="850" viewBox="0 0 1052 850">
+  <svg width="1052" height="890" viewBox="0 0 1052 890">
     <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs>
 
     <path d="M172 218 L206 218" stroke="#003DA5" stroke-width="1.8" fill="none"/>
@@ -53,13 +53,14 @@
     <path d="M752 246 L808 246" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
     <path d="M752 318 L808 318" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
 
-    <path d="M665 495 L665 514 L238 514 L238 616 L256 616" stroke="#003DA5" stroke-width="2.6" fill="none" marker-end="url(#a)"/>
+    <path d="M665 495 L665 514 L238 514 L238 580 L256 580" stroke="#003DA5" stroke-width="2.6" fill="none" marker-end="url(#a)"/>
 
-    <path d="M522 636 L550 636 L550 560 L578 560" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
-    <path d="M522 636 L578 636" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M522 580 L578 580" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M665 613 L665 662 L238 662 L238 740 L256 740" stroke="#003DA5" stroke-width="2.6" fill="none" marker-end="url(#a)"/>
+    <path d="M522 740 L578 740" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
 
-    <path d="M752 560 L786 560 L786 600" stroke="#003DA5" stroke-width="1.8" fill="none"/>
-    <path d="M752 636 L786 636 L786 600" stroke="#003DA5" stroke-width="1.8" fill="none"/>
+    <path d="M752 580 L786 580 L786 600" stroke="#003DA5" stroke-width="1.8" fill="none"/>
+    <path d="M752 740 L786 740 L786 600" stroke="#003DA5" stroke-width="1.8" fill="none"/>
     <path d="M752 462 L786 462 L786 600" stroke="#003DA5" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>
     <path d="M786 600 L808 600" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
   </svg>
@@ -104,14 +105,20 @@
   <div class="band" style="top:500px"><span>flames and statistics</span></div>
 
   <div class="topo" style="left:260px;top:520px">topology flame-builder</div>
-  <div class="abs card node" style="left:260px;top:536px;width:262px;min-height:180px">
+  <div class="abs card node" style="left:260px;top:536px;width:262px">
     <h3>Flame_Builder_Node</h3>
-    <p>Takes one record at a time. Writes a flame tree, nested spans each as wide as its duration, then folds the request into every aggregate: request totals, the slowest categories, a URL index, and time series by category and by dimension (status, method, server, country, user agent).</p>
-    <p class="grey">Flushes at most once every five seconds.</p>
+    <p>Takes one record at a time and writes its flame tree, nested spans each as wide as its duration, naming where the record sits.</p>
   </div>
 
-  <div class="chip part" style="left:580px;top:527px"><div class="nm mono">flames.pN</div><div class="cp">one flame tree per request</div></div>
-  <div class="chip part mem" style="left:580px;top:603px"><div class="nm mono">SQLite Tables</div><div class="cp">the aggregates, in buckets, on disk</div></div>
+  <div class="topo" style="left:260px;top:674px">topology stats-builder</div>
+  <div class="abs card node" style="left:260px;top:690px;width:262px">
+    <h3>Stats_Builder_Node</h3>
+    <p>Takes one flame at a time, reads its record back from <span class="mono">requests.pN</span>, and folds the request into every aggregate: request totals, the slowest categories, the URLs, and time series by category and by dimension.</p>
+    <p class="grey">Writes at most once every five seconds.</p>
+  </div>
+
+  <div class="chip part" style="left:580px;top:547px"><div class="nm mono">flames.pN</div><div class="cp">one flame tree per request</div></div>
+  <div class="chip part mem" style="left:580px;top:707px"><div class="nm mono">SQLite Tables</div><div class="cp">the aggregates, in buckets, on disk</div></div>
 
 
   <div class="reader" style="left:810px;top:543px"><div class="panel"><header>Performance</header><div class="body">Reads the statistics and the requests index through the <span class="mono">performance</span> verbs: site totals, the URL leaderboard, one URL's aggregate flame, and one request's trace with its findings.</div></div></div>

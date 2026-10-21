@@ -22,12 +22,12 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
-use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
+use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Core;
 // Both plugins have a `Core`; the hook instrumentation belongs to THIS one.
@@ -239,7 +239,7 @@ class Findings {
 		$rule_id  = $rule?->id;
 
 		// A share needs a timing sample (decision 24) long enough to divide.
-		$shares   = Flame_Builder_Node::timing_counts( $duration, $record['error_status'] ?? '-' ) && $duration >= self::MIN_DURATION_MS;
+		$shares   = Stats_Builder_Node::timing_counts( $duration, $record['error_status'] ?? '-' ) && $duration >= self::MIN_DURATION_MS;
 		$stopped  = self::stopped( $record, $entries, $rule );
 		// Unstamped, or stamped by a rule this ruleset does not hold.
 		$cold    = null === $rule ? null : self::cold_start( $record, $rule, $nodes, null === $stopped ? $duration : null );
@@ -1492,7 +1492,7 @@ class Findings {
 	 */
 	private static function stopped( array $record, array $entries, ?Rule $rule ): ?array {
 		$status = $record['error_status'] ?? '-';
-		if ( ! \in_array( $status, Flame_Builder_Node::UNTIMED_STATUSES, true ) ) {
+		if ( ! \in_array( $status, Stats_Builder_Node::UNTIMED_STATUSES, true ) ) {
 			return null;
 		}
 		if ( ! \is_numeric( $record['last_log_ts'] ?? null ) || ! \is_numeric( $record['timestamp'] ?? null ) ) {

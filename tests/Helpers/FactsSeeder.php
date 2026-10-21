@@ -1,7 +1,7 @@
 <?php
 /**
  * FactsSeeder: rows in the Row_Table the active topologies declare with the
- * Flame_Facts schema, written as the flame builder writes them.
+ * Flame_Facts schema, written as the stats builder writes them.
  *
  * Each seeder sends one `ROWS` batch through a real `Row_Table` bound to the
  * partition it names, so a seed passes the same write contract a flush does:
@@ -19,7 +19,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Helpers;
 
 use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
 use Newspack_Event_Logger_Nodes\Bucket;
-use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Bootstrap;
@@ -205,7 +205,7 @@ trait FactsSeeder {
 				if ( null === $url_at ) {
 					$url_at              = \count( $batch );
 					$at['urls'][ $hash ] = $url_at;
-					$batch[]             = [ 'ignore', 'urls', Flame_Builder_Node::url_row( $url, $server ), [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => $server_at ] ];
+					$batch[]             = [ 'ignore', 'urls', Stats_Builder_Node::url_row( $url, $server ), [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => $server_at ] ];
 				}
 				$values['url_id'] = null;
 				$ids[ Flame_Facts_Row_Schema::position( $table, 'url_id' ) ] = $url_at;

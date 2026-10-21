@@ -58,7 +58,7 @@ final class UninstallStatsTablesTest extends TestCase {
 	 */
 	public function test_uninstall_deletes_the_url_snapshot_and_a_build_in_flight(): void {
 		$this->use_base_dir( $this->make_temp_dir( 'uninstall-stats-job-' ) );
-		$this->activate_shipped( 'flame-builder', 1 );
+		$this->activate_shipped( 'stats-builder', 1 );
 		$this->seed_request( [ 'url' => 'https://seed.example/kea-7561/' ] );
 		$this->assertTrue( Row_Table_Node::build( Flame_Facts_Row_Schema::class, Url_Snapshot::NAME, static fn (): bool => true ) );
 		$this->assertTrue( self::snapshot_published() );
@@ -86,7 +86,7 @@ final class UninstallStatsTablesTest extends TestCase {
 	 */
 	public function test_uninstall_says_a_snapshot_that_will_not_delete_and_goes_on(): void {
 		$this->use_base_dir( $this->make_temp_dir( 'uninstall-stats-stuck-' ) );
-		$this->activate_shipped( 'flame-builder', 1 );
+		$this->activate_shipped( 'stats-builder', 1 );
 		$this->seed_request( [ 'url' => 'https://seed.example/kea-7562/' ] );
 		Row_Table_Node::build( Flame_Facts_Row_Schema::class, Url_Snapshot::NAME, static fn (): bool => true );
 		foreach ( self::partition_files( self::FACTS_TABLE ) as $file ) {
