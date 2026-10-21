@@ -37,6 +37,7 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Settings_Schema;
 use Newspack_Nodes\Core as RuntimeCore;
+use Newspack_Nodes\Driver_Error;
 use Newspack_Nodes\Rate_Limit;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -185,7 +186,7 @@ class Core {
 	 */
 	public const MAX_DEPTH = 15;
 
-	/** Bytes a span's error message keeps, after its shaping or redaction. */
+	/** Bytes an HTTP span's error message keeps, after its redaction. */
 	private const ERROR_MAX = 256;
 
 	/** Bytes an HTTP span's method keeps: room for every registered method. */
@@ -1012,13 +1013,14 @@ class Core {
 	}
 
 	/**
-	 * What a statement came to: its error as `Log_Manager::driver_error()`
-	 * writes it, the number and the message cut at its first quote, then cut
-	 * at `ERROR_MAX`; or its row count by the split `wpdb::query()` makes —
-	 * none for DDL, `rows_affected` for a write, `num_rows` for the rest. The
-	 * firehose replicates to the hub, and MySQL quotes the values it failed
-	 * on: a duplicate key whole, and a syntax error's fragment, whose quotes
-	 * pair wrongly when it opens at a literal, so no shaping can be trusted.
+	 * What a statement came to: its error as the substrate's
+	 * `Driver_Error::shape()` writes it, the number and the message cut at
+	 * its first quote, within 256 bytes; or its row count by the split
+	 * `wpdb::query()` makes — none for DDL, `rows_affected` for a write,
+	 * `num_rows` for the rest. The firehose replicates to the hub, and MySQL
+	 * quotes the values it failed on: a duplicate key whole, and a syntax
+	 * error's fragment, whose quotes pair wrongly when it opens at a literal,
+	 * so no shaping can be trusted.
 	 *
 	 * @param object $wpdb  The database object that ran it.
 	 * @param string $query The statement as the database was asked it.
@@ -1047,7 +1049,7 @@ class Core {
 			return [];
 		}
 		if ( '' !== $outcome['error'] ) {
-			return [ 'error' => \substr( Log_Manager::driver_error( $outcome['errno'], $outcome['error'] ), 0, self::ERROR_MAX ) ];
+			return [ 'error' => Driver_Error::shape( $outcome['errno'], $outcome['error'] ) ];
 		}
 		if ( 1 === \preg_match( self::DDL_LEAD, $query ) ) {
 			return [];

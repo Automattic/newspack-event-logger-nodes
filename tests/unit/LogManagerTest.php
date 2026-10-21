@@ -3528,21 +3528,25 @@ class LogManagerTest extends TestCase {
 	 * A driver's error carries its code and its message cut at the first
 	 * quote, which is where every value MySQL or SQLite echoes back begins.
 	 */
-	public function test_a_driver_error_keeps_its_code_and_none_of_its_values(): void {
-		$this->assertSame( '[1062] Duplicate entry', Log_Manager::driver_error( 1062, "Duplicate entry 'weka-7746@kea.test' for key 'user_email'" ) );
-		$this->assertSame( '[HY000] SQLSTATE[HY000]: General error: 1 near', Log_Manager::driver_error( 'HY000', 'SQLSTATE[HY000]: General error: 1 near "kea-7746": syntax error' ) );
+	public function test_a_thrown_driver_exception_keeps_its_code_and_none_of_its_values(): void {
 		$this->assertSame( 'PDOException: [23000] SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry', Log_Manager::thrown( new \PDOException( "SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'weka-7746' for key 'k'", 23000 ) ) );
 		$this->assertSame( 'RuntimeException: kea \'quoted\' stays', Log_Manager::thrown( new \RuntimeException( "kea 'quoted' stays" ) ) );
 	}
 
 	/**
 	 * A SIGNAL's text is the author's own MESSAGE_TEXT, values and no quotes
-	 * at all, so errno 1644 and SQLSTATE 45000 keep the number alone.
+	 * at all, so SQLSTATE 45000 keeps the number alone.
 	 */
-	public function test_a_signal_keeps_its_number_and_none_of_its_text(): void {
-		$this->assertSame( '[1644]', Log_Manager::driver_error( 1644, 'bad email weka@kea.test' ) );
-		$this->assertSame( '[45000]', Log_Manager::driver_error( '45000', 'SQLSTATE[45000]: <<Unknown error>>: 1644 bad email weka@kea.test' ) );
+	public function test_a_thrown_signal_keeps_its_number_and_none_of_its_text(): void {
 		$this->assertSame( 'PDOException: [45000]', Log_Manager::thrown( new \PDOException( 'SQLSTATE[45000]: <<Unknown error>>: 1644 bad email weka@kea.test', 45000 ) ) );
+	}
+
+	/** A thrown driver's text is the substrate's shape, capped at its bytes. */
+	public function test_a_thrown_driver_exception_is_capped_by_the_substrate(): void {
+		$line = Log_Manager::thrown( new \PDOException( \str_repeat( 'kea lock wait 7746 ', 40 ), 1205 ) );
+
+		$this->assertSame( 'PDOException: ' . \Newspack_Nodes\Driver_Error::shape( 1205, \str_repeat( 'kea lock wait 7746 ', 40 ) ), $line );
+		$this->assertSame( \strlen( 'PDOException: ' ) + \Newspack_Nodes\Driver_Error::MAX_BYTES, \strlen( $line ) );
 	}
 
 	/**

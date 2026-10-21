@@ -24,6 +24,7 @@ use Newspack_Nodes\Worker_Should_Stop;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Driver_Error;
 use Newspack_Nodes\Node_Names;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -161,17 +162,6 @@ class Log_Manager {
 	private const REQUEST_METHOD_MAX = 32;
 
 	private const MAX_DATA_SIZE = 3840;
-
-	/**
-	 * The codes a SIGNAL raises, keyed for lookup: MySQL's
-	 * `ER_SIGNAL_EXCEPTION` and the SQLSTATE a PDO reports it under.
-	 *
-	 * @var array<int,true>
-	 */
-	private const SIGNALS = [
-		1644  => true,
-		45000 => true,
-	];
 
 	/** Raw bytes a fatal's message keeps on the terminal, cut on a character. */
 	private const FATAL_MESSAGE_MAX = 1024;
@@ -444,7 +434,7 @@ class Log_Manager {
 		$error = $last();
 		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
 			$plugin                         = self::extract_plugin_slug( $error['file'] );
-			$complete_extra['fatal_error']  = self::within_encoding( self::fatal_message( $error['message'] ), self::FATAL_MESSAGE_MAX, self::FATAL_MESSAGE_BUDGET );
+			$complete_extra['fatal_error']  = self::within_encoding( Driver_Error::fatal( $error['message'] ), self::FATAL_MESSAGE_MAX, self::FATAL_MESSAGE_BUDGET );
 			$complete_extra['fatal_file']   = self::within_encoding( $error['file'], self::FATAL_PATH_MAX, self::FATAL_PATH_BUDGET );
 			$complete_extra['fatal_line']   = $error['line'];
 			$complete_extra['fatal_type']   = $error['type'];
@@ -460,36 +450,6 @@ class Log_Manager {
 			$this->aborted ? 'aborted' : 'complete'
 		);
 		$this->topic?->flush();
-	}
-
-	/**
-	 * A fatal's message as the terminal carries it. Its stack trace goes, for
-	 * every fatal: `fatal_file` and `fatal_line` locate it, and a frame
-	 * prints the arguments a statement ran with. An uncaught
-	 * `PDOException` or `mysqli_sql_exception`, or a subclass, as PHP prints
-	 * it (`Uncaught <Class>: <message> in <file>:<line>`), keeps its class
-	 * and its message cut as `driver_error()` cuts one — its SQLSTATE alone
-	 * for a SIGNAL — since no error number survives into the text.
-	 *
-	 * @param string $message `error_get_last()`'s message.
-	 */
-	private static function fatal_message( string $message ): string {
-		$message = \explode( "\nStack trace:", $message, 2 )[0];
-		if ( 1 !== \preg_match( '/^Uncaught ([\w\\\\]+): (.*) in [^\n]*:\d+$/s', $message, $uncaught ) || ! self::is_driver_class( $uncaught[1] ) ) {
-			return $message;
-		}
-		$state = 1 === \preg_match( '/SQLSTATE\[(\w+)\]/', $uncaught[2], $code ) ? $code[1] : '';
-		$said  = isset( self::SIGNALS[ $state ] ) ? "SQLSTATE[{$state}]" : self::before_quote( $uncaught[2] );
-		return "Uncaught {$uncaught[1]}: {$said}";
-	}
-
-	/**
-	 * Whether a class PHP named in a fatal is a database driver's exception.
-	 *
-	 * @param string $class The class as PHP printed it.
-	 */
-	private static function is_driver_class( string $class ): bool {
-		return \is_a( $class, \PDOException::class, true ) || \is_a( $class, 'mysqli_sql_exception', true );
 	}
 
 	/**
@@ -720,8 +680,9 @@ class Log_Manager {
 	 * A caught throwable as a line the firehose may carry: `stop` for a
 	 * cooperative stop, else `Class: message` — the short class,
 	 * `class@anonymous` for an anonymous one, whose name carries a file path
-	 * and a NUL — its message through `driver_text()`. message() clips a
-	 * message too long for the line, so the class always survives. A thrown
+	 * and a NUL — its message through the substrate's `Driver_Error::of()`,
+	 * which shapes a database driver's. message() clips a message too long
+	 * for the line, so the class always survives. A thrown
 	 * span's close, a Query Monitor log line and a builder's narration all
 	 * spell a throwable this way.
 	 *
@@ -734,46 +695,8 @@ class Log_Manager {
 		$class = \str_contains( $thrown::class, '@anonymous' )
 			? 'class@anonymous'
 			: \basename( \strtr( $thrown::class, '\\', '/' ) );
-		$said  = self::driver_text( $thrown );
+		$said  = Driver_Error::of( $thrown );
 		return '' === $said ? $class : "{$class}: {$said}";
-	}
-
-	/**
-	 * A throwable's message, or a database driver's through
-	 * `driver_error()`: `PDOException` and `mysqli_sql_exception` quote the
-	 * values a statement failed on.
-	 *
-	 * @param \Throwable $thrown What was thrown.
-	 */
-	public static function driver_text( \Throwable $thrown ): string {
-		return $thrown instanceof \PDOException || $thrown instanceof \mysqli_sql_exception
-			? self::driver_error( $thrown->getCode(), $thrown->getMessage() )
-			: $thrown->getMessage();
-	}
-
-	/**
-	 * A database error as the firehose may carry it: `[<code>] ` and the
-	 * message cut at its first quote. MySQL and SQLite quote every value
-	 * they echo — a duplicate key, the fragment a syntax error stopped at,
-	 * the 80 characters of it MySQL keeps — and a fragment opening at a
-	 * literal pairs its quotes wrongly, so the cut is the one safe rule. A
-	 * SIGNAL (`SIGNALS`) keeps its number alone: its text is the author's
-	 * own MESSAGE_TEXT, values and no quotes at all.
-	 *
-	 * @param int|string $code    The driver's error number or SQLSTATE.
-	 * @param string     $message The driver's message.
-	 */
-	public static function driver_error( int|string $code, string $message ): string {
-		return isset( self::SIGNALS[ (string) $code ] ) ? "[{$code}]" : "[{$code}] " . self::before_quote( $message );
-	}
-
-	/**
-	 * A driver's message up to its first quote, where its values begin.
-	 *
-	 * @param string $message The driver's message.
-	 */
-	private static function before_quote( string $message ): string {
-		return \rtrim( (string) \preg_replace( '/[\'"`].*/s', '', $message ) );
 	}
 
 	/**

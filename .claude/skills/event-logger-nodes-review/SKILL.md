@@ -37,10 +37,11 @@ A new producer of potentially-large jobs routed through `Log_Manager` is broken:
 | The elision marker `log_environment()` appends to a capped value | U+2026 on both sides |
 | `URL_REDACT_PATTERN`, `URL_PARAMETER`, `CONTROL_CHARS` | Byte-identical bodies and flags |
 | `url-redaction.json` | Both copies identical, and both redactors give its expected output on every case |
+| `driver-error.json` | The substrate's and gyrobase's copies identical, and `Driver_Error::shape()` and `Gyrobase::Log::driver_error` give its expected bytes on every case |
 
 Neither plugin can host the check — only the dndocker tree sees both producers. `tools/check-firehose-parity.py` is it, and ELN's `pre-push` runs it whenever this tree is the checkout. It also refuses an allowlisted key that reads as a secret.
 
-Those rows, plus where each producer applies the redactor (with no query test of its own), that both strip the request URL of control characters, and that neither redacts a query shape or a queued job body, are the whole of what it compares. `MAX_DATA_SIZE` (3840) is not among them and the script never reads it, because the Perl side bounds a different thing: `$MAX_LINE_SIZE` is PIPE_BUF itself, 4096, applied to the PACKED LINE rather than to the encoded entry, and its overflow path replaces `m` with a `(truncated, original N bytes)` stub instead of trimming it in a loop. Moving 3840 therefore draws no mechanical warning: reason the two producers against `Log.pm` by hand.
+Those rows, the `sql-shape.json` and `signature-shape.json` copies, plus where each producer applies the redactor (with no query test of its own), that both strip the request URL of control characters, and that neither redacts a query shape or a queued job body, are the whole of what it compares. `MAX_DATA_SIZE` (3840) is not among them and the script never reads it, because the Perl side bounds a different thing: `$MAX_LINE_SIZE` is PIPE_BUF itself, 4096, applied to the PACKED LINE rather than to the encoded entry, and its overflow path replaces `m` with a `(truncated, original N bytes)` stub instead of trimming it in a loop. Moving 3840 therefore draws no mechanical warning: reason the two producers against `Log.pm` by hand.
 
 **Cap AFTER redaction.** Reversing the two would let a truncation expose the tail of a secret the redaction covered. A diff editing either side alone ships two producers writing different lines.
 
@@ -88,7 +89,7 @@ Push back on any diff introducing a hub flag — an `enable_aggregator` / `enabl
 
 ### 8. The substrate floor is a version, not a presence check
 
-The deferred bootstrap on `plugins_loaded` priority -11001 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.116.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
+The deferred bootstrap on `plugins_loaded` priority -11001 checks `class_exists( '\Newspack_Nodes\Bootstrap' )` AND `Bootstrap::version_at_least( '2.121.0', 'Newspack Event Logger Nodes' )`. Below the floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there; a missing substrate returns silently. `Requires Plugins: newspack-nodes` keeps the substrate active on WP 6.5+ but does not guarantee the floor, and WordPress does not order plugin updates.
 
 A diff calling a newer substrate API must raise the floor. `scripts/check-substrate-floor.sh` audits the declared floor against every substrate API PHPStan resolves this plugin as calling, and `lint-docs.sh` rule 6 holds the prose to the loader — **a floor set too LOW is worse than none**, because the handshake passes and the plugin fatals later. The deferred bootstrap runs at `NEWSPACK_EVENT_LOGGER_NODES_BOOT_PRIORITY` (-11001), below `hook_start_priority`, so a rule naming `plugins_loaded` times it; don't raise it past that.
 

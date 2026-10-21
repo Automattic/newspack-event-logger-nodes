@@ -38,6 +38,7 @@ use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Driver_Error;
 use Newspack_Nodes\Row_Reader;
 use Newspack_Nodes\Row_Table_Node;
 use Newspack_Nodes\Table_Unavailable;
@@ -618,7 +619,7 @@ final class Url_Snapshot {
 			}
 		} catch ( Table_Unavailable | \PDOException $e ) {
 			// The stderr line reaches the firehose: a driver's text is shaped.
-			$why = Log_Manager::driver_text( $e );
+			$why = Driver_Error::of( $e );
 		}
 		Core::print_less_often( 'performance: the URL snapshot did not open', ' — ' . $why );
 		return null;
