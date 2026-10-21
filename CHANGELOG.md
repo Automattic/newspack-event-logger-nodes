@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`dump_request` says why a request is not found.** The MCP summary and the verb description named only the missing row. Both now also name the second cause: a request whose record has aged out of the raw logs, about a day by default, still counts in every aggregate but answers `Request not found`.
+
 ## [0.149.0] - 2026-10-20
 
 ### Added
