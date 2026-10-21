@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The repetition finding counts a platform span per label.** Ten `stats query`, `flame lookup` or `grep scan` spans each asking something different were reported as one name fired ten times. They now group by name and label, so only true repeats of one question raise the finding, and its title and proposal name the labelled span. Other span kinds group as before.
 - **`dump_request` says why a request is not found.** The MCP summary and the verb description named only the missing row. Both now also name the second cause: a request whose record has aged out of the raw logs, about a day by default, still counts in every aggregate but answers `Request not found`.
 
 ## [0.149.0] - 2026-10-20

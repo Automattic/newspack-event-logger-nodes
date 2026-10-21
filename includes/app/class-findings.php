@@ -718,8 +718,23 @@ class Findings {
 			'rule_id'  => $rule?->id,
 			'proposal' => $defers
 				? self::proposal( 'none', $rule?->id, 'The dominant span\'s finding already covers this name.' )
-				: self::visibility_proposal( $worst['name'], $rule, 'Unmark it once the caller is identified.' ),
+				: self::repeat_proposal( $worst['name'], $rule ),
 		];
+	}
+
+	/**
+	 * The proposal for a repeat the reader can act on. The logger's own work
+	 * has no rule edit, so its verdict names the labelled span it found.
+	 *
+	 * @param string    $name The repeated span's name, label included.
+	 * @param Rule|null $rule The governing rule, or null when none does.
+	 * @return array<string,mixed>
+	 */
+	private static function repeat_proposal( string $name, ?Rule $rule ): array {
+		if ( 'upkeep' === Flame_Tree::span_kind( $name ) ) {
+			return self::proposal( 'none', $rule?->id, \sprintf( self::SPAN_ADVICE['upkeep']['why'], $name ) );
+		}
+		return self::visibility_proposal( $name, $rule, 'Unmark it once the caller is identified.' );
 	}
 
 	/**
@@ -786,7 +801,8 @@ class Findings {
 	 * callers are 22 questions, not one. The calls no label holds —
 	 * unlabelled, or past the builder's label cap — stay under the bare state
 	 * at the profile's totals less the labels', so none drop out. For any
-	 * other kind the state is what repeated.
+	 * other kind the state is what repeated. The logger's own work is judged
+	 * by label too: ten stats queries asking ten things are not one repeat.
 	 *
 	 * @param string                 $state   The profile's key.
 	 * @param array<array-key,mixed> $profile `{ entries, count, time }`, per `Request_Builder_Node::push_stack()`.
@@ -795,7 +811,7 @@ class Findings {
 	private static function repeats_in( string $state, array $profile ): array {
 		$time  = Core::num_float( $profile['time'] ?? 0 );
 		$count = Core::num_int( $profile['count'] ?? 0 );
-		if ( ! Flame_Tree::rule_binds( $state ) ) {
+		if ( ! self::judged_by_label( $state ) ) {
 			return [ [ $state, $time, $count ] ];
 		}
 		$out = [];
@@ -811,6 +827,17 @@ class Findings {
 			$out[] = [ $state, $time, $count ];
 		}
 		return $out;
+	}
+
+	/**
+	 * Whether each `l` label of a state is a question of its own: a span a
+	 * rule binds, or the logger's own work, whose label says what it asked.
+	 *
+	 * @param string $state A profile's key.
+	 * @return bool
+	 */
+	private static function judged_by_label( string $state ): bool {
+		return Flame_Tree::rule_binds( $state ) || 'upkeep' === Flame_Tree::span_kind( $state );
 	}
 
 	/**
