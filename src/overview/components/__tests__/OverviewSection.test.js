@@ -67,7 +67,7 @@ import * as React from 'react';
 import OverviewSection from '../OverviewSection';
 import { SERIES_MEASURES } from '../../constants';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
-import { rowsWire } from '../../../test-helpers/chartWire';
+import { rowsWire, slotsEndingAt } from '../../../test-helpers/chartWire';
 
 /**
  * A view slice holding a `query` answer, as `useNodeField` hands one over.
@@ -90,7 +90,7 @@ const sliceOf = ( data, more = {} ) => ( {
  * @param {string}  bucket The selection it echoes.
  * @return {Object} The answer.
  */
-const uaAnswer = ( rows, bucket = '2026-09-28-14-40..2026-09-29-14-40' ) =>
+const uaAnswer = ( rows, bucket = '2026-09-29-12-40..2026-09-29-14-40' ) =>
 	rowsWire( [ 'bucket', 'ua', ...SERIES_MEASURES ], rows, {
 		filters: { filter: {}, bucket, search: '' },
 	} );
@@ -104,7 +104,8 @@ const baseTotals = {
 };
 
 /**
- * The section's props over `overview`, with `overrides` set.
+ * The section's props over `overview`, with `overrides` set. An overview
+ * names 24 slots unless it names its own, as every reply names some.
  *
  * @param {?Object} overview  The overview slice payload.
  * @param {Object}  overrides Props to set.
@@ -112,7 +113,10 @@ const baseTotals = {
  */
 function mountProps( overview, overrides = {} ) {
 	return {
-		overview,
+		overview: overview && {
+			slots: slotsEndingAt( '2026-09-29-14-35', 24 ),
+			...overview,
+		},
 		urlTotals: baseTotals,
 		serverFilter: '',
 		setServerFilter: jest.fn(),
@@ -360,6 +364,37 @@ describe( 'OverviewSection', () => {
 				.click();
 		} );
 		expect( setChartChips ).toHaveBeenCalledWith( [] );
+		unmount();
+	} );
+
+	it( "captions the stats grid with the span its chart's answer read", () => {
+		const { container, unmount } = mount(
+			{ slots: slotsEndingAt( '2026-09-29-14-35', 24 ) },
+			{
+				chartSlice: sliceOf(
+					uaAnswer( [], '2026-09-29-11-40..2026-09-29-14-40' )
+				),
+			}
+		);
+
+		expect(
+			container
+				.querySelector( '.event-logger-overview-stats' )
+				.getAttribute( 'title' )
+		).toBe(
+			'The last 3 hours in five-minute buckets, the current one so far.'
+		);
+		unmount();
+	} );
+
+	it( 'captions the stats grid with no span before its chart answers', () => {
+		const { container, unmount } = mount( {} );
+
+		expect(
+			container
+				.querySelector( '.event-logger-overview-stats' )
+				.hasAttribute( 'title' )
+		).toBe( false );
 		unmount();
 	} );
 

@@ -23,6 +23,7 @@ import {
 	valueName,
 	runsOf,
 	runSpan,
+	slotSpan,
 	useBucketSelection,
 	useSelectedSlots,
 	useSlotClick,
@@ -33,9 +34,14 @@ import { rowsWire, slotsEndingAt } from '../../test-helpers/chartWire';
 import { act, cleanupMounts, renderHook } from '../../test-helpers/renderHook';
 
 /**
- * A reply's slots at 14:37:11 UTC, newest first as the server sends them.
+ * A reply's 24 slots at 14:37:11 UTC, newest first as the server sends them.
  */
-const SLOTS = slotsEndingAt( '2026-09-29-14-35' );
+const SLOTS = slotsEndingAt( '2026-09-29-14-35', 24 );
+
+/**
+ * A limit no parsing case here reaches, so each tests the spelling alone.
+ */
+const ROOM = 100;
 
 describe( 'buildChartSlots', () => {
 	afterEach( () => {
@@ -45,10 +51,10 @@ describe( 'buildChartSlots', () => {
 	it( 'draws one five-minute slot per key the reply named, oldest first', () => {
 		const slots = buildChartSlots( SLOTS );
 
-		expect( slots ).toHaveLength( 288 );
-		expect( slots[ 0 ].bucketKey ).toBe( '2026-09-28-14-40' );
-		expect( slots[ 287 ].bucketKey ).toBe( '2026-09-29-14-35' );
-		expect( slots[ 287 ].date.toISOString() ).toBe(
+		expect( slots ).toHaveLength( 24 );
+		expect( slots[ 0 ].bucketKey ).toBe( '2026-09-29-12-40' );
+		expect( slots[ 23 ].bucketKey ).toBe( '2026-09-29-14-35' );
+		expect( slots[ 23 ].date.toISOString() ).toBe(
 			'2026-09-29T14:35:00.000Z'
 		);
 		expect( new Set( slots.map( ( slot ) => slot.seconds ) ) ).toEqual(
@@ -346,6 +352,15 @@ describe( 'answerSlots', () => {
 		] );
 	} );
 
+	it( 'draws every bucket the server echoed, however many', () => {
+		const axis = answerSlots( {
+			filters: { bucket: '2026-10-14-07-00..2026-10-15-08-00' },
+		} );
+
+		expect( axis ).toHaveLength( 300 );
+		expect( axis[ 0 ] ).toBe( '2026-10-15-07-55' );
+	} );
+
 	it( 'draws no axis before an answer arrives', () => {
 		expect( answerSlots( null ) ).toBeNull();
 	} );
@@ -353,41 +368,69 @@ describe( 'answerSlots', () => {
 
 describe( 'bucketSpan', () => {
 	it( "names a bucket key as its five minutes in the viewer's zone", () => {
-		expect( bucketSpan( '2026-10-05-18-40' ) ).toBe( '11:40–11:45 AM' );
-		expect( bucketSpan( '2026-10-05-06-55' ) ).toBe( '11:55 PM–12:00 AM' );
+		expect( bucketSpan( '2026-10-05-18-40', ROOM ) ).toBe(
+			'11:40–11:45 AM'
+		);
+		expect( bucketSpan( '2026-10-05-06-55', ROOM ) ).toBe(
+			'11:55 PM–12:00 AM'
+		);
 	} );
 
 	it( 'answers null for anything not shaped as a bucket key', () => {
-		expect( bucketSpan( 'kea-junk' ) ).toBeNull();
-		expect( bucketSpan( '2026-10-04-13' ) ).toBeNull();
-		expect( bucketSpan( '' ) ).toBeNull();
+		expect( bucketSpan( 'kea-junk', ROOM ) ).toBeNull();
+		expect( bucketSpan( '2026-10-04-13', ROOM ) ).toBeNull();
+		expect( bucketSpan( '', ROOM ) ).toBeNull();
 	} );
 
 	it( 'names each run of a selection as its local span, in order', () => {
 		expect(
-			bucketSpan( '2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30' )
+			bucketSpan(
+				'2026-10-05-16-55..2026-10-05-17-15,2026-10-05-18-30',
+				ROOM
+			)
 		).toBe( '9:55–10:15 AM, 11:30–11:35 AM' );
 	} );
 
 	it( 'names a run by the key that closes it', () => {
-		expect( bucketSpan( '2026-10-20-11-00..2026-10-20-19-00' ) ).toBe(
+		expect( bucketSpan( '2026-10-20-11-00..2026-10-20-19-00', ROOM ) ).toBe(
 			'4:00 AM–12:00 PM'
 		);
 	} );
 
 	it( 'answers null for a selection the server would refuse', () => {
-		expect( bucketSpan( '2026-10-05-17-10..2026-10-05-16-55' ) ).toBeNull();
-		expect( bucketSpan( '2026-10-05-16-55..2026-10-05-16-55' ) ).toBeNull();
+		expect(
+			bucketSpan( '2026-10-05-17-10..2026-10-05-16-55', ROOM )
+		).toBeNull();
+		expect(
+			bucketSpan( '2026-10-05-16-55..2026-10-05-16-55', ROOM )
+		).toBeNull();
+	} );
+
+	it( 'answers null for a selection longer than the 24 slots charted', () => {
+		expect(
+			bucketSpan( '2026-10-05-16-00..2026-10-05-18-00', SLOTS.length )
+		).toBe( '9:00–11:00 AM' );
+		expect(
+			bucketSpan( '2026-10-05-16-00..2026-10-05-18-05', SLOTS.length )
+		).toBeNull();
 	} );
 } );
 
 describe( 'bucketLabel', () => {
 	it( 'names a bucket key by its span', () => {
-		expect( bucketLabel( '2026-10-05-18-40' ) ).toBe( '11:40–11:45 AM' );
+		expect( bucketLabel( '2026-10-05-18-40', ROOM ) ).toBe(
+			'11:40–11:45 AM'
+		);
 	} );
 
 	it( 'names a key of another shape as it arrived', () => {
-		expect( bucketLabel( 'kea-junk' ) ).toBe( 'kea-junk' );
+		expect( bucketLabel( 'kea-junk', ROOM ) ).toBe( 'kea-junk' );
+	} );
+
+	it( 'names a selection longer than the 24 slots charted as it arrived', () => {
+		const run = '2026-10-05-16-00..2026-10-05-18-05';
+
+		expect( bucketLabel( run, SLOTS.length ) ).toBe( run );
 	} );
 } );
 
@@ -424,7 +467,7 @@ describe( 'bucketsOf and bucketSpelling', () => {
 	it.each( FIXTURE.canonical.map( ( c ) => [ c.spelling, c.keys ] ) )(
 		'reads %j as its keys and spells them back',
 		( spelling, keys ) => {
-			expect( bucketsOf( spelling ) ).toEqual( keys );
+			expect( bucketsOf( spelling, ROOM ) ).toEqual( keys );
 			expect( bucketSpelling( keys ) ).toBe( spelling );
 		}
 	);
@@ -434,35 +477,44 @@ describe( 'bucketsOf and bucketSpelling', () => {
 	)(
 		'reads the loose spelling %j as ascending keys, each once, spelled canonical',
 		( spelling, keys, canonical ) => {
-			expect( bucketsOf( spelling ) ).toEqual( keys );
+			expect( bucketsOf( spelling, ROOM ) ).toEqual( keys );
 			expect( bucketSpelling( keys ) ).toBe( canonical );
 		}
 	);
 
 	it( 'reads a run as the buckets before the key closing it', () => {
-		const keys = bucketsOf( '2026-10-20-11-00..2026-10-20-19-00' );
+		const keys = bucketsOf( '2026-10-20-11-00..2026-10-20-19-00', ROOM );
 
 		expect( keys ).toHaveLength( 96 );
 		expect( keys[ 0 ] ).toBe( '2026-10-20-11-00' );
 		expect( keys.at( -1 ) ).toBe( '2026-10-20-18-55' );
-		expect( bucketsOf( '2026-10-20-11-00' ) ).toEqual( [
+		expect( bucketsOf( '2026-10-20-11-00', ROOM ) ).toEqual( [
 			'2026-10-20-11-00',
 		] );
 	} );
 
 	it.each( FIXTURE.refused )( 'selects nothing for %j', ( spelling ) => {
-		expect( bucketsOf( spelling ) ).toEqual( [] );
+		expect( bucketsOf( spelling, ROOM ) ).toEqual( [] );
 	} );
 
-	it( "holds a selection to the fixture's limit, as the server does", () => {
+	it( 'refuses a selection longer than the 24 slots charted, as the server does', () => {
+		const max = SLOTS.length;
 		const first = '2026-10-03-06-40';
-		const full = `${ first }..${ keyAfter( first, FIXTURE.max ) }`;
+		const full = `${ first }..${ keyAfter( first, max ) }`;
 
-		expect( bucketsOf( full ) ).toHaveLength( FIXTURE.max );
+		expect( bucketsOf( full, max ) ).toHaveLength( 24 );
 		expect(
-			bucketsOf( `${ first }..${ keyAfter( first, FIXTURE.max + 1 ) }` )
+			bucketsOf( `${ first }..${ keyAfter( first, max + 1 ) }`, max )
 		).toEqual( [] );
-		expect( bucketsOf( `${ full },2026-10-05-23-55` ) ).toEqual( [] );
+		expect( bucketsOf( `${ full },2026-10-05-23-55`, max ) ).toEqual( [] );
+	} );
+
+	it( 'holds a selection to the limit it is handed and no other', () => {
+		const first = '2026-10-03-06-40';
+
+		expect(
+			bucketsOf( `${ first }..${ keyAfter( first, 300 ) }`, 300 )
+		).toHaveLength( 300 );
 	} );
 } );
 
@@ -577,7 +629,10 @@ describe( 'useBucketSelection', () => {
 	const mountSelection = ( first ) =>
 		renderHook( () => {
 			const [ spelling, setSpelling ] = React.useState( first );
-			return [ spelling, ...useBucketSelection( spelling, setSpelling ) ];
+			return [
+				spelling,
+				...useBucketSelection( spelling, setSpelling, SLOTS ),
+			];
 		} ).result;
 
 	/**
@@ -630,6 +685,32 @@ describe( 'useBucketSelection', () => {
 		);
 	} );
 
+	it( 'starts afresh when the held selection outruns the 24 slots charted', () => {
+		expect(
+			afterClick(
+				'2026-10-05-16-00..2026-10-05-18-05',
+				'2026-10-05-18-30',
+				true
+			)
+		).toBe( '2026-10-05-18-30' );
+	} );
+
+	it( 'holds a selection without a limit before a reply names its slots', () => {
+		const { result } = renderHook( () =>
+			useBucketSelection(
+				'2026-10-05-16-55..2026-10-05-17-10',
+				() => {},
+				null
+			)
+		);
+
+		expect( result.current[ 0 ] ).toEqual( [
+			'2026-10-05-16-55',
+			'2026-10-05-17-00',
+			'2026-10-05-17-05',
+		] );
+	} );
+
 	/**
 	 * The spelling one drag leaves on a held selection.
 	 *
@@ -657,7 +738,7 @@ describe( 'useBucketSelection', () => {
 	} );
 
 	it( 'writes a drag across 4:00 AM to 12:00 PM as the run it closes', () => {
-		const keys = bucketsOf( '2026-10-20-11-00..2026-10-20-19-00' );
+		const keys = bucketsOf( '2026-10-20-11-00..2026-10-20-19-00', ROOM );
 
 		expect( afterDrag( '', keys, false ) ).toBe(
 			'2026-10-20-11-00..2026-10-20-19-00'
@@ -720,5 +801,19 @@ describe( 'useSelectedSlots', () => {
 		);
 
 		expect( result.current.size ).toBe( 0 );
+	} );
+} );
+
+describe( 'slotSpan', () => {
+	it.each( [
+		[ 288, '24 hours' ],
+		[ 12, '1 hour' ],
+		[ 18, '90 minutes' ],
+		[ 3, '15 minutes' ],
+		[ 1, '5 minutes' ],
+		[ 37, '3 hours 5 minutes' ],
+		[ 0, '0 minutes' ],
+	] )( 'names %i slots as %j, never 0 hours', ( count, words ) => {
+		expect( slotSpan( new Array( count ).fill( null ) ) ).toBe( words );
 	} );
 } );

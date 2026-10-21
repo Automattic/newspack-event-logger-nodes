@@ -117,9 +117,9 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 const d3Mock = d3.__chain;
 
 /**
- * The slots every reply here names: 288 ending at 14:35.
+ * The slots every reply here names: 24 ending at 14:35.
  */
-const SLOTS = slotsEndingAt( '2026-09-29-14-35' );
+const SLOTS = slotsEndingAt( '2026-09-29-14-35', 24 );
 
 // An AggregateTimeChart on SLOTS under a test storage key.
 const aggregateChart = ( props ) =>
@@ -293,7 +293,7 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'titles the chart the last 24 hours', () => {
+	it( 'titles the chart the hours its 24 slots span', () => {
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				series: dimSeries( {
@@ -304,14 +304,14 @@ describe( 'AggregateTimeChart', () => {
 			} )
 		);
 		expect( container.textContent ).toContain(
-			'Request Volume (Last 24 Hours)'
+			'Request Volume (Last 2 hours)'
 		);
 		unmount();
 	} );
 
 	it( 'plots the oldest slot and the newest at their own five minutes', () => {
 		const series = dimSeries( {
-			'2026-09-28-14-40': { 'kea-ua/7': [ 43, 4300, 4, 43 ] },
+			[ SLOTS.at( -1 ) ]: { 'kea-ua/7': [ 43, 4300, 4, 43 ] },
 			[ bucketKeyNow() ]: { 'kea-ua/7': [ 41, 820, 3, 41 ] },
 		} );
 		const { unmount } = renderComponent(
@@ -342,13 +342,12 @@ describe( 'AggregateTimeChart', () => {
 			} )
 		);
 		expect( container.textContent ).toContain(
-			'Request Volume (Last 1 Hour)'
+			'Request Volume (Last 1 hour)'
 		);
 		unmount();
 	} );
 
-	it( 'titles a fractional axis in whole hours, rounded', () => {
-		// Twenty slots are 100 minutes: two hours, never "1 Hours".
+	it( 'titles an axis short of two whole hours in minutes', () => {
 		const { container, unmount } = renderComponent(
 			aggregateChart( {
 				slots: slotsEndingAt( '2026-09-29-14-35', 20 ),
@@ -360,7 +359,7 @@ describe( 'AggregateTimeChart', () => {
 			} )
 		);
 		expect( container.textContent ).toContain(
-			'Request Volume (Last 2 Hours)'
+			'Request Volume (Last 100 minutes)'
 		);
 		unmount();
 	} );
@@ -377,7 +376,7 @@ describe( 'AggregateTimeChart', () => {
 			} )
 		);
 		expect( container.textContent ).toContain(
-			'Request Volume (Last 12 Hours)'
+			'Request Volume (Last 12 hours)'
 		);
 		unmount();
 	} );
@@ -939,20 +938,20 @@ describe( 'AggregateTimeChart', () => {
 	} );
 
 	it.each( [
-		// Metric, then whether slot 41 (all timed out) and slot 43 (no
+		// Metric, then whether slot 11 (all timed out) and slot 13 (no
 		// requests) are measured: a mean over none is a gap, a count is a 0.
 		[ 'avg', false, false ],
 		[ 'memory', true, false ],
 		[ 'volume', true, true ],
 		[ 'cumulative', true, true ],
 	] )(
-		'plots %s with slot 41 measured: %s, slot 43 measured: %s',
+		'plots %s with slot 11 measured: %s, slot 13 measured: %s',
 		( metric, timedOutMeasured, emptyMeasured ) => {
 			const at = ( index ) => SLOTS[ SLOTS.length - 1 - index ];
 			const series = dimSeries( {
-				[ at( 40 ) ]: { 'edge-kea': [ 6, 900, 24, 3 ] },
-				[ at( 41 ) ]: { 'edge-kea': [ 7, 0, 0, 0 ] },
-				[ at( 42 ) ]: { 'edge-kea': [ 2, 500, 10, 2 ] },
+				[ at( 10 ) ]: { 'edge-kea': [ 6, 900, 24, 3 ] },
+				[ at( 11 ) ]: { 'edge-kea': [ 7, 0, 0, 0 ] },
+				[ at( 12 ) ]: { 'edge-kea': [ 2, 500, 10, 2 ] },
 			} );
 			const { unmount } = renderComponent(
 				aggregateChart( {
@@ -965,10 +964,10 @@ describe( 'AggregateTimeChart', () => {
 				( call ) => call[ 0 ]
 			);
 
-			expect( band[ 40 ].defined ).toBe( true );
-			expect( band[ 42 ].defined ).toBe( true );
-			expect( band[ 41 ].defined ).toBe( timedOutMeasured );
-			expect( band[ 43 ].defined ).toBe( emptyMeasured );
+			expect( band[ 10 ].defined ).toBe( true );
+			expect( band[ 12 ].defined ).toBe( true );
+			expect( band[ 11 ].defined ).toBe( timedOutMeasured );
+			expect( band[ 13 ].defined ).toBe( emptyMeasured );
 			unmount();
 		}
 	);
@@ -976,12 +975,12 @@ describe( 'AggregateTimeChart', () => {
 	it( 'draws a memory slot with no requests as a gap, never as 0 MB', () => {
 		const at = ( index ) => SLOTS[ SLOTS.length - 1 - index ];
 		const series = dimSeries( {
-			[ at( 38 ) ]: { '2xx': [ 2, 500, 96, 2 ] },
-			[ at( 40 ) ]: {
+			[ at( 8 ) ]: { '2xx': [ 2, 500, 96, 2 ] },
+			[ at( 10 ) ]: {
 				'5xx': [ 3, 900, 231, 3 ],
 				'2xx': [ 2, 500, 96, 2 ],
 			},
-			[ at( 52 ) ]: { '5xx': [ 1, 300, 77, 1 ] },
+			[ at( 22 ) ]: { '5xx': [ 1, 300, 77, 1 ] },
 		} );
 		const { unmount } = renderComponent(
 			aggregateChart( {
@@ -993,14 +992,14 @@ describe( 'AggregateTimeChart', () => {
 		const bands = d3Mock.datum.mock.calls.map( ( call ) => call[ 0 ] );
 		expect( bands ).toHaveLength( 2 );
 		const [ ok, err ] = bands;
-		expect( err ).toHaveLength( 288 );
-		expect( err[ 40 ].y1 ).toBe( 77 );
-		expect( err[ 52 ].y1 ).toBe( 77 );
-		expect( [ err[ 40 ].defined, err[ 52 ].defined ] ).toEqual( [
+		expect( err ).toHaveLength( SLOTS.length );
+		expect( err[ 10 ].y1 ).toBe( 77 );
+		expect( err[ 22 ].y1 ).toBe( 77 );
+		expect( [ err[ 10 ].defined, err[ 22 ].defined ] ).toEqual( [
 			true,
 			true,
 		] );
-		for ( let index = 41; index <= 51; index++ ) {
+		for ( let index = 11; index <= 21; index++ ) {
 			expect( err[ index ].defined ).toBe( false );
 			expect( ok[ index ].defined ).toBe( false );
 		}

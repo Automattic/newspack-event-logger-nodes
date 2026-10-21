@@ -351,7 +351,7 @@ async function flushEffects( ms = 60 ) {
  */
 const overviewOf = ( servers, more = {} ) => ( {
 	totals: { requests: 100 },
-	slots: slotsEndingAt( '2026-09-29-14-35' ),
+	slots: slotsEndingAt( '2026-09-29-14-35', 24 ),
 	servers,
 	leaderboard: { count: 0, total_time: null, avg_ms: null, categories: [] },
 	...more,
@@ -2332,14 +2332,57 @@ describe( 'PerformanceDashboard', () => {
 			);
 		} );
 
-		it( "hands the table the overview reply's slots for its Time field", async () => {
-			const slots = slotsEndingAt( '2026-10-04-14-00', 6 );
+		it( 'holds the table selection to the live chart answer, not the overview snapshot', async () => {
+			window.history.replaceState(
+				null,
+				'',
+				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35..2026-10-04-13-50'
+			);
 			mockView = loadedView();
-			mockView.overview.data.slots = slots;
+			mockView.overview.data.slots = slotsEndingAt(
+				'2026-10-04-14-00',
+				2
+			);
+			mockView.chart = {
+				data: {
+					columns: [ 'bucket', 'count' ],
+					rows: [],
+					filters: { bucket: '2026-10-04-13-35..2026-10-04-14-05' },
+				},
+			};
 			mountDash();
 			await flushEffects();
 
-			expect( globalThis.__urlTableProps.slots ).toBe( slots );
+			expect( globalThis.__overviewProps.selectedBuckets ).toEqual( [
+				'2026-10-04-13-35',
+				'2026-10-04-13-40',
+				'2026-10-04-13-45',
+			] );
+			expect( globalThis.__urlTableProps.slots ).toEqual(
+				slotsEndingAt( '2026-10-04-14-00', 6 )
+			);
+		} );
+
+		it( 'shades a linked selection without a limit before the chart answers', async () => {
+			window.history.replaceState(
+				null,
+				'',
+				'/wp-admin/admin.php?page=perf&bucket=2026-10-04-13-35..2026-10-04-13-50'
+			);
+			mockView = loadedView();
+			mockView.overview.data.slots = slotsEndingAt(
+				'2026-10-04-14-00',
+				2
+			);
+			mountDash();
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.selectedBuckets ).toEqual( [
+				'2026-10-04-13-35',
+				'2026-10-04-13-40',
+				'2026-10-04-13-45',
+			] );
+			expect( globalThis.__urlTableProps.slots ).toBeNull();
 		} );
 
 		it( 'drops a removed token from ?bucket= and from the ask', async () => {

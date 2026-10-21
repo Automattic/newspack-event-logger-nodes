@@ -1,6 +1,7 @@
 import * as React from 'react';
 import HeadlineStats, { headlineStats } from '../HeadlineStats';
 import { renderComponent } from '../../../test-helpers/renderHook';
+import { slotsEndingAt } from '../../../test-helpers/chartWire';
 
 describe( 'headlineStats', () => {
 	it( 'shows a mean nobody measured as a dash, beside the measured ones', () => {
@@ -73,6 +74,7 @@ describe( 'HeadlineStats', () => {
 			React.createElement( HeadlineStats, {
 				totals: { urls: 7331, requests: 90210, avg_ms: 212.6 },
 				provisional: true,
+				slots: slotsEndingAt( '2026-09-29-14-35', 24 ),
 			} )
 		);
 
@@ -87,6 +89,7 @@ describe( 'HeadlineStats', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( HeadlineStats, {
 				totals: { urls: 7331, requests: 90210 },
+				slots: slotsEndingAt( '2026-09-29-14-35', 24 ),
 			} )
 		);
 
@@ -96,7 +99,10 @@ describe( 'HeadlineStats', () => {
 
 	it( 'shows a dash for every stat while no totals stand', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( HeadlineStats, { totals: null } )
+			React.createElement( HeadlineStats, {
+				totals: null,
+				slots: slotsEndingAt( '2026-09-29-14-35', 24 ),
+			} )
 		);
 
 		const values = [
@@ -107,18 +113,41 @@ describe( 'HeadlineStats', () => {
 		unmount();
 	} );
 
-	it( 'says the window is the last 24 hours, the current five minutes so far', () => {
+	/**
+	 * The title the grid wears over a reply's slots.
+	 *
+	 * @param {string[]} slots The reply's bucket keys, newest first.
+	 * @return {string} The grid's title.
+	 */
+	const titleOver = ( slots ) => {
 		const { container, unmount } = renderComponent(
-			React.createElement( HeadlineStats, { totals: null } )
+			React.createElement( HeadlineStats, { totals: null, slots } )
 		);
-
-		expect(
-			container
-				.querySelector( '.event-logger-overview-stats' )
-				.getAttribute( 'title' )
-		).toBe(
-			'The last 24 hours in five-minute buckets, the current one so far.'
-		);
+		const title = container
+			.querySelector( '.event-logger-overview-stats' )
+			.getAttribute( 'title' );
 		unmount();
+		return title;
+	};
+
+	it( 'names the hours its 24 slots span, the current five minutes so far', () => {
+		expect( titleOver( slotsEndingAt( '2026-09-29-14-35', 24 ) ) ).toBe(
+			'The last 2 hours in five-minute buckets, the current one so far.'
+		);
+	} );
+
+	it( 'names a span short of two whole hours in minutes, never 0 hours', () => {
+		expect( titleOver( slotsEndingAt( '2026-09-29-14-35', 18 ) ) ).toBe(
+			'The last 90 minutes in five-minute buckets, the current one so far.'
+		);
+		expect( titleOver( slotsEndingAt( '2026-09-29-14-35', 2 ) ) ).toBe(
+			'The last 10 minutes in five-minute buckets, the current one so far.'
+		);
+	} );
+
+	it( 'names a one-hour span in the singular', () => {
+		expect( titleOver( slotsEndingAt( '2026-09-29-14-35', 12 ) ) ).toBe(
+			'The last 1 hour in five-minute buckets, the current one so far.'
+		);
 	} );
 } );

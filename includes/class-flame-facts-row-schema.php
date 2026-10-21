@@ -12,7 +12,7 @@
  * `Bootstrap::row_table()`.
  *
  * `category_window` holds each category's and entry's sums over the last
- * `WINDOW_BUCKETS`, and `window_expiry` one row per bucket expired, so a
+ * `Bucket::window()`, and `window_expiry` one row per bucket expired, so a
  * replayed expiry subtracts nothing twice; its newest bucket is the
  * window's watermark.
  *
@@ -42,18 +42,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * }
  */
 final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
-
-	/** Five-minute buckets a `requests` row lives: seven days. */
-	public const REQUESTS_BUCKETS = 2016;
-
-	/** Five-minute buckets a timing row lives: 25 hours. */
-	public const TIMINGS_BUCKETS = 300;
-
-	/** Hours a `requests_hourly` row lives: seven days. */
-	public const HOURLY_HOURS = 168;
-
-	/** Five-minute buckets the category window spans: the chart's 24 hours. */
-	public const WINDOW_BUCKETS = 288;
 
 	/** The window's watermark, the newest bucket `window_expiry` holds; `%s` is the file's alias. */
 	public const WATERMARK_QUERY = 'SELECT MAX( bucket ) FROM %s.window_expiry';
@@ -87,9 +75,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	/** @var array<string,array<string,int>> Each table's column positions, read once. */
 	private static array $positions = [];
 
-	/** @var array<string,Row_Spec>|null The tables, derived once. */
-	private static ?array $tables = null;
-
 	/**
 	 * Where a column sits in its table's rows: the index an op's `ids` map
 	 * fills, read off the declaration so no caller counts columns.
@@ -107,21 +92,26 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * The thirteen row tables, each column in row order, each table a
 	 * `NAMED_BY` column names `retained_by` that column, and that column
 	 * leading an index wherever its table's key or another index does not.
+	 * Each stats table keeps `Bucket::window()` and `Bucket::RETAIN_SLACK`
+	 * more, read from `min_lifetime` on every call.
 	 *
 	 * @api Read by the Row_Table that opens the file.
 	 * @return array<string,Row_Spec> Each table's declaration, by table name.
+	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
 	 */
 	public static function tables(): array {
-		return self::$tables ??= self::referenced( self::declared() );
+		return self::referenced( self::declared( Bucket::window() + Bucket::RETAIN_SLACK ) );
 	}
 
 	/**
 	 * The tables as declared, before `referenced()` adds what `NAMED_BY`
 	 * implies.
 	 *
+	 * @param int $kept Buckets each stats table keeps; `requests_hourly` keeps the hours covering them.
 	 * @return array<string,Row_Spec>
 	 */
-	private static function declared(): array {
+	private static function declared( int $kept ): array {
+		$hours = (int) \ceil( $kept / ( Bucket::HOUR_SECONDS / Bucket::SECONDS ) );
 		return [
 			'urls'            => [
 				'columns'       => [
@@ -173,7 +163,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'requests_cover'  => [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb', 'profiled', 'error', 'finished_at' ],
 					'requests_server' => [ 'server_id', 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb', 'profiled', 'error' ],
 				],
-				'retain'  => [ 'bucket', self::REQUESTS_BUCKETS, Bucket::SECONDS ],
+				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
 			],
 			'timings'         => [
 				'columns' => [
@@ -194,7 +184,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'requests' => 'sum',
 				],
 				'indexes' => [ 'timings_url' => [ 'url_id', 'bucket' ] ],
-				'retain'  => [ 'bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
+				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
 			],
 			'timings_site'    => [
 				'columns' => [
@@ -215,7 +205,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'requests' => 'sum',
 				],
 				'indexes' => [ 'timings_site_bucket' => [ 'bucket' ] ],
-				'retain'  => [ 'bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
+				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
 			],
 			'category_window' => [
 				'columns' => [
@@ -236,12 +226,12 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'last_bucket' => 'max',
 				],
 				'indexes' => [ 'category_window_last' => [ 'last_bucket' ] ],
-				'retain'  => [ 'last_bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
+				'retain'  => [ 'last_bucket', $kept, Bucket::SECONDS ],
 			],
 			'window_expiry'   => [
 				'columns' => [ 'bucket' => 'INTEGER NOT NULL' ],
 				'key'     => [ 'bucket' ],
-				'retain'  => [ 'bucket', self::TIMINGS_BUCKETS, Bucket::SECONDS ],
+				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
 			],
 			'requests_hourly' => [
 				'columns' => [
@@ -267,7 +257,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 					'sum_peak_mb' => 'sum',
 					'errors'      => 'sum',
 				],
-				'retain'  => [ 'hour', self::HOURLY_HOURS, Bucket::HOUR_SECONDS ],
+				'retain'  => [ 'hour', $hours, Bucket::HOUR_SECONDS ],
 			],
 		];
 	}

@@ -304,7 +304,7 @@ export default function OverviewSection( {
 					) }
 				<UnparseableLinesNotice count={ searchUnparseableLines } />
 				<CardBody>
-					<HeadlineStats totals={ urlTotals } />
+					<HeadlineStats totals={ urlTotals } slots={ chartAxis } />
 
 					{ /* Unconditional: the Metric, Breakdown and Server
 					     selectors are the only way out of a dimension with

@@ -1,8 +1,9 @@
 /**
  * Aggregate time chart — the Performance dashboard's main time series.
  *
- * Plots the 288 five-minute slots its `query` answer read (`answerSlots`),
- * the last 24 hours. One translucent area per series — one tuple of the
+ * Plots the five-minute slots its `query` answer read (`answerSlots`), as
+ * many as the server's window holds, and titles them by the span they cover.
+ * One translucent area per series — one tuple of the
  * selected dimensions, the top ones by request count — overlaid; for the
  * counts and sums the chart's corner toggle stacks them, and the total row
  * appears with the stack. A slot with nothing to average is a gap.
@@ -18,7 +19,7 @@
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
-import { __, _n, sprintf } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import {
 	phosphorColor,
@@ -36,22 +37,13 @@ import {
  * @type {number}
  */
 const MS_PER_SECOND = 1000;
-
-/**
- * Seconds in the hour the title counts the axis in.
- *
- * @type {number}
- */
-const SECONDS_PER_HOUR = 3600;
-import {
-	BUCKET_SECONDS,
-	chartColor,
-} from '@newspack-nodes/shared/hooks/useTimeChart';
+import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
 import {
 	buildChartSlots,
 	decodeRows,
 	hasRows,
+	slotSpan,
 	useSelectedSlots,
 	useSlotClick,
 	useSlotRange,
@@ -218,7 +210,7 @@ export default function AggregateTimeChart( {
 	const axis = useMemo( () => buildChartSlots( slots ), [ slots ] );
 	const chartState = useMemo( () => {
 		if ( ! hasRows( series ) || 0 === axis.length ) {
-			return { lines: [], colorMap: {}, hours: 0 };
+			return { lines: [], colorMap: {}, span: slotSpan( axis ) };
 		}
 
 		// Status classes take semantic colours, the rest the skin's by rank.
@@ -236,10 +228,7 @@ export default function AggregateTimeChart( {
 			} ),
 		} ) );
 
-		const hours = Math.round(
-			( axis.length * BUCKET_SECONDS ) / SECONDS_PER_HOUR
-		);
-		return { lines, colorMap, hours };
+		return { lines, colorMap, span: slotSpan( axis ) };
 	}, [ series, axis, metric, dims ] );
 
 	// The unit follows the DOMAIN: the chart builds it from the peak it draws.
@@ -303,16 +292,11 @@ export default function AggregateTimeChart( {
 			}
 			title={
 				sprintf(
-					// translators: 1: metric name (e.g. Request Volume), 2: hours the axis spans.
-					_n(
-						'%1$s (Last %2$d Hour)',
-						'%1$s (Last %2$d Hours)',
-						chartState.hours,
-						'newspack-event-logger-nodes'
-					),
+					// translators: 1: metric name (e.g. Request Volume), 2: the span the axis covers (e.g. 2 hours).
+					__( '%1$s (Last %2$s)', 'newspack-event-logger-nodes' ),
 					metricLabels[ metric ] ||
 						__( 'Chart', 'newspack-event-logger-nodes' ),
-					chartState.hours
+					chartState.span
 				) + titleSuffix
 			}
 		/>

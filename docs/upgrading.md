@@ -6,6 +6,31 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **The stats span follows the substrate's `min_lifetime`.** The chart, a
+  chart's selection and `category_window` span `min_lifetime` in
+  five-minute buckets, a part bucket counted whole, where they spanned 288.
+  `min_lifetime` defaults to 86,400 seconds from newspack-nodes 2.122.0,
+  this plugin's floor, so a site on the default keeps a day; a site that
+  sets the key gets a chart of that length. A `min_lifetime` below 300
+  seconds fails the `stats-builder` topology at load and every stats verb
+  with an error naming the key. A script that counted on 288 slots reads
+  the count from `slots`.
+- **`requests` and `requests_hourly` keep the span plus an hour, not a
+  week.** Every stats table keeps the span plus 12 buckets, so `query
+  requests` reaches back that far, `dump_url` answers `URL not found` for a
+  URL with no request in that time, and `dump_request` answers `Request not
+  found` for an older rid. Lowering `min_lifetime` purges the older rows at
+  the next retention sweep, and raising it again brings none of them back.
+- **A raised span answers slower until the window fills.** The stats
+  builder rebuilds nothing on a `min_lifetime` change: it expires nothing
+  until the window's start passes the watermark the shorter span left, so
+  the window grows to the new span as time passes. Until then, which takes
+  as many buckets as the span grew, readers answer the category chart and
+  the leaderboard from `timings_site` rather than from `category_window`.
+- **`Bucket::MAX_SELECTION` and `Flame_Facts_Row_Schema`'s
+  `REQUESTS_BUCKETS`, `TIMINGS_BUCKETS`, `HOURLY_HOURS` and
+  `WINDOW_BUCKETS` are gone.** Read `Bucket::window()` for the span and
+  `Stats_Query::retention()` for what a source keeps.
 - **The stats writer is `Stats_Builder_Node`, in its own `stats-builder`
   topology.** `flame-builder.tsl` writes flames and runs auto-tune only;
   `stats-builder.tsl` tails `flames.pN` and reads each flame's record back

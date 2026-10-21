@@ -14,13 +14,14 @@ const SLOT_MS = 300000;
 
 /**
  * The `slots` a reply names: `count` bucket keys ending at `last`, newest
- * first.
+ * first. A reply sends as many as the server's window holds, so every
+ * fixture names its own count.
  *
- * @param {string} last    The newest bucket key, `YYYY-MM-DD-HH-MM`.
- * @param {number} [count] How many; 288 by default, as every reply sends.
+ * @param {string} last  The newest bucket key, `YYYY-MM-DD-HH-MM`.
+ * @param {number} count How many.
  * @return {string[]} Bucket keys, newest first.
  */
-export const slotsEndingAt = ( last, count = 288 ) => {
+export const slotsEndingAt = ( last, count ) => {
 	const [ y, m, d, h, i ] = last.split( '-' ).map( Number );
 	const end = Date.UTC( y, m - 1, d, h, i );
 	return Array.from( { length: count }, ( _, back ) =>
@@ -33,7 +34,7 @@ export const slotsEndingAt = ( last, count = 288 ) => {
 
 /**
  * A `query` answer holding `rows` under `columns`, over the selection it
- * echoes; the last 288 buckets ending at 2026-09-29 14:35 UTC by default.
+ * echoes; by default the 24 buckets ending at 2026-09-29 14:35 UTC.
  *
  * @param {string[]} columns The answer's columns, groups then measures.
  * @param {Array[]}  rows    Its rows, each positional in `columns` order.
@@ -49,7 +50,7 @@ export const rowsWire = ( columns, rows, extra = {} ) => ( {
 	available: true,
 	filters: {
 		filter: {},
-		bucket: '2026-09-28-14-40..2026-09-29-14-40',
+		bucket: '2026-09-29-12-40..2026-09-29-14-40',
 		search: '',
 	},
 	...extra,

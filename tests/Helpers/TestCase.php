@@ -239,7 +239,7 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/** The watermark a window expired through the current tick holds. */
 	protected static function current_window_through(): int {
-		return \Newspack_Event_Logger_Nodes\Bucket::id( (int) \Newspack_Nodes\Core::$now ) - \Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema::WINDOW_BUCKETS;
+		return \Newspack_Event_Logger_Nodes\Bucket::id( (int) \Newspack_Nodes\Core::$now ) - \Newspack_Event_Logger_Nodes\Bucket::window();
 	}
 
 	/**
@@ -611,6 +611,18 @@ abstract class TestCase extends RuntimeTestCase {
 		if ( \class_exists( '\\Newspack_Event_Logger_Nodes\\Config' ) ) {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 		}
+	}
+
+	/**
+	 * Store the substrate's `min_lifetime` as its option, the layer that
+	 * outranks every config file, and drop both configs' memos, so
+	 * `Bucket::window()` reads it through this plugin's `Config`.
+	 *
+	 * @param int $seconds The lifetime; the stats span is it in whole buckets.
+	 */
+	protected function use_min_lifetime( int $seconds ): void {
+		$GLOBALS['_wp_options']['newspack_nodes_min_lifetime'] = $seconds;
+		\Newspack_Event_Logger_Nodes\Config::reset();
 	}
 
 	/**

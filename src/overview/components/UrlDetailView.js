@@ -46,6 +46,7 @@ import {
 	answerSlots,
 	bucketLabel,
 	chartDims,
+	selectionLimit,
 	useBucketSelection,
 } from '../chartSlots';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
@@ -82,10 +83,11 @@ const barValue = ( req, metric ) => {
  *
  * @param {string}   bucket The bucket selection the list narrows to; '' for none.
  * @param {string[]} chips  The chart's chips, each `field=value`.
+ * @param {number}   max    Most buckets the selection may hold: `selectionLimit()` of the slots charted.
  * @return {?string} The note, or null while nothing is narrowed.
  */
-const narrowedNote = ( bucket, chips ) => {
-	const span = bucket ? bucketLabel( bucket ) : '';
+const narrowedNote = ( bucket, chips, max ) => {
+	const span = bucket ? bucketLabel( bucket, max ) : '';
 	if ( chips.length ) {
 		return span
 			? sprintf(
@@ -305,11 +307,6 @@ export default function UrlDetailView( {
 	onMetricChange,
 } ) {
 	const listRef = useRef( null );
-	const note = narrowedNote( filters.bucket, chart.chips );
-	const [ selectedBuckets, pickBucket, pickRange ] = useBucketSelection(
-		filters.bucket,
-		onBucketChange
-	);
 
 	const { startIndex, endIndex, paddingTop, paddingBottom } =
 		useVirtualization(
@@ -336,6 +333,16 @@ export default function UrlDetailView( {
 		[ chartAnswer, chart ]
 	);
 	const axis = useMemo( () => answerSlots( chartAnswer ), [ chartAnswer ] );
+	const note = narrowedNote(
+		filters.bucket,
+		chart.chips,
+		selectionLimit( axis )
+	);
+	const [ selectedBuckets, pickBucket, pickRange ] = useBucketSelection(
+		filters.bucket,
+		onBucketChange,
+		axis
+	);
 	const categoryAxis = useMemo(
 		() => answerSlots( categoryAnswer ),
 		[ categoryAnswer ]

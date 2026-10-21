@@ -381,6 +381,22 @@ test( 'a brief under several runs names each as its local span', () => {
 	);
 } );
 
+test( 'a brief names the span of a selection however long the server held it', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/kea',
+		bucket: '2026-10-04-07-00..2026-10-05-08-00',
+		stats: { count: 17 },
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain(
+		'**bucket:** 2026-10-04-07-00..2026-10-05-08-00 (Oct 4, 12:00 AM–Oct 5, 1:00 AM America/Los_Angeles)'
+	);
+} );
+
 test( 'a URL brief over its whole window names no bucket', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',

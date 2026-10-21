@@ -118,9 +118,9 @@ import { renderComponent } from '../../test-helpers/renderHook';
 const d3Mock = d3.__chain;
 
 /**
- * The slots every reply here names: 288 ending at 14:35.
+ * The slots every reply here names: 24 ending at 14:35.
  */
-const SLOTS = slotsEndingAt( '2026-09-29-14-35' );
+const SLOTS = slotsEndingAt( '2026-09-29-14-35', 24 );
 
 // A CategoryTimeChart on SLOTS under a test storage key.
 const categoryChart = ( props ) =>
@@ -377,7 +377,7 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'reads the oldest slot and the newest as rates over their five minutes', () => {
 		const data = cats( {
-			'2026-09-28-14-40': { memcache: [ 1, 900 ] },
+			[ SLOTS.at( -1 ) ]: { memcache: [ 1, 900 ] },
 			[ bucketKeyNow() ]: { memcache: [ 1, 1500 ] },
 		} );
 		const { unmount } = renderComponent(

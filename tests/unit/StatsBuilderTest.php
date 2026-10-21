@@ -3,6 +3,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Newspack_Event_Logger_Nodes\App\Stats_Query;
 use Newspack_Event_Logger_Nodes\Bucket;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
@@ -32,9 +33,9 @@ use Newspack_Nodes\Tests\Capture_Sink_Node;
  * naming its URL, server and agent, with its hourly and timing rollups and
  * its share of the category window, written in one ROWS batch per flush.
  *
- * The category window equals timings_site summed over the last 288 buckets,
- * across adds, expiries, replays and restarts; its watermark is the newest
- * bucket `window_expiry` holds, which a builder reads once.
+ * The category window equals timings_site summed over the last
+ * `Bucket::window()` buckets, across adds, expiries, replays and restarts;
+ * each process rebuilds it before its first fold.
  */
 #[CoversClass( Stats_Builder_Node::class )]
 final class StatsBuilderTest extends TestCase {
@@ -1728,7 +1729,7 @@ final class StatsBuilderTest extends TestCase {
 	public function test_a_bucket_leaving_the_window_is_subtracted_once_across_a_restarts_replay(): void {
 		$this->window_world();
 		$sb    = $this->window_builder();
-		$first = self::NOW - ( Flame_Facts_Row_Schema::WINDOW_BUCKETS - 1 ) * Bucket::SECONDS;
+		$first = self::NOW - ( Bucket::window() - 1 ) * Bucket::SECONDS;
 		$this->fold( $sb, 'rid-kaka-2', 'hook:kaka_init', 12.5, $first );
 		$sb->flush();
 
@@ -1745,7 +1746,7 @@ final class StatsBuilderTest extends TestCase {
 	public function test_an_idle_tick_expires_the_bucket_leaving_the_window(): void {
 		$this->window_world();
 		$sb    = $this->window_builder();
-		$first = self::NOW - ( Flame_Facts_Row_Schema::WINDOW_BUCKETS - 1 ) * Bucket::SECONDS;
+		$first = self::NOW - ( Bucket::window() - 1 ) * Bucket::SECONDS;
 		$this->fold( $sb, 'rid-kaka-8', 'hook:kaka_init', 12.5, $first );
 		$sb->flush();
 
@@ -1758,7 +1759,7 @@ final class StatsBuilderTest extends TestCase {
 	/** A builder that never receives a flame still expires the window on its tick. */
 	public function test_a_builder_given_no_flames_expires_the_window_on_its_tick(): void {
 		$this->window_world();
-		$bucket = Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::WINDOW_BUCKETS + 1;
+		$bucket = Bucket::id( self::NOW ) - Bucket::window() + 1;
 		$this->seed_rows(
 			0,
 			[
@@ -1780,7 +1781,7 @@ final class StatsBuilderTest extends TestCase {
 	public function test_a_record_older_than_the_watermark_adds_nothing(): void {
 		$this->window_world();
 		$sb = $this->window_builder();
-		$this->fold( $sb, 'rid-kaka-3', 'hook:kaka_init', 12.5, self::NOW - Flame_Facts_Row_Schema::WINDOW_BUCKETS * Bucket::SECONDS );
+		$this->fold( $sb, 'rid-kaka-3', 'hook:kaka_init', 12.5, self::NOW - Bucket::window() * Bucket::SECONDS );
 		$sb->flush();
 
 		$this->assertSame( [], $this->window() );
@@ -1805,8 +1806,8 @@ final class StatsBuilderTest extends TestCase {
 			[
 				[ 'add', 'category_window', self::window_row( 'hook:stale_init', 999.0, 9, 9, $bucket ) ],
 				[ 'add', 'timings_site', [ 'bucket' => $bucket - 3, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 30.5, 'calls' => 4, 'requests' => 2 ] ],
-				[ 'add', 'timings_site', [ 'bucket' => $bucket - 287, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 5.25, 'calls' => 3, 'requests' => 1 ] ],
-				[ 'add', 'timings_site', [ 'bucket' => $bucket - 288, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 70.0, 'calls' => 1, 'requests' => 1 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $bucket - Bucket::window() + 1, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 5.25, 'calls' => 3, 'requests' => 1 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $bucket - Bucket::window(), 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 70.0, 'calls' => 1, 'requests' => 1 ] ],
 			]
 		);
 
@@ -1817,10 +1818,15 @@ final class StatsBuilderTest extends TestCase {
 		$this->assertSame( [ 'hook:kaka_init' => [ 12.5, 2, 1 ], 'hook:tui_init' => [ 35.75, 7, 3 ] ], $this->window(), 'the stale row reads as gone, the bucket outside the window adds nothing' );
 	}
 
+	/**
+	 * A fresh builder resumes at the file's watermark when the span has not
+	 * changed, with one read: no rebuild negates a row `timings_site` does
+	 * not hold, and a fold in the same bucket reads nothing more.
+	 */
 	public function test_a_fresh_builder_resumes_at_the_files_watermark_with_one_read(): void {
 		$this->window_world();
 		$this->seed_stale_window_row();
-		$this->seed_watermark( Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::WINDOW_BUCKETS );
+		$this->seed_watermark( Bucket::id( self::NOW ) - Bucket::window() );
 		$sb = $this->window_builder();
 		$this->fold( $sb, 'rid-kaka-6', 'hook:kaka_init', 12.5, self::NOW );
 		$sb->flush();
@@ -1853,7 +1859,7 @@ final class StatsBuilderTest extends TestCase {
 		$sb->flush();
 
 		$next = $this->restarted( $sb );
-		$this->fold( $next, 'rid-kaka-10', 'hook:kaka_init', 7.0, self::NOW - ( Flame_Facts_Row_Schema::WINDOW_BUCKETS - 1 ) * Bucket::SECONDS );
+		$this->fold( $next, 'rid-kaka-10', 'hook:kaka_init', 7.0, self::NOW - ( Bucket::window() - 1 ) * Bucket::SECONDS );
 		$next->flush();
 
 		$this->assertSame( [ 'hook:kaka_init' => [ 12.5, 2, 1 ] ], $this->window(), 'a record in a bucket the file already expired adds nothing' );
@@ -1862,40 +1868,63 @@ final class StatsBuilderTest extends TestCase {
 	public function test_a_rebuild_marks_its_watermark_so_a_restart_rebuilds_nothing(): void {
 		$this->window_world();
 		$bucket = Bucket::id( self::NOW );
+		$oldest = $bucket - Bucket::window() + 1;
 		$this->seed_rows(
 			0,
 			[
-				[ 'add', 'timings_site', [ 'bucket' => $bucket - 287, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 30.5, 'calls' => 4, 'requests' => 2 ] ],
-				[ 'add', 'timings_site', [ 'bucket' => $bucket - 288, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 6.0, 'calls' => 1, 'requests' => 1 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $oldest, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 30.5, 'calls' => 4, 'requests' => 2 ] ],
+				[ 'add', 'timings_site', [ 'bucket' => $oldest - 1, 'server' => 'seed.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 6.0, 'calls' => 1, 'requests' => 1 ] ],
 			]
 		);
 		$sb = $this->window_builder();
 		$sb->flush();
 		// A sum the window does not hold, which only a second rebuild would add.
-		self::rows_into( Core::node( self::FACTS_TABLE ), self::facts_ops( [ [ 'add', 'timings_site', [ 'bucket' => $bucket - 287, 'server' => 'tui.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 4.0, 'calls' => 1, 'requests' => 1 ] ] ] ) );
+		self::rows_into( Core::node( self::FACTS_TABLE ), self::facts_ops( [ [ 'add', 'timings_site', [ 'bucket' => $oldest, 'server' => 'tui.example', 'worker' => 0, 'category' => 'hook:tui_init', 'entry' => '', 'listener' => 0, 'ms' => 4.0, 'calls' => 1, 'requests' => 1 ] ] ] ) );
 
 		$this->restarted( $sb )->flush();
 
 		$this->assertSame( [ 'hook:tui_init' => [ 30.5, 4, 2 ] ], $this->window(), 'the restart resumed at the rebuild\'s marks' );
 	}
 
-	public function test_a_watermark_301_buckets_back_rebuilds(): void {
+	/** A watermark further back than `timings_site` keeps past the span rebuilds. */
+	public function test_a_watermark_past_the_retained_slack_rebuilds(): void {
 		$this->window_world();
 		$this->seed_stale_window_row();
-		$this->seed_watermark( Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::TIMINGS_BUCKETS - 1 );
+		$this->seed_watermark( Bucket::id( self::NOW ) - Bucket::window() - Bucket::RETAIN_SLACK - 1 );
 		$this->window_builder()->flush();
 
 		$this->assertSame( [], $this->window(), 'the rebuild negates the row timings_site does not hold' );
 	}
 
-	public function test_a_watermark_300_buckets_back_subtracts_per_bucket(): void {
+	/** A watermark inside the retained slack subtracts the buckets leaving, one by one. */
+	public function test_a_watermark_inside_the_retained_slack_subtracts_per_bucket(): void {
 		$this->window_world();
 		$this->seed_stale_window_row();
-		$this->seed_watermark( Bucket::id( self::NOW ) - Flame_Facts_Row_Schema::TIMINGS_BUCKETS );
-		$sb = $this->window_builder();
-		$sb->flush();
+		$this->seed_watermark( Bucket::id( self::NOW ) - Bucket::window() - Bucket::RETAIN_SLACK );
+		$this->window_builder()->flush();
 
 		$this->assertSame( [ 'hook:stale_init' => [ 999.0, 9, 9 ] ], $this->window(), 'the expiry touches only the buckets leaving' );
+	}
+
+	/**
+	 * Lowering `min_lifetime` from 7,200 to 3,600 expires the buckets that
+	 * left the 12 at the next start, one by one: no rebuild runs, so a row
+	 * `timings_site` does not hold survives.
+	 */
+	public function test_a_shrunk_span_expires_the_buckets_that_left_it(): void {
+		$this->use_min_lifetime( 7200 );
+		$this->window_world();
+		$sb = $this->window_builder();
+		$this->fold( $sb, 'rid-kaka-25', 'hook:kaka_init', 7.25, self::NOW - 20 * Bucket::SECONDS );
+		$this->fold( $sb, 'rid-kaka-26', 'hook:kaka_init', 12.5, self::NOW );
+		$sb->flush();
+		self::rows_into( Core::node( self::FACTS_TABLE ), self::facts_ops( [ [ 'add', 'category_window', self::window_row( 'hook:stale_init', 999.0, 9, 9, Bucket::id( self::NOW ) ) ] ] ) );
+		$this->assertSame( [ 'hook:kaka_init' => [ 19.75, 4, 2 ], 'hook:stale_init' => [ 999.0, 9, 9 ] ], $this->window() );
+
+		$this->use_min_lifetime( 3600 );
+		$this->restarted( $sb )->flush();
+
+		$this->assertSame( [ 'hook:kaka_init' => [ 12.5, 2, 1 ], 'hook:stale_init' => [ 999.0, 9, 9 ] ], $this->window() );
 	}
 
 	public function test_a_buffer_written_before_a_failing_expiry_stays_and_replays_once(): void {
@@ -1967,6 +1996,158 @@ final class StatsBuilderTest extends TestCase {
 
 		$this->assertNotNull( $thrown );
 		$this->assertStringContainsString( 'set_facts_target', (string) $thrown->getPrevious()?->getMessage() );
+	}
+
+	/**
+	 * At a 24-bucket span the window's oldest bucket is subtracted when it
+	 * leaves, though the builder sat twelve buckets past it and a sweep ran
+	 * first: retention keeps the span and an hour more.
+	 */
+	public function test_a_bucket_leaving_a_24_bucket_span_is_subtracted_before_retention_purges_it(): void {
+		$this->use_min_lifetime( 7200 );
+		$this->window_world();
+		$sb = $this->window_builder();
+		$this->fold( $sb, 'rid-kaka-21', 'hook:kaka_init', 12.5, self::NOW - 23 * Bucket::SECONDS );
+		$sb->flush();
+		$this->assertSame( [ 'hook:kaka_init' => [ 12.5, 2, 1 ] ], $this->window() );
+
+		Core::$now += 12 * Bucket::SECONDS;
+		$this->sweep_at_the_tick();
+		$sb->flush();
+
+		$this->assertSame( [], $this->window() );
+		$this->assertSame( [ [ 0.0, 0, 0 ] ], $this->raw_window(), 'the sweep left the bucket for the expiry to subtract' );
+	}
+
+	/**
+	 * Raising `min_lifetime` from 3,600 to 7,200 rebuilds nothing: builders
+	 * restarted across bucket boundaries keep the window the 12-bucket one
+	 * left and add what is newer, readers read `timings_site` meanwhile,
+	 * and once the window's start passes the old watermark it equals
+	 * `timings_site` summed over it and readers read it again.
+	 */
+	public function test_a_grown_span_catches_up_without_a_rebuild_across_restarts(): void {
+		$this->use_min_lifetime( 3600 );
+		$this->window_world();
+		$sb = $this->window_builder();
+		$this->fold( $sb, 'rid-kaka-22', 'hook:kaka_init', 7.25, self::NOW - 20 * Bucket::SECONDS );
+		$this->fold( $sb, 'rid-kaka-23', 'hook:kaka_init', 3.5, self::NOW - 5 * Bucket::SECONDS );
+		$this->fold( $sb, 'rid-kaka-24', 'hook:kaka_init', 12.5, self::NOW );
+		$sb->flush();
+		$this->assertSame( [ [ 16.0, 4, 2 ] ], $this->raw_window(), 'twenty buckets back is outside a 12-bucket window' );
+
+		$this->use_min_lifetime( 7200 );
+		$next = $this->restarted( $sb );
+		$next->flush();
+		$this->assertSame( [ [ 16.0, 4, 2 ] ], $this->raw_window(), 'no rebuild adds the bucket the shorter window expired' );
+		$this->assertSame( 'timings_site', $this->span_ranking()['table'] );
+
+		Core::$now += 5 * Bucket::SECONDS;
+		$next = $this->restarted( $next );
+		$this->fold( $next, 'rid-kaka-25', 'hook:kaka_init', 2.25, (int) Core::$now );
+		$next->flush();
+		Core::$now += 4 * Bucket::SECONDS;
+		$next = $this->restarted( $next );
+		$next->flush();
+		$this->assertSame( [ [ 18.25, 6, 3 ] ], $this->raw_window() );
+		$this->assertSame( 'timings_site', $this->span_ranking()['table'] );
+
+		Core::$now += 4 * Bucket::SECONDS;
+		$next->flush();
+		$ranking = $this->span_ranking();
+		$this->assertSame( [ [ 18.25, 6, 3 ] ], $this->raw_window(), 'timings_site over the 24 buckets: the three newest requests' );
+		$this->assertSame( 'category_window', $ranking['table'] );
+		$this->assertSame( [ [ 'hook:kaka_init', 18.25 ] ], $ranking['rows'] );
+	}
+
+	/** A clock stepping back across a bucket boundary rebuilds nothing. */
+	public function test_a_backward_step_across_a_bucket_boundary_rebuilds_nothing(): void {
+		$this->window_world();
+		$sb = $this->window_builder();
+		$sb->flush();
+		self::rows_into( Core::node( self::FACTS_TABLE ), self::facts_ops( [ [ 'add', 'category_window', self::window_row( 'hook:stale_init', 999.0, 9, 9, Bucket::id( self::NOW ) ) ] ] ) );
+
+		Core::$now -= Bucket::SECONDS;
+		$sb->flush();
+
+		$this->assertSame( [ [ 999.0, 9, 9 ] ], $this->raw_window(), 'no rebuild negated the row timings_site does not hold' );
+	}
+
+	/**
+	 * The category ranking over the span ending at the tick's bucket, as
+	 * the Overview asks it, dated by the tick.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function span_ranking(): array {
+		$now = (int) Core::$now;
+		return Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ], 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => Bucket::last( Bucket::window(), $now ), 'now' => $now ] );
+	}
+
+	/**
+	 * A record replayed from older than retention files rows in a bucket no
+	 * selection over the rows can name, and the next sweep removes them.
+	 */
+	public function test_a_record_replayed_from_past_retention_is_unreachable_and_swept(): void {
+		$this->use_min_lifetime( 7200 );
+		$this->window_world();
+		$sb = $this->window_builder();
+		$old = self::NOW - 40 * Bucket::SECONDS;
+		$this->fold( $sb, 'rid-kaka-24', 'hook:kaka_init', 12.5, $old );
+		$sb->flush();
+		$this->assertSame( [ [ 1 ] ], $this->request_count(), 'the replay re-created its row' );
+
+		$reach = Stats_Query::retention( 'requests' );
+		$this->assertSame( 36, $reach );
+		$this->assertSame( [ [ 0 ] ], Stats_Query::run( [ 'source' => 'requests', 'group' => [], 'filter' => [], 'measure' => [ 'count' ], 'buckets' => Bucket::last( $reach, self::NOW ) ] )['rows'] );
+		try {
+			Bucket::selection( Bucket::key( Bucket::id( $old ) ) . '..' . Bucket::key( Bucket::id( self::NOW ) + 1 ), self::NOW, $reach );
+			$this->fail( 'a selection reached a bucket past retention' );
+		} catch ( \InvalidArgumentException $e ) {
+			$this->assertSame( 'bucket selection holds more than 36 buckets', $e->getMessage() );
+		}
+
+		$this->sweep_at_the_tick();
+
+		$this->assertSame( [ [ 0 ] ], $this->request_count() );
+		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM timings_site' ) );
+		$this->assertSame( [ [ 0 ] ], $this->facts( 'SELECT count(*) FROM requests_hourly' ) );
+	}
+
+	/**
+	 * A `min_lifetime` short of one bucket fails the stats builder's
+	 * topology at load, naming the key.
+	 *
+	 * @param int $seconds The refused lifetime.
+	 */
+	#[DataProvider( 'spans_short_of_a_bucket' )]
+	public function test_a_span_short_of_a_bucket_fails_the_builder_at_boot( int $seconds ): void {
+		$this->window_world();
+		$this->use_min_lifetime( $seconds );
+		$router = new Router_Node();
+		$router->name( Node_Names::ROUTER );
+		$interpreter = new Command_Interpreter_Node();
+		$interpreter->name( Node_Names::COMMAND_INTERPRETER );
+		$interpreter->sink( $router );
+
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( "min_lifetime {$seconds} is below the 300-second floor of one stats bucket" );
+		\Newspack_Nodes\Topology_Loader::load( 'stats-builder', 1, $interpreter );
+	}
+
+	/** @return array<string,array{0:int}> */
+	public static function spans_short_of_a_bucket(): array {
+		return [
+			'zero'           => [ 0 ],
+			'a second short' => [ 299 ],
+		];
+	}
+
+	/** One retention pass over the builder's Row_Table, dated by the pinned tick. */
+	private function sweep_at_the_tick(): void {
+		$at          = (float) Core::$now;
+		Core::$clock = static fn (): float => $at;
+		Core::node( self::FACTS_TABLE )->purge( 1000 );
 	}
 
 	/** A window row timings_site holds nothing for, newer than any watermark. */

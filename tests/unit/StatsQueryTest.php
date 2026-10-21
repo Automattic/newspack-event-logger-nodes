@@ -29,7 +29,7 @@ final class StatsQueryTest extends TestCase {
 
 	use FactsSeeder;
 
-	/** The pinned tick: its bucket opens an hour, so the last 288 do not. */
+	/** The pinned tick: its bucket opens an hour, so the span's buckets do not. */
 	private const NOW = 1_790_003_000;
 
 	protected function setUp(): void {
@@ -45,10 +45,10 @@ final class StatsQueryTest extends TestCase {
 		parent::tearDown();
 	}
 
-	/** The 288 buckets ending at the tick's. */
-	private function last_day(): array {
+	/** The span's buckets ending at the tick's. */
+	private function last_span(): array {
 		$now = Bucket::id( self::NOW );
-		return [ [ $now - 287, $now ] ];
+		return [ [ $now - Bucket::window() + 1, $now ] ];
 	}
 
 	/** The 24 whole hours ending with the tick's. */
@@ -57,53 +57,85 @@ final class StatsQueryTest extends TestCase {
 		return [ [ ( $hour - 23 ) * 12, $hour * 12 + 11 ] ];
 	}
 
-	/** A day's timings spec over fields the window holds reads the window. */
-	public function test_a_days_category_ranking_reads_the_window_when_every_watermark_stands_at_its_start(): void {
-		$day = $this->last_day();
+	/** A timings spec over the span and fields the window holds reads the window. */
+	public function test_a_spans_category_ranking_reads_the_window_when_every_watermark_stands_at_its_start(): void {
+		$span = $this->last_span();
 		foreach ( [ 0, 2 ] as $p ) {
 			$this->seed_rows( $p, [
-				[ 'ignore', 'window_expiry', [ 'bucket' => $day[0][0] - 3 ] ],
-				[ 'ignore', 'window_expiry', [ 'bucket' => $day[0][0] - 1 ] ],
-				[ 'add', 'category_window', self::window_row( 'hook:ruru_init', 21.5 + $p, 3, 2, $day[0][1] ) ],
-				[ 'add', 'category_window', self::window_row( 'hook:gone_init', 500.0, 1, 1, $day[0][0] - 1 ) ],
+				[ 'ignore', 'window_expiry', [ 'bucket' => $span[0][0] - 3 ] ],
+				[ 'ignore', 'window_expiry', [ 'bucket' => $span[0][0] - 1 ] ],
+				[ 'add', 'category_window', self::window_row( 'hook:ruru_init', 21.5 + $p, 3, 2, $span[0][1] ) ],
+				[ 'add', 'category_window', self::window_row( 'hook:gone_init', 500.0, 1, 1, $span[0][0] - 1 ) ],
 			] );
 		}
 
-		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ], 'entry' => [ '' ] ], 'measure' => [ 'ms', 'calls' ], 'buckets' => $day, 'sort' => 'ms', 'order' => 'desc' ] );
+		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ], 'entry' => [ '' ] ], 'measure' => [ 'ms', 'calls' ], 'buckets' => $span, 'now' => self::NOW, 'sort' => 'ms', 'order' => 'desc' ] );
 
 		$this->assertSame( 'category_window', $r['table'] );
 		$this->assertSame( [ [ 'hook:ruru_init', 45.0, 6 ] ], $r['rows'], 'a row whose last bucket left the window reads as gone' );
 	}
 
+	/**
+	 * A selection as long as the reader's span, its start meeting the
+	 * watermark, still reads `timings_site` unless it ends at the current
+	 * bucket: a builder keeping 24 buckets holds sums a reader on 12 never
+	 * asked for.
+	 */
+	public function test_a_span_long_selection_ending_before_the_tick_never_reads_the_window(): void {
+		$this->use_min_lifetime( 3600 );
+		$now = Bucket::id( self::NOW );
+		$this->seed_rows( 0, [
+			[ 'ignore', 'window_expiry', [ 'bucket' => $now - 24 ] ],
+			[ 'add', 'category_window', self::window_row( 'hook:ruru_init', 500.0, 9, 9, $now ) ],
+		] );
+		$this->seed_site_timing( [ 'category' => 'hook:ruru_init', 'bucket' => $now - 15, 'ms' => 21.5 ] );
+
+		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ], 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => [ [ $now - 23, $now - 12 ] ] ] );
+
+		$this->assertSame( 'timings_site', $r['table'] );
+		$this->assertSame( [ [ 'hook:ruru_init', 21.5 ] ], $r['rows'] );
+	}
+
+	/**
+	 * The window is judged against the reply's clock the caller read, never
+	 * a second read of the tick: a caller one bucket ahead still reads it.
+	 */
+	public function test_the_window_ends_at_the_callers_clock(): void {
+		$ahead = self::NOW + Bucket::SECONDS;
+
+		$this->assertSame( 'category_window', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => Bucket::last( Bucket::window(), $ahead ), 'now' => $ahead ] ) );
+		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => Bucket::last( Bucket::window(), $ahead ) ] ), 'a spec naming no clock never reads the window' );
+	}
+
 	public function test_a_lagging_watermark_reads_timings_site(): void {
-		$day = $this->last_day();
-		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $day[0][0] - 1 ] ] ] );
-		$this->write_facts( 1, [ [ 'ignore', 'window_expiry', [ $day[0][0] - 2 ] ] ] );
+		$span = $this->last_span();
+		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $span[0][0] - 1 ] ] ] );
+		$this->write_facts( 1, [ [ 'ignore', 'window_expiry', [ $span[0][0] - 2 ] ] ] );
 		$this->seed_site_timing( [ 'category' => 'hook:ruru_init', 'ms' => 13.5 ], partition: 1 );
 
-		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] );
+		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $span ] );
 
 		$this->assertSame( 'timings_site', $r['table'] );
 		$this->assertSame( [ [ 'hook:ruru_init', 13.5 ] ], $r['rows'] );
 	}
 
 	public function test_a_partition_with_no_expiry_row_reads_timings_site(): void {
-		$day = $this->last_day();
-		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $day[0][0] - 1 ] ] ] );
+		$span = $this->last_span();
+		$this->write_facts( 0, [ [ 'ignore', 'window_expiry', [ $span[0][0] - 1 ] ] ] );
 		$this->seed_site_timing( [ 'category' => 'hook:ruru_init', 'ms' => 17.5 ], partition: 1 );
 
-		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] );
+		$r = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $span ] );
 
 		$this->assertSame( 'timings_site', $r['table'] );
 		$this->assertSame( [ [ 'hook:ruru_init', 17.5 ] ], $r['rows'] );
 	}
 
 	public function test_a_server_scoped_or_shorter_ranking_never_reads_the_window(): void {
-		$day = $this->last_day();
-		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] ) );
-		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [], 'measure' => [ 'ms' ], 'buckets' => [ [ $day[0][0] + 1, $day[0][1] ] ] ] ) );
-		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'bucket', 'category' ], 'filter' => [], 'measure' => [ 'ms' ], 'buckets' => $day ] ) );
-		$this->assertSame( 'category_window', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category', 'entry' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $day ] ) );
+		$span = $this->last_span();
+		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'ms' ], 'buckets' => $span, 'now' => self::NOW ] ) );
+		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [], 'measure' => [ 'ms' ], 'buckets' => [ [ $span[0][0] + 1, $span[0][1] ] ], 'now' => self::NOW ] ) );
+		$this->assertSame( 'timings_site', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'bucket', 'category' ], 'filter' => [], 'measure' => [ 'ms' ], 'buckets' => $span, 'now' => self::NOW ] ) );
+		$this->assertSame( 'category_window', Stats_Query::table_for( [ 'source' => 'timings', 'group' => [ 'category', 'entry' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $span, 'now' => self::NOW ] ) );
 	}
 
 	private static function spec( array $over ): array {
@@ -143,10 +175,10 @@ final class StatsQueryTest extends TestCase {
 		$spans = $this->stats_spans(
 			function (): void {
 				$this->seed_site_timings( [ [ 'category' => 'hook:tieke_init', 'ms' => 9.5 ], [ 'category' => 'hook:hoiho_init', 'ms' => 4.5 ], [ 'category' => 'hook:weka_init', 'ms' => 3.5 ] ] );
-				$spec = [ 'source' => 'timings', 'group' => [ 'category', 'listener' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day(), 'sort' => 'ms' ];
+				$spec = [ 'source' => 'timings', 'group' => [ 'category', 'listener' ], 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span(), 'sort' => 'ms' ];
 				Stats_Query::run( $spec );
 				Stats_Query::run( [ 'offset' => 2 ] + $spec );
-				Stats_Query::run( [ 'source' => 'timings', 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+				Stats_Query::run( [ 'source' => 'timings', 'filter' => [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] );
 			}
 		);
 
@@ -168,7 +200,7 @@ final class StatsQueryTest extends TestCase {
 		$spans = $this->stats_spans(
 			function (): void {
 				$this->seed_requests( [ [ 'rid' => 'rid-kokako-8812', 'url' => 'https://seed.example/kokako-8812/' ], [ 'rid' => 'rid-kakapo-8813', 'url' => 'https://seed.example/kokako-8812/' ] ] );
-				Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( 'https://seed.example/kokako-8812/' ) ] ], $this->last_day(), 7 );
+				Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( 'https://seed.example/kokako-8812/' ) ] ], $this->last_span(), 7 );
 				Stats_Query::request_row( 'rid-kakapo-8813' );
 			}
 		);
@@ -190,7 +222,7 @@ final class StatsQueryTest extends TestCase {
 			function (): void {
 				\update_option( 'newspack_nodes_topologies', [] );
 				\Newspack_Nodes\Config::reset();
-				Stats_Query::run( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count' ], 'buckets' => $this->last_day() ] );
+				Stats_Query::run( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count' ], 'buckets' => $this->last_span() ] );
 			}
 		);
 
@@ -202,7 +234,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'egret.example', 'status' => 502 ], partition: 3 );
 		$this->seed_request( [ 'server' => 'kea.example', 'status' => 200 ] );
 
-		$r = Stats_Query::run( [ 'source' => 'requests', 'group' => [ 'server' ], 'filter' => [ 'status_class' => [ 5 ] ], 'measure' => [ 'count' ], 'buckets' => $this->last_day(), 'sort' => 'server' ] );
+		$r = Stats_Query::run( [ 'source' => 'requests', 'group' => [ 'server' ], 'filter' => [ 'status_class' => [ 5 ] ], 'measure' => [ 'count' ], 'buckets' => $this->last_span(), 'sort' => 'server' ] );
 
 		$this->assertSame( [ 'server', 'count' ], $r['columns'] );
 		$this->assertSame( [ [ 'egret.example', 1 ], [ 'kea.example', 1 ] ], $r['rows'] );
@@ -220,13 +252,13 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea.example', 'ms' => 120.0 ] );
 		$this->seed_request( [ 'server' => 'egret.example', 'ms' => 40.0 ], partition: 3 );
 		$this->seed_requests( [ [ 'server' => 'kea.example', 'ms' => 80.0 ], [ 'server' => 'kea.example', 'ms' => 60.0 ] ], partition: 3 );
-		$day = $this->last_day();
+		$span = $this->last_span();
 		$url = Log_Manager::url_hash( 'https://kea.example/seed-path/' );
 
-		$by_server = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'server', 'buckets' => $day ] ) );
-		$filtered  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea.example' ] ], 'buckets' => $day ] ) );
-		$composed  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'buckets' => $day ] ) );
-		$whole     = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'p50_ms' ], 'buckets' => $day ] ) );
+		$by_server = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'server', 'buckets' => $span ] ) );
+		$filtered  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea.example' ] ], 'buckets' => $span ] ) );
+		$composed  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'buckets' => $span ] ) );
+		$whole     = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'server' => [ 'kea.example' ] ], 'measure' => [ 'p50_ms' ], 'buckets' => $span ] ) );
 
 		$this->assertSame( [ [ 'egret.example', 1 ], [ 'kea.example', 3 ] ], $by_server['rows'] );
 		$this->assertSame( [ [ 3 ] ], $filtered['rows'] );
@@ -244,10 +276,10 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'pukeko.example', 'url' => $url ] );
 		$this->seed_request( [ 'server' => 'pukeko.example', 'url' => $url ] );
 		( new \PDO( 'sqlite:' . $this->facts_file( 0 ) ) )->exec( 'DELETE FROM servers' );
-		$day = $this->last_day();
+		$span = $this->last_span();
 
-		$filtered = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'url' => [ Log_Manager::url_hash( $url ) ] ], 'buckets' => $day ] ) );
-		$searched = Stats_Query::run( self::spec( [ 'source' => 'requests', 'search' => 'raupo', 'buckets' => $day ] ) );
+		$filtered = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'url' => [ Log_Manager::url_hash( $url ) ] ], 'buckets' => $span ] ) );
+		$searched = Stats_Query::run( self::spec( [ 'source' => 'requests', 'search' => 'raupo', 'buckets' => $span ] ) );
 
 		$this->assertSame( [ [ 2 ] ], $filtered['rows'] );
 		$this->assertSame( [ [ 2 ] ], $searched['rows'] );
@@ -263,11 +295,11 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'ja4' => 't13d_kea', 'from' => 'kea@bot.example' ], partition: 3 );
 		$this->seed_site_timings( [ [ 'category' => 'hook:kea_init', 'entry' => 'kea_cb', 'ms' => 7.5 ] ] );
 		$this->seed_site_timings( [ [ 'category' => 'hook:moa_init', 'entry' => 'moa_cb', 'ms' => 2.5 ], [ 'category' => 'hook:kea_init', 'entry' => 'kea_cb', 'ms' => 4.0 ] ], partition: 3 );
-		$day = $this->last_day();
+		$span = $this->last_span();
 
-		$ja4  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'ja4', 'from' ], 'sort' => 'ja4', 'buckets' => $day ] ) );
-		$from = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'from' => [ 'kea@bot.example' ] ], 'buckets' => $day ] ) );
-		$cats = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category', 'entry' ], 'filter' => [ 'entry' => [ 'kea_cb' ] ], 'measure' => [ 'ms' ], 'buckets' => [ [ $day[0][1] - 11, $day[0][1] ] ] ] );
+		$ja4  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'ja4', 'from' ], 'sort' => 'ja4', 'buckets' => $span ] ) );
+		$from = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'from' => [ 'kea@bot.example' ] ], 'buckets' => $span ] ) );
+		$cats = Stats_Query::run( [ 'source' => 'timings', 'group' => [ 'category', 'entry' ], 'filter' => [ 'entry' => [ 'kea_cb' ] ], 'measure' => [ 'ms' ], 'buckets' => [ [ $span[0][1] - 11, $span[0][1] ] ] ] );
 
 		$this->assertSame( [ [ 't13d_kea', 'kea@bot.example', 2 ], [ 't13d_moa', 'moa@bot.example', 1 ] ], $ja4['rows'] );
 		$this->assertSame( [ [ 2 ] ], $from['rows'] );
@@ -281,9 +313,9 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'status' => 404 ] );
 		$this->seed_request( [ 'status' => 404 ], partition: 3 );
 
-		$by_status = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'status' ], 'buckets' => $this->last_day() ] ) );
-		$by_class  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'status_class' ], 'buckets' => $this->last_day() ] ) );
-		$total     = Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
+		$by_status = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'status' ], 'buckets' => $this->last_span() ] ) );
+		$by_class  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'status_class' ], 'buckets' => $this->last_span() ] ) );
+		$total     = Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 404, 2 ], [ 'Unknown', 2 ] ], $by_status['rows'] );
 		$this->assertSame( [ [ 4, 2 ], [ 'Unknown', 2 ] ], $by_class['rows'] );
@@ -294,7 +326,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'country' => null, 'ms' => 61.0 ] );
 		$this->seed_request( [ 'country' => 'NZ', 'ms' => 17.0 ] );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country' => [ 'Unknown' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country' => [ 'Unknown' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 61.0 ] ], $r['rows'] );
 	}
@@ -305,9 +337,9 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'country' => 'AU', 'ms' => 4.0 ], partition: 3 );
 		$this->seed_request( [ 'country' => 'SG', 'ms' => 9.0 ] );
 
-		$not_nz  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country!' => [ 'NZ', 'SG' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
-		$known   = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country!' => [ 'Unknown' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
-		$crossed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country' => [ 'NZ', 'AU' ], 'country!' => [ 'AU' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$not_nz  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country!' => [ 'NZ', 'SG' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
+		$known   = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country!' => [ 'Unknown' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
+		$crossed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'country' => [ 'NZ', 'AU' ], 'country!' => [ 'AU' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 65.0 ] ], $not_nz['rows'], 'neither NZ nor SG, an Unknown country kept' );
 		$this->assertSame( [ [ 30.0 ] ], $known['rows'] );
@@ -332,8 +364,8 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'status' => 204, 'ms' => 40.0 ], partition: 3 );
 		$this->seed_request( [ 'status' => 404, 'ms' => 500.0 ] );
 
-		$kept = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'status_class' => [ '5xx' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
-		$left = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'status_class!' => [ '2XX' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$kept = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'status_class' => [ '5xx' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
+		$left = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'status_class!' => [ '2XX' ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 3.0 ] ], $kept['rows'] );
 		$this->assertSame( [ [ 503.0 ] ], $left['rows'] );
@@ -343,7 +375,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://seed.example/kokako/', 'ms' => 33.0 ], partition: 3 );
 		$this->seed_request( [ 'url' => 'https://seed.example/hihi/', 'ms' => 900.0 ] );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'url!' => [ \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( 'https://seed.example/kokako/' ) ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'url!' => [ \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( 'https://seed.example/kokako/' ) ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ 900.0 ], \array_column( $r['rows'], 2 ) );
 	}
@@ -377,7 +409,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_timing( [ 'server' => 'kea.example' ] );
 		$this->seed_site_timing( [ 'server' => 'kea.example', 'category' => 'init hook @10', 'entry' => 'kea_init' ] );
 		$this->seed_hourly( [ 'server' => 'kea.example', 'hour' => $hour ] );
-		$spec = self::spec( $over + [ 'buckets' => $whole_hour ? [ [ $hour * $per_hour, ( $hour + 1 ) * $per_hour - 1 ] ] : $this->last_day() ] );
+		$spec = self::spec( $over + [ 'buckets' => $whole_hour ? [ [ $hour * $per_hour, ( $hour + 1 ) * $per_hour - 1 ] ] : $this->last_span() ] );
 
 		$this->assertSame( $table, Stats_Query::table_for( $spec ) );
 		$this->assertArrayHasKey( $release_index, Flame_Facts_Row_Schema::tables()[ $table ]['indexes'] ?? [], 'the release index exists, so its absence from the plan says something' );
@@ -388,7 +420,7 @@ final class StatsQueryTest extends TestCase {
 	public function test_a_server_filter_on_requests_seeks_the_server_led_index(): void {
 		$this->seed_request( [ 'server' => 'kea-6101.example', 'ms' => 41.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-6101.example', 'ms' => 7.25 ] );
-		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea-6101.example' ] ], 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'filter' => [ 'server' => [ 'kea-6101.example' ] ], 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertMatchesRegularExpression( '/SEARCH t USING (COVERING )?INDEX requests_server \(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
 	}
@@ -397,7 +429,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_site_timing( [ 'server' => 'kea-7003.example', 'category' => 'sql', 'ms' => 41.5 ] );
 		$this->seed_site_timing( [ 'server' => 'kaka-7003.example', 'category' => 'sql', 'ms' => 7.25 ] );
 
-		$plan = self::plan_of( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'server' => [ 'kea-7003.example' ], 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] ) );
+		$plan = self::plan_of( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'server' => [ 'kea-7003.example' ], 'worker' => [ 0 ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertMatchesRegularExpression( '/SEARCH t USING .*\(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
 	}
@@ -406,7 +438,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_site_timing( [ 'server' => 'kea-7005.example', 'category' => 'sql', 'ms' => 41.5 ] );
 		$this->seed_site_timing( [ 'server' => 'kea-7005.example', 'category' => 'sql', 'ms' => 3.5 ], partition: 2 );
 		$this->seed_site_timing( [ 'server' => 'kaka-7005.example', 'category' => 'sql', 'ms' => 7.25 ] );
-		$run = fn ( array $filter ): array => Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => $filter + [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] ) )['rows'];
+		$run = fn ( array $filter ): array => Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => $filter + [ 'entry' => [ '' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] ) )['rows'];
 
 		$this->assertSame( [ [ 'sql', 45.0 ] ], $run( [ 'server' => [ 'kea-7005.example' ] ] ) );
 		$this->assertSame( [ [ 'sql', 7.25 ] ], $run( [ 'server!' => [ 'kea-7005.example' ] ] ), 'a negation answers every other server' );
@@ -418,7 +450,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea-7001.example', 'ms' => 41.5, 'error' => 'T', 'profiled' => 1 ] );
 		$this->seed_request( [ 'server' => 'kaka-7001.example', 'ms' => 7.25 ] );
 
-		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'group' => [ 'profiled' ], 'filter' => [ 'server' => [ 'kea-7001.example' ], 'worker' => [ 0 ] ], 'measure' => [ 'count', 'timed', 'sum_ms', 'errors' ], 'buckets' => $this->last_day() ] ) );
+		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'group' => [ 'profiled' ], 'filter' => [ 'server' => [ 'kea-7001.example' ], 'worker' => [ 0 ] ], 'measure' => [ 'count', 'timed', 'sum_ms', 'errors' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertMatchesRegularExpression( '/SEARCH t USING COVERING INDEX requests_server \(server_id=\? AND bucket>\? AND bucket<\?\)/', $plan );
 	}
@@ -427,7 +459,7 @@ final class StatsQueryTest extends TestCase {
 	public function test_an_unscoped_read_of_errors_and_completion_covers_on_requests_cover(): void {
 		$this->seed_request( [ 'server' => 'kea-7002.example', 'ms' => 41.5, 'error' => 'F', 'profiled' => 1 ] );
 
-		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'group' => [ 'profiled' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'count', 'errors', 'last_seen', 'count_5xx' ], 'buckets' => $this->last_day() ] ) );
+		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'group' => [ 'profiled' ], 'filter' => [ 'worker' => [ 0 ] ], 'measure' => [ 'count', 'errors', 'last_seen', 'count_5xx' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertMatchesRegularExpression( '/SEARCH t USING COVERING INDEX requests_cover \(bucket>\? AND bucket<\?\)/', $plan );
 	}
@@ -460,7 +492,7 @@ final class StatsQueryTest extends TestCase {
 			$this->seed_request( [ 'server' => $server, 'ms' => $ms ] );
 			$this->seed_site_timing( [ 'server' => $server, 'ms' => $ms ] );
 		}
-		$plan = self::plan_of( self::spec( $over + [ 'buckets' => $this->last_day() ] ) );
+		$plan = self::plan_of( self::spec( $over + [ 'buckets' => $this->last_span() ] ) );
 
 		$this->assertMatchesRegularExpression( "/SEARCH t USING (COVERING )?INDEX {$walks} \\(bucket>\\? AND bucket<\\?\\)/", $plan );
 		$this->assertStringNotContainsString( 'server_id=?', $plan );
@@ -495,7 +527,7 @@ final class StatsQueryTest extends TestCase {
 			$this->seed_request( [ 'url' => $url, 'server' => 'kea.example', 'ms' => 12.5 + $i ] );
 			$this->seed_timing( [ 'url' => $url, 'server' => 'kea.example', 'ms' => 12.5 + $i ] );
 		}
-		$plan = self::plan_of( self::spec( $over + [ 'filter' => [ 'page' => [ Log_Manager::url_hash( 'kea.example/hihi-6105/' ) ] ], 'buckets' => $this->last_day() ] ) );
+		$plan = self::plan_of( self::spec( $over + [ 'filter' => [ 'page' => [ Log_Manager::url_hash( 'kea.example/hihi-6105/' ) ] ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertMatchesRegularExpression( '/^SEARCH u USING (COVERING )?INDEX urls_page \(page_hash=\?\)$/m', $plan );
 		$this->assertMatchesRegularExpression( "/^SEARCH t USING (COVERING )?INDEX {$seeks} \\(url_id=\\? AND bucket>\\? AND bucket<\\?\\)$/m", $plan );
@@ -507,7 +539,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea-6102.example', 'ms' => 3.5 ], partition: 2 );
 		$this->seed_request( [ 'server' => 'kaka-6102.example', 'ms' => 7.25 ] );
 		$this->seed_request( [ 'server' => 'tui-6102.example', 'ms' => 900.0 ], partition: 3 );
-		$run = fn ( array $filter ): array => Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => $filter, 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_day() ] ) )['rows'];
+		$run = fn ( array $filter ): array => Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => $filter, 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_span() ] ) )['rows'];
 
 		$this->assertSame( [ [ 2, 45.0 ] ], $run( [ 'server' => [ 'kea-6102.example' ] ] ) );
 		$this->assertSame( [ [ 3, 52.25 ] ], $run( [ 'server' => [ 'kea-6102.example', 'kaka-6102.example' ] ] ), 'two names answer both' );
@@ -519,7 +551,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea-6103.example', 'ms' => 41.5 ] );
 		$this->seed_request( [ 'server' => 'kaka-6103.example', 'ms' => 7.25 ], partition: 1 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'filter' => [ 'server' => [ 'kaka-6103.example' ] ], 'measure' => [ 'count' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'filter' => [ 'server' => [ 'kaka-6103.example' ] ], 'measure' => [ 'count' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 'kaka-6103.example', 1 ] ], $r['rows'] );
 	}
@@ -527,15 +559,15 @@ final class StatsQueryTest extends TestCase {
 	public function test_a_negated_filter_on_an_unknown_field_is_refused_naming_the_field(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'unknown requests field kakapo:' );
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'kakapo!' => [ 'NZ' ] ], 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'kakapo!' => [ 'NZ' ] ], 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_an_absent_country_agent_ja4_and_from_are_unknown_and_no_error_is_a_dash(): void {
 		$this->seed_request( [ 'error' => 'T', 'ms' => null ] );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'country', 'ua', 'ja4', 'from', 'error' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'country', 'ua', 'ja4', 'from', 'error' ], 'buckets' => $this->last_span() ] ) );
 		$this->seed_request( [ 'country' => 'AU', 'ua' => 'Kakapo/2.0', 'ja4' => 't13d1517h2', 'from' => 'bot@kea.example' ], partition: 3 );
-		$named = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'country', 'ua', 'ja4', 'from', 'error' ], 'buckets' => $this->last_day() ] ) );
+		$named = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'country', 'ua', 'ja4', 'from', 'error' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 'Unknown', 'Unknown', 'Unknown', 'Unknown', 'T', 1 ] ], $r['rows'] );
 		$this->assertSame( [ [ 'AU', 'Kakapo/2.0', 't13d1517h2', 'bot@kea.example', '-', 1 ], [ 'Unknown', 'Unknown', 'Unknown', 'Unknown', 'T', 1 ] ], $named['rows'] );
@@ -553,7 +585,7 @@ final class StatsQueryTest extends TestCase {
 		}
 		$hash = static fn ( string $name ): string => Log_Manager::url_hash( "https://seed.example/{$name}-6640/" );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'measure' => [ 'count', 'avg_ms' ], 'buckets' => $this->last_day(), 'sort' => 'count', 'order' => 'desc', 'limit' => 2, 'also' => [ 'sort' => 'avg_ms', 'order' => 'desc', 'limit' => 1 ] ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'measure' => [ 'count', 'avg_ms' ], 'buckets' => $this->last_span(), 'sort' => 'count', 'order' => 'desc', 'limit' => 2, 'also' => [ 'sort' => 'avg_ms', 'order' => 'desc', 'limit' => 1 ] ] ) );
 
 		$this->assertSame( [ $hash( 'kea' ), $hash( 'tui' ) ], \array_column( $r['rows'], 0 ) );
 		$this->assertSame( [ [ $hash( 'tui' ), 'https://seed.example/tui-6640/', 2, 90.5 ] ], $r['also'] );
@@ -561,7 +593,7 @@ final class StatsQueryTest extends TestCase {
 
 	/** An `also` the groups cannot answer, or one beside a top, is refused. */
 	public function test_an_also_is_refused_where_it_cannot_page(): void {
-		$base = [ 'source' => 'requests', 'group' => [ 'url' ], 'buckets' => $this->last_day() ];
+		$base = [ 'source' => 'requests', 'group' => [ 'url' ], 'buckets' => $this->last_span() ];
 		foreach (
 			[
 				[ [ 'also' => [ 'sort' => 'p95_ms', 'limit' => 3 ] ], 'unknown also sort p95_ms' ],
@@ -597,7 +629,7 @@ final class StatsQueryTest extends TestCase {
 	public function test_a_range_not_on_whole_hours_reads_requests(): void {
 		$hour = Bucket::hour( self::NOW );
 
-		foreach ( [ $this->last_day(), [ [ ( $hour - 1 ) * 12, $hour * 12 ] ], [ [ ( $hour - 1 ) * 12, $hour * 12 - 1 ], [ $hour * 12 + 1, $hour * 12 + 11 ] ] ] as $buckets ) {
+		foreach ( [ $this->last_span(), [ [ ( $hour - 1 ) * 12, $hour * 12 ] ], [ [ ( $hour - 1 ) * 12, $hour * 12 - 1 ], [ $hour * 12 + 1, $hour * 12 + 11 ] ] ] as $buckets ) {
 			$this->assertSame( 'requests', Stats_Query::table_for( self::spec( [ 'source' => 'requests', 'group' => [ 'country' ], 'buckets' => $buckets ] ) ), \wp_json_encode( $buckets ) );
 		}
 	}
@@ -630,7 +662,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_hourly( [ 'hour' => $hour - 1, 'count' => 1, 'timed' => 1, 'sum_ms' => 100.0 ] );
 		$this->seed_hourly( [ 'hour' => $hour - 3, 'count' => 3, 'timed' => 3, 'sum_ms' => 900.0 ], partition: 3 );
 
-		$raw    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'avg_ms' ], 'buckets' => $this->last_day() ] ) );
+		$raw    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'avg_ms' ], 'buckets' => $this->last_span() ] ) );
 		$hourly = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'avg_ms' ], 'buckets' => $this->last_hours() ] ) );
 
 		$this->assertSame( [ [ 250.0 ] ], $raw['rows'] );
@@ -644,7 +676,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'ms' => 80.0, 'peak_mb' => 18.0, 'error' => 'A', 'url' => 'https://seed.example/tui/', 'finished_at' => self::NOW - 50.0 ], partition: 3 );
 		$measures = [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'min_ms', 'sum_peak_mb', 'avg_peak_mb', 'max_peak_mb', 'errors', 'urls', 'last_seen' ];
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => $measures, 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => $measures, 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( $measures, $r['columns'] );
 		$this->assertSame( [ [ 3, 2, 120.0, 60.0, 80.0, 40.0, 60.0, 20.0, 30.0, 2, 2, (float) self::NOW - 20.25 ] ], $r['rows'], 'an abort is not an error, and the URL seen twice in two partitions counts once' );
@@ -657,7 +689,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea.example', 'status' => 302, 'worker' => 1 ], partition: 2 );
 		$this->seed_request( [ 'server' => 'egret.example', 'status' => 200 ], partition: 1 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'worker' ], 'sort' => 'server', 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count', 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx', 'worker' ], 'sort' => 'server', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( 'requests', $r['table'] );
 		$this->assertSame(
@@ -671,14 +703,14 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'method' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'method', 'method' ], 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'method', 'method' ], 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_a_name_both_grouped_and_measured_is_refused(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'worker names both a group and a measure' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'worker' ], 'measure' => [ 'worker' ], 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'worker' ], 'measure' => [ 'worker' ], 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_an_untimed_group_answers_null_means_in_either_table(): void {
@@ -687,7 +719,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_hourly( [ 'hour' => $hour, 'count' => 2, 'timed' => 0, 'sum_ms' => 0.0, 'max_ms' => 0.0, 'errors' => 2 ] );
 		$measures = [ 'count', 'timed', 'sum_ms', 'avg_ms', 'max_ms', 'errors' ];
 
-		$raw    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => $measures, 'buckets' => $this->last_day() ] ) );
+		$raw    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => $measures, 'buckets' => $this->last_span() ] ) );
 		$hourly = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => $measures, 'buckets' => $this->last_hours() ] ) );
 
 		$this->assertSame( [ [ 1, 0, 0.0, null, null, 1 ] ], $raw['rows'] );
@@ -709,7 +741,7 @@ final class StatsQueryTest extends TestCase {
 
 	/** Each partition sums a category by its own id, and the names merge the partitions. */
 	public function test_timings_group_by_id_inside_each_partition(): void {
-		$spec = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'url' => [ $this->seed_sql_numbered_apart() ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+		$spec = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'url' => [ $this->seed_sql_numbered_apart() ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] );
 
 		$rows = Stats_Query::run( $spec )['rows'];
 
@@ -724,7 +756,7 @@ final class StatsQueryTest extends TestCase {
 
 	/** A category filter still matches by name in each partition. */
 	public function test_a_category_filter_still_matches_by_name(): void {
-		$spec = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'url' => [ $this->seed_sql_numbered_apart() ], 'category' => [ 'sql' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+		$spec = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'url' => [ $this->seed_sql_numbered_apart() ], 'category' => [ 'sql' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] );
 
 		$this->assertSame( [ [ 'sql', 42.75 ] ], Stats_Query::run( $spec )['rows'] );
 	}
@@ -735,7 +767,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://kea.example/egret-1/', 'server' => 'kea.example' ], partition: 3 );
 		$this->seed_request( [ 'url' => 'http://kea.example/plain', 'server' => 'kea.example' ], partition: 3 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'buckets' => $this->last_span() ] ) );
 
 		$expected = [
 			[ Url_Parts::hash( 'https://kea.example/egret-1/' ), 'https://kea.example/egret-1/', 2 ],
@@ -767,7 +799,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'url' => $first ], partition: 0 );
 		$this->seed_request( [ 'url' => $second ], partition: 2 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ Log_Manager::url_hash( 'https://seed.example/moa-7731/?v=?' ), $named, 2 ] ], $r['rows'] );
 	}
@@ -782,7 +814,7 @@ final class StatsQueryTest extends TestCase {
 		}
 		$this->seed_request( [ 'url' => 'https://seed.example/hihi-7712/', 'ms' => 11.5 ], partition: 2 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'measure' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'max_peak_mb', 'count_5xx', 'count_4xx' ], 'buckets' => $this->last_day(), 'sort' => 'count', 'order' => 'desc' ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'measure' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'max_peak_mb', 'count_5xx', 'count_4xx' ], 'buckets' => $this->last_span(), 'sort' => 'count', 'order' => 'desc' ] ) );
 
 		$this->assertSame( [ Log_Manager::url_hash( 'https://seed.example/kokako-7712/' ), 'https://seed.example/kokako-7712/', 4, 4, 201.5, 50.375, 20.0, 80.5, 4.0, 5.5, 1, 1 ], $r['rows'][0] );
 		$this->assertSame( 11.5, $r['rows'][1][5] );
@@ -794,7 +826,7 @@ final class StatsQueryTest extends TestCase {
 			$this->seed_request( [ 'ms' => $ms ], partition: $i );
 		}
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'count', 'p95_ms', 'urls' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'count', 'p95_ms', 'urls' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 4, 40.0, 1 ] ], $r['rows'] );
 	}
@@ -817,7 +849,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kaka.example', 'status' => 301, 'peak_mb' => 6.25, 'finished_at' => self::NOW - 10.25, 'worker' => 1 ], partition: 1 );
 		$this->seed_request( [ 'server' => 'kaka.example', 'status' => 204, 'peak_mb' => 1.0, 'finished_at' => self::NOW - 70.0 ], partition: 3 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'sum_peak_mb', 'last_seen', 'count_2xx', 'count_3xx', 'worker' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'sum_peak_mb', 'last_seen', 'count_2xx', 'count_3xx', 'worker' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 'kaka.example', 10.75, (float) self::NOW - 10.25, 1, 2, 1 ] ], $r['rows'] );
 	}
@@ -831,8 +863,8 @@ final class StatsQueryTest extends TestCase {
 		}
 		$measure = [ 'ms', 'calls', 'requests', 'avg_ms', 'avg_calls' ];
 
-		$site   = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'measure' => $measure, 'buckets' => $this->last_day() ] ) );
-		$by_url = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'url', 'category' ], 'measure' => $measure, 'buckets' => $this->last_day() ] ) );
+		$site   = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'measure' => $measure, 'buckets' => $this->last_span() ] ) );
+		$by_url = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'url', 'category' ], 'measure' => $measure, 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( 'timings_site', $site['table'] );
 		$this->assertSame( [ [ 'ruru-category', 20.0, 8, 4, 5.0, 2.0 ] ], $site['rows'] );
@@ -849,8 +881,8 @@ final class StatsQueryTest extends TestCase {
 		$named = [ 'http://egret.example/moa', 'https://kea.example/aaa-tui/', 'https://kea.example/weka/' ];
 		$this->assertNotSame( $named, $by_hash, 'the fixture is void unless hash order differs from name order' );
 
-		$asc  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'url_name', 'order' => 'asc', 'buckets' => $this->last_day() ] ) );
-		$desc = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'url_name', 'order' => 'desc', 'buckets' => $this->last_day() ] ) );
+		$asc  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'url_name', 'order' => 'asc', 'buckets' => $this->last_span() ] ) );
+		$desc = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'url_name', 'order' => 'desc', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( $named, \array_column( $asc['rows'], 1 ) );
 		$this->assertSame( \array_reverse( $named ), \array_column( $desc['rows'], 1 ) );
@@ -860,7 +892,7 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'url_name' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'url_name', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'url_name', 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_profiled_groups_and_filters_requests(): void {
@@ -871,14 +903,14 @@ final class StatsQueryTest extends TestCase {
 
 		$this->assertSame( 'requests', Stats_Query::table_for( $spec ), 'the hourly rollup keeps no profiled' );
 		$this->assertSame( [ [ 0, 1, 900.0 ], [ 1, 2, 100.0 ] ], Stats_Query::run( $spec )['rows'] );
-		$this->assertSame( [ [ 2 ] ], Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'profiled' => [ '1' ] ], 'buckets' => $this->last_day() ] ) )['rows'] );
+		$this->assertSame( [ [ 2 ] ], Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'profiled' => [ '1' ] ], 'buckets' => $this->last_span() ] ) )['rows'] );
 	}
 
 	public function test_a_url_filter_takes_its_hash(): void {
 		$this->seed_request( [ 'url' => 'https://seed.example/kokako/', 'ms' => 33.0 ], partition: 3 );
 		$this->seed_request( [ 'url' => 'https://seed.example/hihi/', 'ms' => 900.0 ] );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'url' => [ \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( 'https://seed.example/kokako/' ) ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'url' => [ \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( 'https://seed.example/kokako/' ) ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 33.0 ] ], $r['rows'] );
 	}
@@ -888,8 +920,8 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_timing( [ 'url' => $url, 'category' => 'sql', 'ms' => 42.5, 'calls' => 6, 'requests' => 2 ], partition: 3 );
 		$this->seed_timing( [ 'url' => 'https://seed.example/other/', 'category' => 'sql', 'ms' => 7.0 ] );
 		$this->seed_site_timing( [ 'category' => 'sql', 'ms' => 9999.0, 'calls' => 77, 'requests' => 50 ] );
-		$by_url = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'url' => [ \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( $url ) ] ], 'measure' => [ 'ms', 'calls', 'requests', 'avg_ms', 'avg_calls' ], 'buckets' => $this->last_day() ] );
-		$site   = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+		$by_url = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'url' => [ \Newspack_Event_Logger_Nodes\Log_Manager::url_hash( $url ) ] ], 'measure' => [ 'ms', 'calls', 'requests', 'avg_ms', 'avg_calls' ], 'buckets' => $this->last_span() ] );
+		$site   = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span(), 'now' => self::NOW ] );
 
 		$this->assertSame( 'timings', Stats_Query::table_for( $by_url ) );
 		$this->assertSame( 'category_window', Stats_Query::table_for( $site ) );
@@ -919,8 +951,8 @@ final class StatsQueryTest extends TestCase {
 			return $rows;
 		};
 
-		$composed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'measure' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'max_peak_mb', 'count_5xx', 'last_seen' ], 'buckets' => $this->last_day() ] ) );
-		$whole    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'measure' => [ 'count', 'p50_ms', 'urls' ], 'buckets' => $this->last_day() ] ) );
+		$composed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'measure' => [ 'count', 'timed', 'sum_ms', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'max_peak_mb', 'count_5xx', 'last_seen' ], 'buckets' => $this->last_span() ] ) );
+		$whole    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'measure' => [ 'count', 'p50_ms', 'urls' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( 'requests', $composed['table'] );
 		$this->assertSame( [ 'page', 'page_name', 'count', 'timed', 'sum_ms', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'max_peak_mb', 'count_5xx', 'last_seen' ], $composed['columns'] );
@@ -947,8 +979,8 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://kea.example/toutouwai-7718', 'server' => 'kea.example' ], partition: 2 );
 		$this->seed_request( [ 'url' => 'https://KEA.example/HIHI-7718/', 'server' => 'KEA.example' ], partition: 3 );
 
-		$site      = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'pages', 'urls' ], 'buckets' => $this->last_day() ] ) );
-		$by_server = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'pages' ], 'sort' => 'server', 'buckets' => $this->last_day() ] ) );
+		$site      = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'pages', 'urls' ], 'buckets' => $this->last_span() ] ) );
+		$by_server = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'pages' ], 'sort' => 'server', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 2, 4 ] ], $site['rows'] );
 		$this->assertSame( [ [ 'kea.example', 2 ] ], $by_server['rows'] );
@@ -980,7 +1012,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://kea.example/Hoiho-6106/' ] );
 		$this->seed_timing( [ 'url' => 'https://kea.example/Hoiho-6106/' ] );
 
-		$plan = self::plan_of( self::spec( $over + [ 'buckets' => $this->last_day() ] ) );
+		$plan = self::plan_of( self::spec( $over + [ 'buckets' => $this->last_span() ] ) );
 
 		[ $per_row, $per_id ] = \explode( "\nSCAN g\n", $plan, 2 ) + [ 1 => '' ];
 		$this->assertStringNotContainsString( 'SEARCH u ', $per_row, "no row looks its URL up:\n{$plan}" );
@@ -998,14 +1030,14 @@ final class StatsQueryTest extends TestCase {
 		$named = [ 'egret.example/moa-6630', 'kea.example/aaa-tui-6630', 'kea.example/weka-6630' ];
 		$this->assertNotSame( $named, $by_hash, 'the fixture is void unless hash order differs from name order' );
 
-		$asc  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'sort' => 'page_name', 'order' => 'asc', 'buckets' => $this->last_day() ] ) );
-		$desc = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'sort' => 'page_name', 'order' => 'desc', 'buckets' => $this->last_day() ] ) );
+		$asc  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'sort' => 'page_name', 'order' => 'asc', 'buckets' => $this->last_span() ] ) );
+		$desc = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'sort' => 'page_name', 'order' => 'desc', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( $named, \array_column( $asc['rows'], 1 ) );
 		$this->assertSame( \array_reverse( $named ), \array_column( $desc['rows'], 1 ) );
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'page_name' );
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'page_name', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'page_name', 'buckets' => $this->last_span() ] ) );
 	}
 
 	/**
@@ -1024,9 +1056,9 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_timing( [ 'url' => $other, 'server' => 'kea.example', 'category' => 'sql', 'ms' => 99.0 ] );
 		$page = Log_Manager::url_hash( 'kea.example/weka-5521/' );
 
-		$kept    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'sum_ms' ], 'sort' => 'url_name', 'buckets' => $this->last_day() ] ) );
-		$left    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'page!' => [ $page ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
-		$timings = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+		$kept    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'sum_ms' ], 'sort' => 'url_name', 'buckets' => $this->last_span() ] ) );
+		$left    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'filter' => [ 'page!' => [ $page ] ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
+		$timings = self::spec( [ 'source' => 'timings', 'group' => [ 'category' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] );
 
 		$this->assertSame( [ [ Url_Parts::hash( $upper ), $upper, 20.0 ], [ Url_Parts::hash( $query ), $query, 40.0 ] ], $kept['rows'] );
 		$this->assertSame( [ [ Url_Parts::hash( $other ), $other, 900.0 ] ], $left['rows'] );
@@ -1053,9 +1085,9 @@ final class StatsQueryTest extends TestCase {
 			return $rows;
 		};
 
-		$composed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page', 'url' ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
-		$whole    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page', 'url' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'p50_ms' ], 'buckets' => $this->last_day() ] ) );
-		$listed   = Stats_Query::newest_requests( [ 'page' => [ $page ] ], $this->last_day(), 10 );
+		$composed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page', 'url' ], 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
+		$whole    = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'page', 'url' ], 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'p50_ms' ], 'buckets' => $this->last_span() ] ) );
+		$listed   = Stats_Query::newest_requests( [ 'page' => [ $page ] ], $this->last_span(), 10 );
 
 		$this->assertSame( [ 'page', 'page_name', 'url', 'url_name', 'sum_ms' ], $composed['columns'] );
 		$this->assertSame( $rows( 10.0, 80.0 ), $composed['rows'] );
@@ -1067,7 +1099,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_site_timing( [ 'category' => 'init', 'entry' => '', 'worker' => 1, 'listener' => 0, 'ms' => 12.0 ] );
 		$this->seed_site_timing( [ 'category' => 'init', 'entry' => 'Kea::boot', 'worker' => 0, 'listener' => 1, 'ms' => 4.5 ], partition: 2 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'worker', 'entry', 'listener' ], 'filter' => [ 'category' => [ 'init' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'worker', 'entry', 'listener' ], 'filter' => [ 'category' => [ 'init' ] ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 0, 'Kea::boot', 1, 4.5 ], [ 1, '', 0, 12.0 ] ], $r['rows'] );
 	}
@@ -1076,7 +1108,7 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'worker' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'url', 'worker' ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'url', 'worker' ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_hour_and_day_group_buckets_by_their_hour_and_utc_day(): void {
@@ -1086,8 +1118,8 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_site_timing( [ 'bucket' => $now - 1, 'ms' => 2.0 ] );
 		$this->seed_site_timing( [ 'bucket' => $now, 'ms' => 3.0 ] );
 
-		$requests = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'day', 'hour' ], 'buckets' => $this->last_day() ] ) );
-		$timings  = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'hour' ], 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] ) );
+		$requests = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'day', 'hour' ], 'buckets' => $this->last_span() ] ) );
+		$timings  = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'hour' ], 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$hour = Bucket::hour( self::NOW );
 		$day  = \intdiv( self::NOW, 86400 );
@@ -1099,7 +1131,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://seed.example/kea-or-egret/' ] );
 		$this->seed_request( [ 'url' => 'https://seed.example/kea-or-egrets/' ], partition: 3 );
 		$this->seed_request( [ 'url' => 'https://seed.example/kea-egret/' ], partition: 3 );
-		$spec = self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'search' => 'kea OR "egret*', 'buckets' => $this->last_day() ] );
+		$spec = self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'search' => 'kea OR "egret*', 'buckets' => $this->last_span() ] );
 
 		$r = Stats_Query::run( $spec );
 
@@ -1111,7 +1143,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'url' => 'https://seed.example/hoiho-41/', 'ms' => 12.0 ], partition: 2 );
 		$this->seed_request( [ 'url' => 'https://seed.example/pateke/', 'ms' => 500.0 ] );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'search' => 'HOIHO', 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'search' => 'HOIHO', 'measure' => [ 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 12.0 ] ], $r['rows'] );
 	}
@@ -1119,7 +1151,7 @@ final class StatsQueryTest extends TestCase {
 	public function test_a_search_reads_a_urls_timings(): void {
 		$this->seed_timing( [ 'url' => 'https://seed.example/korimako/', 'ms' => 8.25 ] );
 		$this->seed_site_timing( [ 'ms' => 600.0 ] );
-		$spec = self::spec( [ 'source' => 'timings', 'search' => 'korimako', 'measure' => [ 'ms' ], 'buckets' => $this->last_day() ] );
+		$spec = self::spec( [ 'source' => 'timings', 'search' => 'korimako', 'measure' => [ 'ms' ], 'buckets' => $this->last_span() ] );
 
 		$this->assertSame( 'timings', Stats_Query::table_for( $spec ) );
 		$this->assertSame( [ [ 8.25 ] ], Stats_Query::run( $spec )['rows'] );
@@ -1129,7 +1161,7 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'no word' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'search' => '"* - "', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'search' => '"* - "', 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_percentiles_rank_each_groups_timed_requests(): void {
@@ -1140,17 +1172,17 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'tui.example', 'ms' => 7.5 ], partition: 1 );
 		$this->seed_request( [ 'server' => 'tui.example', 'ms' => null ], partition: 2 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count', 'p50_ms', 'p95_ms' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count', 'p50_ms', 'p95_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 'kea.example', 11, 50.0, 1000.0 ], [ 'tui.example', 2, 7.5, 7.5 ] ], $r['rows'], 'nearest rank over the timed alone' );
 	}
 
 	public function test_a_percentile_with_no_group_ranks_every_row_and_none_timed_is_null(): void {
 		$this->seed_request( [ 'ms' => null ] );
-		$untimed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'p50_ms' ], 'buckets' => $this->last_day() ] ) );
+		$untimed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'p50_ms' ], 'buckets' => $this->last_span() ] ) );
 		$this->seed_request( [ 'ms' => 3.0 ], partition: 3 );
 		$this->seed_request( [ 'ms' => 9.0 ], partition: 1 );
-		$timed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'p50_ms', 'p95_ms' ], 'buckets' => $this->last_day() ] ) );
+		$timed = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'p50_ms', 'p95_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ null ] ], $untimed['rows'] );
 		$this->assertSame( [ [ 3.0, 9.0 ] ], $timed['rows'] );
@@ -1161,7 +1193,7 @@ final class StatsQueryTest extends TestCase {
 			$this->seed_request( [ 'ms' => $i * 7.5 ], partition: $i % 4 );
 		}
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'p95_ms', 'p99_ms' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'p95_ms', 'p99_ms' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 285.0, 300.0 ] ], $r['rows'], 'rank 38 and rank 40 of 40' );
 	}
@@ -1175,7 +1207,7 @@ final class StatsQueryTest extends TestCase {
 		}
 		$this->seed_request( [ 'server' => 'tui.example', 'error' => null ], partition: 1 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count', 'errors', 'error_rate' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'count', 'errors', 'error_rate' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 'kea.example', 8, 3, 0.375 ], [ 'tui.example', 1, 0, 0.0 ] ], $r['rows'], 'not the mean of 1/3 and 2/5' );
 	}
@@ -1193,7 +1225,7 @@ final class StatsQueryTest extends TestCase {
 
 	public function test_error_rate_is_no_top_by_because_it_does_not_add_across_buckets(): void {
 		$this->expectExceptionMessage( 'top_by error_rate' );
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'measure' => [ 'count' ], 'top' => 3, 'top_by' => 'error_rate', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'measure' => [ 'count' ], 'top' => 3, 'top_by' => 'error_rate', 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_sort_order_limit_and_offset_page_the_rows(): void {
@@ -1203,7 +1235,7 @@ final class StatsQueryTest extends TestCase {
 			}
 		}
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'count', 'order' => 'desc', 'limit' => 2, 'offset' => 1, 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'count', 'order' => 'desc', 'limit' => 2, 'offset' => 1, 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 'd.example', 3 ], [ 'c.example', 2 ] ], $r['rows'] );
 	}
@@ -1212,7 +1244,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea.example', 'ms' => 40.0 ] );
 		$this->seed_request( [ 'server' => 'egret.example', 'ms' => null, 'error' => 'T' ], partition: 1 );
 		$this->seed_request( [ 'server' => 'weka.example', 'ms' => 90.0 ], partition: 2 );
-		$spec = self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'avg_ms' ], 'sort' => 'avg_ms', 'buckets' => $this->last_day() ] );
+		$spec = self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [ 'avg_ms' ], 'sort' => 'avg_ms', 'buckets' => $this->last_span() ] );
 
 		$this->assertSame( [ 'kea.example', 'weka.example', 'egret.example' ], \array_column( Stats_Query::run( $spec + [ 'order' => 'asc' ] )['rows'], 0 ) );
 		$this->assertSame( [ 'weka.example', 'kea.example', 'egret.example' ], \array_column( Stats_Query::run( $spec + [ 'order' => 'desc' ] )['rows'], 0 ) );
@@ -1227,7 +1259,7 @@ final class StatsQueryTest extends TestCase {
 			$this->seed_requests( \array_fill( 0, 7, [ 'url' => $url ] ), 2 );
 		}
 		\sort( $hashes );
-		$spec = self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'count', 'buckets' => $this->last_day() ] );
+		$spec = self::spec( [ 'source' => 'requests', 'group' => [ 'url' ], 'sort' => 'count', 'buckets' => $this->last_span() ] );
 
 		$desc = Stats_Query::run( $spec + [ 'order' => 'desc' ] )['rows'];
 		$asc  = Stats_Query::run( $spec + [ 'order' => 'asc' ] )['rows'];
@@ -1242,7 +1274,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'a.example', 'method' => 'POST' ], partition: 3 );
 		$this->seed_request( [ 'server' => 'a.example', 'method' => 'GET' ], partition: 1 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server', 'method' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server', 'method' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 'a.example', 'GET', 1 ], [ 'a.example', 'POST', 1 ], [ 'z.example', 'GET', 1 ] ], $r['rows'] );
 	}
@@ -1252,7 +1284,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'status' => 404 ], partition: 3 );
 		$this->seed_request( [ 'status' => 200 ], partition: 3 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'status' => [ '301', '404' ], 'worker' => [ '0', '1' ] ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'filter' => [ 'status' => [ '301', '404' ], 'worker' => [ '0', '1' ] ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 2 ] ], $r['rows'] );
 		$this->assertNull( $r['groups'], 'no top, no tuple count' );
@@ -1272,7 +1304,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'tui.example', 'bucket' => $now - 1, 'ms' => 200.0 ] );
 		$this->seed_request( [ 'server' => 'weka.example', 'bucket' => $now - 1, 'ms' => 50.0 ], partition: 1 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'top' => 2, 'top_by' => 'sum_ms', 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'top' => 2, 'top_by' => 'sum_ms', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ 'bucket', 'server', 'count' ], $r['columns'] );
 		$this->assertSame( [ [ $now - 1, 'egret.example', 1 ], [ $now - 2, 'tui.example', 1 ], [ $now - 1, 'tui.example', 1 ] ], $r['rows'] );
@@ -1284,7 +1316,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'hihi.example', 'ms' => 50.0 ], partition: 3 );
 		$this->seed_request( [ 'server' => 'kaka.example', 'ms' => 10.0 ], partition: 2 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server', 'bucket' ], 'measure' => [ 'sum_ms' ], 'top' => 1, 'top_by' => 'sum_ms', 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server', 'bucket' ], 'measure' => [ 'sum_ms' ], 'top' => 1, 'top_by' => 'sum_ms', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 'hihi.example', Bucket::id( self::NOW ), 50.0 ] ], $r['rows'] );
 		$this->assertSame( 3, $r['groups'] );
@@ -1298,7 +1330,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'server' => 'kea.example', 'method' => 'POST' ], partition: 1 );
 		$this->seed_request( [ 'server' => 'tui.example', 'method' => 'GET' ], partition: 2 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'hour', 'server', 'method' ], 'top' => 5, 'top_by' => 'count', 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'hour', 'server', 'method' ], 'top' => 5, 'top_by' => 'count', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ $hour, 'kea.example', 'GET', 2 ], [ $hour, 'kea.example', 'POST', 1 ], [ $hour, 'tui.example', 'GET', 1 ] ], $r['rows'] );
 		$this->assertSame( 3, $r['groups'] );
@@ -1313,7 +1345,7 @@ final class StatsQueryTest extends TestCase {
 		foreach ( [ 'requests' => [ 'avg_ms', 'p50_ms', 'p95_ms', 'urls', 'pages', 'max_ms', 'min_ms', 'max_peak_mb', 'avg_peak_mb', 'last_seen', 'worker' ], 'timings' => [ 'avg_ms', 'avg_calls' ] ] as $source => $measures ) {
 			foreach ( $measures as $measure ) {
 				try {
-					Stats_Query::run( self::spec( [ 'source' => $source, 'group' => [ 'bucket', 'server' ], 'measure' => [ 'requests' === $source ? 'count' : 'ms' ], 'top' => 3, 'top_by' => $measure, 'buckets' => $this->last_day() ] ) );
+					Stats_Query::run( self::spec( [ 'source' => $source, 'group' => [ 'bucket', 'server' ], 'measure' => [ 'requests' === $source ? 'count' : 'ms' ], 'top' => 3, 'top_by' => $measure, 'buckets' => $this->last_span() ] ) );
 					$this->fail( "refused: {$source} {$measure}" );
 				} catch ( \InvalidArgumentException $e ) {
 					$this->assertStringContainsString( "top_by {$measure}", $e->getMessage() );
@@ -1332,14 +1364,14 @@ final class StatsQueryTest extends TestCase {
 			$this->seed_request( [ 'server' => 'weka.example', 'bucket' => $now - 2 ], partition: $partition );
 		}
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'measure' => [ 'count', 'errors' ], 'top' => 1, 'top_by' => 'errors', 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'measure' => [ 'count', 'errors' ], 'top' => 1, 'top_by' => 'errors', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ $now - 3, 'kea.example', 1, 1 ], [ $now - 1, 'kea.example', 1, 1 ] ], $r['rows'], 'two errors over two buckets outrank one, and three clean requests' );
 		$this->assertSame( 3, $r['groups'] );
 	}
 
 	public function test_top_over_no_rows_counts_no_groups(): void {
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'top' => 3, 'top_by' => 'count', 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket', 'server' ], 'top' => 3, 'top_by' => 'count', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [], $r['rows'] );
 		$this->assertSame( 0, $r['groups'] );
@@ -1353,7 +1385,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_site_timing( [ 'category' => 'sql', 'ms' => 40.0 ] );
 		$this->seed_site_timing( [ 'category' => 'init', 'ms' => 90.0 ], partition: 2 );
 		$hourly  = self::spec( [ 'source' => 'requests', 'group' => [ 'hour', 'status_class' ], 'top' => 2, 'top_by' => 'count', 'buckets' => $this->last_hours() ] );
-		$timings = self::spec( [ 'source' => 'timings', 'group' => [ 'bucket', 'category' ], 'measure' => [ 'ms' ], 'top' => 1, 'top_by' => 'ms', 'buckets' => $this->last_day() ] );
+		$timings = self::spec( [ 'source' => 'timings', 'group' => [ 'bucket', 'category' ], 'measure' => [ 'ms' ], 'top' => 1, 'top_by' => 'ms', 'buckets' => $this->last_span() ] );
 
 		$by_hour = Stats_Query::run( $hourly );
 		$by_cat  = Stats_Query::run( $timings );
@@ -1371,7 +1403,7 @@ final class StatsQueryTest extends TestCase {
 	}
 
 	public function test_a_top_spec_is_refused_where_it_cannot_rank(): void {
-		$base = [ 'source' => 'requests', 'buckets' => $this->last_day(), 'top_by' => 'count', 'top' => 2, 'group' => [ 'bucket', 'server' ] ];
+		$base = [ 'source' => 'requests', 'buckets' => $this->last_span(), 'top_by' => 'count', 'top' => 2, 'group' => [ 'bucket', 'server' ] ];
 		foreach (
 			[
 				[ [ 'group' => [ 'server' ] ], 'a time field' ],
@@ -1405,42 +1437,46 @@ final class StatsQueryTest extends TestCase {
 	}
 
 	/**
-	 * `query` reaches back as far as its source keeps rows: a week of
-	 * `requests`, 2,016 buckets, answered from the hourly rollup.
+	 * `query` reaches back as far as its source keeps rows, the span and an
+	 * hour: at a `min_lifetime` of 7,200 seconds, 36 buckets of `requests`,
+	 * the three whole hours the hourly rollup answers.
 	 */
-	public function test_a_query_selects_the_whole_week_its_source_keeps(): void {
+	public function test_a_query_selects_every_bucket_its_source_keeps(): void {
+		$this->use_min_lifetime( 7200 );
 		$hour = Bucket::hour( self::NOW );
-		$this->seed_hourly( [ 'hour' => $hour - 72, 'count' => 13 ] );
+		$this->seed_hourly( [ 'hour' => $hour - 3, 'count' => 13 ] );
 		$this->seed_hourly( [ 'hour' => $hour - 1, 'count' => 4 ], partition: 3 );
-		$this->seed_hourly( [ 'hour' => $hour - 169, 'count' => 900 ] );
-		$week = Bucket::key( ( $hour - 168 ) * 12 ) . '..' . Bucket::key( $hour * 12 );
+		$this->seed_hourly( [ 'hour' => $hour - 4, 'count' => 900 ] );
+		$kept = Bucket::key( ( $hour - 3 ) * 12 ) . '..' . Bucket::key( $hour * 12 );
 
-		$reply = self::query( 'requests', 'day', '--measure=count', "--bucket={$week}", '--sort=day' );
+		$reply = self::query( 'requests', 'hour', '--measure=count', "--bucket={$kept}", '--sort=hour' );
 
 		$this->assertSame( 'requests_hourly', $reply['table'] );
-		$this->assertSame( [ [ intdiv( $hour - 72, 24 ), 13 ], [ intdiv( $hour - 1, 24 ), 4 ] ], $reply['rows'] );
-		$this->assertSame( $week, $reply['filters']['bucket'] );
+		$this->assertSame( [ [ $hour - 3, 13 ], [ $hour - 1, 4 ] ], $reply['rows'] );
+		$this->assertSame( $kept, $reply['filters']['bucket'] );
 	}
 
 	/** A selection past what its source keeps is refused, naming that bound. */
 	public function test_a_query_past_its_sources_retention_is_refused(): void {
+		$this->use_min_lifetime( 7200 );
 		$latest = Bucket::id( self::NOW );
-		foreach ( [ [ 'requests', 2016 ], [ 'timings', 300 ] ] as [ $source, $kept ] ) {
-			$over = Bucket::key( $latest - $kept ) . '..' . Bucket::key( $latest + 1 );
+		foreach ( [ 'requests', 'timings' ] as $source ) {
+			$over = Bucket::key( $latest - 36 ) . '..' . Bucket::key( $latest + 1 );
 
 			$reply = self::query( $source, '--measure=' . ( 'requests' === $source ? 'count' : 'ms' ), "--bucket={$over}" );
 
-			$this->assertSame( "bucket selection holds more than {$kept} buckets", \trim( Core::as_string( $reply ) ), $source );
+			$this->assertSame( 'bucket selection holds more than 36 buckets', \trim( Core::as_string( $reply ) ), $source );
 		}
 	}
 
-	/** The URL table keeps the chart's 288 whatever the sources keep. */
+	/** The URL table keeps the chart's span whatever the sources keep. */
 	public function test_the_url_table_keeps_the_charts_selection(): void {
+		$this->use_min_lifetime( 7200 );
 		$latest = Bucket::id( self::NOW );
 
-		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--bucket=' . Bucket::key( $latest - 288 ) . '..' . Bucket::key( $latest + 1 ) ] );
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--bucket=' . Bucket::key( $latest - 24 ) . '..' . Bucket::key( $latest + 1 ) ] );
 
-		$this->assertSame( 'bucket selection holds more than 288 buckets', \trim( Core::as_string( $reply ) ) );
+		$this->assertSame( 'bucket selection holds more than 24 buckets', \trim( Core::as_string( $reply ) ) );
 	}
 
 	public function test_the_query_verb_spells_buckets_as_keys_and_echoes_its_filters(): void {
@@ -1472,16 +1508,17 @@ final class StatsQueryTest extends TestCase {
 		);
 	}
 
-	public function test_the_query_verb_reads_the_last_288_buckets_by_default(): void {
+	public function test_the_query_verb_reads_the_span_by_default(): void {
+		$this->use_min_lifetime( 3900 );
 		$now = Bucket::id( self::NOW );
-		$this->seed_request( [ 'bucket' => $now - 288, 'ms' => 1.0 ] );
-		$this->seed_request( [ 'bucket' => $now - 287, 'ms' => 2.0 ], partition: 3 );
+		$this->seed_request( [ 'bucket' => $now - 13, 'ms' => 1.0 ] );
+		$this->seed_request( [ 'bucket' => $now - 12, 'ms' => 2.0 ], partition: 3 );
 		$this->seed_request( [ 'bucket' => $now, 'ms' => 4.0 ], partition: 1 );
 
 		$reply = self::query( 'requests', '--measure=sum_ms' );
 
 		$this->assertSame( [ [ 6 ] ], $reply['rows'] );
-		$this->assertSame( Bucket::key( $now - 287 ) . '..' . Bucket::key( $now + 1 ), $reply['filters']['bucket'], 'the run closes at the end of the current bucket' );
+		$this->assertSame( Bucket::key( $now - 12 ) . '..' . Bucket::key( $now + 1 ), $reply['filters']['bucket'], 'the run closes at the end of the current bucket' );
 	}
 
 	public function test_the_query_verb_groups_positionally_and_pages(): void {
@@ -1584,7 +1621,7 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \PDOException::class );
 		$this->expectExceptionMessage( 'requests' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_span() ] ) );
 	}
 
 	/**
@@ -1603,7 +1640,7 @@ final class StatsQueryTest extends TestCase {
 		$hour = Bucket::hour( self::NOW - 4000 );
 		$spec = [ 'source' => 'requests', 'group' => [ 'status_class' ], 'measure' => [ 'count', 'errors' ] ];
 
-		$raw    = Stats_Query::run( self::spec( $spec + [ 'buckets' => $this->last_day() ] ) );
+		$raw    = Stats_Query::run( self::spec( $spec + [ 'buckets' => $this->last_span() ] ) );
 		$hourly = Stats_Query::run( self::spec( $spec + [ 'buckets' => [ [ $hour * 12, $hour * 12 + 11 ] ] ] ) );
 
 		$this->assertSame( 'requests_hourly', $hourly['table'] );
@@ -1615,20 +1652,20 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'mean_wombats' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'mean_wombats' ], 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'mean_wombats' ], 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_an_unknown_source_is_refused_naming_it(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'burrows' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'burrows', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'burrows', 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_an_unknown_group_or_filter_field_is_refused_naming_it(): void {
 		foreach ( [ [ 'group' => [ 'plumage' ] ], [ 'filter' => [ 'plumage' => [ 'green' ] ] ], [ 'group' => [ 'category' ] ] ] as $over ) {
 			try {
-				Stats_Query::run( self::spec( $over + [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
+				Stats_Query::run( self::spec( $over + [ 'source' => 'requests', 'buckets' => $this->last_span() ] ) );
 				$this->fail( 'refused: ' . \wp_json_encode( $over ) );
 			} catch ( \InvalidArgumentException $e ) {
 				$this->assertStringContainsString( \array_key_first( $over['filter'] ?? [] ) ?? $over['group'][0], $e->getMessage() );
@@ -1640,27 +1677,27 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'avg_calls' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'avg_calls' ], 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'measure' => [ 'avg_calls' ], 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_a_sort_must_name_an_answered_column(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'max_ms' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'max_ms', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'sort' => 'max_ms', 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_an_order_is_asc_or_desc(): void {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'sideways' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'order' => 'sideways', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'order' => 'sideways', 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_a_limit_or_offset_past_its_bound_is_refused(): void {
 		foreach ( [ [ 'limit' => 1001 ], [ 'limit' => 0 ], [ 'offset' => 10001 ], [ 'offset' => -1 ] ] as $over ) {
 			try {
-				Stats_Query::run( self::spec( $over + [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
+				Stats_Query::run( self::spec( $over + [ 'source' => 'requests', 'buckets' => $this->last_span() ] ) );
 				$this->fail( 'refused: ' . \wp_json_encode( $over ) );
 			} catch ( \InvalidArgumentException $e ) {
 				$this->assertStringContainsString( (string) \array_key_first( $over ), $e->getMessage() );
@@ -1672,11 +1709,11 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'measure' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [], 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'measure' => [], 'buckets' => $this->last_span() ] ) );
 	}
 
 	public function test_no_partition_files_answers_no_rows(): void {
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ 'count' ], $r['columns'] );
 		$this->assertSame( [], $r['rows'] );
@@ -1686,21 +1723,21 @@ final class StatsQueryTest extends TestCase {
 	public function test_a_partition_with_no_file_beside_one_with_rows_answers_their_rows(): void {
 		$this->seed_request( [ 'server' => 'tui.example' ], partition: 2 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [ [ 'tui.example', 1 ] ], $r['rows'] );
 	}
 
 	public function test_rows_outside_the_buckets_are_not_read(): void {
 		$now = Bucket::id( self::NOW );
-		$this->seed_request( [ 'bucket' => $now - 288 ] );
+		$this->seed_request( [ 'bucket' => $now - 31 ] );
 		$this->seed_request( [ 'bucket' => $now - 3 ] );
 		$this->seed_request( [ 'bucket' => $now - 3 ] );
 		$this->seed_request( [ 'bucket' => $now - 1 ] );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket' ], 'buckets' => [ [ $now - 288, $now - 288 ], [ $now - 3, $now - 2 ] ] ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'bucket' ], 'buckets' => [ [ $now - 31, $now - 31 ], [ $now - 3, $now - 2 ] ] ] ) );
 
-		$this->assertSame( [ [ $now - 288, 1 ], [ $now - 3, 2 ] ], $r['rows'] );
+		$this->assertSame( [ [ $now - 31, 1 ], [ $now - 3, 2 ] ], $r['rows'] );
 	}
 
 	public function test_a_stats_file_that_will_not_open_answers_no_rows_and_says_so_once(): void {
@@ -1709,8 +1746,8 @@ final class StatsQueryTest extends TestCase {
 		\Newspack_Event_Logger_Nodes\Config::reset();
 		$logged = \count( Core::$recent_log );
 
-		$first  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
-		$second = Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
+		$first  = Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_span() ] ) );
+		$second = Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_span() ] ) );
 
 		$this->assertSame( [], $first['rows'] );
 		$this->assertSame( [], $second['rows'] );
@@ -1724,7 +1761,7 @@ final class StatsQueryTest extends TestCase {
 		$this->activate_written( 'kea-ledger-4471', "var num_partitions = 2\nmake_node Row_Table kea-facts-4471 Flame_Facts\n" );
 		$this->seed_request( [ 'server' => 'kea.example' ], partition: 1 );
 
-		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'buckets' => $this->last_day() ] ) );
+		$r = Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'server' ], 'buckets' => $this->last_span() ] ) );
 
 		$this->assertFileExists( \Newspack_Nodes\Table_Node::file( 'kea-facts-4471', 1 ) );
 		$this->assertTrue( $r['available'] );
@@ -1737,7 +1774,7 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \RuntimeException::class );
 		$this->expectExceptionMessage( 'the active topologies declare 2 Row_Tables of schema Flame_Facts: kea-left-4471, kea-right-4471' );
 
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'buckets' => $this->last_span() ] ) );
 	}
 
 	/**
@@ -1762,7 +1799,7 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-hihi-c', 'bucket' => $now - 2, 'finished_at' => ( $now - 2 ) * 300 + 1.5 ], partition: 3 );
 		$this->seed_request( [ 'url' => 'https://seed.example/other/', 'rid' => 'rid-other', 'bucket' => $now ] );
 
-		$rows = Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( $url ) ] ], $this->last_day(), 2 );
+		$rows = Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( $url ) ] ], $this->last_span(), 2 );
 
 		$this->assertSame(
 			[
@@ -1771,7 +1808,7 @@ final class StatsQueryTest extends TestCase {
 			],
 			$rows
 		);
-		$all = Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( $url ) ] ], $this->last_day(), 500 );
+		$all = Stats_Query::newest_requests( [ 'url' => [ Log_Manager::url_hash( $url ) ] ], $this->last_span(), 500 );
 		$this->assertSame( [ 'rid' => 'rid-hihi-a', 'url' => Log_Manager::url_hash( $url ), 'started_at' => ( $now - 6 ) * 300 - 23, 'finished_at' => ( $now - 6 ) * 300 + 4.5, 'partition' => 2, 'segment' => 2, 'offset' => 8817, 'length' => 733, 'status' => 302, 'method' => 'POST', 'error' => null, 'ms' => 61.25, 'peak_mb' => 17.5 ], $all[2] );
 	}
 
@@ -1810,12 +1847,12 @@ final class StatsQueryTest extends TestCase {
 		$this->seed_request( [ 'rid' => 'rid-ruru-6631', 'server' => 'kea.example' ] );
 		$this->seed_request( [ 'rid' => 'rid-ruru-6632', 'server' => 'kea.example' ] );
 
-		$listed = Stats_Query::newest_requests( [ 'rid' => [ 'rid-ruru-6632' ] ], $this->last_day(), 5 );
+		$listed = Stats_Query::newest_requests( [ 'rid' => [ 'rid-ruru-6632' ] ], $this->last_span(), 5 );
 
 		$this->assertSame( [ 'rid-ruru-6632' ], \array_column( $listed, 'rid' ) );
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'unknown requests field rid' );
-		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'rid' ], 'buckets' => $this->last_day() ] ) );
+		Stats_Query::run( self::spec( [ 'source' => 'requests', 'group' => [ 'rid' ], 'buckets' => $this->last_span() ] ) );
 	}
 
 	/** Only a keyed lookup goes without a bucket range. */
@@ -1842,7 +1879,7 @@ final class StatsQueryTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'category' );
 
-		Stats_Query::newest_requests( [ 'category' => [ 'sql' ] ], $this->last_day(), 500 );
+		Stats_Query::newest_requests( [ 'category' => [ 'sql' ] ], $this->last_span(), 500 );
 	}
 
 	public function test_newest_requests_from_a_file_that_will_not_open_lists_none(): void {
@@ -1850,7 +1887,7 @@ final class StatsQueryTest extends TestCase {
 		\update_option( 'newspack_nodes_topologies', [] );
 		\Newspack_Event_Logger_Nodes\Config::reset();
 
-		$this->assertSame( [], Stats_Query::newest_requests( [], $this->last_day(), 500 ) );
+		$this->assertSame( [], Stats_Query::newest_requests( [], $this->last_span(), 500 ) );
 	}
 	/**
 	 * The ORDER BY a sort takes, over `k` and its tie-break `t`, in each order.

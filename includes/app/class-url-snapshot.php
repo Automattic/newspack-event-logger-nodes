@@ -330,7 +330,7 @@ final class Url_Snapshot {
 		$grouped  = [
 			'source'  => 'requests',
 			'filter'  => [],
-			'buckets' => Bucket::last( Flame_Facts_Row_Schema::WINDOW_BUCKETS, $now ),
+			'buckets' => Bucket::last( Bucket::window(), $now ),
 			'sort'    => 'url',
 		] + self::GROUPED;
 		$measures = \implode( ', ', \array_map( static fn ( string $name ): string => "g.{$name}", self::GROUPED['measure'] ) );

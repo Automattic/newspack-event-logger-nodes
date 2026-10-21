@@ -10,6 +10,8 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Core;
+
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -27,8 +29,60 @@ final class Bucket {
 	/** Seconds an hour spans. */
 	public const HOUR_SECONDS = 3600;
 
-	/** Most buckets a chart's selection names: the 288 it draws. */
-	public const MAX_SELECTION = 288;
+	/** Buckets each stats table keeps past the span: an hour. */
+	public const RETAIN_SLACK = 12;
+
+	/**
+	 * The span and the buckets the stats rows keep, as a description spells
+	 * them: their counts, or the formulas naming `min_lifetime` where it is
+	 * short of one bucket, since a node's descriptions are read whenever it
+	 * is built and a refusal there would take its every verb down with it.
+	 *
+	 * @return array{window:string,kept:string}
+	 * @throws \RuntimeException When the config will not load.
+	 */
+	public static function span_words(): array {
+		$lifetime = self::lifetime();
+		if ( $lifetime < self::SECONDS ) {
+			$window = '`min_lifetime` / ' . self::SECONDS;
+			return [ 'window' => $window, 'kept' => $window . ' + ' . self::RETAIN_SLACK ];
+		}
+		$window = self::buckets_in( $lifetime );
+		return [ 'window' => (string) $window, 'kept' => (string) ( $window + self::RETAIN_SLACK ) ];
+	}
+
+	/**
+	 * The stats span: the substrate's `min_lifetime` in whole buckets, a part
+	 * bucket counted whole. The chart draws it, a chart's selection names at
+	 * most it, and `category_window` sums it.
+	 *
+	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
+	 */
+	public static function window(): int {
+		$lifetime = self::lifetime();
+		if ( $lifetime < self::SECONDS ) {
+			throw new \RuntimeException( \esc_html( "min_lifetime {$lifetime} is below the " . self::SECONDS . '-second floor of one stats bucket' ) );
+		}
+		return self::buckets_in( $lifetime );
+	}
+
+	/**
+	 * The whole buckets `$seconds` spans, a part bucket counted whole.
+	 *
+	 * @param int $seconds A duration.
+	 */
+	private static function buckets_in( int $seconds ): int {
+		return (int) \ceil( $seconds / self::SECONDS );
+	}
+
+	/**
+	 * The `min_lifetime` this plugin's config reads.
+	 *
+	 * @throws \RuntimeException When the config will not load.
+	 */
+	private static function lifetime(): int {
+		return Core::as_int( Config::value( 'min_lifetime' ) );
+	}
 
 	/**
 	 * The buckets a selection's spelling names, as ascending ranges of
@@ -44,7 +98,7 @@ final class Bucket {
 	 *
 	 * @param string $spelling A selection's spelling.
 	 * @param int    $now      The clock; a bucket after the one it falls in holds no rows.
-	 * @param int    $max      Most buckets it may name: `MAX_SELECTION` for a chart, a source's retention for a query.
+	 * @param int    $max      Most buckets it may name: `window()` for a chart, a source's retention for a query.
 	 * @return list<array{0:int,1:int}> First and last bucket id of each run.
 	 * @throws \InvalidArgumentException On a piece that is not a five-minute key, a run
 	 *                                   not ending after it starts, a bucket after

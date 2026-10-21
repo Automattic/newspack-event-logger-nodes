@@ -118,12 +118,14 @@ The stats live in one Row_Table, `flame-facts`, which `stats-builder.tsl` declar
 
 | Table | One row per | Kept |
 |---|---|---|
-| `requests` | Completed request, keyed by `rid`: its bucket, start and finish, the firehose position of its record, server, URL, status, method, country, agent, worker and profiled flags, error kind, duration and peak memory | 2,016 five-minute buckets, seven days |
+| `requests` | Completed request, keyed by `rid`: its bucket, start and finish, the firehose position of its record, server, URL, status, method, country, agent, worker and profiled flags, error kind, duration and peak memory | The span plus an hour |
 | `urls` | URL a request names: `hash`, `server` and `path`, the path searched through an FTS5 shadow | While a `requests` row names it |
 | `agents` | User agent a request names | While a `requests` row names it |
-| `timings` | Bucket, server, URL, profile category and entry: `ms`, `calls` and `requests` summed, and whether the category is a listener | 300 buckets, 25 hours |
-| `timings_site` | Bucket, server, worker flag, category and entry, the same sums and listener flag | 300 buckets, 25 hours |
-| `requests_hourly` | Hour, server, status class, method, worker flag and country: `count`, `timed`, `sum_ms`, `sum_peak_mb` and `errors` summed, `max_ms` the largest | 168 hours, seven days |
+| `timings` | Bucket, server, URL, profile category and entry: `ms`, `calls` and `requests` summed, and whether the category is a listener | The span plus an hour |
+| `timings_site` | Bucket, server, worker flag, category and entry, the same sums and listener flag | The span plus an hour |
+| `requests_hourly` | Hour, server, status class, method, worker flag and country: `count`, `timed`, `sum_ms`, `sum_peak_mb` and `errors` summed, `max_ms` the largest | The hours covering the span plus an hour |
+
+The span is `Bucket::window()`, the substrate's `min_lifetime` in five-minute buckets, a part bucket counted whole: a day at the default 86,400 seconds. The chart, a chart's selection and `category_window` cover it, and the hour each table keeps past it is `Bucket::RETAIN_SLACK`, 12 buckets. A `min_lifetime` below 300 makes every stats verb answer an error naming the key and the `flame-facts` Row_Table fail at load. Lowering it purges the older rows at the next retention sweep, and raising it brings none back. A raise rebuilds nothing: the stats builder expires nothing until the window's start passes the watermark the shorter span left, so the window grows to the new span as time passes, and the leaderboard reads `timings_site`, slower, for as many buckets as the span grew. A cut expires the buckets that left the window at that start, with no rebuild. Only a selection of exactly the span ending at the bucket of the reply's clock ever reads `category_window`; any other selection reads `timings_site`.
 
 Buckets are `Bucket::id()`s, five minutes each, and hours `Bucket::hour()`s, both counted on UTC. A key column holds no NULL, so `requests_hourly` files an absent status class as 0 and an absent country as `''`.
 
@@ -214,7 +216,7 @@ This plugin registers exactly one REST route of its own: `POST /wp-json/newspack
 | `dump_url` | `performance.dump_url` | One URL's stats, its 500 newest requests across partitions, the aggregate flame rebuilt from the newest 100's stored flames |
 | `performance_query` | `performance.query` | Any group, filter and measure `Stats_Query` names, over the request or timing rows; a top-N by window functions |
 | `performance_urls` | `performance.urls` | The table of pages: every URL-set fact under the filters it applied, and a page's URLs under `--page=<page hash>` |
-| `performance_overview` | `performance.overview` | Site totals, the servers seen and the 24-hour category leaderboard |
+| `performance_overview` | `performance.overview` | Site totals, the servers seen and the category leaderboard over the chart's span |
 | `performance_ask` | `performance.ask` | `Findings` for one picker descriptor — `overview:`, `url:`, `request:`, `span:`, `entry:` or `category:` |
 | `dump_rules` / `rules_upsert` / `rules_delete` | `rules.*` | The per-URL logging ruleset |
 
@@ -278,7 +280,7 @@ A performance verb tells where its time goes inside its command span (`Performan
 
 **Dashboard 429s immediately.** Service-CI verbs carry no throttle of their own, but `/command` does: `HTTP_In_Node::RATE_LIMIT_BURST` is 30 POSTs per `RATE_LIMIT_WINDOW_S` (1 second) per user, metered by the substrate's `Rate_Limit` and tunable through the `newspack_nodes/command_rate_limit` filter. A 429 on a `/command` POST is that budget, not a per-CI limit. With neither memcached nor APCu answering, `/command` admits and logs `Rate_Limit: /command rate limit unavailable` once a window, so the dashboards keep working unmetered; a 429 on `/messages/stream` is the SSE slot pool.
 
-**The time axis comes from the answer, never from the page.** Each chart draws the buckets its `query` answer echoes in `filters.bucket` (`answerSlots()`), the last 288 five-minute buckets ending at the current one unless a selection names others, so a browser clock off by a minute moves nothing. A chart with no series drawn before its first answer is an answer that has not arrived yet.
+**The time axis comes from the answer, never from the page.** Each chart draws the buckets its `query` answer echoes in `filters.bucket` (`answerSlots()`), the span's five-minute buckets ending at the current one unless a selection names others, so a browser clock off by a minute moves nothing. A chart with no series drawn before its first answer is an answer that has not arrived yet.
 
 **A chart says "No … data in this window." while traffic flows.** Read the `query` answer's `available`: false means the stats files did not open, and the worker or request logged `performance: stats rows did not open` with the reason — `pdo_sqlite` missing, no active topology declaring `flame-facts`, or a file SQLite cannot attach. True with no rows means the rows hold nothing for that question; ask `GET_STATS` on `stats-builder` whether its buffer is writing and how many flames found their record gone, and `dump flame-facts` for the Row_Table's counters.
 

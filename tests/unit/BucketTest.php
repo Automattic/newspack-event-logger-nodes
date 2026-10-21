@@ -10,6 +10,9 @@ use Newspack_Nodes\Core;
 #[CoversClass( Bucket::class )]
 class BucketTest extends TestCase {
 
+	/** Most buckets the fixture selections are read under: more than any names. */
+	private const ROOM = 100;
+
 	/** A clock past every fixture bucket: 2026-10-06 00:00 UTC. */
 	private static function now(): int {
 		return \gmmktime( 0, 0, 0, 10, 6, 2026 );
@@ -143,7 +146,7 @@ class BucketTest extends TestCase {
 	 */
 	#[DataProvider( 'canonical_selections' )]
 	public function test_a_canonical_selection_round_trips( string $spelling, array $keys ): void {
-		$ranges = Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION );
+		$ranges = Bucket::selection( $spelling, self::now(), self::ROOM );
 
 		$this->assertSame( $keys, self::keys_of( $ranges ) );
 		$this->assertSame( $spelling, Bucket::spelling( $ranges ) );
@@ -159,7 +162,7 @@ class BucketTest extends TestCase {
 	 */
 	#[DataProvider( 'loose_selections' )]
 	public function test_a_loose_selection_normalizes( string $spelling, array $keys, string $canonical ): void {
-		$ranges = Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION );
+		$ranges = Bucket::selection( $spelling, self::now(), self::ROOM );
 
 		$this->assertSame( $keys, self::keys_of( $ranges ) );
 		$this->assertSame( $canonical, Bucket::spelling( $ranges ) );
@@ -170,11 +173,11 @@ class BucketTest extends TestCase {
 	 * through 18:55, and a lone key is its one bucket.
 	 */
 	public function test_a_run_ends_before_the_key_closing_it(): void {
-		$ranges = Bucket::selection( '2026-10-20-11-00..2026-10-20-19-00', \gmmktime( 0, 0, 0, 10, 21, 2026 ), Bucket::MAX_SELECTION );
+		$ranges = Bucket::selection( '2026-10-20-11-00..2026-10-20-19-00', \gmmktime( 0, 0, 0, 10, 21, 2026 ), self::ROOM );
 
 		$this->assertSame( [ [ Bucket::of_key( '2026-10-20-11-00' ), Bucket::of_key( '2026-10-20-18-55' ) ] ], $ranges );
 		$this->assertSame( 96, $ranges[0][1] - $ranges[0][0] + 1 );
-		$this->assertSame( [ '2026-10-20-11-00' ], self::keys_of( Bucket::selection( '2026-10-20-11-00', \gmmktime( 0, 0, 0, 10, 21, 2026 ), Bucket::MAX_SELECTION ) ) );
+		$this->assertSame( [ '2026-10-20-11-00' ], self::keys_of( Bucket::selection( '2026-10-20-11-00', \gmmktime( 0, 0, 0, 10, 21, 2026 ), self::ROOM ) ) );
 	}
 
 	/** A selection is ranges of bucket ids, adjacent and overlapping runs merged. */
@@ -184,9 +187,9 @@ class BucketTest extends TestCase {
 
 		$this->assertSame(
 			[ [ $first, $first + 3 ], [ $apart, $apart ] ],
-			Bucket::selection( '2026-10-05-18-30,2026-10-05-16-55..2026-10-05-17-15,2026-10-05-17-00', self::now(), Bucket::MAX_SELECTION )
+			Bucket::selection( '2026-10-05-18-30,2026-10-05-16-55..2026-10-05-17-15,2026-10-05-17-00', self::now(), self::ROOM )
 		);
-		$this->assertSame( [], Bucket::selection( '', self::now(), Bucket::MAX_SELECTION ) );
+		$this->assertSame( [], Bucket::selection( '', self::now(), self::ROOM ) );
 	}
 
 	/**
@@ -198,7 +201,7 @@ class BucketTest extends TestCase {
 	#[DataProvider( 'refused_selections' )]
 	public function test_a_malformed_selection_is_refused( string $spelling ): void {
 		$this->expectException( \InvalidArgumentException::class );
-		Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION );
+		Bucket::selection( $spelling, self::now(), self::ROOM );
 	}
 
 	/** A refusal names the piece of the spelling it could not read. */
@@ -210,7 +213,7 @@ class BucketTest extends TestCase {
 			'2026-10-05-16-55..2026-10-05-16-55' => 'bucket run 2026-10-05-16-55..2026-10-05-16-55 does not end after it starts',
 		] as $spelling => $message ) {
 			try {
-				Bucket::selection( $spelling, self::now(), Bucket::MAX_SELECTION );
+				Bucket::selection( $spelling, self::now(), self::ROOM );
 				$this->fail( "{$spelling} parsed" );
 			} catch ( \InvalidArgumentException $e ) {
 				$this->assertSame( $message, $e->getMessage() );
@@ -225,29 +228,31 @@ class BucketTest extends TestCase {
 	public function test_a_bucket_after_the_clock_is_refused(): void {
 		$now = \gmmktime( 9, 12, 41, 10, 5, 2026 );
 
-		$this->assertSame( [ [ Bucket::id( $now ), Bucket::id( $now ) ] ], Bucket::selection( '2026-10-05-09-10', $now, Bucket::MAX_SELECTION ) );
-		$this->assertSame( [ [ Bucket::id( $now ) - 1, Bucket::id( $now ) ] ], Bucket::selection( '2026-10-05-09-05..2026-10-05-09-15', $now, Bucket::MAX_SELECTION ) );
+		$this->assertSame( [ [ Bucket::id( $now ), Bucket::id( $now ) ] ], Bucket::selection( '2026-10-05-09-10', $now, self::ROOM ) );
+		$this->assertSame( [ [ Bucket::id( $now ) - 1, Bucket::id( $now ) ] ], Bucket::selection( '2026-10-05-09-05..2026-10-05-09-15', $now, self::ROOM ) );
 		$this->expectException( \InvalidArgumentException::class );
 		$this->expectExceptionMessage( 'bucket 2026-10-05-09-15 is in the future' );
-		Bucket::selection( '2026-10-05-09-10..2026-10-05-09-20', $now, Bucket::MAX_SELECTION );
+		Bucket::selection( '2026-10-05-09-10..2026-10-05-09-20', $now, self::ROOM );
 	}
 
 	/**
-	 * A selection holds at most 288 buckets: a run of 288 parses, and one
-	 * bucket more is refused naming the limit, before any run that long is
+	 * A selection holds at most the span's buckets: at a `min_lifetime` of
+	 * 3,900 seconds, rounded up to 13, a run of 13 parses, and one bucket
+	 * more is refused naming the limit, before any run that long is
 	 * enumerated.
 	 */
-	public function test_a_selection_past_the_limit_is_refused(): void {
+	public function test_a_selection_past_the_span_is_refused(): void {
+		$this->use_min_lifetime( 3900 );
 		$first = \gmmktime( 6, 40, 0, 10, 3, 2026 );
-		$close = Bucket::key( Bucket::id( $first ) + 288 );
+		$close = Bucket::key( Bucket::id( $first ) + 13 );
 
-		$this->assertSame( [ [ Bucket::id( $first ), Bucket::id( $first ) + 287 ] ], Bucket::selection( "2026-10-03-06-40..{$close}", self::now(), Bucket::MAX_SELECTION ) );
-		foreach ( [ '2026-10-03-06-35..' . $close, "2026-10-03-06-40..{$close},2026-10-05-23-55", '2026-10-03-06-40..2026-10-05-23-55,2026-10-05-23-55..2026-10-06-00-00' ] as $over ) {
+		$this->assertSame( [ [ Bucket::id( $first ), Bucket::id( $first ) + 12 ] ], Bucket::selection( "2026-10-03-06-40..{$close}", self::now(), Bucket::window() ) );
+		foreach ( [ '2026-10-03-06-35..' . $close, "2026-10-03-06-40..{$close},2026-10-05-23-55", '2026-10-03-06-40..2026-10-03-07-35,2026-10-03-07-30..2026-10-03-07-50' ] as $over ) {
 			try {
-				Bucket::selection( $over, \PHP_INT_MAX, Bucket::MAX_SELECTION );
+				Bucket::selection( $over, \PHP_INT_MAX, Bucket::window() );
 				$this->fail( "{$over} parsed" );
 			} catch ( \InvalidArgumentException $e ) {
-				$this->assertSame( 'bucket selection holds more than 288 buckets', $e->getMessage() );
+				$this->assertSame( 'bucket selection holds more than 13 buckets', $e->getMessage() );
 			}
 		}
 	}
@@ -255,12 +260,74 @@ class BucketTest extends TestCase {
 	/** A run a century long is refused by arithmetic, never walked. */
 	public function test_a_century_long_run_is_refused_without_being_walked(): void {
 		$this->expectException( \InvalidArgumentException::class );
-		$this->expectExceptionMessage( 'bucket selection holds more than 288 buckets' );
-		Bucket::selection( '2026-10-03-06-40..2126-10-03-06-40', \PHP_INT_MAX, Bucket::MAX_SELECTION );
+		$this->expectExceptionMessage( 'bucket selection holds more than 100 buckets' );
+		Bucket::selection( '2026-10-03-06-40..2126-10-03-06-40', \PHP_INT_MAX, self::ROOM );
 	}
 
-	/** The limit is the one the shared fixture names, which JS holds to. */
-	public function test_the_limit_is_the_fixtures(): void {
-		$this->assertSame( self::selection_cases()['max'] ?? null, Bucket::MAX_SELECTION );
+	/** The span is `min_lifetime` in whole buckets, a part bucket counted whole. */
+	public function test_the_span_is_min_lifetime_in_buckets_rounded_up(): void {
+		$this->use_min_lifetime( 7200 );
+		$this->assertSame( 24, Bucket::window() );
+		$this->use_min_lifetime( 3900 );
+		$this->assertSame( 13, Bucket::window() );
+		$this->assertSame( 12, Bucket::RETAIN_SLACK );
+	}
+
+	/** The span reads `min_lifetime` through this plugin's `Config`, never around it. */
+	public function test_the_span_reads_through_the_plugins_config(): void {
+		$this->use_min_lifetime( 7200 );
+		$memo = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Config::class, 'config' );
+		$memo->setValue( null, [ 'min_lifetime' => 3900 ] + \Newspack_Event_Logger_Nodes\Config::load_config() );
+
+		$this->assertSame( 13, Bucket::window() );
+	}
+
+	/**
+	 * A config that will not load fails the description loudly: only a
+	 * `min_lifetime` short of one bucket is spelled as a formula.
+	 */
+	public function test_a_config_that_will_not_load_fails_the_description(): void {
+		$dir  = $this->make_temp_dir( 'span-words-' );
+		$conf = "{$dir}/broken-config.php";
+		\file_put_contents( $conf, "<?php\nreturn 'kakapo';\n" );
+		\putenv( "LOCAL_NEWSPACK_NODES_CONF={$conf}" );
+		\Newspack_Event_Logger_Nodes\Config::reset();
+
+		$this->expectException( \RuntimeException::class );
+		Bucket::span_words();
+	}
+
+	/**
+	 * A description spells the span and the buckets the rows keep as counts,
+	 * and spells them from the key where `min_lifetime` is refused, so a
+	 * description never fails the node declaring it.
+	 */
+	public function test_a_description_spells_the_span_or_the_key(): void {
+		$this->use_min_lifetime( 7200 );
+		$this->assertSame( [ 'window' => '24', 'kept' => '36' ], Bucket::span_words() );
+		$this->use_min_lifetime( 299 );
+		$this->assertSame( [ 'window' => '`min_lifetime` / 300', 'kept' => '`min_lifetime` / 300 + 12' ], Bucket::span_words() );
+	}
+
+	/**
+	 * A `min_lifetime` short of one bucket is refused naming the key and the
+	 * floor, never read as some other span.
+	 *
+	 * @param int $seconds The refused lifetime.
+	 */
+	#[DataProvider( 'spans_short_of_a_bucket' )]
+	public function test_a_min_lifetime_short_of_a_bucket_is_refused( int $seconds ): void {
+		$this->use_min_lifetime( $seconds );
+		$this->expectException( \RuntimeException::class );
+		$this->expectExceptionMessage( "min_lifetime {$seconds} is below the 300-second floor of one stats bucket" );
+		Bucket::window();
+	}
+
+	/** @return array<string,array{0:int}> */
+	public static function spans_short_of_a_bucket(): array {
+		return [
+			'zero'           => [ 0 ],
+			'a second short' => [ 299 ],
+		];
 	}
 }

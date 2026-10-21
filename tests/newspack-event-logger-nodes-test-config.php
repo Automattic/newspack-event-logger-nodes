@@ -17,7 +17,8 @@ return [
 	'segment_size'     => 1024,
 	'min_segments'     => 2,
 	'num_segments'     => 2,
-	'min_lifetime'     => 0,
+	// A 24-bucket stats span, so no test reads the default's.
+	'min_lifetime'     => 7200,
 	'lifetime'         => 0,
 	'memcache_servers' => [],
 	'enable_logging'   => false,

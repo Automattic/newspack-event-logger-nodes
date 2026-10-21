@@ -21,12 +21,13 @@
  * written adds nothing.
  *
  * The builder also keeps `category_window`, each category's and entry's
- * sums over the last `WINDOW_BUCKETS`: a request adds its timings when its
+ * sums over the last `Bucket::window()`: a request adds its timings when its
  * bucket is newer than the window's watermark, and every write subtracts
  * each bucket that left the window, once per `window_expiry` row. The
  * watermark is the newest bucket `window_expiry` holds, read once, before
  * the first fold. With none, or one older than `timings_site` holds, the
- * window is rebuilt from `timings_site`.
+ * window is rebuilt from `timings_site`; one past the window's start, a span
+ * grown since, expires nothing until the start passes it.
  *
  * A flame whose record is gone — no `request_at`, a place that does not
  * parse, or a read that finds nothing — is skipped and counted, never
@@ -711,13 +712,17 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Move the window to end at the current bucket: subtract each bucket that
 	 * left it, or rebuild it from `timings_site` when the file holds no
-	 * watermark or `timings_site` may no longer hold the gap. One ROWS batch,
-	 * whose `window_expiry` rows carry the new watermark; a refusal raises
-	 * and the watermark stays.
+	 * watermark or `timings_site` may no longer hold the gap. A watermark at
+	 * or past the window's start, a span grown since it was kept, expires
+	 * nothing until the start passes it. One ROWS batch, whose
+	 * `window_expiry` rows carry the new watermark; a refusal raises and the
+	 * watermark stays.
+	 *
+	 * @throws \RuntimeException When `min_lifetime` is short of one bucket.
 	 */
 	private function expire_window(): void {
 		$now     = Bucket::id( (int) Core::$now );
-		$through = $now - Flame_Facts_Row_Schema::WINDOW_BUCKETS;
+		$through = $now - Bucket::window();
 		$reader  = null;
 		if ( null === $this->window_through ) {
 			$reader               = $this->own_reader();
@@ -727,7 +732,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			return;
 		}
 		$reader ??= $this->own_reader();
-		$batch  = null === $this->window_through || $this->window_through < $now - Flame_Facts_Row_Schema::TIMINGS_BUCKETS
+		$batch  = null === $this->window_through || $this->window_through < $through - Bucket::RETAIN_SLACK
 			? self::window_rebuild( $reader, $through, $now )
 			: self::window_expiries( $reader, $this->window_through + 1, $through );
 		// Freed first: SQLite keeps a file a write locks open for reuse.
@@ -748,7 +753,8 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * One `ignore` per bucket from `$first` through `$last`, each carrying the
-	 * negation of that bucket's `timings_site` sums as `then` ops.
+	 * negation of that bucket's `timings_site` sums as `then` ops, so a
+	 * replayed expiry subtracts nothing twice.
 	 *
 	 * @param Row_Reader $reader The file's reader, from `own_reader()`.
 	 * @param int        $first  The first bucket to expire.
@@ -776,9 +782,9 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Every window row negated, then `timings_site` summed over the buckets
 	 * after `$through` through `$now`: the window rebuilt exactly, whatever it
-	 * held and whatever retention purged first. Each bucket `timings_site`
-	 * still holds at or before `$through` is marked expired, the last of them
-	 * the watermark.
+	 * held and whatever retention purged first. The `RETAIN_SLACK` buckets
+	 * ending at `$through` are marked expired, the last of them the
+	 * watermark.
 	 *
 	 * @param Row_Reader $reader  The file's reader, from `own_reader()`.
 	 * @param int        $through The bucket the rebuilt window starts after.
@@ -798,7 +804,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		foreach ( $sums as $row ) {
 			$batch[] = self::window_op( $row, 1, Core::as_int( $row[7] ) );
 		}
-		foreach ( \range( $now - Flame_Facts_Row_Schema::TIMINGS_BUCKETS + 1, $through ) as $bucket ) {
+		foreach ( \range( $through - Bucket::RETAIN_SLACK + 1, $through ) as $bucket ) {
 			$batch[] = [ 'ignore', 'window_expiry', [ $bucket ] ];
 		}
 		return $batch;

@@ -104,10 +104,18 @@ const sliceOf = ( data, more = {} ) => ( {
  * @param {string}  bucket The selection it echoes.
  * @return {Object} The answer.
  */
-const classAnswer = ( rows, bucket = '2026-09-28-14-40..2026-09-29-14-40' ) =>
+const classAnswer = ( rows, bucket = '2026-09-29-12-40..2026-09-29-14-40' ) =>
 	rowsWire( [ 'bucket', 'status_class', ...SERIES_MEASURES ], rows, {
 		filters: { filter: {}, bucket, search: '' },
 	} );
+
+/**
+ * The modal's chart answer over twelve slots, 13:05 to 14:00 UTC on 4
+ * October, the window a selection here is judged against.
+ */
+const TWELVE_SLOTS = sliceOf(
+	classAnswer( [], '2026-10-04-13-05..2026-10-04-14-05' )
+);
 
 const baseUrlDetail = {
 	stats: { avg_ms: 100 },
@@ -466,6 +474,7 @@ describe( 'UrlDetailView', () => {
 	it( 'replaces its selection on a plain chart click, and toggles on an additive one', () => {
 		const onBucketChange = jest.fn();
 		const { unmount } = mount( {
+			chartSlice: TWELVE_SLOTS,
 			filters: { bucket: '2026-10-04-13-35' },
 			onBucketChange,
 		} );
@@ -494,6 +503,7 @@ describe( 'UrlDetailView', () => {
 	it( 'replaces its selection on a plain chart drag, and adds the span on an additive one', () => {
 		const onBucketChange = jest.fn();
 		const { unmount } = mount( {
+			chartSlice: TWELVE_SLOTS,
 			filters: { bucket: '2026-10-04-13-35' },
 			onBucketChange,
 		} );
@@ -529,6 +539,7 @@ describe( 'UrlDetailView', () => {
 
 	it( "shades the modal's own selection on both charts", () => {
 		const { unmount } = mount( {
+			chartSlice: TWELVE_SLOTS,
 			filters: {
 				bucket: '2026-10-04-13-30..2026-10-04-13-40',
 			},
@@ -578,9 +589,51 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
+	it( "judges its selection against the twelve slots its chart's answer read", () => {
+		const thirteen = '2026-10-04-13-05..2026-10-04-14-10';
+		const { container, unmount } = mount( {
+			chartSlice: TWELVE_SLOTS,
+			filters: { bucket: thirteen },
+		} );
+
+		expect( globalThis.__aggregateSelected ).toEqual( [] );
+		expect(
+			container.querySelector( '[role="status"]' ).textContent
+		).toContain( thirteen );
+		unmount();
+	} );
+
+	it.each( [
+		[ 'before its chart answers', sliceOf( null ) ],
+		[
+			'when its chart errors',
+			sliceOf( null, { error: 'kea timed out' } ),
+		],
+	] )(
+		'labels and shades its selection without a limit %s',
+		( _, chartSlice ) => {
+			const spelling = '2026-10-04-13-35..2026-10-04-13-50';
+			const { container, unmount } = mount( {
+				chartSlice,
+				filters: { bucket: spelling },
+			} );
+
+			const banner = container.querySelector( '[role="status"]' );
+			expect( banner.textContent ).toContain( '6:35–6:50 AM' );
+			expect( banner.textContent ).not.toContain( spelling );
+			expect( globalThis.__aggregateSelected ).toEqual( [
+				'2026-10-04-13-35',
+				'2026-10-04-13-40',
+				'2026-10-04-13-45',
+			] );
+			unmount();
+		}
+	);
+
 	it( 'notes under a bucket that the charts and profile cover every request', () => {
 		const note = 'describe every request to this URL';
 		const bucketed = mount( {
+			chartSlice: TWELVE_SLOTS,
 			filters: { bucket: '2026-10-04-13-35' },
 		} );
 		const banner = bucketed.container.querySelector( '[role="status"]' );
@@ -590,6 +643,7 @@ describe( 'UrlDetailView', () => {
 		bucketed.unmount();
 
 		const both = mount( {
+			chartSlice: TWELVE_SLOTS,
 			filters: { bucket: '2026-10-04-13-35' },
 			chart: { ...NO_DETAIL_CHART, chips: [ 'country=Kiribati' ] },
 		} );
