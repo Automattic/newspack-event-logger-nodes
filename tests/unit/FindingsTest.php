@@ -719,6 +719,59 @@ class FindingsTest extends TestCase {
 		$this->assertEqualsWithDelta( 87.5, $found['metric']['self_ms'], 1e-6 );
 	}
 
+	/** Sixty platform queries asking sixty different things repeat nothing. */
+	public function test_platform_spans_with_distinct_labels_raise_no_repetition(): void {
+		$labels = [];
+		for ( $i = 0; $i < 10; $i++ ) {
+			$labels[ "question-{$i}" ] = [ 4.0, 6 ];
+		}
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'stats query' => [ 'count' => 60, 'time' => 40.0, 'entries' => $labels ],
+		];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' ) );
+	}
+
+	/** The same platform question asked sixty times is the repeat, and the finding names it. */
+	public function test_platform_spans_with_one_label_name_it_in_the_repetition(): void {
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'stats query' => [
+				'count'   => 60,
+				'time'    => 40.0,
+				'entries' => [ 'urls-by-hour' => [ 40.0, 60 ] ],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'stats query: urls-by-hour', $found['metric']['name'] );
+		$this->assertSame( 60, $found['metric']['count'] );
+		$this->assertStringStartsWith( 'stats query: urls-by-hour fired 60 times', $found['title'] );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'stats query: urls-by-hour', $found['proposal']['why'] );
+	}
+
+	/** A span that is not the platform's still repeats by its bare name, whatever labels it carries. */
+	public function test_non_platform_spans_with_distinct_labels_still_group_by_name(): void {
+		$labels = [];
+		for ( $i = 0; $i < 10; $i++ ) {
+			$labels[ "caller-{$i}" ] = [ 4.0, 6 ];
+		}
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'Theme::render_card @10' => [ 'count' => 60, 'time' => 40.0, 'entries' => $labels ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'Theme::render_card @10', $found['metric']['name'] );
+		$this->assertSame( 60, $found['metric']['count'] );
+	}
+
 	/** A listener's name IS its callable, so its profile counts as one span. */
 	public function test_repetition_of_a_listener_counts_the_listener(): void {
 		$record             = $this->healthy_record();
