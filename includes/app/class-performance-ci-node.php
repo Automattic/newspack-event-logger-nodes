@@ -63,6 +63,7 @@ use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config_System\Restart_Planner;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Driver_Error;
 use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
@@ -1395,7 +1396,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			// The overview whose servers this reply names.
 			$listed = null === $stored && '' !== $server && null !== $snapshot ? $snapshot->answer( Overview_Prefetch::key( $verb, \array_replace( $args, [ 'server' => null ] ) ) ) : $stored;
 		} catch ( \PDOException | \JsonException $e ) {
-			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . Log_Manager::driver_text( $e ) );
+			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . Driver_Error::of( $e ) );
 			$stored = null;
 			$listed = null;
 		}
@@ -1445,7 +1446,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		try {
 			return $read( $snapshot, $args );
 		} catch ( \PDOException $e ) {
-			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . Log_Manager::driver_text( $e ) );
+			Core::print_less_often( 'performance: the URL snapshot did not read', ' — ' . Driver_Error::of( $e ) );
 			return null;
 		}
 	}
