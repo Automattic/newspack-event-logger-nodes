@@ -6,6 +6,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+## 0.148.2
+
 - **A bucket run's `end` is exclusive.** In `--bucket`, the MCP `bucket`
   argument, `?bucket=` and `?url_bucket=`, `start..end` is the buckets from
   `start` up to the one `end` opens, `end` not among them, and
@@ -14,6 +16,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   key after its last bucket, so `11-00..18-55` becomes `11-00..19-00`. A
   run `a..a` is refused rather than selecting `a`; write the lone key `a`.
   Nothing reads the old meaning.
+
+## 0.148.0
 
 - **`urls` and the MCP `performance_urls` tool list pages, not URLs.** A
   page is a URL's lowercased host and path, every query key folded, and a
@@ -60,6 +64,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   page's one shape or of its busiest, where `hash` went, as a `url:`
   descriptor or to `dump_url`.
 
+## 0.136.0
+
 - **This release needs newspack-nodes 2.112.0.** The overview-prefetch job
   publishes its URL snapshot through `Row_Table_Node::build()` and the verbs
   read it through `open_snapshot()`; below 2.112.0 the plugin goes dormant
@@ -83,6 +89,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   carries `errors`, and so do an `overview:` brief's `stats` and URL rows.
   `ask` answers no `error_summary`: a `url:` brief always carries the count
   and the means of the requests its filter leaves.
+
+## 0.134.0
 
 - **This release needs newspack-nodes 2.111.0, and each site rebuilds its
   stats.** The stats move from the three keyed `flame-stats:*` Tables to the
@@ -129,6 +137,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `Other` rows marked `aggregate`. Every count is exact and every mean
   request-weighted, `totals.urls` and `rows` count distinct URLs, and
   `requests_per_second` divides by the seconds the selected buckets have run.
+  `search` is an FTS5 match over the URL path index: the refusals "a search too common to narrow" (0.114.0, `URL_SEARCH_MAX`) and "a search with no word" (0.121.0) are gone, and a term answers rows or none.
 
 - **`dump_url` answers `{ stats, requests, requests_capped, aggregate_flame,
   flame_cut, aggregate_profiles }`.** The `breakdown`, `categories` and `after`
@@ -204,6 +213,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   so a topology may declare it under any name. `delete_stats_tables( $topologies_dir )` takes the plugin's shipped
   topologies.
 
+## 0.133.0
+
 - **This release needs newspack-nodes 2.110.0, which takes a broker's
   sources by `add_source`.** `aggregator.tsl` now builds its `spokes` group
   with `make_node Vault_Group spokes Remote_Source spoke <offsets root>
@@ -222,6 +233,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   as unreadable, so the hub stops pulling its spokes, and its bundled stream
   hooks call `addPairs()`, which the page's `_stream` link no longer has.
 
+## 0.132.0
+
 - **This release needs newspack-nodes 2.109.0, which spells a log stamp with
   `:` and a broker pair with `=`.** `aggregator.tsl` now writes
   `firehose.p{partition}=remote-job-rewrite sources:php=php-errors:partition`
@@ -232,15 +245,21 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   both spellings, so the plugin stays dormant below 2.109.0. Deploy the
   substrate first.
 
+## 0.131.0
+
 - **This release needs newspack-nodes 2.107.0.** Its bundled Triage view
   removes a dead-letter record with `dl_remove`, which an older substrate
   refuses as an unknown verb, so the plugin stays dormant below 2.107.0.
   Deploy the substrate first.
 
+## 0.130.0
+
 - **This release needs newspack-nodes 2.106.0.** Its bundled topology
   console asks for an owner's sidecars through `dump_metadata -o`, which an
   older substrate answers with an empty map, so the plugin stays dormant
   below 2.106.0. Deploy the substrate first.
+
+## 0.129.2
 
 - **Reclaim the stats Tables with newspack-nodes 2.105.0.** A stats
   schema change is migrated by
@@ -258,6 +277,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `Core` with the substrate's bundles, whose shape 2.102.0 changes. Below the floor the plugin stays dormant behind
   its admin notice; deploy the substrate and this plugin together, then
   restart the workers.
+
+## 0.127.0
 
 - **A topology writing `<partition>` fails to load; write `{partition}`.**
   The substrate resolves `{partition}` in each argument a node's schema
@@ -297,16 +318,22 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   needs PHP's `error_log` set to an absolute file path. Read
   `wp nodes doctor`'s `log-sources` row on each site.
 
+## 0.126.0
+
 - **This release needs newspack-nodes 2.98.0.** The Ask picker marks
   each element a pick stands on, and the substrate's `newspack-nodes-ui`
   stylesheet, which 2.98.0 extends, is what paints that mark. Below the
   floor the plugin stays dormant behind its admin notice. Update the
   substrate first, then this plugin, then restart the workers.
 
+## 0.125.0
+
 - **This release needs newspack-nodes 2.97.0.** The MCP door meters each
   session through the substrate's `Rate_Limit`, which 2.97.0 adds. Below
   the floor the plugin stays dormant behind its admin notice. Update the
   substrate first, then this plugin, then restart the workers.
+
+## 0.124.0
 
 - **This release needs newspack-nodes 2.94.0.** A bucket selection reads
   every URL its sets name through the substrate's
@@ -314,6 +341,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   any size page by page, and no selection is refused for naming too many
   URLs. Below the floor the plugin stays dormant behind its admin notice.
   Update the substrate first, then this plugin, then restart the workers.
+
+## 0.123.0
 
 - **`--bucket` takes a selection, and its refusals name the key.** `urls`,
   `dump_url`, `ask` and their MCP tools read `bucket` as comma-separated
@@ -339,6 +368,25 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   plugin stays dormant behind its admin notice. Update the substrate first,
   then this plugin, then restart the workers.
 
+## 0.121.0
+
+- **A search with no word is refused.** A term with no run of two
+  characters or more, such as `a` or `/`, answers
+  `search "<term>" names no word: a search needs a word of 2 characters or more`
+  where it answered zero rows. Nothing walks URL names for a term any more.
+
+- **A rid lookup's not-found is definite.** `search_requests`,
+  `dump_request` and a `request:` ask walk the indexes with no time budget,
+  so they no longer throw `request index scan budget spent before rid <rid>
+  was reached`; `Request not found` means no partition holds the rid.
+
+- **A capped request list is complete.** `dump_url`'s `scan_stopped_early`
+  is true only when the walk spent its time budget; a list of 500 is the
+  newest 500 exactly. The `url:` brief carries `requests_capped` for that
+  case, since such a list is not every request since `requests_window_start`.
+
+## 0.120.1
+
 - **This release needs newspack-nodes 2.90.0.** Hub mode reads the
   substrate's `Topology_Analyzer::nodes_of_type()` and the `remote_partition`
   its graph names on each `Remote_Source`. Below the floor the
@@ -351,11 +399,15 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   hub forked from `aggregator` keeps its `firehose.p<partition>` readers
   and needs nothing.
 
+## 0.119.0
+
 - **This release needs newspack-nodes 2.85.0.** The flame builder's topology
   includes the substrate's `table-probe`, so `flame-stats:aggregate`,
   `flame-stats:url` and `flame-stats:url-fine` report to the station's Tables
   tab. Below the floor the plugin stays dormant behind its admin notice.
   Update the substrate first, then this plugin, then restart the workers.
+
+## 0.115.0
 
 - **Reclaim the stats Tables after deploying: a URL sort orders the whole
   URL.** A site `url` list (`urlrank_s`, `urlrank_sh`) stores each entry's
@@ -365,6 +417,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`,
   for each active topology that includes `flame-builder`, such as `performance` or `complete`
   (decision 5).
+
+## 0.114.0
 
 - **Reclaim the stats Tables after deploying: search and `dump_url` read a
   new namespace.** Each URL's row is also filed by key, as
@@ -384,20 +438,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   dashboard showing `performance_urls` or an `overview:` brief under a
   search shows that error and asks for another word.
 
-- **A search with no word is refused.** A term with no run of two
-  characters or more, such as `a` or `/`, answers
-  `search "<term>" names no word: a search needs a word of 2 characters or more`
-  where it answered zero rows. Nothing walks URL names for a term any more.
-
-- **A rid lookup's not-found is definite.** `search_requests`,
-  `dump_request` and a `request:` ask walk the indexes with no time budget,
-  so they no longer throw `request index scan budget spent before rid <rid>
-  was reached`; `Request not found` means no partition holds the rid.
-
-- **A capped request list is complete.** `dump_url`'s `scan_stopped_early`
-  is true only when the walk spent its time budget; a list of 500 is the
-  newest 500 exactly. The `url:` brief carries `requests_capped` for that
-  case, since such a list is not every request since `requests_window_start`.
+## 0.113.0
 
 - **The 0.112.x Ledger stats are withdrawn; rebuild the stats Tables.**
   The stats are 0.111.2's Tables again. Run, for each active topology that
@@ -423,6 +464,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   where each read 0; `avg_peak_mb` is null for a scope with no request. A
   client renders null as unmeasured. Such a URL ranks last on `avg_ms`,
   `min_ms` and `max_ms` in either order, searched or not.
+
+## 0.111.2
 
 - **`dump_url` tails by `--after`, and `--since` is gone.** A caller sending
   `--since=<epoch>` is refused `unknown option --since`. Send
@@ -469,6 +512,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   required`; send it under a manage session or the site's own signature. A
   service CI verb refused by role no longer appears as a dispatch span.
 
+## 0.111.1
+
 - **With newspack-nodes 2.79.0 the flame stats start empty once, and a
   salt rotation no longer resets them.** A durable Table's key carries no
   salt any more: it stores `{namespace}:{key}`. The rows written under the
@@ -494,6 +539,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   no `filed` stamp and reads as never filed. A client reading the sets
   directly with `SMEMBERS` names the bucket, `Y-m-d-H` at 00, 06, 12 or 18
   UTC, after the namespace.
+
+## 0.111.0
 
 - **Release newspack-nodes 2.77.0, this plugin's 0.111.0 and
   newspack-intelligence 0.12.0 together, and deploy them together.** The

@@ -137,7 +137,7 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'class'   => Performance_CI_Node::class,
 			'verb'    => 'dump_request',
-			'summary' => 'One request in full, with its flame data and computed findings, read where its request row says it sits. `flame_cut` true means the flame lookup ran out of time before it found `flame_data`, so its absence says nothing of whether the request was profiled; ask again. A `Request not found` error means no row of the last seven days names that rid: the request is older, or finished in the last few seconds and is not written yet.',
+			'summary' => 'One request in full, with its flame data and computed findings, read where its request row says it sits. `flame_cut` true means the flame lookup ran out of time before it found `flame_data`, so its absence says nothing of whether the request was profiled; ask again. A `Request not found` error means either no row of the last seven days names that rid (the request is older, or finished in the last few seconds and is not written yet), or the row exists but its record has aged out of the raw logs, about a day by default; such a request still counts in every aggregate.',
 			'args'    => [ 'rid' => 'The request id.' ],
 		],
 		'grep_requests'            => [

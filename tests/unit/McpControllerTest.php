@@ -656,6 +656,8 @@ class McpControllerTest extends TestCase {
 			$this->assertStringContainsString( 'not found', $tools[ $tool ]['summary'], $tool );
 		}
 		$this->assertStringContainsString( 'seven days', $tools['dump_request']['summary'], 'it says a request outlives its row' );
+		$this->assertStringContainsString( 'aged out of the raw logs', $tools['dump_request']['summary'], 'it says a row can outlive its record' );
+		$this->assertStringContainsString( 'about a day by default', $tools['dump_request']['summary'] );
 		$this->assertStringContainsString( '`request:<rid>`', $tools['performance_ask']['summary'], 'a request is named by its rid alone' );
 		$this->assertStringNotContainsString( '<partition>', $tools['performance_ask']['summary'] );
 		$this->assertStringNotContainsString( 'index', $tools['dump_request']['summary'] );

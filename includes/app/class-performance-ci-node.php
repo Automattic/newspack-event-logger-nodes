@@ -2489,7 +2489,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_request',
 					'capability'  => Capabilities::READ,
-					'description' => 'Full request + flame data for a rid, read at the place its request row names, with `flame_cut` true when MAX_SCAN_S ended the flame lookup before it found `flame_data`; no row, aged past seven days or not yet written, is not found.',
+					'description' => 'Full request + flame data for a rid, read at the place its request row names, with `flame_cut` true when MAX_SCAN_S ended the flame lookup before it found `flame_data`; is not found when no row names the rid (aged past seven days or not yet written) or when its record has aged out of the raw logs, about a day by default, though the request still counts in every aggregate.',
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 					],
