@@ -2,7 +2,7 @@
 /**
  * Flame Facts Row Schema
  *
- * The row tables the flame builder writes and every performance reader
+ * The row tables the stats builder writes and every performance reader
  * queries: one `requests` row per completed request, its per-category
  * `timings` per URL and per site, and its `requests_hourly` rollup. Every
  * string a row repeats, its URL, server, agent, JA4, From, category and
@@ -54,6 +54,9 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 
 	/** Five-minute buckets the category window spans: the chart's 24 hours. */
 	public const WINDOW_BUCKETS = 288;
+
+	/** The window's watermark, the newest bucket `window_expiry` holds; `%s` is the file's alias. */
+	public const WATERMARK_QUERY = 'SELECT MAX( bucket ) FROM %s.window_expiry';
 
 	/**
 	 * Each column naming a row of another table by that row's `id`, and the

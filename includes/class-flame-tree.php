@@ -52,12 +52,12 @@ final class Flame_Tree {
 	public const COMMAND_SUFFIX = ' command';
 
 	/**
-	 * The flame builder's routine writes, one summary a
+	 * The stats builder's routine writes, one summary a
 	 * `Narration::ROLLUP_EVERY_S`.
 	 */
 	public const STATS_WRITES = 'stats writes';
 
-	/** The flame builder's span for its clean stop. */
+	/** The stats builder's span for its clean stop. */
 	public const STATS_SWEEP = 'stats sweep';
 
 	/** The request builder's rollup of what it assembled and wrote, once a minute. */

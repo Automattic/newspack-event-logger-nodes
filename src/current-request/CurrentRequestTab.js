@@ -7,7 +7,7 @@
  * The page localizes `{ rid, perfUrl }` into
  * `window.NewspackEventLoggerNodes.currentRequest`; the summary, flame graph,
  * and profile breakdown are fetched from the `performance` CI's `dump_request`
- * verb (by rid). The request and flame builders process the firehose
+ * verb (by rid). The request, flame and stats builders process the firehose
  * asynchronously, so a just-loaded page has no request row for a beat — that's
  * the "still processing" state. There is no Refresh: the tab asks each tick
  * until the record and its flame land, so a button would only repeat an ask
@@ -37,12 +37,12 @@ const VIEW = 'current-request:view';
 /** Every router tick: the record lands the moment the worker writes it. */
 const POLL_INTERVAL_MS = 1000;
 
-/** Replies carrying the record the poll waits out for the flame write. */
+/** Replies carrying the record the poll asks past for a flame lookup cut. */
 const FLAME_RETRY_TICKS = 5;
 
 /**
  * The tail of `Performance_CI_Node::stats_outage()`'s refusal: no stats rows
- * opened, as on a site running no `flame-builder` topology, so no later ask
+ * opened, as on a site running no `stats-builder` topology, so no later ask
  * can find the request by its row.
  */
 const STATS_OUTAGE = 'the stats rows did not open';
@@ -72,7 +72,7 @@ function currentRequestData() {
  * (logging off, running as root, or no matching `log` rule), `loading` until
  * the poll graph mounts the view node, `outage` once `dump_request` answers
  * that the stats rows did not open, which stops the asking, `processing`
- * while the request-builder has yet to write the record, and `found` once
+ * while no request row names the record yet, and `found` once
  * `dump_request` answers with one.
  *
  * The load is desired state rather than an event: the tab POLLS for its own
@@ -80,8 +80,10 @@ function currentRequestData() {
  * rendered — or a session refused and later renewed — converges on its own,
  * and the ask rides the same tick as everything else on the page.
  *
- * A found record then holds the poll open a few more ticks for `flame_data`,
- * which `Flame_Builder_Node` writes after the record it is built from.
+ * A found record then holds the poll open a few more ticks for `flame_data`.
+ * The row trails its flame, because `Stats_Builder_Node` writes it only after
+ * reading the flame, so the first found reply carries the flame unless
+ * `MAX_SCAN_S` cut its lookup.
  *
  * @return {import('react').ReactElement} The tab.
  */
@@ -97,11 +99,10 @@ export default function CurrentRequestTab() {
 		! request && !! model?.error && model.error.includes( STATS_OUTAGE );
 
 	// @longform
-	// The flame is a SECOND write: Flame_Builder consumes requests.log after
-	// Request_Builder writes the record, so the reply that finds the request
-	// almost always predates its flame. Asking on past the record delivers the
-	// trace without a reload, and the retry bound keeps an unprofiled request
-	// from asking for one forever.
+	// The row trails its flame, so a reply that finds the request carries the
+	// flame unless MAX_SCAN_S cut its lookup. Asking on past the record
+	// delivers a cut trace without a reload, and the retry bound keeps an
+	// unprofiled request from asking for one forever.
 	const [ asksSinceFound, setAsksSinceFound ] = useState( 0 );
 	useEffect( () => {
 		if ( model?.request ) {
@@ -173,7 +174,7 @@ export default function CurrentRequestTab() {
 			<div className="eln-current-request eln-current-request--processing newspack-nodes-status">
 				<p>
 					{ __(
-						'This request is still processing — the request builder hasn’t logged it yet.',
+						'This request is still processing — it hasn’t been logged yet.',
 						'newspack-event-logger-nodes'
 					) }
 				</p>

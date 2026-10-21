@@ -105,7 +105,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 	/**
 	 * Every non-nominal terminal marker: fatal, timed out, aborted, incomplete.
-	 * The `process (complete)` validator and the flame builder's row both
+	 * The `process (complete)` validator and the stats builder's row both
 	 * read this one list, so a status the builder writes is one a reader names.
 	 */
 	public const ERROR_STATUSES = [ 'F', 'T', 'A', 'I' ];
@@ -1743,6 +1743,28 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$carried[ $field ] = Core::num_int( $counts[ $field ] ?? null );
 		}
 		$request->object_cache = $carried;
+	}
+
+	/**
+	 * A completed-request record as a builder folds it: the record with its
+	 * method labelled (`method_label()`), its URL, its host and its rid.
+	 * A record that names no host, carries no method or carries no rid
+	 * throws, so the Consumer dead-letters it and reads on.
+	 *
+	 * @param array<array-key,mixed> $request The record.
+	 * @return array{0: array<array-key,mixed>, 1: string, 2: string, 3: string} The record, its URL, its host and its rid.
+	 * @throws \InvalidArgumentException When the record is one no builder can fold.
+	 */
+	public static function checked_record( array $request ): array {
+		$url    = Core::str( $request['url'] ?? '' );
+		$server = Url_Parts::server_of( $url );
+		// Bounded: an invented method must not mint a value of its own.
+		$request['request_method'] = self::method_label( $request['request_method'] ?? null );
+		$rid                       = Core::str( $request['rid'] ?? '' );
+		if ( '' === $rid ) {
+			throw new \InvalidArgumentException( \esc_html( "request record for {$url} carries no rid" ) );
+		}
+		return [ $request, $url, $server, $rid ];
 	}
 
 	/**

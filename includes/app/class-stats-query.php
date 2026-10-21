@@ -19,10 +19,10 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Bucket;
-use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Facts_Row_Schema;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
 use Newspack_Event_Logger_Nodes\Url_Parts;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Row_Reader;
@@ -123,7 +123,7 @@ final class Stats_Query {
 	private const UNKNOWN = 'Unknown';
 
 	/** A status code the builder reads a status class from, as SQL. */
-	private const KNOWN_STATUS = 't.status BETWEEN ' . Flame_Builder_Node::STATUS_MIN . ' AND ' . Flame_Builder_Node::STATUS_MAX;
+	private const KNOWN_STATUS = 't.status BETWEEN ' . Stats_Builder_Node::STATUS_MIN . ' AND ' . Stats_Builder_Node::STATUS_MAX;
 
 	/** A measure's aggregate over the arm inputs, in its `measures` tuple. */
 	private const AGGREGATE = 0;
@@ -576,7 +576,7 @@ final class Stats_Query {
 	 */
 	private static function window_holds( Row_Reader $reader, array $aliases, int $through ): bool {
 		$marks = $reader->rows(
-			\implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => "SELECT MAX( bucket ) FROM {$alias}.window_expiry", $aliases ) ),
+			\implode( ' UNION ALL ', \array_map( static fn ( string $alias ): string => \sprintf( Flame_Facts_Row_Schema::WATERMARK_QUERY, $alias ), $aliases ) ),
 			[]
 		);
 		return [] === \array_filter( $marks, static fn ( array $mark ): bool => null === $mark[0] || $through !== Core::as_int( $mark[0] ) );
@@ -882,7 +882,7 @@ final class Stats_Query {
 	 * @param string   $name The measure.
 	 */
 	private static function aggregate( array $def, string $name ): string {
-		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Flame_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][ self::AGGREGATE ] );
+		return \str_replace( '{error_kinds}', "'" . \implode( "', '", Stats_Builder_Node::ERROR_KINDS ) . "'", $def['measures'][ $name ][ self::AGGREGATE ] );
 	}
 
 	/**

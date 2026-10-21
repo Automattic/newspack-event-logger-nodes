@@ -30,7 +30,7 @@
  *    POSTs per user per window, so a polling dashboard is bounded upstream.
  *  - Stats reads fail soft, as `Stats_Query` and the dashboards' "no data"
  *    state do.
- *  - Stats come from the flame builder's Flame_Facts rows alone.
+ *  - Stats come from the stats builder's Flame_Facts rows alone.
  *  - Disk reads: a request is found by its row, its record read at the
  *    place the row names, and flames located by rid through
  *    `Partition_Node::locate_by()`, which stops once it holds every rid or
@@ -1132,11 +1132,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * One request record by rid, read once at the place its `requests` row
 	 * names, with its flame merged in as `flame_data`, the row's URL hash as
 	 * `url_hash`, and `flame_cut` true when MAX_SCAN_S ended the flame lookup
-	 * first. The flame builder on partition N writes flames.pN and the row
-	 * naming requests.pN, so the flame is located on the row's partition
-	 * alone, no further back than the row's `finished_at`; a miss there means
-	 * none was stored, and leaves the body intact. No row means no request,
-	 * whether retention took it or the builder has not written it yet, and a
+	 * first. The flame builder on partition N writes flames.pN, and the stats
+	 * builder there writes the row naming requests.pN only after reading that
+	 * flame, so the flame is located on the row's partition alone, no further
+	 * back than the row's `finished_at`; a miss there means none was stored,
+	 * and leaves the body intact. No row means no request, whether retention
+	 * took it or the stats builder has not written it yet, and a
 	 * place holding another request's record, keyed by its rid, means the
 	 * same; rows that did not open are an outage, refused as one.
 	 *

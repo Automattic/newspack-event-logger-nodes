@@ -2,12 +2,12 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 
 use Newspack_Event_Logger_Nodes\Job_Router_Node;
-use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Job_Worker_Node;
+use Newspack_Nodes\Log_Position;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Tee_Node;
@@ -90,7 +90,7 @@ class FullPipelineTest extends TestCase {
 		$rb->name( 'request-builder' );
 
 		$flame_capture = new Capture_Sink_Node();
-		$fb            = $this->builder_sending_to( $flame_capture );
+		$fb            = $this->armed_flame_builder( $flame_capture );
 		$fb->connect_node( 'flames:partition' );
 		$rb->sink( $fb );
 
@@ -136,9 +136,35 @@ class FullPipelineTest extends TestCase {
 		$this->assertSame( 'process', $process['name'] );
 		$this->assertNotEmpty( $process['children'] );
 		$this->assertSame( 'init', $process['children'][0]['name'] );
+	}
 
-		// 3. FlameBuilder.flush() writes the request's row, naming its URL.
-		$fb->flush();
-		$this->assertSame( [ [ 'r1', Log_Manager::url_hash( 'https://kea-7713.test/x' ) ] ], $this->facts( 'SELECT r.rid, u.hash FROM requests r JOIN urls u ON u.id = r.url_id' ) );
+	/**
+	 * The two builders join on the record's place: the flame names where the
+	 * request builder wrote the record, and the stats builder reads it there
+	 * and files the row under that place.
+	 */
+	public function test_the_stats_builder_files_the_record_the_flame_names(): void {
+		$sb      = $this->armed_stats_builder();
+		$request = $this->completed_request( [ 'rid' => 'rid-hihi-4417', 'url' => 'https://hihi-4417.test/korimako', 'duration_ms' => 417.5 ] );
+		$crumb   = $this->record_request( $request );
+		$flames  = new Capture_Sink_Node();
+		$fb      = $this->armed_flame_builder( $flames );
+		$fb->connect_node( 'flames:partition' );
+
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::ID ]    = $crumb;
+		$message[ Message::KEY ]   = 'rid-hihi-4417';
+		$message[ Message::VALUE ] = $request;
+		$fb->fill( $message );
+		$sb->fill( $flames->captured[0] );
+		$sb->flush();
+
+		$place = Log_Position::crumb( $crumb );
+		$this->assertNotNull( $place );
+		$this->assertSame(
+			[ [ 'rid-hihi-4417', 417.5, 0, $place['segment'], $place['offset'], $place['length'] ] ],
+			$this->facts( 'SELECT rid, ms, partition, segment, offset, length FROM requests' )
+		);
 	}
 }

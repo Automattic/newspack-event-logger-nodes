@@ -2,7 +2,7 @@
 
 The application layer of the event logger, built on `newspack-nodes` (the runtime substrate). Request-lifecycle logging, flame-graph generation and hub/spoke aggregation all run as Nodes, and the dashboards stream live over the substrate's SSE endpoints, whose server side this plugin does not own.
 
-This plugin owns `Log_Manager`, `Request_Builder_Node`, `Request_Flight_Node`, `Flame_Builder_Node`, `Auto_Tuner_Node`, `Job_Router_Node`, `Remote_Job_Rewrite_Node`, `Discovery_Collector_Node`, the `flame-facts` row schema and `App\Stats_Query`, the per-URL logging ruleset (`Rule` / `Rule_Set` / `Rule_Matcher`), the `App\*_CI_Node` service CIs (`performance`, `discovery`, `rules`), the React dashboards and the topology files. Node subclasses carry a `_Node` suffix; helpers like `Log_Manager` and `Bucket` don't.
+This plugin owns `Log_Manager`, `Request_Builder_Node`, `Request_Flight_Node`, `Flame_Builder_Node`, `Stats_Builder_Node`, `Auto_Tuner_Node`, `Job_Router_Node`, `Remote_Job_Rewrite_Node`, `Discovery_Collector_Node`, the `flame-facts` row schema and `App\Stats_Query`, the per-URL logging ruleset (`Rule` / `Rule_Set` / `Rule_Matcher`), the `App\*_CI_Node` service CIs (`performance`, `discovery`, `rules`), the React dashboards and the topology files. Node subclasses carry a `_Node` suffix; helpers like `Log_Manager` and `Bucket` don't.
 
 Three things live in the substrate and have no alias here — call the substrate class directly:
 
@@ -10,7 +10,7 @@ Three things live in the substrate and have no alias here — call the substrate
 - **`Job_Worker_Node`**. This plugin keeps only the request-context glue, `Log_Manager::begin/end_job_context`, hooked onto `newspack_nodes/job_worker/{before,after}_job`.
 - **`Job_Intake`** is `\Newspack_Nodes\Job_Intake`. `job-router.tsl` and `job-feed.tsl` each `include job-intake` and add their own router leg, so the substrate's conflict gate refuses co-activating its stock `job-intake` with either.
 
-This plugin builds no cache of its own. Keyed stores use the substrate's `Table_Node`, whose keys are scoped per install. The flame builder's stats live in the `flame-facts` Row_Table `flame-builder.tsl` declares, written by message through `Table_Client` and read through `App\Stats_Query`, which names the Flame_Facts schema and never the table (`Row_Table_Node::read( Flame_Facts_Row_Schema::class, … )`); `App\Url_Snapshot`'s `flame-facts.job.sqlite`, a file the overview-prefetch job builds from those rows and the substrate publishes whole and owns (`Row_Table_Node::build()` and `open_snapshot()`, its ADR-35), holds the window's URL table and the other stored answers, the Overview's default questions and each listed server's scoped poll, as JSON rows in its `answers` table, which live and expire with the file rather than in a store of their own (decision 37); `Rule_Set`'s large hook lists keep an `auto` `Table_Node::table()`, memcached else APCu. `Flame_Builder_Node::apply_auto_tune()`'s cross-worker lock is an `add()` on `Cache_Backend::shared_first()`, the same tier.
+This plugin builds no cache of its own. Keyed stores use the substrate's `Table_Node`, whose keys are scoped per install. The stats live in the `flame-facts` Row_Table `stats-builder.tsl` declares, written by `Stats_Builder_Node` by message through `Table_Client` and read through `App\Stats_Query`, which names the Flame_Facts schema and never the table (`Row_Table_Node::read( Flame_Facts_Row_Schema::class, … )`); `App\Url_Snapshot`'s `flame-facts.job.sqlite`, a file the overview-prefetch job builds from those rows and the substrate publishes whole and owns (`Row_Table_Node::build()` and `open_snapshot()`, its ADR-35), holds the window's URL table and the other stored answers, the Overview's default questions and each listed server's scoped poll, as JSON rows in its `answers` table, which live and expire with the file rather than in a store of their own (decision 37); `Rule_Set`'s large hook lists keep an `auto` `Table_Node::table()`, memcached else APCu. `Flame_Builder_Node::apply_auto_tune()`'s cross-worker lock is an `add()` on `Cache_Backend::shared_first()`, the same tier.
 
 ## Plugin Load Order
 
@@ -124,7 +124,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/class-{rule,rule-set,rule-matcher}.php` | The per-URL logging ruleset: value object, durable two-tier storage, matcher |
 | `includes/class-log-manager.php` | Per-request firehose writer; redacts URL secrets; refuses root |
 | `includes/class-object-cache-counts.php` | What a request asked of the object cache, read where core's cache and WP Cloud's memcached drop-in each keep the truth |
-| `includes/class-{request-builder,request-flight,flame-builder,auto-tuner}-node.php` | Request assembly, the in-flight snapshot sibling, flame and stats fan-out, auto-tune |
+| `includes/class-{request-builder,request-flight,flame-builder,stats-builder,auto-tuner}-node.php` | Request assembly, the in-flight snapshot sibling, the flames, the stats rows read back from each flame's record, auto-tune |
 | `includes/class-{job-router,remote-job-rewrite,discovery-collector}-node.php` | Job normalization onto jobs.log, the hub's `job` → `remote_job` rewrite, the hub's discovery fan-out |
 | `includes/class-{flame-tree,flame-fold,quiet}.php` | Flame algorithms, and the quiet rule on which both builders leave their stream clocks for the wall |
 | `includes/class-{diagnostics-bridge,hook-categorizer,reqgrep-core,current-request-overlay}.php`, `trait-narration.php` | Verb spans and the stderr seam, hook categories, the reqgrep engine, the station's Request tab, builder narration |
@@ -132,7 +132,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | `includes/class-{flame-facts-row-schema,bucket,url-parts}.php` | The thirteen stats tables the `flame-facts` Row_Table holds; the five-minute bucket, the hour and the selection grammar; a URL's server and paths |
 | `includes/admin/`, `includes/cli/` | The settings page, which hosts the rules editor; `wp nodes reqgrep` and `wp nodes ruleset-bench` |
 | `includes/uninstall-cleanup.php`, `uninstall.php` | The option sweep by prefix, the files of every Row_Table the shipped topologies declare with the Flame_Facts schema, and the overview-prefetch job's URL snapshot; `uninstall.php` requires it and the Composer autoloader by hand because the main file does not run on DELETE |
-| `topologies/` | Eleven `.tsl` graphs, named by filename: five primitives and six compositions |
+| `topologies/` | Twelve `.tsl` graphs, named by filename: six primitives and six compositions |
 | `mu-plugins/00-newspack-profiler.php` | The standalone profiler drop-in, shipped as its own release asset |
 | `scripts/` | This plugin's `build.mjs`, `pre-push.local` and `bump-version.sh`; everything else is vendored, `pre-push` included, `render-diagram.sh` (the `docs/img` sheets to PNG) and its `autocrop.py` included |
 | `src/` | Six esbuild entries: five dashboards and the `current-request` tab. Shared SCSS forwards the substrate's tokens and mixins, so never create a local `_tokens.scss` or `_mixins.scss` |
@@ -155,7 +155,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 - **Command and constructor `arguments` are a token array** (`list<string>`), never a space-joined string. The substrate binds a verb's tokens against the `args` its schema declares before the handler runs, so a handler reads `$args['<name>']`, typed and defaulted, and parses nothing; each arg arrives by position or as `--name=value`. Declare what the callers send: the dashboards build args with `formatCommandArgs(...)`, the MCP door names every arg, and an undeclared option is refused.
 - **Type flags**: an array VALUE takes `TM_STRUCT`, a string VALUE `TM_BYTESTREAM`. Consumers reading an array VALUE gate on `TM_STRUCT`.
 - **Don't add `class_exists()` guards for in-plugin classes.** The composer classmap resolves everything under `includes/`, so a missing class means a stale classmap.
-- **A topology name is its `.tsl` filename.** `complete` runs request-builder, flame-builder, job-router and job-worker in one worker; no `combined.tsl` or `jobs.tsl` exists. Read `wp nodes status` for what is active, since stored options outrank the config file.
+- **A topology name is its `.tsl` filename.** `complete` runs request-builder, flame-builder, stats-builder (through `performance`), job-router and job-worker in one worker; no `combined.tsl` or `jobs.tsl` exists. Read `wp nodes status` for what is active, since stored options outrank the config file.
 - **`App\Core` carries two correctness mechanisms; don't strip them.** `wrap_callbacks()` skips any callback with a by-reference parameter, because wrapping it breaks WordPress's contract. A sacrificial `hook_spacer` at `PHP_INT_MAX - 2` keeps `hook_complete` firing when a filter unhooks itself mid-run.
 
 ## Local Skills

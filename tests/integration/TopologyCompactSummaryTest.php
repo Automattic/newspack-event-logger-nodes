@@ -253,14 +253,18 @@ class TopologyCompactSummaryTest extends TestCase {
 
 	/**
 	 * Worker p3 reads and writes its own partition of every per-worker log —
-	 * the firehose and requests it consumes, the requests and flames it writes,
-	 * each cursor and quarantine beside them — while the four shared outputs
-	 * stay the `.p0` every worker appends to.
+	 * the firehose, requests and flames it consumes, the requests and flames
+	 * it writes, each cursor and quarantine beside them, and the requests the
+	 * stats builder reads each flame's record from — while the four shared
+	 * outputs stay the `.p0` every worker appends to.
 	 */
 	public function test_worker_three_resolves_its_own_partition_of_every_per_worker_log(): void {
 		$this->load_topology( 'complete', 3 );
 
-		foreach ( [ 'firehose', 'requests' ] as $log ) {
+		$reader = new Partition_Node();
+		$reader->arguments( [ $this->read_private( Core::node( 'stats-builder' ), 'requests_partition' ) ] );
+		$this->assertSame( $this->read_private( Core::node( 'requests:partition' ), 'partition_dir' ), $reader->partition_dir(), 'the stats builder reads the requests log its worker writes' );
+		foreach ( [ 'firehose', 'requests', 'flames' ] as $log ) {
 			$consumer = Core::node( "{$log}:consumer" );
 			$this->assertStringEndsWith( "/{$log}.p3", $this->read_private( $consumer, 'source_dir' ) );
 			$this->assertStringEndsWith( "/complete.{$log}.p3", $this->read_private( $consumer, 'offsetlog_dir' ) );

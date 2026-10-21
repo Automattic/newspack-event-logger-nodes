@@ -46,7 +46,7 @@ final class UrlSnapshotTest extends TestCase {
 		parent::setUp();
 		Core::$clock = static fn (): float => (float) self::NOW;
 		Core::right_now();
-		$this->activate_shipped( 'flame-builder', 4 );
+		$this->activate_shipped( 'stats-builder', 4 );
 	}
 
 	protected function tearDown(): void {

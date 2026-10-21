@@ -3,11 +3,12 @@ namespace Newspack_Event_Logger_Nodes\Tests;
 
 use Newspack_Nodes\Tests\TestCase as RuntimeTestCase;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 
 abstract class TestCase extends RuntimeTestCase {
 
-	/** The Row_Table `flame-builder.tsl` declares with the Flame_Facts schema. */
+	/** The Row_Table `stats-builder.tsl` declares with the Flame_Facts schema. */
 	protected const FACTS_TABLE = 'flame-facts';
 
 	/**
@@ -29,6 +30,24 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/** The directory a loaded topology's Tables open their files in. */
 	private string $tables_dir = '';
+
+	/** The directory holding the requests logs `record_request()` writes, one `requests.p{N}` each. */
+	private ?string $requests_root = null;
+
+	/**
+	 * The writers of the requests logs, by directory, removed in tearDown.
+	 *
+	 * @var array<string,\Newspack_Nodes\Partition_Node>
+	 */
+	private array $requests_logs = [];
+
+	/**
+	 * The ID of each record a requests log wrote, as a Consumer delivers it,
+	 * in the order written; `record_request()` takes each as it lands.
+	 *
+	 * @var list<string>
+	 */
+	private array $written_at = [];
 
 	/**
 	 * The `_wp_test_filters` table at setUp, restored in tearDown. The base
@@ -62,34 +81,137 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * A builder `fb` armed as `flame-builder.tsl` arms one, its partition
-	 * bound to `$partition`, writing that partition of a real `flame-facts`
-	 * Row_Table through the request graph, on the Router of that graph.
+	 * A builder `fb` armed as `flame-builder.tsl` arms one, its auto-tune
+	 * flush on the Router tick, sending every message it sends to `$sink`.
+	 *
+	 * @param \Newspack_Nodes\Node $sink Where its flames, auto-tune emits and replies land.
+	 */
+	protected function armed_flame_builder( \Newspack_Nodes\Node $sink ): Flame_Builder_Node {
+		if ( null === \Newspack_Nodes\Core::node( \Newspack_Nodes\Node_Names::ROUTER ) ) {
+			$router = new \Newspack_Nodes\Router_Node();
+			$router->name( \Newspack_Nodes\Node_Names::ROUTER );
+		}
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->arguments( [] );
+		$fb->sink( $sink );
+		return $fb;
+	}
+
+	/**
+	 * A stats builder `sb` armed as `stats-builder.tsl` arms one, its
+	 * partition bound to `$partition`, reading the requests logs
+	 * `record_request()` writes and writing that partition of a real
+	 * `flame-facts` Row_Table through the request graph.
 	 *
 	 * @param string $partition The partition the worker is bound to.
 	 */
-	protected function armed_flame_builder( string $partition = '0' ): Flame_Builder_Node {
+	protected function armed_stats_builder( string $partition = '0' ): Stats_Builder_Node {
 		\Newspack_Nodes\Core::$var['partition'] = $partition;
 		if ( null === \Newspack_Nodes\Core::node( \Newspack_Nodes\Node_Names::ROUTER ) ) {
 			$router = new \Newspack_Nodes\Router_Node();
 			$router->name( \Newspack_Nodes\Node_Names::ROUTER );
 		}
 		$this->current_window_facts();
-		$fb = new Flame_Builder_Node();
-		$fb->name( 'fb' );
-		$fb->arguments( [] );
-		// As a worker loading flame-builder.tsl names it: no user is current.
+		$sb = new Stats_Builder_Node();
+		$sb->name( 'sb' );
+		$sb->arguments( [] );
+		// As a worker loading stats-builder.tsl names it: no user is current.
 		$user = $GLOBALS['_current_user_id'] ?? null;
 		unset( $GLOBALS['_current_user_id'] );
 		try {
-			\Newspack_Nodes\Core::node( 'fb:config' )->dispatch( 'set_facts_target', [ self::FACTS_TABLE ] );
+			$config = \Newspack_Nodes\Core::node( 'sb:config' );
+			$config->dispatch( 'set_facts_target', [ self::FACTS_TABLE ] );
+			$config->dispatch( 'set_requests_partition', [ $this->requests_partition() ] );
 		} finally {
 			if ( null !== $user ) {
 				$GLOBALS['_current_user_id'] = $user;
 			}
 		}
-		$fb->sink( VerbHarness::request_graph() );
-		return $fb;
+		$sb->sink( VerbHarness::request_graph() );
+		return $sb;
+	}
+
+	/** The `{partition}` path the requests logs `record_request()` writes sit at. */
+	protected function requests_partition(): string {
+		$this->requests_root ??= $this->make_temp_dir( 'stats-requests-' );
+		return $this->requests_root . '/requests.p' . \Newspack_Nodes\Core::PARTITION_TOKEN;
+	}
+
+	/**
+	 * Write `$request` to the bound partition's requests log as the request
+	 * builder does, its KEY the rid.
+	 *
+	 * @param array<string,mixed> $request The completed request.
+	 * @return string The record's ID, `segment:offset:length`.
+	 */
+	protected function record_request( array $request ): string {
+		$dir = \Newspack_Nodes\Core::resolve_partition( $this->requests_partition(), (int) \Newspack_Nodes\Core::bound_partition(), null );
+		if ( ! isset( $this->requests_logs[ $dir ] ) ) {
+			$log = new \Newspack_Nodes\Partition_Node();
+			// One wide segment: the test config's 1 KB ones prune as they rotate.
+			$log->arguments( [ $dir, (string) ( 64 << 20 ) ] );
+			$log->void_warranty();
+			$log->with_index(
+				function ( array $message, array $position ): ?string {
+					$this->written_at[] = \Newspack_Nodes\Log_Position::format( $position['segment'], $position['offset'], $position['length'] );
+					return null;
+				}
+			);
+			$this->requests_logs[ $dir ] = $log;
+		}
+		$message                                       = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
+		$message[ \Newspack_Nodes\Message::KEY ]       = \Newspack_Nodes\Core::as_string( $request['rid'] ?? '' );
+		$message[ \Newspack_Nodes\Message::VALUE ]     = $request;
+		$this->requests_logs[ $dir ]->fill( $message );
+		$this->requests_logs[ $dir ]->flush();
+		// No worker tails the log; a wake would re-read the wall on the tick.
+		\Newspack_Nodes\Partition_Node::forget_pending_wakes();
+		return \array_pop( $this->written_at ) ?? throw new \LogicException( 'the requests log wrote no record' );
+	}
+
+	/**
+	 * The flame the flame builder sends for `$request`: its tree, stamped with
+	 * the rid, the URL hash and the place of its record. The tree's value is
+	 * 725 ms whatever the record's duration, as a rendering artifact differs
+	 * from the timed request (decision 12), so a row read off the flame shows.
+	 *
+	 * @param array<string,mixed> $request    The completed request.
+	 * @param string|null         $request_at The record's ID; null for a flame carrying none.
+	 * @return array<int,mixed> A TM_STRUCT message.
+	 */
+	protected static function flame_at( array $request, ?string $request_at ): array {
+		$rid   = \Newspack_Nodes\Core::as_string( $request['rid'] ?? '' );
+		$flame = [
+			'name'     => 'request',
+			'value'    => 725.0,
+			'children' => [],
+			'rid'      => $rid,
+			'url_hash' => \Newspack_Event_Logger_Nodes\Url_Parts::hash( \Newspack_Nodes\Core::as_string( $request['url'] ?? '' ) ),
+		];
+		if ( null !== $request_at ) {
+			$flame['request_at'] = $request_at;
+		}
+		$message                                   = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]  = \Newspack_Nodes\Message::TM_STRUCT;
+		$message[ \Newspack_Nodes\Message::KEY ]   = $rid;
+		$message[ \Newspack_Nodes\Message::VALUE ] = $flame;
+		return $message;
+	}
+
+	/**
+	 * Write `$request`'s record, then fill `$sb` with the flame naming it.
+	 *
+	 * @param Stats_Builder_Node  $sb      The builder.
+	 * @param array<string,mixed> $request The completed request.
+	 * @return string The record's ID.
+	 */
+	protected function fill_flame( Stats_Builder_Node $sb, array $request ): string {
+		$crumb = $this->record_request( $request );
+		$sb->fill( self::flame_at( $request, $crumb ) );
+		return $crumb;
 	}
 
 	/**
@@ -146,31 +268,6 @@ abstract class TestCase extends RuntimeTestCase {
 		if ( 0 !== ( \Newspack_Nodes\Core::num_int( $reply[ \Newspack_Nodes\Message::TYPE ] ) & \Newspack_Nodes\Message::TM_ERROR ) ) {
 			throw new \LogicException( 'the facts table refused ROWS: ' . \Newspack_Nodes\Core::as_string( $reply[ \Newspack_Nodes\Message::VALUE ] ) );
 		}
-	}
-
-	/**
-	 * An armed builder whose sink sends its ROWS requests on into the request
-	 * graph, where they are answered, and every other message it sends — a
-	 * flame, an auto-tune emit, a GET_STATS reply — to `$other`.
-	 */
-	protected function builder_sending_to( \Newspack_Nodes\Node $other ): Flame_Builder_Node {
-		$fb = $this->armed_flame_builder();
-		$fb->sink(
-			new class( $other ) extends \Newspack_Nodes\Node {
-				public function __construct( private \Newspack_Nodes\Node $other ) {
-					parent::__construct();
-				}
-
-				public function fill( array $message ): void {
-					if ( 0 !== ( \Newspack_Nodes\Core::num_int( $message[ \Newspack_Nodes\Message::TYPE ] ) & \Newspack_Nodes\Message::TM_REQUEST ) ) {
-						VerbHarness::request_graph()->fill( $message );
-						return;
-					}
-					$this->other->fill( $message );
-				}
-			}
-		);
-		return $fb;
 	}
 
 	/**
@@ -439,6 +536,10 @@ abstract class TestCase extends RuntimeTestCase {
 	protected function tearDown(): void {
 		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::$hrtime_fn = null;
 		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
+		foreach ( $this->requests_logs as $log ) {
+			$log->remove_node();
+		}
+		$this->requests_logs = [];
 		$this->rmdir_recursive( $this->tables_dir );
 		$GLOBALS['_wp_test_filters'] = $this->saved_wp_test_filters;
 		parent::tearDown();

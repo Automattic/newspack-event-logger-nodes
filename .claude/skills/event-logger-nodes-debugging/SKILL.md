@@ -63,10 +63,10 @@ Pivot into a worker to see node state. Worker ids are `<topology>.p<N>`, and `wp
 
 ```bash
 wp nodes status                # every catalog topology + live workers + consumer lag
-wp nodes cli performance.p0    # attach to the topology carrying Request_Builder + Flame_Builder
+wp nodes cli performance.p0    # attach to the topology carrying the three builders
 ```
 
-Topology names come from the `.tsl` filename, with no `name:` frontmatter. This plugin ships `request-builder`, `flame-builder`, `performance` (both of those), `job-router`, `job-feed`, `job-hub`, `job-spoke`, `complete` (performance + job-hub), `aggregator` and `hub-control`; the substrate adds the stock `job-intake`, `job-worker`, `settings-sync` and `topic-probe`. Which are active depends on the deployment's substrate `topologies` config list, whose shipped default is empty. A deployment may also register renamed groups — eve runs `aggregator-hub` and `job-spoke` beside `performance` — so read the list rather than assuming.
+Topology names come from the `.tsl` filename, with no `name:` frontmatter. This plugin ships `request-builder`, `flame-builder`, `stats-builder`, `performance` (all three of those), `job-router`, `job-feed`, `job-hub`, `job-spoke`, `complete` (performance + job-hub), `aggregator` and `hub-control`; the substrate adds the stock `job-intake`, `job-worker`, `settings-sync` and `topic-probe`. Which are active depends on the deployment's substrate `topologies` config list, whose shipped default is empty. A deployment may also register renamed groups — eve runs `aggregator-hub` and `job-spoke` beside `performance` — so read the list rather than assuming.
 
 Worker-restart classification is a separate vocabulary: each `Settings_Schema` field's `restart:` key holds CONSUMER NODE TYPES, and `Restart_Planner` resolves them to the live topologies running a node of a matching class, ancestry included — so `Log` satisfies a `Partition` declaration. The substrate's segment-geometry fields declare `[ 'Partition', 'Topic', 'Log' ]`, this plugin's three rendered fields declare `'all'`, and a field needing no recycle declares `[]`.
 
@@ -76,28 +76,31 @@ From the prompt:
 status                                     # shell status lines, printed locally; no message leaves
 ls -alst                                   # every node with COUNT/SINK/TARGET columns
 dump request-builder                       # every property of Request_Builder_Node (alias of dump_node)
-dump flame-builder                         # start here when flame or stats writes are missing
+dump flame-builder                         # start here when flames are missing
+dump stats-builder                         # start here when stats writes are missing
 dump completed:tee                         # the Tee's target list
 ls -a request-builder                      # every node whose NAME matches that glob
 dump flame-facts                           # the stats Row_Table: its schema word and its counters
-command_node flame-builder:config \
+command_node stats-builder:config \
     set_facts_target flame-facts           # a verb at <cwd>/<path>, cwd unchanged (aliases: command, cmd)
 request request-builder GET_STATS          # in-flight depth (alias of request_node)
-request flame-builder GET_STATS            # buffered requests and row ops
+request stats-builder GET_STATS            # buffered requests and row ops
+request flame-builder GET_STATS            # the auto-tune queue depth
 cmd request-builder:config purge           # drop every in-flight request, reporting the count
 cd request-builder:config                  # send later verbs TO that interpreter; `cd /` resets
 ```
 
 Valid `ls` flags are `-a`, `-c`, `-l`, `-s` and `-t`, combinable as `-alst`. There is no `-o` flag: the connection model is `sink`/`target`, with no `owner`. That is also why `-a` is the form to reach for — without it the argument scopes by SINK, and every node in these graphs sinks into `_command_interpreter` and steers with `target`, so `ls request-builder` prints nothing at all.
 
-`GET_STATS` is the TM_REQUEST verb worth knowing on both builders, because it answers the questions the dashboards cannot:
+`GET_STATS` is the TM_REQUEST verb worth knowing on all three builders, because it answers the questions the dashboards cannot:
 
 | Verb | Node | Reply |
 |---|---|---|
 | `GET_STATS` | `request-builder` | `{ pending_count, oldest_rid, oldest_age_s, sample, line_counter }` |
-| `GET_STATS` | `flame-builder` | `{ buffered_requests, buffered_rows, last_flush_age_s, auto_tune_pending_count, significant_events_count, narration }` |
+| `GET_STATS` | `flame-builder` | `{ auto_tune_pending_count, significant_events_count }` |
+| `GET_STATS` | `stats-builder` | `{ buffered_requests, buffered_rows, last_flush_age_s, records_gone, narration }` |
 
-A `line_counter` of 0 on a busy site means the firehose Consumer is reading nothing. A climbing `oldest_age_s` means requests are stranding in flight — `Request_Builder_Node` evicts them 720 to 1080 seconds after their last line (three buckets rotating every 360 seconds, and the 720-second floor is what clears a worker's 595-second spawn request by two minutes) and writes them out with `error_status='T'`.
+A `line_counter` of 0 on a busy site means the firehose Consumer is reading nothing. A `records_gone` that keeps climbing after the first start's replay means flames arriving whose records `requests.pN` no longer holds: the flame Consumer lags the requests log by more than its retention. A climbing `oldest_age_s` means requests are stranding in flight — `Request_Builder_Node` evicts them 720 to 1080 seconds after their last line (three buckets rotating every 360 seconds, and the 720-second floor is what clears a worker's 595-second spawn request by two minutes) and writes them out with `error_status='T'`.
 
 Once the in-flight cache is wedged rather than merely slow, `cmd request-builder:config purge` is the escalation: it drops every in-flight request and reports how many went. Those entries are DISCARDED, never emitted as timed out — a wedged builder holds requests that will never complete, and answering that with thousands of doc writes costs more than losing records already known to be dead. Ordinary bucket eviction still emits. The verb declares `action`, so the topology editor withholds it from the persisted `.tsl` and it stays an operator verb rather than a line re-running on every worker boot.
 
@@ -111,7 +114,7 @@ Scripted pivot sessions (`echo cmd | wp nodes cli performance.p0`) drain cleanly
 
 ## Stats schema
 
-The stats live in one Row_Table, `flame-facts`, which `flame-builder.tsl` declares with the `Flame_Facts` schema: one SQLite file per flame-builder partition at `{base_dir}/tables/flame-facts.p{N}.sqlite`, its nine tables declared by `Flame_Facts_Row_Schema`. Partition N's builder is its file's only writer, one `ROWS` batch a flush through its `Table_Client`. `App\Stats_Query` attaches every partition's file read-only into one connection and answers from a fixed vocabulary of fields and measures, binding every value, so no SQL text enters from outside. Rows go only when their `retain` window passes, so a row a reply lacks is one no flush wrote, or one whose window passed.
+The stats live in one Row_Table, `flame-facts`, which `stats-builder.tsl` declares with the `Flame_Facts` schema: one SQLite file per stats-builder partition at `{base_dir}/tables/flame-facts.p{N}.sqlite`, its thirteen tables declared by `Flame_Facts_Row_Schema`. Partition N's stats builder is its file's only writer, one `ROWS` batch a flush through its `Table_Client`. `App\Stats_Query` attaches every partition's file read-only into one connection and answers from a fixed vocabulary of fields and measures, binding every value, so no SQL text enters from outside. Rows go only when their `retain` window passes, so a row a reply lacks is one no flush wrote, or one whose window passed.
 
 | Table | One row per | Kept |
 |---|---|---|
@@ -145,7 +148,7 @@ echo "stats slabs" | nc <memcache-host> 11211
 wp nodes memcache flush
 
 # Reset the statistics: reclaim the flame-facts files, for each active
-# topology that includes flame-builder.
+# topology that includes stats-builder.
 wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start
 ```
 
@@ -236,8 +239,8 @@ Diagnostic flow:
 wp nodes types                 # active topology groups the fleet spawns
 wp nodes status                # every catalog topology plus what is live
 
-# The flame builder answers it directly, per partition.
-echo 'request flame-builder GET_STATS' | wp nodes cli performance.p0
+# The stats builder answers it directly, per partition.
+echo 'request stats-builder GET_STATS' | wp nodes cli performance.p0
 
 # One broker's own reconnect/backoff snapshot. The second token is the broker
 # name, the third `p` and the worker partition; each reader's cursor rides the
@@ -251,11 +254,11 @@ Two ageing rules decide what that `remote:` key says. `Remote_Source_Node::publi
 
 If a hub is missing entries from a spoke, read that `remote:` snapshot — but read it for churn, not for the gap. A reconnect resumes from the cursor the last forwarded record's breadcrumb set, so a bouncing spoke costs duplicates rather than records. A real gap means the spoke reaped the segments the hub's cursor still pointed into: `Consumer_Node::normalize_cursor()` then snaps that cursor to the oldest segment left, and everything between the two is gone.
 
-## Reading the flame builder's narration
+## Reading the stats builder's narration
 
-The flame builder tells what it writes on the worker's own record, the `restapi` record of `/wp-json/newspack-nodes/v1/workers/spawn`, and only where a rule covers that route. Every counter is in the `m` — a span's on its `(complete)` — a head then `<n> <name>` pairs joined by ` · `, zeros left out, because `m` is what a stored record keeps; a span's time is its `duration_ms`. Read them with `wp nodes reqgrep 'stats writes'`, or open a worker record in the Requests dashboard, where each span nests what it ran.
+The stats builder tells what it writes on the worker's own record, the `restapi` record of `/wp-json/newspack-nodes/v1/workers/spawn`, and only where a rule covers that route. Every counter is in the `m` — a span's on its `(complete)` — a head then `<n> <name>` pairs joined by ` · `, zeros left out, because `m` is what a stored record keeps; a span's time is its `duration_ms`. Read them with `wp nodes reqgrep 'stats writes'`, or open a worker record in the Requests dashboard, where each span nests what it ran.
 
-- **`stats writes`**, a point, one a minute while the builder writes and one at the stop: `12 flushes · 3480 requests`, the flushes since the last line and the requests they wrote to `flame-facts`.
+- **`stats writes`**, a point, one a minute while the builder writes or skips gone records, and one at the stop: `12 flushes · 3480 requests · 40 records gone`, the flushes since the last line, the requests they wrote to `flame-facts`, and the flames skipped because their record is gone.
 - **`stats sweep`**, a span around a clean stop's flush, its `(complete)` reading `stopped`, with the stop's `stats writes` line nested inside it.
 
 A steady worker lifetime tells about ten lines. `GET_STATS`'s `narration` shows the counters the next line will carry.
@@ -277,7 +280,7 @@ A performance verb tells where its time goes inside its command span (`Performan
 
 **The time axis comes from the answer, never from the page.** Each chart draws the buckets its `query` answer echoes in `filters.bucket` (`answerSlots()`), the last 288 five-minute buckets ending at the current one unless a selection names others, so a browser clock off by a minute moves nothing. A chart with no series drawn before its first answer is an answer that has not arrived yet.
 
-**A chart says "No … data in this window." while traffic flows.** Read the `query` answer's `available`: false means the stats files did not open, and the worker or request logged `performance: stats rows did not open` with the reason — `pdo_sqlite` missing, no active topology declaring `flame-facts`, or a file SQLite cannot attach. True with no rows means the rows hold nothing for that question; ask `GET_STATS` on `flame-builder` whether its buffer is writing, and `dump flame-facts` for the Row_Table's counters.
+**A chart says "No … data in this window." while traffic flows.** Read the `query` answer's `available`: false means the stats files did not open, and the worker or request logged `performance: stats rows did not open` with the reason — `pdo_sqlite` missing, no active topology declaring `flame-facts`, or a file SQLite cannot attach. True with no rows means the rows hold nothing for that question; ask `GET_STATS` on `stats-builder` whether its buffer is writing and how many flames found their record gone, and `dump flame-facts` for the Row_Table's counters.
 
 **`reqgrep --recent` shows nothing but the firehose is being written.** Three possibilities. First, `Log_Manager` never started: `enable_logging` is off, or the process is root (`posix_geteuid() === 0` returns before the matcher is even built, because root-owned segment files the web user could never append to are worse than no logs). Second, the firehose path doesn't match — check `Newspack_Event_Logger_Nodes\Config::get_logs_directory()`. Third, no ruleset rule matches the URL: `Log_Manager` resolves one governing rule per request through `Rule_Matcher`, and no match — or a `skip` rule — writes nothing. **Empty means empty**: an absent ruleset logs nothing, because there is no implicit `/` log-all baseline. Read it through the `rules` CI `dump` verb or `wp option get newspack_event_logger_nodes_rules`. The shipped default seeds a `/` log rule alone; the substrate's own endpoints and `/wp-cron.php` log as worker traffic.
 
@@ -337,7 +340,7 @@ ls -la {base_dir}/logs/alerts.p0/ {base_dir}/logs/errors.p0/ {base_dir}/logs/gyr
 ls -la {base_dir}/logs/completed.p0/
 
 # Flame_Builder output: the flame trees backing the drilldown, indexed with a
-# sibling `.idx` (`flame-index`), and the flame-facts SQLite files.
+# sibling `.idx` (`flame-index`); and Stats_Builder's flame-facts SQLite files.
 ls -la {base_dir}/logs/flames.p0/ {base_dir}/tables/
 
 # Job ingress, the delayed-job park, and the routed queue. jobdelay is the

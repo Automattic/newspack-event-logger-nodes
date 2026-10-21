@@ -2,44 +2,29 @@
 /**
  * Flame Builder
  *
- * The stats fan-out of the event logger. A Consumer tails `requests.p{N}` and
- * fills this node with one TM_STRUCT message per completed request; the node
- * turns each into a flame tree (via `Flame_Tree`), forwards it to the
- * `flames:partition` Partition for the flame viewer, and buffers the rows
- * the request contributes to the `flame-facts` Row_Table
- * (`Flame_Facts_Row_Schema`): its `requests` row, the `urls`, `agents`,
- * `servers`, `ja4s` and `froms` rows it names, its `requests_hourly` rollup
- * and, when timed, its `timings` and `timings_site` rows, which name their
- * `categories` and `entries` rows.
- *
- * `write_rows()` sends the buffer as one `ROWS` batch, one transaction, every
- * FLUSH_INTERVAL_SEC, at every checkpoint, and as soon as it holds
- * BUFFERED_REQUESTS_LIMIT requests or BUFFERED_OPS_LIMIT ops. A batch names
- * each URL and each lookup name once, and a row takes their ids by batch
- * index. Each request's rollups ride as `then` ops of its `requests` row,
- * applied only when that row inserted, so a replay of records already
- * written adds nothing.
- *
- * The builder also keeps `category_window`, each category's and entry's
- * sums over the last `WINDOW_BUCKETS`: a request adds its timings when its
- * bucket is newer than the window's watermark, and every write subtracts
- * each bucket that left the window, once per `window_expiry` row. The
- * watermark is the newest bucket `window_expiry` holds, read once, before
- * the first fold. With none, or one older than `timings_site` holds, the
- * window is rebuilt from `timings_site`.
+ * The flame half of the event logger's request fan-out. A Consumer tails
+ * `requests.p{N}` and fills this node with one TM_STRUCT message per
+ * completed request; the node turns each into a flame tree (via
+ * `Flame_Tree`) and forwards it to the `flames:partition` Partition,
+ * stamped with the request's `rid`, its `url_hash` and its `request_at`,
+ * the record's own ID in `requests.p{N}`. `Stats_Builder_Node` tails the
+ * flames and reads each record where its `request_at` names it, so a
+ * request's rows never land before its flame.
  *
  * One side channel hangs off that pipeline: the request's governing `Rule`
  * drives auto-tune. Hooks that fire too often, custom events to disable, and
  * newly significant events accumulate here and are emitted as messages to the
- * owned `Auto_Tuner_Node` sibling, which rewrites the rule.
+ * owned `Auto_Tuner_Node` sibling, which rewrites the rule. A category's
+ * significance is its mean per call over the folds since the last flush, at
+ * most `AUTO_TUNE_WINDOW` of them.
+ *
+ * The builder holds nothing durable: a flame is written as it is built, and
+ * a decision waits for the next flush or a clean stop.
  *
  * Worker context: this node runs inside the `flame-builder` (or `complete`)
  * topology. See `topologies/flame-builder.tsl` for the wiring.
  *
- * A record is filed where it finished on its own STREAM clock, clamped to
- * the WALL tick that brought it; `idle_since()` answers the WALL moment of
- * the last write, and the auto-tune lock's wait is a duration on the
- * MONOTONIC clock.
+ * Quiet and the auto-tune lock's wait are durations on the MONOTONIC clock.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -48,29 +33,20 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Idle_Reporter;
-use Newspack_Nodes\Log_Position;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Shutdown_Sweeper;
-use Newspack_Nodes\Sqlite_Arm;
-use Newspack_Nodes\Table_Client;
-use Newspack_Nodes\Table_Node;
 use Newspack_Nodes\Timer_Node;
-use Newspack_Nodes\Worker_Should_Stop;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
 /**
- * Builds flame trees and the flame-facts rows from completed requests.
- *
- * @phpstan-import-type Row_Op from \Newspack_Nodes\Sqlite_Arm
+ * Builds flame trees from completed requests and runs auto-tune.
  */
-class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Reporter {
+class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	use \Newspack_Nodes\Schema_Reflection;
 	use \Newspack_Nodes\Deferred_Clean_Stop;
-	use Narration;
 
 	/** Seconds between periodic flush() runs: the cadence of the Router-tick timer. */
 	const FLUSH_INTERVAL_SEC = 5;
@@ -84,51 +60,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public const IDLE_AFTER_SEC = 12 * self::FLUSH_INTERVAL_SEC;
 
 	/**
-	 * Error statuses whose duration ends at an interruption rather than the
-	 * request's end: a timeout and an abort (decision 24).
-	 *
-	 * @var list<string>
-	 */
-	public const UNTIMED_STATUSES = [ 'T', 'A' ];
-
-	/**
-	 * The error statuses that count as errors: a timeout and a fatal. An
-	 * abort is the logger's own worker stopping and a gap is missing detail.
-	 *
-	 * @var list<string>
-	 */
-	public const ERROR_KINDS = [ 'T', 'F' ];
-
-	/** The lowest status code a status class is read from. */
-	public const STATUS_MIN = 100;
-
-	/** The highest status code a status class is read from. */
-	public const STATUS_MAX = 599;
-
-	/**
-	 * Requests the buffer holds before the record reaching the count writes
-	 * it, whatever the tick: a replay folds far faster than the tick, so the
-	 * count is what bounds a batch and what commits a replay as it goes.
-	 */
-	public const BUFFERED_REQUESTS_LIMIT = 1000;
-
-	/**
-	 * Ops the buffer holds before the record reaching the count writes it:
-	 * memory follows ops, about 730 bytes each, and a timed request adds
-	 * three per profile category and entry, so this bounds a batch near
-	 * 15 MB.
-	 */
-	public const BUFFERED_OPS_LIMIT = 20_000;
-
-	/**
-	 * Categories a timed request writes to the timing tables, its dearest by
-	 * self time with their entries; the rest are a URL's long tail, about 5%
-	 * of the time on the staging URL that forced the cut (decision 38). The
-	 * request's own record keeps every one, and auto-tune judges every one.
-	 */
-	public const TIMED_CATEGORIES = 100;
-
-	/**
 	 * Monotonic clock seam, replacing `hrtime( true )` where a builder times
 	 * its own quiet or a wait. Tests reassign it to step the monotonic clock
 	 * apart from the wall one. Signature: `function (): int`, nanoseconds.
@@ -136,6 +67,12 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @var \Closure|null
 	 */
 	public static ?\Closure $hrtime_fn = null;
+
+	/**
+	 * The most requests a significance average spans: the sums start again
+	 * after this many folds, and at every flush.
+	 */
+	private const AUTO_TUNE_WINDOW = 1000;
 
 	/** How long a clean stop waits for a sibling's auto-tune lock: its expiry. */
 	private const AUTO_TUNE_LOCK_WAIT_MS = 5000;
@@ -164,80 +101,41 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 */
 	private array $auto_tune = [ 'disable_hooks' => [], 'disable_custom_events' => [], 'add_significant_events' => [] ];
 
-	/** Unix time of the last periodic flush(), which GET_STATS reports as an age. */
-	private float $last_flush_time = 0.0;
-
-	/** Unix time of the last write that held a folded record: `idle_since()`. */
-	private float $worked_at = 0.0;
-
 	/** @var Rule_Set|null Lazily-loaded per-worker ruleset (thresholds are per-rule). */
 	private ?Rule_Set $rule_set = null;
 
 	/** @var array<string,array<string,bool>> rule_id => {event => true} known-significant dedupe cache. */
 	private array $significant_events = [];
 
-	/** Node NAME of the Row_Table the rows are written to ('' = unnamed). */
-	private string $facts_target = '';
-
-	/** The builder's asker for its Row_Table. */
-	private Table_Client $client;
-
 	/**
-	 * The ROWS batch the next write sends: each buffered request's ops, in
-	 * the order they were buffered.
-	 *
-	 * @var list<Row_Op>
-	 */
-	private array $rows = [];
-
-	/** Requests the batch holds. */
-	private int $buffered = 0;
-
-	/** Ops the batch holds, `then` ops included. */
-	private int $ops = 0;
-
-	/** @var array<string,int> Batch index of each URL's `urls` op, by url_hash. */
-	private array $url_at = [];
-
-	/** @var array<string,array<array-key,int>> Batch index of each lookup name's op, by column. */
-	private array $name_at = [];
-
-	/**
-	 * Each rule's categories, summed ms and calls over the requests the batch
-	 * holds under it: the significant-event signal's window.
+	 * Each rule's categories, summed ms and calls over the folds since the
+	 * sums last started: the significant-event signal's window.
 	 *
 	 * @var array<string,array<string,array{0:float,1:int}>>
 	 */
 	private array $category_sums = [];
 
-	/** The last bucket the category window has expired; null until read. */
-	private ?int $window_through = null;
+	/** Folds the sums hold, which start again at `AUTO_TUNE_WINDOW`. */
+	private int $folds = 0;
 
 	/**
-	 * Seed the flush clock, build the Table asker, and publish the owned
-	 * auto-tuner sibling.
+	 * Publish the owned auto-tuner sibling.
 	 *
 	 * @api Used by substrate
 	 */
 	public function __construct() {
-		$this->last_flush_time = Core::$now;
-		$this->worked_at       = Core::$now;
-		$this->client          = new Table_Client( $this );
-
 		// Owned auto-tuner sibling (patron-linked; hidden from the canvas).
 		$auto_tuner = new Auto_Tuner_Node();
 		$auto_tuner->patron( $this );
 		$this->publish_sibling( 'auto-tuner', $auto_tuner );
 
 		parent::__construct();
-		// Wire :config interpreter last: handlers read patron() lazily (safe).
-		$this->auto_wire_interpreter();
 	}
 
 	/**
 	 * Store the tokens and arm the periodic flush on the Router tick, every
 	 * FLUSH_INTERVAL_SEC. A node constructed but never given arguments never
-	 * fires; `shutdown_sweep()` still flushes it on a clean stop.
+	 * fires; `shutdown_sweep()` still emits its decisions on a clean stop.
 	 *
 	 * @api Used by substrate.
 	 * @param list<string>|null $args Positional tokens, or null to read them back.
@@ -251,18 +149,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Handle one message: the Row_Table's reply, a TM_REQUEST introspection
-	 * verb, or a TM_STRUCT completed-request record tailed off `requests.p{N}`.
-	 *
-	 * A Table's reply goes to the client first, never to the fold: it is the
-	 * answer to an ask a write made, not a record.
+	 * Handle one message: a TM_REQUEST introspection verb, or a TM_STRUCT
+	 * completed-request record tailed off `requests.p{N}`.
 	 *
 	 * A completed request becomes a flame tree, is forwarded to the flames
-	 * partition, and is buffered as rows. A record whose URL does not name a
-	 * host throws `InvalidArgumentException` before any of that, so the
-	 * Consumer dead-letters it and reads on. Any other message is dropped.
-	 * The record that brings the buffer to BUFFERED_REQUESTS_LIMIT requests
-	 * or BUFFERED_OPS_LIMIT ops writes it.
+	 * partition, and tunes its rule. A record whose URL does not name a host
+	 * throws `InvalidArgumentException` before any of that, so the Consumer
+	 * dead-letters it and reads on. Any other message is dropped.
 	 *
 	 * The message runs inside `deferring()`, which holds a cooperative stop a
 	 * downstream forward raises until this message's own bookkeeping is
@@ -271,33 +164,20 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param array<int,mixed> $message Positional Message array.
 	 */
 	public function fill( array $message ): void {
-		if ( $this->client->accepts( $message ) ) {
-			return;
-		}
 		++$this->counter;
-		$type = Core::num_int( $message[ Message::TYPE ] );
-		if ( null === $this->window_through && 0 !== ( $type & Message::TM_STRUCT ) && 0 === ( $type & Message::TM_REQUEST ) ) {
-			$this->sync_window();
-		}
 		$this->deferring( fn () => $this->fold_record( $message ) );
 	}
 
 	/**
-	 * Router-TIMER tick: flush what the buffer holds and the auto-tune
-	 * decisions a sibling's lock held back, and expire the window even when
-	 * neither waits. A failure raises here, out of the drain, and the worker
-	 * exits loudly; its successor replays from the last checkpoint's cursor.
-	 * A stop raised inside the flush waits for it to finish, as it does in
-	 * `shutdown_sweep()`.
+	 * Router-TIMER tick: start the sums again and emit the auto-tune
+	 * decisions. A failure raises here, out of the drain, and the worker
+	 * exits loudly. A stop raised inside the flush waits for it to finish,
+	 * as it does in `shutdown_sweep()`.
 	 *
 	 * @api Used by substrate.
 	 */
 	protected function fire(): void {
-		$held = [] !== $this->rows || [] !== \array_filter( $this->auto_tune );
 		$this->deferring( fn () => $this->flush() );
-		if ( $held ) {
-			$this->last_flush_time = Core::$now;
-		}
 	}
 
 	/**
@@ -317,22 +197,11 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			return;
 		}
 
-		$url = Core::str( $request['url'] ?? '' );
-		// A hostless URL or no method throws before any fold; it dead-letters.
-		$server = Url_Parts::server_of( $url );
-		// Bounded: an invented method must not mint a value of its own.
-		$request['request_method'] = Request_Builder_Node::method_label( $request['request_method'] ?? null );
-
-		$rid = Core::str( $request['rid'] ?? '' );
-		if ( '' === $rid ) {
-			throw new \InvalidArgumentException( \esc_html( "Flame_Builder: a record for {$url} carries no rid" ) );
-		}
-		$url_hash = Url_Parts::hash( $url );
-		$entries  = $request['entries'] ?? [];
+		[ $request, $url, , $rid ] = Request_Builder_Node::checked_record( $request );
+		$entries = $request['entries'] ?? [];
 		if ( ! \is_array( $entries ) ) {
 			$entries = [];
 		}
-
 		// @longform A record carries EITHER raw entries or — when
 		// Request_Builder folded it under memory pressure — the merged tree it
 		// built instead. Every record already on disk carries entries, so
@@ -349,28 +218,23 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			Core::num_float( $flame_data['value'] ?? 0 )
 		);
 
-		$this->store_flame( $rid, $url_hash, $flame_data );
-		// A replayed record's row is ignored by its rid, its rollups with it.
-		$this->buffer_request( $request, $rid, Core::str( $message[ Message::ID ] ), $url, $url_hash, $server );
-		if ( $this->buffered >= self::BUFFERED_REQUESTS_LIMIT || $this->ops >= self::BUFFERED_OPS_LIMIT ) {
-			$this->write_rows();
+		$this->store_flame( $rid, Url_Parts::hash( $url ), Core::str( $message[ Message::ID ] ), $flame_data );
+		$this->tune_profiles( $request, $url );
+		if ( ++$this->folds >= self::AUTO_TUNE_WINDOW ) {
+			$this->restart_sums();
 		}
 	}
 
 	/**
-	 * The `GET_STATS` reply data, which `answer_request()` sends back: what
-	 * the buffer holds and the auto-tune queue depth.
+	 * The `GET_STATS` reply data, which `answer_request()` sends back: the
+	 * auto-tune queue depth.
 	 *
-	 * @return array<string,mixed>
+	 * @return array<string,int>
 	 */
 	private function stats_report(): array {
 		return [
-			'buffered_requests'        => $this->buffered,
-			'buffered_rows'            => \count( $this->rows ),
-			'last_flush_age_s'         => $this->last_flush_time > 0 ? (int) ( Core::$now - $this->last_flush_time ) : null,
 			'auto_tune_pending_count'  => \array_sum( \array_map( self::map_total( ... ), $this->auto_tune ) ),
 			'significant_events_count' => self::map_total( $this->significant_events ),
-			'narration'                => $this->tally,
 		];
 	}
 
@@ -379,21 +243,24 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 *
 	 * `rid` and `url_hash` are stamped into the payload because the companion
 	 * index formatter (`format_index_entry`, registered as `flame-index` and
-	 * installed by the topology's `with_index` verb) reads them off VALUE.
+	 * installed by the topology's `with_index` verb) reads them off VALUE;
+	 * `request_at` because the stats builder reads the record there.
 	 *
 	 * Writing is optional: without a target or sink the flame is simply not
-	 * persisted, and the caller buffers its rows either way.
+	 * persisted, and the caller tunes its rule either way.
 	 *
 	 * @param string               $rid        Request ID.
 	 * @param string               $url_hash   URL hash.
+	 * @param string               $request_at The record's ID, `segment:offset:length`.
 	 * @param array<string,mixed> $flame_data Flame tree; mutated locally, not by reference.
 	 */
-	private function store_flame( string $rid, string $url_hash, array $flame_data ): void {
+	private function store_flame( string $rid, string $url_hash, string $request_at, array $flame_data ): void {
 		// Duplicate-sibling suffixes exist only to survive the merge.
 		Flame_Tree::strip_name_suffixes( $flame_data );
 
-		$flame_data['rid']      = $rid;
-		$flame_data['url_hash'] = $url_hash;
+		$flame_data['rid']        = $rid;
+		$flame_data['url_hash']   = $url_hash;
+		$flame_data['request_at'] = $request_at;
 
 		if ( '' === $this->target || null === $this->sink ) {
 			return;
@@ -404,7 +271,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$message[ Message::TO ]    = $this->target;
 		$message[ Message::KEY ]   = $flame_data['rid'];
 		$message[ Message::VALUE ] = $flame_data;
-		// Deferred on a stop so the caller still buffers the rows.
+		// Deferred on a stop so the caller still tunes the rule.
 		$this->guarded( fn () => $this->sink->fill( $message ) );
 	}
 
@@ -423,278 +290,33 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Buffer one completed request's ops: an `ignore` for its server, its URL
-	 * and, when it carries each, its user agent, JA4 and From, and, when it is
-	 * timed, for each profile category and entry, each the first time the
-	 * batch meets it, whose ids the rows take by batch index; then the
-	 * request's `ignore`, whose `then` ops add its hourly rollup and, when it
-	 * is timed, a timing row per profile category and entry for the URL and
-	 * for the site, and its share of the category window.
+	 * Feed a timed request's every profile category to the auto-tune checks
+	 * of its governing rule, the stamped one, else the one its URL matches.
+	 * A worker's feed only a rule written for the platform's own work, a
+	 * platform route or `/jobs` and below (`Log_Manager::serves_platform()`):
+	 * under the catch-all, a worker's hooks would tune what every visitor's
+	 * page binds. A timeout's or an abort's profile is not a sample.
 	 *
-	 * Filed where it COMPLETED (decision 19): its start plus its duration,
-	 * clamped to the tick, since a request cannot have finished after it
-	 * reached the builder and a reader walks back from the wall. A timeout's
-	 * or an abort's duration is not a sample (decision 24), so its row times
-	 * nothing and it does not write a timing row; workers write their timings
-	 * too, under `worker` 1, which a site-wide reader leaves out.
-	 *
-	 * @param array<array-key,mixed> $request  The record, its method labelled.
-	 * @param string                 $rid      Its request id.
-	 * @param string                 $crumb    The record's crumb, its place in `requests.p{N}`.
-	 * @param string                 $url      The request's URL.
-	 * @param string                 $url_hash The hash of its identity, `Url_Parts::hash()`.
-	 * @param string                 $server   Its host.
-	 * @throws \LogicException When no partition is bound, so a row can not name one.
+	 * @param array<array-key,mixed> $request The record.
+	 * @param string                 $url     Its URL, which a rule matches by path.
 	 */
-	private function buffer_request( array $request, string $rid, string $crumb, string $url, string $url_hash, string $server ): void {
-		$partition = Core::bound_partition() ?? throw new \LogicException( 'Flame_Builder: no partition is bound, so a request row can not name one' );
-		$duration  = Core::num_float( $request['duration_ms'] ?? 0 );
-		$error     = $request['error_status'] ?? '-';
-		$timed     = self::timing_counts( $duration, $error );
-		$worker    = empty( $request['is_worker'] ) ? 0 : 1;
-		$now       = (int) Core::$now;
-		$started   = Core::num_int( $request['timestamp'] ?? $now, $now );
-		$finished  = \min( $now, self::completed_at( $started, $duration ) );
-		$bucket    = Bucket::id( $finished );
-		$status    = \is_numeric( $request['status_code'] ?? null ) ? (int) $request['status_code'] : null;
-		$method    = Core::str( $request['request_method'] );
-		$country   = self::named( $request['country_code'] ?? null );
-		$ua        = self::named( $request['user_agent'] ?? null );
-		$ja4       = self::named( $request['ja4_hash'] ?? null );
-		$from      = self::named( $request['http_from'] ?? null );
-		$peak      = \max( 0.0, Core::num_float( $request['peak_mb'] ?? 0 ) );
-		$ms        = $timed ? $duration : 0.0;
-		$place     = Log_Position::crumb( $crumb );
-
-		$server_at = $this->named_at( 'server_id', $server );
-		$url_at    = $this->url_at[ $url_hash ] ??= $this->op( [ 'ignore', 'urls', self::url_row( $url, $server ), [], self::ids_at( 'urls', [ 'server_id' => $server_at ] ) ] );
-		$ids       = self::ids_at(
-			'requests',
-			[
-				'server_id' => $server_at,
-				'url_id'    => $url_at,
-				'ua_id'     => $this->named_at( 'ua_id', $ua ),
-				'ja4_id'    => $this->named_at( 'ja4_id', $ja4 ),
-				'from_id'   => $this->named_at( 'from_id', $from ),
-			]
-		);
-		$then      = [
-			[ 'add', 'requests_hourly', [ Bucket::hour( $finished ), null, self::status_class( $status ), $method, $worker, $country ?? '', 1, $timed ? 1 : 0, $ms, $ms, $peak, self::error_counts( $error ) ? 1 : 0 ], [], self::ids_at( 'requests_hourly', [ 'server_id' => $server_at ] ) ],
-		];
-		$profiles  = $timed ? Core::arr( $request['profiles'] ?? null ) : [];
-		$timings   = $this->profile_rows( $profiles, $request, $url, 1 === $worker );
-		$windowed  = $bucket > $this->window_through;
-		foreach ( $timings as [ $category, $entry, $listener, $time, $calls ] ) {
-			$named  = [
-				'category_id' => $this->named_at( 'category_id', $category ),
-				'entry_id'    => $this->named_at( 'entry_id', $entry ),
-			];
-			$then[] = [ 'add', 'timings', [ $bucket, null, null, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings', $named + [ 'server_id' => $server_at, 'url_id' => $url_at ] ) ];
-			$then[] = [ 'add', 'timings_site', [ $bucket, null, $worker, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings_site', $named + [ 'server_id' => $server_at ] ) ];
-			if ( $windowed ) {
-				$then[] = [ ...self::window_op( [ null, null, $listener, $worker, $time, $calls, 1 ], 1, $bucket ), [], self::ids_at( 'category_window', $named ) ];
-			}
-		}
-		$this->ops += \count( $then );
-		$this->op(
-			[
-				'ignore',
-				'requests',
-				[
-					$rid,
-					$bucket,
-					(float) $finished,
-					$started,
-					$partition,
-					$place['segment'] ?? null,
-					$place['offset'] ?? null,
-					$place['length'] ?? null,
-					null,
-					null,
-					$status,
-					$method,
-					$country,
-					null,
-					null,
-					null,
-					$worker,
-					[] === $timings ? 0 : 1,
-					\in_array( $error, Request_Builder_Node::ERROR_STATUSES, true ) ? $error : null,
-					$timed ? $duration : null,
-					$peak,
-				],
-				$then,
-				$ids,
-			]
-		);
-		++$this->buffered;
-	}
-
-	/**
-	 * The batch index of the `ignore` filing `$name` in the lookup table
-	 * `Flame_Facts_Row_Schema::NAMED_BY` names for `$column`, appended the
-	 * first time the batch names it; null for no name.
-	 *
-	 * @param string      $column A column naming a lookup row by its id.
-	 * @param string|null $name   The name, exactly as the record carries it.
-	 */
-	private function named_at( string $column, ?string $name ): ?int {
-		if ( null === $name ) {
-			return null;
-		}
-		return $this->name_at[ $column ][ $name ] ??= $this->op( [ 'ignore', Flame_Facts_Row_Schema::NAMED_BY[ $column ], [ null, $name ] ] );
-	}
-
-	/**
-	 * Append one op to the batch and count it.
-	 *
-	 * @param Row_Op $op The op.
-	 * @return int Its batch index, which a later op's `ids` names.
-	 */
-	private function op( array $op ): int {
-		$this->rows[] = $op;
-		++$this->ops;
-		return \count( $this->rows ) - 1;
-	}
-
-	/**
-	 * An op's `ids` map: each column's position in `$table` to the batch
-	 * index whose id fills it, a column naming no op can not be left null.
-	 *
-	 * @param string                  $table  The table the op writes.
-	 * @param array<string,int|null> $columns Batch indexes by column.
-	 * @return array<int,int>
-	 */
-	private static function ids_at( string $table, array $columns ): array {
-		$ids = [];
-		foreach ( $columns as $column => $at ) {
-			if ( null !== $at ) {
-				$ids[ Flame_Facts_Row_Schema::position( $table, $column ) ] = $at;
-			}
-		}
-		return $ids;
-	}
-
-	/**
-	 * The positional values of a `urls` row, in the schema's column order:
-	 * the id the table assigns, the hash of the URL's identity, the server id
-	 * the caller fills, the stored path, the page and the page's hash.
-	 *
-	 * @api FactsSeeder, so a seeded row is the row this builder writes.
-	 * @param string $url    The request's URL.
-	 * @param string $server Its host.
-	 * @return list<int|string|null>
-	 */
-	public static function url_row( string $url, string $server ): array {
-		$page = Url_Parts::page( $url );
-		return [ null, Url_Parts::hash( $url ), null, Url_Parts::row_path( $url, $server ), $page, Log_Manager::url_hash( $page ) ];
-	}
-
-	/**
-	 * A record field as a row stores it: its string, or null when it is empty
-	 * or cannot be represented as a scalar, so a reader spells every absence one way.
-	 *
-	 * @param mixed $value The field.
-	 */
-	private static function named( mixed $value ): ?string {
-		$name = Core::as_string( $value );
-		return '' === $name ? null : $name;
-	}
-
-	/**
-	 * The second a request completed at, which files its row in a bucket:
-	 * its start plus its duration rounded to the second. The builder clamps
-	 * it to the tick that brought the record.
-	 *
-	 * @param int   $started     The record's start, in unix seconds.
-	 * @param float $duration_ms The record's duration.
-	 */
-	public static function completed_at( int $started, float $duration_ms ): int {
-		return $started + (int) \round( $duration_ms / 1000 );
-	}
-
-	/**
-	 * Whether a request's duration is a timing sample. A timeout's and an
-	 * abort's are fictions, and would skew the mean and the max.
-	 *
-	 * @param float $duration_ms  The record's duration.
-	 * @param mixed $error_status The record's error status, `-` when none.
-	 */
-	public static function timing_counts( float $duration_ms, mixed $error_status ): bool {
-		return $duration_ms > 0 && ! \in_array( $error_status, self::UNTIMED_STATUSES, true );
-	}
-
-	/**
-	 * The status class an hourly row keys on: the code's hundreds digit from
-	 * STATUS_MIN to STATUS_MAX, else 0, the key's spelling of an absent class.
-	 *
-	 * @param int|null $status The record's status code, null when absent.
-	 */
-	private static function status_class( ?int $status ): int {
-		return null !== $status && $status >= self::STATUS_MIN && $status <= self::STATUS_MAX ? \intdiv( $status, 100 ) : 0;
-	}
-
-	/**
-	 * Whether a request is an error: its status is one of ERROR_KINDS,
-	 * whatever status code it answered, and whether or not its duration
-	 * times it.
-	 *
-	 * @param mixed $error_status The record's error status, `-` when none.
-	 */
-	public static function error_counts( mixed $error_status ): bool {
-		return \in_array( $error_status, self::ERROR_KINDS, true );
-	}
-
-	/**
-	 * A timed request's profile as timing rows: each of its
-	 * `TIMED_CATEGORIES` dearest categories by self time, ties by name,
-	 * entry '', and each of its entries, with whether the category is a
-	 * listener span, whose time already counts inside its hook's. Every
-	 * category, the ones past the cut included, feeds the auto-tune checks
-	 * of its governing rule, the stamped one, else the one its URL
-	 * matches. A worker's feed only a rule written for the
-	 * platform's own work, a platform route or `/jobs` and below
-	 * (`Log_Manager::serves_platform()`): under the catch-all, a worker's
-	 * hooks would tune what every visitor's page binds.
-	 *
-	 * @param array<array-key,mixed> $profiles `profiles{}` from the record.
-	 * @param array<array-key,mixed> $request  The record.
-	 * @param string                 $url      Its URL, which a rule matches by path.
-	 * @param bool                   $worker   Whether a worker served it.
-	 * @return list<array{0:string,1:string,2:int,3:float,4:int}> Category, entry, listener, ms, calls.
-	 */
-	private function profile_rows( array $profiles, array $request, string $url, bool $worker ): array {
+	private function tune_profiles( array $request, string $url ): void {
+		$timed    = Stats_Builder_Node::timing_counts( Core::num_float( $request['duration_ms'] ?? 0 ), $request['error_status'] ?? '-' );
+		$profiles = $timed ? Core::arr( $request['profiles'] ?? null ) : [];
 		if ( [] === $profiles ) {
-			return [];
+			return;
 		}
 		$rules = $this->rule_set();
 		$rule  = $rules->rule_by_id( Core::as_string( $request['rule_id'] ?? '' ) ) ?? $rules->for_url( $url );
-		$tunes = null !== $rule && $rule->is_log() && '' !== $rule->id
-			&& ( ! $worker || Log_Manager::serves_platform( $rule->pattern ) );
-		$rows  = [];
-		$times = [];
+		if ( null === $rule || ! $rule->is_log() || '' === $rule->id
+			|| ( ! empty( $request['is_worker'] ) && ! Log_Manager::serves_platform( $rule->pattern ) ) ) {
+			return;
+		}
 		foreach ( $profiles as $category => $data ) {
-			if ( ! \is_string( $category ) || ! \is_array( $data ) ) {
-				continue;
-			}
-			$kind     = Flame_Tree::span_kind( $category );
-			// The column flags an overlay: its time is already its parent's.
-			$listener = Flame_Tree::is_overlay_span( $category ) ? 1 : 0;
-			$time     = Core::num_float( $data['time'] ?? 0 );
-			$calls    = Core::num_int( $data['count'] ?? 0 );
-			$times[ $category ]  = $time;
-			$rows[ $category ][] = [ $category, '', $listener, $time, $calls ];
-			foreach ( Core::arr( $data['entries'] ?? null ) as $name => $entry ) {
-				$entry               = Core::arr( $entry );
-				$rows[ $category ][] = [ $category, (string) $name, $listener, Core::num_float( $entry[0] ?? 0 ), Core::num_int( $entry[1] ?? 0 ) ];
-			}
-			if ( $tunes ) {
-				$this->tune( $rule, $category, $kind, $time, $calls );
+			if ( \is_string( $category ) && \is_array( $data ) ) {
+				$this->tune( $rule, $category, Flame_Tree::span_kind( $category ), Core::num_float( $data['time'] ?? 0 ), Core::num_int( $data['count'] ?? 0 ) );
 			}
 		}
-		$names = \array_keys( $times );
-		\array_multisort( \array_values( $times ), \SORT_DESC, \SORT_NUMERIC, $names, \SORT_ASC, \SORT_STRING );
-		return \array_merge( ...\array_map( static fn ( string $name ): array => $rows[ $name ], \array_slice( $names, 0, self::TIMED_CATEGORIES ) ) );
 	}
 
 	/**
@@ -709,14 +331,14 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/**
 	 * Run a category through its rule's two auto-tune checks. Significant:
-	 * the category's average per call over every request the batch holds
-	 * that tunes that rule reaches the time threshold; `profile_rows()`
-	 * decides which requests tune it, and a rule at `/jobs` or below can
-	 * mix a job's calls with a page's there. Noisy: this request called
-	 * it more often than the count threshold, and it is disabled as a
-	 * custom event when the rule logs it as one, else as a hook.
-	 * Only a span the rule binds by name is one auto-tune acts on; any
-	 * other keeps its sums and goes no further (`Flame_Tree::RULE_BOUND_KINDS`).
+	 * the category's average per call over every fold since the sums
+	 * started that tunes that rule reaches the time threshold;
+	 * `tune_profiles()` decides which requests tune it, and a rule at
+	 * `/jobs` or below can mix a job's calls with a page's there. Noisy:
+	 * this request called it more often than the count threshold, and it is
+	 * disabled as a custom event when the rule logs it as one, else as a
+	 * hook. Only a span the rule binds by name is one auto-tune acts on, so
+	 * any other is neither summed nor judged (`Flame_Tree::RULE_BOUND_KINDS`).
 	 * A transport is promoted but never disabled: no hook list holds it.
 	 *
 	 * @param Rule   $rule     The request's governing log rule.
@@ -726,13 +348,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param int    $calls    Its calls in this request.
 	 */
 	private function tune( Rule $rule, string $category, string $kind, float $time, int $calls ): void {
+		if ( ! \in_array( $kind, Flame_Tree::RULE_BOUND_KINDS, true ) ) {
+			return;
+		}
 		$sums = $this->category_sums[ $rule->id ][ $category ] ?? [ 0.0, 0 ];
 		$sums = [ $sums[0] + $time, $sums[1] + $calls ];
 
 		$this->category_sums[ $rule->id ][ $category ] = $sums;
-		if ( ! \in_array( $kind, Flame_Tree::RULE_BOUND_KINDS, true ) ) {
-			return;
-		}
 		$base = Flame_Tree::hook_name( $category );
 		$at   = $rule->auto_protect_time_threshold;
 		if ( $at > 0 && $sums[1] > 0 && $sums[0] / $sums[1] >= $at
@@ -747,250 +369,38 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Write the buffer and expire the window before the Consumer commits its
-	 * cursor; the checkpoint carries nothing. A record the cursor replays is
-	 * counted once by its `requests` row's rid (decision 31), and an expiry
-	 * it replays once by its `window_expiry` row. Only the durable half of a
-	 * flush runs here: an auto-tune emit that throws would keep the cursor
-	 * from committing, so its decisions wait for the tick. A write that fails
-	 * raises, and the cursor commits nothing past the records it held. In
-	 * crawl mode the Consumer checkpoints every message, so this runs per
-	 * message until `CHECKPOINT_INTERVAL_S` of crash-free progress ends the
-	 * crawl.
-	 *
-	 * @api Used by substrate.
-	 * @return array{}
-	 */
-	public function save_state(): array {
-		$this->write_rows();
-		return [];
-	}
-
-	/**
-	 * Flush on a clean stop, waiting out the auto-tune lock. The substrate
-	 * runs the sweep before the cursor handoff, while the graph is intact.
+	 * Emit the auto-tune decisions on a clean stop, waiting out the lock. The
+	 * substrate runs the sweep before the cursor handoff, while the graph is
+	 * intact.
 	 *
 	 * A sibling partition may hold the auto-tune lock at that moment. A
 	 * periodic flush leaves the decisions for the next flush; a stop has none,
 	 * so it waits the lock out — the lock expires in seconds on its own.
 	 *
 	 * The sweep runs inside `deferring()`, as a message does, so a stop raised
-	 * inside it waits for the flush to finish.
+	 * inside it waits for the emit to finish.
 	 *
 	 * @api Used by substrate.
 	 */
 	public function shutdown_sweep(): void {
-		$this->deferring(
-			fn () => $this->spanned(
-				Flame_Tree::STATS_SWEEP,
-				function (): void {
-					$this->flush();
-					$this->apply_auto_tune( self::AUTO_TUNE_LOCK_WAIT_MS );
-					// The last minute's writes would otherwise go untold.
-					$this->tell_writes();
-				},
-				fn (): array => [ 'stopped', [] ]
-			)
-		);
+		$this->deferring( fn () => $this->apply_auto_tune( self::AUTO_TUNE_LOCK_WAIT_MS ) );
 	}
 
 	/**
-	 * Write the buffer, then emit the auto-tune decisions.
-	 *
-	 * `fire()` calls this once per FLUSH_INTERVAL_SEC and every clean stop
-	 * through `shutdown_sweep()`; a checkpoint runs `write_rows()` alone. The
-	 * buffer empties BEFORE the auto-tune emit: its rows are written by then,
-	 * and a throw there must not hand them to the next flush again.
+	 * Start the sums again, then emit the auto-tune decisions. `fire()` calls
+	 * this once per FLUSH_INTERVAL_SEC.
 	 */
 	public function flush(): void {
-		$this->write_rows();
+		$this->restart_sums();
 		$this->apply_auto_tune();
 	}
 
 	/**
-	 * Send the buffer as one `ROWS` batch to the Row_Table `set_facts_target`
-	 * named, one transaction, then expire the window, and start clean. Every
-	 * checkpoint runs it before its cursor commits, so nothing the cursor has
-	 * passed is left unwritten; an empty buffer still expires, so an idle
-	 * tick moves the window too.
-	 *
-	 * A refused or unanswered batch, or any other failure, a stop included,
-	 * raises a plain stop carrying it, and the buffer stays: the Consumer
-	 * neither dead-letters the record in hand nor commits past it, and the
-	 * successor replays every record the batch held.
-	 *
-	 * @throws Worker_Should_Stop Carrying whatever failed the write (ADR-14).
+	 * Start the significant-event sums again.
 	 */
-	private function write_rows(): void {
-		$held = [] !== $this->rows;
-		try {
-			if ( $held ) {
-				$this->client->write_rows( $this->facts_table(), $this->rows );
-			}
-			$this->expire_window();
-		} catch ( \Throwable $e ) {
-			throw Worker_Should_Stop::combine( [ new Worker_Should_Stop( 'stats write failed' ), $e ] );
-		}
-		if ( ! $held ) {
-			return;
-		}
-		$this->tally( Flame_Tree::STATS_WRITES, 'flushes' );
-		$this->tally( Flame_Tree::STATS_WRITES, 'requests', $this->buffered );
-		$this->rows          = [];
-		$this->buffered      = 0;
-		$this->ops           = 0;
-		$this->url_at        = [];
-		$this->name_at       = [];
+	private function restart_sums(): void {
 		$this->category_sums = [];
-		$this->worked_at     = Core::$now;
-		// Once a minute rather than once a flush: a handful a lifetime.
-		if ( $this->rollup_due( (int) Core::$now ) ) {
-			$this->tell_writes();
-		}
-	}
-
-	/**
-	 * Read the watermark and expire the window before the first fold, so the
-	 * gate reads one where no newer bucket has passed.
-	 *
-	 * @throws Worker_Should_Stop Carrying whatever failed, so the record replays.
-	 */
-	private function sync_window(): void {
-		try {
-			$this->expire_window();
-		} catch ( \Throwable $e ) {
-			throw Worker_Should_Stop::combine( [ new Worker_Should_Stop( 'stats window failed' ), $e ] );
-		}
-	}
-
-	/**
-	 * Move the window to end at the current bucket: subtract each bucket that
-	 * left it, or rebuild it from `timings_site` when the file holds no
-	 * watermark or `timings_site` may no longer hold the gap. One ROWS batch,
-	 * whose `window_expiry` rows carry the new watermark; a refusal raises
-	 * and the watermark stays.
-	 */
-	private function expire_window(): void {
-		$now                    = Bucket::id( (int) Core::$now );
-		$through                = $now - Flame_Facts_Row_Schema::WINDOW_BUCKETS;
-		$this->window_through ??= $this->watermark();
-		if ( null !== $this->window_through && $this->window_through >= $through ) {
-			return;
-		}
-		$batch = null === $this->window_through || $this->window_through < $now - Flame_Facts_Row_Schema::TIMINGS_BUCKETS
-			? $this->window_rebuild( $through, $now )
-			: $this->window_expiries( $this->window_through + 1, $through );
-		$this->client->write_rows( $this->facts_table(), $batch );
-		$this->window_through = $through;
-	}
-
-	/** The newest bucket this partition's file has expired; null for none. */
-	private function watermark(): ?int {
-		$newest = $this->own_rows( 'SELECT MAX( bucket ) FROM %s.window_expiry', [] )[0][0] ?? null;
-		return null === $newest ? null : Core::as_int( $newest );
-	}
-
-	/**
-	 * One `ignore` per bucket from `$first` through `$last`, each carrying the
-	 * negation of that bucket's `timings_site` sums as `then` ops.
-	 *
-	 * @param int $first The first bucket to expire.
-	 * @param int $last  The last.
-	 * @return list<Row_Op>
-	 */
-	private function window_expiries( int $first, int $last ): array {
-		$sums = $this->own_rows(
-			'SELECT bucket, category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY bucket, category_id, entry_id, listener, worker',
-			[ $first, $last ]
-		);
-		$then = \array_fill_keys( \range( $first, $last ), [] );
-		foreach ( $sums as $row ) {
-			$bucket            = Core::as_int( $row[0] );
-			$then[ $bucket ][] = self::window_op( \array_slice( $row, 1 ), -1, $bucket );
-		}
-		$batch = [];
-		foreach ( $then as $bucket => $negations ) {
-			$batch[] = [ 'ignore', 'window_expiry', [ $bucket ], $negations ];
-		}
-		return $batch;
-	}
-
-	/**
-	 * Every window row negated, then `timings_site` summed over the buckets
-	 * after `$through` through `$now`: the window rebuilt exactly, whatever it
-	 * held and whatever retention purged first. Each bucket `timings_site`
-	 * still holds at or before `$through` is marked expired, the last of them
-	 * the watermark.
-	 *
-	 * @param int $through The bucket the rebuilt window starts after.
-	 * @param int $now     The current bucket.
-	 * @return list<Row_Op>
-	 */
-	private function window_rebuild( int $through, int $now ): array {
-		$batch = [];
-		foreach ( $this->own_rows( 'SELECT category_id, entry_id, listener, worker, ms, calls, requests, last_bucket FROM %s.category_window', [] ) as $row ) {
-			$batch[] = self::window_op( $row, -1, Core::as_int( $row[7] ) );
-		}
-		$sums = $this->own_rows(
-			'SELECT category_id, entry_id, listener, worker, TOTAL( ms ), SUM( calls ), SUM( requests ), MAX( bucket ) FROM %s.timings_site WHERE bucket BETWEEN ? AND ? GROUP BY category_id, entry_id, listener, worker',
-			[ $through + 1, $now ]
-		);
-		foreach ( $sums as $row ) {
-			$batch[] = self::window_op( $row, 1, Core::as_int( $row[7] ) );
-		}
-		foreach ( \range( $now - Flame_Facts_Row_Schema::TIMINGS_BUCKETS + 1, $through ) as $bucket ) {
-			$batch[] = [ 'ignore', 'window_expiry', [ $bucket ] ];
-		}
-		return $batch;
-	}
-
-	/**
-	 * A `category_window` add of one category's and entry's sums, added at
-	 * `$sign` 1 and subtracted at -1, its `last_bucket` `$last`. The op's
-	 * `ids` map fills any null id.
-	 *
-	 * @param list<mixed> $sums Category id, entry id, listener, worker, ms, calls, requests.
-	 * @param int         $sign 1 or -1.
-	 * @param int         $last The bucket the row last moved in.
-	 * @return Row_Op
-	 */
-	private static function window_op( array $sums, int $sign, int $last ): array {
-		[ $category, $entry, $listener, $worker, $ms, $calls, $requests ] = $sums;
-		return [ 'add', 'category_window', [ null === $category ? null : Core::as_int( $category ), null === $entry ? null : Core::as_int( $entry ), Core::as_int( $listener ), Core::as_int( $worker ), $sign * Core::num_float( $ms ), $sign * Core::as_int( $calls ), $sign * Core::as_int( $requests ), $last ] ];
-	}
-
-	/**
-	 * Rows of a statement over this partition's file of the Row_Table
-	 * `set_facts_target` named, its alias the `%s`; none before the file
-	 * exists.
-	 *
-	 * @param string            $sql   The statement.
-	 * @param list<scalar|null> $binds Its binds.
-	 * @return list<list<mixed>>
-	 * @throws \LogicException When no partition is bound, or no table is named.
-	 * @throws \PDOException When the file will not open.
-	 */
-	private function own_rows( string $sql, array $binds ): array {
-		$partition = Core::bound_partition() ?? throw new \LogicException( 'Flame_Builder: no partition is bound, so no window can be read' );
-		$reader    = Sqlite_Arm::open_rows( [ $partition => Table_Node::file( $this->facts_table(), $partition ) ], Flame_Facts_Row_Schema::version() );
-		return [] === $reader->aliases() ? [] : $reader->rows( \sprintf( $sql, "p{$partition}" ), $binds );
-	}
-
-	/**
-	 * The Row_Table `set_facts_target` named, which every write needs.
-	 *
-	 * @throws \LogicException When the verb named none.
-	 */
-	private function facts_table(): string {
-		return '' === $this->facts_target ? throw new \LogicException( 'Flame_Builder: no Row_Table named by set_facts_target' ) : $this->facts_target;
-	}
-
-	/**
-	 * Tell `stats writes`: what the flushes since the last line wrote, the
-	 * flushes and requests first.
-	 */
-	private function tell_writes(): void {
-		$this->rollup( Flame_Tree::STATS_WRITES, [ 'flushes', 'requests' ] );
+		$this->folds         = 0;
 	}
 
 	/**
@@ -1091,7 +501,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * @param string             $key     'disable_hooks' | 'disable_custom_events' | 'add_significant_events'
 	 * @param string             $rule_id The rule these items were proposed under.
 	 * @param array<int,string> $items   Hook/event names — already deduped at the caller.
-	 * @throws \RuntimeException With no sink, which the write before it needed too.
+	 * @throws \RuntimeException With no sink to carry it.
 	 */
 	private function emit_auto_tune( string $key, string $rule_id, array $items ): void {
 		// Narrate auto-tune fires so debug_state surfaces them.
@@ -1112,38 +522,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * The `set_facts_target` verb's entry point, which the declared setter
-	 * calls by name.
-	 *
-	 * @param string $table The Row_Table the rows are written to.
-	 */
-	public function set_facts_target( string $table ): void {
-		$this->facts_target = $table;
-	}
-
-	/**
-	 * The Row_Table the verb named, which the flush writes past its primary
-	 * target, so the console draws an edge to it.
-	 *
-	 * @api Unioned into display_targets() by the substrate's Node.
-	 * @return list<string>
-	 */
-	protected function extra_targets(): array {
-		return [ $this->facts_target ];
-	}
-
-	/**
-	 * When this node went idle: the last write that held a folded record
-	 * while nothing is buffered, or null while a record waits for the next
-	 * write.
-	 *
-	 * @api Used by substrate: `Cooperative_Stop`'s idle scan.
-	 */
-	public function idle_since(): ?float {
-		return 0 === $this->buffered ? $this->worked_at : null;
-	}
-
-	/**
 	 * The queued auto-tune decisions, by emit key then rule id.
 	 *
 	 * @api Used by tests.
@@ -1154,21 +532,6 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			static fn ( array $by_rule ): array => \array_map( static fn ( array $set ): array => \array_keys( $set ), $by_rule ),
 			$this->auto_tune
 		);
-	}
-
-	/**
-	 * Emit the base config plus this node's verb-config, from STATE — one
-	 * `command_node {name}:config <verb> <value>` line per setting that differs from its
-	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
-	 *
-	 * A verb missing here silently drops its setting on a console serialize →
-	 * replay round trip, so a new persistent verb needs a line added.
-	 *
-	 * @api Used by substrate.
-	 * @return string TSL lines, newline-terminated.
-	 */
-	public function dump_config(): string {
-		return parent::dump_config() . $this->dump_setters();
 	}
 
 	/**
@@ -1222,11 +585,7 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	}
 
 	/**
-	 * Declarative schema: the `:config` verb, the TM_REQUEST verb, and the
-	 * palette metadata. `Schema_Reflection::auto_wire_interpreter()` builds the
-	 * `{name}:config` interpreter from the `commands` entries, so a verb added
-	 * here needs no wiring — but a persistent one also needs a `dump_config()`
-	 * line, or it will not survive a serialize → replay round trip.
+	 * Declarative schema: the TM_REQUEST verb and the palette metadata.
 	 *
 	 * @api Used by the substrate to provide UI etc.
 	 * @return array<string,mixed>
@@ -1234,24 +593,13 @@ class Flame_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Transform',
-			'description' => 'Writes each completed request\'s rows and rollups to a Flame_Facts Row_Table; emits flame JSONL.',
+			'description' => 'Builds each completed request\'s flame tree and forwards it, naming its record, to the flames partition; runs auto-tune.',
 			'arguments'   => [],
-			'commands'    => [
-				[
-					'name'        => 'set_facts_target',
-					'description' => 'Name the Row_Table, declared with the Flame_Facts schema, every flush writes its rows to: flame-facts.',
-					'args'        => [
-						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
-					],
-					// Declarative: the substrate trims, assigns and dumps it.
-					'setter'      => 'facts_target',
-				],
-			],
 			'requests'    => [
 				[
 					'name'        => 'GET_STATS',
-					'description' => 'What the buffer holds and the auto-tune queue depth.',
-					'reply_shape' => '{ buffered_requests, buffered_rows, last_flush_age_s, auto_tune_pending_count, significant_events_count, narration }',
+					'description' => 'The auto-tune queue depth.',
+					'reply_shape' => '{ auto_tune_pending_count, significant_events_count }',
 					'handler'     => static fn ( self $node ): array => $node->stats_report(),
 				],
 			],
