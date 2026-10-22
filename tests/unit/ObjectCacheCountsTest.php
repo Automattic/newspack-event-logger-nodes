@@ -63,10 +63,7 @@ class ObjectCacheCountsTest extends TestCase {
 	public function test_core_counts_are_read_as_they_are(): void {
 		$this->core_cache( 4815, 162 );
 
-		$this->assertSame(
-			[ 'object_cache' => [ 'kind' => 'core', 'hits' => 4815, 'misses' => 162 ] ],
-			Object_Cache_Counts::since( Object_Cache_Counts::mark( true ) )
-		);
+		$this->assertSame( '4815 hit, 162 miss', Object_Cache_Counts::row( Object_Cache_Counts::mark( true ) ) );
 	}
 
 	/** A mark taken partway counts only what moved after it. */
@@ -76,7 +73,7 @@ class ObjectCacheCountsTest extends TestCase {
 		$cache->cache_hits   = 4915;
 		$cache->cache_misses = 172;
 
-		$this->assertSame( [ 'kind' => 'core', 'hits' => 4815, 'misses' => 162 ], Object_Cache_Counts::since( $mark )['object_cache'] ?? null );
+		$this->assertSame( '4815 hit, 162 miss', Object_Cache_Counts::row( $mark ) );
 	}
 
 	/**
@@ -93,10 +90,7 @@ class ObjectCacheCountsTest extends TestCase {
 		$this->busy_drop_in( $cache );
 
 		$this->assertSame( 6, $cache->cache_hits, 'the fixture aliases cache_hits to the get count' );
-		$this->assertSame(
-			[ 'kind' => 'memcached', 'local' => 9, 'gets' => 6, 'hits' => 4, 'misses' => 2, 'multi_keys' => 3 ],
-			Object_Cache_Counts::since( $mark )['object_cache'] ?? null
-		);
+		$this->assertSame( '9 local, 6 get, 4 hit, 2 miss, 3 multi', Object_Cache_Counts::row( $mark ) );
 	}
 
 	/** A mark partway through the drop-in's run excludes what came before it. */
@@ -107,36 +101,33 @@ class ObjectCacheCountsTest extends TestCase {
 		$mark = Object_Cache_Counts::mark();
 		$this->busy_drop_in( $cache );
 
-		$this->assertSame(
-			[ 'kind' => 'memcached', 'local' => 9, 'gets' => 6, 'hits' => 4, 'misses' => 2, 'multi_keys' => 3 ],
-			Object_Cache_Counts::since( $mark )['object_cache'] ?? null
-		);
+		$this->assertSame( '9 local, 6 get, 4 hit, 2 miss, 3 multi', Object_Cache_Counts::row( $mark ) );
 	}
 
-	/** What `since()` writes is `FIELDS`, in its order, for either kind. */
-	public function test_since_writes_exactly_the_declared_fields(): void {
-		$this->core_cache( 7, 3 );
-		$core = Object_Cache_Counts::since( Object_Cache_Counts::mark( true ) )['object_cache'] ?? [];
+	/** Every bucket of the kind is written, a zero as a zero, in its fixed order. */
+	public function test_the_row_shows_every_bucket_zeros_included(): void {
+		$this->core_cache( 0, 0 );
+		$core = Object_Cache_Counts::row( Object_Cache_Counts::mark( true ) );
 		$GLOBALS['wp_object_cache'] = new \Memcached_Drop_In_Fixture();
-		$memcached = Object_Cache_Counts::since( Object_Cache_Counts::mark( true ) )['object_cache'] ?? [];
+		$memcached = Object_Cache_Counts::row( Object_Cache_Counts::mark( true ) );
 
-		$this->assertSame( [ 'kind', ...Object_Cache_Counts::FIELDS['core'] ], \array_keys( $core ) );
-		$this->assertSame( [ 'kind', ...Object_Cache_Counts::FIELDS['memcached'] ], \array_keys( $memcached ) );
+		$this->assertSame( '0 hit, 0 miss', $core );
+		$this->assertSame( '0 local, 0 get, 0 hit, 0 miss, 0 multi', $memcached );
 	}
 
-	/** Any other cache, counters or not, gets nothing written. */
+	/** Any other cache, counters or not, gets no row. */
 	public function test_an_unknown_cache_gets_nothing(): void {
 		$GLOBALS['wp_object_cache'] = (object) [ 'cache_hits' => 4815, 'cache_misses' => 162 ];
 
 		$this->assertNull( Object_Cache_Counts::mark() );
-		$this->assertSame( [], Object_Cache_Counts::since( Object_Cache_Counts::mark( true ) ) );
+		$this->assertNull( Object_Cache_Counts::row( Object_Cache_Counts::mark( true ) ) );
 	}
 
 	/** No cache at all is nothing too. */
 	public function test_no_cache_gets_nothing(): void {
 		$GLOBALS['wp_object_cache'] = null;
 
-		$this->assertSame( [], Object_Cache_Counts::since( null ) );
+		$this->assertNull( Object_Cache_Counts::row( null ) );
 		$this->assertNull( Object_Cache_Counts::mark( true ) );
 	}
 
@@ -146,6 +137,6 @@ class ObjectCacheCountsTest extends TestCase {
 		$mark                       = Object_Cache_Counts::mark();
 		$GLOBALS['wp_object_cache'] = new \Memcached_Drop_In_Fixture();
 
-		$this->assertSame( [], Object_Cache_Counts::since( $mark ) );
+		$this->assertNull( Object_Cache_Counts::row( $mark ) );
 	}
 }

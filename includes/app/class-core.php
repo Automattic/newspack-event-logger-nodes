@@ -270,9 +270,6 @@ class Core {
 	/** @var Query_Monitor_Actions Query Monitor's timers and log lines. */
 	private Query_Monitor_Actions $query_monitor;
 
-	/** @var Request_Context The shutdown entry naming what WordPress routed. */
-	private Request_Context $request_context;
-
 	/** @var Server_Timing The response header a reader gets. */
 	private Server_Timing $server_timing;
 
@@ -301,7 +298,6 @@ class Core {
 		$this->start_priority = RuntimeCore::num_int( $priority );
 
 		$this->query_monitor   = new Query_Monitor_Actions();
-		$this->request_context = new Request_Context();
 		$this->server_timing   = new Server_Timing();
 		$this->bind_current_scope();
 		\add_action( 'newspack_event_logger_nodes_scope_changed', [ $this, 'rebind_for_current_scope' ] );
@@ -512,11 +508,15 @@ class Core {
 			return;
 		}
 		// Ride any logged request: no rule names them.
-		foreach ( [ $this->query_monitor, $this->request_context, $this->server_timing ] as $part ) {
-			foreach ( $part->listeners() as [ $hook, $callback, $priority, $args ] ) {
-				\add_filter( $hook, $callback, $priority, $args );
-				$this->listeners[] = [ $hook, $callback, $priority ];
-			}
+		$listeners = [
+			...$this->query_monitor->listeners(),
+			// A job's template is not the enclosing request's.
+			...( Log_Manager::in_job_context() ? [] : Request_Context::listeners() ),
+			...$this->server_timing->listeners(),
+		];
+		foreach ( $listeners as [ $hook, $callback, $priority, $args ] ) {
+			\add_filter( $hook, $callback, $priority, $args );
+			$this->listeners[] = [ $hook, $callback, $priority ];
 		}
 
 		// Instrument real hooks; custom events (not do_action) are excluded.

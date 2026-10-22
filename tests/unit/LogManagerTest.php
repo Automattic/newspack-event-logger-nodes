@@ -3375,10 +3375,11 @@ class LogManagerTest extends TestCase {
 	// ── object cache counts and time so far ────────────────────────────────
 
 	/**
-	 * A web request's terminal carries what it asked of the object cache,
-	 * counted over the whole process, since the process IS the request.
+	 * A web request's object-cache counts are their own `objectcache` row,
+	 * counted over the whole process, since the process IS the request; the
+	 * row is kept through a fold, and the terminal carries no counts.
 	 */
-	public function test_the_terminal_carries_the_object_caches_counts(): void {
+	public function test_the_object_cache_counts_are_their_own_row(): void {
 		$this->require_config_or_skip();
 		require_once \dirname( __DIR__ ) . '/fixtures/object-cache/wp-includes/class-wp-object-cache.php';
 		$this->rmdir_recursive( self::test_dir() );
@@ -3392,13 +3393,15 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 		$GLOBALS['wp_object_cache'] = $saved;
 
+		$rows = self::entries_of( $this->written_entries(), Log_Manager::OBJECT_CACHE );
+		$this->assertSame( [ '4815 hit, 162 miss' ], \array_column( $rows, 'm' ) );
+		$this->assertSame( 1, $rows[0]['keep'] ?? null );
 		$terminal = self::entries_of( $this->written_entries(), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
-		$this->assertSame( [ 'kind' => 'core', 'hits' => 4815, 'misses' => 162 ], $terminal['object_cache'] ?? null );
-		$this->assertArrayNotHasKey( 'cache_hits', $terminal );
+		$this->assertArrayNotHasKey( 'object_cache', $terminal );
 	}
 
-	/** A cache this logger does not know gets nothing written, not zeros. */
-	public function test_an_unknown_cache_adds_nothing_to_the_terminal(): void {
+	/** A cache this logger does not know gets no row, not zeros. */
+	public function test_an_unknown_cache_writes_no_object_cache_row(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
 		$saved                        = $GLOBALS['wp_object_cache'] ?? null;
@@ -3408,9 +3411,68 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 		$GLOBALS['wp_object_cache'] = $saved;
 
-		$terminal = self::entries_of( $this->written_entries(), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
-		$this->assertArrayNotHasKey( 'object_cache', $terminal );
-		$this->assertArrayNotHasKey( 'cache_hits', $terminal, 'counters an unknown cache declares are not read' );
+		$this->assertSame( [], self::entries_of( $this->written_entries(), Log_Manager::OBJECT_CACHE ) );
+	}
+
+	/**
+	 * Each producer of the close runs on its own: a context that throws as it
+	 * is built still leaves the cache row, memory, resources and the
+	 * terminal, and the throw escapes after them.
+	 */
+	public function test_a_throwing_context_still_closes_the_record(): void {
+		$this->require_config_or_skip();
+		require_once \dirname( __DIR__ ) . '/fixtures/object-cache/wp-includes/class-wp-object-cache.php';
+		$this->rmdir_recursive( self::test_dir() );
+		$saved                      = [ $GLOBALS['wp_object_cache'] ?? null, $GLOBALS['wp'] ?? null ];
+		$GLOBALS['wp_object_cache'] = new \WP_Object_Cache();
+		$GLOBALS['wp']              = new class() {
+			public function __isset( string $name ): bool {
+				return true;
+			}
+			public function __get( string $name ): mixed {
+				throw new \RuntimeException( "kea-7746 {$name} unreadable" );
+			}
+		};
+
+		$lm     = $this->fresh_log_manager();
+		$thrown = null;
+		try {
+			$lm->finish();
+		} catch ( \RuntimeException $e ) {
+			$thrown = $e;
+		} finally {
+			[ $GLOBALS['wp_object_cache'], $GLOBALS['wp'] ] = $saved;
+		}
+
+		$this->assertSame( 'kea-7746 matched_query unreadable', $thrown?->getMessage() );
+		$this->assertSame(
+			[ Log_Manager::OBJECT_CACHE, Log_Manager::MEMORY, Log_Manager::RESOURCES, Log_Manager::REQUEST_COMPLETE ],
+			\array_slice( \array_column( $this->written_entries(), 'k' ), -4 )
+		);
+	}
+
+	/**
+	 * A record ends with the spans left open, then what WordPress made of the
+	 * request, the object cache's row, memory, resources and the terminal.
+	 */
+	public function test_the_record_closes_in_its_fixed_order(): void {
+		$this->require_config_or_skip();
+		require_once \dirname( __DIR__ ) . '/fixtures/object-cache/wp-includes/class-wp-object-cache.php';
+		$this->rmdir_recursive( self::test_dir() );
+		$saved                      = [ $GLOBALS['wp_object_cache'] ?? null, $GLOBALS['wp'] ?? null ];
+		$GLOBALS['wp_object_cache'] = new \WP_Object_Cache();
+		$GLOBALS['wp']              = (object) [ 'matched_rule' => 'kea-7746/?$', 'matched_query' => '' ];
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'weka' ] ] ] );
+
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'weka' );
+		$lm->finish();
+		[ $GLOBALS['wp_object_cache'], $GLOBALS['wp'] ] = $saved;
+
+		$this->assertSame(
+			[ 'weka (complete)', Log_Manager::REQUEST_CONTEXT, Log_Manager::OBJECT_CACHE, Log_Manager::MEMORY, Log_Manager::RESOURCES, Log_Manager::REQUEST_COMPLETE ],
+			\array_slice( \array_column( $this->written_entries(), 'k' ), -6 )
+		);
 	}
 
 	/**

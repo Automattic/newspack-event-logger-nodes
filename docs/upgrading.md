@@ -6,6 +6,24 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **`object_cache` and `context` leave the record, and `object_cache`
+  leaves the terminal.** `process (complete)` carries no `object_cache` map,
+  and `Request_Builder_Node` writes neither field onto a record, so a
+  reader of either finds nothing. The counts are an `objectcache` entry
+  (`Log_Manager::OBJECT_CACHE`) whose `m` is a string, `120 hit, 7 miss` under
+  core's cache and `31275 local, 799 get, 766 hit, 33 miss, 1645 multi` under
+  WP Cloud's memcached drop-in; read the context from the record's
+  `request_context` entry, whose `m` is the map `context` held.
+  `Object_Cache_Counts::since()` and `FIELDS` are gone; call
+  `Object_Cache_Counts::row()`.
+- **`request_context` comes after the orphaned completes.** `Log_Manager`'s
+  close writes it, between the last `(orphaned)` complete and `objectcache`,
+  and `App\Request_Context` binds no `shutdown` listener and has no
+  `write()`; `listeners()` and `template()` are static, and `entry()`
+  answers the map.
+
+## 0.150.0
+
 - **The stats span follows the substrate's `min_lifetime`.** The chart, a
   chart's selection and `category_window` span `min_lifetime` in
   five-minute buckets, a part bucket counted whole, where they spanned 288.

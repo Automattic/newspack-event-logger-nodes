@@ -252,9 +252,9 @@ class LogManagerJobContextTest extends TestCase {
 
 	/**
 	 * A job's object-cache counts are its own: the worker's process ran other
-	 * jobs before it, so the terminal carries what moved while it ran.
+	 * jobs before it, so its `objectcache` row is what moved while it ran.
 	 */
-	public function test_a_jobs_object_cache_counts_are_what_moved_while_it_ran(): void {
+	public function test_a_jobs_object_cache_row_is_what_moved_while_it_ran(): void {
 		$this->arrange_logging();
 		require_once \dirname( __DIR__ ) . '/fixtures/object-cache/wp-includes/class-wp-object-cache.php';
 		$saved               = $GLOBALS['wp_object_cache'] ?? null;
@@ -270,8 +270,8 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::end_job_context();
 		$GLOBALS['wp_object_cache'] = $saved;
 
-		$terminal = self::entries_of( self::firehose_entries( self::test_dir() ), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
-		$this->assertSame( [ 'kind' => 'core', 'hits' => 4815, 'misses' => 162 ], $terminal['object_cache'] ?? null );
+		$rows = self::entries_of( self::firehose_entries( self::test_dir() ), Log_Manager::OBJECT_CACHE );
+		$this->assertSame( [ '4815 hit, 162 miss' ], \array_column( $rows, 'm' ) );
 	}
 
 	/** A job context is what `in_job_context()` reports, and only while open. */

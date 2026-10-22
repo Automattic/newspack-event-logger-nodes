@@ -1213,48 +1213,11 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 30.0, (float) $profiles['qm']['time'] );
 	}
 
-	/** The terminal's object-cache counts land on the record for the Summary. */
-	public function test_the_record_carries_its_object_cache_counts(): void {
-		$rb      = new Request_Builder_Node();
-		$capture = new Capture_Sink_Node();
-		$rb->sink( $capture );
-
-		$this->fill( $rb, 1, 'r8', 'process (start)' );
-		$this->fill( $rb, 2, 'r8', 'request', [ 'm' => 'GET https://kea.test/x' ] );
-		$counts = [ 'kind' => 'memcached', 'local' => 900, 'gets' => 120, 'hits' => 100, 'misses' => 20, 'multi_keys' => 37 ];
-		$this->fill( $rb, 3, 'r8', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200, 'object_cache' => $counts + [ 'bogus' => 7 ] ] );
-
-		$this->assertSame( $counts, $this->captured_request( $capture )['object_cache'] ?? null );
-	}
-
-	/** A map naming a kind the producer does not write is not carried. */
-	public function test_an_unknown_kind_of_cache_counts_is_not_carried(): void {
-		$rb      = new Request_Builder_Node();
-		$capture = new Capture_Sink_Node();
-		$rb->sink( $capture );
-
-		$this->fill( $rb, 1, 'r8', 'process (start)' );
-		$this->fill( $rb, 2, 'r8', 'request', [ 'm' => 'GET https://kea.test/x' ] );
-		$this->fill( $rb, 3, 'r8', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200, 'object_cache' => [ 'kind' => 'redis', 'hits' => 4 ] ] );
-
-		$this->assertArrayNotHasKey( 'object_cache', $this->captured_request( $capture ) );
-	}
-
-	/** A terminal carrying no counts leaves none on the record, never zeros. */
-	public function test_a_record_without_cache_counts_carries_none(): void {
-		$rb      = new Request_Builder_Node();
-		$capture = new Capture_Sink_Node();
-		$rb->sink( $capture );
-
-		$this->fill( $rb, 1, 'r8', 'process (start)' );
-		$this->fill( $rb, 2, 'r8', 'request', [ 'm' => 'GET https://kea.test/x' ] );
-		$this->fill( $rb, 3, 'r8', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
-
-		$this->assertArrayNotHasKey( 'object_cache', $this->captured_request( $capture ) );
-	}
-
-	/** The request-context entry lands on the record as `context`. */
-	public function test_the_record_carries_its_request_context(): void {
+	/**
+	 * The object cache's row and the request context stay log rows: the
+	 * record lifts the context onto no field of its own.
+	 */
+	public function test_the_cache_row_and_the_context_stay_log_rows(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -1263,9 +1226,14 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 1, 'r6', 'process (start)' );
 		$this->fill( $rb, 2, 'r6', 'request', [ 'm' => 'GET https://kea.test/x' ] );
 		$this->fill( $rb, 3, 'r6', Log_Manager::REQUEST_CONTEXT, [ 'm' => $context ] );
-		$this->fill( $rb, 4, 'r6', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
+		$this->fill( $rb, 4, 'r6', Log_Manager::OBJECT_CACHE, [ 'm' => '900 local, 120 get, 100 hit, 20 miss, 37 multi', 'keep' => 1 ] );
+		$this->fill( $rb, 5, 'r6', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
 
-		$this->assertSame( $context, $this->captured_request( $capture )['context'] ?? null );
+		$record = $this->captured_request( $capture );
+		$rows   = \array_column( $record['entries'], 'm', 'k' );
+		$this->assertSame( $context, $rows[ Log_Manager::REQUEST_CONTEXT ] ?? null );
+		$this->assertSame( '900 local, 120 get, 100 hit, 20 miss, 37 multi', $rows[ Log_Manager::OBJECT_CACHE ] ?? null );
+		$this->assertArrayNotHasKey( 'context', $record );
 	}
 
 	public function test_stderr_keyword_forwarded_to_errors_target_but_alert_is_not(): void {
