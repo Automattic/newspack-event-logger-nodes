@@ -34,6 +34,7 @@ use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Owner;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Settings_Schema;
 use Newspack_Nodes\Core as RuntimeCore;
@@ -78,8 +79,9 @@ class Core {
 	private const TRANSPORT_ORIGIN_DEPTH = 16;
 
 	/**
-	 * Characters kept from an origin label. A label rides every span that names
-	 * one, so this cap is paid per entry rather than once per request.
+	 * Bytes kept from an origin label, its owner's prefix included, cut on a
+	 * character boundary. A label rides every span that names one, so this
+	 * cap is paid per entry rather than once per request.
 	 */
 	private const ORIGIN_MAX = 128;
 
@@ -251,6 +253,9 @@ class Core {
 
 	/** @var array<int,true> spl_object_id of wrappers we created (prevents double-wrap). */
 	private array $wrapper_ids = [];
+
+	/** @var array<array-key,true> Hook keys of callbacks skipped for a by-reference parameter. */
+	private array $by_ref = [];
 
 	/** @var string[] Labels of outbound HTTP spans currently in flight. */
 	private array $http_spans = [];
@@ -766,7 +771,7 @@ class Core {
 				continue;
 			}
 
-			foreach ( $priority_callbacks as &$cb ) {
+			foreach ( $priority_callbacks as $key => &$cb ) {
 				$original      = $cb['function'];
 				$accepted_args = (int) $cb['accepted_args'];
 
@@ -780,12 +785,18 @@ class Core {
 				}
 
 				// By-ref callbacks can't be wrapped: func_get_args() drops ref.
-				if ( self::callback_has_ref_param( $original ) ) {
+				if ( isset( $this->by_ref[ $key ] ) ) {
+					continue;
+				}
+				$reflected = self::reflect( $original );
+				if ( null !== $reflected && self::callback_has_ref_param( $reflected[0] ) ) {
+					$this->by_ref[ $key ] = true;
 					continue;
 				}
 
 				// Wrap timing; resolve LM per-call to survive suspend/resume.
-				$label   = Flame_Tree::listener_name( self::short_name( $original ), $priority );
+				[ $ref, $file ] = $reflected ?? [ null, '' ];
+				$label          = Flame_Tree::listener_name( Owner::labelled( $file, self::short_name( $original, $ref ) ), $priority );
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
 					$args = \array_slice( \func_get_args(), 0, $accepted_args );
 					$lm   = Log_Manager::started_instance();
@@ -805,13 +816,14 @@ class Core {
 	}
 
 	/**
-	 * Short name for a callback (no namespace, no priority).
+	 * Short name for a callback (no namespace, no priority, no owner).
 	 *
-	 * @param mixed $function Callback.
+	 * @param mixed                            $function Callback.
+	 * @param \ReflectionFunctionAbstract|null $ref      Its reflection, which names a closure's file and line.
 	 * @return string e.g. "do_blocks", "Image_CDN::filter_the_content",
 	 *                "{closure}:file.php:12" or "Handler::__invoke".
 	 */
-	private static function short_name( $function ): string {
+	private static function short_name( $function, ?\ReflectionFunctionAbstract $ref ): string {
 		if ( \is_string( $function ) ) {
 			$pos = \strrpos( $function, '\\' );
 			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
@@ -826,11 +838,10 @@ class Core {
 			return "{$class}::{$method}";
 		}
 		if ( $function instanceof \Closure ) {
-			$ref  = new \ReflectionFunction( $function );
-			$file = $ref->getFileName();
-			$line = $ref->getStartLine();
+			$file = $ref?->getFileName();
 			if ( $file ) {
 				$file = \basename( $file );
+				$line = $ref->getStartLine();
 				return "{closure}:{$file}:{$line}";
 			}
 			return '{closure}';
@@ -848,40 +859,70 @@ class Core {
 	 *
 	 * Such a callback can't be timing-wrapped: the wrapper passes args via
 	 * func_get_args() + call_user_func_array(), which copy, so a by-ref param
-	 * receives a value (PHP warning + lost mutation). Reflect once; a
-	 * `\ReflectionException` reports false, so an uninspectable callback is
-	 * wrapped, and anything else the reflection raises propagates.
+	 * receives a value (PHP warning + lost mutation).
 	 *
-	 * @param mixed $function Callback (string|array|Closure|invokable object).
+	 * @param \ReflectionFunctionAbstract $ref The callback's reflection.
 	 * @return bool
 	 */
-	private static function callback_has_ref_param( $function ): bool {
-		try {
-			if ( \is_array( $function ) && \count( $function ) === 2 ) {
-				$target = $function[0];
-				$method = $function[1];
-				if ( ( ! \is_object( $target ) && ! \is_string( $target ) ) || ! \is_string( $method ) ) {
-					return false;
-				}
-				$ref = new \ReflectionMethod( $target, $method );
-			} elseif ( \is_string( $function ) && \str_contains( $function, '::' ) ) {
-				$ref = new \ReflectionMethod( $function );
-			} elseif ( \is_object( $function ) && ! ( $function instanceof \Closure ) && \method_exists( $function, '__invoke' ) ) {
-				$ref = new \ReflectionMethod( $function, '__invoke' );
-			} elseif ( $function instanceof \Closure || \is_string( $function ) ) {
-				$ref = new \ReflectionFunction( $function );
-			} else {
-				return false;
-			}
-		} catch ( \ReflectionException $e ) {
-			return false;
-		}
+	private static function callback_has_ref_param( \ReflectionFunctionAbstract $ref ): bool {
 		foreach ( $ref->getParameters() as $param ) {
 			if ( $param->isPassedByReference() ) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * A callback's reflection and the file that owns it, built once a wrap:
+	 * the one answers whether the callback takes a reference, the other who
+	 * owns it. A method is owned by the class it is hooked as, which may be a
+	 * plugin's subclass of the core class declaring it.
+	 *
+	 * A `\ReflectionException` answers null, so an uninspectable callback is
+	 * wrapped under its bare name, and anything else the reflection raises
+	 * propagates.
+	 *
+	 * @param mixed $function Callback (string|array|Closure|invokable object).
+	 * @return array{\ReflectionFunctionAbstract, string}|null
+	 */
+	private static function reflect( $function ): ?array {
+		try {
+			if ( \is_array( $function ) && \count( $function ) === 2 ) {
+				$target = $function[0];
+				$method = $function[1];
+				if ( ( ! \is_object( $target ) && ! ( \is_string( $target ) && \class_exists( $target ) ) ) || ! \is_string( $method ) ) {
+					return null;
+				}
+				return [ new \ReflectionMethod( $target, $method ), self::class_file( $target ) ];
+			}
+			if ( \is_string( $function ) && \str_contains( $function, '::' ) ) {
+				[ $class, $method ] = \explode( '::', $function, 2 );
+				if ( ! \class_exists( $class ) ) {
+					return null;
+				}
+				return [ new \ReflectionMethod( $class, $method ), self::class_file( $class ) ];
+			}
+			if ( \is_object( $function ) && ! ( $function instanceof \Closure ) && \method_exists( $function, '__invoke' ) ) {
+				return [ new \ReflectionMethod( $function, '__invoke' ), self::class_file( $function ) ];
+			}
+			if ( $function instanceof \Closure || \is_string( $function ) ) {
+				$ref = new \ReflectionFunction( $function );
+				return [ $ref, (string) $ref->getFileName() ];
+			}
+		} catch ( \ReflectionException $e ) {
+			return null;
+		}
+		return null;
+	}
+
+	/**
+	 * The file declaring a class, or '' for an internal one.
+	 *
+	 * @param object|class-string $class An instance or a class name.
+	 */
+	private static function class_file( object|string $class ): string {
+		return (string) ( new \ReflectionClass( $class ) )->getFileName();
 	}
 
 	/**
@@ -934,8 +975,9 @@ class Core {
 	 * @param bool $past_transport Climb past the class that applied the filter,
 	 *                             `wpdb` or `WP_Http`, and every class of its
 	 *                             family, at the wider TRANSPORT_ORIGIN_DEPTH.
-	 * @return string `Class->method`, a function name, or '' when only
-	 *                machinery is on the stack.
+	 * @return string `Class->method` or a function name, prefixed with the
+	 *                owner `asker()` names and cut to ORIGIN_MAX, or '' when
+	 *                only machinery is on the stack.
 	 */
 	private static function origin_frame( bool $past_transport = false ): string {
 		$transport = null;
@@ -944,7 +986,7 @@ class Core {
 			\DEBUG_BACKTRACE_IGNORE_ARGS,
 			$past_transport ? self::TRANSPORT_ORIGIN_DEPTH : self::ORIGIN_DEPTH
 		);
-		foreach ( $frames as $frame ) {
+		foreach ( $frames as $i => $frame ) {
 			$function = $frame['function'];
 			$class    = $frame['class'] ?? '';
 			if ( '' === $function || self::class === $class || 'WP_Hook' === $class ) {
@@ -971,9 +1013,30 @@ class Core {
 				}
 			}
 			$name = '' === $class ? $function : $class . ( $frame['type'] ?? '::' ) . $function;
-			return \substr( $name, 0, self::ORIGIN_MAX );
+			return \mb_strcut( Owner::label( self::asker( $frames, $i ), $name ), 0, self::ORIGIN_MAX, 'UTF-8' );
 		}
 		return '';
+	}
+
+	/**
+	 * Who asked for the frame at `$i`: the owner of the nearest code from it
+	 * outward that is neither core nor unknown, so a plugin's `get_option()`
+	 * names the plugin, or else the owner of the frame's own code. A frame's
+	 * `file` is where it was called from, so frame `$i`'s code is in frame
+	 * `$i - 1`'s file. It reads the backtrace `origin_frame()` already took.
+	 *
+	 * @param list<array{file?: string}> $frames The backtrace, nearest first.
+	 * @param int                        $i      The frame `origin_frame()` names.
+	 */
+	private static function asker( array $frames, int $i ): string {
+		$own = Owner::of( $frames[ $i - 1 ]['file'] ?? '' );
+		for ( $j = $i - 1, $n = \count( $frames ); $j < $n; $j++ ) {
+			$owner = Owner::of( $frames[ $j ]['file'] ?? '' );
+			if ( '' !== $owner && Owner::CORE !== $owner ) {
+				return $owner;
+			}
+		}
+		return $own;
 	}
 
 	/**

@@ -438,12 +438,12 @@ class Log_Manager {
 		/** @var array{type: int, message: string, file: string, line: int}|null $error As `error_get_last()` answers. */
 		$error = $last();
 		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
-			$plugin                         = self::extract_plugin_slug( $error['file'] );
+			$owner                          = Owner::of( $error['file'] );
 			$complete_extra['fatal_error']  = self::within_encoding( Driver_Error::fatal( $error['message'] ), self::FATAL_MESSAGE_MAX, self::FATAL_MESSAGE_BUDGET );
 			$complete_extra['fatal_file']   = self::within_encoding( $error['file'], self::FATAL_PATH_MAX, self::FATAL_PATH_BUDGET );
 			$complete_extra['fatal_line']   = $error['line'];
 			$complete_extra['fatal_type']   = $error['type'];
-			$complete_extra['fatal_plugin'] = null === $plugin ? null : self::within_encoding( $plugin, self::FATAL_PATH_MAX, self::FATAL_PATH_BUDGET );
+			$complete_extra['fatal_plugin'] = Owner::is_plugin( $owner ) ? self::within_encoding( $owner, self::FATAL_PATH_MAX, self::FATAL_PATH_BUDGET ) : null;
 			$complete_extra['error_status'] = 'F';
 		}
 		if ( $this->aborted ) {
@@ -478,41 +478,6 @@ class Log_Manager {
 			$kept .= $char;
 		}
 		return $kept;
-	}
-
-	/**
-	 * Extract plugin slug from a file path.
-	 *
-	 * PHP names the file with every symlink resolved, so each root matches as
-	 * written and as resolved. A plugin the deploy swaps in runs from
-	 * `WP_CONTENT_DIR/plugin-releases/<slug>/<release>/<slug>/`, which its
-	 * `plugins/<slug>` symlink points at; the slug there is the third segment.
-	 *
-	 * @param string $file File path from error_get_last().
-	 * @return string|null Plugin slug or null if not in a plugin's tree.
-	 */
-	private static function extract_plugin_slug( string $file ): ?string {
-		$roots = [];
-		if ( \defined( 'WP_PLUGIN_DIR' ) ) {
-			$roots[ WP_PLUGIN_DIR ] = 0;
-		}
-		if ( \defined( 'WP_CONTENT_DIR' ) ) {
-			$roots[ WP_CONTENT_DIR . '/plugin-releases' ] = 2;
-		}
-		foreach ( $roots as $root => $segment ) {
-			foreach ( [ $root, \realpath( $root ) ] as $dir ) {
-				if ( false === $dir || 0 !== \strpos( $file, \trailingslashit( $dir ) ) ) {
-					continue;
-				}
-				$segments = \explode( '/', \substr( $file, \strlen( \trailingslashit( $dir ) ) ) );
-				if ( 0 === $segment ) {
-					return '.php' === \substr( $segments[0], -4 ) ? \substr( $segments[0], 0, -4 ) : $segments[0];
-				}
-				// A release's own root holds no plugin file.
-				return isset( $segments[ $segment + 1 ] ) ? $segments[ $segment ] : null;
-			}
-		}
-		return null;
 	}
 
 	/**

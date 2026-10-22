@@ -18,8 +18,13 @@ use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Event_Logger_Nodes\Tests\Fixtures\Kea_7746_Caller;
+use Newspack_Event_Logger_Nodes\Tests\Fixtures\Kea_7746_Subclass;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
+
+require_once \dirname( __DIR__ ) . '/fixtures/owners/abspath/wp-includes/kea-7746-core-api.php';
+require_once \dirname( __DIR__ ) . '/fixtures/owners/plugins/kea-7746/class-kea-7746-caller.php';
 
 #[CoversClass( Core::class )]
 class AppCoreTest extends TestCase {
@@ -1019,64 +1024,57 @@ class AppCoreTest extends TestCase {
 
 	// ── short_name tests via reflection ─────────────────────────────────
 
-	public function test_short_name_string_function(): void {
-		$ref = new \ReflectionMethod( Core::class, 'short_name' );
+	/**
+	 * `short_name()` as `wrap_callbacks()` calls it, with the reflection
+	 * `reflect()` built for the callback.
+	 */
+	private static function short_name_of( mixed $function ): string {
+		$reflected = ( new \ReflectionMethod( Core::class, 'reflect' ) )->invoke( null, $function );
+		return ( new \ReflectionMethod( Core::class, 'short_name' ) )->invoke( null, $function, $reflected[0] ?? null );
+	}
 
-		$this->assertSame( 'do_blocks', $ref->invoke( null, 'do_blocks' ) );
+	public function test_short_name_string_function(): void {
+		$this->assertSame( 'do_blocks', self::short_name_of( 'do_blocks' ) );
 	}
 
 	public function test_short_name_namespaced_string(): void {
-		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-
-		$this->assertSame( 'do_stuff', $ref->invoke( null, 'Some\\Namespace\\do_stuff' ) );
+		$this->assertSame( 'do_stuff', self::short_name_of( 'Some\\Namespace\\do_stuff' ) );
 	}
 
 	public function test_short_name_array_class_method_string(): void {
-		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-
 		$this->assertSame(
 			'Image_CDN::filter_the_content',
-			$ref->invoke( null, [ 'My\\Namespace\\Image_CDN', 'filter_the_content' ] )
+			self::short_name_of( [ 'My\\Namespace\\Image_CDN', 'filter_the_content' ] )
 		);
 	}
 
 	public function test_short_name_array_object_method(): void {
-		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-
 		$this->assertSame(
 			'stdClass::some_method',
-			$ref->invoke( null, [ new \stdClass(), 'some_method' ] )
+			self::short_name_of( [ new \stdClass(), 'some_method' ] )
 		);
 	}
 
 	public function test_short_name_closure(): void {
-		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-
 		$closure = function () { return 42; };
-		$result  = $ref->invoke( null, $closure );
+		$result  = self::short_name_of( $closure );
 		$this->assertStringContainsString( '{closure}', $result );
 		$this->assertStringContainsString( 'AppCoreTest.php', $result );
 	}
 
 	public function test_short_name_invokable_object(): void {
-		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-
 		$invokable = new class() {
 			public function __invoke() {}
 		};
-		$this->assertStringContainsString( '::__invoke', $ref->invoke( null, $invokable ) );
+		$this->assertStringContainsString( '::__invoke', self::short_name_of( $invokable ) );
 	}
 
 	public function test_short_name_unknown_type(): void {
-		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-
-		$this->assertSame( '{unknown}', $ref->invoke( null, 42 ) );
+		$this->assertSame( '{unknown}', self::short_name_of( 42 ) );
 	}
 
 	public function test_short_name_single_element_array(): void {
-		$ref = new \ReflectionMethod( Core::class, 'short_name' );
-
-		$this->assertSame( '{unknown}', $ref->invoke( null, [ 'only_one' ] ) );
+		$this->assertSame( '{unknown}', self::short_name_of( [ 'only_one' ] ) );
 	}
 
 	// ── Constructor tests ───────────────────────────────────────────────
@@ -2249,33 +2247,37 @@ class AppCoreTest extends TestCase {
 
 	// ── callback_has_ref_param: every callback shape (direct reflection) ──
 
+	/**
+	 * Whether `wrap_callbacks()` skips a callback for a by-reference
+	 * parameter: one it cannot reflect it wraps.
+	 */
+	private static function has_ref_param( mixed $function ): bool {
+		$reflected = ( new \ReflectionMethod( Core::class, 'reflect' ) )->invoke( null, $function );
+		return null !== $reflected && ( new \ReflectionMethod( Core::class, 'callback_has_ref_param' ) )->invoke( null, $reflected[0] );
+	}
+
 	public function test_callback_has_ref_param_array_object_method(): void {
-		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
-		$this->assertTrue( $ref->invoke( null, [ new RefParamFixture(), 'by_ref' ] ) );
-		$this->assertFalse( $ref->invoke( null, [ new RefParamFixture(), 'no_ref' ] ) );
+		$this->assertTrue( self::has_ref_param( [ new RefParamFixture(), 'by_ref' ] ) );
+		$this->assertFalse( self::has_ref_param( [ new RefParamFixture(), 'no_ref' ] ) );
 	}
 
 	public function test_callback_has_ref_param_array_with_non_string_method_is_false(): void {
 		// target is a string but method isn't a string → the invalid-shape guard.
-		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
-		$this->assertFalse( $ref->invoke( null, [ 'SomeClass', 42 ] ) );
+		$this->assertFalse( self::has_ref_param( [ 'SomeClass', 42 ] ) );
 	}
 
 	public function test_callback_has_ref_param_invokable_object(): void {
-		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
-		$this->assertTrue( $ref->invoke( null, new InvokableRefFixture() ) );
+		$this->assertTrue( self::has_ref_param( new InvokableRefFixture() ) );
 	}
 
 	public function test_callback_has_ref_param_plain_function_string(): void {
-		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
 		// A non-namespaced function with a normal (by-value) param → false.
-		$this->assertFalse( $ref->invoke( null, 'strlen' ) );
+		$this->assertFalse( self::has_ref_param( 'strlen' ) );
 	}
 
 	public function test_callback_has_ref_param_returns_false_on_reflection_failure(): void {
 		// ReflectionMethod on a nonexistent class throws → caught → false.
-		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
-		$this->assertFalse( $ref->invoke( null, [ 'No_Such_Class_ABC123', 'method' ] ) );
+		$this->assertFalse( self::has_ref_param( [ 'No_Such_Class_ABC123', 'method' ] ) );
 	}
 
 	public function test_callback_has_ref_param_propagates_what_is_not_a_reflection_failure(): void {
@@ -2288,10 +2290,9 @@ class AppCoreTest extends TestCase {
 			}
 		};
 		\spl_autoload_register( $autoload );
-		$ref    = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
 		$thrown = null;
 		try {
-			$ref->invoke( null, [ 'Quokka_Absent_7732', 'bound' ] );
+			self::has_ref_param( [ 'Quokka_Absent_7732', 'bound' ] );
 		} catch ( \RuntimeException $e ) {
 			$thrown = $e;
 		} finally {
@@ -2303,8 +2304,7 @@ class AppCoreTest extends TestCase {
 
 	public function test_callback_has_ref_param_unsupported_type_is_false(): void {
 		// An int is neither array/string/object → the else `return false`.
-		$ref = new \ReflectionMethod( Core::class, 'callback_has_ref_param' );
-		$this->assertFalse( $ref->invoke( null, 42 ) );
+		$this->assertFalse( self::has_ref_param( 42 ) );
 	}
 
 	// ── rebind_for_current_scope ───────────────────────────────────────
@@ -2595,6 +2595,188 @@ class AppCoreTest extends TestCase {
 			'FakeCaller->fetch_feed',
 			$this->last_entry_label( 'http (start)' )
 		);
+	}
+
+	/**
+	 * Classify against a tree whose one plugin is the `kea-7746` fixture, so
+	 * this file, which calls into it, sits under no root.
+	 */
+	private static function own_the_fixtures(): void {
+		$fixtures = \dirname( __DIR__ ) . '/fixtures/owners';
+		self::own_files_under(
+			[
+				'plugins'    => "{$fixtures}/plugins",
+				'mu_plugins' => "{$fixtures}/mu-plugins",
+				'themes'     => [ "{$fixtures}/themes" ],
+				'content'    => "{$fixtures}/content",
+				'abspath'    => "{$fixtures}/abspath/",
+				'managed'    => "{$fixtures}/managed",
+			]
+		);
+	}
+
+	/** A listener's span names the plugin that bound it, a closure's too. */
+	public function test_a_wrapped_listener_is_named_with_its_owner(): void {
+		self::own_the_fixtures();
+		$core            = $this->significant_core();
+		$closure         = Kea_7746_Caller::closure_listener();
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [
+			10 => [
+				'kea'     => [ 'function' => [ Kea_7746_Caller::class, 'filter_the_content' ], 'accepted_args' => 1 ],
+				'closure' => [ 'function' => $closure, 'accepted_args' => 1 ],
+			],
+		];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+		$core->hook_start( 'seed' );
+		$wrapped = $wp_filter['the_content']->callbacks[10];
+
+		$this->assertSame( 'hi kea-7746', \call_user_func( $wrapped['kea']['function'], 'hi' ) );
+		$this->assertSame( 'hi closure-7746', \call_user_func( $wrapped['closure']['function'], 'hi' ) );
+
+		$line = ( new \ReflectionFunction( $closure ) )->getStartLine();
+		$this->assertNotNull( $this->last_entry( '[kea-7746] Kea_7746_Caller::filter_the_content @10 (complete)' ) );
+		$this->assertNotNull( $this->last_entry( "[kea-7746] {closure}:class-kea-7746-caller.php:{$line} @10 (complete)" ) );
+	}
+
+	/** A listener from a file under no root keeps its bare name. */
+	public function test_a_wrapped_listener_without_an_owner_keeps_its_bare_name(): void {
+		self::own_the_fixtures();
+		$core            = $this->significant_core();
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'kea' => [ 'function' => [ self::class, 'kea_listener_7746' ], 'accepted_args' => 1 ] ] ];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+		$core->hook_start( 'seed' );
+
+		\call_user_func( $wp_filter['the_content']->callbacks[10]['kea']['function'], 'hi' );
+
+		$this->assertNotNull( $this->last_entry( 'AppCoreTest::kea_listener_7746 @10 (complete)' ) );
+	}
+
+	/**
+	 * The owner is the file of the code that ASKED, which is not the file its
+	 * frame was called from: this file calls the fixture, and owns nothing.
+	 */
+	public function test_a_query_span_label_names_the_owner_of_the_caller(): void {
+		self::own_the_fixtures();
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+
+		( new Kea_7746_Caller() )->ask_for_articles( new FakeTransport(), 'SELECT option_value FROM wp_options WHERE 1' );
+
+		$this->assertSame( '[kea-7746] ' . Kea_7746_Caller::class . '->ask_for_articles', $this->last_entry_label( 'sql (start)' ) );
+	}
+
+	/** The outbound-HTTP twin. */
+	public function test_an_http_span_label_names_the_owner_of_the_caller(): void {
+		self::own_the_fixtures();
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG, log_http: true ) );
+		$core = new Core();
+
+		( new Kea_7746_Caller() )->fetch_feed( new FakeTransport(), 'https://img.example.net/a.jpg' );
+
+		$this->assertSame( '[kea-7746] ' . Kea_7746_Caller::class . '->fetch_feed', $this->last_entry_label( 'http (start)' ) );
+	}
+
+	/**
+	 * Who asked is the plugin beyond the core API it called: a plugin's
+	 * `get_option()` names the plugin, not core.
+	 */
+	public function test_a_query_through_a_core_api_names_the_plugin_that_called_it(): void {
+		self::own_the_fixtures();
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+
+		( new Kea_7746_Caller() )->ask_through_core( new FakeTransport(), 'SELECT option_value FROM wp_options WHERE 1' );
+
+		$this->assertSame( '[kea-7746] kea_7746_get_option', $this->last_entry_label( 'sql (start)' ) );
+	}
+
+	/** With no plugin beyond it, the core API is its own owner. */
+	public function test_a_query_from_a_core_api_alone_names_core(): void {
+		self::own_the_fixtures();
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+
+		\kea_7746_get_option( new FakeTransport(), 'SELECT option_value FROM wp_options WHERE 1' );
+
+		$this->assertSame( '[core] kea_7746_get_option', $this->last_entry_label( 'sql (start)' ) );
+	}
+
+	/** The cap bounds the whole label, prefix included, on a character boundary. */
+	public function test_the_origin_cap_bounds_the_prefixed_label(): void {
+		self::own_the_fixtures();
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core   = new Core();
+		$method = 'ask_' . \str_repeat( 'ō', 30 );
+
+		( new Kea_7746_Caller() )->$method( new FakeTransport(), 'SELECT option_value FROM wp_options WHERE 1' );
+
+		$label = $this->last_entry_label( 'sql (start)' );
+		$this->assertSame( \mb_strcut( '[kea-7746] ' . Kea_7746_Caller::class . "->{$method}", 0, 128, 'UTF-8' ), $label );
+		$this->assertSame( 127, \strlen( $label ), 'the cut falls inside a character, so it keeps one byte fewer' );
+	}
+
+	/**
+	 * A listener is owned by the class it is hooked as, not the class that
+	 * declares the method: a plugin subclass hooking an inherited core method.
+	 */
+	public function test_an_inherited_listener_is_owned_by_the_hooked_class(): void {
+		self::own_the_fixtures();
+		$core            = $this->significant_core();
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [
+			10 => [
+				'object' => [ 'function' => [ new Kea_7746_Subclass(), 'filter_the_content' ], 'accepted_args' => 1 ],
+				'static' => [ 'function' => [ Kea_7746_Subclass::class, 'filter_statically' ], 'accepted_args' => 1 ],
+				'string' => [ 'function' => Kea_7746_Subclass::class . '::filter_statically', 'accepted_args' => 1 ],
+			],
+		];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+		$core->hook_start( 'seed' );
+		$wrapped = $wp_filter['the_content']->callbacks[10];
+
+		$this->assertSame( 'hi core-parent', \call_user_func( $wrapped['object']['function'], 'hi' ) );
+		\call_user_func( $wrapped['static']['function'], 'hi' );
+		\call_user_func( $wrapped['string']['function'], 'hi' );
+
+		$this->assertNotNull( $this->last_entry( '[kea-7746] Kea_7746_Subclass::filter_the_content @10 (complete)' ) );
+		$this->assertNotNull( $this->last_entry( '[kea-7746] Kea_7746_Subclass::filter_statically @10 (complete)' ) );
+		$this->assertNotNull( $this->last_entry( '[kea-7746] Kea_7746_Subclass::filter_statically @10 (complete)' ) );
+	}
+
+	/**
+	 * A callback skipped for a by-reference parameter is remembered by its
+	 * hook key, so a later firing skips it without reflecting it again.
+	 */
+	public function test_a_by_reference_callback_is_skipped_from_memory(): void {
+		$core            = $this->significant_core();
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'byref-6620' => [ 'function' => [ new RefParamFixture(), 'by_ref' ], 'accepted_args' => 1 ] ] ];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+		$core->hook_start( 'x' );
+
+		$by_value = static fn ( $v ) => $v;
+		$wp_filter['the_content']->callbacks[10]['byref-6620']['function'] = $by_value;
+		$core->hook_start( 'x' );
+
+		$this->assertSame( $by_value, $wp_filter['the_content']->callbacks[10]['byref-6620']['function'], 'remembered as by-reference, so not reflected or wrapped' );
+	}
+
+	/** A traced hook's origin names its owner as well. */
+	public function test_a_traced_hook_origin_names_its_owner(): void {
+		self::own_the_fixtures();
+		$this->set_governing_rule( $this->tracing_rule( 0 ) );
+		$core                               = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		( new Kea_7746_Caller() )->render_content( $core );
+
+		$this->assertSame( '[kea-7746] ' . Kea_7746_Caller::class . '->render_content', $this->last_entry_label( 'the_content hook (start)' ) );
 	}
 
 	/**
