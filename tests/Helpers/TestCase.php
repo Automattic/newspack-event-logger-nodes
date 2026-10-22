@@ -535,6 +535,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 * every later test that pins it and then trips a `print_less_often()`.
 	 */
 	protected function tearDown(): void {
+		self::own_files_under( null );
 		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::$hrtime_fn = null;
 		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
 		foreach ( $this->requests_logs as $log ) {
@@ -544,6 +545,25 @@ abstract class TestCase extends RuntimeTestCase {
 		$this->rmdir_recursive( $this->tables_dir );
 		$GLOBALS['_wp_test_filters'] = $this->saved_wp_test_filters;
 		parent::tearDown();
+	}
+
+	/**
+	 * Classify files against `$roots`, or WordPress's own roots when null, with
+	 * every owner `Owner` has memoized forgotten. The `themes` stand in for the
+	 * directories `register_theme_directory()` keeps. tearDown restores the
+	 * default.
+	 *
+	 * @param array{plugins: string, mu_plugins: string, themes: list<string>, content: string, abspath: string, managed: string}|null $roots The roots map.
+	 */
+	protected static function own_files_under( ?array $roots ): void {
+		unset( $GLOBALS['wp_theme_directories'] );
+		if ( null !== $roots ) {
+			$GLOBALS['wp_theme_directories'] = $roots['themes'];
+			unset( $roots['themes'] );
+		}
+		\Newspack_Event_Logger_Nodes\Owner::$roots = null === $roots ? null : static fn (): array => $roots;
+		( new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Owner::class, 'owners' ) )->setValue( null, [] );
+		( new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Owner::class, 'table' ) )->setValue( null, null );
 	}
 
 	/**

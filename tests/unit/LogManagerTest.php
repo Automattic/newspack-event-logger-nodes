@@ -18,6 +18,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Owner;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Event_Framework;
@@ -3705,15 +3706,35 @@ class LogManagerTest extends TestCase {
 	 * its message, and no fatal keeps its stack trace, whose frames carry
 	 * the arguments a statement ran with.
 	 *
+	 * @param string $message The fatal's message.
+	 * @param string $file    The file it names.
 	 * @return array<string,mixed> The terminal of a request that died of `$message`.
 	 */
-	private function terminal_of_fatal( string $message ): array {
+	private function terminal_of_fatal( string $message, string $file = '/srv/kea.php' ): array {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
-		Log_Manager::$last_error = static fn (): array => [ 'type' => E_ERROR, 'message' => $message, 'file' => '/srv/kea.php', 'line' => 12 ];
+		Log_Manager::$last_error = static fn (): array => [ 'type' => E_ERROR, 'message' => $message, 'file' => $file, 'line' => 12 ];
 		$lm = $this->fresh_log_manager();
 		$lm->finish();
 		return self::entries_of( $this->written_entries(), Log_Manager::REQUEST_COMPLETE )[0] ?? [];
+	}
+
+	/** A fatal in a plugin's file names the plugin `Owner` says owns it. */
+	public function test_a_fatal_in_a_plugin_names_its_owner(): void {
+		$file = \WP_PLUGIN_DIR . '/kokako-5521/includes/class-kokako.php';
+
+		$terminal = $this->terminal_of_fatal( 'kokako 5521 broke', $file );
+
+		$this->assertSame( 'kokako-5521', $terminal['fatal_plugin'] ?? null );
+		$this->assertSame( Owner::of( $file ), $terminal['fatal_plugin'] );
+	}
+
+	/** An mu-plugin is not a plugin, so its fatal names none. */
+	public function test_a_fatal_in_an_mu_plugin_names_no_plugin(): void {
+		$terminal = $this->terminal_of_fatal( 'ruru 3301 broke', \WPMU_PLUGIN_DIR . '/ruru-3301.php' );
+
+		$this->assertSame( 'F', $terminal['error_status'] ?? null );
+		$this->assertNull( $terminal['fatal_plugin'] ?? null );
 	}
 
 	public function test_an_uncaught_driver_exception_reaches_the_terminal_without_its_values(): void {
@@ -3802,36 +3823,6 @@ class LogManagerTest extends TestCase {
 		$c = Log_Manager::instance();
 		$this->assertSame( $a, $b );
 		$this->assertSame( $b, $c );
-	}
-
-	// =========================================================================
-	// extract_plugin_slug: private static helper invoked from the fatal-tagging
-	// path of finish(). Exercise its branches via reflection so we don't need
-	// to actually crash PHP to populate error_get_last().
-	// =========================================================================
-
-	private function invoke_extract_plugin_slug( string $file ): ?string {
-		$ref = new \ReflectionMethod( Log_Manager::class, 'extract_plugin_slug' );
-		return $ref->invoke( null, $file );
-	}
-
-	public function test_extract_plugin_slug_returns_null_for_file_outside_plugins_dir(): void {
-		// File path that does not start with WP_PLUGIN_DIR returns null.
-		// (WP_PLUGIN_DIR defaults to /tmp/test-wp-plugins in the bootstrap.)
-		$this->assertNull( $this->invoke_extract_plugin_slug( '/var/www/wp-includes/wp-db.php' ) );
-		$this->assertNull( $this->invoke_extract_plugin_slug( '/etc/passwd' ) );
-		$this->assertNull( $this->invoke_extract_plugin_slug( '' ) );
-	}
-
-	public function test_extract_plugin_slug_returns_directory_slug_for_subdirectory_plugin(): void {
-		// File inside a plugin subdirectory — slug is the first path segment
-		// after WP_PLUGIN_DIR.
-		$path = \WP_PLUGIN_DIR . '/akismet/akismet.php';
-		$this->assertSame( 'akismet', $this->invoke_extract_plugin_slug( $path ) );
-
-		// Nested file under the same plugin returns the same slug.
-		$nested = \WP_PLUGIN_DIR . '/akismet/views/admin.php';
-		$this->assertSame( 'akismet', $this->invoke_extract_plugin_slug( $nested ) );
 	}
 
 	// -------------------------------------------------------------------------
@@ -3963,41 +3954,6 @@ class LogManagerTest extends TestCase {
 		$dirs = Log_Manager::firehose_dirs( '/somewhere/else/firehose.p2' );
 
 		$this->assertSame( [ 2 => '/somewhere/else/firehose.p2' ], $dirs );
-	}
-
-	public function test_extract_plugin_slug_strips_php_suffix_for_single_file_plugin(): void {
-		// Single-file plugin directly under WP_PLUGIN_DIR — slug strips `.php`.
-		$path = \WP_PLUGIN_DIR . '/hello.php';
-		$this->assertSame( 'hello', $this->invoke_extract_plugin_slug( $path ) );
-
-		// A weird file with no .php extension at the top level returns it raw.
-		$path2 = \WP_PLUGIN_DIR . '/raw-segment';
-		$this->assertSame( 'raw-segment', $this->invoke_extract_plugin_slug( $path2 ) );
-	}
-
-	/** A plugin swapped in as a release runs from that release, which a fatal names. */
-	public function test_extract_plugin_slug_reads_the_slug_from_a_release_path(): void {
-		$path = \WP_CONTENT_DIR . '/plugin-releases/kereru-9182/20261008223021288837917-61651-v4.2.0/kereru-9182/includes/class-x.php';
-		$this->assertSame( 'kereru-9182', $this->invoke_extract_plugin_slug( $path ) );
-	}
-
-	/** PHP names a fatal's file with every symlink resolved, the content dir's included. */
-	public function test_extract_plugin_slug_matches_the_resolved_content_dir(): void {
-		$real = \sys_get_temp_dir() . '/eln-real-content-' . \getmypid();
-		\mkdir( $real . '/plugin-releases', 0777, true );
-		\symlink( $real, \WP_CONTENT_DIR );
-		try {
-			$path = \realpath( $real ) . '/plugin-releases/tui-5520/20261008223021288837917-61651-v1.9.0/tui-5520/tui-5520.php';
-			$this->assertSame( 'tui-5520', $this->invoke_extract_plugin_slug( $path ) );
-		} finally {
-			\unlink( \WP_CONTENT_DIR );
-			\exec( 'rm -rf ' . \escapeshellarg( $real ) );
-		}
-	}
-
-	/** A file directly in a plugin's release root sits in no release, so names no plugin. */
-	public function test_extract_plugin_slug_returns_null_for_a_release_path_without_a_plugin_dir(): void {
-		$this->assertNull( $this->invoke_extract_plugin_slug( \WP_CONTENT_DIR . '/plugin-releases/kereru-9182/stray.php' ) );
 	}
 
 	/** The wire string readers group by; the JS fold exemption spells it too. */

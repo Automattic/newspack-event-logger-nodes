@@ -541,6 +541,10 @@ if ( ! defined( 'WP_CONTENT_DIR' ) ) {
 	define( 'WP_CONTENT_DIR', "{$newspack_test_base}-wp-content" );
 }
 
+if ( ! defined( 'WPMU_PLUGIN_DIR' ) ) {
+	define( 'WPMU_PLUGIN_DIR', WP_CONTENT_DIR . '/mu-plugins' );
+}
+
 // Canonical shared WP shims from the substrate; local overrides above win.
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/wp-shims.php';
 

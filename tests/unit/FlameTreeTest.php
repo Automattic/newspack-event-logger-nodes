@@ -428,6 +428,16 @@ class FlameTreeTest extends TestCase {
 		$this->assertSame( 'wp_loaded hook', Flame_Tree::base_name( 'wp_loaded hook' ) );
 	}
 
+	/** An owner's `[<owner>] ` prefix leaves a span the kind it was, and its base whole. */
+	public function test_an_owner_prefix_keeps_the_span_kind_and_base(): void {
+		$listener = '[mu:ruru-3301] {closure}:loader.php:42 @-5';
+		$this->assertTrue( Flame_Tree::is_listener_span( "{$listener} (start)" ) );
+		$this->assertSame( 'listener', Flame_Tree::span_kind( $listener ) );
+		$this->assertSame( $listener, Flame_Tree::base_name( "{$listener} (complete)" ) );
+		$this->assertSame( 'the_content hook', Flame_Tree::base_name( Flame_Tree::node_name( 'the_content hook', '[theme:pukeko-2207] Pukeko->render' ) ) );
+		$this->assertSame( 'sql', Flame_Tree::base_name( 'sql: [kea-7746] Kea_Feed->import' ) );
+	}
+
 	/**
 	 * `base_name()` is the substrate's `spanBaseName()` in PHP. The one case
 	 * list is the substrate's `tests/fixtures/span-base-names.json`, read from
