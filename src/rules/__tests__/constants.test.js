@@ -23,6 +23,11 @@ describe( 'rules constants', () => {
 			log_plugin_loads: false,
 			trace_hooks: false,
 			trace_callers: 0,
+			log_memory: false,
+			flush_every_line: false,
+			log_context: false,
+			log_cache: false,
+			log_resources: false,
 		} );
 	} );
 } );

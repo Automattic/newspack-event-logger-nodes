@@ -75,8 +75,6 @@ class AdminTest extends TestCase {
 		// live on `\Newspack_Nodes\Admin\Admin`.
 		$expected = [
 			'newspack_event_logger_nodes_enable_logging',
-			'newspack_event_logger_nodes_log_memory',
-			'newspack_event_logger_nodes_flush_every_line',
 		];
 		foreach ( $expected as $option ) {
 			$this->assertArrayHasKey( $option, $GLOBALS['_registered_settings'], "missing option: $option" );
@@ -123,7 +121,7 @@ class AdminTest extends TestCase {
 
 		// The application settings fields; the per-URL settings are rule fields,
 		// not settings fields. Storage fields (substrate) are NOT asserted here.
-		foreach ( [ 'enable_logging', 'log_memory', 'flush_every_line' ] as $field ) {
+		foreach ( [ 'enable_logging' ] as $field ) {
 			$this->assertArrayHasKey( $field, $GLOBALS['_registered_fields'], "field $field not registered" );
 			$this->assertSame( Admin::SETTINGS_PAGE, $GLOBALS['_registered_fields'][ $field ]['page'] );
 		}
@@ -163,7 +161,6 @@ class AdminTest extends TestCase {
 		// num_partitions) are owned by `\Newspack_Nodes\Admin` and reset
 		// via its own handler.
 		\update_option( 'newspack_event_logger_nodes_enable_logging', 0 );
-		\update_option( 'newspack_event_logger_nodes_log_memory', 1 );
 		\update_option( 'unrelated_option', 'survives' );
 
 		$admin = new Admin();
@@ -175,7 +172,6 @@ class AdminTest extends TestCase {
 		}
 
 		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
-		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_log_memory' ) );
 		$this->assertSame( 'survives', \get_option( 'unrelated_option' ) ); // unrelated options untouched
 		$this->assertNotNull( $GLOBALS['_last_redirect'] );
 		$this->assertStringContainsString( Admin::MENU_SLUG, $GLOBALS['_last_redirect'] );
@@ -240,9 +236,9 @@ class AdminTest extends TestCase {
 		$this->prepare_lock_dir( 'request-workers', 0 );
 
 		$admin = new Admin();
-		// log_memory is cached in the Log_Manager per-process singleton (every
-		// worker) → 'all' → restart every live topology, combined included.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_memory' );
+		// enable_logging is cached in the Log_Manager per-process singleton
+		// (every worker) → 'all' → restart every live topology, combined included.
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_logging' );
 
 		$this->assertRestartFlagged( 'combined', 0 );
 		$this->assertRestartFlagged( 'aggregator', 0 );
@@ -262,7 +258,7 @@ class AdminTest extends TestCase {
 		}
 
 		$admin = new Admin();
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_memory' );
+		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_logging' );
 
 		for ( $p = 0; $p < 4; $p++ ) {
 			$this->assertRestartFlagged( 'flame-builder', $p );
@@ -282,7 +278,7 @@ class AdminTest extends TestCase {
 
 		$thrown = null;
 		try {
-			( new Admin() )->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_memory' );
+			( new Admin() )->maybe_request_worker_restart( 'newspack_event_logger_nodes_enable_logging' );
 		} catch ( \RuntimeException $e ) {
 			$thrown = $e;
 		} finally {
@@ -449,14 +445,6 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'logging', $out );
 	}
 
-	public function test_debugging_section_callback_warns_about_overhead(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->debugging_section_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( '<p>', $out );
-	}
-
 	// ---- Field callbacks: enable_logging / enable_jobs ----------------------
 
 	public function test_enable_logging_callback_renders_checkbox_with_default(): void {
@@ -504,49 +492,6 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	public function test_log_memory_callback_renders_checkbox(): void {
-		\update_option( 'newspack_event_logger_nodes_log_memory', 1 );
-		$admin = new Admin();
-		\ob_start();
-		$admin->log_memory_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_log_memory"', $out );
-		$this->assertStringContainsString( 'type="checkbox"', $out );
-		$this->assertStringContainsString( 'checked="checked"', $out );
-		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_log_memory]"', $out );
-		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
-	}
-
-	public function test_log_memory_callback_unchecked_when_disabled(): void {
-		\update_option( 'newspack_event_logger_nodes_log_memory', 0 );
-		$admin = new Admin();
-		\ob_start();
-		$admin->log_memory_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'type="checkbox"', $out );
-		$this->assertStringNotContainsString( 'checked="checked"', $out );
-	}
-
-	public function test_flush_every_line_callback_renders_checkbox(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->flush_every_line_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'name="newspack_event_logger_nodes_flush_every_line"', $out );
-		$this->assertStringContainsString( 'type="checkbox"', $out );
-		$this->assertStringContainsString( 'data-nn-reset="newspack_event_logger_nodes_reset[newspack_event_logger_nodes_flush_every_line]"', $out );
-		$this->assertStringContainsString( 'data-nn-reset-toggle', $out );
-	}
-
-	public function test_flush_every_line_callback_checked_when_enabled(): void {
-		\update_option( 'newspack_event_logger_nodes_flush_every_line', 1 );
-		$admin = new Admin();
-		\ob_start();
-		$admin->flush_every_line_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( 'checked="checked"', $out );
-	}
-
 	// ---- data-nn-reset-default on checkboxes -----------------------------
 
 	/**
@@ -558,9 +503,8 @@ class AdminTest extends TestCase {
 	 */
 	public static function reset_default_provider(): array {
 		return [
-			'enable_logging default true'     => [ 'enable_logging_callback', [ 'enable_logging' => true ], '1' ],
-			'log_memory default false'        => [ 'log_memory_callback', [ 'log_memory' => false ], '0' ],
-			'flush_every_line default false'  => [ 'flush_every_line_callback', [ 'flush_every_line' => false ], '0' ],
+			'enable_logging default true'  => [ 'enable_logging_callback', [ 'enable_logging' => true ], '1' ],
+			'enable_logging pinned false'  => [ 'enable_logging_callback', [ 'enable_logging' => false ], '0' ],
 		];
 	}
 
@@ -612,28 +556,6 @@ class AdminTest extends TestCase {
 
 	// ---- maybe_request_worker_restart additional branches ---------------
 
-	public function test_maybe_request_worker_restart_log_memory_restarts_all_live_topologies(): void {
-		$this->register_topologies();
-		$this->prepare_lock_dir( 'combined', 0 );
-		$this->prepare_lock_dir( 'aggregator', 0 );
-		$admin = new Admin();
-		// log_memory is cached in the Log_Manager singleton → 'all'.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_memory' );
-		$this->assertRestartFlagged( 'combined', 0 );
-		$this->assertRestartFlagged( 'aggregator', 0 );
-	}
-
-	public function test_maybe_request_worker_restart_flush_every_line_restarts_all_live_topologies(): void {
-		$this->register_topologies();
-		$this->prepare_lock_dir( 'combined', 0 );
-		$this->prepare_lock_dir( 'aggregator', 0 );
-		$admin = new Admin();
-		// flush_every_line is cached in the Log_Manager singleton → 'all'.
-		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_flush_every_line' );
-		$this->assertRestartFlagged( 'combined', 0 );
-		$this->assertRestartFlagged( 'aggregator', 0 );
-	}
-
 	public function test_maybe_request_worker_restart_skips_unknown_application_option(): void {
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'combined', 0 );
@@ -673,50 +595,51 @@ class AdminTest extends TestCase {
 
 	public function test_skip_default_writes_passes_through_when_value_differs_from_default(): void {
 		// Inject a known default via the test config-file override.
-		$this->use_base_dir( $this->base_dir, [ 'flush_every_line' => true ] );
+		$this->use_base_dir( $this->base_dir, [ 'enable_logging' => false ] );
 
 		$admin = new Admin();
-		// Value 1 (truthy) differs from bool-default `true` only after normalization to int 1.
-		// Submit value 5 which differs from default 1 → passes through.
-		$this->assertSame( 5, $admin->skip_default_writes( 5, 'newspack_event_logger_nodes_flush_every_line', 0 ) );
+		// The pinned `false` normalizes to int 0; 5 differs from it → passes through.
+		$this->assertSame( 5, $admin->skip_default_writes( 5, 'newspack_event_logger_nodes_enable_logging', 1 ) );
 	}
 
 	public function test_skip_default_writes_deletes_option_when_user_changes_back_to_default(): void {
-		// flush_every_line default is `true` (bool); normalizer turns it into int 1.
-		$this->use_base_dir( $this->base_dir, [ 'flush_every_line' => true ] );
-		\update_option( 'newspack_event_logger_nodes_flush_every_line', 0 );
+		// The pinned enable_logging default is `false` (bool); normalized to int 0.
+		$this->use_base_dir( $this->base_dir, [ 'enable_logging' => false ] );
+		\update_option( 'newspack_event_logger_nodes_enable_logging', 1 );
 
 		$admin    = new Admin();
-		$returned = $admin->skip_default_writes( 1, 'newspack_event_logger_nodes_flush_every_line', 0 );
+		$returned = $admin->skip_default_writes( 0, 'newspack_event_logger_nodes_enable_logging', 1 );
 		// Returns the OLD value so update_option treats the write as a no-op.
-		$this->assertSame( 0, $returned );
+		$this->assertSame( 1, $returned );
 		// The row is deleted so the file-default kicks in on next read.
-		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_flush_every_line' ) );
+		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_enable_logging' ) );
 	}
 
 	public function test_skip_default_writes_ignores_a_foreign_option_whose_tail_matches_a_key(): void {
-		$this->use_base_dir( $this->base_dir, [ 'flush_every_line' => true ] );
+		$this->use_base_dir( $this->base_dir, [ 'enable_logging' => false ] );
 		// Exactly the prefix LENGTH of foreign characters, then a real key of
 		// ours. Stripping by length judges another plugin's option against our
 		// defaults, and deletes their row when the values happen to agree.
-		$foreign = \str_repeat( 'z', 28 ) . 'flush_every_line';
-		\update_option( $foreign, 0 );
+		$foreign = \str_repeat( 'z', 28 ) . 'enable_logging';
+		\update_option( $foreign, 1 );
 
 		$admin = new Admin();
 
-		$this->assertSame( 1, $admin->skip_default_writes( 1, $foreign, 0 ) );
+		$this->assertSame( 0, $admin->skip_default_writes( 0, $foreign, 1 ) );
 		$this->assertNotFalse( \get_option( $foreign ) );
 	}
 
 	public function test_skip_default_writes_returns_old_value_when_already_equal_to_default(): void {
-		// Default `true` → normalized to int 1.
-		$this->use_base_dir( $this->base_dir, [ 'flush_every_line' => true ] );
+		// Pinned `false` → normalized to int 0.
+		$this->use_base_dir( $this->base_dir, [ 'enable_logging' => false ] );
+		\update_option( 'newspack_event_logger_nodes_enable_logging', 0 );
 
 		$admin = new Admin();
 		// Submitted value already equals old value and the default — short-circuits
 		// to old_value with no delete (avoids touching the row needlessly).
-		$returned = $admin->skip_default_writes( 1, 'newspack_event_logger_nodes_flush_every_line', 1 );
-		$this->assertSame( 1, $returned );
+		$returned = $admin->skip_default_writes( 0, 'newspack_event_logger_nodes_enable_logging', 0 );
+		$this->assertSame( 0, $returned );
+		$this->assertSame( 0, \get_option( 'newspack_event_logger_nodes_enable_logging' ), 'the row stands' );
 	}
 
 	public function test_skip_default_writes_compares_int_defaults_directly(): void {
@@ -814,17 +737,17 @@ class AdminTest extends TestCase {
 		$admin = new Admin();
 		$admin->register_settings();
 		unset( $_POST[ Admin::RESET_MARK_FIELD ] );
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = 1;
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_enable_logging'] = 1;
 
 		$result = \apply_filters(
-			'pre_update_option_newspack_event_logger_nodes_log_memory',
+			'pre_update_option_newspack_event_logger_nodes_enable_logging',
 			0,
 			1,
-			'newspack_event_logger_nodes_log_memory'
+			'newspack_event_logger_nodes_enable_logging'
 		);
 
 		$this->assertSame( 0, $result, 'unmarked unchecked checkbox is an override, not a reset' );
-		$this->assertArrayHasKey( 'newspack_event_logger_nodes_log_memory', $GLOBALS['_wp_options'] );
+		$this->assertArrayHasKey( 'newspack_event_logger_nodes_enable_logging', $GLOBALS['_wp_options'] );
 	}
 
 	// ---- Shared Config_System wiring (Reset_Gate / Field_Reset_Assets) ----
@@ -838,8 +761,6 @@ class AdminTest extends TestCase {
 
 		$expected = [
 			'newspack_event_logger_nodes_enable_logging',
-			'newspack_event_logger_nodes_log_memory',
-			'newspack_event_logger_nodes_flush_every_line',
 		];
 		foreach ( $expected as $option ) {
 			$this->assertNotEmpty(
@@ -916,13 +837,15 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	public function test_register_settings_registers_debugging_fields(): void {
+	/** The diagnostic switches are each rule's, so the page has no Debugging section. */
+	public function test_register_settings_registers_no_debugging_section(): void {
 		$admin = new Admin();
 		$admin->register_settings();
 
 		foreach ( [ 'log_memory', 'flush_every_line' ] as $f ) {
-			$this->assertArrayHasKey( $f, $GLOBALS['_registered_fields'] );
+			$this->assertArrayNotHasKey( $f, $GLOBALS['_registered_fields'] );
 		}
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_debugging_section', $GLOBALS['_registered_sections'] );
 	}
 
 	public function test_maintenance_section_points_at_the_substrate_flush(): void {

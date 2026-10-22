@@ -836,18 +836,20 @@ class RequestBuilderTest extends TestCase {
 		$this->assertGreaterThanOrEqual( 2, \count( $urls ) );
 	}
 
-	public function test_memory_extracts_peak_mb(): void {
-		$rb      = new Request_Builder_Node();
-		$capture = new Capture_Sink_Node();
-		$rb->sink( $capture );
+	/** The record's peak is the terminal's, an aborted one's included. */
+	public function test_the_terminal_carries_the_records_peak(): void {
+		foreach ( [ 'process (complete)' => 32.75, 'process (aborted)' => 41 ] as $terminal => $peak ) {
+			$rb      = new Request_Builder_Node();
+			$capture = new Capture_Sink_Node();
+			$rb->sink( $capture );
 
-		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea.test/x' ] );
-		$this->fill( $rb, 3, 'r1', 'memory', [ 'm' => [ 'peak' => '32MB', 'end' => '24MB' ] ] );
-		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+			$this->fill( $rb, 1, 'r1', 'process (start)' );
+			$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+			$this->fill( $rb, 3, 'r1', $terminal, [ 'peak_mb' => $peak ] );
 
-		$req = $this->captured_request( $capture );
-		$this->assertEqualsWithDelta( 32.0, $req['peak_mb'], 1e-9 );
+			$req = $this->captured_request( $capture );
+			$this->assertSame( (float) $peak, $req['peak_mb'], $terminal );
+		}
 	}
 
 	/**

@@ -29,6 +29,9 @@ use Newspack_Nodes\Topic_Node;
 #[CoversClass( Log_Manager::class )]
 class LogManagerTest extends TestCase {
 
+	/** A `/` rule writing every optional row, each line flushed as written. */
+	private const EVERY_ROW = [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'flush_every_line' => true, 'log_context' => true, 'log_cache' => true, 'log_resources' => true ];
+
 	/** @var array Original $_SERVER backup. */
 	private array $orig_server;
 
@@ -612,13 +615,14 @@ class LogManagerTest extends TestCase {
 	}
 
 	public function test_finish_writes_the_terminal_when_a_stop_arrives(): void {
-		// The cooperative stop lands on a WRITE, and finish() writes twice before
-		// its terminal. Landing on the memory line meant complete() was never
-		// reached — and `finished` latches on entry, so nothing retried it. The
-		// record then stranded in flight until eviction, on any job whose lock
-		// went away mid-request, not just a gyrobase render past its lease.
+		// The cooperative stop lands on a WRITE, and finish() writes the spans'
+		// closes and the rule's rows before its terminal. Landing on one of them
+		// must still reach complete() — `finished` latches on entry, so nothing
+		// retries it, and the record would strand in flight until eviction, on
+		// any job whose lock went away mid-request.
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW + [ 'custom_events' => [ 'work' ] ] ] );
 		$lm = $this->fresh_log_manager();
 		$lm->start( 'work' );
 		$lm->message( 'work', [ 'm' => 'before the stop' ] );
@@ -683,9 +687,10 @@ class LogManagerTest extends TestCase {
 	public function test_finish_writes_the_terminal_past_a_failed_drain_write_then_raises_it(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW ] );
 		$lm      = $this->fresh_log_manager();
 		$refusal = new \RuntimeException( 'firehose append refused 6612' );
-		self::refuse_entries( $lm, static fn ( array $entry ): bool => 'memory' === $entry['k'], $refusal );
+		self::refuse_entries( $lm, static fn ( array $entry ): bool => Log_Manager::RESOURCES === $entry['k'], $refusal );
 
 		$thrown = null;
 		try {
@@ -705,9 +710,10 @@ class LogManagerTest extends TestCase {
 	public function test_finish_keeps_an_abort_its_caller_declared_past_a_failed_drain_write(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW ] );
 		$lm      = $this->fresh_log_manager();
 		$refusal = new \RuntimeException( 'firehose append refused 6614' );
-		self::refuse_entries( $lm, static fn ( array $entry ): bool => 'memory' === $entry['k'], $refusal );
+		self::refuse_entries( $lm, static fn ( array $entry ): bool => Log_Manager::RESOURCES === $entry['k'], $refusal );
 		( new \ReflectionProperty( Log_Manager::class, 'aborted' ) )->setValue( $lm, true );
 
 		$thrown = null;
@@ -724,6 +730,7 @@ class LogManagerTest extends TestCase {
 	public function test_finish_raises_a_plain_stop_carrying_the_terminal_write_failure(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW ] );
 		$lm      = $this->fresh_log_manager();
 		$refusal = new \RuntimeException( 'terminal append refused 6613' );
 		self::refuse_entries( $lm, static fn ( array $entry ): bool => \str_starts_with( $entry['k'], Log_Manager::REQUEST_LABEL . ' (' ), $refusal );
@@ -772,6 +779,7 @@ class LogManagerTest extends TestCase {
 		// the first, which is the case a single guard around the drain misses.
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ self::EVERY_ROW + [ 'custom_events' => [ 'work' ] ] ] );
 		$lm = $this->fresh_log_manager();
 		$lm->start( 'work' );
 		$lm->message( 'work', [ 'm' => 'before the stop' ] );
@@ -786,7 +794,7 @@ class LogManagerTest extends TestCase {
 				++$calls;
 				// Un-throttle so the NEXT write checks too.
 				$last_pump->setValue( $framework, 0.0 );
-				return $calls < 3;
+				return $calls < 2;
 			}
 		);
 		$last_pump->setValue( $framework, 0.0 );
@@ -1584,25 +1592,137 @@ class LogManagerTest extends TestCase {
 		$this->assertTrue( $this->fresh_log_manager()->is_started(), "skip '/health?' must not skip a sub-path" );
 	}
 
-	public function test_log_memory_config_flag(): void {
+	/**
+	 * A rule naming no row writes four lines: the open's three and the
+	 * terminal, which carries the request's peak memory whatever it says.
+	 */
+	public function test_a_rule_naming_no_row_writes_four_lines(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		Config::reset();
+		require_once \dirname( __DIR__ ) . '/fixtures/object-cache/wp-includes/class-wp-object-cache.php';
+		$this->rmdir_recursive( self::test_dir() );
+		$saved                      = [ $GLOBALS['wp_object_cache'] ?? null, $GLOBALS['wp'] ?? null ];
+		$GLOBALS['wp_object_cache'] = new \WP_Object_Cache();
+		$GLOBALS['wp']              = (object) [ 'matched_rule' => 'kea-5821/?$', 'matched_query' => '' ];
+		$_SERVER['HTTP_USER_AGENT'] = 'kea-5821';
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ] ] );
 
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-memory' ) );
-		Config::reset();
+		$lm = $this->fresh_log_manager();
+		$lm->finish();
+		$peak = \round( \memory_get_peak_usage( true ) / 1048576, 2 );
+		[ $GLOBALS['wp_object_cache'], $GLOBALS['wp'] ] = $saved;
+		$entries = $this->written_entries();
 
-		$lm = Log_Manager::instance();
-		$this->assertTrue( $lm->is_started() );
+		$this->assertSame(
+			[ Log_Manager::REQUEST_START, Log_Manager::REQUEST_LINE, Log_Manager::ENVIRONMENT, Log_Manager::REQUEST_COMPLETE ],
+			\array_column( $entries, 'k' )
+		);
+		// JSON drops a whole float's fraction, so the wire may carry an int.
+		$this->assertSame( $peak, (float) ( self::last_entry_of( $entries, Log_Manager::REQUEST_COMPLETE )['peak_mb'] ?? 0 ) );
+	}
 
-		// Verify log_memory flag is set via reflection.
-		$ref = new \ReflectionProperty( Log_Manager::class, 'log_memory' );
-		$this->assertTrue( $ref->getValue( $lm ), 'log_memory should be true with logging-memory config' );
+	/** A worker's switchless record adds its type and partition to the four. */
+	public function test_a_workers_switchless_record_names_its_worker(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$_SERVER['HTTP_USER_AGENT']                 = 'kea-5821';
+		$_SERVER['NEWSPACK_NODES_WORKER_TYPE']      = 'kea-builder';
+		$_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] = '3';
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ] ] );
 
-		// start/complete with log_memory should add peak_mb to complete entry.
-		$lm->start( 'memory_test' );
-		$lm->complete( 'memory_test' );
-		$this->assertTrue( true );
+		$this->fresh_log_manager()->finish();
+
+		$this->assertSame(
+			[ Log_Manager::REQUEST_START, Log_Manager::WORKER_TYPE, Log_Manager::WORKER_PARTITION, Log_Manager::REQUEST_LINE, Log_Manager::ENVIRONMENT, Log_Manager::REQUEST_COMPLETE ],
+			\array_column( $this->written_entries(), 'k' )
+		);
+	}
+
+	/** An aborted record's terminal carries the peak too. */
+	public function test_an_aborted_terminal_carries_the_peak(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$lm = $this->fresh_log_manager();
+		( new \ReflectionProperty( Log_Manager::class, 'aborted' ) )->setValue( $lm, true );
+
+		$lm->finish();
+
+		$this->assertGreaterThan( 0, self::last_entry_of( $this->written_entries(), Log_Manager::REQUEST_ABORTED )['peak_mb'] ?? 0 );
+	}
+
+	/** The rule's `log_memory` puts the peak on every close, and only then. */
+	public function test_log_memory_is_the_rules_to_set(): void {
+		$this->require_config_or_skip();
+		foreach ( [ true, false ] as $on ) {
+			$this->rmdir_recursive( self::test_dir() );
+			$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'kea_5821' ], 'log_memory' => $on ] ] );
+			$lm = $this->fresh_log_manager();
+			$lm->start( 'kea_5821' );
+			$lm->complete( 'kea_5821' );
+			$lm->finish();
+
+			$close = self::last_entry_of( $this->written_entries(), 'kea_5821 (complete)' );
+			$this->assertSame( $on, \array_key_exists( 'peak_mb', $close ?? [] ), $on ? 'the rule asks for the peak' : 'a rule that says nothing gets none' );
+		}
+	}
+
+	/** The rule's `flush_every_line` drains every line to disk as it is written. */
+	public function test_flush_every_line_is_the_rules_to_set(): void {
+		$this->require_config_or_skip();
+		foreach ( [ true, false ] as $on ) {
+			$this->rmdir_recursive( self::test_dir() );
+			$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'flush_every_line' => $on ] ] );
+			$lm = $this->fresh_log_manager();
+			$lm->message( 'kea_5821', [ 'm' => 'no explicit flush' ] );
+
+			$this->assertSame( $on, [] !== self::entries_of( self::firehose_entries( self::test_dir() ), 'kea_5821' ), $on ? 'flushed as written' : 'buffered until the close' );
+			$lm->finish();
+		}
+	}
+
+	/**
+	 * A rule save reaches a running worker through the reload its fleet node
+	 * answers, and the worker's own open record follows the saved rule from
+	 * its next line, with no restart.
+	 */
+	public function test_a_reload_re_resolves_the_rule_an_open_record_follows(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::test_dir() );
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'flush_every_line' => false ] ] );
+		self::with_deferred_bootstrap(
+			function (): void {
+				$lm = $this->fresh_log_manager();
+				$lm->message( 'kea_6631_before', [ 'm' => 'buffered' ] );
+				$this->assertSame( [], self::entries_of( self::firehose_entries( self::test_dir() ), 'kea_6631_before' ), 'the saved rule does not flush' );
+
+				$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'flush_every_line' => true ] ] );
+				\Newspack_Nodes\Topology_Registry::invalidate_config_cache();
+				$lm->message( 'kea_6631_after', [ 'm' => 'flushed' ] );
+
+				$this->assertCount( 1, self::entries_of( self::firehose_entries( self::test_dir() ), 'kea_6631_after' ), 'the reloaded rule flushes the next line' );
+				$this->assertTrue( $lm->governing_rule()?->flush_every_line );
+				$lm->finish();
+			}
+		);
+	}
+
+	/** Each of the close's three optional rows is the rule's to ask for. */
+	public function test_context_cache_and_resources_rows_are_the_rules_to_set(): void {
+		$this->require_config_or_skip();
+		require_once \dirname( __DIR__ ) . '/fixtures/object-cache/wp-includes/class-wp-object-cache.php';
+		$rows  = [ 'log_context' => Log_Manager::REQUEST_CONTEXT, 'log_cache' => Log_Manager::OBJECT_CACHE, 'log_resources' => Log_Manager::RESOURCES ];
+		$saved = [ $GLOBALS['wp_object_cache'] ?? null, $GLOBALS['wp'] ?? null ];
+		foreach ( $rows as $knob => $category ) {
+			$this->rmdir_recursive( self::test_dir() );
+			$GLOBALS['wp_object_cache'] = new \WP_Object_Cache();
+			$GLOBALS['wp']              = (object) [ 'matched_rule' => 'kea-5821/?$', 'matched_query' => '' ];
+			$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', $knob => true ] ] );
+			$this->fresh_log_manager()->finish();
+
+			$kinds = \array_column( $this->written_entries(), 'k' );
+			$this->assertSame( Log_Manager::RESOURCES === $category ? 2 : 1, \count( \array_keys( $kinds, $category, true ) ), "{$knob} writes {$category}" );
+			$this->assertSame( [], \array_values( \array_intersect( $kinds, \array_diff( $rows, [ $category ] ) ) ), "{$knob} writes no other optional row" );
+		}
+		[ $GLOBALS['wp_object_cache'], $GLOBALS['wp'] ] = $saved;
 	}
 
 	// ── Real round-trip: write through Topic, read back from disk ──────────
@@ -2026,13 +2146,14 @@ class LogManagerTest extends TestCase {
 
 	// -- log_environment / log_resources / log_process -----------------------
 
-	public function test_finish_emits_environment_resources_memory_and_process_complete(): void {
+	public function test_finish_emits_environment_resources_and_process_complete(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::test_dir() );
 		Log_Manager::reset();
 		Config::reset();
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
+		$this->set_rules_option( [ self::EVERY_ROW + [ 'custom_events' => [ 'unit' ] ] ] );
 
 		$_SERVER['HTTP_REFERER']     = 'https://example.com/page?token=SHHH&id=ok';
 		$_SERVER['REMOTE_ADDR']      = '1.2.3.4';
@@ -2059,8 +2180,8 @@ class LogManagerTest extends TestCase {
 		// Its open and close samples read back through the one parser.
 		$this->assertGreaterThanOrEqual( 0.0, Log_Manager::cpu_between_samples( $entries )['cpu_ms'] ?? -1.0 );
 
-		// finish() emits k=memory and k=process (complete).
-		$this->assertContains( 'memory', $kinds, 'finish must emit a memory entry' );
+		// finish() writes no memory entry; the terminal carries the peak.
+		$this->assertNotContains( 'memory', $kinds, 'finish writes no memory entry' );
 		$this->assertContains( 'process (complete)', $kinds, 'finish must emit process (complete)' );
 
 		// The curated payload is a structured map under `m`.
@@ -3113,41 +3234,6 @@ class LogManagerTest extends TestCase {
 		$ref->setValue( $lm, [] );
 	}
 
-	// ── flush_every_line path ──────────────────────────────────────────────
-
-	/**
-	 * The `flush_every_line` config flag drains the Topic batch after every
-	 * `message()` — verified by checking the logging-enabled config sets it
-	 * AND a single message lands on disk before any explicit flush.
-	 */
-	public function test_message_flushes_immediately_when_flush_every_line_enabled(): void {
-		$this->require_config_or_skip();
-		$this->rmdir_recursive( self::test_dir() );
-		Log_Manager::reset();
-		Config::reset();
-		// logging-enabled config has flush_every_line=true.
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
-		Config::reset();
-
-		$lm = Log_Manager::instance();
-		$lm->start( 'init' );
-		$lm->message( 'visible_immediately', [ 'm' => 'no explicit flush' ] );
-
-		// Without finish() AND without explicit $lm->flush(), the entry must
-		// already be on disk because flush_every_line forced a drain.
-		$log_dir = self::test_dir() . '/logs/firehose.p0';
-		$this->assertDirectoryExists( $log_dir );
-		$files = \glob( $log_dir . '/*.log' );
-		$this->assertNotEmpty( $files, 'flush_every_line=true must drain on every message' );
-
-		// Verify the flush_every_line property was actually set from config.
-		$ref = new \ReflectionProperty( Log_Manager::class, 'flush_every_line' );
-		$this->assertTrue( $ref->getValue( $lm ) );
-
-		// Drain the singleton before tearDown.
-		$lm->finish();
-	}
-
 	// ── matches_url_filter: most-specific-rule-wins composition ─────────────
 
 	/**
@@ -3388,6 +3474,7 @@ class LogManagerTest extends TestCase {
 		$cache->cache_hits            = 4815;
 		$cache->cache_misses          = 162;
 		$GLOBALS['wp_object_cache'] = $cache;
+		$this->set_rules_option( [ self::EVERY_ROW ] );
 
 		$lm = $this->fresh_log_manager();
 		$lm->finish();
@@ -3406,6 +3493,7 @@ class LogManagerTest extends TestCase {
 		$this->rmdir_recursive( self::test_dir() );
 		$saved                        = $GLOBALS['wp_object_cache'] ?? null;
 		$GLOBALS['wp_object_cache'] = (object) [ 'cache_hits' => 4815, 'cache_misses' => 162 ];
+		$this->set_rules_option( [ self::EVERY_ROW ] );
 
 		$lm = $this->fresh_log_manager();
 		$lm->finish();
@@ -3416,8 +3504,8 @@ class LogManagerTest extends TestCase {
 
 	/**
 	 * Each producer of the close runs on its own: a context that throws as it
-	 * is built still leaves the cache row, memory, resources and the
-	 * terminal, and the throw escapes after them.
+	 * is built still leaves the cache row, resources and the terminal, and
+	 * the throw escapes after them.
 	 */
 	public function test_a_throwing_context_still_closes_the_record(): void {
 		$this->require_config_or_skip();
@@ -3433,6 +3521,7 @@ class LogManagerTest extends TestCase {
 				throw new \RuntimeException( "kea-7746 {$name} unreadable" );
 			}
 		};
+		$this->set_rules_option( [ self::EVERY_ROW ] );
 
 		$lm     = $this->fresh_log_manager();
 		$thrown = null;
@@ -3446,14 +3535,14 @@ class LogManagerTest extends TestCase {
 
 		$this->assertSame( 'kea-7746 matched_query unreadable', $thrown?->getMessage() );
 		$this->assertSame(
-			[ Log_Manager::OBJECT_CACHE, Log_Manager::MEMORY, Log_Manager::RESOURCES, Log_Manager::REQUEST_COMPLETE ],
-			\array_slice( \array_column( $this->written_entries(), 'k' ), -4 )
+			[ Log_Manager::OBJECT_CACHE, Log_Manager::RESOURCES, Log_Manager::REQUEST_COMPLETE ],
+			\array_slice( \array_column( $this->written_entries(), 'k' ), -3 )
 		);
 	}
 
 	/**
 	 * A record ends with the spans left open, then what WordPress made of the
-	 * request, the object cache's row, memory, resources and the terminal.
+	 * request, the object cache's row, resources and the terminal.
 	 */
 	public function test_the_record_closes_in_its_fixed_order(): void {
 		$this->require_config_or_skip();
@@ -3462,7 +3551,7 @@ class LogManagerTest extends TestCase {
 		$saved                      = [ $GLOBALS['wp_object_cache'] ?? null, $GLOBALS['wp'] ?? null ];
 		$GLOBALS['wp_object_cache'] = new \WP_Object_Cache();
 		$GLOBALS['wp']              = (object) [ 'matched_rule' => 'kea-7746/?$', 'matched_query' => '' ];
-		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'weka' ] ] ] );
+		$this->set_rules_option( [ self::EVERY_ROW + [ 'custom_events' => [ 'weka' ] ] ] );
 
 		$lm = $this->fresh_log_manager();
 		$lm->start( 'weka' );
@@ -3470,8 +3559,8 @@ class LogManagerTest extends TestCase {
 		[ $GLOBALS['wp_object_cache'], $GLOBALS['wp'] ] = $saved;
 
 		$this->assertSame(
-			[ 'weka (complete)', Log_Manager::REQUEST_CONTEXT, Log_Manager::OBJECT_CACHE, Log_Manager::MEMORY, Log_Manager::RESOURCES, Log_Manager::REQUEST_COMPLETE ],
-			\array_slice( \array_column( $this->written_entries(), 'k' ), -6 )
+			[ 'weka (complete)', Log_Manager::REQUEST_CONTEXT, Log_Manager::OBJECT_CACHE, Log_Manager::RESOURCES, Log_Manager::REQUEST_COMPLETE ],
+			\array_slice( \array_column( $this->written_entries(), 'k' ), -5 )
 		);
 	}
 

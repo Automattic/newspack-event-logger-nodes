@@ -19,6 +19,7 @@ class LogManagerJobContextTest extends TestCase {
 		// Listeners registered via `\add_action` in a test leak across tests
 		// through the bootstrap's global `_wp_actions` shim otherwise.
 		$GLOBALS['_wp_actions'] = [];
+		unset( $GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
 		Log_Manager::reset();
 		\Newspack_Event_Logger_Nodes\Config::reset();
@@ -256,6 +257,7 @@ class LogManagerJobContextTest extends TestCase {
 	 */
 	public function test_a_jobs_object_cache_row_is_what_moved_while_it_ran(): void {
 		$this->arrange_logging();
+		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] = [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'log_cache' => true ] ];
 		require_once \dirname( __DIR__ ) . '/fixtures/object-cache/wp-includes/class-wp-object-cache.php';
 		$saved               = $GLOBALS['wp_object_cache'] ?? null;
 		$cache               = new \WP_Object_Cache();
@@ -272,6 +274,76 @@ class LogManagerJobContextTest extends TestCase {
 
 		$rows = self::entries_of( self::firehose_entries( self::test_dir() ), Log_Manager::OBJECT_CACHE );
 		$this->assertSame( [ '4815 hit, 162 miss' ], \array_column( $rows, 'm' ) );
+	}
+
+	/**
+	 * A job's record follows the `/jobs/` rule and the enclosing request's
+	 * follows its own, each switch read from the rule governing that record.
+	 */
+	public function test_each_record_follows_its_own_rules_switches(): void {
+		$this->arrange_logging();
+		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] = [
+			[ 'id' => 'page', 'pattern' => '/kea-5821', 'action' => 'log', 'custom_events' => [ 'kea_work' ], 'log_resources' => true, 'log_memory' => false ],
+			[ 'id' => 'jobs', 'pattern' => '/jobs/', 'action' => 'log', 'custom_events' => [ 'kea_work' ], 'log_resources' => false, 'log_memory' => true ],
+		];
+		$server                 = $_SERVER;
+		$_SERVER['REQUEST_URI'] = '/kea-5821';
+		unset( $_SERVER['UNIQUE_ID'], $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
+		try {
+			$page = Log_Manager::instance();
+			$this->assertTrue( $page->is_started(), 'the page rule logs the request' );
+			$page->start( 'kea_work' );
+			$page->complete( 'kea_work' );
+			Log_Manager::begin_job_context( 'kea_handler', 'run-5821' );
+			$job = Log_Manager::instance();
+			$job->start( 'kea_work' );
+			$job->complete( 'kea_work' );
+			Log_Manager::end_job_context();
+			$page->finish();
+		} finally {
+			$_SERVER = $server;
+		}
+
+		$entries = self::firehose_entries( self::test_dir(), true );
+		$by_rid  = [];
+		foreach ( $entries as $entry ) {
+			$by_rid[ $entry['rid'] ][] = $entry;
+		}
+		$this->assertCount( 2, $by_rid, 'two records' );
+		$records = \array_values( $by_rid );
+		$is_page = static fn ( array $record ): bool => \str_contains( (string) ( self::last_entry_of( $record, 'request' )['m'] ?? '' ), '/kea-5821' );
+		[ $page_record ] = \array_values( \array_filter( $records, $is_page ) );
+		[ $job_record ]  = \array_values( \array_filter( $records, static fn ( array $r ): bool => ! $is_page( $r ) ) );
+
+		$this->assertCount( 2, self::entries_of( $page_record, 'resources' ), 'the page rule samples resources' );
+		$this->assertArrayNotHasKey( 'peak_mb', self::last_entry_of( $page_record, 'kea_work (complete)' ) ?? [], 'the page rule puts no peak on spans' );
+		$this->assertSame( [], self::entries_of( $job_record, 'resources' ), 'the job rule samples none' );
+		$this->assertArrayHasKey( 'peak_mb', self::last_entry_of( $job_record, 'kea_work (complete)' ) ?? [], 'the job rule puts the peak on spans' );
+	}
+
+	/**
+	 * A job's switchless record: its worker's type, no partition, and the
+	 * message that caused it between the request line and the environment.
+	 */
+	public function test_a_jobs_switchless_record_names_its_worker_and_its_cause(): void {
+		$this->arrange_logging();
+		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] = [ [ 'id' => 'jobs', 'pattern' => '/jobs/', 'action' => 'log' ] ];
+		$server                                     = $_SERVER;
+		$_SERVER['HTTP_USER_AGENT']                 = 'kea-5821';
+		$_SERVER['NEWSPACK_NODES_WORKER_TYPE']      = 'kea-worker';
+		$_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] = '2';
+		try {
+			Log_Manager::begin_job_context( 'kea_handler', 'run-5822', [ \Newspack_Nodes\Message::FROM => 'jobs.p2', \Newspack_Nodes\Message::ID => '1:2:3', \Newspack_Nodes\Message::KEY => 'kea' ] );
+			Log_Manager::instance();
+			Log_Manager::end_job_context();
+		} finally {
+			$_SERVER = $server;
+		}
+
+		$this->assertSame(
+			[ Log_Manager::REQUEST_START, Log_Manager::WORKER_TYPE, Log_Manager::REQUEST_LINE, Log_Manager::JOB_MESSAGE, Log_Manager::ENVIRONMENT, Log_Manager::REQUEST_COMPLETE ],
+			\array_column( self::firehose_entries( self::test_dir() ), 'k' )
+		);
 	}
 
 	/** A job context is what `in_job_context()` reports, and only while open. */

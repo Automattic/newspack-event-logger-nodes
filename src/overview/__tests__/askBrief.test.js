@@ -1014,13 +1014,19 @@ test( 'a rule says what it logs beyond hooks, so an absence reads right', () => 
 			log_queries: true,
 			log_http: false,
 			log_plugin_loads: true,
+			log_memory: true,
+			log_context: false,
+			log_cache: true,
+			log_resources: true,
 			trace_hooks: false,
 			trace_callers: 3,
 		},
 		caveat: 'c',
 	} );
 
-	expect( md ).toContain( '**logs:** queries, plugin loads' );
+	expect( md ).toContain(
+		'**logs:** queries, plugin loads, memory, cache, resources'
+	);
 	expect( md ).toContain( '**traces:** callers ×3' );
 	expect( md ).not.toContain( 'HTTP' );
 } );

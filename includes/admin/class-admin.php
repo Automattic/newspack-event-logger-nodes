@@ -3,15 +3,15 @@
  * Admin: application-side WP-Settings-API surface and per-option granular
  * worker-restart on save.
  *
- * Renders exactly three checkboxes, the only application options with a
- * settings field: `enable_logging`, `log_memory`, and `flush_every_line`. The
- * four remaining keys `Settings_Schema` declares — `rules`,
- * `hook_start_priority`, `custom_colors` and `recommended_log_events` — are
- * overlay-only (`ui: false`): Config loads them, and this class neither
- * renders nor resets them.
+ * Renders exactly one checkbox, the only application option with a settings
+ * field: `enable_logging`. The four remaining keys `Settings_Schema` declares
+ * — `rules`, `hook_start_priority`, `custom_colors` and
+ * `recommended_log_events` — are overlay-only (`ui: false`): Config loads
+ * them, and this class neither renders nor resets them.
  *
- * URL filters, hook lists, and auto-tune thresholds are per-rule fields in the
- * `newspack_event_logger_nodes_rules` option, not global settings. That option
+ * URL filters, hook lists, auto-tune thresholds and the diagnostic switches
+ * are per-rule fields in the `newspack_event_logger_nodes_rules` option, not
+ * global settings. That option
  * is edited by the React ruleset editor mounted below the form, through the
  * `rules` service CI — never by the Settings API.
  *
@@ -127,22 +127,6 @@ class Admin {
 			'enable_logging',
 			\__( 'Enable event logging', 'newspack-event-logger-nodes' ),
 			1
-		);
-	}
-
-	/** Peak-memory annotation on every completed request. Ships off. */
-	public static function log_memory_callback(): void {
-		self::render_checkbox(
-			'log_memory',
-			\__( 'Append peak_mb to every complete() log entry so memory growth is visible across the request timeline.', 'newspack-event-logger-nodes' )
-		);
-	}
-
-	/** Unbuffered firehose writes — crash survivability over throughput. Ships off. */
-	public static function flush_every_line_callback(): void {
-		self::render_checkbox(
-			'flush_every_line',
-			\__( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' )
 		);
 	}
 
@@ -439,11 +423,6 @@ class Admin {
 	 */
 	public static function general_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Enable or disable event logging.', 'newspack-event-logger-nodes' ) . '</p>';
-	}
-
-	/** Intro for the Debugging section: `log_memory` + `flush_every_line`. */
-	public static function debugging_section_callback(): void {
-		echo '<p>' . \esc_html__( 'Diagnostic toggles for tracing OOMs and mysterious slowness. Both add overhead — disable when not needed.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
 	/**

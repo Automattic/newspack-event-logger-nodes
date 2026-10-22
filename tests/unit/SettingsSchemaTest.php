@@ -22,18 +22,16 @@ class SettingsSchemaTest extends TestCase {
 	/**
 	 * The unprefixed overlay key-set. The seven per-URL settings
 	 * (log_urls/skip_urls/log_events/custom_events/significant_events/
-	 * auto_disable_threshold/auto_protect_time_threshold) are per-rule fields,
-	 * not keys.
+	 * auto_disable_threshold/auto_protect_time_threshold) and the debugging
+	 * switches (log_memory/flush_every_line) are per-rule fields, not keys.
 	 *
-	 * Seven keys, because the schema declares every key the application has:
+	 * Five keys, because the schema declares every key the application has:
 	 * `custom_colors` and `recommended_log_events` carry no
 	 * option and no settings field, but a key declared only by the config file
 	 * is null on every install whose file predates it.
 	 */
 	private const OVERLAY_KEYS = [
 		'enable_logging',
-		'log_memory',
-		'flush_every_line',
 		'hook_start_priority',
 		// The per-URL ruleset overlays the config file (so `$config['rules']`
 		// can seed it) but is not a settings-form field — the rules editor
@@ -46,8 +44,6 @@ class SettingsSchemaTest extends TestCase {
 	/** The prefixed settings-form option names. */
 	private const OPTION_NAMES = [
 		'newspack_event_logger_nodes_enable_logging',
-		'newspack_event_logger_nodes_log_memory',
-		'newspack_event_logger_nodes_flush_every_line',
 	];
 
 	/**

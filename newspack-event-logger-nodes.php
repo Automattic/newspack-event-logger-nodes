@@ -114,6 +114,8 @@ function newspack_event_logger_nodes_boot(): void {
 		\Newspack_Nodes\Config::RESET_ACTION,
 		[ \Newspack_Event_Logger_Nodes\Config::class, 'reset_local_cache' ]
 	);
+	// After the cache drops, so the open records re-read the saved ruleset.
+	\add_action( \Newspack_Nodes\Config::RESET_ACTION, [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'reload_rules' ], 11 );
 
 	// The prefetch job declines before the context filter opens one for it.
 	\add_filter( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\App\Overview_Prefetch::class, 'admit' ], 5, 4 );

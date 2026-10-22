@@ -2,10 +2,11 @@
  * Peak memory across one request, on the flame graph's own time axis.
  *
  * `Log_Manager` appends `peak_mb` to every `complete()` entry when the
- * `log_memory` setting is on, and the flame's X axis is already milliseconds
- * from the request's start — so the two line up over the same request without
- * either knowing about the other. The chart draws nothing when no entry
- * carried a reading, which is what "the setting is off" looks like from here.
+ * governing rule's `log_memory` is on, and the flame's X axis is already
+ * milliseconds from the request's start — so the two line up over the same
+ * request without either knowing about the other. With it off only the
+ * terminal carries a reading, and one reading draws nothing, which is what
+ * "the switch is off" looks like from here.
  *
  * What it plots is `memory_get_peak_usage( true )`, a HIGH-WATER MARK: it never
  * falls, so the shape is a staircase and a step says where memory was CLAIMED,

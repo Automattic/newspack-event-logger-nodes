@@ -182,19 +182,6 @@ final class ConfigReloadSignalTest extends TestCase {
 
 	// ---- performance CI `set` --------------------------------------------
 
-	public function test_settings_set_verb_asks_every_live_worker_to_re_read(): void {
-		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_log_memory 1'
-		);
-
-		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
-		$this->assertFleetAskedToReload();
-	}
-
 	public function test_settings_set_verb_asks_every_live_worker_to_re_read_a_synced_ruleset(): void {
 		// The ruleset branch re-tiers through Rule_Set::save() rather than a raw
 		// update_option, so it inherits that writer's signal.
@@ -215,18 +202,22 @@ final class ConfigReloadSignalTest extends TestCase {
 		// changed, and a reload is not free: it fires Config::RESET_ACTION on
 		// every worker, which re-globs and re-parses every .tsl to reach the
 		// identical answer. Once per sweep, per worker, forever.
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = true;
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [ ( new Rule( Rule_Set::id_for( '/tarot/' ), '/tarot/', Rule::ACTION_LOG, hooks: [ 'init' ], log_cache: true ) )->to_array() ];
 
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_log_memory 1'
-		);
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', $this->ruleset_push() );
 
-		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_log_memory', 'updated' => false ], $result );
+		$this->assertSame( [ 'option' => Rule_Set::OPTION_RULES, 'updated' => false ], $result );
 		$this->assertFleetNotAskedToReload();
+	}
+
+	/**
+	 * A `set` pushing one `/tarot/` log rule, as a hub sends the ruleset.
+	 *
+	 * @return list<string>
+	 */
+	private function ruleset_push(): array {
+		$rule = ( new Rule( Rule_Set::id_for( '/tarot/' ), '/tarot/', Rule::ACTION_LOG, hooks: [ 'init' ], log_cache: true ) )->to_array();
+		return Command_Args::format( [ Rule_Set::OPTION_RULES, (string) \json_encode( [ $rule ] ) ], [] );
 	}
 
 	/**
@@ -237,16 +228,10 @@ final class ConfigReloadSignalTest extends TestCase {
 	public function test_settings_set_verb_writes_the_option_and_refuses_with_an_unresolvable_locks_directory(): void {
 		$this->break_locks_directory();
 
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_log_memory 1'
-		);
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', $this->ruleset_push() );
 
 		$this->assertIsString( $result, 'the verb answers with its error, not a result' );
-		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+		$this->assertSame( '/tarot/', $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0]['pattern'] ?? null );
 	}
 
 	/**
@@ -258,12 +243,7 @@ final class ConfigReloadSignalTest extends TestCase {
 		\symlink( "{$this->base_dir}/elsewhere-5521", "{$this->base_dir}/locks" );
 
 		try {
-			$result = VerbHarness::fire(
-				new Performance_CI_Node(),
-				'performance',
-				'set',
-				'newspack_event_logger_nodes_log_memory 1'
-			);
+			$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', $this->ruleset_push() );
 		} finally {
 			\unlink( "{$this->base_dir}/locks" );
 		}

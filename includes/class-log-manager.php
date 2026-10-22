@@ -85,17 +85,24 @@ class Log_Manager {
 	/** Category of the line naming the request's method and URL. */
 	public const REQUEST_LINE = 'request';
 
+	/** Category of a job context's entry naming the record that caused it. */
+	public const JOB_MESSAGE = 'message';
+
 	/** Category of the getrusage() sample written at the open and at the close. */
 	public const RESOURCES = 'resources';
-
-	/** Category of the memory high-water entry the close writes. */
-	public const MEMORY = 'memory';
 
 	/** Category of the close's object-cache row; its `m` is `Object_Cache_Counts::row()`. */
 	public const OBJECT_CACHE = 'objectcache';
 
 	/** Category of the close's entry whose `m` is `App\Request_Context`'s map. */
 	public const REQUEST_CONTEXT = 'request_context';
+
+	/** The rows the close writes between the spans' drain and the terminal. */
+	public const CLOSE_ROWS = [
+		self::REQUEST_CONTEXT => true,
+		self::OBJECT_CACHE    => true,
+		self::RESOURCES       => true,
+	];
 
 	/** The `m` of a `(complete)` closing a span its caller never closed. */
 	public const ORPHANED = '(orphaned)';
@@ -268,13 +275,8 @@ class Log_Manager {
 	/** @var bool This context ended without its job completing (cooperative stop). */
 	private bool $aborted = false;
 
-	/** @var bool Flush write buffer after every log line (survives OOM/crash). */
-	private $flush_every_line = false;
 	/** @var int The next line's `n` field, 1-based. */
 	private $line_number = 1;
-
-	/** @var bool Append peak_mb to every complete() entry for memory profiling. */
-	private $log_memory = false;
 
 	/** @var Rule|null The rule governing this request (null ⇒ no match ⇒ skip). */
 	private ?Rule $matched_rule = null;
@@ -310,7 +312,8 @@ class Log_Manager {
 
 	/**
 	 * The `Object_Cache_Counts::mark()` this context's `objectcache` row
-	 * counts from; null when the cache is not one it knows.
+	 * counts from; null when the cache is not one it knows, or when the
+	 * governing rule does not say `log_cache`.
 	 *
 	 * @var array{kind: string, counters: array<string,int>, positions: array<array-key,int>}|null
 	 */
@@ -361,8 +364,6 @@ class Log_Manager {
 		if ( empty( $this->config['enable_logging'] ) ) {
 			return;
 		}
-		$this->log_memory       = ! empty( $this->config['log_memory'] );
-		$this->flush_every_line = ! empty( $this->config['flush_every_line'] );
 		if ( \function_exists( 'posix_geteuid' ) && 0 === \posix_geteuid() ) {
 			return;
 		}
@@ -390,8 +391,9 @@ class Log_Manager {
 
 	/**
 	 * Close the request: drain the timer stack, then log the request context,
-	 * the object cache's row, memory, resources, and the final
-	 * `process (complete)` line before flushing the Topic.
+	 * the object cache's row and resources where the governing rule asks for
+	 * them, and the final `process (complete)` line, which always carries the
+	 * peak memory, before flushing the Topic.
 	 *
 	 * Registered as a shutdown function by the constructor, so it also runs
 	 * after a fatal. When error_get_last() reports one of FATAL_TYPES, the
@@ -449,7 +451,7 @@ class Log_Manager {
 		}
 		$this->complete(
 			self::REQUEST_LABEL,
-			\array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ),
+			\array_merge( [ 'status_code' => \http_response_code() ?: 0, 'peak_mb' => self::peak_mb() ], $complete_extra ),
 			$this->aborted ? 'aborted' : 'complete'
 		);
 		$this->topic?->flush();
@@ -515,9 +517,10 @@ class Log_Manager {
 
 	/**
 	 * Everything the record carries before its terminal: the spans left open,
-	 * what WordPress made of a web request, the object cache's row, this
-	 * request's memory high-water mark, and its resource usage. Each is
-	 * attempted whatever an earlier one threw.
+	 * then, as the governing rule's `log_context`, `log_cache` and
+	 * `log_resources` ask, what WordPress made of a web request, the object
+	 * cache's row and its resource usage. Each is attempted whatever an
+	 * earlier one threw.
 	 *
 	 * @return list<\Throwable> What the producers threw, in order.
 	 */
@@ -531,7 +534,7 @@ class Log_Manager {
 			},
 			function (): void {
 				// A job context's record is not the request WordPress routed.
-				$context = [] === self::$job_stack ? App\Request_Context::entry() : [];
+				$context = [] === self::$job_stack && $this->matched_rule?->log_context ? App\Request_Context::entry() : [];
 				if ( [] !== $context ) {
 					$this->message( self::REQUEST_CONTEXT, [ 'm' => $context ] );
 				}
@@ -543,12 +546,6 @@ class Log_Manager {
 					$this->message( self::OBJECT_CACHE, [ 'm' => $counts, 'keep' => 1 ] );
 				}
 			},
-			fn () => $this->message( self::MEMORY, [
-				'm' => [
-					'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-					'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-				],
-			] ),
 			$this->log_resources( ... )
 		);
 	}
@@ -654,11 +651,16 @@ class Log_Manager {
 			$data += \array_intersect_key( $match, [ 'keep' => true ] );
 			$data['duration_ms'] = \max( 0, ( $now - $start ) / self::NS_PER_MS );
 			$this->charge( $label, $data['duration_ms'], $match['inner'] ?? 0.0 );
-			if ( $this->log_memory ) {
-				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
+			if ( $this->matched_rule?->log_memory ) {
+				$data['peak_mb'] ??= self::peak_mb();
 			}
 			$this->message( "{$label} ({$suffix})", $data, $shaped );
 		}
+	}
+
+	/** The process's memory high-water mark so far, in MB to two places. */
+	private static function peak_mb(): float {
+		return \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
 	}
 
 	/**
@@ -1295,6 +1297,28 @@ class Log_Manager {
 	}
 
 	/**
+	 * `Newspack_Nodes\Config::RESET_ACTION` listener: the reload a rule save
+	 * asks every worker for. Each open context, the suspended ones included,
+	 * re-resolves the rule governing its URL from the saved ruleset, so a
+	 * running worker's own record follows the save from its next line. A
+	 * context that never built a matcher — logging off, or root — stays inert.
+	 */
+	public static function reload_rules(): void {
+		$contexts = \array_filter(
+			[ ...self::$context_stack, self::$instance ],
+			static fn ( ?self $lm ): bool => null !== $lm?->matcher
+		);
+		if ( [] === $contexts ) {
+			return;
+		}
+		$matcher = Rule_Set::load()->matcher();
+		foreach ( $contexts as $lm ) {
+			$lm->matcher = $matcher;
+			$lm->matches_url_filter( $lm->request_url );
+		}
+	}
+
+	/**
 	 * The rule governing this request (null ⇒ no match ⇒ skip).
 	 *
 	 * @api Used by external plugins.
@@ -1576,7 +1600,8 @@ class Log_Manager {
 	}
 
 	/**
-	 * Open the request: `process (start)`, `request`, environment, resources.
+	 * Open the request: `process (start)`, `request`, environment, and the
+	 * resources sample a rule's `log_resources` asks for.
 	 *
 	 * The `process` frame this pushes is the root of the timer stack — finish()
 	 * closes it last, and every orphaned frame above it drains first.
@@ -1595,7 +1620,7 @@ class Log_Manager {
 		$this->message( self::REQUEST_START, $process_data );
 		$this->times[] = [ 'label' => self::REQUEST_LABEL, 'ts' => $process_hr, 'at' => $this->request_ts ?? Core::$now ];
 		// A web request is its process; a job counts from its own start.
-		$this->cache_from = Object_Cache_Counts::mark( [] === self::$job_stack );
+		$this->cache_from = $this->matched_rule?->log_cache ? Object_Cache_Counts::mark( [] === self::$job_stack ) : null;
 		$this->log_worker();
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- CONTROL_CHARS stripped, as REQUEST_URI is.
@@ -1608,7 +1633,7 @@ class Log_Manager {
 		$job_message = self::job_message();
 		if ( [] !== $job_message ) {
 			$this->message(
-				'message',
+				self::JOB_MESSAGE,
 				[
 					'm' => [
 						'FROM' => Core::as_string( $job_message[ \Newspack_Nodes\Message::FROM ] ?? '', '' ),
@@ -1626,9 +1651,13 @@ class Log_Manager {
 	/**
 	 * Emit a `resources` line from getrusage(): CPU time, faults, I/O blocks,
 	 * signals, context switches. Called at request open and again at finish, so
-	 * a reader can difference the two. Silent when getrusage() is unavailable.
+	 * a reader can difference the two. Silent unless the governing rule says
+	 * `log_resources`, and when getrusage() is unavailable.
 	 */
 	private function log_resources(): void {
+		if ( ! $this->matched_rule?->log_resources ) {
+			return;
+		}
 		$r = \getrusage();
 		if ( ! $r ) {
 			return;
@@ -1771,7 +1800,7 @@ class Log_Manager {
 		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		$this->topic->fill( $message );
 
-		if ( $this->flush_every_line ) {
+		if ( $this->matched_rule?->flush_every_line ) {
 			$this->topic->flush();
 		}
 

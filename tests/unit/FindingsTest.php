@@ -162,6 +162,58 @@ class FindingsTest extends TestCase {
 		$this->assertStringNotContainsString( 'resources', $found['title'] );
 	}
 
+	/**
+	 * A rule without `log_resources` opens its record with no sample, so the
+	 * opening rows end at the environment, and silence after it places no
+	 * stop either.
+	 */
+	public function test_opening_rows_without_a_sample_end_at_the_environment(): void {
+		$record                = $this->timed_out_record();
+		$record['entries']     = [
+			...\array_slice( $record['entries'], 0, 2 ),
+			[ 'n' => 3, 'ts' => 6000.003, 'k' => 'environment_v3', 'm' => [ 'HTTP_USER_AGENT' => 'kea-5821' ] ],
+		];
+		$record['last_log_ts'] = 6000.268;
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'stopped' );
+
+		$this->assertStringContainsString( 'unknown', $found['title'] );
+		$this->assertArrayNotHasKey( 'last_entry', $found['metric'] );
+	}
+
+	/**
+	 * A job context names its causing record between the request line and the
+	 * environment, and gyrobase names its publication and database there: each
+	 * is an opening row, so silence after the environment places no stop.
+	 *
+	 * @return array<string,array{0:list<array<string,mixed>>}>
+	 */
+	public static function openings_without_work(): array {
+		return [
+			'php job'  => [ [ [ 'k' => 'message', 'm' => [ 'FROM' => 'kea-intake', 'ID' => '3:0:88', 'KEY' => 'kea' ] ] ] ],
+			'gyrobase' => [ [ [ 'k' => 'publication', 'm' => 'kea' ], [ 'k' => 'database (info)', 'm' => 'kea-db' ] ] ],
+		];
+	}
+
+	/**
+	 * @param list<array<string,mixed>> $between The rows a producer writes between `request` and `environment_v3`.
+	 */
+	#[DataProvider( 'openings_without_work' )]
+	public function test_rows_between_the_request_and_the_environment_open_the_record( array $between ): void {
+		$record            = $this->timed_out_record();
+		$entries           = \array_slice( $record['entries'], 0, 2 );
+		foreach ( $between as $i => $row ) {
+			$entries[] = [ 'n' => 3 + $i, 'ts' => 6000.0015 ] + $row;
+		}
+		$entries[]             = [ 'n' => 9, 'ts' => 6000.003, 'k' => 'environment_v3', 'm' => [ 'HTTP_USER_AGENT' => 'kea-5821' ] ];
+		$record['entries']     = $entries;
+		$record['last_log_ts'] = 6000.300;
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'stopped' );
+
+		$this->assertStringContainsString( 'unknown', $found['title'] );
+	}
+
 	/** Rows past the opening ones place the stop, whatever the rule binds. */
 	public function test_a_hookless_rules_record_still_places_its_stop(): void {
 		$found = $this->of_kind(
@@ -224,14 +276,14 @@ class FindingsTest extends TestCase {
 		$record['duration_ms']  = 912.0;
 		$record['entries']      = [
 			[ 'n' => 1, 'ts' => 6000.000, 'k' => 'process (start)', 'm' => '' ],
-			[ 'n' => 2, 'ts' => 6000.002, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
-			[ 'n' => 3, 'ts' => 6000.100, 'k' => 'job (start)', 'l' => 'cache_cozy', 'm' => '' ],
-			[ 'n' => 4, 'ts' => 6000.310, 'k' => 'http (start)', 'l' => 'Cache_Cozy::warm', 'm' => 'https://example.test/' ],
-			[ 'n' => 5, 'ts' => 6000.911, 'k' => 'http (complete)', 'm' => '(orphaned)', 'duration_ms' => 601.0 ],
-			[ 'n' => 6, 'ts' => 6000.911, 'k' => 'job (complete)', 'm' => '(orphaned)', 'duration_ms' => 811.0 ],
-			[ 'n' => 7, 'ts' => 6000.911, 'k' => 'memory', 'm' => [ 'peak' => '40MB' ] ],
+			[ 'n' => 2, 'ts' => 6000.001, 'k' => 'request', 'm' => 'POST https://kea.test/jobs/cache_cozy' ],
+			[ 'n' => 3, 'ts' => 6000.002, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 4, 'ts' => 6000.100, 'k' => 'job (start)', 'l' => 'cache_cozy', 'm' => '' ],
+			[ 'n' => 5, 'ts' => 6000.310, 'k' => 'http (start)', 'l' => 'Cache_Cozy::warm', 'm' => 'https://example.test/' ],
+			[ 'n' => 6, 'ts' => 6000.911, 'k' => 'http (complete)', 'm' => '(orphaned)', 'duration_ms' => 601.0 ],
+			[ 'n' => 7, 'ts' => 6000.911, 'k' => 'job (complete)', 'm' => '(orphaned)', 'duration_ms' => 811.0 ],
 			[ 'n' => 8, 'ts' => 6000.912, 'k' => 'resources', 'm' => 'utime => 0.090000, stime => 0.020000' ],
-			[ 'n' => 9, 'ts' => 6000.912, 'k' => 'process (aborted)', 'm' => '' ],
+			[ 'n' => 9, 'ts' => 6000.912, 'k' => 'process (aborted)', 'm' => '', 'peak_mb' => 40.0 ],
 		];
 		$record['last_log_ts']  = 6000.912;
 
@@ -242,6 +294,37 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 'job: cache_cozy › http: Cache_Cozy::warm', $found['metric']['open'] );
 		$this->assertSame( 912.0, $found['metric']['aborted_after_ms'] );
 		$this->assertArrayNotHasKey( 'evicted_after_ms', $found['metric'] );
+	}
+
+	/**
+	 * Under `log_cache` and `log_context` the close writes its context and
+	 * cache rows ahead of `resources`, and both are drain: the stop sits at
+	 * the last entry the request's own work wrote.
+	 */
+	public function test_an_aborted_records_close_rows_are_drain(): void {
+		$record                 = $this->loaded_record();
+		$record['error_status'] = 'A';
+		$record['timestamp']    = 7000.0;
+		$record['duration_ms']  = 644.0;
+		$record['entries']      = [
+			[ 'n' => 1, 'ts' => 7000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 7000.001, 'k' => 'request', 'm' => 'GET https://kea.test/kea-5821' ],
+			[ 'n' => 3, 'ts' => 7000.002, 'k' => 'environment_v3', 'm' => [ 'HTTP_USER_AGENT' => 'kea-5821' ] ],
+			[ 'n' => 4, 'ts' => 7000.003, 'k' => 'resources', 'm' => 'utime => 0.040000, stime => 0.010000' ],
+			[ 'n' => 5, 'ts' => 7000.120, 'k' => 'wp_loaded hook (start)', 'm' => '' ],
+			[ 'n' => 6, 'ts' => 7000.643, 'k' => 'wp_loaded hook (complete)', 'm' => '(orphaned)', 'duration_ms' => 523.0 ],
+			[ 'n' => 7, 'ts' => 7000.643, 'k' => 'request_context', 'm' => [ 'template' => 'themes/kea/index.php' ] ],
+			[ 'n' => 8, 'ts' => 7000.643, 'k' => 'objectcache', 'm' => '512 hit, 9 miss', 'keep' => 1 ],
+			[ 'n' => 9, 'ts' => 7000.644, 'k' => 'resources', 'm' => 'utime => 0.310000, stime => 0.020000' ],
+			[ 'n' => 10, 'ts' => 7000.644, 'k' => 'process (aborted)', 'm' => '', 'peak_mb' => 38.5 ],
+		];
+		$record['last_log_ts']  = 7000.644;
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'stopped' );
+
+		$this->assertSame( 'wp_loaded hook (start)', $found['metric']['last_entry'] );
+		$this->assertEqualsWithDelta( 120.0, $found['metric']['last_entry_ms'], 1e-6 );
+		$this->assertSame( 'wp_loaded hook', $found['metric']['open'] ?? null );
 	}
 
 	public function test_a_record_that_finished_has_no_stopped_finding(): void {
@@ -2477,6 +2560,18 @@ class FindingsTest extends TestCase {
 
 		$this->assertStringNotContainsString( 'every outbound HTTP request', $caveat );
 		$this->assertStringContainsString( 'outbound HTTP requests under the rule\'s HTTP logging', $caveat );
+	}
+
+	/**
+	 * The PHP logger writes CPU samples, the cache row and the request context
+	 * only where the rule asks; gyrobase's engine samples resources on every
+	 * run. The caveat must hold for records from both producers.
+	 */
+	public function test_the_caveat_makes_the_close_rows_the_rules_choice_for_php_alone(): void {
+		$caveat = Findings::caveat();
+
+		$this->assertStringContainsString( 'The PHP logger writes a record\'s CPU samples, object-cache counts and request context only under the rule\'s resources, cache and context logging', $caveat );
+		$this->assertStringContainsString( 'gyrobase engine samples resources on every run', $caveat );
 	}
 
 	/**

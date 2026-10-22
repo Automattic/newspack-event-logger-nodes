@@ -246,7 +246,7 @@ class RequestBuilderPressureFoldTest extends TestCase {
 			$this->fill( $rb, $n++, 'long', "{$hook} hook (start)" );
 			$this->fill( $rb, $n++, 'long', "{$hook} hook (complete)", [ 'duration_ms' => 1 ] );
 		}
-		$this->fill( $rb, $n++, 'long', 'memory', [ 'm' => '62MB' ] );
+		$this->fill( $rb, $n++, 'long', 'request_context', [ 'm' => [ 'template' => 'themes/kea/index.php' ] ] );
 		$this->fill( $rb, $n++, 'long', 'resources', [ 'm' => 'utime => 1' ] );
 		$this->fill( $rb, $n, 'long', 'process (complete)', [ 'duration_ms' => 900, 'status_code' => 200 ] );
 
@@ -285,11 +285,10 @@ class RequestBuilderPressureFoldTest extends TestCase {
 		// The parent's post-subprocess work: more rows than the tail holds.
 		$n = 4;
 		$this->fill( $rb, $n++, 'nested', 'nuclear_gyrobase', [ 'm' => 'engine exit 0' ] );
-		foreach ( [ 'query', 'query', 'updated_option' ] as $hook ) {
+		foreach ( [ 'query', 'query', 'update_option', 'updated_option' ] as $hook ) {
 			$this->fill( $rb, $n++, 'nested', "{$hook} hook (start)" );
 			$this->fill( $rb, $n++, 'nested', "{$hook} hook (complete)", [ 'duration_ms' => 1 ] );
 		}
-		$this->fill( $rb, $n++, 'nested', 'memory', [ 'm' => '14MB' ] );
 		$this->fill( $rb, $n++, 'nested', 'resources', [ 'm' => 'utime => 1' ] );
 		$this->fill( $rb, $n, 'nested', 'process (complete)', [ 'duration_ms' => 536214, 'status_code' => 200 ] );
 

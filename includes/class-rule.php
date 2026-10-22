@@ -59,6 +59,11 @@ final class Rule {
 	 * @param bool          $log_plugin_loads            Write the profiler mu-plugin's per-plugin load timings as spans. Off unless set; the mu-plugin measures either way, so this decides only whether the request's record carries two entries per site-activated plugin.
 	 * @param bool          $trace_hooks                 Name the calling frame on each hook entry's aggregation label, so one hook firing sixteen times splits into a flame node per caller. Costs one shallow backtrace per firing.
 	 * @param int           $trace_callers               Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL, so a hook asked for from three places traces three times; 0 = off, and a stored `true` is a count of 1.
+	 * @param bool          $log_memory                  Append `peak_mb` to every `(complete)` entry, so memory growth reads across the timeline. The terminal carries it whatever this says.
+	 * @param bool          $flush_every_line            Flush the firehose after every entry, so the last line before a crash or an OOM kill is on disk. Costs one write per entry.
+	 * @param bool          $log_context                 Write the close's `request_context` entry: the template, rewrite rule, query vars and conditionals of a web request.
+	 * @param bool          $log_cache                   Write the close's `objectcache` row: what the request asked of the object cache.
+	 * @param bool          $log_resources               Write the two `resources` getrusage() samples, at the open and at the close, which the CPU-time findings difference.
 	 *
 	 * @throws \InvalidArgumentException When the pattern is empty, or hooks and hooks_in contradict.
 	 */
@@ -76,7 +81,12 @@ final class Rule {
 		public readonly bool $log_http = false,
 		public readonly bool $log_plugin_loads = false,
 		public readonly bool $trace_hooks = false,
-		public readonly int $trace_callers = 0
+		public readonly int $trace_callers = 0,
+		public readonly bool $log_memory = false,
+		public readonly bool $flush_every_line = false,
+		public readonly bool $log_context = false,
+		public readonly bool $log_cache = false,
+		public readonly bool $log_resources = false
 	) {
 		if ( '' === $pattern ) {
 			throw new \InvalidArgumentException( 'rule pattern is required' );
@@ -119,7 +129,7 @@ final class Rule {
 	 * A copy of this rule with some fields replaced, the object being immutable.
 	 *
 	 * Keys come from `to_array()`; anything absent is carried over. Reconstructing
-	 * by hand means thirteen positional arguments at every call site, and a field
+	 * by hand means nineteen positional arguments at every call site, and a field
 	 * added to the constructor silently drops out of the ones that were missed.
 	 *
 	 * @param array<string,mixed> $overrides Fields to replace.
@@ -151,6 +161,11 @@ final class Rule {
 			'log_plugin_loads'            => $this->log_plugin_loads,
 			'trace_hooks'                 => $this->trace_hooks,
 			'trace_callers'               => $this->trace_callers,
+			'log_memory'                  => $this->log_memory,
+			'flush_every_line'            => $this->flush_every_line,
+			'log_context'                 => $this->log_context,
+			'log_cache'                   => $this->log_cache,
+			'log_resources'               => $this->log_resources,
 		];
 	}
 
@@ -184,7 +199,12 @@ final class Rule {
 			! empty( $a['log_http'] ),
 			! empty( $a['log_plugin_loads'] ),
 			! empty( $a['trace_hooks'] ),
-			self::to_trace_count( $a['trace_callers'] ?? 0 )
+			self::to_trace_count( $a['trace_callers'] ?? 0 ),
+			! empty( $a['log_memory'] ),
+			! empty( $a['flush_every_line'] ),
+			! empty( $a['log_context'] ),
+			! empty( $a['log_cache'] ),
+			! empty( $a['log_resources'] )
 		);
 	}
 

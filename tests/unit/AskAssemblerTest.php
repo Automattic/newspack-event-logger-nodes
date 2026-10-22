@@ -608,6 +608,10 @@ class AskAssemblerTest extends TestCase {
 				'log_plugin_loads' => true,
 				'trace_hooks'      => true,
 				'trace_callers'    => 3,
+				'log_memory'       => true,
+				'log_context'      => false,
+				'log_cache'        => true,
+				'log_resources'    => true,
 			]
 		);
 		$shape = Ask_Assembler::for_request( $this->record(), $rule )['rule'];
@@ -617,6 +621,11 @@ class AskAssemblerTest extends TestCase {
 		$this->assertTrue( $shape['log_plugin_loads'] );
 		$this->assertTrue( $shape['trace_hooks'] );
 		$this->assertSame( 3, $shape['trace_callers'] );
+		// Whether an absent peak or close row was unlogged or never existed.
+		$this->assertTrue( $shape['log_memory'] );
+		$this->assertFalse( $shape['log_context'] );
+		$this->assertTrue( $shape['log_cache'] );
+		$this->assertTrue( $shape['log_resources'] );
 	}
 
 	/** The entry list is capped, so the record's own address rides along. */

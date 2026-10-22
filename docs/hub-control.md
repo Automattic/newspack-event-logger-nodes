@@ -18,12 +18,10 @@ include settings-sync
 make_node Discovery_Collector discovery-collector 300
 
 cmd settings-sync:config add_setting newspack_event_logger_nodes_rules performance newspack_event_logger_nodes_rules
-cmd settings-sync:config add_setting newspack_event_logger_nodes_log_memory performance newspack_event_logger_nodes_log_memory
-cmd settings-sync:config add_setting newspack_event_logger_nodes_flush_every_line performance newspack_event_logger_nodes_flush_every_line
 secure
 ```
 
-A change to any `newspack_` option on the hub appends its name to a settings log; [Settings_Sync](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-sync-node.php) tails it, reads the current value, and mints one `set` command per spoke. Every 300 seconds it re-pushes every registered option, so an offline or newly connected spoke converges. The substrate's own map sends the partition count and the six log-geometry settings, `segment_size`, `min_segments`, `num_segments`, `max_segments`, `min_lifetime` and `lifetime`, to the spoke's settings interpreter; the three `add_setting` lines above add the rules, log memory and flush-every-line options for the spoke's performance interpreter. The ruleset ships inlined whole: a rule on the hub may point at a hook table the hub holds, and the resolver expands every pointer rule's hooks before the push, so a spoke never receives a rule pointing at a table it does not hold. No Tee fans this out: a signature verifies only at the spoke it is minted for, so each minter signs once per spoke.
+A change to any `newspack_` option on the hub appends its name to a settings log; [Settings_Sync](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-sync-node.php) tails it, reads the current value, and mints one `set` command per spoke. Every 300 seconds it re-pushes every registered option, so an offline or newly connected spoke converges. The substrate's own map sends the partition count and the six log-geometry settings, `segment_size`, `min_segments`, `num_segments`, `max_segments`, `min_lifetime` and `lifetime`, to the spoke's settings interpreter; the `add_setting` line above adds the ruleset for the spoke's performance interpreter, and with it every rule's diagnostic switches. The ruleset ships inlined whole: a rule on the hub may point at a hook table the hub holds, and the resolver expands every pointer rule's hooks before the push, so a spoke never receives a rule pointing at a table it does not hold. No Tee fans this out: a signature verifies only at the spoke it is minted for, so each minter signs once per spoke.
 
 ## Discovery
 

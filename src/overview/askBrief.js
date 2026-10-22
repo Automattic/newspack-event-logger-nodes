@@ -240,6 +240,10 @@ function ruleLines( rule ) {
 				rule.log_queries && 'queries',
 				rule.log_http && 'HTTP',
 				rule.log_plugin_loads && 'plugin loads',
+				rule.log_memory && 'memory',
+				rule.log_context && 'context',
+				rule.log_cache && 'cache',
+				rule.log_resources && 'resources',
 			]
 				.filter( Boolean )
 				.join( ', ' ) || 'hooks only',

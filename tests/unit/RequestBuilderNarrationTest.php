@@ -478,10 +478,10 @@ class RequestBuilderNarrationTest extends TestCase {
 	public function test_an_idle_builder_reading_its_own_narration_back_goes_quiet(): void {
 		$narration = $this->read_back_lifetime( null );
 
-		// The record's four opening lines and the restore's span, carried once.
-		$this->assertSame( [ '1 envelopes · 6 entries' ], self::closes_of( $narration, Flame_Tree::REQUESTS_CHECKPOINT ) );
-		// The visit's nine lines and the record's four opening ones.
-		$this->assertSame( [ '13 lines · 1 records · 1 summaries' ], \array_column( self::entries_of( $narration, Flame_Tree::REQUESTS_WRITES ), 'm' ) );
+		// The record's three opening lines and the restore's span, carried once.
+		$this->assertSame( [ '1 envelopes · 5 entries' ], self::closes_of( $narration, Flame_Tree::REQUESTS_CHECKPOINT ) );
+		// The visit's nine lines and the record's three opening ones.
+		$this->assertSame( [ '12 lines · 1 records · 1 summaries' ], \array_column( self::entries_of( $narration, Flame_Tree::REQUESTS_WRITES ), 'm' ) );
 	}
 
 	/**
@@ -492,10 +492,10 @@ class RequestBuilderNarrationTest extends TestCase {
 	public function test_a_siblings_narration_read_in_moves_nothing(): void {
 		$narration = $this->read_back_lifetime( 'sibling-builder-3317' );
 
-		// The record's four opening lines and the restore's span, carried once.
-		$this->assertSame( [ '1 envelopes · 6 entries' ], self::closes_of( $narration, Flame_Tree::REQUESTS_CHECKPOINT ) );
-		// The visit's nine lines and the record's four opening ones.
-		$this->assertSame( [ '13 lines · 1 records · 1 summaries' ], \array_column( self::entries_of( $narration, Flame_Tree::REQUESTS_WRITES ), 'm' ) );
+		// The record's three opening lines and the restore's span, carried once.
+		$this->assertSame( [ '1 envelopes · 5 entries' ], self::closes_of( $narration, Flame_Tree::REQUESTS_CHECKPOINT ) );
+		// The visit's nine lines and the record's three opening ones.
+		$this->assertSame( [ '12 lines · 1 records · 1 summaries' ], \array_column( self::entries_of( $narration, Flame_Tree::REQUESTS_WRITES ), 'm' ) );
 	}
 
 	/**

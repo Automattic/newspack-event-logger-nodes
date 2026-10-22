@@ -148,6 +148,11 @@ hub syncs to spokes:
 | `log_plugin_loads` | bool | Write the profiler mu-plugin's per-plugin load timings as spans. Off unless set. The mu-plugin measures either way; this decides whether the record carries two entries per site-activated plugin. |
 | `trace_hooks` | bool | Name the calling frame on each hook entry's aggregation label, so one hook firing sixteen times splits into a flame node per caller. Default false. |
 | `trace_callers` | int | Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL; 0 is off, and a stored `true` is a count of 1. |
+| `log_memory` | bool | Append `peak_mb`, the process's peak memory in MB, to every `(complete)` entry. The terminal carries it whatever this says. Default false. |
+| `flush_every_line` | bool | Flush the firehose after every entry, so the last line before a crash or an OOM kill is on disk. Costs one write per entry. Default false. |
+| `log_context` | bool | Write the close's `request_context` entry for a web request. Default false. |
+| `log_cache` | bool | Write the close's `objectcache` row. Default false. |
+| `log_resources` | bool | Write a `resources` getrusage() sample at the open and at the close, which the gap findings' CPU bounds difference. Default false. |
 
 ### `performance` — the omnibus dashboard CI
 
@@ -220,26 +225,21 @@ hour:
 query requests bucket status_class --measure=count --top=5 --top_by=count --bucket=2026-10-15-14-00..2026-10-15-15-00
 ```
 
-**`set`** is the normalized positional single-option writer (`set <option> <value>`) over a
-three-option whitelist: `newspack_event_logger_nodes_rules` (array),
-`newspack_event_logger_nodes_log_memory` (bool) and
-`newspack_event_logger_nodes_flush_every_line` (bool). An option absent from it is refused
-as `unknown option`, so the whitelist and [`hub-control.tsl`](../topologies/hub-control.tsl)'s `add_setting` lines must stay
-in step. Array-typed options carry their value as JSON, and the decoded array is sanitized
-before it is stored: string keys and string values pass through `sanitize_text_field`, an
-object is dropped, and the whole option is refused as `invalid value for option` — a
-different refusal from `unknown option` — when it nests more than `SETTINGS_ARRAY_DEPTH` (5)
-levels below the top or any one level holds more than `SETTINGS_ARRAY_MAX` (10,000)
-elements. Nothing is truncated to fit. A set to the value already in place answers
-`updated: false` without saving, because the hub re-pushes every synced option on its
-sweep whether or not it moved and a reload fires `Config::RESET_ACTION` on every worker,
-which re-parses every `.tsl` for the same answer. The ruleset routes to
-`Rule_Set::apply_synced()` instead, which re-tiers and holds its own gate, and that is where
-the decode matters most: an array-option value that is not a JSON array is refused with
-`synced array-option value is not a JSON array` before anything is written, because read as
-an empty array, `apply_synced()` would SAVE it — clearing the spoke's rules and pinning the
-explicit "log nothing" that `reset` exists to avoid storing. Autoload follows `Config::autoload_for()`, and the write emits a settings
-event that [`Settings_Sync_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-sync-node.php) fans out to spokes.
+**`set`** is the spoke side of a hub's ruleset push (`set <option> <value>`): it takes
+`newspack_event_logger_nodes_rules` alone, the one option
+[`hub-control.tsl`](../topologies/hub-control.tsl)'s `add_setting` line syncs here, and refuses
+any other as `unknown option`. The value is JSON, and the decoded array is sanitized before
+it is stored: string keys and string values pass through `sanitize_text_field`, an object is
+dropped, and the whole push is refused as `invalid value for option` — a different refusal
+from `unknown option` — when it nests more than `SETTINGS_ARRAY_DEPTH` (5) levels below the
+top or any one level holds more than `SETTINGS_ARRAY_MAX` (10,000) elements. Nothing is
+truncated to fit. A value that is not a JSON array is refused with `synced array-option value
+is not a JSON array` before anything is written, because read as an empty array,
+`Rule_Set::apply_synced()` would SAVE it — clearing the spoke's rules and pinning the explicit
+"log nothing" that `reset` exists to avoid storing. `apply_synced()` re-tiers the rules and
+answers `updated: false` for a ruleset already in place, because the hub re-pushes on its
+sweep whether or not it moved and a reload fires `Config::RESET_ACTION` on every worker, which
+re-parses every `.tsl` for the same answer.
 
 ## Substrate verbs the dashboards use
 
@@ -446,6 +446,7 @@ false.
 | `flush_plugin_loads(): void` | Write the profiler drop-in's `plugins` rows as span pairs under the rule's `log_plugin_loads`, and empty the list whatever the rule says, so they are written once. The deferred bootstrap calls it before it binds the rule. |
 | `governing_rule(): ?Rule` / `governing_rule_id(): string` | The rule admitting this request. The id rides `process (start)` as `rule`. |
 | `matches_url_filter( string ): bool` | Resolve and keep the governing rule for a URL. |
+| `static reload_rules(): void` | The `Newspack_Nodes\Config::RESET_ACTION` listener, at priority 11: every open context, suspended ones included, re-resolves its governing rule from the saved ruleset, so a running worker's own record follows a rule save from its next line. A context that built no matcher stays inert. |
 | `get_request_id(): string` | An empty rid means an unlogged request. |
 | `refresh_firehose(): void` | Re-read the firehose segment state from disk, after a subprocess that may have written to or rotated it. |
 | `relay_topic_to_ci( array ): void` | Lazy Topic→interpreter relay for an early-wired Topic. |
@@ -465,12 +466,19 @@ false.
 Public constants: `FATAL_TYPES`, and the four request keywords `REQUEST_LABEL` (`process`),
 `REQUEST_START`, `REQUEST_COMPLETE` and `REQUEST_ABORTED`. The last two together are
 `Request_Builder_Node::TERMINAL_KEYWORDS`, the pair that closes a record; without one it
-strands in flight until eviction. `REQUEST_CONTEXT` (`request_context`) and `OBJECT_CACHE`
-(`objectcache`) are the categories of two of the entries the close writes.
+strands in flight until eviction. `REQUEST_CONTEXT` (`request_context`), `OBJECT_CACHE`
+(`objectcache`) and `RESOURCES` (`resources`) are the categories of the entries the close
+writes where the governing rule's `log_context`, `log_cache` and `log_resources` ask.
 
 The close attempts each of its producers whatever an earlier one threw, and raises what they threw after the terminal. It writes, in this order: an `(orphaned)` complete for each span left open, a web
 request's `request_context` entry, its `m` [`App\Request_Context::entry()`](../includes/app/class-request-context.php),
-the `objectcache` row, `memory`, `resources` and the terminal. The `objectcache` row's `m` is
+the `objectcache` row, `resources` and the terminal, each of the three middle rows only under
+its rule switch. The terminal always carries `peak_mb`, so a rule turning none of them on
+writes four lines for a web page: `process (start)`, `request`, `environment_v3` and the
+terminal. A worker or platform request adds `worker_type`, and a worker process its
+`worker_partition` too; a job context adds `worker_type` when its worker named one, and the
+`message` naming the record that caused it. `environment_v3` is written only when an
+allowlisted variable is set. The `objectcache` row's `m` is
 [`Object_Cache_Counts::row()`](../includes/class-object-cache-counts.php), a string of
 `<n> <bucket>` parts joined by `, `, every bucket shown, zeros included, in a fixed order: the
 whole process's counts for a web request, what moved while the context was open for a job.
@@ -584,7 +592,7 @@ binds a rule that does not log:
 | [`App\Query_Monitor_Actions`](../includes/app/class-query-monitor-actions.php) | `qm/start`, `qm/stop` (1 arg), `qm/lap` (2) | 10 | At the stop, `qm (start)` labelled with the timer's name and back-dated to its start, clamped to the start of the span it is written in (`Log_Manager::open_since()`), its `qm lap` entries and the timers stopped inside it, and `qm (complete)` with `duration_ms`; `qm (warning)` `Timer not started` for a stop or lap with no start. A timer holds 50 laps and inner timers and 100 timers stay open at most. |
 | | `qm/emergency` … `qm/debug` (2) | 10 | `qm (<level>)`, the message converted as `QM_Collector_Logger::store()` does and its placeholders filled with shaped context values. `(warning)` and above reach the Errors stream. |
 | | `shutdown` | `PHP_INT_MAX` | `qm (warning)` `Timer not stopped` for each timer still open, which is dropped. |
-| [`App\Request_Context`](../includes/app/class-request-context.php) | `template_include` (1) | `PHP_INT_MAX` | Nothing; keeps the template WordPress will include, and is bound only outside a job context. `Log_Manager`'s close writes `request_context` from it after the spans left open: its `m` up to `template`, `matched_rule`, `matched_query`, `query_vars`, `conditionals` and `trimmed`, fitted under 3,600 bytes by the producer; none in a job context or where WordPress routed nothing. |
+| [`App\Request_Context`](../includes/app/class-request-context.php) | `template_include` (1) | `PHP_INT_MAX` | Nothing; keeps the template WordPress will include, and is bound only outside a job context and under a rule's `log_context`. `Log_Manager`'s close writes `request_context` from it after the spans left open: its `m` up to `template`, `matched_rule`, `matched_query`, `query_vars`, `conditionals` and `trimmed`, fitted under 3,600 bytes by the producer; none in a job context or where WordPress routed nothing. |
 | [`App\Server_Timing`](../includes/app/class-server-timing.php) | `send_headers` | `PHP_INT_MAX` | The `Server-Timing` header. |
 | | `rest_pre_serve_request` (1) | `PHP_INT_MIN` | The header, once per served response; a preloaded, batched or embedded one, which passes `rest_post_dispatch` alone, gets none. |
 | | `admin_init` | `PHP_INT_MAX` | The header, under `wp_doing_ajax()` alone. |

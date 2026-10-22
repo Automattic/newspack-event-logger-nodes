@@ -146,7 +146,7 @@ class HubControlTopologyTest extends TestCase {
 		$this->assertStringContainsString( 'allow_replies_to discovery-collector', $dump );
 	}
 
-	public function test_settings_sync_registers_all_nine_settings(): void {
+	public function test_settings_sync_registers_all_seven_settings(): void {
 		$this->load_hub_control();
 
 		$registry = ( new \ReflectionProperty( Settings_Sync_Node::class, 'registry' ) );
@@ -154,10 +154,9 @@ class HubControlTopologyTest extends TestCase {
 
 		// Six substrate locals (the remote_* geometry keys: segment_size,
 		// min_segments, num_segments, min_lifetime, lifetime, max_segments) arrive
-		// through the `include settings-sync`; three ELN app keys (rules,
-		// log_memory, flush_every_line) come from the overlay. A hub does not
-		// push its own num_partitions to its spokes.
-		$this->assertCount( 9, $map );
+		// through the `include settings-sync`; the ELN ruleset comes from the
+		// overlay. A hub does not push its own num_partitions to its spokes.
+		$this->assertCount( 7, $map );
 		$this->assertArrayNotHasKey( 'newspack_nodes_num_partitions', $map );
 		// Substrate-remap (TO=settings). The remote-spoke geometry options live
 		// under `newspack_nodes_remote_*` and each maps TWICE: to the spoke's
@@ -183,9 +182,8 @@ class HubControlTopologyTest extends TestCase {
 			[ [ 'to' => 'performance', 'remote' => 'newspack_event_logger_nodes_rules' ] ],
 			$map['newspack_event_logger_nodes_rules']
 		);
-		$this->assertSame(
-			[ [ 'to' => 'performance', 'remote' => 'newspack_event_logger_nodes_flush_every_line' ] ],
-			$map['newspack_event_logger_nodes_flush_every_line']
-		);
+		// The debugging switches ride each rule, so neither is a setting of its own.
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_log_memory', $map );
+		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_flush_every_line', $map );
 	}
 }

@@ -511,7 +511,7 @@ class Core {
 		$listeners = [
 			...$this->query_monitor->listeners(),
 			// A job's template is not the enclosing request's.
-			...( Log_Manager::in_job_context() ? [] : Request_Context::listeners() ),
+			...( $rule->log_context && ! Log_Manager::in_job_context() ? Request_Context::listeners() : [] ),
 			...$this->server_timing->listeners(),
 		];
 		foreach ( $listeners as [ $hook, $callback, $priority, $args ] ) {

@@ -354,13 +354,14 @@ abstract class TestCase extends RuntimeTestCase {
 	 * `logged_entries()` to read, in segments too large for a test to rotate. The caller's tearDown undoes the config,
 	 * the rules option and REQUEST_URI.
 	 *
-	 * @param string $uri The request's REQUEST_URI, under `/kea/`.
+	 * @param string              $uri  The request's REQUEST_URI, under `/kea/`.
+	 * @param array<string,mixed> $rule The rule's fields beside its pattern and action.
 	 */
-	protected function start_logged_request( string $uri = '/kea/7746' ): \Newspack_Event_Logger_Nodes\Log_Manager {
+	protected function start_logged_request( string $uri = '/kea/7746', array $rule = [] ): \Newspack_Event_Logger_Nodes\Log_Manager {
 		$this->rmdir_recursive( self::test_dir() );
 		@\mkdir( self::test_dir() . '/logs', 0755, true );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-capture' ) );
-		$rule = new \Newspack_Event_Logger_Nodes\Rule( 'a1b2c3d4e5f6', '/kea/', \Newspack_Event_Logger_Nodes\Rule::ACTION_LOG );
+		$rule = \Newspack_Event_Logger_Nodes\Rule::from_array( [ 'id' => 'a1b2c3d4e5f6', 'pattern' => '/kea/', 'action' => 'log' ] + $rule );
 		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] = [ $rule->to_array() ];
 		$_SERVER['REQUEST_URI'] = $uri;
 		\Newspack_Event_Logger_Nodes\Config::reset();
@@ -463,8 +464,8 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @return list<array<string,mixed>>
 	 */
 	protected function logged_in( string $base, \Closure $work, array $extras = [] ): array {
-		$this->use_base_dir( $base, $extras + [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'enable_logging' => true, 'flush_every_line' => true ] );
-		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] = [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log' ] ];
+		$this->use_base_dir( $base, $extras + [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'enable_logging' => true ] );
+		$GLOBALS['_wp_options'][ \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES ] = [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'flush_every_line' => true ] ];
 		$server                 = $_SERVER;
 		$_SERVER['REQUEST_URI'] = '/perf-probe-7731';
 		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'] );

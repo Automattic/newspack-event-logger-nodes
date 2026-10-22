@@ -76,7 +76,7 @@ class RequestContextTest extends TestCase {
 	 * conditionals the main query answers true.
 	 */
 	public function test_the_close_writes_what_wordpress_made_of_the_request(): void {
-		$this->start_logged_request();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
 		$this->a_single_post();
 
 		$this->assertSame( WP_CONTENT_DIR . '/themes/kea/single.php', Request_Context::template( WP_CONTENT_DIR . '/themes/kea/single.php' ) );
@@ -93,9 +93,17 @@ class RequestContextTest extends TestCase {
 		);
 	}
 
+	/** A rule that does not ask for the context gets no entry. */
+	public function test_a_rule_without_log_context_writes_no_entry(): void {
+		$this->start_logged_request();
+		$this->a_single_post();
+
+		$this->assertNull( $this->written_context() );
+	}
+
 	/** A template outside wp-content is named from the install's root. */
 	public function test_a_core_template_is_named_from_the_install_root(): void {
-		$this->start_logged_request();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
 
 		Request_Context::template( ABSPATH . 'wp-includes/template-canvas.php' );
 
@@ -104,7 +112,7 @@ class RequestContextTest extends TestCase {
 
 	/** A request WordPress routed nowhere — a CLI run, a worker — writes no entry. */
 	public function test_a_request_with_no_context_writes_no_entry(): void {
-		$this->start_logged_request();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
 		$GLOBALS['wp']       = null;
 		$GLOBALS['wp_query'] = null;
 
@@ -113,9 +121,9 @@ class RequestContextTest extends TestCase {
 
 	/** A job context's record is not the web request's, so it gets none. */
 	public function test_a_job_context_writes_no_entry(): void {
-		$this->start_logged_request();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
 		$this->a_single_post();
-		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][] = ( new Rule( 'b2c3d4e5f6a1', '/jobs/', Rule::ACTION_LOG ) )->to_array();
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][] = ( new Rule( 'b2c3d4e5f6a1', '/jobs/', Rule::ACTION_LOG, log_context: true ) )->to_array();
 		Log_Manager::begin_job_context( 'kea_7746' );
 		$this->assertTrue( Log_Manager::instance()->is_started(), 'the job context logs too' );
 
@@ -131,7 +139,7 @@ class RequestContextTest extends TestCase {
 	 * strings are halved, so `message()` never has to drop the whole map.
 	 */
 	public function test_an_oversized_context_is_trimmed_to_fit(): void {
-		$this->start_logged_request();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
 		$vars = [];
 		for ( $i = 0; $i < 400; $i++ ) {
 			$vars[ "kea_var_{$i}" ] = "value {$i}";
@@ -148,7 +156,7 @@ class RequestContextTest extends TestCase {
 
 	/** A main query flagging more than one line holds loses its last flags too. */
 	public function test_conditionals_past_the_budget_are_dropped_from_the_end(): void {
-		$this->start_logged_request();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
 		$query = new \stdClass();
 		for ( $i = 0; $i < 400; $i++ ) {
 			$query->{"is_kea_{$i}"} = true;
@@ -172,10 +180,10 @@ class RequestContextTest extends TestCase {
 
 	/** The template is read once: the next record does not inherit it. */
 	public function test_the_template_is_read_once(): void {
-		$this->start_logged_request();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
 		Request_Context::template( WP_CONTENT_DIR . '/themes/kea/single.php' );
 		$this->logged_entries();
-		$this->start_logged_request();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
 
 		$this->assertNull( $this->written_context() );
 	}
@@ -184,7 +192,7 @@ class RequestContextTest extends TestCase {
 	public function test_a_reset_empties_the_template_slot(): void {
 		Request_Context::template( WP_CONTENT_DIR . '/themes/kea/stale-7746.php' );
 		Log_Manager::reset();
-		$this->start_logged_request();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
 		$GLOBALS['wp'] = (object) [ 'matched_rule' => 'kea-7746/?$', 'matched_query' => '' ];
 
 		$this->assertSame( [ 'matched_rule' => 'kea-7746/?$' ], $this->written_context() );
@@ -195,8 +203,8 @@ class RequestContextTest extends TestCase {
 	 * so the enclosing record keeps the one its own request included.
 	 */
 	public function test_a_template_seen_inside_a_job_stays_off_the_parents_record(): void {
-		$this->start_logged_request();
-		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][] = ( new Rule( 'b2c3d4e5f6a1', '/jobs/', Rule::ACTION_LOG ) )->to_array();
+		$this->start_logged_request( rule: [ 'log_context' => true ] );
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][] = ( new Rule( 'b2c3d4e5f6a1', '/jobs/', Rule::ACTION_LOG, log_context: true ) )->to_array();
 		$GLOBALS['_wp_actions']      = [];
 		$GLOBALS['_wp_test_filters'] = [];
 		new Core();

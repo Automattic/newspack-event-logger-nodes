@@ -3,7 +3,7 @@
  * Deployment OVERRIDES for Newspack Event Logger Nodes: the operator's copy of
  * the application config.
  *
- * Each of the ten keys `Settings_Schema` declares appears below, commented out
+ * Each of the five keys `Settings_Schema` declares appears below, commented out
  * beside the default the schema declares in code. Uncomment a line to pin that
  * value on this deployment. Pinning is not the same as leaving a key alone — a
  * pinned value survives a later change to the schema default.
@@ -12,8 +12,7 @@
  * `LOCAL_NEWSPACK_NODES_CONF`, and a stored `newspack_event_logger_nodes_<key>`
  * option. PRESENCE decides the option layer rather than truthiness, so a stored
  * '', [] or false beats both files. Every key here takes one; the settings page
- * writes `enable_logging`, `log_memory` and `flush_every_line`, and the rules
- * editor writes `rules`. `rules` takes only an array as a setting: a stored
+ * writes `enable_logging`, and the rules editor writes `rules`. `rules` takes only an array as a setting: a stored
  * non-array is corrupt, and `Rule_Set::load()` seeds from this file and the
  * schema default beneath it instead.
  *
@@ -57,9 +56,10 @@ return [
 	// out of the global sums.
 	// No match means skip, and empty means empty: drop the `/` rule and the
 	// site logs nothing. A `log` rule may also carry hook lists, custom and
-	// significant event names, the two auto-tune thresholds, and the query,
-	// HTTP and hook-trace switches — `Rule` is the full shape. A rule's id is
-	// derived from its pattern, so declaring one here is pointless.
+	// significant event names, the two auto-tune thresholds, the query, HTTP
+	// and hook-trace switches, and the memory, flush, context, cache and
+	// resources switches — `Rule` is the full shape. A rule's id is derived
+	// from its pattern, so declaring one here is pointless.
 	// 'rules' => [
 	//	[
 	//		'pattern' => '/',
@@ -76,15 +76,6 @@ return [
 	// Hook-category colors are a different thing entirely: they come from
 	// `hook_categories.json`.
 	// 'custom_colors' => [],
-
-	// Add `peak_mb`, peak memory in MB, to every entry `Log_Manager`'s
-	// `complete()` emits — `(complete)` and `(aborted)` alike.
-	// 'log_memory' => false,
-
-	// Flush the firehose Topic after each entry, so a crash keeps what it
-	// wrote. The Topic otherwise batches, so the guarantee costs one write
-	// per entry.
-	// 'flush_every_line' => false,
 
 	// The priority `App\Core` binds `hook_start` at. Its `hook_complete`
 	// always binds at `PHP_INT_MAX - 1`, so a lower number here widens the

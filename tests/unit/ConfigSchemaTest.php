@@ -30,7 +30,7 @@ class ConfigSchemaTest extends TestCase {
 	/** Overrides seeded here are distinct from every schema default. */
 	private const OVERRIDES = [
 		'hook_start_priority' => -4242,
-		'log_memory'          => true,
+		'enable_logging'      => false,
 	];
 
 	/** Saved snapshot of the substrate's `Config::$registered_keys` (a process-wide static). */
@@ -129,7 +129,7 @@ class ConfigSchemaTest extends TestCase {
 		$this->use_base_dir( $dir, self::OVERRIDES );
 
 		$this->assertSame( -4242, Config::value( 'hook_start_priority' ) );
-		$this->assertTrue( Config::load_config()['log_memory'] );
+		$this->assertFalse( Config::load_config()['enable_logging'] );
 	}
 
 	/** A key the schema does not know is an operator typo, and it is NAMED. */

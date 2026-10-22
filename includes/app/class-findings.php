@@ -90,6 +90,19 @@ class Findings {
 	/** Joins a span path's names, outermost first, in every metric that carries one. */
 	private const PATH_SEPARATOR = ' › ';
 
+	/**
+	 * The rows a record opens with after its `request` line, gyrobase's
+	 * `publication` and `database (info)` among them; the last ends its open.
+	 */
+	private const OPENING_ROWS = [
+		Log_Manager::REQUEST_LINE => true,
+		Log_Manager::JOB_MESSAGE  => true,
+		'publication'             => true,
+		'database (info)'         => true,
+		Log_Manager::ENVIRONMENT  => true,
+		Log_Manager::RESOURCES    => true,
+	];
+
 	/** Unexplained interval between consecutive entries, in milliseconds. */
 	public const GAP_MS = 250.0;
 
@@ -1540,6 +1553,9 @@ class Findings {
 	 * Where a record's logging stopped: its last entry ahead of the drain a
 	 * producer writes on its way out, and stamped no earlier than the
 	 * `request` line, as the plugin rows the bootstrap writes later are not.
+	 * The record's open ends at the last of its `OPENING_ROWS` before the
+	 * first other entry past the `request` line; a stop placed there or
+	 * earlier is unknown.
 	 *
 	 * @param list<mixed> $entries The record's entries.
 	 * @return array{0:?int,1:bool,2:string} Stop index (null when empty), whether it places a stop, the open spans.
@@ -1548,12 +1564,14 @@ class Findings {
 		$opener = -1;
 		$floor  = -\INF;
 		foreach ( $entries as $at => $entry ) {
-			$entry = Core::arr( $entry );
-			if ( Log_Manager::REQUEST_LINE === ( $entry['k'] ?? null ) ) {
+			$entry   = Core::arr( $entry );
+			$keyword = Core::as_string( $entry['k'] ?? '' );
+			if ( Log_Manager::REQUEST_LINE === $keyword ) {
 				$floor = Core::num_float( $entry['ts'] ?? 0 );
 			}
-			if ( Log_Manager::RESOURCES === ( $entry['k'] ?? null ) ) {
+			if ( isset( self::OPENING_ROWS[ $keyword ] ) ) {
 				$opener = $at;
+			} elseif ( -\INF !== $floor ) {
 				break;
 			}
 		}
@@ -1625,8 +1643,7 @@ class Findings {
 	private static function is_drain( array $entry ): bool {
 		$keyword = Core::as_string( $entry['k'] ?? '' );
 		return isset( Request_Builder_Node::TERMINAL_KEYWORDS[ $keyword ] )
-			|| Log_Manager::MEMORY === $keyword
-			|| Log_Manager::RESOURCES === $keyword
+			|| isset( Log_Manager::CLOSE_ROWS[ $keyword ] )
 			|| ( Log_Manager::ORPHANED === ( $entry['m'] ?? null ) && 1 === \preg_match( Flame_Tree::PATTERN_COMPLETE, $keyword ) );
 	}
 
@@ -2042,6 +2059,9 @@ class Findings {
 			. 'and database queries under its query logging — nothing else is instrumented, so an '
 			. 'absence here is as often an unbound hook as an idle one. Without HTTP logging it '
 			. 'sees no outbound calls, without query logging no SQL, and below PHP userland it '
-			. 'sees only those calls and queries. Unlogged time is unmeasured, not idle.';
+			. 'sees only those calls and queries. Unlogged time is unmeasured, not idle. The PHP '
+			. 'logger writes a record\'s CPU samples, object-cache counts and request context only '
+			. 'under the rule\'s resources, cache and context logging, so a missing one was not '
+			. 'asked for; the gyrobase engine samples resources on every run.';
 	}
 }

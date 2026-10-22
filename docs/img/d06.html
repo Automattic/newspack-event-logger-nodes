@@ -39,7 +39,7 @@
   <div class="gates" style="flex:0 0 440px">
     <div class="gate"><div class="num">1</div>
       <div class="card"><h3>Master switch</h3>
-        <p>With <span class="mono">enable_logging</span> off, nothing is written. The other two switches are <span class="mono">log_memory</span> and <span class="mono">flush_every_line</span>.</p></div></div>
+        <p>With <span class="mono">enable_logging</span> off, nothing is written.</p></div></div>
     <div class="gate"><div class="num">2</div>
       <div class="card"><h3>Not root</h3>
         <p>The writer refuses to run as root.</p></div></div>
@@ -54,6 +54,7 @@
         <p>The hooks to time, the custom events to log, and the events to profile per callback.</p>
         <p><b>Outbound HTTP</b>: timed by default, one span per remote call; a rule can turn it off.</p>
         <p><b>SQL</b>: timed only when a rule asks. The closing hook fires only under <span class="mono">SAVEQUERIES</span>, and each query costs two entries.</p>
+        <p><b>The close's rows</b>: the request context, the object-cache counts and the resources samples, each only when a rule asks, as are the peak memory on every span and a flush per line. With none of them, a web page writes four lines; a worker adds its type and partition, and a job its type and the message that caused it.</p>
         <p class="red">Nothing bound: the Performance dashboard's findings report insufficient instrumentation rather than guess.</p></div></div>
   </div>
 
@@ -71,7 +72,7 @@
         <tr class="job"><td class="n">8</td><td class="k">job</td><td class="v mono">{ handler, id, parameters }</td><td class="c">A small job rides the same append. Part 7: only firehose entries cross from a spoke to its hub.</td></tr>
         <tr><td class="n">9</td><td class="k">template (start)</td><td class="v"></td><td class="c">A span opens and is never closed.</td></tr>
         <tr class="dim"><td class="n">10</td><td class="k">template (orphaned)</td><td class="v"></td><td class="c">At shutdown the writer <b>drains</b> every open span as orphaned.</td></tr>
-        <tr class="dim"><td class="n">11</td><td class="k">process (complete)</td><td class="v mono">or process (aborted)</td><td class="c">The <b>terminal</b>. An abort carries the fatal error's message, file, line and offending plugin.</td></tr>
+        <tr class="dim"><td class="n">11</td><td class="k">process (complete)</td><td class="v mono">or process (aborted)</td><td class="c">The <b>terminal</b>, carrying the peak memory. An abort carries the fatal error's message, file, line and offending plugin.</td></tr>
       </table>
     </div>
     <div class="fields">

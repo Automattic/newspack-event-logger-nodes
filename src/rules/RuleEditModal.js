@@ -128,6 +128,15 @@ export default function RuleEditModal( {
 	const [ logPluginLoads, setLogPluginLoads ] = useState(
 		!! rule?.log_plugin_loads
 	);
+	const [ logMemory, setLogMemory ] = useState( !! rule?.log_memory );
+	const [ flushEveryLine, setFlushEveryLine ] = useState(
+		!! rule?.flush_every_line
+	);
+	const [ logContext, setLogContext ] = useState( !! rule?.log_context );
+	const [ logCache, setLogCache ] = useState( !! rule?.log_cache );
+	const [ logResources, setLogResources ] = useState(
+		!! rule?.log_resources
+	);
 	const [ traceHooks, setTraceHooks ] = useState( !! rule?.trace_hooks );
 	const [ traceCallers, setTraceCallers ] = useState(
 		String( rule?.trace_callers ?? 0 )
@@ -173,6 +182,11 @@ export default function RuleEditModal( {
 			log_queries: isLog && logQueries,
 			log_http: isLog && logHttp,
 			log_plugin_loads: isLog && logPluginLoads,
+			log_memory: isLog && logMemory,
+			flush_every_line: isLog && flushEveryLine,
+			log_context: isLog && logContext,
+			log_cache: isLog && logCache,
+			log_resources: isLog && logResources,
 			trace_hooks: isLog && traceHooks,
 			// The count refines the caller label, so unticking retires both.
 			trace_callers:
@@ -388,6 +402,76 @@ export default function RuleEditModal( {
 								) }
 								checked={ logPluginLoads }
 								onChange={ setLogPluginLoads }
+							/>
+
+							<CheckboxControl
+								name="rule-log-memory"
+								label={ __(
+									'Log peak memory on every span',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									"Adds the process's peak memory to every span's close, so memory growth reads across the request's timeline. The request's own close carries it either way.",
+									'newspack-event-logger-nodes'
+								) }
+								checked={ logMemory }
+								onChange={ setLogMemory }
+							/>
+
+							<CheckboxControl
+								name="rule-log-context"
+								label={ __(
+									'Log request context',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									"Adds one entry to the request's log naming the template WordPress included, the rewrite rule and query it matched, its query vars and the conditionals the main query answers true.",
+									'newspack-event-logger-nodes'
+								) }
+								checked={ logContext }
+								onChange={ setLogContext }
+							/>
+
+							<CheckboxControl
+								name="rule-log-cache"
+								label={ __(
+									'Log object cache counts',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									"Adds one entry to the request's log counting its object-cache hits and misses.",
+									'newspack-event-logger-nodes'
+								) }
+								checked={ logCache }
+								onChange={ setLogCache }
+							/>
+
+							<CheckboxControl
+								name="rule-log-resources"
+								label={ __(
+									'Log resource usage',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									"Adds two entries to the request's log, its CPU time, page faults, I/O blocks and context switches at the start and at the end. The CPU figures beside a finding's gaps come from these.",
+									'newspack-event-logger-nodes'
+								) }
+								checked={ logResources }
+								onChange={ setLogResources }
+							/>
+
+							<CheckboxControl
+								name="rule-flush-every-line"
+								label={ __(
+									'Flush every line',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									'Writes each entry to disk as it is logged, so the last line before a crash or an out-of-memory kill survives. Costs one write per entry.',
+									'newspack-event-logger-nodes'
+								) }
+								checked={ flushEveryLine }
+								onChange={ setFlushEveryLine }
 							/>
 
 							<div className="rule-edit-trace-row">

@@ -374,6 +374,46 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_plugin_loads ).toBe( true );
 	} );
 
+	// The close's rows and the two debugging switches, each a rule's to set.
+	const ROW_SWITCHES = [
+		[ 'log_memory', 'rule-log-memory' ],
+		[ 'flush_every_line', 'rule-flush-every-line' ],
+		[ 'log_context', 'rule-log-context' ],
+		[ 'log_cache', 'rule-log-cache' ],
+		[ 'log_resources', 'rule-log-resources' ],
+	];
+
+	test.each( ROW_SWITCHES )(
+		'a log rule round-trips its %s opt-in',
+		( field ) => {
+			mount( { ...LOG_RULE, [ field ]: true } );
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ][ field ] ).toBe( true );
+		}
+	);
+
+	test.each( ROW_SWITCHES )(
+		'ticking %s is reflected in the saved draft',
+		( field, name ) => {
+			mount( LOG_RULE );
+			expect( inDialog( `input[name="${ name }"]` ).checked ).toBe(
+				false
+			);
+			toggle( inDialog( `input[name="${ name }"]` ) );
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ][ field ] ).toBe( true );
+		}
+	);
+
+	test.each( ROW_SWITCHES )(
+		'a skip rule carries no %s opt-in',
+		( field ) => {
+			mount( { ...LOG_RULE, action: 'skip', [ field ]: true } );
+			click( saveButton() );
+			expect( onSave.mock.calls[ 0 ][ 0 ][ field ] ).toBe( false );
+		}
+	);
+
 	test( 'a log rule round-trips its caller-trace opt-in', () => {
 		// The checkbox is the cheap switch; a tuned deep budget survives an edit.
 		mount( { ...LOG_RULE, trace_hooks: true, trace_callers: 250 } );

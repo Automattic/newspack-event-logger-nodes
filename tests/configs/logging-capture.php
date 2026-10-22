@@ -11,6 +11,6 @@ return [
 	'memcache_servers' => [],
 	'allowed_users'    => [],
 	'custom_colors'    => [],
-	'log_memory'       => false,
-	'flush_every_line' => true,
+	// Each line reaches disk as written, so a test reads it mid-request.
+	'rules'            => [ [ 'pattern' => '/', 'action' => 'log', 'flush_every_line' => true ] ],
 ];

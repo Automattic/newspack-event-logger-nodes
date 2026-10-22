@@ -34,11 +34,11 @@ use Newspack_Nodes\Config_System\Schema;
 /**
  * The application's Field/Schema declaration.
  *
- * Three settings render as checkboxes — `enable_logging`, `log_memory`, and
- * `flush_every_line`. Four more keys overlay the config file with no settings
- * field at all (`ui: false`): `rules`, `hook_start_priority`, `custom_colors`
- * and `recommended_log_events`. URL filters, hook lists, and auto-tune thresholds
- * are per-rule fields of the `rules` ruleset, which the React rules editor owns
+ * One setting renders as a checkbox: `enable_logging`. Four more keys overlay
+ * the config file with no settings field at all (`ui: false`): `rules`,
+ * `hook_start_priority`, `custom_colors` and `recommended_log_events`. URL
+ * filters, hook lists, auto-tune thresholds and the diagnostic switches are
+ * per-rule fields of the `rules` ruleset, which the React rules editor owns
  * through the `rules` service CI — never the Settings API.
  *
  * Every Field carries its `default:` here, and `newspack-event-logger-nodes-
@@ -66,8 +66,9 @@ class Settings_Schema {
 	 *
 	 * No match means skip, and empty means empty: drop the `/` rule and the
 	 * site logs nothing. A `log` rule may also carry hook lists, custom and
-	 * significant event names, the two auto-tune thresholds, and the query,
-	 * HTTP and hook-trace switches — `Rule` is the full shape. A rule's id is
+	 * significant event names, the two auto-tune thresholds, the query, HTTP
+	 * and hook-trace switches, and the memory, flush, context, cache and
+	 * resources switches — `Rule` is the full shape. A rule's id is
 	 * derived from its pattern, so declaring one here is pointless.
 	 *
 	 * @var list<array<string,string>>
@@ -168,8 +169,7 @@ class Settings_Schema {
 			return self::$schema;
 		}
 
-		$general         = 'newspack_event_logger_nodes_general_section';
-		$debugging       = 'newspack_event_logger_nodes_debugging_section';
+		$general = 'newspack_event_logger_nodes_general_section';
 
 		// Literal prefix, not Admin::OPTION_PREFIX: schema-build skips Admin.
 		self::$schema = new Schema(
@@ -189,31 +189,7 @@ class Settings_Schema {
 					register_args: [],
 				),
 
-				// A URL, hook or threshold field belongs to a rule, not here.
-
-				// -- Debugging ----------------------------------------------
-				new Field(
-					key: 'log_memory',
-					type: 'bool',
-					label: static fn(): string => \__( 'Log Memory', 'newspack-event-logger-nodes' ),
-					section: $debugging,
-					// Cached in the Log_Manager singleton: restart all workers.
-					restart: 'all',
-					default: false,
-					sanitize: 'absint',
-					render: [ Admin::class, 'log_memory_callback' ],
-				),
-				new Field(
-					key: 'flush_every_line',
-					type: 'bool',
-					label: static fn(): string => \__( 'Flush Every Line', 'newspack-event-logger-nodes' ),
-					section: $debugging,
-					// Cached in the Log_Manager singleton: restart all workers.
-					restart: 'all',
-					default: false,
-					sanitize: 'absint',
-					render: [ Admin::class, 'flush_every_line_callback' ],
-				),
+				// A URL, hook, threshold or switch is a rule's, not a setting.
 
 				// The rules editor owns this option; config only seeds it.
 				new Field(
@@ -245,13 +221,9 @@ class Settings_Schema {
 				),
 			],
 			[
-				$general         => [
+				$general => [
 					'title'    => static fn(): string => \__( 'General', 'newspack-event-logger-nodes' ),
 					'callback' => [ Admin::class, 'general_section_callback' ],
-				],
-				$debugging       => [
-					'title'    => static fn(): string => \__( 'Debugging', 'newspack-event-logger-nodes' ),
-					'callback' => [ Admin::class, 'debugging_section_callback' ],
 				],
 			]
 		);

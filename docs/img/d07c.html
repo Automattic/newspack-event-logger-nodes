@@ -41,10 +41,10 @@
     <div class="st node" style="flex:0 0 160px"><b>settings:consumer</b>Tails that log. <span class="mono">settings-sync</span> reads the option's current value at consume time.</div>
     <div class="arw"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
     <div class="st node" style="flex:1 1 auto"><b>settings-sync mints one <span class="mono" style="color:#101517">set</span> command per spoke</b>
-      Each is addressed to an interpreter on that spoke and signed under that spoke's session key. The substrate's own map carries the partition count and the six remote log-geometry settings; hub-control adds three of the logger's own.
+      Each is addressed to an interpreter on that spoke and signed under that spoke's session key. The substrate's own map carries the partition count and the six remote log-geometry settings; hub-control adds the logger's ruleset.
       <div style="margin-top:7px">
         <span class="tag">→ settings interpreter: num_partitions, segment_size, min_segments, num_segments, max_segments, min_lifetime, lifetime</span>
-        <span class="tag">→ performance interpreter: rules, log_memory, flush_every_line</span>
+        <span class="tag">→ performance interpreter: rules</span>
       </div>
     </div>
     <div class="arw tall"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
