@@ -304,6 +304,7 @@ A performance verb tells where its time goes inside its command span (`Performan
 | `log_context` | off | The close's `request_context` entry |
 | `log_cache` | off | The close's `objectcache` row |
 | `log_resources` | off | The `resources` samples at the open and the close; a record without them has no CPU bounds on its gaps |
+| `log_php_errors` | off | A `php (warning)`, `php (notice)` or `php (deprecated)` row per distinct level, file and line, carrying `file`, `line`, `owner` and `silenced`, and a `php errors` row at the close counting the repeats. A site whose `00-newspack-profiler.php` is older than the plugin misses errors raised before the logger boots |
 
 Both span pairs name their CALLER, never the host or the table, because one host answers nothing when every call goes to the same one. Edit the knobs through the rules editor or the `rules` CI's `upsert`: a record carrying no `sql` rows means `log_queries` is false on its governing rule, not that the bridge broke.
 

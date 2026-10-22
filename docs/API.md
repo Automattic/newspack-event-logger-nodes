@@ -153,6 +153,7 @@ hub syncs to spokes:
 | `log_context` | bool | Write the close's `request_context` entry for a web request. Default false. |
 | `log_cache` | bool | Write the close's `objectcache` row. Default false. |
 | `log_resources` | bool | Write a `resources` getrusage() sample at the open and at the close, which the gap findings' CPU bounds difference. Default false. |
+| `log_php_errors` | bool | Record PHP's warnings, notices and deprecations and WordPress's own deprecation and misuse notices: one `php (warning)`, `php (notice)` or `php (deprecated)` row for each distinct level, file and line, and a `php errors` count row at the close. Default false. |
 
 ### `performance` — the omnibus dashboard CI
 
@@ -468,9 +469,12 @@ Public constants: `FATAL_TYPES`, and the four request keywords `REQUEST_LABEL` (
 `Request_Builder_Node::TERMINAL_KEYWORDS`, the pair that closes a record; without one it
 strands in flight until eviction. `REQUEST_CONTEXT` (`request_context`), `OBJECT_CACHE`
 (`objectcache`) and `RESOURCES` (`resources`) are the categories of the entries the close
-writes where the governing rule's `log_context`, `log_cache` and `log_resources` ask.
+writes where the governing rule's `log_context`, `log_cache` and `log_resources` ask. `PHP_ERRORS` (`php errors`)
+is the count row `log_php_errors` adds, and `CLOSE_ROWS` names it with those three.
+A label that names code leads with its owner, `[<owner>] `; see
+[Labels and owners](architecture-guide.md#labels-and-owners).
 
-The close attempts each of its producers whatever an earlier one threw, and raises what they threw after the terminal. It writes, in this order: an `(orphaned)` complete for each span left open, a web
+The close attempts each of its producers whatever an earlier one threw, and raises what they threw after the terminal. It writes, in this order: an `(orphaned)` complete for each span left open, the `php errors` count row under `log_php_errors`, a web
 request's `request_context` entry, its `m` [`App\Request_Context::entry()`](../includes/app/class-request-context.php),
 the `objectcache` row, `resources` and the terminal, each of the three middle rows only under
 its rule switch. The terminal always carries `peak_mb`, so a rule turning none of them on
@@ -596,5 +600,7 @@ binds a rule that does not log:
 | [`App\Server_Timing`](../includes/app/class-server-timing.php) | `send_headers` | `PHP_INT_MAX` | The `Server-Timing` header. |
 | | `rest_pre_serve_request` (1) | `PHP_INT_MIN` | The header, once per served response; a preloaded, batched or embedded one, which passes `rest_post_dispatch` alone, gets none. |
 | | `admin_init` | `PHP_INT_MAX` | The header, under `wp_doing_ajax()` alone. |
+
+A fourth set, [`App\Php_Errors`](../includes/app/class-php-errors.php), is bound only under a rule's `log_php_errors`: an error handler for `Php_Errors::MASK`, and the WordPress actions `deprecated_function_run`, `deprecated_constructor_run`, `deprecated_class_run`, `deprecated_file_included`, `deprecated_argument_run`, `deprecated_hook_run`, `doing_it_wrong_run` and `wp_trigger_error_always_run` (`wp_trigger_error_run` before WordPress 7.0), all at priority 10. Each writes a `php (<level>)` row through `Log_Manager::record_php_error()`; [PHP errors](architecture-guide.md#php-errors) has the rest.
 
 `header()` and `headers_sent()` sit behind the `$send_header` and `$headers_sent` seams, and nothing is sent once headers have left. The header goes only to a signed-in user holding `Capabilities::READ`: `total;dur=<ms>;desc="since PHP start"`, the `TOP` (5) categories of `timing_so_far()`'s `spent`, dearest first, each a token-safe name with its label as `desc`, then `rid;desc="<request id>"`. A query span's `(complete)` carries `rows`, or `error`, the substrate's `Driver_Error::shape()` of the errno and message, within 256 bytes, read from the driver on `$wpdb`'s connection through the `Core::$query_outcome` seam; an HTTP span's carries `http_method` and, on a `WP_Error`, `error`, redacted as a URL and cut at 256 bytes. `query_end()` leaves `$wpdb->queries` whole while Query Monitor collects, `class_exists( 'QueryMonitor', false )` through the `Core::$query_monitor_loaded` seam, and drains it otherwise; `QM_VERSION` is defined ahead of QM's CLI, cron and disabled returns, so it is not the test.
