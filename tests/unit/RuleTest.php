@@ -46,6 +46,7 @@ final class RuleTest extends TestCase {
 			'log_context'                 => true,
 			'log_cache'                   => true,
 			'log_resources'               => true,
+			'log_php_errors'              => true,
 		];
 		$rule = Rule::from_array( $data );
 		$this->assertSame( $data, $rule->to_array() );
@@ -72,7 +73,7 @@ final class RuleTest extends TestCase {
 		$this->assertFalse( $rule->trace_hooks );
 		$this->assertSame( 0, $rule->trace_callers );
 		// The close's optional rows and the debugging switches are opt-ins too.
-		foreach ( [ 'log_memory', 'flush_every_line', 'log_context', 'log_cache', 'log_resources' ] as $knob ) {
+		foreach ( [ 'log_memory', 'flush_every_line', 'log_context', 'log_cache', 'log_resources', 'log_php_errors' ] as $knob ) {
 			$this->assertFalse( $rule->{$knob}, "{$knob} is off unless set" );
 			$on = Rule::from_array( [ 'id' => 'k7', 'pattern' => '/kea-5821', 'action' => 'log', $knob => true ] );
 			$this->assertTrue( $on->{$knob}, "{$knob} reads back set" );

@@ -1194,6 +1194,56 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
+	 * A PHP warning reaches the Errors stream as every `(warning)` does; a
+	 * notice or a deprecation stays in the record, and each keeps where it
+	 * was raised and who owns that file.
+	 */
+	public function test_a_php_warning_is_forwarded_and_each_php_row_keeps_its_place(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->set_errors_target( 'errors:target' );
+		$at = [ 'file' => '/srv/kea/plugins/kea-7746/kea.php', 'owner' => 'kea-7746' ];
+
+		$this->fill( $rb, 1, 'r9', 'process (start)' );
+		$this->fill( $rb, 2, 'r9', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+		$this->fill( $rb, 3, 'r9', 'php (warning)', [ 'm' => 'kea 7746 warned', 'line' => 31 ] + $at );
+		$this->fill( $rb, 4, 'r9', 'php (notice)', [ 'm' => 'kea 7746 noted', 'line' => 32, 'silenced' => true ] + $at );
+		$this->fill( $rb, 5, 'r9', 'php (deprecated)', [ 'm' => 'kea 7746 old', 'line' => 33 ] + $at );
+		$this->fill( $rb, 6, 'r9', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
+
+		$forwarded = \array_values( \array_filter( $capture->captured, fn ( $m ) => 'errors:target' === $m[ Message::TO ] ) );
+		$this->assertSame( [ 'php (warning)' ], \array_map( static fn ( $m ) => $m[ Message::VALUE ]['k'], $forwarded ) );
+		$request = \array_values( \array_filter( $capture->captured, fn ( $m ) => 'errors:target' !== $m[ Message::TO ] ) );
+		$entries = (array) $request[0][ Message::VALUE ]['entries'];
+		$this->assertSame(
+			[
+				[ '/srv/kea/plugins/kea-7746/kea.php', 31, 'kea-7746', null ],
+				[ '/srv/kea/plugins/kea-7746/kea.php', 32, 'kea-7746', true ],
+				[ '/srv/kea/plugins/kea-7746/kea.php', 33, 'kea-7746', null ],
+			],
+			\array_map( static fn ( array $e ): array => [ $e['file'] ?? null, $e['line'] ?? null, $e['owner'] ?? null, $e['silenced'] ?? null ], \array_slice( $entries, 2, 3 ) )
+		);
+	}
+
+	/** A warning `error_reporting`, `@` or `WP_DEBUG` hid stays in the record. */
+	public function test_a_silenced_php_warning_is_not_forwarded(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->set_errors_target( 'errors:target' );
+
+		$this->fill( $rb, 1, 'r9', 'process (start)' );
+		$this->fill( $rb, 2, 'r9', 'request', [ 'm' => 'GET https://kea.test/x' ] );
+		$this->fill( $rb, 3, 'r9', 'php (warning)', [ 'm' => 'kea 7746 hushed', 'line' => 34, 'silenced' => true ] );
+		$this->fill( $rb, 4, 'r9', 'php (warning)', [ 'm' => 'kea 7746 heard', 'line' => 35 ] );
+		$this->fill( $rb, 5, 'r9', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
+
+		$forwarded = \array_values( \array_filter( $capture->captured, fn ( $m ) => 'errors:target' === $m[ Message::TO ] ) );
+		$this->assertSame( [ 'kea 7746 heard' ], \array_map( static fn ( $m ) => $m[ Message::VALUE ]['m'], $forwarded ) );
+	}
+
+	/**
 	 * A Query Monitor timer overlays time its hook already counts, so it
 	 * takes nothing from the hook's exclusive time, which auto-tune reads.
 	 */

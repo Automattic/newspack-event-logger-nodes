@@ -499,13 +499,13 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		// Alerts route to the journal; onward fan-out is topology wiring.
 		if ( 'alert' === $keyword ) {
 			$this->emit_entry( $entry, $rid, $request, $this->alerts_target, 'alerts' );
-		} elseif ( 'error' === $keyword || 'warning' === $keyword
+		} elseif ( empty( $entry['silenced'] ) && ( 'error' === $keyword || 'warning' === $keyword
 			|| 'stderr' === $keyword
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
 			|| \str_ends_with( $keyword, '(critical)' )
 			|| \str_ends_with( $keyword, '(alert)' )
-			|| \str_ends_with( $keyword, '(emergency)' )
+			|| \str_ends_with( $keyword, '(emergency)' ) )
 		) {
 			$this->emit_entry( $entry, $rid, $request, $this->errors_target, 'errors' );
 		}
@@ -572,6 +572,19 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			}
 			if ( isset( $entry['http_method'] ) ) {
 				$stored['http_method'] = Core::as_string( $entry['http_method'], '' );
+			}
+			// Where a PHP error row was raised, and who owns that file.
+			if ( isset( $entry['file'] ) ) {
+				$stored['file'] = Core::as_string( $entry['file'], '' );
+			}
+			if ( isset( $entry['line'] ) ) {
+				$stored['line'] = Core::num_int( $entry['line'] );
+			}
+			if ( isset( $entry['owner'] ) ) {
+				$stored['owner'] = Core::as_string( $entry['owner'], '' );
+			}
+			if ( ! empty( $entry['silenced'] ) ) {
+				$stored['silenced'] = true;
 			}
 			// Log_Manager trimmed this entry to fit; the reader says so.
 			if ( ! empty( $entry['truncated'] ) ) {

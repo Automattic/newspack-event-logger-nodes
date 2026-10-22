@@ -64,6 +64,7 @@ final class Rule {
 	 * @param bool          $log_context                 Write the close's `request_context` entry: the template, rewrite rule, query vars and conditionals of a web request.
 	 * @param bool          $log_cache                   Write the close's `objectcache` row: what the request asked of the object cache.
 	 * @param bool          $log_resources               Write the two `resources` getrusage() samples, at the open and at the close, which the CPU-time findings difference.
+	 * @param bool          $log_php_errors              Record PHP's warnings, notices and deprecations, and WordPress's own deprecations and misuse, one row per distinct error and a count of the repeats at the close. Off unless set; off, the request installs no error handler.
 	 *
 	 * @throws \InvalidArgumentException When the pattern is empty, or hooks and hooks_in contradict.
 	 */
@@ -86,7 +87,8 @@ final class Rule {
 		public readonly bool $flush_every_line = false,
 		public readonly bool $log_context = false,
 		public readonly bool $log_cache = false,
-		public readonly bool $log_resources = false
+		public readonly bool $log_resources = false,
+		public readonly bool $log_php_errors = false
 	) {
 		if ( '' === $pattern ) {
 			throw new \InvalidArgumentException( 'rule pattern is required' );
@@ -129,7 +131,7 @@ final class Rule {
 	 * A copy of this rule with some fields replaced, the object being immutable.
 	 *
 	 * Keys come from `to_array()`; anything absent is carried over. Reconstructing
-	 * by hand means nineteen positional arguments at every call site, and a field
+	 * by hand means twenty positional arguments at every call site, and a field
 	 * added to the constructor silently drops out of the ones that were missed.
 	 *
 	 * @param array<string,mixed> $overrides Fields to replace.
@@ -166,6 +168,7 @@ final class Rule {
 			'log_context'                 => $this->log_context,
 			'log_cache'                   => $this->log_cache,
 			'log_resources'               => $this->log_resources,
+			'log_php_errors'              => $this->log_php_errors,
 		];
 	}
 
@@ -204,7 +207,8 @@ final class Rule {
 			! empty( $a['flush_every_line'] ),
 			! empty( $a['log_context'] ),
 			! empty( $a['log_cache'] ),
-			! empty( $a['log_resources'] )
+			! empty( $a['log_resources'] ),
+			! empty( $a['log_php_errors'] )
 		);
 	}
 

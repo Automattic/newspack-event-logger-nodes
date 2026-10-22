@@ -374,13 +374,14 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_plugin_loads ).toBe( true );
 	} );
 
-	// The close's rows and the two debugging switches, each a rule's to set.
+	// The close's rows and the debugging switches, each a rule's to set.
 	const ROW_SWITCHES = [
 		[ 'log_memory', 'rule-log-memory' ],
 		[ 'flush_every_line', 'rule-flush-every-line' ],
 		[ 'log_context', 'rule-log-context' ],
 		[ 'log_cache', 'rule-log-cache' ],
 		[ 'log_resources', 'rule-log-resources' ],
+		[ 'log_php_errors', 'rule-log-php-errors' ],
 	];
 
 	test.each( ROW_SWITCHES )(

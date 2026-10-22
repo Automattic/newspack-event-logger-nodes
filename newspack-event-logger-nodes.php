@@ -177,8 +177,9 @@ function newspack_event_logger_nodes_boot(): void {
 		}
 	);
 
-	// The plugin rows go first, ahead of any span App\Core binds.
+	// The drop-in's rows go first, ahead of any span App\Core binds.
 	\Newspack_Event_Logger_Nodes\Log_Manager::instance()->flush_plugin_loads();
+	\Newspack_Event_Logger_Nodes\Log_Manager::instance()->flush_php_errors();
 	new \Newspack_Event_Logger_Nodes\App\Core();
 
 	if ( \function_exists( 'is_admin' ) && \is_admin() ) {

@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Newspack Profiler
- * Description: Times each active plugin's load — duration, new classes, new files — and records the moment PHP began the request. Event Logger Nodes writes the measurements to the firehose when it is active; nothing here depends on it.
+ * Description: Times each active plugin's load — duration, new classes, new files — records the moment PHP began the request, and catches the PHP errors raised before Event Logger Nodes boots. Event Logger Nodes writes the measurements to the firehose when it is active; nothing here depends on it.
  * Version: 0.151.0
  * Author: Automattic
  *
@@ -15,6 +15,9 @@
  * Only site-activated plugins are timed. Must-use plugins announce themselves
  * on `mu_plugin_loaded` and network-activated ones on `network_plugin_loaded`;
  * neither hook is bound here.
+ *
+ * Its error handler is registered here, ahead of every plugin, so a warning a
+ * plugin raises while it loads is caught; it chains to the handler before it.
  *
  * Deploy manually: Copy to wp-content/mu-plugins/00-newspack-profiler.php
  * Remove: Delete the file. No persistent state, no options, no database writes.
@@ -37,14 +40,120 @@
  * bootstrap, which writes the rows through `Log_Manager::flush_plugin_loads()`
  * and empties the list.
  *
- * @var array{request_time:int,request_ts:float,plugins:list<array{slug:string,start_ts:float,duration_ns:int|float,new_classes:int,new_files:int}>} $newspack_profiler
+ * `php_errors` holds each distinct PHP error the handler below caught, by its
+ * level, file and line, with its first message, how many times it was raised
+ * and when first; past `NEWSPACK_PROFILER_PHP_ERRORS_MAX` keys,
+ * `php_errors_dropped` counts the raises left out. An error
+ * `wp_trigger_error()` raised in core keeps the files and lines of its stack,
+ * which tell one misuse from another and lead the logger to the code that
+ * misused core. `Log_Manager::flush_php_errors()` takes the buffer at the
+ * same bootstrap and leaves null, which stops the buffering, and pops
+ * `php_error_handler` while it is still on top of the stack.
+ *
+ * @var array{request_time:int,request_ts:float,plugins:list<array{slug:string,start_ts:float,duration_ns:int|float,new_classes:int,new_files:int}>,php_errors:array<string,array{errno:int,message:string,file:string,line:int,silenced:bool,times:int,ts:float,frames:list<array{file:string,line:int}>}>|null,php_errors_dropped:int,php_error_handler:\Closure|null} $newspack_profiler
  */
 global $newspack_profiler;
 $newspack_profiler = [
-	'request_time' => \hrtime( true ),
-	'request_ts'   => \microtime( true ),
-	'plugins'      => [],
+	'request_time'       => \hrtime( true ),
+	'request_ts'         => \microtime( true ),
+	'plugins'            => [],
+	'php_errors'         => [],
+	'php_errors_dropped' => 0,
+	'php_error_handler'  => null,
 ];
+
+// Query Monitor's levels, every one but the fatals; `App\Php_Errors::MASK`.
+\defined( 'NEWSPACK_PROFILER_PHP_ERROR_MASK' ) || \define( 'NEWSPACK_PROFILER_PHP_ERROR_MASK', \E_ALL & ~( \E_ERROR | \E_PARSE | \E_COMPILE_ERROR | \E_USER_ERROR | \E_RECOVERABLE_ERROR ) );
+
+// Distinct errors buffered before the logger boots; past it, only counted.
+\defined( 'NEWSPACK_PROFILER_PHP_ERRORS_MAX' ) || \define( 'NEWSPACK_PROFILER_PHP_ERRORS_MAX', 100 );
+
+/** @var callable|null $newspack_profiler_previous The error handler before the one below. */
+$newspack_profiler_previous = null;
+
+/**
+ * Buffer a PHP error until the event logger boots, then chain to the handler
+ * before this one with the same arguments, whatever buffering threw; a
+ * throw then propagates.
+ *
+ * Every level the mask admits is buffered; the logger keeps the ones it
+ * records. `silenced` says `error_reporting` left it out, as `@` does.
+ *
+ * @param int    $errno   The error's level.
+ * @param string $errstr  Its message.
+ * @param string $errfile The file it was raised in.
+ * @param int    $errline The line.
+ * @return bool What the handler before answered; false with none, so PHP's own runs.
+ */
+$newspack_profiler['php_error_handler'] = static function ( int $errno, string $errstr, string $errfile = '', int $errline = 0 ) use ( &$newspack_profiler_previous ): bool {
+	/** @var array{php_errors:array<string,array{errno:int,message:string,file:string,line:int,silenced:bool,times:int,ts:float,frames:list<array{file:string,line:int}>}>|null,php_errors_dropped:int} $newspack_profiler */
+	global $newspack_profiler;
+	try {
+		if ( \is_array( $newspack_profiler['php_errors'] ) ) {
+			$key    = "{$errno}\0{$errfile}\0{$errline}";
+			$frames = [];
+			if ( \in_array( $errno, [ \E_USER_WARNING, \E_USER_NOTICE, \E_USER_DEPRECATED ], true ) && \str_ends_with( $errfile, '/wp-includes/functions.php' ) ) {
+				// From trigger_error() outward, which the replay walks.
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- locates the misuse.
+				foreach ( \debug_backtrace( \DEBUG_BACKTRACE_IGNORE_ARGS, 16 ) as $frame ) {
+					if ( isset( $frame['file'] ) ) {
+						$frames[] = [
+							'file' => $frame['file'],
+							'line' => $frame['line'] ?? 0,
+						];
+						$key     .= "\0{$frame['file']}:" . ( $frame['line'] ?? 0 );
+					}
+				}
+			}
+			if ( isset( $newspack_profiler['php_errors'][ $key ] ) ) {
+				++$newspack_profiler['php_errors'][ $key ]['times'];
+			} elseif ( \count( $newspack_profiler['php_errors'] ) < \NEWSPACK_PROFILER_PHP_ERRORS_MAX ) {
+				$newspack_profiler['php_errors'][ $key ] = [
+					'errno'    => $errno,
+					'message'  => $errstr,
+					'file'     => $errfile,
+					'line'     => $errline,
+					// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.runtime_configuration_error_reporting -- reads the level; sets nothing.
+					'silenced' => 0 === ( \error_reporting() & $errno ),
+					'times'    => 1,
+					'ts'       => \microtime( true ),
+					'frames'   => $frames,
+				];
+			} else {
+				++$newspack_profiler['php_errors_dropped'];
+			}
+		}
+	} finally {
+		$answer = null !== $newspack_profiler_previous && false !== $newspack_profiler_previous( $errno, $errstr, $errfile, $errline );
+	}
+	return $answer;
+};
+// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_set_error_handler -- catches load-time errors.
+$newspack_profiler_previous = \set_error_handler( $newspack_profiler['php_error_handler'], \NEWSPACK_PROFILER_PHP_ERROR_MASK );
+
+\add_action(
+	'plugins_loaded',
+	/**
+	 * Stop buffering once every plugin has loaded, unless the event logger
+	 * took the buffer at its bootstrap, and leave the stack while still on
+	 * top of it; beneath a handler installed over it, it only chains.
+	 */
+	static function (): void {
+		/** @var array{php_errors:array<string,mixed>|null,php_error_handler:\Closure} $newspack_profiler */
+		global $newspack_profiler;
+		if ( ! \is_array( $newspack_profiler['php_errors'] ) ) {
+			return;
+		}
+		$newspack_profiler['php_errors'] = null;
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_set_error_handler -- reads the top, which PHP offers no getter for.
+		$top = \set_error_handler( static fn (): bool => false );
+		\restore_error_handler();
+		if ( $top === $newspack_profiler['php_error_handler'] ) {
+			\restore_error_handler();
+		}
+	},
+	\PHP_INT_MAX
+);
 
 /**
  * Running baseline, threaded by reference through the two callbacks below.
