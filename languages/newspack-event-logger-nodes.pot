@@ -2,14 +2,14 @@
 # This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Newspack Event Logger Nodes 0.151.0\n"
+"Project-Id-Version: Newspack Event Logger Nodes 0.152.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/newspack-event-logger-nodes\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-22T04:39:35+00:00\n"
+"POT-Creation-Date: 2026-10-22T08:23:08+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -1324,53 +1324,53 @@ msgstr ""
 msgid "Press Enter to add one. Each is timed per callback, and auto-disable never removes it."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:162
+#: src/rules/RuleEditModal.js:165
 msgid "Pattern is required."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:204
+#: src/rules/RuleEditModal.js:208
 msgid "Edit rule"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:205
+#: src/rules/RuleEditModal.js:209
 msgid "Add rule"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:214
+#: src/rules/RuleEditModal.js:218
 msgid "URL pattern"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:218
+#: src/rules/RuleEditModal.js:222
 msgid "A prefix like /blog, or an exact match ending in ? (e.g. /about?)."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:229
+#: src/rules/RuleEditModal.js:233
 #: src/rules/RulesAdmin.js:351
 msgid "Action"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:234
+#: src/rules/RuleEditModal.js:238
 #: src/rules/RulesAdmin.js:156
 msgid "Log"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:241
+#: src/rules/RuleEditModal.js:245
 #: src/rules/RulesAdmin.js:157
 msgid "Skip"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:255
+#: src/rules/RuleEditModal.js:259
 #: src/rules/RulesAdmin.js:354
 msgid "Hooks"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:265
+#: src/rules/RuleEditModal.js:269
 msgid "Select Hooks"
 msgstr ""
 
 #. translators: %d: number of selected hooks.
 #. translators: %d: number of hooks on the rule.
-#: src/rules/RuleEditModal.js:273
+#: src/rules/RuleEditModal.js:277
 #: src/rules/RulesAdmin.js:164
 #, js-format
 msgid "%d hook"
@@ -1378,17 +1378,17 @@ msgid_plural "%d hooks"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/rules/RuleEditModal.js:286
+#: src/rules/RuleEditModal.js:290
 msgid "Custom events"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:296
+#: src/rules/RuleEditModal.js:300
 msgid "Select Events"
 msgstr ""
 
 #. translators: %d: number of selected custom events.
 #. translators: %d: number of custom events on the rule.
-#: src/rules/RuleEditModal.js:304
+#: src/rules/RuleEditModal.js:308
 #: src/rules/RulesAdmin.js:178
 #, js-format
 msgid "%d event"
@@ -1396,125 +1396,133 @@ msgid_plural "%d events"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/rules/RuleEditModal.js:319
+#: src/rules/RuleEditModal.js:323
 msgid "Significant events"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:335
+#: src/rules/RuleEditModal.js:339
 msgid "Auto-disable threshold"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:339
+#: src/rules/RuleEditModal.js:343
 msgid "Occurrence count before an event auto-disables. 0 = off."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:351
+#: src/rules/RuleEditModal.js:355
 msgid "Auto-protect time threshold (ms)"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:355
+#: src/rules/RuleEditModal.js:359
 msgid "Duration in ms above which a slow event is protected. 0 = off."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:367
+#: src/rules/RuleEditModal.js:371
 msgid "Log database queries"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:371
+#: src/rules/RuleEditModal.js:375
 msgid "Times every query as its own flame span. Each query adds two entries to the request's log, so a request running hundreds of them leaves a large record, which may be folded under memory pressure."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:381
+#: src/rules/RuleEditModal.js:385
 msgid "Log HTTP requests"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:385
+#: src/rules/RuleEditModal.js:389
 msgid "Times every outbound HTTP request as its own flame span. Each outbound call adds two entries to the request's log."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:395
+#: src/rules/RuleEditModal.js:399
 msgid "Log plugin load time"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:399
+#: src/rules/RuleEditModal.js:403
 msgid "Times each site-activated plugin as its own flame span. The measuring happens either way; this is two log entries per plugin, before the request does any work."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:409
+#: src/rules/RuleEditModal.js:413
 msgid "Log peak memory on every span"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:413
+#: src/rules/RuleEditModal.js:417
 msgid "Adds the process's peak memory to every span's close, so memory growth reads across the request's timeline. The request's own close carries it either way."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:423
+#: src/rules/RuleEditModal.js:427
 msgid "Log request context"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:427
+#: src/rules/RuleEditModal.js:431
 msgid "Adds one entry to the request's log naming the template WordPress included, the rewrite rule and query it matched, its query vars and the conditionals the main query answers true."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:437
+#: src/rules/RuleEditModal.js:441
 msgid "Log object cache counts"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:441
+#: src/rules/RuleEditModal.js:445
 msgid "Adds one entry to the request's log counting its object-cache hits and misses."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:451
+#: src/rules/RuleEditModal.js:455
 msgid "Log resource usage"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:455
+#: src/rules/RuleEditModal.js:459
 msgid "Adds two entries to the request's log, its CPU time, page faults, I/O blocks and context switches at the start and at the end. The CPU figures beside a finding's gaps come from these."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:465
+#: src/rules/RuleEditModal.js:469
+msgid "Log PHP errors"
+msgstr ""
+
+#: src/rules/RuleEditModal.js:473
+msgid "Adds one entry to the request's log for each distinct PHP warning, notice or deprecation, and for each of WordPress's own deprecation and misuse notices, naming the file, the line and the plugin or theme that owns it. A repeat is counted, not logged, in one entry at the request's end. Errors PHP or WordPress would have hidden are logged too, and marked silenced."
+msgstr ""
+
+#: src/rules/RuleEditModal.js:483
 msgid "Flush every line"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:469
+#: src/rules/RuleEditModal.js:487
 msgid "Writes each entry to disk as it is logged, so the last line before a crash or an out-of-memory kill survives. Costs one write per entry."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:480
+#: src/rules/RuleEditModal.js:498
 msgid "Trace hook callers"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:486
+#: src/rules/RuleEditModal.js:504
 msgid "Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph. The number traces that many calls from each CALLER of a hook, query shape or outbound URL further, recording the twenty frames above each — expensive, so 1 already reaches every caller. At 0 every span still carries its label and none records a backtrace."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:490
+#: src/rules/RuleEditModal.js:508
 msgid "Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph."
 msgstr ""
 
-#: src/rules/RuleEditModal.js:505
+#: src/rules/RuleEditModal.js:523
 msgid "Calls traced per caller of each hook, query shape and URL"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:514
+#: src/rules/RuleEditModal.js:532
 msgid "traced per caller of each hook, query shape and URL"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:544
+#: src/rules/RuleEditModal.js:562
 msgid "Confirm delete"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:548
+#: src/rules/RuleEditModal.js:566
 #: src/rules/RulesAdmin.js:380
 msgid "Delete rule"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:559
+#: src/rules/RuleEditModal.js:577
 #: src/rules/RulesAdmin.js:114
 msgid "Cancel"
 msgstr ""
 
-#: src/rules/RuleEditModal.js:562
+#: src/rules/RuleEditModal.js:580
 msgid "Save rule"
 msgstr ""
 
