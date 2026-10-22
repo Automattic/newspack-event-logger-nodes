@@ -40,17 +40,7 @@ final class PhpErrorsTest extends TestCase {
 		$this->server  = $_SERVER;
 		$this->actions = $GLOBALS['_wp_actions'];
 		$this->handler = self::top_handler();
-		$fixtures      = \dirname( __DIR__ ) . '/fixtures/owners';
-		self::own_files_under(
-			[
-				'plugins'    => "{$fixtures}/plugins",
-				'mu_plugins' => "{$fixtures}/mu-plugins",
-				'themes'     => [ "{$fixtures}/themes" ],
-				'content'    => "{$fixtures}/content",
-				'abspath'    => "{$fixtures}/abspath/",
-				'managed'    => "{$fixtures}/managed",
-			]
-		);
+		self::own_the_owner_fixtures();
 	}
 
 	protected function tearDown(): void {
@@ -257,6 +247,22 @@ final class PhpErrorsTest extends TestCase {
 			'a too-early enqueue'                   => [ 'kea_7746_enqueue_script', 'php (notice)', 'doing_it_wrong kea_7746_enqueue_script: kea 7746 enqueued too early (3.3.0)', "\t\$api();\n" ],
 			'a misuse three core frames down'       => [ 'kea_7746_deep_api', 'php (notice)', 'doing_it_wrong kea_7746_deep_api: kea 7746 deep (6.6.0)', "\t\$api();\n" ],
 		];
+	}
+
+	/**
+	 * A core listener the logger times reports its misuse at core's own line:
+	 * `timed()` calling the listener is not who misused it.
+	 */
+	public function test_a_timed_core_listener_misuse_is_placed_in_core_not_the_logger(): void {
+		$lm = $this->start_logged_request( '/kea/7746', [ 'log_php_errors' => true ] );
+		new Core();
+
+		$lm->timed( 'kea 7746 wrapped', 'kea_7746_checked_api' );
+
+		$this->assertSame(
+			[ [ 'php (notice)', 'doing_it_wrong kea_7746_checked_api: kea 7746 called too early (6.5.0)', self::core_file(), self::core_line(), 'core', true ] ],
+			self::rows( $this->logged_entries() )
+		);
 	}
 
 	/**
@@ -568,6 +574,20 @@ final class PhpErrorsTest extends TestCase {
 	/** A file the `kea-7746` plugin owns. */
 	private static function plugin_file(): string {
 		return \dirname( __DIR__ ) . '/fixtures/owners/plugins/kea-7746/class-kea-7746-caller.php';
+	}
+
+	/** The core file whose APIs report misuse. */
+	private static function core_file(): string {
+		return \dirname( __DIR__ ) . '/fixtures/owners/abspath/wp-includes/functions.php';
+	}
+
+	/** The line of that file where `kea_7746_checked_api()` reports itself. */
+	private static function core_line(): int {
+		$lines = \file( self::core_file() );
+		self::assertIsArray( $lines );
+		$at = \array_search( "\t_doing_it_wrong( __FUNCTION__, 'kea 7746 called too early', '6.5.0' );\n", $lines, true );
+		self::assertIsInt( $at );
+		return $at + 1;
 	}
 
 	/** The plugin file that misuses core. */

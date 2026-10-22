@@ -2597,27 +2597,9 @@ class AppCoreTest extends TestCase {
 		);
 	}
 
-	/**
-	 * Classify against a tree whose one plugin is the `kea-7746` fixture, so
-	 * this file, which calls into it, sits under no root.
-	 */
-	private static function own_the_fixtures(): void {
-		$fixtures = \dirname( __DIR__ ) . '/fixtures/owners';
-		self::own_files_under(
-			[
-				'plugins'    => "{$fixtures}/plugins",
-				'mu_plugins' => "{$fixtures}/mu-plugins",
-				'themes'     => [ "{$fixtures}/themes" ],
-				'content'    => "{$fixtures}/content",
-				'abspath'    => "{$fixtures}/abspath/",
-				'managed'    => "{$fixtures}/managed",
-			]
-		);
-	}
-
 	/** A listener's span names the plugin that bound it, a closure's too. */
 	public function test_a_wrapped_listener_is_named_with_its_owner(): void {
-		self::own_the_fixtures();
+		self::own_the_owner_fixtures();
 		$core            = $this->significant_core();
 		$closure         = Kea_7746_Caller::closure_listener();
 		$hook            = new \WP_Hook();
@@ -2642,7 +2624,7 @@ class AppCoreTest extends TestCase {
 
 	/** A listener from a file under no root keeps its bare name. */
 	public function test_a_wrapped_listener_without_an_owner_keeps_its_bare_name(): void {
-		self::own_the_fixtures();
+		self::own_the_owner_fixtures();
 		$core            = $this->significant_core();
 		$hook            = new \WP_Hook();
 		$hook->callbacks = [ 10 => [ 'kea' => [ 'function' => [ self::class, 'kea_listener_7746' ], 'accepted_args' => 1 ] ] ];
@@ -2660,7 +2642,7 @@ class AppCoreTest extends TestCase {
 	 * frame was called from: this file calls the fixture, and owns nothing.
 	 */
 	public function test_a_query_span_label_names_the_owner_of_the_caller(): void {
-		self::own_the_fixtures();
+		self::own_the_owner_fixtures();
 		$this->set_governing_rule( $this->query_rule( true ) );
 		$core = new Core();
 
@@ -2671,7 +2653,7 @@ class AppCoreTest extends TestCase {
 
 	/** The outbound-HTTP twin. */
 	public function test_an_http_span_label_names_the_owner_of_the_caller(): void {
-		self::own_the_fixtures();
+		self::own_the_owner_fixtures();
 		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG, log_http: true ) );
 		$core = new Core();
 
@@ -2685,7 +2667,7 @@ class AppCoreTest extends TestCase {
 	 * `get_option()` names the plugin, not core.
 	 */
 	public function test_a_query_through_a_core_api_names_the_plugin_that_called_it(): void {
-		self::own_the_fixtures();
+		self::own_the_owner_fixtures();
 		$this->set_governing_rule( $this->query_rule( true ) );
 		$core = new Core();
 
@@ -2696,7 +2678,7 @@ class AppCoreTest extends TestCase {
 
 	/** With no plugin beyond it, the core API is its own owner. */
 	public function test_a_query_from_a_core_api_alone_names_core(): void {
-		self::own_the_fixtures();
+		self::own_the_owner_fixtures();
 		$this->set_governing_rule( $this->query_rule( true ) );
 		$core = new Core();
 
@@ -2705,9 +2687,85 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( '[core] kea_7746_get_option', $this->last_entry_label( 'sql (start)' ) );
 	}
 
+	/**
+	 * A Core bound for a rule that wraps `the_content`'s listeners, logs
+	 * queries and traces hook origins, under the owner fixtures.
+	 */
+	private function wrapping_core(): Core {
+		self::own_the_owner_fixtures();
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule(
+				'6d1f3a8c5e29',
+				'/kea/',
+				Rule::ACTION_LOG,
+				significant_events: [ 'the_content' ],
+				hooks: [ 'the_content' ],
+				log_queries: true,
+				trace_hooks: true
+			)
+		);
+		return new Core();
+	}
+
+	/**
+	 * Wrap `$function` as a `the_content` listener and return the wrapper.
+	 *
+	 * @param Core     $core     The Core that wraps it.
+	 * @param callable $function The listener.
+	 */
+	private function wrapped_listener( Core $core, callable $function ): \Closure {
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'kea' => [ 'function' => $function, 'accepted_args' => 2 ] ] ];
+		global $wp_filter;
+		$wp_filter['the_content']           = $hook;
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+		$core->hook_start( 'seed' );
+		$wrapper = $wp_filter['the_content']->callbacks[10]['kea']['function'];
+		$this->assertInstanceOf( \Closure::class, $wrapper );
+		$this->assertNotSame( $function, $wrapper );
+		return $wrapper;
+	}
+
+	/**
+	 * A plugin listener's query through a core API names the plugin, though
+	 * the logger's own wrapper and `timed()` stand between it and the hook.
+	 */
+	public function test_a_wrapped_plugin_listener_query_names_the_plugin(): void {
+		$core    = $this->wrapping_core();
+		$wrapper = $this->wrapped_listener( $core, [ new Kea_7746_Caller(), 'ask_through_core' ] );
+
+		$wrapper( new FakeTransport(), 'SELECT option_value FROM wp_options WHERE 7746' );
+
+		$this->assertSame( '[kea-7746] kea_7746_get_option', $this->last_entry_label( 'sql (start)' ) );
+	}
+
+	/**
+	 * A core listener's query names core: the logger's wrapper and `timed()`
+	 * are not who asked, though the logger's own files are owned.
+	 */
+	public function test_a_wrapped_core_listener_query_names_core_not_the_logger(): void {
+		$core    = $this->wrapping_core();
+		$wrapper = $this->wrapped_listener( $core, 'kea_7746_get_option' );
+
+		$wrapper( new FakeTransport(), 'SELECT option_value FROM wp_options WHERE 7746' );
+
+		$this->assertSame( '[core] kea_7746_get_option', $this->last_entry_label( 'sql (start)' ) );
+	}
+
+	/** The hook-origin twin: a hook a wrapped core listener fires names core. */
+	public function test_a_hook_a_wrapped_core_listener_fires_names_core_not_the_logger(): void {
+		$core    = $this->wrapping_core();
+		$wrapper = $this->wrapped_listener( $core, 'kea_7746_the_content' );
+
+		$wrapper( $core );
+
+		$this->assertSame( '[core] kea_7746_the_content', $this->last_entry_label( 'the_content hook (start)' ) );
+	}
+
 	/** The cap bounds the whole label, prefix included, on a character boundary. */
 	public function test_the_origin_cap_bounds_the_prefixed_label(): void {
-		self::own_the_fixtures();
+		self::own_the_owner_fixtures();
 		$this->set_governing_rule( $this->query_rule( true ) );
 		$core   = new Core();
 		$method = 'ask_' . \str_repeat( 'ō', 30 );
@@ -2724,7 +2782,7 @@ class AppCoreTest extends TestCase {
 	 * declares the method: a plugin subclass hooking an inherited core method.
 	 */
 	public function test_an_inherited_listener_is_owned_by_the_hooked_class(): void {
-		self::own_the_fixtures();
+		self::own_the_owner_fixtures();
 		$core            = $this->significant_core();
 		$hook            = new \WP_Hook();
 		$hook->callbacks = [
@@ -2769,7 +2827,7 @@ class AppCoreTest extends TestCase {
 
 	/** A traced hook's origin names its owner as well. */
 	public function test_a_traced_hook_origin_names_its_owner(): void {
-		self::own_the_fixtures();
+		self::own_the_owner_fixtures();
 		$this->set_governing_rule( $this->tracing_rule( 0 ) );
 		$core                               = new Core();
 		$GLOBALS['_wp_test_current_filter'] = 'the_content';

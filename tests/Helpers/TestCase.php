@@ -567,6 +567,28 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Classify against the `tests/fixtures/owners` tree, whose one plugin is
+	 * `kea-7746` and whose `abspath` is core, so a test file calling into it
+	 * sits under no root. This plugin's own `includes/` is owned too, as it is
+	 * on a site, rooted as mu-plugins: the one root that holds it without
+	 * holding the fixtures beside it, so its files read `mu:app` and
+	 * `mu:class-log-manager`.
+	 */
+	protected static function own_the_owner_fixtures(): void {
+		$fixtures = \dirname( __DIR__ ) . '/fixtures/owners';
+		self::own_files_under(
+			[
+				'plugins'    => "{$fixtures}/plugins",
+				'mu_plugins' => \dirname( __DIR__, 2 ) . '/includes',
+				'themes'     => [ "{$fixtures}/themes" ],
+				'content'    => "{$fixtures}/content",
+				'abspath'    => "{$fixtures}/abspath/",
+				'managed'    => "{$fixtures}/managed",
+			]
+		);
+	}
+
+	/**
 	 * ELN-specific default prefix so app temp dirs live in their OWN namespace,
 	 * not the substrate's `newspack-nodes-test-`: each suite's run-coverage.sh
 	 * sweeps its own prefix's stale dirs, and a shared prefix would put one

@@ -1047,19 +1047,39 @@ class Core {
 	/**
 	 * The nearest frame from `$from` outward whose file is code that neither
 	 * core nor an unknown owner holds, or null when the backtrace has none.
+	 * A call the logger makes while timing a listener is not such code: see
+	 * `times_a_listener()`.
 	 *
 	 * @api Called by `App\Php_Errors` and `Log_Manager::flush_php_errors()`.
-	 * @param array<int,array{file?: string}> $frames A backtrace, nearest first.
-	 * @param int                             $from   The frame to start from.
+	 * @param array<int,array{file?: string, function?: string, class?: string}> $frames A backtrace, nearest first.
+	 * @param int                                                                $from   The frame to start from.
 	 */
 	public static function owned_frame( array $frames, int $from ): ?int {
 		for ( $j = $from, $n = \count( $frames ); $j < $n; $j++ ) {
 			$owner = Owner::of( $frames[ $j ]['file'] ?? '' );
-			if ( '' !== $owner && Owner::CORE !== $owner ) {
+			if ( '' !== $owner && Owner::CORE !== $owner && ! self::times_a_listener( $frames[ $j + 1 ] ?? [] ) ) {
 				return $j;
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Whether a frame is the logger timing a listener: `Log_Manager::timed()`,
+	 * or the wrapper `wrap_callbacks()` installs, which is this class's one
+	 * closure that calls code outside the logger. A frame's `file` is a call
+	 * made inside the NEXT frame's function, so a frame whose next frame is
+	 * one of these is the logger calling on behalf of whoever bound or timed
+	 * the listener, and the walk looks past it. A frame without a function, as
+	 * the profiler drop-in keeps them, is never one.
+	 *
+	 * @param array{function?: string, class?: string} $frame The frame making the call.
+	 */
+	private static function times_a_listener( array $frame ): bool {
+		$class    = $frame['class'] ?? '';
+		$function = $frame['function'] ?? '';
+		return ( Log_Manager::class === $class && 'timed' === $function )
+			|| ( self::class === $class && \str_starts_with( $function, '{closure' ) );
 	}
 
 	/**
