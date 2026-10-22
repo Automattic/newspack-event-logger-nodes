@@ -248,6 +248,9 @@ class Core {
 	/** @var array<string,int>|null HOOK_ARG_KEEP flipped for lookup, once per process. */
 	private static ?array $hook_arg_keep = null;
 
+	/** @var array<string,array{int,int}>|null timing_sites(), once per process. */
+	private static ?array $timing_sites = null;
+
 	/** @var int Priority hook_start registers at (config key `hook_start_priority`). */
 	private int $start_priority;
 
@@ -1051,13 +1054,13 @@ class Core {
 	 * `times_a_listener()`.
 	 *
 	 * @api Called by `App\Php_Errors` and `Log_Manager::flush_php_errors()`.
-	 * @param array<int,array{file?: string, function?: string, class?: string}> $frames A backtrace, nearest first.
-	 * @param int                                                                $from   The frame to start from.
+	 * @param array<int,array{file?: string, line?: int}> $frames A backtrace, nearest first.
+	 * @param int                                         $from   The frame to start from.
 	 */
 	public static function owned_frame( array $frames, int $from ): ?int {
 		for ( $j = $from, $n = \count( $frames ); $j < $n; $j++ ) {
 			$owner = Owner::of( $frames[ $j ]['file'] ?? '' );
-			if ( '' !== $owner && Owner::CORE !== $owner && ! self::times_a_listener( $frames[ $j + 1 ] ?? [] ) ) {
+			if ( '' !== $owner && Owner::CORE !== $owner && ! self::times_a_listener( $frames[ $j ] ) ) {
 				return $j;
 			}
 		}
@@ -1065,21 +1068,33 @@ class Core {
 	}
 
 	/**
-	 * Whether a frame is the logger timing a listener: `Log_Manager::timed()`,
-	 * or the wrapper `wrap_callbacks()` installs, which is this class's one
-	 * closure that calls code outside the logger. A frame's `file` is a call
-	 * made inside the NEXT frame's function, so a frame whose next frame is
-	 * one of these is the logger calling on behalf of whoever bound or timed
-	 * the listener, and the walk looks past it. A frame without a function, as
-	 * the profiler drop-in keeps them, is never one.
+	 * Whether a frame is a call the logger makes while timing a listener: its
+	 * `file` and `line` lie inside `Log_Manager::timed()`, which calls the
+	 * listener, or inside `wrap_callbacks()`, whose wrapper calls `timed()`.
+	 * The frame is known from itself, so a bounded backtrace cut off right
+	 * after it still reads it, and the walk looks past it to whoever bound or
+	 * timed the listener.
 	 *
-	 * @param array{function?: string, class?: string} $frame The frame making the call.
+	 * @param array{file?: string, line?: int} $frame A backtrace frame.
 	 */
 	private static function times_a_listener( array $frame ): bool {
-		$class    = $frame['class'] ?? '';
-		$function = $frame['function'] ?? '';
-		return ( Log_Manager::class === $class && 'timed' === $function )
-			|| ( self::class === $class && \str_starts_with( $function, '{closure' ) );
+		$span = ( self::$timing_sites ??= self::timing_sites() )[ $frame['file'] ?? '' ] ?? null;
+		$line = $frame['line'] ?? 0;
+		return null !== $span && $line >= $span[0] && $line <= $span[1];
+	}
+
+	/**
+	 * The first and last line of `Log_Manager::timed()` and of
+	 * `wrap_callbacks()`, each keyed by its file.
+	 *
+	 * @return array<string,array{int,int}>
+	 */
+	private static function timing_sites(): array {
+		$sites = [];
+		foreach ( [ new \ReflectionMethod( Log_Manager::class, 'timed' ), new \ReflectionMethod( self::class, 'wrap_callbacks' ) ] as $method ) {
+			$sites[ (string) $method->getFileName() ] = [ (int) $method->getStartLine(), (int) $method->getEndLine() ];
+		}
+		return $sites;
 	}
 
 	/**
