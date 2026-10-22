@@ -12,6 +12,11 @@ function kea_7746_get_option( object $transport, string $sql ): mixed {
 	return $transport->get_row( $sql );
 }
 
+/** A core API firing `the_content`, as a template tag does. */
+function kea_7746_the_content( Newspack_Event_Logger_Nodes\App\Core $core ): mixed {
+	return $core->hook_start( 'kea core body' );
+}
+
 /** A core class whose methods a plugin subclass hooks. */
 class Kea_7746_Core_Parent {
 

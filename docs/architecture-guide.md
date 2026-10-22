@@ -210,7 +210,7 @@ Each root matches as written and as its `realpath()`, with a trailing slash, so 
 The prefix goes on three labels, and on no others:
 
 - **A listener span's callable.** The wrapper takes the owner from the reflection it already builds for the by-reference check, and from the class the method is hooked as rather than the one declaring it. A closure reads `[my-plugin] {closure}:file.php:42 @10`.
-- **The `l` of an SQL or HTTP span.** `origin_frame()` names the owner of the nearest frame, from the one it names outward, that neither core nor an unknown file owns (`Core::owned_frame()`), so a plugin's `get_option()` query reads `[my-plugin] get_option`. The backtrace is the one `origin_frame()` already takes.
+- **The `l` of an SQL or HTTP span.** `origin_frame()` names the owner of the nearest frame, from the one it names outward, that neither core nor an unknown file owns (`Core::owned_frame()`), so a plugin's `get_option()` query reads `[my-plugin] get_option`. The walk looks past the logger timing a listener — `Log_Manager::timed()` and the wrapper `wrap_callbacks()` installs — so a wrapped core listener's `get_option()` reads `[core] get_option`, not the logger. The backtrace is the one `origin_frame()` already takes.
 - **A `trace_hooks` hook origin.**
 
 `ORIGIN_MAX` bounds `l` with its prefix, cut on a character boundary. Auto-tune binds `hook`, `custom` and `transport` spans by hook name or the bare `sql` or `http` category, never by a listener label or an `l`, and `Flame_Tree::base_name()` splits on `": "`, which the prefix does not contain, so neither reads the prefix. The stats schema is unchanged: labels are names in the existing lookups. Per-callback time exists only for hooks a rule marks significant, because nothing else is wrapped.
