@@ -133,6 +133,17 @@ if ( ! class_exists( '\WP_Hook' ) ) {
 	// array shape (`priority => callback_id => [function, accepted_args]`).
 	class WP_Hook {
 		public array $callbacks = [];
+		// As core's: each callback by priority, sliced to its accepted_args.
+		public function apply_filters( $value, array $args ) {
+			\ksort( $this->callbacks );
+			foreach ( $this->callbacks as $callbacks ) {
+				foreach ( $callbacks as $the_ ) {
+					$args[0] = $value;
+					$value   = \call_user_func_array( $the_['function'], \array_slice( $args, 0, (int) $the_['accepted_args'] ) );
+				}
+			}
+			return $value;
+		}
 		public function remove_filter( string $hook, $function_to_remove, int $priority = 10 ): bool {
 			unset( $this->callbacks[ $priority ][ _wp_filter_build_unique_id( $hook, $function_to_remove, $priority ) ] );
 			return true;

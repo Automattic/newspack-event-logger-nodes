@@ -2716,7 +2716,7 @@ class AppCoreTest extends TestCase {
 	 */
 	private function wrapped_listener( Core $core, callable $function ): \Closure {
 		$hook            = new \WP_Hook();
-		$hook->callbacks = [ 10 => [ 'kea' => [ 'function' => $function, 'accepted_args' => 2 ] ] ];
+		$hook->callbacks = [ 10 => [ 'kea' => [ 'function' => $function, 'accepted_args' => 4 ] ] ];
 		global $wp_filter;
 		$wp_filter['the_content']           = $hook;
 		$GLOBALS['_wp_test_current_filter'] = 'the_content';
@@ -2761,6 +2761,71 @@ class AppCoreTest extends TestCase {
 		$wrapper( $core );
 
 		$this->assertSame( '[core] kea_7746_the_content', $this->last_entry_label( 'the_content hook (start)' ) );
+	}
+
+	/**
+	 * A hook a wrapped core listener fires through `WP_Hook`, its core frames
+	 * filling the origin's bounded backtrace so it ends on the logger's call
+	 * to the listener or on the wrapper's call to `timed()`, names core: each
+	 * logger frame is known from itself, not from the frame beyond it.
+	 *
+	 * @param int $short How many frames short of ORIGIN_DEPTH the chain is.
+	 */
+	#[DataProvider( 'truncations' )]
+	public function test_a_hook_origin_cut_off_inside_the_logger_names_core( int $short ): void {
+		$core                     = $this->wrapping_core();
+		$wrapper                  = $this->wrapped_listener( $core, 'kea_7746_core_chain' );
+		$option_home              = new \WP_Hook();
+		$option_home->callbacks   = [ 10 => [ 'start' => [ 'function' => [ $core, 'hook_start' ], 'accepted_args' => 1 ] ] ];
+		$GLOBALS['wp_filter']['option_home'] = $option_home;
+		// origin_frame, hook_start, WP_Hook->apply_filters, the API: then the chain.
+		$frames = self::depth( 'ORIGIN_DEPTH' ) - 4 - $short;
+
+		$wrapper( $frames, 'kea_7746_get_option_home' );
+
+		$this->assertSame( '[core] kea_7746_get_option_home', $this->last_entry_label( 'the_content hook (start)' ) );
+	}
+
+	/**
+	 * The query twin, at TRANSPORT_ORIGIN_DEPTH: a query a wrapped core
+	 * listener's chain makes through a core API names core.
+	 *
+	 * @param int $short How many frames short of TRANSPORT_ORIGIN_DEPTH the chain is.
+	 */
+	#[DataProvider( 'truncations' )]
+	public function test_a_query_origin_cut_off_inside_the_logger_names_core( int $short ): void {
+		$core    = $this->wrapping_core();
+		$wrapper = $this->wrapped_listener( $core, 'kea_7746_core_chain' );
+		// origin_frame, query_start, apply_filters, query, get_row, the API.
+		$frames = self::depth( 'TRANSPORT_ORIGIN_DEPTH' ) - 6 - $short;
+
+		$wrapper( $frames, 'kea_7746_get_option', new FakeTransport(), 'SELECT option_value FROM wp_options WHERE 7746' );
+
+		$this->assertSame( '[core] kea_7746_get_option', $this->last_entry_label( 'sql (start)' ) );
+	}
+
+	/**
+	 * The backtrace's last frame: the logger calling the listener, with the
+	 * `timed()` frame beyond it cut, or the wrapper calling `timed()`.
+	 *
+	 * @return array<string,array{0:int}>
+	 */
+	public static function truncations(): array {
+		return [
+			'cut after the call inside timed()' => [ 0 ],
+			'cut after the wrapper calls timed()' => [ 1 ],
+		];
+	}
+
+	/**
+	 * One of Core's backtrace depths.
+	 *
+	 * @param string $name The constant.
+	 */
+	private static function depth( string $name ): int {
+		$depth = ( new \ReflectionClassConstant( Core::class, $name ) )->getValue();
+		self::assertIsInt( $depth );
+		return $depth;
 	}
 
 	/** The cap bounds the whole label, prefix included, on a character boundary. */

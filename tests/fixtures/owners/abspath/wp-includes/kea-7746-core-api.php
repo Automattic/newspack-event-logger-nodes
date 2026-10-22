@@ -17,6 +17,27 @@ function kea_7746_the_content( Newspack_Event_Logger_Nodes\App\Core $core ): mix
 	return $core->hook_start( 'kea core body' );
 }
 
+/**
+ * A core API that filters `option_home` through its `WP_Hook`, as
+ * `get_option( 'home' )` does.
+ */
+function kea_7746_get_option_home(): mixed {
+	return $GLOBALS['wp_filter']['option_home']->apply_filters( 'https://kea.example', [ 'https://kea.example' ] );
+}
+
+/**
+ * Core frames between a listener and the API it reaches, as
+ * `wp_default_scripts()` reaches `get_option()` through `get_rest_url()` and
+ * `get_home_url()`: `$frames` of them, then `$api( ...$args )`.
+ *
+ * @param int    $frames How many frames of this function stand between.
+ * @param string $api    The core API the last one calls.
+ * @param mixed  ...$args Its arguments.
+ */
+function kea_7746_core_chain( int $frames, string $api, mixed ...$args ): mixed {
+	return $frames > 1 ? kea_7746_core_chain( $frames - 1, $api, ...$args ) : $api( ...$args );
+}
+
 /** A core class whose methods a plugin subclass hooks. */
 class Kea_7746_Core_Parent {
 
