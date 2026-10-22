@@ -106,7 +106,7 @@ Once the in-flight cache is wedged rather than merely slow, `cmd request-builder
 
 Two owned siblings appear in `ls -a` under composite names and answer to `dump`: `request-builder:flight` (the hidden in-flight snapshot node) and `flame-builder:auto-tuner`.
 
-Typo a worker id and the cli fails fast: ``Error: no worker '<id>' (run `wp nodes status` to list active workers)``. A missing lock dir is not by itself the answer — an on-demand worker sleeps holding none, so the attach falls through to `Spawn_Coordinator::wake_sleeping_worker()` first.
+Typo a worker id and the cli fails fast: ``Error: no worker '<id>' (run `wp nodes status` to list active workers)``. A missing lock dir is not by itself the answer — an on-demand worker sleeps holding none, so the attach resolves it through `Spawn_Coordinator::worker_channel()` and wakes it with `wake_channel()`; a wake the spawn endpoint refuses fails the attach with the endpoint's message.
 
 `wp nodes cli` refuses to run as root, because the workers run as an unprivileged user and root-owned IPC dirs lock them out. Always `docker exec -u <user>`.
 
