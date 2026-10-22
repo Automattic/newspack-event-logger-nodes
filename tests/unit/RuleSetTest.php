@@ -131,11 +131,12 @@ final class RuleSetTest extends TestCase {
 		$this->assertFalse( $rule->log_context );
 		$this->assertFalse( $rule->log_cache );
 		$this->assertFalse( $rule->log_resources );
+		$this->assertFalse( $rule->log_php_errors );
 	}
 
 	/** A rule's row and debugging switches survive the store and the hub's wire. */
 	public function test_the_row_and_debugging_switches_survive_save_and_sync(): void {
-		$knobs = [ 'log_memory' => true, 'flush_every_line' => true, 'log_context' => true, 'log_cache' => true, 'log_resources' => true ];
+		$knobs = [ 'log_memory' => true, 'flush_every_line' => true, 'log_context' => true, 'log_cache' => true, 'log_resources' => true, 'log_php_errors' => true ];
 		( new Rule_Set( [] ) )->save( [ Rule::from_array( [ 'id' => '', 'pattern' => '/kea-5821/', 'action' => 'log' ] + $knobs ) ] );
 		$wire = Rule_Set::hydrate_array( $this->stored_rule_maps() );
 		unset( $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] );

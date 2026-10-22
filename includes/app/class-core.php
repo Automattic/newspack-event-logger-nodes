@@ -278,6 +278,9 @@ class Core {
 	/** @var Server_Timing The response header a reader gets. */
 	private Server_Timing $server_timing;
 
+	/** @var Php_Errors The error handler and WordPress listeners `log_php_errors` binds. */
+	private Php_Errors $php_errors;
+
 	/** @var list<array{0: string, 1: callable, 2: int}> What `bind_current_scope()` bound of those three. */
 	private array $listeners = [];
 
@@ -304,6 +307,7 @@ class Core {
 
 		$this->query_monitor   = new Query_Monitor_Actions();
 		$this->server_timing   = new Server_Timing();
+		$this->php_errors      = new Php_Errors();
 		$this->bind_current_scope();
 		\add_action( 'newspack_event_logger_nodes_scope_changed', [ $this, 'rebind_for_current_scope' ] );
 	}
@@ -462,7 +466,8 @@ class Core {
 	 * (begin_job_context / end_job_context).
 	 *
 	 * Only this class's own filters come off — the per-hook trio, the HTTP
-	 * three and `query_start`. `query_end` stays bound once armed: SAVEQUERIES
+	 * three and `query_start` — with the listener sets and the PHP error
+	 * handler, while it is still on top of the stack. `query_end` stays bound once armed: SAVEQUERIES
 	 * outlives every scope, so the drain must too, and with no span open it
 	 * closes nothing. Both open-span stacks are emptied: a span the old scope
 	 * opened and never closed — `wpdb::query()` returning ahead of
@@ -485,6 +490,7 @@ class Core {
 			\remove_filter( $hook, $callback, $priority );
 		}
 		$this->listeners = [];
+		$this->php_errors->uninstall();
 		$this->query_monitor->reset();
 		$this->bound_hooks = [];
 		$this->significant = [];
@@ -505,7 +511,9 @@ class Core {
 	 * names, so binding them would register a filter nothing ever fires.
 	 *
 	 * The rule's `log_http` and `log_queries` add the two span pairs no hook
-	 * reaches; the SAVEQUERIES the second needs is why it is an opt-in.
+	 * reaches; the SAVEQUERIES the second needs is why it is an opt-in. Its
+	 * `log_php_errors` installs the error handler and WordPress's deprecation
+	 * listeners, so a rule without it pays for neither.
 	 */
 	private function bind_current_scope(): void {
 		$rule = Log_Manager::instance()->governing_rule();
@@ -518,7 +526,11 @@ class Core {
 			// A job's template is not the enclosing request's.
 			...( $rule->log_context && ! Log_Manager::in_job_context() ? Request_Context::listeners() : [] ),
 			...$this->server_timing->listeners(),
+			...( $rule->log_php_errors ? $this->php_errors->listeners() : [] ),
 		];
+		if ( $rule->log_php_errors ) {
+			$this->php_errors->install();
+		}
 		foreach ( $listeners as [ $hook, $callback, $priority, $args ] ) {
 			\add_filter( $hook, $callback, $priority, $args );
 			$this->listeners[] = [ $hook, $callback, $priority ];
@@ -1029,14 +1041,25 @@ class Core {
 	 * @param int                        $i      The frame `origin_frame()` names.
 	 */
 	private static function asker( array $frames, int $i ): string {
-		$own = Owner::of( $frames[ $i - 1 ]['file'] ?? '' );
-		for ( $j = $i - 1, $n = \count( $frames ); $j < $n; $j++ ) {
+		return Owner::of( $frames[ self::owned_frame( $frames, $i - 1 ) ?? $i - 1 ]['file'] ?? '' );
+	}
+
+	/**
+	 * The nearest frame from `$from` outward whose file is code that neither
+	 * core nor an unknown owner holds, or null when the backtrace has none.
+	 *
+	 * @api Called by `App\Php_Errors` and `Log_Manager::flush_php_errors()`.
+	 * @param array<int,array{file?: string}> $frames A backtrace, nearest first.
+	 * @param int                             $from   The frame to start from.
+	 */
+	public static function owned_frame( array $frames, int $from ): ?int {
+		for ( $j = $from, $n = \count( $frames ); $j < $n; $j++ ) {
 			$owner = Owner::of( $frames[ $j ]['file'] ?? '' );
 			if ( '' !== $owner && Owner::CORE !== $owner ) {
-				return $owner;
+				return $j;
 			}
 		}
-		return $own;
+		return null;
 	}
 
 	/**

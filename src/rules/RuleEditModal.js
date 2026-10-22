@@ -137,6 +137,9 @@ export default function RuleEditModal( {
 	const [ logResources, setLogResources ] = useState(
 		!! rule?.log_resources
 	);
+	const [ logPhpErrors, setLogPhpErrors ] = useState(
+		!! rule?.log_php_errors
+	);
 	const [ traceHooks, setTraceHooks ] = useState( !! rule?.trace_hooks );
 	const [ traceCallers, setTraceCallers ] = useState(
 		String( rule?.trace_callers ?? 0 )
@@ -187,6 +190,7 @@ export default function RuleEditModal( {
 			log_context: isLog && logContext,
 			log_cache: isLog && logCache,
 			log_resources: isLog && logResources,
+			log_php_errors: isLog && logPhpErrors,
 			trace_hooks: isLog && traceHooks,
 			// The count refines the caller label, so unticking retires both.
 			trace_callers:
@@ -458,6 +462,20 @@ export default function RuleEditModal( {
 								) }
 								checked={ logResources }
 								onChange={ setLogResources }
+							/>
+
+							<CheckboxControl
+								name="rule-log-php-errors"
+								label={ __(
+									'Log PHP errors',
+									'newspack-event-logger-nodes'
+								) }
+								help={ __(
+									"Adds one entry to the request's log for each distinct PHP warning, notice or deprecation, and for each of WordPress's own deprecation and misuse notices, naming the file, the line and the plugin or theme that owns it. A repeat is counted, not logged, in one entry at the request's end. Errors PHP or WordPress would have hidden are logged too, and marked silenced.",
+									'newspack-event-logger-nodes'
+								) }
+								checked={ logPhpErrors }
+								onChange={ setLogPhpErrors }
 							/>
 
 							<CheckboxControl

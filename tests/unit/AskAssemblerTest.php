@@ -612,6 +612,7 @@ class AskAssemblerTest extends TestCase {
 				'log_context'      => false,
 				'log_cache'        => true,
 				'log_resources'    => true,
+				'log_php_errors'   => true,
 			]
 		);
 		$shape = Ask_Assembler::for_request( $this->record(), $rule )['rule'];
@@ -626,6 +627,7 @@ class AskAssemblerTest extends TestCase {
 		$this->assertFalse( $shape['log_context'] );
 		$this->assertTrue( $shape['log_cache'] );
 		$this->assertTrue( $shape['log_resources'] );
+		$this->assertTrue( $shape['log_php_errors'] );
 	}
 
 	/** The entry list is capped, so the record's own address rides along. */

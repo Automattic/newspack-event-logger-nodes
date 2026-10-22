@@ -647,6 +647,7 @@ class Ask_Assembler {
 			'log_context'        => $rule->log_context,
 			'log_cache'          => $rule->log_cache,
 			'log_resources'      => $rule->log_resources,
+			'log_php_errors'     => $rule->log_php_errors,
 			'trace_hooks'        => $rule->trace_hooks,
 			'trace_callers'      => $rule->trace_callers,
 		];

@@ -1018,6 +1018,7 @@ test( 'a rule says what it logs beyond hooks, so an absence reads right', () => 
 			log_context: false,
 			log_cache: true,
 			log_resources: true,
+			log_php_errors: true,
 			trace_hooks: false,
 			trace_callers: 3,
 		},
@@ -1025,7 +1026,7 @@ test( 'a rule says what it logs beyond hooks, so an absence reads right', () => 
 	} );
 
 	expect( md ).toContain(
-		'**logs:** queries, plugin loads, memory, cache, resources'
+		'**logs:** queries, plugin loads, memory, cache, resources, PHP errors'
 	);
 	expect( md ).toContain( '**traces:** callers ×3' );
 	expect( md ).not.toContain( 'HTTP' );

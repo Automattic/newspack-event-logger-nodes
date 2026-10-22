@@ -27,8 +27,9 @@
  * about it: HTTP spans cost two entries per outbound call, query spans two
  * per query and need SAVEQUERIES, plugin loads two per site-activated plugin,
  * the provenance knobs buy a backtrace at hook firings, a flushed line costs a
- * write of its own, and the memory, context, cache and resources switches each
- * add to every record the rule logs.
+ * write of its own, the memory, context, cache and resources switches each
+ * add to every record the rule logs, and PHP errors cost an error handler and
+ * a row per distinct error.
  *
  * @type {Object}
  */
@@ -52,4 +53,5 @@ export const BLANK_RULE = {
 	log_context: false,
 	log_cache: false,
 	log_resources: false,
+	log_php_errors: false,
 };

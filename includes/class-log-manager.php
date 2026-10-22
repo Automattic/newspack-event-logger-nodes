@@ -97,11 +97,28 @@ class Log_Manager {
 	/** Category of the close's entry whose `m` is `App\Request_Context`'s map. */
 	public const REQUEST_CONTEXT = 'request_context';
 
+	/** Category of the close's row counting each PHP error raised more than once. */
+	public const PHP_ERRORS = 'php errors';
+
 	/** The rows the close writes between the spans' drain and the terminal. */
 	public const CLOSE_ROWS = [
+		self::PHP_ERRORS      => true,
 		self::REQUEST_CONTEXT => true,
 		self::OBJECT_CACHE    => true,
 		self::RESOURCES       => true,
+	];
+
+	/**
+	 * The level each recorded PHP error number is written under, as the
+	 * `php (<level>)` row's category. Every other number goes unrecorded.
+	 */
+	public const PHP_ERROR_LEVELS = [
+		\E_WARNING         => 'warning',
+		\E_USER_WARNING    => 'warning',
+		\E_NOTICE          => 'notice',
+		\E_USER_NOTICE     => 'notice',
+		\E_DEPRECATED      => 'deprecated',
+		\E_USER_DEPRECATED => 'deprecated',
 	];
 
 	/** The `m` of a `(complete)` closing a span its caller never closed. */
@@ -196,6 +213,21 @@ class Log_Manager {
 
 	/** ENCODED bytes the fatal's file and plugin slug may each take; see above. */
 	private const FATAL_PATH_BUDGET = 640;
+
+	/**
+	 * ENCODED bytes the `php errors` row's count string may take: the entry
+	 * less the 512 its other fields are given, as the terminal's fatal is.
+	 */
+	private const PHP_ERRORS_BUDGET = self::MAX_DATA_SIZE - 512;
+
+	/**
+	 * A database driver's warning, which names its function first:
+	 * `mysqli_real_connect(): `, `mysqli::query(): `, `PDOStatement::execute(): `.
+	 */
+	private const DRIVER_WARNING = '/\A(?:mysqli|PDO|SQLite3)\w*(?:::\w+)?\(\): /';
+
+	/** A driver's code in its warning: mysqli's `(<state>/<errno>)`, else PDO's `SQLSTATE[<state>]`. */
+	private const DRIVER_CODE = '/\(\w+\/(\d+)\)|SQLSTATE\[(\w+)\]/';
 
 	/**
 	 * Last-error seam: replaces the `error_get_last()` call, which no test
@@ -309,6 +341,20 @@ class Log_Manager {
 
 	/** @var array<string,float> Self time of every closed span so far, in ms, by label. */
 	private array $spent = [];
+
+	/**
+	 * Each distinct PHP error this context recorded, by its key: how many
+	 * times it was raised, and how the `php errors` row names it.
+	 *
+	 * @var array<string,array{0:int,1:string}>
+	 */
+	private array $php_errors = [];
+
+	/** @var int Errors the profiler drop-in counted past its cap, unbuffered. */
+	private int $php_errors_dropped = 0;
+
+	/** @var bool A PHP error row is being written; one raised meanwhile is ignored. */
+	private static bool $writing_php_error = false;
 
 	/**
 	 * The `Object_Cache_Counts::mark()` this context's `objectcache` row
@@ -458,34 +504,11 @@ class Log_Manager {
 	}
 
 	/**
-	 * A prefix of `$text` no longer than `$bytes` raw and `$budget` encoded,
-	 * as `message()` encodes it, its quotes counted, cut on a character
-	 * boundary. JSON escapes each character on its own, so the encoding of
-	 * the prefix is the sum of its characters'.
-	 *
-	 * @param string $text   The text.
-	 * @param int    $bytes  Raw bytes it may keep.
-	 * @param int    $budget Encoded bytes it may take.
-	 */
-	private static function within_encoding( string $text, int $bytes, int $budget ): string {
-		$size = 2;
-		$kept = '';
-		foreach ( \mb_str_split( \mb_strcut( $text, 0, $bytes, 'UTF-8' ), 1, 'UTF-8' ) as $char ) {
-			$size += \strlen( (string) \wp_json_encode( $char, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR ) ) - 2;
-			if ( $size > $budget ) {
-				break;
-			}
-			$kept .= $char;
-		}
-		return $kept;
-	}
-
-	/**
 	 * Everything the record carries before its terminal: the spans left open,
-	 * then, as the governing rule's `log_context`, `log_cache` and
-	 * `log_resources` ask, what WordPress made of a web request, the object
-	 * cache's row and its resource usage. Each is attempted whatever an
-	 * earlier one threw.
+	 * the count of each PHP error raised more than once, then, as the
+	 * governing rule's `log_context`, `log_cache` and `log_resources` ask,
+	 * what WordPress made of a web request, the object cache's row and its
+	 * resource usage. Each is attempted whatever an earlier one threw.
 	 *
 	 * @return list<\Throwable> What the producers threw, in order.
 	 */
@@ -495,6 +518,12 @@ class Log_Manager {
 			function () use ( $now ): void {
 				while ( \count( $this->times ) > 1 ) {
 					$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
+				}
+			},
+			function (): void {
+				$counts = $this->php_error_counts();
+				if ( '' !== $counts ) {
+					$this->message( self::PHP_ERRORS, [ 'm' => $counts, 'keep' => 1 ] );
 				}
 			},
 			function (): void {
@@ -513,6 +542,37 @@ class Log_Manager {
 			},
 			$this->log_resources( ... )
 		);
+	}
+
+	/**
+	 * The `php errors` row's `m`: `<times> <level> <file>:<line>` for each PHP
+	 * error raised more than once, the most repeated first, joined by `, ` as
+	 * pyrobase's stats rows join their counts, `<n> more` for those
+	 * `PHP_ERRORS_BUDGET` leaves no room for, and `<n> dropped before boot`
+	 * for what the profiler drop-in counted past its cap. '' when neither.
+	 */
+	private function php_error_counts(): string {
+		$repeated = \array_filter( $this->php_errors, static fn ( array $seen ): bool => $seen[0] > 1 );
+		\uasort( $repeated, static fn ( array $a, array $b ): int => $b[0] <=> $a[0] );
+		$dropped = 0 === $this->php_errors_dropped ? [] : [ "{$this->php_errors_dropped} dropped before boot" ];
+		$parts   = [];
+		// The quotes, and room for the `<n> more` and the dropped tails.
+		$size = 2 + 16 + ( [] === $dropped ? 0 : 2 + \strlen( $dropped[0] ) );
+		foreach ( $repeated as [ $times, $name ] ) {
+			$part  = "{$times} {$name}";
+			$bytes = \strlen( (string) \wp_json_encode( $part, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR ) );
+			if ( $size + $bytes > self::PHP_ERRORS_BUDGET ) {
+				break;
+			}
+			// Its quotes are the `, ` that joins it.
+			$size   += $bytes;
+			$parts[] = $part;
+		}
+		$more = \count( $repeated ) - \count( $parts );
+		if ( $more > 0 ) {
+			$parts[] = "{$more} more";
+		}
+		return \implode( ', ', [ ...$parts, ...$dropped ] );
 	}
 
 	/**
@@ -1198,6 +1258,161 @@ class Log_Manager {
 				]
 			);
 		}
+	}
+
+	/**
+	 * Record one PHP warning, notice or deprecation, or one of WordPress's
+	 * own, under a rule that says `log_php_errors`.
+	 *
+	 * The first time a key is raised — its level, file and line — this
+	 * writes a `php (<level>)` row whose `m` is that first message, URLs
+	 * redacted and a database driver's cut before its values, with its
+	 * `file`, `line`, the file's `owner` and `silenced` when `error_reporting`,
+	 * `@` or `WP_DEBUG` would have hidden it. A repeat is only counted, for the
+	 * `php errors` row the close writes. An error raised while a row is
+	 * written is ignored, so a write that misbehaves cannot recurse.
+	 *
+	 * @api Called by `App\Php_Errors`, the handler and the WordPress listeners.
+	 * @param string $level    `warning`, `notice` or `deprecated`.
+	 * @param string $message  What was raised.
+	 * @param string $file     The file it was raised in, '' when unknown.
+	 * @param int    $line     The line, 0 when unknown.
+	 * @param bool   $silenced Whether PHP or WordPress would have hidden it.
+	 * @throws \InvalidArgumentException When the level is not one this records.
+	 */
+	public function record_php_error( string $level, string $message, string $file, int $line, bool $silenced ): void {
+		if ( ! \in_array( $level, self::PHP_ERROR_LEVELS, true ) ) {
+			throw new \InvalidArgumentException( "Log_Manager: '{$level}' is not a PHP error level this records" );
+		}
+		$this->note_php_error( $level, $message, $file, $line, $silenced, 1, null );
+	}
+
+	/**
+	 * Take over the PHP errors the profiler drop-in caught before this
+	 * plugin booted. The deferred bootstrap calls this beside
+	 * `flush_plugin_loads()`.
+	 *
+	 * The drop-in buffers nothing after this, whatever the rule says, and its
+	 * handler leaves the stack while still on top of it, so `App\Php_Errors`
+	 * alone records from here. One installed over the drop-in's keeps its
+	 * place, and the drop-in's, beneath it, only chains. Only a started
+	 * logger under a rule that says `log_php_errors` replays the buffer, each
+	 * error stamped when the drop-in caught it, and counts what it dropped.
+	 * An error that kept its frames — `wp_trigger_error()`'s own, raised in
+	 * core — is placed at the first of them `App\Core::owned_frame()` finds.
+	 */
+	public function flush_php_errors(): void {
+		/** @var array{php_errors?: array<string,array{errno:int,message:string,file:string,line:int,silenced:bool,times:int,ts:float,frames:list<array{file:string,line:int}>}>|null, php_errors_dropped?: int, php_error_handler?: callable}|null $newspack_profiler */
+		global $newspack_profiler;
+		$buffered = $newspack_profiler['php_errors'] ?? null;
+		if ( ! \is_array( $buffered ) ) {
+			return;
+		}
+		$newspack_profiler['php_errors'] = null;
+		if ( isset( $newspack_profiler['php_error_handler'] ) ) {
+			App\Php_Errors::pop_if_top( $newspack_profiler['php_error_handler'] );
+		}
+		if ( ! $this->records_php_errors() ) {
+			return;
+		}
+		$this->php_errors_dropped += $newspack_profiler['php_errors_dropped'] ?? 0;
+		foreach ( $buffered as $error ) {
+			$level = self::PHP_ERROR_LEVELS[ $error['errno'] ] ?? null;
+			if ( null !== $level ) {
+				$at   = App\Core::owned_frame( $error['frames'], 0 );
+				$site = null === $at ? $error : $error['frames'][ $at ];
+				$this->note_php_error( $level, $error['message'], $site['file'], $site['line'], $error['silenced'], $error['times'], $error['ts'] );
+			}
+		}
+	}
+
+	/**
+	 * Count a PHP error, writing its row the first time its key is raised.
+	 *
+	 * @param string     $level    `warning`, `notice` or `deprecated`.
+	 * @param string     $message  What was raised.
+	 * @param string     $file     The file it was raised in.
+	 * @param int        $line     The line.
+	 * @param bool       $silenced Whether PHP or WordPress would have hidden it.
+	 * @param int        $times    How many times it was raised.
+	 * @param float|null $ts       When it was first raised; null for now.
+	 */
+	private function note_php_error( string $level, string $message, string $file, int $line, bool $silenced, int $times, ?float $ts ): void {
+		if ( self::$writing_php_error || ! $this->records_php_errors() ) {
+			return;
+		}
+		$key = "{$level}\0{$file}\0{$line}";
+		if ( isset( $this->php_errors[ $key ] ) ) {
+			$this->php_errors[ $key ][0] += $times;
+			return;
+		}
+		$this->php_errors[ $key ] = [ $times, "{$level} {$file}:{$line}" ];
+		self::$writing_php_error  = true;
+		try {
+			$row = [
+				'm'     => self::within_encoding( self::driver_text( self::redact_url( $message ) ), self::FATAL_MESSAGE_MAX, self::FATAL_MESSAGE_BUDGET ),
+				'file'  => self::within_encoding( $file, self::FATAL_PATH_MAX, self::FATAL_PATH_BUDGET ),
+				'line'  => $line,
+				'owner' => self::within_encoding( Owner::of( $file ), self::FATAL_PATH_MAX, self::FATAL_PATH_BUDGET ),
+			];
+			if ( $silenced ) {
+				$row['silenced'] = true;
+			}
+			if ( null !== $ts ) {
+				$row['ts'] = $ts;
+			}
+			$this->message( "php ({$level})", $row );
+		} finally {
+			self::$writing_php_error = false;
+		}
+	}
+
+	/**
+	 * A database driver's warning cut as `Driver_Error::shape()` cuts every
+	 * driver message, at its first quote, where the values it failed on
+	 * begin; any other message as written.
+	 *
+	 * @param string $message The message, its URLs already redacted.
+	 */
+	private static function driver_text( string $message ): string {
+		if ( 1 !== \preg_match( self::DRIVER_WARNING, $message ) ) {
+			return $message;
+		}
+		\preg_match( self::DRIVER_CODE, $message, $code );
+		return Driver_Error::shape( '' === ( $code[1] ?? '' ) ? ( $code[2] ?? null ) : $code[1], $message );
+	}
+
+	/**
+	 * A prefix of `$text` no longer than `$bytes` raw and `$budget` encoded,
+	 * as `message()` encodes it, its quotes counted, cut on a character
+	 * boundary. JSON escapes each character on its own, so the encoding of
+	 * the prefix is the sum of its characters', walked only when the whole
+	 * runs over.
+	 *
+	 * @param string $text   The text.
+	 * @param int    $bytes  Raw bytes it may keep.
+	 * @param int    $budget Encoded bytes it may take.
+	 */
+	private static function within_encoding( string $text, int $bytes, int $budget ): string {
+		$text = \mb_strcut( $text, 0, $bytes, 'UTF-8' );
+		if ( \strlen( (string) \wp_json_encode( $text, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR ) ) <= $budget ) {
+			return $text;
+		}
+		$size = 2;
+		$kept = '';
+		foreach ( \mb_str_split( $text, 1, 'UTF-8' ) as $char ) {
+			$size += \strlen( (string) \wp_json_encode( $char, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR ) ) - 2;
+			if ( $size > $budget ) {
+				break;
+			}
+			$kept .= $char;
+		}
+		return $kept;
+	}
+
+	/** Whether this context records PHP errors: started, under `log_php_errors`. */
+	private function records_php_errors(): bool {
+		return $this->is_started() && true === $this->matched_rule?->log_php_errors;
 	}
 
 	/**

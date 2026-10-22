@@ -244,6 +244,7 @@ function ruleLines( rule ) {
 				rule.log_context && 'context',
 				rule.log_cache && 'cache',
 				rule.log_resources && 'resources',
+				rule.log_php_errors && 'PHP errors',
 			]
 				.filter( Boolean )
 				.join( ', ' ) || 'hooks only',

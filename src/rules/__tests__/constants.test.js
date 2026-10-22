@@ -28,6 +28,7 @@ describe( 'rules constants', () => {
 			log_context: false,
 			log_cache: false,
 			log_resources: false,
+			log_php_errors: false,
 		} );
 	} );
 } );

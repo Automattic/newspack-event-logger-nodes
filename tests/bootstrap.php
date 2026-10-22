@@ -268,10 +268,11 @@ if ( ! function_exists( 'wp_localize_script' ) ) {
 if ( ! function_exists( 'get_bloginfo' ) ) {
 	/**
 	 * Seeded 9.9.9 — no WordPress release carries it, so a test that reads a
-	 * version really read this one.
+	 * version really read this one. A test that sets `$wp_version` reads its
+	 * own, as WordPress's reads that global.
 	 */
 	function get_bloginfo( string $show = '', string $filter = 'raw' ): string {
-		return 'version' === $show ? '9.9.9' : '';
+		return 'version' === $show ? ( $GLOBALS['wp_version'] ?? '9.9.9' ) : '';
 	}
 }
 
