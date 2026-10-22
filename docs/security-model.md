@@ -66,7 +66,7 @@ The request-scoped captures reuse those models rather than adding one:
 - **A failed HTTP call's `error`** is the `WP_Error` message through `redact_url()`, then cut at 256 bytes, because a transport error can quote its URL. Its `http_method` is printable ASCII cut at 32 bytes.
 - **A Query Monitor log line** is the caller's message through `message()`'s URL redaction, its `{placeholder}`s filled by the hook-argument model: a value survives only under a `HOOK_ARG_KEEP` key, an object reads as its class and an array as its type. A message that is itself an array or an object is shaped the same way, where Query Monitor would `print_r()` it. Context keys no placeholder names are not written. A timer's or a lap's name is written as given, cut at 128 characters.
 - **The `request_context` entry** names the template relative to wp-content or the install's root, never as an absolute path; `matched_query` goes through `redact_url()` as a query string; the main query's vars are shaped by the hook-argument model; the rewrite rule and the conditionals are written as WordPress holds them.
-- **The object cache's counts** are a kind and up to five integers.
+- **The `objectcache` row** is up to five integers, each beside its bucket's name.
 
 The `Server-Timing` header leaves the site only to a signed-in user holding `read`, the role that already reads the raw firehose. It carries category labels (hook, span and custom-event names), their self times so far and the request id, each `desc` printable ASCII, quoted-string escaped and cut at 64 characters, so no label can split the response. A visitor never gets it, whatever the capability map grants anonymous users.
 

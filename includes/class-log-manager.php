@@ -91,7 +91,10 @@ class Log_Manager {
 	/** Category of the memory high-water entry the close writes. */
 	public const MEMORY = 'memory';
 
-	/** Category of the entry whose `m` is `App\Request_Context`'s shutdown map. */
+	/** Category of the close's object-cache row; its `m` is `Object_Cache_Counts::row()`. */
+	public const OBJECT_CACHE = 'objectcache';
+
+	/** Category of the close's entry whose `m` is `App\Request_Context`'s map. */
 	public const REQUEST_CONTEXT = 'request_context';
 
 	/** The `m` of a `(complete)` closing a span its caller never closed. */
@@ -172,13 +175,12 @@ class Log_Manager {
 	/**
 	 * ENCODED bytes the terminal's fatal message may take.
 	 *
-	 * The terminal's other fields at their worst take at most 512 encoded
-	 * bytes: `n` (17 with its key), `k` (25, `process (complete)`),
-	 * `status_code` (18), `duration_ms` (38, an exponent float), `peak_mb`
-	 * (20), `ts` (22), `error_status` (19), `fatal_line` (24), `fatal_type`
-	 * (16), the three fatal keys with their quotes (51) and `object_cache` at
-	 * its widest, the memcached map with five 19-digit counts (200): 450,
-	 * rounded up. That leaves 3,840 − 512 = 3,328 for the three strings:
+	 * The terminal's other fields at their worst take 250 encoded bytes: `n`
+	 * (17 with its key), `k` (25, `process (complete)`), `status_code` (18),
+	 * `duration_ms` (38, an exponent float), `peak_mb` (20), `ts` (22),
+	 * `error_status` (19), `fatal_line` (24), `fatal_type` (16) and the three
+	 * fatal keys with their quotes (51). Reserving 512 for them leaves
+	 * 3,840 − 512 = 3,328 for the three strings:
 	 * 2,048 for the message and 640 each for the file and the plugin slug.
 	 * Raw bytes are no bound — a 4-byte character encodes to 12 — so each is
 	 * measured as `message()` encodes it.
@@ -307,8 +309,8 @@ class Log_Manager {
 	private array $spent = [];
 
 	/**
-	 * The `Object_Cache_Counts::mark()` this context's terminal counts the
-	 * object cache from; null when the cache is not one it knows.
+	 * The `Object_Cache_Counts::mark()` this context's `objectcache` row
+	 * counts from; null when the cache is not one it knows.
 	 *
 	 * @var array{kind: string, counters: array<string,int>, positions: array<array-key,int>}|null
 	 */
@@ -387,8 +389,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * Close the request: drain the timer stack, then log memory, resources, and
-	 * the final `process (complete)` line before flushing the Topic.
+	 * Close the request: drain the timer stack, then log the request context,
+	 * the object cache's row, memory, resources, and the final
+	 * `process (complete)` line before flushing the Topic.
 	 *
 	 * Registered as a shutdown function by the constructor, so it also runs
 	 * after a fatal. When error_get_last() reports one of FATAL_TYPES, the
@@ -412,9 +415,9 @@ class Log_Manager {
 		// until eviction. So the terminal is written whatever the drain threw,
 		// and both escape together after it. Terminal-LAST is a wire contract,
 		// not a preference: `Reqgrep_Core` finalizes and evicts the rid on it.
-		$caught = Worker_Should_Stop::attempt( $this->drain_before_terminal( ... ) );
+		$caught = $this->drain_before_terminal();
 		// A stop mid-finish means this request did not run to its end.
-		$this->aborted = $this->aborted || ( $caught[0] ?? null ) instanceof Worker_Should_Stop;
+		$this->aborted = $this->aborted || [] !== \array_filter( $caught, static fn ( \Throwable $e ): bool => $e instanceof Worker_Should_Stop );
 		$caught        = [ ...$caught, ...Worker_Should_Stop::attempt( $this->write_terminal( ... ) ) ];
 		$this->started = false;
 		// Per-request: a latched flag marks every later request.
@@ -446,7 +449,7 @@ class Log_Manager {
 		}
 		$this->complete(
 			self::REQUEST_LABEL,
-			\array_merge( [ 'status_code' => \http_response_code() ?: 0 ], Object_Cache_Counts::since( $this->cache_from ), $complete_extra ),
+			\array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ),
 			$this->aborted ? 'aborted' : 'complete'
 		);
 		$this->topic?->flush();
@@ -512,20 +515,42 @@ class Log_Manager {
 
 	/**
 	 * Everything the record carries before its terminal: the spans left open,
-	 * this request's memory high-water mark, and its resource usage.
+	 * what WordPress made of a web request, the object cache's row, this
+	 * request's memory high-water mark, and its resource usage. Each is
+	 * attempted whatever an earlier one threw.
+	 *
+	 * @return list<\Throwable> What the producers threw, in order.
 	 */
-	private function drain_before_terminal(): void {
+	private function drain_before_terminal(): array {
 		$now = \hrtime( true );
-		while ( \count( $this->times ) > 1 ) {
-			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
-		}
-		$this->message( self::MEMORY, [
-			'm' => [
-				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-			],
-		] );
-		$this->log_resources();
+		return Worker_Should_Stop::attempt(
+			function () use ( $now ): void {
+				while ( \count( $this->times ) > 1 ) {
+					$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
+				}
+			},
+			function (): void {
+				// A job context's record is not the request WordPress routed.
+				$context = [] === self::$job_stack ? App\Request_Context::entry() : [];
+				if ( [] !== $context ) {
+					$this->message( self::REQUEST_CONTEXT, [ 'm' => $context ] );
+				}
+			},
+			function (): void {
+				$counts = Object_Cache_Counts::row( $this->cache_from );
+				if ( null !== $counts ) {
+					// The fold keeps it, as it keeps pyrobase's cache rows.
+					$this->message( self::OBJECT_CACHE, [ 'm' => $counts, 'keep' => 1 ] );
+				}
+			},
+			fn () => $this->message( self::MEMORY, [
+				'm' => [
+					'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+					'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+				],
+			] ),
+			$this->log_resources( ... )
+		);
 	}
 
 	/**
@@ -1322,6 +1347,7 @@ class Log_Manager {
 			self::$instance->finish();
 		}
 		self::$instance = null;
+		App\Request_Context::template( '' );
 	}
 
 	/**

@@ -1010,7 +1010,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			// A hole outranks a nominal finish, never a stamped one.
 			$request->error_status = '-' === $error_status && Core::int( $request->gap_after ?? 0, 0 ) > 0 ? 'I' : $error_status;
 			self::carry_fatal( $request, $entry );
-			self::carry_cache_counts( $request, $entry );
 			$request->state        = 'complete';
 		};
 
@@ -1020,14 +1019,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$request->status_code  = Core::num_int( $entry['status_code'] ?? null );
 			$request->error_status = 'A';
 			self::carry_fatal( $request, $entry );
-			self::carry_cache_counts( $request, $entry );
 			$request->state        = 'complete';
-		};
-
-		$s[ Log_Manager::REQUEST_CONTEXT ] = function ( \stdClass $request, array $entry ): void {
-			if ( \is_array( $entry['m'] ?? null ) ) {
-				$request->context = $entry['m'];
-			}
 		};
 
 		$s[ Log_Manager::REQUEST_LINE ] = function ( \stdClass $request, array $entry ): void {
@@ -1722,27 +1714,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$request->fatal_line   = Core::int( $entry['fatal_line'] ?? 0, 0 );
 		$request->fatal_type   = Core::int( $entry['fatal_type'] ?? 0, 0 );
 		$request->fatal_plugin = Core::str( $entry['fatal_plugin'] ?? '', '' );
-	}
-
-	/**
-	 * Copy a terminal's `object_cache` map onto the record, keeping only the
-	 * counts `Object_Cache_Counts` writes for its kind; a kind it does not
-	 * write is not carried.
-	 *
-	 * @param \stdClass              $request The request being closed.
-	 * @param array<array-key,mixed> $entry   The terminal entry.
-	 */
-	private static function carry_cache_counts( \stdClass $request, array $entry ): void {
-		$counts = Core::arr( $entry['object_cache'] ?? null, [] );
-		$fields = Object_Cache_Counts::FIELDS[ Core::as_string( $counts['kind'] ?? '', '' ) ] ?? null;
-		if ( null === $fields ) {
-			return;
-		}
-		$carried = [ 'kind' => $counts['kind'] ];
-		foreach ( $fields as $field ) {
-			$carried[ $field ] = Core::num_int( $counts[ $field ] ?? null );
-		}
-		$request->object_cache = $carried;
 	}
 
 	/**

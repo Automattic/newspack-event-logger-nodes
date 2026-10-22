@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **A request's object-cache counts are their own log row.** The close writes an `objectcache` entry, `Log_Manager::OBJECT_CACHE`, whose `m` is a string in the shape of pyrobase's cache rows: every bucket of the cache's kind as `<n> <bucket>`, zeros included, joined by `, ` in a fixed order, `120 hit, 7 miss` under core's `WP_Object_Cache` and `31275 local, 799 get, 766 hit, 33 miss, 1645 multi` under WP Cloud's memcached drop-in. It carries `keep`, so a fold never drops it, and a job context writes it over what moved while it was open. Any other cache writes no row. `process (complete)` no longer carries `object_cache`, and `Object_Cache_Counts::since()` and `FIELDS` give way to `Object_Cache_Counts::row()`.
+- **The record ends in a fixed order.** The close writes the `(orphaned)` completes for the spans left open, then a web request's `request_context`, then `objectcache`, `memory`, `resources` and the terminal. `Log_Manager`'s drain writes `request_context` from `App\Request_Context::entry()` for a web request's record alone, where a `shutdown` listener at `PHP_INT_MAX` wrote it ahead of the orphaned completes. `Request_Context` keeps its `template_include` listener alone, which `App\Core` binds only outside a job context, so a job's template never lands on the enclosing record; the close reads the template once, and `Log_Manager::reset()` empties it. Each producer of the close is attempted whatever an earlier one threw, so a context that fails to build still leaves the cache row, memory, resources and the terminal, and every throw escapes after the terminal.
+- **The request detail shows the counts and the context as log rows only.** The Summary's **Object cache** line and the **Context** section are gone, with `RequestContext.js`; the log table renders both entries as rows. `Request_Builder_Node` no longer lifts the terminal's counts onto the record as `object_cache` or the `request_context` entry's map onto it as `context`.
+
 ## [0.150.0] - 2026-10-21
 
 ### Changed

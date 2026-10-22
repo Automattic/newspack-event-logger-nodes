@@ -9,6 +9,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use Newspack_Event_Logger_Nodes\App\Core;
 use Newspack_Event_Logger_Nodes\App\Request_Context;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
@@ -22,17 +23,21 @@ class RequestContextTest extends TestCase {
 	/** @var array<string,mixed> $_SERVER as the test found it. */
 	private array $server = [];
 
-	/** @var array<string,mixed> The `wp` and `wp_query` globals as found. */
+	/** @var array<string,mixed> The globals as found: WordPress's and the hook harness's. */
 	private array $globals = [];
 
 	protected function setUp(): void {
 		parent::setUp();
 		$this->server  = $_SERVER;
-		$this->globals = [ 'wp' => $GLOBALS['wp'] ?? null, 'wp_query' => $GLOBALS['wp_query'] ?? null ];
+		$this->globals = [];
+		foreach ( [ 'wp', 'wp_query', '_wp_actions', '_wp_test_filters' ] as $name ) {
+			$this->globals[ $name ] = $GLOBALS[ $name ] ?? null;
+		}
 	}
 
 	protected function tearDown(): void {
 		Log_Manager::reset();
+		Request_Context::template( '' );
 		$_SERVER = $this->server;
 		foreach ( $this->globals as $name => $value ) {
 			$GLOBALS[ $name ] = $value;
@@ -70,13 +75,11 @@ class RequestContextTest extends TestCase {
 	 * the main query's non-empty vars shaped as hook arguments are, and the
 	 * conditionals the main query answers true.
 	 */
-	public function test_shutdown_writes_what_wordpress_made_of_the_request(): void {
+	public function test_the_close_writes_what_wordpress_made_of_the_request(): void {
 		$this->start_logged_request();
 		$this->a_single_post();
-		$context = new Request_Context();
 
-		$this->assertSame( WP_CONTENT_DIR . '/themes/kea/single.php', $context->template( WP_CONTENT_DIR . '/themes/kea/single.php' ) );
-		$context->write();
+		$this->assertSame( WP_CONTENT_DIR . '/themes/kea/single.php', Request_Context::template( WP_CONTENT_DIR . '/themes/kea/single.php' ) );
 
 		$this->assertSame(
 			[
@@ -93,10 +96,8 @@ class RequestContextTest extends TestCase {
 	/** A template outside wp-content is named from the install's root. */
 	public function test_a_core_template_is_named_from_the_install_root(): void {
 		$this->start_logged_request();
-		$context = new Request_Context();
 
-		$context->template( ABSPATH . 'wp-includes/template-canvas.php' );
-		$context->write();
+		Request_Context::template( ABSPATH . 'wp-includes/template-canvas.php' );
 
 		$this->assertSame( 'wp-includes/template-canvas.php', $this->written_context()['template'] ?? null );
 	}
@@ -106,8 +107,6 @@ class RequestContextTest extends TestCase {
 		$this->start_logged_request();
 		$GLOBALS['wp']       = null;
 		$GLOBALS['wp_query'] = null;
-
-		( new Request_Context() )->write();
 
 		$this->assertNull( $this->written_context() );
 	}
@@ -120,8 +119,9 @@ class RequestContextTest extends TestCase {
 		Log_Manager::begin_job_context( 'kea_7746' );
 		$this->assertTrue( Log_Manager::instance()->is_started(), 'the job context logs too' );
 
-		( new Request_Context() )->write();
 		Log_Manager::end_job_context();
+		$GLOBALS['wp']       = null;
+		$GLOBALS['wp_query'] = null;
 
 		$this->assertNull( $this->written_context() );
 	}
@@ -138,8 +138,6 @@ class RequestContextTest extends TestCase {
 		}
 		$GLOBALS['wp']       = (object) [ 'matched_rule' => \str_repeat( '😀', 300 ), 'matched_query' => \str_repeat( 'q', 600 ) ];
 		$GLOBALS['wp_query'] = (object) [ 'query_vars' => $vars, 'is_home' => true ];
-
-		( new Request_Context() )->write();
 
 		$entry = self::entries_of( $this->logged_entries(), Log_Manager::REQUEST_CONTEXT )[0] ?? [];
 		$this->assertArrayNotHasKey( 'truncated', $entry, 'the producer fitted it; message() never trimmed' );
@@ -158,8 +156,6 @@ class RequestContextTest extends TestCase {
 		$GLOBALS['wp']       = null;
 		$GLOBALS['wp_query'] = $query;
 
-		( new Request_Context() )->write();
-
 		$m = self::entries_of( $this->logged_entries(), Log_Manager::REQUEST_CONTEXT )[0]['m'] ?? [];
 		$this->assertTrue( $m['trimmed'] ?? false );
 		$this->assertSame( 'is_kea_0', $m['conditionals'][0] ?? null );
@@ -167,19 +163,64 @@ class RequestContextTest extends TestCase {
 		$this->assertLessThanOrEqual( 3600, \strlen( (string) \wp_json_encode( $m ) ) );
 	}
 
-	/** It listens for the final template and for shutdown, at the last priority. */
-	public function test_it_listens_for_the_final_template_and_shutdown(): void {
-		$listeners = ( new Request_Context() )->listeners();
+	/** It listens for the final template alone, at the last priority. */
+	public function test_it_listens_for_the_final_template_alone(): void {
+		$listeners = Request_Context::listeners();
 
-		$this->assertSame( [ [ 'template_include', PHP_INT_MAX ], [ 'shutdown', PHP_INT_MAX ] ], \array_map( static fn ( array $l ): array => [ $l[0], $l[2] ], $listeners ) );
+		$this->assertSame( [ [ 'template_include', PHP_INT_MAX ] ], \array_map( static fn ( array $l ): array => [ $l[0], $l[2] ], $listeners ) );
 	}
 
-	/** Without a started logger nothing is written and nothing is built. */
-	public function test_nothing_is_written_without_a_started_logger(): void {
+	/** The template is read once: the next record does not inherit it. */
+	public function test_the_template_is_read_once(): void {
+		$this->start_logged_request();
+		Request_Context::template( WP_CONTENT_DIR . '/themes/kea/single.php' );
+		$this->logged_entries();
+		$this->start_logged_request();
+
+		$this->assertNull( $this->written_context() );
+	}
+
+	/** A template left in the slot before the record opened is not its own. */
+	public function test_a_reset_empties_the_template_slot(): void {
+		Request_Context::template( WP_CONTENT_DIR . '/themes/kea/stale-7746.php' );
+		Log_Manager::reset();
+		$this->start_logged_request();
+		$GLOBALS['wp'] = (object) [ 'matched_rule' => 'kea-7746/?$', 'matched_query' => '' ];
+
+		$this->assertSame( [ 'matched_rule' => 'kea-7746/?$' ], $this->written_context() );
+	}
+
+	/**
+	 * A template WordPress includes inside a job context belongs to the job,
+	 * so the enclosing record keeps the one its own request included.
+	 */
+	public function test_a_template_seen_inside_a_job_stays_off_the_parents_record(): void {
+		$this->start_logged_request();
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][] = ( new Rule( 'b2c3d4e5f6a1', '/jobs/', Rule::ACTION_LOG ) )->to_array();
+		$GLOBALS['_wp_actions']      = [];
+		$GLOBALS['_wp_test_filters'] = [];
+		new Core();
+		$included = static function ( string $template ): void {
+			foreach ( $GLOBALS['_wp_test_filters']['template_include'] ?? [] as $callbacks ) {
+				foreach ( $callbacks as $callback ) {
+					$callback( $template );
+				}
+			}
+		};
+
+		$included( WP_CONTENT_DIR . '/themes/kea/single.php' );
+		Log_Manager::begin_job_context( 'kea_7746' );
+		$included( WP_CONTENT_DIR . '/themes/kea/job-weka.php' );
+		Log_Manager::end_job_context();
+
+		$this->assertSame( 'themes/kea/single.php', $this->written_context()['template'] ?? null );
+	}
+
+	/** Reading the map builds no logger. */
+	public function test_the_map_builds_no_logger(): void {
 		$this->a_single_post();
 
-		( new Request_Context() )->write();
-
+		$this->assertSame( [ 'is_single', 'is_singular' ], Request_Context::entry()['conditionals'] ?? null );
 		$this->assertFalse( Log_Manager::has_instance() );
 	}
 }

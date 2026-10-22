@@ -17,8 +17,9 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Captures the final `template_include` and writes the `request_context`
- * entry at shutdown, once a request.
+ * Captures the final `template_include` and answers the `request_context`
+ * map `Log_Manager` writes as it closes the record, after the spans left
+ * open and before the object cache's row.
  *
  * Its `m` is a map of up to five keys, each present only when WordPress set
  * it: `template`, the included file relative to wp-content, else to the
@@ -48,24 +49,22 @@ class Request_Context {
 	/** The string fields the fit halves, most expendable first. */
 	private const SACRIFICE = [ 'matched_query', 'matched_rule', 'template' ];
 
-	/** @var string The final `template_include`, '' until it fires. */
-	private string $template = '';
+	/** @var string The final `template_include`, '' until it fires or once read. */
+	private static string $template = '';
 
 	/**
-	 * `shutdown`: write the context into the web request's record. A job
-	 * context's record is not the request whose globals these are, and a
-	 * request WordPress routed nowhere — a CLI run, a worker loop — has
-	 * nothing to say, so neither gets an entry.
+	 * The fitted map for the web request's record, reading the template
+	 * once. `Log_Manager` asks only for a web request's record, never a job
+	 * context's, whose record is not the request these globals describe; a
+	 * request WordPress routed nowhere — a CLI run, a worker loop — answers
+	 * an empty map.
+	 *
+	 * @return array<string,mixed>
 	 */
-	public function write(): void {
-		$lm = Log_Manager::started_instance();
-		if ( null === $lm || Log_Manager::in_job_context() ) {
-			return;
-		}
-		$context = $this->context();
-		if ( [] !== $context ) {
-			$lm->message( Log_Manager::REQUEST_CONTEXT, [ 'm' => self::fit( $context ) ] );
-		}
+	public static function entry(): array {
+		$context        = self::context( self::$template );
+		self::$template = '';
+		return [] === $context ? [] : self::fit( $context );
 	}
 
 	/**
@@ -112,14 +111,15 @@ class Request_Context {
 	/**
 	 * The map, each key only where WordPress set something.
 	 *
+	 * @param string $template The included file, '' when none was.
 	 * @return array<string,mixed>
 	 */
-	private function context(): array {
+	private static function context( string $template ): array {
 		$wp       = $GLOBALS['wp'] ?? null;
 		$wp_query = $GLOBALS['wp_query'] ?? null;
 		$query    = \is_object( $wp ) ? RuntimeCore::as_string( $wp->matched_query ?? '', '' ) : '';
 		$context  = [
-			'template'      => self::relative( $this->template ),
+			'template'      => self::relative( $template ),
 			'matched_rule'  => \is_object( $wp ) ? RuntimeCore::as_string( $wp->matched_rule ?? '', '' ) : '',
 			'matched_query' => '' === $query ? '' : \substr( Log_Manager::redact_url( "?{$query}" ), 1 ),
 		];
@@ -156,27 +156,27 @@ class Request_Context {
 	}
 
 	/**
-	 * What `App\Core` binds on a logged request: the template at the last
-	 * priority, so it is the one WordPress includes, and the writer at
-	 * shutdown's last, after a rule's `shutdown` span has closed.
+	 * What `App\Core` binds on a logged web request's scope, never a job
+	 * context's: the template at the last priority, so it is the one
+	 * WordPress includes.
 	 *
 	 * @return list<array{0: string, 1: callable, 2: int, 3: int}> Hook, callback, priority, accepted args.
 	 */
-	public function listeners(): array {
+	public static function listeners(): array {
 		return [
-			[ 'template_include', [ $this, 'template' ], PHP_INT_MAX, 1 ],
-			[ 'shutdown', [ $this, 'write' ], PHP_INT_MAX, 0 ],
+			[ 'template_include', [ self::class, 'template' ], PHP_INT_MAX, 1 ],
 		];
 	}
 
 	/**
-	 * `template_include`: keep the template, and pass it through.
+	 * `template_include`: keep the template, and pass it through. `''`
+	 * empties the slot, as `Log_Manager::reset()` does.
 	 *
 	 * @param mixed $template The file WordPress will include.
 	 * @return mixed The same file.
 	 */
-	public function template( mixed $template ): mixed {
-		$this->template = RuntimeCore::as_string( $template, '' );
+	public static function template( mixed $template ): mixed {
+		self::$template = RuntimeCore::as_string( $template, '' );
 		return $template;
 	}
 }

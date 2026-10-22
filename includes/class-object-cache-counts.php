@@ -19,48 +19,48 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *
  * Core's `WP_Object_Cache`, the class `wp-includes/class-wp-object-cache.php`
  * declares, counts true runtime-cache hits and misses in `cache_hits` and
- * `cache_misses`, so those are read as they are: `kind` `core`.
+ * `cache_misses`, so those are read as they are: the row is `<n> hit, <n>
+ * miss`.
  *
  * WP Cloud's memcached drop-in (wp-ok-cache), told by the
  * `WP_Object_Cache_Stats` helper its class declares, aliases `cache_hits` to
  * its count of memcached `get` round trips and `cache_misses` to its count of
- * `add` calls, so neither is read: `kind` `memcached` carries `local`, the
- * gets answered from the request's own copy (`stats['get_local']`, which also
- * counts a non-persistent group's misses, answered there too); `gets`, the
- * single-key memcached round trips (`stats['get']`); `hits` and `misses`,
- * those round trips by the comment `group_ops` records for each — `memcache`
- * a hit, `not_in_memcache` and `checkthedatabaseplease` a miss — its
- * `slow-ops` copies left out; and `multi_keys`, the keys a `get_multiple`
- * batch asked for, which it records no per-key result for. The drop-in keeps
- * `group_ops` on every request, not under a debug flag, and empties it on
- * `flush_runtime()`, which `Job_Worker_Node` calls between jobs, so a
- * handler flushing its own runtime cache undercounts its hits and misses.
+ * `add` calls, so neither is read: the row is `local`, the gets answered from
+ * the request's own copy (`stats['get_local']`, which also counts a
+ * non-persistent group's misses, answered there too); `get`, the single-key
+ * memcached round trips (`stats['get']`); `hit` and `miss`, those round trips
+ * by the comment `group_ops` records for each — `memcache` a hit,
+ * `not_in_memcache` and `checkthedatabaseplease` a miss — its `slow-ops`
+ * copies left out; and `multi`, the keys a `get_multiple` batch asked for,
+ * which it records no per-key result for. The drop-in keeps `group_ops` on
+ * every request, not under a debug flag, and empties it on
+ * `flush_runtime()`, which `Job_Worker_Node` calls between jobs, so a handler
+ * flushing its own runtime cache undercounts its hits and misses.
  *
- * Any other cache gets nothing, never zeros.
+ * Any other cache gets no row, never zeros.
  */
 final class Object_Cache_Counts {
 
 	/**
-	 * The counts each kind's `object_cache` map carries, in the order it is
-	 * written; `Request_Builder_Node` keeps exactly these.
+	 * The buckets each kind's row names, in the order it names them.
 	 *
 	 * @var array<string,list<string>>
 	 */
-	public const FIELDS = [
-		'core'      => [ 'hits', 'misses' ],
-		'memcached' => [ 'local', 'gets', 'hits', 'misses', 'multi_keys' ],
+	private const BUCKETS = [
+		'core'      => [ 'hit', 'miss' ],
+		'memcached' => [ 'local', 'get', 'hit', 'miss', 'multi' ],
 	];
 
 	/**
-	 * Where each running counter of `FIELDS` is read: core's from a property
-	 * of that name, the drop-in's from its `stats` key. Every other field is
+	 * Where each running counter of `BUCKETS` is read: core's from a property
+	 * of that name, the drop-in's from its `stats` key. Every other bucket is
 	 * counted from the drop-in's `group_ops` by `lookups()`.
 	 *
 	 * @var array<string,array<string,string>>
 	 */
 	private const COUNTERS = [
-		'core'      => [ 'hits' => 'cache_hits', 'misses' => 'cache_misses' ],
-		'memcached' => [ 'local' => 'get_local', 'gets' => 'get' ],
+		'core'      => [ 'hit' => 'cache_hits', 'miss' => 'cache_misses' ],
+		'memcached' => [ 'local' => 'get_local', 'get' => 'get' ],
 	];
 
 	/** Core's cache's class name, which the drop-in reuses. */
@@ -104,24 +104,25 @@ final class Object_Cache_Counts {
 	}
 
 	/**
-	 * The terminal's `object_cache` field: what moved since `$mark`, or
-	 * nothing when there was no baseline or the cache is not its kind now.
+	 * The `objectcache` row's `m`: what moved since `$mark`, `<n> <bucket>`
+	 * per bucket joined by `, `, or null when there was no baseline or the
+	 * cache is not its kind now.
 	 *
 	 * @param array{kind: string, counters: array<string,int>, positions: array<array-key,int>}|null $mark What `mark()` answered.
-	 * @return array{object_cache?: array<string,int|string>}
 	 */
-	public static function since( ?array $mark ): array {
+	public static function row( ?array $mark ): ?string {
 		$cache = $GLOBALS['wp_object_cache'] ?? null;
 		if ( null === $mark || ! \is_object( $cache ) || self::kind( $cache ) !== $mark['kind'] ) {
-			return [];
+			return null;
 		}
 		$now     = self::counters( $cache, $mark['kind'] );
 		$lookups = 'memcached' === $mark['kind'] ? self::lookups( Core::arr( $cache->group_ops ?? null, [] ), $mark['positions'] ) : [];
-		$moved   = [ 'kind' => $mark['kind'] ];
-		foreach ( self::FIELDS[ $mark['kind'] ] as $field ) {
-			$moved[ $field ] = isset( $now[ $field ] ) ? $now[ $field ] - ( $mark['counters'][ $field ] ?? 0 ) : ( $lookups[ $field ] ?? 0 );
+		$parts   = [];
+		foreach ( self::BUCKETS[ $mark['kind'] ] as $bucket ) {
+			$moved   = isset( $now[ $bucket ] ) ? $now[ $bucket ] - ( $mark['counters'][ $bucket ] ?? 0 ) : ( $lookups[ $bucket ] ?? 0 );
+			$parts[] = "{$moved} {$bucket}";
 		}
-		return [ 'object_cache' => $moved ];
+		return \implode( ', ', $parts );
 	}
 
 	/**
@@ -131,10 +132,10 @@ final class Object_Cache_Counts {
 	 *
 	 * @param array<array-key,mixed> $group_ops The drop-in's `group_ops`.
 	 * @param array<array-key,int>   $positions Each group's length at the mark.
-	 * @return array<string,int> Each field of `FIELDS` the counters do not hold.
+	 * @return array<string,int> Each bucket of `BUCKETS` the counters do not hold.
 	 */
 	private static function lookups( array $group_ops, array $positions ): array {
-		$counts = \array_fill_keys( \array_diff( self::FIELDS['memcached'], \array_keys( self::COUNTERS['memcached'] ) ), 0 );
+		$counts = \array_fill_keys( \array_diff( self::BUCKETS['memcached'], \array_keys( self::COUNTERS['memcached'] ) ), 0 );
 		foreach ( $group_ops as $group => $ops ) {
 			$ops = Core::arr( $ops, [] );
 			if ( self::SLOW_OPS === $group ) {
@@ -144,9 +145,9 @@ final class Object_Cache_Counts {
 			foreach ( \array_slice( $ops, $from > \count( $ops ) ? 0 : $from ) as $op ) {
 				$op = Core::arr( $op, [] );
 				if ( 'get' === ( $op[0] ?? null ) ) {
-					++$counts[ self::FOUND === ( $op[4] ?? null ) ? 'hits' : 'misses' ];
+					++$counts[ self::FOUND === ( $op[4] ?? null ) ? 'hit' : 'miss' ];
 				} elseif ( 'get_multiple' === ( $op[0] ?? null ) ) {
-					$counts['multi_keys'] += \count( Core::arr( $op[1] ?? null, [] ) );
+					$counts['multi'] += \count( Core::arr( $op[1] ?? null, [] ) );
 				}
 			}
 		}
@@ -163,8 +164,8 @@ final class Object_Cache_Counts {
 	private static function counters( object $cache, string $kind ): array {
 		$stats    = Core::arr( $cache->stats ?? null, [] );
 		$counters = [];
-		foreach ( self::COUNTERS[ $kind ] as $field => $source ) {
-			$counters[ $field ] = Core::as_int( 'core' === $kind ? ( $cache->{$source} ?? 0 ) : ( $stats[ $source ] ?? 0 ) );
+		foreach ( self::COUNTERS[ $kind ] as $bucket => $source ) {
+			$counters[ $bucket ] = Core::as_int( 'core' === $kind ? ( $cache->{$source} ?? 0 ) : ( $stats[ $source ] ?? 0 ) );
 		}
 		return $counters;
 	}

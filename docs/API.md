@@ -465,15 +465,19 @@ false.
 Public constants: `FATAL_TYPES`, and the four request keywords `REQUEST_LABEL` (`process`),
 `REQUEST_START`, `REQUEST_COMPLETE` and `REQUEST_ABORTED`. The last two together are
 `Request_Builder_Node::TERMINAL_KEYWORDS`, the pair that closes a record; without one it
-strands in flight until eviction. `REQUEST_CONTEXT` (`request_context`) is the category of
-`App\Request_Context`'s shutdown entry.
+strands in flight until eviction. `REQUEST_CONTEXT` (`request_context`) and `OBJECT_CACHE`
+(`objectcache`) are the categories of two of the entries the close writes.
 
-The terminal carries `object_cache` from [`Object_Cache_Counts`](../includes/class-object-cache-counts.php): the whole
-process's counts for a web request, what moved while the context was open for a job. Under
-core's `WP_Object_Cache` it is `{ kind: core, hits, misses }`; under WP Cloud's memcached
-drop-in `{ kind: memcached, local, gets, hits, misses, multi_keys }`, read from its `stats`
-and `group_ops`, never from its `cache_hits` and `cache_misses`, which count `get` and `add`
-calls. Any other cache gets none.
+The close attempts each of its producers whatever an earlier one threw, and raises what they threw after the terminal. It writes, in this order: an `(orphaned)` complete for each span left open, a web
+request's `request_context` entry, its `m` [`App\Request_Context::entry()`](../includes/app/class-request-context.php),
+the `objectcache` row, `memory`, `resources` and the terminal. The `objectcache` row's `m` is
+[`Object_Cache_Counts::row()`](../includes/class-object-cache-counts.php), a string of
+`<n> <bucket>` parts joined by `, `, every bucket shown, zeros included, in a fixed order: the
+whole process's counts for a web request, what moved while the context was open for a job.
+Under core's `WP_Object_Cache` it reads `120 hit, 7 miss`; under WP Cloud's memcached drop-in
+`31275 local, 799 get, 766 hit, 33 miss, 1645 multi`, read from its `stats` and `group_ops`,
+never from its `cache_hits` and `cache_misses`, which count `get` and `add` calls. The row
+carries `keep`, so a fold never drops it. Any other cache gets no row.
 
 **Payload size.** `message()` holds each encoded entry to 3,840 bytes, the headroom under
 PIPE_BUF (4,096) that keeps a lock-free append atomic against every other writer on this
@@ -580,8 +584,7 @@ binds a rule that does not log:
 | [`App\Query_Monitor_Actions`](../includes/app/class-query-monitor-actions.php) | `qm/start`, `qm/stop` (1 arg), `qm/lap` (2) | 10 | At the stop, `qm (start)` labelled with the timer's name and back-dated to its start, clamped to the start of the span it is written in (`Log_Manager::open_since()`), its `qm lap` entries and the timers stopped inside it, and `qm (complete)` with `duration_ms`; `qm (warning)` `Timer not started` for a stop or lap with no start. A timer holds 50 laps and inner timers and 100 timers stay open at most. |
 | | `qm/emergency` … `qm/debug` (2) | 10 | `qm (<level>)`, the message converted as `QM_Collector_Logger::store()` does and its placeholders filled with shaped context values. `(warning)` and above reach the Errors stream. |
 | | `shutdown` | `PHP_INT_MAX` | `qm (warning)` `Timer not stopped` for each timer still open, which is dropped. |
-| [`App\Request_Context`](../includes/app/class-request-context.php) | `template_include` (1) | `PHP_INT_MAX` | Nothing; keeps the template WordPress will include. |
-| | `shutdown` | `PHP_INT_MAX` | `request_context`, its `m` up to `template`, `matched_rule`, `matched_query`, `query_vars`, `conditionals` and `trimmed`, fitted under 3,600 bytes by the producer; none in a job context or where WordPress routed nothing. |
+| [`App\Request_Context`](../includes/app/class-request-context.php) | `template_include` (1) | `PHP_INT_MAX` | Nothing; keeps the template WordPress will include, and is bound only outside a job context. `Log_Manager`'s close writes `request_context` from it after the spans left open: its `m` up to `template`, `matched_rule`, `matched_query`, `query_vars`, `conditionals` and `trimmed`, fitted under 3,600 bytes by the producer; none in a job context or where WordPress routed nothing. |
 | [`App\Server_Timing`](../includes/app/class-server-timing.php) | `send_headers` | `PHP_INT_MAX` | The `Server-Timing` header. |
 | | `rest_pre_serve_request` (1) | `PHP_INT_MIN` | The header, once per served response; a preloaded, batched or embedded one, which passes `rest_post_dispatch` alone, gets none. |
 | | `admin_init` | `PHP_INT_MAX` | The header, under `wp_doing_ajax()` alone. |
