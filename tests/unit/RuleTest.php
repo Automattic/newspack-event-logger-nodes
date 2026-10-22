@@ -41,6 +41,11 @@ final class RuleTest extends TestCase {
 			'log_plugin_loads'            => false,
 			'trace_hooks'                 => true,
 			'trace_callers'               => 60,
+			'log_memory'                  => true,
+			'flush_every_line'            => true,
+			'log_context'                 => true,
+			'log_cache'                   => true,
+			'log_resources'               => true,
 		];
 		$rule = Rule::from_array( $data );
 		$this->assertSame( $data, $rule->to_array() );
@@ -66,6 +71,13 @@ final class RuleTest extends TestCase {
 		// A backtrace per hook firing is a diagnostic, not a default.
 		$this->assertFalse( $rule->trace_hooks );
 		$this->assertSame( 0, $rule->trace_callers );
+		// The close's optional rows and the debugging switches are opt-ins too.
+		foreach ( [ 'log_memory', 'flush_every_line', 'log_context', 'log_cache', 'log_resources' ] as $knob ) {
+			$this->assertFalse( $rule->{$knob}, "{$knob} is off unless set" );
+			$on = Rule::from_array( [ 'id' => 'k7', 'pattern' => '/kea-5821', 'action' => 'log', $knob => true ] );
+			$this->assertTrue( $on->{$knob}, "{$knob} reads back set" );
+			$this->assertFalse( $on->with( [ $knob => false ] )->{$knob}, "with() clears {$knob}" );
+		}
 	}
 
 	/**

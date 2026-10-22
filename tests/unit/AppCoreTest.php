@@ -2649,13 +2649,24 @@ class AppCoreTest extends TestCase {
 	 */
 	public function test_a_logged_request_binds_the_request_scoped_listeners(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->set_governing_rule( new Rule( '3e7a1c9b5d20', '/reports/', Rule::ACTION_LOG ) );
+		$this->set_governing_rule( new Rule( '3e7a1c9b5d20', '/reports/', Rule::ACTION_LOG, log_context: true ) );
 
 		$bound = $this->capture_added_filters( fn() => new Core() );
 
 		foreach ( [ 'qm/start', 'qm/stop', 'qm/lap', 'qm/error', 'qm/debug', 'template_include', 'send_headers', 'rest_pre_serve_request', 'admin_init', 'shutdown' ] as $hook ) {
 			$this->assertContains( $hook, $bound, "{$hook} is bound on a logged request" );
 		}
+	}
+
+	/** The context's template capture binds only for a rule writing the context. */
+	public function test_a_rule_without_log_context_captures_no_template(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( new Rule( '3e7a1c9b5d20', '/reports/', Rule::ACTION_LOG ) );
+
+		$bound = $this->capture_added_filters( fn() => new Core() );
+
+		$this->assertNotContains( 'template_include', $bound );
+		$this->assertContains( 'send_headers', $bound, 'the other request-scoped listeners still bind' );
 	}
 
 	/** A request no rule logs binds none of them. */

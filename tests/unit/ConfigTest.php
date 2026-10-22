@@ -157,13 +157,13 @@ class ConfigTest extends TestCase {
 		// Config is read at plugins_loaded:-11001, before the substrate wires its
 		// runtime (it never does on a frontend request) and before any loader
 		// could register keys, so both Configs self-declare on first read.
-		// 7 / true are distinct from the shipped defaults (1 / false).
+		// 7 / false are distinct from the shipped defaults (1 / true).
 		$conf = $this->temp_dir . '/unwired.php';
-		\file_put_contents( $conf, "<?php return [ 'num_partitions' => 7, 'flush_every_line' => true ];\n" );
+		\file_put_contents( $conf, "<?php return [ 'num_partitions' => 7, 'enable_logging' => false ];\n" );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $conf );
 		$this->simulate_unwired_request();
 		$this->assertSame( 7, Config::value( 'num_partitions' ) );
-		$this->assertTrue( Config::value( 'flush_every_line' ) );
+		$this->assertFalse( Config::value( 'enable_logging' ) );
 	}
 
 	public function test_plugin_file_hooks_declaration_onto_the_substrate_pull(): void {

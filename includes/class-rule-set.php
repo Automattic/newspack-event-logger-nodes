@@ -118,7 +118,7 @@ final class Rule_Set {
 	 *
 	 * Config is memoized per process with the stored option already folded in,
 	 * so it must be invalidated before the read-back or this returns the very
-	 * ruleset it discarded (the `settings_set` verb resets it for this reason).
+	 * ruleset it discarded (the `set` verb resets it for this reason).
 	 *
 	 * Signals the live fleet for itself, because deleting the option never
 	 * reaches `save()`; see `request_reloads()`.
@@ -328,15 +328,15 @@ final class Rule_Set {
 	 * route them through save(), which RE-TIERS locally — heavy rules' inline
 	 * hooks are written back out to this site's own durable option + table mirror,
 	 * keeping OPTION_RULES small. The inverse of hydrate_array(); the
-	 * `performance` CI's `settings_set` verb calls it for OPTION_RULES instead
-	 * of writing the option raw.
+	 * `performance` CI's `set` verb, which takes OPTION_RULES alone, calls it
+	 * rather than writing the option raw.
 	 *
-	 * A push that changes nothing does nothing. The hub re-sends every synced
-	 * option on its periodic sweep whether or not it moved — that is what makes
-	 * a freshly-connected spoke converge — and `set` gates the other options on
-	 * a value comparison; this is the same gate for the one option that cannot
-	 * be compared raw. Re-saving is not free: it rewrites every pointer rule's
-	 * durable option and asks every worker to re-read its config.
+	 * A push that changes nothing does nothing. The hub re-sends the ruleset on
+	 * its periodic sweep whether or not it moved — that is what makes a
+	 * freshly-connected spoke converge — so the gate compares the resolved
+	 * rules, the ruleset being an option that cannot be compared raw.
+	 * Re-saving is not free: it rewrites every pointer rule's durable option
+	 * and asks every worker to re-read its config.
 	 *
 	 * @param array<int|string,mixed> $rules_array Hydrated rule maps off the wire.
 	 * @return bool Whether the ruleset actually moved.

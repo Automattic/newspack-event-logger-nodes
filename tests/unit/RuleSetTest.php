@@ -126,6 +126,23 @@ final class RuleSetTest extends TestCase {
 		$this->assertFalse( $rule->log_http );
 		$this->assertFalse( $rule->log_plugin_loads );
 		$this->assertFalse( $rule->trace_hooks );
+		$this->assertFalse( $rule->log_memory );
+		$this->assertFalse( $rule->flush_every_line );
+		$this->assertFalse( $rule->log_context );
+		$this->assertFalse( $rule->log_cache );
+		$this->assertFalse( $rule->log_resources );
+	}
+
+	/** A rule's row and debugging switches survive the store and the hub's wire. */
+	public function test_the_row_and_debugging_switches_survive_save_and_sync(): void {
+		$knobs = [ 'log_memory' => true, 'flush_every_line' => true, 'log_context' => true, 'log_cache' => true, 'log_resources' => true ];
+		( new Rule_Set( [] ) )->save( [ Rule::from_array( [ 'id' => '', 'pattern' => '/kea-5821/', 'action' => 'log' ] + $knobs ) ] );
+		$wire = Rule_Set::hydrate_array( $this->stored_rule_maps() );
+		unset( $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] );
+
+		Rule_Set::apply_synced( $wire );
+
+		$this->assertSame( $knobs, \array_intersect_key( Rule_Set::load()->rules()[0]->to_array(), $knobs ) );
 	}
 
 	public function test_a_corrupt_option_seeds_from_the_config_layers_beneath_it(): void {

@@ -639,10 +639,14 @@ class Ask_Assembler {
 			'hook_count'         => null === $rule->hooks ? null : \count( $rule->hooks ),
 			'custom_event_count' => \count( $rule->custom_events ),
 			'significant_events' => $rule->significant_events,
-			// Whether an absent query, call or load was unlogged or never ran.
+			// Whether an absent query, call, load, peak or row was unlogged.
 			'log_queries'        => $rule->log_queries,
 			'log_http'           => $rule->log_http,
 			'log_plugin_loads'   => $rule->log_plugin_loads,
+			'log_memory'         => $rule->log_memory,
+			'log_context'        => $rule->log_context,
+			'log_cache'          => $rule->log_cache,
+			'log_resources'      => $rule->log_resources,
 			'trace_hooks'        => $rule->trace_hooks,
 			'trace_callers'      => $rule->trace_callers,
 		];

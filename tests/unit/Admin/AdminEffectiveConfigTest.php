@@ -5,7 +5,7 @@
  * ELN's settings page delegates the panel to the shared substrate
  * `Settings_Renderer`, passing ELN's own Schema, option prefix, and effective
  * config. This file asserts the panel reports the right restart impact for an
- * ELN field (`log_memory`, classified `'all'`, restarts every active topology —
+ * ELN field (`enable_logging`, classified `'all'`, restarts every active topology —
  * so `combined` appears when active) and that the section is hooked to ELN's
  * `settings_after_form` action and echoes a `widefat` table.
  *
@@ -41,7 +41,7 @@ class AdminEffectiveConfigTest extends TestCase {
 		$this->use_base_dir( $this->base_dir );
 
 		// Active set including `combined`, which instantiates a Flame_Builder. ELN's
-		// log_memory is classified 'all' → restarts every active topology.
+		// enable_logging is classified 'all' → restarts every active topology.
 		Topology_Registry::reset();
 		$this->tsl_dir = $this->make_temp_dir( 'eln-effective-config-topologies-' );
 		Topology_Registry::register_stock_dir( $this->tsl_dir );
@@ -75,10 +75,11 @@ class AdminEffectiveConfigTest extends TestCase {
 		return \array_column( $rows, null, 'key' );
 	}
 
-	public function test_log_memory_restart_impact_includes_active_combined(): void {
+	public function test_enable_logging_restart_impact_includes_active_combined(): void {
 		$rows = $this->rows_by_key();
-		$this->assertArrayHasKey( 'log_memory', $rows );
-		$this->assertStringContainsString( 'combined', $rows['log_memory']['restart'] );
+		$this->assertArrayHasKey( 'enable_logging', $rows );
+		$this->assertStringContainsString( 'combined', $rows['enable_logging']['restart'] );
+		$this->assertArrayNotHasKey( 'log_memory', $rows );
 	}
 
 	public function test_admin_render_section_is_hooked_and_echoes_widefat_table(): void {

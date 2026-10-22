@@ -1,8 +1,8 @@
 /**
  * MemoryTrack — the peak-memory staircase under the flame graph.
  *
- * `log_memory` appends `peak_mb` to every complete() entry, and the flame's X
- * axis is already time, so the two line up over one request.
+ * A rule's `log_memory` appends `peak_mb` to every complete() entry, and the
+ * flame's X axis is already time, so the two line up over one request.
  */
 
 import React from 'react';

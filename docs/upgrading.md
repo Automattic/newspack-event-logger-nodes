@@ -6,6 +6,37 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **`log_memory` and `flush_every_line` are rule switches, not settings.**
+  Neither is a config key, an option or a settings-page checkbox, and the
+  Debugging section is gone. A config file or `LOCAL_NEWSPACK_NODES_CONF`
+  still naming either is reported to stderr as an unknown key; a stored
+  `newspack_event_logger_nodes_log_memory` or `_flush_every_line` row is
+  ignored, and nothing migrates it. Set the switch on each rule that wants
+  it, in the rules editor or in the rule's JSON. `performance set` takes
+  `newspack_event_logger_nodes_rules` alone and answers `unknown option` for
+  any other, and `hub-control.tsl` registers only the ruleset with
+  `settings-sync`, so a custom hub topology still adding the two
+  `add_setting` lines pushes options every spoke refuses: drop them.
+- **The `memory` entry is gone, and the terminal always carries `peak_mb`.**
+  `process (complete)` and `process (aborted)` carry the peak memory in MB,
+  rounded to two places, whatever any switch says, and the record's `peak_mb`
+  is read from there. `Log_Manager::MEMORY` is gone, and no entry carries
+  the process's memory at the end. A rule's `log_memory` puts `peak_mb` on
+  every other `(complete)` too.
+- **`request_context`, `objectcache` and `resources` are written only where
+  a rule asks.** Each `Rule` gains `log_context`, `log_cache` and
+  `log_resources`, off unless set, beside `log_memory` and
+  `flush_every_line`. A rule turning none on writes four lines for a web
+  page: `process (start)`, `request`, `environment_v3` and the terminal. A
+  worker or platform request adds `worker_type`, and a worker process its
+  `worker_partition` too; a job context adds `worker_type` when its worker
+  named one, and the `message` naming the record that caused it.
+  `environment_v3` is written only when an allowlisted variable is set. A site
+  upgrading sees fewer lines until a rule turns them on: no request context,
+  no cache counts, and no CPU samples, so `Log_Manager::cpu_between_samples()`
+  answers null and a gap finding carries no `on_cpu_min_ms` or
+  `on_cpu_max_ms`. `App\Core` binds the `template_include` capture only under
+  `log_context`.
 - **`object_cache` and `context` leave the record, and `object_cache`
   leaves the terminal.** `process (complete)` carries no `object_cache` map,
   and `Request_Builder_Node` writes neither field onto a record, so a

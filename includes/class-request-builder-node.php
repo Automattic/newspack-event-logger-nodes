@@ -225,7 +225,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 	/**
 	 * Unkept raw entries a folded request keeps from its tail — how it ends:
-	 * memory, resources, process complete. Kept entries ride beside them in
+	 * the close's rows and the terminal. Kept entries ride beside them in
 	 * arrival order. Both ends are bounded, and it is the repetitive middle
 	 * that costs memory.
 	 */
@@ -1010,6 +1010,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			// A hole outranks a nominal finish, never a stamped one.
 			$request->error_status = '-' === $error_status && Core::int( $request->gap_after ?? 0, 0 ) > 0 ? 'I' : $error_status;
 			self::carry_fatal( $request, $entry );
+			self::carry_peak( $request, $entry );
 			$request->state        = 'complete';
 		};
 
@@ -1019,6 +1020,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$request->status_code  = Core::num_int( $entry['status_code'] ?? null );
 			$request->error_status = 'A';
 			self::carry_fatal( $request, $entry );
+			self::carry_peak( $request, $entry );
 			$request->state        = 'complete';
 		};
 
@@ -1069,13 +1071,6 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			$ja4_hash = self::env_str( $env, 'HTTP_X_JA4_HASH' );
 			if ( '' !== $ja4_hash ) {
 				$request->ja4_hash = $ja4_hash;
-			}
-		};
-
-		$s[ Log_Manager::MEMORY ] = function ( \stdClass $request, array $entry ): void {
-			$m = $entry['m'] ?? [];
-			if ( \is_array( $m ) && isset( $m['peak'] ) && \is_scalar( $m['peak'] ) ) {
-				$request->peak_mb = (float) $m['peak'];
 			}
 		};
 
@@ -1714,6 +1709,19 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		$request->fatal_line   = Core::int( $entry['fatal_line'] ?? 0, 0 );
 		$request->fatal_type   = Core::int( $entry['fatal_type'] ?? 0, 0 );
 		$request->fatal_plugin = Core::str( $entry['fatal_plugin'] ?? '', '' );
+	}
+
+	/**
+	 * Move the terminal's `peak_mb`, the process's memory high-water mark,
+	 * onto the record. A producer whose terminal carries none leaves it unset.
+	 *
+	 * @param \stdClass              $request Record under assembly.
+	 * @param array<array-key,mixed> $entry   The terminal entry.
+	 */
+	private static function carry_peak( \stdClass $request, array $entry ): void {
+		if ( \is_numeric( $entry['peak_mb'] ?? null ) ) {
+			$request->peak_mb = (float) $entry['peak_mb'];
+		}
 	}
 
 	/**

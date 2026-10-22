@@ -1556,9 +1556,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// set verb (normalized positional receiver) — nine-option whitelist +
-	// array/int/float/bool type-coerced sanitization. Positional
-	// `set <option> <value>`.
+	// set verb — the ruleset option alone, its JSON value decoded and
+	// sanitized. Positional `set <option> <value>`.
 	// -------------------------------------------------------------------------
 
 	public function test_a_non_json_ruleset_push_is_refused_and_saves_nothing(): void {
@@ -1579,14 +1578,14 @@ class PerformanceCITest extends TestCase {
 	public function test_array_option_json_preserves_associative_keys(): void {
 		// A JSON array-option value is json_decoded and sanitize_settings_array keeps
 		// the keys — a csv split would flatten an assoc map to a list of "1"s.
-		$decode = new \ReflectionMethod( Performance_CI_Node::class, 'decode_array_value' );
-		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
+		$decode   = new \ReflectionMethod( Performance_CI_Node::class, 'decode_array_value' );
+		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_array' );
 
 		$decoded = $decode->invoke( null, (string) \json_encode( [ 'advancedemail' => true, 'amazons3' => true ] ) );
 
 		$this->assertSame(
 			[ 'advancedemail' => true, 'amazons3' => true ],
-			$sanitize->invoke( null, $decoded, 'array' )
+			$sanitize->invoke( null, $decoded )
 		);
 	}
 
@@ -1672,67 +1671,26 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayNotHasKey( 'arbitrary_option', $GLOBALS['_wp_options'] );
 	}
 
-	public function test_set_verb_coerces_bool_option(): void {
-		$interpreter = new Performance_CI_Node();
-		VerbHarness::fire(
-			$interpreter,
-			'performance',
-			'set',
-			'newspack_event_logger_nodes_log_memory 1'
-		);
+	/** The two debugging switches are a rule's, so a hub pushing either is refused. */
+	public function test_set_verb_refuses_the_retired_debugging_options(): void {
+		foreach ( [ 'newspack_event_logger_nodes_log_memory', 'newspack_event_logger_nodes_flush_every_line' ] as $option ) {
+			$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ $option, '1' ] );
 
-		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
-	}
-
-	/**
-	 * A hub pushes a false bool option as a blank token, which is what
-	 * `Core::as_string( false )` gives, so `set` takes its value optional and a
-	 * blank turns the spoke's copy off.
-	 */
-	public function test_set_verb_applies_the_blank_a_hub_pushes_for_false(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] = true;
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'set',
-			[ 'newspack_event_logger_nodes_flush_every_line', '' ]
-		);
-
-		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_flush_every_line', 'updated' => true ], $result );
-		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] );
-	}
-
-	/** A bool option reads its value as a bool word, so `false` turns it off. */
-	public function test_set_verb_turns_a_bool_option_off_on_false(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = true;
-
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', 'false' ] );
-
-		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_log_memory', 'updated' => true ], $result );
-		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
-	}
-
-	/** A word no bool reads as is refused, never read as on. */
-	public function test_set_verb_refuses_a_bool_option_value_outside_the_bool_words(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = false;
-
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', 'kea-4471' ] );
-
-		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid value for option', $result );
-		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+			$this->assertIsString( $result );
+			$this->assertStringContainsString( "unknown option: {$option}", $result );
+			$this->assertArrayNotHasKey( $option, $GLOBALS['_wp_options'] );
+		}
 	}
 
 	/** A blank is a value; no value at all names nothing to write. */
 	public function test_set_verb_refuses_an_absent_value(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = true;
+		( new Rule_Set( [] ) )->save( [ new Rule( 'ignored', '/marmot/', Rule::ACTION_LOG ) ] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory' ] );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ Rule_Set::OPTION_RULES ] );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'value required', $result );
-		$this->assertTrue( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
+		$this->assertSame( '/marmot/', $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0]['pattern'] ?? null );
 	}
 
 	/**
@@ -1752,63 +1710,6 @@ class PerformanceCITest extends TestCase {
 			$resets[] = true;
 		} );
 		return [ 'events' => $events, 'resets' => $resets ];
-	}
-
-	/**
-	 * A bool option comes back from the options table as `'1'` while the hub
-	 * pushes the word `1`, which coerces to `true`: the same value in another
-	 * PHP type must write nothing, record no settings event and reset nothing.
-	 */
-	public function test_set_verb_pushing_the_stored_true_in_its_wire_form_writes_nothing(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = '1';
-		$seen = $this->watch_settings_writes();
-
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', '1' ] );
-
-		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_log_memory', 'updated' => false ], $result );
-		$this->assertSame( '1', $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'], 'the stored row is untouched' );
-		$this->assertCount( 0, $seen['events'], 'no settings event' );
-		$this->assertCount( 0, $seen['resets'], 'no config reset' );
-	}
-
-	/** The options table hands a stored false back as `''`, which a hub's blank equals. */
-	public function test_set_verb_pushing_the_stored_false_in_its_wire_form_writes_nothing(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] = '';
-		$seen = $this->watch_settings_writes();
-
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_flush_every_line', '' ] );
-
-		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_flush_every_line', 'updated' => false ], $result );
-		$this->assertSame( '', $GLOBALS['_wp_options']['newspack_event_logger_nodes_flush_every_line'] );
-		$this->assertCount( 0, $seen['events'] );
-	}
-
-	/** The counterpart guard: a value that moved still writes and records its event. */
-	public function test_set_verb_pushing_a_changed_bool_still_writes_and_records_it(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = '1';
-		$seen = $this->watch_settings_writes();
-
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', '' ] );
-
-		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_log_memory', 'updated' => true ], $result );
-		$this->assertFalse( $GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] );
-		$this->assertCount( 1, $seen['events'] );
-	}
-
-	/**
-	 * The settings-sync loop's shape: a hub re-pushes the option on every
-	 * event it reads, so two identical pushes in a row must both be no-ops.
-	 */
-	public function test_set_verb_two_identical_bool_pushes_in_a_row_write_nothing(): void {
-		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = '1';
-		$seen = $this->watch_settings_writes();
-
-		$first  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', '1' ] );
-		$second = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', [ 'newspack_event_logger_nodes_log_memory', '1' ] );
-
-		$this->assertFalse( $first['updated'] ?? null );
-		$this->assertFalse( $second['updated'] ?? null );
-		$this->assertCount( 0, $seen['events'], 'neither push feeds the sync another event' );
 	}
 
 	/**
@@ -1848,11 +1749,11 @@ class PerformanceCITest extends TestCase {
 		// A nested map recurses one level and keeps the structure (sanitize_array
 		// recursion branch), not flattened or rejected. Tested on the sanitizer
 		// directly — the ruleset option itself re-tiers on set().
-		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
+		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_array' );
 
 		$this->assertSame(
 			[ 'group' => [ 'inner' => 'val' ] ],
-			$sanitize->invoke( null, [ 'group' => [ 'inner' => 'val' ] ], 'array' )
+			$sanitize->invoke( null, [ 'group' => [ 'inner' => 'val' ] ] )
 		);
 	}
 
@@ -1897,16 +1798,6 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsString( $result );
 		$this->assertArrayNotHasKey( 'newspack_event_logger_nodes_rules', $GLOBALS['_wp_options'] );
-	}
-
-	public function test_sanitize_settings_value_rejects_non_array_and_unknown_type(): void {
-		// Two reject paths unreachable through `set` (which always hands an array
-		// for array-typed options and only ever a whitelisted type): a non-array
-		// value for the array branch, and an unrecognized type.
-		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
-
-		$this->assertNull( $ref->invoke( null, 'not-an-array', 'array' ) );
-		$this->assertNull( $ref->invoke( null, 'whatever', 'nonexistent-type' ) );
 	}
 
 	// ── verb grammar: verb first ────────────────────────────────────────────

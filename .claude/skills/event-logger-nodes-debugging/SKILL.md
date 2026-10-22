@@ -49,7 +49,7 @@ Two more flags size the history ring, which holds the lines of rids that have no
 
 The in-flight cache is separate and fixed at 100 requests × 3 buckets rotating every 60 seconds; a request evicted from it prints with a trailing `[incomplete]` line. `Reqgrep_Core` also clips one request at `MAX_LINES_PER_REQUEST` (20,000) or `MAX_BYTES_PER_REQUEST` (10 MB). The CLI prints a clipped request with no marker saying so; the `grep_requests` verb reports the same clip as `truncated` on its reply.
 
-The firehose `Partition` writes in batches: it accumulates records and flushes when the next one would carry the batch past `MAX_LINE_SIZE` (4096, the PIPE_BUF ceiling that keeps a lock-free append atomic), and `Log_Manager::finish()` flushes the residue with the terminal line. So `--follow` lags by up to one batch, and a process killed before shutdown loses whatever that batch still held; the `flush_every_line` setting flushes after every line instead, which is what survives an OOM kill.
+The firehose `Partition` writes in batches: it accumulates records and flushes when the next one would carry the batch past `MAX_LINE_SIZE` (4096, the PIPE_BUF ceiling that keeps a lock-free append atomic), and `Log_Manager::finish()` flushes the residue with the terminal line. So `--follow` lags by up to one batch, and a process killed before shutdown loses whatever that batch still held; a rule's `flush_every_line` flushes after every line instead, which is what survives an OOM kill.
 
 Stdin wins over every other source: piping packed envelopes in makes `--follow` and `--recent` inert. Lines that are not packed envelopes are skipped, so a capture from an older wire format yields nothing.
 
@@ -290,7 +290,7 @@ A performance verb tells where its time goes inside its command span (`Performan
 
 **A record's timeline starts late and names no plugin loads.** The `00-newspack-profiler.php` mu-plugin drop-in records the moment PHP began the request and times each site-activated plugin's load; `Log_Manager`'s constructor consumes `request_ts` and `request_time` from the `$newspack_profiler` global and stamps `process (start)` with that moment. Without the drop-in installed under `wp-content/mu-plugins/`, the record begins where `Log_Manager` emitted its first line, deep in bootstrap, and carries no plugin rows at all.
 
-**A record times PHP and nothing below it.** Four per-rule knobs decide how deep a logged request is instrumented, and every one is off unless the rule sets it.
+**A record times PHP and nothing below it.** Per-rule knobs decide how deep a logged request is instrumented, and every one is off unless the rule sets it.
 
 | Knob | Default | What it adds |
 |---|---|---|
@@ -299,6 +299,11 @@ A performance verb tells where its time goes inside its command span (`Performan
 | `log_queries` | off | A `sql` span per query, between `query` and `log_query_custom_data`. It defines `SAVEQUERIES` for the life of the process and costs two entries per query |
 | `trace_hooks` | off | The calling frame on each hook entry's `l`, so one hook firing sixteen times splits into a flame node per caller |
 | `trace_callers` | off | A deep backtrace on the start entry's `caller` field, on hook, query and HTTP spans alike, budgeted per CALLER of each hook, statement shape and URL, and reset for each job — a stored `true` is a count of 1 |
+| `log_memory` | off | `peak_mb` on every span's close; the terminal carries it either way |
+| `flush_every_line` | off | A flush after every line, so a killed process keeps what it wrote |
+| `log_context` | off | The close's `request_context` entry |
+| `log_cache` | off | The close's `objectcache` row |
+| `log_resources` | off | The `resources` samples at the open and the close; a record without them has no CPU bounds on its gaps |
 
 Both span pairs name their CALLER, never the host or the table, because one host answers nothing when every call goes to the same one. Edit the knobs through the rules editor or the `rules` CI's `upsert`: a record carrying no `sql` rows means `log_queries` is false on its governing rule, not that the bridge broke.
 

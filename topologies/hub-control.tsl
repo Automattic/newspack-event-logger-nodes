@@ -2,10 +2,9 @@
 #
 # Includes the substrate `settings-sync` topology (settings:consumer →
 # settings-sync fans out per spoke, plus the six-axis remote_* geometry pushes) and
-# layers on the ELN-only pieces: the discovery-collector fan-out and the three
-# application-key pushes (rules, log_memory, flush_every_line). The
-# `num_partitions = 1` pin must live here — frontmatter is read from the
-# top-level file only, so the included file's `var` is skipped.
+# layers on the ELN-only pieces: the discovery-collector fan-out and the ruleset
+# push. The `num_partitions = 1` pin must live here — frontmatter is read from
+# the top-level file only, so the included file's `var` is skipped.
 
 var num_partitions = 1
 var on_demand_idle = 0
@@ -27,8 +26,6 @@ make_node Null null
 # second HTTP_Out for a spoke already in the group beside it: two egresses
 # both minting from the same session double the pushes a spoke receives.
 command_node settings-sync:config add_setting newspack_event_logger_nodes_rules performance newspack_event_logger_nodes_rules
-command_node settings-sync:config add_setting newspack_event_logger_nodes_log_memory performance newspack_event_logger_nodes_log_memory
-command_node settings-sync:config add_setting newspack_event_logger_nodes_flush_every_line performance newspack_event_logger_nodes_flush_every_line
 command_node settings:config allow_replies_to settings-sync
 command_node settings:config allow_replies_to discovery-collector
 

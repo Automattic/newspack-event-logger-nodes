@@ -13,9 +13,8 @@
  *     (`src/overview/components/AskPanel.js`).
  *   - list_hooks — the Settings page's hook-catalog tree.
  *   - set — the spoke-side receiver of the substrate Settings_Sync_Node
- *     hub→spoke fanout. `hub-control.tsl` maps three application options
- *     (rules, log_memory, flush_every_line) to this `performance` node;
- *     SETTINGS_OPTIONS is the matching whitelist.
+ *     hub→spoke fanout. `hub-control.tsl` maps the ruleset option to this
+ *     `performance` node, and `set` refuses any other.
  *
  * SSE-style stream surfaces (request-log, gyroscope, errors) consume the
  * substrate's `/messages/stream` EventSource directly — the
@@ -59,7 +58,6 @@ use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
-use Newspack_Nodes\Config_System\Restart_Planner;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Driver_Error;
@@ -214,20 +212,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const SETTINGS_ARRAY_MAX   = 10000;
 
 	/**
-	 * `set` whitelist: WP option name → sanitization type. An option absent
-	 * here is refused outright, so this list and `hub-control.tsl`'s
-	 * `add_setting` lines must stay in step — a hub push naming anything else
-	 * comes back as "unknown option".
-	 *
-	 * @var array<string,string>
-	 */
-	private const SETTINGS_OPTIONS = [
-		'newspack_event_logger_nodes_rules'            => 'array',
-		'newspack_event_logger_nodes_log_memory'       => 'bool',
-		'newspack_event_logger_nodes_flush_every_line' => 'bool',
-	];
-
-	/**
 	 * The overview-prefetch job's questions by stored key, read on this
 	 * node's first `overview` or `query`: the node lives as long as the
 	 * request graph that mounted it, so a request reads them once.
@@ -235,72 +219,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @var array<string,array{name:string,verb:string,tokens:list<string>,args:array<string,mixed>}>|null
 	 */
 	private ?array $stored = null;
-
-	/**
-	 * Coerce and bounds-check one value for `set`.
-	 *
-	 * Rejection is signalled by null, so a legitimately-null sanitized value is
-	 * not representable — every accepted type here returns a scalar or array.
-	 *
-	 * A bool is one of the substrate's bool words, or a blank for false,
-	 * which is how a hub pushes one; any other word rejects.
-	 *
-	 * @param mixed  $value Raw input.
-	 * @param string $type  `bool` or `array`; anything else rejects.
-	 * @return mixed|null Sanitized value, or null to reject.
-	 */
-	private static function sanitize_settings_value( mixed $value, string $type ): mixed {
-		switch ( $type ) {
-			case 'bool':
-				return '' === $value ? false : Command_Args::typed( Core::as_string( $value ), 'bool' );
-			case 'array':
-				if ( ! \is_array( $value ) ) {
-					return null;
-				}
-				return self::sanitize_settings_array( $value );
-		}
-		return null;
-	}
-
-	/**
-	 * Bounded-recursion array sanitizer for `set`: depth cap
-	 * SETTINGS_ARRAY_DEPTH, per-level size cap SETTINGS_ARRAY_MAX, string keys
-	 * and string values through `sanitize_text_field`.
-	 *
-	 * An object is DROPPED silently; a too-deep or too-wide array rejects the
-	 * whole option. NULL survives: it is inert, and it is load-bearing on the
-	 * wire — a heavy rule syncs as a POINTER whose `hooks` key is an explicit
-	 * null, and dropping it produces a map `Rule::from_array()` refuses, so a
-	 * normal settings push fails.
-	 *
-	 * @param array<mixed,mixed> $arr   Input array.
-	 * @param int                $depth Current recursion depth.
-	 * @return array<mixed,mixed>|null Sanitized array, or null if too deep/large.
-	 */
-	private static function sanitize_settings_array( array $arr, int $depth = 0 ): ?array {
-		if ( $depth > self::SETTINGS_ARRAY_DEPTH ) {
-			return null;
-		}
-		if ( \count( $arr ) > self::SETTINGS_ARRAY_MAX ) {
-			return null;
-		}
-		$out = [];
-		foreach ( $arr as $key => $value ) {
-			$safe_key = \is_int( $key ) ? $key : \sanitize_text_field( $key );
-			if ( \is_string( $value ) ) {
-				$out[ $safe_key ] = \sanitize_text_field( $value );
-			} elseif ( null === $value || \is_bool( $value ) || \is_int( $value ) || \is_float( $value ) ) {
-				$out[ $safe_key ] = $value;
-			} elseif ( \is_array( $value ) ) {
-				$nested = self::sanitize_settings_array( $value, $depth + 1 );
-				if ( null === $nested ) {
-					return null;
-				}
-				$out[ $safe_key ] = $nested;
-			}
-		}
-		return $out;
-	}
 
 	/**
 	 * Pattern-search the RECENT firehose window; return a bounded summary of matching
@@ -2327,6 +2245,46 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Bounded-recursion array sanitizer for `set`: depth cap
+	 * SETTINGS_ARRAY_DEPTH, per-level size cap SETTINGS_ARRAY_MAX, string keys
+	 * and string values through `sanitize_text_field`.
+	 *
+	 * An object is DROPPED silently; a too-deep or too-wide array rejects the
+	 * whole option. NULL survives: it is inert, and it is load-bearing on the
+	 * wire — a heavy rule syncs as a POINTER whose `hooks` key is an explicit
+	 * null, and dropping it produces a map `Rule::from_array()` refuses, so a
+	 * normal settings push fails.
+	 *
+	 * @param array<mixed,mixed> $arr   Input array.
+	 * @param int                $depth Current recursion depth.
+	 * @return array<mixed,mixed>|null Sanitized array, or null if too deep/large.
+	 */
+	private static function sanitize_settings_array( array $arr, int $depth = 0 ): ?array {
+		if ( $depth > self::SETTINGS_ARRAY_DEPTH ) {
+			return null;
+		}
+		if ( \count( $arr ) > self::SETTINGS_ARRAY_MAX ) {
+			return null;
+		}
+		$out = [];
+		foreach ( $arr as $key => $value ) {
+			$safe_key = \is_int( $key ) ? $key : \sanitize_text_field( $key );
+			if ( \is_string( $value ) ) {
+				$out[ $safe_key ] = \sanitize_text_field( $value );
+			} elseif ( null === $value || \is_bool( $value ) || \is_int( $value ) || \is_float( $value ) ) {
+				$out[ $safe_key ] = $value;
+			} elseif ( \is_array( $value ) ) {
+				$nested = self::sanitize_settings_array( $value, $depth + 1 );
+				if ( null === $nested ) {
+					return null;
+				}
+				$out[ $safe_key ] = $nested;
+			}
+		}
+		return $out;
+	}
+
+	/**
 	 * Decode a synced array-option value. Settings_Sync_Node::scalarize()
 	 * JSON-encodes arrays unconditionally, so the wire form is always JSON. A
 	 * non-JSON value is a contract violation, refused before anything is
@@ -2557,70 +2515,31 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'set',
 					'capability'  => Capabilities::TUNE,
-					'description' => 'Normalized positional single-option perf setting write with sync guard. A bool option takes a bool word, or a blank for false, as a hub pushes one.',
+					'description' => 'The spoke side of a hub\'s ruleset push: write `newspack_event_logger_nodes_rules` from its JSON, the one option `hub-control.tsl` syncs here. Any other option is refused.',
 					'args'        => [
 						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'value', 'type' => 'string', 'required' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				// One option per command; Settings_Sync_Node fans it out.
 				$option = Core::as_string( $args['option'] );
-				if ( ! isset( self::SETTINGS_OPTIONS[ $option ] ) ) {
+				if ( Rule_Set::OPTION_RULES !== $option ) {
 					throw new \RuntimeException( \esc_html( "unknown option: {$option}" ) );
 				}
-
 				if ( null === $args['value'] ) {
 					throw new \RuntimeException( 'value required' );
 				}
-
-				// Wire value is string; array options carry JSON, decoded here.
-				$type      = self::SETTINGS_OPTIONS[ $option ];
-				$raw_value = Core::as_string( $args['value'] );
-				$value     = 'array' === $type ? self::decode_array_value( $raw_value ) : $raw_value;
-
-				$sanitized = self::sanitize_settings_value( $value, $type );
+				$sanitized = self::sanitize_settings_array( self::decode_array_value( Core::as_string( $args['value'] ) ) );
 				if ( null === $sanitized ) {
 					throw new \RuntimeException( 'invalid value for option' );
 				}
-
 				// apply_synced re-tiers and holds its own no-op gate.
-				if ( Rule_Set::OPTION_RULES === $option && \is_array( $sanitized ) ) {
-					$changed = Rule_Set::apply_synced( $sanitized );
-					if ( $changed ) {
-						AppConfig::reset();
-					}
-					return [
-						'option'  => $option,
-						'updated' => $changed,
-					];
+				$changed = Rule_Set::apply_synced( $sanitized );
+				if ( $changed ) {
+					AppConfig::reset();
 				}
-
-				// @longform A set to a value already in place is
-				// a no-op, not a save. The hub re-pushes every
-				// synced option on its sweep whether or not it
-				// moved, and a reload is not free: it fires
-				// Config::RESET_ACTION on every worker, which
-				// re-parses every .tsl for the same answer. Compare
-				// in the option's own type: the options table
-				// hands a bool back as '1' or ''.
-				$stored = \get_option( $option, null );
-				$held   = \is_scalar( $stored ) ? self::sanitize_settings_value( Core::as_string( $stored ), $type ) : $stored;
-				if ( $held === $sanitized ) {
-					return [
-						'option'  => $option,
-						'updated' => false,
-					];
-				}
-
-				// Autoload per Config::autoload_for; emits settings event.
-				$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
-				AppConfig::reset();
-				// Outside is_admin(): no updated_option tells the workers.
-				Restart_Planner::plan( [] );
-
 				return [
 					'option'  => $option,
-					'updated' => $ok,
+					'updated' => $changed,
 				];
 					},
 				],
