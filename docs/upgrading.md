@@ -6,6 +6,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+## 0.151.0
+
 - **`log_memory` and `flush_every_line` are rule switches, not settings.**
   Neither is a config key, an option or a settings-page checkbox, and the
   Debugging section is gone. A config file or `LOCAL_NEWSPACK_NODES_CONF`
