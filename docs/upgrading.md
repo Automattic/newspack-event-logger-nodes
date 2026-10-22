@@ -6,6 +6,30 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **Every label that names code leads with its owner.** A wrapped
+  listener's category, the `l` of an SQL or HTTP span and a `trace_hooks`
+  origin read `[<owner>] Class->method`. The owner is the plugin's slug,
+  `mu:<slug>` for an mu-plugin, `theme:<slug>` for a theme, `dropin` for a
+  drop-in or `core`, and a file with no known owner leaves the label bare.
+  Listener categories and call-site entries change spelling once, so their
+  stats history restarts under the new names, and the old names age out
+  within `min_lifetime`. Nothing is rebuilt. A reader matching a listener
+  category or an `l` by its old spelling matches the prefixed one.
+- **`Log_Manager::extract_plugin_slug()` is gone.** Call `Owner::of( $file )`,
+  which answers the owner string above, `''` for an unknown file, and is
+  memoized per file. A fatal's `fatal_plugin` is that owner when it names a
+  plugin, and null for any other.
+- **`log_php_errors` is a new rule switch, off unless set.** Under it the
+  record carries a `php (warning)`, `php (notice)` or `php (deprecated)` row
+  for the first time each level, file and line is seen, and one `php errors`
+  row at the close counting the repeats. A rule that does not set it writes
+  none of them. `php errors` joins `Log_Manager::CLOSE_ROWS`, so a reader
+  skipping the close's rows by that list skips it too. The profiler
+  mu-plugin is a separate release asset that catches the errors raised
+  before the logger boots: a site running an older copy, or none, records
+  from the bootstrap on and misses plugin load-time errors until the copy
+  in `wp-content/mu-plugins/` is updated.
+
 ## 0.151.0
 
 - **`log_memory` and `flush_every_line` are rule switches, not settings.**
