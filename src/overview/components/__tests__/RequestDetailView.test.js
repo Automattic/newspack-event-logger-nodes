@@ -40,6 +40,7 @@ jest.mock( '../LogEntriesTable', () => ( {
 import * as React from 'react';
 import RequestDetailView from '../RequestDetailView';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
+import { compileLocal, resolveCascade } from '../../../test-helpers/cascade';
 
 const baseRequest = {
 	request_method: 'GET',
@@ -433,6 +434,42 @@ describe( 'RequestDetailView', () => {
 			'process',
 			'db',
 		] );
+		unmount();
+	} );
+
+	it( 'stacks its sections on one gap, none carrying a margin of its own', async () => {
+		const { container, unmount } = await renderAsync(
+			React.createElement( RequestDetailView, {
+				requestDetail: {
+					...baseRequest,
+					profiles: { 'kea-7301': { count: 2, time: 40 } },
+					owners: [
+						{ owner: 'kea-7301', ms: 40, share: 0.3, calls: 2 },
+					],
+				},
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+			} )
+		);
+		const stack = container.querySelector( '.event-logger-sections' );
+		expect( stack ).not.toBeNull();
+		const owner = [ ...stack.children ].find( ( child ) =>
+			child.textContent.includes( 'Time by owner' )
+		);
+		expect( owner ).toBeDefined();
+		for ( const child of stack.children ) {
+			expect( child.style.marginTop ).toBe( '' );
+			expect( child.style.marginBottom ).toBe( '' );
+		}
+		const sheet = compileLocal( 'overview/styles/base.scss' );
+		const won = resolveCascade( stack, [ sheet ] );
+		expect( won.display ).toBe( 'flex' );
+		expect( won[ 'flex-direction' ] ).toBe( 'column' );
+		expect( won.gap ).toBe( '32px' );
+		expect( resolveCascade( owner, [ sheet ] )[ 'margin-block' ] ).toBe(
+			'0'
+		);
 		unmount();
 	} );
 

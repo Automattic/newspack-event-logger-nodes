@@ -304,7 +304,7 @@ export default function OverviewSection( {
 						</div>
 					) }
 				<UnparseableLinesNotice count={ searchUnparseableLines } />
-				<CardBody>
+				<CardBody className="event-logger-sections">
 					<HeadlineStats totals={ urlTotals } slots={ chartAxis } />
 
 					{ /* Unconditional: the Metric, Breakdown and Server
