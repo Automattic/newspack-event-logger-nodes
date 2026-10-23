@@ -19,7 +19,8 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   grouped or filtered by `server` answers `category_window` rather than
   `timings_site`. A whole-window `requests` query naming only `url`,
   `page`, `server` and `worker` and measuring only what a URL row of the
-  `urls` reply carries answers `table` `urls_window` rather than
+  `urls` reply carries, or the distinct `urls` and `pages`, answers
+  `table` `urls_window` rather than
   `requests`, with the same rows, unless `requests_hourly` answers it, and
   only while every partition's window has expired through the bucket
   before the range and holds no row past its end.

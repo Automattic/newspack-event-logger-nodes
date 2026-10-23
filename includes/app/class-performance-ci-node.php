@@ -1631,6 +1631,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'filter'  => self::scope( $server, false ),
 				'measure' => [ 'count', 'timed', 'avg_ms', 'avg_peak_mb', 'errors', 'urls' ],
 				'buckets' => $chart,
+				'now'     => $now,
 			]
 		);
 		$totals  = self::measures( $answer );
