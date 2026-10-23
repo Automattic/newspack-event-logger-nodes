@@ -360,7 +360,7 @@ describe( 'OverviewSection', () => {
 		expect( container.textContent ).toContain( 'Country = NZ' );
 		act( () => {
 			container
-				.querySelector( 'button[aria-label="Remove Country = NZ"]' )
+				.querySelector( 'button[title="Remove Country = NZ"]' )
 				.click();
 		} );
 		expect( setChartChips ).toHaveBeenCalledWith( [] );

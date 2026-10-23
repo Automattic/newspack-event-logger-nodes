@@ -135,16 +135,16 @@ function inDialog( selector ) {
 }
 
 /**
- * The description a checkbox's info button carries, which its tooltip shows.
+ * The description a checkbox carries, which the input names through
+ * `aria-describedby` for a screen reader.
  *
  * @param {string} name The checkbox input's name.
- * @return {string} The button's accessible label.
+ * @return {string} The description.
  */
 function tipOf( name ) {
-	return inDialog( `input[name="${ name }"]` )
-		.closest( '.rule-edit-switch' )
-		.querySelector( '.rule-edit-switch-info' )
-		.getAttribute( 'aria-label' );
+	const input = inDialog( `input[name="${ name }"]` );
+	return document.getElementById( input.getAttribute( 'aria-describedby' ) )
+		.textContent;
 }
 
 function saveButton() {
@@ -595,7 +595,7 @@ describe( 'RuleEditModal — log rule fields', () => {
 		}
 	} );
 
-	test( 'every logging checkbox keeps its description in an info tooltip, not on the page', () => {
+	test( 'every logging checkbox keeps its description in its native title, with no info button and nothing on the page', () => {
 		mount( { ...LOG_RULE, trace_hooks: true } );
 		const boxes = [
 			...document.querySelectorAll(
@@ -609,7 +609,14 @@ describe( 'RuleEditModal — log rule fields', () => {
 				control.querySelector( '.components-base-control__help' )
 			).toBeNull();
 			expect( tipOf( box.name ).length ).toBeGreaterThan( 20 );
+			// The native title, so hovering the box or its label shows it.
+			expect( box.closest( '.rule-edit-switch' ).title ).toBe(
+				tipOf( box.name )
+			);
 		}
+		expect(
+			document.querySelector( '[role="dialog"] .rule-edit-switch-info' )
+		).toBeNull();
 	} );
 
 	test( 'the backtrace count shares the checkbox row', () => {
@@ -810,9 +817,8 @@ describe( 'RuleEditModal — Enter saves through the form', () => {
 		const others = [ ...form.querySelectorAll( 'button' ) ].filter(
 			( b ) => b !== saveButton()
 		);
-		// Select Hooks, Select Events, Measure, the tag's remove, Clear all,
-		// ten switches' info buttons, Delete, Cancel.
-		expect( others ).toHaveLength( 17 );
+		// Select Hooks, Select Events, Measure, the tag's remove, Clear all, Delete, Cancel.
+		expect( others ).toHaveLength( 7 );
 		others.forEach( ( b ) => expect( b.type ).toBe( 'button' ) );
 	} );
 

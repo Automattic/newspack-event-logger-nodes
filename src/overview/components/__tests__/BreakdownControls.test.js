@@ -599,7 +599,7 @@ describe( 'BreakdownControls', () => {
 			act( () => {
 				container
 					.querySelector(
-						'button[aria-label="Remove Status Class = 5xx"]'
+						'button[title="Remove Status Class = 5xx"]'
 					)
 					.click();
 			} );

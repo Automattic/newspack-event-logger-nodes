@@ -669,9 +669,7 @@ describe( 'UrlTable', () => {
 		expect( field.querySelectorAll( 'datalist option' ) ).toHaveLength( 7 );
 
 		act( () =>
-			field
-				.querySelector( 'button[aria-label="Remove 7:00–7:05 AM"]' )
-				.click()
+			field.querySelector( 'button[title="Remove 7:00–7:05 AM"]' ).click()
 		);
 		expect( onBucketChange ).toHaveBeenCalledWith(
 			'2026-10-04-13-30..2026-10-04-13-40'

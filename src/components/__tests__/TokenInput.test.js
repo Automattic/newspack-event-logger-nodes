@@ -133,7 +133,7 @@ describe( 'TokenInput', () => {
 		const field = mountInput( [ '/kea-31', '/weka-77', '/tui-12' ] );
 		act( () =>
 			field.container
-				.querySelector( 'button[aria-label="Remove /weka-77"]' )
+				.querySelector( 'button[title="Remove /weka-77"]' )
 				.click()
 		);
 

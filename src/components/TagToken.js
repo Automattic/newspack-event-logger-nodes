@@ -15,7 +15,7 @@ import './TagToken.scss';
  * @param {Object}     props             Component props.
  * @param {string}     props.label       The token's text.
  * @param {() => void} props.onRemove    Takes the token away.
- * @param {string}     props.removeLabel The remove button's accessible name.
+ * @param {string}     props.removeLabel The remove button's title and accessible name.
  * @return {import('react').ReactElement} The token.
  */
 export default function TagToken( { label, onRemove, removeLabel } ) {
@@ -26,7 +26,7 @@ export default function TagToken( { label, onRemove, removeLabel } ) {
 				icon={ closeSmall }
 				iconSize={ 16 }
 				onClick={ onRemove }
-				label={ removeLabel }
+				title={ removeLabel }
 				className="event-logger-tag-remove"
 			/>
 		</span>
