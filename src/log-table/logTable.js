@@ -67,7 +67,7 @@ const SHARED_COLUMNS = {
 			'Browser/client identifier',
 			'newspack-event-logger-nodes'
 		),
-		width: '200px',
+		width: '320px',
 	},
 };
 
