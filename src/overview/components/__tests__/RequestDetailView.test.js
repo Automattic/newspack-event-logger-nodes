@@ -496,7 +496,7 @@ describe( 'RequestDetailView', () => {
 		expect( container.textContent ).toContain( 'Time by owner' );
 		expect( container.textContent ).toContain( 'plugin:ibis-forms' );
 		expect( container.textContent ).toContain( '61.5ms' );
-		expect( container.textContent ).not.toContain( 'ms per request' );
+		expect( container.textContent ).not.toContain( 'per request' );
 		unmount();
 	} );
 } );

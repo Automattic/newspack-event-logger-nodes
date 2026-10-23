@@ -71,21 +71,12 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 	} );
 	// Everything a span covers: every owner but the time no span covers.
 	const profiled = owners.filter( ( { owner } ) => '(unmeasured)' !== owner );
+	// The Time Breakdown's labels; an average says per request in its caption.
 	const columns = [
 		[ 'owner', __( 'Owner', 'newspack-event-logger-nodes' ) ],
-		[
-			'ms',
-			perRequest
-				? __( 'ms per request', 'newspack-event-logger-nodes' )
-				: __( 'ms', 'newspack-event-logger-nodes' ),
-		],
-		[ 'share', __( 'Share', 'newspack-event-logger-nodes' ) ],
-		[
-			'calls',
-			perRequest
-				? __( 'Calls per request', 'newspack-event-logger-nodes' )
-				: __( 'Calls', 'newspack-event-logger-nodes' ),
-		],
+		[ 'ms', __( 'Time', 'newspack-event-logger-nodes' ) ],
+		[ 'share', __( '% of Total', 'newspack-event-logger-nodes' ) ],
+		[ 'calls', __( 'Count', 'newspack-event-logger-nodes' ) ],
 	];
 
 	return (
@@ -198,6 +189,11 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 					'Self time by the code that ran it. Listeners on significant hooks, queries and HTTP calls (to the code that asked) and plugin loads are attributed; time in an unmarked hook counts toward the enclosing owner.',
 					'newspack-event-logger-nodes'
 				) }
+				{ perRequest &&
+					` ${ __(
+						'Times and counts are per request.',
+						'newspack-event-logger-nodes'
+					) }` }
 			</p>
 		</div>
 	);
