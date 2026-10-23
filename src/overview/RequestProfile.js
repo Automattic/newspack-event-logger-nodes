@@ -238,6 +238,7 @@ export function ShareBar( { segments } ) {
  * @param {?number}               [props.totalProfiledTime] Profiled total the averaged views compute server-side, null where unmeasured; summed from the non-listener categories when omitted.
  * @param {string|null}           [props.title]             Heading text, or null for no heading; defaults to "Time Breakdown".
  * @param {string}                [props.labelledBy]        Id of the heading that names the table when `title` is null and a wrapper carries it.
+ * @param {boolean}               [props.totaled]           False to leave the Total Profiled row to a table below that closes for both.
  * @return {import('react').ReactElement|null} The panel, or null when every category carries zero time and zero count.
  */
 export default function RequestProfile( {
@@ -246,6 +247,7 @@ export default function RequestProfile( {
 	totalProfiledTime,
 	title = __( 'Time Breakdown', 'newspack-event-logger-nodes' ),
 	labelledBy,
+	totaled = true,
 } ) {
 	const headingId = useId();
 	const [ expandedState, setExpandedState ] = useState( null );
@@ -470,25 +472,27 @@ export default function RequestProfile( {
 						</tr>
 					) }
 				</tbody>
-				<tfoot>
-					<tr className="newspack-nodes-table__summary">
-						<td>
-							{ __(
-								'Total Profiled',
-								'newspack-event-logger-nodes'
-							) }
-						</td>
-						<td className="newspack-nodes-table__terminal-data">
-							{ null === profiledTime
-								? '—'
-								: formatDuration( profiledTime ) }
-						</td>
-						<td className="newspack-nodes-table__terminal-data">
-							{ shareText( shareOf( profiledTime ) ) }
-						</td>
-						<td />
-					</tr>
-				</tfoot>
+				{ totaled && (
+					<tfoot>
+						<tr className="newspack-nodes-table__summary">
+							<td>
+								{ __(
+									'Total Profiled',
+									'newspack-event-logger-nodes'
+								) }
+							</td>
+							<td className="newspack-nodes-table__terminal-data">
+								{ null === profiledTime
+									? '—'
+									: formatDuration( profiledTime ) }
+							</td>
+							<td className="newspack-nodes-table__terminal-data">
+								{ shareText( shareOf( profiledTime ) ) }
+							</td>
+							<td />
+						</tr>
+					</tfoot>
+				) }
 			</table>
 		</div>
 	);
@@ -535,29 +539,40 @@ export function ProfileWithCaption( {
 				className="newspack-nodes-status"
 				style={ { fontSize: '12px', marginTop: '8px' } }
 			>
-				{ serverName
-					? sprintf(
-							// translators: 1: number of requests, 2: the server name.
-							_n(
-								'Average breakdown across %1$d request on %2$s',
-								'Average breakdown across %1$d requests on %2$s',
-								count,
-								'newspack-event-logger-nodes'
-							),
-							count,
-							serverName
-					  )
-					: sprintf(
-							// translators: %d: number of requests.
-							_n(
-								'Average breakdown across %d request',
-								'Average breakdown across %d requests',
-								count,
-								'newspack-event-logger-nodes'
-							),
-							count
-					  ) }
+				{ averageCaption( count, serverName ) }
 			</p>
 		</div>
 	);
+}
+
+/**
+ * How many requests an averaged breakdown covers, and on which server.
+ *
+ * @param {number} count      Requests the average covers.
+ * @param {string} serverName Server it is scoped to; '' captions it site-wide.
+ * @return {string} The caption.
+ */
+export function averageCaption( count, serverName ) {
+	return serverName
+		? sprintf(
+				// translators: 1: number of requests, 2: the server name.
+				_n(
+					'Average breakdown across %1$d request on %2$s',
+					'Average breakdown across %1$d requests on %2$s',
+					count,
+					'newspack-event-logger-nodes'
+				),
+				count,
+				serverName
+		  )
+		: sprintf(
+				// translators: %d: number of requests.
+				_n(
+					'Average breakdown across %d request',
+					'Average breakdown across %d requests',
+					count,
+					'newspack-event-logger-nodes'
+				),
+				count
+		  );
 }
