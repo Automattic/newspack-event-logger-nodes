@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.153.1] - 2026-10-23
+
 ### Changed
 - **`(unmeasured)` is no longer listed as an owner.** `dump_request`'s `owners`, `dump_url`'s `aggregate_owners`, the Overview's `owners` and every Time by owner table leave it out, as the Time Breakdown lists no such category: each share still divides by the wall clock, so the bar's unfilled remainder is the time no span covers and the Total Profiled row sums every row above it. The stored `(unmeasured)` row stays, as the count of timed requests every per-request figure divides by.
 - **Hover text is the browser's native title everywhere, as the topology console's is.** A rule-editor checkbox carries its description as the title of the checkbox and its label, where an info button beside each of the ten switches drew WordPress's tooltip, which ran the window's width on one line; the input still names the description through `aria-describedby`. A tag token's remove button is titled with its label instead of drawing WordPress's tooltip.
