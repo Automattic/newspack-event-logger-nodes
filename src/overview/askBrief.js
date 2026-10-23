@@ -476,6 +476,7 @@ function bodyLines( brief ) {
 					: [] ),
 			];
 		case 'url':
+		case 'page':
 			return [
 				...fields( [
 					[ 'url', brief.url, 'site' ],

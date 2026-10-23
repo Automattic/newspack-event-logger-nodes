@@ -66,6 +66,7 @@ class AskAssemblerTest extends TestCase {
 		// answers site-wide for the same hash, and nothing in the brief says
 		// which of the two contradicting sets it was looking at.
 		$brief = Ask_Assembler::for_url(
+			'url',
 			[ 'url' => 'https://example.test/a', 'hash' => 'cccccccccccc', 'count' => 2, 'errors' => 1, 'avg_ms' => 130.0 ],
 			[],
 			false,
@@ -76,7 +77,7 @@ class AskAssemblerTest extends TestCase {
 
 		$this->assertSame( 'alpha.example', $brief['server'] );
 		$this->assertSame(
-			[ 'hash' => 'cccccccccccc', 'server' => 'alpha.example' ],
+			[ 'url' => 'cccccccccccc', 'server' => 'alpha.example' ],
 			$brief['fetch'][0]['arguments']
 		);
 	}
@@ -89,6 +90,29 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame(
 			[ 'type' => 'url', 'id' => '25ecf5606840' ],
 			Ask_Assembler::parse_descriptor( 'url:25ecf5606840' )
+		);
+		$this->assertSame(
+			[ 'type' => 'page', 'id' => '7e1f0c3a9b2d' ],
+			Ask_Assembler::parse_descriptor( 'page:7e1f0c3a9b2d' )
+		);
+	}
+
+	/** A page's brief names itself a page and fetches again by `dump_url`'s `page`. */
+	public function test_a_page_brief_re_fetches_the_page(): void {
+		$brief = Ask_Assembler::for_url(
+			'page',
+			[ 'url' => 'https://example.test/kaka-9183/', 'hash' => '7e1f0c3a9b2d', 'count' => 3, 'errors' => 0 ],
+			[],
+			false,
+			null,
+			'beta.example',
+			self::FILTERS
+		);
+
+		$this->assertSame( [ 'page', '7e1f0c3a9b2d', 'https://example.test/kaka-9183/' ], [ $brief['subject'], $brief['hash'], $brief['url'] ] );
+		$this->assertSame(
+			[ 'page' => '7e1f0c3a9b2d', 'server' => 'beta.example' ],
+			$brief['fetch'][0]['arguments']
 		);
 	}
 
@@ -366,7 +390,7 @@ class AskAssemblerTest extends TestCase {
 			[ 'rid' => 'c', 'duration_ms' => 1400, 'status_code' => 200, 'partition' => 0 ],
 		];
 
-		$brief = Ask_Assembler::for_url( $stats, $requests, false, $this->rule(), '', self::FILTERS );
+		$brief = Ask_Assembler::for_url( 'url', $stats, $requests, false, $this->rule(), '', self::FILTERS );
 
 		$this->assertSame( 'url', $brief['subject'] );
 		$this->assertStringContainsString( '[REDACTED]', $brief['url'] );
@@ -382,6 +406,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_a_url_brief_says_when_its_list_holds_the_newest_only(): void {
 		$brief = static fn ( bool $capped ): array => Ask_Assembler::for_url(
+			'url',
 			[ 'url' => 'https://example.test/kahu', 'hash' => 'c4c4c4c4c4c4', 'count' => 9133, 'errors' => 12 ],
 			[ [ 'rid' => 'kahu1', 'duration_ms' => 41.5, 'status_code' => 200, 'partition' => 2 ] ],
 			$capped,
@@ -528,6 +553,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_a_url_brief_leaves_the_time_series_to_the_verb_that_owns_it(): void {
 		$brief = Ask_Assembler::for_url(
+			'url',
 			[ 'hash' => '25ecf5606840', 'url' => '/calendar', 'count' => 12, 'errors' => 3 ],
 			[],
 			false,
@@ -542,13 +568,14 @@ class AskAssemblerTest extends TestCase {
 			\array_column( $brief['fetch'], 'tool' )
 		);
 		$this->assertSame(
-			[ 'hash' => '25ecf5606840' ],
+			[ 'url' => '25ecf5606840' ],
 			$brief['fetch'][0]['arguments']
 		);
 	}
 
 	public function test_worst_requests_name_themselves_without_their_storage_coordinates(): void {
 		$brief = Ask_Assembler::for_url(
+			'url',
 			[ 'hash' => 'ff00', 'url' => '/calendar', 'count' => 2, 'errors' => 0 ],
 			[
 				[
@@ -735,12 +762,19 @@ class AskAssemblerTest extends TestCase {
 		// Picked inside the URL modal, the chain names the URL; the brief's
 		// second pointer is how an agent widens from this request to it, and
 		// it carries the modal's server so the widening stays in scope.
-		$brief = Ask_Assembler::for_request( $this->record(), null, 'url:cccccccccccc', 'alpha.example' );
+		$brief = Ask_Assembler::for_request( $this->record(), null, [ 'url' => 'cccccccccccc' ], 'alpha.example' );
 
 		$this->assertSame( 'dump_request', $brief['fetch'][0]['tool'] );
-		$this->assertSame( [ 'tool' => 'dump_url', 'arguments' => [ 'hash' => 'cccccccccccc', 'server' => 'alpha.example' ] ], $brief['fetch'][1] );
-		$this->assertSame( [ 'hash' => 'cccccccccccc' ], Ask_Assembler::for_request( $this->record(), null, 'url:cccccccccccc', '' )['fetch'][1]['arguments'] );
+		$this->assertSame( [ 'tool' => 'dump_url', 'arguments' => [ 'url' => 'cccccccccccc', 'server' => 'alpha.example' ] ], $brief['fetch'][1] );
+		$this->assertSame( [ 'url' => 'cccccccccccc' ], Ask_Assembler::for_request( $this->record(), null, [ 'url' => 'cccccccccccc' ], '' )['fetch'][1]['arguments'] );
 		$this->assertCount( 1, Ask_Assembler::for_request( $this->record(), null )['fetch'] );
+	}
+
+	/** Picked inside a page's window, the request widens to that page by `page`. */
+	public function test_a_request_brief_points_at_the_page_it_was_asked_under(): void {
+		$brief = Ask_Assembler::for_request( $this->record(), null, [ 'page' => '7e1f0c3a9b2d' ], 'beta.example' );
+
+		$this->assertSame( [ 'tool' => 'dump_url', 'arguments' => [ 'page' => '7e1f0c3a9b2d', 'server' => 'beta.example' ] ], $brief['fetch'][1] );
 	}
 
 	public function test_a_url_category_brief_counts_the_requests_the_category_appeared_in(): void {
@@ -842,6 +876,7 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_a_url_with_no_rule_says_so_and_gets_the_cold_start_finding(): void {
 		$brief = Ask_Assembler::for_url(
+			'url',
 			[ 'hash' => 'ff00', 'url' => 'https://example.test/uncovered', 'count' => 12, 'errors' => 4, 'avg_ms' => 4000.0 ],
 			[],
 			false,
@@ -1181,6 +1216,7 @@ class AskAssemblerTest extends TestCase {
 	/** An unfiltered brief keeps the URL's whole stats, its errors among them. */
 	public function test_a_full_url_brief_keeps_the_whole_url_stats(): void {
 		$brief = Ask_Assembler::for_url(
+			'url',
 			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 4210, 'timed_count' => 4173, 'avg_ms' => 812.0, 'max_ms' => 9100.0, 'max_peak_mb' => 96.5, 'errors' => 37 ],
 			[],
 			false,
@@ -1195,7 +1231,7 @@ class AskAssemblerTest extends TestCase {
 			$brief['stats']
 		);
 		$this->assertSame(
-			[ 'hash' => '5e5e5e5e5e5e', 'server' => 'kiwi.example' ],
+			[ 'url' => '5e5e5e5e5e5e', 'server' => 'kiwi.example' ],
 			$brief['fetch'][0]['arguments']
 		);
 	}
@@ -1206,6 +1242,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_a_url_brief_carries_its_rows_max_ms_null_or_measured(): void {
 		$brief = static fn ( ?float $max ): mixed => Ask_Assembler::for_url(
+			'url',
 			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 6, 'errors' => 2, 'avg_ms' => 41.7, 'max_ms' => $max ],
 			[],
 			false,
@@ -1220,6 +1257,7 @@ class AskAssemblerTest extends TestCase {
 	public function test_a_url_brief_cannot_be_built_without_naming_its_filters(): void {
 		$this->expectException( \ArgumentCountError::class );
 		Ask_Assembler::for_url(
+			'url',
 			[ 'url' => 'https://example.test/quiet', 'hash' => 'd0d0d0d0d0d0', 'count' => 3 ],
 			[],
 			false,
@@ -1231,6 +1269,7 @@ class AskAssemblerTest extends TestCase {
 	/** A bucketed, filtered brief names both, and its pointer fetches both. */
 	public function test_a_bucketed_url_brief_names_its_bucket_and_re_fetches_it(): void {
 		$brief = Ask_Assembler::for_url(
+			'url',
 			[ 'hash' => '5e5e5e5e5e5e', 'url' => 'https://example.test/kea', 'count' => 7, 'avg_ms' => 70.0, 'max_ms' => 133.0, 'max_peak_mb' => 3.5, 'errors' => 1 ],
 			[],
 			false,
@@ -1242,7 +1281,7 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( '2026-10-04-13-35', $brief['bucket'] );
 		$this->assertSame( [ 'status_class=5' ], $brief['filter'] );
 		$this->assertSame(
-			[ 'hash' => '5e5e5e5e5e5e', 'server' => 'kiwi.example', 'filter' => [ 'status_class=5' ], 'bucket' => '2026-10-04-13-35' ],
+			[ 'url' => '5e5e5e5e5e5e', 'server' => 'kiwi.example', 'filter' => [ 'status_class=5' ], 'bucket' => '2026-10-04-13-35' ],
 			$brief['fetch'][0]['arguments']
 		);
 	}
@@ -1268,6 +1307,7 @@ class AskAssemblerTest extends TestCase {
 	 */
 	public function test_worst_requests_rank_a_null_duration_after_every_number(): void {
 		$brief = Ask_Assembler::for_url(
+			'url',
 			[ 'hash' => 'a7a7a7a7a7a7', 'url' => 'https://example.test/tui', 'count' => 5, 'errors' => 2 ],
 			[
 				[ 'rid' => 'tout1', 'duration_ms' => null, 'status_code' => 0, 'error_status' => 'T', 'partition' => 1 ],

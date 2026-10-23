@@ -42,9 +42,12 @@
  *     → url:shell/_http/performance
  *   request-detail:timer (Timer) → request-detail:fetch → request:shell/_http/performance
  *
- * Every `url-detail:timer` tick asks `dump_url` and the URL's two charts
- * again, and each answer replaces its slice whole. Opening the modal or
- * rescoping it asks all three through `askNow()`, superseding every older
+ * The URL modal is the page modal too: its subject keys on `url` or `page`,
+ * so `dump_url` asks `--url=<hash>` or `--page=<hash>`, and its two charts
+ * filter `url=<hash>` or `page=<hash>`. Every `url-detail:timer` tick asks
+ * `dump_url` and the two charts again, and each answer replaces its slice
+ * whole. Opening the modal or rescoping it asks all three through
+ * `askNow()`, superseding every older
  * ask; editing its buckets asks the list alone, since the charts describe
  * every request to the URL; a modal chart's dimension change asks that chart
  * alone, and its chip change that chart and `dump_url`, whose header and list
@@ -91,6 +94,7 @@ import { views } from '../nodes/register';
 import { chartDims, chipParts, filterTokens } from '../chartSlots';
 import { useOnChange } from './useOnChange';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
+import { subjectArgs } from '../detailSubject';
 import {
 	CATEGORY_MEASURES,
 	CHART_TOP,
@@ -326,25 +330,27 @@ const siteScope = ( serverFilter ) => ( {
 } );
 
 /**
- * The scope a URL chart asks under: the URL, worker traffic counted as
- * `dump_url` counts it, and only that server's traffic under a server filter.
+ * The scope a modal chart asks under: its subject's URL or page, worker
+ * traffic counted as `dump_url` counts it, and only that server's traffic
+ * under a server filter.
  *
- * @param {string} hash         The URL hash.
- * @param {string} serverFilter Server scope; '' means every server.
+ * @param {{field: string, hash: string}} subject      The modal's subject.
+ * @param {string}                        serverFilter Server scope; '' means
+ *                                                     every server.
  * @return {Object<string,string[]>} Field => values.
  */
-const urlScope = ( hash, serverFilter ) => ( {
-	url: [ hash ],
+const subjectScope = ( { field, hash }, serverFilter ) => ( {
+	[ field ]: [ hash ],
 	...( serverFilter ? { server: [ serverFilter ] } : {} ),
 } );
 
 /**
- * `dump_url` args for the open modal: the hash, the server filter its row was
- * scoped by, and the modal's own narrowing. The open ask and every refresh
- * tick send the same question.
+ * `dump_url` args for the open modal: its subject, the server filter its row
+ * was scoped by, and the modal's own narrowing. The open ask and every
+ * refresh tick send the same question.
  *
  * @param {Object}   arg              Named arguments.
- * @param {string}   arg.hash         The URL hash.
+ * @param {Object}   arg.subject      The modal's `{ field, hash }`.
  * @param {string}   arg.serverFilter Server scope; '' means every server.
  * @param {Object}   arg.filters      The modal's `{ bucket }`: the spelling of
  *                                    the bucket selection the header and list
@@ -354,7 +360,7 @@ const urlScope = ( hash, serverFilter ) => ( {
  *                                    and list as they narrow its chart.
  * @return {string[]} The command token array.
  */
-function urlDetailArgs( { hash, serverFilter, filters, chips } ) {
+function detailArgs( { subject, serverFilter, filters, chips } ) {
 	const options = {};
 	if ( serverFilter ) {
 		options.server = serverFilter;
@@ -362,14 +368,11 @@ function urlDetailArgs( { hash, serverFilter, filters, chips } ) {
 	if ( filters.bucket ) {
 		options.bucket = filters.bucket;
 	}
-	return [
-		...formatCommandArgs( [ hash ], options ),
-		...filterTokens( chips ),
-	];
+	return [ ...subjectArgs( subject, options ), ...filterTokens( chips ) ];
 }
 
 /**
- * Whether a URL hash may go out as a `dump_url` token. A selection arrives
+ * Whether a URL or page hash may go out as a `dump_url` token. A selection arrives
  * from a deep link as readily as from a clicked row, so it is user input, and
  * one that fails here drives the modal's error control instead of a command.
  *
@@ -489,9 +492,9 @@ function urlsArgs( { urlParams, serverFilter, page, chips, limit } ) {
  *                                          `useBatchedPoll`, where only a
  *                                          Timer riding the router sits
  *                                          inside the batch bracket.
- * @param {?Object}  [opts.selectedUrl]     `{ hash, url }` of the open URL
- *                                          detail modal; null closes and
- *                                          clears its slices.
+ * @param {?Object}  [opts.selectedSubject] The open detail modal's
+ *                                          `{ field, hash, url }`; null
+ *                                          closes and clears its slices.
  * @param {Object}   [opts.detailFilters]   The modal's `{ bucket }`: the
  *                                          bucket selection its header and
  *                                          list narrow to.
@@ -517,7 +520,7 @@ export function usePerformanceGraph( opts = {} ) {
 		chartChips = NO_CHIPS,
 		refreshInterval = String( DEFAULT_REFRESH_INTERVAL_MS ),
 		askActive = false,
-		selectedUrl = null,
+		selectedSubject = null,
 		selectedRequest = null,
 		detailFilters = NO_DETAIL_FILTERS,
 		detailChart = NO_DETAIL_CHART,
@@ -597,47 +600,47 @@ export function usePerformanceGraph( opts = {} ) {
 		[]
 	);
 	/**
-	 * A question about the open URL, or null with none to ask about, which
-	 * sends nothing at all.
+	 * A question about the open modal's subject, or null with none to ask
+	 * about, which sends nothing at all.
 	 *
-	 * @param {(hash: string) => string[]} ask The question, given the hash.
+	 * @param {(subject: Object) => string[]} ask The question, given the subject.
 	 * @return {() => ?string[]} The fire-time getter.
 	 */
-	const aboutUrl = useCallback(
+	const aboutSubject = useCallback(
 		( ask ) => () => {
-			const hash = optsRef.current.selectedUrl?.hash;
-			return isValidHash( hash ) ? ask( hash ) : null;
+			const subject = optsRef.current.selectedSubject;
+			return isValidHash( subject?.hash ) ? ask( subject ) : null;
 		},
 		[]
 	);
 	const urlDetailNow = useMemo(
 		() =>
-			aboutUrl( ( hash ) =>
-				urlDetailArgs( {
-					hash,
+			aboutSubject( ( subject ) =>
+				detailArgs( {
+					subject,
 					serverFilter: serverFilterRef.current,
 					filters: detailFiltersRef.current,
 					chips: detailChartRef.current.chips,
 				} )
 			),
-		[ aboutUrl ]
+		[ aboutSubject ]
 	);
 	const urlChartNow = useMemo(
 		() =>
-			aboutUrl( ( hash ) =>
+			aboutSubject( ( subject ) =>
 				seriesArgs(
 					detailChartRef.current,
-					urlScope( hash, serverFilterRef.current )
+					subjectScope( subject, serverFilterRef.current )
 				)
 			),
-		[ aboutUrl ]
+		[ aboutSubject ]
 	);
 	const urlCategoriesNow = useMemo(
 		() =>
-			aboutUrl( ( hash ) =>
-				categoryArgs( urlScope( hash, serverFilterRef.current ) )
+			aboutSubject( ( subject ) =>
+				categoryArgs( subjectScope( subject, serverFilterRef.current ) )
 			),
-		[ aboutUrl ]
+		[ aboutSubject ]
 	);
 
 	// @longform The slices each tick source fans to, which the build, the
@@ -825,7 +828,7 @@ export function usePerformanceGraph( opts = {} ) {
 		// @longform Suspend the offscreen overview poll while a detail modal
 		// is open, and while the `?` picker is armed: a page repainting under
 		// a stationary pointer swaps the row being aimed at.
-		paused: !! ( selectedUrl || selectedRequest || askActive ),
+		paused: !! ( selectedSubject || selectedRequest || askActive ),
 		intervalMs,
 	} );
 
@@ -921,12 +924,18 @@ export function usePerformanceGraph( opts = {} ) {
 	// Every hold leaves the page stale, so each refreshes on release.
 	const wasHeld = useRef( false );
 	useEffect( () => {
-		const held = !! ( selectedUrl || selectedRequest || askActive );
+		const held = !! ( selectedSubject || selectedRequest || askActive );
 		if ( wasHeld.current && ! held && isPageVisible ) {
 			pokePage();
 		}
 		wasHeld.current = held;
-	}, [ selectedUrl, selectedRequest, askActive, isPageVisible, pokePage ] );
+	}, [
+		selectedSubject,
+		selectedRequest,
+		askActive,
+		isPageVisible,
+		pokePage,
+	] );
 
 	// The question each modal slice was last asked, by the parts that move it.
 	const detailAskedRef = useRef( null );
@@ -942,12 +951,12 @@ export function usePerformanceGraph( opts = {} ) {
 			Object.values( urlSlices ).forEach( ( { view } ) =>
 				sendControl( view, { action: 'clear' } )
 			);
-		if ( ! selectedUrl ) {
+		if ( ! selectedSubject ) {
 			detailAskedRef.current = null;
 			clear();
 			return;
 		}
-		if ( ! isValidHash( selectedUrl.hash ) ) {
+		if ( ! isValidHash( selectedSubject.hash ) ) {
 			sendControl( URLDETAIL_VIEW, {
 				action: 'error',
 				error: 'Invalid URL hash format',
@@ -955,7 +964,8 @@ export function usePerformanceGraph( opts = {} ) {
 			return;
 		}
 		const asked = {
-			hash: selectedUrl.hash,
+			field: selectedSubject.field,
+			hash: selectedSubject.hash,
 			server: serverFilter,
 			bucket: detailBucket,
 			chips: JSON.stringify( detailChips ),
@@ -966,8 +976,8 @@ export function usePerformanceGraph( opts = {} ) {
 		detailAskedRef.current = asked;
 		const moved = ( ...parts ) =>
 			parts.some( ( part ) => prev[ part ] !== asked[ part ] );
-		if ( ! prev || moved( 'hash', 'server' ) ) {
-			// Another URL's numbers must not stand under this one's title.
+		if ( ! prev || moved( 'field', 'hash', 'server' ) ) {
+			// Another subject's numbers must not stand under this one's title.
 			clear();
 			Object.values( urlSlices ).forEach( ask );
 			return;
@@ -981,7 +991,7 @@ export function usePerformanceGraph( opts = {} ) {
 			ask( urlSlices.chart );
 		}
 	}, [
-		selectedUrl,
+		selectedSubject,
 		serverFilter,
 		detailBucket,
 		detailChips,
@@ -1002,8 +1012,8 @@ export function usePerformanceGraph( opts = {} ) {
 			return;
 		}
 		if (
-			selectedUrl &&
-			isValidHash( selectedUrl.hash ) &&
+			selectedSubject &&
+			isValidHash( selectedSubject.hash ) &&
 			! selectedRequest &&
 			isPageVisible
 		) {
@@ -1012,7 +1022,7 @@ export function usePerformanceGraph( opts = {} ) {
 			timer.stopTimer();
 		}
 	}, [
-		selectedUrl,
+		selectedSubject,
 		selectedRequest,
 		isPageVisible,
 		intervalMs,

@@ -528,11 +528,11 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedSubject: { field: 'url', hash: 'abc' } } );
 		} );
 		const detail = findVerb( wire.batches, 'dump_url' );
 		expect( detail ).toBeTruthy();
-		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( 'abc' );
+		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( '--url=abc' );
 		const view = Core.node( 'url-detail:view' );
 		expect( view.view.data ).toEqual( {
 			stats: {},
@@ -962,7 +962,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
-				selectedUrl: { hash: 'beef5512' },
+				selectedSubject: { field: 'url', hash: 'beef5512' },
 				detailChart: {
 					breakdown: 'method',
 					thenBy: '',
@@ -972,9 +972,8 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		} );
 
 		const opened = findVerb( wire.batches, 'dump_url' );
-		expect( positional( opened[ VALUE ].arguments ) ).toEqual( [
-			'beef5512',
-		] );
+		expect( positional( opened[ VALUE ].arguments ) ).toEqual( [] );
+		expect( option( opened[ VALUE ].arguments, 'url' ) ).toBe( 'beef5512' );
 		expect( options( opened[ VALUE ].arguments, 'filter' ) ).toEqual( [
 			'status_class=5',
 			'country=Kiribati',
@@ -1004,7 +1003,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '60000',
-				selectedUrl: { hash: 'beef6631' },
+				selectedSubject: { field: 'url', hash: 'beef6631' },
 				detailChart: {
 					breakdown: 'status_class',
 					thenBy: '',
@@ -1027,13 +1026,13 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 
 	test( 'a bucket change asks the list alone, and a dimension change the chart alone', async () => {
 		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
-		const selectedUrl = { hash: 'beef6631' };
+		const selectedSubject = { field: 'url', hash: 'beef6631' };
 		const chips = [ 'country=Kiribati' ];
 		const chartOf = ( breakdown ) => ( { breakdown, thenBy: '', chips } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {
 				refreshInterval: '60000',
-				selectedUrl,
+				selectedSubject,
 				detailChart: chartOf( 'method' ),
 			},
 		} );
@@ -1043,7 +1042,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '60000',
-				selectedUrl,
+				selectedSubject,
 				detailChart: chartOf( 'method' ),
 				detailFilters: { bucket: '2026-10-04-13-35' },
 			} );
@@ -1056,7 +1055,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '60000',
-				selectedUrl,
+				selectedSubject,
 				detailChart: chartOf( 'ua' ),
 				detailFilters: { bucket: '2026-10-04-13-35' },
 			} );
@@ -1074,11 +1073,11 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		const wire = installWire( {
 			dump_url: { stats: { count: 5512 }, requests: [] },
 		} );
-		const selectedUrl = { hash: 'beef5512' };
+		const selectedSubject = { field: 'url', hash: 'beef5512' };
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {
 				refreshInterval: '60000',
-				selectedUrl,
+				selectedSubject,
 				detailChart: { breakdown: 'method', thenBy: '', chips: [] },
 			},
 		} );
@@ -1097,7 +1096,7 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '60000',
-				selectedUrl,
+				selectedSubject,
 				detailChart: {
 					breakdown: 'method',
 					thenBy: '',
@@ -1145,14 +1144,14 @@ describe( 'usePerformanceGraph — the chips ride urls and dump_url', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
-				selectedUrl: { hash: 'f00d7731' },
+				selectedSubject: { field: 'url', hash: 'f00d7731' },
 			} );
 		} );
 		await nextTask();
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
-				selectedUrl: { hash: 'f00d7731' },
+				selectedSubject: { field: 'url', hash: 'f00d7731' },
 				detailChart: {
 					breakdown: 'status_class',
 					thenBy: '',
@@ -1232,7 +1231,7 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
-				selectedUrl: { hash: 'beef4471' },
+				selectedSubject: { field: 'url', hash: 'beef4471' },
 				detailFilters: {
 					bucket: '2026-10-04-13-35',
 				},
@@ -1248,7 +1247,7 @@ describe( 'usePerformanceGraph — the bucket selection', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
-				selectedUrl: { hash: 'beef4471' },
+				selectedSubject: { field: 'url', hash: 'beef4471' },
 				detailFilters: {
 					bucket: RUNS,
 				},
@@ -1280,13 +1279,13 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 		// Open the URL detail modal — the overview/urls poll must suspend.
 		await act( async () => {
-			rerender( { selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedSubject: { field: 'url', hash: 'abc' } } );
 		} );
 		expect( Core.node( 'performance:timer' ).mode ).toBe( 'inactive' );
 
 		// Close it — the overview/urls poll resumes.
 		await act( async () => {
-			rerender( { selectedUrl: null } );
+			rerender( { selectedSubject: null } );
 		} );
 		expect( Core.node( 'performance:timer' ).mode ).toBe( 'router' );
 	} );
@@ -1302,7 +1301,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
-				selectedUrl: { hash: 'abc' },
+				selectedSubject: { field: 'url', hash: 'abc' },
 			} );
 		} );
 		// On-demand slice runs on a real Timer + Fetcher, not setInterval.
@@ -1316,7 +1315,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		const detail = findVerb( wire.batches, 'dump_url' );
 		expect( detail ).toBeTruthy();
-		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( 'abc' );
+		expect( detail[ VALUE ].arguments[ 0 ] ).toBe( '--url=abc' );
 	} );
 
 	// The arguments ARE the question, so the ask needs no subject to name it.
@@ -1331,7 +1330,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
-				selectedUrl: { hash: 'f00d7731' },
+				selectedSubject: { field: 'url', hash: 'f00d7731' },
 			} );
 		} );
 
@@ -1353,7 +1352,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
-				selectedUrl: { hash: 'f00d4471' },
+				selectedSubject: { field: 'url', hash: 'f00d4471' },
 			} );
 		} );
 		const bounce = newMessage();
@@ -1379,14 +1378,14 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedSubject: { field: 'url', hash: 'abc' } } );
 		} );
 		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 
 		// Drill into a request — the dump_url poll must stop.
 		await act( async () => {
 			rerender( {
-				selectedUrl: { hash: 'abc' },
+				selectedSubject: { field: 'url', hash: 'abc' },
 				selectedRequest: 'r1',
 			} );
 		} );
@@ -1395,7 +1394,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		// Back out to the URL detail — the dump_url poll resumes.
 		await act( async () => {
 			rerender( {
-				selectedUrl: { hash: 'abc' },
+				selectedSubject: { field: 'url', hash: 'abc' },
 				selectedRequest: null,
 			} );
 		} );
@@ -1438,14 +1437,14 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedSubject: { field: 'url', hash: 'abc' } } );
 		} );
 		// While the modal is open the overview/urls poll is suspended.
 		wire.batches.length = 0;
 
 		// Closing must refresh the now-visible overview at once.
 		await act( async () => {
-			rerender( { selectedUrl: null } );
+			rerender( { selectedSubject: null } );
 		} );
 		expect( findVerb( wire.batches, 'overview' ) ).toBeTruthy();
 		expect( findVerb( wire.batches, 'urls' ) ).toBeTruthy();
@@ -1460,7 +1459,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedSubject: { field: 'url', hash: 'abc' } } );
 		} );
 		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 
@@ -1478,7 +1477,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		const props = {
 			refreshInterval: '60000',
-			selectedUrl: { hash: 'abc' },
+			selectedSubject: { field: 'url', hash: 'abc' },
 		};
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { refreshInterval: '60000' },
@@ -1495,7 +1494,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( 1 );
 		expect(
 			findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments[ 0 ]
-		).toBe( 'abc' );
+		).toBe( '--url=abc' );
 	} );
 
 	test( 'Reset Graph with the URL modal open re-arms its Timer at the interval, not every tick', async () => {
@@ -1504,7 +1503,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		const props = {
 			refreshInterval: '60000',
-			selectedUrl: { hash: 'abc' },
+			selectedSubject: { field: 'url', hash: 'abc' },
 		};
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { refreshInterval: '60000' },
@@ -1536,14 +1535,14 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		await act( async () => {} );
 		// One selection object, as the dashboard's state holds it.
-		const selectedUrl = { hash: 'abc' };
+		const selectedSubject = { field: 'url', hash: 'abc' };
 		await act( async () => {
-			rerender( { refreshInterval: '60000', selectedUrl } );
+			rerender( { refreshInterval: '60000', selectedSubject } );
 		} );
 		wire.batches.length = 0;
 
 		await act( async () => {
-			rerender( { refreshInterval: '120000', selectedUrl } );
+			rerender( { refreshInterval: '120000', selectedSubject } );
 		} );
 		await nextTask();
 
@@ -1561,12 +1560,12 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedSubject: { field: 'url', hash: 'abc' } } );
 		} );
 		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 
 		await act( async () => {
-			rerender( { selectedUrl: null } );
+			rerender( { selectedSubject: null } );
 		} );
 
 		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'inactive' );
@@ -1630,7 +1629,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		renderHook( () =>
 			usePerformanceGraph( {
 				serverFilter: 'alpha.example',
-				selectedUrl: { hash: 'abc' },
+				selectedSubject: { field: 'url', hash: 'abc' },
 			} )
 		);
 		await act( async () => {} );
@@ -1735,7 +1734,7 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 		const before = countVerbs( wire.batches, 'dump_url' );
 		await act( async () => {
 			rerender( {
-				selectedUrl: { hash: 'NOT-HEX!' },
+				selectedSubject: { field: 'url', hash: 'NOT-HEX!' },
 			} );
 		} );
 		await nextTask();
@@ -1782,10 +1781,10 @@ describe( 'usePerformanceGraph — control origins', () => {
 	} );
 
 	test( 'closing the url modal clears the slice through the control path', () => {
-		let selectedUrl = { hash: 'a'.repeat( 32 ) };
+		let selectedSubject = { field: 'url', hash: 'a'.repeat( 32 ) };
 		const { rerender } = renderHook( () =>
 			usePerformanceGraph( {
-				selectedUrl,
+				selectedSubject,
 			} )
 		);
 		const view = Core.node( 'url-detail:view' );
@@ -1798,7 +1797,7 @@ describe( 'usePerformanceGraph — control origins', () => {
 		view.fill( landed );
 		expect( view.view.data ).not.toBeNull();
 
-		selectedUrl = null;
+		selectedSubject = null;
 		act( () => rerender() );
 		expect( view.view.data ).toBeNull();
 	} );
@@ -1870,7 +1869,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 			rerender( {
 				refreshInterval: '0',
 				chartBreakdown: 'country',
-				selectedUrl: { hash: 'f00d9921' },
+				selectedSubject: { field: 'url', hash: 'f00d9921' },
 			} );
 		} );
 		wire.batches.length = 0;
@@ -1878,7 +1877,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 			refreshTick();
 		} );
 		const refreshed = findVerb( wire.batches, 'dump_url' );
-		expect( refreshed[ VALUE ].arguments ).toEqual( [ 'f00d9921' ] );
+		expect( refreshed[ VALUE ].arguments ).toEqual( [ '--url=f00d9921' ] );
 	} );
 
 	test( 'asks the chart by both dimensions and its chips, a chip replacing the worker scope', async () => {
@@ -1930,7 +1929,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 				refreshInterval: '60000',
 				chartBreakdown: 'ja4',
 				chartThenBy: 'ja4',
-				selectedUrl: { hash: 'beef7743' },
+				selectedSubject: { field: 'url', hash: 'beef7743' },
 				detailChart: {
 					breakdown: 'method',
 					thenBy: 'method',
@@ -2029,6 +2028,88 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		).toEqual( [ 'worker=0', 'method=PUT' ] );
 	} );
 
+	test( 'a page window asks dump_url by --page= and charts its page by page=', async () => {
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		wire.batches.length = 0;
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				serverFilter: 'hoiho-9902.example',
+				selectedSubject: {
+					field: 'page',
+					hash: 'feed5a1e9902',
+					url: 'https://hoiho-9902.example/',
+				},
+				detailFilters: { bucket: '2026-10-23-09-05' },
+				detailChart: {
+					breakdown: 'method',
+					thenBy: '',
+					chips: [ 'url=0ddba11c9902' ],
+				},
+			} );
+		} );
+
+		expect(
+			findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments
+		).toEqual( [
+			'--page=feed5a1e9902',
+			'--server=hoiho-9902.example',
+			'--bucket=2026-10-23-09-05',
+			'--filter=url=0ddba11c9902',
+		] );
+		expect(
+			options(
+				queryFrom( wire.batches, 'url-chart:in' )[ VALUE ].arguments,
+				'filter'
+			)
+		).toEqual( [
+			'page=feed5a1e9902',
+			'server=hoiho-9902.example',
+			'url=0ddba11c9902',
+		] );
+		expect(
+			options(
+				queryFrom( wire.batches, 'url-categories:in' )[ VALUE ]
+					.arguments,
+				'filter'
+			)
+		).toEqual( [
+			'page=feed5a1e9902',
+			'server=hoiho-9902.example',
+			'entry=',
+		] );
+	} );
+
+	test( 'a URL and a page of one hash are two windows, each asked afresh', async () => {
+		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '60000' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '60000',
+				selectedSubject: { field: 'url', hash: 'feed5a1e9903' },
+			} );
+		} );
+		wire.batches.length = 0;
+		await act( async () => {
+			rerender( {
+				refreshInterval: '60000',
+				selectedSubject: { field: 'page', hash: 'feed5a1e9903' },
+			} );
+		} );
+		await nextTask();
+
+		expect(
+			findVerb( wire.batches, 'dump_url' )[ VALUE ].arguments
+		).toEqual( [ '--page=feed5a1e9903' ] );
+	} );
+
 	test( 'opening a URL asks its stats and its two charts, each tick again, worker traffic counted', async () => {
 		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
@@ -2040,7 +2121,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 			rerender( {
 				refreshInterval: '0',
 				serverFilter: 'kea.example',
-				selectedUrl: { hash: 'beef7743' },
+				selectedSubject: { field: 'url', hash: 'beef7743' },
 				detailChart: {
 					breakdown: 'method',
 					thenBy: 'country',
@@ -2080,12 +2161,12 @@ describe( 'usePerformanceGraph — chart questions', () => {
 
 	test( "a modal chart's dimension change asks that chart alone", async () => {
 		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
-		const selectedUrl = { hash: 'beef7743' };
+		const selectedSubject = { field: 'url', hash: 'beef7743' };
 		// A fresh array each render: the modal compares the chips by value.
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {
 				refreshInterval: '60000',
-				selectedUrl,
+				selectedSubject,
 				detailChart: {
 					breakdown: 'method',
 					thenBy: '',
@@ -2099,7 +2180,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '60000',
-				selectedUrl,
+				selectedSubject,
 				detailChart: {
 					breakdown: 'ja4',
 					thenBy: '',
@@ -2120,9 +2201,9 @@ describe( 'usePerformanceGraph — chart questions', () => {
 
 	test( 'a bucket flip asks the list, never the charts, which describe every request', async () => {
 		const wire = installWire( { dump_url: { stats: {}, requests: [] } } );
-		const selectedUrl = { hash: 'beef7743' };
+		const selectedSubject = { field: 'url', hash: 'beef7743' };
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { refreshInterval: '60000', selectedUrl },
+			initialProps: { refreshInterval: '60000', selectedSubject },
 		} );
 		await act( async () => {} );
 		wire.batches.length = 0;
@@ -2130,7 +2211,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '60000',
-				selectedUrl,
+				selectedSubject,
 				detailFilters: { bucket: '2026-10-04-13-35' },
 			} );
 		} );
@@ -2155,7 +2236,7 @@ describe( 'usePerformanceGraph — chart questions', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '0',
-				selectedUrl: { hash: 'f00d7731' },
+				selectedSubject: { field: 'url', hash: 'f00d7731' },
 			} );
 		} );
 		await act( async () => {
@@ -2612,7 +2693,7 @@ describe( 'usePerformanceGraph — a url-detail tick with no session', () => {
 		await act( async () => {
 			rerender( {
 				refreshInterval: '120000',
-				selectedUrl: { hash: 'b7e3c9a104d2' },
+				selectedSubject: { field: 'url', hash: 'b7e3c9a104d2' },
 			} );
 		} );
 		const timer = Core.node( 'url-detail:timer' );
@@ -2628,6 +2709,6 @@ describe( 'usePerformanceGraph — a url-detail tick with no session', () => {
 
 		const asked = findVerb( wire.batches, 'dump_url' );
 		expect( asked ).toBeTruthy();
-		expect( asked[ VALUE ].arguments[ 0 ] ).toBe( 'b7e3c9a104d2' );
+		expect( asked[ VALUE ].arguments[ 0 ] ).toBe( '--url=b7e3c9a104d2' );
 	} );
 } );

@@ -30,18 +30,30 @@ function num( value, fallback = 0 ) {
 }
 
 /**
+ * The open detail window's subject as the facts name it: under its own field,
+ * `url` or `page`, its hash and the name it is titled by.
+ *
+ * @param {?Object} subject The window's `{ field, hash, url }`, or null.
+ * @return {Object} `{ <field>: { hash, url } }`, or `{ url: null }` for none.
+ */
+const subjectFacts = ( subject ) =>
+	subject
+		? { [ subject.field ]: { hash: subject.hash, url: subject.url } }
+		: { url: null };
+
+/**
  * What the dashboard is currently showing, innermost selection first: a
- * selected request describes the page better than the URL it sits under, and
- * that better than the totals of the URL set on screen. `surface` says which
- * of the three it is — `request`, `url` or `overview` — and `filters` rides
- * on all three, because a narrowed number that does not say what narrowed it
- * reads as the site's.
+ * selected request describes the page better than the URL or page window it
+ * sits under, and that better than the totals of the URL set on screen.
+ * `surface` says which it is — `request`, `url`, `page` or `overview` — and
+ * `filters` rides on every one, because a narrowed number that does not say
+ * what narrowed it reads as the site's.
  *
  * @param {Object}   [state]                 The dashboard's current selection.
  * @param {?Object}  [state.urlTotals]       Totals for the URL set the filters selected.
  * @param {?Array}   [state.urlSlowest]      The slowest pages of that same set.
  * @param {?Object}  [state.urlFilters]      The filters both are of.
- * @param {?Object}  [state.selectedUrl]     The selected URL's `{ hash, url }`.
+ * @param {?Object}  [state.selectedSubject] The open `{ field, hash, url }`.
  * @param {?Object}  [state.urlDetail]       Its detail payload.
  * @param {string[]} [state.detailChips]     The modal chart's chips, each
  *                                           `field=value`, which narrow its
@@ -58,7 +70,7 @@ export function pageFacts( {
 	urlTotals,
 	urlSlowest,
 	urlFilters,
-	selectedUrl,
+	selectedSubject,
 	urlDetail,
 	detailChips = [],
 	detailFilters,
@@ -73,9 +85,7 @@ export function pageFacts( {
 			surface: 'request',
 			filters,
 			request: { rid: selectedRequest },
-			url: selectedUrl
-				? { hash: selectedUrl.hash, url: selectedUrl.url }
-				: null,
+			...subjectFacts( selectedSubject ),
 			duration_ms: num( requestDetail.duration_ms ),
 			status_code: num( requestDetail.status_code ),
 			findings: requestDetail.findings,
@@ -83,13 +93,13 @@ export function pageFacts( {
 		};
 	}
 
-	if ( selectedUrl ) {
+	if ( selectedSubject ) {
 		const stats = urlDetail?.stats ?? {};
-		// Shaped as the url: brief is.
+		// Shaped as the url: brief is, a page's as well.
 		return {
-			surface: 'url',
+			surface: selectedSubject.field,
 			filters,
-			url: { hash: selectedUrl.hash, url: selectedUrl.url },
+			...subjectFacts( selectedSubject ),
 			filter: detailChips,
 			bucket: detailFilters?.bucket,
 			stats: {

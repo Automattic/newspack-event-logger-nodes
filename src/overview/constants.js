@@ -14,6 +14,7 @@
  */
 
 import { __ } from '@wordpress/i18n';
+import { SUBJECT_PARAMS } from './detailSubject';
 
 /**
  * Auto-refresh cadences for the dashboard's "Refresh:" dropdown.
@@ -201,10 +202,16 @@ export const FILTER_FIELD_OPTIONS = REQUEST_FIELDS.filter(
 } ) );
 
 /**
- * The fields a URL modal chip may name: every chip field but the URL it is.
+ * The fields a detail modal's chip may name, by the field its subject keys
+ * on: every chip field but that one, the URL or the page the modal is.
+ *
+ * @type {Object<string, Array<{label: string, value: string, suggested: boolean}>>}
  */
-export const URL_CHIP_OPTIONS = FILTER_FIELD_OPTIONS.filter(
-	( option ) => 'url' !== option.value
+export const SUBJECT_CHIP_OPTIONS = Object.fromEntries(
+	Object.keys( SUBJECT_PARAMS ).map( ( field ) => [
+		field,
+		FILTER_FIELD_OPTIONS.filter( ( option ) => field !== option.value ),
+	] )
 );
 
 /** The classes every table cell carries, header or row. */

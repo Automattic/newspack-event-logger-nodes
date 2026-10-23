@@ -534,6 +534,37 @@ final class StatsQueryTest extends TestCase {
 		$this->assertLessThan( \strpos( $plan, "INDEX {$seeks}" ), \strpos( $plan, 'INDEX urls_page' ), "the page's URLs drive the read:\n{$plan}" );
 	}
 
+	/**
+	 * The URL fields a window keys on, each with the hash it names.
+	 *
+	 * @return array<string,array{0:string,1:string}>
+	 */
+	public static function url_keyed_fields(): array {
+		return [
+			'url'  => [ 'url', Log_Manager::url_hash( 'https://kea-6106.example/hihi-6106/' ) ],
+			'page' => [ 'page', Log_Manager::url_hash( 'kea-6106.example/hihi-6106/' ) ],
+		];
+	}
+
+	/**
+	 * A server-scoped read filtered to one URL or page seeks that URL's rows
+	 * over the window through `requests_url`, never walking every row the
+	 * server has there through `requests_server`.
+	 *
+	 * @param string $field The URL field filtered.
+	 * @param string $hash  The hash it names.
+	 */
+	#[DataProvider( 'url_keyed_fields' )]
+	public function test_a_server_scoped_url_filter_seeks_the_urls_rows( string $field, string $hash ): void {
+		foreach ( [ 'https://kea-6106.example/hihi-6106/', 'https://kea-6106.example/kaka-6106/', 'https://kaka-6106.example/hihi-6106/' ] as $i => $url ) {
+			$this->seed_request( [ 'url' => $url, 'server' => \wp_parse_url( $url, PHP_URL_HOST ), 'ms' => 21.5 + $i ] );
+		}
+		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'group' => [ $field ], 'filter' => [ $field => [ $hash ], 'server' => [ 'kea-6106.example' ] ], 'measure' => [ 'count', 'sum_ms' ], 'buckets' => $this->last_span() ] ) );
+
+		$this->assertMatchesRegularExpression( '/^SEARCH t USING (COVERING )?INDEX requests_url \(url_id=\? AND bucket>\? AND bucket<\?\)$/m', $plan );
+		$this->assertStringNotContainsString( 'requests_server', $plan );
+	}
+
 	public function test_a_server_filter_answers_the_named_servers_rows(): void {
 		$this->seed_request( [ 'server' => 'kea-6102.example', 'ms' => 41.5 ] );
 		$this->seed_request( [ 'server' => 'kea-6102.example', 'ms' => 3.5 ], partition: 2 );

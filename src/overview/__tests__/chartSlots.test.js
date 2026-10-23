@@ -28,7 +28,7 @@ import {
 	useSelectedSlots,
 	useSlotClick,
 	useSlotRange,
-	withoutUrlChips,
+	withoutChips,
 } from '../chartSlots';
 import { rowsWire, slotsEndingAt } from '../../test-helpers/chartWire';
 import { act, cleanupMounts, renderHook } from '../../test-helpers/renderHook';
@@ -304,7 +304,7 @@ describe( 'valueName and filterValue', () => {
 	} );
 } );
 
-describe( 'chipParts and withoutUrlChips', () => {
+describe( 'chipParts and withoutChips', () => {
 	it( 'reads a chip as its field, whether it negates, and its value', () => {
 		expect( chipParts( 'country=NZ' ) ).toEqual( {
 			field: 'country',
@@ -328,14 +328,24 @@ describe( 'chipParts and withoutUrlChips', () => {
 		} );
 	} );
 
-	it( 'drops a url chip from a one-URL question, negated or not', () => {
-		expect(
-			withoutUrlChips( [
-				'url=4be3cc0a1f2e',
-				'url!=0ddba11c4e5f',
-				'country=NZ',
-			] )
-		).toEqual( [ 'country=NZ' ] );
+	it( "drops the chips on a window's own field, negated or not", () => {
+		const chips = [
+			'url=4be3cc0a1f2e',
+			'page!=0ddba11c4e5f',
+			'url!=0ddba11c4e5f',
+			'page=7e57ab1e9a01',
+			'country=NZ',
+		];
+		expect( withoutChips( chips, 'url' ) ).toEqual( [
+			'page!=0ddba11c4e5f',
+			'page=7e57ab1e9a01',
+			'country=NZ',
+		] );
+		expect( withoutChips( chips, 'page' ) ).toEqual( [
+			'url=4be3cc0a1f2e',
+			'url!=0ddba11c4e5f',
+			'country=NZ',
+		] );
 	} );
 } );
 

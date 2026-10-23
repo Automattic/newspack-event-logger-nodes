@@ -163,7 +163,7 @@ function mount( overrides = {} ) {
 		requestSort: { field: 'timestamp', dir: 'desc' },
 		onRequestSort: jest.fn(),
 		onSelectRequest: jest.fn(),
-		urlHash: 'deadbeef',
+		subject: { field: 'url', hash: 'deadbeef' },
 		filters: { bucket: '' },
 		onBucketChange: jest.fn(),
 		chartSlice: sliceOf( null ),
@@ -206,13 +206,44 @@ describe( 'UrlDetailView', () => {
 		// The picker walks [data-ask] ancestors innermost first, so a click on
 		// the body asks about the URL and a click on a row still asks about
 		// that request.
-		const { container, unmount } = mount( { urlHash: 'cafe0123beef' } );
+		const { container, unmount } = mount( {
+			subject: { field: 'url', hash: 'cafe0123beef' },
+		} );
 		const root = container.firstElementChild;
 		expect( root.getAttribute( 'data-ask' ) ).toBe( 'url:cafe0123beef' );
 		const row = container.querySelector( '[data-ask^="request:"]' );
 		expect( row ).not.toBeNull();
 		expect( root.contains( row ) ).toBe( true );
 		unmount();
+	} );
+
+	it( 'names a page window to the ask picker as its page', () => {
+		const { container, unmount } = mount( {
+			subject: { field: 'page', hash: 'bead5a1e6604' },
+		} );
+		expect( container.firstElementChild.getAttribute( 'data-ask' ) ).toBe(
+			'page:bead5a1e6604'
+		);
+		unmount();
+	} );
+
+	it( 'offers a page window a chip on its URLs, and a URL window none on its own', () => {
+		const chart = { ...NO_DETAIL_CHART, chips: [ 'url=fade0bee6604' ] };
+		const page = mount( {
+			subject: { field: 'page', hash: 'bead5a1e6604' },
+			chart,
+		} );
+		expect( page.container.textContent ).toContain(
+			'URL Hash = fade0bee6604'
+		);
+		page.unmount();
+
+		const url = mount( {
+			subject: { field: 'url', hash: 'cafe0123beef' },
+			chart,
+		} );
+		expect( url.container.textContent ).not.toContain( 'URL Hash' );
+		url.unmount();
 	} );
 
 	it( 'offers no server breakdown, since a URL already names its host', () => {
@@ -925,7 +956,7 @@ describe( 'UrlDetailView', () => {
 			requestSort: { field: 'timestamp', dir: 'desc' },
 			onRequestSort: jest.fn(),
 			onSelectRequest: jest.fn(),
-			urlHash: 'deadbeef',
+			subject: { field: 'url', hash: 'deadbeef' },
 			filters: { bucket: '' },
 			onBucketChange: jest.fn(),
 			listing: false,

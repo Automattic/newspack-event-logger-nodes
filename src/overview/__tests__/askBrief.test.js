@@ -348,6 +348,33 @@ test( 'a URL brief names the worst recent requests by rid', () => {
 	expect( md ).toContain( '**avg_ms:** 812.3' );
 } );
 
+test( 'a page brief renders the body a URL brief does, titled as its page', () => {
+	const md = briefToMarkdown( {
+		subject: 'page',
+		url: 'https://kakapo-7731.example/rimu-7731/',
+		hash: 'f1a5c0de7731',
+		stats: { count: 23, errors: 4, avg_ms: 615.75, max_peak_mb: 88.5 },
+		worst_requests: [
+			{ rid: 'kakapo1', duration_ms: 7310.2, status_code: 502 },
+		],
+		requests_capped: true,
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '## page' );
+	expect( md ).toContain(
+		'**url:** <site-data>https://kakapo-7731.example/rimu-7731/</site-data>'
+	);
+	expect( md ).toContain( '**count:** 23' );
+	expect( md ).toContain( '**errors:** 4' );
+	expect( md ).toContain( '**avg_ms:** 615.8' );
+	expect( md ).toContain( 'kakapo1 7310.2ms 502' );
+	expect( md ).toContain( 'older ones are unlisted' );
+	expect( md ).toContain( 'no rule governs this URL' );
+} );
+
 test( 'a URL brief under a bucket names the five minutes its numbers cover', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',

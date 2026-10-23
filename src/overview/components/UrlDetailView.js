@@ -1,8 +1,8 @@
 /**
  * URL Detail View — the body of the Performance dashboard's URL modal.
  *
- * `PerformanceDashboard` opens a modal for one URL and renders this view inside
- * it. The view owns no slice and asks nothing: it draws the three slices the
+ * `PerformanceDashboard` opens a modal for one URL, or for a whole page, and
+ * renders this view inside it. The view owns no slice and asks nothing: it draws the three slices the
  * parent's graph asks each tick — the `dump_url` payload, and the URL's two
  * `query` answers. Top to bottom:
  *
@@ -28,9 +28,10 @@ import { __, sprintf } from '@wordpress/i18n';
 import {
 	CELL_BASE,
 	SCOPED_BREAKDOWN_OPTIONS,
-	URL_CHIP_OPTIONS,
+	SUBJECT_CHIP_OPTIONS,
 	cellClass,
 } from '../constants';
+import { subjectDescriptor } from '../detailSubject';
 
 import ResponseTimeChart from '../ResponseTimeChart';
 import RequestTrace, { FlameCutNote } from './RequestTrace';
@@ -272,7 +273,7 @@ const RequestRow = memo(
  * @param {Object}                                               props.requestSort       Current sort as `{ field, dir }`; drives the header arrows only.
  * @param {(field: string) => void}                              props.onRequestSort     Receives a field name when a sortable header is clicked.
  * @param {(rid: string) => void}                                props.onSelectRequest   Receives a rid from a row click or a scatter-plot dot.
- * @param {string}                                               props.urlHash           The URL's 12-char hash, which the `?` picker asks about.
+ * @param {{field: string, hash: string}}                        props.subject           What the window is about, a URL or a page, which the `?` picker asks about and the chips may not name.
  * @param {{bucket: string}}                                     props.filters           The bucket selection's spelling the header and list narrow to, '' for none. The dashboard owns it, so it survives a trip to a request and back.
  * @param {(update: *) => void}                                  props.onBucketChange    Receives the bucket selection's new spelling, or an updater of the one held: the Time field's selection, or a chart click's updater.
  * @param {boolean}                                              [props.listing]         Whether the list is being asked afresh under new filters; the rows it holds answer the old ones, so the list alone shows it loading.
@@ -293,7 +294,7 @@ export default function UrlDetailView( {
 	requestSort,
 	onRequestSort,
 	onSelectRequest,
-	urlHash,
+	subject,
 	filters,
 	onBucketChange,
 	listing = false,
@@ -366,10 +367,10 @@ export default function UrlDetailView( {
 		requestSort.field === field ? requestSort.dir : null;
 
 	return (
-		// The picker root: a body click outside a row asks about the URL.
+		// The picker root: a body click outside a row asks about the subject.
 		<div
 			className="event-logger-sections"
-			data-ask={ urlHash ? `url:${ urlHash }` : undefined }
+			data-ask={ subjectDescriptor( subject ) }
 		>
 			{ note && (
 				<p className="newspack-nodes-banner is-info" role="status">
@@ -390,7 +391,7 @@ export default function UrlDetailView( {
 				breakdownOptions={ SCOPED_BREAKDOWN_OPTIONS }
 				chips={ chart.chips }
 				setChips={ onChipsChange }
-				chipOptions={ URL_CHIP_OPTIONS }
+				chipOptions={ SUBJECT_CHIP_OPTIONS[ subject.field ] }
 				loading={ !! chartSlice?.loading }
 				error={ chartSlice?.error ?? null }
 				onSlotClick={ pickBucket }

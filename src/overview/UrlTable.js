@@ -3,8 +3,9 @@
  *
  * A page is a URL's lowercased host and path, and its row folds every query
  * shape the set holds of it. A page of one shape is that URL, and a click
- * opens it; a page of more expands into its shapes, each a URL row beneath it
- * that its own slice answers, at most a page's worth and then how many more.
+ * opens it; a click on a page of more opens the page's own window, and its
+ * caret expands it into its shapes, each a URL row beneath it that its own
+ * slice answers, at most a page's worth and then how many more.
  *
  * The server owns the set. `PerformanceDashboard` polls the `performance` CI's
  * `urls` verb and this table draws the page it is handed, in the order it
@@ -55,6 +56,7 @@ import {
 	useQueryParamChoice,
 	useQueryParamFlag,
 } from '@newspack-nodes/shared/hooks/useQueryParamState';
+import { sameSubject, subjectDescriptor, subjectOfRow } from './detailSubject';
 import {
 	DEFAULT_CHART_METRIC,
 	NO_PAGE_KEYS,
@@ -386,6 +388,22 @@ const barFieldFor = ( metric ) => {
 	return 'avg_ms';
 };
 
+/**
+ * A key handler that runs `activate` on Enter or Space, as a click would.
+ *
+ * @param {(e: import('react').KeyboardEvent) => void} activate What the key activates.
+ * @return {(e: import('react').KeyboardEvent) => void} The `onKeyDown` handler.
+ */
+const onActivationKey = ( activate ) => ( e ) => {
+	if ( 'Enter' === e.key || ' ' === e.key ) {
+		e.preventDefault();
+		activate( e );
+	}
+};
+
+/** Whether each tree-row arrow key leaves a page expanded. */
+const ARROW_EXPANDS = { ArrowRight: true, ArrowLeft: false };
+
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const UrlRow = memo(
 	/**
@@ -394,20 +412,21 @@ const UrlRow = memo(
 	 *
 	 * The URL cell carries a background bar whose width is this row's value as
 	 * a fraction of `maxAvg`; a row above that value fills the cell and stops.
-	 * A row naming one URL is a button carrying the `?` picker's `url:`
-	 * descriptor, so a picker click asks about that URL rather than the page,
-	 * and a click opens it. A page of several shapes names none: its click
-	 * expands or shuts it, behind the shared disclosure caret.
+	 * Every row is a button carrying the `?` picker's descriptor for the
+	 * window it opens, and a click or Enter/Space opens that window: a row
+	 * naming one URL opens its URL's, a page of several shapes its page's.
+	 * Such a page is a tree row: ArrowRight expands it, ArrowLeft shuts it,
+	 * and its caret, presentational, expands or shuts it on a mouse click.
 	 *
 	 * @param {Object}                       props             Component props.
 	 * @param {Object}                       props.url         A page row, or a shape's URL row.
 	 * @param {boolean}                      [props.shape]     Whether it is a shape beneath its page.
 	 * @param {?string}                      [props.expandKey] The key a page of several shapes toggles by; null for any other row.
 	 * @param {boolean}                      [props.open]      Whether that page is expanded.
-	 * @param {boolean}                      props.isSelected  Whether the detail modal is open on this row.
+	 * @param {boolean}                      props.isSelected  Whether the detail modal is open on the window it opens.
 	 * @param {boolean}                      [props.isBusy]    Whether a click on it waits for its one request to open.
-	 * @param {(url: Object) => void}        props.onSelect    Receives a row naming one URL on click or Enter/Space.
-	 * @param {(key: string) => void}        [props.onToggle]  Receives `expandKey` on click or Enter/Space.
+	 * @param {(url: Object) => void}        props.onSelect    Receives the row on click or Enter/Space.
+	 * @param {(key: string) => void}        [props.onToggle]  Receives `expandKey` from the caret or an arrow key.
 	 * @param {(n: number, s?: string) => *} props.formatNum   Number formatter, from the table.
 	 * @param {number}                       props.maxAvg      The page's p95 of the measured bar metric; 0 draws no bar.
 	 * @param {string}                       props.barField    The row field the bar measures, from `barFieldFor()`.
@@ -436,23 +455,33 @@ const UrlRow = memo(
 			};
 		}
 		const expandable = null !== expandKey;
-		const activate = () =>
-			expandable ? onToggle( expandKey ) : onSelect( url );
+		const select = () => onSelect( url );
+		const selectKey = onActivationKey( select );
 		const handleKeyDown = ( e ) => {
-			if ( e.key === 'Enter' || e.key === ' ' ) {
-				e.preventDefault();
-				activate();
+			const expands = ARROW_EXPANDS[ e.key ];
+			if ( ! expandable || undefined === expands ) {
+				selectKey( e );
+				return;
 			}
+			e.preventDefault();
+			if ( expands !== open ) {
+				onToggle( expandKey );
+			}
+		};
+		// A caret click is the row's toggle, never its open.
+		const toggle = ( e ) => {
+			e.stopPropagation();
+			onToggle( expandKey );
 		};
 
 		return (
 			<div
 				role="button"
 				tabIndex={ 0 }
-				data-ask={ url.hash ? `url:${ url.hash }` : undefined }
+				data-ask={ subjectDescriptor( subjectOfRow( url ) ) }
 				aria-expanded={ expandable ? open : undefined }
 				aria-busy={ isBusy || undefined }
-				onClick={ activate }
+				onClick={ select }
 				onKeyDown={ handleKeyDown }
 				className={ `event-logger-table__row newspack-nodes-table__row${
 					shape ? ' is-shape' : ''
@@ -470,18 +499,23 @@ const UrlRow = memo(
 						className={ cellClass( col ) }
 						style={ 'code' === col.kind ? barStyle : undefined }
 					>
-						{ 'code' === col.kind && ! shape && (
-							<span
-								className={ `event-logger-table__caret${
-									expandable
-										? ' newspack-nodes-disclosure'
-										: ''
-								}` }
-								aria-hidden="true"
-							>
-								{ expandable ? '▾' : '' }
-							</span>
-						) }
+						{ 'code' === col.kind &&
+							! shape &&
+							( expandable ? (
+								// The row's arrow keys are the caret's keys.
+								<span
+									className="event-logger-table__caret newspack-nodes-disclosure"
+									aria-hidden="true"
+									onClick={ toggle }
+								>
+									▾
+								</span>
+							) : (
+								<span
+									className="event-logger-table__caret"
+									aria-hidden="true"
+								/>
+							) ) }
 						{ renderCell( col, url, formatNum ) }
 						{ 'code' === col.kind && isBusy && <Spinner /> }
 					</div>
@@ -519,6 +553,24 @@ function NoteRow( { text } ) {
 }
 
 /**
+ * The selection a row shows, settled here so a memoized row re-renders only
+ * when its own flags move: whether the modal is open on the window it opens,
+ * and whether a click on it waits for its one request.
+ *
+ * @param {Object}  row      A page row, or a shape's URL row.
+ * @param {?Object} selected The open window's subject, or null.
+ * @param {?Object} busy     The subject a click waits on, or null.
+ * @return {{isSelected: boolean, isBusy: boolean}} The row's flags.
+ */
+const rowState = ( row, selected, busy ) => {
+	const subject = subjectOfRow( row );
+	return {
+		isSelected: sameSubject( selected, subject ),
+		isBusy: sameSubject( busy, subject ),
+	};
+};
+
+/**
  * One run of an expanded page's shape slots, filled from the window of shapes
  * its slice's view holds, each shape keyed by its hash; a slot outside that
  * window waits for the next. Not memoized: the slice is built
@@ -530,8 +582,8 @@ function NoteRow( { text } ) {
  * @param {number}  props.from     Its first slot in this run.
  * @param {number}  props.to       One past its last slot.
  * @param {Object}  props.rowProps What every row takes from the table.
- * @param {?Object} props.selected The open URL, or null.
- * @param {?string} props.busy     The hash a click waits on, or null.
+ * @param {?Object} props.selected The open window's subject, or null.
+ * @param {?Object} props.busy     The subject a click waits on, or null.
  * @return {import('react').ReactElement[]} The rows.
  */
 function PageShapes( { page, from, to, rowProps, selected, busy } ) {
@@ -554,8 +606,7 @@ function PageShapes( { page, from, to, rowProps, selected, busy } ) {
 				{ ...rowProps }
 				url={ shape }
 				shape
-				isSelected={ selected?.hash === shape.hash }
-				isBusy={ busy === shape.hash }
+				{ ...rowState( shape, selected, busy ) }
 			/>
 		) : (
 			<NoteRow
@@ -572,10 +623,10 @@ function PageShapes( { page, from, to, rowProps, selected, busy } ) {
  *
  * @param {Object}                     props                  Component props.
  * @param {Array<Object>}              props.urls             The page rows the `urls` verb returned.
- * @param {?Object}                    props.selectedUrl      The URL the detail modal is open on, or null.
- * @param {(url: Object) => void}      props.onSelect         Receives a row naming one URL, a one-shape page or a shape, on click or Enter/Space.
+ * @param {?Object}                    props.selectedSubject  The `{ field, hash }` the detail modal is open on, or null.
+ * @param {(url: Object) => void}      props.onSelect         Receives the row clicked or activated by Enter/Space: a page, or a shape.
  * @param {string[]}                   [props.expanded]       The keys of the expanded pages, as `pageKey()` spells them.
- * @param {?string}                    [props.busy]           The URL hash a click waits on to open its one request; its row shows busy.
+ * @param {?Object}                    [props.busy]           The subject a click waits on to open its one request; its row shows busy.
  * @param {(key: string) => void}      [props.onToggleExpand] Receives the key of a page of several shapes to expand or shut.
  * @param {(params: Object) => void}   props.onParamsChange   Receives `search`, `sort`, `order`, `offset`, `includeWorkers` and `bucket` whenever one of them changes.
  * @param {string}                     [props.bucket]         The spelling of the bucket selection the dashboard narrowed the table to; '' for none.
@@ -591,7 +642,7 @@ function PageShapes( { page, from, to, rowProps, selected, busy } ) {
  */
 export default function UrlTable( {
 	urls,
-	selectedUrl,
+	selectedSubject,
 	onSelect,
 	expanded = NO_PAGE_KEYS,
 	onToggleExpand,
@@ -894,7 +945,7 @@ export default function UrlTable( {
 										from={ row.from }
 										to={ row.to }
 										rowProps={ rowProps }
-										selected={ selectedUrl }
+										selected={ selectedSubject }
 										busy={ busy }
 									/>
 								);
@@ -927,14 +978,11 @@ export default function UrlTable( {
 										1 < row.page.shapes ? key : null
 									}
 									open={ !! row.open }
-									isSelected={
-										!! row.page.hash &&
-										selectedUrl?.hash === row.page.hash
-									}
-									isBusy={
-										!! row.page.hash &&
-										busy === row.page.hash
-									}
+									{ ...rowState(
+										row.page,
+										selectedSubject,
+										busy
+									) }
 								/>
 							);
 						} )

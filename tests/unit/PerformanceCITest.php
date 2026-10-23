@@ -1340,14 +1340,33 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
 		$this->assertSame( 'dump_url', $result['fetch'][1]['tool'] );
-		$this->assertSame( [ 'hash' => 'cafebabe3456', 'server' => 'alpha.example' ], $result['fetch'][1]['arguments'] );
+		$this->assertSame( [ 'url' => 'cafebabe3456', 'server' => 'alpha.example' ], $result['fetch'][1]['arguments'] );
+	}
+
+	/** A request picked inside a page's window widens to that page by `page`. */
+	public function test_ask_carries_the_page_a_request_was_picked_under(): void {
+		$rid = $this->write_request( [
+			'rid'            => 'rid-ask-under-page-1234567890123',
+			'url'            => 'https://example.com/kaka-9183/?q=?',
+			'request_url'    => 'https://example.com/kaka-9183/?q=?',
+			'timestamp'      => 1700000900,
+			'duration_ms'    => 140,
+			'status_code'    => 200,
+			'peak_mb'        => 3,
+			'request_method' => 'GET',
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ "request:{$rid}", 'page:7e1f0c3a9b2d', '--server=beta.example' ] );
+
+		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
+		$this->assertSame( [ 'tool' => 'dump_url', 'arguments' => [ 'page' => '7e1f0c3a9b2d', 'server' => 'beta.example' ] ], $result['fetch'][1] );
 	}
 
 	public function test_a_span_without_its_request_context_is_refused(): void {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'span:wp_loaded' );
 
 		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'needs its request or its url', \strtolower( $result ) );
+		$this->assertStringContainsString( 'needs its request, its url or its page', \strtolower( $result ) );
 	}
 
 	/**
@@ -3113,16 +3132,18 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * `--bucket` owns the buckets, and on a one-URL verb the hash owns the
-	 * URL: a filter naming either is refused, naming its owner.
+	 * `--bucket` owns the buckets, and on a one-subject verb the arg or the
+	 * descriptor naming the subject owns its field: a filter naming either is
+	 * refused, naming its owner.
 	 *
 	 * @return array<string,array{0:string,1:string,2:string}>
 	 */
 	public static function owned_filter_refusals(): array {
 		$hash   = Log_Manager::url_hash( 'https://kahu-9.example/hoiho/' );
+		$page   = Log_Manager::url_hash( 'kahu-9.example/hoiho/' );
 		$key    = '2026-09-21-04-35';
 		$bucket = "filter bucket={$key} belongs to --bucket: name the buckets with --bucket";
-		$url    = "filter url=0ddba11c4e5f belongs to the hash: name the URL with the hash";
+		$url    = 'filter url=0ddba11c4e5f belongs to --url: name the URL with --url';
 		return [
 			'urls bucket'               => [ 'urls', "--filter=bucket={$key}", $bucket ],
 			'urls bucket beside --bucket' => [ 'urls', "--bucket={$key} --filter=bucket={$key}", $bucket ],
@@ -3130,11 +3151,12 @@ class PerformanceCITest extends TestCase {
 			'dump_url url'              => [ 'dump_url', "{$hash} --filter=url=0ddba11c4e5f", $url ],
 			'ask overview: bucket'      => [ 'ask', "overview:site --filter=bucket={$key}", $bucket ],
 			'ask url: bucket'           => [ 'ask', "url:{$hash} --filter=bucket={$key}", $bucket ],
-			'ask url: url'              => [ 'ask', "url:{$hash} --filter=url=0ddba11c4e5f", $url ],
+			'ask url: url'              => [ 'ask', "url:{$hash} --filter=url=0ddba11c4e5f", 'filter url=0ddba11c4e5f belongs to the descriptor: name the URL with the descriptor' ],
+			'ask page: page'            => [ 'ask', "page:{$page} --filter=page=0ddba11c4e5f", 'filter page=0ddba11c4e5f belongs to the descriptor: name the page with the descriptor' ],
 			'dump_url url capitalised'  => [ 'dump_url', "{$hash} --filter=URL=0ddba11c4e5f", $url ],
 			'urls server negated'       => [ 'urls', '--filter=server!=kahu-9.example', "filter server!=kahu-9.example belongs to --server: name the server with --server" ],
 			'urls bucket negated'       => [ 'urls', "--filter=bucket!={$key}", "filter bucket!={$key} belongs to --bucket: name the buckets with --bucket" ],
-			'dump_url url negated'      => [ 'dump_url', "{$hash} --filter=url!=0ddba11c4e5f", "filter url!=0ddba11c4e5f belongs to the hash: name the URL with the hash" ],
+			'dump_url url negated'      => [ 'dump_url', "{$hash} --filter=url!=0ddba11c4e5f", 'filter url!=0ddba11c4e5f belongs to --url: name the URL with --url' ],
 			'ask overview: server negated' => [ 'ask', 'overview:site --filter=server!=kahu-9.example', "filter server!=kahu-9.example belongs to --server: name the server with --server" ],
 		];
 	}
@@ -3794,6 +3816,143 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * Two shapes of one page, `?q=?` twice and its capitalised bare path
+	 * once, each request with its flame, its timings and its owner time,
+	 * beside another page's dearer traffic none of the page's answers count.
+	 *
+	 * @return string The page's hash.
+	 */
+	private function seed_a_page_of_two_shapes(): string {
+		$at    = self::latest() * 300;
+		$query = 'https://seed.example/kaka-9183/?q=?';
+		$bare  = 'https://seed.example/Kaka-9183/';
+		foreach ( [ [ $query, 'rid-kaka-q1-9183', 210.5, 18.5, 4.5, 70.5 ], [ $query, 'rid-kaka-q2-9183', 330.25, 22.5, 11.5, 90.5 ], [ $bare, 'rid-kaka-b1-9183', 95.75, 40.5, 8.5, 30.5 ] ] as [ $url, $rid, $ms, $peak, $second, $span ] ) {
+			$this->seed_request( [ 'url' => $url, 'rid' => $rid, 'ms' => $ms, 'peak_mb' => $peak, 'finished_at' => $at + $second, 'profiled' => 1 ] );
+			$this->write_flame( [ 'rid' => $rid, 'url_hash' => self::hash_of( $url ), 'name' => 'request', 'value' => $ms, 'children' => [ [ 'name' => 'wp_loaded', 'value' => $span, 'children' => [] ] ] ] );
+		}
+		$this->seed_timing( [ 'url' => $query, 'category' => 'sql', 'ms' => 40.5, 'calls' => 3, 'requests' => 2 ] );
+		$this->seed_timing( [ 'url' => $bare, 'category' => 'sql', 'ms' => 20.25, 'calls' => 1, 'requests' => 1 ] );
+		$this->seed_owner_timing( [ 'url' => $query, 'owner' => 'kaka-plugin', 'ms' => 60.0, 'calls' => 6, 'requests' => 2 ] );
+		$this->seed_owner_timing( [ 'url' => $query, 'owner' => '(unmeasured)', 'ms' => 6.0, 'calls' => 0, 'requests' => 2 ] );
+		$this->seed_owner_timing( [ 'url' => $bare, 'owner' => 'kaka-plugin', 'ms' => 30.0, 'calls' => 3, 'requests' => 1 ] );
+		$this->seed_owner_timing( [ 'url' => $bare, 'owner' => '(unmeasured)', 'ms' => 3.0, 'calls' => 0, 'requests' => 1 ] );
+		$elsewhere = 'https://seed.example/kea-9183/';
+		$this->seed_request( [ 'url' => $elsewhere, 'rid' => 'rid-kea-9183', 'ms' => 7000.5, 'finished_at' => $at + 13.5, 'profiled' => 1 ] );
+		$this->seed_timing( [ 'url' => $elsewhere, 'category' => 'sql', 'ms' => 9000.0, 'calls' => 90, 'requests' => 1 ] );
+		$this->seed_owner_timing( [ 'url' => $elsewhere, 'owner' => 'kea-plugin', 'ms' => 9000.0, 'calls' => 90, 'requests' => 1 ] );
+		$this->seed_owner_timing( [ 'url' => $elsewhere, 'owner' => '(unmeasured)', 'ms' => 1.0, 'calls' => 0, 'requests' => 1 ] );
+		return self::hash_of( 'seed.example/kaka-9183/' );
+	}
+
+	/**
+	 * `dump_url --page` reads every shape of the page: its stats fold both,
+	 * named by the page hash and the name a page row of several shapes
+	 * shows, its list holds both shapes' requests newest first, and its
+	 * flame, profile and owners sum both.
+	 */
+	public function test_dump_url_page_folds_every_shape_of_the_page(): void {
+		$page = $this->seed_a_page_of_two_shapes();
+		$at   = self::latest() * 300;
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', "--page={$page}" );
+
+		$this->assertIsArray( $reply, \is_string( $reply ) ? $reply : 'dump_url answered no structure' );
+		$this->assertSame( [ 'stats', 'requests', 'requests_capped', 'aggregate_flame', 'flame_cut', 'aggregate_profiles', 'aggregate_owners' ], \array_keys( $reply ) );
+		$this->assertSame(
+			[ $page, 'https://seed.example/kaka-9183/', 3, 95.75, 330.25, 40.5, $at + 11.5, 0 ],
+			[ $reply['stats']['hash'], $reply['stats']['url'], $reply['stats']['count'], $reply['stats']['min_ms'], $reply['stats']['max_ms'], $reply['stats']['max_peak_mb'], $reply['stats']['last_updated'], $reply['stats']['errors'] ]
+		);
+		$this->assertEqualsWithDelta( [ 636.5 / 3, 81.5 / 3 ], [ $reply['stats']['avg_ms'], $reply['stats']['avg_peak_mb'] ], 1e-9 );
+		$this->assertSame( [ 'rid-kaka-q2-9183', 'rid-kaka-b1-9183', 'rid-kaka-q1-9183' ], \array_column( $reply['requests'], 'rid' ) );
+		$this->assertFalse( $reply['requests_capped'] );
+		$this->assertFalse( $reply['flame_cut'] );
+		$this->assertEqualsWithDelta( [ 636.5 / 3, 191.5 / 3 ], [ $reply['aggregate_flame']['value'], $reply['aggregate_flame']['children'][0]['value'] ], 1e-9 );
+		$this->assertSame( 3, $reply['aggregate_profiles']['count'] );
+		$this->assertSame( [ 20.25, 3 ], [ $reply['aggregate_profiles']['categories']['sql']['time'], $reply['aggregate_profiles']['categories']['sql']['samples'] ] );
+		$this->assertSame( [ 'kaka-plugin' ], \array_column( $reply['aggregate_owners'], 'owner' ) );
+		$this->assertEqualsWithDelta( [ 30.0, 90 / 99, 3.0 ], [ $reply['aggregate_owners'][0]['ms_per_request'], $reply['aggregate_owners'][0]['share'], $reply['aggregate_owners'][0]['calls_per_request'] ], 1e-9 );
+	}
+
+	/**
+	 * `dump_url` names one URL by `--url` or one page by `--page`: both, or
+	 * neither, is refused.
+	 *
+	 * @return array<string,array{0:list<string>}>
+	 */
+	public static function dump_url_subjects_refused(): array {
+		$page = self::hash_of( 'seed.example/kaka-9183/' );
+		return [
+			'both'    => [ [ self::hash_of( 'https://seed.example/Kaka-9183/' ), "--page={$page}" ] ],
+			'neither' => [ [ '--server=seed.example' ] ],
+		];
+	}
+
+	#[DataProvider( 'dump_url_subjects_refused' )]
+	public function test_dump_url_names_exactly_one_url_or_page( array $tokens ): void {
+		$this->seed_a_page_of_two_shapes();
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $tokens );
+
+		$this->assertStringContainsString( 'name one URL by --url or one page by --page', Core::as_string( $reply ) );
+	}
+
+	/** `--page` owns the page field in `dump_url` as it does in `urls`. */
+	public function test_a_page_filter_beside_a_dump_url_page_is_refused(): void {
+		$page = $this->seed_a_page_of_two_shapes();
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ "--page={$page}", "--filter=page={$page}" ] );
+
+		$this->assertStringContainsString( "filter page={$page} belongs to --page: name the page with --page", Core::as_string( $reply ) );
+	}
+
+	public function test_dump_url_of_an_unknown_page_is_not_found(): void {
+		$this->seed_a_page_of_two_shapes();
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', '--page=0ddba11f00d5' );
+
+		$this->assertStringContainsString( 'Page not found: 0ddba11f00d5', Core::as_string( $reply ) );
+	}
+
+	/**
+	 * A `page:` brief is the `url:` brief of every shape of the page, its
+	 * rule matched against the page's name, its pointer fetching the page.
+	 */
+	public function test_ask_page_briefs_every_shape_of_the_page(): void {
+		$page = $this->seed_a_page_of_two_shapes();
+		( new Rule_Set( [] ) )->save( [ new Rule( 'ignored', '/kaka-9183/', Rule::ACTION_LOG ) ] );
+
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "page:{$page}" );
+
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertSame( 'page', $brief['subject'] );
+		$this->assertSame( [ 'https://seed.example/kaka-9183/', $page, 3, 330.25 ], [ $brief['url'], $brief['hash'], $brief['stats']['count'], $brief['stats']['max_ms'] ] );
+		$this->assertSame( [ 'rid-kaka-q2-9183', 'rid-kaka-q1-9183', 'rid-kaka-b1-9183' ], \array_column( $brief['worst_requests'], 'rid' ) );
+		$this->assertSame( '/kaka-9183/', $brief['rule']['pattern'] );
+		$this->assertSame( [ [ 'tool' => 'dump_url', 'arguments' => [ 'page' => $page ] ] ], $brief['fetch'] );
+	}
+
+	/** A span under a `page:` answers from the page's aggregate flame. */
+	public function test_ask_span_under_a_page_reads_its_shapes_flames(): void {
+		$page = $this->seed_a_page_of_two_shapes();
+
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', "page:{$page}" ] );
+
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertEqualsWithDelta( 191.5 / 3, $brief['ms'], 1e-9 );
+		$this->assertSame( [ 'mean per request over 3 requests, every server', 'https://seed.example/kaka-9183/' ], [ $brief['scope'], $brief['url'] ] );
+	}
+
+	/** A category under a `page:` answers from the page's profile. */
+	public function test_ask_category_under_a_page_reads_its_shapes_timings(): void {
+		$page = $this->seed_a_page_of_two_shapes();
+
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:sql', "page:{$page}" ] );
+
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertSame( [ 'mean per request over 3 requests, every server', 'https://seed.example/kaka-9183/', 20.25 ], [ $brief['scope'], $brief['url'], $brief['avg_time_ms'] ] );
+	}
+
+	/**
 	 * Two requests of one URL, each with its flame, the second partition's
 	 * flame index holding another URL's beside them.
 	 *
@@ -4077,11 +4236,24 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'URL not found: deadbeefcafe', $reply );
 	}
 
-	public function test_dump_url_declares_its_hash_server_filter_and_bucket(): void {
+	/** A URL is named by `--url` or first by position; `--hash` is no arg. */
+	public function test_dump_url_names_a_url_by_url_and_refuses_hash(): void {
+		$url = 'https://seed.example/pukeko-5520/';
+		$this->seed_request( [ 'url' => $url, 'rid' => 'rid-pukeko-5520', 'ms' => 61.25 ] );
+
+		$named = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', '--url=' . self::hash_of( $url ) );
+		$hash  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', '--hash=' . self::hash_of( $url ) );
+
+		$this->assertIsArray( $named, \is_string( $named ) ? $named : 'dump_url answered no structure' );
+		$this->assertSame( [ $url, 61.25 ], [ $named['stats']['url'], $named['stats']['max_ms'] ] );
+		$this->assertStringContainsString( 'unknown option --hash', Core::as_string( $hash ) );
+	}
+
+	public function test_dump_url_declares_its_url_page_server_filter_and_bucket(): void {
 		$args = self::args_by_name( 'dump_url' );
 
-		$this->assertSame( [ 'hash', 'server', 'filter', 'bucket' ], \array_keys( $args ) );
-		$this->assertTrue( $args['hash']['required'] );
+		$this->assertSame( [ 'url', 'page', 'server', 'filter', 'bucket' ], \array_keys( $args ) );
+		$this->assertSame( [ false, '' ], [ $args['url']['required'], $args['url']['default'] ], 'a page names no URL' );
 		$this->assertSame( self::args_by_name( 'query' )['filter'], $args['filter'], 'declared as query declares it' );
 		$this->assertSame( [ 'string', 'string' ], [ $args['server']['type'], $args['bucket']['type'] ] );
 	}
@@ -4100,7 +4272,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertFalse( $brief['requests_capped'] );
 		$this->assertArrayNotHasKey( 'scan_stopped_early', $brief );
 		$this->assertArrayNotHasKey( 'requests_window_start', $brief );
-		$this->assertSame( [ 'hash' => self::hash_of( $url ), 'server' => 'seed.example' ], $brief['fetch'][0]['arguments'] );
+		$this->assertSame( [ 'url' => self::hash_of( $url ), 'server' => 'seed.example' ], $brief['fetch'][0]['arguments'] );
 	}
 
 	public function test_ask_overview_and_url_briefs_carry_the_filter(): void {
@@ -4119,7 +4291,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'status_class=5' ], $brief['filter'] );
 		$this->assertSame( [ 'count' => 1, 'errors' => 0, 'avg_ms' => 610.5, 'max_ms' => 610.5, 'max_peak_mb' => 44.5 ], $brief['stats'] );
 		$this->assertSame( [ 'rid-korimako-503' ], \array_column( $brief['worst_requests'], 'rid' ) );
-		$this->assertSame( [ 'hash' => self::hash_of( $url ), 'filter' => [ 'status_class=5' ] ], $brief['fetch'][0]['arguments'] );
+		$this->assertSame( [ 'url' => self::hash_of( $url ), 'filter' => [ 'status_class=5' ] ], $brief['fetch'][0]['arguments'] );
 	}
 
 	public function test_a_url_brief_carries_its_selections_spelling(): void {
