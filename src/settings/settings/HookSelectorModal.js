@@ -51,7 +51,8 @@ export const PLUGIN_TIME_HOOKS = window.newspackNodesOwnerTimeEvents || [];
  *
  * Searching drops the categories that match nothing and expands none of the
  * rest, so a matched name shows only inside a category already open; "Select
- * Matches" takes every match either way.
+ * Matches" takes every match that is not noisy either way, and counts the
+ * ones it would add: those not chosen already.
  *
  * @param {Object}                 props             Component props.
  * @param {boolean}                props.isOpen      Whether the modal is open.
@@ -116,31 +117,29 @@ export default function HookSelectorModal( {
 			if ( ! Array.isArray( hooks ) ) {
 				return;
 			}
-			const selectedInCategory = hooks.filter( ( h ) =>
-				chosen.has( h )
-			).length;
-			const recommendedInCategory = hooks.filter( ( h ) =>
-				RECOMMENDED_HOOKS.has( h )
-			).length;
 			const bulk = selectable( hooks );
 			counts[ category ] = {
 				selectable: bulk.length,
 				selectableSelected: bulk.filter( ( h ) => chosen.has( h ) )
 					.length,
-				selected: selectedInCategory,
+				selected: hooks.filter( ( h ) => chosen.has( h ) ).length,
 				total: hooks.length,
-				recommended: recommendedInCategory,
+				recommended: hooks.filter( ( h ) => RECOMMENDED_HOOKS.has( h ) )
+					.length,
 			};
 		} );
 		return counts;
 	}, [ chosen, hooksByCategory, selectable ] );
 
 	/**
-	 * Toggle every non-noisy hook in a category, on unless they are all on.
+	 * Toggle every selectable hook in a category, on unless they are all on.
 	 *
-	 * The whole category toggles, hooks the search hides included, which is
-	 * what keeps the header checkbox agreeing with its own count badge. A
-	 * header is a bulk selection, so it leaves noisy hooks alone.
+	 * A header is a bulk selection, so it leaves noisy hooks alone, and it
+	 * toggles the whole category, hooks the search hides included. Its
+	 * checked and indeterminate states count exactly the hooks it toggles,
+	 * and a category holding none disables it. Its count badge counts every
+	 * chosen hook over all of them, so a noisy hook picked on its own still
+	 * shows on a collapsed category.
 	 *
 	 * @param {string} category Category name.
 	 */
@@ -188,8 +187,9 @@ export default function HookSelectorModal( {
 	}
 
 	const totalSelected = chosen.count;
-	const visibleHooks = getVisibleHooks();
-	const totalVisible = visibleHooks.length;
+	const addable = getSelectableHooks().filter(
+		( hook ) => ! chosen.has( hook )
+	).length;
 	const isFiltered = search.length > 0;
 	const categoryOrder = Object.keys( filteredCategories ).sort();
 
@@ -222,7 +222,7 @@ export default function HookSelectorModal( {
 										'Select Matches (%d)',
 										'newspack-event-logger-nodes'
 									),
-									totalVisible
+									addable
 							  )
 							: __(
 									'Select All',
@@ -296,6 +296,8 @@ export default function HookSelectorModal( {
 					const hooks = filteredCategories[ category ];
 					const description = descriptions[ category ] || '';
 					const counts = categoryCounts[ category ] || {
+						selectable: 0,
+						selectableSelected: 0,
 						selected: 0,
 						total: 0,
 					};
@@ -303,7 +305,8 @@ export default function HookSelectorModal( {
 					const allSelected =
 						counts.selectable > 0 &&
 						counts.selectableSelected === counts.selectable;
-					const someSelected = ! allSelected && counts.selected > 0;
+					const someSelected =
+						! allSelected && counts.selectableSelected > 0;
 
 					return (
 						<div
@@ -330,6 +333,7 @@ export default function HookSelectorModal( {
 								<CheckboxControl
 									checked={ allSelected }
 									indeterminate={ someSelected }
+									disabled={ 0 === counts.selectable }
 									onChange={ () =>
 										toggleCategory( category )
 									}

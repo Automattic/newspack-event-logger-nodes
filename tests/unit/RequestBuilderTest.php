@@ -1333,6 +1333,86 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
+	 * A hook's label under `trace_hooks` names who FIRED it, and a custom
+	 * event's names the work, so neither names the code that ran: both stay
+	 * the enclosing listener's, and the owner their labels name counts no
+	 * time and no call.
+	 */
+	public function test_a_hook_or_custom_event_label_names_no_owner(): void {
+		$record = $this->record_after(
+			[
+				[ 'the_content hook (start)' ],
+				[ '[ruru-3301] Ruru->go @10 (start)' ],
+				[ 'gettext hook (start)', [ 'l' => '[kea-7746] require_once' ] ],
+				[ 'gettext hook (complete)', [ 'duration_ms' => 6.5 ] ],
+				[ 'kakapo_sync (start)', [ 'l' => '[kea-7746] Sync->run' ] ],
+				[ 'kakapo_sync (complete)', [ 'duration_ms' => 1.25 ] ],
+				[ '[ruru-3301] Ruru->go @10 (complete)', [ 'duration_ms' => 10.0 ] ],
+				[ 'the_content hook (complete)', [ 'duration_ms' => 12.25 ] ],
+			],
+			40.0
+		);
+
+		$this->assertEquals(
+			[ 'ruru-3301' => [ 10.0, 1 ], '(unowned)' => [ 2.25, 0 ], '(unmeasured)' => [ 27.75, 0 ] ],
+			$record['owners']
+		);
+	}
+
+	/**
+	 * What a state alone settles is worked out once per builder: two
+	 * requests over the same spans hold one memo entry per distinct state,
+	 * each its `Flame_Tree::span_kind()` and the owner the state names.
+	 */
+	public function test_state_kinds_are_memoized_per_state_across_requests(): void {
+		$rb = new Request_Builder_Node();
+		foreach ( [ 'r-kaka-1', 'r-kaka-2' ] as $rid ) {
+			$this->fill( $rb, 1, $rid, 'process (start)' );
+			$this->fill( $rb, 2, $rid, 'request', [ 'm' => 'GET https://kea.test/kaka' ] );
+			$this->fill( $rb, 3, $rid, 'init hook (start)' );
+			$this->fill( $rb, 4, $rid, '[kea-7746] Init->go @10 (start)' );
+			$this->fill( $rb, 5, $rid, 'sql (start)', [ 'l' => '[core] kaka_q' ] );
+			$this->fill( $rb, 6, $rid, 'sql (complete)', [ 'duration_ms' => 1.5 ] );
+			$this->fill( $rb, 7, $rid, '[kea-7746] Init->go @10 (complete)', [ 'duration_ms' => 2.5 ] );
+			$this->fill( $rb, 8, $rid, 'init hook (complete)', [ 'duration_ms' => 3.5 ] );
+		}
+
+		$this->assertSame(
+			[
+				'init hook'               => [ 'kind' => 'hook', 'owner' => '' ],
+				'[kea-7746] Init->go @10' => [ 'kind' => 'listener', 'owner' => 'kea-7746' ],
+				'sql'                     => [ 'kind' => 'transport', 'owner' => '' ],
+			],
+			( new \ReflectionProperty( Request_Builder_Node::class, 'state_kinds' ) )->getValue( $rb )
+		);
+	}
+
+	/**
+	 * A memo at its cap starts a fresh generation rather than freezing: a
+	 * state first seen past the cap is memoized, alone, after the reset, so a
+	 * hostile state vocabulary costs time, not memory, and hot states return.
+	 */
+	public function test_the_state_kind_memo_resets_at_its_cap(): void {
+		$rb    = new Request_Builder_Node();
+		$cap   = ( new \ReflectionClassConstant( Request_Builder_Node::class, 'MAX_SPAN_KINDS' ) )->getValue();
+		$memo  = new \ReflectionProperty( Request_Builder_Node::class, 'state_kinds' );
+		$memo->setValue( $rb, \array_fill_keys( \array_map( static fn ( int $i ): string => "weka_{$i} hook", \range( 1, $cap ) ), [ 'kind' => 'hook', 'owner' => '' ] ) );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r-weka', 'process (start)' );
+		$this->fill( $rb, 2, 'r-weka', 'request', [ 'm' => 'GET https://kea.test/weka' ] );
+		$this->fill( $rb, 3, 'r-weka', '[ruru-3301] Ruru->go @10 (start)' );
+		$this->fill( $rb, 4, 'r-weka', '[ruru-3301] Ruru->go @10 (complete)', [ 'duration_ms' => 4.75 ] );
+		$this->fill( $rb, 5, 'r-weka', 'process (complete)', [ 'duration_ms' => 9.0, 'status_code' => 200 ] );
+
+		$held = $memo->getValue( $rb );
+		$this->assertCount( 1, $held );
+		$this->assertSame( [ '[ruru-3301] Ruru->go @10' => [ 'kind' => 'listener', 'owner' => 'ruru-3301' ] ], $held );
+		$this->assertEquals( [ 'ruru-3301' => [ 4.75, 1 ], '(unmeasured)' => [ 4.25, 0 ] ], $this->captured_request( $capture )['owners'] );
+	}
+
+	/**
 	 * A Query Monitor timer credits and debits nothing, even when its label
 	 * names an owner, and the query timed inside it is its enclosing span's
 	 * child: here the request's, so it covers the request's own time.

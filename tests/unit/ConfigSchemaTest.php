@@ -123,12 +123,42 @@ class ConfigSchemaTest extends TestCase {
 		$this->assertSame( [ 'pattern' => '/', 'action' => 'log' ], \end( $rules ) );
 	}
 
-	/** A string list keeps the strings its key holds, in order, and nothing else. */
-	public function test_string_list_keeps_the_strings_a_key_holds(): void {
+	/** A string list is the strings its key holds, in order. */
+	public function test_string_list_reads_the_strings_a_key_holds(): void {
 		$dir = $this->make_temp_dir();
-		$this->use_base_dir( $dir, [ 'owner_time_events' => [ 'kea_7746_boot', 7, [ 'kea_nested' ], 'kea_7746_done' ] ] );
+		$this->use_base_dir( $dir, [ 'owner_time_events' => [ 'kea_7746_boot', 'kea_7746_done' ] ] );
 
 		$this->assertSame( [ 'kea_7746_boot', 'kea_7746_done' ], Config::string_list( 'owner_time_events' ) );
+	}
+
+	/** An entry that is not a string is refused, naming the key and its type. */
+	public function test_string_list_refuses_an_entry_that_is_not_a_string(): void {
+		$dir = $this->make_temp_dir();
+		$this->use_base_dir( $dir, [ 'owner_time_events' => [ 'kea_7746_boot', 7746, 'kea_7746_done' ] ] );
+
+		$this->expectException( \UnexpectedValueException::class );
+		$this->expectExceptionMessage( "config key 'owner_time_events' must hold only strings, not int" );
+		Config::string_list( 'owner_time_events' );
+	}
+
+	/** A value that is not a list is refused, naming the key and its type. */
+	public function test_string_list_refuses_a_value_that_is_not_an_array(): void {
+		$dir = $this->make_temp_dir();
+		$this->use_base_dir( $dir, [ 'noisy_log_events' => '^kea_7746' ] );
+
+		$this->expectException( \UnexpectedValueException::class );
+		$this->expectExceptionMessage( "config key 'noisy_log_events' must be a list of strings, not string" );
+		Config::string_list( 'noisy_log_events' );
+	}
+
+	/** A string-keyed map is refused as a value that is not a list. */
+	public function test_string_list_refuses_a_map(): void {
+		$dir = $this->make_temp_dir();
+		$this->use_base_dir( $dir, [ 'owner_time_events' => [ 'boot' => 'kea_7746_boot', 'done' => 'kea_7746_done' ] ] );
+
+		$this->expectException( \UnexpectedValueException::class );
+		$this->expectExceptionMessage( "config key 'owner_time_events' must be a list of strings, not array" );
+		Config::string_list( 'owner_time_events' );
 	}
 
 	/** An undeclared key is refused rather than read as an empty list. */

@@ -34,7 +34,7 @@ use Newspack_Nodes\Config_System\Schema;
 /**
  * The application's Field/Schema declaration.
  *
- * One setting renders as a checkbox: `enable_logging`. Four more keys overlay
+ * One setting renders as a checkbox: `enable_logging`. Six more keys overlay
  * the config file with no settings field at all (`ui: false`): `rules`,
  * `hook_start_priority`, `custom_colors`, `recommended_log_events`,
  * `owner_time_events` and `noisy_log_events`. URL
@@ -106,10 +106,12 @@ class Settings_Schema {
 	];
 
 	/**
-	 * Hook-name patterns the rule editor warns are too noisy to log, in
-	 * `hook_categories.json`'s pattern form. `Config::noisy_hooks()` matches
-	 * them, for `list_hooks`' `noisy` names and the owner-time window list;
-	 * a pattern `Hook_Categorizer::checked_regex()` refuses matches nothing.
+	 * Hook-name patterns too noisy to log in bulk, in `hook_categories.json`'s
+	 * pattern form. The hook picker marks each hook they match, and leaves it
+	 * out of its bulk selections and of the plugin-time lists, while it stays
+	 * selectable alone. `Config::noisy_hooks()` matches them, for
+	 * `list_hooks`' `noisy` names and the owner-time window list; a pattern
+	 * `Hook_Categorizer::checked_regex()` refuses matches nothing.
 	 *
 	 * @var list<string>
 	 */

@@ -48,20 +48,31 @@ describe( 'OwnerTable', () => {
 		unmount();
 	} );
 
-	it( 'heads the ms column per request for an average', () => {
+	it( 'heads the ms and calls columns per request for an average', () => {
 		const { container, unmount } = mount( {
-			owners: ROWS.map( ( { ms, ...row } ) => ( {
+			owners: ROWS.map( ( { ms, calls, ...row } ) => ( {
 				...row,
 				ms_per_request: ms + 1,
+				calls_per_request: calls / 3,
 			} ) ),
 			perRequest: true,
 		} );
-		expect( cells( container )[ 0 ][ 1 ] ).toBe( '188.5ms' );
+		expect( cells( container )[ 0 ] ).toEqual( [
+			'plugin:heron-gallery',
+			'188.5ms',
+			'42.4%',
+			'13.7',
+		] );
 		expect(
 			Array.from( container.querySelectorAll( 'th' ) ).map(
 				( th ) => th.textContent
 			)
-		).toEqual( [ 'Owner', 'ms per request', 'Share', 'Calls' ] );
+		).toEqual( [
+			'Owner',
+			'ms per request',
+			'Share',
+			'Calls per request',
+		] );
 		unmount();
 	} );
 
@@ -78,7 +89,7 @@ describe( 'OwnerTable', () => {
 	it( 'captions what the table measures', () => {
 		const { container, unmount } = mount( { owners: ROWS } );
 		expect( container.textContent ).toContain(
-			'Self time by the code that ran it. Only listeners on significant hooks are attributed; time in an unmarked hook counts toward the enclosing owner.'
+			'Self time by the code that ran it. Listeners on significant hooks, queries and HTTP calls (to the code that asked) and plugin loads are attributed; time in an unmarked hook counts toward the enclosing owner.'
 		);
 		unmount();
 	} );

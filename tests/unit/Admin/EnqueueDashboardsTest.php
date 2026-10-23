@@ -294,6 +294,77 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			);
 		}
 
+		/** What the `admin_notices` listeners print. */
+		private function printed_notices(): string {
+			\ob_start();
+			\do_action( 'admin_notices' );
+			return (string) \ob_get_clean();
+		}
+
+		/**
+		 * A window list whose key holds no list of strings publishes `[]`,
+		 * and an admin notice names the key and the reason; the page and the
+		 * other lists still load.
+		 */
+		public function test_a_malformed_window_list_publishes_empty_and_names_its_key(): void {
+			$this->use_base_dir( $this->make_temp_dir(), [ 'owner_time_events' => [ 'boot' => 'kea_7746_boot' ] ] );
+			$_GET = [ 'page' => 'newspack-event-logger-nodes' ];
+			try {
+				$this->dispatch( 'nodes_page_newspack-event-logger-nodes' );
+				$notices = $this->printed_notices();
+			} finally {
+				unset( $GLOBALS['_wp_actions']['admin_notices'] );
+			}
+
+			$printed = $this->printed_for( 'newspack-nodes-settings' );
+			$this->assertStringContainsString( 'window.newspackNodesOwnerTimeEvents = [];', $printed );
+			$this->assertStringContainsString( 'window.newspackNodesRecommendedHooks = ["', $printed );
+			$this->assertStringContainsString( 'notice notice-error', $notices );
+			$this->assertStringContainsString( 'owner_time_events', $notices );
+			$this->assertStringContainsString( 'must be a list of strings, not array', $notices );
+		}
+
+		/**
+		 * Only a refused value is caught: any other failure reading the list,
+		 * an undeclared key among them, still fails the page.
+		 */
+		public function test_a_window_list_read_failing_otherwise_is_not_caught(): void {
+			$this->expectException( \RuntimeException::class );
+			$this->expectExceptionMessage( 'unknown config key kea_7746_list' );
+			\newspack_event_logger_nodes_window_list(
+				'kea_7746_list',
+				static fn (): array => throw new \RuntimeException( 'unknown config key kea_7746_list' )
+			);
+		}
+
+		/**
+		 * A malformed `noisy_log_events` reads as no noisy names: the owner
+		 * list is published whole, and the notice names that key.
+		 */
+		public function test_a_malformed_noisy_list_publishes_the_owner_list_whole(): void {
+			$this->use_base_dir(
+				$this->make_temp_dir(),
+				[
+					'owner_time_events' => [ 'kea_7746_boot', 'ruru_noisy_tick' ],
+					'noisy_log_events'  => '^ruru_noisy',
+				]
+			);
+			$_GET = [ 'page' => 'event-logger-overview' ];
+			try {
+				$this->dispatch( 'nodes_page_event-logger-overview' );
+				$notices = $this->printed_notices();
+			} finally {
+				unset( $GLOBALS['_wp_actions']['admin_notices'] );
+			}
+
+			$this->assertStringContainsString(
+				'window.newspackNodesOwnerTimeEvents = ["kea_7746_boot","ruru_noisy_tick"];',
+				$this->printed_for( 'newspack-nodes-overview' )
+			);
+			$this->assertStringContainsString( 'noisy_log_events', $notices );
+			$this->assertStringContainsString( 'must be a list of strings, not string', $notices );
+		}
+
 		#[DataProvider( 'trees_without_pickers' )]
 		public function test_trees_without_pickers_carry_neither_list( string $page, string $tree ): void {
 			$_GET = [ 'page' => $page ];

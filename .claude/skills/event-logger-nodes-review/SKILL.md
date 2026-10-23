@@ -195,7 +195,7 @@ A span is named for its CALLER, never for its host or its table. Both pairs set 
 
 ### 20. Settings go through `Settings_Schema`
 
-Settings live in ONE declarative `Settings_Schema` (`includes/class-settings-schema.php`), one `Field` per setting, from which the Config overlay keys, the admin register-and-render loop, and worker-restart classification (`restart_for()`) all derive. Five application keys are declared there with their defaults: one rendered checkbox (`enable_logging`) and four overlay-only (`rules`, `hook_start_priority`, `custom_colors`, `recommended_log_events`). `allowed_users` is the substrate's key: the admin surface inherits it through `Capabilities::can( MANAGE )`.
+Settings live in ONE declarative `Settings_Schema` (`includes/class-settings-schema.php`), one `Field` per setting, from which the Config overlay keys, the admin register-and-render loop, and worker-restart classification (`restart_for()`) all derive. Seven application keys are declared there with their defaults: one rendered checkbox (`enable_logging`) and six overlay-only (`rules`, `hook_start_priority`, `custom_colors`, `recommended_log_events`, `owner_time_events`, `noisy_log_events`). `allowed_users` is the substrate's key: the admin surface inherits it through `Capabilities::can( MANAGE )`.
 
 A diff adding a setting adds a `Field` with its `restart:` key, never a parallel `Admin` array, and leaves reset and delete-on-blank to the substrate's `Config_System\Reset_Gate`.
 
