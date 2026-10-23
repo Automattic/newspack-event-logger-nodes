@@ -367,7 +367,10 @@ export default function UrlDetailView( {
 
 	return (
 		// The picker root: a body click outside a row asks about the URL.
-		<div data-ask={ urlHash ? `url:${ urlHash }` : undefined }>
+		<div
+			className="event-logger-sections"
+			data-ask={ urlHash ? `url:${ urlHash }` : undefined }
+		>
 			{ note && (
 				<p className="newspack-nodes-banner is-info" role="status">
 					{ note }
@@ -413,7 +416,7 @@ export default function UrlDetailView( {
 
 			{ urlDetail.aggregate_flame &&
 				urlDetail.aggregate_flame.children?.length > 0 && (
-					<div style={ { marginTop: '20px' } }>
+					<div>
 						<RequestTrace
 							flameData={ urlDetail.aggregate_flame }
 							order={ flameOrder }

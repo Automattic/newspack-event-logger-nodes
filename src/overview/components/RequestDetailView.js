@@ -29,7 +29,6 @@ import FindingList from './FindingList';
 import { errorStatus } from '../../components/errorStatus';
 
 /** Vertical rhythm between the detail's sections. */
-const SECTION_STYLE = { marginBottom: '20px' };
 
 /**
  * `requestDetail` is the durable request body `record_of()` writes and
@@ -89,10 +88,10 @@ export default function RequestDetailView( {
 	return (
 		// The picker chain: DOM nesting says which request this belongs to.
 		<div
-			className="event-logger-request-detail"
+			className="event-logger-request-detail event-logger-sections"
 			data-ask={ rid ? `request:${ rid }` : undefined }
 		>
-			<div className="event-logger-request-info" style={ SECTION_STYLE }>
+			<div className="event-logger-request-info">
 				<RequestSummary
 					request={ requestDetail }
 					errorRow={ errorRow }
@@ -101,7 +100,7 @@ export default function RequestDetailView( {
 
 			{ /* What is wrong, worst first: the answer before the evidence. */ }
 			{ hasFindings && (
-				<div style={ SECTION_STYLE }>
+				<div>
 					<h3 className="newspack-nodes-section-heading">
 						{ __( 'Findings', 'newspack-event-logger-nodes' ) }
 					</h3>
@@ -129,7 +128,7 @@ export default function RequestDetailView( {
 
 			{ /* Request Flame Graph (built by Flame_Builder_Node, read here) */ }
 			{ hasFlame && (
-				<div style={ SECTION_STYLE }>
+				<div>
 					<RequestTrace
 						flameData={ flameData }
 						order={ flameOrder }
@@ -145,7 +144,7 @@ export default function RequestDetailView( {
 
 			{ /* Profile Breakdown */ }
 			{ hasProfiles && (
-				<div style={ SECTION_STYLE }>
+				<div>
 					<RequestProfile
 						profiles={ requestDetail.profiles }
 						totalMs={ requestDetail.duration_ms || 0 }

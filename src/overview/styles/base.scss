@@ -14,10 +14,17 @@
 	align-items: baseline;
 }
 
-// The overview card stacks the aggregate chart clear of the stat row above it;
-// the same panel inside the URL modal opens the body and needs no gap.
-.event-logger-performance-overview .event-logger-aggregate-chart {
-	margin-top: 20px;
+// One rhythm for every section a view stacks: the gap spaces them, and no
+// section brings a margin of its own.
+.event-logger-sections {
+	display: flex;
+	flex-direction: column;
+	gap: base.$space-xl + base.$space-sm;
+
+	> * {
+		margin-block: 0;
+		min-width: 0;
+	}
 }
 
 // The chart's filter box shares the select row and takes what it leaves.

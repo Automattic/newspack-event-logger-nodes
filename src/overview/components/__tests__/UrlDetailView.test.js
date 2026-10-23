@@ -1181,6 +1181,33 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
+	it( 'stacks its sections on one gap, none carrying a margin of its own', () => {
+		const { container, unmount } = mount( {
+			urlDetail: {
+				...baseUrlDetail,
+				aggregate_owners: [
+					{
+						owner: 'kea-7302',
+						ms_per_request: 21.5,
+						share: 0.5,
+						calls_per_request: 1.5,
+					},
+				],
+			},
+		} );
+		const stack = container.querySelector( '.event-logger-sections' );
+		expect( stack ).not.toBeNull();
+		const owner = [ ...stack.children ].find( ( child ) =>
+			child.textContent.includes( 'Time by owner' )
+		);
+		expect( owner ).toBeDefined();
+		for ( const child of stack.children ) {
+			expect( child.style.marginTop ).toBe( '' );
+			expect( child.style.marginBottom ).toBe( '' );
+		}
+		unmount();
+	} );
+
 	it( 'mounts the owner table per request from aggregate_owners', () => {
 		const { container, unmount } = mount( {
 			urlDetail: {

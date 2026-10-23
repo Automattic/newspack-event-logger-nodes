@@ -452,10 +452,7 @@ export function ProfileWithCaption( {
 } ) {
 	const headingId = useId();
 	return (
-		<div
-			className="event-logger-request-profile"
-			style={ { marginTop: '20px' } }
-		>
+		<div className="event-logger-request-profile">
 			{ heading && <h3 id={ headingId }>{ heading }</h3> }
 			<RequestProfile
 				profiles={ profiles }

@@ -792,6 +792,30 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
+	it( 'stacks its sections on one gap, none carrying a margin of its own', () => {
+		const { container, unmount } = mount( {
+			owners: [
+				{
+					owner: 'kea-7303',
+					ms_per_request: 11.5,
+					share: 0.4,
+					calls_per_request: 3.5,
+				},
+			],
+		} );
+		const stack = container.querySelector( '.event-logger-sections' );
+		expect( stack ).not.toBeNull();
+		const owner = [ ...stack.children ].find( ( child ) =>
+			child.textContent.includes( 'Time by owner' )
+		);
+		expect( owner ).toBeDefined();
+		for ( const child of stack.children ) {
+			expect( child.style.marginTop ).toBe( '' );
+			expect( child.style.marginBottom ).toBe( '' );
+		}
+		unmount();
+	} );
+
 	it( "mounts the owner table from the overview's owners", () => {
 		const { container, unmount } = mount( {
 			owners: [
