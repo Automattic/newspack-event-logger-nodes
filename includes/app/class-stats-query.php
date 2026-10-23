@@ -196,9 +196,11 @@ final class Stats_Query {
 
 	/**
 	 * A row's server, read plainly, for a table whose key or an index leads
-	 * with `server_id` and then `bucket`, so a server filter seeks inside the
-	 * window. `arm()` reads `SERVER_JOIN` in its place under a filter naming
-	 * a URL field, whose url-led index seeks fewer rows than the server's.
+	 * with `server_id`, so a server filter seeks that server's rows: inside
+	 * the window where `bucket` follows it, as on `timings_site`, and the
+	 * server's whole window on `category_window`. `arm()` reads `SERVER_JOIN`
+	 * in its place under a filter naming a URL field, whose url-led index
+	 * seeks fewer rows than the server's.
 	 */
 	private const SEEKING_SERVER_JOIN = 'JOIN %1$s.servers AS sv ON sv.id = t.server_id';
 
@@ -430,12 +432,13 @@ final class Stats_Query {
 		'category_window'    => [
 			'range'    => [ 't.last_bucket', 1 ],
 			'fields'   => [
+				'server'   => 'sv.name',
 				'category' => 'c.name',
 				'entry'    => 'e.name',
 				'listener' => 't.listener',
 				'worker'   => 't.worker',
 			],
-			'joins'    => self::TIMING_JOINS,
+			'joins'    => [ 'server' => self::SEEKING_SERVER_JOIN ] + self::TIMING_JOINS,
 			'inputs'   => self::TIMING_INPUTS,
 			'measures' => self::TIMING_MEASURES,
 		],

@@ -26,7 +26,7 @@ final class FlameFactsTest extends TestCase {
 		$opened = \array_merge( ...$this->facts( "SELECT name FROM sqlite_master WHERE type = 'table'" ) );
 
 		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_expiry', 'urls_fts', 'servers', 'ja4s', 'froms', 'categories', 'entries', 'owners', 'owner_timings', 'owner_timings_site', 'pages', 'timings_page' ], $opened ) ) );
-		$this->assertSame( [ [ 10 ] ], $this->facts( 'PRAGMA user_version' ) );
+		$this->assertSame( [ [ 11 ] ], $this->facts( 'PRAGMA user_version' ) );
 		$this->assertSame( [ [ 'requests_server' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'requests_server'" ) );
 		$this->assertSame( [ [ 'timings_site_bucket' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'timings_site_bucket'" ) );
 	}
@@ -39,7 +39,6 @@ final class FlameFactsTest extends TestCase {
 	public function test_v10_declares_the_page_rollup_and_a_covering_url_index(): void {
 		$tables = Flame_Facts_Row_Schema::tables();
 
-		$this->assertSame( 10, Flame_Facts_Row_Schema::version() );
 		$this->assertSame( 'pages', Flame_Facts_Row_Schema::NAMED_BY['page_id'] );
 		$this->assertSame( [ 'id', 'page', 'page_hash' ], \array_keys( $tables['pages']['columns'] ) );
 		$this->assertSame( [ 'page_hash' ], $tables['pages']['key'] );
@@ -77,12 +76,24 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( [ 'server_id', 'bucket', 'worker', 'category_id', 'entry_id' ], $tables['timings_site']['key'] );
 		$this->assertSame( [ 'bucket' ], $tables['timings_site']['indexes']['timings_site_bucket'] );
 		$this->assertArrayNotHasKey( 'timings_site_server_id', $tables['timings_site']['indexes'], 'the key leads with server_id' );
-		$this->assertSame( [ 'category_id', 'entry_id', 'listener', 'worker', 'ms', 'calls', 'requests', 'last_bucket' ], \array_keys( $tables['category_window']['columns'] ) );
-		$this->assertSame( [ 'category_id', 'entry_id', 'worker' ], $tables['category_window']['key'] );
 		$this->assertSame( [ 'ms' => 'sum', 'calls' => 'sum', 'requests' => 'sum', 'last_bucket' => 'max' ], $tables['category_window']['add'] );
 		$this->assertArrayNotHasKey( 'window_watermark', $tables, 'the newest expiry is the watermark' );
 		$this->assertSame( [ 'bucket' ], $tables['window_expiry']['key'] );
 		$this->assertArrayNotHasKey( 'requests_bucket', $tables['requests']['indexes'] );
+	}
+
+	/**
+	 * The window keeps each server's sums apart, its key led by the server
+	 * as `timings_site`'s is, so a server's leaderboard seeks its own rows.
+	 */
+	public function test_v11_keys_the_category_window_by_server(): void {
+		$tables = Flame_Facts_Row_Schema::tables();
+
+		$this->assertSame( 11, Flame_Facts_Row_Schema::version() );
+		$this->assertSame( [ 'server_id', 'category_id', 'entry_id', 'listener', 'worker', 'ms', 'calls', 'requests', 'last_bucket' ], \array_keys( $tables['category_window']['columns'] ) );
+		$this->assertSame( [ 'server_id', 'category_id', 'entry_id', 'worker' ], $tables['category_window']['key'] );
+		$this->assertContains( [ 'category_window', 'server_id', 'id' ], $tables['servers']['retained_by'] );
+		$this->assertArrayNotHasKey( 'category_window_server_id', $tables['category_window']['indexes'], 'the key leads with server_id' );
 	}
 
 	/**
@@ -121,7 +132,7 @@ final class FlameFactsTest extends TestCase {
 		$tables = Flame_Facts_Row_Schema::tables();
 
 		$this->assertSame( [ [ 'requests', 'url_id', 'id' ], [ 'timings', 'url_id', 'id' ], [ 'owner_timings', 'url_id', 'id' ] ], $tables['urls']['retained_by'] );
-		$this->assertSame( [ [ 'urls', 'server_id', 'id' ], [ 'requests', 'server_id', 'id' ], [ 'timings', 'server_id', 'id' ], [ 'timings_site', 'server_id', 'id' ], [ 'timings_page', 'server_id', 'id' ], [ 'owner_timings', 'server_id', 'id' ], [ 'owner_timings_site', 'server_id', 'id' ], [ 'requests_hourly', 'server_id', 'id' ] ], $tables['servers']['retained_by'] );
+		$this->assertSame( [ [ 'urls', 'server_id', 'id' ], [ 'requests', 'server_id', 'id' ], [ 'timings', 'server_id', 'id' ], [ 'timings_site', 'server_id', 'id' ], [ 'timings_page', 'server_id', 'id' ], [ 'owner_timings', 'server_id', 'id' ], [ 'owner_timings_site', 'server_id', 'id' ], [ 'category_window', 'server_id', 'id' ], [ 'requests_hourly', 'server_id', 'id' ] ], $tables['servers']['retained_by'] );
 		$this->assertSame( [ [ 'timings', 'entry_id', 'id' ], [ 'timings_site', 'entry_id', 'id' ], [ 'timings_page', 'entry_id', 'id' ], [ 'category_window', 'entry_id', 'id' ] ], $tables['entries']['retained_by'] );
 		foreach ( $tables as $table => $spec ) {
 			foreach ( \array_intersect_key( Flame_Facts_Row_Schema::NAMED_BY, $spec['columns'] ) as $column => $named ) {

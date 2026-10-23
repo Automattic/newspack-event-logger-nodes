@@ -265,7 +265,8 @@ trait FactsSeeder {
 	}
 
 	/**
-	 * A non-worker `category_window` row of a category's own total.
+	 * A non-worker `category_window` row of a category's own total, filed
+	 * under the seed server.
 	 *
 	 * @param string $category    The category, as text.
 	 * @param float  $ms          Its summed ms.
@@ -276,6 +277,7 @@ trait FactsSeeder {
 	 */
 	protected static function window_row( string $category, float $ms, int $calls, int $requests, int $last_bucket ): array {
 		return [
+			'server'      => self::$seed_server,
 			'category'    => $category,
 			'entry'       => '',
 			'listener'    => 0,
