@@ -338,6 +338,31 @@ export default function RuleEditModal( {
 								</span>
 							</div>
 
+							<div className="rule-edit-plugin-time-field">
+								<BaseControl.VisualLabel className="rule-edit-field-label">
+									{ __(
+										'Plugin time',
+										'newspack-event-logger-nodes'
+									) }
+								</BaseControl.VisualLabel>
+								<button
+									type="button"
+									className="button"
+									onClick={ measurePluginTime }
+								>
+									{ __(
+										'Measure plugin time',
+										'newspack-event-logger-nodes'
+									) }
+								</button>
+								<span className="rule-edit-field-note newspack-nodes-status">
+									{ __(
+										'Adds the lifecycle hooks, sql and http',
+										'newspack-event-logger-nodes'
+									) }
+								</span>
+							</div>
+
 							<BaseControl
 								{ ...significantBase.baseControlProps }
 								id={ significantBase.baseControlProps.id }
@@ -354,16 +379,6 @@ export default function RuleEditModal( {
 									onChange={ setSignificant }
 								/>
 							</BaseControl>
-							<button
-								type="button"
-								className="button"
-								onClick={ measurePluginTime }
-							>
-								{ __(
-									'Measure plugin time',
-									'newspack-event-logger-nodes'
-								) }
-							</button>
 
 							<div className="rule-edit-threshold-row">
 								<TextControl
