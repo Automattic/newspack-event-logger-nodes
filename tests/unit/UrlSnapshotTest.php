@@ -430,6 +430,41 @@ final class UrlSnapshotTest extends TestCase {
 	}
 
 	/**
+	 * With every partition's watermark at the window's start, the group step
+	 * reads the URL window, sorting nothing, and publishes the `urls` rows a
+	 * build from `requests` publishes.
+	 */
+	public function test_the_snapshot_groups_from_the_url_window(): void {
+		$this->seed_parity_traffic();
+		$urls = static function (): array {
+			Url_Snapshot::publish( self::NOW, self::TTL, static fn (): array => [] );
+			$db = Row_Table_Node::open_snapshot( Url_Snapshot::NAME );
+			self::assertInstanceOf( Row_Reader::class, $db );
+			return $db->rows( 'SELECT u.*, s.name FROM urls AS u JOIN servers AS s ON s.id = u.server_id ORDER BY u.rowid', [] );
+		};
+		$from_requests = $urls();
+		foreach ( [ 0, 1, 3 ] as $partition ) {
+			$this->seed_url_window( $partition, Bucket::id( self::NOW ) - Bucket::window() );
+		}
+
+		$grouped = Row_Table_Node::build(
+			Flame_Facts_Row_Schema::class,
+			'urls-window-plan-7114',
+			static function ( Row_Reader $db ): array {
+				[ [ $sql, $binds ] ] = ( new \ReflectionMethod( Url_Snapshot::class, 'url_steps' ) )->invoke( null, $db, self::NOW )[ Flame_Tree::SNAPSHOT_GROUP ];
+				return [ $sql, self::plan_text( $db, $sql, $binds ) ];
+			}
+		);
+
+		$this->assertIsArray( $grouped );
+		$this->assertStringContainsString( '.urls_window AS t', $grouped[0] );
+		$this->assertStringNotContainsString( '.requests AS t', $grouped[0] );
+		$this->assertStringNotContainsString( 'USE TEMP B-TREE FOR ORDER BY', $grouped[1] );
+		$this->assertCount( 8, $from_requests );
+		$this->assertSame( $from_requests, $urls() );
+	}
+
+	/**
 	 * The plan of the statement `$method` makes, in a scratch build over
 	 * `seed_page_traffic()` that has run the URL steps and `$before`.
 	 *

@@ -7,8 +7,9 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 ## Unreleased
 
 - **The stats schema is version 11, and a site refills its stats once.** The
-  `flame-facts` Row_Table gains `pages` and `timings_page`, its
-  `requests_url` index widens, and `category_window` is keyed by server. A
+  `flame-facts` Row_Table gains `pages`, `timings_page` and `urls_window`,
+  its `requests_url` index widens, and `category_window` is keyed by
+  server. A
   builder that opens a version 9 or 10 file discards it and starts empty,
   so every chart and table reads only what the builder has written since.
   Refill them from the retained flames as the version 9 step below does:
@@ -16,7 +17,12 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `wp nodes start`. A `query` naming a page and no URL now answers `table`
   `timings_page` rather than `timings`, and a whole-window `timings` query
   grouped or filtered by `server` answers `category_window` rather than
-  `timings_site`.
+  `timings_site`. A whole-window `requests` query naming only `url`,
+  `page`, `server` and `worker` and measuring only what a URL row of the
+  `urls` reply carries answers `table` `urls_window` rather than
+  `requests`, with the same rows, unless `requests_hourly` answers it, and
+  only while every partition's window has expired through the bucket
+  before the range and holds no row past its end.
 - **The stats schema is version 9, and a site refills its stats once.** The
   `flame-facts` Row_Table gains `owners`, `owner_timings` and
   `owner_timings_site`. A builder that opens a version 8 file discards it
