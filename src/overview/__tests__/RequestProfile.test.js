@@ -367,9 +367,9 @@ describe( 'RequestProfile', () => {
 			} )
 		);
 		// Shared status chrome owns the expand caret.
-		const caret = Array.from( container.querySelectorAll( 'span' ) ).find(
-			( s ) => s.textContent === '▶' || s.textContent === '▼'
-		);
+		const caret = Array.from(
+			container.querySelectorAll( 'tbody span' )
+		).find( ( s ) => s.textContent === '▶' || s.textContent === '▼' );
 		expect( caret.classList.contains( 'newspack-nodes-status' ) ).toBe(
 			true
 		);
@@ -469,6 +469,69 @@ describe( 'RequestProfile', () => {
 		// The three trailing entries are summarized, not drawn.
 		expect( container.textContent ).toContain( 'and 3 more' );
 		expect( container.textContent ).not.toContain( 'cb12' );
+		unmount();
+	} );
+} );
+
+describe( 'RequestProfile sorting', () => {
+	const PROFILES = {
+		'kea-7501': { count: 9, time: 10 },
+		'kea-7502': { count: 1, time: 50 },
+		'kea-7503': { count: 4, time: 30 },
+	};
+	const names = ( container ) =>
+		[ ...container.querySelectorAll( 'tbody > tr' ) ].map( ( tr ) =>
+			tr.querySelector( 'td' ).textContent.trim()
+		);
+	const header = ( container, label ) =>
+		[ ...container.querySelectorAll( 'thead button' ) ].find( ( b ) =>
+			b.textContent.startsWith( label )
+		);
+	const click = ( el ) =>
+		act( () => {
+			el.dispatchEvent(
+				new window.MouseEvent( 'click', { bubbles: true } )
+			);
+		} );
+	const swatch = ( container, name ) =>
+		[ ...container.querySelectorAll( 'tbody > tr' ) ]
+			.find( ( tr ) => tr.textContent.startsWith( name ) )
+			.querySelector( '.event-logger-profile-swatch' ).style.background;
+
+	it( 'lists longest first, and each header sorts by its column, flipping on a second click', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: PROFILES,
+				totalMs: 100,
+			} )
+		);
+		expect( names( container ) ).toEqual( [
+			'kea-7502',
+			'kea-7503',
+			'kea-7501',
+		] );
+		const colour = swatch( container, 'kea-7502' );
+
+		click( header( container, 'Count' ) );
+		expect( names( container ) ).toEqual( [
+			'kea-7501',
+			'kea-7503',
+			'kea-7502',
+		] );
+		click( header( container, 'Count' ) );
+		expect( names( container ) ).toEqual( [
+			'kea-7502',
+			'kea-7503',
+			'kea-7501',
+		] );
+		click( header( container, 'Category' ) );
+		expect( names( container ) ).toEqual( [
+			'kea-7503',
+			'kea-7502',
+			'kea-7501',
+		] );
+		// A category keeps the colour its bar segment has, wherever it sorts.
+		expect( swatch( container, 'kea-7502' ) ).toBe( colour );
 		unmount();
 	} );
 } );

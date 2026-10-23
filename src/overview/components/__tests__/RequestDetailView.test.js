@@ -20,6 +20,7 @@ jest.mock( '../../RequestProfile', () => ( {
 	__esModule: true,
 	default: () => 'REQUEST_PROFILE',
 	profileOrder: jest.requireActual( '../../RequestProfile' ).profileOrder,
+	ShareBar: jest.requireActual( '../../RequestProfile' ).ShareBar,
 } ) );
 jest.mock( '../LogEntriesTable', () => ( {
 	__esModule: true,

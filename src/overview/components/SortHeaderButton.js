@@ -5,6 +5,8 @@
  * onto a line of its own beneath the label; its gap is the caret's margin.
  */
 
+import { useState, useCallback } from '@wordpress/element';
+
 /** The caret each sort direction draws. */
 const CARETS = { asc: '▲', desc: '▼' };
 
@@ -46,4 +48,42 @@ export default function SortHeaderButton( {
 			) }
 		</button>
 	);
+}
+
+/**
+ * A table's own column sort, as the overview's URL tables sort: a second
+ * click on the sorted column flips it, and a new column sorts descending.
+ *
+ * `sorted` reads each row's value through `valueOf`, comparing strings by
+ * locale and anything else as a number; equal rows keep their order.
+ *
+ * @param {string} field The column the rows first sort by.
+ * @return {{sorted: (rows: Array<Object>, valueOf: (row: Object, field: string) => (string|number)) => Array<Object>, dirOf: (field: string) => ?string, onSort: (field: string) => void}} The sort.
+ */
+export function useColumnSort( field ) {
+	const [ sort, setSort ] = useState( { field, dir: 'desc' } );
+	const onSort = useCallback(
+		( next ) =>
+			setSort( ( current ) =>
+				current.field === next
+					? {
+							field: next,
+							dir: 'desc' === current.dir ? 'asc' : 'desc',
+					  }
+					: { field: next, dir: 'desc' }
+			),
+		[]
+	);
+	const dirOf = ( name ) => ( sort.field === name ? sort.dir : null );
+	const sorted = ( rows, valueOf ) => {
+		const sign = 'asc' === sort.dir ? 1 : -1;
+		return [ ...rows ].sort( ( a, b ) => {
+			const x = valueOf( a, sort.field );
+			const y = valueOf( b, sort.field );
+			return (
+				sign * ( 'string' === typeof x ? x.localeCompare( y ) : x - y )
+			);
+		} );
+	};
+	return { sorted, dirOf, onSort };
 }

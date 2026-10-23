@@ -19,6 +19,7 @@ import {
 	phosphorColor,
 } from '@newspack-nodes/shared/utils/formatUtils';
 
+import SortHeaderButton, { useColumnSort } from './components/SortHeaderButton';
 import './styles/request-profile.scss';
 
 /**
@@ -165,6 +166,56 @@ export const profileOrder = ( profiles ) =>
 	sortProfiles( profiles ).map( ( p ) => p.state );
 
 /**
+ * A row of segments, each as wide as its share, coloured by its caller.
+ *
+ * A segment that takes `onSelect` is a button, reached by click, Enter or
+ * Space. A bar with no such segment only pictures numbers its table also
+ * carries, so it is hidden from a screen reader.
+ *
+ * @param {Object}                                                                                   props          Component props.
+ * @param {Array<{key: string, share: number, title: string, color: string, onSelect?: () => void}>} props.segments Segments in drawing order; `share` is a percentage.
+ * @return {import('react').ReactElement} The bar.
+ */
+export function ShareBar( { segments } ) {
+	const decorative = segments.every( ( { onSelect } ) => ! onSelect );
+	return (
+		<div
+			className="event-logger-profile-bar"
+			aria-hidden={ decorative ? 'true' : undefined }
+		>
+			{ segments.map( ( { key, share, title, color, onSelect } ) =>
+				onSelect ? (
+					<div
+						key={ key }
+						role="button"
+						tabIndex={ 0 }
+						title={ title }
+						style={ {
+							width: `${ share }%`,
+							background: color,
+							cursor: 'pointer',
+						} }
+						onClick={ onSelect }
+						onKeyDown={ ( e ) => {
+							if ( e.key === 'Enter' || e.key === ' ' ) {
+								e.preventDefault();
+								onSelect();
+							}
+						} }
+					/>
+				) : (
+					<div
+						key={ key }
+						title={ title }
+						style={ { width: `${ share }%`, background: color } }
+					/>
+				)
+			) }
+		</div>
+	);
+}
+
+/**
  * The time breakdown for one request, or for an average of many.
  *
  * Every percentage divides by `totalMs`, the wall clock, rather than by the
@@ -216,12 +267,29 @@ export default function RequestProfile( {
 			.reduce( ( sum, p ) => sum + p.time, 0 );
 	}, [ sortedProfiles, totalProfiledTime ] );
 
-	const visibleProfiles = useMemo( () => {
-		if ( showAll || sortedProfiles.length <= DEFAULT_VISIBLE_COUNT ) {
-			return sortedProfiles;
-		}
-		return sortedProfiles.slice( 0, DEFAULT_VISIBLE_COUNT );
-	}, [ sortedProfiles, showAll ] );
+	const { sorted, dirOf, onSort } = useColumnSort( 'time' );
+
+	// Colours follow the time ranking, so a sorted row keeps its segment's.
+	const colourOf = useMemo(
+		() =>
+			new Map(
+				sortedProfiles.map( ( { state }, index ) => [
+					state,
+					phosphorColor( index, getStateColor( state ) ),
+				] )
+			),
+		[ sortedProfiles ]
+	);
+
+	const tableRows = sorted( sortedProfiles, ( row, field ) =>
+		'category' === field
+			? row.state
+			: row[ 'count' === field ? 'count' : 'time' ]
+	);
+	const visibleProfiles =
+		showAll || tableRows.length <= DEFAULT_VISIBLE_COUNT
+			? tableRows
+			: tableRows.slice( 0, DEFAULT_VISIBLE_COUNT );
 
 	const hiddenCount = sortedProfiles.length - DEFAULT_VISIBLE_COUNT;
 	const hasHiddenProfiles = hiddenCount > 0;
@@ -244,39 +312,25 @@ export default function RequestProfile( {
 		<div className="event-logger-request-profile">
 			{ title && <h3 id={ headingId }>{ title }</h3> }
 
-			<div className="event-logger-profile-bar">
-				{ sortedProfiles.map( ( { state, time }, index ) => {
+			<ShareBar
+				segments={ sortedProfiles.flatMap( ( { state, time } ) => {
 					if ( isOverlayCategory( state ) ) {
-						return null;
+						return [];
 					}
 					const share = shareOf( time );
-					return (
-						<div
-							key={ state }
-							role="button"
-							tabIndex={ 0 }
-							title={ `${ state }: ${ formatDuration(
+					return [
+						{
+							key: state,
+							share: share ?? 0,
+							title: `${ state }: ${ formatDuration(
 								time
-							) } (${ shareText( share ) })` }
-							style={ {
-								width: `${ share ?? 0 }%`,
-								background: phosphorColor(
-									index,
-									getStateColor( state )
-								),
-								cursor: 'pointer',
-							} }
-							onClick={ () => toggleExpand( state ) }
-							onKeyDown={ ( e ) => {
-								if ( e.key === 'Enter' || e.key === ' ' ) {
-									e.preventDefault();
-									toggleExpand( state );
-								}
-							} }
-						/>
-					);
+							) } (${ shareText( share ) })`,
+							color: colourOf.get( state ),
+							onSelect: () => toggleExpand( state ),
+						},
+					];
 				} ) }
-			</div>
+			/>
 
 			<table
 				className="newspack-nodes-table newspack-nodes-table--undivided"
@@ -284,26 +338,44 @@ export default function RequestProfile( {
 			>
 				<thead>
 					<tr>
-						<th scope="col">
-							{ __( 'Category', 'newspack-event-logger-nodes' ) }
-						</th>
-						<th scope="col">
-							{ __( 'Time', 'newspack-event-logger-nodes' ) }
-						</th>
-						<th scope="col">
-							{ __(
-								'% of Total',
-								'newspack-event-logger-nodes'
-							) }
-						</th>
-						<th scope="col">
-							{ __( 'Count', 'newspack-event-logger-nodes' ) }
-						</th>
+						{ [
+							[
+								'category',
+								__( 'Category', 'newspack-event-logger-nodes' ),
+							],
+							[
+								'time',
+								__( 'Time', 'newspack-event-logger-nodes' ),
+							],
+							[
+								'share',
+								__(
+									'% of Total',
+									'newspack-event-logger-nodes'
+								),
+							],
+							[
+								'count',
+								__( 'Count', 'newspack-event-logger-nodes' ),
+							],
+						].map( ( [ field, label ] ) => (
+							<th scope="col" key={ field }>
+								<SortHeaderButton
+									field={ field }
+									label={ label }
+									dir={ dirOf( field ) }
+									variant={
+										'category' === field ? '' : 'numeric'
+									}
+									onSort={ onSort }
+								/>
+							</th>
+						) ) }
 					</tr>
 				</thead>
 				<tbody>
 					{ visibleProfiles.map(
-						( { state, count, time, entries }, index ) => {
+						( { state, count, time, entries } ) => {
 							const share = shareOf( time );
 							const hasEntries =
 								Object.keys( entries ).length > 0;
@@ -330,10 +402,8 @@ export default function RequestProfile( {
 											<span
 												className="event-logger-profile-swatch"
 												style={ {
-													background: phosphorColor(
-														index,
-														getStateColor( state )
-													),
+													background:
+														colourOf.get( state ),
 												} }
 											/>
 											{ state }
