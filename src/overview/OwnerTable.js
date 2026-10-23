@@ -43,9 +43,10 @@ const ownerColor = ( owner ) => {
  * @param {Object}                                                                                                                   props              Component props.
  * @param {?Array<{owner: string, ms?: number, ms_per_request?: number, share: number, calls?: number, calls_per_request?: number}>} props.owners       Rows, longest first; `share` is a fraction.
  * @param {boolean}                                                                                                                  [props.perRequest] True when rows carry `ms_per_request` and `calls_per_request` in place of `ms` and `calls`.
+ * @param {{ms: ?number, share: ?number, caption: string}}                                                                           [props.summary]    A total and caption to close the table with in place of its own, as a breakdown above it hands down; a null figure reads `—`.
  * @return {import('react').ReactElement|null} The table, or null without rows.
  */
-export default function OwnerTable( { owners, perRequest = false } ) {
+export default function OwnerTable( { owners, perRequest = false, summary } ) {
 	const headingId = useId();
 	const { sorted, dirOf, onSort } = useColumnSort( 'ms' );
 
@@ -54,6 +55,10 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 	}
 
 	const msOf = ( row ) => ( perRequest ? row.ms_per_request : row.ms );
+	const total = summary ?? {
+		ms: owners.reduce( ( sum, row ) => sum + msOf( row ), 0 ),
+		share: owners.reduce( ( sum, row ) => sum + row.share, 0 ),
+	};
 	const callsOf = ( row ) =>
 		perRequest ? row.calls_per_request : row.calls;
 	const rows = sorted( owners, ( row, field ) => {
@@ -151,20 +156,14 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 							) }
 						</td>
 						<td className="newspack-nodes-table__terminal-data">
-							{ formatDuration(
-								owners.reduce(
-									( sum, row ) => sum + msOf( row ),
-									0
-								)
-							) }
+							{ null === total.ms
+								? '—'
+								: formatDuration( total.ms ) }
 						</td>
 						<td className="newspack-nodes-table__terminal-data">
-							{ `${ (
-								owners.reduce(
-									( sum, row ) => sum + row.share,
-									0
-								) * 100
-							).toFixed( 1 ) }%` }
+							{ null === total.share
+								? '—'
+								: `${ ( total.share * 100 ).toFixed( 1 ) }%` }
 						</td>
 						<td />
 					</tr>
@@ -174,15 +173,19 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 				className="newspack-nodes-status"
 				style={ { fontSize: '12px', marginTop: '8px' } }
 			>
-				{ __(
-					'Self time by the code that ran it. Listeners on significant hooks, queries and HTTP calls (to the code that asked) and plugin loads are attributed; time in an unmarked hook counts toward the enclosing owner.',
-					'newspack-event-logger-nodes'
+				{ summary?.caption ?? (
+					<>
+						{ __(
+							'Self time by the code that ran it. Listeners on significant hooks, queries and HTTP calls (to the code that asked) and plugin loads are attributed; time in an unmarked hook counts toward the enclosing owner.',
+							'newspack-event-logger-nodes'
+						) }
+						{ perRequest &&
+							` ${ __(
+								'Times and counts are per request.',
+								'newspack-event-logger-nodes'
+							) }` }
+					</>
 				) }
-				{ perRequest &&
-					` ${ __(
-						'Times and counts are per request.',
-						'newspack-event-logger-nodes'
-					) }` }
 			</p>
 		</div>
 	);

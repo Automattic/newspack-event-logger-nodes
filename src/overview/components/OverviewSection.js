@@ -33,7 +33,10 @@ import {
 import CategoryTimeChart from '../CategoryTimeChart';
 import { breakdownState } from '../AggregateTimeChart';
 import { answerSlots, chartDims } from '../chartSlots';
-import { ProfileWithCaption } from '../RequestProfile';
+import RequestProfile, {
+	averageCaption,
+	ProfileWithCaption,
+} from '../RequestProfile';
 import OwnerTable from '../OwnerTable';
 import BreakdownControls from './BreakdownControls';
 import { AskButton } from './AskPanel';
@@ -161,6 +164,18 @@ export default function OverviewSection( {
 	if ( ! overview ) {
 		return null;
 	}
+
+	const leaderboard =
+		overview.leaderboard?.count > 0 ? overview.leaderboard : null;
+	// With owners listed, their table closes for both.
+	const owned = null !== leaderboard && overview.owners?.length > 0;
+	const breakdownHeading = serverFilter
+		? sprintf(
+				// translators: %s: the server name being filtered by.
+				__( 'Time Breakdown (%s)', 'newspack-event-logger-nodes' ),
+				serverFilter
+		  )
+		: __( 'Global Time Breakdown', 'newspack-event-logger-nodes' );
 
 	return (
 		<div className="event-logger-performance-overview">
@@ -344,34 +359,50 @@ export default function OverviewSection( {
 						selectedBuckets={ selectedBuckets }
 					/>
 
-					{ overview.leaderboard?.count > 0 && (
-						<ProfileWithCaption
-							profiles={ overview.leaderboard.categories }
-							totalMs={ overview.leaderboard.avg_ms }
-							totalProfiledTime={
-								overview.leaderboard.total_time
-							}
-							count={ overview.leaderboard.count }
-							heading={
-								serverFilter
-									? sprintf(
-											// translators: %s: the server name being filtered by.
-											__(
-												'Time Breakdown (%s)',
-												'newspack-event-logger-nodes'
+					<div>
+						{ leaderboard &&
+							( owned ? (
+								<RequestProfile
+									profiles={ leaderboard.categories }
+									totalMs={ leaderboard.avg_ms }
+									totalProfiledTime={ leaderboard.total_time }
+									title={ breakdownHeading }
+									totaled={ false }
+								/>
+							) : (
+								<ProfileWithCaption
+									profiles={ leaderboard.categories }
+									totalMs={ leaderboard.avg_ms }
+									totalProfiledTime={ leaderboard.total_time }
+									count={ leaderboard.count }
+									heading={ breakdownHeading }
+									serverName={ serverFilter }
+								/>
+							) ) }
+						{ /* The breakdown's total and caption close both tables. */ }
+						<OwnerTable
+							owners={ overview.owners }
+							perRequest
+							summary={
+								owned
+									? {
+											ms: leaderboard.total_time,
+											share:
+												null ===
+													leaderboard.total_time ||
+												! ( leaderboard.avg_ms > 0 )
+													? null
+													: leaderboard.total_time /
+													  leaderboard.avg_ms,
+											caption: averageCaption(
+												leaderboard.count,
+												serverFilter
 											),
-											serverFilter
-									  )
-									: __(
-											'Global Time Breakdown',
-											'newspack-event-logger-nodes'
-									  )
+									  }
+									: undefined
 							}
-							serverName={ serverFilter }
 						/>
-					) }
-
-					<OwnerTable owners={ overview.owners } perRequest />
+					</div>
 				</CardBody>
 			</Card>
 		</div>
