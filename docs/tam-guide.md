@@ -156,7 +156,9 @@ claude mcp add --transport http slow-site \
 
 `slow-site` is only the name Claude Code shows for this connection. Start a new session and ask, for example: *"Which URL on this site is slowest, and what is the cause?"*
 
-The connection needs a custom `Authorization` header. Claude Code takes one; claude.ai's custom connectors authenticate through OAuth and have no field for it. From claude.ai, use **Ask Claude** on the dashboard instead.
+### 3. Or connect Claude Desktop or claude.ai
+
+Claude Desktop and claude.ai take no header, and need no key from step 1. Add the same address as a custom connector, and Claude sends you to the site's WordPress: sign in, choose **read** or **tune**, name the connection, such as `Jane — Claude Desktop`, and approve it. The connection stays signed in for 30 days from that approval, then asks you to sign in again. It is listed under **Nodes** → **Sessions** → **Connections**, where **Revoke** ends it. The connector reaches the site from Anthropic's servers, so the site must be reachable from the internet.
 
 ### What Claude can do with it
 

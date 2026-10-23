@@ -35,7 +35,7 @@
 <div class="seq" id="seq">
 <svg class="wire" id="wire"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
 
-<div class="lane card" data-lane="0"><h3>Agent</h3><p>An MCP client registered once with the handle and secret a command session issued.</p></div>
+<div class="lane card" data-lane="0"><h3>Agent</h3><p>An MCP client holding a command session: one issued by hand, or one the site's OAuth sign-in minted.</p></div>
 <div class="lane card" data-lane="1"><h3>The gate</h3><p><span class="mono">MCP_Controller::<wbr>check_permission()</span>, the route's permission callback.</p></div>
 <div class="lane card" data-lane="2"><h3>JSON-RPC</h3><p><span class="mono">MCP_Controller::<wbr>dispatch()</span>: one route, <span class="mono">POST …/newspack-event-logger-nodes/v1/mcp</span>, four methods.</p></div>
 <div class="lane card" data-lane="3"><h3>The verb</h3><p>The <span class="mono">performance</span> or <span class="mono">rules</span> interpreter, mounted by <span class="mono">Bootstrap::<wbr>mount_request_graph()</span>, and its handler.</p></div>
@@ -43,11 +43,12 @@
 <div class="hop" data-span="0,1"><span class="n">1</span>One JSON-RPC request per POST, under <span class="mono">Authorization: Bearer &lt;handle&gt;.&lt;secret&gt;</span>: 32 hex, a dot, 64 hex.</div>
 
 <div class="panel" data-arrow="0,1" data-cap="POST, over HTTPS" data-span="1,3">
-  <header><span class="n">2</span>Three refusals, the swap, then the meter; the first to fail answers</header>
+  <header><span class="n">2</span>Four refusals, the swap, then the meter; the first to fail answers</header>
   <div class="body">
     <div class="chip"><span class="st">403</span><span class="mono">Bootstrap::fleet_gate()</span>: the fleet is network-global, so a multisite subsite is refused.</div>
     <div class="chip"><span class="st">401</span>The header does not match the Bearer shape.</div>
     <div class="chip"><span class="st">401</span><span class="mono">Command_Auth::load_session_record( handle )</span> finds no live session, or its secret fails <span class="mono">hash_equals</span>.</div>
+    <div class="chip"><span class="st">401</span><span class="mono">Command_Auth::admits_resource()</span> refuses a session an OAuth grant minted for another resource than <span class="mono">MCP_Controller::resource()</span>. Every 401 carries <span class="mono">WWW-Authenticate: Bearer resource_metadata="…"</span>, naming where to sign in.</div>
     <div class="chip"><span class="st pass">&#10003;</span>The request BECOMES the session's minting user (<span class="mono">wp_set_current_user</span>); the session's scope is installed as <span class="mono">Capabilities::$session_scope</span>, a ceiling and never a grant.</div>
     <div class="chip"><span class="st">429</span>All 20 of the handle's slots held (<span class="mono">RATE_LIMIT_BURST</span> 20, <span class="mono">RATE_LIMIT_WINDOW_S</span> 10): each admitted call claims one through <span class="mono">Rate_Limit::claim()</span>'s atomic cache <span class="mono">add()</span>, and the slot frees one window after its claim. A <b>503</b> <span class="mono">rate_limit_unavailable</span> instead when neither memcached nor APCu answers, or the slot read fails. Checked last, so an unauthenticated flood spends no slots.</div>
   </div>
