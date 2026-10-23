@@ -113,9 +113,7 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 					{ rows.map( ( row ) => {
 						const { owner, share } = row;
 						const ms = msOf( row );
-						const calls = perRequest
-							? callsOf( row ).toFixed( 1 )
-							: Math.round( callsOf( row ) );
+						const calls = Math.round( callsOf( row ) );
 						return (
 							<tr key={ owner }>
 								<td>

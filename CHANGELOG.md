@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **The owner table's heading reads "Time By Owner"**, as "Time Breakdown" is capitalised.
+- **Time By Owner rounds an averaged count to a whole number**, as the Time Breakdown does, where it showed one decimal (`14.0`).
 
 ## [0.153.3] - 2026-10-23
 
