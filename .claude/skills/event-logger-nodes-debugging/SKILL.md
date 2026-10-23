@@ -276,6 +276,15 @@ The overview-prefetch job tells its time on its own record, `/jobs/eln_overview_
 
 A performance verb tells where its time goes inside its command span (`Performance_CI dump_url command`), and a prefetch answer inside its own, with one span per read: a **`stats query`** per `Stats_Query` read, labelled with its source, groups and a page's offset (`timings by category,listener offset 1000`, `requests newest`, `requests by rid`) and closing `<n> rows` or `unavailable`; a **`flame lookup`** per partition a request's or a URL's flames are sought on, labelled with its partition (`flames.p3`) and closing `<n> of <m> found` or `cut`; and a **`grep scan`** per firehose partition `grep_requests` drains, labelled `firehose.p0` and closing `<n> lines`, plus ` · cut` where its budget ran out. A command's self time is then what none of them covers.
 
+## Reading the owner tables
+
+`dump_request` carries `owners`, `dump_url` `aggregate_owners` and `overview` `owners`: each owner's self time, so the rows add up to the request's duration. A bracketed name is the code that ran, `theme:<slug>` for a theme, `mu:<slug>` for an mu-plugin, `core` for WordPress, and the rest plugin slugs.
+
+- **`(unowned)`** is time in frames that name no owner and sit under no owned frame: a top-level hook's own dispatch, a custom event, a platform span outside any listener. It also holds a plugin's listener on a hook the rule does not mark significant, because only listeners on significant hooks are wrapped.
+- **`(unmeasured)`** is the request's duration less every span the record holds. It grows when hooks are untimed or a fold dropped detail.
+- **To shrink both,** mark the lifecycle hooks significant: the rule editor's "Measure plugin time" adds them, `sql` and `http`, and switches on Log queries, Log HTTP and Log plugin loads. Save the rule, then read a request it logs.
+- **The Overview and URL tables read per request.** `ms_per_request` divides by every timed request folded, so a plugin that runs on one request in ten shows a tenth of its cost. A table that is missing after an upgrade is the old snapshot, or stats still refilling after the schema reset.
+
 ## Common failure modes
 
 **Dashboard 429s immediately.** Service-CI verbs carry no throttle of their own, but `/command` does: `HTTP_In_Node::RATE_LIMIT_BURST` is 30 POSTs per `RATE_LIMIT_WINDOW_S` (1 second) per user, metered by the substrate's `Rate_Limit` and tunable through the `newspack_nodes/command_rate_limit` filter. A 429 on a `/command` POST is that budget, not a per-CI limit. With neither memcached nor APCu answering, `/command` admits and logs `Rate_Limit: /command rate limit unavailable` once a window, so the dashboards keep working unmetered; a 429 on `/messages/stream` is the SSE slot pool.

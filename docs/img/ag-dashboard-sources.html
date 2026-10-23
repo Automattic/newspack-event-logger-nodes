@@ -78,6 +78,8 @@ table.g td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monos
     <tr><td class="k">eventLoggerHookCategories</td><td><span class="mono">hook_categories.json</span> whole, <span class="mono">_colors</span> and <span class="mono">_patterns</span> included; the Gyroscope legend's contents are a fixed array in <span class="mono">Inflight.js</span></td><td>all five</td></tr>
     <tr><td class="k">eventLoggerCustomColors</td><td><span class="mono">Config::get_custom_colors()</span>, custom-event name to swatch, read by the substrate's shared <span class="mono">formatUtils</span></td><td>all five</td></tr>
     <tr><td class="k">newspackNodesRecommendedHooks</td><td><span class="mono">recommended_log_events</span>, what the picker's "Recommended" button selects</td><td>settings, overview</td></tr>
+    <tr><td class="k">newspackNodesOwnerTimeEvents</td><td><span class="mono">owner_time_events</span>, the hooks "Plugin time" and "Measure plugin time" add</td><td>settings, overview</td></tr>
+    <tr><td class="k">newspackNodesNoisyHooks</td><td><span class="mono">noisy_log_events</span> patterns that compile, the hooks no bulk selection takes</td><td>settings, overview</td></tr>
     <tr><td class="k">newspackNodesCustomColors</td><td>the same custom-colour map, for <span class="mono">CustomEventSelectorModal</span>'s swatches</td><td>settings, overview</td></tr>
     <tr><td class="k">NewspackEventLoggerNodes.currentRequest</td><td><span class="mono">{ rid, partition, perfUrl }</span> for THIS request, merged by <span class="mono">Object.assign</span> so a sibling key survives</td><td>wherever the overlay tab loads</td></tr>
   </table>

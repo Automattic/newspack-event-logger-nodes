@@ -6,6 +6,36 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 ## Unreleased
 
+- **The stats schema is version 9, and a site refills its stats once.** The
+  `flame-facts` Row_Table gains `owners`, `owner_timings` and
+  `owner_timings_site`. A builder that opens a version 8 file discards it
+  and starts empty, so every chart and table reads only what the builder
+  has written since. To refill them from the retained flames, hold the
+  fleet with `wp nodes stop`, delete each `flames:consumer` cursor, the
+  directory `<config:offsets_dir>/<topology>.flames.p{partition}` of every
+  partition, and lift the hold with `wp nodes start`. The consumer then
+  starts with no cursor and reads every flame `flames.pN` keeps, which
+  covers the same `min_lifetime` span the stats keep. A flame whose record
+  `requests.pN` has pruned is skipped and counted as `records_gone`.
+  `wp nodes stop && wp nodes deactivate <topology> && wp nodes gc --force && wp nodes memcache flush && wp nodes activate <topology> && wp nodes start`
+  also refills them, but it deletes every cursor, so the request builder
+  re-reads the retained firehose and, on `complete`, the job router runs
+  again every retained job younger than the `jobs:sieve` window.
+- **Two overlay-only keys feed the rule editor's plugin-time buttons.**
+  `owner_time_events` defaults to `plugins_loaded`, `after_setup_theme`,
+  `init`, `wp_loaded`, `parse_request`, `wp`, `template_redirect`,
+  `template_include`, `wp_enqueue_scripts`, `wp_head`, `the_content`,
+  `wp_footer`, `shutdown`, `rest_api_init`, `admin_init`, `admin_menu` and
+  `admin_enqueue_scripts`. `noisy_log_events` defaults to the patterns
+  `^gettext`, `^ngettext`, `^pre_wp_cache_get$`, `^pre_option$`,
+  `^alloptions$` and `^pre_wp_load_alloptions$`. Both are `array_strings`
+  with `ui: false`, so only the options overlay changes them; a site that
+  sets neither gets the defaults.
+- **An Overview snapshot built before the upgrade shows no owner table.**
+  The snapshot carries no `owners`, and `OwnerTable` renders nothing for a
+  missing list, so the table appears when the overview-prefetch job next
+  builds a snapshot.
+
 - **Every label that names code leads with its owner.** A wrapped
   listener's category, the `l` of an SQL or HTTP span and a `trace_hooks`
   origin read `[<owner>] Class->method`. The owner is the plugin's slug,
