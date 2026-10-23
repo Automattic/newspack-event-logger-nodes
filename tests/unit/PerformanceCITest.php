@@ -294,7 +294,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'empty is the last 13', $arg( 'urls', 'bucket' ) );
 		$this->assertStringContainsString( '25 buckets for either source; empty is the last 13', $arg( 'query', 'bucket' ) );
 		$this->assertStringContainsString( '`stats` over the last 13 buckets', $verbs['dump_url']['description'] );
-		$this->assertStringContainsString( 'its category profile over the 25 buckets the timings keep', $verbs['dump_url']['description'] );
+		$this->assertStringContainsString( 'with none, the 25 buckets the timings keep', $verbs['dump_url']['description'] );
 		$this->assertStringContainsString( 'aged past the 25 buckets the rows keep', $verbs['dump_request']['description'] );
 		$this->assertStringContainsString( 'at least `min_lifetime` unless `max_segments` prunes it sooner', $verbs['dump_request']['description'] );
 		$this->assertDoesNotMatchRegularExpression( '/\b(288|2,016|300)\b|24 hours|24-hour|25 hours|25-hour|seven days/', (string) \wp_json_encode( $verbs ) );
