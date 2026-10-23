@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.153.3] - 2026-10-23
+
+### Fixed
+- **The dashboards' charts draw no band where a series has nothing to show.** Built against newspack-nodes 2.125.0, whose `AreaTimeChart` leaves out a series' empty stretches, so a chart whose series are mostly zero no longer piles their outlines along one curve, which Firefox drew as a hard, stepped line.
+
 ## [0.153.2] - 2026-10-23
 
 ### Fixed
