@@ -153,6 +153,28 @@ class Config {
 	}
 
 	/**
+	 * The noisy-hook patterns the rule editor publishes, minus any that
+	 * `Hook_Categorizer::checked_regex()` refuses, each refusal logged by key.
+	 *
+	 * @return list<string> Patterns, in configured order.
+	 */
+	public static function noisy_log_events(): array {
+		$patterns = [];
+		foreach ( Core::arr( self::value( 'noisy_log_events' ) ) as $pattern ) {
+			if ( ! \is_string( $pattern ) ) {
+				continue;
+			}
+			if ( null === Hook_Categorizer::checked_regex( $pattern ) ) {
+				Core::print_less_often( 'noisy_log_events: ', (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) . ' is not a valid pattern' );
+				continue;
+			}
+			$patterns[] = $pattern;
+		}
+
+		return $patterns;
+	}
+
+	/**
 	 * Fail-loud single-key read over THIS plugin's merged config, validated
 	 * against the shared substrate registry: an undeclared key throws instead of
 	 * limping on a `?? default`. A declared key resolves off the merged config

@@ -36,7 +36,8 @@ use Newspack_Nodes\Config_System\Schema;
  *
  * One setting renders as a checkbox: `enable_logging`. Four more keys overlay
  * the config file with no settings field at all (`ui: false`): `rules`,
- * `hook_start_priority`, `custom_colors` and `recommended_log_events`. URL
+ * `hook_start_priority`, `custom_colors`, `recommended_log_events`,
+ * `owner_time_events` and `noisy_log_events`. URL
  * filters, hook lists, auto-tune thresholds and the diagnostic switches are
  * per-rule fields of the `rules` ruleset, which the React rules editor owns
  * through the `rules` service CI — never the Settings API.
@@ -75,6 +76,50 @@ class Settings_Schema {
 	 */
 	private const RULES = [
 		[ 'pattern' => '/', 'action' => 'log' ],
+	];
+
+	/**
+	 * Hook names the hook picker offers for time-by-owner attribution.
+	 * Exposed to JS as `window.newspackNodesOwnerTimeEvents`; a menu, and
+	 * nothing here binds anything.
+	 *
+	 * @var list<string>
+	 */
+	private const OWNER_TIME_EVENTS = [
+		'plugins_loaded',
+		'after_setup_theme',
+		'init',
+		'wp_loaded',
+		'parse_request',
+		'wp',
+		'template_redirect',
+		'template_include',
+		'wp_enqueue_scripts',
+		'wp_head',
+		'the_content',
+		'wp_footer',
+		'shutdown',
+		'rest_api_init',
+		'admin_init',
+		'admin_menu',
+		'admin_enqueue_scripts',
+	];
+
+	/**
+	 * Hook-name patterns the rule editor warns are too noisy to log, in
+	 * `hook_categories.json`'s pattern form. Exposed to JS as
+	 * `window.newspackNodesNoisyHooks` by `Config::noisy_log_events()`, which
+	 * throws on a pattern that does not compile.
+	 *
+	 * @var list<string>
+	 */
+	private const NOISY_LOG_EVENTS = [
+		'^gettext',
+		'^ngettext',
+		'^pre_wp_cache_get$',
+		'^pre_option$',
+		'^alloptions$',
+		'^pre_wp_load_alloptions$',
 	];
 
 	/**
@@ -218,6 +263,20 @@ class Settings_Schema {
 					type: 'array_strings',
 					ui: false,
 					default: self::RECOMMENDED_LOG_EVENTS,
+				),
+				// The hook picker's time-by-owner menu; binds nothing itself.
+				new Field(
+					key: 'owner_time_events',
+					type: 'array_strings',
+					ui: false,
+					default: self::OWNER_TIME_EVENTS,
+				),
+				// Patterns the rule editor flags as too noisy to log.
+				new Field(
+					key: 'noisy_log_events',
+					type: 'array_strings',
+					ui: false,
+					default: self::NOISY_LOG_EVENTS,
 				),
 			],
 			[

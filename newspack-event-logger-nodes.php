@@ -452,13 +452,19 @@ function newspack_event_logger_nodes_enqueue_dashboards( string $hook ): void {
 
 	// settings + overview both render pickers from these window lists.
 	if ( 'settings' === $tree || 'overview' === $tree ) {
-		$recommended         = \Newspack_Event_Logger_Nodes\Config::value( 'recommended_log_events' );
-		$recommended         = \is_array( $recommended ) ? \array_values( \array_filter( $recommended, 'is_string' ) ) : [];
-		$custom_colors       = \Newspack_Event_Logger_Nodes\Config::get_custom_colors();
+		$lists = '';
+		foreach ( [
+			'newspackNodesRecommendedHooks' => 'recommended_log_events',
+			'newspackNodesOwnerTimeEvents'  => 'owner_time_events',
+		] as $global => $key ) {
+			$names  = \Newspack_Event_Logger_Nodes\Config::value( $key );
+			$lists .= "window.{$global} = " . \wp_json_encode( \is_array( $names ) ? \array_values( \array_filter( $names, 'is_string' ) ) : [] ) . ';';
+		}
+		$lists .= 'window.newspackNodesNoisyHooks = ' . \wp_json_encode( \Newspack_Event_Logger_Nodes\Config::noisy_log_events() ) . ';';
 		\wp_add_inline_script(
 			$handle,
-			'window.newspackNodesRecommendedHooks = ' . \wp_json_encode( $recommended ) . ';'
-			. 'window.newspackNodesCustomColors = ' . \wp_json_encode( $custom_colors ) . ';',
+			$lists
+			. 'window.newspackNodesCustomColors = ' . \wp_json_encode( \Newspack_Event_Logger_Nodes\Config::get_custom_colors() ) . ';',
 			'before'
 		);
 	}

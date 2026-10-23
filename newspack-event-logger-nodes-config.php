@@ -157,4 +157,39 @@ return [
 	//	'wpseo_indexables_unindexed_calculated',
 	//	'wpseo_saved_indexable',
 	// ],
+
+	// Hook names the hook picker offers for time-by-owner attribution.
+	// Exposed to JS as `window.newspackNodesOwnerTimeEvents`; a menu, and
+	// nothing here binds anything.
+	// 'owner_time_events' => [
+	//	'plugins_loaded',
+	//	'after_setup_theme',
+	//	'init',
+	//	'wp_loaded',
+	//	'parse_request',
+	//	'wp',
+	//	'template_redirect',
+	//	'template_include',
+	//	'wp_enqueue_scripts',
+	//	'wp_head',
+	//	'the_content',
+	//	'wp_footer',
+	//	'shutdown',
+	//	'rest_api_init',
+	//	'admin_init',
+	//	'admin_menu',
+	//	'admin_enqueue_scripts',
+	// ],
+
+	// Hook-name patterns the rule editor flags as too noisy to log, in
+	// `hook_categories.json`'s pattern form. A pattern that does not compile
+	// throws when the list is published as `window.newspackNodesNoisyHooks`.
+	// 'noisy_log_events' => [
+	//	'^gettext',
+	//	'^ngettext',
+	//	'^pre_wp_cache_get$',
+	//	'^pre_option$',
+	//	'^alloptions$',
+	//	'^pre_wp_load_alloptions$',
+	// ],
 ];

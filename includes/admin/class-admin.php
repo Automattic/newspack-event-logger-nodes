@@ -4,9 +4,9 @@
  * worker-restart on save.
  *
  * Renders exactly one checkbox, the only application option with a settings
- * field: `enable_logging`. The four remaining keys `Settings_Schema` declares
- * — `rules`, `hook_start_priority`, `custom_colors` and
- * `recommended_log_events` — are overlay-only (`ui: false`): Config loads
+ * field: `enable_logging`. The six remaining keys `Settings_Schema` declares
+ * — `rules`, `hook_start_priority`, `custom_colors`,
+ * `recommended_log_events`, `owner_time_events` and `noisy_log_events` — are overlay-only (`ui: false`): Config loads
  * them, and this class neither renders nor resets them.
  *
  * URL filters, hook lists, auto-tune thresholds and the diagnostic switches

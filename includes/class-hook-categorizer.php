@@ -289,7 +289,7 @@ class Hook_Categorizer {
 	 * @param string $pattern An operator's or the shipped file's pattern.
 	 * @return string|null `\x01`-delimited regex.
 	 */
-	private static function checked_regex( string $pattern ): ?string {
+	public static function checked_regex( string $pattern ): ?string {
 		if ( \strlen( $pattern ) > self::MAX_PATTERN_LENGTH ) {
 			return null;
 		}

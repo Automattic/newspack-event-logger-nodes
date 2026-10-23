@@ -33,6 +33,10 @@ declare global {
 		newspackNodesCustomColors?: Record< string, string >;
 		/** Recommended hook names offered in the hook picker. */
 		newspackNodesRecommendedHooks?: string[];
+		/** Hook names offered for time-by-owner attribution. */
+		newspackNodesOwnerTimeEvents?: string[];
+		/** Hook-name patterns the rule editor flags as too noisy. */
+		newspackNodesNoisyHooks?: string[];
 	}
 }
 
