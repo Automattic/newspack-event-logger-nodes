@@ -573,6 +573,98 @@ describe( 'HookSelectorModal', () => {
 			expect( button( 'Apply' ).textContent ).toBe( 'Apply (0)' );
 		} );
 
+		function search( term ) {
+			const { act } = require( '../../../test-helpers/renderHook' );
+			const input = document.querySelector(
+				'input[type="search"], input'
+			);
+			act( () => {
+				const setter = Object.getOwnPropertyDescriptor(
+					window.HTMLInputElement.prototype,
+					'value'
+				).set;
+				setter.call( input, term );
+				input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+			} );
+		}
+
+		it( 'Select Matches counts the selectable matches it would add', () => {
+			mountNoisy( [] );
+			search( 'e' );
+			expect( button( 'Select Matches' ).textContent ).toBe(
+				'Select Matches (1)'
+			);
+		} );
+
+		it( 'Select Matches counts no match already chosen', () => {
+			mountNoisy( [ 'kea_7746_init' ] );
+			search( 'e' );
+			expect( button( 'Select Matches' ).textContent ).toBe(
+				'Select Matches (0)'
+			);
+		} );
+
+		function headerOf( name ) {
+			return Array.from(
+				document.querySelectorAll( '.hook-selector-category-header' )
+			).find( ( el ) => el.textContent.includes( name ) );
+		}
+
+		it( 'a noisy-only category disables its header and still counts its picks', () => {
+			global.__hookcatalogMockModel = {
+				hooksByCategory: {
+					Noise: [ 'gettext', 'pre_option' ],
+					Mixed: [ 'kea_7746_init', 'ngettext' ],
+				},
+				noisy: [ 'gettext', 'pre_option', 'ngettext' ],
+				loading: false,
+			};
+			mount( {
+				isOpen: true,
+				onClose: jest.fn(),
+				selected: [ 'gettext' ],
+				onSelect: jest.fn(),
+			} );
+			const disabled = Array.from(
+				document.querySelectorAll(
+					'.hook-selector-category-header input[type="checkbox"]'
+				)
+			).map( ( input ) => input.disabled );
+			expect( disabled ).toEqual( [ false, true ] );
+			expect(
+				headerOf( 'Noise' ).querySelector(
+					'.hook-selector-category-count'
+				).textContent
+			).toBe( '1/2' );
+		} );
+
+		it( 'a lone noisy pick shows on its collapsed category badge only', () => {
+			mountNoisy( [ 'gettext' ] );
+			const mixed = headerOf( 'Mixed' );
+			const checkbox = mixed.querySelector( 'input[type="checkbox"]' );
+			expect( document.querySelector( '#hook-gettext' ) ).toBeNull();
+			expect(
+				mixed.querySelector( '.hook-selector-category-count' )
+					.textContent
+			).toBe( '1/3' );
+			expect( checkbox.checked ).toBe( false );
+			expect( checkbox.indeterminate ).toBe( false );
+		} );
+
+		it( 'the header checks over selectable hooks while the badge counts all', () => {
+			mountNoisy( [ 'gettext', 'pre_option' ] );
+			const mixed = headerOf( 'Mixed' );
+			const checkbox = mixed.querySelector( 'input[type="checkbox"]' );
+			const badge = mixed.querySelector(
+				'.hook-selector-category-count'
+			);
+			expect( badge.textContent ).toBe( '2/3' );
+			expect( checkbox.checked ).toBe( false );
+			click( checkbox );
+			expect( badge.textContent ).toBe( '3/3' );
+			expect( checkbox.checked ).toBe( true );
+		} );
+
 		it( 'exports the owner list as the window publishes it', () => {
 			const mod = require( '../HookSelectorModal' );
 			expect( mod.PLUGIN_TIME_HOOKS ).toEqual( [

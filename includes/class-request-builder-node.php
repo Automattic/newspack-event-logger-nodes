@@ -194,6 +194,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** Max distinct labels tracked per profiled state (bounds runaway memory). */
 	private const MAX_PROFILE_ENTRY_LABELS = 1000;
 
+	/** Max states `$state_kinds` holds; reaching it starts a fresh generation. */
+	private const MAX_SPAN_KINDS = 10000;
+
 	/**
 	 * Open spans one request may hold before it is marked runaway. A runaway
 	 * stays visible in the in-flight view and stores no further entries; it
@@ -272,6 +275,14 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 	/** @var array<string,callable> Keyword → mutator. Set in constructor. */
 	private $state_callbacks;
+
+	/**
+	 * What each state alone settles, filled by `kind_of_state()` on first
+	 * sight.
+	 *
+	 * @var array<string,array{kind: string, owner: string}>
+	 */
+	private array $state_kinds = [];
 
 	/** Newest entry stamp consumed, never past the wall: 0 before the first. */
 	private float $stream_now = 0.0;
@@ -751,10 +762,13 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	 * Push state onto request stack.
 	 *
 	 * Stack frames are [ state, label, owner, inner, named, timer ], settled
-	 * as the frame opens: a timer's owner is its parent's, so it stays
-	 * transparent; any other span's is the one its name carries
-	 * (`Owner::of_label()`), and `named` says so, else its parent's. `inner`
-	 * is the ms its closed children took.
+	 * as the frame opens. Three kinds of span name their own owner, and
+	 * `named` says so: a listener in its state, a plugin load as
+	 * `<slug> plugin`, and a transport in its label, the code that asked.
+	 * Every other span takes its parent's: a hook, whose label under
+	 * `trace_hooks` names who fired it rather than who ran it; a custom
+	 * event; a platform span; and a Query Monitor timer, which credits none.
+	 * `inner` is the ms its closed children took.
 	 * Pushing also opens the state's profile record, so a state that never
 	 * closes still appears in the profile with a zero duration instead of
 	 * vanishing.
@@ -796,10 +810,12 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			];
 		}
 
+		$settled = $this->kind_of_state( $state );
+		$own     = 'transport' === $settled['kind']
+			? Owner::of_label( Flame_Tree::node_name( $state, $label ) )
+			: $settled['owner'];
 		$parent  = [] === $stack ? Owner::UNOWNED : $stack[ \count( $stack ) - 1 ][ self::OWNER_SLOT ];
-		$timer   = self::is_timer_span( $state );
-		$own     = $timer ? '' : Owner::of_label( Flame_Tree::node_name( $state, $label ) );
-		$stack[] = [ $state, $label, '' === $own ? $parent : $own, 0.0, '' !== $own, $timer ];
+		$stack[] = [ $state, $label, '' === $own ? $parent : $own, 0.0, '' !== $own, 'qm' === $settled['kind'] ];
 
 		$profile = &$profiles[ $state ];
 		if ( $label && \count( $profile['entries'] ) < self::MAX_PROFILE_ENTRY_LABELS && ! isset( $profile['entries'][ $label ] ) ) {
@@ -899,7 +915,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		}
 
 		// A listener's or a QM timer's time is already its ancestors'.
-		if ( ! empty( $stack ) && ! Flame_Tree::is_overlay_span( $state ) ) {
+		$kind = $this->kind_of_state( $state )['kind'];
+		if ( ! empty( $stack ) && 'qm' !== $kind && 'listener' !== $kind ) {
 			for ( $j = \count( $stack ) - 1; $j >= 0; $j-- ) {
 				$ancestor_frame = $stack[ $j ];
 				$ancestor       = $ancestor_frame[0];
@@ -914,7 +931,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 						$profiles[ $ancestor ]['entries'][ $ancestor_label ][0] -= $time;
 					}
 					// Subtract up to first non-callback ancestor, then stop.
-					if ( ! Flame_Tree::is_listener_span( $ancestor ) ) {
+					if ( 'listener' !== $this->kind_of_state( $ancestor )['kind'] ) {
 						break;
 					}
 				}
@@ -969,13 +986,32 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Whether a span is a Query Monitor timer: an overlay that is not a
-	 * listener, laid over time the spans around it already count.
+	 * What a span's state alone settles: its `Flame_Tree::span_kind()`, and
+	 * the owner the state itself names, a listener's or a plugin load's,
+	 * else ''.
+	 *
+	 * Memoized per state in `$state_kinds`, which empties when it reaches
+	 * `MAX_SPAN_KINDS`, so a hostile state vocabulary costs time rather than
+	 * memory and the states in use fill it again.
 	 *
 	 * @param string $state A span's state name.
+	 * @return array{kind: string, owner: string}
 	 */
-	private static function is_timer_span( string $state ): bool {
-		return Flame_Tree::is_overlay_span( $state ) && ! Flame_Tree::is_listener_span( $state );
+	private function kind_of_state( string $state ): array {
+		if ( isset( $this->state_kinds[ $state ] ) ) {
+			return $this->state_kinds[ $state ];
+		}
+		$kind    = Flame_Tree::span_kind( $state );
+		$settled = [
+			'kind'  => $kind,
+			'owner' => 'listener' === $kind || 'plugin' === $kind ? Owner::of_label( $state ) : '',
+		];
+		// A fresh generation: the hot states return on their next sight.
+		if ( \count( $this->state_kinds ) >= self::MAX_SPAN_KINDS ) {
+			$this->state_kinds = [];
+		}
+		$this->state_kinds[ $state ] = $settled;
+		return $settled;
 	}
 
 	/**

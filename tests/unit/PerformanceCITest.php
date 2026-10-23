@@ -1607,6 +1607,16 @@ class PerformanceCITest extends TestCase {
 		$this->assertEqualsCanonicalizing( [ 'kea_noisy_boot', 'tui_ruru' ], $result['noisy'] );
 	}
 
+	/** A `noisy_log_events` that is not a list of strings fails the verb, naming the key. */
+	public function test_list_hooks_refuses_a_malformed_noisy_list(): void {
+		$this->use_base_dir( $this->make_temp_dir(), [ 'noisy_log_events' => '^kea_noisy' ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'list_hooks' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( "config key 'noisy_log_events' must be a list of strings, not string", \html_entity_decode( $result, ENT_QUOTES ) );
+	}
+
 	public function test_list_hooks_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter     = new Performance_CI_Node();
@@ -3713,7 +3723,8 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'kea-7746', 'core', '(unmeasured)' ], \array_column( $reply['owners'], 'owner' ) );
 		$this->assertEqualsWithDelta( [ 20.0, 10.0, 3.0 ], \array_column( $reply['owners'], 'ms_per_request' ), 1e-9 );
 		$this->assertEqualsWithDelta( [ 60 / 99, 30 / 99, 9 / 99 ], \array_column( $reply['owners'], 'share' ), 1e-9 );
-		$this->assertSame( [ 4, 9, 0 ], \array_column( $reply['owners'], 'calls' ) );
+		$this->assertEqualsWithDelta( [ 4 / 3, 3.0, 0.0 ], \array_column( $reply['owners'], 'calls_per_request' ), 1e-9 );
+		$this->assertSame( [ 'owner', 'ms_per_request', 'share', 'calls_per_request' ], \array_keys( $reply['owners'][0] ) );
 	}
 
 	public function test_overview_owners_find_unmeasured_past_a_full_page_of_owners(): void {
@@ -3748,6 +3759,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'kea-7746', 'core', '(unmeasured)' ], \array_column( $reply['aggregate_owners'], 'owner' ) );
 		$this->assertEqualsWithDelta( [ 20.0, 10.0, 3.0 ], \array_column( $reply['aggregate_owners'], 'ms_per_request' ), 1e-9 );
 		$this->assertEqualsWithDelta( [ 60 / 99, 30 / 99, 9 / 99 ], \array_column( $reply['aggregate_owners'], 'share' ), 1e-9 );
+		$this->assertEqualsWithDelta( [ 4 / 3, 3.0, 0.0 ], \array_column( $reply['aggregate_owners'], 'calls_per_request' ), 1e-9 );
 	}
 
 	public function test_dump_url_profile_is_null_over_no_profiled_request(): void {

@@ -172,14 +172,29 @@ class Config {
 	}
 
 	/**
-	 * The strings a list-valued key holds, in order; anything else it holds
-	 * is left out.
+	 * The strings a list-valued key holds, in order.
 	 *
 	 * @param string $key Config key, declared by this plugin or the substrate.
 	 * @return list<string>
+	 * @throws \UnexpectedValueException When the key holds anything but a list
+	 *                                   of strings, naming the key and the
+	 *                                   offending type.
 	 */
 	public static function string_list( string $key ): array {
-		return \array_values( \array_filter( Core::arr( self::value( $key ) ), 'is_string' ) );
+		$value = self::value( $key );
+		if ( ! \is_array( $value ) || ! \array_is_list( $value ) ) {
+			throw new \UnexpectedValueException(
+				\sprintf( "config key '%s' must be a list of strings, not %s", \esc_html( $key ), \esc_html( \get_debug_type( $value ) ) )
+			);
+		}
+		foreach ( $value as $entry ) {
+			if ( ! \is_string( $entry ) ) {
+				throw new \UnexpectedValueException(
+					\sprintf( "config key '%s' must hold only strings, not %s", \esc_html( $key ), \esc_html( \get_debug_type( $entry ) ) )
+				);
+			}
+		}
+		return $value;
 	}
 
 	/**

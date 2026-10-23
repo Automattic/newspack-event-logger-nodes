@@ -30,7 +30,9 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `^gettext`, `^ngettext`, `^pre_wp_cache_get$`, `^pre_option$`,
   `^alloptions$` and `^pre_wp_load_alloptions$`. Both are `array_strings`
   with `ui: false`, so only the options overlay changes them; a site that
-  sets neither gets the defaults.
+  sets neither gets the defaults. A value that is not a list of strings
+  publishes an empty list on the settings and Overview pages, beside an
+  admin notice naming the key and the reason, and fails `list_hooks`.
 - **An Overview snapshot built before the upgrade shows no owner table.**
   The snapshot carries no `owners`, and `OwnerTable` renders nothing for a
   missing list, so the table appears when the overview-prefetch job next

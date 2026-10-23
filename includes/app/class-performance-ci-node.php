@@ -1459,7 +1459,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string           $server  Server to scope to; '' is every server.
 	 * @param int              $now     The reply's clock.
 	 * @param list<mixed>|null $servers The `servers` to name; null reads them.
-	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, owners: list<array{owner:string,ms_per_request:float,share:float,calls:int}>, available: bool}
+	 * @return array{totals: array<string,mixed>|null, slots: list<string>, servers: list<mixed>, leaderboard: array<string,mixed>, owners: list<array{owner:string,ms_per_request:float,share:float,calls_per_request:float}>, available: bool}
 	 */
 	private static function answer_overview( string $server, int $now, ?array $servers ): array {
 		$chart   = Bucket::last( Bucket::window(), $now );
@@ -1508,15 +1508,15 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Each owner's time over `$buckets` of the owner rows `$filter` selects,
-	 * dearest per request first: `ms_per_request` is its summed `ms` over the
-	 * `requests` of the `(unmeasured)` row, which counts every request
-	 * folded, and `share` its `ms` over every owner's. Empty over no folded
-	 * request.
+	 * dearest per request first: `ms_per_request` and `calls_per_request`
+	 * are its summed `ms` and `calls` over the `requests` of the
+	 * `(unmeasured)` row, which counts every request folded, and `share` its
+	 * `ms` over every owner's. Empty over no folded request.
 	 *
 	 * @param array<string,list<scalar>> $filter  Fields the `owners` source holds.
 	 * @param list<array{0:int,1:int}>   $buckets The board's buckets.
 	 * @param int                        $now     The reply's clock.
-	 * @return list<array{owner:string,ms_per_request:float,share:float,calls:int}>
+	 * @return list<array{owner:string,ms_per_request:float,share:float,calls_per_request:float}>
 	 */
 	private static function owner_board( array $filter, array $buckets, int $now ): array {
 		$rows     = self::timing_rows(
@@ -1537,10 +1537,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		$board = [];
 		foreach ( $rows as [ $owner, $ms, $calls ] ) {
 			$board[] = [
-				'owner'          => Core::as_string( $owner ),
-				'ms_per_request' => Core::num_float( $ms ) / $requests,
-				'share'          => 0.0 < $total ? Core::num_float( $ms ) / $total : 0.0,
-				'calls'          => Core::num_int( $calls ),
+				'owner'             => Core::as_string( $owner ),
+				'ms_per_request'    => Core::num_float( $ms ) / $requests,
+				'share'             => 0.0 < $total ? Core::num_float( $ms ) / $total : 0.0,
+				'calls_per_request' => Core::num_float( $calls ) / $requests,
 			];
 		}
 		return $board;

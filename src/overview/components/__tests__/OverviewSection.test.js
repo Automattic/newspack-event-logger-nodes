@@ -799,7 +799,7 @@ describe( 'OverviewSection', () => {
 					owner: 'mu:egret-cache',
 					ms_per_request: 17.5,
 					share: 0.37,
-					calls: 22,
+					calls_per_request: 4.75,
 				},
 			],
 		} );
@@ -807,6 +807,8 @@ describe( 'OverviewSection', () => {
 		expect( container.textContent ).toContain( 'mu:egret-cache' );
 		expect( container.textContent ).toContain( 'ms per request' );
 		expect( container.textContent ).toContain( '17.5ms' );
+		expect( container.textContent ).toContain( 'Calls per request' );
+		expect( container.textContent ).toContain( '4.8' );
 		unmount();
 	} );
 

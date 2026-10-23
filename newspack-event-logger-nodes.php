@@ -452,13 +452,49 @@ function newspack_event_logger_nodes_enqueue_dashboards( string $hook ): void {
 
 	// settings + overview both render pickers from these window lists.
 	if ( 'settings' === $tree || 'overview' === $tree ) {
-		$owner_time = \Newspack_Event_Logger_Nodes\Config::string_list( 'owner_time_events' );
+		$recommended = \newspack_event_logger_nodes_window_list( 'recommended_log_events', static fn (): array => \Newspack_Event_Logger_Nodes\Config::string_list( 'recommended_log_events' ) );
+		$owner_time  = \newspack_event_logger_nodes_window_list( 'owner_time_events', static fn (): array => \Newspack_Event_Logger_Nodes\Config::string_list( 'owner_time_events' ) );
+		$noisy       = \newspack_event_logger_nodes_window_list( 'noisy_log_events', static fn (): array => \Newspack_Event_Logger_Nodes\Config::noisy_hooks( $owner_time ) );
 		\wp_add_inline_script(
 			$handle,
-			'window.newspackNodesRecommendedHooks = ' . \wp_json_encode( \Newspack_Event_Logger_Nodes\Config::string_list( 'recommended_log_events' ) ) . ';'
-			. 'window.newspackNodesOwnerTimeEvents = ' . \wp_json_encode( \array_values( \array_diff( $owner_time, \Newspack_Event_Logger_Nodes\Config::noisy_hooks( $owner_time ) ) ) ) . ';'
+			'window.newspackNodesRecommendedHooks = ' . \wp_json_encode( $recommended ) . ';'
+			. 'window.newspackNodesOwnerTimeEvents = ' . \wp_json_encode( \array_values( \array_diff( $owner_time, $noisy ) ) ) . ';'
 			. 'window.newspackNodesCustomColors = ' . \wp_json_encode( \Newspack_Event_Logger_Nodes\Config::get_custom_colors() ) . ';',
 			'before'
 		);
+	}
+}
+
+/**
+ * One list a picker page publishes on the window, as `$read` reads it. A key
+ * holding no list of strings publishes `[]` instead and leaves an admin
+ * notice naming the key and the reason, so the settings and Overview pages
+ * still load. The `list_hooks` verb reads the same keys and throws, which
+ * reaches the dashboard as a `TM_ERROR`.
+ *
+ * @param string                   $key  The config key `$read` reads.
+ * @param callable(): list<string> $read Reads the list; throws on a bad value.
+ * @return list<string>
+ */
+function newspack_event_logger_nodes_window_list( string $key, callable $read ): array {
+	try {
+		return $read();
+	} catch ( \UnexpectedValueException $e ) {
+		$reason = $e->getMessage();
+		\add_action(
+			'admin_notices',
+			static function () use ( $key, $reason ): void {
+				\printf(
+					'<div class="notice notice-error"><p>%s</p></div>',
+					\esc_html( \sprintf(
+						/* translators: 1: config key, 2: why its value was refused. */
+						\__( 'Newspack Event Logger Nodes published an empty %1$s list: %2$s', 'newspack-event-logger-nodes' ),
+						$key,
+						$reason
+					) )
+				);
+			}
+		);
+		return [];
 	}
 }

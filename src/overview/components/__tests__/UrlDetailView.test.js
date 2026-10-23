@@ -1190,7 +1190,7 @@ describe( 'UrlDetailView', () => {
 						owner: 'theme:rail',
 						ms_per_request: 33.5,
 						share: 0.61,
-						calls: 14,
+						calls_per_request: 2.25,
 					},
 				],
 			},
@@ -1200,6 +1200,8 @@ describe( 'UrlDetailView', () => {
 		expect( container.textContent ).toContain( 'ms per request' );
 		expect( container.textContent ).toContain( '33.5ms' );
 		expect( container.textContent ).toContain( '61.0%' );
+		expect( container.textContent ).toContain( 'Calls per request' );
+		expect( container.textContent ).toContain( '2.3' );
 		unmount();
 	} );
 
