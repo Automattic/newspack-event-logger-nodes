@@ -17,10 +17,9 @@ jest.mock( '../../FlameGraph', () => ( {
 	},
 } ) );
 jest.mock( '../../RequestProfile', () => ( {
+	...jest.requireActual( '../../RequestProfile' ),
 	__esModule: true,
 	default: () => 'REQUEST_PROFILE',
-	profileOrder: jest.requireActual( '../../RequestProfile' ).profileOrder,
-	ShareBar: jest.requireActual( '../../RequestProfile' ).ShareBar,
 } ) );
 jest.mock( '../LogEntriesTable', () => ( {
 	__esModule: true,
