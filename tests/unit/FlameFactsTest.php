@@ -25,16 +25,42 @@ final class FlameFactsTest extends TestCase {
 
 		$opened = \array_merge( ...$this->facts( "SELECT name FROM sqlite_master WHERE type = 'table'" ) );
 
-		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_expiry', 'urls_fts', 'servers', 'ja4s', 'froms', 'categories', 'entries', 'owners', 'owner_timings', 'owner_timings_site' ], $opened ) ) );
-		$this->assertSame( [ [ 9 ] ], $this->facts( 'PRAGMA user_version' ) );
+		$this->assertSame( [], \array_values( \array_diff( [ 'urls', 'agents', 'requests', 'timings', 'timings_site', 'requests_hourly', 'category_window', 'window_expiry', 'urls_fts', 'servers', 'ja4s', 'froms', 'categories', 'entries', 'owners', 'owner_timings', 'owner_timings_site', 'pages', 'timings_page' ], $opened ) ) );
+		$this->assertSame( [ [ 10 ] ], $this->facts( 'PRAGMA user_version' ) );
 		$this->assertSame( [ [ 'requests_server' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'requests_server'" ) );
 		$this->assertSame( [ [ 'timings_site_bucket' ] ], $this->facts( "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'timings_site_bucket'" ) );
 	}
 
-	public function test_v9_declares_the_window_its_expiries_and_the_server_led_keys(): void {
+	/**
+	 * A page's timings sum across its URLs into `timings_page`, keyed as
+	 * `timings` with the page in the URL's place, the page a `pages` row;
+	 * `requests_url` carries every column a page's stats read.
+	 */
+	public function test_v10_declares_the_page_rollup_and_a_covering_url_index(): void {
 		$tables = Flame_Facts_Row_Schema::tables();
 
-		$this->assertSame( 9, Flame_Facts_Row_Schema::version() );
+		$this->assertSame( 10, Flame_Facts_Row_Schema::version() );
+		$this->assertSame( 'pages', Flame_Facts_Row_Schema::NAMED_BY['page_id'] );
+		$this->assertSame( [ 'id', 'page', 'page_hash' ], \array_keys( $tables['pages']['columns'] ) );
+		$this->assertSame( [ 'page_hash' ], $tables['pages']['key'] );
+		$this->assertSame( [ [ 'timings_page', 'page_id', 'id' ] ], $tables['pages']['retained_by'] );
+		$this->assertSame( [ 'bucket', 'server_id', 'page_id', 'category_id', 'entry_id', 'listener', 'ms', 'calls', 'requests' ], \array_keys( $tables['timings_page']['columns'] ) );
+		$this->assertSame( [ 'bucket', 'server_id', 'page_id', 'category_id', 'entry_id' ], $tables['timings_page']['key'] );
+		$this->assertSame( $tables['timings']['add'], $tables['timings_page']['add'] );
+		$this->assertSame( [ 'timings_page_page' => [ 'page_id', 'bucket' ] ], \array_intersect_key( $tables['timings_page']['indexes'], [ 'timings_page_page' => true ] ) );
+		$this->assertSame( $tables['timings']['retain'], $tables['timings_page']['retain'] );
+		$this->assertSame( [ 'bucket', 'server_id', 'url_id', 'category_id', 'entry_id', 'listener', 'ms', 'calls', 'requests' ], \array_keys( $tables['timings']['columns'] ) );
+		$this->assertSame( [ 'bucket', 'server_id', 'url_id', 'category_id', 'entry_id' ], $tables['timings']['key'] );
+		$this->assertSame( [ 'timings_url', 'timings_server_id', 'timings_category_id', 'timings_entry_id' ], \array_keys( $tables['timings']['indexes'] ) );
+		$this->assertSame( [ 'url_id', 'bucket' ], $tables['timings']['indexes']['timings_url'] );
+		$this->assertSame( [ 'bucket', 'server_id', 'worker', 'category_id', 'entry_id', 'listener', 'ms', 'calls', 'requests' ], \array_keys( $tables['timings_site']['columns'] ) );
+		$this->assertSame( [ 'timings_site_bucket', 'timings_site_category_id', 'timings_site_entry_id' ], \array_keys( $tables['timings_site']['indexes'] ) );
+		$this->assertSame( [ 'url_id', 'bucket', 'worker', 'server_id', 'ms', 'status', 'peak_mb', 'profiled', 'error', 'finished_at' ], $tables['requests']['indexes']['requests_url'] );
+	}
+
+	public function test_the_window_its_expiries_and_the_server_led_keys(): void {
+		$tables = Flame_Facts_Row_Schema::tables();
+
 		$this->assertSame( 'owners', Flame_Facts_Row_Schema::NAMED_BY['owner_id'] );
 		$this->assertSame( [ 'bucket', 'server_id', 'url_id', 'owner_id', 'ms', 'calls', 'requests' ], \array_keys( $tables['owner_timings']['columns'] ) );
 		$this->assertSame( [ 'bucket', 'server_id', 'url_id', 'owner_id' ], $tables['owner_timings']['key'] );
@@ -70,7 +96,7 @@ final class FlameFactsTest extends TestCase {
 			$this->use_min_lifetime( $lifetime );
 			$tables = Flame_Facts_Row_Schema::tables();
 
-			foreach ( [ 'requests', 'timings', 'timings_site', 'window_expiry' ] as $table ) {
+			foreach ( [ 'requests', 'timings', 'timings_site', 'timings_page', 'window_expiry' ] as $table ) {
 				$this->assertSame( [ 'bucket', $buckets, Bucket::SECONDS ], $tables[ $table ]['retain'], "{$table} at {$lifetime}" );
 			}
 			$this->assertSame( [ 'last_bucket', $buckets, Bucket::SECONDS ], $tables['category_window']['retain'] );
@@ -95,8 +121,8 @@ final class FlameFactsTest extends TestCase {
 		$tables = Flame_Facts_Row_Schema::tables();
 
 		$this->assertSame( [ [ 'requests', 'url_id', 'id' ], [ 'timings', 'url_id', 'id' ], [ 'owner_timings', 'url_id', 'id' ] ], $tables['urls']['retained_by'] );
-		$this->assertSame( [ [ 'urls', 'server_id', 'id' ], [ 'requests', 'server_id', 'id' ], [ 'timings', 'server_id', 'id' ], [ 'timings_site', 'server_id', 'id' ], [ 'owner_timings', 'server_id', 'id' ], [ 'owner_timings_site', 'server_id', 'id' ], [ 'requests_hourly', 'server_id', 'id' ] ], $tables['servers']['retained_by'] );
-		$this->assertSame( [ [ 'timings', 'entry_id', 'id' ], [ 'timings_site', 'entry_id', 'id' ], [ 'category_window', 'entry_id', 'id' ] ], $tables['entries']['retained_by'] );
+		$this->assertSame( [ [ 'urls', 'server_id', 'id' ], [ 'requests', 'server_id', 'id' ], [ 'timings', 'server_id', 'id' ], [ 'timings_site', 'server_id', 'id' ], [ 'timings_page', 'server_id', 'id' ], [ 'owner_timings', 'server_id', 'id' ], [ 'owner_timings_site', 'server_id', 'id' ], [ 'requests_hourly', 'server_id', 'id' ] ], $tables['servers']['retained_by'] );
+		$this->assertSame( [ [ 'timings', 'entry_id', 'id' ], [ 'timings_site', 'entry_id', 'id' ], [ 'timings_page', 'entry_id', 'id' ], [ 'category_window', 'entry_id', 'id' ] ], $tables['entries']['retained_by'] );
 		foreach ( $tables as $table => $spec ) {
 			foreach ( \array_intersect_key( Flame_Facts_Row_Schema::NAMED_BY, $spec['columns'] ) as $column => $named ) {
 				$leading = [ $spec['key'][0] ?? null, ...\array_column( $spec['indexes'] ?? [], 0 ) ];
@@ -137,6 +163,19 @@ final class FlameFactsTest extends TestCase {
 		$this->assertSame( [ [ 'tauhou.example' ] ], $this->facts( 'SELECT name FROM servers' ) );
 		$this->assertSame( [ [ 't13d_shared' ] ], $this->facts( 'SELECT name FROM ja4s' ) );
 		$this->assertSame( [ [ 'tauhou@bot.example' ] ], $this->facts( 'SELECT name FROM froms' ) );
+	}
+
+	/** Purging a page's last timing row releases its `pages` row; a newer page's stays. */
+	public function test_purging_a_pages_last_timing_releases_the_page(): void {
+		$this->activate_shipped( 'stats-builder', 1 );
+		$old = Bucket::id( self::tick() ) - Bucket::window() - Bucket::RETAIN_SLACK - 3;
+		$this->seed_timing( [ 'server' => 'pipit.example', 'url' => 'https://pipit.example/kahu-61?q=1', 'bucket' => $old, 'ms' => 4.5 ] );
+		$this->seed_timing( [ 'server' => 'pipit.example', 'url' => 'https://pipit.example/tieke-62', 'ms' => 6.75 ] );
+
+		$this->purge_facts( 0 );
+
+		$this->assertSame( [ [ 'pipit.example/tieke-62', 6.75 ] ], $this->facts( 'SELECT p.page, t.ms FROM timings_page t JOIN pages p ON p.id = t.page_id' ) );
+		$this->assertSame( [ [ 'pipit.example/tieke-62' ] ], $this->facts( 'SELECT page FROM pages' ) );
 	}
 
 	/** A URL a timing row still names outlives the purge of its last request. */

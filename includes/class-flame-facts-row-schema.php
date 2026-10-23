@@ -4,10 +4,10 @@
  *
  * The row tables the stats builder writes and every performance reader
  * queries: one `requests` row per completed request, its per-category
- * `timings` per URL and per site, and its `requests_hourly` rollup. Every
- * string a row repeats, its URL, server, agent, JA4, From, category and
- * entry, is the id of a row in `urls` or a lookup table, each released once
- * no row names it. A topology declares them as `make_node Row_Table <name>
+ * `timings` per URL, per page and per site, and its `requests_hourly`
+ * rollup. Every string a row repeats, its URL, page, server, agent, JA4,
+ * From, category and entry, is the id of a row in `urls`, `pages` or a
+ * lookup table, each released once no row names it. A topology declares them as `make_node Row_Table <name>
  * Flame_Facts`, and a reader finds that name through
  * `Bootstrap::row_table()`.
  *
@@ -54,6 +54,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 */
 	public const NAMED_BY = [
 		'url_id'      => 'urls',
+		'page_id'     => 'pages',
 		'server_id'   => 'servers',
 		'ua_id'       => 'agents',
 		'ja4_id'      => 'ja4s',
@@ -61,6 +62,13 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 		'category_id' => 'categories',
 		'entry_id'    => 'entries',
 		'owner_id'    => 'owners',
+	];
+
+	/** Each timing table, by the column naming what one of its rows is per. */
+	private const TIMING_SUBJECTS = [
+		'timings'      => 'url_id',
+		'timings_site' => 'worker',
+		'timings_page' => 'page_id',
 	];
 
 	/** A lookup table: each name the rows repeat, filed once under its id. */
@@ -90,7 +98,7 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	}
 
 	/**
-	 * The sixteen row tables, each column in row order, each table a
+	 * The eighteen row tables, each column in row order, each table a
 	 * `NAMED_BY` column names `retained_by` that column, and that column
 	 * leading an index wherever its table's key or another index does not.
 	 * Each stats table keeps `Bucket::window()` and `Bucket::RETAIN_SLACK`
@@ -128,6 +136,15 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				'autoincrement' => 'id',
 				'fts'           => [ 'path' ],
 			],
+			'pages'           => [
+				'columns'       => [
+					'id'        => 'INTEGER',
+					'page'      => 'TEXT NOT NULL',
+					'page_hash' => 'TEXT NOT NULL',
+				],
+				'key'           => [ 'page_hash' ],
+				'autoincrement' => 'id',
+			],
 			'servers'         => self::LOOKUP,
 			'agents'          => self::LOOKUP,
 			'ja4s'            => self::LOOKUP,
@@ -161,54 +178,13 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 				],
 				'key'     => [ 'rid' ],
 				'indexes' => [
-					'requests_url'    => [ 'url_id', 'bucket' ],
+					'requests_url'    => [ 'url_id', 'bucket', 'worker', 'server_id', 'ms', 'status', 'peak_mb', 'profiled', 'error', 'finished_at' ],
 					'requests_cover'  => [ 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb', 'profiled', 'error', 'finished_at' ],
 					'requests_server' => [ 'server_id', 'bucket', 'worker', 'url_id', 'ms', 'status', 'peak_mb', 'profiled', 'error' ],
 				],
 				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
 			],
-			'timings'         => [
-				'columns' => [
-					'bucket'      => 'INTEGER NOT NULL',
-					'server_id'   => 'INTEGER NOT NULL',
-					'url_id'      => 'INTEGER NOT NULL',
-					'category_id' => 'INTEGER NOT NULL',
-					'entry_id'    => 'INTEGER NOT NULL',
-					'listener'    => 'INTEGER NOT NULL',
-					'ms'          => 'REAL NOT NULL',
-					'calls'       => 'INTEGER NOT NULL',
-					'requests'    => 'INTEGER NOT NULL',
-				],
-				'key'     => [ 'bucket', 'server_id', 'url_id', 'category_id', 'entry_id' ],
-				'add'     => [
-					'ms'       => 'sum',
-					'calls'    => 'sum',
-					'requests' => 'sum',
-				],
-				'indexes' => [ 'timings_url' => [ 'url_id', 'bucket' ] ],
-				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
-			],
-			'timings_site'    => [
-				'columns' => [
-					'bucket'      => 'INTEGER NOT NULL',
-					'server_id'   => 'INTEGER NOT NULL',
-					'worker'      => 'INTEGER NOT NULL',
-					'category_id' => 'INTEGER NOT NULL',
-					'entry_id'    => 'INTEGER NOT NULL',
-					'listener'    => 'INTEGER NOT NULL',
-					'ms'          => 'REAL NOT NULL',
-					'calls'       => 'INTEGER NOT NULL',
-					'requests'    => 'INTEGER NOT NULL',
-				],
-				'key'     => [ 'server_id', 'bucket', 'worker', 'category_id', 'entry_id' ],
-				'add'     => [
-					'ms'       => 'sum',
-					'calls'    => 'sum',
-					'requests' => 'sum',
-				],
-				'indexes' => [ 'timings_site_bucket' => [ 'bucket' ] ],
-				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
-			],
+			...self::timing_tables( $kept ),
 			'owner_timings'  => [
 				'columns' => [
 					'bucket'    => 'INTEGER NOT NULL',
@@ -303,6 +279,45 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	}
 
 	/**
+	 * The timing tables, each one row per bucket, server, subject, category
+	 * and entry, with `listener` and the summed `ms`, `calls` and
+	 * `requests`: `timings` per URL, `timings_site` per worker flag and
+	 * `timings_page` per page. A URL's or a page's table seeks its subject
+	 * through `<table>_<subject>`; the site's key leads with its server.
+	 *
+	 * @param int $kept Buckets each keeps.
+	 * @return array<string,Row_Spec>
+	 */
+	private static function timing_tables( int $kept ): array {
+		$tables = [];
+		foreach ( self::TIMING_SUBJECTS as $table => $subject ) {
+			$site             = 'worker' === $subject;
+			$tables[ $table ] = [
+				'columns' => [
+					'bucket'      => 'INTEGER NOT NULL',
+					'server_id'   => 'INTEGER NOT NULL',
+					$subject      => 'INTEGER NOT NULL',
+					'category_id' => 'INTEGER NOT NULL',
+					'entry_id'    => 'INTEGER NOT NULL',
+					'listener'    => 'INTEGER NOT NULL',
+					'ms'          => 'REAL NOT NULL',
+					'calls'       => 'INTEGER NOT NULL',
+					'requests'    => 'INTEGER NOT NULL',
+				],
+				'key'     => [ ...( $site ? [ 'server_id', 'bucket' ] : [ 'bucket', 'server_id' ] ), $subject, 'category_id', 'entry_id' ],
+				'add'     => [
+					'ms'       => 'sum',
+					'calls'    => 'sum',
+					'requests' => 'sum',
+				],
+				'indexes' => $site ? [ "{$table}_bucket" => [ 'bucket' ] ] : [ $table . '_' . \substr( $subject, 0, -3 ) => [ $subject, 'bucket' ] ],
+				'retain'  => [ 'bucket', $kept, Bucket::SECONDS ],
+			];
+		}
+		return $tables;
+	}
+
+	/**
 	 * `$tables` with every reference `NAMED_BY` reads in a table's columns
 	 * declared on both sides: its column leading an index, and the named
 	 * table `retained_by` it.
@@ -336,6 +351,6 @@ final class Flame_Facts_Row_Schema implements \Newspack_Nodes\Row_Schema {
 	 * @api Read by the Row_Table that opens the file.
 	 */
 	public static function version(): int {
-		return 9;
+		return 10;
 	}
 }

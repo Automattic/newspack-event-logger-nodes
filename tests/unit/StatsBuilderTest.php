@@ -589,7 +589,7 @@ final class StatsBuilderTest extends TestCase {
 		$payload = $reply[ Message::VALUE ];
 		$this->assertSame( 'GET_STATS', $payload['verb'] );
 		$this->assertSame( 1, $payload['data']['buffered_requests'] );
-		$this->assertSame( 8, $payload['data']['buffered_rows'], 'its server, URL and agent, its two categories, the empty entry, the unmeasured owner, and its request' );
+		$this->assertSame( 9, $payload['data']['buffered_rows'], 'its server, URL, page and agent, its two categories, the empty entry, the unmeasured owner, and its request' );
 		$this->assertSame( 0, $payload['data']['records_gone'] );
 	}
 
@@ -1098,6 +1098,88 @@ final class StatsBuilderTest extends TestCase {
 	}
 
 	/**
+	 * Three timed requests over two shapes of one page in one bucket, and one
+	 * shape in the bucket before, beside another page: each with its own
+	 * category, its overlay listener and an entry.
+	 *
+	 * @return array{0:string,1:string} The page's hash, and the other page's.
+	 */
+	private function fold_a_page_of_two_shapes( Stats_Builder_Node $sb ): array {
+		$listener = Flame_Tree::listener_name( 'tieke_cb', 10 );
+		$fold     = function ( string $rid, string $url, int $finished, float $sql, int $calls, float $cb ) use ( $sb, $listener ): void {
+			$this->fill_flame(
+				$sb,
+				$this->completed_request(
+					[
+						'rid'         => $rid,
+						'url'         => $url,
+						'timestamp'   => $finished - 1,
+						'duration_ms' => 1000.0,
+						'profiles'    => [
+							'sql'     => [ 'time' => $sql, 'count' => $calls, 'entries' => [ 'SELECT tieke' => [ $sql / 4, 1 ] ] ],
+							$listener => [ 'time' => $cb, 'count' => 1, 'entries' => [] ],
+						],
+					]
+				)
+			);
+		};
+		$fold( 'rid-tieke-q1', 'https://kokako.example/Tieke-88/?q=1', self::NOW, 12.5, 3, 2.25 );
+		$fold( 'rid-tieke-b1', 'https://kokako.example/tieke-88/', self::NOW, 30.5, 5, 4.75 );
+		$fold( 'rid-tieke-q2', 'https://kokako.example/tieke-88/?q=2', self::NOW, 8.0, 2, 1.5 );
+		$fold( 'rid-tieke-old', 'https://kokako.example/tieke-88/', self::NOW - Bucket::SECONDS, 40.25, 7, 6.5 );
+		$fold( 'rid-kea-other', 'https://kokako.example/kea-89/', self::NOW, 900.5, 90, 99.5 );
+		$sb->flush();
+		return [ Log_Manager::url_hash( 'kokako.example/tieke-88/' ), Log_Manager::url_hash( 'kokako.example/kea-89/' ) ];
+	}
+
+	/**
+	 * A page's shapes sum into one `timings_page` row per category, entry
+	 * and listener per bucket, its page a `pages` row filed once.
+	 */
+	public function test_a_pages_shapes_sum_into_one_page_row_per_category_and_entry_per_bucket(): void {
+		$this->window_world();
+		[ $page, $other ] = $this->fold_a_page_of_two_shapes( $this->window_builder() );
+		$now              = Bucket::id( self::NOW );
+		$listener         = Flame_Tree::listener_name( 'tieke_cb', 10 );
+
+		$this->assertSame( [ [ 'kokako.example/kea-89/', $other ], [ 'kokako.example/tieke-88/', $page ] ], $this->facts( 'SELECT page, page_hash FROM pages ORDER BY page' ) );
+		$this->assertSame(
+			[
+				[ $now - 1, 'sql', '', 0, 40.25, 7, 1 ],
+				[ $now - 1, 'sql', 'SELECT tieke', 0, 40.25 / 4, 1, 1 ],
+				[ $now - 1, $listener, '', 1, 6.5, 1, 1 ],
+				[ $now, 'sql', '', 0, 51.0, 10, 3 ],
+				[ $now, 'sql', 'SELECT tieke', 0, 51.0 / 4, 3, 3 ],
+				[ $now, $listener, '', 1, 8.5, 3, 3 ],
+			],
+			$this->facts( "SELECT t.bucket, c.name, e.name, t.listener, t.ms, t.calls, t.requests FROM timings_page t JOIN pages p ON p.id = t.page_id JOIN servers sv ON sv.id = t.server_id JOIN categories c ON c.id = t.category_id JOIN entries e ON e.id = t.entry_id WHERE p.page_hash = '{$page}' AND sv.name = 'kokako.example' ORDER BY t.bucket, c.name, e.name" )
+		);
+	}
+
+	/**
+	 * A page's breakdown read from `timings_page` is its shapes' `timings`
+	 * summed, bucket by bucket.
+	 */
+	public function test_a_page_breakdown_from_its_rollup_equals_its_shapes_timings_summed(): void {
+		$this->window_world();
+		[ $page ] = $this->fold_a_page_of_two_shapes( $this->window_builder() );
+		$spec     = [ 'source' => 'timings', 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'ms', 'calls', 'requests' ], 'buckets' => Bucket::last( 3, self::NOW ), 'sort' => 'ms', 'order' => 'desc' ];
+
+		$rollup = Stats_Query::run( [ 'group' => [ 'bucket', 'category', 'entry', 'listener' ] ] + $spec );
+		$shapes = Stats_Query::run( [ 'group' => [ 'url', 'bucket', 'category', 'entry', 'listener' ] ] + $spec );
+		$summed = [];
+		foreach ( $shapes['rows'] as [ , , $bucket, $category, $entry, $listener, $ms, $calls, $requests ] ) {
+			$key            = "{$bucket} {$category} {$entry} {$listener}";
+			$summed[ $key ] = [ $bucket, $category, $entry, $listener, ( $summed[ $key ][4] ?? 0.0 ) + $ms, ( $summed[ $key ][5] ?? 0 ) + $calls, ( $summed[ $key ][6] ?? 0 ) + $requests ];
+		}
+		$by_key = static fn ( array $rows ): array => \array_combine( \array_map( static fn ( array $row ): string => \implode( ' ', \array_slice( $row, 0, 4 ) ), $rows ), $rows );
+
+		$this->assertSame( [ 'timings_page', 'timings' ], [ $rollup['table'], $shapes['table'] ] );
+		$this->assertCount( 6, $rollup['rows'] );
+		$this->assertEqualsWithDelta( $by_key( \array_values( $summed ) ), $by_key( $rollup['rows'] ), 1e-9 );
+	}
+
+	/**
 	 * A name reads back byte for byte, and names differing only in case or
 	 * spacing file apart.
 	 */
@@ -1144,6 +1226,8 @@ final class StatsBuilderTest extends TestCase {
 			'requests_hourly' => $this->facts( 'SELECT count, timed, sum_ms, max_ms FROM requests_hourly' ),
 			'timings'         => $this->facts( 'SELECT e.name, t.ms, t.calls, t.requests FROM timings t JOIN entries e ON e.id = t.entry_id ORDER BY e.name' ),
 			'timings_site'    => $this->facts( 'SELECT e.name, t.ms, t.calls, t.requests FROM timings_site t JOIN entries e ON e.id = t.entry_id ORDER BY e.name' ),
+			'timings_page'    => $this->facts( 'SELECT p.page, e.name, t.ms, t.calls, t.requests FROM timings_page t JOIN pages p ON p.id = t.page_id JOIN entries e ON e.id = t.entry_id ORDER BY e.name' ),
+			'pages'           => $this->facts( 'SELECT id, page, page_hash FROM pages' ),
 			'category_window' => $this->facts( 'SELECT e.name, w.ms, w.calls, w.requests FROM category_window w JOIN entries e ON e.id = w.entry_id ORDER BY e.name' ),
 		];
 		$first = $this->armed_stats_builder();
@@ -1162,6 +1246,8 @@ final class StatsBuilderTest extends TestCase {
 
 		$this->assertSame( [ [ 2, 2, 105.0, 61.0 ] ], $once['requests_hourly'] );
 		$this->assertSame( [ [ '', 9.75, 4, 2 ], [ 'SELECT weka', 5.5, 2, 1 ] ], $once['category_window'] );
+		$this->assertSame( [ [ 'kea.example/weka', '', 9.75, 4, 2 ], [ 'kea.example/weka', 'SELECT weka', 5.5, 2, 1 ] ], $once['timings_page'] );
+		$this->assertCount( 1, $once['pages'] );
 		$this->assertSame( $once, $rollups(), 'the replay summed nothing twice' );
 		$this->assertSame( [ [ 2 ] ], $this->facts( 'SELECT count(*) FROM requests' ) );
 	}
@@ -1339,8 +1425,8 @@ final class StatsBuilderTest extends TestCase {
 		for ( $e = 0; $e < 37; $e++ ) {
 			$entries[ "SELECT kakariki {$e}" ] = [ 0.5, 1 ];
 		}
-		// Its URL, request and hour, a category row and 37 entry rows thrice, two owner rows.
-		$per  = 3 + 3 * 38 + 2;
+		// Its URL, page, request and hour, a category row and 37 entry rows four times, two owner rows.
+		$per  = 4 + 4 * 38 + 2;
 		// Once per batch: the server, the category, 38 entries and the owner.
 		$need = (int) \ceil( ( Stats_Builder_Node::BUFFERED_OPS_LIMIT - 41 ) / $per );
 		$fill = fn ( int $i ) => $this->fill_flame( $sb, $this->completed_request( [ 'rid' => "rid-kakariki-{$i}", 'url' => "https://kea.example/kakariki-{$i}", 'user_agent' => '', 'profiles' => [ 'sql' => [ 'time' => 18.5, 'count' => 37, 'entries' => $entries ] ] ] ) );

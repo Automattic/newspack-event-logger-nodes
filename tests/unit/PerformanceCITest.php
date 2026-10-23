@@ -82,6 +82,7 @@ class PerformanceCITest extends TestCase {
 		VerbHarness::reset();
 		Core::$clock                        = null;
 		Settings_Event_Writer::$append_seam = null;
+		Performance_CI_Node::$board_paging  = null;
 		unset( $GLOBALS['_test_fire_option_actions'] );
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
@@ -3871,6 +3872,50 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 20.25, 3 ], [ $reply['aggregate_profiles']['categories']['sql']['time'], $reply['aggregate_profiles']['categories']['sql']['samples'] ] );
 		$this->assertSame( [ 'kaka-plugin' ], \array_column( $reply['aggregate_owners'], 'owner' ) );
 		$this->assertEqualsWithDelta( [ 30.0, 90 / 99, 3.0 ], [ $reply['aggregate_owners'][0]['ms_per_request'], $reply['aggregate_owners'][0]['share'], $reply['aggregate_owners'][0]['calls_per_request'] ], 1e-9 );
+	}
+
+	/**
+	 * A page's profile reads its timings once, grouped by category, entry
+	 * and listener: each category's totals are its entry-less rows, and its
+	 * entries the rest.
+	 */
+	public function test_a_page_profile_reads_its_timings_once(): void {
+		$reply = null;
+		[ $spans ] = $this->logged_spans(
+			Flame_Tree::STATS_QUERY,
+			function () use ( &$reply ): void {
+				$page = $this->seed_a_page_of_two_shapes();
+				$this->seed_timing( [ 'url' => 'https://seed.example/kaka-9183/?q=?', 'category' => 'sql', 'entry' => 'SELECT kaka', 'ms' => 12.75, 'calls' => 3, 'requests' => 3 ] );
+				$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', "--page={$page}" );
+			}
+		);
+
+		$timings = \array_values( \array_filter( \array_column( $spans, 1 ), static fn ( mixed $label ): bool => \str_starts_with( Core::as_string( $label ), 'timings' ) ) );
+		$this->assertSame( [ 'timings by category,entry,listener' ], $timings );
+		$this->assertSame( [ 'time' => 20.25, 'count' => 4 / 3, 'samples' => 3, 'entries' => [ 'SELECT kaka' => [ 4.25, 1, 3 ] ] ], $reply['aggregate_profiles']['categories']['sql'] );
+	}
+
+	/**
+	 * A board deeper than the rows one read may page through still holds
+	 * every category's total: a cheap category whose total ranks past the
+	 * last page keeps its row, and the profiled total counts it. The bound
+	 * is shrunk to pages of 4 rows, the last starting at row 8.
+	 */
+	public function test_a_board_past_the_paging_bound_keeps_every_category_total(): void {
+		Performance_CI_Node::$board_paging = static fn (): array => [ 4, 8 ];
+		$url = 'https://seed.example/kakariki-7391/';
+		$this->seed_timing( [ 'url' => $url, 'category' => 'sql', 'ms' => 900.5, 'calls' => 9, 'requests' => 2 ] );
+		for ( $e = 0; $e < 12; $e++ ) {
+			$this->seed_timing( [ 'url' => $url, 'category' => 'sql', 'entry' => "SELECT kakariki {$e}", 'ms' => 20.5 + $e, 'calls' => 1, 'requests' => 1 ] );
+		}
+		$this->seed_timing( [ 'url' => $url, 'category' => 'hook:kakariki_cheap', 'ms' => 0.75, 'calls' => 3, 'requests' => 2 ] );
+		$this->seed_request( [ 'url' => $url, 'ms' => 950.5, 'profiled' => 1 ] );
+		$this->seed_request( [ 'url' => $url, 'ms' => 4.5, 'profiled' => 1 ] );
+
+		$profiles = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) )['aggregate_profiles'];
+
+		$this->assertSame( [ 'time' => 0.375, 'count' => 1.5, 'samples' => 2, 'entries' => [] ], $profiles['categories']['hook:kakariki_cheap'] );
+		$this->assertSame( ( 900.5 + 0.75 ) / 2, $profiles['total_time'] );
 	}
 
 	/**

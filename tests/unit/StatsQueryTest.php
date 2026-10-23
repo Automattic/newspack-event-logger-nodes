@@ -509,7 +509,7 @@ final class StatsQueryTest extends TestCase {
 			'requests totals'     => [ [ 'source' => 'requests', 'measure' => [ 'count', 'sum_ms' ] ], 'requests_url' ],
 			'requests by url'     => [ [ 'source' => 'requests', 'group' => [ 'url' ], 'measure' => [ 'count', 'sum_ms' ] ], 'requests_url' ],
 			'requests by bucket'  => [ [ 'source' => 'requests', 'group' => [ 'bucket' ], 'measure' => [ 'count', 'p95_ms' ] ], 'requests_url' ],
-			'timings by category' => [ [ 'source' => 'timings', 'group' => [ 'category' ], 'measure' => [ 'ms' ] ], 'timings_url' ],
+			'timings by url'      => [ [ 'source' => 'timings', 'group' => [ 'url', 'category' ], 'measure' => [ 'ms' ] ], 'timings_url' ],
 		];
 	}
 
@@ -532,6 +532,91 @@ final class StatsQueryTest extends TestCase {
 		$this->assertMatchesRegularExpression( '/^SEARCH u USING (COVERING )?INDEX urls_page \(page_hash=\?\)$/m', $plan );
 		$this->assertMatchesRegularExpression( "/^SEARCH t USING (COVERING )?INDEX {$seeks} \\(url_id=\\? AND bucket>\\? AND bucket<\\?\\)$/m", $plan );
 		$this->assertLessThan( \strpos( $plan, "INDEX {$seeks}" ), \strpos( $plan, 'INDEX urls_page' ), "the page's URLs drive the read:\n{$plan}" );
+	}
+
+	/**
+	 * A timings spec naming a page and no URL reads `timings_page`, one
+	 * naming a URL or searching URLs `timings`, any other `timings_site`.
+	 */
+	public function test_the_picker_reads_a_pages_timings_from_its_rollup(): void {
+		$page = Log_Manager::url_hash( 'kea-6107.example/hihi-6107/' );
+		$url  = Url_Parts::hash( 'https://kea-6107.example/hihi-6107/?q=1' );
+		$pick = static fn ( array $over ): string => Stats_Query::table_for( self::spec( $over + [ 'source' => 'timings', 'measure' => [ 'ms' ], 'buckets' => [ [ 5_966_600, 5_966_611 ] ] ] ) );
+
+		$this->assertSame( 'timings_page', $pick( [ 'group' => [ 'category', 'entry', 'listener' ], 'filter' => [ 'page' => [ $page ] ] ] ) );
+		$this->assertSame( 'timings_page', $pick( [ 'group' => [ 'bucket', 'category' ], 'filter' => [ 'page' => [ $page ], 'entry' => [ '' ] ], 'top' => 20, 'top_by' => 'ms' ] ) );
+		$this->assertSame( 'timings_page', $pick( [ 'group' => [ 'page', 'server' ] ] ), 'a page group' );
+		$this->assertSame( 'timings_page', $pick( [ 'filter' => [ 'page!' => [ $page ] ] ] ), 'a negated page' );
+		$this->assertSame( 'timings', $pick( [ 'group' => [ 'category' ], 'filter' => [ 'url' => [ $url ] ] ] ) );
+		$this->assertSame( 'timings', $pick( [ 'group' => [ 'url', 'category' ], 'filter' => [ 'page' => [ $page ] ] ] ), 'a page with a URL' );
+		$this->assertSame( 'timings', $pick( [ 'filter' => [ 'page' => [ $page ] ], 'search' => 'hihi' ] ), 'a page with a search' );
+		$this->assertSame( 'timings_site', $pick( [ 'group' => [ 'category' ], 'filter' => [ 'server' => [ 'kea-6107.example' ] ] ] ) );
+		$this->assertSame( 'owner_timings', Stats_Query::table_for( self::spec( [ 'source' => 'owners', 'filter' => [ 'page' => [ $page ] ], 'measure' => [ 'ms' ], 'buckets' => [ [ 5_966_600, 5_966_611 ] ] ] ) ), 'owners keep their URL table' );
+	}
+
+	/**
+	 * A page's timings seek its `pages` row by hash, then its rollup rows
+	 * over the window through the page-led index.
+	 */
+	public function test_a_page_filter_on_timings_seeks_its_page_then_its_rollup_rows(): void {
+		foreach ( [ 'https://kea.example/Hihi-6108/', 'https://kea.example/hihi-6108/?a=?', 'https://kea.example/kaka-6108/' ] as $i => $url ) {
+			$this->seed_timing( [ 'url' => $url, 'server' => 'kea.example', 'ms' => 12.5 + $i ] );
+		}
+		$plan = self::plan_of( self::spec( [ 'source' => 'timings', 'group' => [ 'category', 'entry', 'listener' ], 'filter' => [ 'page' => [ Log_Manager::url_hash( 'kea.example/hihi-6108/' ) ] ], 'measure' => [ 'ms', 'calls', 'requests' ], 'buckets' => $this->last_span() ] ) );
+
+		$this->assertMatchesRegularExpression( '/^SEARCH u USING COVERING INDEX sqlite_autoindex_pages_1 \(page_hash=\?\)$/m', $plan );
+		$this->assertMatchesRegularExpression( '/^SEARCH t USING INDEX timings_page_page \(page_id=\? AND bucket>\? AND bucket<\?\)$/m', $plan );
+		$this->assertLessThan( \strpos( $plan, 'timings_page_page' ), \strpos( $plan, 'sqlite_autoindex_pages_1' ), "the page drives the read:\n{$plan}" );
+	}
+
+	/**
+	 * A page grouped over timings answers each page once by its hash and
+	 * its name, summed across the partitions whose ids for it differ.
+	 */
+	public function test_a_page_group_over_timings_names_each_page_across_partitions(): void {
+		$this->seed_timing( [ 'url' => 'https://kea.example/kaka-6109/', 'server' => 'kea.example', 'category' => 'hook:kaka_init', 'ms' => 30.5 ], partition: 1 );
+		$this->seed_timing( [ 'url' => 'https://kea.example/hihi-6109/?a=1', 'server' => 'kea.example', 'category' => 'sql', 'ms' => 8.25 ], partition: 1 );
+		$this->seed_timing( [ 'url' => 'https://kea.example/Hihi-6109/', 'server' => 'kea.example', 'category' => 'sql', 'ms' => 4.5 ], partition: 2 );
+
+		$r = Stats_Query::run( self::spec( [ 'source' => 'timings', 'group' => [ 'page', 'category' ], 'measure' => [ 'ms' ], 'sort' => 'ms', 'order' => 'desc', 'buckets' => $this->last_span() ] ) );
+
+		$this->assertSame( 'timings_page', $r['table'] );
+		$this->assertSame(
+			[
+				[ Log_Manager::url_hash( 'kea.example/kaka-6109/' ), 'kea.example/kaka-6109/', 'hook:kaka_init', 30.5 ],
+				[ Log_Manager::url_hash( 'kea.example/hihi-6109/' ), 'kea.example/hihi-6109/', 'sql', 12.75 ],
+			],
+			$r['rows']
+		);
+	}
+
+	/**
+	 * A page's stats, percentiles included, read each request from
+	 * `requests_url` alone, server scope or none, never fetching its row.
+	 *
+	 * @return array<string,array{0:array<string,list<string>>}>
+	 */
+	public static function page_stats_scopes(): array {
+		return [
+			'every server' => [ [] ],
+			'one server'   => [ [ 'server' => [ 'kea-6110.example' ] ] ],
+		];
+	}
+
+	/**
+	 * @param array<string,list<string>> $scope The server scope.
+	 */
+	#[DataProvider( 'page_stats_scopes' )]
+	public function test_a_pages_stats_read_covers_on_requests_url( array $scope ): void {
+		foreach ( [ 'https://kea-6110.example/hihi-6110/', 'https://kea-6110.example/hihi-6110/?a=?' ] as $i => $url ) {
+			$this->seed_request( [ 'url' => $url, 'server' => 'kea-6110.example', 'ms' => 21.5 + $i, 'error' => 'T', 'profiled' => 1 ] );
+		}
+		$page    = Log_Manager::url_hash( 'kea-6110.example/hihi-6110/' );
+		$measure = [ ...Performance_CI_Node::URL_MEASURES, 'p50_ms', 'p95_ms', 'p99_ms', 'error_rate' ];
+
+		$plan = self::plan_of( self::spec( [ 'source' => 'requests', 'group' => [ 'page' ], 'filter' => [ 'page' => [ $page ] ] + $scope, 'measure' => $measure, 'buckets' => $this->last_span() ] ) );
+
+		$this->assertMatchesRegularExpression( '/^SEARCH t USING COVERING INDEX requests_url \(url_id=\? AND bucket>\? AND bucket<\?\)$/m', $plan );
 	}
 
 	/**
@@ -1124,7 +1209,7 @@ final class StatsQueryTest extends TestCase {
 	/**
 	 * A `page` filter takes the page's hash and keeps every URL of that page,
 	 * any case or query shape, and a negated one keeps every other; a
-	 * timings question naming a page reads `timings`, the table holding URLs.
+	 * timings question naming a page reads `timings_page`, its pages' sums.
 	 */
 	public function test_a_page_filter_keeps_its_urls(): void {
 		$upper = 'https://kea.example/Weka-5521/';
@@ -1143,7 +1228,7 @@ final class StatsQueryTest extends TestCase {
 
 		$this->assertSame( [ [ Url_Parts::hash( $upper ), $upper, 20.0 ], [ Url_Parts::hash( $query ), $query, 40.0 ] ], $kept['rows'] );
 		$this->assertSame( [ [ Url_Parts::hash( $other ), $other, 900.0 ] ], $left['rows'] );
-		$this->assertSame( 'timings', Stats_Query::table_for( $timings ) );
+		$this->assertSame( 'timings_page', Stats_Query::table_for( $timings ) );
 		$this->assertSame( [ [ 'sql', 12.5 ] ], Stats_Query::run( $timings )['rows'] );
 	}
 

@@ -50,7 +50,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * an order of its own answers beside the first, from the one statement.
  *
  * @phpstan-type Also array{sort:string, order:string, limit:int}
- * @phpstan-type Measured array{measures:array<string,array{0:string,1:list<string>,2:?string,3:list<string>}>}
+ * @phpstan-type Measured array{measures:array<string,array{0:string,1:list<string>,2:?string,3:list<string>}>, ids?:array<string,array{0:string,1:string}>}
  * @phpstan-type Spec array{source:string, group:list<string>, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, sort:string, order:string, limit:int, offset:int, search:string, match:string, top:?int, top_by:string, also:?Also, now:?int}
  */
 final class Stats_Query {
@@ -142,7 +142,8 @@ final class Stats_Query {
 	 * The fields a partition sums by id when its measures compose, each its
 	 * id column and the table naming it: the sum then names each group once
 	 * rather than joining a name onto every row. A page sums by its URLs'
-	 * ids, and the union merges the URLs of one page by its hash.
+	 * ids, and the union merges the URLs of one page by its hash, except
+	 * where a table declares its own `ids`, as `timings_page` does its page.
 	 */
 	private const BY_ID = [
 		'url'      => [ 't.url_id', 'urls' ],
@@ -153,6 +154,9 @@ final class Stats_Query {
 
 	/** The join a URL field, input or search needs. */
 	private const URL_JOIN = 'JOIN %1$s.urls AS u ON u.id = t.url_id';
+
+	/** The join a page rollup's page needs: `pages` as `u`, columns as `urls` names them. */
+	private const PAGE_JOIN = 'JOIN %1$s.pages AS u ON u.id = t.page_id';
 
 	/** The join a URL's server needs, after `urls`. */
 	private const URL_SERVER_JOIN = 'JOIN %1$s.servers AS us ON us.id = u.server_id';
@@ -224,6 +228,24 @@ final class Stats_Query {
 		'ms'       => 't.ms',
 		'calls'    => 't.calls',
 		'requests' => 't.requests',
+	];
+
+	/**
+	 * What `timings`, `timings_page` and `timings_site` share; each adds the
+	 * fields and joins of its subject, the URL, the page or the worker.
+	 */
+	private const TIMING_TABLE = [
+		'range'    => [ 't.bucket', 1 ],
+		'fields'   => [
+			'bucket'   => 't.bucket',
+			'hour'     => 't.bucket / ' . self::BUCKETS_PER_HOUR,
+			'server'   => 'sv.name',
+			'category' => 'c.name',
+			'entry'    => 'e.name',
+			'listener' => 't.listener',
+		],
+		'inputs'   => self::TIMING_INPUTS,
+		'measures' => self::TIMING_MEASURES,
 	];
 
 	/**
@@ -344,40 +366,32 @@ final class Stats_Query {
 			],
 		],
 		'timings'            => [
-			'range'    => [ 't.bucket', 1 ],
-			'fields'   => [
-				'bucket'   => 't.bucket',
-				'hour'     => 't.bucket / ' . self::BUCKETS_PER_HOUR,
-				'server'   => 'sv.name',
-				'url'      => self::URL_FIELDS['url']['hash'],
-				'page'     => self::URL_FIELDS['page']['hash'],
-				'category' => 'c.name',
-				'entry'    => 'e.name',
-				'listener' => 't.listener',
-			],
-			'joins'    => [
+			'fields' => [
+				'url'  => self::URL_FIELDS['url']['hash'],
+				'page' => self::URL_FIELDS['page']['hash'],
+			] + self::TIMING_TABLE['fields'],
+			'joins'  => [
 				'server' => self::SERVER_JOIN,
 				'url'    => self::URL_JOIN,
 				'page'   => self::URL_JOIN,
 			] + self::TIMING_JOINS,
-			'inputs'   => self::TIMING_INPUTS,
-			'measures' => self::TIMING_MEASURES,
-		],
-		'timings_site'       => [
-			'range'    => [ 't.bucket', 1 ],
-			'fields'   => [
-				'bucket'   => 't.bucket',
-				'hour'     => 't.bucket / ' . self::BUCKETS_PER_HOUR,
-				'server'   => 'sv.name',
-				'worker'   => 't.worker',
-				'category' => 'c.name',
-				'entry'    => 'e.name',
-				'listener' => 't.listener',
+		] + self::TIMING_TABLE,
+		'timings_page'       => [
+			'fields' => [ 'page' => self::URL_FIELDS['page']['hash'] ] + self::TIMING_TABLE['fields'],
+			'joins'  => [
+				'server' => self::SERVER_JOIN,
+				'page'   => self::PAGE_JOIN,
+			] + self::TIMING_JOINS,
+			'ids'    => [
+				'page'     => [ 't.page_id', 'pages' ],
+				'category' => self::BY_ID['category'],
+				'entry'    => self::BY_ID['entry'],
 			],
-			'joins'    => [ 'server' => self::SEEKING_SERVER_JOIN ] + self::TIMING_JOINS,
-			'inputs'   => self::TIMING_INPUTS,
-			'measures' => self::TIMING_MEASURES,
-		],
+		] + self::TIMING_TABLE,
+		'timings_site'       => [
+			'fields' => [ 'worker' => 't.worker' ] + self::TIMING_TABLE['fields'],
+			'joins'  => [ 'server' => self::SEEKING_SERVER_JOIN ] + self::TIMING_JOINS,
+		] + self::TIMING_TABLE,
 		'owner_timings'      => [
 			'range'    => [ 't.bucket', 1 ],
 			'fields'   => [
@@ -778,10 +792,11 @@ final class Stats_Query {
 
 	/**
 	 * An arm grouped inside its partition: each group field as `f<i>` and each
-	 * folded measure's row aggregate as `q_<name>`. Each `BY_ID` group, grouped
-	 * by id, joins its partition's table after grouping for its name: a URL
-	 * field its hash and its name parts, from one `urls` join however many
-	 * URL fields the group names, since each is the same URL id.
+	 * folded measure's row aggregate as `q_<name>`. Each group the table sums
+	 * by id (`ids()`) joins its partition's table after grouping for its
+	 * name: a URL field its hash and its name parts, from one join of the
+	 * table naming it, `urls` or a page rollup's `pages`, however many URL
+	 * fields the group names, since each is the same id.
 	 *
 	 * @param array{0:string, 1:list<scalar|null>} $arm    The arm, its `BY_ID` groups by id.
 	 * @param Spec                                 $spec   The checked spec.
@@ -795,18 +810,19 @@ final class Stats_Query {
 		$select   = \array_map( static fn ( string $name ): string => self::aggregate( $def, $name ) . " AS q_{$name}", $folded );
 		$sql      = 'SELECT ' . \implode( ', ', [ ...$groups, ...$select ] ) . " FROM ( {$arm[0]} )" . ( [] === $groups ? '' : ' GROUP BY ' . \implode( ', ', $groups ) );
 		$outer    = \array_map( static fn ( string $column ): string => "g.{$column}", [ ...$groups, ...$partials ] );
+		$ids      = self::ids( $def );
 		$urls     = [];
 		$joins    = [];
 		foreach ( $spec['group'] as $i => $field ) {
 			if ( isset( self::URL_FIELDS[ $field ] ) ) {
 				$outer[ $i ] = \implode( ', ', [ self::URL_FIELDS[ $field ]['hash'] . " AS f{$i}", ...self::named_parts( $i, $field ) ] );
 				if ( [] === $urls ) {
-					$urls[] = "JOIN %1\$s.urls AS u ON u.id = g.f{$i}";
+					$urls[] = "JOIN %1\$s.{$ids[ $field ][1]} AS u ON u.id = g.f{$i}";
 				}
 				\array_push( $urls, ...self::URL_FIELDS[ $field ]['joins'] );
-			} elseif ( isset( self::BY_ID[ $field ] ) ) {
+			} elseif ( isset( $ids[ $field ] ) ) {
 				$outer[ $i ] = "l{$i}.name AS f{$i}";
-				$joins[]     = 'JOIN %1$s.' . self::BY_ID[ $field ][1] . " AS l{$i} ON l{$i}.id = g.f{$i}";
+				$joins[]     = 'JOIN %1$s.' . $ids[ $field ][1] . " AS l{$i} ON l{$i}.id = g.f{$i}";
 			}
 		}
 		$joins = [ ...\array_unique( $urls ), ...$joins ];
@@ -837,14 +853,15 @@ final class Stats_Query {
 	}
 
 	/**
-	 * The table that answers $spec exactly at least cost: category_window | timings_site | timings | owner_timings_site | owner_timings | requests_hourly | requests.
+	 * The table that answers $spec exactly at least cost: category_window | timings_site | timings_page | timings | owner_timings_site | owner_timings | requests_hourly | requests.
 	 *
 	 * A timings spec over exactly the `Bucket::window()` buckets ending at the
 	 * bucket of its `now`, naming only the window's fields, reads
 	 * `category_window`; with `readable()` holding the watermark to its
 	 * start, the builder and the reader then keep one span. Any other reads
-	 * `timings_site` unless a URL
-	 * or a page is grouped or filtered, or a URL searched; a requests spec
+	 * `timings_site` unless a URL or a page is grouped or filtered, or a URL
+	 * searched: then `timings_page` when it names a page and no URL and
+	 * searches none, else `timings`. A requests spec
 	 * reads `requests_hourly` when the rollup keeps
 	 * every field and measure it names, its `top_by` among them, and every
 	 * bucket range covers whole hours.
@@ -861,7 +878,8 @@ final class Stats_Query {
 		}
 		if ( 'timings' === $spec['source'] ) {
 			if ( $by_url ) {
-				return 'timings';
+				$by_page = ! \in_array( 'url', $named, true ) && '' === ( $spec['search'] ?? '' );
+				return $by_page ? 'timings_page' : 'timings';
 			}
 			$range = 1 === \count( $spec['buckets'] ) ? $spec['buckets'][0] : null;
 			$now   = $spec['now'] ?? null;
@@ -1018,7 +1036,7 @@ final class Stats_Query {
 	 * One partition's arm, its alias a `%1$s` placeholder: each group field
 	 * as `f<i>`, a URL field's name parts beside it as `n<i>_<k>`, and
 	 * each input as `m_<name>`, over the bucket ranges, the filters and the
-	 * search. Grouped by id, a `BY_ID` field is its id alone, and joins its
+	 * search. Grouped by id, an `ids()` field is its id alone, and joins its
 	 * table only for a filter on it or, for a URL, a search; a URL never
 	 * joins `servers`. A filter naming a URL field joins the server through
 	 * `SERVER_JOIN`. Each join is made once, however many fields need it.
@@ -1033,11 +1051,12 @@ final class Stats_Query {
 	private static function arm( array $spec, string $table, array $fields, array $inputs, bool $by_id = false ): array {
 		$def    = self::TABLES[ $table ];
 		$expr   = $def['fields'];
+		$by     = self::ids( $def );
 		$select = [];
 		$after  = [];
 		foreach ( $spec['group'] as $i => $field ) {
-			if ( $by_id && isset( self::BY_ID[ $field ] ) ) {
-				$select[] = self::BY_ID[ $field ][0] . " AS f{$i}";
+			if ( $by_id && isset( $by[ $field ] ) ) {
+				$select[] = $by[ $field ][0] . " AS f{$i}";
 				continue;
 			}
 			$select[] = Core::as_string( $expr[ $field ] ) . " AS f{$i}";
@@ -1067,7 +1086,7 @@ final class Stats_Query {
 			$clauses[] = Core::as_string( $expr[ $field ] ) . $in . \implode( ', ', \array_fill( 0, \count( $values ), '?' ) ) . ' )';
 			\array_push( $binds, ...$values );
 		}
-		$ids    = \array_keys( self::BY_ID );
+		$ids    = \array_keys( $by );
 		$joined = $by_id ? [ ...\array_diff( $fields, $ids ), ...\array_intersect( self::filtered( $spec['filter'] ), $ids ) ] : $fields;
 		if ( '' !== $spec['match'] ) {
 			$clauses[] = self::SEARCH;
@@ -1109,6 +1128,16 @@ final class Stats_Query {
 	 */
 	private static function parts( string $prefix, int $i, string $field ): array {
 		return \array_map( static fn ( int $k ): string => "{$prefix}{$i}_{$k}", \array_keys( \array_values( self::URL_FIELDS[ $field ]['parts'] ) ) );
+	}
+
+	/**
+	 * The fields a table sums by id: its own `ids`, else `BY_ID`.
+	 *
+	 * @param Measured $def The table.
+	 * @return array<string,array{0:string,1:string}>
+	 */
+	private static function ids( array $def ): array {
+		return $def['ids'] ?? self::BY_ID;
 	}
 
 	/**

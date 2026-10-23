@@ -9,8 +9,9 @@
  * `set_requests_partition` names. It buffers the rows the record contributes
  * to the `flame-facts` Row_Table (`Flame_Facts_Row_Schema`): its `requests`
  * row, the `urls`, `agents`, `servers`, `ja4s` and `froms` rows it names, its
- * `requests_hourly` rollup and, when timed, its `timings` and `timings_site`
- * rows, which name their `categories` and `entries` rows.
+ * `requests_hourly` rollup and, when timed, its `timings`, `timings_page`
+ * and `timings_site` rows, which name their `categories` and `entries` rows,
+ * and its page's `pages` row.
  *
  * `flush()` sends the buffer as one `ROWS` batch, one transaction, every
  * FLUSH_INTERVAL_SEC, at every checkpoint, and as soon as it holds
@@ -106,7 +107,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	/**
 	 * Ops the buffer holds before the record reaching the count writes it:
 	 * memory follows ops, about 730 bytes each, and a timed request adds
-	 * three per profile category and entry, so this bounds a batch near
+	 * four per profile category and entry, so this bounds a batch near
 	 * 15 MB.
 	 */
 	public const BUFFERED_OPS_LIMIT = 20_000;
@@ -156,6 +157,9 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 
 	/** @var array<string,int> Batch index of each URL's `urls` op, by url_hash. */
 	private array $url_at = [];
+
+	/** @var array<string,int> Batch index of each page's `pages` op, by its hash. */
+	private array $page_at = [];
 
 	/** @var array<string,array<array-key,int>> Batch index of each lookup name's op, by column. */
 	private array $name_at = [];
@@ -357,9 +361,10 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 	 * timed, for each profile category, entry and owner, each the first time
 	 * the batch meets it, whose ids the rows take by batch index; then the
 	 * request's `ignore`, whose `then` ops add its hourly rollup and, when it
-	 * is timed, a timing row per profile category and entry and an owner row
-	 * per owner the record measured, `Request_Builder_Node::owners_of()`, for
-	 * the URL and for the site, and its share of the category window.
+	 * is timed, a timing row per profile category and entry for the URL, its
+	 * page and the site, an owner row per owner the record measured,
+	 * `Request_Builder_Node::owners_of()`, for the URL and for the site, and
+	 * its share of the category window.
 	 *
 	 * Filed where it COMPLETED (decision 19): its start plus its duration,
 	 * clamped to the tick, since a request cannot have finished after it
@@ -414,12 +419,15 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		$timings   = self::profile_rows( $profiles );
 		$windowed  = $bucket > $this->window_through;
 		$site      = [ 'server_id' => $server_at ];
-		$page      = $site + [ 'url_id' => $url_at ];
+		$by_url    = $site + [ 'url_id' => $url_at ];
+		// A page no timing row names would never be released by a purge.
+		$by_page = [] === $timings ? $site : $site + [ 'page_id' => $this->page_op_at( $url_at ) ];
 		foreach ( $timings as $category => $entries ) {
 			$category_at = [ 'category_id' => $this->named_at( 'category_id', $category ) ];
 			foreach ( $entries as [ $entry, $listener, $time, $calls ] ) {
 				$named  = $category_at + [ 'entry_id' => $this->named_at( 'entry_id', $entry ) ];
-				$then[] = [ 'add', 'timings', [ $bucket, null, null, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings', $named + $page ) ];
+				$then[] = [ 'add', 'timings', [ $bucket, null, null, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings', $named + $by_url ) ];
+				$then[] = [ 'add', 'timings_page', [ $bucket, null, null, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings_page', $named + $by_page ) ];
 				$then[] = [ 'add', 'timings_site', [ $bucket, null, $worker, null, null, $listener, $time, $calls, 1 ], [], self::ids_at( 'timings_site', $named + $site ) ];
 				if ( $windowed ) {
 					$then[] = [ ...self::window_op( [ null, null, $listener, $worker, $time, $calls, 1 ], 1, $bucket ), [], self::ids_at( 'category_window', $named ) ];
@@ -428,7 +436,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 		}
 		foreach ( $timed ? Request_Builder_Node::owners_of( $request ) : [] as [ $owner, $owner_ms, $calls ] ) {
 			$named  = [ 'owner_id' => $this->named_at( 'owner_id', $owner ) ];
-			$then[] = [ 'add', 'owner_timings', [ $bucket, null, null, null, $owner_ms, $calls, 1 ], [], self::ids_at( 'owner_timings', $named + $page ) ];
+			$then[] = [ 'add', 'owner_timings', [ $bucket, null, null, null, $owner_ms, $calls, 1 ], [], self::ids_at( 'owner_timings', $named + $by_url ) ];
 			$then[] = [ 'add', 'owner_timings_site', [ $bucket, null, $worker, null, $owner_ms, $calls, 1 ], [], self::ids_at( 'owner_timings_site', $named + $site ) ];
 		}
 		$this->op(
@@ -478,6 +486,19 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			return null;
 		}
 		return $this->name_at[ $column ][ $name ] ??= $this->op( [ 'ignore', Flame_Facts_Row_Schema::NAMED_BY[ $column ], [ null, $name ] ] );
+	}
+
+	/**
+	 * The batch index of the `ignore` filing in `pages` the page the `urls`
+	 * op at `$url_at` names, appended the first time the batch names it.
+	 *
+	 * @param int $url_at The batch index of the request's `urls` op.
+	 */
+	private function page_op_at( int $url_at ): int {
+		$url  = Core::arr( $this->rows[ $url_at ][2] );
+		$page = Core::as_string( $url[ Flame_Facts_Row_Schema::position( 'urls', 'page' ) ] );
+		$hash = Core::as_string( $url[ Flame_Facts_Row_Schema::position( 'urls', 'page_hash' ) ] );
+		return $this->page_at[ $hash ] ??= $this->op( [ 'ignore', 'pages', [ null, $page, $hash ] ] );
 	}
 
 	/**
@@ -688,6 +709,7 @@ class Stats_Builder_Node extends Timer_Node implements Shutdown_Sweeper, Idle_Re
 			$this->buffered  = 0;
 			$this->ops       = 0;
 			$this->url_at    = [];
+			$this->page_at   = [];
 			$this->name_at   = [];
 			$this->worked_at = Core::$now;
 		}
