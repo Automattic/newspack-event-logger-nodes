@@ -3762,6 +3762,30 @@ class PerformanceCITest extends TestCase {
 		$this->assertEqualsWithDelta( [ 4 / 3, 3.0 ], \array_column( $reply['aggregate_owners'], 'calls_per_request' ), 1e-9 );
 	}
 
+	/**
+	 * A bucket selection narrows the profile and the owners as it narrows
+	 * the stats and the list, so a window holding one request reads as it.
+	 */
+	public function test_dump_url_profile_and_owners_follow_a_bucket_selection(): void {
+		$url    = 'https://seed.example/kokako-41/';
+		$picked = self::latest() - 3;
+		$this->seed_request( [ 'url' => $url, 'bucket' => $picked, 'ms' => 60.5, 'profiled' => 1 ] );
+		$this->seed_request( [ 'url' => $url, 'ms' => 700.5, 'profiled' => 1 ] );
+		$this->seed_timing( [ 'url' => $url, 'bucket' => $picked, 'category' => 'sql', 'ms' => 30.5, 'calls' => 3, 'requests' => 1 ] );
+		$this->seed_timing( [ 'url' => $url, 'category' => 'sql', 'ms' => 900.0, 'calls' => 9, 'requests' => 1 ] );
+		$this->seed_owner_timing( [ 'url' => $url, 'bucket' => $picked, 'owner' => 'kea-7746', 'ms' => 30.5, 'calls' => 3, 'requests' => 1 ] );
+		$this->seed_owner_timing( [ 'url' => $url, 'bucket' => $picked, 'owner' => '(unmeasured)', 'ms' => 30.0, 'calls' => 0, 'requests' => 1 ] );
+		$this->seed_owner_timing( [ 'url' => $url, 'owner' => 'kea-7746', 'ms' => 900.0, 'calls' => 9, 'requests' => 1 ] );
+		$this->seed_owner_timing( [ 'url' => $url, 'owner' => '(unmeasured)', 'ms' => 0.0, 'calls' => 0, 'requests' => 1 ] );
+
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ self::hash_of( $url ), '--bucket=' . Bucket::key( $picked ) ] );
+
+		$this->assertSame( 1, $reply['aggregate_profiles']['count'] );
+		$this->assertSame( 30.5, $reply['aggregate_profiles']['categories']['sql']['time'] );
+		$this->assertSame( [ 'kea-7746' ], \array_column( $reply['aggregate_owners'], 'owner' ) );
+		$this->assertEqualsWithDelta( 30.5, $reply['aggregate_owners'][0]['ms_per_request'], 1e-9 );
+	}
+
 	public function test_dump_url_profile_is_null_over_no_profiled_request(): void {
 		$url = 'https://seed.example/whio-12/';
 		$this->seed_request( [ 'url' => $url, 'ms' => 50.5 ] );

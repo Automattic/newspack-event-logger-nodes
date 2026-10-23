@@ -456,7 +456,7 @@ describe( 'RequestDetailView', () => {
 		const stack = container.querySelector( '.event-logger-sections' );
 		expect( stack ).not.toBeNull();
 		const owner = [ ...stack.children ].find( ( child ) =>
-			child.textContent.includes( 'Time by owner' )
+			child.textContent.includes( 'Time By Owner' )
 		);
 		expect( owner ).toBeDefined();
 		for ( const child of stack.children ) {
@@ -493,7 +493,7 @@ describe( 'RequestDetailView', () => {
 				realEntryCount: 0,
 			} )
 		);
-		expect( container.textContent ).toContain( 'Time by owner' );
+		expect( container.textContent ).toContain( 'Time By Owner' );
 		expect( container.textContent ).toContain( 'plugin:ibis-forms' );
 		expect( container.textContent ).toContain( '61.5ms' );
 		expect( container.textContent ).not.toContain( 'per request' );

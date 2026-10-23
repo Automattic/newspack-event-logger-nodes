@@ -806,7 +806,7 @@ describe( 'OverviewSection', () => {
 		const stack = container.querySelector( '.event-logger-sections' );
 		expect( stack ).not.toBeNull();
 		const owner = [ ...stack.children ].find( ( child ) =>
-			child.textContent.includes( 'Time by owner' )
+			child.textContent.includes( 'Time By Owner' )
 		);
 		expect( owner ).toBeDefined();
 		for ( const child of stack.children ) {
@@ -827,7 +827,7 @@ describe( 'OverviewSection', () => {
 				},
 			],
 		} );
-		expect( container.textContent ).toContain( 'Time by owner' );
+		expect( container.textContent ).toContain( 'Time By Owner' );
 		expect( container.textContent ).toContain( 'mu:egret-cache' );
 		expect( container.textContent ).toContain( 'per request' );
 		expect( container.textContent ).toContain( '17.5ms' );
@@ -838,7 +838,7 @@ describe( 'OverviewSection', () => {
 
 	it( 'mounts no owner table from a snapshot that predates owners', () => {
 		const { container, unmount } = mount( {} );
-		expect( container.textContent ).not.toContain( 'Time by owner' );
+		expect( container.textContent ).not.toContain( 'Time By Owner' );
 		unmount();
 	} );
 } );

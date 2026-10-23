@@ -669,7 +669,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string       $spelling A `Bucket::selection()` spelling; '' for the chart's.
 	 * @param int          $now      The reply's clock.
 	 * @param int          $limit    Most requests listed, newest first.
-	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}, listed: list<array<string,mixed>>, requests_capped: bool, bucket: string, available: bool}
+	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}, listed: list<array<string,mixed>>, requests_capped: bool, bucket: string, buckets: list<array{0:int,1:int}>, available: bool}
 	 * @throws \RuntimeException When no request row names the hash.
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, or a filter `url_filter_of()` refuses.
 	 */
@@ -692,6 +692,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			'listed'          => $listed,
 			'requests_capped' => \count( $listed ) < Core::num_int( $stats['count'] ),
 			'bucket'          => '' === $spelling ? '' : Bucket::spelling( $buckets ),
+			'buckets'         => $buckets,
 			'available'       => $answer['available'],
 		];
 	}
@@ -845,7 +846,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( '' === $named ) {
 				throw self::stats_outage( "no aggregate for URL {$url['id']}" );
 			}
-			$profile = self::url_profile( $url['id'], $scope, $now );
+			$profile = self::url_profile( $url['id'], $scope, Bucket::last( Stats_Query::retention( 'timings' ), $now ), $now );
 			$brief   = null === $profile ? null : Ask_Assembler::for_url_category( $profile, $name, $named, $server );
 			if ( null !== $brief ) {
 				return $brief;
@@ -890,16 +891,17 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * A URL's category profile over every bucket the timings keep, in the
-	 * leaderboard's shape, or null over no profiled request.
+	 * A URL's category profile over `$buckets`, in the leaderboard's shape,
+	 * or null over no profiled request.
 	 *
-	 * @param string                     $hash  12-char URL hash.
-	 * @param array<string,list<scalar>> $scope The server scope; worker traffic counts.
-	 * @param int                        $now   The reply's clock.
+	 * @param string                     $hash    12-char URL hash.
+	 * @param array<string,list<scalar>> $scope   The server scope; worker traffic counts.
+	 * @param list<array{0:int,1:int}>   $buckets The buckets read.
+	 * @param int                        $now     The reply's clock.
 	 * @return array{count:int, total_time:?float, avg_ms:?float, categories:array<array-key,mixed>}|null
 	 */
-	private static function url_profile( string $hash, array $scope, int $now ): ?array {
-		$board = self::leaderboard( $scope + [ 'url' => [ $hash ] ], Bucket::last( Stats_Query::retention( 'timings' ), $now ), $now );
+	private static function url_profile( string $hash, array $scope, array $buckets, int $now ): ?array {
+		$board = self::leaderboard( $scope + [ 'url' => [ $hash ] ], $buckets, $now );
 		return 0 === $board['count'] ? null : $board;
 	}
 
@@ -2425,7 +2427,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
-					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last ' . $span . ' buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its category profile over the ' . $kept . ' buckets the timings keep, null over no profiled request. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured, as are the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` in `stats`, which also carries `error_rate`, `errors` over `count`. Series come from `query` filtered to the URL.',
+					'description' => 'One URL from its request rows, worker traffic counted: `stats` over the last ' . $span . ' buckets or a `bucket` selection, its newest RECENT_REQUEST_LIMIT requests by `finished_at` with each one\'s start, `requests_capped` true when the list holds fewer requests than the stats count, the aggregate flame rebuilt from the stored flames of the newest FLAME_REQUEST_LIMIT of them when no filter or bucket narrows the list, null with `flame_cut` true when MAX_SCAN_S ended the rebuild first, and `aggregate_profiles`, its category profile over the `bucket` selection or, with none, the ' . $kept . ' buckets the timings keep, null over no profiled request; `aggregate_owners` follows the same selection. `server` scopes the stats, the list and the profile, and `filter` narrows the stats and the list. A stats file that will not open answers zero stats, no list and a null flame and profile. Each row\'s `duration_ms` is null where no sample was taken; `avg_ms`, `min_ms`, `max_ms` and `avg_peak_mb` are null where nothing was measured, as are the nearest-rank `p50_ms`, `p95_ms` and `p99_ms` in `stats`, which also carries `error_rate`, `errors` over `count`. Series come from `query` filtered to the URL.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
@@ -2455,8 +2457,8 @@ class Performance_CI_Node extends Service_CI_Node {
 					'requests_capped'    => $detail['requests_capped'],
 					'aggregate_flame'    => $flame,
 					'flame_cut'          => $rebuilt && null === $flame,
-					'aggregate_profiles' => self::url_profile( $hash, self::scope( $server, true ), $now ),
-					'aggregate_owners'   => self::owner_board( self::scope( $server, true ) + [ 'url' => [ $hash ] ], Bucket::last( Stats_Query::retention( 'owners' ), $now ), $now ),
+					'aggregate_profiles' => self::url_profile( $hash, self::scope( $server, true ), '' === $spelling ? Bucket::last( Stats_Query::retention( 'timings' ), $now ) : $detail['buckets'], $now ),
+					'aggregate_owners'   => self::owner_board( self::scope( $server, true ) + [ 'url' => [ $hash ] ], '' === $spelling ? Bucket::last( Stats_Query::retention( 'owners' ), $now ) : $detail['buckets'], $now ),
 				];
 					},
 				],

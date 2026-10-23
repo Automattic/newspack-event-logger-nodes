@@ -1096,7 +1096,7 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'shows the Time Breakdown before Time by owner, as every view does', () => {
+	it( 'shows the Time Breakdown before Time By Owner, as every view does', () => {
 		const { container, unmount } = mount( {
 			urlDetail: {
 				...baseUrlDetail,
@@ -1119,7 +1119,7 @@ describe( 'UrlDetailView', () => {
 			( heading ) => heading.textContent
 		);
 		expect( headings.indexOf( 'Time Breakdown' ) ).toBeGreaterThan( -1 );
-		expect( headings.indexOf( 'Time by owner' ) ).toBeGreaterThan(
+		expect( headings.indexOf( 'Time By Owner' ) ).toBeGreaterThan(
 			headings.indexOf( 'Time Breakdown' )
 		);
 		unmount();
@@ -1225,7 +1225,7 @@ describe( 'UrlDetailView', () => {
 		const stack = container.querySelector( '.event-logger-sections' );
 		expect( stack ).not.toBeNull();
 		const owner = [ ...stack.children ].find( ( child ) =>
-			child.textContent.includes( 'Time by owner' )
+			child.textContent.includes( 'Time By Owner' )
 		);
 		expect( owner ).toBeDefined();
 		for ( const child of stack.children ) {
@@ -1249,7 +1249,7 @@ describe( 'UrlDetailView', () => {
 				],
 			},
 		} );
-		expect( container.textContent ).toContain( 'Time by owner' );
+		expect( container.textContent ).toContain( 'Time By Owner' );
 		expect( container.textContent ).toContain( 'theme:rail' );
 		expect( container.textContent ).toContain( 'per request' );
 		expect( container.textContent ).toContain( '33.5ms' );
@@ -1263,7 +1263,7 @@ describe( 'UrlDetailView', () => {
 		const { container, unmount } = mount( {
 			urlDetail: { ...baseUrlDetail, aggregate_owners: [] },
 		} );
-		expect( container.textContent ).not.toContain( 'Time by owner' );
+		expect( container.textContent ).not.toContain( 'Time By Owner' );
 		unmount();
 	} );
 } );

@@ -1,5 +1,5 @@
 /**
- * The "Time by owner" table: self time attributed to the code that ran it,
+ * The "Time By Owner" table: self time attributed to the code that ran it,
  * one row per owner, ranked by time. A single request supplies its own rows;
  * the URL modal and the Overview supply averages, whose time and calls
  * columns read per request.
@@ -76,7 +76,7 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 	return (
 		<div className="event-logger-request-profile">
 			<h3 id={ headingId }>
-				{ __( 'Time by owner', 'newspack-event-logger-nodes' ) }
+				{ __( 'Time By Owner', 'newspack-event-logger-nodes' ) }
 			</h3>
 			<ShareBar
 				segments={ owners.map( ( row ) => ( {
