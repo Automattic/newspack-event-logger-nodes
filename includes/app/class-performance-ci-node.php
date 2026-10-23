@@ -585,8 +585,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The `url:` or `page:` brief — stats, worst recent requests, and the
 	 * cold-start finding when nothing governs it, of the requests `dump_url`
-	 * reads under the same server, `filter` and `bucket`, the rule matched
-	 * against the name its stats carry.
+	 * reads under the same server, `filter` and `bucket`, under the rule
+	 * `subject_rule()` finds.
 	 *
 	 * @param string      $field   A `SUBJECTS` field, the descriptor's type.
 	 * @param string      $hash    The hash the descriptor names.
@@ -605,8 +605,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$detail['stats'],
 			self::url_requests( $detail['listed'] ),
 			$detail['requests_capped'],
-			// Stats that did not open name no URL for a rule to match.
-			'' === $detail['stats']['url'] ? null : Rule_Set::load()->for_url( $detail['stats']['url'] ),
+			self::subject_rule( $field, $hash, $detail, $server, $now ),
 			$server,
 			$filters
 		);
@@ -663,7 +662,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		$flame = self::subject_flame( $detail['listed'] ) ?? throw new \RuntimeException( \esc_html( "no aggregate for {$noun} {$subject['id']}: its flame rebuild ran out of time" ) );
 		$named = $detail['stats']['url'];
-		$brief = Ask_Assembler::for_url_span( $flame, $name, $named, Rule_Set::load()->for_url( $named ), $subject['descriptor'], $server );
+		$brief = Ask_Assembler::for_url_span( $flame, $name, $named, self::subject_rule( $subject['type'], $subject['id'], $detail, $server, $now ), $subject['descriptor'], $server );
 		if ( null === $brief ) {
 			throw new \RuntimeException( \esc_html( "no span '{$name}' in this {$noun}'s aggregate" ) );
 		}
@@ -671,13 +670,65 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The rule governing a subject: the one its busiest shape's newest
+	 * request was stamped with, else the one its name matches, as the flame
+	 * builder falls back. A URL is its own busiest shape; a page's is its URL
+	 * with the most requests among those the window counts, under its filter,
+	 * scope and buckets, workers counted as the window counts them. Its
+	 * newest request is the first the window lists, else the newest the
+	 * window's filter keeps; where the window lists none, it is the
+	 * subject's newest on its server over the buckets the rows keep. A
+	 * stored name drops its query, so only a stamp carries a query-bearing
+	 * rule.
+	 *
+	 * @param string                                                                                                                                              $field  A `SUBJECTS` field.
+	 * @param string                                                                                                                                              $hash   The hash it names.
+	 * @param array{stats: array{url:string}, listed: list<array<string,mixed>>, filter: array<string,list<scalar>>, buckets: list<array{0:int,1:int}>} $detail Its `subject_detail()`.
+	 * @param string                                                                                                                                              $server Server the window is scoped to; '' is every server.
+	 * @param int                                                                                                                                                 $now    The reply's clock.
+	 */
+	private static function subject_rule( string $field, string $hash, array $detail, string $server, int $now ): ?Rule {
+		// Stats that did not open name nothing for a rule to match.
+		if ( '' === $detail['stats']['url'] ) {
+			return null;
+		}
+		$listed = $detail['listed'];
+		if ( [] === $listed ) {
+			$newest = Stats_Query::newest_requests( [ $field => [ $hash ] ] + self::scope( $server, true ), Bucket::last( Stats_Query::retention( 'requests' ), $now ), 1 )[0] ?? null;
+		} elseif ( 'page' === $field ) {
+			$busiest = Stats_Query::run(
+				[
+					'source'  => 'requests',
+					'group'   => [ 'url' ],
+					'filter'  => $detail['filter'],
+					'measure' => [ 'count' ],
+					'buckets' => $detail['buckets'],
+					'sort'    => 'count',
+					'order'   => 'desc',
+					'limit'   => 1,
+				]
+			);
+			$shape   = isset( $busiest['rows'][0] ) ? Core::as_string( $busiest['rows'][0][0] ) : null;
+			$newest  = null === $shape ? null : \array_values( \array_filter( $listed, static fn ( array $row ): bool => $shape === $row['url'] ) )[0]
+				?? Stats_Query::newest_requests( [ 'url' => [ $shape ] ] + $detail['filter'], $detail['buckets'], 1 )[0] ?? null;
+		} else {
+			$newest = $listed[0];
+		}
+		$record = null === $newest ? null : self::record_at( $newest );
+		$stamp  = null === $record ? '' : Findings::rule_stamp( $record );
+		$rules  = Rule_Set::load();
+		return ( '' === $stamp ? null : $rules->rule_by_id( $stamp ) ) ?? $rules->for_url( $detail['stats']['url'] );
+	}
+
+	/**
 	 * One subject over a selection's buckets, or the chart's: its stats and
 	 * the rows of its newest `$limit` requests, worker traffic counted, which
 	 * `url_requests()` shapes as `dump_url` lists them and `subject_flame()` reads
-	 * each request's partition off, and whether the list holds fewer than the
-	 * stats count. A filter narrows the stats and the list together, and a
-	 * filter on `worker` replaces the scope's. A stats file that will not
-	 * open answers zero stats and no list, `available` false (decision 3).
+	 * each request's partition off, whether the list holds fewer than the
+	 * stats count, and the filter both were read under. A filter narrows the
+	 * stats and the list together, and a filter on `worker` replaces the
+	 * scope's. A stats file that will not open answers zero stats and no
+	 * list, `available` false (decision 3).
 	 *
 	 * @param string       $field    A `SUBJECTS` field, the one the reads key on.
 	 * @param string       $hash     The hash it names.
@@ -687,7 +738,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string       $spelling A `Bucket::selection()` spelling; '' for the chart's.
 	 * @param int          $now      The reply's clock.
 	 * @param int          $limit    Most requests listed, newest first.
-	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}, listed: list<array<string,mixed>>, requests_capped: bool, bucket: string, buckets: list<array{0:int,1:int}>, available: bool}
+	 * @return array{stats: array{hash:string, url:string, count:mixed, avg_ms:?float, min_ms:?float, max_ms:?float, p50_ms:?float, p95_ms:?float, p99_ms:?float, avg_peak_mb:?float, max_peak_mb:mixed, last_updated:mixed, errors:mixed, error_rate:?float, requests_per_second:float|int}, listed: list<array<string,mixed>>, filter: array<string,list<scalar>>, requests_capped: bool, bucket: string, buckets: list<array{0:int,1:int}>, available: bool}
 	 * @throws \RuntimeException When no request row names the hash.
 	 * @throws \InvalidArgumentException On a selection `Bucket::selection()` refuses, or a filter `url_filter_of()` refuses.
 	 */
@@ -708,6 +759,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return [
 			'stats'           => $stats,
 			'listed'          => $listed,
+			'filter'          => $filter,
 			'requests_capped' => \count( $listed ) < Core::num_int( $stats['count'] ),
 			'bucket'          => '' === $spelling ? '' : Bucket::spelling( $buckets ),
 			'buckets'         => $buckets,
@@ -800,11 +852,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * rule about a hook.
 	 *
 	 * The RECORD answers this: `Request_Builder_Node` stamps `rule_id` from the
-	 * match the request itself made. Re-deriving it here finds nothing, because
-	 * a stored `url` is absolute and query-stripped (`https://host/path`) while
-	 * rules are path patterns — not even a catch-all `/` matches one, so every
-	 * brief would report "no rule governs this URL" and propose creating a rule
-	 * whose pattern could never match anything.
+	 * match the request itself made, against the URI it was sent with.
+	 * `Rule_Set::for_url()` matches a stored `url` by its path alone, since
+	 * its stored query has its values masked, so only the stamp finds a
+	 * query-bearing rule.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
 	 */
@@ -1122,7 +1173,27 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \RuntimeException When the rows did not open, no row names the rid, or its place holds no record of it.
 	 */
 	private static function load_request( string $rid ): array {
-		$row       = self::row_of( $rid );
+		$row    = self::row_of( $rid );
+		$record = self::record_at( $row ) ?? throw self::not_found( $rid );
+
+		$record['url_hash'] = $row['url'];
+		$flames             = self::stored_flames( Core::num_int( $row['partition'] ), [ $rid ], Core::num_float( $row['finished_at'] ), self::scan_deadline() );
+		$record['flame_cut'] = null === $flames;
+		if ( isset( $flames[ $rid ] ) ) {
+			$record['flame_data'] = $flames[ $rid ];
+		}
+		return $record;
+	}
+
+	/**
+	 * The record a `requests` row names, read once at its place; null where
+	 * the row names no place, its partition declares no dir, or the place
+	 * holds no record keyed by the row's rid.
+	 *
+	 * @param array<string,mixed> $row A `requests` row, `Stats_Query::LISTED` keyed.
+	 * @return array<array-key,mixed>|null
+	 */
+	private static function record_at( array $row ): ?array {
 		$partition = Core::num_int( $row['partition'] );
 		$dir       = Bootstrap::node_dirs( self::NODE_REQUESTS )[ $partition ] ?? null;
 		$message   = null === $row['segment'] || null === $dir ? null : self::on_partition(
@@ -1132,16 +1203,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			static fn ( Partition_Node $node ): ?array => $node->read_message_at( Core::as_int( $row['segment'] ), Core::as_int( $row['offset'] ), Core::as_int( $row['length'] ) )
 		);
 		$record    = $message[ Message::VALUE ] ?? null;
-		if ( ! \is_array( $record ) || $rid !== ( $message[ Message::KEY ] ?? null ) ) {
-			throw self::not_found( $rid );
-		}
-		$record['url_hash'] = $row['url'];
-		$flames             = self::stored_flames( $partition, [ $rid ], Core::num_float( $row['finished_at'] ), self::scan_deadline() );
-		$record['flame_cut'] = null === $flames;
-		if ( isset( $flames[ $rid ] ) ) {
-			$record['flame_data'] = $flames[ $rid ];
-		}
-		return $record;
+		return \is_array( $record ) && $row['rid'] === ( $message[ Message::KEY ] ?? null ) ? $record : null;
 	}
 	/**
 	 * The `requests` row a rid keys, as `Stats_Query::request_row()` reads it.

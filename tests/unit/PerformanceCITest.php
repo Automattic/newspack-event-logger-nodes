@@ -3915,7 +3915,8 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * A `page:` brief is the `url:` brief of every shape of the page, its
-	 * rule matched against the page's name, its pointer fetching the page.
+	 * rule, with no record to read, the one the page's path matches, its
+	 * pointer fetching the page.
 	 */
 	public function test_ask_page_briefs_every_shape_of_the_page(): void {
 		$page = $this->seed_a_page_of_two_shapes();
@@ -3929,6 +3930,154 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'rid-kaka-q2-9183', 'rid-kaka-q1-9183', 'rid-kaka-b1-9183' ], \array_column( $brief['worst_requests'], 'rid' ) );
 		$this->assertSame( '/kaka-9183/', $brief['rule']['pattern'] );
 		$this->assertSame( [ [ 'tool' => 'dump_url', 'arguments' => [ 'page' => $page ] ] ], $brief['fetch'] );
+	}
+
+	/**
+	 * One request as production stores it, with a flame: its record stamped
+	 * with the rule `$pattern` ids, or unstamped under '', and its row, with
+	 * any `$row` columns over the seeded ones.
+	 *
+	 * @param array<string,mixed> $row Row columns by name.
+	 */
+	private function seed_stamped( string $url, string $rid, float $ms, float $second, string $pattern, array $row = [] ): void {
+		$record = [ 'rid' => $rid, 'url' => $url, 'request_url' => $url, 'duration_ms' => $ms ] + ( '' === $pattern ? [] : [ 'rule_id' => Rule_Set::id_for( $pattern ) ] );
+		$this->seed_request( $row + [ 'url' => $url, 'rid' => $rid, 'ms' => $ms, 'finished_at' => self::latest() * 300 + $second, 'profiled' => 1 ] + $this->write_record( $record ) );
+		$this->write_flame( [ 'rid' => $rid, 'url_hash' => self::hash_of( $url ), 'name' => 'request', 'value' => $ms, 'children' => [ [ 'name' => 'rest_api_init', 'value' => 12.5, 'children' => [] ] ] ] );
+	}
+
+	/** The `/?rest_route=` rule, with hooks, so a brief it governs proposes no cold start. */
+	private static function rest_rule(): Rule {
+		return new Rule( Rule_Set::id_for( '/?rest_route=' ), '/?rest_route=', Rule::ACTION_LOG, hooks: [ 'rest_api_init' ] );
+	}
+
+	/**
+	 * A page takes the rule its busiest shape's newest request was stamped
+	 * with: a home page served mostly as `/?rest_route=` shapes is governed
+	 * by that rule with no `/` rule, and so is a span under it.
+	 */
+	public function test_a_page_brief_and_its_span_take_the_rule_its_busiest_shape_was_stamped_with(): void {
+		$rest = 'https://seed.example/?rest_route=%2Ftui%2Fv2';
+		$this->seed_stamped( $rest, 'rid-tui-r1-7714', 140.5, 3.5, '/?rest_route=' );
+		$this->seed_stamped( $rest, 'rid-tui-r2-7714', 160.25, 4.5, '/?rest_route=' );
+		$this->seed_stamped( 'https://seed.example/', 'rid-tui-h1-7714', 88.75, 2.5, '' );
+		( new Rule_Set( [] ) )->save( [ self::rest_rule() ] );
+		$page = self::hash_of( 'seed.example/' );
+
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "page:{$page}" );
+		$span  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:rest_api_init', "page:{$page}" ] );
+
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertIsArray( $span, \is_string( $span ) ? $span : 'ask answered no span brief' );
+		$this->assertSame( [ 'https://seed.example/', '/?rest_route=' ], [ $brief['url'], $brief['rule']['pattern'] ?? null ] );
+		$this->assertSame( [], $brief['findings'], 'an instrumented page proposes no cold start' );
+		$this->assertSame( '/?rest_route=', $span['rule']['pattern'] ?? null );
+	}
+
+	/** A URL takes the rule its newest request was stamped with. */
+	public function test_a_url_brief_takes_the_rule_its_newest_request_was_stamped_with(): void {
+		$rest = 'https://seed.example/?rest_route=%2Fhoiho%2Fv3';
+		$this->seed_stamped( $rest, 'rid-hoiho-1-8820', 210.5, 5.5, '/?rest_route=' );
+		( new Rule_Set( [] ) )->save( [ self::rest_rule() ] );
+
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $rest ) );
+
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertSame( [ '/?rest_route=', [] ], [ $brief['rule']['pattern'] ?? null, $brief['findings'] ] );
+	}
+
+	/**
+	 * A newest request whose record carries no stamp, or whose record does
+	 * not read, falls back to the rule matching the subject's path.
+	 */
+	public function test_a_url_brief_with_no_stamped_record_takes_the_rule_its_path_matches(): void {
+		$unstamped = 'https://seed.example/moa-6612/';
+		$unread    = 'https://seed.example/moa-6612/unread/';
+		$this->seed_stamped( $unstamped, 'rid-moa-1-6612', 77.25, 6.5, '' );
+		$this->seed_request( [ 'url' => $unread, 'rid' => 'rid-moa-2-6612', 'ms' => 66.5 ] );
+		( new Rule_Set( [] ) )->save( [ new Rule( Rule_Set::id_for( '/moa-6612/' ), '/moa-6612/', Rule::ACTION_LOG, hooks: [ 'wp_head' ] ) ] );
+
+		foreach ( [ $unstamped, $unread ] as $url ) {
+			$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'url:' . self::hash_of( $url ) );
+			$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+			$this->assertSame( '/moa-6612/', $brief['rule']['pattern'] ?? null, $url );
+		}
+	}
+
+	/**
+	 * A page's rule comes from its busiest shape, by count, even when a less
+	 * busy shape served its newest request under another rule.
+	 */
+	public function test_a_page_takes_its_busiest_shapes_rule_not_its_newest_requests(): void {
+		$rest = 'https://seed.example/?rest_route=%2Fkereru%2Fv1';
+		$this->seed_stamped( $rest, 'rid-kereru-r1-5531', 120.5, 1.5, '/?rest_route=' );
+		$this->seed_stamped( $rest, 'rid-kereru-r2-5531', 130.5, 2.5, '/?rest_route=' );
+		$this->seed_stamped( 'https://seed.example/', 'rid-kereru-h1-5531', 99.5, 9.5, '/?' );
+		( new Rule_Set( [] ) )->save( [ self::rest_rule(), new Rule( Rule_Set::id_for( '/?' ), '/?', Rule::ACTION_LOG, hooks: [ 'wp_head' ] ) ] );
+
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'page:' . self::hash_of( 'seed.example/' ) );
+
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertSame( 'rid-kereru-h1-5531', Core::as_string( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', '--page=' . self::hash_of( 'seed.example/' ) )['requests'][0]['rid'] ), 'the newest request is the home shape\'s' );
+		$this->assertSame( '/?rest_route=', $brief['rule']['pattern'] ?? null );
+	}
+
+	/**
+	 * The page's busiest shape is the busiest among the requests its filter
+	 * keeps: POST traffic to a `/?rest_route=` shape, not the GET traffic
+	 * to `/` that outnumbers it unfiltered.
+	 */
+	public function test_a_filtered_page_takes_the_rule_of_its_busiest_shape_under_the_filter(): void {
+		$rest = 'https://seed.example/?rest_route=%2Fkaka%2Fv5';
+		$home = 'https://seed.example/';
+		$this->seed_stamped( $home, 'rid-kaka-h1-3307', 41.5, 1.5, '/?', [ 'method' => 'GET' ] );
+		$this->seed_stamped( $home, 'rid-kaka-h2-3307', 42.5, 2.5, '/?', [ 'method' => 'GET' ] );
+		$this->seed_stamped( $home, 'rid-kaka-h3-3307', 43.5, 3.5, '/?', [ 'method' => 'GET' ] );
+		$this->seed_stamped( $rest, 'rid-kaka-r1-3307', 51.5, 4.5, '/?rest_route=', [ 'method' => 'POST' ] );
+		$this->seed_stamped( $rest, 'rid-kaka-r2-3307', 52.5, 5.5, '/?rest_route=', [ 'method' => 'POST' ] );
+		$this->seed_stamped( $home, 'rid-kaka-h4-3307', 44.5, 6.5, '/?', [ 'method' => 'POST' ] );
+		( new Rule_Set( [] ) )->save( [ self::rest_rule(), new Rule( Rule_Set::id_for( '/?' ), '/?', Rule::ACTION_LOG, hooks: [ 'wp_head' ] ) ] );
+		$page = 'page:' . self::hash_of( 'seed.example/' );
+
+		$all  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', $page );
+		$post = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ $page, '--filter=method=POST' ] );
+
+		$this->assertIsArray( $post, \is_string( $post ) ? $post : 'ask answered no brief' );
+		$this->assertSame( [ '/?', '/?rest_route=' ], [ $all['rule']['pattern'] ?? null, $post['rule']['pattern'] ?? null ] );
+	}
+
+	/**
+	 * A filter that keeps none of a URL's requests leaves its rule to the
+	 * URL's newest request over the window the rows keep.
+	 */
+	public function test_a_url_whose_filter_keeps_nothing_takes_its_newest_requests_stamp(): void {
+		$rest = 'https://seed.example/?rest_route=%2Fweka%2Fv7';
+		$this->seed_stamped( $rest, 'rid-weka-1-2290', 71.25, 3.5, '/?rest_route=' );
+		( new Rule_Set( [] ) )->save( [ self::rest_rule() ] );
+
+		$brief = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'url:' . self::hash_of( $rest ), '--filter=status=500' ] );
+
+		$this->assertIsArray( $brief, \is_string( $brief ) ? $brief : 'ask answered no brief' );
+		$this->assertSame( [ 0, '/?rest_route=' ], [ $brief['stats']['count'], $brief['rule']['pattern'] ?? null ] );
+	}
+
+	/**
+	 * A page with no request in a bucket selection takes the stamp of its
+	 * newest request over the window the rows keep; one with no record to
+	 * read there takes the rule its path matches.
+	 */
+	public function test_a_page_with_no_request_in_its_selection_takes_its_newest_requests_stamp(): void {
+		$this->seed_stamped( 'https://seed.example/tieke-4410/?a=?', 'rid-tieke-1-4410', 55.25, 7.5, '/?rest_route=' );
+		$this->seed_request( [ 'url' => 'https://seed.example/tieke-4410/unread/', 'rid' => 'rid-tieke-2-4410', 'ms' => 56.5 ] );
+		( new Rule_Set( [] ) )->save( [ self::rest_rule(), new Rule( Rule_Set::id_for( '/tieke-4410/' ), '/tieke-4410/', Rule::ACTION_LOG, hooks: [ 'wp_head' ] ) ] );
+		$empty = '--bucket=' . Bucket::key( self::latest() - 20 );
+
+		$stamped = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'page:' . self::hash_of( 'seed.example/tieke-4410/' ), $empty ] );
+		$unread  = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'page:' . self::hash_of( 'seed.example/tieke-4410/unread/' ), $empty ] );
+
+		$this->assertIsArray( $stamped, \is_string( $stamped ) ? $stamped : 'ask answered no brief' );
+		$this->assertIsArray( $unread, \is_string( $unread ) ? $unread : 'ask answered no brief' );
+		$this->assertSame( [ 0, '/?rest_route=' ], [ $stamped['stats']['count'], $stamped['rule']['pattern'] ?? null ] );
+		$this->assertSame( [ 0, '/tieke-4410/' ], [ $unread['stats']['count'], $unread['rule']['pattern'] ?? null ] );
 	}
 
 	/** A span under a `page:` answers from the page's aggregate flame. */

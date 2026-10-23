@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A URL or page brief names the rule its requests were stamped with.** A `url:` or `page:` brief, and a span asked under one, matched the subject's stored name against the ruleset, and a stored name keeps only its path, so a URL logged under a query-bearing rule such as `/?rest_route=` reported no governing rule and a cold-start finding telling the operator to switch on instrumentation those requests already had. The brief now takes the rule stamped on its busiest shape's newest request: the URL itself, or the page's URL with the most requests under the brief's filter, scope and buckets. Matching the path is the fallback where no such request's record reads or carries a stamp.
+
 ## [0.156.0] - 2026-10-23
 
 ### Fixed
