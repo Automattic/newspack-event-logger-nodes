@@ -25,6 +25,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Owner;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Stats_Builder_Node;
@@ -2049,9 +2050,11 @@ class Findings {
 	/**
 	 * Each owner's time on one request, dearest first, as the request builder
 	 * measured it on the span stack (`Request_Builder_Node::owners_of()`),
-	 * never off a flame value (decision 12). `share` divides by the duration.
-	 * None on a record carrying no owners, or whose duration nobody measured
-	 * (decision 24), as `for_request()` gates its findings.
+	 * never off a flame value (decision 12). `share` divides by the duration,
+	 * and `Owner::UNMEASURED`, the time no span covers, is no owner and is
+	 * left out, so the shares sum to the part measured. None on a record
+	 * carrying no owners, or whose duration nobody measured (decision 24), as
+	 * `for_request()` gates its findings.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
 	 * @return list<array{owner:string,ms:float,share:float,calls:int}>
@@ -2063,6 +2066,9 @@ class Findings {
 		}
 		$rows = [];
 		foreach ( Request_Builder_Node::owners_of( $record ) as [ $owner, $ms, $calls ] ) {
+			if ( Owner::UNMEASURED === $owner ) {
+				continue;
+			}
 			$rows[] = [
 				'owner' => $owner,
 				'ms'    => $ms,

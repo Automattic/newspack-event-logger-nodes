@@ -411,6 +411,7 @@ class FindingsTest extends TestCase {
 		return [ 'duration_ms' => $duration_ms, 'error_status' => $error_status, 'owners' => $owners ];
 	}
 
+	/** `(unmeasured)` is no owner: it is listed nowhere, and each share still divides by the duration. */
 	public function test_owners_are_the_records_rows_dearest_first_each_with_its_share(): void {
 		$record = self::owned_record(
 			[
@@ -425,7 +426,6 @@ class FindingsTest extends TestCase {
 			[
 				[ 'owner' => 'kea-7746', 'ms' => 25.5, 'share' => 25.5 / 41.5, 'calls' => 1 ],
 				[ 'owner' => '(unowned)', 'ms' => 6.0, 'share' => 6.0 / 41.5, 'calls' => 0 ],
-				[ 'owner' => '(unmeasured)', 'ms' => 5.5, 'share' => 5.5 / 41.5, 'calls' => 0 ],
 				[ 'owner' => 'core', 'ms' => 4.5, 'share' => 4.5 / 41.5, 'calls' => 3 ],
 			],
 			Findings::owners( $record )
@@ -439,7 +439,6 @@ class FindingsTest extends TestCase {
 		$this->assertSame(
 			[
 				[ 'owner' => 'kea-7746', 'ms' => 30.0, 'share' => 30.0 / 41.5, 'calls' => 2 ],
-				[ 'owner' => '(unmeasured)', 'ms' => 11.5, 'share' => 11.5 / 41.5, 'calls' => 0 ],
 			],
 			Findings::owners( $record )
 		);
@@ -468,13 +467,13 @@ class FindingsTest extends TestCase {
 	}
 
 	public function test_owners_keep_a_numeric_slug_a_string(): void {
-		$this->assertSame( [ '2024', '(unmeasured)' ], \array_column( Findings::owners( self::owned_record( [ '2024' => [ 30.5, 1 ], '(unmeasured)' => [ 11.0, 0 ] ] ) ), 'owner' ) );
+		$this->assertSame( [ '2024' ], \array_column( Findings::owners( self::owned_record( [ '2024' => [ 30.5, 1 ], '(unmeasured)' => [ 11.0, 0 ] ] ) ), 'owner' ) );
 	}
 
 	public function test_owners_break_a_tie_by_owner_name(): void {
 		$record = self::owned_record( [ 'zed-1' => [ 5.0, 1 ], 'ant-2' => [ 5.0, 1 ], '(unmeasured)' => [ 0.25, 0 ] ] );
 
-		$this->assertSame( [ 'ant-2', 'zed-1', '(unmeasured)' ], \array_column( Findings::owners( $record ), 'owner' ) );
+		$this->assertSame( [ 'ant-2', 'zed-1' ], \array_column( Findings::owners( $record ), 'owner' ) );
 	}
 
 	public function test_a_dominant_span_is_named_with_its_share(): void {

@@ -13,7 +13,6 @@ const ROWS = [
 	{ owner: 'plugin:heron-gallery', ms: 187.5, share: 0.4237, calls: 41 },
 	{ owner: '(unowned)', ms: 90, share: 0.2051, calls: 7 },
 	{ owner: 'theme:kea', ms: 12.25, share: 0.0279, calls: 3 },
-	{ owner: '(unmeasured)', ms: 5, share: 0.0114, calls: 0 },
 ];
 
 const mount = ( props ) =>
@@ -33,7 +32,6 @@ describe( 'OwnerTable', () => {
 			[ 'plugin:heron-gallery', '187.5ms', '42.4%', '41' ],
 			[ '(unowned)', '90.0ms', '20.5%', '7' ],
 			[ 'theme:kea', '12.3ms', '2.8%', '3' ],
-			[ '(unmeasured)', '5.0ms', '1.1%', '0' ],
 		] );
 		unmount();
 	} );
@@ -94,13 +92,13 @@ describe( 'OwnerTable', () => {
 		unmount();
 	} );
 
-	it( 'italicises the pseudo-owners and no other owner', () => {
+	it( 'italicises the pseudo-owner and no other owner', () => {
 		const { container, unmount } = mount( { owners: ROWS } );
 		expect(
 			Array.from( container.querySelectorAll( 'em' ) ).map(
 				( em ) => em.textContent
 			)
-		).toEqual( [ '(unowned)', '(unmeasured)' ] );
+		).toEqual( [ '(unowned)' ] );
 		unmount();
 	} );
 
@@ -153,7 +151,7 @@ describe( 'OwnerTable totals and sorting', () => {
 			);
 		} );
 
-	it( 'totals everything the spans cover, leaving out (unmeasured)', () => {
+	it( 'totals every owner it lists', () => {
 		const { container, unmount } = mount( { owners: ROWS } );
 		const total = [ ...container.querySelectorAll( 'tfoot td' ) ].map(
 			( td ) => td.textContent
@@ -173,11 +171,9 @@ describe( 'OwnerTable totals and sorting', () => {
 			'theme:kea',
 			'plugin:heron-gallery',
 			'(unowned)',
-			'(unmeasured)',
 		] );
 		click( header( container, 'Owner' ) );
 		expect( owners( container ) ).toEqual( [
-			'(unmeasured)',
 			'(unowned)',
 			'plugin:heron-gallery',
 			'theme:kea',
@@ -187,7 +183,6 @@ describe( 'OwnerTable totals and sorting', () => {
 			'plugin:heron-gallery',
 			'(unowned)',
 			'theme:kea',
-			'(unmeasured)',
 		] );
 		unmount();
 	} );
@@ -209,17 +204,16 @@ describe( 'OwnerTable share bar', () => {
 		const widths = segments( container ).map( ( s ) =>
 			parseFloat( s.style.width )
 		);
-		[ 42.37, 20.51, 2.79, 1.14 ].forEach( ( width, at ) =>
+		[ 42.37, 20.51, 2.79 ].forEach( ( width, at ) =>
 			expect( widths[ at ] ).toBeCloseTo( width, 6 )
 		);
 		unmount();
 	} );
 
-	it( 'gives the two pseudo-owners separate muted neutrals', () => {
+	it( 'gives the pseudo-owner a muted neutral', () => {
 		const { container, unmount } = mount( { owners: ROWS } );
-		const [ , unowned, , unmeasured ] = segments( container );
+		const [ , unowned ] = segments( container );
 		expect( unowned.style.background ).toBe( 'rgb(158, 158, 158)' );
-		expect( unmeasured.style.background ).toBe( 'rgb(108, 108, 108)' );
 		unmount();
 	} );
 
@@ -240,7 +234,7 @@ describe( 'OwnerTable share bar', () => {
 	} );
 } );
 
-describe( 'PSEUDO_OWNER_COLORS', () => {
+describe( 'UNOWNED', () => {
 	const read = ( ...parts ) =>
 		fs.readFileSync( path.join( __dirname, ...parts ), 'utf8' );
 	const phpConst = ( name ) => {
@@ -255,16 +249,11 @@ describe( 'PSEUDO_OWNER_COLORS', () => {
 		return match[ 1 ];
 	};
 
-	it( 'carries the names Owner minds for unclaimed and unmeasured time', () => {
+	it( 'carries the name Owner minds for unclaimed time', () => {
 		const match = read( '..', 'OwnerTable.js' ).match(
-			/const PSEUDO_OWNER_COLORS = \{([^}]*)\};/
+			/const UNOWNED = '([^']*)';/
 		);
 		expect( match ).toBeTruthy();
-		const mirrored = [ ...match[ 1 ].matchAll( /'([^']+)':/g ) ].map(
-			( key ) => key[ 1 ]
-		);
-		expect( mirrored.sort() ).toEqual(
-			[ phpConst( 'UNOWNED' ), phpConst( 'UNMEASURED' ) ].sort()
-		);
+		expect( match[ 1 ] ).toBe( phpConst( 'UNOWNED' ) );
 	} );
 } );

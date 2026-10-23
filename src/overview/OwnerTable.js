@@ -8,33 +8,29 @@
 import { useId } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 
-import { formatDuration } from '@newspack-nodes/shared/utils/formatUtils';
+import {
+	formatDuration,
+	getStateColor,
+} from '@newspack-nodes/shared/utils/formatUtils';
 import { chartColor } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 import { ShareBar } from './RequestProfile';
 import SortHeaderButton, { useColumnSort } from './components/SortHeaderButton';
 
-/**
- * The owners the server names for time no code claims, each in a muted
- * neutral of its own: `(unowned)` the grey untyped spans take, `(unmeasured)`
- * the darker Neutral 600, receding furthest.
- */
-const PSEUDO_OWNER_COLORS = {
-	'(unowned)': '#9e9e9e',
-	'(unmeasured)': '#6c6c6c',
-};
+/** The owner the server names for time no code claims. */
+const UNOWNED = '(unowned)';
 
 /**
- * An owner's colour: its pseudo-owner neutral, else the series colour its
- * name hashes to, so an owner keeps one colour in every view and at every
- * rank.
+ * An owner's colour: `UNOWNED` the grey `getStateColor()` gives a name it does
+ * not know, as untyped spans take it, and any other the series colour its name
+ * hashes to, so an owner keeps one colour in every view and at every rank.
  *
  * @param {string} owner The owner's name.
  * @return {string} A CSS colour value.
  */
 const ownerColor = ( owner ) => {
-	if ( Object.hasOwn( PSEUDO_OWNER_COLORS, owner ) ) {
-		return PSEUDO_OWNER_COLORS[ owner ];
+	if ( UNOWNED === owner ) {
+		return getStateColor( owner );
 	}
 	let hash = 0;
 	for ( const char of owner ) {
@@ -69,8 +65,6 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 		}
 		return 'share' === field ? row.share : msOf( row );
 	} );
-	// Everything a span covers: every owner but the time no span covers.
-	const profiled = owners.filter( ( { owner } ) => '(unmeasured)' !== owner );
 	// The Time Breakdown's labels; an average says per request in its caption.
 	const columns = [
 		[ 'owner', __( 'Owner', 'newspack-event-logger-nodes' ) ],
@@ -131,10 +125,7 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 											background: ownerColor( owner ),
 										} }
 									/>
-									{ Object.hasOwn(
-										PSEUDO_OWNER_COLORS,
-										owner
-									) ? (
+									{ UNOWNED === owner ? (
 										<em>{ owner }</em>
 									) : (
 										owner
@@ -163,7 +154,7 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 						</td>
 						<td className="newspack-nodes-table__terminal-data">
 							{ formatDuration(
-								profiled.reduce(
+								owners.reduce(
 									( sum, row ) => sum + msOf( row ),
 									0
 								)
@@ -171,7 +162,7 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 						</td>
 						<td className="newspack-nodes-table__terminal-data">
 							{ `${ (
-								profiled.reduce(
+								owners.reduce(
 									( sum, row ) => sum + row.share,
 									0
 								) * 100

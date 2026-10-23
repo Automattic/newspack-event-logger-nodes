@@ -369,7 +369,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertEquals(
 			[
 				[ 'owner' => 'kea-7746', 'ms' => 24.0, 'share' => 24.0 / 47.5, 'calls' => 1 ],
-				[ 'owner' => '(unmeasured)', 'ms' => 14.5, 'share' => 14.5 / 47.5, 'calls' => 0 ],
 				[ 'owner' => 'core', 'ms' => 9.0, 'share' => 9.0 / 47.5, 'calls' => 2 ],
 			],
 			$result['owners']
@@ -3720,13 +3719,14 @@ class PerformanceCITest extends TestCase {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
 
 		$this->assertSame( [ 'as_of', 'totals', 'slots', 'servers', 'leaderboard', 'owners', 'available' ], \array_keys( $reply ) );
-		$this->assertSame( [ 'kea-7746', 'core', '(unmeasured)' ], \array_column( $reply['owners'], 'owner' ) );
-		$this->assertEqualsWithDelta( [ 20.0, 10.0, 3.0 ], \array_column( $reply['owners'], 'ms_per_request' ), 1e-9 );
-		$this->assertEqualsWithDelta( [ 60 / 99, 30 / 99, 9 / 99 ], \array_column( $reply['owners'], 'share' ), 1e-9 );
-		$this->assertEqualsWithDelta( [ 4 / 3, 3.0, 0.0 ], \array_column( $reply['owners'], 'calls_per_request' ), 1e-9 );
+		$this->assertSame( [ 'kea-7746', 'core' ], \array_column( $reply['owners'], 'owner' ) );
+		$this->assertEqualsWithDelta( [ 20.0, 10.0 ], \array_column( $reply['owners'], 'ms_per_request' ), 1e-9 );
+		$this->assertEqualsWithDelta( [ 60 / 99, 30 / 99 ], \array_column( $reply['owners'], 'share' ), 1e-9 );
+		$this->assertEqualsWithDelta( [ 4 / 3, 3.0 ], \array_column( $reply['owners'], 'calls_per_request' ), 1e-9 );
 		$this->assertSame( [ 'owner', 'ms_per_request', 'share', 'calls_per_request' ], \array_keys( $reply['owners'][0] ) );
 	}
 
+	/** The `(unmeasured)` row is the denominator wherever it sorts, and is never listed. */
 	public function test_overview_owners_find_unmeasured_past_a_full_page_of_owners(): void {
 		$rows = [ [ 'owner' => '(unmeasured)', 'ms' => 0.25, 'calls' => 0, 'requests' => 5 ] ];
 		for ( $i = 0; $i <= Stats_Query::MAX_LIMIT; $i++ ) {
@@ -3736,9 +3736,9 @@ class PerformanceCITest extends TestCase {
 
 		$owners = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' )['owners'];
 
-		$this->assertCount( Stats_Query::MAX_LIMIT + 2, $owners );
+		$this->assertCount( Stats_Query::MAX_LIMIT + 1, $owners );
 		$this->assertEqualsWithDelta( ( 50.5 + Stats_Query::MAX_LIMIT ) / 5, $owners[0]['ms_per_request'], 1e-9 );
-		$this->assertSame( '(unmeasured)', $owners[ Stats_Query::MAX_LIMIT + 1 ]['owner'] );
+		$this->assertNotContains( '(unmeasured)', \array_column( $owners, 'owner' ) );
 	}
 
 	public function test_overview_owners_are_empty_over_no_measured_request(): void {
@@ -3756,10 +3756,10 @@ class PerformanceCITest extends TestCase {
 		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', self::hash_of( $url ) );
 
 		$this->assertSame( [ 'stats', 'requests', 'requests_capped', 'aggregate_flame', 'flame_cut', 'aggregate_profiles', 'aggregate_owners' ], \array_keys( $reply ) );
-		$this->assertSame( [ 'kea-7746', 'core', '(unmeasured)' ], \array_column( $reply['aggregate_owners'], 'owner' ) );
-		$this->assertEqualsWithDelta( [ 20.0, 10.0, 3.0 ], \array_column( $reply['aggregate_owners'], 'ms_per_request' ), 1e-9 );
-		$this->assertEqualsWithDelta( [ 60 / 99, 30 / 99, 9 / 99 ], \array_column( $reply['aggregate_owners'], 'share' ), 1e-9 );
-		$this->assertEqualsWithDelta( [ 4 / 3, 3.0, 0.0 ], \array_column( $reply['aggregate_owners'], 'calls_per_request' ), 1e-9 );
+		$this->assertSame( [ 'kea-7746', 'core' ], \array_column( $reply['aggregate_owners'], 'owner' ) );
+		$this->assertEqualsWithDelta( [ 20.0, 10.0 ], \array_column( $reply['aggregate_owners'], 'ms_per_request' ), 1e-9 );
+		$this->assertEqualsWithDelta( [ 60 / 99, 30 / 99 ], \array_column( $reply['aggregate_owners'], 'share' ), 1e-9 );
+		$this->assertEqualsWithDelta( [ 4 / 3, 3.0 ], \array_column( $reply['aggregate_owners'], 'calls_per_request' ), 1e-9 );
 	}
 
 	public function test_dump_url_profile_is_null_over_no_profiled_request(): void {
