@@ -313,6 +313,22 @@ describe( 'Inflight', () => {
 		).toBe( rateLabel( '%s req/s' )( 5.8 ) );
 	} );
 
+	it( 'gives State, What and UA room for what they hold', () => {
+		window.localStorage.setItem(
+			'event-logger-columns',
+			JSON.stringify( [ 'state', 'what', 'user_agent' ] )
+		);
+		registerViewFixture();
+		const { container } = mount();
+		expect(
+			container
+				.querySelector( '.newspack-nodes-log-header' )
+				.parentElement.style.getPropertyValue(
+					'--stream-grid-template'
+				)
+		).toBe( '160px 400px 320px' );
+	} );
+
 	it( 'heads its table through the shared log-table header', () => {
 		const order = [ 'rid', 'remote_addr', 'user_agent' ];
 		window.localStorage.setItem(

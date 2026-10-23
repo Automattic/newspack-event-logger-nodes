@@ -111,7 +111,7 @@ const COLUMNS = logColumns( {
 			'What the request is currently doing',
 			'newspack-event-logger-nodes'
 		),
-		width: '100px',
+		width: '160px',
 	},
 	what: {
 		label: __( 'What', 'newspack-event-logger-nodes' ),
@@ -119,7 +119,7 @@ const COLUMNS = logColumns( {
 			'Details: query text, template name, hook name, etc.',
 			'newspack-event-logger-nodes'
 		),
-		width: '200px',
+		width: '400px',
 	},
 	remote_addr: {},
 	user_agent: {},
