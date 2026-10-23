@@ -9,7 +9,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-10-23T12:54:56+00:00\n"
+"POT-Creation-Date: 2026-10-23T14:52:24+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: newspack-event-logger-nodes\n"
@@ -355,14 +355,14 @@ msgstr ""
 #: src/overview/CategoryTimeChart.js:60
 #: src/overview/components/BucketField.js:288
 #: src/overview/components/LogEntriesTable.js:1558
-#: src/overview/components/UrlDetailView.js:132
+#: src/overview/components/UrlDetailView.js:133
 #: src/overview/OwnerTable.js:84
 #: src/overview/RequestProfile.js:393
 msgid "Time"
 msgstr ""
 
 #: src/log-table/logTable.js:39
-#: src/overview/components/UrlDetailView.js:143
+#: src/overview/components/UrlDetailView.js:144
 msgid "Request ID"
 msgstr ""
 
@@ -371,7 +371,7 @@ msgid "Unique request identifier - click to view its full trace"
 msgstr ""
 
 #: src/log-table/logTable.js:47
-#: src/overview/UrlTable.js:172
+#: src/overview/UrlTable.js:174
 msgid "URL"
 msgstr ""
 
@@ -380,7 +380,7 @@ msgid "Request method and URL - click to view URL stats"
 msgstr ""
 
 #: src/log-table/logTable.js:55
-#: src/overview/components/UrlDetailView.js:152
+#: src/overview/components/UrlDetailView.js:153
 msgid "Status"
 msgstr ""
 
@@ -413,23 +413,23 @@ msgid "View URL stats"
 msgstr ""
 
 #: src/overview/AggregateTimeChart.js:257
-#: src/overview/constants.js:52
+#: src/overview/constants.js:53
 msgid "Request Volume"
 msgstr ""
 
 #: src/overview/AggregateTimeChart.js:258
-#: src/overview/constants.js:56
+#: src/overview/constants.js:57
 msgid "Avg Response Time"
 msgstr ""
 
 #: src/overview/AggregateTimeChart.js:259
-#: src/overview/constants.js:60
+#: src/overview/constants.js:61
 msgid "Cumulative Response Time"
 msgstr ""
 
 #: src/overview/AggregateTimeChart.js:263
 #: src/overview/components/HeadlineStats.js:66
-#: src/overview/constants.js:64
+#: src/overview/constants.js:65
 msgid "Avg Peak Memory"
 msgstr ""
 
@@ -502,61 +502,61 @@ msgstr[1] ""
 msgid "%1$s %2$s"
 msgstr ""
 
-#: src/overview/components/AskPanel.js:110
+#: src/overview/components/AskPanel.js:112
 msgid "That answered with no brief. Nothing was assembled for what you picked."
 msgstr ""
 
-#: src/overview/components/AskPanel.js:232
+#: src/overview/components/AskPanel.js:235
 msgid "Cancel — click anything to ask"
 msgstr ""
 
-#: src/overview/components/AskPanel.js:236
+#: src/overview/components/AskPanel.js:239
 msgid "Ask AI"
 msgstr ""
 
-#: src/overview/components/AskPanel.js:285
+#: src/overview/components/AskPanel.js:288
 msgid "Assembled brief"
 msgstr ""
 
 #. translators: %s: the subject asked about.
-#: src/overview/components/AskPanel.js:293
+#: src/overview/components/AskPanel.js:296
 #, js-format
 msgid "About this %s"
 msgstr ""
 
 #. translators: %d: how many things were selected.
-#: src/overview/components/AskPanel.js:301
+#: src/overview/components/AskPanel.js:304
 #, js-format
 msgid "About %d selected things"
 msgstr ""
 
-#: src/overview/components/AskPanel.js:319
+#: src/overview/components/AskPanel.js:322
 msgid "Copying puts this on your clipboard; Ask Claude carries it in the link, which browser history and any URL-logging proxy will keep. Both are a deliberate act — the picker click was not."
 msgstr ""
 
 #. translators: %s: the MCP endpoint URL.
-#: src/overview/components/AskPanel.js:328
+#: src/overview/components/AskPanel.js:331
 #, js-format
 msgid "This site can also expose these numbers to an agent over MCP, at %s. Connecting one is a deliberate act: issue a scoped session under Nodes → Sessions and configure your client with it."
 msgstr ""
 
-#: src/overview/components/AskPanel.js:338
+#: src/overview/components/AskPanel.js:341
 msgid "The brief that leaves this page"
 msgstr ""
 
-#: src/overview/components/AskPanel.js:349
+#: src/overview/components/AskPanel.js:352
 msgid "Copied."
 msgstr ""
 
-#: src/overview/components/AskPanel.js:353
+#: src/overview/components/AskPanel.js:356
 msgid "Close"
 msgstr ""
 
-#: src/overview/components/AskPanel.js:362
+#: src/overview/components/AskPanel.js:365
 msgid "Ask Claude"
 msgstr ""
 
-#: src/overview/components/AskPanel.js:369
+#: src/overview/components/AskPanel.js:372
 msgid "Copy brief"
 msgstr ""
 
@@ -579,7 +579,7 @@ msgid "Filter, e.g. status_class=5xx"
 msgstr ""
 
 #: src/overview/components/BreakdownControls.js:233
-#: src/overview/constants.js:88
+#: src/overview/constants.js:89
 msgid "Server"
 msgstr ""
 
@@ -913,105 +913,105 @@ msgid "The flame lookup ran out of time, so no trace is shown here; that does no
 msgstr ""
 
 #. translators: %s: the bucket's local span, e.g. 7:05–7:10 AM.
-#: src/overview/components/UrlDetailView.js:96
+#: src/overview/components/UrlDetailView.js:97
 #, js-format
 msgid "The filters narrow the chart beneath them, the header and the list, which hold %s; the category charts and the profile describe every request to this URL."
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:102
+#: src/overview/components/UrlDetailView.js:103
 msgid "The filters narrow the chart beneath them, the header and the list; the category charts and the profile describe every request to this URL."
 msgstr ""
 
 #. translators: %s: the bucket's local span, e.g. 7:05–7:10 AM.
-#: src/overview/components/UrlDetailView.js:110
+#: src/overview/components/UrlDetailView.js:111
 #, js-format
 msgid "The charts and the profile describe every request to this URL; the header and the list below hold %s."
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:138
-#: src/overview/constants.js:115
+#: src/overview/components/UrlDetailView.js:139
+#: src/overview/constants.js:116
 msgid "Method"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:169
+#: src/overview/components/UrlDetailView.js:170
 #: src/requests/RequestStream.js:97
 msgid "Duration"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:180
-#: src/overview/UrlTable.js:222
+#: src/overview/components/UrlDetailView.js:181
+#: src/overview/UrlTable.js:224
 msgid "Mem"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:423
+#: src/overview/components/UrlDetailView.js:424
 msgid "Aggregate Flame Graph"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:450
+#: src/overview/components/UrlDetailView.js:451
 msgid "Recent Requests"
 msgstr ""
 
 #. translators: %d: number of recent requests shown.
-#: src/overview/components/UrlDetailView.js:456
+#: src/overview/components/UrlDetailView.js:457
 #, js-format
 msgid "Recent Requests (%d)"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/components/UrlDetailView.js:473
+#: src/overview/components/UrlDetailView.js:474
 #, js-format
 msgid "Could not list requests: %s"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:509
+#: src/overview/components/UrlDetailView.js:510
 msgid "Loading requests…"
 msgstr ""
 
-#: src/overview/components/UrlDetailView.js:513
+#: src/overview/components/UrlDetailView.js:514
 msgid "No requests to display"
 msgstr ""
 
-#: src/overview/constants.js:93
+#: src/overview/constants.js:94
 msgid "URL Hash"
 msgstr ""
 
-#: src/overview/constants.js:99
+#: src/overview/constants.js:100
 msgid "Page Hash"
 msgstr ""
 
-#: src/overview/constants.js:105
+#: src/overview/constants.js:106
 msgid "Status Code"
 msgstr ""
 
-#: src/overview/constants.js:110
+#: src/overview/constants.js:111
 msgid "Status Class"
 msgstr ""
 
-#: src/overview/constants.js:120
+#: src/overview/constants.js:121
 msgid "Country"
 msgstr ""
 
-#: src/overview/constants.js:125
+#: src/overview/constants.js:126
 msgid "User Agent"
 msgstr ""
 
-#: src/overview/constants.js:130
+#: src/overview/constants.js:131
 msgid "JA4 Hash"
 msgstr ""
 
-#: src/overview/constants.js:135
+#: src/overview/constants.js:136
 msgid "From"
 msgstr ""
 
-#: src/overview/constants.js:140
+#: src/overview/constants.js:141
 msgid "Worker"
 msgstr ""
 
-#: src/overview/constants.js:145
+#: src/overview/constants.js:146
 msgid "Profiled"
 msgstr ""
 
-#: src/overview/constants.js:150
+#: src/overview/constants.js:151
 msgid "Error"
 msgstr ""
 
@@ -1088,71 +1088,71 @@ msgstr ""
 msgid "Times and counts are per request."
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:118
+#: src/overview/PerformanceDashboard.js:127
 msgid "Unknown URL"
 msgstr ""
 
 #. translators: %s: the request ID that was searched for.
-#: src/overview/PerformanceDashboard.js:859
+#: src/overview/PerformanceDashboard.js:880
 #, js-format
 msgid "Request \"%s\" not found — prefix with / to search recent traffic"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:922
+#: src/overview/PerformanceDashboard.js:947
 msgid "No matches in recent traffic"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1119
+#: src/overview/PerformanceDashboard.js:1144
 msgid "Could not save the logging rule."
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1151
+#: src/overview/PerformanceDashboard.js:1176
 msgid "Could not delete the logging rule."
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1203
+#: src/overview/PerformanceDashboard.js:1228
 msgid "Loading performance data…"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1284
+#: src/overview/PerformanceDashboard.js:1309
 msgid "Pages by Request Count"
 msgstr ""
 
 #. translators: %s: the request ID.
-#: src/overview/PerformanceDashboard.js:1327
+#: src/overview/PerformanceDashboard.js:1354
 #, js-format
 msgid "Request: %s"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1352
+#: src/overview/PerformanceDashboard.js:1379
 msgid "Back to URL details"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1399
+#: src/overview/PerformanceDashboard.js:1426
 msgid "Edit logging rule"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1403
+#: src/overview/PerformanceDashboard.js:1430
 msgid "Log this URL"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/PerformanceDashboard.js:1428
+#: src/overview/PerformanceDashboard.js:1455
 #, js-format
 msgid "Could not load this URL: %s"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1434
+#: src/overview/PerformanceDashboard.js:1461
 msgid "Loading URL…"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/PerformanceDashboard.js:1486
+#: src/overview/PerformanceDashboard.js:1513
 #, js-format
 msgid "Could not load this request: %s"
 msgstr ""
 
-#: src/overview/PerformanceDashboard.js:1492
+#: src/overview/PerformanceDashboard.js:1519
 msgid "Loading request…"
 msgstr ""
 
@@ -1238,66 +1238,66 @@ msgstr ""
 msgid "Response Times (Recent Requests)"
 msgstr ""
 
-#: src/overview/UrlTable.js:166
+#: src/overview/UrlTable.js:168
 msgid "Reqs"
 msgstr ""
 
-#: src/overview/UrlTable.js:206
+#: src/overview/UrlTable.js:208
 msgid "Avg"
 msgstr ""
 
-#: src/overview/UrlTable.js:211
+#: src/overview/UrlTable.js:213
 msgid "Min"
 msgstr ""
 
-#: src/overview/UrlTable.js:216
+#: src/overview/UrlTable.js:218
 msgid "Max"
 msgstr ""
 
-#: src/overview/UrlTable.js:229
+#: src/overview/UrlTable.js:231
 msgid "Last seen"
 msgstr ""
 
 #. translators: %s: the error message.
-#: src/overview/UrlTable.js:354
-#: src/overview/UrlTable.js:544
+#: src/overview/UrlTable.js:356
+#: src/overview/UrlTable.js:596
 #, js-format
 msgid "Could not load URLs: %s"
 msgstr ""
 
-#: src/overview/UrlTable.js:359
-#: src/overview/UrlTable.js:547
+#: src/overview/UrlTable.js:361
+#: src/overview/UrlTable.js:599
 msgid "Loading URLs…"
 msgstr ""
 
 #. translators: %s: the URL search term.
-#: src/overview/UrlTable.js:364
+#: src/overview/UrlTable.js:366
 #, js-format
 msgid "No URLs match \"%s\""
 msgstr ""
 
-#: src/overview/UrlTable.js:367
+#: src/overview/UrlTable.js:369
 msgid "No URLs to display"
 msgstr ""
 
-#: src/overview/UrlTable.js:807
+#: src/overview/UrlTable.js:858
 msgid "Search by whole URL word"
 msgstr ""
 
-#: src/overview/UrlTable.js:811
+#: src/overview/UrlTable.js:862
 msgid "Search by whole URL word…"
 msgstr ""
 
-#: src/overview/UrlTable.js:830
+#: src/overview/UrlTable.js:881
 msgid "Showing Workers"
 msgstr ""
 
-#: src/overview/UrlTable.js:831
+#: src/overview/UrlTable.js:882
 msgid "Include Workers"
 msgstr ""
 
 #. translators: 1: how many URLs the page holds past those listed, 2: how many the server lists under one page.
-#: src/overview/UrlTable.js:909
+#: src/overview/UrlTable.js:960
 #, js-format
 msgid "%1$s more URL, past the first %2$s the server lists"
 msgid_plural "%1$s more URLs, past the first %2$s the server lists"
@@ -1305,30 +1305,30 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. translators: 1: first row number on the page, 2: last row number on the page, 3: total number of pages listed.
-#: src/overview/UrlTable.js:950
+#: src/overview/UrlTable.js:998
 #, js-format
 msgid "%1$s–%2$s of %3$s pages"
 msgstr ""
 
 #. translators: %s: number of pages in the table.
-#: src/overview/UrlTable.js:964
+#: src/overview/UrlTable.js:1012
 #, js-format
 msgid "%s page"
 msgid_plural "%s pages"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/overview/UrlTable.js:981
+#: src/overview/UrlTable.js:1029
 msgid "Prev"
 msgstr ""
 
 #. translators: 1: current page number, 2: total number of pages.
-#: src/overview/UrlTable.js:986
+#: src/overview/UrlTable.js:1034
 #, js-format
 msgid "Page %1$d of %2$d"
 msgstr ""
 
-#: src/overview/UrlTable.js:1000
+#: src/overview/UrlTable.js:1048
 msgid "Next"
 msgstr ""
 
