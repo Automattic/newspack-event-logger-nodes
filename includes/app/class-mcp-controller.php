@@ -139,7 +139,7 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'class'   => Performance_CI_Node::class,
 			'verb'    => 'dump_request',
-			'summary' => 'One request in full, with its flame data and computed findings, read where its request row says it sits. `flame_cut` true means the flame lookup ran out of time before it found `flame_data`, so its absence says nothing of whether the request was profiled; ask again. A `Request not found` error means either no row of the last {kept} buckets names that rid (the request is older, or finished in the last few seconds and is not written yet), or the row exists but its record has aged out of the raw logs, which keep it at least `min_lifetime` unless `max_segments` prunes it sooner; such a request still counts in every aggregate.',
+			'summary' => 'One request in full, with its flame data and computed findings, read where its request row says it sits. `owners` lists each owner\'s self time (`ms`), `share` of the request and `calls`; `(unowned)` is time no owned frame encloses and `(unmeasured)` time no span covers. `flame_cut` true means the flame lookup ran out of time before it found `flame_data`, so its absence says nothing of whether the request was profiled; ask again. A `Request not found` error means either no row of the last {kept} buckets names that rid (the request is older, or finished in the last few seconds and is not written yet), or the row exists but its record has aged out of the raw logs, which keep it at least `min_lifetime` unless `max_segments` prunes it sooner; such a request still counts in every aggregate.',
 			'args'    => [ 'rid' => 'The request id.' ],
 		],
 		'grep_requests'            => [

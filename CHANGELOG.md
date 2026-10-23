@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`dump_request` answers each owner's self time.** `Findings::owners()` sums a request flame's self time by the owner its frames name: `Owner::of_label()` reads the `[<owner>] ` a label carries, after a `<base>: ` or at the start, and gives a `<slug> plugin` load span to `<slug>`. A frame naming no owner takes its nearest owned ancestor's, so a hook timed inside a plugin's listener stays that plugin's time, and with none it is `(unowned)`. `(unmeasured)` is the duration less every top-level span, always present. Each row carries `owner`, `ms`, `share` of the duration and `calls`, the calls counting only frames that name the owner; self time is never below zero. `dump_request` returns them as `owners`, and the MCP tool's description names the field.
+
 ## [0.152.0] - 2026-10-22
 
 ### Added

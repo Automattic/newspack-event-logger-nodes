@@ -13,6 +13,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Newspack_Event_Logger_Nodes\App\Findings;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\App\Stats_Query;
 use Newspack_Event_Logger_Nodes\App\Url_Snapshot;
@@ -345,6 +346,25 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ "a1b2c3d4\n" ] );
 
 		$this->assertSame( "invalid hash format\n", $result );
+	}
+
+	public function test_dump_request_answers_each_owners_self_time(): void {
+		$flame = [
+			'name'     => 'request',
+			'value'    => 47.0,
+			'children' => [
+				[ 'name' => 'the_content hook: [kea-7746] Kea->render', 'value' => 33.0, 'children' => [ [ 'name' => 'sql: [core] q', 'value' => 9.0, 'children' => [] ] ] ],
+			],
+		];
+		$rid   = $this->write_request( [ 'rid' => 'rid-owners-5530917', 'url' => 'https://example.com/owners', 'timestamp' => 1700005100, 'duration_ms' => 47 ] );
+		$this->write_flame( [ 'rid' => $rid ] + $flame );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
+
+		// The stored record round-trips JSON, which drops a whole float's point.
+		$this->assertEquals( Findings::owners( $flame, 47.0 ), $result['owners'] );
+		$this->assertSame( 'kea-7746', $result['owners'][0]['owner'] );
+		$this->assertEqualsWithDelta( 24.0, $result['owners'][0]['ms'], 0.0001 );
 	}
 
 	public function test_the_flame_scan_matches_the_rid_column_and_only_that_rid(): void {
