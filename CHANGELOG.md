@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.156.0] - 2026-10-23
+
 ### Fixed
 - **A plugin, mu-plugin or theme linked into its root is owned again.** A dev install links each checkout in, `plugins/newspack-plugin` to `/newspack-plugins/newspack-plugin`, and PHP names a file at its resolved target, which sat under no root, so on a newspack-docker request all 257 plugin and theme listeners read unowned and Time By Owner showed only core and the mu-plugins. `Owner` now scans its plugin, mu-plugin and theme roots once for entries that are links, and a file under a link's target answers that link's slug, ahead of the broader roots a target may sit under.
 
