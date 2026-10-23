@@ -166,11 +166,14 @@ const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 	[
 		'overview/RequestProfile.js',
 		[
-			/background:\s*phosphorColor\(\s*index,\s*getStateColor/,
+			/background:\s*fill\b/,
+			/background:\s*colourOf\.get\( state \)/,
 			/cursor:\s*'pointer'/,
 			/cursor:\s*hasEntries/,
 		],
 	],
+	// An owner's swatch is its series colour, the data the bar paints too.
+	[ 'overview/OwnerTable.js', [ /background:\s*ownerColor\( owner \)/ ] ],
 	[
 		'overview/components/LogEntriesTable.js',
 		[
@@ -265,7 +268,7 @@ const STYLE_APPEARANCE_ALLOWLIST = [
 	},
 	{
 		file: 'settings/styles/hook-selector.scss',
-		selector: /\.hook-selector-(?:recommended|recommended-star)$/,
+		selector: /\.hook-selector-(?:recommended|recommended-star|noisy)$/,
 		properties: [ 'color' ],
 	},
 	{
@@ -451,10 +454,10 @@ describe( 'canonical appearance ownership', () => {
 			'utf8'
 		);
 
-		// The two picker buttons take a visual label; the tag box, a BaseControl's.
+		// The three selector rows take a visual label; the tag box, a BaseControl's.
 		expect(
 			source.match( /<BaseControl\.VisualLabel(?:\s|>)/g ) || []
-		).toHaveLength( 2 );
+		).toHaveLength( 3 );
 		expect( source.match( /<BaseControl(?:\s|>)/g ) || [] ).toHaveLength(
 			1
 		);

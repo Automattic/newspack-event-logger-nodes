@@ -100,7 +100,7 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 					title: `${ row.owner }: ${ formatDuration(
 						perRequest ? row.ms_per_request : row.ms
 					) } (${ ( row.share * 100 ).toFixed( 1 ) }%)`,
-					color: ownerColor( row.owner ),
+					fill: ownerColor( row.owner ),
 				} ) ) }
 			/>
 			<table
@@ -108,7 +108,7 @@ export default function OwnerTable( { owners, perRequest = false } ) {
 				aria-labelledby={ headingId }
 			>
 				<thead>
-					<tr>
+					<tr className="newspack-nodes-table__header">
 						{ columns.map( ( [ field, label ] ) => (
 							<th scope="col" key={ field }>
 								<SortHeaderButton

@@ -45,17 +45,12 @@
 		text-align: left;
 	}
 
-	// A sort header reads as its cell's own label, aligned as the cell is.
+	// A sort header fills its cell and aligns as the cell does; the shared
+	// header row paints it.
 	thead .newspack-nodes-sortable-header-button {
 		display: inline-flex;
 		justify-content: flex-end;
 		width: 100%;
-		background: transparent;
-		border: 0;
-		padding: 0;
-		font: inherit;
-		color: inherit;
-		cursor: pointer;
 	}
 
 	thead th:first-child .newspack-nodes-sortable-header-button {
