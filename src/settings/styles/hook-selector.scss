@@ -72,9 +72,14 @@
 		font-size: 11px;
 	}
 
-	.hook-selector-recommended-star {
+	.hook-selector-recommended-star,
+	.hook-selector-noisy {
 		color: var(--brass-text);
 		margin-left: 4px;
 		font-size: 10px;
+	}
+
+	.hook-selector-noisy {
+		font-style: italic;
 	}
 }
