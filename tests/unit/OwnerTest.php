@@ -188,6 +188,35 @@ class OwnerTest extends TestCase {
 		}
 	}
 
+	/**
+	 * A root that can name no owner for a file does not end the search: a
+	 * plugin deployed unversioned into the managed tree and linked into the
+	 * plugins root answers its link's slug.
+	 */
+	public function test_a_root_that_names_no_owner_yields_to_a_later_one(): void {
+		$base = \sys_get_temp_dir() . '/eln-owner-unversioned-' . \getmypid();
+		foreach ( [ 'wp-content/plugins', 'managed-5531/plugins/nuc-5531' ] as $dir ) {
+			\mkdir( "{$base}/{$dir}", 0777, true );
+		}
+		\symlink( "{$base}/managed-5531/plugins/nuc-5531", "{$base}/wp-content/plugins/nuc-5531" );
+		try {
+			self::own_files_under(
+				[
+					'plugins' => "{$base}/wp-content/plugins",
+					'content' => "{$base}/wp-content",
+					'abspath' => "{$base}/",
+					'managed' => \realpath( "{$base}/managed-5531" ),
+				] + self::ROOTS
+			);
+			$managed = \realpath( "{$base}/managed-5531" );
+
+			$this->assertSame( 'nuc-5531', Owner::of( "{$managed}/plugins/nuc-5531/nuc-5531.php" ) );
+			$this->assertSame( '', Owner::of( "{$managed}/plugins/stray-5531/stray.php" ) );
+		} finally {
+			\exec( 'rm -rf ' . \escapeshellarg( $base ) );
+		}
+	}
+
 	/** A root's links are read once a process; a theme-only rebuild keeps them. */
 	public function test_a_roots_links_are_read_once(): void {
 		$base = \sys_get_temp_dir() . '/eln-owner-once-' . \getmypid();

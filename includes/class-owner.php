@@ -155,7 +155,9 @@ final class Owner {
 	}
 
 	/**
-	 * The owner the first root holding the file gives it.
+	 * The owner the first root holding the file gives it, a root that names
+	 * none yielding to the next: an unversioned copy in the managed tree is
+	 * named by the link to it.
 	 *
 	 * @param string $file A path as PHP names it.
 	 */
@@ -173,8 +175,12 @@ final class Owner {
 			}
 		}
 		foreach ( self::$table['dirs'] as [ $dir, $kind, $owner ] ) {
-			if ( \str_ends_with( $dir, '/' ) ? \str_starts_with( $file, $dir ) : $file === $dir ) {
-				return $owner ?? self::owner_in( $kind, \explode( '/', \substr( $file, \strlen( $dir ) ) ) );
+			if ( ! ( \str_ends_with( $dir, '/' ) ? \str_starts_with( $file, $dir ) : $file === $dir ) ) {
+				continue;
+			}
+			$found = $owner ?? self::owner_in( $kind, \explode( '/', \substr( $file, \strlen( $dir ) ) ) );
+			if ( '' !== $found ) {
+				return $found;
 			}
 		}
 		return '';
