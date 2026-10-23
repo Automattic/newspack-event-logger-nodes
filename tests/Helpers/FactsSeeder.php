@@ -7,8 +7,8 @@
  * partition it names, so a seed passes the same write contract a flush does:
  * a row names its URL, server, agent, JA4, From, category and entry as text,
  * each under its `Flame_Facts_Row_Schema::NAMED_BY` column less its `_id`,
- * and the seeder files each through its lookup's `ignore`, whose id the row
- * takes by batch index.
+ * and its page as a logged URL of it, and the seeder files each through its
+ * lookup's `ignore`, whose id the row takes by batch index.
  * Every column a test leaves out takes the seeder's default; a key naming no
  * column fails the seed.
  *
@@ -91,14 +91,17 @@ trait FactsSeeder {
 	}
 
 	/**
-	 * One `timings` row: a URL's category or entry over one bucket.
+	 * One `timings` row, a URL's category or entry over one bucket, and the
+	 * `timings_page` row its page sums it into, as the builder writes both.
 	 *
 	 * @param array<string,mixed> $over      Columns by name, plus `url`.
 	 * @param int                 $partition The partition file it lands in.
 	 */
 	protected function seed_timing( array $over = [], int $partition = 0 ): void {
 		$server = Core::as_string( $over['server'] ?? self::$seed_server );
-		$this->seed_rows( $partition, [ [ 'add', 'timings', $over + [ 'url' => "https://{$server}/seed-path/" ] + self::timing_defaults( $server ) ] ] );
+		$row    = $over + [ 'url' => "https://{$server}/seed-path/" ] + self::timing_defaults( $server );
+		$page   = [ 'page' => $row['url'] ] + \array_diff_key( $row, [ 'url' => true ] );
+		$this->seed_rows( $partition, [ [ 'add', 'timings', $row ], [ 'add', 'timings_page', $page ] ] );
 	}
 
 	/**
@@ -216,14 +219,14 @@ trait FactsSeeder {
 	 */
 	protected static function facts_ops( array $rows ): array {
 		$batch = [];
-		// One lookup op per name per batch, as the builder's `named_at()` files.
 		$at    = [];
-		$named = static function ( string $lookup, string $name, array $row = [ null ], array $ids = [] ) use ( &$batch, &$at ): int {
-			if ( ! isset( $at[ $lookup ][ $name ] ) ) {
-				$at[ $lookup ][ $name ] = \count( $batch );
-				$batch[]                = [ 'ignore', $lookup, [ ...$row, $name ], [], $ids ];
+		// One `ignore` per key per table per batch, as the builder files them.
+		$filed = static function ( string $table, string $key, array $values, array $ids = [] ) use ( &$batch, &$at ): int {
+			if ( ! isset( $at[ $table ][ $key ] ) ) {
+				$at[ $table ][ $key ] = \count( $batch );
+				$batch[]              = [ 'ignore', $table, $values, [], $ids ];
 			}
-			return $at[ $lookup ][ $name ];
+			return $at[ $table ][ $key ];
 		};
 		foreach ( $rows as [ $verb, $table, $values ] ) {
 			$ids = [];
@@ -231,28 +234,27 @@ trait FactsSeeder {
 			if ( \is_string( $values['server'] ?? null ) ) {
 				$values['server'] = Url_Parts::server_name( $values['server'] );
 			}
-			if ( \array_key_exists( 'url', $values ) ) {
-				$url    = Core::as_string( $values['url'] );
-				$server = Core::as_string( $values['server'] );
-				unset( $values['url'] );
-				$server_at = $named( Flame_Facts_Row_Schema::NAMED_BY['server_id'], $server );
-				$hash      = Url_Parts::hash( $url );
-				$url_at    = $at['urls'][ $hash ] ?? null;
-				if ( null === $url_at ) {
-					$url_at              = \count( $batch );
-					$at['urls'][ $hash ] = $url_at;
-					$batch[]             = [ 'ignore', 'urls', Stats_Builder_Node::url_row( $url, $server ), [], [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => $server_at ] ];
+			foreach ( [ 'url' => 'urls', 'page' => 'pages' ] as $key => $named ) {
+				if ( ! \array_key_exists( $key, $values ) ) {
+					continue;
 				}
-				$values['url_id'] = null;
-				$ids[ Flame_Facts_Row_Schema::position( $table, 'url_id' ) ] = $url_at;
+				$server = Core::as_string( $values['server'] );
+				$url    = Stats_Builder_Node::url_row( Core::as_string( $values[ $key ] ), $server );
+				$page   = [ null, $url[ Flame_Facts_Row_Schema::position( 'urls', 'page' ) ], $url[ Flame_Facts_Row_Schema::position( 'urls', 'page_hash' ) ] ];
+				$ids[ Flame_Facts_Row_Schema::position( $table, "{$key}_id" ) ] = 'urls' === $named
+					? $filed( $named, Core::as_string( $url[ Flame_Facts_Row_Schema::position( 'urls', 'hash' ) ] ), $url, [ Flame_Facts_Row_Schema::position( 'urls', 'server_id' ) => $filed( 'servers', $server, [ null, $server ] ) ] )
+					: $filed( $named, Core::as_string( $page[2] ), $page );
+				unset( $values[ $key ] );
+				$values[ "{$key}_id" ] = null;
 			}
-			foreach ( \array_diff_key( Flame_Facts_Row_Schema::NAMED_BY, [ 'url_id' => true ] ) as $column => $lookup ) {
+			foreach ( \array_diff_key( Flame_Facts_Row_Schema::NAMED_BY, [ 'url_id' => true, 'page_id' => true ] ) as $column => $lookup ) {
 				$key = \substr( $column, 0, -3 );
 				if ( ! \array_key_exists( $key, $values ) ) {
 					continue;
 				}
 				if ( null !== $values[ $key ] ) {
-					$ids[ Flame_Facts_Row_Schema::position( $table, $column ) ] = $named( $lookup, Core::as_string( $values[ $key ] ) );
+					$name = Core::as_string( $values[ $key ] );
+					$ids[ Flame_Facts_Row_Schema::position( $table, $column ) ] = $filed( $lookup, $name, [ null, $name ] );
 				}
 				unset( $values[ $key ] );
 				$values[ $column ] = null;

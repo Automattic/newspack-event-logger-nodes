@@ -73,7 +73,7 @@ The scope is memoized per process, so a live worker keeps writing the OLD prefix
 
 ### 6. Sums, not means — and nothing measured reads a flame `value`
 
-The rollups store raw sums: `timings` and `timings_site` fold `ms`, `calls` and `requests` by `sum`, and `requests_hourly` folds `count`, `timed`, `sum_ms`, `sum_peak_mb` and `errors` by `sum`. A fold across buckets and partitions is therefore exact addition, and `App\Stats_Query` divides at read time. A diff introducing running-mean storage reopens the EMA-clamp bug raw sums exist to prevent. Aggregator code MUST sum.
+The rollups store raw sums: `timings`, `timings_page` and `timings_site` fold `ms`, `calls` and `requests` by `sum`, and `requests_hourly` folds `count`, `timed`, `sum_ms`, `sum_peak_mb` and `errors` by `sum`. A fold across buckets and partitions is therefore exact addition, and `App\Stats_Query` divides at read time. A diff introducing running-mean storage reopens the EMA-clamp bug raw sums exist to prevent. Aggregator code MUST sum.
 
 The same rule bans a stored percentile: a percentile does not merge, so a fold over N buckets cannot produce the window's. `requests_hourly`'s `max_ms` stays because it folds by `max` exactly.
 

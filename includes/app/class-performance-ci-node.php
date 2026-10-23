@@ -248,6 +248,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const SETTINGS_ARRAY_MAX   = 10000;
 
 	/**
+	 * Leaderboard paging seam. Replaces the bound `timing_rows()` pages to,
+	 * `Stats_Query::MAX_LIMIT` rows a page and no page past
+	 * `Stats_Query::MAX_OFFSET`; tests shrink it, so a board deeper than the
+	 * bound fits a test's time budget.
+	 * Signature: `function (): array{0:int,1:int}`, the page size and the
+	 * farthest offset a page starts at.
+	 *
+	 * @var (\Closure(): array{0:int,1:int})|null
+	 */
+	public static ?\Closure $board_paging = null;
+
+	/**
 	 * The overview-prefetch job's questions by stored key, read on this
 	 * node's first `overview` or `query`: the node lives as long as the
 	 * request graph that mounted it, so a request reads them once.
@@ -1668,7 +1680,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return list<array{owner:string,ms_per_request:float,share:float,calls_per_request:float}>
 	 */
 	private static function owner_board( array $filter, array $buckets, int $now ): array {
-		$rows     = self::timing_rows(
+		[ $rows ] = self::timing_rows(
 			[ 'owner' ],
 			[
 				'source'  => 'owners',
@@ -1734,8 +1746,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The category leaderboard over `$buckets` of the timings `$filter`
 	 * selects, in the `leaderboard_of()` shape, its `count` the profiled
 	 * requests the same filter selects and its `avg_ms` their timed mean
-	 * over every request it selects. A category's own row carries its
-	 * totals and its entries, each read whole through `timing_rows()`.
+	 * over every request it selects. One `timing_rows()` read grouped by
+	 * category, entry and listener answers both a category's totals, its
+	 * row whose entry is empty, and its entries, the rest. A board that read
+	 * cut reads its totals again, filtered to the empty entry, so a cheap
+	 * category's total is never among the rows the cut left out.
 	 *
 	 * @param array<string,list<scalar>>  $filter  Fields both sources hold.
 	 * @param list<array{0:int,1:int}>    $buckets The board's buckets.
@@ -1752,8 +1767,14 @@ class Performance_CI_Node extends Service_CI_Node {
 		];
 		$sums         = [];
 		$sum_req_time = 0.0;
-		$categories   = self::timing_rows( [ 'category', 'listener' ], [ 'filter' => $filter + [ 'entry' => [ '' ] ] ] + $timings );
-		foreach ( $categories as [ $category, $listener, $ms, $calls, $requests ] ) {
+		$group        = [ 'category', 'entry', 'listener' ];
+		[ $rows, $cut ] = self::timing_rows( $group, $timings );
+		// A cut board can miss a cheap category's total: read the totals whole.
+		$totals = $cut ? self::timing_rows( $group, [ 'filter' => $filter + [ 'entry' => [ '' ] ] ] + $timings )[0] : $rows;
+		foreach ( $totals as [ $category, $entry, $listener, $ms, $calls, $requests ] ) {
+			if ( '' !== $entry ) {
+				continue;
+			}
 			// An overlay's time (a listener's, a QM timer's) counts already.
 			$sum_req_time += 0 === $listener ? Core::num_float( $ms ) : 0.0;
 			$sums[ Core::as_string( $category ) ] = [
@@ -1763,7 +1784,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'entries'   => [],
 			];
 		}
-		foreach ( self::timing_rows( [ 'category', 'entry' ], $timings ) as [ $category, $entry, $ms, $calls, $requests ] ) {
+		foreach ( $rows as [ $category, $entry, , $ms, $calls, $requests ] ) {
 			$category = Core::as_string( $category );
 			if ( '' !== $entry && isset( $sums[ $category ] ) ) {
 				$sums[ $category ]['entries'][ Core::as_string( $entry ) ] = [ $ms, $calls, $requests ];
@@ -1797,33 +1818,35 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Every row of a timings spec grouped by `$group`, dearest first, a page
-	 * of `Stats_Query::MAX_LIMIT` at a time until a page comes back short.
-	 * A board deeper than the farthest page a query may start says so once
-	 * a window and answers what it read, the cheapest rows left out.
+	 * of `Stats_Query::MAX_LIMIT` at a time until a page comes back short,
+	 * and whether the read was cut. A board deeper than the farthest page a
+	 * query may start says so once a window and answers what it read, the
+	 * cheapest rows left out, cut.
 	 *
 	 * @param list<string>                                                                                                          $group   The fields to group by.
 	 * @param array{source:string, filter:array<string,list<scalar|null>>, measure:list<string>, buckets:list<array{0:int,1:int}>, now:int} $timings The timings spec, less its group, sort and page.
-	 * @return list<list<mixed>>
+	 * @return array{0:list<list<mixed>>, 1:bool}
 	 */
 	private static function timing_rows( array $group, array $timings ): array {
-		$rows = [];
-		for ( $offset = 0; ; $offset += Stats_Query::MAX_LIMIT ) {
+		[ $size, $farthest ] = ( self::$board_paging ?? static fn (): array => [ Stats_Query::MAX_LIMIT, Stats_Query::MAX_OFFSET ] )();
+		$rows                = [];
+		for ( $offset = 0; ; $offset += $size ) {
 			$page = Stats_Query::run(
 				[
 					'group'  => $group,
 					'sort'   => 'ms',
 					'order'  => 'desc',
-					'limit'  => Stats_Query::MAX_LIMIT,
+					'limit'  => $size,
 					'offset' => $offset,
 				] + $timings
 			)['rows'];
 			\array_push( $rows, ...$page );
-			if ( \count( $page ) < Stats_Query::MAX_LIMIT ) {
-				return $rows;
+			if ( \count( $page ) < $size ) {
+				return [ $rows, false ];
 			}
-			if ( $offset + Stats_Query::MAX_LIMIT > Stats_Query::MAX_OFFSET ) {
+			if ( $offset + $size > $farthest ) {
 				Core::print_less_often( 'performance: leaderboard rows past the offset bound', ' — kept the ' . \count( $rows ) . ' dearest' );
-				return $rows;
+				return [ $rows, true ];
 			}
 		}
 	}
