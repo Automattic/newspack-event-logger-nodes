@@ -182,8 +182,14 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/** A stack frame's slot holding the ms its closed children took. */
 	private const INNER_SLOT = 3;
 
+	/** A stack frame's slot holding whether its own name carries its owner. */
+	private const NAMED_SLOT = 4;
+
+	/** A stack frame's slot holding whether it is a Query Monitor timer. */
+	private const TIMER_SLOT = 5;
+
 	/** The request's own frame, every stack's bottom: unowned, nothing inside yet. */
-	private const REQUEST_FRAME = [ Log_Manager::REQUEST_LABEL, '', Owner::UNOWNED, 0.0 ];
+	private const REQUEST_FRAME = [ Log_Manager::REQUEST_LABEL, '', Owner::UNOWNED, 0.0, false, false ];
 
 	/** Max distinct labels tracked per profiled state (bounds runaway memory). */
 	private const MAX_PROFILE_ENTRY_LABELS = 1000;
@@ -744,8 +750,11 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/**
 	 * Push state onto request stack.
 	 *
-	 * Stack frames are [ state, label, owner, inner ]: the owner it is settled
-	 * on as it opens (`frame_owner()`), and the ms its closed children took.
+	 * Stack frames are [ state, label, owner, inner, named, timer ], settled
+	 * as the frame opens: a timer's owner is its parent's, so it stays
+	 * transparent; any other span's is the one its name carries
+	 * (`Owner::of_label()`), and `named` says so, else its parent's. `inner`
+	 * is the ms its closed children took.
 	 * Pushing also opens the state's profile record, so a state that never
 	 * closes still appears in the profile with a zero duration instead of
 	 * vanishing.
@@ -767,7 +776,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		self::normalize_stack( $request );
 
 		// References, not copies: mutate \stdClass arrays in place (avoid COW).
-		/** @var list<array{0: string,1: string,2: string,3: float}> $stack */
+		/** @var list<array{0: string,1: string,2: string,3: float,4: bool,5: bool}> $stack */
 		$stack = &$request->stack;
 		// Dynamic \stdClass property: per-state profile records keyed by state.
 		/** @var array<string,array{entries: array<string,array{0: float,1: int}>,count: int,time: float,ts: float}> $profiles */
@@ -788,7 +797,9 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		}
 
 		$parent  = [] === $stack ? Owner::UNOWNED : $stack[ \count( $stack ) - 1 ][ self::OWNER_SLOT ];
-		$stack[] = [ $state, $label, self::frame_owner( $parent, $state, $label ), 0.0 ];
+		$timer   = self::is_timer_span( $state );
+		$own     = $timer ? '' : Owner::of_label( Flame_Tree::node_name( $state, $label ) );
+		$stack[] = [ $state, $label, '' === $own ? $parent : $own, 0.0, '' !== $own, $timer ];
 
 		$profile = &$profiles[ $state ];
 		if ( $label && \count( $profile['entries'] ) < self::MAX_PROFILE_ENTRY_LABELS && ! isset( $profile['entries'][ $label ] ) ) {
@@ -835,7 +846,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		self::normalize_stack( $request );
 
 		// References, not copies: mutate \stdClass arrays in place (avoid COW).
-		/** @var list<array{0: string,1: string,2: string,3: float}> $stack */
+		/** @var list<array{0: string,1: string,2: string,3: float,4: bool,5: bool}> $stack */
 		$stack = &$request->stack;
 		/** @var array<string,array{entries: array<string,array{0: float,1: int}>,count: int,time: float,ts: float}> $profiles */
 		$profiles = &$request->profiles;
@@ -845,7 +856,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 		if ( $frame[0] === $state ) {
 			// Fast path: matched top of stack (the common case).
-			$closed = [ $frame ];
+			$inner = $frame[ self::INNER_SLOT ];
 			\array_pop( $stack );
 		} else {
 			// Slow path: mismatched close — search backward and unwind.
@@ -861,8 +872,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 			}
 
 			$closed = \array_splice( $stack, $found_idx );
+			$frame  = $closed[0];
+			$inner  = \array_sum( \array_column( $closed, self::INNER_SLOT ) );
 		}
-		$label = $closed[0][1];
+		$label = $frame[1];
 
 		if ( isset( $profiles[ $state ] ) ) {
 			$profile          = &$profiles[ $state ];
@@ -879,7 +892,11 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 
 		/** @var array<array-key,array{0: float,1: int}> $owners */
 		$owners = &$request->owners;
-		self::fold_owner( $owners, $stack, $closed, $time );
+		$gain   = self::fold_owner( $owners, $frame, $time, $inner );
+		$parent = \count( $stack ) - 1;
+		if ( isset( $stack[ $parent ] ) ) {
+			$stack[ $parent ][ self::INNER_SLOT ] += $gain;
+		}
 
 		// A listener's or a QM timer's time is already its ancestors'.
 		if ( ! empty( $stack ) && ! Flame_Tree::is_overlay_span( $state ) ) {
@@ -908,42 +925,34 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Credit a closed span's exclusive time to the owner its frame carries,
-	 * as `Log_Manager::charge()` charges a label: its duration less the
-	 * `inner` its closed children took, and its whole duration to its
-	 * parent's `inner`. Only a span naming its owner adds a call.
+	 * Credit a closed span's exclusive time to the owner its frame carries:
+	 * its duration less the `inner` its closed children took, plus a call
+	 * when its own name carries that owner. Its parent's `inner` gains its
+	 * whole duration.
 	 *
-	 * The frames a mismatched close splices away credit nothing and hand
-	 * their `inner` to the frame that closes, which held them. A Query Monitor
-	 * timer credits nothing and hands its `inner` to its parent, so the spans
-	 * inside it count as its parent's children.
+	 * A Query Monitor timer credits nothing, and its parent's `inner` gains
+	 * only the timer's own `inner`, so the spans inside it count as its
+	 * parent's children. A mismatched close's `inner` includes the frames it
+	 * spliced away, which credit nothing themselves.
 	 *
-	 * @param array<array-key,array{0: float,1: int}>          $owners Owner → [ ms, calls ], mutated.
-	 * @param list<array{0: string,1: string,2: string,3: float}> $stack The open frames, the closed ones gone; mutated.
-	 * @param list<array{0: string,1: string,2: string,3: float}> $closed The frame that closed, then any it spliced away.
-	 * @param float                                             $time   Its duration in ms.
+	 * @param array<array-key,array{0: float,1: int}>                    $owners Owner → [ ms, calls ], mutated.
+	 * @param array{0: string,1: string,2: string,3: float,4: bool,5: bool} $frame  The frame that closed.
+	 * @param float                                                      $time   Its duration in ms.
+	 * @param float                                                      $inner  The ms its closed children took.
+	 * @return float The ms its parent's `inner` gains.
 	 */
-	private static function fold_owner( array &$owners, array &$stack, array $closed, float $time ): void {
-		[ $state, $label, $owner ] = $closed[0];
-		$inner                     = \array_sum( \array_column( $closed, self::INNER_SLOT ) );
-		$parent                    = \count( $stack ) - 1;
-		if ( self::is_timer_span( $state ) ) {
-			$time = $inner;
-		} else {
-			$named            = '' !== Owner::of_label( Flame_Tree::node_name( $state, $label ) );
-			$owners[ $owner ] = [ ( $owners[ $owner ][0] ?? 0.0 ) + $time - $inner, ( $owners[ $owner ][1] ?? 0 ) + ( $named ? 1 : 0 ) ];
+	private static function fold_owner( array &$owners, array $frame, float $time, float $inner ): float {
+		if ( $frame[ self::TIMER_SLOT ] ) {
+			return $inner;
 		}
-		if ( isset( $stack[ $parent ] ) ) {
-			$stack[ $parent ][ self::INNER_SLOT ] += $time;
-		}
+		$owner            = $frame[ self::OWNER_SLOT ];
+		$owners[ $owner ] = [ ( $owners[ $owner ][0] ?? 0.0 ) + $time - $inner, ( $owners[ $owner ][1] ?? 0 ) + ( $frame[ self::NAMED_SLOT ] ? 1 : 0 ) ];
+		return $time;
 	}
 
 	/**
 	 * Coerce `stack`, `profiles` and `owners` to arrays so the callers can take
-	 * references. A restored envelope carries whatever the checkpoint held: a
-	 * frame holding only its state and label takes its owner as a push would
-	 * and an empty `inner`. Every frame a push opens carries both, so a top
-	 * frame carrying its `inner` vouches for the frames below it.
+	 * references. A restored envelope carries whatever the checkpoint held.
 	 *
 	 * @param \stdClass $request Request object, mutated in place.
 	 */
@@ -951,39 +960,12 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		if ( ! \is_array( $request->stack ?? null ) ) {
 			$request->stack = [];
 		}
-		/** @var list<array{0: string,1: string,2?: string,3?: float}> $stack */
-		$stack = $request->stack;
-		if ( [] !== $stack && ! isset( $stack[ \count( $stack ) - 1 ][ self::INNER_SLOT ] ) ) {
-			$parent = Owner::UNOWNED;
-			foreach ( $stack as $at => [ $state, $label ] ) {
-				$parent        = $stack[ $at ][ self::OWNER_SLOT ] ?? self::frame_owner( $parent, $state, $label );
-				$stack[ $at ]  = [ $state, $label, $parent, $stack[ $at ][ self::INNER_SLOT ] ?? 0.0 ];
-			}
-			$request->stack = $stack;
-		}
 		if ( ! \is_array( $request->profiles ?? null ) ) {
 			$request->profiles = [];
 		}
 		if ( ! \is_array( $request->owners ?? null ) ) {
 			$request->owners = [];
 		}
-	}
-
-	/**
-	 * The owner a frame carries, settled when it opens: a timer's parent's,
-	 * so a timer stays transparent, else the one its name carries
-	 * (`Owner::of_label()`), else its parent's.
-	 *
-	 * @param string $parent The parent frame's owner.
-	 * @param string $state  The span's state name.
-	 * @param string $label  Its label.
-	 */
-	private static function frame_owner( string $parent, string $state, string $label ): string {
-		if ( self::is_timer_span( $state ) ) {
-			return $parent;
-		}
-		$own = Owner::of_label( Flame_Tree::node_name( $state, $label ) );
-		return '' !== $own ? $own : $parent;
 	}
 
 	/**
@@ -1709,6 +1691,8 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/**
 	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
 	 * A `requests restore` span, counting what came back as it rehydrates it.
+	 * An envelope whose stack lacks the owner slots a push stamps, or that
+	 * carries a stack and no `owners`, is dropped and logged.
 	 *
 	 * @api Used by substrate.
 	 * @param array<string,mixed> $saved Saved state from save_state().
@@ -1730,6 +1714,10 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 					if ( ! \is_array( $val ) ) {
 						return $val;
 					}
+					if ( isset( $val['stack'] ) && ! self::carries_owner_slots( $val ) ) {
+						$this->print_less_often( 'WARNING: dropping a restored envelope lacking owner slots: ', Core::as_string( $val['rid'] ?? '' ) );
+						return null;
+					}
 					$val['timestamp']   = Core::num_float( $val['timestamp'] ?? null );
 					$val['duration_ms'] = Core::num_float( $val['duration_ms'] ?? null );
 					$val['status_code'] = Core::num_int( $val['status_code'] ?? null );
@@ -1744,6 +1732,24 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 				return [ 'restored', $held, [ 'envelopes', 'entries' ] ];
 			}
 		);
+	}
+
+	/**
+	 * Whether a checkpointed envelope carries `owners` and every slot a push
+	 * stamps on each of its stack frames.
+	 *
+	 * @param array<array-key,mixed> $envelope A checkpointed envelope.
+	 */
+	private static function carries_owner_slots( array $envelope ): bool {
+		if ( ! \is_array( $envelope['stack'] ?? null ) || ! \is_array( $envelope['owners'] ?? null ) ) {
+			return false;
+		}
+		foreach ( $envelope['stack'] as $frame ) {
+			if ( ! \is_array( $frame ) || ! \array_key_exists( self::TIMER_SLOT, $frame ) ) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -1784,6 +1790,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 	/**
 	 * Apply $fn to every request held in a cache-state bucket. Serialization
 	 * converts the envelopes one way and rehydration back; only $fn differs.
+	 * A request $fn maps to null leaves its bucket.
 	 *
 	 * @param array<string,mixed> $state Cache state from/for LRU_Cache.
 	 * @param callable            $fn    Per-request converter.
@@ -1795,7 +1802,7 @@ class Request_Builder_Node extends Timer_Node implements Shutdown_Sweeper {
 		}
 		foreach ( $state['buckets'] as &$bucket ) {
 			if ( \is_array( $bucket ) ) {
-				$bucket = \array_map( $fn, $bucket );
+				$bucket = \array_filter( \array_map( $fn, $bucket ), static fn ( $request ): bool => null !== $request );
 			}
 		}
 		unset( $bucket );

@@ -112,7 +112,7 @@ class Hook_Categorizer {
 	 * order; a category named only by a user pattern or override gets no seeded
 	 * bucket and lands after them, in first-hook order.
 	 *
-	 * @return array<string,mixed> Associative array of category => [hooks...].
+	 * @return array<string,list<string>> Category => its hook names.
 	 */
 	public static function get_registered_hooks_by_category(): array {
 		$hooks      = self::get_registered_hooks();
@@ -222,7 +222,7 @@ class Hook_Categorizer {
 				if ( ! \is_string( $pattern ) ) {
 					continue;
 				}
-				$regex = self::checked_regex( $pattern );
+				$regex = self::checked_regex( $pattern, "hook_categories[{$category}]" );
 				if ( null === $regex ) {
 					continue;
 				}
@@ -284,27 +284,42 @@ class Hook_Categorizer {
 	}
 
 	/**
-	 * The pattern delimited for PCRE, or null when a guard refuses it.
+	 * The pattern delimited for PCRE, or null when a guard refuses it. A
+	 * refusal is logged as `<source>: pattern rejected (<why>): <pattern>`.
 	 *
 	 * @param string $pattern An operator's or the shipped file's pattern.
+	 * @param string $source  What the pattern came from, as the log names it.
 	 * @return string|null `\x01`-delimited regex.
 	 */
-	public static function checked_regex( string $pattern ): ?string {
+	public static function checked_regex( string $pattern, string $source ): ?string {
 		if ( \strlen( $pattern ) > self::MAX_PATTERN_LENGTH ) {
-			return null;
+			return self::refused( $source, 'over ' . self::MAX_PATTERN_LENGTH . ' bytes', $pattern );
 		}
 		// Reject patterns with nested quantifiers (ReDoS risk).
 		if ( \preg_match( '/[+*?]\}?\)?[+*?{]/', $pattern ) ) {
-			Core::print_less_often( '[EventLoggerNodes] Hook categorizer pattern rejected (nested quantifier): ', (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) );
-			return null;
+			return self::refused( $source, 'nested quantifier', $pattern );
 		}
 		// Use \x01 delimiter to avoid injection/escaping issues.
 		$regex = "\x01" . $pattern . "\x01";
 		if ( false === @\preg_match( $regex, '' ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged -- Validating user-supplied regex.
-			Core::print_less_often( '[EventLoggerNodes] Invalid hook categorizer pattern rejected: ', (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $pattern, 0, 100 ) ) );
-			return null;
+			return self::refused( $source, 'invalid', $pattern );
 		}
 		return $regex;
+	}
+
+	/**
+	 * Log a refused pattern, its source and its head stripped of control
+	 * characters.
+	 *
+	 * @param string $source  What the pattern came from.
+	 * @param string $why     The guard that refused it.
+	 * @param string $pattern The pattern.
+	 * @return null Always: the refusal `checked_regex()` answers.
+	 */
+	private static function refused( string $source, string $why, string $pattern ): null {
+		$scrub = static fn ( string $text ): string => (string) \preg_replace( '/[\x00-\x1f\x7f]/', '', \substr( $text, 0, 100 ) );
+		Core::print_less_often( $scrub( $source ) . ": pattern rejected ({$why}): ", $scrub( $pattern ) );
+		return null;
 	}
 
 	/**

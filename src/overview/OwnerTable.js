@@ -17,7 +17,7 @@ const PSEUDO_OWNERS = [ '(unowned)', '(unmeasured)' ];
 
 /**
  * @param {Object}                                                                                      props              Component props.
- * @param {?Array<{owner: string, ms?: number, ms_per_request?: number, share: number, calls: number}>} props.owners       Rows, longest first; `share` is a fraction. Absent on a snapshot built before owners existed.
+ * @param {?Array<{owner: string, ms?: number, ms_per_request?: number, share: number, calls: number}>} props.owners       Rows, longest first; `share` is a fraction.
  * @param {boolean}                                                                                     [props.perRequest] True when rows then carry `ms_per_request` in place of `ms`.
  * @return {import('react').ReactElement|null} The table, or null without rows.
  */

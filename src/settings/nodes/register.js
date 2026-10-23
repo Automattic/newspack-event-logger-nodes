@@ -16,10 +16,11 @@ export const views = registerSliceViews( {
 	 * `hook-catalog:view` — the registered-hook taxonomy behind the hook picker.
 	 *
 	 * The `performance` CI's `list_hooks` verb answers a PHP array. The
-	 * picker needs two of its four fields: the category-to-hooks map it lists,
-	 * and the one-liners it prints beside each category name. Those
-	 * descriptions fall back to an empty map because the modal subscripts them
-	 * per category as it renders.
+	 * picker needs three of its five fields: the category-to-hooks map it
+	 * lists, the one-liners it prints beside each category name, and the
+	 * `noisy` names no bulk selection takes. The descriptions fall back to an
+	 * empty map because the modal subscripts them per category as it renders,
+	 * and `noisy` to an empty list.
 	 *
 	 * `hooksByCategory` starts null, the only mark of a taxonomy that has not
 	 * arrived — `useHookCatalogGraph` derives the picker's spinner from it, so
@@ -34,12 +35,18 @@ export const views = registerSliceViews( {
 	 * object returns null and keeps the last good taxonomy on screen.
 	 */
 	HookCatalogView: {
-		empty: { hooksByCategory: null, descriptions: {}, error: null },
+		empty: {
+			hooksByCategory: null,
+			descriptions: {},
+			noisy: [],
+			error: null,
+		},
 		parse: ( payload ) =>
 			payload && 'object' === typeof payload.hooks_by_category
 				? {
 						hooksByCategory: payload.hooks_by_category,
 						descriptions: payload.category_descriptions ?? {},
+						noisy: payload.noisy ?? [],
 						error: null,
 				  }
 				: null,

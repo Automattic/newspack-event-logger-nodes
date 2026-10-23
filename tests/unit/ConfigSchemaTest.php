@@ -123,16 +123,36 @@ class ConfigSchemaTest extends TestCase {
 		$this->assertSame( [ 'pattern' => '/', 'action' => 'log' ], \end( $rules ) );
 	}
 
-	/** An override of the noisy list is published as written. */
-	public function test_noisy_log_events_publishes_a_valid_override(): void {
+	/** A string list keeps the strings its key holds, in order, and nothing else. */
+	public function test_string_list_keeps_the_strings_a_key_holds(): void {
 		$dir = $this->make_temp_dir();
-		$this->use_base_dir( $dir, [ 'noisy_log_events' => [ '^zork_', 'quux$' ] ] );
+		$this->use_base_dir( $dir, [ 'owner_time_events' => [ 'kea_7746_boot', 7, [ 'kea_nested' ], 'kea_7746_done' ] ] );
 
-		$this->assertSame( [ '^zork_', 'quux$' ], Config::noisy_log_events() );
+		$this->assertSame( [ 'kea_7746_boot', 'kea_7746_done' ], Config::string_list( 'owner_time_events' ) );
 	}
 
-	/** A noisy pattern that does not compile is skipped and logged by key. */
-	public function test_noisy_log_events_skips_and_logs_a_pattern_that_does_not_compile(): void {
+	/** An undeclared key is refused rather than read as an empty list. */
+	public function test_string_list_refuses_an_undeclared_key(): void {
+		$this->expectExceptionMessage( "unknown config key 'kea_7746_list'" );
+		Config::string_list( 'kea_7746_list' );
+	}
+
+	/** The noisy hooks are the names a configured pattern matches, in their order. */
+	public function test_noisy_hooks_are_the_names_a_noisy_pattern_matches(): void {
+		$dir = $this->make_temp_dir();
+		$this->use_base_dir( $dir, [ 'noisy_log_events' => [ 'ruru$', '^zork_' ] ] );
+
+		$this->assertSame(
+			[ 'zork_a', 'x_ruru', 'zork_b' ],
+			Config::noisy_hooks( [ 'zork_a', 'kea_7746', 'x_ruru', 'gettext', 'zork_b' ] )
+		);
+	}
+
+	/**
+	 * A noisy pattern `checked_regex()` refuses matches nothing, and the one
+	 * line logged is the refusal's own.
+	 */
+	public function test_noisy_hooks_skip_a_refused_pattern_logged_once(): void {
 		$lines = [];
 		\Newspack_Nodes\Core::$recent_log_timers = [];
 		\Newspack_Nodes\Core::set_stderr_handler( static function ( string $text ) use ( &$lines ): void {
@@ -141,8 +161,9 @@ class ConfigSchemaTest extends TestCase {
 		$dir = $this->make_temp_dir();
 		$this->use_base_dir( $dir, [ 'noisy_log_events' => [ '^kea(', '^ruru_' ] ] );
 
-		$this->assertSame( [ '^ruru_' ], Config::noisy_log_events() );
-		$this->assertStringContainsString( 'noisy_log_events: ^kea( is not a valid pattern', \implode( "\n", $lines ) );
+		$this->assertSame( [ 'ruru_a' ], Config::noisy_hooks( [ 'kea(x', 'ruru_a' ] ) );
+		$this->assertCount( 1, $lines );
+		$this->assertStringContainsString( 'noisy_log_events: pattern rejected (invalid): ^kea(', $lines[0] );
 	}
 
 	/** A config file entry still overrides the schema default, key by key. */

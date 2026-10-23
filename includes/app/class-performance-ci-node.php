@@ -1529,12 +1529,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				'now'     => $now,
 			]
 		);
-		$requests = 0;
-		$total    = 0.0;
-		foreach ( $rows as [ $owner, $ms, , $folded ] ) {
-			$requests += Owner::UNMEASURED === $owner ? Core::num_int( $folded ) : 0;
-			$total    += Core::num_float( $ms );
-		}
+		$requests = Core::num_int( \array_column( $rows, 3, 0 )[ Owner::UNMEASURED ] ?? null );
+		$total    = Core::num_float( \array_sum( \array_column( $rows, 1 ) ) );
 		if ( 0 === $requests ) {
 			return [];
 		}
@@ -1547,7 +1543,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				'calls'          => Core::num_int( $calls ),
 			];
 		}
-		\usort( $board, static fn ( array $a, array $b ): int => $b['ms_per_request'] <=> $a['ms_per_request'] );
 		return $board;
 	}
 
@@ -2548,17 +2543,14 @@ class Performance_CI_Node extends Service_CI_Node {
 					'description' => 'Registered hooks grouped by category.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				// Recompute total_hooks so the response contract stays stable.
 				$by_category = Hook_Categorizer::get_registered_hooks_by_category();
-				$total       = 0;
-				foreach ( $by_category as $list ) {
-					$total += \is_array( $list ) ? \count( $list ) : 0;
-				}
+				$names       = \array_merge( ...\array_values( $by_category ) );
 				return [
-					'total_hooks'           => $total,
+					'total_hooks'           => \count( $names ),
 					'categories'            => Hook_Categorizer::get_categories(),
 					'category_descriptions' => Hook_Categorizer::get_descriptions(),
 					'hooks_by_category'     => $by_category,
+					'noisy'                 => AppConfig::noisy_hooks( $names ),
 				];
 					},
 				],

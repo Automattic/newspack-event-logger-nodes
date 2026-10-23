@@ -8,7 +8,7 @@
  * the search filter, the per-category counts and the tree itself.
  */
 
-import { useState, useMemo } from '@wordpress/element';
+import { useState, useMemo, useCallback } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import { CheckboxControl, Spinner } from '@wordpress/components';
 
@@ -31,48 +31,14 @@ import SelectorModal from './SelectorModal';
 const RECOMMENDED_HOOKS = new Set( window.newspackNodesRecommendedHooks || [] );
 
 /**
- * Patterns for hooks that fire too often to select in bulk.
- *
- * PHP publishes the `noisy_log_events` list as regex sources, already
- * validated server-side.
- *
- * @type {RegExp[]}
- */
-const NOISY_PATTERNS = ( window.newspackNodesNoisyHooks || [] ).flatMap(
-	( source ) => {
-		try {
-			return [ new RegExp( source ) ];
-		} catch ( error ) {
-			// PCRE accepts syntax JS rejects; skip it, keep the picker.
-			// eslint-disable-next-line no-console
-			console.warn(
-				`Skipping noisy hook pattern ${ source }: ${ error.message }`
-			);
-			return [];
-		}
-	}
-);
-
-/**
- * Whether a hook name matches a noisy pattern.
- *
- * @param {string} hook Hook name.
- * @return {boolean} True when bulk selections skip the hook.
- */
-export const isNoisy = ( hook ) =>
-	NOISY_PATTERNS.some( ( pattern ) => pattern.test( hook ) );
-
-/**
  * Hook names "Plugin time" and the rule editor's "Measure plugin time" add.
  *
  * PHP publishes the `owner_time_events` config list on the window, as it does
- * the recommended one; a noisy name is left out.
+ * the recommended one, already less every noisy name.
  *
  * @type {string[]}
  */
-export const PLUGIN_TIME_HOOKS = (
-	window.newspackNodesOwnerTimeEvents || []
-).filter( ( hook ) => ! isNoisy( hook ) );
+export const PLUGIN_TIME_HOOKS = window.newspackNodesOwnerTimeEvents || [];
 
 /**
  * Hook Selector Modal component.
@@ -112,8 +78,16 @@ export default function HookSelectorModal( {
 	const {
 		hooksByCategory,
 		descriptions = {},
+		noisy,
 		loading,
 	} = useHookCatalogGraph( { isOpen } );
+
+	// `list_hooks` names the noisy hooks; bulk selections leave them out.
+	const noisySet = useMemo( () => new Set( noisy ), [ noisy ] );
+	const selectable = useCallback(
+		( hooks ) => hooks.filter( ( hook ) => ! noisySet.has( hook ) ),
+		[ noisySet ]
+	);
 
 	// A malformed category value would throw in filter; skip it instead.
 	const filteredCategories = useMemo( () => {
@@ -148,19 +122,18 @@ export default function HookSelectorModal( {
 			const recommendedInCategory = hooks.filter( ( h ) =>
 				RECOMMENDED_HOOKS.has( h )
 			).length;
-			const selectable = hooks.filter( ( h ) => ! isNoisy( h ) );
+			const bulk = selectable( hooks );
 			counts[ category ] = {
-				selectable: selectable.length,
-				selectableSelected: selectable.filter( ( h ) =>
-					chosen.has( h )
-				).length,
+				selectable: bulk.length,
+				selectableSelected: bulk.filter( ( h ) => chosen.has( h ) )
+					.length,
 				selected: selectedInCategory,
 				total: hooks.length,
 				recommended: recommendedInCategory,
 			};
 		} );
 		return counts;
-	}, [ chosen, hooksByCategory ] );
+	}, [ chosen, hooksByCategory, selectable ] );
 
 	/**
 	 * Toggle every non-noisy hook in a category, on unless they are all on.
@@ -172,9 +145,7 @@ export default function HookSelectorModal( {
 	 * @param {string} category Category name.
 	 */
 	const toggleCategory = ( category ) => {
-		const hooks = ( hooksByCategory[ category ] || [] ).filter(
-			( h ) => ! isNoisy( h )
-		);
+		const hooks = selectable( hooksByCategory[ category ] || [] );
 		if ( hooks.length > 0 && hooks.every( ( h ) => chosen.has( h ) ) ) {
 			chosen.removeAll( hooks );
 		} else {
@@ -210,8 +181,7 @@ export default function HookSelectorModal( {
 		Object.values( filteredCategories ).filter( Array.isArray ).flat();
 
 	// Bulk selections skip noisy hooks; a noisy hook stays checkable alone.
-	const getSelectableHooks = () =>
-		getVisibleHooks().filter( ( hook ) => ! isNoisy( hook ) );
+	const getSelectableHooks = () => selectable( getVisibleHooks() );
 
 	if ( ! isOpen ) {
 		return null;
@@ -421,7 +391,7 @@ export default function HookSelectorModal( {
 															★
 														</span>
 													) }
-													{ isNoisy( hook ) && (
+													{ noisySet.has( hook ) && (
 														<span className="hook-selector-noisy">
 															{ __(
 																'noisy',

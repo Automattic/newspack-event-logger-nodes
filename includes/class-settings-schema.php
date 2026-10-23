@@ -80,8 +80,8 @@ class Settings_Schema {
 
 	/**
 	 * Hook names the hook picker offers for time-by-owner attribution.
-	 * Exposed to JS as `window.newspackNodesOwnerTimeEvents`; a menu, and
-	 * nothing here binds anything.
+	 * Exposed to JS as `window.newspackNodesOwnerTimeEvents`, less every name
+	 * `Config::noisy_hooks()` matches; a menu, and nothing here binds anything.
 	 *
 	 * @var list<string>
 	 */
@@ -107,9 +107,9 @@ class Settings_Schema {
 
 	/**
 	 * Hook-name patterns the rule editor warns are too noisy to log, in
-	 * `hook_categories.json`'s pattern form. Exposed to JS as
-	 * `window.newspackNodesNoisyHooks` by `Config::noisy_log_events()`, which
-	 * skips a pattern that does not compile and logs it.
+	 * `hook_categories.json`'s pattern form. `Config::noisy_hooks()` matches
+	 * them, for `list_hooks`' `noisy` names and the owner-time window list;
+	 * a pattern `Hook_Categorizer::checked_regex()` refuses matches nothing.
 	 *
 	 * @var list<string>
 	 */
