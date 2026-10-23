@@ -152,7 +152,7 @@ export default function RequestDetailView( {
 				</div>
 			) }
 
-			{ /* Time by owner */ }
+			{ /* Time By Owner */ }
 			<OwnerTable owners={ requestDetail.owners } />
 
 			{ /* Log Entries Table, or what a folded request kept instead */ }

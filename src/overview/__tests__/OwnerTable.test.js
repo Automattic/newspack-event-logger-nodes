@@ -1,5 +1,5 @@
 /**
- * Tests for OwnerTable: the "Time by owner" table every performance view
+ * Tests for OwnerTable: the "Time By Owner" table every performance view
  * mounts from its payload's owner rows.
  */
 
