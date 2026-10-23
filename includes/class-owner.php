@@ -35,6 +35,12 @@ final class Owner {
 	/** The owner of a drop-in. */
 	public const DROPIN = 'dropin';
 
+	/** The bucket for time no owner claims. */
+	public const UNOWNED = '(unowned)';
+
+	/** The bucket for time no frame accounts for. */
+	public const UNMEASURED = '(unmeasured)';
+
 	/** What an mu-plugin's slug follows. */
 	private const MU_PREFIX = 'mu:';
 
@@ -252,5 +258,24 @@ final class Owner {
 	 */
 	public static function is_plugin( string $owner ): bool {
 		return '' !== $owner && self::CORE !== $owner && self::DROPIN !== $owner && ! \str_contains( $owner, ':' );
+	}
+
+	/**
+	 * The owner a flame frame's name carries.
+	 *
+	 * A frame is `<base>: <label>` or a bare label, and `label()` put the owner
+	 * in front of the label. A plugin-load span is the plugin's own.
+	 *
+	 * @param string $name A frame's name.
+	 * @return string The owner, or '' when the name carries none.
+	 */
+	public static function of_label( string $name ): string {
+		if ( Flame_Tree::is_plugin_load_span( $name ) ) {
+			return \substr( Flame_Tree::base_name( $name ), 0, -\strlen( Flame_Tree::PLUGIN_LOAD_SUFFIX ) );
+		}
+		$at    = \strpos( $name, ': ' );
+		$label = false === $at || \str_starts_with( $name, '[' ) ? $name : \substr( $name, $at + 2 );
+		$end   = \strpos( $label, '] ' );
+		return '[' === ( $label[0] ?? '' ) && false !== $end ? \substr( $label, 1, $end - 1 ) : '';
 	}
 }

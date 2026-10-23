@@ -9,6 +9,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Owner;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
@@ -213,5 +214,36 @@ class OwnerTest extends TestCase {
 		foreach ( [ '', 'mu:ruru-3301', 'theme:pukeko-2207', 'dropin', 'core' ] as $owner ) {
 			$this->assertFalse( Owner::is_plugin( $owner ), $owner );
 		}
+	}
+
+	/** A name opening with `[` is a bare label, whatever `: ` its label holds. */
+	public function test_a_bare_label_keeps_its_owner_past_a_colon(): void {
+		$this->assertSame( 'mu:kea-8814', Owner::of_label( '[mu:kea-8814] Kea_Load::run: step' ) );
+	}
+
+	/** A frame named `<base>: <label>` has the owner its label opens with. */
+	public function test_of_label_reads_the_owner_after_the_base(): void {
+		$this->assertSame( 'theme:pukeko-2207', Owner::of_label( 'the_content hook: [theme:pukeko-2207] Pukeko->render' ) );
+	}
+
+	/** A frame that is only a label has the owner it opens with. */
+	public function test_of_label_reads_a_bare_label(): void {
+		$this->assertSame( 'mu:ruru-3301', Owner::of_label( '[mu:ruru-3301] {closure}:loader.php:42 @-5' ) );
+	}
+
+	/** A call-site frame has the owner its label opens with. */
+	public function test_of_label_reads_a_call_site(): void {
+		$this->assertSame( 'core', Owner::of_label( 'sql: [core] kea_7746_get_option' ) );
+	}
+
+	/** A plugin-load span belongs to the plugin it names. */
+	public function test_a_plugin_load_span_is_its_plugins(): void {
+		$this->assertSame( 'kea-7746', Owner::of_label( 'kea-7746' . Flame_Tree::PLUGIN_LOAD_SUFFIX ) );
+	}
+
+	/** A name whose label does not open with `[<owner>] ` has no owner. */
+	public function test_a_name_with_no_owner_reads_empty(): void {
+		$this->assertSame( '', Owner::of_label( 'init hook' ) );
+		$this->assertSame( '', Owner::of_label( 'kea-7746 custom: [not-at-start' ) );
 	}
 }
