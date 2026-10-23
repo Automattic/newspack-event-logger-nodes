@@ -1511,7 +1511,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * dearest per request first: `ms_per_request` and `calls_per_request`
 	 * are its summed `ms` and `calls` over the `requests` of the
 	 * `(unmeasured)` row, which counts every request folded, and `share` its
-	 * `ms` over every owner's. Empty over no folded request.
+	 * `ms` over every row's. That row is no owner and is not listed. Empty
+	 * over no folded request.
 	 *
 	 * @param array<string,list<scalar>> $filter  Fields the `owners` source holds.
 	 * @param list<array{0:int,1:int}>   $buckets The board's buckets.
@@ -1536,6 +1537,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		$board = [];
 		foreach ( $rows as [ $owner, $ms, $calls ] ) {
+			if ( Owner::UNMEASURED === $owner ) {
+				continue;
+			}
 			$board[] = [
 				'owner'             => Core::as_string( $owner ),
 				'ms_per_request'    => Core::num_float( $ms ) / $requests,
